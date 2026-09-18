@@ -36,6 +36,19 @@ WANTED = [
     ("results",         "school",  "idx_results_school", None),
     # the course pages' driving filter (live fallback + board builds)
     ("meets",           "course_name", "idx_meets_course_name", None),
+    # ★ THE OTHER HALF OF A COURSE (owner, 2026-09-18: tfrrs races were not
+    #   on course pages at all). `meets` is anet-only, so the tfrrs side of
+    #   a course is meets_tfrrs.venue_name -- and the first attempt at that
+    #   fix filtered on COALESCE(m.course_name, mt.venue_name), which no
+    #   index can serve, and made every course page crawl. The queries now
+    #   resolve each feed by its own index and UNION the two; this is the
+    #   one that side needs.
+    #
+    # ! (venue_name, sport) IN THAT ORDER. The lookup is `sport = 'XC' AND
+    #   venue_name = %(course)s`, and the existence check above matches on
+    #   the LEADING column -- sport-first would also be far less selective.
+    ("meets_tfrrs",     "venue_name", "idx_meets_tfrrs_venue",
+     "(venue_name, sport)"),
     # ★ ISSUE #17 (2026-08-27). Every course helper joins
     #   `results ON r.div_id = m.div_id` after filtering meets by
     #   course_name -- with no div_id-leading index the planner hash-joins

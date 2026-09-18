@@ -4345,6 +4345,73 @@ def compiled_tf(meet_id):
 #  XC COURSE
 # ===================================================================== #
 
+# ===================================================================== #
+#  COURSE PAGES  --  both feeds, without losing the index
+# ===================================================================== #
+#
+# ★ THE COURSE PAGES WERE ANET-ONLY (owner, 2026-09-18: "those meets that
+#   were 404ing are not present on course pages"). Every get_course_* query
+#   did `JOIN meets m ON m.div_id = r.div_id AND m.source = r.source` and
+#   then `WHERE m.course_name = %(course)s`. `meets` is written by exactly
+#   one function -- anet's saveMeet -- and save_tfrrs writes `results` and
+#   `meets_tfrrs`, never `meets`. So the INNER JOIN dropped every tfrrs cross
+#   country row before the WHERE was reached. Not a filter that excluded
+#   them: they could not appear, on any board, at any distance.
+#
+# ⚠ AND THE OBVIOUS FIX MADE THE PAGE UNUSABLE. Replacing the filter with
+#   `WHERE COALESCE(m.course_name, mt.venue_name) = %(course)s` is correct
+#   and was reverted within the hour: a COALESCE over a join result cannot
+#   use an index, so the planner joined 39M result rows to both meet tables
+#   and evaluated the expression per row before it could filter anything.
+#   idx_meets_course_name is what the old query was really relying on.
+#
+# ! SO THE COURSE IS RESOLVED FIRST, ON EACH SIDE, BY ITS OWN INDEX.
+#   meets.course_name (idx_meets_course_name) yields anet div_ids;
+#   meets_tfrrs.venue_name (idx_meets_tfrrs_venue_name, added by
+#   scripts/add_course_indexes.py) yields tfrrs meet_ids. Each branch is a
+#   small indexed lookup joined to `results` on an indexed key, and the two
+#   are UNION ALLed. Nothing evaluates an expression over the whole table.
+#
+# ! ONE DEFINITION, SEVEN QUERIES. The bodies select from `course_rows` and
+#   never name `meets` or `meets_tfrrs` again, so a course page cannot
+#   disagree with itself about which races were held on it.
+def _courseRowsCte():
+    """A CTE named course_rows: every result raced on %(course)s, either feed.
+
+    Columns are named so the existing bodies keep working: the results
+    columns they already used, plus distance / meet_name / state, which they
+    used to take off `m`.
+    """
+    return """
+    course_rows AS (
+        SELECT r.person_id, r.athlete_id, r.athlete_name, r.result_id,
+               r.time_seconds, r.date, r.grade, r.school, r.speed_rating,
+               r.div_id, r.meet_id, r.source,
+               m.distance::real AS distance,
+               m.meet_name      AS meet_name,
+               m.state          AS state
+        FROM   meets m
+        JOIN   results r
+               ON r.div_id = m.div_id AND r.source = m.source
+        WHERE  m.course_name = %(course)s
+        UNION ALL
+        -- the tfrrs half: keyed on meet_id, with the per-division distance
+        -- inside the jsonb blob (see _blob) rather than a column
+        SELECT r.person_id, r.athlete_id, r.athlete_name, r.result_id,
+               r.time_seconds, r.date, r.grade, r.school, r.speed_rating,
+               r.div_id, r.meet_id, r.source,
+               (mt.division_distances -> r.div_id::text
+                   ->> 'distance')::real AS distance,
+               mt.meet_name     AS meet_name,
+               mt.state         AS state
+        FROM   meets_tfrrs mt
+        JOIN   results r
+               ON r.meet_id = mt.meet_id AND r.source = 'tfrrs'
+        WHERE  mt.sport = 'XC' AND mt.venue_name = %(course)s
+    )
+    """
+
+
 def get_course_header(cur, course_name, dist=None):
     """Result/athlete counts for the header line, counted from the real
     rows and scoped to one distance when the page is.
@@ -4359,14 +4426,13 @@ def get_course_header(cur, course_name, dist=None):
     #   page had none, so course.html rendered bare names through
     #   schoolLabel and answered with each name's BIGGEST cluster.
     #   mode() over the course's own meets, not one arbitrary row.
-    cur.execute("""
+    cur.execute(f"""
+        WITH {_courseRowsCte()}
         SELECT count(*)                    AS n_results,
                count(DISTINCT r.person_id) AS n_athletes,
-               mode() WITHIN GROUP (ORDER BY m.state) AS state
-        FROM results r
-        JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
-        WHERE m.course_name = %(course)s
-          AND (%(dist)s::int IS NULL OR round(m.distance)::int = %(dist)s)
+               mode() WITHIN GROUP (ORDER BY r.state) AS state
+        FROM course_rows r
+        WHERE (%(dist)s::int IS NULL OR round(r.distance)::int = %(dist)s)
     """, {"course": course_name, "dist": dist})
     row = cur.fetchone()
     return row if row and row["n_results"] else None
@@ -4377,27 +4443,27 @@ def get_course_rating_bests(cur, course_name, dist=None, limit=60):
     per gender. dist=None is the overview (all distances, which rating
     makes comparable; each row carries its own); an int scopes to one.
     Replaces the old mixed-gender get_course_bests table."""
-    dist_sql = "AND round(m.distance)::int = %(dist)s" if dist else ""
+    dist_sql = "AND round(r.distance)::int = %(dist)s" if dist else ""
     cur.execute(f"""
-        WITH rows AS (
+        WITH {_courseRowsCte()},
+        rows AS (
             SELECT r.person_id, r.result_id, r.time_seconds, r.date,
                    r.grade, r.school, r.speed_rating,
-                   round(m.distance)::int AS distance,
-                   m.meet_id, m.div_id, a.gender, {_name_sql('r')} AS name,
+                   round(r.distance)::int AS distance,
+                   r.meet_id, r.div_id, a.gender, {_name_sql('r')} AS name,
                    row_number() OVER (PARTITION BY r.person_id
                                       ORDER BY r.speed_rating DESC) AS pr_rn
-            FROM results r
-            JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+            FROM course_rows r
             {_athlete_lateral('r')}
-            WHERE m.course_name = %(course)s
+            WHERE TRUE
               {dist_sql}
-              AND m.distance IS NOT NULL
+              AND r.distance IS NOT NULL
               AND r.person_id IS NOT NULL
               AND a.gender IN ('M', 'F')
               AND r.speed_rating IS NOT NULL
               AND r.time_seconds IS NOT NULL
-              AND r.time_seconds BETWEEN m.distance * {_REC_PACE_LO}
-                                     AND m.distance * {_REC_PACE_HI}
+              AND r.time_seconds BETWEEN r.distance * {_REC_PACE_LO}
+                                     AND r.distance * {_REC_PACE_HI}
         ),
         ranked AS (
             SELECT *, row_number() OVER (PARTITION BY gender
@@ -4416,24 +4482,23 @@ def get_course_team_rating_bests(cur, course_name, limit=60):
     time-based team records -- rating is what makes a 3200 squad and an
     8000 squad comparable on one list."""
     cur.execute(f"""
-        WITH finishers AS (
+        WITH {_courseRowsCte()},
+        finishers AS (
             SELECT r.meet_id, r.div_id, r.source, r.school, r.speed_rating,
-                   r.date, m.meet_name, round(m.distance)::int AS distance,
+                   r.date, r.meet_name, round(r.distance)::int AS distance,
                    a.gender,
                    row_number() OVER (
                        PARTITION BY r.meet_id, r.div_id, r.source, r.school
                        ORDER BY r.speed_rating DESC) AS tn
-            FROM results r
-            JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+            FROM course_rows r
             {_athlete_lateral('r')}
-            WHERE m.course_name = %(course)s
-              AND m.distance IS NOT NULL
+            WHERE r.distance IS NOT NULL
               AND NULLIF(TRIM(r.school), '') IS NOT NULL
               AND a.gender IN ('M', 'F')
               AND r.speed_rating IS NOT NULL
               AND r.time_seconds IS NOT NULL
-              AND r.time_seconds BETWEEN m.distance * {_REC_PACE_LO}
-                                     AND m.distance * {_REC_PACE_HI}
+              AND r.time_seconds BETWEEN r.distance * {_REC_PACE_LO}
+                                     AND r.distance * {_REC_PACE_HI}
         ),
         teams AS (
             SELECT meet_id, div_id, school,
@@ -4469,30 +4534,28 @@ def get_course_meets(cur, course_name, dist=None, limit=200):
     (varsity 5000m, frosh 3200m). array_agg collects them into one list
     per meet instead of collapsing to a single value.
     """
-    cur.execute("""
-        SELECT m.meet_id,
-               m.meet_name,
+    cur.execute(f"""
+        WITH {_courseRowsCte()}
+        SELECT r.meet_id,
+               r.meet_name,
                -- DISTINCT so a distance run by six divisions appears once.
                -- ORDER BY so the list is stable between page loads.
                -- FILTER drops NULLs, which would otherwise become a literal
-               -- NULL *element* in the array (tfrrs XC rows have no distance).
-               array_agg(DISTINCT m.distance ORDER BY m.distance)
-                   FILTER (WHERE m.distance IS NOT NULL) AS distances,
+               -- NULL *element* in the array (a tfrrs division the blob has
+               -- no distance for).
+               array_agg(DISTINCT r.distance ORDER BY r.distance)
+                   FILTER (WHERE r.distance IS NOT NULL) AS distances,
                max(r.date)  AS last_date,
                count(*)     AS n_results
-        FROM meets m
-        JOIN results r
-             ON r.div_id = m.div_id
-            AND r.source = m.source
-        WHERE m.course_name = %(course)s
-        GROUP BY m.meet_id, m.meet_name
+        FROM course_rows r
+        GROUP BY r.meet_id, r.meet_name
         -- dist picks WHICH meets appear (those that ran the selected
         -- distance) but not what a row says about them: the distances
         -- and result counts stay the whole meet's. A HAVING, not a
         -- WHERE, so the filter doesn't also throw away the other
         -- divisions' rows before the aggregates see them.
         HAVING %(dist)s::int IS NULL
-            OR bool_or(round(m.distance)::int = %(dist)s)
+            OR bool_or(round(r.distance)::int = %(dist)s)
         ORDER BY max(r.date) DESC
         LIMIT %(limit)s
         -- +1: the extra row is how the cap reports that it bit. See capped.py.
@@ -4503,18 +4566,15 @@ def get_course_meets(cur, course_name, dist=None, limit=200):
 
 def get_course_distances(cur, course_name):
     """Which distances have been raced on this course, and how often."""
-    cur.execute("""
-        SELECT m.distance,
+    cur.execute(f"""
+        WITH {_courseRowsCte()}
+        SELECT r.distance,
                count(*)     AS n_results,
                min(r.date)  AS first_date,
                max(r.date)  AS last_date
-        FROM meets m
-        JOIN results r
-             ON r.div_id = m.div_id
-            AND r.source = m.source
-        WHERE m.course_name = %(course)s
-          AND m.distance IS NOT NULL
-        GROUP BY m.distance
+        FROM course_rows r
+        WHERE r.distance IS NOT NULL
+        GROUP BY r.distance
         ORDER BY count(*) DESC
     """, {"course": course_name})
     return cur.fetchall()
@@ -5091,18 +5151,17 @@ def get_course_records(cur, course_name, dist, limit=60):
     uses; rows without a linked person or a gender stay off the records
     (they remain in the rating table below)."""
     cur.execute(f"""
-        WITH rows AS (
+        WITH {_courseRowsCte()},
+        rows AS (
             SELECT r.person_id, r.result_id, r.time_seconds, r.date,
                    r.grade, r.school, r.speed_rating,
-                   m.meet_id, m.div_id, m.meet_name,
+                   r.meet_id, r.div_id, r.meet_name,
                    a.gender, {_name_sql('r')} AS name,
                    row_number() OVER (PARTITION BY r.person_id
                                       ORDER BY r.time_seconds ASC) AS pr_rn
-            FROM results r
-            JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+            FROM course_rows r
             {_athlete_lateral('r')}
-            WHERE m.course_name = %(course)s
-              AND round(m.distance)::int = %(dist)s
+            WHERE round(r.distance)::int = %(dist)s
               AND r.person_id IS NOT NULL
               AND a.gender IN ('M', 'F')
               AND r.time_seconds IS NOT NULL
@@ -5125,17 +5184,16 @@ def get_course_team_records(cur, course_name, dist, limit=60):
     ONE race, best race per school, top `limit` per gender. Ranked by the
     total; the average is displayed alongside for readability."""
     cur.execute(f"""
-        WITH finishers AS (
+        WITH {_courseRowsCte()},
+        finishers AS (
             SELECT r.meet_id, r.div_id, r.source, r.school, r.time_seconds,
-                   r.date, m.meet_name, a.gender,
+                   r.date, r.meet_name, a.gender,
                    row_number() OVER (
                        PARTITION BY r.meet_id, r.div_id, r.source, r.school
                        ORDER BY r.time_seconds ASC) AS tn
-            FROM results r
-            JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+            FROM course_rows r
             {_athlete_lateral('r')}
-            WHERE m.course_name = %(course)s
-              AND round(m.distance)::int = %(dist)s
+            WHERE round(r.distance)::int = %(dist)s
               AND NULLIF(TRIM(r.school), '') IS NOT NULL
               AND a.gender IN ('M', 'F')
               AND r.time_seconds IS NOT NULL
