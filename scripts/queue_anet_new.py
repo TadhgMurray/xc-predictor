@@ -73,6 +73,46 @@ def watermark(cur, sport):
     return cur.fetchone()[0]
 
 
+# A block of ids, and how many real meets a block needs before it counts as
+# part of the corpus rather than noise. One stray id cannot make a block.
+FRONTIER_BLOCK = 1000
+FRONTIER_MIN_PER_BLOCK = 5
+
+
+def denseFrontier(cur, sport, block=FRONTIER_BLOCK,
+                  min_per_block=FRONTIER_MIN_PER_BLOCK):
+    """The top of the highest BLOCK of ids that holds real meets.
+
+    ★ THE OWNER'S ASK (2026-09-18): "can we start at the highest batch of
+      meet ids we've scraped, so one or two crazy ids don't fuck us? (also
+      670k shouldn't even be possible as the max we scraped was like 270k)".
+      A max() is decided by its single largest value, so one bogus row -- a
+      mis-keyed meet, a stray id from the other sport's space -- moves the
+      frontier by 400,000 and the walk starts in empty space.
+
+    ! REAL MEETS, NOT RESULTS. A scheduled meet is a real meet with no
+      results, and it marks the corpus just as well, so this counts `meets` /
+      `meets_tf` rows. The block only needs min_per_block of them: a genuine
+      stretch of the id space has hundreds, and a single outlier has one.
+
+    Returns the TOP of that block (block_start + block), so the walk starts
+      inside the tail of real ids rather than skipping it.
+    """
+    mt = SPORTS[sport]["meets"]
+    cur.execute(f"""
+        SELECT (meet_id / %(block)s) * %(block)s AS blk,
+               count(DISTINCT meet_id)           AS n
+        FROM   {mt}
+        WHERE  source = 'anet' AND meet_id IS NOT NULL
+        GROUP  BY 1
+        HAVING count(DISTINCT meet_id) >= %(minimum)s
+        ORDER  BY 1 DESC
+        LIMIT  1
+    """, {"block": block, "minimum": min_per_block})
+    row = cur.fetchone()
+    return (row[0] + block) if row else None
+
+
 def askedFrontier(cur, sport):
     """The highest id we have EVER queued for this sport, or None.
 
@@ -243,13 +283,35 @@ def seedForward(cur, sport, lo, hi):
     # ! AND UNSTICK WHAT IS ALREADY THERE. A row left at 2 (failed) or 3 (a
     #   session that died mid-claim) is never claimed again, so a forward
     #   seed that ignored them would walk straight past the ids most likely
-    #   to be missing data. Rows at 1 belong to the recent pass.
+    #   to be missing data.
     cur.execute("""
         UPDATE meet_queue SET scraped = 0
         WHERE  source = 'anet' AND sport = %s
           AND  meet_id BETWEEN %s AND %s AND scraped IN (2, 3)
     """, (sport, lo, hi))
-    return inserted, cur.rowcount
+    woken = cur.rowcount
+
+    # ★ AND RE-ASK THE ONES THAT HELD NO MEET, which is the half that makes a
+    #   forward walk work at all. The blind prefill asked every id to 670,000
+    #   long ago and marked them done; the ids just above the real corpus
+    #   answered "no such meet" because anet HAD NOT CREATED THEM YET. That
+    #   answer expires. Without this, ON CONFLICT DO NOTHING leaves them at 1
+    #   forever and the walk can never reach a new meet.
+    #
+    # ! ONLY THE ONES WITH NO MEET ROW. An id that did come back as a real
+    #   meet with no results is a SCHEDULED meet, and re-asking those is the
+    #   recent pass's job (scheduledToRetry), measured from the watermark. Two
+    #   passes, two populations, no overlap.
+    mt = SPORTS[sport]["meets"]
+    cur.execute(f"""
+        UPDATE meet_queue q SET scraped = 0
+        WHERE  q.source = 'anet' AND q.sport = %s
+          AND  q.meet_id BETWEEN %s AND %s AND q.scraped = 1
+          AND  NOT EXISTS (SELECT 1 FROM {mt} m
+                           WHERE m.meet_id = q.meet_id
+                             AND m.source = 'anet')
+    """, (sport, lo, hi))
+    return inserted, woken + cur.rowcount
 
 
 def requeue(cur, sport, ids, chunk=5000):
@@ -290,16 +352,23 @@ def seedSport(cur, sport, write=False, ahead=AHEAD,
         f"(scheduled), and {misses:,} ids in a row at the top that are not "
         f"meets at all")
 
-    # Where "never asked" begins. max() of the two, so a database whose
-    # queue was never seeded that high still walks from the watermark.
+    # ⚠ NOT askedFrontier, AND NOT THE WATERMARK EITHER. The old blind
+    #   prefill queued every id to 670,000, so the asked frontier is 670,000
+    #   for a sport whose real ids stop near 270,000 -- starting there walks
+    #   400,000 ids of empty space. And the watermark is a max(), so one bogus
+    #   row moves it just as far. The dense frontier is where the real ids
+    #   actually run out.
     asked = askedFrontier(cur, sport)
-    frontier = max(top, asked or 0)
-    out["asked"] = asked
-    out["frontier"] = frontier
-    if asked and asked > top:
-        say(f"  [{sport}] highest id ever queued: {asked:,} -- the forward "
-            f"walk starts above THAT, not above the watermark, or it would "
-            f"re-seed ids already asked and add nothing")
+    dense = denseFrontier(cur, sport)
+    frontier = dense or top
+    out["asked"], out["dense"], out["frontier"] = asked, dense, frontier
+    say(f"  [{sport}] highest block of real meets ends at {frontier:,} "
+        f"(watermark {top:,}, highest id ever queued "
+        f"{asked if asked is None else format(asked, ',')})")
+    if asked and asked > frontier + ahead:
+        say(f"  [{sport}]   ids {frontier + 1:,}..{asked:,} were asked before "
+            f"and held no meet -- re-asked below, because 'not a meet' is an "
+            f"answer that expires: anet had not created them yet.")
 
     if do_new:
         if misses >= stop_after_misses:

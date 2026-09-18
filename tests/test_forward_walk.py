@@ -83,26 +83,47 @@ class TheWalkStartsFromRealData(unittest.TestCase):
         self.assertIn("results", body)
         self.assertNotIn("meet_queue", body)
 
-    # ⚠ THE WALK MUST START ABOVE WHAT WE HAVE ASKED, NOT ABOVE WHAT HAS
-    #   ANSWERED. The old blind prefill queued every id to 670,000 under both
-    #   sports; XC's watermark is 275,585. Seeding from the watermark walks
-    #   into already-asked ids, where ON CONFLICT DO NOTHING adds nothing, and
-    #   the first extension would call the corpus exhausted.
-    def test_the_walk_starts_above_the_highest_id_ever_queued(self):
-        self.assertIn("def askedFrontier(", self.src)
-        body = _func(self.src, "askedFrontier")
-        self.assertIn("FROM meet_queue", body)
-        self.assertIn("max(meet_id)", body)
+    # ⚠ NO SINGLE ID MAY DECIDE THE FRONTIER (owner, 2026-09-18: "can we
+    #   start at the highest batch of meet ids we've scraped, so one or two
+    #   crazy ids don't fuck us? ... 670k shouldn't even be possible as the
+    #   max we scraped was like 270k"). A max() is decided by its largest
+    #   value, so one bogus row moves the start by 400,000 ids.
+    def test_the_frontier_is_a_dense_block_not_a_max(self):
+        self.assertIn("def denseFrontier(", self.src)
+        body = _func(self.src, "denseFrontier")
+        self.assertIn("GROUP  BY 1", body)
+        self.assertIn("HAVING count(DISTINCT meet_id) >= %(minimum)s", body)
+        self.assertIn("ORDER  BY 1 DESC", body)
 
         seed = _func(self.src, "seedSport")
-        self.assertIn("askedFrontier(cur, sport)", seed)
+        self.assertIn("denseFrontier(cur, sport)", seed)
         self.assertIn("frontier + 1", seed)
-        # and never the watermark alone
+        # never a bare max, from either table
         self.assertNotIn("lo, hi = top + 1", seed)
+        self.assertNotIn("max(top, asked or 0)", seed)
 
-    def test_a_queue_never_seeded_that_high_still_walks_from_the_watermark(self):
-        seed = _func(self.src, "seedSport")
-        self.assertIn("max(top, asked or 0)", seed)
+    def test_a_block_needs_more_than_one_meet(self):
+        import re as _re
+        m = _re.search(r"FRONTIER_MIN_PER_BLOCK = (\d+)", self.src)
+        self.assertIsNotNone(m)
+        self.assertGreater(int(m.group(1)), 1)
+
+    # ★ THE HALF THAT MAKES A FORWARD WALK POSSIBLE. The blind prefill asked
+    #   every id to 670,000 and marked them done; the ids just above the real
+    #   corpus said "no such meet" because anet had not created them yet.
+    def test_no_meet_is_an_answer_that_expires(self):
+        body = _func(self.src, "seedForward")
+        self.assertIn("q.scraped = 1", body)
+        self.assertIn("NOT EXISTS", body)
+
+    # ! AND ONLY THAT POPULATION. A real meet with no results is SCHEDULED,
+    #   and re-asking those belongs to the recent pass, measured from the
+    #   watermark. Two passes, two populations, no overlap.
+    def test_it_does_not_re_ask_scheduled_meets(self):
+        body = _func(self.src, "seedForward")
+        i = body.index("q.scraped = 1")
+        self.assertIn('SPORTS[sport]["meets"]', body)
+        self.assertIn("NOT EXISTS", body[i:])
 
     # ! "UNTIL 404" CANNOT BE ONE 404: anet ids have real gaps.
     def test_the_stop_is_a_run_of_misses_not_one(self):
