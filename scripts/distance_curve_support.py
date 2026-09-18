@@ -50,6 +50,23 @@ NO DATABASE, no network -- safe to run while a scrape is going.
 ! AN EXPONENT UNDER 1.0 IS IMPOSSIBLE and over ~1.20 is a fit artefact, per
   distance_curve_check's reasoning (Riegel is 1.06-1.10 for a trained runner).
   Both are flagged.
+
+⚠⚠ AND IT ALSO REPORTS WHETHER THE ARTIFACT IS STALE, which on 2026-09-18 was
+   the whole answer. The fitter grew a floor on the local exponent
+   (MIN_LOCAL_EXP = 1.04) and a monotone pass precisely to forbid a k under
+   1.0, and it records both on every entry it writes: `min_local_exp`,
+   `floored_segments`, `monotone`. The shipped pkl has NONE of those keys --
+   its entries are coeffs, degree, eps, knots, n_matched, span, target and
+   friends. So it was built by a fitter that predates the fix, and the
+   impossible tails are not a live bug in the code: they are a file nobody
+   rebuilt.
+
+   That is the third instance of the same shape in one day:
+   database.backfillMeetsTFVenueNames ("written, committed, wired to nothing"),
+   school_team_link (built and read by nothing until 2026-09-17), and now this.
+   So the staleness check is printed FIRST, before any exponent, because
+   reading the numbers without it sends you to debug the fitter instead of
+   re-running it.
 """
 import argparse
 import math
@@ -111,6 +128,30 @@ def main():
                          f"engine/fit_distance_exponent.py first")
     with open(args.artifact, "rb") as fh:
         art = pickle.load(fh)
+
+    # ★★ IS THIS FILE EVEN FROM THE CURRENT FITTER? Checked before anything
+    #    else: every entry the present fitter writes carries min_local_exp and
+    #    floored_segments (the exponent floor) and monotone (the smoother). An
+    #    artifact without them predates both, and its impossible tails are a
+    #    stale file rather than a live bug.
+    STAMPS = ("min_local_exp", "floored_segments", "monotone")
+    entries = [e for e in (art.get("pools") or {}).values() if e]
+    have = {k for e in entries for k in e.keys()}
+    missing = [k for k in STAMPS if k not in have]
+    if missing:
+        print(f"\n  ⚠⚠ THIS ARTIFACT IS STALE. It carries none of "
+              f"{missing} on any entry,\n"
+              f"     so it was built BEFORE the fitter grew its exponent floor "
+              f"(MIN_LOCAL_EXP)\n"
+              f"     and its monotone pass -- the two things that exist to "
+              f"forbid a k under 1.0.\n"
+              f"     Any impossible exponent below is a file nobody rebuilt, "
+              f"NOT a live bug:\n"
+              f"         python engine/fit_distance_exponent.py\n"
+              f"     Everything after this point describes the OLD curve.")
+    else:
+        print(f"\n  artifact carries the floor and monotone stamps "
+              f"(current fitter).")
 
     targets = art.get("pool_targets") or {}
     pools = art.get("pools") or {}
