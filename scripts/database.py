@@ -2507,29 +2507,47 @@ def _claimMeetBatch(cursor, batch_size, sport=None):
     # ! sport= SCOPES A RUN TO ONE SPORT (ANET_SPORT in the launcher). The
     #   honest way to see cross country tonight is to ask for cross country,
     #   not to hope the planner offers it.
-    where = "scraped = 0 AND source = 'anet'"
-    params = []
+    # ★ FAIR ACROSS SPORTS WHEN NO SPORT IS NAMED (owner, 2026-09-18: "can
+    #   you make it so it does xc and tf so I don't gotta unautomate"). A
+    #   single ORDER BY meet_id would hand back ALL of one sport before any of
+    #   the other, because anet's XC and TF id spaces are disjoint -- XC tops
+    #   out near 276,000 and TF near 671,000, so ordering by id is ordering by
+    #   sport. Half the batch each, so both advance together and one sport
+    #   stalling does not park the other.
+    #
+    # ! AND A SPORT WITH NOTHING DUE GIVES ITS HALF BACK, so the batch stays
+    #   full once one sport finishes rather than halving throughput.
     if sport:
-        where += " AND sport = %s"
-        params.append(sport)
-    params.append(batch_size)
+        return _claimOneSport(cursor, batch_size, sport)
+
+    half = max(1, batch_size // 2)
+    rows = _claimOneSport(cursor, half, "XC")
+    rows += _claimOneSport(cursor, batch_size - len(rows), "TF")
+    if len(rows) < batch_size:
+        rows += _claimOneSport(cursor, batch_size - len(rows), "XC")
+    return rows
+
+
+def _claimOneSport(cursor, limit, sport):
+    if limit <= 0:
+        return []
     cursor.execute(
-        f"""
+        """
         UPDATE meet_queue
         SET scraped = 3
         WHERE (meet_id, sport, source) IN (
             SELECT meet_id, sport, source
             FROM meet_queue
-            WHERE {where}
+            WHERE scraped = 0 AND source = 'anet' AND sport = %s
             ORDER BY meet_id
             FOR UPDATE SKIP LOCKED
             LIMIT %s
         )
         RETURNING meet_id, sport
         """,
-        tuple(params),
+        (sport, limit),
     )
-    return cursor.fetchall()
+    return list(cursor.fetchall())
 
 # _buildMeetSportDict
 # Purpose: Reshapes flat (meet_id, sport) rows into a dict grouping all

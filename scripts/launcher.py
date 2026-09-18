@@ -1467,14 +1467,23 @@ _QUEUE_STATE = {0: "due", 1: "done", 2: "failed", 3: "in-progress",
 # than each running the same seeding query against a queue that is already
 # refilled.
 _EXTEND_LOCK = asyncio.Lock()
-_EXTEND_STATE = {"exhausted": False, "dry": 0, "last_top": None}
+# ! PER SPORT, so a finished sport stops being seeded while the other runs on.
+#   A single shared counter kept seeding 500 dead XC ids per block for as long
+#   as TF was productive.
+_EXTEND_STATE = {"dry": {}, "last_top": {}, "done": set()}
 
-# Freshly-asked blocks that found no new meet before we call it the end.
+# Freshly-asked blocks that found no new meet before we call a sport finished.
 # ★ FRESHLY-ASKED IS THE POINT (owner, 2026-09-18: the walk stopped dead on
 #   31,198 historical "not a meet" answers). An id that was empty months ago
 #   is not evidence about today -- that is why it is being re-asked. Only a
 #   block we have just asked can say the corpus has ended.
-DRY_BLOCKS_TO_STOP = int(os.environ.get("DRY_BLOCKS_TO_STOP", 3))
+#
+# ⚠ SEED_AHEAD x DRY_BLOCKS_TO_STOP IS HOW FAR PAST THE LAST REAL MEET WE
+#   WALK BEFORE GIVING UP, and 2,000 x 3 was "way too patient" (owner): six
+#   thousand ids at ~5s each is eight hours of confirmed nothing. 500 x 2 is
+#   a thousand, which is the number asked for.
+SEED_AHEAD = int(os.environ.get("SEED_AHEAD", 500))
+DRY_BLOCKS_TO_STOP = int(os.environ.get("DRY_BLOCKS_TO_STOP", 2))
 
 
 async def _extendFrontier(label):
@@ -1493,56 +1502,64 @@ async def _extendFrontier(label):
     ! FORWARD ONLY. The recent-empties pass is a one-off at startup; re-running
       it here would re-queue the same meets every time the queue drained.
     """
-    if _EXTEND_STATE["exhausted"]:
-        return False
+    from queue_anet_new import SPORTS
+    wanted = [ANET_SPORT] if ANET_SPORT else list(SPORTS)
+
     async with _EXTEND_LOCK:
-        if _EXTEND_STATE["exhausted"]:
+        live = [sp for sp in wanted if sp not in _EXTEND_STATE["done"]]
+        if not live:
             return False
 
         def _seed():
             from database import getConn
-            from queue_anet_new import seedAll, dueCounts, watermark, SPORTS
+            from queue_anet_new import seedAll, dueCounts, watermark
             with getConn() as conn:
                 # ! THE WATERMARK BEFORE AND AFTER IS THE EVIDENCE. It only
                 #   moves when a real meet was found, so comparing it across
                 #   a drained block says whether that block held anything --
                 #   without needing a per-id record of what came back.
                 with conn.cursor() as cur:
-                    tops = {sp: watermark(cur, sp)
-                            for sp in ([ANET_SPORT] if ANET_SPORT
-                                       else list(SPORTS))}
+                    tops = {sp: watermark(cur, sp) for sp in live}
                 conn.rollback()
                 seedAll(conn, write=True, do_recent=False, verbose=False,
-                        sports=[ANET_SPORT] if ANET_SPORT else None,
-                        ahead=int(os.environ.get("SEED_AHEAD", 2000)))
+                        sports=live, ahead=SEED_AHEAD)
                 due = dueCounts(conn)
-            if ANET_SPORT:
-                due = {k: v for k, v in due.items() if k == ANET_SPORT}
-            return sum(due.values()), tops
+            return {sp: due.get(sp, 0) for sp in live}, tops
 
         due, tops = await runDbCall(_seed)
 
-        # Did the block we just drained move any watermark?
-        moved = (_EXTEND_STATE["last_top"] is None
-                 or tops != _EXTEND_STATE["last_top"])
-        _EXTEND_STATE["last_top"] = tops
-        if moved:
-            _EXTEND_STATE["dry"] = 0
-        else:
-            _EXTEND_STATE["dry"] += 1
+        for sp in live:
+            last = _EXTEND_STATE["last_top"].get(sp, "unset")
+            moved = last == "unset" or tops.get(sp) != last
+            _EXTEND_STATE["last_top"][sp] = tops.get(sp)
+            if moved:
+                _EXTEND_STATE["dry"][sp] = 0
+            else:
+                _EXTEND_STATE["dry"][sp] = _EXTEND_STATE["dry"].get(sp, 0) + 1
 
-        if due and _EXTEND_STATE["dry"] < DRY_BLOCKS_TO_STOP:
-            note = ("" if moved else
-                    f" [{_EXTEND_STATE['dry']}/{DRY_BLOCKS_TO_STOP} dry]")
-            print(f"[queue] {label} queue drained -- seeded the next block, "
-                  f"{due:,} now due{note}", flush=True)
+            dry = _EXTEND_STATE["dry"].get(sp, 0)
+            if dry >= DRY_BLOCKS_TO_STOP or not due.get(sp):
+                _EXTEND_STATE["done"].add(sp)
+                why = ("nothing left to seed" if not due.get(sp) else
+                       f"{DRY_BLOCKS_TO_STOP} blocks of {SEED_AHEAD} in a row "
+                       f"found no new meet")
+                print(f"[queue] {label} {sp} forward walk finished: {why} "
+                      f"(watermark {tops.get(sp)})", flush=True)
+
+        still = {sp: n for sp, n in due.items()
+                 if sp not in _EXTEND_STATE["done"] and n}
+        if still:
+            parts = ", ".join(
+                f"{sp} {n:,}"
+                + (f" [{_EXTEND_STATE['dry'][sp]}/{DRY_BLOCKS_TO_STOP} dry]"
+                   if _EXTEND_STATE["dry"].get(sp) else "")
+                for sp, n in sorted(still.items()))
+            print(f"[queue] {label} queue drained -- seeded the next block: "
+                  f"{parts}", flush=True)
             return True
 
-        _EXTEND_STATE["exhausted"] = True
-        why = ("nothing left to seed" if not due else
-               f"{DRY_BLOCKS_TO_STOP} blocks in a row found no new meet")
-        print(f"[queue] {label} forward walk stopping: {why}. Watermarks: "
-              f"{tops}", flush=True)
+        print(f"[queue] {label} every sport's forward walk is finished. "
+              f"Stopping.", flush=True)
         return False
 
 
@@ -1584,7 +1601,7 @@ def _prepareQueue():
                   "plus recent meets with no results")
             seedAll(conn, write=True,
                     sports=[ANET_SPORT] if ANET_SPORT else None,
-                    ahead=int(os.environ.get("SEED_AHEAD", 2000)),
+                    ahead=SEED_AHEAD,
                     recent_days=int(os.environ.get("SEED_RECENT_DAYS", 120)))
 
         print("[queue] anet meet_queue:")

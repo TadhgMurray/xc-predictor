@@ -56,19 +56,25 @@ class ADrainedQueueExtendsInsteadOfStopping(unittest.TestCase):
     def test_only_one_session_extends_at_a_time(self):
         body = _func(self.src, "_extendFrontier")
         self.assertIn("_EXTEND_LOCK", body)
-        # and the check is repeated inside the lock, or five sessions queue up
-        # behind it and each seeds again
-        self.assertEqual(body.count('_EXTEND_STATE["exhausted"]'), 3)
+        # and the finished-sport check happens INSIDE the lock, or five
+        # sessions queue up behind it and each seeds the same block again
+        lock_at = body.index("async with _EXTEND_LOCK")
+        self.assertIn('sp not in _EXTEND_STATE["done"]', body[lock_at:])
+        self.assertIn("if not live:", body[lock_at:])
 
     def test_exhaustion_is_sticky(self):
-        """Once the walk ends, later drains must not re-seed forever."""
+        """Once a sport's walk ends, later drains must not re-seed it."""
         body = _func(self.src, "_extendFrontier")
-        self.assertIn('_EXTEND_STATE["exhausted"] = True', body)
+        self.assertIn('_EXTEND_STATE["done"].add(sp)', body)
+        # and `done` is consulted before any seeding happens
+        self.assertLess(body.index('_EXTEND_STATE["done"]'),
+                        body.index("seedAll("))
 
     def test_it_says_which_it_was(self):
         body = _func(self.src, "_extendFrontier")
         self.assertIn("seeded the next block", body)
-        self.assertIn("forward walk stopping", body)
+        self.assertIn("forward walk finished", body)
+        self.assertIn("every sport's forward walk is finished", body)
 
 
 class TheStopComesFromFreshEvidence(unittest.TestCase):
@@ -82,10 +88,47 @@ class TheStopComesFromFreshEvidence(unittest.TestCase):
         self.assertIn("watermark", body)
         self.assertIn('_EXTEND_STATE["last_top"]', body)
 
+    # ★ BOTH SPORTS IN ONE RUN (owner: "so I don't gotta unautomate"), and
+    #   fairly: anet's XC and TF id spaces are disjoint, so a single
+    #   ORDER BY meet_id is an ORDER BY sport and would drain one entirely
+    #   before touching the other.
+    def test_the_claim_splits_the_batch_between_sports(self):
+        db = _read("scripts/database.py")
+        body = _func(db, "_claimMeetBatch")
+        self.assertIn('_claimOneSport(cursor, half, "XC")', body)
+        self.assertIn('"TF"', body)
+        self.assertIn("batch_size // 2", body)
+
+    def test_a_sport_with_nothing_due_gives_its_half_back(self):
+        db = _read("scripts/database.py")
+        body = _func(db, "_claimMeetBatch")
+        self.assertIn("if len(rows) < batch_size:", body)
+
     def test_a_dry_block_is_counted_and_a_productive_one_resets_it(self):
         body = _func(self.src, "_extendFrontier")
-        self.assertIn('_EXTEND_STATE["dry"] += 1', body)
-        self.assertIn('_EXTEND_STATE["dry"] = 0', body)
+        self.assertIn('_EXTEND_STATE["dry"][sp] = 0', body)
+        self.assertIn('_EXTEND_STATE["dry"].get(sp, 0) + 1', body)
+
+    # ! PER SPORT. A shared counter kept seeding dead XC ids for as long as TF
+    #   was productive, and finished XC would never be marked done.
+    def test_each_sport_finishes_on_its_own(self):
+        body = _func(self.src, "_extendFrontier")
+        self.assertIn('_EXTEND_STATE["done"].add(sp)', body)
+        self.assertIn('sp not in _EXTEND_STATE["done"]', body)
+        self.assertIn("sports=live", body)
+
+    # ⚠ HOW FAR PAST THE LAST REAL MEET WE WALK BEFORE GIVING UP. 2,000 x 3
+    #   was eight hours of confirmed nothing (owner: "way too patient").
+    def test_the_give_up_distance_is_about_a_thousand_ids(self):
+        import re as _re
+        ahead = int(_re.search(r'SEED_AHEAD = int\(os\.environ\.get\('
+                               r'"SEED_AHEAD", (\d+)\)\)',
+                               self.src).group(1))
+        dry = int(_re.search(r'DRY_BLOCKS_TO_STOP = int\(os\.environ\.get\('
+                             r'"DRY_BLOCKS_TO_STOP", (\d+)\)\)',
+                             self.src).group(1))
+        self.assertLessEqual(ahead * dry, 1500)
+        self.assertGreaterEqual(ahead * dry, 300)
 
     def test_it_takes_several_dry_blocks_not_one(self):
         import re as _re
