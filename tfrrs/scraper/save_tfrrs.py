@@ -41,7 +41,7 @@ _BIGINT_62 = (1 << 62) - 1
 # The source tag stamped on every TFRRS row (matches the migration's scheme).
 TFRRS_SOURCE = "tfrrs"
 
-from database import executeWithRetry
+from database import executeWithRetry, _Utf8Json
 
 # ================================================================== #
 # Create TFRRS Table
@@ -341,7 +341,7 @@ def _mintResultId(row: dict) -> int:
 #           scraped_at: one batch timestamp shared by every row.
 # Output:   a tuple in INSERT-column order.
 def _rowToTuple(row: dict, scraped_at) -> tuple:
-    splits_value = psycopg2.extras.Json(row["splits"]) if row.get("splits") else None
+    splits_value = _Utf8Json(row["splits"]) if row.get("splits") else None
     return (
         _mintResultId(row),          # result_id (minted — see open decision)
         row["athlete_id"],           # NULL until identity resolution
@@ -501,7 +501,7 @@ def saveTFRRSMeetMeta(conn, meta: dict, meet_id, sport) -> None:
         # division_distances: wrap the dict as Json so psycopg2 sends it to the
         # jsonb column. None-safe: Json(None) stores SQL NULL, which is fine for
         # a meet with no parsed divisions.
-        psycopg2.extras.Json(meta.get("division_distances")),
+        _Utf8Json(meta.get("division_distances")),
     ))
 
 # _rowToTupleXC
@@ -518,7 +518,7 @@ def _rowToTupleXC(row: dict, scraped_at) -> tuple:
     # splits: store the JSONB blob when present; has_splits is the 1/0 flag the
     # `results` table carries (derived here since the normalized row has only the
     # raw splits list, not a precomputed flag).
-    splits_value = psycopg2.extras.Json(row["splits"]) if row.get("splits") else None
+    splits_value = _Utf8Json(row["splits"]) if row.get("splits") else None
     has_splits   = 1 if row.get("splits") else 0
  
     # school + school_source mirror anet's saveResultsBulk convention: a real

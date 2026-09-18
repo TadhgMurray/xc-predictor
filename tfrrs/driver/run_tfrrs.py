@@ -27,7 +27,8 @@ sys.path.insert(0, "scripts")
 from scraper import CloudflareException, RateLimitException
 # NOTE: claim is the TFRRS-scoped one (returns (meet_id, sport) tuples), NOT
 # anet's getBatchUnscrapedMeets (which returns a dict and claims anet rows).
-from database import getConn, claimTFRRSMeetBatch, resetTFRRSInProgress
+from database import (getConn, claimTFRRSMeetBatch, resetTFRRSInProgress,
+                      _Utf8Json)
 
 from fetch_tfrrs import fetchTFPage, IPBlockedException
 from parse_meet_meta import parseXCMeetMeta
@@ -416,7 +417,7 @@ def _saveTeamScores(conn, bundle):
         ON CONFLICT (meet_id, sport, source)
         DO UPDATE SET teams_json = EXCLUDED.teams_json
         """,
-        (bundle["meet_id"], bundle["sport"], psycopg2.extras.Json(teams)),
+        (bundle["meet_id"], bundle["sport"], _Utf8Json(teams)),
     )
 
 # Add to chunk 1's imports:

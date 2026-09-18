@@ -61,6 +61,31 @@ def census(cur):
     print(f"  {cur.fetchone()[0]:,} of them are at a location another meet "
           f"HAS named -- that is what pass 2 fills")
 
+    # ⚠ PASS 1 IS THE ONLY SOURCE WHEN NOTHING IS NAMED YET, and the census
+    #   did not report it (owner, 2026-09-18: pass 2's figure came back 0 and
+    #   read like the whole backfill was pointless). Passes 2 and 3 copy a
+    #   name from ANOTHER meets_tf row, so while venue_name is 100 per cent
+    #   NULL they can fill nothing by construction -- there is no seed. Every
+    #   name has to come from meets_tf_meta first. That is the number that
+    #   says whether this job is worth running.
+    cur.execute("""
+        SELECT count(*) FROM meets_tf t
+        JOIN   meets_tf_meta m ON m.meet_id = t.meet_id
+        WHERE  t.venue_name IS NULL
+          AND  m.venue_name IS NOT NULL AND btrim(m.venue_name) <> ''
+    """)
+    from_meta = cur.fetchone()[0]
+    print(f"  {from_meta:,} have a name waiting in meets_tf_meta "
+          f"-- that is pass 1, and it is the seed the other two copy from")
+    if not from_meta:
+        cur.execute("SELECT count(*) FILTER (WHERE venue_name IS NOT NULL "
+                    "AND btrim(venue_name) <> ''), count(*) "
+                    "FROM meets_tf_meta")
+        named, total = cur.fetchone()
+        print(f"  ⚠ meets_tf_meta itself has {named:,} names out of "
+              f"{total:,} rows. With no seed anywhere, all three passes fill "
+              f"nothing and the names can only come from a re-scrape.")
+
 
 def main():
     ap = argparse.ArgumentParser(

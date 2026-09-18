@@ -33,7 +33,7 @@ sys.path.insert(0, "scripts")
 sys.path.insert(0, "racecast")
 
 import psycopg2.extras
-from database import getConn
+from database import getConn, _Utf8Json
 from dbfast import swapTable
 
 _DDL = """
@@ -68,7 +68,7 @@ CREATE TABLE course_boards_new (
 #   failure while BUILDING a course; this one happens at the INSERT, in a
 #   batch of 200, so it escapes that guard and takes the whole step with it.
 def _json(ctx):
-    return psycopg2.extras.Json(
+    return _Utf8Json(
         ctx, dumps=lambda o: json.dumps(o, default=str, ensure_ascii=False))
 
 

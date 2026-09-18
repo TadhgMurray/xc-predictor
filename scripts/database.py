@@ -9,6 +9,7 @@
 
 import re
 import sys
+import json
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
@@ -1761,7 +1762,7 @@ def saveMeetTeams(conn, meet_id, sport, teams_array):
         #   NameError the first time saveMeetTeams ran -- pre-existing, found
         #   by sweeping every file this session touched for names used and
         #   never imported (the sweep that found the missing `import sys`).
-        (meet_id, sport, psycopg2.extras.Json(_cleanJson(teams_array))),
+        (meet_id, sport, _Utf8Json(_cleanJson(teams_array))),
     )
 
 # saveMeetTFMeta
@@ -1794,7 +1795,7 @@ def saveMeetTFMeta(conn, meet_info: dict):
     # GoogleData is a nested dict (the embedded Places geocode). Wrap in Json so
     # it stores as real JSONB; _cleanJson strips any NULs. None -> SQL NULL.
     google_data = location.get("GoogleData")
-    google_json = (psycopg2.extras.Json(_cleanJson(google_data))
+    google_json = (_Utf8Json(_cleanJson(google_data))
                    if google_data is not None else None)
  
     executeWithRetry(cursor, """
@@ -2279,6 +2280,27 @@ def saveResultsTFBulk(conn, results: list):
 # Arguments:
 #           obj: a dict, list, str, or scalar headed for a JSONB column.
 # Output:   the same shape with all NULs removed from string values/keys.
+# ⚠ THE SERVER ENCODING IS SQL_ASCII, AND psycopg2's Json USES
+#   ensure_ascii=True (owner, 2026-09-18: "Save failed for TF meet 629415:
+#   unsupported Unicode escape sequence ... Unicode escape value could not be
+#   translated to the server's encoding SQL_ASCII", on an athlete named
+#   Sad\u00e9). json.dumps escapes every non-ASCII character as \uXXXX, and
+#   jsonb REJECTS a \uXXXX above ASCII when the server encoding is SQL_ASCII
+#   -- it has no encoding to translate the codepoint into. The whole meet's
+#   save was rolled back for one accented name.
+#
+# ★ ensure_ascii=False SENDS THE CHARACTER, NOT AN ESCAPE. The literal UTF-8
+#   bytes go over the wire and SQL_ASCII stores any byte sequence as-is, so
+#   the name round-trips and nothing is lost. This is why the TEXT columns
+#   were never affected: only jsonb parses \u escapes.
+#
+# ! NOT A REPLACE-THE-CHARACTER FIX. Stripping accents would quietly rename
+#   real athletes, which is worse than the crash it fixes.
+class _Utf8Json(psycopg2.extras.Json):
+    def dumps(self, obj):
+        return json.dumps(obj, ensure_ascii=False)
+
+
 def _cleanJson(obj):
     if isinstance(obj, str):
         return obj.replace("\x00", "")
@@ -2344,10 +2366,10 @@ def saveMeetExtras(conn, meet_id, sport, teams_array, event_types_array,
         (
             meet_id,
             sport,
-            psycopg2.extras.Json(_cleanJson(teams_array))       if teams_array       is not None else None,
-            psycopg2.extras.Json(_cleanJson(event_types_array)) if event_types_array is not None else None,
-            psycopg2.extras.Json(_cleanJson(relay_legs_array))  if relay_legs_array  is not None else None,
-            psycopg2.extras.Json(_cleanJson(team_scores_array)) if team_scores_array is not None else None,
+            _Utf8Json(_cleanJson(teams_array))       if teams_array       is not None else None,
+            _Utf8Json(_cleanJson(event_types_array)) if event_types_array is not None else None,
+            _Utf8Json(_cleanJson(relay_legs_array))  if relay_legs_array  is not None else None,
+            _Utf8Json(_cleanJson(team_scores_array)) if team_scores_array is not None else None,
             "anet",
         ),
     )
