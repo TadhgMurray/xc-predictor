@@ -1462,7 +1462,12 @@ _URL_KEY = ("regexp_replace(regexp_replace(btrim(lower({c})), "
             "'^//', 'https://'), '=s[0-9]+$', '')")
 
 
-def sharedAlready(cur, sha, minimum=SHARED_MIN):
+def sharedAlready(cur, sha, minimum=SHARED_MIN, kind=None):
+    # ! anet IS EXEMPT HERE TOO, the same rule markShared applies. Asking a
+    #   different question at write time is how a crest gets refused that the
+    #   sweep would then not have flagged.
+    if kind == "anet":
+        return False
     """True when this exact image is already worn by `minimum` schools --
     a placeholder, and not worth installing on one more. The sweep would
     flag it afterwards anyway; this stops it being written at all."""
@@ -1636,56 +1641,51 @@ def sharedShas(rows, minimum=SHARED_MIN):
 #   that deletes ten thousand live crests. Do not rebuild it on this theory.
 
 
-# ★★ ONE anet TEAM'S MASCOT IS NOT A PLACEHOLDER, WHATEVER IT IS CALLED
-#    (owner, 2026-09-18, after two failed attempts at this). Counting name
-#    FAMILIES was the second try and it still hid Penn State, because the
-#    families were:
-#
-#      'penn state', 'psu abington', 'psu berks', 'psu harrisburg'
-#
-#    Four, and SHARED_MIN is four. No amount of word-prefix cleverness tells
-#    you that "PSU-Abington" is "Penn State Abington"; chasing abbreviations
-#    is endless and would break somewhere else.
-#
-# ★ THE DATA ALREADY ANSWERS IT. anet serves a mascot PER TEAM, and all 34 of
-#   those rows carry team 21255's image. An image belonging to ONE team is
-#   that team's mascot by definition. A real district placeholder is worn by
-#   MANY teams -- that is what makes it a placeholder -- so teams are the
-#   thing to count, and they are a fact rather than a guess about names.
-#
-# ! FAMILIES REMAIN THE FALLBACK for a row whose image matches no anet team
-#   (a crest taken from a school's own website, and the ~950 anet rows whose
-#   URL matches nothing). Those have no team to count, so the old rule still
-#   decides them.
-def _teamsPerSha(cur):
-    """{sha: n_distinct_anet_teams} for every stored image anet also has."""
-    if not _tableExists(cur, "anet_team"):
-        return {}
-    cur.execute(f"""
-        SELECT l.sha, count(DISTINCT t.team_id)
-        FROM   school_logo l
-        JOIN   anet_team t
-               ON {_URL_KEY.format(c='t.mascot_url')}
-                = {_URL_KEY.format(c='l.source_url')}
-        WHERE  l.sha IS NOT NULL
-        GROUP  BY l.sha
-    """)
-    return {r[0]: r[1] for r in cur.fetchall()}
-
-
 def markShared(cur, minimum=SHARED_MIN):
     """Flag the district crests over the WHOLE table, and clear the flag
-    from anything that is no longer one."""
-    cur.execute("SELECT school, sha FROM school_logo WHERE sha IS NOT NULL")
+    from anything that is no longer one.
+
+    ⚠⚠⚠ anet CRESTS ARE NEVER SUPPRESSED BY SHARING, and this is the third and
+       last answer to "Penn State has no logo" (owner, 2026-09-18, reported
+       five times). The first two attempts both counted the wrong thing, and
+       they failed for the same reason: THE PREMISE DOES NOT APPLY TO anet.
+
+         attempt 1: count distinct school NAMES -> 4 (Penn State, PSU-Abington,
+                    PSU-Berks, PSU-Harrisburg). SHARED_MIN is 4. Suppressed.
+         attempt 2: count name FAMILIES via first-two-words -> still 4
+                    ("penn state", "psu abington", "psu berks",
+                    "psu harrisburg"): no word rule knows PSU is Penn State.
+         attempt 3: count distinct anet TEAMS -> still 4, because those
+                    campuses really ARE four different anet teams (21255,
+                    34254, 29434, 30361) and anet serves them all the same
+                    Nittany Lions image.
+
+    ★ SO THE QUESTION WAS NEVER "how many wear it". An anet mascot_url is
+      anet's answer FOR THAT TEAM ID -- per team by construction. If anet hands
+      team 21255 that picture, it IS team 21255's crest, however many sibling
+      campuses share it. There is nothing to detect.
+
+      `shared` exists for the OTHER kind: a crest scraped from a school's own
+      website, where one district site serves one logo to every school in it
+      and the picture genuinely belongs to none of them. That is where counting
+      wearers is the right test, and it still runs there.
+
+    ! A BAD anet IMAGE IS AN OVERRIDE, NOT A THRESHOLD. If some association
+      logo really does need suppressing, `override = 'none'` says so for that
+      row, which is a decision someone made rather than a number that also
+      hides Penn State.
+    """
+    cur.execute("SELECT school, sha FROM school_logo "
+                "WHERE sha IS NOT NULL AND COALESCE(kind, '') <> 'anet'")
     rows = [(r["school"], r["sha"]) if isinstance(r, dict) else (r[0], r[1])
             for r in cur.fetchall()]
     shas = sharedShas(rows, minimum)
-    # ! A ONE-TEAM IMAGE IS NEVER SHARED, whatever the names say.
-    per_team = _teamsPerSha(cur)
-    shas = {sha for sha in shas if per_team.get(sha, 0) != 1}
     cur.execute("UPDATE school_logo SET shared = false WHERE shared")
     if shas:
-        cur.execute("UPDATE school_logo SET shared = true WHERE sha = ANY(%s)",
+        # ! AND ONLY THE NON-anet ROWS OF A SHARED IMAGE. One picture can be
+        #   both a district's placeholder and some team's real anet mascot.
+        cur.execute("UPDATE school_logo SET shared = true "
+                    "WHERE sha = ANY(%s) AND COALESCE(kind, '') <> 'anet'",
                     (list(shas),))
     return len(shas)
 

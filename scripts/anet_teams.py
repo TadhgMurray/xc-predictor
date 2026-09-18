@@ -1070,7 +1070,7 @@ def main():
                                 storedKind(cur, school, state, lv)):
                             kept += 1
                             png = None
-                        elif not args.replace and sharedAlready(cur, sha):
+                        elif not args.replace and sharedAlready(cur, sha, kind="anet"):
                             placeholder += 1
                             png = None
                     # ⚠ NEVER UNDER AN EMPTY STATE (2026-09-16, the first

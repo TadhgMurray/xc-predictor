@@ -654,14 +654,21 @@ class OneSchoolCanBeTargetedAndForgotten(unittest.TestCase):
         self.assertIn("--forget needs --write", self._src())
 
 
-# ★★ ONE anet TEAM'S MASCOT IS NOT A PLACEHOLDER (owner, 2026-09-18, the
-#    third attempt at Penn State). Counting name FAMILIES still hid it:
-#    'penn state', 'psu abington', 'psu berks', 'psu harrisburg' -- four, and
-#    SHARED_MIN is four. No word-prefix rule tells you PSU-Abington is Penn
-#    State Abington. But all 34 rows carry team 21255's image, and anet serves
-#    a mascot PER TEAM, so an image belonging to one team is that team's
-#    mascot. A real placeholder is worn by MANY teams.
-class AOneTeamImageIsNeverShared(unittest.TestCase):
+# ⚠⚠⚠ anet CRESTS ARE NEVER SUPPRESSED BY SHARING -- the third and last answer
+#    to "Penn State has no logo" (owner, 2026-09-18, reported five times). Two
+#    earlier rules counted the wrong thing and failed identically:
+#
+#      count NAMES    -> 4 (Penn State, PSU-Abington, PSU-Berks, PSU-Harrisburg)
+#      count FAMILIES -> still 4; no word rule knows PSU is Penn State
+#      count TEAMS    -> still 4; those campuses ARE four anet teams and anet
+#                        serves them all the same Nittany Lions image
+#
+#    The premise was wrong, not the threshold. An anet mascot_url is anet's
+#    answer FOR THAT TEAM ID, per team by construction: if anet hands team
+#    21255 that picture it IS its crest, however many siblings share it.
+#    `shared` is for crests scraped from WEBSITES, where one district site
+#    serves one logo to schools it belongs to none of.
+class AnetCrestsAreNeverSuppressedBySharing(unittest.TestCase):
     def _src(self):
         import io
         import os
@@ -670,35 +677,44 @@ class AOneTeamImageIsNeverShared(unittest.TestCase):
                      encoding="utf-8") as fh:
             return fh.read()
 
-    def test_the_sweep_counts_teams_and_drops_the_one_team_images(self):
+    def test_the_sweep_only_counts_non_anet_rows(self):
         src = self._src()
-        self.assertIn("def _teamsPerSha(cur):", src)
-        self.assertIn("count(DISTINCT t.team_id)", src)
         body = src[src.index("def markShared("):]
         body = body[:body.index("\ndef ")]
-        self.assertIn("per_team = _teamsPerSha(cur)", body)
-        self.assertIn("per_team.get(sha, 0) != 1", body)
+        self.assertIn("COALESCE(kind, '') <> 'anet'", body)
+        # and it only FLAGS non-anet rows: one picture can be both a
+        # district's placeholder and some team's real mascot
+        self.assertEqual(body.count("COALESCE(kind, '') <> 'anet'"), 2)
 
-    # ! THE WRITE-TIME GUARD MUST AGREE WITH THE SWEEP, or it refuses to
-    #   install a crest the sweep would then not have flagged.
-    def test_the_write_guard_applies_the_same_rule(self):
+    # ! THE WRITE-TIME GUARD MUST AGREE WITH THE SWEEP, or it refuses a crest
+    #   the sweep would then not have flagged.
+    def test_the_write_guard_exempts_anet_too(self):
         src = self._src()
         body = src[src.index("def sharedAlready("):]
         body = body[:body.index("\ndef ")]
-        self.assertIn("count(DISTINCT t.team_id)", body)
+        self.assertIn('if kind == "anet":', body)
         self.assertIn("return False", body)
 
-    # ! FAMILIES REMAIN THE FALLBACK for an image no anet team carries -- a
-    #   crest from a school's own website has no team to count.
-    def test_families_still_decide_an_image_with_no_anet_team(self):
+    def test_the_anet_writer_passes_its_kind(self):
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "anet_teams.py"),
+                     encoding="utf-8") as fh:
+            self.assertIn('sharedAlready(cur, sha, kind="anet")', fh.read())
+
+    # ★ FAMILIES STILL DECIDE THE WEBSITE CRESTS. The district-placeholder
+    #   problem is real; it is just not anet's.
+    def test_families_still_apply_to_website_crests(self):
         src = self._src()
-        body = src[src.index("def sharedAlready("):]
+        body = src[src.index("def sharedShas("):]
         body = body[:body.index("\ndef ")]
-        self.assertIn("_family(n) for n in names", body)
-        self.assertIn("_isRosterish(n)", body)
-        # and only a count of exactly one team short-circuits: zero means
-        # "no anet team knows this image", which is not evidence either way
-        self.assertIn("== 1", body)
+        self.assertIn("_family(school)", body)
+        self.assertIn("_isRosterish(school)", body)
+
+    # ! AND A BAD anet IMAGE IS AN OVERRIDE, not a threshold.
+    def test_the_escape_hatch_is_documented(self):
+        self.assertIn("override = 'none'", self._src())
 
 
 if __name__ == "__main__":
