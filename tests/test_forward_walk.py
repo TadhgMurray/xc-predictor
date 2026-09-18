@@ -35,58 +35,66 @@ def _func(src, name):
 
 
 class ADrainedQueueExtendsInsteadOfStopping(unittest.TestCase):
+    """Both drain loops, and the walk they share."""
 
     def setUp(self):
-        self.src = _read("scripts/launcher.py")
+        self.walk = _read("scripts/queue_meets.py")
+        i = self.walk.index("class ForwardWalk")
+        self.body = self.walk[i:self.walk.index("\ndef main(", i)]
 
     def test_the_session_loop_tries_to_extend_before_breaking(self):
-        body = _func(self.src, "runSession")
-        i = body.index("if not batch:")
-        tail = body[i:i + 300]
-        self.assertIn("_extendFrontier", tail)
-        # the break must come AFTER the attempt, not instead of it
-        self.assertLess(tail.index("_extendFrontier"), tail.index("break"))
+        for rel, fn in (("scripts/launcher.py", "runSession"),
+                        ("tfrrs/driver/run_tfrrs.py", "_sessionWorker")):
+            body = _func(_read(rel), fn)
+            i = body.index("if not batch:")
+            tail = body[i:i + 400]
+            with self.subTest(module=rel):
+                self.assertIn("_extendFrontier", tail)
+                self.assertLess(tail.index("_extendFrontier"),
+                                tail.index("break"))
 
     def test_extending_is_forward_only(self):
         """Re-running the recent pass on every drain would re-queue the same
         meets forever."""
-        body = _func(self.src, "_extendFrontier")
-        self.assertIn("do_recent=False", body)
+        self.assertIn("do_recent=False", self.body)
 
     def test_only_one_session_extends_at_a_time(self):
-        body = _func(self.src, "_extendFrontier")
-        self.assertIn("_EXTEND_LOCK", body)
-        # and the finished-sport check happens INSIDE the lock, or five
-        # sessions queue up behind it and each seeds the same block again
-        lock_at = body.index("async with _EXTEND_LOCK")
-        self.assertIn('sp not in _EXTEND_STATE["done"]', body[lock_at:])
-        self.assertIn("if not live:", body[lock_at:])
+        for rel in ("scripts/launcher.py", "tfrrs/driver/run_tfrrs.py"):
+            src = _read(rel)
+            body = _func(src, "_extendFrontier")
+            with self.subTest(module=rel):
+                self.assertIn("_EXTEND_LOCK", body)
+                # the walk object is built inside the lock, not per call
+                lock_at = body.index("async with _EXTEND_LOCK")
+                self.assertIn("ForwardWalk(", body[lock_at:])
 
     def test_exhaustion_is_sticky(self):
         """Once a sport's walk ends, later drains must not re-seed it."""
-        body = _func(self.src, "_extendFrontier")
-        self.assertIn('_EXTEND_STATE["done"].add(sp)', body)
+        self.assertIn("self.done.add(sp)", self.body)
         # and `done` is consulted before any seeding happens
-        self.assertLess(body.index('_EXTEND_STATE["done"]'),
-                        body.index("seedAll("))
+        self.assertLess(self.body.index("self.done"),
+                        self.body.index("seedAll("))
 
     def test_it_says_which_it_was(self):
-        body = _func(self.src, "_extendFrontier")
-        self.assertIn("seeded the next block", body)
-        self.assertIn("forward walk finished", body)
-        self.assertIn("every sport's forward walk is finished", body)
+        self.assertIn("seeded the next block", self.body)
+        self.assertIn("forward walk finished", self.body)
+        self.assertIn("forward walk is finished", self.body)
 
 
 class TheStopComesFromFreshEvidence(unittest.TestCase):
     """Only a block we have just asked can say the corpus has ended."""
 
     def setUp(self):
-        self.src = _read("scripts/launcher.py")
+        self.src = _read("scripts/queue_meets.py")
+
+    def _walk(self):
+        i = self.src.index("class ForwardWalk")
+        return self.src[i:self.src.index("\ndef main(", i)]
 
     def test_it_compares_watermarks_across_a_drained_block(self):
-        body = _func(self.src, "_extendFrontier")
-        self.assertIn("watermark", body)
-        self.assertIn('_EXTEND_STATE["last_top"]', body)
+        body = self._walk()
+        self.assertIn("watermark(cur, sp, self.source)", body)
+        self.assertIn("self.last_top", body)
 
     # ★ BOTH SPORTS IN ONE RUN (owner: "so I don't gotta unautomate"), and
     #   fairly: anet's XC and TF id spaces are disjoint, so a single
@@ -105,42 +113,73 @@ class TheStopComesFromFreshEvidence(unittest.TestCase):
         self.assertIn("if len(rows) < batch_size:", body)
 
     def test_a_dry_block_is_counted_and_a_productive_one_resets_it(self):
-        body = _func(self.src, "_extendFrontier")
-        self.assertIn('_EXTEND_STATE["dry"][sp] = 0', body)
-        self.assertIn('_EXTEND_STATE["dry"].get(sp, 0) + 1', body)
+        body = self._walk()
+        self.assertIn("self.dry[sp] = 0 if moved else "
+                      "self.dry.get(sp, 0) + 1", body)
 
     # ! PER SPORT. A shared counter kept seeding dead XC ids for as long as TF
     #   was productive, and finished XC would never be marked done.
     def test_each_sport_finishes_on_its_own(self):
-        body = _func(self.src, "_extendFrontier")
-        self.assertIn('_EXTEND_STATE["done"].add(sp)', body)
-        self.assertIn('sp not in _EXTEND_STATE["done"]', body)
+        body = self._walk()
+        self.assertIn("self.done.add(sp)", body)
+        self.assertIn("sp not in self.done", body)
         self.assertIn("sports=live", body)
 
     # ⚠ HOW FAR PAST THE LAST REAL MEET WE WALK BEFORE GIVING UP. 2,000 x 3
     #   was eight hours of confirmed nothing (owner: "way too patient").
     def test_the_give_up_distance_is_about_a_thousand_ids(self):
+        """Both feeds, since each names its own knobs."""
         import re as _re
-        ahead = int(_re.search(r'SEED_AHEAD = int\(os\.environ\.get\('
-                               r'"SEED_AHEAD", (\d+)\)\)',
-                               self.src).group(1))
-        dry = int(_re.search(r'DRY_BLOCKS_TO_STOP = int\(os\.environ\.get\('
-                             r'"DRY_BLOCKS_TO_STOP", (\d+)\)\)',
-                             self.src).group(1))
-        self.assertLessEqual(ahead * dry, 1500)
-        self.assertGreaterEqual(ahead * dry, 300)
+        for rel, a, d in (
+                ("scripts/launcher.py", "SEED_AHEAD", "DRY_BLOCKS_TO_STOP"),
+                ("tfrrs/driver/run_tfrrs.py", "TFRRS_SEED_AHEAD",
+                 "TFRRS_DRY_BLOCKS")):
+            src = _read(rel)
+            ahead = int(_re.search(a + r' = int\(os\.environ\.get\("' + a
+                                   + r'", (\d+)\)\)', src).group(1))
+            dry = int(_re.search(d + r' = int\(os\.environ\.get\("' + d
+                                 + r'", (\d+)\)\)', src).group(1))
+            with self.subTest(module=rel):
+                self.assertLessEqual(ahead * dry, 1500)
+                self.assertGreaterEqual(ahead * dry, 300)
 
     def test_it_takes_several_dry_blocks_not_one(self):
+        """The default must be more than one block, in both launchers."""
         import re as _re
-        m = _re.search(r"DRY_BLOCKS_TO_STOP = int\(os\.environ\.get\("
-                       r'"DRY_BLOCKS_TO_STOP", (\d+)\)\)', self.src)
-        self.assertIsNotNone(m)
-        self.assertGreater(int(m.group(1)), 1)
+        for rel, name in (("scripts/launcher.py", "DRY_BLOCKS_TO_STOP"),
+                          ("tfrrs/driver/run_tfrrs.py", "TFRRS_DRY_BLOCKS")):
+            m = _re.search(name + r' = int\(os\.environ\.get\("' + name
+                           + r'", (\d+)\)\)', _read(rel))
+            with self.subTest(module=rel):
+                self.assertIsNotNone(m)
+                self.assertGreater(int(m.group(1)), 1)
 
     def test_it_says_which_reason_it_stopped_for(self):
-        body = _func(self.src, "_extendFrontier")
+        body = self._walk()
         self.assertIn("nothing left to seed", body)
         self.assertIn("found no new meet", body)
+
+    # ★ ONE IMPLEMENTATION. Two loops with the same shape growing two sets of
+    #   stopping rules is how they drift.
+    def test_both_drain_loops_use_the_same_walk(self):
+        for rel in ("scripts/launcher.py", "tfrrs/driver/run_tfrrs.py"):
+            src = _read(rel)
+            with self.subTest(module=rel):
+                self.assertIn("from queue_meets import ForwardWalk", src)
+                self.assertIn("_extendFrontier", src)
+
+    # ⚠ AND BOTH LOOPS MUST TRY BEFORE THEY BREAK. tfrrs's ended the run on a
+    #   drained queue, so one launch did a single block per sport.
+    def test_neither_loop_breaks_without_trying_to_extend(self):
+        for rel, fn in (("scripts/launcher.py", "runSession"),
+                        ("tfrrs/driver/run_tfrrs.py", "_sessionWorker")):
+            body = _func(_read(rel), fn)
+            i = body.index("if not batch:")
+            tail = body[i:i + 400]
+            with self.subTest(module=rel):
+                self.assertIn("_extendFrontier", tail)
+                self.assertLess(tail.index("_extendFrontier"),
+                                tail.index("break"))
 
 
 class TheWalkStartsFromRealData(unittest.TestCase):

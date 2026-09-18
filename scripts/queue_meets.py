@@ -398,6 +398,91 @@ def dueCounts(conn, source="anet"):
     return out
 
 
+# ------------------------------------------------------------- the walk itself
+
+class ForwardWalk:
+    """Seeds the next block when a drain empties, and decides when to stop.
+
+    ★ ONE IMPLEMENTATION FOR BOTH LAUNCHERS. anet's runSession and tfrrs's
+      _sessionWorker have the same `if not batch: break` shape, and the anet
+      one grew this logic inline. A second copy in run_tfrrs would be a second
+      set of stopping rules to keep in step.
+
+    ★ AND THE STOP COMES FROM THIS RUN'S OWN EVIDENCE. An earlier version
+      stopped when enough ids were already recorded as "not a meet", and
+      stopped dead on 31,198 of them -- answers from months ago, about the very
+      ids being re-asked. A block counts as dry only when WE just asked it and
+      the watermark did not move; a watermark only moves when a real meet was
+      found.
+
+    ! PER SPORT. A shared counter kept seeding dead ids for one sport for as
+      long as the other was productive, and the finished one was never marked
+      done.
+
+    ! SYNCHRONOUS ON PURPOSE. Both callers are asyncio and both already have a
+      way to run blocking DB work off the loop; a coroutine here would need
+      one of their event loops.
+    """
+
+    def __init__(self, source="anet", sports=None, ahead=AHEAD,
+                 dry_blocks=2, recent_days=RECENT_DAYS):
+        self.source = source
+        self.sports = list(sports or SPORTS)
+        self.ahead = ahead
+        self.dry_blocks = dry_blocks
+        self.recent_days = recent_days
+        self.dry = {}
+        self.last_top = {}
+        self.done = set()
+
+    def live(self):
+        return [sp for sp in self.sports if sp not in self.done]
+
+    def extend(self):
+        """(has_more, [lines to print]). False means every sport is finished."""
+        lines = []
+        live = self.live()
+        if not live:
+            return False, lines
+
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                tops = {sp: watermark(cur, sp, self.source) for sp in live}
+            conn.rollback()
+            seedAll(conn, source=self.source, write=True, do_recent=False,
+                    verbose=False, sports=live, ahead=self.ahead)
+            due = dueCounts(conn, self.source)
+        due = {sp: due.get(sp, 0) for sp in live}
+
+        for sp in live:
+            last = self.last_top.get(sp, "unset")
+            moved = last == "unset" or tops.get(sp) != last
+            self.last_top[sp] = tops.get(sp)
+            self.dry[sp] = 0 if moved else self.dry.get(sp, 0) + 1
+
+            if self.dry.get(sp, 0) >= self.dry_blocks or not due.get(sp):
+                self.done.add(sp)
+                why = ("nothing left to seed" if not due.get(sp) else
+                       f"{self.dry_blocks} blocks of {self.ahead} in a row "
+                       f"found no new meet")
+                lines.append(f"{self.source}/{sp} forward walk finished: "
+                             f"{why} (watermark {tops.get(sp)})")
+
+        still = {sp: n for sp, n in due.items()
+                 if sp not in self.done and n}
+        if still:
+            parts = ", ".join(
+                f"{sp} {n:,}"
+                + (f" [{self.dry[sp]}/{self.dry_blocks} dry]"
+                   if self.dry.get(sp) else "")
+                for sp, n in sorted(still.items()))
+            lines.append(f"queue drained -- seeded the next block: {parts}")
+            return True, lines
+
+        lines.append(f"every {self.source} sport's forward walk is finished.")
+        return False, lines
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", choices=SOURCES, default="anet")

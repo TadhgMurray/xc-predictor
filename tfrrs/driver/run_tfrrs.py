@@ -496,6 +496,39 @@ def _tick(phase, dt):
                   f"claim avg {_PHASE['claim']/n*1000:.0f}ms | "
                   f"process avg {_PHASE['process']/n*1000:.0f}ms", flush=True)
     
+# One session extends at a time; the others reuse that answer rather than each
+# seeding the same block again.
+_EXTEND_LOCK = asyncio.Lock()
+_WALK = {"it": None}
+
+# How far past each sport's frontier to seed per block, and how many freshly
+# asked blocks may come back empty before that sport is called finished.
+TFRRS_SEED_AHEAD = int(os.environ.get("TFRRS_SEED_AHEAD", 500))
+TFRRS_DRY_BLOCKS = int(os.environ.get("TFRRS_DRY_BLOCKS", 2))
+
+
+async def _extendFrontier(label):
+    """Seed the next block when the queue drains. False when it is finished.
+
+    ! queue_meets.ForwardWalk, the same object the anet launcher uses. Its stop
+      comes from this run's own evidence -- a block counts as dry only when we
+      just asked it and the sport's watermark did not move -- because a
+      "not a meet" answer recorded months ago says nothing about today, which
+      is the whole reason those ids are being re-asked.
+    """
+    from queue_meets import ForwardWalk
+
+    async with _EXTEND_LOCK:
+        if _WALK["it"] is None:
+            _WALK["it"] = ForwardWalk(source="tfrrs",
+                                      ahead=TFRRS_SEED_AHEAD,
+                                      dry_blocks=TFRRS_DRY_BLOCKS)
+        more, lines = await asyncio.to_thread(_WALK["it"].extend)
+        for line in lines:
+            print(f"[queue] {label} {line}", flush=True)
+        return more
+
+
 # _sessionWorker
 # Purpose: One session's drain loop. Claims batches from the shared tfrrs queue
 #          and processes them sequentially at the normal per-meet delay, until the
@@ -517,7 +550,16 @@ async def _sessionWorker(session_idx, url_for, page, rotator, counter):
             t0 = time.perf_counter()
             batch = await asyncio.to_thread(claimTFRRSMeetBatch, CLAIM_BATCH_SIZE)
             _tick("claim", time.perf_counter() - t0)
+
+            # ★ EMPTY IS NOT "DONE" -- IT IS "EXTEND THE FRONTIER" (owner,
+            #   2026-09-18). The anet loop learned this and this one had not:
+            #   a drained queue ended the run, so one launch did a single
+            #   block per sport and "keep going until 404" meant relaunching
+            #   by hand. Same walk the anet side uses, so the two cannot grow
+            #   different stopping rules.
             if not batch:
+                if await _extendFrontier(f"[S{session_idx}]"):
+                    continue
                 break
 
             for meet_id, sport in batch:
