@@ -458,6 +458,13 @@ def storeDivisions(cur, team_id, sport, divs, custom=()):
     return len(rows)
 
 
+# ! ONE NORMALISER, BOTH ENDS. mascotUrls below is what makes the two
+#   spellings differ, so the undo lives beside it: add the scheme to a
+#   protocol-relative URL and drop the googleusercontent "=sN" size.
+_URL_KEY = ("regexp_replace(regexp_replace(btrim(lower({c})), "
+            "'^//', 'https://'), '=s[0-9]+$', '')")
+
+
 def mascotUrls(team):
     """The crest to try, best first. MascotUrl is protocol-relative, and
     lh3.googleusercontent.com serves a sized copy for an =sN suffix -- so
@@ -552,14 +559,24 @@ def _int(v):
 #   deliberate any-state fallback. Neither is touched.
 def misplacedCrests(cur):
     """[(school, state, level, anet_state)] -- stored crests that are, by
-    anet's own anet_state, some other school's."""
+    anet's own anet_state, some other school's.
+
+    ⚠⚠ THE TWO URLS ARE NOT THE SAME STRING, and the first run of this
+       returned a clean "0" because of it (owner, 2026-09-18). anet_team.
+       mascot_url is anet's raw value -- protocol-relative, "//lh3.google
+       usercontent.com/..." -- and school_logo.source_url is what
+       mascotUrls() actually FETCHED, which adds the scheme and the "=s512"
+       googleusercontent sizing suffix. An equality join between them
+       matches nothing, ever. _URL_KEY normalises both ends.
+    """
     if not (_tableExists(cur, "school_logo") and _tableExists(cur, "anet_team")):
         return []
-    cur.execute("""
+    cur.execute(f"""
         SELECT DISTINCT l.school, l.state, COALESCE(l.level, ''),
                upper(btrim(t.anet_state))
         FROM   school_logo l
-        JOIN   anet_team t ON t.mascot_url = l.source_url
+        JOIN   anet_team t ON {_URL_KEY.format(c='t.mascot_url')}
+                            = {_URL_KEY.format(c='l.source_url')}
         WHERE  l.override IS NULL
           AND  l.kind = 'anet'
           AND  COALESCE(btrim(l.state), '') <> ''
@@ -571,13 +588,33 @@ def misplacedCrests(cur):
           --   state, the row is right and the disagreement is noise.
           AND  NOT EXISTS (
                    SELECT 1 FROM anet_team t2
-                   WHERE  t2.mascot_url = l.source_url
+                   WHERE  {_URL_KEY.format(c='t2.mascot_url')}
+                        = {_URL_KEY.format(c='l.source_url')}
                      AND  upper(btrim(t2.anet_state)) = upper(btrim(l.state)))
         ORDER  BY l.school, l.state
     """)
     return [tuple(r) if not isinstance(r, dict) else
             (r["school"], r["state"], r["coalesce"], r["upper"])
             for r in cur.fetchall()]
+
+
+# ★ AND A ZERO HAS TO BE TELLABLE FROM A BROKEN JOIN, which is the whole
+#   reason the first version looked fine. This is printed beside the count.
+def crestJoinReach(cur):
+    """(rows_with_an_anet_source, of_those_matched_to_a_team)."""
+    if not (_tableExists(cur, "school_logo") and _tableExists(cur, "anet_team")):
+        return (0, 0)
+    cur.execute(f"""
+        SELECT count(*),
+               count(*) FILTER (WHERE EXISTS (
+                   SELECT 1 FROM anet_team t
+                   WHERE {_URL_KEY.format(c='t.mascot_url')}
+                       = {_URL_KEY.format(c='l.source_url')}))
+        FROM   school_logo l
+        WHERE  l.kind = 'anet' AND COALESCE(l.source_url, '') <> ''
+    """)
+    row = cur.fetchone()
+    return (row[0], row[1]) if row else (0, 0)
 
 
 def unfileMisplaced(cur, rows):
@@ -672,8 +709,14 @@ def main():
         with getConn() as conn:
             with conn.cursor() as cur:
                 bad = misplacedCrests(cur)
-                print(f"  {len(bad):,} stored crests belong to a team anet "
-                      f"places in another state")
+                have, matched = crestJoinReach(cur)
+                print(f"  {matched:,} of {have:,} anet crest rows match a "
+                      f"team by image; {len(bad):,} of those belong to a "
+                      f"team anet places in another state")
+                if have and not matched:
+                    raise SystemExit(
+                        "  no row matched ANY team -- the join is broken, "
+                        "not the data. Nothing written.")
                 for school, state, level, anet_state in bad[:40]:
                     print(f"    {school} ({state}) level={level or '-'} "
                           f"-- anet puts that picture's team in {anet_state}")

@@ -438,26 +438,50 @@ class AMisplacedCrestCanBeUnfiled(unittest.TestCase):
     # ★ THE PROOF IS anet'S OWN RECORD, which is what makes deleting safe
     #   here and unsafe in the --prune-stale tombstone: school_logo.
     #   source_url IS anet_team.mascot_url, so the row names its own team.
+    # ⚠⚠ THE TWO URLS ARE NOT THE SAME STRING, and a plain equality join
+    #    returns a clean, wrong "0 stored crests" (owner, 2026-09-18).
+    #    anet_team.mascot_url is protocol-relative; school_logo.source_url
+    #    is what mascotUrls() fetched -- scheme added, "=s512" appended.
     def test_it_matches_the_row_to_the_team_by_the_image_it_fetched(self):
         src = self._src()
         body = src[src.index("def misplacedCrests(cur):"):]
-        body = body[:body.index("\ndef ")]
-        self.assertIn("t.mascot_url = l.source_url", body)
+        body = body[:body.index("\ndef crestJoinReach")]
+        self.assertIn("_URL_KEY.format(c='t.mascot_url')", body)
+        self.assertIn("_URL_KEY.format(c='l.source_url')", body)
+        self.assertNotIn("t.mascot_url = l.source_url", body)
         self.assertIn("upper(btrim(t.anet_state)) <> upper(btrim(l.state))", body)
+
+    def test_the_normaliser_undoes_both_differences(self):
+        src = self._src()
+        i = src.index("_URL_KEY = (")
+        tpl = src[i:src.index("\n\n", i)]
+        self.assertIn("'^//', 'https://'", tpl)
+        self.assertIn("'=s[0-9]+$', ''", tpl)
+
+    # ★ A ZERO MUST BE TELLABLE FROM A BROKEN JOIN. That is what made the
+    #   first version look like good news.
+    def test_it_reports_join_reach_and_refuses_a_total_miss(self):
+        src = self._src()
+        self.assertIn("def crestJoinReach(cur):", src)
+        i = src.index("if args.unfile_misplaced:")
+        block = src[i:i + 1800]
+        self.assertIn("crestJoinReach(cur)", block)
+        self.assertIn("if have and not matched:", block)
+        self.assertIn("the join is broken", block)
 
     # ⚠ ONE PICTURE CAN BE SEVERAL TEAMS'. If any team wearing it is one
     #   anet puts in this state, the row is right.
     def test_a_shared_image_owned_here_too_is_left_alone(self):
         src = self._src()
         body = src[src.index("def misplacedCrests(cur):"):]
-        body = body[:body.index("\ndef ")]
+        body = body[:body.index("\ndef crestJoinReach")]
         self.assertIn("NOT EXISTS", body)
-        self.assertIn("t2.mascot_url = l.source_url", body)
+        self.assertIn("_URL_KEY.format(c='t2.mascot_url')", body)
 
     def test_it_never_touches_an_override_or_a_stateless_row(self):
         src = self._src()
         body = src[src.index("def misplacedCrests(cur):"):]
-        body = body[:body.index("\ndef ")]
+        body = body[:body.index("\ndef crestJoinReach")]
         self.assertIn("l.override IS NULL", body)
         self.assertIn("COALESCE(btrim(l.state), '') <> ''", body)
 
