@@ -126,31 +126,26 @@ def _prepareQueue():
       and the queue stayed empty. prefill.ceilingFor() reads the highest id
       anything has ever seen and seeds past it.
     """
-    sys.path.insert(0, os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "sweep"))
-    import prefill_tfrrs_queue as prefill
-
-    due = _printQueueDue()
-    if due:
-        print(f"[queue] {due:,} due", flush=True)
-        return
+    from queue_meets import seedAll, dueCounts
 
     if os.environ.get("TFRRS_NO_SEED", "") not in ("", "0", "false"):
-        print("[queue] ⚠ nothing due and TFRRS_NO_SEED=1 -- nothing to do.")
-        sys.exit(1)
-
-    print("[queue] nothing due -- seeding", flush=True)
-    with getConn() as conn:
-        ceiling = prefill.seed(conn)
-    print(f"[queue] seeded through {ceiling:,}", flush=True)
+        print("[queue] TFRRS_NO_SEED=1 -- draining the queue as it stands.",
+              flush=True)
+    else:
+        print("[queue] seeding: forward from the last real id per sport, plus "
+              "recent meets with no results, plus the scheduled ones",
+              flush=True)
+        with getConn() as conn:
+            seedAll(conn, source="tfrrs", write=True,
+                    ahead=int(os.environ.get("TFRRS_SEED_AHEAD", 500)),
+                    recent_days=int(
+                        os.environ.get("TFRRS_RECENT_DAYS", 120)))
 
     due = _printQueueDue()
     if not due:
-        print("[queue] ⚠ STILL NOTHING DUE after seeding through "
-              f"{ceiling:,}. Every id up to there is already done, failed or "
-              f"recorded as not a meet. Raise the reach with "
-              f"TFRRS_SEED_AHEAD=20000 if TFRRS has moved on further than "
-              f"that.")
+        print("[queue] ⚠ NOTHING IS DUE even after seeding. Either every id "
+              "up to each sport's frontier is done, or the frontier is wrong. "
+              "Look at it with: python scripts/queue_meets.py --source tfrrs")
         sys.exit(1)
     print(f"[queue] {due:,} due", flush=True)
 

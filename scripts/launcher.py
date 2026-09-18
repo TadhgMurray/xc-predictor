@@ -88,7 +88,7 @@ MAX_BLOCK_RETRIES = 3
 #   stopped using -- which is worse than no line at all.
 #
 #   The real frontier is per sport and lives in the data:
-#   queue_anet_new.watermark() takes max(meet_id) with results, and the
+#   queue_meets.watermark() takes max(meet_id) with results, and the
 #   forward walk goes up from there. XC and TF are separate id spaces (owner
 #   confirmed), so each has its own.
 _UNUSED_SCAN_START_ID = 1
@@ -1454,7 +1454,7 @@ async def _extendFrontier(label):
     ! FORWARD ONLY. The recent-empties pass is a one-off at startup; re-running
       it here would re-queue the same meets every time the queue drained.
     """
-    from queue_anet_new import SPORTS
+    from queue_meets import SPORTS
     wanted = [ANET_SPORT] if ANET_SPORT else list(SPORTS)
 
     async with _EXTEND_LOCK:
@@ -1464,18 +1464,19 @@ async def _extendFrontier(label):
 
         def _seed():
             from database import getConn
-            from queue_anet_new import seedAll, dueCounts, watermark
+            from queue_meets import seedAll, dueCounts, watermark
             with getConn() as conn:
                 # ! THE WATERMARK BEFORE AND AFTER IS THE EVIDENCE. It only
                 #   moves when a real meet was found, so comparing it across
                 #   a drained block says whether that block held anything --
                 #   without needing a per-id record of what came back.
                 with conn.cursor() as cur:
-                    tops = {sp: watermark(cur, sp) for sp in live}
+                    tops = {sp: watermark(cur, sp, "anet") for sp in live}
                 conn.rollback()
-                seedAll(conn, write=True, do_recent=False, verbose=False,
-                        sports=live, ahead=SEED_AHEAD)
-                due = dueCounts(conn)
+                seedAll(conn, source="anet", write=True, do_recent=False,
+                        verbose=False, sports=live,
+                        ahead=SEED_AHEAD)
+                due = dueCounts(conn, "anet")
             return {sp: due.get(sp, 0) for sp in live}, tops
 
         due, tops = await runDbCall(_seed)
@@ -1536,12 +1537,12 @@ def _prepareQueue():
       commands and one silent failure mode: the sessions claimed nothing and
       said "0 processed".
 
-    ! THE SAME CODE THE SCRIPT USES -- queue_anet_new.seedAll -- so a scrape
+    ! THE SAME CODE THE SCRIPT USES -- queue_meets.seedAll -- so a scrape
       night cannot get a different answer than a dry run did. Set
       ANET_NO_SEED=1 to drain the queue exactly as it stands.
     """
     from database import getConn
-    from queue_anet_new import seedAll, dueCounts
+    from queue_meets import seedAll, dueCounts
 
     skip = os.environ.get("ANET_NO_SEED", "") not in ("", "0", "false")
     with getConn() as conn:
@@ -1551,7 +1552,7 @@ def _prepareQueue():
         else:
             print("[queue] seeding: forward from the last real id per sport, "
                   "plus recent meets with no results")
-            seedAll(conn, write=True,
+            seedAll(conn, source="anet", write=True,
                     sports=[ANET_SPORT] if ANET_SPORT else None,
                     ahead=SEED_AHEAD,
                     recent_days=int(os.environ.get("SEED_RECENT_DAYS", 120)))
@@ -1560,7 +1561,7 @@ def _prepareQueue():
         for sport, state, n in _queueState(conn):
             print(f"[queue]   {sport}  "
                   f"{_QUEUE_STATE.get(state, state):<12} {n:,}")
-        due = dueCounts(conn)
+        due = dueCounts(conn, "anet")
 
     if ANET_SPORT:
         print(f"[queue] ANET_SPORT={ANET_SPORT} -- this run claims "
@@ -1573,7 +1574,7 @@ def _prepareQueue():
               "up to each sport's watermark is done and the forward walk "
               "found no gap, or the walk has decided the corpus ends "
               "(--stop-after-misses).")
-        print("[queue]   Look at it with: python scripts/queue_anet_new.py")
+        print("[queue]   Look at it with: python scripts/queue_meets.py")
         sys.exit(1)
     print("[queue] due: " + ", ".join(f"{k} {v:,}"
                                       for k, v in sorted(due.items())))

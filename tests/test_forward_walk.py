@@ -146,7 +146,7 @@ class TheStopComesFromFreshEvidence(unittest.TestCase):
 class TheWalkStartsFromRealData(unittest.TestCase):
 
     def setUp(self):
-        self.src = _read("scripts/queue_anet_new.py")
+        self.src = _read("scripts/queue_meets.py")
 
     # ! "ACTUALLY REAL" = PRODUCED RESULTS. A queue row proves we asked.
     def test_the_watermark_is_the_last_id_with_results(self):
@@ -168,7 +168,7 @@ class TheWalkStartsFromRealData(unittest.TestCase):
         self.assertIn("ORDER  BY 1 DESC", body)
 
         seed = _func(self.src, "seedSport")
-        self.assertIn("denseFrontier(cur, sport)", seed)
+        self.assertIn("denseFrontier(cur, sport, source)", seed)
         self.assertIn("frontier + 1", seed)
         # never a bare max, from either table
         self.assertNotIn("lo, hi = top + 1", seed)
@@ -218,29 +218,35 @@ class TheWalkStartsFromRealData(unittest.TestCase):
 
     def test_no_meet_is_an_answer_that_expires(self):
         body = _func(self.src, "seedForward")
-        self.assertIn("q.scraped = 4", body)
-        self.assertIn("NOT EXISTS", body)
+        self.assertIn("q.scraped IN (2, 3, 4)", body)
+        self.assertIn("NOT ", body)
 
     # ! AND ONLY THAT POPULATION. A real meet with no results is SCHEDULED,
     #   and re-asking those belongs to the recent pass, measured from the
     #   watermark. Two passes, two populations, no overlap.
     def test_it_does_not_re_ask_scheduled_meets(self):
         body = _func(self.src, "seedForward")
-        i = body.index("q.scraped = 4")
-        self.assertIn('SPORTS[sport]["meets"]', body)
-        self.assertIn("NOT EXISTS", body[i:])
+        i = body.index("q.scraped IN (2, 3, 4)")
+        # state 1 only comes back when the id is NOT a real meet
+        self.assertIn("q.scraped = 1 AND NOT _MEET_", 
+                      body[i:].replace(
+                          "{_meetExistsSql(source, sport)}", "_MEET_"))
 
-    # ! "UNTIL 404" CANNOT BE ONE 404: anet ids have real gaps.
-    def test_the_stop_is_a_run_of_misses_not_one(self):
-        self.assertIn("STOP_AFTER_MISSES", self.src)
-        m = re.search(r"STOP_AFTER_MISSES = (\d+)", self.src)
-        self.assertIsNotNone(m)
-        self.assertGreater(int(m.group(1)), 1)
+    # ! "UNTIL 404" CANNOT BE ONE 404, and the stop no longer lives here at
+    #   all: the seeding script only ever seeds, and each launcher decides
+    #   when to stop from its own fresh evidence. A threshold in this file
+    #   would be a second answer to the same question.
+    def test_the_seeder_does_not_own_the_stop(self):
+        self.assertNotIn("STOP_AFTER_MISSES", self.src)
+        seed = _func(self.src, "seedSport")
+        self.assertIn("seeding forward", seed)
+        # and it says plainly that the miss count decides nothing
+        self.assertIn("GATES NOTHING", _func(self.src, "trailingMisses"))
 
     def test_a_miss_is_an_id_we_asked_about(self):
         """An id never queued is not evidence of a ceiling."""
         body = _func(self.src, "trailingMisses")
-        self.assertIn("scraped IN (1, 2)", body)
+        self.assertIn("scraped IN (1, 2, 4)", body)
 
     # ⚠ THE BUG THAT WOULD HAVE STOPPED THE WALK EARLY (owner, 2026-09-18:
     #   "there's like 10k meets that are scheduled with no results, and
@@ -249,26 +255,67 @@ class TheWalkStartsFromRealData(unittest.TestCase):
     #   the first run of scheduled meets look like the end of the corpus.
     def test_the_ceiling_is_missing_MEETS_not_missing_results(self):
         body = _func(self.src, "trailingMisses")
-        src = _read("scripts/queue_anet_new.py")
-        # it asks the meets table, not the results table
-        self.assertIn('SPORTS[sport]["meets"]', body)
-        self.assertNotIn('SPORTS[sport]["results"]', body)
-        # and the two tables are genuinely different per sport
-        self.assertIn('"meets": "meets_tf"', src)
+        # it asks the MEETS table, not the results table
+        self.assertIn("_meetExistsSql(source, sport)", body)
+        self.assertNotIn("['results']", body)
+        # and each feed and sport names its own meets table
+        self.assertIn('"meets": "meets_tf"', self.src)
+        self.assertIn('"meets": "meets_tfrrs"', self.src)
 
     def test_scheduled_meets_are_retried_not_counted_as_a_ceiling(self):
-        src = _read("scripts/queue_anet_new.py")
-        body = _func(src, "scheduledToRetry")
+        body = _func(self.src, "scheduledToRetry")
         # a real meet with no results
-        self.assertIn('SPORTS[sport]["meets"]', body)
+        self.assertIn("_meetExistsSql(source, sport)", body)
         self.assertIn("NOT EXISTS", body)
         # and it does not waste a fetch on one still in the future
-        self.assertIn("meet_date > %(today)s", body)
+        self.assertIn("> %(today)s", body)
 
     def test_the_two_numbers_are_reported_separately(self):
-        body = _func(_read("scripts/queue_anet_new.py"), "seedSport")
+        body = _func(self.src, "seedSport")
         self.assertIn("scheduled", body)
         self.assertIn("are not meets (queue state 4)", body)
+
+
+class OneWalkForBothFeeds(unittest.TestCase):
+    """★ "Just make it exactly like anet" (owner, 2026-09-18). The first tfrrs
+    attempt treated a table-name difference as a design difference and shipped
+    a blind seed instead. The feeds differ in three table names; nothing else.
+    """
+
+    def setUp(self):
+        self.src = _read("scripts/queue_meets.py")
+
+    def test_both_feeds_are_mapped(self):
+        for feed in ('"anet"', '"tfrrs"'):
+            self.assertIn(feed, self.src)
+        # and each maps both sports
+        self.assertEqual(self.src.count('"results": "results",'), 2)
+        self.assertEqual(self.src.count('"results": "results_tf",'), 2)
+
+    def test_every_query_is_per_source_and_sport(self):
+        for name in ("watermark", "askedFrontier", "denseFrontier",
+                     "trailingMisses", "scheduledAbove", "emptyRecent",
+                     "scheduledToRetry", "seedForward", "requeue"):
+            with self.subTest(fn=name):
+                sig = _func(self.src, name).split("\n")[0]
+                self.assertIn("sport", sig)
+                self.assertIn("source", sig)
+
+    # ⚠ NOTHING ACROSS SPORTS. Both feeds keep XC and TF in separate id
+    #   spaces -- anet XC ~276k vs TF ~671k, tfrrs XC ~27k vs TF ~96k -- so a
+    #   watermark or frontier measured over both is meaningless.
+    def test_the_watermark_is_scoped_to_one_sport(self):
+        body = _func(self.src, "watermark")
+        self.assertIn("source = %s", body)
+        self.assertIn("_t(source, sport)", body)
+
+    def test_both_launchers_use_it(self):
+        anet = _read("scripts/launcher.py")
+        tfrrs = _read("tfrrs/driver/launch_tfrrs.py")
+        self.assertIn("from queue_meets import", anet)
+        self.assertIn("from queue_meets import", tfrrs)
+        self.assertIn('source="anet"', anet)
+        self.assertIn('source="tfrrs"', tfrrs)
 
 
 if __name__ == "__main__":
