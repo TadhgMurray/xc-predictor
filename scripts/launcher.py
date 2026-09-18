@@ -35,60 +35,12 @@ from scrape_tuning import NUM_SESSIONS, perMeetDelayRange, perRequestDelayRange
 # Chrome path differs by OS. We must use real Chrome (not Playwright's bundled
 # Chromium) because Cloudflare fingerprints the binary — Chromium gets blocked.
 # headless=False is also required for the same reason.
-# ! SEARCHED, AND CHROME_PATH IN THE ENVIRONMENT WINS. One hardcoded path
-#   per OS meant a box where Chrome sits anywhere else died inside
-#   playwright with "executable doesn't exist at /usr/bin/google-chrome" --
-#   a Playwright traceback for what is an apt-get.
-_CHROME_CANDIDATES = {
-    "Windows": [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    ],
-    "Linux": [
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
-        "/opt/google/chrome/chrome",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/chromium",
-    ],
-    "Darwin": [
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    ],
-}
+# ! ONE DEFINITION, SHARED WITH THE TFRRS LAUNCHER. See
+#   scripts/chrome_path.py -- real Chrome, not Playwright's chromium,
+#   because Cloudflare fingerprints the binary.
+from chrome_path import chromePath as _chromePath, found as _chromeFound
 
-
-def _chromePath():
-    """The real Chrome binary.
-
-    ⚠ REAL CHROME, NOT PLAYWRIGHT'S CHROMIUM. Cloudflare fingerprints the
-      binary and blocks the bundled build, which is also why headless=False
-      below is not optional. The chromium entries are last and are a
-      last-resort fallback, not an equivalent: expect blocks on them.
-    """
-    override = os.environ.get("CHROME_PATH")
-    if override:
-        return override
-    system = platform.system()
-    if system not in _CHROME_CANDIDATES:
-        raise RuntimeError(f"Unsupported OS: {system}")
-    for path in _CHROME_CANDIDATES[system]:
-        if os.path.exists(path):
-            return path
-    looked = "\n  ".join(_CHROME_CANDIDATES[system])
-    raise RuntimeError(
-        "Google Chrome not found. Looked in:\n  " + looked + "\n"
-        "Install it (Debian/Ubuntu: apt-get install -y "
-        "./google-chrome-stable_current_amd64.deb) or set CHROME_PATH. "
-        "Playwright's bundled chromium is NOT a substitute -- Cloudflare "
-        "fingerprints the binary and blocks it.")
-
-
-# ! RESOLVED AT LAUNCH, NOT AT IMPORT. _chromePath() raises when Chrome is
-#   absent, and raising at import time would break every module that merely
-#   imports this one (the tests do) on any machine without Chrome.
-CHROME_PATH = (os.environ.get("CHROME_PATH")
-               or next((p for p in _CHROME_CANDIDATES.get(
-                        platform.system(), []) if os.path.exists(p)), None))
+CHROME_PATH = _chromeFound()
 
 STAGGER_SECONDS = 8
 

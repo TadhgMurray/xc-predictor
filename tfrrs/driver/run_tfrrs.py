@@ -10,6 +10,7 @@
 #          yet. So today the driver runs end-to-end THROUGH transform and returns
 #          the rows in hand; saving + the meet_queue update are explicit seams.
 
+import os
 import re
 from bs4 import BeautifulSoup
 import sys
@@ -49,7 +50,10 @@ SPORT_TF = "TF"
 # How many concurrent sessions to run. Each is one Playwright page draining the
 # shared claim queue at the normal per-meet pace. Scale this up; the limiter is
 # per-session, so more sessions = more throughput without any one going faster.
-SESSION_COUNT = 24
+# ! FROM THE ENVIRONMENT, like the anet side's NUM_SESSIONS. 24 headful
+#   Chrome pages is a lot of RAM to discover by surprise, and the two scrapers
+#   now run at the same time on one box.
+SESSION_COUNT = int(os.environ.get("TFRRS_SESSIONS", 24))
 
 # Save gates. Both are False today and flip to True when their blocker clears:
 #   - results: saveTFRRSResultsBulk needs the migration's identity columns
@@ -73,7 +77,23 @@ _XC_SELF_RE = re.compile(r"/results/xc/(\d+)/")
 
 # Inter-meet delay (seconds). This is the ENTIRE 429 defense — single session,
 # single IP, no rotation. Jittered, and leaned higher (3-6) for unattended runs.
-PER_MEET_DELAY = (3, 6)
+# ! TFRRS_PER_MEET_DELAY="5,9" widens it. Separate from the anet knob on
+#   purpose: tfrrs.org and athletic.net are different hosts with different
+#   limiters, so one number for both would be tuning to the stricter of two
+#   unrelated things.
+def _envRange(name, default):
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        lo, hi = (float(x) for x in raw.split(","))
+        return (lo, hi)
+    except ValueError:
+        print(f"[tfrrs] {name}={raw!r} is not 'low,high' -- using {default}")
+        return default
+
+
+PER_MEET_DELAY = _envRange("TFRRS_PER_MEET_DELAY", (3, 6))
 
 # _borrowConn / _returnConn
 # Purpose: Borrow a raw connection from the shared pool and return it. These wrap
