@@ -1266,8 +1266,18 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
             batch = await runDbCall(getBatchUnscrapedMeets, BATCH_SIZE,
                                     ANET_SPORT)
             
-            # Ran out of meets to scrape, break.
+            # ★ EMPTY IS NOT "DONE" -- IT IS "EXTEND THE FRONTIER"
+            #   (owner, 2026-09-18: the genuinely-empty recent meets number
+            #   about sixty, and the real work is "however many have been
+            #   made since then that we've never scraped at all"). The
+            #   forward walk seeds SEED_AHEAD ids at a time; draining them
+            #   and stopping turned "keep going until 404" into "run the
+            #   launcher once per 2,000 ids by hand". Now a drained queue
+            #   seeds the next block and carries on, and only a block that
+            #   comes back empty ends the run.
             if not batch:
+                if await _extendFrontier(config["label"]):
+                    continue
                 break
 
             for meet_id in batch:
@@ -1451,6 +1461,53 @@ def _printSummary(summaries: list):
 # Output: None.
 _QUEUE_STATE = {0: "due", 1: "done", 2: "failed", 3: "in-progress",
                 4: "skipped"}
+
+
+# One session extends at a time, and the others reuse that answer rather
+# than each running the same seeding query against a queue that is already
+# refilled.
+_EXTEND_LOCK = asyncio.Lock()
+_EXTEND_STATE = {"exhausted": False}
+
+
+async def _extendFrontier(label):
+    """Seed the next block of ids above each sport's watermark.
+
+    Returns True when there is new work. False means the walk has hit its
+    miss threshold -- the "404" in "keep going until 404" -- and the run is
+    genuinely finished.
+
+    ! FORWARD ONLY. The recent-empties pass is a one-off at startup; re-running
+      it here would re-queue the same meets every time the queue drained.
+    """
+    if _EXTEND_STATE["exhausted"]:
+        return False
+    async with _EXTEND_LOCK:
+        if _EXTEND_STATE["exhausted"]:
+            return False
+
+        def _seed():
+            from database import getConn
+            from queue_anet_new import seedAll, dueCounts
+            with getConn() as conn:
+                seedAll(conn, write=True, do_recent=False, verbose=False,
+                        sports=[ANET_SPORT] if ANET_SPORT else None,
+                        ahead=int(os.environ.get("SEED_AHEAD", 2000)))
+                due = dueCounts(conn)
+            if ANET_SPORT:
+                due = {k: v for k, v in due.items() if k == ANET_SPORT}
+            return sum(due.values())
+
+        due = await runDbCall(_seed)
+        if due:
+            print(f"[queue] {label} queue drained -- seeded the next block, "
+                  f"{due:,} now due", flush=True)
+            return True
+
+        _EXTEND_STATE["exhausted"] = True
+        print(f"[queue] {label} queue drained and the forward walk found "
+              f"nothing new -- the corpus ends here. Stopping.", flush=True)
+        return False
 
 
 def _queueState(conn):
