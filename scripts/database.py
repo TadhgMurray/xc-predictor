@@ -2460,11 +2460,11 @@ def populateRecoveryQueue(rows: list) -> int:
 # Output: dict mapping meet_id (int) → list of sports still needing
 #         work, e.g. {101: ["XC", "TF"], 5601: ["TF"]}.
 #         Empty dict means no status=0 work remains — scraping is done.
-def getBatchUnscrapedMeets(batch_size: int) -> dict:
+def getBatchUnscrapedMeets(batch_size: int, sport: str = None) -> dict:
     
     with getConn() as conn:
         cursor = conn.cursor()
-        rows = _claimMeetBatch(cursor, batch_size)
+        rows = _claimMeetBatch(cursor, batch_size, sport)
         conn.commit()  # commit the claim so other sessions see status=3 immediately
  
     return _buildMeetSportDict(rows)
@@ -2494,22 +2494,40 @@ def getBatchUnscrapedMeets(batch_size: int) -> dict:
 # Output: list of (meet_id, sport) tuples actually claimed this call.
 #         May be shorter than batch_size if fewer than batch_size rows
 #         are left at status=0 (i.e. scraping is nearly done).
-def _claimMeetBatch(cursor, batch_size):
+def _claimMeetBatch(cursor, batch_size, sport=None):
 
+    # ⚠ THERE WAS NO ORDER BY, AND THAT IS WHY A RUN CAN BE ALL ONE SPORT
+    #   (owner, 2026-09-18: "I swear I didn't see a single xc meet"). Without
+    #   one, Postgres returns whatever the scan reaches first -- physical row
+    #   order -- so whichever sport's rows happen to sit earlier in the table
+    #   are claimed first and the other waits until they are gone. Ordering by
+    #   meet_id interleaves nothing either, but it makes the run REPEATABLE
+    #   and it is `sport` below that answers the actual want.
+    #
+    # ! sport= SCOPES A RUN TO ONE SPORT (ANET_SPORT in the launcher). The
+    #   honest way to see cross country tonight is to ask for cross country,
+    #   not to hope the planner offers it.
+    where = "scraped = 0 AND source = 'anet'"
+    params = []
+    if sport:
+        where += " AND sport = %s"
+        params.append(sport)
+    params.append(batch_size)
     cursor.execute(
-        """
+        f"""
         UPDATE meet_queue
         SET scraped = 3
         WHERE (meet_id, sport, source) IN (
             SELECT meet_id, sport, source
             FROM meet_queue
-            WHERE scraped = 0 AND source = 'anet'      -- <-- scope to anet
+            WHERE {where}
+            ORDER BY meet_id
             FOR UPDATE SKIP LOCKED
             LIMIT %s
         )
         RETURNING meet_id, sport
         """,
-        (batch_size,),
+        tuple(params),
     )
     return cursor.fetchall()
 

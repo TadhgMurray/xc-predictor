@@ -63,7 +63,21 @@ JITTER_FRACTION = 0.25
 #          (3-6s) because the current 1-2s is over the per-session limit. Each of
 #          ~200 sessions waits a random value in this range between meets, so
 #          widening also lowers the COMBINED IP rate (watch both 429 types).
-_PER_MEET_DELAY_RANGE = (1.5, 2.5)
+# ! ENV-SETTABLE, LIKE THE OTHER TWO. PER_MEET_DELAY="4,8" widens it for a
+#   deliberately slow run without editing a tracked file.
+def _envRange(name, default):
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        lo, hi = (float(x) for x in raw.split(","))
+        return (lo, hi)
+    except ValueError:
+        print(f"[tuning] {name}={raw!r} is not 'low,high' -- using {default}")
+        return default
+
+
+_PER_MEET_DELAY_RANGE = _envRange("PER_MEET_DELAY", (1.5, 2.5))
 
 
 # perRequestDelayRange

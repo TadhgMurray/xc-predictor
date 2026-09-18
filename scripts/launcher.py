@@ -92,6 +92,15 @@ CHROME_PATH = (os.environ.get("CHROME_PATH")
 
 STAGGER_SECONDS = 8
 
+# ★ ANET_SPORT SCOPES THE RUN (owner, 2026-09-18: "I swear I didn't see a
+#   single xc meet"). The claim had no ORDER BY, so whichever sport sat
+#   earlier in the table physically was taken first and the other waited for
+#   it to finish. Ordering made it repeatable; this is how you ask for the
+#   one you want.
+ANET_SPORT = (os.environ.get("ANET_SPORT") or "").strip().upper() or None
+if ANET_SPORT and ANET_SPORT not in ("XC", "TF"):
+    raise RuntimeError(f"ANET_SPORT must be XC or TF, not {ANET_SPORT!r}")
+
 # Tells scraper to only grab meet metadata, not results.
 # Necessary for meet metadata backfill.
 META_ONLY = False
@@ -1252,7 +1261,10 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
             # with their specific sports pre-filtered by the DB.
             # Meet_ids already done or in progress (status 1/2/3/4) 
             # are absent from needs_work entirely — we never loop over them.
-            batch = await runDbCall(getBatchUnscrapedMeets, BATCH_SIZE)
+            # ANET_SPORT=XC (or TF) scopes the whole run to one sport;
+            # unset takes both, in meet_id order.
+            batch = await runDbCall(getBatchUnscrapedMeets, BATCH_SIZE,
+                                    ANET_SPORT)
             
             # Ran out of meets to scrape, break.
             if not batch:
@@ -1478,6 +1490,7 @@ def _prepareQueue():
             print("[queue] seeding: forward from the last real id per sport, "
                   "plus recent meets with no results")
             seedAll(conn, write=True,
+                    sports=[ANET_SPORT] if ANET_SPORT else None,
                     ahead=int(os.environ.get("SEED_AHEAD", 2000)),
                     recent_days=int(os.environ.get("SEED_RECENT_DAYS", 120)))
 
@@ -1486,6 +1499,11 @@ def _prepareQueue():
             print(f"[queue]   {sport}  "
                   f"{_QUEUE_STATE.get(state, state):<12} {n:,}")
         due = dueCounts(conn)
+
+    if ANET_SPORT:
+        print(f"[queue] ANET_SPORT={ANET_SPORT} -- this run claims "
+              f"{ANET_SPORT} only")
+        due = {k: v for k, v in due.items() if k == ANET_SPORT}
 
     total = sum(due.values())
     if not total:
