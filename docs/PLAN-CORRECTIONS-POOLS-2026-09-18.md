@@ -83,29 +83,32 @@ picking:
   useful bar near the low end. Land it as a config constant and report the
   count at 5, 8, 10, 15 before choosing.
 
-## Correction 3 — cull the overrides. **DANGEROUS. READ THIS FIRST.**
+## Correction 3 — cull the overrides. **ALREADY BUILT, and safe.**
 
-Corrections are **`engine/corrections.py`, a ~52MB Python source file**, not a
-table. `scripts/backup_corrections.py` already exists and is the right tool:
-it verifies the copy by hash, has `--list` and `--restore`.
+An earlier draft of this doc called it dangerous on the grounds that
+`engine/corrections.py` is a ~52MB source file holding decisions git has never
+seen. That is true of the file and wrong about the risk, because it ignores
+which parts are regenerable. `scripts/wipe_overrides.py` already encodes the
+real distinction:
 
-⚠ **Its own header is the warning:** on this machine the working file held
-**5,248 distance and 2,065 result overrides against HEAD's 4,114 and 623**.
-That is ~1.6MB of hand-made decisions *that git has never seen*, and `*.bak`
-is gitignored, so a backup lives on **one disk with nothing replicating it**.
+    pass 1 -> _DISTANCE_OVERRIDES     (regenerated)
+    pass 2 -> _RESULT_OVERRIDE        (regenerated)
+    pass 3 -> _RESULT_DROP            (ADDS to it, never rebuilds it)
 
-So before emptying anything:
+- **The overrides are regenerable.** Culling them costs a rebuild, not a loss,
+  which is exactly the owner's ask ("cull so import isn't so long").
+- **The drops are not.** Pass 3 only finds rows that are still rated, so a row
+  dropped earlier can never be re-found. Clearing the drops deletes filtering
+  with nothing to replace it. `wipe_overrides` deliberately leaves them.
+- **It appends a `.clear()` block rather than deleting lines**, so the last
+  word wins, `--undo` is deleting five lines, and the 1.45M-line record stays
+  in git. Better than backup-and-empty, which trades the record for the
+  working set.
 
-1. `python scripts/backup_corrections.py` — the hash-verified local copy.
-2. **Commit `engine/corrections.py` to git, or copy it off the box.** Step 1
-   alone is a seatbelt for ten minutes, not an archive. Emptying the file
-   after only step 1 means one disk failure destroys every override ever made.
-3. Only then empty it, and add the rule-derived corrections.
-
-"Overturn every other current override" is the owner's call and the reason is
-sound — the rules above should supersede hand-patches, and a 52MB import is
-slow. But it is irreversible in a way nothing else in this plan is, so it goes
-last, after the rules that replace it are in and measured.
+So this is `python scripts/wipe_overrides.py` to report, then `--write`. The
+only genuine caution left: do it *after* the rules meant to supersede the
+hand-patches are in, or the rebuild regenerates the same overrides from the
+same unfixed inputs and nothing is gained.
 
 ## Pooling — `pool by anet pool`
 
@@ -121,17 +124,28 @@ rekey: **anet states the pool; stop inferring it.**
 2. **A club with a known pro in it is a pro club.** Transitive, cheap,
    one query. Needs a floor: one mis-tagged pro should not promote a youth
    club, so require the pro to have real rows for that club.
-3. **No anet team id ⇒ pro.** ⚠ This one needs a number before it ships.
-   Every tfrrs row has no anet team id — 37.1M rows, 0% coverage (see the
-   census). Read literally, this makes the entire tfrrs corpus pro. It must
-   mean "no team id *after* the tfrrs bridge has run", which makes it Phase 2
-   dependent, and even then the residue should be measured before the rule is
-   applied rather than after.
-4. **A team with ~3 athletes is pro** ("dawgsmenesch"). Plausible — a real
-   school has a roster — but it is a size heuristic and will catch tiny real
-   schools. Per the separate-over-merge rule, being wrong here is a *pooling*
-   error, which is harmful, so measure the distribution of team sizes and pick
-   the floor from it rather than from the example.
+3. **No anet team id ⇒ pro.** RECOMMEND AGAINST, and the owner's own
+   qualification ("that aren't linked ig") is the reason it does not work.
+   After the bridge runs, what is left unlinked is mostly small COLLEGE
+   programmes that missed the vote bars — and those bars were just raised, so
+   more of them will. A college is not a pro. Unlinked should keep whatever
+   `college_flag` makes of its school string, exactly as today, and `pro`
+   should require POSITIVE evidence: a `pro_athlete_season` row, an anet club
+   level, or a roster too small to be a school. Absence of a link is absence
+   of evidence, not evidence of pro.
+
+4. **A team with ~3 athletes is pro** ("dawgsmenesch"). RECOMMEND using the
+   fact instead of the proxy. `anet_team.level` already distinguishes them and
+   the census output confirms the coding: Georgetown Running Club, Oregon Track
+   Club and Nike Oregon Track Club are all **level 16**, while high schools are
+   4 and colleges 8. So club-ness is stored, not inferred, and it is the same
+   move as the whole team-id rekey — stop guessing what anet states.
+
+   Size then has one honest job: a tiebreaker where `level` is missing. On its
+   own it catches real rural schools, which genuinely field three runners, and
+   a wrong pool compares an athlete against the wrong field — the harmful
+   direction under the separate-over-merge rule. Measure the size distribution
+   per level before choosing any floor.
 
 ## Suggested order
 
