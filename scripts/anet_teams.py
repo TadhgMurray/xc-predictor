@@ -264,6 +264,25 @@ def teams(cur, limit=None, state=None, redo=False, missing=False):
     link_src = ("school_team_link" if _tableExists(cur, "school_team_link")
                 else "(SELECT NULL::text AS tfrrs_school, NULL::int AS team_id,"
                      " NULL::text AS state WHERE false)")
+    # ★★ AND WITH --missing THE GROUPING IS PUSHED DOWN TO THE SCHOOLS THAT
+    #    NEED A CREST (owner, 2026-09-18: "taking forever"). `counted` groups
+    #    results UNION results_tf -- tens of millions of rows -- to decide the
+    #    modal team of every (school, state) pair in the corpus, and --missing
+    #    then throws almost all of it away. The same names, asked first, turn
+    #    minutes into seconds. It cannot change the ANSWER: every pair the
+    #    unfiltered query would return for these schools is still grouped, and
+    #    the pairs dropped are exactly the ones --missing discards anyway.
+    want = ""
+    if missing and _tableExists(cur, "school_logo"):
+        want = """AND school IN (
+                      SELECT si2.school FROM school_identity si2
+                      WHERE  si2.n_athletes >= 3
+                        AND  NOT EXISTS (SELECT 1 FROM school_logo g2
+                              WHERE g2.school = si2.school
+                                AND g2.state = si2.state
+                                AND g2.path IS NOT NULL AND g2.status = 'ok'
+                                AND COALESCE(lower(g2.override), '') <> 'none'
+                                AND (NOT g2.shared OR g2.override IS NOT NULL)))"""
     where_state = "AND si.state = %(state)s" if state else ""
     lim = "LIMIT %(limit)s" if limit else ""
     cur.execute(f"""
@@ -273,9 +292,11 @@ def teams(cur, limit=None, state=None, redo=False, missing=False):
             -- of them as a school's modal id would fetch team 0 for everyone.
             SELECT school, team_id, person_id FROM results
             WHERE  team_id IS NOT NULL AND team_id <> 0 AND school IS NOT NULL
+                   {want}
             UNION ALL
             SELECT school, team_id, person_id FROM results_tf
             WHERE  team_id IS NOT NULL AND team_id <> 0 AND school IS NOT NULL
+                   {want}
         ), counted AS (
             SELECT t.school, {state_expr} AS state, t.team_id, count(*) AS n
             FROM   t {home}
@@ -811,12 +832,24 @@ def main():
     from database import getConn
     with getConn() as conn:
         with conn.cursor() as cur:
+            # ★ SAY WHAT IS HAPPENING BEFORE THE SLOW PART, NOT AFTER (owner,
+            #   2026-09-18: "this script is taking forever not printing any
+            #   output"). Building the queue groups results UNION results_tf
+            #   -- tens of millions of rows -- so it is MINUTES before the
+            #   first line below, and every one of this script's progress
+            #   prints was on the far side of it. Nothing was wrong; nothing
+            #   said so either.
+            print("  building the queue: grouping every result row by "
+                  "(school, state, team). This is the slow part -- minutes on "
+                  "a full corpus, no network.", flush=True)
+            _q0 = time.time()
             todo = (unfetchedTeams(cur, args.limit, args.min_rows)
                     if args.unfetched else
                     teams(cur, args.limit, args.state,
                           redo=args.redo or args.logos_only,
                           missing=args.missing))
             conn.commit()
+            print(f"  queue built in {time.time() - _q0:.0f}s", flush=True)
             # ! THE ESTIMATE HAS TO BE HONEST ABOUT WHICH CALLS. --logos-only
             #   makes one image request per team and no API call at all, and
             #   the image host is not anet, so the per-host pacing that

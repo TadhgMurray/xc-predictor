@@ -523,5 +523,47 @@ class AMisplacedCrestCanBeUnfiled(unittest.TestCase):
         self.assertIn("if args.write and bad:", block)
 
 
+# ⚠⚠ A SCRIPT THAT PRINTS NOTHING FOR MINUTES LOOKS BROKEN (owner,
+#    2026-09-18: "this script is taking forever not printing any output").
+#    anet_teams builds its queue by grouping results UNION results_tf -- tens
+#    of millions of rows -- and every progress print was on the far side of
+#    that. Two fixes: say so first, and with --missing do not group the whole
+#    corpus to then throw almost all of it away.
+class TheQueueBuildIsNotSilent(unittest.TestCase):
+    def _src(self):
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "anet_teams.py"),
+                     encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_it_says_so_before_the_slow_query_not_after(self):
+        src = self._src()
+        self.assertIn("building the queue", src)
+        self.assertLess(src.index("building the queue"),
+                        src.index("todo = (unfetchedTeams("))
+        # and reports how long it took, so "forever" becomes a number
+        self.assertIn("queue built in", src)
+
+    def test_missing_pushes_the_school_filter_into_the_grouping(self):
+        src = self._src()
+        self.assertIn("want = \"\"", src)
+        self.assertIn("if missing and _tableExists(cur, \"school_logo\"):", src)
+        # both legs of the UNION, or the cheap side still scans everything
+        self.assertEqual(src.count("{want}"), 2)
+
+    # ! IT MUST NOT CHANGE THE ANSWER: the same three conditions loadCrests
+    #   serves on, so the schools kept are exactly those --missing wants.
+    def test_the_filter_uses_the_same_conditions_as_the_gap_test(self):
+        src = self._src()
+        i = src.index("want = \"\"")
+        block = src[i:src.index("where_state =", i)]
+        for cond in ("g2.path IS NOT NULL", "g2.status = 'ok'",
+                     "NOT g2.shared OR g2.override IS NOT NULL",
+                     "si2.n_athletes >= 3"):
+            self.assertIn(cond, block)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
