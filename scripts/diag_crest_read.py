@@ -161,6 +161,68 @@ def main():
                   + ("   <-- OLDER THAN THE FULL FILE: stale thumb"
                      if stale else ""))
 
+    # ★★ ARE ANY OF THESE STORED FILES THE SAME PICTURE? (owner, 2026-09-18:
+    #    "OR shows the IL logo".) Byte digests cannot answer that -- two sizes
+    #    of one image differ in every byte -- and a browser answer can come
+    #    from its own week-old cache. This compares the PICTURES: grayscale,
+    #    32x32, mean absolute difference. Near zero means the same image.
+    print(f"\n=== are any stored files the same picture? ===")
+    try:
+        from PIL import Image
+    except Exception as exc:                          # noqa: BLE001
+        print(f"    Pillow unavailable ({exc}) -- cannot compare pictures.")
+    else:
+        thumbs = {}
+        for st in [x for x in states if x]:
+            got = school_logo.crestState(name, st)
+            if got is None:
+                continue
+            try:
+                im = Image.open(got[2]).convert("L").resize((32, 32))
+                thumbs[st] = list(im.getdata())
+            except Exception as exc:                  # noqa: BLE001
+                print(f"    {st}: unreadable ({exc})")
+        seen = sorted(thumbs)
+        for i, a in enumerate(seen):
+            for b in seen[i + 1:]:
+                diff = sum(abs(x - y) for x, y in zip(thumbs[a], thumbs[b]))
+                diff /= float(len(thumbs[a]))
+                verdict = ("THE SAME PICTURE" if diff < 2.0 else
+                           "nearly the same" if diff < 8.0 else "different")
+                print(f"    {a} vs {b}: mean pixel difference "
+                      f"{diff:6.2f}   {verdict}")
+        if len(seen) < 2:
+            print("    fewer than two stored crests to compare.")
+
+    # ★★ AND WHO ELSE WEARS THIS EXACT IMAGE, with the family each name
+    #    counts as -- the number markShared compares against SHARED_MIN. A
+    #    crest suppressed as a "district placeholder" is suppressed by THIS
+    #    list, so it is the only thing worth reading when one disappears.
+    print(f"\n=== who else wears each of these images (the shared count) ===")
+    sys.path.insert(0, os.path.join(_ROOT, "scripts"))
+    from scrape_school_logos import _family, _isRosterish, SHARED_MIN
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT state, sha FROM school_logo
+                           WHERE school = %s AND sha IS NOT NULL
+                           ORDER BY state""", (name,))
+            mine = cur.fetchall()
+            for st, sha in mine:
+                cur.execute("""SELECT school, state FROM school_logo
+                               WHERE sha = %s ORDER BY school, state""", (sha,))
+                wearers = cur.fetchall()
+                fams = {_family(w) for w, _ in wearers if not _isRosterish(w)}
+                flag = ("  <-- SUPPRESSED: counts as a placeholder"
+                        if len(fams) >= SHARED_MIN else "")
+                print(f"\n    {name} ({st}): {len(wearers)} row(s), "
+                      f"{len(fams)} famil(ies), SHARED_MIN={SHARED_MIN}{flag}")
+                for w, ws in wearers[:12]:
+                    mark = " [roster status, not counted]" if _isRosterish(w) else ""
+                    print(f"      {w} ({ws or '--'}) -> {_family(w)!r}{mark}")
+                if len(wearers) > 12:
+                    print(f"      ... and {len(wearers) - 12} more")
+        conn.rollback()
+
     print("\n  read it in this order: contextState decides the state, the "
           "crest row is looked up under it,\n  and the last table says whose "
           "mascot that row's picture really is.")
