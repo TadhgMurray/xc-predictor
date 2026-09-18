@@ -10,13 +10,44 @@
 #          sustainable level — and re-derive the per-request delay
 #          automatically whenever the session count changes.
 
+import os
+
+
+def _envFloat(name, default):
+    """A knob from the environment, so tuning a run does not edit a file."""
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"[tuning] {name}={raw!r} is not a number -- using {default}")
+        return default
+
+
 # Parallel sessions to run. Was 200 (burst-and-ban); 10-25 runs clean 24/7.
-NUM_SESSIONS = 25
+#
+# ⚠ THIS IS NOT THE PACE KNOB, AND LOWERING IT DOES NOT SLOW THE SCRAPE.
+#   perRequestDelayRange() below divides NUM_SESSIONS by
+#   TARGET_REQUESTS_PER_SEC_PER_IP, so the COMBINED rate is held constant
+#   and fewer sessions simply means each one waits less. Six sessions and
+#   twenty-five sessions finish in about the same wall time; six use a lot
+#   less RAM, because each one is a real Chrome.
+#
+#   To actually go gentler, lower TARGET_REQUESTS_PER_SEC_PER_IP.
+#
+# ! CAPPED BY SESSION_CONFIGS. launcher takes SESSION_CONFIGS[:NUM_SESSIONS],
+#   so a number above the configured list silently gets the list's length.
+NUM_SESSIONS = int(_envFloat("NUM_SESSIONS", 25))
 
 # The ONE number you normally tune. Aggregate GetResultsData3 requests/sec
 # allowed against the single shared IP. Start low, raise it while watching
 # your 1015 rate, then back off ~30% from where bans start.
-TARGET_REQUESTS_PER_SEC_PER_IP = 3.0
+#
+# ★ THE REAL PACE KNOB. Halve it and the whole run takes twice as long,
+#   whatever the session count.
+TARGET_REQUESTS_PER_SEC_PER_IP = _envFloat(
+    "TARGET_REQUESTS_PER_SEC_PER_IP", 3.0)
 
 # Rough time one GetResultsData3 fetch takes (network + parse). Subtracted
 # from the budget so the sleep we add doesn't double-count the fetch time.
