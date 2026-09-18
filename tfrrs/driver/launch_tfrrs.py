@@ -128,7 +128,18 @@ def _prepareQueue():
     """
     from queue_meets import seedAll, dueCounts
 
-    if os.environ.get("TFRRS_NO_SEED", "") not in ("", "0", "false"):
+    # ★ RETRY-ONLY MODE, the same knob as the anet launcher's
+    #   ANET_RETRY_FAILED (owner, 2026-09-18: "do the failed ones without the
+    #   forwards pass and stuff"). Resets failed and stranded claims, seeds
+    #   nothing, and run_tfrrs ends the run when the queue drains.
+    if os.environ.get("TFRRS_RETRY_FAILED", "") not in ("", "0", "false"):
+        print("[queue] TFRRS_RETRY_FAILED=1 -- re-claiming failed and "
+              "stranded meets only. No forward walk, no recent pass.",
+              flush=True)
+        with getConn() as conn:
+            seedAll(conn, source="tfrrs", write=True,
+                    do_new=False, do_recent=False, do_failed=True)
+    elif os.environ.get("TFRRS_NO_SEED", "") not in ("", "0", "false"):
         print("[queue] TFRRS_NO_SEED=1 -- draining the queue as it stands.",
               flush=True)
     else:
@@ -143,6 +154,10 @@ def _prepareQueue():
 
     due = _printQueueDue()
     if not due:
+        if os.environ.get("TFRRS_RETRY_FAILED", "") not in ("", "0", "false"):
+            print("[queue] nothing failed -- there is nothing to retry. Drop "
+                  "TFRRS_RETRY_FAILED to scrape forward.", flush=True)
+            sys.exit(0)
         print("[queue] ⚠ NOTHING IS DUE even after seeding. Either every id "
               "up to each sport's frontier is done, or the frontier is wrong. "
               "Look at it with: python scripts/queue_meets.py --source tfrrs")

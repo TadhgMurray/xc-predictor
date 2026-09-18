@@ -289,6 +289,34 @@ def seedForward(cur, sport, lo, hi, source="anet"):
     return inserted, cur.rowcount
 
 
+# ★ THE FAILURES, WHEREVER THEY ARE (owner, 2026-09-18: "rerun the scrapers
+#   to do the failed ones without the forwards pass and stuff"). Nothing else
+#   reaches them: seedForward re-asks states 2, 3 and 4 but only inside the
+#   block it is walking, so a meet that failed below the watermark -- the 62
+#   that died on the Unicode jsonb bug, for instance -- is never re-claimed by
+#   any pass. resetInProgress covers state 3 at start-up; this covers 2.
+#
+# ! STATE 4 IS NOT A FAILURE. It is the feed saying "no meet here", and
+#   re-asking every one of them across the whole id space is the forward
+#   walk's job, aimed and bounded. This is the meets we broke, not the ids
+#   that do not exist.
+def retryFailed(cur, sport, source="anet"):
+    """Reset every failed or stranded claim to due. Returns how many."""
+    cur.execute("""
+        UPDATE meet_queue SET scraped = 0
+        WHERE  source = %s AND sport = %s AND scraped IN (2, 3)
+    """, (source, sport))
+    return cur.rowcount
+
+
+def countFailed(cur, sport, source="anet"):
+    cur.execute("""
+        SELECT count(*) FROM meet_queue
+        WHERE  source = %s AND sport = %s AND scraped IN (2, 3)
+    """, (source, sport))
+    return cur.fetchone()[0]
+
+
 def requeue(cur, sport, ids, source="anet", chunk=5000):
     n = 0
     for i in range(0, len(ids), chunk):
@@ -304,7 +332,7 @@ def requeue(cur, sport, ids, source="anet", chunk=5000):
 
 def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
               recent_days=RECENT_DAYS, do_new=True, do_recent=True,
-              verbose=True, **_ignored):
+              do_failed=False, verbose=True, **_ignored):
     """Seed one (feed, sport). Returns a dict of what it found and did.
 
     ! CALLED BY BOTH LAUNCHERS, so a scrape night cannot get a different answer
@@ -317,7 +345,16 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
     tag = f"{source}/{sport}"
     out = {"source": source, "sport": sport, "top": None, "misses": 0,
            "seeded": 0, "woken": 0, "dated": 0, "scheduled_retry": 0,
-           "requeued": 0}
+           "requeued": 0, "failed": 0}
+
+    # ! BEFORE THE WATERMARK GUARD. A failed meet is worth re-claiming whether
+    #   or not this feed has produced results yet.
+    if do_failed:
+        n = countFailed(cur, sport, source)
+        say(f"  [{tag}] failed or stranded claims: {n:,}")
+        if write and n:
+            out["failed"] = retryFailed(cur, sport, source)
+            say(f"  [{tag}]   {out['failed']:,} reset to scraped=0")
 
     top = watermark(cur, sport, source)
     if top is None:

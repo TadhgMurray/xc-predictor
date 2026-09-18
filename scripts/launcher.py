@@ -1424,6 +1424,12 @@ _WALK = {"it": None}
 # ⚠ SEED_AHEAD x DRY_BLOCKS_TO_STOP IS HOW FAR PAST THE LAST REAL MEET WE WALK
 #   BEFORE GIVING UP, and 2,000 x 3 was "way too patient" (owner): six thousand
 #   ids at ~5s each is eight hours of confirmed nothing. 500 x 2 is a thousand.
+# ★ RETRY-ONLY MODE (owner, 2026-09-18: "rerun the scrapers to do the failed
+#   ones without the forwards pass and stuff"). ANET_RETRY_FAILED=1 resets
+#   every failed or stranded claim to due, seeds NOTHING, and ends the run
+#   when the queue drains instead of walking forward. One bounded pass over
+#   the meets we broke.
+RETRY_FAILED = os.environ.get("ANET_RETRY_FAILED", "") not in ("", "0", "false")
 SEED_AHEAD = int(os.environ.get("SEED_AHEAD", 500))
 DRY_BLOCKS_TO_STOP = int(os.environ.get("DRY_BLOCKS_TO_STOP", 2))
 
@@ -1434,6 +1440,11 @@ async def _extendFrontier(label):
     ! THE WALK ITSELF IS queue_meets.ForwardWalk, shared with the tfrrs
       launcher, so the two cannot grow different stopping rules.
     """
+    # ! AND IN RETRY-ONLY MODE A DRAINED QUEUE IS THE END OF THE RUN. Without
+    #   this the walk would seed new ids the moment the failures ran out, which
+    #   is the "and stuff" the owner asked to leave out.
+    if RETRY_FAILED:
+        return False
     from queue_meets import ForwardWalk
 
     async with _EXTEND_LOCK:
@@ -1478,7 +1489,13 @@ def _prepareQueue():
 
     skip = os.environ.get("ANET_NO_SEED", "") not in ("", "0", "false")
     with getConn() as conn:
-        if skip:
+        if RETRY_FAILED:
+            print("[queue] ANET_RETRY_FAILED=1 -- re-claiming failed and "
+                  "stranded meets only. No forward walk, no recent pass.")
+            seedAll(conn, source="anet", write=True,
+                    sports=[ANET_SPORT] if ANET_SPORT else None,
+                    do_new=False, do_recent=False, do_failed=True)
+        elif skip:
             print("[queue] ANET_NO_SEED=1 -- draining the queue as it "
                   "stands, seeding nothing.")
         else:
@@ -1502,6 +1519,10 @@ def _prepareQueue():
 
     total = sum(due.values())
     if not total:
+        if RETRY_FAILED:
+            print("[queue] nothing failed -- there is nothing to retry. "
+                  "Drop ANET_RETRY_FAILED to scrape forward.")
+            sys.exit(0)
         print("[queue] ⚠ NOTHING IS DUE even after seeding. Either every id "
               "up to each sport's watermark is done and the forward walk "
               "found no gap, or the walk has decided the corpus ends "

@@ -516,6 +516,9 @@ async def _extendFrontier(label):
       "not a meet" answer recorded months ago says nothing about today, which
       is the whole reason those ids are being re-asked.
     """
+    # ! RETRY-ONLY MODE ENDS WHEN THE QUEUE DRAINS -- no new ids.
+    if os.environ.get("TFRRS_RETRY_FAILED", "") not in ("", "0", "false"):
+        return False
     from queue_meets import ForwardWalk
 
     async with _EXTEND_LOCK:
