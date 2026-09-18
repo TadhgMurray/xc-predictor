@@ -58,6 +58,12 @@ for _p in (_ROOT, _HERE, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "rac
 
 # ! BOTH BARS ARE ABOUT ONE THING: a link is a claim about a whole team, so
 #   it has to be carried by a team's worth of people.
+def _tableExists(cur, name):
+    cur.execute("SELECT to_regclass(%s)", (f"public.{name}",))
+    got = cur.fetchone()
+    return bool(got[0] if not isinstance(got, dict) else list(got.values())[0])
+
+
 MIN_ATHLETES = 5
 MIN_SHARE = 0.60
 
@@ -337,6 +343,36 @@ def decide(counted, teams, min_athletes=MIN_ATHLETES, min_share=MIN_SHARE):
     return links, rejected
 
 
+# ★★ THE NUMBER THAT SAYS WHETHER THIS IS THIN (owner, 2026-09-18, on the
+#    team-id rekey). The census counted school NAMES -- 4,658 bridged, against
+#    614,844 names that never carry a team id -- and that reads like near-total
+#    failure. It is the wrong denominator. tfrrs names are mostly one-off
+#    spellings and roster statuses on a handful of rows each, while the few
+#    hundred real college programmes carry nearly all the rows.
+#
+# ★ SO COUNT ROWS, NOT NAMES. What matters for keying the site on team_id is
+#   what share of tfrrs RESULT ROWS can be given a team, and that is the only
+#   figure that should decide how much work the unresolved remainder deserves.
+def coverage(cur, tables=("results", "results_tf")):
+    """[(table, tfrrs_rows, rows_a_link_covers, pct)] -- how much of the tfrrs
+    corpus school_team_link can actually place."""
+    out = []
+    if not _tableExists(cur, "school_team_link"):
+        return out
+    for table in tables:
+        cur.execute(f"""
+            SELECT count(*),
+                   count(*) FILTER (WHERE EXISTS (
+                       SELECT 1 FROM school_team_link l
+                       WHERE  l.tfrrs_school = r.school))
+            FROM   {table} r
+            WHERE  r.source = 'tfrrs' AND r.school IS NOT NULL
+        """)
+        tot, got = cur.fetchone()
+        out.append((table, tot, got, (100.0 * got / tot) if tot else 0.0))
+    return out
+
+
 def write(cur, links):
     from scrape_school_logos import ensureTable
     ensureTable(cur, DDL)
@@ -397,6 +433,11 @@ def main():
                         tables=[t.strip() for t in args.tables.split(",")
                                 if t.strip()])
         links, rejected = decide(counted, teams, args.min_athletes, args.min_share)
+        # ! BEFORE THE DETAIL, because it is the figure that decides whether
+        #   the unresolved remainder is a footnote or the main event.
+        for table, tot, got, pct in coverage(cur):
+            print(f"  {table}: {got:,} of {tot:,} tfrrs rows "
+                  f"({pct:.1f}%) already have a linkable school string")
         print(f"\n  {len(counted):,} tfrrs school strings share an athlete-year "
               f"with an anet college team")
         print(f"  {len(links):,} link (>= {args.min_athletes} athletes and "
