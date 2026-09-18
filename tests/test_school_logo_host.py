@@ -162,10 +162,6 @@ class Wiring(unittest.TestCase):
         self.assertIn("plausibleHost(school, url, kind, source)", src)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
-
-
 # ★ THE WRONG-LOGO SUBSET (owner, 2026-09-18): "it's taken some logos not
 #   actually from the anet site (or it's taken them from a similar named
 #   school) ... is there some way to only scrape these subsets so I don't have
@@ -196,11 +192,17 @@ class TheSuspectSelector(unittest.TestCase):
         self.assertIn("continue", body)
 
     def test_it_reads_only_stored_rows(self):
-        """No network: a suspect sweep must not cost a fetch to plan."""
+        """No network: a suspect sweep must not cost a request to PLAN.
+
+        ! NAMED CALLS, NOT THE WORD "fetch" -- cur.fetchall() is a database
+          read and an earlier version of this test failed on it.
+        """
         body = self._body()
         self.assertIn("FROM   school_logo", body)
-        self.assertNotIn("requests", body)
-        self.assertNotIn("fetch", body)
+        for call in ("requests.", "urlopen", "Manners(", "workOne(",
+                     "httpGet", "session."):
+            with self.subTest(call=call):
+                self.assertNotIn(call, body)
 
     def test_it_also_flags_a_host_that_no_longer_passes(self):
         body = self._body()
@@ -230,3 +232,82 @@ class TheSuspectSelector(unittest.TestCase):
         """The implausible ones lead, so --limit covers them first."""
         body = self._body()
         self.assertIn("for pair in implausible + off_anet:", body)
+
+
+# ★★ THE REAL WRONG-LOGO BUG (owner, 2026-09-18): "the issue isn't that we're
+#    not getting it from anet but that we're getting the wrong one from anet
+#    (this applies to wake forest and oregon)".
+#
+#    scrape_school_logos.py's KIND_RANK comment asserts an anet crest "cannot
+#    be the wrong school's, it is fetched BY TEAM ID". That is true only if the
+#    team id belongs to this school -- and anet_teams.teams() chose it by
+#    ATHLETE MODALITY, which is an inference, while anet_team.anet_state has
+#    held anet's own answer all along.
+class TheCrestTeamMustBeThisSchoolsTeam(unittest.TestCase):
+
+    @staticmethod
+    def _query():
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "anet_teams.py"),
+                     encoding="utf-8") as fh:
+            src = fh.read()
+        i = src.index("def teams(")
+        return src[i:src.index("\ndef parseTeam(", i)]
+
+    def test_anets_own_state_decides_first(self):
+        q = self._query()
+        self.assertIn("anet_keyed", q)
+        self.assertIn("at.anet_state", q)
+        # and it outranks the athlete-modal guess
+        self.assertIn("COALESCE(ak.team_id, modal.team_id, link.team_id)", q)
+
+    def test_the_team_is_matched_to_the_clusters_state(self):
+        q = self._query()
+        self.assertIn("ak.state = si.state", q)
+
+    # ⚠ NO BADGE BEATS ANOTHER SCHOOL'S BADGE. Where anet states the team's
+    #   state and it disagrees with the cluster, the row must be refused.
+    def test_a_team_anet_places_elsewhere_is_refused(self):
+        q = self._query()
+        self.assertIn("upper(btrim(a.anet_state)) = si.state", q)
+
+    # ! AN UNKNOWN anet_state STILL PASSES. Most of the corpus has one, and
+    #   refusing the blanks would strip crests that are right.
+    def test_an_unknown_state_is_not_refused(self):
+        q = self._query()
+        self.assertIn("COALESCE(btrim(a.anet_state), '') = ''", q)
+
+    def test_the_modal_pick_survives_as_a_fallback(self):
+        """A name anet places nowhere still gets its athlete-modal team."""
+        q = self._query()
+        self.assertIn("modal.team_id", q)
+        self.assertIn("link.team_id", q)
+
+
+class ThereIsAWayToAskWhyACrestIsMissing(unittest.TestCase):
+    """"Penn State still doesn't have a logo" has been reported three times and
+    answered with three different guesses at which gate excluded it."""
+
+    def test_the_diagnostic_exists(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.assertTrue(os.path.exists(
+            os.path.join(root, "scripts", "diag_crest.py")))
+
+    def test_it_covers_every_gate(self):
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "diag_crest.py"),
+                     encoding="utf-8") as fh:
+            src = fh.read()
+        for gate in ("school_identity", "anet_team", "school_team_link",
+                     "school_logo", "n_athletes >= 3", "shared"):
+            with self.subTest(gate=gate):
+                self.assertIn(gate, src)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

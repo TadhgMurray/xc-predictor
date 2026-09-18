@@ -283,9 +283,41 @@ def teams(cur, limit=None, state=None, redo=False, missing=False):
         ), modal AS (
             SELECT DISTINCT ON (school, state) school, state, team_id
             FROM   counted ORDER BY school, state, n DESC
+        ), by_team AS (
+            -- one row per (name, team), athlete-state rolled up: which team
+            -- the name's athletes raced under, regardless of where they race
+            SELECT school, team_id, sum(n) AS n FROM counted GROUP BY 1, 2
+        ), anet_keyed AS (
+            -- ★★ THE TEAM anet ITSELF PLACES IN THIS STATE (owner,
+            --    2026-09-18: "the issue isn't that we're not getting it from
+            --    anet but that we're getting the wrong one from anet (this
+            --    applies to wake forest and oregon)").
+            --
+            --    `modal` picks the team most raced under by athletes ASSIGNED
+            --    this state, which is an inference. anet_team.anet_state is
+            --    anet's own record of where that team is -- a fact, already
+            --    stored by this very script. For a shared name that fact is
+            --    the whole answer: (Oregon, OR) wants the team anet puts in
+            --    OR, and no amount of athlete counting can be trusted to
+            --    agree, because a cluster's athletes include transfers,
+            --    mis-assignments and anyone anet filed under the wrong team.
+            --
+            --    The comment above KIND_RANK says an anet crest "cannot be
+            --    the wrong school's, it is fetched BY TEAM ID". True only if
+            --    the team id belongs to this school. Choosing it by athlete
+            --    modality is exactly how it stops belonging.
+            SELECT DISTINCT ON (b.school, upper(btrim(at.anet_state)))
+                   b.school,
+                   upper(btrim(at.anet_state)) AS state,
+                   b.team_id
+            FROM   by_team b
+            JOIN   anet_team at ON at.team_id = b.team_id
+            WHERE  COALESCE(btrim(at.anet_state), '') <> ''
+            ORDER  BY b.school, upper(btrim(at.anet_state)), b.n DESC
         )
         SELECT si.school, si.state,
-               COALESCE(modal.team_id, link.team_id) AS team_id, a.mascot_url
+               COALESCE(ak.team_id, modal.team_id, link.team_id) AS team_id,
+               a.mascot_url
         FROM   school_identity si
         -- ⚠⚠ LEFT, AND THE LINK BESIDE IT (owner, 2026-09-17: "Penn state
         --    still has no logo at all"; and 2026-09-16 of Williams, "they
@@ -307,16 +339,29 @@ def teams(cur, limit=None, state=None, redo=False, missing=False):
         --   the link for the string "Oregon" -- the university, in OR --
         --   supplies a team for (Oregon, OR) and can never reach
         --   (Oregon, IL), which keeps its own modal team.
+        -- ★ anet'S OWN PLACEMENT FIRST, then the athlete-modal team, then the
+        --   tfrrs link. Only the first is a fact about the team.
+        LEFT   JOIN anet_keyed ak
+               ON ak.school = si.school AND ak.state = si.state
         LEFT   JOIN modal ON modal.school = si.school AND modal.state = si.state
         LEFT   JOIN {link_src} link
                ON link.tfrrs_school = si.school
               AND upper(btrim(link.state)) = si.state
         -- the resolved team, so mascot_url is the linked team's where the
         -- cluster had none of its own
-        LEFT   JOIN anet_team a ON a.team_id = COALESCE(modal.team_id,
+        LEFT   JOIN anet_team a ON a.team_id = COALESCE(ak.team_id,
+                                                        modal.team_id,
                                                         link.team_id)
         WHERE  si.n_athletes >= 3 {done} {where_state} {gap}
-          AND  COALESCE(modal.team_id, link.team_id) IS NOT NULL
+          AND  COALESCE(ak.team_id, modal.team_id, link.team_id) IS NOT NULL
+          -- ⚠ AND NEVER A TEAM anet PLACES SOMEWHERE ELSE. Where anet states
+          --   the team's state and it disagrees with this cluster's, the
+          --   crest belongs to a different school: no badge is better than
+          --   another school's badge. An unknown anet_state still passes,
+          --   because most of the corpus has one and refusing those would
+          --   strip crests that are right.
+          AND  (COALESCE(btrim(a.anet_state), '') = ''
+                OR upper(btrim(a.anet_state)) = si.state)
         ORDER  BY si.n_athletes DESC
         {lim}
     """, {"limit": limit, "state": (state or "").upper()})
