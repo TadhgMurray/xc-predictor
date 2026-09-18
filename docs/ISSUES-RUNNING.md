@@ -2253,3 +2253,35 @@ corpus sweep is visible before it runs.
 **Before any rescrape now**, run `scripts/queue_status.py --sample 10`. If
 `normal run` is in the tens of thousands, that is the laundered set plus the
 forward-walk seeds, and a full run will take a night at the paced rate.
+
+### 2026-09-18, later — measured, and it is narrower than feared
+
+`queue_status.py` on the live queue:
+
+    anet   TF  due 469      done 536,894  stranded  75  not-a-meet 123,101
+    anet   XC  due 4,734    done 171,428  stranded  46  not-a-meet  48,380
+    tfrrs  TF  due 144      done  60,464  failed     1
+    tfrrs  XC  due 73       done  16,784  failed     9  stranded 12
+
+                        normal run            --retry-failed
+      anet              5,203                 121
+      tfrrs               217                  22
+
+So the entry above was too gloomy in one specific way and right in another:
+
+- **Right:** anet has **no rows at state 2 at all**. Every anet failure, the 62
+  Unicode `jsonb` ones included, was reset to due — that evidence is gone, as
+  described.
+- **Too gloomy:** 121 anet rows survive at state **3** (stranded claims from
+  crashed sessions), and tfrrs kept 10 genuine state-2 failures plus 12
+  stranded. `--retry-failed` therefore has real work: 121 + 22 = **143 meets**,
+  which is minutes rather than a night.
+
+Note the id spans in that output. `--retry-failed` spans 271,052..675,239 and
+`normal run` spans 275,739..675,708 — both wide, because the queue holds both
+sports across two disjoint id spaces. A wide span is only evidence of a
+laundered set when the *count* is also large; here the retry count is 143, so
+it is the right set.
+
+**Practical upshot:** after the team-id scrape finishes, run the retry (143
+meets, quick) and then a normal run for the 5,420 genuinely-due ids.

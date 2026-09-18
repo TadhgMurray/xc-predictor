@@ -68,6 +68,76 @@ def _tableExists(cur, name):
     return bool(got[0] if not isinstance(got, dict) else list(got.values())[0])
 
 
+# ★★ A ZERO MUST SAY WHICH STAGE PRODUCED IT (owner, 2026-09-18: the first run
+#    printed "no rated rows on binned courses" and that was all). Exactly the
+#    fault fixed for the crest join hours earlier, repeated here. Four things
+#    can empty this query and they need different fixes:
+#
+#      1. course_difficulties is empty or unbuilt;
+#      2. n_results is NULL or small, so min_course_results rejects every course
+#         (COALESCE(n_results, 0) >= 200 keeps nothing when the column is NULL);
+#      3. course_difficulties.course_name does NOT equal meets.course_name --
+#         probe_meet.py:299 records that course_name is the "namespaced DISPLAY
+#         name", so the two spellings can differ and the join silently matches
+#         nothing;
+#      4. speed_rating is NULL for this sport, or the year window is empty.
+#
+#    So each stage is counted before the main query runs, and the one that
+#    zeroed is named.
+def preflight(cur, table, since, min_course, verbose=True):
+    """(ok, why). Counts each stage so an empty result has a cause."""
+    def say(msg):
+        if verbose:
+            print(msg, flush=True)
+
+    cur.execute("SELECT count(*), count(difficulty), count(n_results) "
+                "FROM course_difficulties")
+    n_cd, n_diff, n_nres = cur.fetchone()
+    say(f"    course_difficulties: {n_cd:,} rows, {n_diff:,} with a "
+        f"difficulty, {n_nres:,} with n_results")
+    if not n_diff:
+        return False, "course_difficulties has no difficulties -- build it first"
+
+    cur.execute("SELECT count(*) FROM course_difficulties WHERE "
+                "difficulty IS NOT NULL AND COALESCE(n_results, 0) >= %s",
+                (min_course,))
+    n_pass = cur.fetchone()[0]
+    say(f"    ... passing --min-course-results {min_course}: {n_pass:,}")
+    if not n_pass:
+        return False, (f"no course clears n_results >= {min_course}. "
+                       f"n_results is NULL on {n_cd - n_nres:,} rows -- "
+                       f"lower it with --min-course-results 0")
+
+    # ⚠ THE JOIN KEY. Counted on its own, because a name mismatch is invisible
+    #   in the final query and is the most likely cause.
+    cur.execute("""
+        SELECT count(*) FROM (
+            SELECT DISTINCT course_name FROM course_difficulties
+            WHERE difficulty IS NOT NULL
+        ) cd
+        WHERE EXISTS (SELECT 1 FROM meets m WHERE m.course_name = cd.course_name)
+    """)
+    n_named = cur.fetchone()[0]
+    say(f"    ... whose course_name also appears in meets: {n_named:,}")
+    if not n_named:
+        return False, ("course_difficulties.course_name never equals "
+                       "meets.course_name -- the two spellings differ "
+                       "(course_name is a namespaced DISPLAY name, see "
+                       "probe_meet.py:299), so the join needs the canonical "
+                       "key, not this one")
+
+    cur.execute(f"""SELECT count(*) FROM {table}
+                    WHERE speed_rating IS NOT NULL
+                      AND date ~ '^(19|20)[0-9][0-9]-'
+                      AND substr(date, 1, 4)::int >= %s""", (since,))
+    n_rated = cur.fetchone()[0]
+    say(f"    {table}: {n_rated:,} rated rows from {since}")
+    if not n_rated:
+        return False, (f"{table} has no rated rows from {since} -- widen "
+                       f"--since, or ratings were never written for this sport")
+    return True, ""
+
+
 def _sql(table, bins):
     """Median rating per (difficulty bin, percentile band).
 
@@ -193,9 +263,14 @@ def main():
                 table = TABLES.get(sport)
                 if not table or not _tableExists(cur, table):
                     continue
-                print(f"\n  {sport}: scanning rated rows from {args.since} on "
-                      f"courses with >= {args.min_course_results} results, "
-                      f"fields of >= {args.min_field}...", flush=True)
+                print(f"\n  {sport}: preflight", flush=True)
+                ok, why = preflight(cur, table, args.since,
+                                    args.min_course_results)
+                if not ok:
+                    print(f"    -> STOPPING: {why}")
+                    continue
+                print(f"    scanning, fields of >= {args.min_field}...",
+                      flush=True)
                 cur.execute(_sql(table, args.bins),
                             {"since": args.since, "hw": args.band_halfwidth,
                              "min_field": args.min_field,
