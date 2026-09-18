@@ -15,6 +15,21 @@ from the NCAA facility factors), because the indoor level and the winter form
 curve are one free direction the fit resolves backwards. `bracket_engine.py`
 has no equivalent, which is why the owner says it is not fixed. It is not.
 
+**MEASURED, 2026-09-18** (`scripts/diag_indoor_level.py`, from the published
+`course_difficulties` cells — seconds, no row scan):
+
+    surface      cells    median      mean       p25       p75
+    indoor       1,575   -0.0168   -0.0152   -0.0259   -0.0044
+    outdoor     25,629   -0.0020   -0.0004   -0.0074    0.0050
+
+    indoor median MINUS outdoor median: -0.0148
+
+So **indoor is published 1.5% EASIER than outdoor**, and the quartiles say the
+worst cells reach ~2.6% easier. The owner said 4%; the median is 1.5% and the
+tail approaches his figure. Either way the SIGN is wrong — an indoor oval is
+slower than an average outdoor track, not faster — and the size is material:
+1.5% of log-time is several rating points at every distance.
+
 **The mechanism, from `bracket_engine.py:430`:**
 
 > the vote-weighted mean of D per **(sport, era)** is held at zero each pass
@@ -35,6 +50,11 @@ in the form curve or in the indoor cells, and the fit is free to choose.
 good reason stated in the code (banked vs flat, 160m vs 300m, and no weather).
 But a weak pull toward an *unanchored* level means indoor keeps more of a
 number that was never pinned to anything.
+
+Note the cell counts too: 1,575 indoor cells against 25,629 outdoor. The
+indoor group is 6% of the track corpus and carries the weakest prior (1.0
+against outdoor's 2.5), so it is both the least constrained by data and the
+least pulled toward its group mean — while its group mean is itself unanchored.
 
 **Proposed fix, mirroring the engine that got it right:** extend the gauge from
 `(sport, era)` to `(sport, surface, era)` and pin the indoor group's mean to an

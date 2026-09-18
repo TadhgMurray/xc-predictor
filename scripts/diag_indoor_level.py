@@ -245,27 +245,25 @@ def main():
                     else:
                         print(f"      -> no systematic surface bias at this scale.")
 
-            print(f"\n=== 2. raw per-surface medians (context only) ===")
-            cur.execute("""
-                SELECT CASE WHEN COALESCE(m.is_indoor, 0) = 1
-                            THEN 'indoor' ELSE 'outdoor' END AS surface,
-                       count(*),
-                       percentile_cont(0.5) WITHIN GROUP
-                           (ORDER BY r.speed_rating::double precision)
-                FROM   results_tf r
-                JOIN   meets_tf m ON m.div_id = r.div_id AND m.source = r.source
-                WHERE  r.speed_rating IS NOT NULL
-                  AND  r.date ~ '^(19|20)[0-9][0-9]-'
-                  AND  substr(r.date, 1, 4)::int >= %(since)s
-                GROUP  BY 1 ORDER BY 1
-            """, {"since": args.since})
-            for surface, cnt, med2 in cur.fetchall():
-                print(f"    {surface:<8} {cnt:>14,} rows   median rating "
-                      f"{med2:8.2f}")
-            print(f"    ⚠ do NOT read a surface bias off these two numbers: "
-                  f"indoor meets are\n      disproportionately collegiate and "
-                  f"championship, so this compares fields,\n      not "
-                  f"surfaces. Section 1 is the one that controls for that.")
+            # ⚠⚠ THERE WAS A SECTION 2 HERE AND IT WAS INDEFENSIBLE (owner,
+            #    2026-09-18: "What data could you possible be loading that is
+            #    this big"). It took percentile_cont over every rated row in
+            #    results_tf grouped by surface -- ~155M values, which
+            #    percentile_cont must materialise and SORT, so it spilled past
+            #    an 8GB temp limit.
+            #
+            #    And it was labelled "context only" with a warning not to read
+            #    a surface bias off it, because indoor meets are
+            #    disproportionately collegiate and championship. So it spent
+            #    8GB of temp space producing a number this file itself said was
+            #    meaningless. Deleted rather than optimised: the fix for a query
+            #    nobody should read is not a faster version of it.
+            #
+            # ★ SECTION 1 IS THE ANSWER. Measured 2026-09-18: indoor cells have
+            #   a median published difficulty of -0.0168 against outdoor's
+            #   -0.0020 -- indoor is published 1.5% EASIER, with the p25 at
+            #   -0.0259. That is the owner's claim, from 27,204 cells, in
+            #   seconds.
         conn.rollback()
 
 
