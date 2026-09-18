@@ -322,22 +322,109 @@ def votes(cur, teams, since=None, tables=None, verbose=True):
     return out
 
 
-def decide(counted, teams, min_athletes=MIN_ATHLETES, min_share=MIN_SHARE):
+# ⚠⚠ A SHARE BAR PUNISHES THE OLD PROGRAMMES (owner, 2026-09-18: "MIN_SHARE
+#    = 0.60 kind of messes with it especially with older teams bcs tfrrs has a
+#    ton of older college meets anet doesn't have").
+#
+#    `share` was n_ath / TOTAL votes for the string, so every transfer, every
+#    mis-merged person and every guest dilutes it. For an era anet barely
+#    covers there are only a handful of shared athletes to begin with, and
+#    then a 4-1-1-1 split -- the right team beating each rival four to one --
+#    scores 0.57 and is REJECTED. The bar asked "does this team own most of a
+#    noisy field", when the question is "is this team clearly the answer".
+#
+# ★ SO: MARGIN OVER THE RUNNER-UP, not share of the field. 4-1-1-1 is a 4x
+#   margin and obviously right; 4-3 is a 1.3x margin and obviously not. Share
+#   is still computed and printed, because it is informative -- it is just no
+#   longer the gate.
+#
+# ★★ AND THE NAME IS A SECOND, INDEPENDENT WITNESS (owner: "link with anet as
+#    usual ... definitely by school"). Where the tfrrs string and the anet
+#    team's own name are the same name -- decoration aside, by
+#    school_name.relation, the module whose whole point is that judgement --
+#    two unrelated signals agree, and demanding five athletes on top is asking
+#    a thin era for evidence it cannot have. Those need MIN_ATHLETES_NAMED.
+#
+# ! A NAME MATCH ALONE IS STILL NOT ENOUGH, and that is deliberate. "Oregon"
+#   names three schools; the athletes are what say WHICH. So the named tier
+#   lowers the athlete floor, never removes it, and still wants a margin.
+MARGIN = 3.0                # blind tier: the winner beats the runner-up 3x
+MARGIN_NAMED = 2.0          # ... 2x when the names already agree
+MIN_ATHLETES_NAMED = 2    # the anet team's name IS this name
+MIN_ATHLETES_PREFIX = 3   # ... is a word-prefix of it
+
+
+# ⚠⚠ "Williams" vs "Williams College" IS A PREFIX, NOT "same", and that is
+#    deliberate upstream: school_name._SUFFIX_NOISE refuses to strip level
+#    words because Adrian College and Adrian Middle School are one string
+#    apart. But the prefix case is this linker's MAIN case -- anet's rows say
+#    "Williams" and tfrrs says "Williams College" -- so it cannot be thrown
+#    away either.
+#
+# ★ SO THREE STRENGTHS, NOT TWO. An exact name is the strongest corroboration
+#   and earns the lowest athlete floor. A prefix is real but weaker, because
+#   "Oregon" is a prefix of "Oregon Episcopal" and those are two schools, so
+#   it earns a floor in between. No name relation at all falls back to the
+#   athletes alone. In every tier the athletes still have to agree AND out-vote
+#   the runner-up; the name only ever buys a lower floor.
+def _nameRelation(tfrrs_school, anet_school):
+    """'same', 'prefix', or None. Falls back to None -- never a match -- if
+    school_name cannot be imported, so a missing module only makes this
+    stricter."""
+    if not (tfrrs_school and anet_school):
+        return None
+    try:
+        from school_name import isPrefixOf, nameKey, relation
+    except Exception:                                 # noqa: BLE001
+        return None
+    if relation(tfrrs_school, anet_school) == "same":
+        return "same"
+    a, b = nameKey(tfrrs_school), nameKey(anet_school)
+    if a and a == b:
+        return "same"
+    if isPrefixOf(tfrrs_school, anet_school) or isPrefixOf(anet_school,
+                                                           tfrrs_school):
+        return "prefix"
+    return None
+
+
+def decide(counted, teams, min_athletes=MIN_ATHLETES, min_share=None,
+           margin=MARGIN, margin_named=MARGIN_NAMED,
+           min_athletes_named=MIN_ATHLETES_NAMED,
+           min_athletes_prefix=MIN_ATHLETES_PREFIX):
     """(links, rejected): a link per tfrrs string that has a clear winner.
-    Pure -- the bars are the whole decision, so they are testable."""
+    Pure -- the bars are the whole decision, so they are testable.
+
+    ! min_share IS ACCEPTED AND IGNORED unless given. It was the gate and is
+      now only a floor a caller can re-impose; passing it back is how the old
+      behaviour is reproduced for comparison.
+    """
     links, rejected = [], []
     for school, by_team in sorted(counted.items()):
         total = sum(v[0] for v in by_team.values())
-        team_id, (n_ath, n_seas) = max(by_team.items(),
-                                       key=lambda kv: (kv[1][0], -kv[0]))
+        ranked = sorted(by_team.items(), key=lambda kv: (-kv[1][0], kv[0]))
+        team_id, (n_ath, n_seas) = ranked[0]
+        runner = ranked[1][1][0] if len(ranked) > 1 else 0
         share = n_ath / total if total else 0.0
+        # no rival at all is an unbounded margin, not a division by zero
+        ratio = (float("inf") if runner == 0 else n_ath / float(runner))
         anet_school, state = teams.get(team_id, (None, None))
+        rel = _nameRelation(school, anet_school)
+        floor = {"same": min_athletes_named,
+                 "prefix": min_athletes_prefix}.get(rel, min_athletes)
+        want = margin_named if rel else margin
+        ok = (n_ath >= floor and ratio >= want
+              and (min_share is None or share >= min_share))
+        why = ("" if ok else
+               f"{n_ath} athletes < {floor}" if n_ath < floor else
+               f"margin {ratio:.1f}x < {want}x" if ratio < want else
+               f"share {share:.2f} < {min_share}")
         row = (school, team_id, state, "college", n_ath, n_seas,
-               round(share, 4), anet_school, len(by_team))
-        if n_ath >= min_athletes and share >= min_share:
-            links.append(row)
-        else:
-            rejected.append(row)
+               round(share, 4), anet_school, len(by_team),
+               ("name+athletes" if rel == "same" else
+                "prefix+athletes" if rel == "prefix" else "athletes"),
+               (None if ratio == float("inf") else round(ratio, 2)), why)
+        (links if ok else rejected).append(row)
     links.sort(key=lambda r: -r[4])
     rejected.sort(key=lambda r: -r[4])
     return links, rejected
@@ -395,7 +482,29 @@ def main():
     ap.add_argument("--write", action="store_true", help="without this, a dry run")
     ap.add_argument("--show", type=int, default=30)
     ap.add_argument("--min-athletes", type=int, default=MIN_ATHLETES)
-    ap.add_argument("--min-share", type=float, default=MIN_SHARE)
+    # ⚠ NO LONGER A GATE. Left as an OPT-IN floor so the old behaviour can be
+    #   reproduced for comparison -- see the comment above decide().
+    ap.add_argument("--min-share", type=float, default=None,
+                    help="re-impose the old share floor as an extra bar "
+                         "(pre-2026-09-18 behaviour; it rejected old "
+                         "programmes whose winner led 4-1-1-1)")
+    ap.add_argument("--margin", type=float, default=MARGIN,
+                    help="how many times the runner-up the winner must beat "
+                         "when only the athletes agree")
+    ap.add_argument("--margin-named", type=float, default=MARGIN_NAMED,
+                    help="... and when the anet team's own name is the same "
+                         "name, where two independent signals already agree")
+    ap.add_argument("--min-athletes-prefix", type=int,
+                    default=MIN_ATHLETES_PREFIX,
+                    help="athlete floor when the anet name is a word-PREFIX "
+                         "of the tfrrs name (Williams / Williams College). "
+                         "Higher than the exact tier because Oregon is a "
+                         "prefix of Oregon Episcopal.")
+    ap.add_argument("--min-athletes-named", type=int,
+                    default=MIN_ATHLETES_NAMED,
+                    help="athlete floor for that named tier. Never zero: "
+                         "\"Oregon\" names three schools and the athletes are "
+                         "what say which.")
     ap.add_argument("--tables", default="results,results_tf",
                     help="which result tables to gather evidence from. "
                          "`results` alone is the XC half and is much the "
@@ -432,7 +541,10 @@ def main():
         counted = votes(cur, teams, since=args.since,
                         tables=[t.strip() for t in args.tables.split(",")
                                 if t.strip()])
-        links, rejected = decide(counted, teams, args.min_athletes, args.min_share)
+        links, rejected = decide(counted, teams, args.min_athletes,
+                                 args.min_share, args.margin,
+                                 args.margin_named, args.min_athletes_named,
+                                 args.min_athletes_prefix)
         # ! BEFORE THE DETAIL, because it is the figure that decides whether
         #   the unresolved remainder is a footnote or the main event.
         for table, tot, got, pct in coverage(cur):
@@ -440,19 +552,35 @@ def main():
                   f"({pct:.1f}%) already have a linkable school string")
         print(f"\n  {len(counted):,} tfrrs school strings share an athlete-year "
               f"with an anet college team")
-        print(f"  {len(links):,} link (>= {args.min_athletes} athletes and "
-              f">= {args.min_share:.0%} of the string's votes); "
-              f"{len(rejected):,} do not and stay their own schools\n")
-        print(f"  {'tfrrs string':<34}{'team':>8} {'ST':<3} {'ath':>5} "
-              f"{'sea':>4} {'share':>6}  anet's name")
-        for sc, tid, st, _lv, n, ns, sh, anet_sc, _k in links[:args.show]:
+        n_same = sum(1 for r in links if r[9] == "name+athletes")
+        n_pref = sum(1 for r in links if r[9] == "prefix+athletes")
+        print(f"  {len(links):,} link: {n_same:,} exact name "
+              f"(>= {args.min_athletes_named} athletes), "
+              f"{n_pref:,} name-prefix (>= {args.min_athletes_prefix}), "
+              f"{len(links) - n_same - n_pref:,} athletes alone "
+              f"(>= {args.min_athletes}); "
+              f"{len(rejected):,} stay their own schools")
+        # ! MARGIN IS THE GATE NOW, share is printed because it is
+        #   informative. See the comment above decide().
+        if args.min_share is not None:
+            print(f"  (--min-share {args.min_share} re-imposed as an extra "
+                  f"floor, the pre-2026-09-18 behaviour)")
+        print(f"\n  {'tfrrs string':<34}{'team':>8} {'ST':<3} {'ath':>5} "
+              f"{'sea':>4} {'share':>6} {'margin':>7}  {'basis':<14} anet's name")
+        for r in links[:args.show]:
+            sc, tid, st, n, ns, sh, anet_sc = r[0], r[1], r[2], r[4], r[5], r[6], r[7]
+            mg = "inf" if r[10] is None else f"{r[10]:.1f}x"
             print(f"  {sc[:33]:<34}{tid:>8} {st or '--':<3} {n:>5} {ns:>4} "
-                  f"{sh:>6.0%}  {anet_sc}")
+                  f"{sh:>6.0%} {mg:>7}  {r[9]:<14} {anet_sc}")
         if rejected:
-            print(f"\n  NOT LINKED (the remainder, kept separate):")
-            for sc, tid, st, _lv, n, ns, sh, anet_sc, k in rejected[:args.show]:
+            print(f"\n  NOT LINKED (the remainder, kept separate) -- with the "
+                  f"bar each one missed:")
+            for r in rejected[:args.show]:
+                sc, tid, st, n, ns, sh, anet_sc, k = (r[0], r[1], r[2], r[4],
+                                                      r[5], r[6], r[7], r[8])
+                mg = "inf" if r[10] is None else f"{r[10]:.1f}x"
                 print(f"  {sc[:33]:<34}{tid:>8} {st or '--':<3} {n:>5} {ns:>4} "
-                      f"{sh:>6.0%}  {k} candidate team(s)  {anet_sc}")
+                      f"{sh:>6.0%} {mg:>7}  {r[11]:<24} {k} cand.  {anet_sc}")
         if not args.write:
             print("\n  DRY RUN -- nothing written. --write to store the links.\n")
             return 0
