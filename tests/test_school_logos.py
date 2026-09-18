@@ -2411,7 +2411,12 @@ class TeamSlug(unittest.TestCase):
     def test_the_column_is_added_to_both_tables_and_registered(self):
         db = read("scripts", "database.py")
         self.assertIn("def _migrateResultsAddTeamSlug(cursor):", db)
-        self.assertIn("_migrateResultsAddTeamSlug(cursor)\n", db)
+        # ⚠ NOT A CALL SPELLING ANY MORE. createTables runs its phases from a
+        #   tuple so it can commit between them (the deadlock fix); the
+        #   migration is named there, not called inline.
+        steps = db.split("for _step in (")[1].split("):")[0]
+        self.assertIn("_migrateResultsAddTeamSlug", steps)
+        self.assertIn("_step(cursor)", db)
         self.assertIn('for table in ("results", "results_tf"):', db)
         self.assertIn("ADD COLUMN IF NOT EXISTS team_slug TEXT", db)
 

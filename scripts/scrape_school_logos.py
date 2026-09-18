@@ -1462,11 +1462,13 @@ def sharedAlready(cur, sha, minimum=SHARED_MIN):
     flag it afterwards anyway; this stops it being written at all."""
     if not sha:
         return False
-    cur.execute("""SELECT count(DISTINCT school) FROM school_logo
-                   WHERE sha = %s""", (sha,))
-    row = cur.fetchone()
-    n = row[0] if not isinstance(row, dict) else list(row.values())[0]
-    return (n or 0) >= minimum
+    # ! FAMILIES, THE SAME COUNT markShared USES. Asking for distinct school
+    #   NAMES here while the sweep counts families would refuse to install a
+    #   crest the sweep would then not have flagged.
+    cur.execute("SELECT school FROM school_logo WHERE sha = %s", (sha,))
+    names = [r["school"] if isinstance(r, dict) else r[0]
+             for r in cur.fetchall()]
+    return len({_family(n) for n in names}) >= minimum
 
 
 def storedKind(cur, school, state, level=None):
@@ -1509,15 +1511,90 @@ def touch(cur, school, state):
                    WHERE school = %s AND state = %s""", (school, state))
 
 
+def _family(name):
+    """The institution FAMILY a name belongs to: its first two words.
+
+    ★ ONE UNIVERSITY'S CAMPUSES ARE NOT FOUR SCHOOLS (owner, 2026-09-18:
+      "Penn State still doesn't have a logo", reported four times). anet
+      serves the SAME Nittany Lions image for Penn State, Penn State Berks,
+      Penn State Shenango and the rest, so SHARED_MIN counted four distinct
+      names, called the crest a district placeholder, and the site drew
+      nothing -- for the one school whose crest was completely correct.
+
+    ! TWO WORDS, NOT A PREFIX WALK, and deliberately conservative. "Penn
+      State *" collapses to one family, which is the case being fixed.
+      "Lincoln High" and "Lincoln Middle" do NOT -- their second words
+      differ -- so a district placeholder across a town's schools still
+      flags exactly as before. Only names that agree on their first two
+      words merge, which is close to "the same institution" and far from
+      "the same town".
+
+    ! AND THE RULE THE SHARED SWEEP EXISTS FOR IS UNTOUCHED: one governing
+      body's logo on four hundred unrelated schools is four hundred
+      families.
+    """
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", str(name or "").lower()) if w]
+    return " ".join(words[:2]) if words else ""
+
+
 def sharedShas(rows, minimum=SHARED_MIN):
-    """{sha} worn by `minimum` or more DISTINCT schools. Distinct schools,
-    not rows: one school split into two state clusters legitimately wears
-    its own crest twice."""
+    """{sha} worn by `minimum` or more distinct institution FAMILIES.
+
+    Families, not rows and not names: one school split into two state
+    clusters wears its own crest twice, and one university's campuses wear
+    it a dozen times. Neither is a placeholder.
+    """
     by = {}
     for school, sha in rows:
         if sha:
-            by.setdefault(sha, set()).add(school)
-    return {sha for sha, schools in by.items() if len(schools) >= minimum}
+            by.setdefault(sha, set()).add(_family(school))
+    return {sha for sha, fams in by.items() if len(fams) >= minimum}
+
+
+def staleRows(cur):
+    """school_logo rows whose (school, state) is no longer a cluster.
+
+    ⚠ A REBUILD THAT MERGES A NAME LEAVES ITS OLD ROWS BEHIND (owner,
+      2026-09-18, via diag_crest): school_identity has ONE "Penn State"
+      cluster, in PA, and school_logo had Penn State rows under seventeen
+      states -- AR, AZ, CA, CT, FL, IA, IL, IN, KY, MD, MN, NJ, NY, OH, OR,
+      PA, VA -- all carrying the same image. Those sixteen are from the build
+      when the name had 28 clusters. anet_teams' --redo files crests under
+      the NEW pairs and deletes nothing, and its own docstring says so
+      without drawing the conclusion.
+
+      They are not harmless. Every one is another name+state wearing the
+      crest, they make the table unreadable when something goes wrong, and a
+      cluster that comes back under an old state inherits a crest nobody
+      re-checked.
+
+    ! NEVER A ROW A HUMAN SET. An override is a decision, and a rebuild is
+      not allowed to discard it.
+    """
+    if not _tableExists(cur, "school_identity"):
+        return []
+    cur.execute("""
+        SELECT l.school, l.state, l.level, l.kind
+        FROM   school_logo l
+        WHERE  COALESCE(btrim(l.state), '') <> ''
+          AND  l.override IS NULL
+          AND  NOT EXISTS (SELECT 1 FROM school_identity si
+                           WHERE si.school = l.school AND si.state = l.state)
+        ORDER  BY l.school, l.state
+    """)
+    return [(r["school"], r["state"], r["level"], r["kind"])
+            if isinstance(r, dict) else tuple(r) for r in cur.fetchall()]
+
+
+def pruneStale(cur, rows):
+    """Delete those rows. Returns how many went."""
+    n = 0
+    for school, state, level, _kind in rows:
+        cur.execute("""DELETE FROM school_logo
+                       WHERE school = %s AND state = %s AND level = %s""",
+                    (school, state, level or ""))
+        n += cur.rowcount
+    return n
 
 
 def markShared(cur, minimum=SHARED_MIN):
@@ -1805,6 +1882,11 @@ def main():
     ap.add_argument("--dir", default=None, help="where the PNGs go (default XCP_LOGO_DIR)")
     ap.add_argument("--sweep-only", action="store_true",
                     help="re-run the shared-crest sweep and stop")
+    ap.add_argument("--prune-stale", action="store_true",
+                    help="delete school_logo rows whose (school, state) is no "
+                         "longer a school_identity cluster -- leftovers from "
+                         "an identity rebuild. Overrides are never touched. "
+                         "Needs --write; --dry-run lists them.")
     ap.add_argument("--suspect", action="store_true",
                     help="only schools whose crest did NOT come from anet's "
                          "team page, worst first. The wrong-logo subset, "
@@ -1866,6 +1948,28 @@ def main():
             #   repair it was asked for.
             ensureTable(cur, DDL)
             ensureLevelKey(cur)
+
+            # ★ BEFORE ANYTHING ELSE, because the shared sweep counts these
+            #   rows and a stale one can tip a real crest over the bar.
+            if args.prune_stale:
+                stale = staleRows(cur)
+                print(f"  {len(stale):,} school_logo rows whose (school, "
+                      f"state) is no longer a cluster", flush=True)
+                for school, state, level, kind in stale[:25]:
+                    print(f"    {school} ({state}) level={level or '-'} "
+                          f"{kind}")
+                if len(stale) > 25:
+                    print(f"    ... and {len(stale) - 25:,} more")
+                if args.write and stale:
+                    print(f"  deleted {pruneStale(cur, stale):,}", flush=True)
+                    n = markShared(cur)
+                    print(f"  shared sweep re-run: {n:,} images are worn by "
+                          f"{SHARED_MIN}+ institution families", flush=True)
+                    conn.commit()
+                elif stale:
+                    print("  DRY RUN -- pass --write to delete them.")
+                return
+
             pairs = None
             if args.fix_multi:
                 pairs = damagedPairs(cur)

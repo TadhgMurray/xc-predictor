@@ -309,5 +309,127 @@ class ThereIsAWayToAskWhyACrestIsMissing(unittest.TestCase):
                 self.assertIn(gate, src)
 
 
+# ★★ WHY PENN STATE HAD NO LOGO, found by diag_crest rather than by a fifth
+#    guess (owner, 2026-09-18). Two separate faults, both in the STORE rather
+#    than the fetch -- its crest was correct the whole time.
+class OneUniversitysCampusesAreNotFourSchools(unittest.TestCase):
+    """anet serves the same Nittany Lions image for Penn State and its
+    campuses, so SHARED_MIN counted four distinct NAMES, called the crest a
+    district placeholder, and the site drew nothing."""
+
+    def setUp(self):
+        import re as _re
+        import io
+        import os
+        import ast
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "scrape_school_logos.py"),
+                     encoding="utf-8") as fh:
+            src = fh.read()
+        ns = {"re": _re}
+        for node in ast.parse(src).body:
+            if isinstance(node, ast.FunctionDef) and node.name in (
+                    "_family", "sharedShas"):
+                exec(ast.get_source_segment(src, node), ns)
+            if isinstance(node, ast.Assign) and getattr(
+                    node.targets[0], "id", "") == "SHARED_MIN":
+                exec(ast.get_source_segment(src, node), ns)
+        self.family = ns["_family"]
+        self.sharedShas = ns["sharedShas"]
+
+    def test_campuses_collapse_to_one_family(self):
+        fams = {self.family(n) for n in (
+            "Penn State", "Penn State Berks", "Penn State Shenango",
+            "Penn State-Behrend", "Penn State Abington")}
+        self.assertEqual(len(fams), 1)
+
+    def test_one_universitys_crest_is_not_a_placeholder(self):
+        rows = [(n, "sha1") for n in (
+            "Penn State", "Penn State Berks", "Penn State Shenango",
+            "Penn State Abington", "Penn State Altoona")]
+        self.assertNotIn("sha1", self.sharedShas(rows))
+
+    # ! AND THE RULE THE SWEEP EXISTS FOR IS UNTOUCHED.
+    def test_a_governing_body_logo_still_flags(self):
+        rows = [(n, "sha2") for n in (
+            "Acme High", "Brookside", "Cedar Valley", "Dunmore Area",
+            "Easton")]
+        self.assertIn("sha2", self.sharedShas(rows))
+
+    # ! CONSERVATIVE ON PURPOSE: a district placeholder across a town's
+    #   schools must behave exactly as before, so two words, not a prefix.
+    def test_a_towns_schools_are_still_separate_families(self):
+        self.assertNotEqual(self.family("Lincoln High"),
+                            self.family("Lincoln Middle"))
+
+    def test_the_install_check_counts_the_same_way(self):
+        """sharedAlready refusing on NAMES while the sweep counts FAMILIES
+        would refuse a crest the sweep would not have flagged."""
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "scrape_school_logos.py"),
+                     encoding="utf-8") as fh:
+            src = fh.read()
+        i = src.index("def sharedAlready(")
+        body = src[i:src.index("\ndef ", i + 10)]
+        self.assertIn("_family(", body)
+        self.assertNotIn("count(DISTINCT school)", body)
+
+
+class AnIdentityRebuildLeavesRowsBehind(unittest.TestCase):
+    """school_identity has ONE Penn State cluster, in PA; school_logo had
+    Penn State rows under seventeen states. Sixteen are from the build when
+    the name had 28 clusters, and --redo files under the new pairs without
+    deleting the old."""
+
+    @staticmethod
+    def _src():
+        import io
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with io.open(os.path.join(root, "scripts", "scrape_school_logos.py"),
+                     encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_stale_rows_can_be_found(self):
+        src = self._src()
+        self.assertIn("def staleRows(", src)
+        i = src.index("def staleRows(")
+        body = src[i:src.index("\ndef ", i + 10)]
+        self.assertIn("NOT EXISTS", body)
+        self.assertIn("school_identity", body)
+
+    # ⚠ AN OVERRIDE IS A DECISION. A rebuild must not discard one.
+    def test_it_never_touches_an_override(self):
+        src = self._src()
+        i = src.index("def staleRows(")
+        body = src[i:src.index("\ndef ", i + 10)]
+        self.assertIn("l.override IS NULL", body)
+
+    def test_a_stateless_row_is_not_called_stale(self):
+        """level-less, state-less rows are the deliberate any-state fallback."""
+        src = self._src()
+        i = src.index("def staleRows(")
+        body = src[i:src.index("\ndef ", i + 10)]
+        self.assertIn("COALESCE(btrim(l.state), '') <> ''", body)
+
+    def test_there_is_a_flag_and_it_needs_write(self):
+        src = self._src()
+        self.assertIn('ap.add_argument("--prune-stale"', src)
+        self.assertIn("if args.prune_stale:", src)
+        i = src.index("if args.prune_stale:")
+        block = src[i:i + 1200]
+        self.assertIn("DRY RUN", block)
+        self.assertIn("if args.write and stale:", block)
+
+    # ★ THE SWEEP MUST RE-RUN AFTER A PRUNE, or the rows it counted are gone
+    #   and the flags it set stay.
+    def test_pruning_re_runs_the_shared_sweep(self):
+        src = self._src()
+        i = src.index("if args.prune_stale:")
+        self.assertIn("markShared(cur)", src[i:i + 1200])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
