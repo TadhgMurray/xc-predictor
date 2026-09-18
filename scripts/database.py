@@ -851,6 +851,14 @@ def _createCoreTables(cursor):
             div_id          BIGINT PRIMARY KEY,
             meet_id         BIGINT,
             meet_name       TEXT,
+            -- ★ THE MEET'S OWN DATE (owner, 2026-09-18). It was only ever on
+            --   the RESULT rows, so a meet with zero results had no date
+            --   anywhere and "which meets from the last few months came back
+            --   empty" could not be asked -- the one question you ask about
+            --   an empty meet. meets_tf_meta.meet_date has carried it for
+            --   track all along; this is the same value for cross country,
+            --   from the same MeetDate field saveMeet already parses.
+            meet_date       TEXT,
             course_name     TEXT,
             distance        REAL,
             gps_lat         REAL,
@@ -1261,12 +1269,17 @@ def saveMeet(conn, meetData: dict, divData: dict):
     # .get() calls below can't raise. (The original indexed Location["Name"]
     # directly, which would KeyError on a meet missing Location.)
     location = meetData.get("Location", {}) or {}
- 
+
+    # Same parse as saveResult's, from the same field.
+    _raw = meetData.get("MeetDate", "") or ""
+    meet_date = _raw.split("T")[0] if _raw else None
+
     executeWithRetry(cursor, """
         INSERT INTO meets (
             div_id,
             meet_id,
             meet_name,
+            meet_date,
             course_name,
             distance,
             gps_lat,
@@ -1279,8 +1292,9 @@ def saveMeet(conn, meetData: dict, divData: dict):
             source,
             id_system
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (div_id) DO UPDATE SET
+            meet_date   = COALESCE(EXCLUDED.meet_date, meets.meet_date),
             course_name = EXCLUDED.course_name,
             distance    = EXCLUDED.distance,
             gps_lat     = EXCLUDED.gps_lat,
@@ -1294,6 +1308,7 @@ def saveMeet(conn, meetData: dict, divData: dict):
         divData["IDMeetDiv"],          # PK — must exist; bracket access on purpose
         meetData["ID"],
         meetData["Name"],
+        meet_date,
         location.get("Name"),          # course_name = venue name (6/22: course identity not in API)
         divData.get("Meters"),         # distance VARIES per division — never assume 5000
         location.get("Lat"),
