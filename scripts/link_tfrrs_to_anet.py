@@ -486,6 +486,19 @@ def write(cur, links):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--why", action="append", default=[], metavar="SUBSTR",
+                    help="explain one tfrrs school string's fate: every anet "
+                         "team its athletes vote for, that team's level, and "
+                         "which gate rejected the link. Repeatable. "
+                         "⚠ A STRING WITH NO CANDIDATES AT ALL is the common "
+                         "case and it is NOT a threshold problem -- it means "
+                         "no anet team on a college-named level shares an "
+                         "athlete with it, usually because anet has no college "
+                         "team for that school. The linker's ceiling is the "
+                         "size of that set (2,034 teams on code 8 when this "
+                         "was written, of which 1,943 are linked), so a miss "
+                         "is far more often missing anet coverage than a bar "
+                         "set too high.")
     ap.add_argument("--write", action="store_true", help="without this, a dry run")
     ap.add_argument("--show", type=int, default=30)
     ap.add_argument("--min-athletes", type=int, default=MIN_ATHLETES)
@@ -552,6 +565,49 @@ def main():
                                  args.min_share, args.margin,
                                  args.margin_named, args.min_athletes_named,
                                  args.min_athletes_prefix)
+        # ★★ --why: ONE STRING'S FATE, SPELLED OUT. Asked of Georgetown, the
+        #    question was never "which bar rejected it" but "does anet have a
+        #    Georgetown college team at all" -- and the two look identical in
+        #    the summary, so this separates them.
+        if args.why:
+            print(f"\n  === why, per named string ===")
+            low = {k.lower(): k for k in counted}
+            for pat in args.why:
+                hits = [orig for lk, orig in low.items() if pat.lower() in lk]
+                if not hits:
+                    print(f"\n  '{pat}': NO tfrrs string containing it shares "
+                          f"an athlete-year with any anet COLLEGE team.")
+                    print(f"      That is not a threshold: the string never "
+                          f"reached a vote. Either anet has no college team\n"
+                          f"      for the school, or its team sits on a level "
+                          f"code that loadTeamLevels did not name 'college'.\n"
+                          f"      Check with: scripts/anet_teams.py --school "
+                          f"'{pat}'")
+                    continue
+                for name in sorted(hits):
+                    by_team = counted[name]
+                    tot = sum(v[0] for v in by_team.values()) or 1
+                    rank = sorted(by_team.items(),
+                                  key=lambda kv: (-kv[1][0], kv[0]))
+                    print(f"\n  '{name}' -- {len(by_team)} candidate team(s), "
+                          f"{tot} athlete votes")
+                    print(f"      {'team':>8} {'votes':>6} {'share':>6} "
+                          f"{'seasons':>8}  anet name / state")
+                    for tid, (n_ath, n_seas) in rank[:8]:
+                        a_name, a_state = teams.get(tid, (None, None))
+                        print(f"      {tid:>8} {n_ath:>6} "
+                              f"{n_ath / tot:>5.0%} {n_seas:>8}  "
+                              f"{str(a_name)[:34]} / {a_state}")
+                    verdict = [r for r in links if r[0] == name]
+                    if verdict:
+                        r = verdict[0]
+                        print(f"      -> LINKED to {r[1]} ({r[7]}) by {r[9]}, "
+                              f"margin {r[10]}x")
+                    else:
+                        r = [x for x in rejected if x[0] == name]
+                        print(f"      -> NOT linked: "
+                              + (r[0][11] if r else "no candidate cleared"))
+
         # ! BEFORE THE DETAIL, because it is the figure that decides whether
         #   the unresolved remainder is a footnote or the main event.
         for table, tot, got, pct in coverage(cur):
