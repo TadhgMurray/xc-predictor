@@ -130,8 +130,28 @@ step() {
         say "  ok   $name"
         return 0
     fi
-    say "  FAIL $name  — CHAIN STOPPED (see $LOGDIR/$name.log)"
+    say "  FAIL $name  (see $LOGDIR/$name.log)"
     return 1
+}
+
+# step_fatal <name> <command...> -- a step whose failure MUST stop the chain.
+# ⚠ `step` USED TO CLAIM "CHAIN STOPPED" ITSELF AND IT WAS A LIE (2026-09-19).
+#   Whether a failure stops anything is the CALLER's `|| exit 1`, and the two
+#   steps written `|| true` -- team_identity and team_pool -- printed
+#   "CHAIN STOPPED" and then carried straight on to the solve. The 02:15 run's
+#   log says it twice and ran for another four and a half hours. A message that
+#   contradicts the next line of the same log is worse than no message: it sent
+#   the reader looking for a stop that never happened.
+#
+#   So the decision and the wording now live in one place each. step_fatal
+#   stops and says so; step returns and says only that it failed.
+step_fatal() {
+    local name="$1"; shift
+    if step "$name" "$@"; then
+        return 0
+    fi
+    say "  CHAIN STOPPED: $name feeds everything after it"
+    exit 1
 }
 
 : > "$PROG"
@@ -173,7 +193,7 @@ say "results/results_tf marked BUSY ($LOCK) — the scrape chain will wait"
 # The live artifact, on purpose: this chain exists to produce a solve, and a
 # solve has to read one curve. overnight_distance_curve.sh is the separate
 # script that fits VARIANTS to their own files and touches nothing.
-step curve "$PY" engine/fit_distance_exponent.py --fresh || exit 1
+step_fatal curve "$PY" engine/fit_distance_exponent.py --fresh
 
 # ----------------------------------------------- 1b. the ability question
 # ★ READ ONLY, AND THE MEASUREMENT THAT IS STILL MISSING (owner, 2026-09-19:
@@ -193,7 +213,7 @@ step ability_deciles "$PY" engine/diag_exponent_by_ability.py || true
 
 # ---------------------------------------------------------------- 2. pools
 # school_levels.pkl FIRST: it is the one the solve actually reads.
-step school_levels "$PY" scripts/build_school_levels.py || exit 1
+step_fatal school_levels "$PY" scripts/build_school_levels.py
 
 # Then the team-id pooling. Built and inspectable; consumed by nothing yet
 # (see the header). Not fatal to the chain for that exact reason -- a solve
@@ -223,8 +243,8 @@ fi
 # ! THE HOLDOUT AND THE LADDER ARE SKIPPED, as every documented run skips
 #   them: six to eight hours that do not change the site. Score the curve and
 #   the athlete prior afterwards with scripts/bracket_holdout.py instead.
-step solve bash deploy/run_pipeline.sh --from 5 \
-    --skip 08a_holdout,08b_ladder || exit 1
+step_fatal solve bash deploy/run_pipeline.sh --from 5 \
+    --skip 08a_holdout,08b_ladder
 
 rm -f "$LOCK"
 say "results/results_tf released — the scrape chain may retry meets now"
