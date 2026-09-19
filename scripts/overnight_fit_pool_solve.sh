@@ -79,6 +79,15 @@ PROG="$LOGDIR/00-progress.log"
 
 say() { echo "[$(date '+%F %T')] $*" | tee -a "$PROG"; }
 
+# ★ THE TABLE LOCK. backfill and the solve SWAP results / results_tf, and the
+#   meet scrapers WRITE to them -- a row written mid-rebuild lands in
+#   <table>_old and is lost. overnight_logos.sh waits on this marker before it
+#   retries any meet, so the two chains can run at the same time without one
+#   of them quietly dropping rows. Removed on every exit path, including a
+#   kill: an orphaned marker would block the other chain for ever.
+LOCK="$LOGDIR/RESULTS-BUSY"
+trap 'rm -f "$LOCK"' EXIT INT TERM
+
 # step <name> <command...>
 # ★ A FAILING STEP STOPS THE CHAIN HERE, unlike the scrape script. These
 #   stages FEED each other: solving on a half-built school_levels.pkl or a
@@ -104,12 +113,26 @@ wait_for_team_scrape say
 #   from under writers; a row written mid-rebuild lands in <table>_old and is
 #   lost (scripts/pipeline.py's own header). Warn loudly rather than kill
 #   something the owner may be running on purpose.
-if [ -n "$(pgrep -f 'launcher\.py' || true)" ]; then
-    say "⚠⚠ launcher.py IS RUNNING. backfill and the solve swap results/"
-    say "   results_tf out from under it and rows written mid-rebuild are"
-    say "   LOST. Stop it before this reaches the backfill stage, or re-run"
-    say "   with SKIP_SOLVE=1 to do only the curve and the pools."
-fi
+# ! THE MEET SCRAPERS, NOT THE TEAM SCRAPER. anet_teams.py writes anet_team
+#   and cannot collide with anything here; the meet drivers write results /
+#   results_tf, which the backfill and the solve SWAP, and a row written
+#   mid-rebuild lands in <table>_old and is lost. So this warns about those
+#   two and says which it means -- an earlier version said "the launcher",
+#   which meant nothing to the one person who had to act on it.
+for drv in "launcher.py" "launch_tfrrs.py"; do
+    if [ -n "$(pgrep -f "$drv" || true)" ]; then
+        say "⚠⚠ $drv IS RUNNING and it writes results/results_tf, which the"
+        say "   backfill and the solve swap. Rows it writes mid-rebuild are"
+        say "   LOST. Stop it before this reaches the backfill, or re-run with"
+        say "   SKIP_SOLVE=1 for the curve and pools only."
+    fi
+done
+
+# The lock covers the whole chain, not just the solve step: the curve and the
+# pools are what the backfill will read, so a scrape landing rows between them
+# and the backfill would be normalised by artifacts it never saw.
+: > "$LOCK"
+say "results/results_tf marked BUSY ($LOCK) — the scrape chain will wait"
 
 # ---------------------------------------------------------------- 1. curve
 # The live artifact, on purpose: this chain exists to produce a solve, and a
@@ -147,7 +170,8 @@ step team_pool     "$PY" engine/build_team_pool.py       || true
 step link_tfrrs    "$PY" scripts/link_tfrrs_to_anet.py   || true
 
 if [ "${SKIP_SOLVE:-0}" = "1" ]; then
-    say "SKIP_SOLVE=1 — stopping before anything writes to results"
+    rm -f "$LOCK"
+    say "SKIP_SOLVE=1 — stopping before anything writes to results; released"
     say "done. read $LOGDIR/curve.log and $LOGDIR/school_levels.log"
     exit 0
 fi
@@ -157,6 +181,9 @@ fi
 # bookkeeping between them. --from backfill skips its clean/weather stages,
 # which is right here: nothing above touched the weather artifacts.
 step solve "$PY" scripts/pipeline.py --sport "$SPORT" --from backfill || exit 1
+
+rm -f "$LOCK"
+say "results/results_tf released — the scrape chain may retry meets now"
 
 say "done. read in this order:"
 say "  $LOGDIR/curve.log          — SHAPE TEST (ms_*/elem_* only), and whether"

@@ -17,10 +17,26 @@
 #   school_logo and meet_queue against distance_spline.pkl, school_levels.pkl
 #   and results -- so the two scripts can and should run at the same time.
 #
-# ⚠ THE RETRIED MEETS LAND IN THE *NEXT* SOLVE, NOT TONIGHT'S. New rows arrive
-#   after the backfill has already run, so they carry no normalized_time from
-#   this cycle. That is the cost of not blocking the solve on a crawl, and it
-#   is the right trade: 143 meets against the whole corpus.
+# ⚠⚠ AND THE MEET RETRIES WAIT FOR THE COMPUTE CHAIN, WHICH THE FIRST VERSION
+#    OF THIS SCRIPT GOT WRONG. The claim "nothing here shares a table with the
+#    compute chain" was false: the meet scrapers WRITE results / results_tf and
+#    backfill + the solve SWAP those exact tables, so a row scraped mid-rebuild
+#    lands in <table>_old and is lost. The crests really are independent
+#    (school_logo), so they still start immediately; only the retries wait, on
+#    the RESULTS-BUSY marker the compute chain holds.
+#
+# ⚠ THE RETRIED MEETS THEREFORE LAND IN THE *NEXT* SOLVE. They arrive after the
+#   backfill, so they carry no normalized_time from this cycle. That is the
+#   cost of not letting a crawl gate the ratings, and the right trade at 143
+#   meets against the whole corpus.
+#
+# ⚠⚠ AND THE RETRY IS AN ENVIRONMENT VARIABLE, NOT A FLAG. launcher.py has NO
+#    argparse at all -- `launcher.py --retry-failed` is silently ignored and it
+#    starts an ordinary FORWARD scrape of the whole queue. Unattended, at
+#    night, that is much worse than an error, and the first version of this
+#    script did exactly that. The switches are ANET_RETRY_FAILED=1 and, for
+#    the 22 tfrrs meets of the 143, TFRRS_RETRY_FAILED=1 on its own driver --
+#    two separate programs, and the anet launcher does not cover tfrrs.
 #
 # ! A FAILING STEP DOES NOT STOP THE CHAIN. Unlike the compute chain, these
 #   stages do not feed each other -- crests and meet retries are independent,
@@ -51,7 +67,7 @@ say() { echo "[$(date '+%F %T')] $*" | tee -a "$PROG"; }
 step() {
     local name="$1"; shift
     say "START $name"
-    if "$@" > "$LOGDIR/$name.log" 2>&1; then
+    if env "$@" > "$LOGDIR/$name.log" 2>&1; then
         say "  ok   $name"
         return 0
     fi
@@ -65,21 +81,50 @@ say "python: $PY"
 wait_for_team_scrape say
 
 # ------------------------------------------------------------- 1. crests
+# The crests are genuinely independent -- school_logo, which nothing else
+# writes -- so they do not wait for anything.
 step logos "$PY" scripts/scrape_school_logos.py || true
 
 # -------------------------------------------------------- 2. failed meets
-# 143 real meets: 121 anet stranded in state 3, 22 tfrrs. --retry-failed
-# claims states (2,3) directly and skips the startup reset, so it cannot take
-# the whole queue with it.
+# 143 real meets: 121 anet stranded in state 3, 22 tfrrs. The retry mode claims
+# states (2,3) directly and skips the startup reset, so it cannot take the
+# whole queue with it.
 if [ "${SKIP_MEETS:-0}" != "1" ]; then
-    step retry_meets "$PY" scripts/launcher.py --retry-failed || true
+    LOCK="engine/data/overnight/compute/RESULTS-BUSY"
+    if [ -e "$LOCK" ]; then
+        say "waiting: the compute chain holds results/results_tf ($LOCK)."
+        say "  Scraping into a table mid-rebuild loses the rows, so the"
+        say "  retries wait. The crests above already ran."
+        # ! BOUNDED. If the compute chain dies without clearing its marker the
+        #   trap should have removed it, but a hard kill -9 cannot run a trap.
+        #   Six hours is longer than any solve here and short enough that this
+        #   script still finishes overnight.
+        waited=0
+        while [ -e "$LOCK" ] && [ "$waited" -lt 21600 ]; do
+            sleep 60
+            waited=$((waited + 60))
+        done
+        if [ -e "$LOCK" ]; then
+            say "  STILL held after 6h — skipping the meet retries rather than"
+            say "  risk scraping into a table being swapped. Re-run this script"
+            say "  once the compute chain is done."
+            SKIP_MEETS=1
+        else
+            say "  released after $((waited / 60))m; continuing"
+        fi
+    fi
+fi
+if [ "${SKIP_MEETS:-0}" != "1" ]; then
+    step retry_anet  ANET_RETRY_FAILED=1  "$PY" scripts/launcher.py || true
+    step retry_tfrrs TFRRS_RETRY_FAILED=1 "$PY" tfrrs/driver/launch_tfrrs.py || true
 else
     say "SKIP_MEETS=1 — the 143 failed meets left alone"
 fi
 
 say "done. read:"
 say "  $LOGDIR/logos.log        — crest coverage, now that every team id exists"
-say "  $LOGDIR/retry_meets.log  — of the 143, how many are still failed"
+say "  $LOGDIR/retry_anet.log   — of the 121 anet meets, how many are still failed"
+say "  $LOGDIR/retry_tfrrs.log  — and the 22 tfrrs ones"
 say ""
 say "! the retried meets have no normalized_time from tonight's backfill."
 say "  They join the corpus at the next run of overnight_fit_pool_solve.sh."
