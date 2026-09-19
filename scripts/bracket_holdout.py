@@ -102,6 +102,13 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
                 e = y[mm] - pred[mm]
                 out["by_sport"][name] = (float(e.std()), int(mm.sum()))
                 print(f"        {name}: {e.std():.6f}  ({int(mm.sum()):,} rows)")
+    # ★ THE SAME-ROWS COMPARISON GOES BEFORE THE JOINT-MODEL BLOCK, so it sits
+    #   next to the headline it is correcting.
+    if compare:
+        out["window_compare"] = _compareRuns(compare, cov, pred, y, test_s,
+                                             pct, seed, era_years, window)
+    if dump:
+        _dumpRun(dump, cov, pred, y, test_s, pct, seed, era_years, window)
     base_log = os.path.join(_ROOT, "engine", "data", "ladder_logs", "base.log")
     line = None
     if os.path.exists(base_log):
@@ -123,7 +130,7 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
                                 races_at_cell=f["races_per_base"][np.asarray(f["base_of_cell"])[
                                     np.maximum(f["cell"], 0)]],
                                 rows_at_athlete=_rowsPerAthleteSeason(
-                                    cols, train_s))
+                                    sub, train_s))
     return out
 
 
@@ -136,6 +143,65 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
 # ! TRAINING ROWS ONLY, AND EXCLUDING THE ROW ITSELF IS NOT NEEDED HERE: a
 #   held-out row is by construction not in train_s, so its own athlete count
 #   is already the evidence the engine actually had.
+# _dumpRun / _compareRuns
+# Purpose:   Score two runs on the ROWS BOTH COVER, which is the only fair way
+#            to compare settings that change COVERAGE.
+#
+# ⚠ WHY THIS EXISTS. The first window experiment (2026-09-19) read:
+#       window 21   error sd 0.041938   covered 63.1%   XC 0.046661
+#       window 45   error sd 0.042507   covered 69.3%   XC 0.047595
+#   and 45 looks worse. But it covers 6.2 points MORE of the corpus, and the
+#   rows it adds are exactly the ones that had no sibling race within 21 days
+#   -- the hardest rows there are. So the two numbers are computed on
+#   different populations and the comparison is confounded: a setting that
+#   reaches further into the thin tail is penalised for reaching.
+#
+# ★ THE SAMPLE IS IDENTICAL ACROSS RUNS WITH THE SAME --pct AND --seed, and
+#   in the same order, so the arrays align elementwise and no row ids are
+#   needed. The signature is stored and checked anyway, because a silently
+#   misaligned comparison would be worse than no comparison.
+def _dumpRun(path, cov, pred, y, test_s, pct, seed, era_years, window):
+    np.savez_compressed(
+        path, cov=np.asarray(cov), pred=np.asarray(pred, dtype=np.float32),
+        y=np.asarray(y, dtype=np.float32), test=np.asarray(test_s),
+        sig=np.asarray([float(pct), float(seed), float(era_years),
+                        float(len(cov))]), window=np.asarray([float(window)]))
+    print(f"        dumped this run to {path} "
+          f"(compare another with --compare {path})")
+
+
+def _compareRuns(path, cov, pred, y, test_s, pct, seed, era_years, window):
+    if not os.path.exists(path):
+        print(f"        --compare: no dump at {path}; run the other setting "
+              f"first with --dump {path}")
+        return None
+    d = np.load(path)
+    sig = d["sig"]
+    mine = [float(pct), float(seed), float(era_years), float(len(cov))]
+    if list(sig) != mine:
+        print(f"        --compare REFUSED: the dump was made with "
+              f"pct/seed/era/rows {list(sig)} and this run is {mine}. The "
+              f"samples differ, so the rows do not align.")
+        return None
+    other_w = float(d["window"][0])
+    both = np.asarray(test_s) & np.asarray(cov) & d["cov"]
+    if not both.any():
+        print("        --compare: no row is covered by both runs")
+        return None
+    e_mine = float((np.asarray(y)[both] - np.asarray(pred)[both]).std())
+    e_other = float((d["y"][both] - d["pred"][both]).std())
+    print(f"\n[bracket] SAME ROWS, BOTH WINDOWS: {int(both.sum()):,} held-out "
+          f"rows covered by both")
+    print(f"        window {window:g}: {e_mine:.6f}     "
+          f"window {other_w:g}: {e_other:.6f}")
+    better = f"{window:g}" if e_mine < e_other else f"{other_w:g}"
+    print(f"        -> window {better} wins on the rows both can score. This "
+          f"is the comparison;\n           the headline sds are not, because "
+          f"they are computed on different rows.")
+    return dict(n=int(both.sum()), sd_this=e_mine, sd_other=e_other,
+                window_this=float(window), window_other=other_w)
+
+
 def _priorAthlete(text):
     """'fit' stays a string; anything else becomes a float.
 
@@ -147,9 +213,23 @@ def _priorAthlete(text):
     return be.PRIOR_FIT if t == be.PRIOR_FIT else float(t or 0.0)
 
 
-def _rowsPerAthleteSeason(cols, train_s):
-    ath = np.asarray(cols["athlete"]).astype(np.int64)
-    year = np.asarray(cols["year"]).astype(np.int64)
+def _rowsPerAthleteSeason(sub, train_s):
+    # ⚠ sub, NOT cols. train_s, test_s, pred, y and cov are all over the
+    #   SAMPLE (bk.subsetCols(cols, both)), not the whole pack -- 8,986,323
+    #   rows against 62,805,298. Indexing the full pack with the sample's mask
+    #   raised "boolean index did not match indexed array along axis 0" AFTER
+    #   the headline numbers had printed, so the run was not wasted, but the
+    #   by-athlete table never appeared. The other two arrays at this call site
+    #   (races_at_cell, from f["cell"]) are sample-shaped for the same reason;
+    #   full_ath/full_year/full_norm are passed separately and ARE the pack,
+    #   which is what made the mistake easy to make.
+    ath = np.asarray(sub["athlete"]).astype(np.int64)
+    year = np.asarray(sub["year"]).astype(np.int64)
+    n_mask = int(np.asarray(train_s).size)
+    if ath.size != n_mask:
+        raise AssertionError(
+            f"_rowsPerAthleteSeason: {ath.size:,} rows but a {n_mask:,}-row "
+            f"mask. Pass the SAMPLE (sub), not the pack (cols).")
     key = ath * 10_000 + year
     uniq, inv = np.unique(key, return_inverse=True)
     counts = np.bincount(inv[np.asarray(train_s, dtype=bool)],
@@ -339,6 +419,14 @@ def main():
                          "'fit' and read the 'by training rows behind the "
                          "ATHLETE' table: thin buckets should improve and fat "
                          "ones should not get worse.")
+    ap.add_argument("--dump", default=None, metavar="PATH",
+                    help="write this run's per-row held-out predictions, so "
+                         "another run can be scored on the SAME rows")
+    ap.add_argument("--compare", default=None, metavar="PATH",
+                    help="a --dump from another run: print both on the rows "
+                         "BOTH cover. Use this whenever the setting changes "
+                         "coverage (--window does), because the headline sds "
+                         "are computed on different populations otherwise.")
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--no-tilt", action="store_true")
     ap.add_argument("--no-curve", action="store_true")
@@ -363,7 +451,8 @@ def main():
           window=args.window, top=args.top, prior_races=args.prior_races,
           prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
           use_curve=not args.no_curve, gauge=args.gauge,
-          prior_athlete=_priorAthlete(args.prior_athlete))
+          prior_athlete=_priorAthlete(args.prior_athlete),
+          dump=args.dump, compare=args.compare)
 
 
 if __name__ == "__main__":
