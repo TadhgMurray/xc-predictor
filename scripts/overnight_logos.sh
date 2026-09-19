@@ -83,7 +83,7 @@ wait_for_team_scrape say
 # ------------------------------------------------------------- 1. crests
 # The crests are genuinely independent -- school_logo, which nothing else
 # writes -- so they do not wait for anything.
-step logos "$PY" scripts/scrape_school_logos.py || true
+step logos "$PY" scripts/scrape_school_logos.py --write --retry-failed || true
 
 # -------------------------------------------------------- 2. failed meets
 # 143 real meets: 121 anet stranded in state 3, 22 tfrrs. The retry mode claims

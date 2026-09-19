@@ -220,8 +220,8 @@ step_fatal school_levels "$PY" scripts/build_school_levels.py
 # does not depend on them, so a failure here must not block one.
 say "team_pool IS read by the solve below (the 15-athlete rule);"
 say "team_identity and the tfrrs link are built and inspectable only"
-step team_identity "$PY" racecast/build_team_identity.py || true
-step team_pool     "$PY" engine/build_team_pool.py       || true
+step team_identity "$PY" racecast/build_team_identity.py --write || true
+step team_pool     "$PY" engine/build_team_pool.py       --write || true
 # ! NOT link_tfrrs_to_anet HERE. It is pipeline stage 10b0_tfrrs_link, with
 #   --write, and running it early without --write printed a verdict and
 #   changed nothing.
