@@ -600,6 +600,22 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   0.01): with a few race days per era that number, against
   #   sigma_u / sqrt(days), decides how far a venue can move. The holdout
   #   carries the same.
+  # ★ XCP_BRACKET_WINDOW (days, default 21): how far either side of a race
+  #   the engine looks for the athlete's OTHER rows when forming their level.
+  #   run_joint has taken --bracket-window since it existed and this file has
+  #   never passed it, so the knob was unreachable from a pipeline run
+  #   (2026-09-19). MEASURED on the same held-out rows, which is the only fair
+  #   way to compare it since a wider window also changes COVERAGE:
+  #
+  #       SAME ROWS, BOTH WINDOWS: 571,290 rows covered by both
+  #         window 45: 0.041434     window 21: 0.041938
+  #
+  #   45 wins by 1.2% relative, and separately lifts coverage 63.1% -> 69.3%.
+  #   Read the headline sds and 45 looks WORSE (0.042507 against 0.041938),
+  #   because it is scoring 6.2 points more of the corpus and the rows it adds
+  #   are the ones with no sibling race within 21 days -- the hardest there
+  #   are. Use scripts/bracket_holdout.py --dump/--compare, never the
+  #   headlines, to judge this one.
   # ★ XCP_BRACKET_PRIOR: the bracket engine's course prior in races, per
   #   group (XC, outdoor track, indoor track). Default "fit": read from
   #   the courses with 2+ races and printed; "XC=1,TF:out=2.5,TF:in=1"
@@ -631,6 +647,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       --outer "${XCP_OUTER:-5}" \
       ${XCP_DIFFICULTY:+--difficulty "$XCP_DIFFICULTY"} \
       ${XCP_BRACKET_PRIOR:+--bracket-prior "$XCP_BRACKET_PRIOR"} \
+      ${XCP_BRACKET_WINDOW:+--bracket-window "$XCP_BRACKET_WINDOW"} \
       ${XCP_TRACK_LEVEL_BY_POOL:+--track-level-by-pool "$XCP_TRACK_LEVEL_BY_POOL"} \
       ${XCP_BRACKET_PLACE_RADIUS:+--bracket-place-radius "$XCP_BRACKET_PLACE_RADIUS"} \
       ${XCP_BRACKET_PLACE_PRIOR:+--bracket-place-prior "$XCP_BRACKET_PLACE_PRIOR"} \

@@ -35,6 +35,24 @@
 : "${XCP_ERA_YEARS:=2}"             # course eras, in years
 : "${XCP_ALTITUDE:=1}"              # altitude correction on
 : "${XCP_INDOOR_LEVEL:=0.003}"      # indoor's level against outdoor
+# ★ UNSET ON PURPOSE, WITH A MEASUREMENT BEHIND IT. run_joint's default is 21
+#   days. On the SAME held-out rows -- the only fair comparison, because a
+#   wider window also changes coverage -- 45 beats 21:
+#
+#       SAME ROWS, BOTH WINDOWS: 571,290 rows covered by both
+#         window 45: 0.041434     window 21: 0.041938      (-1.2% relative)
+#
+#   and coverage rises 63.1% -> 69.3%, which is 28,000 more XC rows getting a
+#   rating at all. The headline sds say the opposite (45 reads 0.042507) only
+#   because 45 scores the harder rows 21 could not reach.
+#
+#   It is left unset rather than set to 45 because 45 was the only alternative
+#   tried. Sweep it before adopting one:
+#     for w in 30 45 60 90; do
+#       scripts/bracket_holdout.py --pct 15 --seed 11 --era-years 2 #           --window "$w" --compare /tmp/w21.npz
+#     done
+#   (dump the 21 baseline once with --window 21 --dump /tmp/w21.npz.)
+# : "${XCP_BRACKET_WINDOW:=45}"
 # ⚠ LEAVE THIS AT none. I argued for `field` here on 2026-09-19 and the owner
 #   refuted it on the spot, with the right instrument: if an untapered
 #   championship field were the cause, NXN AND FOOT LOCKER WOULD BOTH SHOW IT,
@@ -57,4 +75,5 @@ export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 XCP_INDOOR_LEVEL XCP_IMPORTANCE XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
 XCP_SPORT_LEVEL_POOLS XCP_BRACKET_PRIOR XCP_BRACKET_PLACE_RADIUS \
-XCP_BRACKET_PLACE_PRIOR XCP_COURSE_SCALE XCP_FROM_STATE XCP_PROBES"
+XCP_BRACKET_PLACE_PRIOR XCP_BRACKET_WINDOW XCP_COURSE_SCALE \
+XCP_FROM_STATE XCP_PROBES"
