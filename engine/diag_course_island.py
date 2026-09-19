@@ -74,6 +74,28 @@ import bracket as bk                                            # noqa: E402
 import bracket_engine as be                                     # noqa: E402
 
 
+# _defaultPack / _defaultState
+# Purpose:   The paths run_joint itself uses, asked of run_joint rather than
+#            retyped.
+# ⚠ I HARD-CODED engine/data/pack.npz IN TWO NEW SCRIPTS AND IT DOES NOT EXIST
+#   (2026-09-19). The pack is `packed_XC_TF.npz` -- five other scripts spell it
+#   that way and run_joint's own --pack default is authoritative -- so both
+#   scripts failed at once and told the reader to rebuild a pack that was
+#   already on disk under its real name. Asking the parser removes the chance
+#   of a sixth spelling.
+def _defaultPack():
+    try:
+        import run_joint as rj
+        return rj.buildParser().get_default("pack")
+    except Exception:                                            # noqa: BLE001
+        return os.path.join(_ROOT, "engine", "data", "packed_XC_TF.npz")
+
+
+def _defaultState():
+    return os.path.join(_ROOT, "engine", "data",
+                        "joint_difficulty_state.npz")
+
+
 # _matchCells
 # Purpose:   The cell indices whose key contains any of the patterns, matched
 #            case-insensitively on the key string.
@@ -103,10 +125,8 @@ def main():
     ap = argparse.ArgumentParser(
         description="Is a pair of courses an island whose shared level is "
                     "shrunk toward the average course?")
-    ap.add_argument("--pack", default=os.path.join(_ROOT, "engine", "data",
-                                                  "pack.npz"))
-    ap.add_argument("--npz", default=os.path.join(
-        _ROOT, "engine", "data", "joint_difficulty_state.npz"),
+    ap.add_argument("--pack", default=_defaultPack())
+    ap.add_argument("--npz", default=_defaultState(),
         help="the solve state, for races_per_cell and the fitted priors")
     ap.add_argument("--course", action="append", default=[],
                     help="a substring of the course KEY; repeatable")

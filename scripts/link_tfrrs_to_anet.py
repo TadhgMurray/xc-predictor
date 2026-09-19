@@ -361,6 +361,41 @@ MIN_ATHLETES_NAMED = 3    # the anet team's name IS this name
 MIN_ATHLETES_PREFIX = 4   # ... is a word-prefix of it
 
 
+# ★★ THE SUPERMAJORITY TIER (owner, 2026-09-19: "sure you can make that
+#    decision"). A third route to a link, for the case the margin test cannot
+#    see.
+#
+#  ⚠ WHAT THE MARGIN TEST GETS WRONG. It asks "does the winner beat the
+#    runner-up by Nx", which is the right question when the rival is noise and
+#    the WRONG question when the rival is a same-named sibling college. From
+#    the 2026-09-19 dry run, all rejected on margin alone:
+#
+#        Carroll                 342 athletes  63% share  1.7x   Carroll (Wis.)
+#        Ottawa                  292           46%        1.2x   Ottawa (Kan.)
+#        Northwestern University  93           64%        1.8x   NU Club
+#        Illinois State Univ.     61           55%        1.2x   Illinois State
+#
+#    Carroll has THREE HUNDRED AND FORTY-TWO athletes agreeing, and is refused
+#    because Carroll (Mont.) also collects votes. Three hundred agreeing
+#    athletes is not a thin signal that a 1.7x ratio should veto; the ratio is
+#    low precisely BECAUSE both schools are real and both are in the corpus.
+#
+#  ★ SO THIS TIER TRADES THE MARGIN FOR VOLUME AND A SHARE, AND DEMANDS THE
+#    NAME. Only an exact or prefix name match qualifies -- the blind tier keeps
+#    its 3x margin untouched, because without a name the margin is the only
+#    protection there is.
+#
+#  ! IT IS STRICTER THAN IT LOOKS, AND DELIBERATELY SO, given "I'd prefer to
+#    separate more than over merge". 50 athletes is an order of magnitude above
+#    the named floor of 3, and a 60% share means the winner holds a clear
+#    majority of ALL votes, not just more than the next one. Ottawa (46%) and
+#    Illinois State (55%) still fail it -- they are genuinely ambiguous and stay
+#    separate. Carroll and Northwestern pass. That is the line: a supermajority
+#    of a large vote, or nothing.
+SUPERMAJORITY_ATHLETES = 50    # a vote this large is not thin evidence
+SUPERMAJORITY_SHARE = 0.60     # ... and the winner holds a clear majority
+
+
 # ⚠⚠ "Williams" vs "Williams College" IS A PREFIX, NOT "same", and that is
 #    deliberate upstream: school_name._SUFFIX_NOISE refuses to strip level
 #    words because Adrian College and Adrian Middle School are one string
@@ -398,7 +433,9 @@ def _nameRelation(tfrrs_school, anet_school):
 def decide(counted, teams, min_athletes=MIN_ATHLETES, min_share=None,
            margin=MARGIN, margin_named=MARGIN_NAMED,
            min_athletes_named=MIN_ATHLETES_NAMED,
-           min_athletes_prefix=MIN_ATHLETES_PREFIX):
+           min_athletes_prefix=MIN_ATHLETES_PREFIX,
+           super_athletes=SUPERMAJORITY_ATHLETES,
+           super_share=SUPERMAJORITY_SHARE):
     """(links, rejected): a link per tfrrs string that has a clear winner.
     Pure -- the bars are the whole decision, so they are testable.
 
@@ -422,8 +459,20 @@ def decide(counted, teams, min_athletes=MIN_ATHLETES, min_share=None,
         want = margin_named if rel else margin
         ok = (n_ath >= floor and ratio >= want
               and (min_share is None or share >= min_share))
+        # ★ THE SUPERMAJORITY ROUTE, checked only when the margin route failed
+        #   and only with a NAME. See SUPERMAJORITY_ATHLETES.
+        by_super = False
+        if (not ok and rel and n_ath >= floor
+                and n_ath >= super_athletes and share >= super_share
+                and (min_share is None or share >= min_share)):
+            ok, by_super = True, True
         why = ("" if ok else
                f"{n_ath} athletes < {floor}" if n_ath < floor else
+               # ! AND WHEN THE MARGIN FAILED, SAY WHETHER THE SUPERMAJORITY
+               #   ROUTE WAS EVEN AVAILABLE. "margin 1.2x < 3.0x" on a string
+               #   with no name match is a different situation from the same
+               #   line on one with 46% of a 292-vote majority, and a reader
+               #   deciding whether a bar is wrong needs to see which.
                # ! THREE DECIMALS, BECAUSE ONE PRODUCED A CONTRADICTION.
                #   The table prints round(ratio, 2) at .1f and this string
                #   printed the same number at .1f from the raw value, so
@@ -432,11 +481,16 @@ def decide(counted, teams, min_athletes=MIN_ATHLETES, min_share=None,
                #   the bar. It was never a comparison bug; it was 1.95 shown
                #   two ways. A rejection has to show enough digits to be
                #   believed.
-               f"margin {ratio:.3f}x < {want}x" if ratio < want else
+               (f"margin {ratio:.3f}x < {want}x"
+                + ("" if not rel else
+                   f", and supermajority needs {super_athletes}+ athletes at "
+                   f"{super_share:.0%} (has {n_ath} at {share:.0%})"))
+               if ratio < want else
                f"share {share:.2f} < {min_share}")
         row = (school, team_id, state, "college", n_ath, n_seas,
                round(share, 4), anet_school, len(by_team),
-               ("name+athletes" if rel == "same" else
+               ("supermajority" if by_super else
+                "name+athletes" if rel == "same" else
                 "prefix+athletes" if rel == "prefix" else "athletes"),
                (None if ratio == float("inf") else round(ratio, 2)), why)
         (links if ok else rejected).append(row)
@@ -528,6 +582,18 @@ def main():
                          "of the tfrrs name (Williams / Williams College). "
                          "Higher than the exact tier because Oregon is a "
                          "prefix of Oregon Episcopal.")
+    ap.add_argument("--supermajority-athletes", type=int,
+                    default=SUPERMAJORITY_ATHLETES,
+                    help="the third route to a link: this many athletes AND "
+                         "--supermajority-share of the votes AND a name match "
+                         "links even when the margin fails, because a "
+                         "same-named sibling college depresses the ratio "
+                         "precisely by being real. 0 disables the tier. See "
+                         "SUPERMAJORITY_ATHLETES.")
+    ap.add_argument("--supermajority-share", type=float,
+                    default=SUPERMAJORITY_SHARE,
+                    help="the share the winner must hold for that route "
+                         "(default %(default)s)")
     ap.add_argument("--min-athletes-named", type=int,
                     default=MIN_ATHLETES_NAMED,
                     help="athlete floor for that named tier. Never zero: "
@@ -569,10 +635,16 @@ def main():
         counted = votes(cur, teams, since=args.since,
                         tables=[t.strip() for t in args.tables.split(",")
                                 if t.strip()])
-        links, rejected = decide(counted, teams, args.min_athletes,
-                                 args.min_share, args.margin,
-                                 args.margin_named, args.min_athletes_named,
-                                 args.min_athletes_prefix)
+        links, rejected = decide(
+            counted, teams, args.min_athletes, args.min_share, args.margin,
+            args.margin_named, args.min_athletes_named,
+            args.min_athletes_prefix,
+            # ! 0 DISABLES IT by being unreachable, not by a second flag: an
+            #   athlete count is never below zero, so the tier simply never
+            #   fires and the old behaviour is exactly reproducible.
+            super_athletes=(args.supermajority_athletes
+                            if args.supermajority_athletes > 0 else 10 ** 9),
+            super_share=args.supermajority_share)
         # ★★ --why: ONE STRING'S FATE, SPELLED OUT. Asked of Georgetown, the
         #    question was never "which bar rejected it" but "does anet have a
         #    Georgetown college team at all" -- and the two look identical in

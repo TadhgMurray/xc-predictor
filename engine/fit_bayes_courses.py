@@ -76,6 +76,28 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts"))
         sys.path.insert(0, _p)
 
 
+# _defaultPack / _defaultState
+# Purpose:   The paths run_joint itself uses, asked of run_joint rather than
+#            retyped.
+# ⚠ I HARD-CODED engine/data/pack.npz IN TWO NEW SCRIPTS AND IT DOES NOT EXIST
+#   (2026-09-19). The pack is `packed_XC_TF.npz` -- five other scripts spell it
+#   that way and run_joint's own --pack default is authoritative -- so both
+#   scripts failed at once and told the reader to rebuild a pack that was
+#   already on disk under its real name. Asking the parser removes the chance
+#   of a sixth spelling.
+def _defaultPack():
+    try:
+        import run_joint as rj
+        return rj.buildParser().get_default("pack")
+    except Exception:                                            # noqa: BLE001
+        return os.path.join(_ROOT, "engine", "data", "packed_XC_TF.npz")
+
+
+def _defaultState():
+    return os.path.join(_ROOT, "engine", "data",
+                        "joint_difficulty_state.npz")
+
+
 # ★ HIS PRIORS, AND THE ORDERING IS THE INTERESTING PART. Ability sigma 0.25
 #   against course sigma 1.0 -- TIGHTER ON RUNNERS THAN ON COURSES, which is the
 #   reverse of our engine, where courses get three nested shrinkages and
@@ -277,8 +299,7 @@ def main():
     ap.add_argument("--selftest", action="store_true",
                     help="recover known difficulties from synthetic data and "
                          "check interval coverage; touches no database")
-    ap.add_argument("--pack", default=os.path.join(_ROOT, "engine", "data",
-                                                  "pack.npz"))
+    ap.add_argument("--pack", default=_defaultPack())
     ap.add_argument("--sport", choices=["XC", "TF"], default="XC")
     ap.add_argument("--pool", default="hs_m",
                     help="bare pool name, as the pack's athlete_keys spell it")
