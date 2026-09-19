@@ -221,16 +221,88 @@ Locker could not do.
 
 ---
 
+## 6b. Are the pools free-falling against each other?
+
+Owner: "I wonder if the pools are kind of free falling against each other
+because they aren't well connected."
+
+**Two facts make that precise.** Ability is keyed `akey = (r[_PID], pool)`, and
+the rating is `points = pool_mean / ability * 100`. So:
+
+* **within** a pool the scale is fixed by construction — 100 is that pool's mean;
+* **between** pools the ONLY connection in the data is courses both pools race,
+  because `D` is keyed per course with no pool in the key;
+* and the best bridge available — the same human, spring high-school track then
+  autumn college cross-country, weeks apart — is **severed**: a pool change
+  makes two independent ability unknowns out of one person.
+
+⚠ **AND A POOL-WIDE DRIFT IS INVISIBLE WHERE ANYONE WOULD LOOK FOR IT.**
+`points` divides by the pool mean, so shifting a whole pool moves no athlete's
+rating at all. It shows up only in the difficulties of courses that pool races
+— which is where the damage was actually noticed. Any check for this has to be
+on difficulties or on cross-pool races, never on ratings.
+
+### What to do, in order
+
+**(i) The track pin already fixes most of this, which is a reason to want it
+more.** Every pool races flat outdoor 400s. Once those are 0.0 by construction
+(§2), high school, college and pro all share one ABSOLUTE reference, and each
+pool's ability scale is anchored to it rather than to itself. Track is the one
+venue every pool has in common, so it is the natural connector and it is
+already item §2. No new term needed.
+
+**(ii) Measure it before modelling it.** Two numbers decide whether this is real
+or theoretical, and neither needs a new solve:
+
+* `engine/diag_connectivity.py` already builds the bipartite athlete × course
+  graph, and its own docstring says it keys on `person_id` alone while the
+  engine keys `(person_id, pool)` — so it reports an **upper bound** and
+  splitting by pool "can only ever SUBDIVIDE a component". Run it pool-aware
+  and count how many courses are raced by two or more pools, weighted by rows.
+* Count the **crossing athletes**: people with rows in two pools within one
+  year. That is the sample size any transition term would rest on.
+
+**(iii) A cross-pool error check, from machinery that exists.** A pool-wide
+drift mis-predicts mixed races systematically. Take held-out races whose
+finishers span two pools and report error by pool pair. If the pools have
+drifted apart, that table says so and says by how much — and it is the same
+`bracket_holdout` bucketing already used for course thinness and athlete
+thinness.
+
+**(iv) Only then, a pool-transition offset.** If the crossers are numerous and
+the mixed-race check shows drift:
+
+        ability[i, pool2] = ability[i, pool1] + offset(pool1 -> pool2) + delta[i]
+
+one shared scalar per ordered pool pair, with `delta[i]` shrunk — the offset is
+the pool gap, `delta` is how far this person differs from a typical transition.
+
+! **THE PATTERN ALREADY EXISTS IN THIS CODEBASE**, which is the argument for
+  doing it this way rather than inventing something. `XCP_SPORT_LEVEL` pins the
+  XC/TF gap as a stated scalar instead of estimating what the data cannot
+  identify, and `XCP_SPORT_LEVEL_POOLS` already carries it PER POOL
+  (`college=0,hs=0.008,ms=0.012,elem=0.015`). A pool-transition offset is the
+  same move on a different axis.
+
+⚠ **DO NOT instead let one ability span the transition.** A high-school senior
+  becoming a college freshman racing 8k against 22-year-olds undergoes a real
+  level change, not noise. The severing is right; what is missing is a term
+  that says how big the typical jump is.
+
+---
+
 ## 8. Order, and one rule
 
 1. §1 geometry plumbing + census  ← gates everything
 2. §3's *bug hunt* only: why is asserted +0.3% indoor reading −1.68%?
 3. §2 the pin. **Stop. Check non-CA courses are no longer uniformly negative.**
 4. §4 race-day term off the pinned cells
-5. §6 shrinkage, using §4's σ
+5. §6 shrinkage, using §4's σ; and §6b (ii)+(iii), which are measurements
+   and can run any time
 6. §3 the indoor prior and gates
 7. §5 era length by holdout, N=1 last
-8. §7 the external check, whenever convenient — it blocks nothing
+8. §6b (iv) a pool-transition offset, only if (ii) and (iii) say it is needed
+9. §7 the external check, whenever convenient — it blocks nothing
 
 **One change per solve.** The 2026-09-19 failure was two unvalidated changes
 landing together: `--merge-sports` became the default before the shape test
