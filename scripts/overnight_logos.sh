@@ -50,6 +50,8 @@
 #       PY=...          python to use
 #       SKIP_WAIT=1     start now, do not wait for the team scrape
 #       SKIP_MEETS=1    crests only, leave the failed meets alone
+#       ANET_CREST_RATE=0.5   seconds between anet image requests
+#       ANET_CREST_LIMIT=N    cap the anet crest queue (default: every team)
 set -u
 
 cd "$(dirname "$0")/.." || exit 1
@@ -83,6 +85,40 @@ wait_for_team_scrape say
 # ------------------------------------------------------------- 1. crests
 # The crests are genuinely independent -- school_logo, which nothing else
 # writes -- so they do not wait for anything.
+#
+# ★ ANET FIRST, AND UNCONDITIONALLY (owner, 2026-09-19: "make sure it always
+#   replaces the current image (but keeps them both stored), just so we have
+#   exactly the same logos as anet no matter what"). This step did not exist:
+#   the chain ran the WEB scraper only, which never touches anet_team.
+#   mascot_url, so "the overnight logo run" could not have made us match anet
+#   even when it worked.
+#
+#   --logos-only  no anet API calls at all; the crest comes from the
+#                 mascot_url already stored, and it implies --redo, so the
+#                 queue is every team rather than the gaps.
+#   --replace     install anet's mascot over whatever is stored, placeholders
+#                 and all. That IS "the same logos as anet no matter what".
+#   The old PNG is not lost: writeFile copies it into <LOGO_DIR>/superseded/
+#   before the swap (see scrape_school_logos._supersede).
+#
+# ⚠ ONE CONTESTED CASE SURVIVES --replace, and it is arithmetic rather than a
+#   preference: where anet does not know a team's level the crest key is
+#   (school, state) alone, and (Amherst, MA) is Amherst College AND Amherst
+#   Regional High. One key holds one crest, so whichever mascot lands there is
+#   wrong for the other -- anet_teams keeps the better-ranked one on exactly
+#   those keys and nowhere else.
+#
+# ⚠ THIS IS THE LONG STEP: one image request per team at ANET_CREST_RATE
+#   seconds. That is the cost of matching anet exactly, it is why this chain
+#   is separate from the compute chain, and nothing waits on it. Set
+#   ANET_CREST_LIMIT to cap a first run.
+step anet_crests "$PY" scripts/anet_teams.py --logos-only --write --replace \
+    --rate "${ANET_CREST_RATE:-0.5}" \
+    ${ANET_CREST_LIMIT:+--limit "$ANET_CREST_LIMIT"} || true
+
+# Then the open web, which fills what anet has no mascot for. It cannot
+# undo the step above: kindRank puts anet ahead of every web source, so a
+# school that now wears anet's crest keeps it.
 step logos "$PY" scripts/scrape_school_logos.py --write --retry-failed || true
 
 # -------------------------------------------------------- 2. failed meets

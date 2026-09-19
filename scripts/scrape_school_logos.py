@@ -1393,13 +1393,65 @@ def targets(cur, refresh_days=REFRESH_DAYS, only=None, state=None, limit=None,
             for r in cur.fetchall()]
 
 
-def writeFile(school, state, png, directory=None, level=None):
+# ★ THE ONE THAT IS ABOUT TO BE REPLACED IS KEPT (owner, 2026-09-19: "can we
+#   make sure it always replaces the current image (but keeps them both
+#   stored), just so we have exactly the same logos as anet no matter what").
+#   os.replace destroyed the old PNG, so "take anet's" and "we still have the
+#   athletics-site mark we used to serve" could not both be true. Now the
+#   superseded bytes are copied into <dir>/superseded/ before the swap.
+#
+#   The archive name is CONTENT-ADDRESSED -- <stem>.<sha1[:12]>.png -- for two
+#   reasons: re-running a replace scrape stores nothing new (the same old
+#   image hashes to the same name and the file is already there), and the
+#   whole history of one school is its stem's glob. Nothing reads this
+#   directory; the site derives its path from fileFor as it always did, so the
+#   served crest is always the newest one, which is the point.
+SUPERSEDED = "superseded"
+
+
+def _supersede(path, directory):
+    """Copy the crest at `path` into the archive. Returns the archive path,
+    or None when there was nothing there to keep."""
+    try:
+        with open(path, "rb") as fh:
+            old = fh.read()
+    except OSError:
+        return None
+    if not old:
+        return None
+    keep = os.path.join(directory, SUPERSEDED)
+    base = os.path.basename(path)
+    stem = base[:-4] if base.lower().endswith(".png") else base
+    dest = os.path.join(keep, f"{stem}.{hashlib.sha1(old).hexdigest()[:12]}.png")
+    if os.path.exists(dest):
+        return dest
+    os.makedirs(keep, exist_ok=True)
+    tmp = f"{dest}.{os.getpid()}.tmp"
+    with open(tmp, "wb") as fh:
+        fh.write(old)
+    os.replace(tmp, dest)
+    return dest
+
+
+def writeFile(school, state, png, directory=None, level=None, keep_old=True):
     """The PNG on disk under its derived name; returns the bare file name,
-    which is what the row stores and what the site re-derives."""
+    which is what the row stores and what the site re-derives.
+
+    keep_old copies whatever is already at that name into <dir>/superseded/
+    first -- see the note above. Skipped when the bytes are identical, which
+    is the common case on a refresh scrape."""
     directory = directory or LOGO_DIR
     os.makedirs(directory, exist_ok=True)
     name = fileFor(school, state, level)
     path = os.path.join(directory, name)
+    if keep_old and os.path.exists(path):
+        try:
+            with open(path, "rb") as fh:
+                same = fh.read() == png
+        except OSError:
+            same = False
+        if not same:
+            _supersede(path, directory)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "wb") as fh:
         fh.write(png)

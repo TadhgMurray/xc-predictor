@@ -36,10 +36,30 @@ _STEP = re.compile(r'^\s*step(?:_fatal)?\s+(\S+)\s+(.*)$')
 _ENVVAR = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
 
 
+def _joinContinuations(text):
+    """Fold `\`-continued lines, so a multi-line step call is one line."""
+    out, buf = [], ""
+    for line in text.splitlines():
+        if line.rstrip().endswith("\\"):
+            buf += line.rstrip()[:-1] + " "
+            continue
+        out.append(buf + line)
+        buf = ""
+    if buf:
+        out.append(buf)
+    return out
+
+
+# `${VAR:+--flag "$VAR"}` -- an optional flag. The flag inside it still has to
+# be one the target accepts, so the braces are stripped and the body kept.
+_OPTIONAL = re.compile(r'\$\{[A-Za-z_][A-Za-z0-9_]*:\+([^}]*)\}')
+
+
 def _invocations(text):
     """(label, script, flags) for every step line that runs a .py file."""
     out = []
-    for line in text.splitlines():
+    for line in _joinContinuations(text):
+        line = _OPTIONAL.sub(r'\1', line)
         m = _STEP.match(line)
         if not m:
             continue
