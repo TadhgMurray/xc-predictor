@@ -10,6 +10,45 @@ add these things I've said."
 
 ---
 
+## What the 2026-09-19 02:15 run actually did, and what it did NOT
+
+Established from the run's own logs, and it changes the baseline every
+measurement below rests on.
+
+**It ran `scripts/pipeline.py`, not `deploy/run_pipeline.sh`.** The log's banner
+is `PIPELINE -- TF (results_tf) stages: backfill, engine, suspects`, which is
+pipeline.py's; the chain was only switched to the real pipeline at 10:59:40, and
+the run started at 02:15. So:
+
+* **`08_golive` never ran. The bracket engine never ran. No XCP_ constant was
+  set. `course_difficulties` was never rewritten** — confirmed independently by
+  `joint_difficulty_state.npz` still being dated 2026-09-14_21:26.
+
+⚠ **SO THE DIFFICULTY COMPLAINTS PREDATE THIS SESSION.** Non-California courses
+  reading negative, and Mt. SAC's 5k at +4.0% against the 3 mile's +10%, are
+  both from the September 14 solve. The merged distance curve cannot have caused
+  either — it never reached a difficulty. Four failed hypotheses about Foot
+  Locker were chasing a real problem that is older than any change here, and
+  the leverage arithmetic that cleared the curve was right for the wrong
+  reason: it was not that the effect was too small, it is that the path did not
+  exist.
+
+★ **WHAT THE RUN DID CHANGE, AND IT IS STILL WRONG.** The backfill rewrote
+  `normalized_time` with the merged curve — 29,912,105 TF rows changed — and
+  `speed_ratings.py` then ran for both sports. So the live ratings are computed
+  on the NEW curve against difficulties computed on the OLD one. That is the
+  inconsistent state, and it is the reason a restoration is still needed: not
+  to undo bad difficulties, but to put ratings and difficulties back on one
+  curve. `deploy/run_pipeline.sh --from 5` is what does that, and it is what the
+  chain now calls.
+
+! **AND THE PACK IS UNTOUCHED.** `07_pack` never ran, so `packed_XC_TF.npz` is
+  still 2026-09-14_19:35. Every holdout number in this session was measured on
+  that pack — which makes them comparable with each other, and means none of
+  them reflects the team scrape.
+
+---
+
 ## 0. What "word for word" can and cannot mean
 
 I did not have his estimator when I first answered — only `compare_slaney.py`,
