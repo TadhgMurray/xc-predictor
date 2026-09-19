@@ -122,6 +122,35 @@ class TheEngineSuppliesIt(unittest.TestCase):
                       "a rule that repools rows off the school boards must "
                       "have its cost in the census, like no_team_pro")
 
+    def test_the_query_names_a_column_the_table_actually_has(self):
+        """⚠ THE BUG THIS TEST DID NOT CATCH, BECAUSE IT ENCODED IT. The loader
+        asked `WHERE pool = 'pro'`; build_team_pool's CREATE TABLE says `kind`.
+        Every call raised UndefinedColumn, speed_ratings swallowed it as
+        "team_pool unavailable", and the rule reported as wired had never
+        repooled a row. The old assertion pinned the wrong spelling, so it
+        passed throughout.
+
+        So this checks the two files AGAINST EACH OTHER rather than against a
+        literal I typed twice."""
+        import re
+        ddl = open(os.path.join(_ROOT, "engine", "build_team_pool.py"),
+                   encoding="utf-8").read()
+        create = ddl[ddl.index("CREATE TABLE IF NOT EXISTS team_pool"):]
+        create = create[:create.index(")\n")]
+        columns = set(re.findall(r"^\s*(\w+)\s+\w", create, re.M))
+        self.assertIn("kind", columns, "the schema itself changed")
+
+        db = open(os.path.join(_ROOT, "engine", "speed_ratings_db.py"),
+                  encoding="utf-8").read()
+        i = db.index("def loadProTeams(")
+        body = db[i:i + 1800]
+        used = set(re.findall(r"WHERE\s+(\w+)\s*=", body))
+        self.assertTrue(used, "loadProTeams has no WHERE clause to check")
+        for col in used:
+            self.assertIn(col, columns,
+                          f"loadProTeams filters on {col!r}, which team_pool "
+                          f"does not have. Columns: {sorted(columns)}")
+
     def test_the_loader_degrades_to_empty_without_the_table(self):
         # ! A pack built before build_team_pool.py has run must pool exactly as
         #   it did before. Checked on the SQL, because the real call needs a db.
@@ -131,7 +160,7 @@ class TheEngineSuppliesIt(unittest.TestCase):
         body = src[i:i + 1500]
         self.assertIn("to_regclass('team_pool')", body)
         self.assertIn("return set(), {}", body)
-        self.assertIn("pool = 'pro'", body,
+        self.assertIn("kind = 'pro'", body,
                       "it must read the VERDICT, not re-derive the threshold")
         self.assertNotIn("n_athletes <", body,
                          "re-deriving the 15-athlete rule here would be the "

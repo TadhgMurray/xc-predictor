@@ -345,6 +345,18 @@ def loadProTeams():
     if _PRO_TEAMS is not None:
         return _PRO_TEAMS
     _PRO_TEAMS = set()
+    # ⚠ OPT-IN, AND THAT IS A CONSEQUENCE OF HOW THIS WAS FOUND (2026-09-19).
+    #   The loader queried a column that does not exist (`pool` for `kind`), so
+    #   the 15-athlete rule had never repooled a row -- it failed safe and
+    #   nobody knew. Fixing the column means the rule fires for the FIRST time
+    #   on the next run, which is exactly the wrong moment to introduce it:
+    #   there is a bad solve to diagnose and a second simultaneous change would
+    #   make the two inseparable. So it now needs XCP_TEAM_POOL=1, and the line
+    #   below says which state it is in either way.
+    if os.environ.get("XCP_TEAM_POOL", "") in ("", "0", "false"):
+        print("[engine] team_pool: OFF (XCP_TEAM_POOL=1 to apply the "
+              "15-athletes-all-time rule). Pooling as before.")
+        return _PRO_TEAMS
     try:
         from speed_ratings_db import loadProTeams as _load
         ids, why = _load()
