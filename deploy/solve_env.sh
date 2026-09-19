@@ -35,32 +35,14 @@
 : "${XCP_ERA_YEARS:=2}"             # course eras, in years
 : "${XCP_ALTITUDE:=1}"              # altitude correction on
 : "${XCP_INDOOR_LEVEL:=0.003}"      # indoor's level against outdoor
-# ⚠⚠ THIS IS THE ONE TO ARGUE ABOUT, AND IT IS THE LEADING SUSPECT FOR
-#    UNDER-DIFFICULTIED CHAMPIONSHIPS (Foot Locker, and Mt. SAC's 5k against
-#    its 3 mile). run_joint's own default is `field` -- "the race's front
-#    strength, the mean rating of its top five relative to the median race".
-#    `none` is NO TERM AT ALL. Runs 22/24 carried none, which is why it is the
-#    value here, but that means the last real solve had no taper/field term.
-#
-#    WHY THAT UNDER-DIFFICULTIES A CHAMPIONSHIP. A cell's reading is
-#    (z - a)/h, z being log normalised time, smaller = faster. At a
-#    championship everyone is peaked and tapered, so they run FASTER than
-#    their windowed level a predicts; (z - a) goes more negative; D comes out
-#    LOWER, i.e. the course reads EASIER. With no importance term there is
-#    nothing else for that peak to land in.
-#
-#    AND IT EXPLAINS THE ASYMMETRY BETWEEN TWO CELLS AT ONE VENUE, which is
-#    the part a shrinkage story could not. Mt. SAC's 3 mile is the
-#    regular-season invitational distance -- thousands of ordinary runners on
-#    ordinary days -- so its cell is dominated by untapered races and reads a
-#    true +10%. Mt. SAC's 5k is the postseason distance, so its cell is mostly
-#    tapered championship races and absorbs the full bias: +4.0%. Same hill,
-#    same footing, different populations. Glendoveer likewise hosts ordinary
-#    meets all season, so NXN's cell is mixed and partly anchored; a venue
-#    used only for a national final has a cell that is 100% tapered.
-#
-#    SET XCP_IMPORTANCE=field AND SEE WHETHER THE 5k AND THE 3 MILE CONVERGE.
-#    That is the test, and it is one line.
+# ⚠ LEAVE THIS AT none. I argued for `field` here on 2026-09-19 and the owner
+#   refuted it on the spot, with the right instrument: if an untapered
+#   championship field were the cause, NXN AND FOOT LOCKER WOULD BOTH SHOW IT,
+#   and they do not -- and among athletes who raced both, Foot Locker's
+#   normalised times are slightly SLOWER, so its difficulty should sit at or
+#   above NXN's rather than below. A taper term cannot produce a difference
+#   between two races that share a field and a week. Do not add it to chase
+#   this; it would paper over whatever is actually moving the cells.
 : "${XCP_IMPORTANCE:=none}"         # `field` is run_joint's own default
 
 # --- housekeeping the pipeline expects -----------------------------------
