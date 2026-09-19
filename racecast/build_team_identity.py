@@ -73,10 +73,47 @@ CREATE TABLE IF NOT EXISTS team_identity (
 REAL_TEAM = "team_id IS NOT NULL AND team_id <> 0"
 
 
+def _realTeam(alias):
+    """REAL_TEAM qualified for a joined query, where a bare `team_id` is
+    ambiguous."""
+    return f"{alias}.team_id IS NOT NULL AND {alias}.team_id <> 0"
+
+
+# ⚠⚠ THE STATE IS ON THE MEET, NOT ON THE RESULT (2026-09-19: this script
+#    crashed with `column "state" does not exist` the first time the overnight
+#    chain actually reached it with --write). results / results_tf carry no
+#    state at all; meets.state and meets_tf.state do, on the same join keys
+#    fit_states_offsets uses -- (div_id, source) for XC, and
+#    (meet_id, div_id, event_id, source) for TF.
+#
+# ! LEFT JOIN, DELIBERATELY. n_rows and n_athletes must stay counts of the
+#   team's rows whether or not its meet is present, so a missing meet costs
+#   the row its state and nothing else. An INNER join here would silently
+#   shrink every team that has an unmatched meet.
+
+
 def _tableExists(cur, name):
     cur.execute("SELECT to_regclass(%s)", (f"public.{name}",))
     got = cur.fetchone()
     return bool(got[0] if not isinstance(got, dict) else list(got.values())[0])
+
+
+def _requireColumns(cur, table, cols):
+    """Fail now, with the whole list, if the table lacks a column this build
+    reads. See the note in build()."""
+    cur.execute("""SELECT column_name FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = %s""",
+                (table,))
+    have = set()
+    for row in cur.fetchall():
+        have.add(row[0] if not isinstance(row, dict) else row["column_name"])
+    if not have:
+        raise SystemExit(f"{table} does not exist")
+    missing = [c for c in cols if c not in have]
+    if missing:
+        raise SystemExit(
+            f"{table} is missing {', '.join(missing)} — this script's SQL "
+            f"reads them. It has: {', '.join(sorted(have))}")
 
 
 def build(cur, verbose=True):
@@ -88,6 +125,20 @@ def build(cur, verbose=True):
     if not _tableExists(cur, "anet_team"):
         raise SystemExit("anet_team is missing; run scripts/anet_teams.py first")
 
+    # ! CHECKED BEFORE THE SCAN, NOT DURING IT. The `state` bug above surfaced
+    #   as a crash after "counting rows and athletes per team..." had already
+    #   printed, and on a night when it had a full pass over 232M rows to get
+    #   through first. Every column this build depends on is now confirmed in
+    #   the catalogue first, which costs one query and names what is missing.
+    _requireColumns(cur, "results", ("team_id", "person_id", "div_id", "source"))
+    _requireColumns(cur, "results_tf", ("team_id", "person_id", "div_id",
+                                        "event_id", "meet_id", "source"))
+    _requireColumns(cur, "meets", ("div_id", "source", "state"))
+    _requireColumns(cur, "meets_tf", ("meet_id", "div_id", "event_id", "source",
+                                      "state"))
+    _requireColumns(cur, "anet_team", ("team_id", "school", "anet_state",
+                                       "city", "level"))
+
     cur.execute(DDL)
 
     # ★ ONE PASS OVER THE ROWS, into a temp table with an index. Counting
@@ -98,9 +149,18 @@ def build(cur, verbose=True):
     cur.execute(f"""
         CREATE TEMP TABLE _ti_rows AS
         WITH r AS (
-            SELECT team_id, person_id, state FROM results  WHERE {REAL_TEAM}
+            SELECT r.team_id, r.person_id, m.state
+            FROM   results r
+            LEFT   JOIN meets m
+                   ON m.div_id = r.div_id AND m.source = r.source
+            WHERE  {_realTeam("r")}
             UNION ALL
-            SELECT team_id, person_id, state FROM results_tf WHERE {REAL_TEAM}
+            SELECT r.team_id, r.person_id, m.state
+            FROM   results_tf r
+            LEFT   JOIN meets_tf m
+                   ON m.meet_id  = r.meet_id AND m.div_id = r.div_id
+                  AND m.event_id = r.event_id AND m.source = r.source
+            WHERE  {_realTeam("r")}
         )
         SELECT team_id,
                count(*)                          AS n_rows,
