@@ -150,3 +150,59 @@ class TheEngineStillAcceptsItsOwnSignature(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheHoldoutCliActuallyReachesTheFunction(unittest.TestCase):
+    """⚠ TWICE NOW a --dump/--compare edit landed in argparse and NOT in
+    score(), and `--help` looked perfect while the run died on
+    `score() got an unexpected keyword argument 'dump'`. Checking the help
+    text proves the parser accepts a flag, not that anything consumes it.
+    These assert the CALLABLE."""
+
+    def test_score_accepts_every_flag_main_forwards(self):
+        import inspect
+        import bracket_holdout as bh
+        params = inspect.signature(bh.score).parameters
+        src = inspect.getsource(bh.main)
+        # every `name=args.x` in main's score(...) call must be a parameter
+        call = src[src.index("    score("):]
+        for name in ("dump", "compare", "prior_athlete", "gauge", "window"):
+            self.assertIn(name, params, f"score() is missing {name}")
+            self.assertIn(f"{name}=", call, f"main() does not pass {name}")
+
+    def test_the_dump_and_compare_helpers_exist(self):
+        import bracket_holdout as bh
+        self.assertTrue(callable(bh._dumpRun))
+        self.assertTrue(callable(bh._compareRuns))
+
+    def test_compare_refuses_a_mismatched_sample(self):
+        import os
+        import tempfile
+        import bracket_holdout as bh
+        n = 40
+        y = np.linspace(0, 1, n)
+        cov = np.ones(n, bool)
+        test = np.ones(n, bool)
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "a.npz")
+            bh._dumpRun(path, cov, y, y, test, 15, 11, 2, 21)
+            # same sample -> a verdict
+            got = bh._compareRuns(path, cov, y, y, test, 15, 11, 2, 45)
+            self.assertIsNotNone(got)
+            self.assertEqual(got["n"], n)
+            # different row count -> refused, not silently misaligned
+            half = slice(0, n // 2)
+            self.assertIsNone(
+                bh._compareRuns(path, cov[half], y[half], y[half], test[half],
+                                15, 11, 2, 45))
+            # different seed -> refused
+            self.assertIsNone(
+                bh._compareRuns(path, cov, y, y, test, 15, 99, 2, 45))
+
+    def test_compare_on_a_missing_dump_is_a_message_not_a_crash(self):
+        import bracket_holdout as bh
+        n = 10
+        self.assertIsNone(
+            bh._compareRuns("/nonexistent/nope.npz", np.ones(n, bool),
+                            np.zeros(n), np.zeros(n), np.ones(n, bool),
+                            15, 11, 2, 45))

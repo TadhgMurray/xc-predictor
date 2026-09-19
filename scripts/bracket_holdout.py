@@ -64,7 +64,7 @@ def sampleAndSplit(cols, pct, seed, frac=0.10, split_seed=1):
 def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
           top=0.5, prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30,
           tilt=True, use_curve=True, verbose=True, joint_dump=None, gauge=be.GAUGE_DEFAULT,
-          prior_athlete=be.PRIOR_ATHLETE):
+          prior_athlete=be.PRIOR_ATHLETE, dump=None, compare=None):
     """Fit on the sample's training rows, score its held-out races.
     Returns dict(sd, covered, by_sport, n_train, n_test, seconds, base_line,
     same_rows). joint_dump: the joint model's per-row held-out predictions
