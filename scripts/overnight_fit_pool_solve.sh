@@ -50,6 +50,34 @@
 #   log is what says whether the (team_id -> school, state) resolution is
 #   right -- Georgetown should come out DC.
 #
+# ⚠⚠ AND THE SOLVE IS deploy/run_pipeline.sh, NOT scripts/pipeline.py. The
+#    first version of this script called the latter, which was wrong in two
+#    ways that both mattered (owner, 2026-09-19: "did you use the bracketed
+#    engine, and did you use the constants that we've used in previos
+#    pipelines/solve like XCP WINTER GAIN?" -- no, and no):
+#
+#    1. THE BRACKET ENGINE WAS NEVER REACHED. It is published by 08_golive
+#       (engine/run_joint.py --golive) and ONLY when XCP_DIFFICULTY=bracket;
+#       without that the go-live publishes the joint model's course numbers
+#       instead. scripts/pipeline.py has no go-live stage at all, so the
+#       chain would have stopped after speed_ratings -- no bracket
+#       difficulties, no tilt, no fill_ratings, no rankings rebuild. The site
+#       would have been serving boards built on the previous solve's
+#       difficulties against this solve's ratings.
+#
+#    2. NONE OF THE CONSTANTS WERE SET. Every documented run carries a line
+#       of XCP_ variables -- XCP_SPORT_LEVEL (which superseded
+#       XCP_WINTER_GAIN), XCP_ERA_YEARS, XCP_ALTITUDE, XCP_INDOOR_LEVEL,
+#       XCP_IMPORTANCE. They are the run's settings, not defaults, and a run
+#       without them is a different model. They now live in
+#       deploy/solve_env.sh, are printed before anything starts, and are
+#       overridable from the environment.
+#
+# ! AND 10b0_tfrrs_link IS ALREADY A PIPELINE STAGE
+#   (scripts/link_tfrrs_to_anet.py --write). This script used to run it
+#   separately AND without --write, so it printed a verdict and wrote
+#   nothing, then the pipeline did the real thing later. Removed from here.
+#
 # ! NO SCRAPING IN HERE. Scrapes live in overnight_logos.sh so that a slow
 #   crawl cannot sit in front of the solve. The 143-meet retry is there too,
 #   which means its meets land in the NEXT solve, not this one.
@@ -61,7 +89,6 @@
 #   Options (environment):
 #       PY=...            python to use
 #       SKIP_WAIT=1       start now, do not wait for the scrape
-#       SPORT=both|XC|TF  which sport to solve (default both)
 #       SKIP_SOLVE=1      do the curve and the pools, stop before touching
 #                         results (useful the first time)
 set -u
@@ -72,12 +99,15 @@ cd "$(dirname "$0")/.." || exit 1
 if [ -f /etc/xc-predictor.env ]; then set -a; . /etc/xc-predictor.env; set +a; fi
 
 PY="${PY:-$( [ -x /srv/venv/bin/python ] && echo /srv/venv/bin/python || echo python3 )}"
-SPORT="${SPORT:-both}"
 LOGDIR="engine/data/overnight/compute"
 mkdir -p "$LOGDIR"
 PROG="$LOGDIR/00-progress.log"
 
 say() { echo "[$(date '+%F %T')] $*" | tee -a "$PROG"; }
+
+# ★ THE CONSTANTS, SOURCED AND THEN PRINTED. A solve whose settings are not
+#   in its own log cannot be reproduced or argued with later.
+. deploy/solve_env.sh
 
 # ★ THE TABLE LOCK. backfill and the solve SWAP results / results_tf, and the
 #   meet scrapers WRITE to them -- a row written mid-rebuild lands in
@@ -105,7 +135,12 @@ step() {
 }
 
 : > "$PROG"
-say "python: $PY   sport: $SPORT"
+say "python: $PY"
+say "solve constants (deploy/solve_env.sh; override from the environment):"
+for _v in $SOLVE_ENV_VARS; do
+    eval "_val=\${$_v-}"
+    [ -n "$_val" ] && say "    $_v=$_val"
+done
 
 wait_for_team_scrape say
 
@@ -167,7 +202,9 @@ say "team_pool IS read by the solve below (the 15-athlete rule);"
 say "team_identity and the tfrrs link are built and inspectable only"
 step team_identity "$PY" racecast/build_team_identity.py || true
 step team_pool     "$PY" engine/build_team_pool.py       || true
-step link_tfrrs    "$PY" scripts/link_tfrrs_to_anet.py   || true
+# ! NOT link_tfrrs_to_anet HERE. It is pipeline stage 10b0_tfrrs_link, with
+#   --write, and running it early without --write printed a verdict and
+#   changed nothing.
 
 if [ "${SKIP_SOLVE:-0}" = "1" ]; then
     rm -f "$LOCK"
@@ -177,10 +214,17 @@ if [ "${SKIP_SOLVE:-0}" = "1" ]; then
 fi
 
 # ------------------------------------------------- 3. re-normalise + solve
-# pipeline.py does backfill -> engine -> suspects and the verify/drop
-# bookkeeping between them. --from backfill skips its clean/weather stages,
-# which is right here: nothing above touched the weather artifacts.
-step solve "$PY" scripts/pipeline.py --sport "$SPORT" --from backfill || exit 1
+# ★ --from 5 IS THE BACKFILL, and the backfill is the point: 05_backfill_xc /
+#   05_backfill_tf run backfill_normalize.py, which re-applies the new
+#   distance curve and the new pools to results.normalized_time. Everything
+#   after it -- 07_pack, 08_golive (the bracket engine), 09_tilt, 09b_fill,
+#   10_rankings and the unit builders -- then reads the rebuilt numbers.
+#
+# ! THE HOLDOUT AND THE LADDER ARE SKIPPED, as every documented run skips
+#   them: six to eight hours that do not change the site. Score the curve and
+#   the athlete prior afterwards with scripts/bracket_holdout.py instead.
+step solve bash deploy/run_pipeline.sh --from 5 \
+    --skip 08a_holdout,08b_ladder || exit 1
 
 rm -f "$LOCK"
 say "results/results_tf released — the scrape chain may retry meets now"
