@@ -424,7 +424,15 @@ def decide(counted, teams, min_athletes=MIN_ATHLETES, min_share=None,
               and (min_share is None or share >= min_share))
         why = ("" if ok else
                f"{n_ath} athletes < {floor}" if n_ath < floor else
-               f"margin {ratio:.1f}x < {want}x" if ratio < want else
+               # ! THREE DECIMALS, BECAUSE ONE PRODUCED A CONTRADICTION.
+               #   The table prints round(ratio, 2) at .1f and this string
+               #   printed the same number at .1f from the raw value, so
+               #   Johnson & Wales came out as "1.9x ... margin 2.0x < 2.0x"
+               #   -- one row asserting a number is both under and equal to
+               #   the bar. It was never a comparison bug; it was 1.95 shown
+               #   two ways. A rejection has to show enough digits to be
+               #   believed.
+               f"margin {ratio:.3f}x < {want}x" if ratio < want else
                f"share {share:.2f} < {min_share}")
         row = (school, team_id, state, "college", n_ath, n_seas,
                round(share, 4), anet_school, len(by_team),
