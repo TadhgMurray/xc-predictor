@@ -186,6 +186,11 @@ class NothingSurvives(unittest.TestCase):
 #  THE BLACK BACKGROUND, AND WHY THE KEY WAS MISSING IT                 #
 # ===================================================================== #
 
+# ! THE DECORATOR THE OTHER CLASSES HAVE. Without it these eight tests fail
+#   with "'NoneType' object has no attribute 'new'" on any box without Pillow
+#   rather than skipping -- which is a missing dependency reported as a broken
+#   repair, and eight of the thirty-nine failures in the suite's first full run.
+@unittest.skipIf(Image is None, "Pillow not installed")
 class TheOpaqueRegion(unittest.TestCase):
     """★ THE BUG (owner, 2026-09-16: "the backgrounds are black but the
     background on anet are white, so idk where the black is coming from").

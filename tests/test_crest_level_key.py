@@ -119,7 +119,13 @@ def test_the_repair_migrates_before_it_reads_the_level():
 
 def test_the_writers_all_take_a_level():
     src = open(os.path.join(_ROOT, "scripts", "scrape_school_logos.py")).read()
-    assert "def writeFile(school, state, png, directory=None, level=None):" in src
+    # ! ASSERTED PARAMETER BY PARAMETER, NOT AS ONE SIGNATURE STRING. The
+    #   whole-line form broke the day writeFile gained keep_old (the
+    #   superseded-crest archive, 2026-09-19) without anything about the LEVEL
+    #   -- which is all this test is about -- having changed.
+    sig = src[src.index("def writeFile("):src.index("\n", src.index("def writeFile(") + 400)]
+    for want in ("school", "state", "png", "directory=None", "level=None"):
+        assert want in sig, f"writeFile lost {want}: {sig!r}"
     assert "name = fileFor(school, state, level)" in src
     assert "def storedKind(cur, school, state, level=None):" in src
     assert "ON CONFLICT (school, state, level) DO UPDATE" in src
@@ -135,8 +141,11 @@ def test_anet_files_a_mascot_under_its_own_teams_level():
     assert 'if lv not in ("elem", "ms", "hs", "college"):' in src
     assert "writeFile(school, state, png, args.dir,\n                                             level=lv)" in src
     assert "level=lv)" in src[src.index("record(cur, school, state, name"):][:400]
-    # and it may not REPLACE a crest on a two-institution pair
-    assert "keep = args.keep_better or (school, state) in multi_level" in src
+    # and it may not REPLACE a crest on a two-institution pair. The condition
+    # was given a name (contested_key) when --replace stopped composing with
+    # --keep-better; the rule is the same one, in two lines instead of one.
+    assert "contested_key = not lv and (school, state) in multi_level" in src
+    assert "keep = args.keep_better or contested_key" in src
 
 
 def test_the_damaged_pairs_are_findable_and_re_askable():
@@ -150,7 +159,8 @@ def test_the_damaged_pairs_are_findable_and_re_askable():
     assert "NOT is_bucket" in body
     # --fix-multi re-asks exactly those PAIRS, not their names
     assert '"--fix-multi"' in src
-    assert "pairs = damagedPairs(cur) if args.fix_multi else None" in src
+    fix = src[src.index("            pairs = None"):]
+    assert fix.index("if args.fix_multi:") < fix.index("pairs = damagedPairs(cur)")
     assert "if args.fix_multi:\n        args.redo = True" in src
     tgt = src[src.index("def targets("):src.index("def writeFile(")]
     assert "(w.school, w.state) IN (SELECT school, state FROM " in tgt

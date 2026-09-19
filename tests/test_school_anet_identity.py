@@ -309,7 +309,16 @@ def test_a_tfrrs_school_links_to_an_anet_team_by_its_athletes():
     assert {r[0] for r in rejected} == {"Thin College", "Split College"}
     # the bars are what does it, and they are arguable from the outside
     assert L.MIN_ATHLETES >= 3 and 0.5 < L.MIN_SHARE <= 1.0
-    tight, _r = L.decide(counted, teams, min_athletes=100)
+    # ! EVERY FLOOR, NOT JUST min_athletes. decide() grew separate bars for the
+    #   paths that have better evidence than a vote count -- an exact name
+    #   match (min_athletes_named), a prefix match (min_athletes_prefix) and a
+    #   supermajority (super_athletes) -- so raising min_athletes alone stopped
+    #   suppressing anything: Williams College kept linking by 'name+athletes'.
+    #   The claim being tested is that the BARS decide, so the test has to lift
+    #   all of them.
+    tight, _r = L.decide(counted, teams, min_athletes=100,
+                         min_athletes_named=100, min_athletes_prefix=100,
+                         super_athletes=1000)
     assert tight == []
 
 
@@ -421,7 +430,10 @@ def test_the_two_institution_guard_survives_replace():
             "                                               or contested_key):"
             in src)
     # the placeholder rule IS a preference, and --replace does override it
-    assert "elif not args.replace and sharedAlready(cur, sha):" in src
+    # ! sharedAlready TAKES kind= NOW: anet is exempt from the placeholder
+    #   check at write time, the same exemption markShared applies, so that the
+    #   sweep and the writer answer the same question.
+    assert 'elif not args.replace and sharedAlready(cur, sha, kind="anet"):' in src
 
 
 def test_replace_and_keep_better_cannot_be_passed_together():

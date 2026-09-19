@@ -846,6 +846,9 @@ class Svg(unittest.TestCase):
     """Skipping SVG was pure lost coverage; reading it needs cairosvg, and
     not having cairosvg must stay a skip rather than a crash."""
 
+    # ! normalise() CHECKS PILLOW FIRST, so without it the reason is "no
+    #   Pillow" and never reaches the cairosvg branch this asserts.
+    @unittest.skipIf(Image is None, "Pillow is not installed in this sandbox")
     def test_without_cairosvg_an_svg_is_a_reason_not_an_exception(self):
         real = S._svgToPng
         S._svgToPng = lambda raw, px: None
@@ -1093,7 +1096,11 @@ class Anet(unittest.TestCase):
 
     def test_a_dead_endpoint_stops_the_run_early(self):
         src = read("scripts", "anet_teams.py")
-        self.assertIn("if i == ABORT_AFTER and meta == 0:", src)
+        # ! THE CONDITION GREW A CLAUSE (`and not args.logos_only`, because a
+        #   --logos-only run makes no API calls and so never has metadata to
+        #   count). Asserted in parts, so the next clause does not read as the
+        #   guard having been removed.
+        self.assertIn("if i == ABORT_AFTER and meta == 0", src)
         self.assertIn("conn.rollback()", src)
         self.assertLessEqual(A.ABORT_AFTER, 25)
 
