@@ -114,9 +114,15 @@ class TheHoldoutCanScoreBoth(unittest.TestCase):
     """A change to the gauge must be scored, not argued about."""
 
     def test_the_flag_reaches_both_fit_calls(self):
+        # ! COUNT THE ARGUMENT, NOT ITS PUNCTUATION (2026-09-19). This asserted
+        #   on "gauge=gauge)" -- with the closing paren -- so it broke the
+        #   moment `gauge` stopped being the LAST argument to be.fit, which
+        #   adding prior_athlete did. The claim is that both call sites
+        #   forward the flag; where it sits in the argument list is not the
+        #   claim.
         src = read("scripts/bracket_holdout.py")
         self.assertIn('ap.add_argument("--gauge"', src)
-        self.assertEqual(src.count("gauge=gauge)"), 2)
+        self.assertEqual(src.count("gauge=gauge"), 2)
         self.assertEqual(src.count("gauge=args.gauge"), 2)
 
 

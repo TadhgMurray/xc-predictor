@@ -63,7 +63,8 @@ def sampleAndSplit(cols, pct, seed, frac=0.10, split_seed=1):
 
 def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
           top=0.5, prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30,
-          tilt=True, use_curve=True, verbose=True, joint_dump=None, gauge=be.GAUGE_DEFAULT):
+          tilt=True, use_curve=True, verbose=True, joint_dump=None, gauge=be.GAUGE_DEFAULT,
+          prior_athlete=be.PRIOR_ATHLETE):
     """Fit on the sample's training rows, score its held-out races.
     Returns dict(sd, covered, by_sport, n_train, n_test, seconds, base_line,
     same_rows). joint_dump: the joint model's per-row held-out predictions
@@ -79,7 +80,8 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
           f"held-out rows ({pct:g}% of athletes, 10% of their races)", flush=True)
     f = be.fit(sub, npz, train=train_s, window=window, top=top, era_years=era_years,
                n_iter=iters, prior_races=prior_races, prior_group=prior_group, tilt=tilt,
-               use_curve=use_curve, verbose=verbose, codes=codes, gauge=gauge)
+               use_curve=use_curve, verbose=verbose, codes=codes, gauge=gauge,
+               prior_athlete=prior_athlete)
     pred, cov = be.predict(f)
     y = np.log(np.asarray(sub["norm"], dtype=np.float64))
     m = test_s & cov
@@ -119,12 +121,45 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
                                 full_ath=cols["athlete"], full_year=cols["year"],
                                 full_norm=cols["norm"],
                                 races_at_cell=f["races_per_base"][np.asarray(f["base_of_cell"])[
-                                    np.maximum(f["cell"], 0)]])
+                                    np.maximum(f["cell"], 0)]],
+                                rows_at_athlete=_rowsPerAthleteSeason(
+                                    cols, train_s))
     return out
 
 
+# _rowsPerAthleteSeason
+# Purpose:   For every row, how many TRAINING rows stand behind that row's
+#            athlete-season -- the athlete-side counterpart of
+#            races_per_base, and the axis a wrong athlete prior shows on.
+# Arguments: cols -- the pack; train_s -- the training-row mask.
+# Output:    an int array, one count per row of the pack.
+# ! TRAINING ROWS ONLY, AND EXCLUDING THE ROW ITSELF IS NOT NEEDED HERE: a
+#   held-out row is by construction not in train_s, so its own athlete count
+#   is already the evidence the engine actually had.
+def _priorAthlete(text):
+    """'fit' stays a string; anything else becomes a float.
+
+    ! parsePrior's shape, kept separate because the athlete prior is ONE
+      number or 'fit' -- it has no per-group spelling, and accepting one
+      would imply a per-group meaning that levels() does not have.
+    """
+    t = (text or "").strip().lower()
+    return be.PRIOR_FIT if t == be.PRIOR_FIT else float(t or 0.0)
+
+
+def _rowsPerAthleteSeason(cols, train_s):
+    ath = np.asarray(cols["athlete"]).astype(np.int64)
+    year = np.asarray(cols["year"]).astype(np.int64)
+    key = ath * 10_000 + year
+    uniq, inv = np.unique(key, return_inverse=True)
+    counts = np.bincount(inv[np.asarray(train_s, dtype=bool)],
+                         minlength=uniq.size)
+    return counts[inv]
+
+
 def sameRows(sub, both, test_s, cov, pred, y, dump_path=None, full_ath=None,
-             full_year=None, full_norm=None, races_at_cell=None):
+             full_year=None, full_norm=None, races_at_cell=None,
+             rows_at_athlete=None):
     """★ ONE SET OF ROWS FOR BOTH ENGINES (2026-09-12). The bracket engine
     covers a held-out row only when its athlete has other races within
     the window, 59% of the corpus's held-out rows; the joint model covers
@@ -207,19 +242,52 @@ def sameRows(sub, both, test_s, cov, pred, y, dump_path=None, full_ath=None,
                 sb, sj = float((y[mm] - pred[mm]).std()), float((y[mm] - jp[mm]).std())
                 res["by_races"][lab] = (sb, sj, int(mm.sum()))
                 print(f"        {'':34}{lab:>7} {int(mm.sum()):>9,} {sb:>9.5f} {sj:>9.5f}")
+
+    # ★★ AND THE SAME QUESTION ON THE ATHLETE AXIS, which had no table at all
+    #    (2026-09-19). The course side has been scored by its thinness since
+    #    the prior existed; the athlete side has no prior and so had nothing
+    #    to score -- which is exactly how an asymmetry survives. bracket's
+    #    levels() takes the PLAIN MEAN of an athlete-season's other rows, so
+    #    an athlete with one other row is a single noisy reading used with
+    #    the authority of an athlete with thirty.
+    #
+    #    THIS IS THE TABLE THAT DECIDES prior_athlete, and how to read it:
+    #      thin buckets improve, fat buckets unchanged -> the prior is right
+    #      fat buckets get WORSE                       -> over-shrinking
+    #      nothing moves at all                        -> tau >> sigma; the
+    #                                                     athletes really are
+    #                                                     that different and
+    #                                                     no prior is wanted
+    #    Run once at prior_athlete=0 and once at "fit" and compare columns.
+    if rows_at_athlete is not None:
+        ra = np.asarray(rows_at_athlete, dtype=np.int64)
+        res["by_athlete_rows"] = {}
+        print(f"        by training rows behind the ATHLETE:  {'rows/ath':>8} "
+              f"{'rows':>9} {'bracket':>9} {'joint':>9}")
+        for lo, hi, lab in ((1, 1, "1"), (2, 3, "2-3"), (4, 9, "4-9"),
+                            (10, 29, "10-29"), (30, 10 ** 9, "30+")):
+            mm = m & (ra >= lo) & (ra <= hi)
+            if mm.sum() >= 200:
+                sb = float((y[mm] - pred[mm]).std())
+                sj = float((y[mm] - jp[mm]).std())
+                res["by_athlete_rows"][lab] = (sb, sj, int(mm.sum()))
+                print(f"        {'':37}{lab:>8} {int(mm.sum()):>9,} "
+                      f"{sb:>9.5f} {sj:>9.5f}")
     return res
 
 
 def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
            prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30, tilt=True,
-           use_curve=True, gauge=be.GAUGE_DEFAULT):
+           use_curve=True, gauge=be.GAUGE_DEFAULT,
+           prior_athlete=be.PRIOR_ATHLETE):
     """Fit every row and write the difficulty file."""
     t0 = time.time()
     if codes is None or "_cell" not in cols:
         cols, codes = bk.packCodes(cols, npz, era_years)
     f = be.fit(cols, npz, train=None, window=window, top=top, era_years=era_years,
                n_iter=iters, prior_races=prior_races, prior_group=prior_group, tilt=tilt,
-               use_curve=use_curve, verbose=True, codes=codes, gauge=gauge)
+               use_curve=use_curve, verbose=True, codes=codes, gauge=gauge,
+               prior_athlete=prior_athlete)
     np.savez(out_path, D=f["D"], votes=f["votes"], course_keys=np.array(f["cell_keys"]),
              D_race=f["D_race"], votes_race=f["votes_race"],
              races_per_cell=f["races_per_cell"], races_per_base=f["races_per_base"],
@@ -261,6 +329,16 @@ def main():
                     default=be.GAUGE_DEFAULT,
                     help="which cells are held at zero. Run both and compare "
                          "the held-out error before trusting either.")
+    ap.add_argument("--prior-athlete", default=str(be.PRIOR_ATHLETE),
+                    help="shrink each athlete-season's level toward its "
+                         "POOL's mean by this many rows' worth. A number, or "
+                         "'fit' to estimate sigma_row^2/tau^2 per pool. "
+                         "Default %(default)s = OFF, which is the plain mean "
+                         "of the athlete's other rows in the window -- one "
+                         "row counting as much as thirty. Run at 0 and at "
+                         "'fit' and read the 'by training rows behind the "
+                         "ATHLETE' table: thin buckets should improve and fat "
+                         "ones should not get worse.")
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--no-tilt", action="store_true")
     ap.add_argument("--no-curve", action="store_true")
@@ -278,12 +356,14 @@ def main():
         fitAll(cols, npz, args.out, codes=codes, era_years=args.era_years,
                window=args.window, top=args.top, prior_races=args.prior_races,
                prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
-               use_curve=not args.no_curve, gauge=args.gauge)
+               use_curve=not args.no_curve, gauge=args.gauge,
+               prior_athlete=_priorAthlete(args.prior_athlete))
         return
     score(cols, npz, codes=codes, pct=args.pct, seed=args.seed, era_years=args.era_years,
           window=args.window, top=args.top, prior_races=args.prior_races,
           prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
-          use_curve=not args.no_curve, gauge=args.gauge)
+          use_curve=not args.no_curve, gauge=args.gauge,
+          prior_athlete=_priorAthlete(args.prior_athlete))
 
 
 if __name__ == "__main__":

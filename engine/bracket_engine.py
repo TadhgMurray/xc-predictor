@@ -95,6 +95,56 @@ PRIOR_RACES = 2.0
 #   "XC=1,TF:out=2.5,TF:in=1"). Whatever is used is printed.
 PRIOR_GROUP_BY = {"XC": 1.0, "TF:out": 2.5, "TF:in": 1.0}
 
+# ★★ AND THE ATHLETE SIDE GETS NONE OF THIS (owner, 2026-09-19: "I'm
+#    noticing shrinkage things. Like when is shrinkage good and when is it
+#    bad and how do we tell (also don't think we're applying a lot rn)").
+#    The hunch is right, and it is an asymmetry rather than an absence.
+#
+#  ⚠ WHAT levels() DID: a[q] = s_ / max(n_other, 1) -- a PLAIN MEAN of the
+#    athlete-season's other rows inside the window. `has = n_other > 0`, so
+#    ONE other row is enough, and that athlete's level is a single noisy
+#    reading carrying exactly the authority of an athlete with thirty. The
+#    course side, meanwhile, gets three nested shrinkages with a prior
+#    FITTED per group from the data. Courses were being protected from thin
+#    evidence and athletes were not.
+#
+#    It does damage twice over, which is why it is worth fixing rather than
+#    noting:
+#      1. AS A VOTER. cellStep forms r_i = (z - a) / h and averages over a
+#         race's voters, so a thin athlete's noise goes straight into the
+#         course's difficulty. race_sat saturates a race's weight in its
+#         voter COUNT, which cannot see that one of those voters is a guess.
+#      2. AS THE RATING. The published number rests on that same unshrunk a.
+#         A first collegiate race is the pure case: the athlete's other rows
+#         are a different pool at a different level, there are few of them
+#         inside the window, and nothing pulls the estimate back.
+#
+#  ★ SO: pull a toward the athlete's POOL mean by PRIOR_ATHLETE rows'
+#    worth, with the prior in the same units and estimated the same way as
+#    the group prior -- sigma_row^2 / tau_athlete^2, the number of readings
+#    whose average is as informative as "this is an ordinary athlete for
+#    their pool". Pool, not the global mean, for the same reason each course
+#    group is pulled toward its own average: a thin high-schooler should
+#    land at the high-school level, not between two pools.
+#
+#  ! OFF BY DEFAULT, AND THIS ONE STAYS OFF UNTIL IT IS SCORED. Every other
+#    change in this file was argued from a measurement on this corpus; this
+#    one is argued from the code reading above, and it moves EVERY rating.
+#    scripts/bracket_holdout.py now buckets held-out error by how many
+#    training rows stand behind the ROW'S ATHLETE, which is the axis a
+#    wrong athlete prior shows up on -- the exact counterpart of the "by
+#    training races at the course" table that already exists. Run it at 0
+#    and at "fit" and read that table:
+#      - thin buckets improve, fat buckets unchanged  -> the prior is right
+#      - fat buckets get worse                        -> over-shrinking
+#      - nothing moves                                -> tau >> sigma, the
+#                                                        athletes really are
+#                                                        that different and
+#                                                        no prior is wanted
+PRIOR_ATHLETE = 0.0            # rows; 0 = off. "fit" estimates it per pool.
+PRIOR_ATHLETE_RANGE = (0.1, 20.0)   # outside this the estimate is not believed
+PRIOR_ATHLETE_MIN_ATHLETES = 200    # per pool, with 2+ rows, to be fitted
+
 # ★★ WHICH CELLS ARE THE ZERO (owner, 2026-09-18: "we make flat 400 difficulty
 #    outdoor to 0.0 no matter what. Then we put indoor on avg comparison, and
 #    the indoor venues are only rated difficulty wise against each other
@@ -344,6 +394,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         verbose=False, codes=None, prior_rows=None, z=None, h_row=None,
         prior_warmup=PRIOR_FIT_WARMUP, place_radius=PLACE_RADIUS_M,
         prior_place=PRIOR_PLACE, voter_agg="mean",
+        prior_athlete=PRIOR_ATHLETE,
         gauge=GAUGE_DEFAULT):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
@@ -494,6 +545,11 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
               + f"  [{int(gauge_ref.sum()):,} of {n_cell:,} cells are the "
                 f"reference]", flush=True)
     prior_stated, fit_priors = _statedPriors(prior_group)
+    # the athlete prior: a number, or "fit" to estimate it per pool after the
+    # same warmup the group priors use.
+    fit_athlete = (isinstance(prior_athlete, str)
+                   and prior_athlete.strip().lower() == PRIOR_FIT)
+    prior_athlete_stated = 0.0 if fit_athlete else float(prior_athlete or 0.0)
     prior_g = prior_stated.copy()
     prior_report = None
     # the places: courses within place_radius of each other, of one kind
@@ -502,13 +558,90 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     in_place = place_of_base >= 0
     k_place = float(prior_place or 0.0)
 
-    def levels(D_now):
-        """The athletes' local levels against the courses D_now."""
+    # ---- the athlete prior: pool codes per ROW, and the fitted k ----
+    # ! PER ROW, because the shrinkage target is the athlete's POOL and the
+    #   rows are what carry the pool. pool_of_raw may already have been
+    #   built for the curve; build it here only if it was not.
+    if float(prior_athlete_stated or 0.0) > 0 or fit_athlete:
+        if pool_of_raw is None:
+            pool_of_raw, _pnames = rj.poolCodes(cols["athlete_keys"])
+        pool_row = np.asarray(pool_of_raw)[ath_raw]
+        n_pool = int(pool_row.max()) + 1 if pool_row.size else 1
+    else:
+        pool_row = np.zeros(n, dtype=np.int64)
+        n_pool = 1
+    k_ath = np.full(n_pool, float(prior_athlete_stated or 0.0))
+    athlete_report = None
+
+    def _fitAthletePrior(a_raw, v):
+        """sigma_row^2 / tau^2 per pool, from the athlete-seasons with 2+ rows.
+
+        ★ THE SAME IDENTIFIED-PRIORS IDEA AS _fitGroupPriors, on the other
+          axis: the within-athlete-season spread of the de-difficultied rows
+          against the between-athlete-season spread of their means. A pool
+          with too few multi-row athletes keeps the stated value.
+        """
+        out = k_ath.copy()
+        rep = {}
+        fin = np.isfinite(a_raw) & np.isfinite(v)
+        for p_ in range(n_pool):
+            m = fin & (pool_row == p_)
+            if not m.any():
+                continue
+            seas = season[m]
+            _u, inv, cnt = np.unique(seas, return_inverse=True,
+                                     return_counts=True)
+            multi = cnt[inv] >= 2
+            if int(np.unique(seas[multi]).size) < PRIOR_ATHLETE_MIN_ATHLETES:
+                rep[p_] = (None, int(np.unique(seas[multi]).size))
+                continue
+            vv, ii = v[m][multi], inv[multi]
+            mean_of = np.bincount(ii, weights=vv) / np.maximum(
+                np.bincount(ii), 1)
+            resid = vv - mean_of[ii]
+            dof = max(vv.size - np.unique(ii).size, 1)
+            sigma2 = float((resid ** 2).sum() / dof)
+            means = mean_of[np.unique(ii)]
+            tau2 = float(means.var(ddof=1)) if means.size > 1 else 0.0
+            # tau2 as measured is sigma2/n inflated; remove the sampling part
+            tau2 = max(tau2 - sigma2 / max(float(cnt[multi].mean()), 1.0),
+                       1e-12)
+            k = sigma2 / tau2
+            lo, hi = PRIOR_ATHLETE_RANGE
+            rep[p_] = (k, int(means.size))
+            out[p_] = min(max(k, lo), hi)
+        return out, rep
+
+    def levels(D_now, k_a=None):
+        """The athletes' local levels against the courses D_now.
+
+        ⚠ WITH k_a = 0 THIS IS THE HISTORIC PLAIN MEAN, EXACTLY. The two
+          bincounts below are skipped entirely in that case, so the old
+          path is not merely reproduced, it is the code that runs.
+        """
         v = z - h * D_now[np.maximum(cell, 0)]
         s_, _c = W.sums(v[ref])
         s_ = s_ - np.where(self_ref, v[q], 0.0)
         a = np.full(n, np.nan)
-        a[q] = np.where(has, s_ / np.maximum(n_other, 1), np.nan)
+        a_raw = np.where(has, s_ / np.maximum(n_other, 1), np.nan)
+        kk = k_ath if k_a is None else k_a
+        if not np.any(kk > 0):
+            a[q] = a_raw
+            return a
+        # the pool's own mean level, weighted by how much each athlete's
+        # estimate is worth (its row count) -- the target to shrink toward
+        ok = np.isfinite(a_raw)
+        pr = pool_row[q]
+        num = np.bincount(pr[ok], weights=(a_raw[ok] * n_other[ok]),
+                          minlength=n_pool)
+        den = np.bincount(pr[ok], weights=n_other[ok].astype(np.float64),
+                          minlength=n_pool)
+        m_pool = np.where(den > 0, num / np.maximum(den, 1e-12), 0.0)
+        k_row = kk[pr]
+        a[q] = np.where(ok,
+                        (s_ + k_row * m_pool[pr])
+                        / np.maximum(n_other + k_row, 1e-9),
+                        np.nan)
         return a
 
     def cellStep(a, k_g):
@@ -578,6 +711,16 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
 
     for it in range(n_iter):
         a_local = levels(D)
+        # ! FITTED AFTER THE SAME WARMUP, AND FROM THE UNSHRUNK MEANS. The
+        #   estimate is of the spread among athletes; reading it off already
+        #   shrunk levels would measure the shrinkage and converge the prior
+        #   to nonsense. So the warmup runs with k = 0 (or the stated value)
+        #   and the fit happens once, then holds -- exactly the wall the
+        #   group priors use.
+        if fit_athlete and athlete_report is None and it >= prior_warmup:
+            v_now = z - h * D[np.maximum(cell, 0)]
+            k_ath, athlete_report = _fitAthletePrior(a_local, v_now)
+            a_local = levels(D)
         st = cellStep(a_local, prior_g)
         if fit_priors and prior_report is None and it >= prior_warmup:
             race_base = base_of_cell[race_cell]
@@ -633,6 +776,32 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
               f"its group's average course by (in races):", flush=True)
         for ln in prior_lines:
             print("        " + ln, flush=True)
+        # ★ THE ATHLETE SIDE, SAID OUT LOUD EITHER WAY. Silence here was the
+        #   whole problem: the course priors have been printed since they
+        #   existed and the athlete level had no line at all, so "how much
+        #   shrinkage are we applying" had no answer short of reading
+        #   levels().
+        if not np.any(k_ath > 0):
+            print(f"[bracket] athlete prior: OFF — every athlete-season's "
+                  f"level is the PLAIN MEAN of its other rows in the window, "
+                  f"so one row counts as much as thirty, both as a voter and "
+                  f"as the rating (prior_athlete=0)", flush=True)
+        else:
+            lo_k, hi_k = float(k_ath[k_ath > 0].min()), float(k_ath.max())
+            print(f"[bracket] athlete prior: a level is pulled toward its "
+                  f"POOL's mean by "
+                  + (f"{lo_k:g} rows' worth" if lo_k == hi_k else
+                     f"{lo_k:g}..{hi_k:g} rows' worth by pool")
+                  + (" (fitted: sigma_row^2/tau^2 per pool)" if fit_athlete
+                     else " (stated)"), flush=True)
+            if athlete_report:
+                kept = sum(1 for k, _n in athlete_report.values()
+                           if k is not None)
+                print(f"        {kept} of {len(athlete_report)} pools fitted "
+                      f"their own; the rest keep the stated "
+                      f"{prior_athlete_stated:g} "
+                      f"(needs {PRIOR_ATHLETE_MIN_ATHLETES} athlete-seasons "
+                      f"with 2+ rows)", flush=True)
         if cols.get("course_lat") is None:
             print("[bracket] place prior: the pack carries no course coordinates "
                   "(rebuild it at 07_pack); no places", flush=True)
