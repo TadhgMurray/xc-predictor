@@ -36,8 +36,17 @@ import os
 import sys
 import time
 
+# ⚠⚠ engine/ BELONGS HERE, AND ITS ABSENCE WAS NOT HARMLESS (2026-09-19:
+#    "team levels unavailable (ModuleNotFoundError: No module named
+#    'speed_ratings_db') -- crests file under no level"). loadTeamLevels lives
+#    in engine/, so every run of this script silently took the fallback and
+#    filed every crest under NO level -- which is the level-less (school,
+#    state) key that Amherst College and Amherst Regional High share, the exact
+#    damage the level split exists to prevent. A missing path entry presented
+#    itself as a capability the box did not have.
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for _p in (os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "racecast")):
+for _p in (_ROOT, os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "engine"),
+           os.path.join(_ROOT, "racecast")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -54,6 +63,31 @@ HEADERS = {"anet-appinfo": "web:web:0:240", "Accept": "application/json"}
 API = "https://www.athletic.net/api/v1/TeamNav/Team?team={team}&sport={sport}&season={season}"
 CORE = "https://www.athletic.net/api/v1/TeamHome/GetTeamCore?teamId={team}&sport={sport}&year={season}"
 ABORT_AFTER = 20
+
+
+# ★ WHICH FAILURE IS IT (2026-09-19). The abort printed "if that is a challenge
+#   page, --ignore-robots does not help" over a body that was neither: anet had
+#   answered with well-formed JSON saying `"team": null` twenty times, because
+#   the twenty ids ASKED FOR ARE NOT TEAMS. Those two failures need opposite
+#   responses -- one is anet refusing us, the other is our own queue holding
+#   stale ids -- so the message now reads the body rather than guessing.
+def _abortHint(raw):
+    body = (raw or b"").decode("utf-8", "replace").lstrip()
+    if body.startswith("{") or body.startswith("["):
+        try:
+            got = json.loads(body)
+        except ValueError:
+            got = None
+        if isinstance(got, dict) and "team" in got and got.get("team") is None:
+            return ("anet ANSWERED, and said this id is not a team "
+                    "(\"team\": null). That is our queue, not anet's door: "
+                    "the ids came from team_id values on our own result rows, "
+                    "so they are stale or were never anet teams. Nothing to "
+                    "retry here -- check one with --probe <team>.")
+        return ("anet answered with JSON but no team in it. --probe <team> "
+                "prints one whole response.")
+    return ("If that is a challenge page, --ignore-robots does not help; if it "
+            "says robots, it does. --probe <team> prints one whole response.")
 
 TEAM_DDL = """
 CREATE TABLE IF NOT EXISTS anet_team (
@@ -1100,9 +1134,7 @@ def main():
                         f"Nothing written.\n"
                         f"  What anet actually said:\n    "
                         + (raw[:600].decode("utf-8", "replace") if raw else "(no body)")
-                        + "\n  If that is a challenge page, --ignore-robots does "
-                          "not help; if it says robots, it does. "
-                          "--probe <team> prints one whole response.")
+                        + "\n  " + _abortHint(raw))
                 if args.write and i % 100 == 0:
                     conn.commit()
                 if i % 100 == 0 or args.dry_run:

@@ -102,9 +102,17 @@ def main():
                     help="the athlete bar to test against (default 15)")
     args = ap.parse_args()
 
+    # ! getConn IS A CONTEXT MANAGER -- it hands the connection back to the
+    #   pool when the block ends, which is why every other script in the tree
+    #   opens it with `with`. Calling it bare returns the manager object.
     from database import getConn
-    conn = getConn()
-    cur = conn.cursor()
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            _report(cur, args)
+        conn.rollback()      # read-only by construction; nothing to keep
+
+
+def _report(cur, args):
     for t in ("team_pool", "team_identity"):
         if not _tableExists(cur, t):
             raise SystemExit(f"{t} is missing; build it first")
@@ -160,7 +168,6 @@ def main():
     print("\n  ! nothing was written. If `freed` is large the bar is being "
           "applied to a fraction of a roster;\n    if it is small the rule is "
           "catching what it says it catches and these are simply tiny teams.")
-    cur.close()
 
 
 if __name__ == "__main__":

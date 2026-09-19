@@ -63,8 +63,14 @@ ok(err is None and f["exclude_grade"] == ["12"],
    f"one year with an exclusion was rejected: {err}")
 ok(teams.gradeExcluded(f), "gradeExcluded must see the filter")
 
+# ! THE WORDING MOVED, THE RULE DID NOT. parseFilters now FILLS the current
+#   season when it knows one ("it needs one season, and now it picks one
+#   instead of refusing"), and refuses only when no season can be found at all
+#   -- which is this call, in a test process with no season loaded. So the
+#   assertion is on the refusal and on its subject, not on the old sentence
+#   "one year", which is what it used to match.
 _, err2 = teams.parseFilters(_Args(sport="XC", pool="hs_m", exclude_grade="12"))
-ok(err2 and "one year" in err2,
+ok(err2 and ("season" in err2 or "one year" in err2),
    f"an exclusion with no year must be refused, not silently served: {err2!r}")
 
 _, err3 = teams.parseFilters(_Args(sport="XC", pool="hs_m",
@@ -175,19 +181,37 @@ ok("Seniorville" not in after,
    "a squad with two runners left cannot field five and must not score")
 
 
-# ---- 6. the UI sends it only from the teams board --------------------- #
+# ---- 6. the control that carries the feature now ---------------------- #
+#
+# ⚠ THIS SECTION USED TO ASSERT A CONTROL THAT WAS DELIBERATELY REMOVED, and
+#   it asserted it with JS.index(...) at MODULE level -- so the removal turned
+#   the whole file into a ValueError at import, and under pytest that is a
+#   collection error rather than a failure. It read:
+#
+#       i = JS.index('q.set("exclude_grade"')
+#
+#   The teams-only "Graduating (removed)" combo it looked for was replaced by
+#   the ONE grade combo, which on the teams board BUILDS the squad ("tick 9 and
+#   the board is every school's freshman team, and next year's squad is the
+#   same control with the seniors left unticked"). So the UI no longer sends
+#   exclude_grade at all, on purpose, while teams.py still accepts it for links
+#   already out in the world -- see racecast/templates/rankings.html and
+#   teams.py:666. What follows asserts THAT, which is the live contract.
 JS = io.open(os.path.join(ROOT, "racecast", "static", "rankings.js"),
              encoding="utf-8").read()
-i = JS.index('q.set("exclude_grade"')
-ok('state.board === "teams"' in JS[max(0, i - 400):i],
-   "exclude_grade must be sent from the teams board only")
-ok("exclude_grade: GRADES" in JS,
-   "the control needs the grade list to offer")
 HTML = io.open(os.path.join(ROOT, "racecast", "templates", "rankings.html"),
                encoding="utf-8").read()
-j = HTML.index('data-field="exclude_grade"')
-ok("teams-only" in HTML[max(0, j - 400):j],
-   "the returning-teams control belongs to the teams board only")
+ok('q.set("exclude_grade"' not in JS,
+   "the UI must not send exclude_grade any more -- the grade combo replaced "
+   "the teams-only control")
+ok('data-field="exclude_grade"' not in HTML,
+   "the removed combo must not come back in the template")
+ok('data-field="grade"' in HTML,
+   "the grade combo IS the returning-teams feature now")
+TEAMS = io.open(os.path.join(ROOT, "racecast", "teams.py"),
+                encoding="utf-8").read()
+ok('_multiValue(args, "exclude_grade")' in TEAMS,
+   "the API must keep accepting exclude_grade for links already sent")
 
 
 if __name__ == "__main__":
