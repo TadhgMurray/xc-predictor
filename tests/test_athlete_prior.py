@@ -206,3 +206,58 @@ class TheHoldoutCliActuallyReachesTheFunction(unittest.TestCase):
             bh._compareRuns("/nonexistent/nope.npz", np.ones(n, bool),
                             np.zeros(n), np.zeros(n), np.ones(n, bool),
                             15, 11, 2, 45))
+
+
+class TheJointDumpCannotCrashTheRun(unittest.TestCase):
+    """⚠ A dump written against a DIFFERENT pack raised
+    "index 62805404 is out of bounds for axis 0 with size 62805298" -- the
+    pack had been rebuilt 107 rows smaller between the two runs. sameRows
+    already had the guard for it (`inb`), one line TOO LATE: the lexsort
+    undo indexed with the raw ids first.
+
+    ! AND IT ONLY SURFACED ONCE AN EARLIER BUG WAS FIXED. The previous crash
+      was in _rowsPerAthleteSeason, evaluated as an ARGUMENT to sameRows, so
+      execution never got inside. One bug was masking the other."""
+
+    @staticmethod
+    def _pack(n):
+        return dict(
+            full_ath=np.arange(n) // 3,
+            full_year=np.full(n, 2024),
+            full_norm=np.exp(np.linspace(0.1, 0.9, n)))
+
+    def _run(self, rows, n=1000):
+        import os
+        import tempfile
+        import bracket_holdout as bh
+        pk = self._pack(n)
+        y = np.log(pk["full_norm"])
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "base_holdout.npz")
+            idx = np.clip(rows, 0, n - 1)
+            np.savez(path, row=rows, pred=y[idx],
+                     covered=np.ones(rows.size, bool), y=y[idx])
+            return bh.sameRows({"sport": np.zeros(n)}, np.ones(n, bool),
+                               np.ones(n, bool), np.ones(n, bool), y, y,
+                               path, **pk)
+
+    def test_an_id_past_the_end_is_reported_not_raised(self):
+        # the server's case: a pack rebuilt smaller than the dump's
+        got = self._run(np.array([0, 5, 10, 1106]))
+        self.assertIsNone(got, "it must decline, not crash")
+
+    def test_every_id_past_the_end_is_also_survivable(self):
+        self.assertIsNone(self._run(np.arange(0, 1000, 10) + 1000))
+
+    def test_negative_ids_are_treated_the_same_way(self):
+        # ! -1 is how this module already spells "no row", so it must not be
+        #   read as "the last row" by numpy's wrap-around.
+        self.assertIsNone(self._run(np.array([-1, -5, 0, 3])))
+
+    def test_a_dump_that_does_match_is_not_rejected_by_the_clamp(self):
+        # It may still decline for OTHER reasons (too little overlap); what
+        # this pins is that the clamp itself raises nothing and lets it past.
+        try:
+            self._run(np.arange(0, 1000, 2))
+        except Exception as exc:                                 # noqa: BLE001
+            self.fail(f"a valid dump must not raise: {exc!r}")

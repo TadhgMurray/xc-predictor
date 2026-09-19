@@ -266,7 +266,26 @@ def sameRows(sub, both, test_s, cov, pred, y, dump_path=None, full_ath=None,
         #   sort is recomputed here and undone. Run 21's first comparison
         #   read 35% overlap and a joint error of 0.0625 for this reason.
         order = np.lexsort((np.asarray(full_year), np.asarray(full_ath)))
-        rows_j = order[rows_j]
+        # ⚠ CLAMP BEFORE INDEXING, NOT AFTER (2026-09-19). The `inb` guard
+        #   below exists for exactly this case and sat one line too late, so a
+        #   dump written against a DIFFERENT pack raised
+        #   "index 62805404 is out of bounds for axis 0 with size 62805298"
+        #   instead of reporting the mismatch it was written to report. 107
+        #   rows is a pack rebuilt between the two runs; the ids are then
+        #   meaningless, not merely shifted.
+        bad = (rows_j < 0) | (rows_j >= order.size)
+        if bad.any():
+            share = float(bad.mean())
+            print(f"        the joint file holds {int(bad.sum()):,} row ids "
+                  f"({share:.1%}) outside this pack's {order.size:,} rows — it "
+                  f"was written against a DIFFERENT pack")
+            if share > 0.01:
+                print(f"        no same-rows comparison: rebuild the dump with "
+                      f"`scripts/ablation_ladder.py --only base`, or point "
+                      f"--dump-path at one built on this pack")
+                return None
+            print(f"        dropping them and continuing on the rest")
+        rows_j = np.where(bad, -1, order[np.clip(rows_j, 0, order.size - 1)])
     # the dump's own times must land on the rows they came from; if they do
     # not, the two engines are being compared on different rows and it stops
     y_full = np.log(np.asarray(full_norm, dtype=np.float64))
