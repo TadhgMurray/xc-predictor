@@ -3171,18 +3171,34 @@ def _printComparisonTable(xc_pot, tf_pot, xc_sup, tf_sup):
 #          loads (dispatch on data: legacy pool-dict pickles have no
 #          "kind" and route to the old spline path unchanged).
 # Arguments: art — fitAllPotentials' output.
-def savePotentials(art):
+def savePotentials(art, path=None):
+    """Write the artifact, or refuse to.
+
+    ⚠ path EXISTS SO A COMPARISON RUN CANNOT EAT THE LIVE ARTIFACT
+      (2026-09-19). This wrote OUTPUT_FILE unconditionally, which is fine
+      for one authoritative refit and a trap for the thing anyone actually
+      wants to do with the new flags: fit several variants and read them
+      against each other. Four back-to-back runs each overwrote the file
+      the last one wrote, the site ran on whichever finished last, and the
+      evidence the run existed to produce was gone. --out sends a variant
+      somewhere else; no --out still means the live path, so the
+      authoritative refit is unchanged.
+    """
+    dest = path or OUTPUT_FILE
     lo, hi = _curveHealth(art["global"])
     if lo < EXP_SANE[0] or hi > EXP_SANE[1]:
         print(f"\nSAVE REFUSED: the GLOBAL curve is unphysical "
               f"(local exp [{lo:.3f}, {hi:.3f}]). No pickle written — a "
               f"saved artifact is a promise, and this one would lie.")
         return False
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    with open(OUTPUT_FILE, "wb") as f:
+    os.makedirs(os.path.dirname(os.path.abspath(dest)) or ".", exist_ok=True)
+    with open(dest, "wb") as f:
         pickle.dump(art, f)
     print(f"\nDistance potentials ({len(art['pools'])} pools + global) "
-          f"saved to {OUTPUT_FILE}")
+          f"saved to {dest}"
+          + ("" if dest == OUTPUT_FILE else
+             f"\n  ! NOT the live artifact ({OUTPUT_FILE}) — nothing the "
+             f"engine reads has changed."))
     return True
 
 
@@ -3237,6 +3253,12 @@ def main():
     parser.add_argument("--monotone-sports", default=",".join(MONOTONE_SPORTS),
                         help="sports whose curves' local exponent is held non-increasing "
                              "with distance (default %(default)s; '' turns it off)")
+    parser.add_argument("--out", default=None,
+                        help="write the artifact HERE instead of the live "
+                             "path. Use it for every comparison run: without "
+                             "it, each variant overwrites the file the last "
+                             "one wrote and the engine picks up whichever "
+                             "finished last.")
     parser.add_argument("--merge-sports", action="store_true",
                         help="fit ONE shape per pool from BOTH sports' "
                              "pairs (eps still per sport), stored under both "
@@ -3328,7 +3350,7 @@ def main():
           + ("MERGED" if MERGE_SPORTS else "per-sport") + " potentials...\n")
     art = fitAllPotentials(xc_by_pool, tf_by_pool,
                            report_residuals=args.residuals)
-    savePotentials(art)
+    savePotentials(art, path=args.out)
     sanityCheck(art)
 
 
