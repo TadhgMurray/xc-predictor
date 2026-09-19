@@ -607,10 +607,13 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   (2026-09-19). MEASURED on the same held-out rows, which is the only fair
   #   way to compare it since a wider window also changes COVERAGE:
   #
-  #       SAME ROWS, BOTH WINDOWS: 571,290 rows covered by both
-  #         window 45: 0.041434     window 21: 0.041938
+  #       571,290 rows covered by all, against a 21-day baseline:
+  #         21  0.041938 | 30  0.041401 | 45  0.041434 | 60  0.041603
+  #         90  0.041658
   #
-  #   45 wins by 1.2% relative, and separately lifts coverage 63.1% -> 69.3%.
+  #   All four beat 21 and the curve TURNS OVER: an interior optimum at 30-45
+  #   (a tie at 0.08% apart), declining after. solve_env.sh sets 30.
+  #   Separately, coverage rises 63.1% -> 69.3% at 45.
   #   Read the headline sds and 45 looks WORSE (0.042507 against 0.041938),
   #   because it is scoring 6.2 points more of the corpus and the rows it adds
   #   are the ones with no sibling race within 21 days -- the hardest there

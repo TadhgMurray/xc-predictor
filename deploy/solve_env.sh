@@ -35,24 +35,35 @@
 : "${XCP_ERA_YEARS:=2}"             # course eras, in years
 : "${XCP_ALTITUDE:=1}"              # altitude correction on
 : "${XCP_INDOOR_LEVEL:=0.003}"      # indoor's level against outdoor
-# ★ UNSET ON PURPOSE, WITH A MEASUREMENT BEHIND IT. run_joint's default is 21
-#   days. On the SAME held-out rows -- the only fair comparison, because a
-#   wider window also changes coverage -- 45 beats 21:
+# ★ MEASURED, NOT CHOSEN. run_joint's default is 21 days. Swept on the SAME
+#   held-out rows -- the only fair comparison, since a wider window also
+#   changes coverage -- against a 21-day baseline, 571,290 rows covered by all:
 #
-#       SAME ROWS, BOTH WINDOWS: 571,290 rows covered by both
-#         window 45: 0.041434     window 21: 0.041938      (-1.2% relative)
+#       window 21   0.041938   (baseline)
+#       window 30   0.041401   -1.28%   <-- best
+#       window 45   0.041434   -1.20%
+#       window 60   0.041603   -0.80%
+#       window 90   0.041658   -0.67%
 #
-#   and coverage rises 63.1% -> 69.3%, which is 28,000 more XC rows getting a
-#   rating at all. The headline sds say the opposite (45 reads 0.042507) only
-#   because 45 scores the harder rows 21 could not reach.
+#   Every one beats 21, and the curve turns over: an INTERIOR optimum around
+#   30-45 (those two differ by 0.08%, a tie), declining after. That shape is
+#   the finding. It says the window is a real fitness horizon of about a month
+#   either side, NOT "the athlete term just wants more rows" -- which would
+#   have kept improving out to 90.
 #
-#   It is left unset rather than set to 45 because 45 was the only alternative
-#   tried. Sweep it before adopting one:
-#     for w in 30 45 60 90; do
-#       scripts/bracket_holdout.py --pct 15 --seed 11 --era-years 2 #           --window "$w" --compare /tmp/w21.npz
-#     done
-#   (dump the 21 baseline once with --window 21 --dump /tmp/w21.npz.)
-# : "${XCP_BRACKET_WINDOW:=45}"
+# ⚠ AND IT REFUTES THE STRATUM STORY IT WAS RUN TO TEST. The idea was that a
+#   December championship's voters only see other championship races, so a
+#   wider window would let their October form in and fix Foot Locker. But
+#   early December plus 30 days reaches back only to about 5 November -- still
+#   postseason. The window that WOULD bridge to the September-October season
+#   is 90, and 90 is the worst of the four. Bridging costs more in fitness
+#   drift than it buys in evidence. So this is a general improvement and NOT
+#   the Foot Locker / NXN fix.
+#
+#   Coverage also rises (63.1% -> 69.3% at 45), which is tens of thousands
+#   more rows getting a rating at all -- a second, independent gain that the
+#   headline sds hide, since they are then computed on different populations.
+: "${XCP_BRACKET_WINDOW:=30}"
 # ⚠ LEAVE THIS AT none. I argued for `field` here on 2026-09-19 and the owner
 #   refuted it on the spot, with the right instrument: if an untapered
 #   championship field were the cause, NXN AND FOOT LOCKER WOULD BOTH SHOW IT,
