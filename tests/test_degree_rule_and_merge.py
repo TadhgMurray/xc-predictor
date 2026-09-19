@@ -164,6 +164,38 @@ class TheDegreeRuleMeasuresWhereTheDataSits(unittest.TestCase):
             fde.DEGREE_RULE = original
 
 
+class TheShippedDefaults(unittest.TestCase):
+    """The three 2026-09-19 changes are the default. Pinned here because a
+    silent flip either way would be invisible -- every one of them moves
+    every curve."""
+
+    def test_the_three_defaults(self):
+        self.assertTrue(fde.MERGE_SPORTS, "one shape per pool, both sports")
+        self.assertEqual(fde.DEGREE_RULE, "locations")
+        self.assertEqual(fde.PRIOR_SLOPE_WEIGHT, 1.0)
+        self.assertEqual(fde.K_PRIOR, 1.06)
+
+    def test_each_one_can_still_be_turned_off(self):
+        import argparse
+        import io
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            with self.assertRaises(SystemExit):
+                # --help is the cheapest proof the three off-switches parse
+                import sys
+                argv = sys.argv
+                try:
+                    sys.argv = ["fit", "--help"]
+                    fde.main()
+                finally:
+                    sys.argv = argv
+        text = buf.getvalue()
+        for flag in ("--no-merge-sports", "--degree-rule", "--slope-prior",
+                     "--out"):
+            self.assertIn(flag, text, f"{flag} must be reachable")
+
+
 class TheMergedFitSharesShapeButNotEps(unittest.TestCase):
 
     def test_eps_correction_matches_the_solver_exactly(self):
@@ -349,78 +381,76 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TheSlopePriorReplacesTheClampWithPhysics(unittest.TestCase):
+class TheCurvaturePriorReplacesTheClampWithPhysics(unittest.TestCase):
     """★ The floor makes a curve LEGAL, not RIGHT: MIN_LOCAL_EXP clamps the
-       SAMPLED values after the fit, so the fit is still free to bend to 0.84
-       and the clamp then flattens it to exactly 1.040. The prior puts the
-       physics in the fit instead."""
+       SAMPLED values after the fit, so the fit is free to bend below 1.0 and
+       the clamp then flattens it. The prior removes the freedom instead."""
 
     def setUp(self):
-        self._saved = fde.PRIOR_SLOPE_WEIGHT
+        self._w = fde.PRIOR_SLOPE_WEIGHT
+        self._rule = fde.DEGREE_RULE
 
     def tearDown(self):
-        fde.PRIOR_SLOPE_WEIGHT = self._saved
+        fde.PRIOR_SLOPE_WEIGHT = self._w
+        fde.DEGREE_RULE = self._rule
 
-    def test_off_by_default_and_contributes_nothing_when_off(self):
-        self.assertEqual(self._saved, 0.0, "the prior must ship off")
-        edges = fde._aggregatePairEdges(_standardisedTrack(k=1.08))
+    @staticmethod
+    def _poisoned():
+        """Clean and dense to 3,200m; the ONLY evidence above it says pace
+        improves with distance. An October 8k against a November 10k -- the
+        XC confound in its purest form, and a real end segment."""
+        clean = (800, 1000, 1200, 1500, 1600, 2000, 2400, 3000, 3200)
+        pairs = []
+        for i, a in enumerate(clean):
+            for b in clean[i + 1:]:
+                pairs += [_pair(a, b, k=1.10, t1=200.0 + j)
+                          for j in range(30)]
+        poison = (3200, 5000, 8000, 10000)
+        for i, a in enumerate(poison):
+            for b in poison[i + 1:]:
+                pairs += [_pair(a, b, k=0.80, t1=600.0 + j)
+                          for j in range(30)]
+        return pairs
+
+    def test_zero_means_gone_not_merely_small(self):
         fde.PRIOR_SLOPE_WEIGHT = 0.0
-        A, b, w = fde._priorSlopeRows(edges, 3, 1.0)
+        A, b, w = fde._priorSlopeRows(
+            fde._aggregatePairEdges(_standardisedTrack()), 3, 1.0)
         self.assertEqual((A.shape, len(b), len(w)), ((0, 3), 0, 0),
-                         "with the weight at 0 there are no prior rows at "
-                         "all, which is what makes the old solve exact "
-                         "rather than merely close")
+                         "at 0 there are no prior rows at all, which is what "
+                         "makes the old solve exact rather than close")
 
-    def test_a_tiny_weight_is_a_nudge_and_a_large_one_is_a_pull(self):
-        # The knob has to be monotone or it cannot be tuned.
-        pairs = _standardisedTrack(k=1.16)
-        got = {}
-        for weight in (0.0, 0.5, 8.0):
-            fde.PRIOR_SLOPE_WEIGHT = weight
-            got[weight] = fde._localExponent(fde._fitOnePotential(pairs), 5000)
-        self.assertGreater(got[0.0], fde.K_PRIOR)
-        self.assertLessEqual(got[8.0], got[0.5] + 1e-9)
-        self.assertLessEqual(got[0.5], got[0.0] + 1e-9)
-
-    def test_the_prior_row_basis_matches_polyDeriv(self):
-        # ! If these two disagree the prior constrains something that is not
-        #   the local exponent, silently.
+    def test_the_rows_are_the_second_derivative_of_the_same_polynomial(self):
         fde.PRIOR_SLOPE_WEIGHT = 1.0
-        edges = fde._aggregatePairEdges(_standardisedTrack(k=1.08))
+        edges = fde._aggregatePairEdges(_standardisedTrack())
         A, b, _w = fde._priorSlopeRows(edges, 3, 1.0)
         L0 = math.log(fde.TARGET_DISTANCE_METERS)
         pts = [e[0] for e in edges] + [e[1] for e in edges]
         probes = np.linspace(min(pts), max(pts), fde.PRIOR_SLOPE_PROBES)
         coeffs = np.array([0.7, -0.03, 0.004])
+        h = 1e-4
         for row, x_abs in zip(A, probes):
-            self.assertAlmostEqual(float(row @ coeffs),
-                                   fde._polyDeriv(coeffs, x_abs - L0),
-                                   places=12)
-        self.assertTrue(all(abs(x - fde.K_PRIOR) < 1e-12 for x in b))
+            x = x_abs - L0
+            numeric = (fde._polyDeriv(coeffs, x + h)
+                       - fde._polyDeriv(coeffs, x - h)) / (2 * h)
+            self.assertAlmostEqual(float(row @ coeffs), numeric, places=6)
+        self.assertTrue(all(v == 0.0 for v in b), "the target is NO bending")
 
-    def test_the_prior_is_weightless_where_the_endpoints_are(self):
-        # ★ Data wins where data exists; that is the whole design.
+    def test_a_line_has_no_curvature_to_penalise(self):
         fde.PRIOR_SLOPE_WEIGHT = 1.0
-        edges = fde._aggregatePairEdges(_standardisedTrack(k=1.08))
-        _A, _b, w = fde._priorSlopeRows(edges, 3, 1.0)
-        L0 = math.log(fde.TARGET_DISTANCE_METERS)
-        pts = [e[0] for e in edges] + [e[1] for e in edges]
-        probes = np.linspace(min(pts), max(pts), fde.PRIOR_SLOPE_PROBES)
-        # the probe nearest a heavily-raced rung must carry ~no prior weight
-        rung = math.log(1600.0)
-        i_near = int(np.argmin(np.abs(probes - rung)))
-        i_far = int(np.argmax(w))
-        self.assertLess(w[i_near], w[i_far],
-                        "the prior must be lighter near real endpoints")
-        self.assertLess(w[i_near], 0.5 * float(np.max(w)))
-        del L0
+        A, _b, _w = fde._priorSlopeRows(
+            fde._aggregatePairEdges(_standardisedTrack()), 1, 1.0)
+        self.assertTrue((A == 0.0).all(),
+                        "degree 1 cannot bend, so the rows must be inert "
+                        "rather than absent -- an absent block would change "
+                        "the row count and nothing else")
 
     def test_balance_is_zero_at_the_boundaries_and_one_inside(self):
-        edges = fde._aggregatePairEdges(_standardisedTrack(k=1.08))
-        # ! THE PROBES MUST COME FROM THE EDGES, as _priorSlopeRows builds
-        #   them. An endpoint is the MEAN of its bin's members, so
-        #   log(800) recomputed independently lands a float either side of
-        #   it and a strict comparison at the boundary flips.
+        edges = fde._aggregatePairEdges(_standardisedTrack())
+        # ! PROBES FROM THE EDGES, as _priorSlopeRows builds them. An
+        #   endpoint is the MEAN of its bin, so log(800) recomputed
+        #   independently lands a float either side of it and a strict
+        #   comparison at the boundary flips.
         pts = [e[0] for e in edges] + [e[1] for e in edges]
         probes = np.linspace(min(pts), max(pts), 9)
         self.assertEqual(list(fde._supportBalance([], probes)), [0.0] * 9)
@@ -432,9 +462,9 @@ class TheSlopePriorReplacesTheClampWithPhysics(unittest.TestCase):
                         "throughout, however lumpy the rungs are")
 
     def test_the_prior_ignores_the_gaps_between_standardised_rungs(self):
-        # ⚠ THE BUG THIS MEASURE REPLACED. A local-density kernel weighted
+        # ⚠ THE FIRST BAD MEASURE. A local-density kernel weighted
         #   2,063..2,546m and 6,564..8,102m -- the gaps BETWEEN rungs, where
-        #   the polynomial interpolates between two well-supported points and
+        #   the polynomial interpolates between two supported points and
         #   needs no help -- and gave the actual boundaries zero.
         fde.PRIOR_SLOPE_WEIGHT = 1.0
         edges = fde._aggregatePairEdges(_standardisedTrack(k=1.12))
@@ -443,122 +473,85 @@ class TheSlopePriorReplacesTheClampWithPhysics(unittest.TestCase):
         pts = [e[0] for e in edges] + [e[1] for e in edges]
         probes = np.linspace(min(pts), max(pts), fde.PRIOR_SLOPE_PROBES)
         for x, weight in zip(probes, w):
-            d = math.exp(x)
-            if 2000 <= d <= 8200:
+            if 2000 <= math.exp(x) <= 8200:
                 self.assertEqual(weight, 0.0,
-                                 f"prior must stand down at {d:,.0f}m")
+                                 f"must stand down at {math.exp(x):,.0f}m")
         self.assertGreater(w[0], 0.0, "the bottom boundary is one-sided")
         self.assertGreater(w[-1], 0.0, "the top boundary is one-sided")
 
-    def test_a_well_supported_curve_barely_moves(self):
-        # ⚠ THE PROPERTY THAT MATTERS MOST. A prior that shifts a curve the
-        #   pairs already determine is a bias, not a regulariser.
-        pairs = _standardisedTrack(k=1.12)
-        fde.PRIOR_SLOPE_WEIGHT = 0.0
-        base = fde._fitOnePotential(pairs)
-        fde.PRIOR_SLOPE_WEIGHT = 1.0
-        with_prior = fde._fitOnePotential(pairs)
-        # ! A BOUND, NOT AN EQUALITY. The prior enters one global polynomial
-        #   fit, so pinning the two boundaries tilts the whole cubic a
-        #   little. Measured on a k=1.12 eight-rung corpus at weight 1, the
-        #   largest interior shift is 0.003 -- an order of magnitude below
-        #   the 0.03-0.06 differences this fitter exists to resolve, and far
-        #   below the 0.08 the floor was silently imposing. If this bound
-        #   ever has to be loosened, the prior has stopped being a
-        #   regulariser.
-        worst = max(abs(fde._localExponent(base, d)
-                        - fde._localExponent(with_prior, d))
-                    for d in (1600, 2400, 3200, 5000))
-        self.assertLess(worst, 0.005, f"largest interior shift {worst:.4f}")
+    def test_it_does_not_arch_a_flat_curve_at_any_degree(self):
+        """⚠ THE SECOND BAD MEASURE, AND THE REASON THIS PENALISES CURVATURE
+        RATHER THAN THE SLOPE.
 
-    def test_the_outermost_rung_moves_a_little_and_toward_the_prior(self):
-        # ! AND THIS IS THE DESIGN, NOT A LEAK. 1,000m sits one rung above
-        #   the 800m boundary, where support really is one-sided, so a small
-        #   pull belongs there. What must never happen is a pull AWAY from
-        #   the prior -- the signature of a cubic pinned in the middle and
-        #   pivoting at its ends, which is what the density measure did
-        #   (1.12 came back as 1.1296).
+        Pinning the slope to K_PRIOR worked at degree 2 and DEFORMED the
+        curve at degree 3. Measured on this exact fixture, where the truth
+        is 1.120 at every distance: 800 -> 1.076, 2400 -> 1.134,
+        10000 -> 1.077. Support is two-sided across the whole interior, so
+        the prior carried weight at two of twenty-five probes, and two level
+        constraints on a three-coefficient cubic bowed the middle up past
+        the truth to satisfy them.
+
+        A curvature penalty imposes no level anywhere, so a straight line
+        through the data satisfies it exactly and nothing moves.
+        """
         pairs = _standardisedTrack(k=1.12)
-        fde.PRIOR_SLOPE_WEIGHT = 0.0
-        base = fde._localExponent(fde._fitOnePotential(pairs), 1000)
-        fde.PRIOR_SLOPE_WEIGHT = 1.0
-        moved = fde._localExponent(fde._fitOnePotential(pairs), 1000)
-        self.assertLess(moved, base, "must move TOWARD 1.06, not away")
-        self.assertLess(base - moved, 0.01, "and only a little")
+        for rule in fde.DEGREE_RULE_CHOICES:
+            fde.DEGREE_RULE = rule
+            fde.PRIOR_SLOPE_WEIGHT = 0.0
+            base = fde._fitOnePotential(pairs)
+            fde.PRIOR_SLOPE_WEIGHT = 1.0
+            with_prior = fde._fitOnePotential(pairs)
+            for d in (800, 1000, 1600, 2400, 3200, 5000, 10000):
+                self.assertAlmostEqual(
+                    fde._localExponent(with_prior, d),
+                    fde._localExponent(base, d), delta=0.001,
+                    msg=f"{rule}, degree {base['degree']}, at {d}m")
 
     def test_the_clamp_stops_firing_because_the_fit_never_goes_there(self):
-        """★ THE WHOLE POINT, AND IT IS MEASURED RATHER THAN ARGUED.
+        """★ THE WHOLE POINT, MEASURED RATHER THAN ARGUED.
 
-        A corpus that is clean and dense to 3,200m and whose ONLY evidence
-        above that implies pace improving with distance -- an October 8k
-        against a November 10k, the XC confound in its purest form.
+        Prior off: the cubic follows the poison below 1.0 and MIN_LOCAL_EXP
+        clamps the result -- 1.040 at the top with 25 segments held to the
+        floor, and the damage reaches all the way down to 1.044 at 800m.
+        That is the floor making a curve LEGAL.
 
-        With the prior off, the cubic follows the poison below 1.0 and
-        MIN_LOCAL_EXP clamps the result: 1.040 at 8,000m with 25 segments
-        held to the floor. That is the floor making a curve LEGAL. With the
-        prior on, the fit never reaches the impossible region, the clamp
-        fires ZERO times, and the curve reads 1.061 -- the physics, not a
-        clamp.
+        Prior on: ZERO floored segments and 1.100 everywhere -- the clean
+        data's OWN exponent, recovered. Not K_PRIOR's 1.06: a curvature
+        penalty makes the unsupported end inherit the pool's measured
+        slope, which is the one respect in which it beats pinning a level.
         """
-        clean = (800, 1000, 1200, 1500, 1600, 2000, 2400, 3000, 3200)
-        pairs = []
-        for i, a in enumerate(clean):
-            for b in clean[i + 1:]:
-                pairs += [_pair(a, b, k=1.10, t1=200.0 + j)
-                          for j in range(30)]
-        poison = (3200, 5000, 8000, 10000)
-        for i, a in enumerate(poison):
-            for b in poison[i + 1:]:
-                pairs += [_pair(a, b, k=0.80, t1=600.0 + j)
-                          for j in range(30)]
-
+        fde.DEGREE_RULE = "locations"
+        pairs = self._poisoned()
         fde.PRIOR_SLOPE_WEIGHT = 0.0
         loose = fde._fitOnePotential(pairs)
         fde.PRIOR_SLOPE_WEIGHT = 1.0
         tight = fde._fitOnePotential(pairs)
 
         self.assertEqual(loose["degree"], 3, "fixture must earn curvature")
-        # the floor is doing the work, and saying so
         self.assertGreater(loose["floored_segments"], 20)
         self.assertAlmostEqual(fde._localExponent(loose, 8000),
                                loose["min_local_exp"], delta=1e-3,
                                msg="without the prior the long end IS the "
                                    "floor, not a measurement")
-        # with the prior the clamp has nothing left to do
         self.assertEqual(tight["floored_segments"], 0,
                          "the prior must make the clamp redundant")
-        k_tight = fde._localExponent(tight, 8000)
-        self.assertGreater(k_tight, loose["min_local_exp"] + 0.01)
-        self.assertLess(abs(k_tight - fde.K_PRIOR), 0.03)
+        for d in (800, 1600, 3200, 8000, 10000):
+            self.assertAlmostEqual(fde._localExponent(tight, d), 1.10,
+                                   delta=0.01,
+                                   msg=f"must recover the clean k at {d}m")
 
-    def test_a_heavy_prior_bleeds_inward_which_is_why_it_is_a_knob(self):
-        # ! THE LIMIT OF THE APPROACH, PINNED SO IT CANNOT BE FORGOTTEN. The
-        #   prior enters as rows in ONE global polynomial fit, so it cannot
-        #   be perfectly local: crank it high enough and the interior moves
-        #   too. Measured on the fixture above, k at 1,600m drifts
-        #   1.122 -> 1.098 (w=1) -> 1.085 (w=8). Weight 1 is the setting to
-        #   start from; anything much larger is fitting the prior.
-        clean = (800, 1000, 1200, 1500, 1600, 2000, 2400, 3000, 3200)
-        pairs = []
-        for i, a in enumerate(clean):
-            for b in clean[i + 1:]:
-                pairs += [_pair(a, b, k=1.10, t1=200.0 + j)
-                          for j in range(30)]
-        poison = (3200, 5000, 8000, 10000)
-        for i, a in enumerate(poison):
-            for b in poison[i + 1:]:
-                pairs += [_pair(a, b, k=0.80, t1=600.0 + j)
-                          for j in range(30)]
+    def test_a_heavier_prior_cannot_run_away_with_it(self):
+        # ! A curvature penalty saturates: once the curve is straight there
+        #   is nothing left to remove, so raising the weight does nothing.
+        #   That is the property a LEVEL prior did not have, and the reason
+        #   this one needs no careful tuning.
+        fde.DEGREE_RULE = "locations"
+        pairs = self._poisoned()
         got = {}
         for w in (1.0, 8.0):
             fde.PRIOR_SLOPE_WEIGHT = w
             got[w] = fde._localExponent(fde._fitOnePotential(pairs), 1600)
-        self.assertLess(got[8.0], got[1.0],
-                        "a heavier prior must pull the interior too -- if it "
-                        "did not, this test is measuring nothing")
-        self.assertLess(got[1.0] - got[8.0], 0.05,
-                        "but even a heavy prior must not take the interior "
-                        "over")
+        self.assertAlmostEqual(got[1.0], got[8.0], delta=0.005)
 
 
 if __name__ == "__main__":

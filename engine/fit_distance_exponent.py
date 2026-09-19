@@ -1432,8 +1432,13 @@ def _distinctTransitions(edges):
 #   chosen FROM a measurement. `--degree-rule locations` switches it on;
 #   either way every pool's line prints what each rule would have
 #   granted, so one run settles it with numbers instead of argument.
-MERGE_SPORTS = False            # --merge-sports; see _fitMergedPotential
-DEGREE_RULE = "edges"           # "edges" (historic) | "locations" (above)
+# ★ ALL THREE ARE NOW THE DEFAULT (owner, 2026-09-19: "the fitter as I
+#   said"). They shipped off for one run so the comparison could be made;
+#   the flags below turn each back off individually, and
+#   scripts/overnight_distance_curve.sh still fits every combination to its
+#   own file, so the evidence is still producible without an argument.
+MERGE_SPORTS = True             # --no-merge-sports; see _fitMergedPotential
+DEGREE_RULE = "locations"       # --degree-rule edges restores the old count
 DEGREE_RULE_CHOICES = ("edges", "locations")
 
 POLY_DEGREE_SPAN_LOG = (0.693, 0.347)   # log-span to earn degree 3 / 2:
@@ -1734,7 +1739,7 @@ K_PRIOR = 1.06               # the physical prior on the local exponent.
                              # own docstring calls the truth: "an exponent
                              # near 1.06 drifting mildly with log
                              # distance".
-PRIOR_SLOPE_WEIGHT = 0.0     # --slope-prior. In units of ONE TYPICAL
+PRIOR_SLOPE_WEIGHT = 1.0     # --slope-prior 0 turns it off. In units of ONE TYPICAL
                              # EDGE: 1.0 means "where no endpoint sits
                              # nearby, the prior is worth about as much as
                              # a single median-weight edge". 0 turns it off
@@ -1809,6 +1814,48 @@ def _supportBalance(edges, probes):
 # Output:    (A_prior, b_prior, w_prior) as numpy arrays; all empty when
 #            PRIOR_SLOPE_WEIGHT is 0.
 def _priorSlopeRows(edges, degree, w_typical):
+    """The prior as extra least-squares rows, where support is one-sided.
+
+    ⚠ IT PENALISES CURVATURE, NOT THE SLOPE, AND THAT CORRECTION IS
+      MEASURED (2026-09-19). Pinning the slope to K_PRIOR works at degree 2
+      and DEFORMS the curve at degree 3. Measured on a flat k=1.12
+      eight-rung track corpus, where the truth is 1.120 at every distance:
+
+          degree 2, prior on:   1.117 everywhere        harmless
+          degree 3, prior on:   800  -> 1.076
+                                1600 -> 1.122
+                                2400 -> 1.134   <-- ARCH
+                                3200 -> 1.134
+                                10000-> 1.077
+
+      Support is two-sided across the whole interior, so the prior carries
+      weight at exactly two of twenty-five probes -- and two level
+      constraints on a three-coefficient cubic is enormous leverage. The
+      fit satisfied them by BOWING THE MIDDLE UP past the truth. That is
+      the same pivot that killed the local-density version, one basis
+      further on: a prior imposed on a GLOBAL basis is never local, and the
+      more flexible the basis the worse the deformation.
+
+    ★ SO THE CONSTRAINT SAYS "DO NOT BEND WHERE YOU CANNOT SEE" INSTEAD OF
+      "BE 1.06 THERE". g'' = 0 at a one-sided location makes the end
+      segment INHERIT the slope of the last stretch that had data on both
+      sides, which is better than K_PRIOR in the one way that matters: it
+      uses the pool's own measured exponent rather than a constant. And it
+      cannot arch, because it constrains no level anywhere -- a straight
+      line through the data satisfies it exactly.
+
+    ! g'' IS STILL LINEAR IN THE COEFFICIENTS, so this is the same one
+      extra block of rows in the same least squares. g = a1 x + a2 x^2 +
+      a3 x^3, so g'' = 2 a2 + 6 a3 x and the row is [0, 2, 6x]. Degree 1
+      has no curvature to penalise and gets an all-zero row, which
+      contributes nothing -- correct, a line already cannot bend.
+
+    ! K_PRIOR IS NOT GONE. _floorLocalExponent still backstops a curve
+      whose data insists on the impossible, and K_PRIOR remains the
+      documented physical value the floor is derived from. What changed is
+      that the fit is no longer TOLD the answer, only told not to invent
+      curvature in the dark.
+    """
     if not PRIOR_SLOPE_WEIGHT or not edges:
         return (np.zeros((0, degree)), np.zeros(0), np.zeros(0))
     L0 = math.log(TARGET_DISTANCE_METERS)
@@ -1818,11 +1865,11 @@ def _priorSlopeRows(edges, degree, w_typical):
     A, b, w = [], [], []
     for x_abs, r in zip(probes, rel):
         x = x_abs - L0
-        # ! THE DERIVATIVE BASIS, MATCHING _polyDeriv EXACTLY. g has no
-        #   constant term, so coefficient j carries x**(j+1) and its
-        #   derivative carries (j+1) * x**j.
-        A.append([(j + 1) * x ** j for j in range(degree)])
-        b.append(K_PRIOR)
+        # the second derivative of sum_j a_j x**(j+1): term j contributes
+        # (j+1) * j * x**(j-1), which is 0 for j=0 (the linear term).
+        A.append([(j + 1) * j * x ** (j - 1) if j >= 1 else 0.0
+                  for j in range(degree)])
+        b.append(0.0)
         w.append(PRIOR_SLOPE_WEIGHT * w_typical * (1.0 - float(r)))
     return np.asarray(A), np.asarray(b), np.asarray(w)
 
@@ -3259,15 +3306,18 @@ def main():
                              "it, each variant overwrites the file the last "
                              "one wrote and the engine picks up whichever "
                              "finished last.")
-    parser.add_argument("--merge-sports", action="store_true",
-                        help="fit ONE shape per pool from BOTH sports' "
+    parser.add_argument("--no-merge-sports", dest="merge_sports",
+                        action="store_false", default=True,
+                        help="go back to a separate shape per sport. The "
+                             "default fits ONE shape per pool from BOTH sports' "
                              "pairs (eps still per sport), stored under both "
                              "sport keys. XC supplies distance resolution, TF "
                              "supplies an unconfounded level, and terrain "
                              "goes where it belongs -- course difficulty. "
-                             "Read the SHAPE TEST lines before using this: "
-                             "it is only right where the two curves' local "
-                             "exponents agree inside their overlap band.")
+                             "The SHAPE TEST lines say whether it holds for "
+                             "a given pool -- one shape is only right where "
+                             "the two curves' local exponents agree inside "
+                             "their overlap band.")
     parser.add_argument("--degree-rule", default=DEGREE_RULE,
                         choices=DEGREE_RULE_CHOICES,
                         help="how a pool earns polynomial degree. 'edges' "
@@ -3280,14 +3330,16 @@ def main():
                              "way.")
     parser.add_argument("--slope-prior", type=float,
                         default=PRIOR_SLOPE_WEIGHT,
-                        help=f"pull the local exponent toward {K_PRIOR} "
-                             f"WHERE THE PAIRS ARE ABSENT, in units of one "
-                             f"typical edge (default %(default)s = off). This "
-                             f"is what --min-exponent should have been: the "
-                             f"floor clamps an impossible curve after the "
-                             f"fit, this one keeps the fit from going there. "
-                             f"With it on, floored_segments should fall to "
-                             f"zero -- that is how you know it worked.")
+                        help="forbid CURVATURE where the endpoint support is "
+                             "one-sided, in units of one typical edge "
+                             "(default %(default)s; 0 = off). This is what "
+                             "--min-exponent should have been: the floor "
+                             "clamps an impossible curve after the fit, this "
+                             "keeps the fit from going there, and the "
+                             "unsupported end inherits the pool's OWN "
+                             "measured exponent instead of a constant. With "
+                             "it on, floored_segments should fall to zero -- "
+                             "that is how you know it worked.")
     parser.add_argument("--min-per-rung", type=int, default=1,
                         help="with --season-best: a rung needs this many "
                              "races before its best counts (2 tightens the "
@@ -3331,10 +3383,11 @@ def main():
 
     # PER-SPORT is the saved methodology (measured: XC exp ~0.95-1.05
     # vs TF ~1.06-1.22 — two laws; the old combined fit gated itself).
-    print(f"SLOPE PRIOR: "
-          + (f"{PRIOR_SLOPE_WEIGHT:g} typical edges toward {K_PRIOR} where "
-             f"the pairs are absent (--slope-prior). Watch floored_segments "
-             f"fall to zero."
+    print(f"CURVATURE PRIOR: "
+          + (f"{PRIOR_SLOPE_WEIGHT:g} typical edges against BENDING where the "
+             f"support is one-sided (--slope-prior). The end then inherits "
+             f"the pool's own measured exponent; watch floored_segments fall "
+             f"to zero."
              if PRIOR_SLOPE_WEIGHT else
              "off (--slope-prior; the exponent floor still clamps after the "
              "fit, which makes a curve legal rather than right)") + "\n")
