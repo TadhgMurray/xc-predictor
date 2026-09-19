@@ -23,7 +23,11 @@ import unittest
 
 import numpy as np
 
-os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+# ! THE sys.path LINE MUST COME FIRST. _env lives in tests/, so it is not
+#   importable until this directory is on the path -- and it must be
+#   imported before anything that reaches scripts/config.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _env  # noqa: E402,F401  -- sets XCP_DB_PASSWORD; see tests/_env.py
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts")):
     if _p not in sys.path:

@@ -1,0 +1,48 @@
+# Project: xc-predictor
+# File:    .gitguardian.yaml
+# Purpose: declare the two known non-secrets that trip GitGuardian's "Generic
+#          Database Assignment" detector, so a real leak is not buried under
+#          recurring false positives.
+#
+# ⚠ READ THIS BEFORE ADDING ANYTHING. An ignore entry is a claim that a
+#   specific string is not a credential. Only two things belong here, both
+#   verified 2026-09-19:
+#
+#   1. tests/*  ->  os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+#      34 test files carry this line. scripts/config.py raises at import when
+#      XCP_DB_PASSWORD is unset -- "There is deliberately no fallback" -- so a
+#      test that imports anything touching config must put SOMETHING there.
+#      The value is the literal string `unused-by-this-test`; it is not a
+#      password, has never been one, and no database accepts it.
+#
+#   2. scripts/config.py  ->  the string `DB_PASSWORD = "..."` inside the
+#      RuntimeError message that tells a developer how to create the
+#      gitignored scripts/config_local.py. Three dots, in help text.
+#
+# ★ WHERE THE REAL CREDENTIALS LIVE, AND WHY THIS FILE DOES NOT WEAKEN THEM:
+#      server        /etc/xc-predictor.env      (not in the repo)
+#      workstation   scripts/config_local.py    (gitignored, and `git ls-files`
+#                                                confirms it is untracked)
+#   Both ignores below are pinned to an exact string, not a pattern, so a real
+#   secret in the same file would still be reported.
+#
+# ! THIS FILE GOVERNS ggshield / CI SCANS, NOT THE SAAS DASHBOARD. An incident
+#   already raised has to be marked a false positive in the GitGuardian UI by
+#   hand; this only stops the next one.
+version: 2
+
+secret:
+  ignored-matches:
+    - name: >-
+        test bootstrap: the placeholder XCP_DB_PASSWORD every test sets so
+        scripts/config.py does not raise at import. Not a credential.
+      match: unused-by-this-test
+    - name: >-
+        scripts/config.py help text showing a developer the shape of the
+        gitignored config_local.py. The value is literally three dots.
+      match: 'DB_PASSWORD = "..."'
+
+  ignored-paths:
+    # The pair cache and solve artifacts are large binaries with no secrets;
+    # scanning them is only noise.
+    - engine/data/**
