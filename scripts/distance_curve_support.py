@@ -22,14 +22,25 @@ NO DATABASE, no network -- safe to run while a scrape is going.
   race gets longer. No runner does that.
 
   So this is not another curve printer. Every fitted entry carries `span`, the
-  metre range its PAIRS actually covered, and `n_matched`, how many pairs fed
+  metre range its PAIRS actually covered, and `n_edges`, how many distinct
+  distance transitions fed
   it. Outside that span the curve is the boundary slope continued -- a choice,
   not a measurement. This lists, per pool:
 
       span          where the data was
       target        the distance every row in the pool is converted TO
       target in?    whether that target is even inside the support
-      n_matched     how many same-athlete pairs the curve rests on
+      n_edges       distinct distance transitions the curve rests on. THIS
+                    IS NOT THE PAIR COUNT AND n_matched IS NOT EITHER.
+                    ! n_matched = len(_matchedContrasts(edges)) -- the stage-1
+                      evidence for eps, the CALENDAR OFFSET, gated at
+                      MIN_EPS_MATCHED_TRANSITIONS = 10. It is a small subset
+                      of the transitions by construction, so reading it as
+                      "how much data does this pool have" understates a fat
+                      pool by orders of magnitude. It was printed under the
+                      heading `pairs` here and led to exactly that misreading
+                      (2026-09-19). Sample size is n_edges; eps confidence is
+                      n_matched; they answer different questions.
       exponent      the local exponent at the span's edges and at the target
 
 ⚠⚠ AND THE HEADLINE IS THE ENDS OF A POOL'S OWN RANGE, NOT EXTRAPOLATION
@@ -198,9 +209,10 @@ def main():
 
     print(f"\n  === support and target, per pool ===")
     print(f"  {'pool|sport':<22} {'span (m)':>17} {'target':>8} "
-          f"{'in?':>4} {'pairs':>8}  exponent at target")
+          f"{'in?':>4} {'edges':>8} {'eps n':>6}  exponent at target")
 
-    print(f"  {'-' * 22} {'-' * 17} {'-' * 8} {'-' * 4} {'-' * 8}  {'-' * 30}")
+    print(f"  {'-' * 22} {'-' * 17} {'-' * 8} {'-' * 4} {'-' * 8} {'-' * 6}"
+          f"  {'-' * 30}")
     outside = []
     for key in sorted(pools):
         e = pools[key] or {}
@@ -223,7 +235,7 @@ def main():
         print(f"  {key:<22} {span_s:>17} "
               f"{(f'{tgt:,.0f}' if tgt else '?'):>8} "
               f"{('yes' if in_span else 'NO'):>4} "
-              f"{e.get('n_matched', 0):>8,}  "
+              f"{e.get('n_edges', 0):>8,} {e.get('n_matched', 0):>6,}  "
               f"{(f'{exp_t:.3f}' if exp_t is not None else '?')}{flag(exp_t)}")
         if not in_span:
             outside.append((key, span_s, tgt))
