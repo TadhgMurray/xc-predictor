@@ -63,7 +63,14 @@
 #   Coverage also rises (63.1% -> 69.3% at 45), which is tens of thousands
 #   more rows getting a rating at all -- a second, independent gain that the
 #   headline sds hide, since they are then computed on different populations.
-: "${XCP_BRACKET_WINDOW:=30}"
+#
+# ⚠ LEFT UNSET UNTIL THE RESTORATION RUN IS DONE (2026-09-19). It was briefly
+#   set to 30 here, which would have made the next solve differ from the last
+#   known-good one by TWO things -- the curve revert AND the window -- and the
+#   whole point of the restoration is that it changes nothing but undoing a bad
+#   run. Set it on the run AFTER the restoration verifies, one change at a
+#   time:  XCP_BRACKET_WINDOW=30 bash deploy/run_pipeline.sh --from 8 ...
+# : "${XCP_BRACKET_WINDOW:=30}"
 # ⚠ LEAVE THIS AT none. I argued for `field` here on 2026-09-19 and the owner
 #   refuted it on the spot, with the right instrument: if an untapered
 #   championship field were the cause, NXN AND FOOT LOCKER WOULD BOTH SHOW IT,
