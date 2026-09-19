@@ -64,7 +64,8 @@ def sampleAndSplit(cols, pct, seed, frac=0.10, split_seed=1):
 def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
           top=0.5, prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30,
           tilt=True, use_curve=True, verbose=True, joint_dump=None, gauge=be.GAUGE_DEFAULT,
-          prior_athlete=be.PRIOR_ATHLETE, dump=None, compare=None):
+          prior_athlete=be.PRIOR_ATHLETE, prior_target=be.PRIOR_TARGET,
+          dump=None, compare=None):
     """Fit on the sample's training rows, score its held-out races.
     Returns dict(sd, covered, by_sport, n_train, n_test, seconds, base_line,
     same_rows). joint_dump: the joint model's per-row held-out predictions
@@ -81,7 +82,7 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
     f = be.fit(sub, npz, train=train_s, window=window, top=top, era_years=era_years,
                n_iter=iters, prior_races=prior_races, prior_group=prior_group, tilt=tilt,
                use_curve=use_curve, verbose=verbose, codes=codes, gauge=gauge,
-               prior_athlete=prior_athlete)
+               prior_athlete=prior_athlete, prior_target=prior_target)
     pred, cov = be.predict(f)
     y = np.log(np.asarray(sub["norm"], dtype=np.float64))
     m = test_s & cov
@@ -378,7 +379,7 @@ def sameRows(sub, both, test_s, cov, pred, y, dump_path=None, full_ath=None,
 def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
            prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30, tilt=True,
            use_curve=True, gauge=be.GAUGE_DEFAULT,
-           prior_athlete=be.PRIOR_ATHLETE):
+           prior_athlete=be.PRIOR_ATHLETE, prior_target=be.PRIOR_TARGET):
     """Fit every row and write the difficulty file."""
     t0 = time.time()
     if codes is None or "_cell" not in cols:
@@ -386,7 +387,7 @@ def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
     f = be.fit(cols, npz, train=None, window=window, top=top, era_years=era_years,
                n_iter=iters, prior_races=prior_races, prior_group=prior_group, tilt=tilt,
                use_curve=use_curve, verbose=True, codes=codes, gauge=gauge,
-               prior_athlete=prior_athlete)
+               prior_athlete=prior_athlete, prior_target=prior_target)
     np.savez(out_path, D=f["D"], votes=f["votes"], course_keys=np.array(f["cell_keys"]),
              D_race=f["D_race"], votes_race=f["votes_race"],
              races_per_cell=f["races_per_cell"], races_per_base=f["races_per_base"],
@@ -399,6 +400,78 @@ def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
     print(f"[bracket] wrote {out_path}: {int((f['votes'] > 0).sum()):,} cells with votes "
           f"in {time.time() - t0:.0f}s")
     return f
+
+
+# ★★ THE SHRINKAGE SWEEP, AS ONE COMMAND (owner, 2026-09-19: "shrinkage should
+#    prolly be greater perchance", and then "I do wondr if the fact that each
+#    pool has diff abilities messes with the difficulty calculation?").
+#
+#    Three settings answer both questions together, and they have to be scored
+#    on THE SAME ROWS to mean anything -- which is why this is one command and
+#    not three invocations:
+#
+#      off           prior_athlete=0. The channel from pool composition to
+#                    difficulty is shut. This is what production does today.
+#      mean          the prior on, pulling toward the pool's row-weighted mean.
+#      median        the prior on, pulling toward its row-weighted median.
+#
+#    Read it as two answers. off vs the best of the other two says whether MORE
+#    shrinkage helps at all. mean vs median says whether the pools' mixed
+#    composition is costing anything -- if median wins, the mean was being
+#    dragged by a second population, and `pro` holding 218k athletes from
+#    11,980 rule-caught tiny teams is the obvious suspect.
+#
+# ! EVERY OTHER SETTING IS HELD, and the sample is drawn once: same pct, same
+#   seed, same rows, same era, same window. The only thing that varies is the
+#   prior.
+def _shrinkageSweep(cols, npz, codes, args, settings=None):
+    settings = settings or (("off", 0.0, "mean"),
+                            ("mean", args.prior_athlete_sweep, "mean"),
+                            ("median", args.prior_athlete_sweep, "median"))
+    rows = []
+    for label, k_a, target in settings:
+        print(f"\n[bracket] ===== shrinkage sweep: {label} "
+              f"(prior_athlete={k_a}, target={target}) =====", flush=True)
+        out = score(cols, npz, codes=codes, pct=args.pct, seed=args.seed,
+                    era_years=args.era_years, window=args.window, top=args.top,
+                    prior_races=args.prior_races, prior_group=args.prior_group,
+                    iters=args.iters, tilt=not args.no_tilt,
+                    use_curve=not args.no_curve, gauge=args.gauge,
+                    prior_athlete=k_a, prior_target=target, verbose=False)
+        rows.append((label, k_a, target, out))
+
+    print("\n[bracket] ===== SHRINKAGE SWEEP =====")
+    print(f"    {'setting':<10} {'k_a':>6} {'target':<7} {'sd':>10} "
+          f"{'covered':>8}")
+    for label, k_a, target, out in rows:
+        print(f"    {label:<10} {k_a:>6} {target:<7} {out['sd']:>10.6f} "
+              f"{out['covered'] * 100:>7.1f}%")
+    best = min(rows, key=lambda r: r[3]["sd"])
+    print(f"    -> {best[0]} wins on sd")
+    by = {r[0]: r[3]["sd"] for r in rows}
+    if "off" in by and best[0] != "off":
+        print(f"       shrinkage helps: {by['off']:.6f} -> {by[best[0]]:.6f}")
+    elif "off" in by:
+        print("       shrinkage does NOT help at this k; leave the prior off")
+    if "mean" in by and "median" in by:
+        d = by["mean"] - by["median"]
+        verdict = ("the pools' composition IS costing something -- the mean is "
+                   "being dragged" if d > 0 else
+                   "the pools look like one distribution each; the mean was "
+                   "fine")
+        print(f"       mean - median = {d:+.6f}: {verdict}")
+    # ⚠ COVERAGE MUST NOT MOVE HERE. The prior changes the LEVELS, not which
+    #   rows have one, so a coverage difference means something else changed
+    #   and the sds are on different populations -- the trap --window falls
+    #   into. Said out loud rather than left for the reader to notice.
+    covs = {round(r[3]["covered"], 6) for r in rows}
+    if len(covs) > 1:
+        print("    ⚠ COVERAGE MOVED between settings, so these sds are NOT on "
+              "the same rows. Do not compare them.")
+    else:
+        print("    coverage identical across settings: same rows, so the sds "
+              "are comparable.")
+    return rows
 
 
 def main():
@@ -446,6 +519,23 @@ def main():
                          "BOTH cover. Use this whenever the setting changes "
                          "coverage (--window does), because the headline sds "
                          "are computed on different populations otherwise.")
+    # ★ WHAT THE ATHLETE PRIOR SHRINKS TOWARD. Only matters when the prior is
+    #   on (--prior-athlete). See bracket_engine.PRIOR_TARGET: the mean of a
+    #   pool that holds two populations -- `pro` holds 218k athletes, 11,980 of
+    #   its 12,310 teams caught by the <15-athlete rule -- belongs to nobody in
+    #   it, and drags every member's level and so every course they race.
+    ap.add_argument("--prior-target", default=be.PRIOR_TARGET,
+                    choices=list(be.PRIOR_TARGETS),
+                    help="the pool centre the athlete prior pulls toward "
+                         f"(default {be.PRIOR_TARGET})")
+    ap.add_argument("--sweep-shrinkage", action="store_true",
+                    help="score prior off / mean-target / median-target on the "
+                         "SAME rows and print the table. Answers both 'does "
+                         "more shrinkage help' and 'do the pools' mixed "
+                         "abilities cost anything'.")
+    ap.add_argument("--prior-athlete-sweep", default="fit",
+                    help="the k the sweep uses for its two on settings "
+                         "(default fit: estimate it per pool)")
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--no-tilt", action="store_true")
     ap.add_argument("--no-curve", action="store_true")
@@ -459,18 +549,24 @@ def main():
     cols, codes = bk.packCodes(cols, npz, args.era_years)
     print(f"[bracket] {np.asarray(cols['norm']).size:,} rows coded in {time.time() - t0:.0f}s",
           flush=True)
+    if args.sweep_shrinkage:
+        args.prior_athlete_sweep = _priorAthlete(args.prior_athlete_sweep)
+        _shrinkageSweep(cols, npz, codes, args)
+        return
     if args.full:
         fitAll(cols, npz, args.out, codes=codes, era_years=args.era_years,
                window=args.window, top=args.top, prior_races=args.prior_races,
                prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
                use_curve=not args.no_curve, gauge=args.gauge,
-               prior_athlete=_priorAthlete(args.prior_athlete))
+               prior_athlete=_priorAthlete(args.prior_athlete),
+               prior_target=args.prior_target)
         return
     score(cols, npz, codes=codes, pct=args.pct, seed=args.seed, era_years=args.era_years,
           window=args.window, top=args.top, prior_races=args.prior_races,
           prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
           use_curve=not args.no_curve, gauge=args.gauge,
           prior_athlete=_priorAthlete(args.prior_athlete),
+          prior_target=args.prior_target,
           dump=args.dump, compare=args.compare)
 
 

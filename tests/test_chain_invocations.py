@@ -37,7 +37,7 @@ _ENVVAR = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
 
 
 def _joinContinuations(text):
-    """Fold `\`-continued lines, so a multi-line step call is one line."""
+    r"""Fold backslash-continued lines, so a multi-line step call is one line."""
     out, buf = [], ""
     for line in text.splitlines():
         if line.rstrip().endswith("\\"):

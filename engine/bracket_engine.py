@@ -145,6 +145,68 @@ PRIOR_ATHLETE = 0.0            # rows; 0 = off. "fit" estimates it per pool.
 PRIOR_ATHLETE_RANGE = (0.1, 20.0)   # outside this the estimate is not believed
 PRIOR_ATHLETE_MIN_ATHLETES = 200    # per pool, with 2+ rows, to be fitted
 
+# ★★ WHAT THE SHRINKAGE PULLS TOWARD, AND WHY IT IS NOT THE MEAN (owner,
+#    2026-09-19: "I do wondr if the fact that each pool has diff abilities
+#    messes with the difficulty calculation?").
+#
+#    Difficulty itself is pool-free: a race's reading is r_i = (z - a) / h, a
+#    WITHIN-ATHLETE residual, so who raced there cancels. The one channel by
+#    which a pool's composition can reach difficulty is this prior -- levels()
+#    shrinks each athlete's level toward their pool's centre, and that shrunk
+#    level is what sets r_i. With PRIOR_ATHLETE = 0 the channel is shut, which
+#    is why the question had a reassuring answer today and a bad one tomorrow:
+#    the owner asked for MORE shrinkage ("shrinkage should prolly be greater
+#    perchance"), and that is the switch that opens it.
+#
+#    A row-weighted MEAN is the wrong centre to open it with, because a pool is
+#    not one distribution. team_pool's first real build put 218,231 athletes in
+#    `pro`, and 11,980 of its 12,310 teams are there by the <15-athlete rule --
+#    homeschool co-ops and twelve-runner rural schools, not professionals. The
+#    mean of that pool sits between two humps, belongs to nobody in it, and
+#    every member's level gets dragged toward it -- and with it the difficulty
+#    of every course they race.
+#
+#    A row-weighted MEDIAN is the same estimator for a pool that really is one
+#    distribution and is unmoved by the second hump when it is not. So the
+#    pool's composition stops being a modelling input, whatever ends up in it.
+#
+# ! "mean" IS KEPT AND IS EXACTLY THE OLD ARITHMETIC, so the comparison is a
+#   flag rather than a rewrite: bracket_holdout --prior-target measures the
+#   three of them (off / mean / median) on the same rows.
+PRIOR_TARGET = "median"        # "median" (robust) or "mean" (historic)
+PRIOR_TARGETS = ("mean", "median")
+
+
+def _weightedPoolMedian(vals, weights, pools, n_pool):
+    """The row-weighted median of `vals` within each pool.
+
+    ! ONE SORT, NOT A LOOP OVER POOLS. lexsort orders by pool and then by
+      value, so each pool is a contiguous run of ascending values and the
+      median is where that run's cumulative weight first reaches half of its
+      total. Pools with no finite value keep 0.0, as the mean path does."""
+    out = np.zeros(n_pool, dtype=np.float64)
+    if vals.size == 0:
+        return out
+    order = np.lexsort((vals, pools))
+    p_s = pools[order]
+    v_s = vals[order]
+    w_s = weights[order].astype(np.float64)
+    # cumulative weight, restarted at each pool boundary
+    cw = np.cumsum(w_s)
+    starts = np.searchsorted(p_s, np.arange(n_pool), side="left")
+    ends = np.searchsorted(p_s, np.arange(n_pool), side="right")
+    before = np.where(starts > 0, cw[np.maximum(starts - 1, 0)], 0.0)
+    before = np.where(starts == 0, 0.0, before)
+    total = np.where(ends > starts, cw[np.maximum(ends - 1, 0)] - before, 0.0)
+    for p_ in range(n_pool):
+        lo, hi = starts[p_], ends[p_]
+        if hi <= lo or total[p_] <= 0:
+            continue
+        half = before[p_] + total[p_] / 2.0
+        j = int(np.searchsorted(cw[lo:hi], half, side="left"))
+        out[p_] = v_s[lo + min(j, hi - lo - 1)]
+    return out
+
 # ★★ WHICH CELLS ARE THE ZERO (owner, 2026-09-18: "we make flat 400 difficulty
 #    outdoor to 0.0 no matter what. Then we put indoor on avg comparison, and
 #    the indoor venues are only rated difficulty wise against each other
@@ -394,7 +456,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         verbose=False, codes=None, prior_rows=None, z=None, h_row=None,
         prior_warmup=PRIOR_FIT_WARMUP, place_radius=PLACE_RADIUS_M,
         prior_place=PRIOR_PLACE, voter_agg="mean",
-        prior_athlete=PRIOR_ATHLETE,
+        prior_athlete=PRIOR_ATHLETE, prior_target=PRIOR_TARGET,
         gauge=GAUGE_DEFAULT):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
@@ -570,6 +632,12 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     else:
         pool_row = np.zeros(n, dtype=np.int64)
         n_pool = 1
+    # ! VALIDATED HERE, NOT AT USE. A typo in prior_target would otherwise
+    #   silently mean "mean" for a whole solve.
+    target = str(prior_target or PRIOR_TARGET).strip().lower()
+    if target not in PRIOR_TARGETS:
+        raise ValueError(f"prior_target must be one of {PRIOR_TARGETS}, "
+                         f"not {prior_target!r}")
     k_ath = np.full(n_pool, float(prior_athlete_stated or 0.0))
     athlete_report = None
 
@@ -628,15 +696,20 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         if not np.any(kk > 0):
             a[q] = a_raw
             return a
-        # the pool's own mean level, weighted by how much each athlete's
-        # estimate is worth (its row count) -- the target to shrink toward
+        # the pool's own centre, weighted by how much each athlete's estimate
+        # is worth (its row count) -- the target to shrink toward. See
+        # PRIOR_TARGET for why the default is the median and not the mean.
         ok = np.isfinite(a_raw)
         pr = pool_row[q]
-        num = np.bincount(pr[ok], weights=(a_raw[ok] * n_other[ok]),
-                          minlength=n_pool)
-        den = np.bincount(pr[ok], weights=n_other[ok].astype(np.float64),
-                          minlength=n_pool)
-        m_pool = np.where(den > 0, num / np.maximum(den, 1e-12), 0.0)
+        if target == "median":
+            m_pool = _weightedPoolMedian(a_raw[ok], n_other[ok], pr[ok],
+                                         n_pool)
+        else:
+            num = np.bincount(pr[ok], weights=(a_raw[ok] * n_other[ok]),
+                              minlength=n_pool)
+            den = np.bincount(pr[ok], weights=n_other[ok].astype(np.float64),
+                              minlength=n_pool)
+            m_pool = np.where(den > 0, num / np.maximum(den, 1e-12), 0.0)
         k_row = kk[pr]
         a[q] = np.where(ok,
                         (s_ + k_row * m_pool[pr])
