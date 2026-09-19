@@ -326,6 +326,43 @@ def teamHasPros(team_id, school):
     return bool(school) and str(school).strip().lower() in by_school
 
 
+_PRO_TEAMS = None
+
+
+def loadProTeams():
+    """The anet team_ids build_team_pool.py calls professional, once.
+
+    ★ THE 15-ATHLETE RULE ARRIVES HERE AND NOWHERE ELSE (2026-09-19). Team-id
+      pooling was already live through loadAnetLevels/teamLevelOf -- the level,
+      the team_id == 0 rule and the club-with-pros rule all reach resolvePool.
+      What did not was team_pool's own verdict, most of which is "fewer than
+      fifteen distinct athletes all time is not a school".
+
+    ! EMPTY WITHOUT THE TABLE, so a run before build_team_pool.py pools
+      exactly as it did before and nothing has to be sequenced by hand.
+    """
+    global _PRO_TEAMS
+    if _PRO_TEAMS is not None:
+        return _PRO_TEAMS
+    _PRO_TEAMS = set()
+    try:
+        from speed_ratings_db import loadProTeams as _load
+        ids, why = _load()
+        _PRO_TEAMS = ids
+        if ids:
+            print(f"[engine] team_pool: {len(ids):,} anet teams adjudicated "
+                  f"PROFESSIONAL; their rows leave the school pools")
+            for reason, n in sorted(why.items(), key=lambda kv: -kv[1])[:6]:
+                print(f"            {n:>8,}  {reason}")
+        else:
+            print("[engine] team_pool: no table (or no pro teams) — pooling "
+                  "as before; run engine/build_team_pool.py to enable the "
+                  "15-athletes-all-time rule")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[engine] team_pool unavailable ({exc}); pooling as before")
+    return _PRO_TEAMS
+
+
 def loadAnetLevels():
     """{anet team_id: level name}, once; prints the code table. Empty when
     the database has no anet_team (a pack then pools as before)."""
@@ -820,7 +857,7 @@ _cachedPoolFor = memoPoolFor(_poolCache)
 #            TF abilities are solved independently and never contaminate.
 def poolOf(grade, gender, source, school, sport, merge=False,
            person_id=None, season=None, race_date=None, team_level=None,
-           team_has_pros=False, no_team=False):
+           team_has_pros=False, no_team=False, team_pro=False):
     """The pool for one row, sport-namespaced. "hs_m|XC", or None.
 
     ★ THE DECISION ITSELF NOW LIVES IN pool_resolve.resolvePool, SHARED WITH
@@ -912,7 +949,8 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         poolfor=_cachedPoolFor,
         team_level=team_level,
         team_has_pros=team_has_pros,
-        no_team=no_team)
+        no_team=no_team,
+        team_pro=team_pro)
 
 
 from concurrent.futures import ThreadPoolExecutor
@@ -1176,6 +1214,7 @@ def packResults(batches, today, merge=False):
                 census["bad_or_future_date"] += 1
                 continue
             team_level, has_pros, no_team = None, False, False
+            team_pro = False
             if len(r) > _SLUG:
                 from pool_resolve import teamLevelOf, UNATTACHED_TEAM_ID
                 team_level = teamLevelOf(r[_TEAM], r[_SLUG], loadAnetLevels())
@@ -1191,6 +1230,15 @@ def packResults(batches, today, merge=False):
                     census["no_team_pro"] += 1
                 if team_level:
                     census[f"team_level_{team_level}"] += 1
+                # ★ THE TEAM'S OWN VERDICT, BY TEAM ID. Counted because a
+                #   rule that repools rows out of the school boards must have
+                #   its cost visible in the census, exactly like no_team_pro.
+                try:
+                    team_pro = int(r[_TEAM]) in loadProTeams()
+                except (TypeError, ValueError):
+                    team_pro = False
+                if team_pro:
+                    census["team_pool_pro"] += 1
                 has_pros = teamHasPros(r[_TEAM], r[_SCHOOL])
                 # ★ THE CLUB RULES FIRE ONLY IN A SEASON RACED MOSTLY FOR THE
                 #   CLUB (clubSeason): one national-team race is one row
@@ -1205,7 +1253,7 @@ def packResults(batches, today, merge=False):
                           r[_SPORT], merge,
                           person_id=r[_PID], season=d.year,
                           race_date=d, team_level=team_level, team_has_pros=has_pros,
-                          no_team=no_team)
+                          no_team=no_team, team_pro=team_pro)
             if has_pros and pool and pool.startswith("pro_"):
                 census["club_with_pros_repooled_pro"] += 1
             if pool is None:

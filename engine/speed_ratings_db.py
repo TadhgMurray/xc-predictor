@@ -1001,6 +1001,55 @@ def loadTeamLevels(min_rows=200, share=0.5, college_share=0.25):
 #   grade of 1-8 or no grade are repooled pro (pool_resolve, team_has_pros).
 #   Rows with a high-school grade on such a team keep it -- a sponsor's
 #   youth squad and its elite group can wear one name.
+# loadProTeams
+# Purpose:   The set of anet team_ids that engine/build_team_pool.py has
+#            adjudicated PROFESSIONAL, so the solve can use that verdict
+#            instead of re-deriving a weaker one per row.
+# Arguments: none.
+# Output:    (set of team_id, {reason: count}) -- empty and {} when the table
+#            does not exist yet.
+#
+# ⚠ WHAT WAS AND WAS NOT ALREADY WIRED, because the answer is narrower than
+#   "the solve ignores the team-id pooling" (2026-09-19). Team-id pooling is
+#   LIVE and has been: speed_ratings calls
+#   teamLevelOf(team_id, slug, loadAnetLevels()) per row, resolvePool consumes
+#   team_level / team_has_pros / no_team, so
+#       team_id -> hs|ms|elem|college|club    from anet_team.level   LIVE
+#       team_id == 0 -> professional, ungated                        LIVE
+#       a pro in a club -> the whole club pro (majority-gated)       LIVE
+#   What team_pool adds on top, and what was reaching nothing, is the rule
+#   the owner was emphatic about -- "~3 athletes shoudl actually be 15 and I
+#   mean it", then "no not 15 per year 15 over all time" -- plus a single
+#   audited table carrying n_athletes, n_rows and states_seen per team id
+#   rather than a level code read raw.
+#
+# ★ SO THIS READS THE VERDICT, NOT THE INPUTS. build_team_pool.classify
+#   already decided, in one pure function, with its reason recorded. Deriving
+#   the threshold again here would be a second implementation of the decision
+#   -- which is the exact failure pool_resolve.py exists to have fixed ("There
+#   were three implementations ... they disagreed on about a million
+#   athlete-seasons").
+#
+# ! ABSENT TABLE IS NOT AN ERROR. A pack built before team_pool exists pools
+#   exactly as it did before, which is what makes this safe to ship on.
+def loadProTeams():
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('team_pool')")
+        if cur.fetchone()[0] is None:
+            return set(), {}
+        cur.execute("SELECT team_id, reason FROM team_pool WHERE pool = 'pro'")
+        rows = cur.fetchall()
+    ids, why = set(), {}
+    for tid, reason in rows:
+        try:
+            ids.add(int(tid))
+        except (TypeError, ValueError):
+            continue
+        key = str(reason or "unstated")
+        why[key] = why.get(key, 0) + 1
+    return ids, why
+
+
 def loadClubPros(min_pros=1):
     """({anet team_id: n pro athletes}, {normalised school: n}) for teams
     with at least min_pros professional athletes (pro_athlete_season) in

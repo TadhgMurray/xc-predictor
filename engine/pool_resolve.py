@@ -487,7 +487,7 @@ def resolvePool(grade, gender, source, school, sport,
                 race_date=None, merge=False, poolfor=poolFor,
                 fixed_grade=None, fixed_level=None,
                 grade_verdict=None, person_id=None, team_level=None,
-                team_has_pros=False, no_team=False):
+                team_has_pros=False, no_team=False, team_pro=False):
     """Which pool does this row belong to? Returns "hs_m|XC", or None.
 
     team_level: the team's level from the feeds (teamLevelOf): 'club'
@@ -588,6 +588,27 @@ def resolvePool(grade, gender, source, school, sport,
     # ! NO TEAM, NO SCHOOL. Before every other rule and ungated: see
     #   UNATTACHED_TEAM_ID for why it is not the club path.
     if no_team:
+        is_pro = True
+
+    # ★ AND THE TEAM ITSELF CAN BE PROFESSIONAL, BY TEAM ID (2026-09-19).
+    #   team_pro is engine/build_team_pool.py's adjudicated verdict for this
+    #   row's anet team_id, read from the team_pool table -- most of them for
+    #   the rule the owner was emphatic about: fewer than fifteen distinct
+    #   athletes ALL TIME ("no not 15 per year 15 over all time") is not a
+    #   school, whatever its name looks like.
+    #
+    # ! IT IS A VERDICT ARRIVING, NOT A DECISION BEING MADE. This function
+    #   stays pure and receives the fact, exactly as it receives season_level
+    #   and is_pro; re-deriving the threshold here would be the second
+    #   implementation of one decision, which is the failure this module's
+    #   own header exists to record.
+    #
+    # ! UNGATED, LIKE no_team AND FOR THE SAME REASON. The club rules run
+    #   through clubSeason's majority gate because one national-team race
+    #   should not repool a school season. A team with fewer than fifteen
+    #   athletes in its entire history is not a school that an athlete had a
+    #   season at, so there is no majority to take.
+    if team_pro:
         is_pro = True
 
     # ! A PRO IS REPOOLED, NOT DROPPED -- the same treatment pro_flag gives a
