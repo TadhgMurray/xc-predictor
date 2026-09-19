@@ -1374,6 +1374,153 @@ def _distinctTransitions(edges):
                  round(e[1] / ENDPOINT_BIN_LOG)) for e in edges})
 
 
+# ------------------------------------------------------------------ #
+# THE DEGREE RULE, SECOND ATTEMPT  (2026-09-19)
+# ------------------------------------------------------------------ #
+# ⚠ COUNTING TRANSITIONS PENALISES A SPORT FOR HAVING STANDARDISED
+#   DISTANCES. Track is raced at 800, 1600, 3200, 5000 -- so every
+#   800/1600 doubler in the country lands in ONE endpoint bin
+#   (ENDPOINT_BIN_LOG = 2%), while every cross-country course is a
+#   different measured length and scatters across hundreds of bins.
+#   Measured on the 2026-09-19 artifact:
+#
+#       hs_m|TF       57 transitions   span   800..3,200
+#       hs_m|XC    1,165 transitions   span 2,813..5,000
+#
+#   Twenty times the transitions on a NARROWER span. TF is not short of
+#   athletes, it is short of DISTINCT DISTANCES, and _polyDegree's
+#   POLY_DEGREE_EDGES = (30, 10) reads that scarcity as ignorance:
+#   college_f|TF at 29 transitions misses degree 3 by one and is fitted
+#   with a quadratic no matter how many pairs sit inside those 29 bins.
+#   A quadratic through the middle of a wide span is exactly the shape
+#   that reports 1.15 at 800m falling to 1.05 at 5,000m while the
+#   ability deciles measure it flat at ~1.12.
+#
+# ★ BUT THE OLD DOCSTRING'S WARNING IS ALSO TRUE, AND IT IS THE OTHER
+#   HALF OF THE SAME MISTAKE: count "says nothing about WHERE they
+#   stand -- 254 transitions crammed into a narrow log-span
+#   (college_f|XC's 3.2k-6k band) earn a cubic by count that the span
+#   cannot condition". So count is wrong in BOTH directions: it
+#   under-serves a wide, standardised sport and over-serves a narrow,
+#   quasi-continuous one.
+#
+# ★ WHAT ACTUALLY CONDITIONS A POLYNOMIAL IS WHERE THE DATA SITS. A
+#   cubic in x needs four well-separated x locations carrying real
+#   weight, spread over a real range. Neither is a count of bins. So
+#   this rule measures the two things directly:
+#
+#     span      -- the weighted p5..p95 log-distance range of the edge
+#                  ENDPOINTS. A cubic must see at least a DOUBLING of
+#                  distance (log 2 = 0.693); a quadratic, half that.
+#                  Not a tuned number: below one doubling, the cubic and
+#                  quadratic terms are not separately identified.
+#     locations -- the EFFECTIVE number of distinct endpoint locations,
+#                  as the perplexity exp(-sum p log p) of the support
+#                  distribution over endpoint bins. Perplexity, not a
+#                  raw count, because a thousand bins holding three
+#                  pairs each and one bin holding a million is one
+#                  location wearing a thousand hats. Degree d needs
+#                  d + 2 effective locations: the d + 1 a polynomial of
+#                  that degree needs to be determined, plus one so it is
+#                  fitted rather than interpolated.
+#
+#   Both are CEILINGS, applied with the count ceiling, never instead of
+#   it -- a pool with eight edges still gets a line however wide it is.
+#
+# ! THIS IS OFF BY DEFAULT (--degree-rule). The rule above is reasoning,
+#   not a measurement, and the per-sport methodology it argues with was
+#   chosen FROM a measurement. `--degree-rule locations` switches it on;
+#   either way every pool's line prints what each rule would have
+#   granted, so one run settles it with numbers instead of argument.
+MERGE_SPORTS = False            # --merge-sports; see _fitMergedPotential
+DEGREE_RULE = "edges"           # "edges" (historic) | "locations" (above)
+DEGREE_RULE_CHOICES = ("edges", "locations")
+
+POLY_DEGREE_SPAN_LOG = (0.693, 0.347)   # log-span to earn degree 3 / 2:
+                                        # a doubling, and half a doubling
+POLY_DEGREE_LOCATIONS = (5.0, 4.0)      # effective distinct locations for
+                                        # degree 3 / 2 (d + 2)
+MIN_EDGES_ANY_DEGREE = 8                # the count ceiling that survives:
+                                        # below this nothing above a line,
+                                        # whatever the span says
+
+
+# _edgeSpanLog
+# Purpose:   The weighted p5..p95 log-distance range covered by the edge
+#            ENDPOINTS -- the same span _fitOnePotential records, computed
+#            here so the degree rule and the saved span cannot disagree.
+# Arguments: edges -- _aggregatePairEdges output.
+# Output:    the width in log units as float (0.0 for no edges).
+def _edgeSpanLog(edges):
+    if not edges:
+        return 0.0
+    pts = [e[0] for e in edges] + [e[1] for e in edges]
+    wts = [e[4] for e in edges] + [e[4] for e in edges]
+    return float(_weightedPercentile(pts, wts, 95)
+                 - _weightedPercentile(pts, wts, 5))
+
+
+# _effectiveLocations
+# Purpose:   The EFFECTIVE number of distinct endpoint locations, by the
+#            perplexity of the support distribution over endpoint bins.
+# Arguments: edges -- _aggregatePairEdges output.
+# Output:    a float >= 0. Equals the bin count when support is spread
+#            evenly, and falls toward 1 as one bin takes over.
+# ! PAIRS, NOT EDGE WEIGHT. e[4] is the pair count behind the edge and
+#   e[3] is 1/se, which is floored three ways (SE_FLOOR and the two
+#   prior floors) -- a quantity deliberately compressed so giants cannot
+#   dominate the fit. Perplexity over a compressed weight would call
+#   every pool evenly supported, which is the opposite of what this
+#   measures.
+def _effectiveLocations(edges):
+    support = {}
+    for e in edges:
+        for ld in (e[0], e[1]):
+            key = round(ld / ENDPOINT_BIN_LOG)
+            support[key] = support.get(key, 0.0) + float(e[4])
+    total = sum(support.values())
+    if total <= 0:
+        return 0.0
+    ps = [w / total for w in support.values() if w > 0]
+    entropy = -sum(p * math.log(p) for p in ps)
+    return float(math.exp(entropy))
+
+
+# _degreeByLocations
+# Purpose:   The span-and-locations ceiling described above.
+# Arguments: edges.
+# Output:    1, 2, or 3.
+def _degreeByLocations(edges):
+    span, locs = _edgeSpanLog(edges), _effectiveLocations(edges)
+    if len(edges) < MIN_EDGES_ANY_DEGREE:
+        return 1
+    if span >= POLY_DEGREE_SPAN_LOG[0] and locs >= POLY_DEGREE_LOCATIONS[0]:
+        return 3
+    if span >= POLY_DEGREE_SPAN_LOG[1] and locs >= POLY_DEGREE_LOCATIONS[1]:
+        return 2
+    return 1
+
+
+# _degreeFor
+# Purpose:   The degree one pool has earned under the ACTIVE rule, plus the
+#            audit trail both rules produce, so a run can be read either way.
+# Arguments: edges; n_trans -- the distinct-transition count;
+#            cap -- the demotion ladder's ceiling, as _polyDegree.
+# Output:    (degree, {"rule","degree_edges","degree_locations",
+#                      "span_log","eff_locations"}).
+def _degreeFor(edges, n_trans, cap=None):
+    by_edges = _polyDegree(n_trans, cap=cap)
+    by_locs = _degreeByLocations(edges)
+    if cap is not None:
+        by_locs = min(by_locs, cap)
+    chosen = by_locs if DEGREE_RULE == "locations" else by_edges
+    return chosen, {"rule": DEGREE_RULE,
+                    "degree_edges": int(by_edges),
+                    "degree_locations": int(by_locs),
+                    "span_log": _edgeSpanLog(edges),
+                    "eff_locations": _effectiveLocations(edges)}
+
+
 # _epsSides
 # Purpose:   Edge counts per time-order side — REPORT-ONLY under v2 (the
 #            rung-1 guard lives on MATCHED CONTRASTS now, not raw side
@@ -1544,6 +1691,142 @@ def _irlsScale(r, w_adm):
 # Output:    (coeffs, downweighted) where downweighted lists every cell
 #            finishing under ROBUST_AUDIT_W as
 #            (d1_m, d2_m, implied_exp, n_pairs, final_weight).
+# ------------------------------------------------------------------ #
+# THE SLOPE PRIOR  (2026-09-19)  --  WHAT MIN_LOCAL_EXP SHOULD HAVE BEEN
+# ------------------------------------------------------------------ #
+# ★ THE FLOOR MAKES A CURVE LEGAL, NOT RIGHT, AND THAT IS THE WHOLE
+#   PROBLEM WITH IT. MIN_LOCAL_EXP is applied to the SAMPLED values after
+#   the fit (see _floorLocalExponent): it clamps a segment that came back
+#   impossible. So the fit is still free to bend to 0.84 at the top of
+#   college_m|XC, and the clamp then flattens it to exactly 1.040 -- and a
+#   curve pinned at the floor across most of its range is the floor
+#   talking, not the pairs. Measured on the 2026-09-18 re-fit:
+#   college_f|XC came back a straight line at 1.040 over 38 floored
+#   segments after two stability demotions. A straight line at the floor
+#   is not a measurement.
+#
+# ★ THE FIX IS TO PUT THE PHYSICS IN THE FIT INSTEAD OF AFTER IT. Where
+#   the pairs have something to say, they should say it; where they thin
+#   out, the curve should RELAX TOWARD THE KNOWN ANSWER rather than fit
+#   noise and get clamped. That is a prior, weighted by the absence of
+#   data -- the same doctrine as everything else here: spline through
+#   medians weighted by support, the bbar ridge guard, the era fusion.
+#
+# ★ AND IT IS A LINEAR CONSTRAINT, WHICH IS WHY IT COSTS NOTHING. The
+#   local exponent is dg/dx and g is a polynomial with no constant term,
+#   so _polyDeriv is LINEAR IN THE COEFFICIENTS: a prior that the
+#   exponent at x should be K_PRIOR is one more row in the same least
+#   squares, with basis [(j+1) * x**j]. No new solver, no new model.
+#
+# ⚠ WEIGHTED BY WHERE THE ENDPOINTS ARE, NOT BY EDGE WEIGHT. The thing
+#   that goes wrong at an end segment is that the data sits on ONE SIDE
+#   of it, so the relevant measure is endpoint support NEAR x. An edge
+#   spanning 800..5000 says a great deal about the average exponent
+#   between them and nothing about the exponent at 5000.
+#
+# ! OFF BY DEFAULT (--slope-prior 0). Turning it on moves every curve, so
+#   it is a measurement to run and compare, not a default to assume. The
+#   floor stays in place underneath either way: with the prior on it
+#   should stop firing, and `floored_segments` dropping to zero is how
+#   you know the prior did the job the clamp was doing.
+K_PRIOR = 1.06               # the physical prior on the local exponent.
+                             # Riegel's exponent, and what this fitter's
+                             # own docstring calls the truth: "an exponent
+                             # near 1.06 drifting mildly with log
+                             # distance".
+PRIOR_SLOPE_WEIGHT = 0.0     # --slope-prior. In units of ONE TYPICAL
+                             # EDGE: 1.0 means "where no endpoint sits
+                             # nearby, the prior is worth about as much as
+                             # a single median-weight edge". 0 turns it off
+                             # and the solve is byte-identical to before.
+PRIOR_SLOPE_PROBES = 25      # prior rows across the endpoint range
+SUPPORT_SATURATION = 0.25    # the balance at which a location counts as
+                             # FULLY OBSERVED and the prior stands down
+                             # entirely. A quarter of a perfect split is
+                             # still both sides speaking; requiring a
+                             # perfect split would leave a standing bias
+                             # everywhere but the exact centre.
+
+
+# _supportBalance
+# Purpose:   How TWO-SIDED the endpoint support is at each probe -- the
+#            quantity whose absence is exactly what the phrase "an end
+#            segment has data on one side only" describes.
+# Arguments: edges; probes -- log-distance locations.
+# Output:    a numpy array in [0, 1], one per probe. 1 where support is
+#            balanced above and below (saturating, see below), 0 where it
+#            is entirely on one side.
+#
+# ⚠ THIS WAS LOCAL DENSITY FIRST, AND LOCAL DENSITY MEASURES THE WRONG
+#   THING. A kernel around each probe puts the prior's weight wherever no
+#   endpoint happens to sit nearby -- which on a standardised-distance
+#   corpus means THE GAPS BETWEEN THE RUNGS. Measured on an eight-rung
+#   k=1.12 track fixture, the density version weighted 2,063..2,546m at
+#   0.90-0.93 of a full edge and 6,564..8,102m at 0.77-0.98, while giving
+#   800m and 10,000m -- the actual boundaries -- ZERO. Those gaps are
+#   where the polynomial INTERPOLATES between two well-supported rungs,
+#   which is precisely where it is already identified; the fit was being
+#   pulled toward 1.06 in the one place it had no need of help, and a
+#   k=1.12 corpus came back reading 1.1296 at 1,000m -- moved AWAY from
+#   the prior, because a cubic pinned in the middle pivots at the ends.
+#
+# ★ ONE-SIDEDNESS IS THE MEASURE THAT MATCHES THE DIAGNOSIS. Below the
+#   lowest endpoint there is nothing on the left, above the highest there
+#   is nothing on the right, and in between both sides speak. So the
+#   prior now acts on the outermost rung at each end and on everything
+#   beyond it, and stands fully down across the interior however lumpy
+#   the rungs are.
+def _supportBalance(edges, probes):
+    ends, wts = [], []
+    for e in edges:
+        for ld in (e[0], e[1]):
+            ends.append(ld)
+            wts.append(float(e[4]))
+    if not ends:
+        return np.zeros(len(probes), dtype=float)
+    ends = np.asarray(ends)
+    wts = np.asarray(wts, dtype=float)
+    total = float(wts.sum())
+    out = np.zeros(len(probes), dtype=float)
+    for i, x in enumerate(probes):
+        below = float(wts[ends < x].sum())
+        above = float(wts[ends > x].sum())
+        # a perfectly central probe splits the support in half, so half the
+        # total is what "balanced" means -- the ratio is 1 there and 0 at
+        # either extreme.
+        bal = min(below, above) / (0.5 * total) if total > 0 else 0.0
+        out[i] = min(1.0, bal / SUPPORT_SATURATION)
+    return out
+
+
+# _priorSlopeRows
+# Purpose:   The prior as extra least-squares rows: dg/dx == K_PRIOR at a
+#            grid of locations, each weighted by how little endpoint
+#            support sits there.
+# Arguments: edges; degree; w_typical -- the median admissibility weight of
+#            the real rows, so the prior's strength is expressed relative
+#            to one ordinary edge.
+# Output:    (A_prior, b_prior, w_prior) as numpy arrays; all empty when
+#            PRIOR_SLOPE_WEIGHT is 0.
+def _priorSlopeRows(edges, degree, w_typical):
+    if not PRIOR_SLOPE_WEIGHT or not edges:
+        return (np.zeros((0, degree)), np.zeros(0), np.zeros(0))
+    L0 = math.log(TARGET_DISTANCE_METERS)
+    pts = [e[0] for e in edges] + [e[1] for e in edges]
+    probes = np.linspace(min(pts), max(pts), PRIOR_SLOPE_PROBES)
+    rel = _supportBalance(edges, probes)
+    A, b, w = [], [], []
+    for x_abs, r in zip(probes, rel):
+        x = x_abs - L0
+        # ! THE DERIVATIVE BASIS, MATCHING _polyDeriv EXACTLY. g has no
+        #   constant term, so coefficient j carries x**(j+1) and its
+        #   derivative carries (j+1) * x**j.
+        A.append([(j + 1) * x ** j for j in range(degree)])
+        b.append(K_PRIOR)
+        w.append(PRIOR_SLOPE_WEIGHT * w_typical * (1.0 - float(r)))
+    return np.asarray(A), np.asarray(b), np.asarray(w)
+
+
 def _solveShapeRobust(edges, degree, eps, tukey_c=None):
     L0 = math.log(TARGET_DISTANCE_METERS)
     A, b, w_adm = [], [], []
@@ -1554,17 +1837,34 @@ def _solveShapeRobust(edges, degree, eps, tukey_c=None):
     A, b = np.array(A), np.array(b)
     w_adm = np.array(w_adm, dtype=float)
 
-    w_rob = np.ones(len(edges))
-    coeffs = _solveShapeOnce(A, b, w_adm * w_rob)
+    # ★ THE PRIOR ROWS ARE APPENDED, NEVER REWEIGHTED. They are not
+    #   evidence, so Tukey has no business judging them: the IRLS residual
+    #   and scale are computed on the DATA rows alone and the prior rides
+    #   along at its fixed, support-derived weight. With
+    #   PRIOR_SLOPE_WEIGHT = 0 the arrays are empty and every line below
+    #   reduces to the historic solve exactly.
+    A_pri, b_pri, w_pri = _priorSlopeRows(
+        edges, degree, float(np.median(w_adm)) if len(w_adm) else 1.0)
+    n_data = len(edges)
+
+    def _solve(w_data):
+        if len(b_pri) == 0:
+            return _solveShapeOnce(A, b, w_data)
+        return _solveShapeOnce(np.vstack([A, A_pri]),
+                               np.concatenate([b, b_pri]),
+                               np.concatenate([w_data, w_pri]))
+
+    w_rob = np.ones(n_data)
+    coeffs = _solve(w_adm * w_rob)
     for _round in range(IRLS_MAX_ITERS):
         r = b - A @ coeffs                   # per-edge disagreement
         w_new = _tukeyWeights(r, _irlsScale(r, w_adm), tukey_c)
         if np.count_nonzero(w_new) <= degree:    # consensus collapse:
-            w_rob = np.ones(len(edges))          # abandon the reweight
-            coeffs = _solveShapeOnce(A, b, w_adm)
+            w_rob = np.ones(n_data)              # abandon the reweight
+            coeffs = _solve(w_adm)
             break
         w_rob = w_new
-        new_coeffs = _solveShapeOnce(A, b, w_adm * w_rob)
+        new_coeffs = _solve(w_adm * w_rob)
         if np.max(np.abs(new_coeffs - coeffs)) < 1e-12:
             coeffs = new_coeffs
             break                            # converged early
@@ -1823,7 +2123,7 @@ def _fitOnePotential(pairs, eps_fixed=None, tukey_c=None, degree_cap=None):
     n_trans = _distinctTransitions(edges)
     if n_trans < MIN_EDGES_FOR_POOL:
         return None
-    degree = _polyDegree(n_trans, cap=degree_cap)
+    degree, degree_audit = _degreeFor(edges, n_trans, cap=degree_cap)
     n_sf, n_lf = _epsSides(edges)
     contrasts = _matchedContrasts(edges)             # stage 1 evidence
     if eps_fixed is not None:                        # rung 2: borrowed
@@ -1850,10 +2150,177 @@ def _fitOnePotential(pairs, eps_fixed=None, tukey_c=None, degree_cap=None):
             "values": values,
             "floored_segments": floored, "min_local_exp": float(MIN_LOCAL_EXP or 0.0),
             "n_edges": n_trans, "degree": degree,
+            "degree_audit": degree_audit,
             "coeffs": [float(c) for c in coeffs],
             "span": (float(math.exp(lo)), float(math.exp(hi))),
             "eps": float(eps), "eps_source": eps_source,
             "n_matched": len(contrasts),
+            "n_edges_sf": n_sf, "n_edges_lf": n_lf,
+            "robust_down": downweighted,
+            "n_robust_down": len(downweighted),
+            "ext_slope_hi": ext_slope, "n_ext_pairs": n_ext}
+
+
+# ------------------------------------------------------------------ #
+# THE MERGED FIT  (2026-09-19)  --  ONE SHAPE PER POOL, BOTH SPORTS
+# ------------------------------------------------------------------ #
+# ★ THE TWO SAMPLES FIX EACH OTHER'S DEFECT, WHICH IS THE WHOLE ARGUMENT.
+#
+#     TF   no distance resolution (races are standardised: 800, 1600,
+#          3200, 5000) but UNCONFOUNDED -- flat 400m track, no terrain,
+#          no course, and _dropBadPairs already keeps it that way.
+#     XC   enormous distance resolution (every course a different
+#          measured length) but its pairs carry COURSE and CALENDAR,
+#          neither of which a same-athlete pair cancels.
+#
+#   One shape fitted on the union takes resolution from XC and unbiased
+#   level from TF. It is also the physically correct model: the distance
+#   exponent is a property of the RUNNER. The surface is a property of
+#   the VENUE, and this codebase already has a term for that -- course
+#   difficulty. Putting terrain into the distance exponent is a
+#   misattribution, and it is the one that turns a 9:00 3200 into a
+#   31:00 8k.
+#
+# ★ AND NO SPORT OFFSET IS NEEDED, WHICH IS WHY THIS IS A CONCATENATION
+#   RATHER THAN A NEW MODEL. Every constraint the shape solve sees is a
+#   DIFFERENCE within one pair, and a pair never crosses sports (_XC_SQL
+#   and _TF_SQL are streamed and paired separately). So a constant
+#   multiplicative penalty on cross-country times -- exactly what terrain
+#   is -- cancels in every within-XC difference and cannot reach g. The
+#   XC edges constrain the shape over roughly 2,800..10,000m, the TF
+#   edges over 800..5,000m, and they share it. There is nothing for an
+#   offset to absorb.
+#
+# ★ WHICH ALSO RETIRES THE ANCHOR PROBLEM FOR FREE. A merged pool spans
+#   800..10,000, so the bare-pool anchor -- 5,000 for hs, 8,000 for
+#   college men -- is INSIDE the support for both sports. The six pools
+#   whose every TF row was normalised through a 56% extrapolation off the
+#   boundary slope stop extrapolating, and normalize_distance.targetFor
+#   keeps reading the bare key, so the pace band and the boards never see
+#   a second scale. No consumer changes at all.
+#
+# ⚠ eps IS STILL PER SPORT, AND MUST BE. The calendar offset is the one
+#   thing that genuinely differs: cross-country runs one autumn ramp
+#   toward a championship, track runs a longer season with a different
+#   shape. A single eps median over the merged edges would average two
+#   different confounds and hand the difference to the shape. So stage 1
+#   runs PER SPORT and each sport's edges are corrected by its own eps
+#   BEFORE the shared stage-2 solve -- the same wall between stages that
+#   the per-sport fitter already relies on, just applied twice.
+#
+# ⚠ OFF BY DEFAULT (--merge-sports), AND DELIBERATELY SO. main() records
+#   the opposite finding -- "PER-SPORT is the saved methodology
+#   (measured: XC exp ~0.95-1.05 vs TF ~1.06-1.22 -- two laws; the old
+#   combined fit gated itself)". That measurement is real and it is not
+#   being overruled by argument. What it cannot settle is whether the two
+#   laws are two laws or one law plus XC's confound, because the XC half
+#   of it (~0.95-1.05) SPANS THE IMPOSSIBLE: a local exponent under 1.0
+#   says pace improves as the race lengthens. An estimate that returns a
+#   physically impossible number is not evidence about a second law. So
+#   the merge is built, the overlap-band shape test below measures
+#   whether the shapes agree where BOTH sports have real support, and the
+#   flag stays off until they do.
+#
+# ! A MERGED ENTRY IS STORED UNDER BOTH SPORT KEYS, BY DESIGN. The
+#   consumer looks up "hs_m|XC" and "hs_m|TF"; both resolve to the same
+#   curve object's contents, each carrying the bare pool's anchor. No
+#   reader learns that anything changed.
+
+# _epsBySport
+# Purpose:   Stage 1, once per sport: each sport's own calendar offset,
+#            from its own matched contrasts, with the level borrow and the
+#            undebiased fallback exactly as the per-sport path applies
+#            them.
+# Arguments: edges_by_sport -- {sport: edges}; eps_fixed -- optional
+#            {sport: eps} imposed by the caller (the level borrow).
+# Output:    {sport: (eps, source)}.
+def _epsBySport(edges_by_sport, eps_fixed=None):
+    out = {}
+    for sport, edges in edges_by_sport.items():
+        given = (eps_fixed or {}).get(sport)
+        if given is not None:
+            out[sport] = (float(given), "level")
+            continue
+        contrasts = _matchedContrasts(edges)
+        if len(contrasts) >= MIN_EPS_MATCHED_TRANSITIONS:
+            out[sport] = (_epsFromContrasts(contrasts), "own")
+        else:
+            out[sport] = (0.0, "none")
+    return out
+
+
+# _epsCorrectEdges
+# Purpose:   Move a known offset onto the data side, so the shared solve
+#            can be handed eps=0 and stay a single-eps function.
+# Arguments: edges; eps -- the offset for this sport's edges.
+# Output:    a new edge list, same tuple shape, delta corrected.
+# ! THE SIGN MATCHES _solveShapeRobust EXACTLY -- it forms
+#   `delta + s * eps`, s = e[5]. Correcting here and passing eps=0 there
+#   must be arithmetically identical or the two paths disagree, which is
+#   what test_merged_fit asserts.
+def _epsCorrectEdges(edges, eps):
+    if not eps:
+        return list(edges)
+    return [(ld1, ld2, delta + s * eps, w, cnt, s)
+            for ld1, ld2, delta, w, cnt, s in edges]
+
+
+# _fitMergedPotential
+# Purpose:   One pool, both sports, one shape. Stage 1 per sport (above),
+#            stage 2 over the concatenated eps-corrected edges.
+# Arguments: pairs_by_sport -- {sport: pair list};
+#            eps_fixed -- optional {sport: eps}; tukey_c, degree_cap as
+#            _fitOnePotential.
+# Output:    the same entry shape _fitOnePotential returns, plus
+#            "sports", "eps_by_sport" and "n_edges_by_sport"; or None when
+#            the union is too thin.
+def _fitMergedPotential(pairs_by_sport, eps_fixed=None, tukey_c=None,
+                        degree_cap=None):
+    edges_by_sport = {sp: _aggregatePairEdges(ps)
+                      for sp, ps in sorted(pairs_by_sport.items()) if ps}
+    edges_by_sport = {sp: e for sp, e in edges_by_sport.items() if e}
+    if not edges_by_sport:
+        return None
+    eps_map = _epsBySport(edges_by_sport, eps_fixed)
+    edges = []
+    for sport, e in edges_by_sport.items():
+        edges.extend(_epsCorrectEdges(e, eps_map[sport][0]))
+    n_trans = _distinctTransitions(edges)
+    if n_trans < MIN_EDGES_FOR_POOL:
+        return None
+    degree, degree_audit = _degreeFor(edges, n_trans, cap=degree_cap)
+    n_sf, n_lf = _epsSides(edges)
+    # eps is ZERO here on purpose: every edge above already carries its
+    # own sport's correction in `delta`.
+    coeffs, downweighted = _solveShapeRobust(edges, degree, 0.0, tukey_c)
+    pts = [e[0] for e in edges] + [e[1] for e in edges]
+    wts = [e[4] for e in edges] + [e[4] for e in edges]
+    lo, hi = (_weightedPercentile(pts, wts, 5),
+              _weightedPercentile(pts, wts, 95))
+    all_pairs = [p for ps in pairs_by_sport.values() for p in ps]
+    ext_slope, n_ext = _extensionSlopeHigh(all_pairs, coeffs, lo, hi)
+    knots = _knotGrid(edges)
+    values, floored = _floorLocalExponent(
+        knots, _sampleClamped(coeffs, knots, lo, hi, s_hi_override=ext_slope),
+        MIN_LOCAL_EXP)
+    return {"knots": [float(k) for k in knots],
+            "values": values,
+            "floored_segments": floored,
+            "min_local_exp": float(MIN_LOCAL_EXP or 0.0),
+            "n_edges": n_trans, "degree": degree,
+            "degree_audit": degree_audit,
+            "coeffs": [float(c) for c in coeffs],
+            "span": (float(math.exp(lo)), float(math.exp(hi))),
+            # the merged entry's eps is per sport; these two keep the
+            # single-sport entry's shape so every reader still works.
+            "eps": 0.0, "eps_source": "per_sport",
+            "eps_by_sport": {sp: {"eps": float(v[0]), "source": v[1]}
+                             for sp, v in eps_map.items()},
+            "sports": sorted(edges_by_sport),
+            "n_edges_by_sport": {sp: _distinctTransitions(e)
+                                 for sp, e in edges_by_sport.items()},
+            "n_matched": sum(len(_matchedContrasts(e))
+                             for e in edges_by_sport.values()),
             "n_edges_sf": n_sf, "n_edges_lf": n_lf,
             "robust_down": downweighted,
             "n_robust_down": len(downweighted),
@@ -1891,7 +2358,19 @@ def _healthNote(entry):
              f"{entry.get('min_local_exp', MIN_LOCAL_EXP):.2f} floor" if fl else "")
     mono = (f"; exponent made non-increasing (largest slope change {entry['monotone_change']:.3f})"
             if entry.get("monotone") and entry.get("monotone_change", 0) > 1e-9 else "")
-    return f"local exp range [{lo:.3f}, {hi:.3f}]{tag}{floor}{mono}"
+    # ★ BOTH DEGREE RULES ON EVERY LINE, so one run settles which is right
+    #   instead of two runs and a memory. Silent when they agree.
+    a = entry.get("degree_audit") or {}
+    if a and a.get("degree_edges") != a.get("degree_locations"):
+        other = ("degree_locations" if a["rule"] == "edges"
+                 else "degree_edges")
+        deg = (f"; degree {entry.get('degree')} by {a['rule']}, "
+               f"{a[other]} by the other rule "
+               f"(span {a['span_log']:.2f} log, "
+               f"{a['eff_locations']:.1f} effective locations)")
+    else:
+        deg = ""
+    return f"local exp range [{lo:.3f}, {hi:.3f}]{tag}{floor}{mono}{deg}"
 
 
 # _isHealthy
@@ -1927,7 +2406,51 @@ def _stabilityGrid(entry):
 #            unphysical depending on a constant.
 # Arguments: pairs — the pool's pairs; entry — the shipped-knob fit.
 # Output:    (max_shift, verdict_flipped).
-def _stabilityShift(pairs, entry):
+# ------------------------------------------------------------------ #
+# THE REFIT HANDLE  (2026-09-19)
+# ------------------------------------------------------------------ #
+# ⚠ THE GATES REFIT, SO THEY MUST REFIT THE MODEL THEY ARE GATING. The
+#   stability probe and the demotion ladder both call the fitter again on
+#   the same pairs with one knob moved. Hard-wired to _fitOnePotential,
+#   they would probe a MERGED entry by refitting it UNMERGED -- measuring
+#   merged-vs-per-sport disagreement and reporting it as knob
+#   sensitivity, which auto-fails every merged pool. Same failure mode
+#   the degree pin already documents one function below, one level up.
+#
+#   So the refit is a handle the caller supplies. Default behaviour is
+#   byte-identical to the hard-wired call.
+def _refitter(pairs):
+    def refit(eps_fixed=None, tukey_c=None, degree_cap=None):
+        return _fitOnePotential(pairs, eps_fixed=eps_fixed,
+                                tukey_c=tukey_c, degree_cap=degree_cap)
+    return refit
+
+
+def _mergedRefitter(pairs_by_sport):
+    def refit(eps_fixed=None, tukey_c=None, degree_cap=None):
+        return _fitMergedPotential(pairs_by_sport, eps_fixed=eps_fixed,
+                                   tukey_c=tukey_c, degree_cap=degree_cap)
+    return refit
+
+
+# _isMergedEntry / _epsPin
+# Purpose:   Tell the two entry kinds apart, and give each the eps its
+#            refits must be PINNED to -- a scalar for a single-sport
+#            entry, a {sport: eps} map for a merged one.
+# Arguments: entry.
+# Output:    bool / a float or a dict.
+def _isMergedEntry(entry):
+    return bool(entry) and entry.get("eps_source") == "per_sport"
+
+
+def _epsPin(entry):
+    if _isMergedEntry(entry):
+        return {sp: v["eps"] for sp, v in entry["eps_by_sport"].items()}
+    return entry["eps"]
+
+
+def _stabilityShift(pairs, entry, refit=None):
+    refit = refit or _refitter(pairs)
     grid = _stabilityGrid(entry)
     base_ok = _isHealthy(entry)
     worst, flipped = 0.0, False
@@ -1941,8 +2464,8 @@ def _stabilityShift(pairs, entry):
         # measure cubic-vs-quadratic disagreement, not knob sensitivity,
         # auto-failing every demotion. Pinning makes the invariant
         # explicit instead of accidental.
-        alt = _fitOnePotential(pairs, eps_fixed=entry["eps"], tukey_c=c,
-                               degree_cap=entry["degree"])
+        alt = refit(eps_fixed=_epsPin(entry), tukey_c=c,
+                    degree_cap=entry["degree"])
         worst = max(worst,
                     max(abs(_localExponent(alt, d)
                             - _localExponent(entry, d)) for d in grid))
@@ -1962,10 +2485,10 @@ def _stabilityShift(pairs, entry):
 # Arguments: label — for the report; pairs — the pool's pairs;
 #            entry — the health-approved fit, or None (passed through).
 # Output:    the entry, or None (stability-gated).
-def _applyStabilityGate(label, pairs, entry):
+def _applyStabilityGate(label, pairs, entry, refit=None):
     if entry is None:
         return None
-    shift, flipped = _stabilityShift(pairs, entry)
+    shift, flipped = _stabilityShift(pairs, entry, refit=refit)
     if shift > STABILITY_TOL or flipped:
         why = "verdict FLIPS" if flipped else f"shift {shift:.4f}"
         # Verdict only — no disposition claim. The demotion ladder may
@@ -1992,6 +2515,11 @@ def _applyStabilityGate(label, pairs, entry):
 # Arguments: entry — the certification-failed fit being demoted.
 # Output:    entry["eps"] for a borrowed pool, else None (self-derive).
 def _refitEpsArg(entry):
+    # ! A MERGED ENTRY IS ALWAYS PINNED. Its eps is per sport and was
+    #   measured in stage 1; letting a demotion re-derive it would move two
+    #   unknowns at once and the ladder would be comparing two models.
+    if _isMergedEntry(entry):
+        return _epsPin(entry)
     return entry["eps"] if entry["eps_source"] == "level" else None
 
 
@@ -2004,8 +2532,9 @@ def _refitEpsArg(entry):
 # Arguments: label — for the report; pairs — the pool's pairs;
 #            entry — a fitted entry or None (passed through).
 # Output:    the entry if both gates pass, else None.
-def _certifyEntry(label, pairs, entry):
-    return _applyStabilityGate(label, pairs, _gatePrint(label, entry))
+def _certifyEntry(label, pairs, entry, refit=None):
+    return _applyStabilityGate(label, pairs, _gatePrint(label, entry),
+                               refit=refit)
 
 
 # _demoteUntilCertified
@@ -2027,12 +2556,12 @@ def _certifyEntry(label, pairs, entry):
 #            entry — the failed full-freedom fit (NOT None; caller
 #            guards) whose degree sets the ladder's top.
 # Output:    the first certified demoted entry, or None (exhausted).
-def _demoteUntilCertified(label, pairs, entry):
+def _demoteUntilCertified(label, pairs, entry, refit=None):
+    refit = refit or _refitter(pairs)
     for cap in range(entry["degree"] - 1, 0, -1):
         print(f"    DEMOTION: refitting {label} at degree {cap}")
-        demoted = _fitOnePotential(pairs, eps_fixed=_refitEpsArg(entry),
-                                   degree_cap=cap)
-        certified = _certifyEntry(label, pairs, demoted)
+        demoted = refit(eps_fixed=_refitEpsArg(entry), degree_cap=cap)
+        certified = _certifyEntry(label, pairs, demoted, refit=refit)
         if certified is not None:
             return certified
     print(f"    no certifiable degree: {label} falls to its sport "
@@ -2167,6 +2696,57 @@ def _printLevelEps(level_eps):
 #            pool (gated pools included — the pre-gate entry is what the
 #            instrument diagnoses).
 # Output:    the kind-tagged artifact dict the consumer dispatches on.
+# _fitMergedPools
+# Purpose:   The --merge-sports branch of fitAllPotentials: one shape per
+#            POOL from both sports' pairs, stored under BOTH sport keys so
+#            no consumer learns anything changed.
+# Arguments: art -- the artifact under construction; xc_by_pool,
+#            tf_by_pool; report_residuals.
+# Output:    None (mutates art["pools"]).
+# ! THE ANCHOR IS THE BARE POOL'S, FOR BOTH SPORTS. That is the point of
+#   merging: a merged span reaches 800..10,000, so hs's 5,000 and college
+#   men's 8,000 sit INSIDE the support for track as well as
+#   cross-country, and the six pools that were normalising every TF row
+#   through a 56% extrapolation stop. normalize_distance.targetFor already
+#   reads the bare key, so one scale per pool is preserved exactly.
+def _fitMergedPools(art, xc_by_pool, tf_by_pool, report_residuals=False):
+    pools = sorted(set(xc_by_pool) | set(tf_by_pool))
+    for pool in pools:
+        by_sport = {sp: ps for sp, ps in
+                    (("XC", xc_by_pool.get(pool, [])),
+                     ("TF", tf_by_pool.get(pool, []))) if ps}
+        n_pairs = sum(len(ps) for ps in by_sport.values())
+        if n_pairs < MIN_PAIRS_FOR_POOL_SPLINE:
+            print(f"  {pool} (merged): {n_pairs:,} pairs — below "
+                  f"threshold.")
+            continue
+        label = f"{pool}|merged"
+        all_pairs = [p for ps in by_sport.values() for p in ps]
+        refit = _mergedRefitter(by_sport)
+        entry = _fitMergedPotential(by_sport)
+        if entry is None:
+            print(f"  {label}: too few edges — falls back.")
+            continue
+        print(f"  {label}: {n_pairs:,} pairs, "
+              f"{'/'.join(f'{sp} {n}' for sp, n in sorted(entry['n_edges_by_sport'].items()))}"
+              f" transitions.  {_healthNote(entry)}")
+        print(f"    eps per sport: "
+              + ", ".join(f"{sp} {v['eps']:+.4f} ({v['source']})"
+                          for sp, v in sorted(entry["eps_by_sport"].items())))
+        fitted = _certifyEntry(label, all_pairs, entry, refit=refit)
+        if fitted is None:
+            fitted = _demoteUntilCertified(label, all_pairs, entry,
+                                           refit=refit)
+        if report_residuals:
+            _reportResiduals(label, all_pairs, entry)
+        if fitted is None:
+            continue
+        for sport in sorted(by_sport):
+            stored = dict(fitted)
+            stored["target"] = _targetFor(pool)     # BARE key, both sports
+            art["pools"][f"{pool}|{sport}"] = _applyMonotone(stored, sport)
+
+
 def fitAllPotentials(xc_by_pool, tf_by_pool, report_residuals=False):
     all_xc = [p for ps in xc_by_pool.values() for p in ps]
     all_tf = [p for ps in tf_by_pool.values() for p in ps]
@@ -2179,6 +2759,23 @@ def fitAllPotentials(xc_by_pool, tf_by_pool, report_residuals=False):
     assert art["global"] is not None, "combined global must always fit"
     print(f"  global (combined): {_epsNote(art['global'])}.  "
           f"{_healthNote(art['global'])}")
+
+    # ★ THE MERGE BRANCH TAKES OVER FROM HERE. The globals above are
+    #   unchanged (the combined global always was both sports); only the
+    #   per-pool curves change, and they still land under both sport keys.
+    if MERGE_SPORTS:
+        print("\n  MERGED SHAPE PER POOL (--merge-sports): one curve per "
+              "pool from both sports' pairs, eps per sport.\n")
+        for sport, by_pool in (("XC", xc_by_pool), ("TF", tf_by_pool)):
+            sport_pairs = [p for ps in by_pool.values() for p in ps]
+            g = _applyStabilityGate(f"global|{sport}", sport_pairs,
+                                    _fitGated(f"global|{sport}", sport_pairs))
+            if g is not None:
+                art["global_by_sport"][sport] = _applyMonotone(g, sport)
+        _fitMergedPools(art, xc_by_pool, tf_by_pool, report_residuals)
+        art["pool_targets"] = dict(POOL_TARGET_METERS)
+        art["merged_sports"] = True
+        return art
 
     # PASS 1 — every pool fits itself (rung 1 where the guard clears).
     first = {}
@@ -2429,9 +3026,114 @@ def compareXCvsTF(xc_by_pool, tf_by_pool):
         # curves wherever the pool self-identified — read the two-laws
         # question against THESE lines, not the 7/04 undebiased run
         print(f"    XC {_epsNote(xc_pot)}   TF {_epsNote(tf_pot)}")
-        _printComparisonTable(xc_pot, tf_pot,
-                              _distanceSupport(xc_pairs),
-                              _distanceSupport(tf_pairs))
+        xc_sup, tf_sup = _distanceSupport(xc_pairs), _distanceSupport(tf_pairs)
+        _printComparisonTable(xc_pot, tf_pot, xc_sup, tf_sup)
+        # ★ THE SHAPE TEST IS THE ONE THAT DECIDES --merge-sports; the
+        #   conversion table above mixes level with shape and cannot.
+        _printOverlapShape(pool, _overlapShapeVerdict(xc_pot, tf_pot,
+                                                      xc_sup, tf_sup))
+
+
+# ------------------------------------------------------------------ #
+# THE OVERLAP-BAND SHAPE TEST  (2026-09-19)
+# ------------------------------------------------------------------ #
+# ★ THE EXISTING COMPARISON ASKS THE WRONG QUESTION FOR THIS DECISION.
+#   _printComparisonTable compares CONVERSIONS from a 1000s 5K, which
+#   mixes level and shape: a pool where the two sports have identical
+#   exponents but different terrain penalties diverges on every row, and
+#   a pool where they have the same level and different laws can agree at
+#   the anchor and disagree everywhere else. Whether ONE SHAPE is
+#   legitimate is a question about dg/d(log d) -- the local exponent --
+#   and about nothing else, because level is exactly the thing the merge
+#   does not need (see _fitMergedPotential: terrain cancels in every
+#   within-sport difference).
+#
+# ★ AND IT MUST BE ASKED ONLY WHERE BOTH SPORTS HAVE REAL SUPPORT.
+#   Outside the intersection one side is reporting its extrapolation
+#   policy, and comparing a measurement against a policy measures the
+#   policy. Measured intersections on the 2026-09-19 artifact:
+#
+#       ms_m       1,700..3,200   0.63 log   WIDE   -- ask here
+#       elem_*     1,606..3,000   0.62 log   WIDE   -- ask here
+#       hs_m       2,813..3,200   0.13 log   narrow
+#       college_m  4,000..5,000   0.22 log   narrow
+#
+#   So middle school and elementary are where this test has power, and
+#   they are the pools to read. A narrow band can agree by accident.
+OVERLAP_MIN_LOG = 0.20       # below this the intersection cannot
+                             # distinguish two shapes: report, don't judge
+OVERLAP_AGREE_EXP = 0.02     # a mean |exponent| gap under this is one law
+                             # wearing two labels. 2% is the same
+                             # threshold the conversion table already uses
+                             # for its own verdict, kept for continuity.
+OVERLAP_PROBES = 9           # evaluation points across the band
+
+
+# _overlapBand
+# Purpose:   The distance range where both sports actually testified.
+# Arguments: xc_sup, tf_sup -- (lo_m, hi_m) supports.
+# Output:    (lo_m, hi_m) or None when they do not overlap.
+def _overlapBand(xc_sup, tf_sup):
+    lo = max(xc_sup[0], tf_sup[0])
+    hi = min(xc_sup[1], tf_sup[1])
+    return (lo, hi) if hi > lo else None
+
+
+# _overlapShapeVerdict
+# Purpose:   The local exponent of each sport's curve across the band both
+#            measured, and the one number that decides the merge.
+# Arguments: xc_pot, tf_pot -- fitted entries; xc_sup, tf_sup -- supports.
+# Output:    a dict for the caller to print/assert on, or None (no band).
+def _overlapShapeVerdict(xc_pot, tf_pot, xc_sup, tf_sup):
+    band = _overlapBand(xc_sup, tf_sup)
+    if band is None:
+        return None
+    lo, hi = band
+    width = math.log(hi) - math.log(lo)
+    probes = [math.exp(x) for x in
+              np.linspace(math.log(lo), math.log(hi), OVERLAP_PROBES)]
+    rows = [(d, _localExponent(xc_pot, d), _localExponent(tf_pot, d))
+            for d in probes]
+    gaps = [abs(a - b) for _d, a, b in rows]
+    mean_gap = float(np.mean(gaps))
+    powered = width >= OVERLAP_MIN_LOG
+    return {"band": band, "width_log": width, "rows": rows,
+            "mean_gap": mean_gap, "max_gap": float(np.max(gaps)),
+            "powered": powered,
+            "agree": bool(powered and mean_gap <= OVERLAP_AGREE_EXP)}
+
+
+# _printOverlapShape
+# Purpose:   The verdict as a table, with the honest reading attached.
+# Arguments: pool -- label; v -- _overlapShapeVerdict output or None.
+def _printOverlapShape(pool, v):
+    if v is None:
+        print(f"    SHAPE TEST: the two supports do not overlap — the "
+              f"merge cannot be tested on this pool.")
+        return
+    lo, hi = v["band"]
+    print(f"    SHAPE TEST over {lo:,.0f}..{hi:,.0f}m "
+          f"({v['width_log']:.2f} log units"
+          f"{'' if v['powered'] else f', UNDER the {OVERLAP_MIN_LOG} needed to judge'})")
+    print(f"      {'distance':>9} {'XC exp':>8} {'TF exp':>8} {'gap':>8}")
+    for d, a, b in v["rows"]:
+        print(f"      {d:>9,.0f} {a:>8.3f} {b:>8.3f} {abs(a - b):>8.3f}")
+    print(f"      mean gap {v['mean_gap']:.3f}   max gap {v['max_gap']:.3f}"
+          f"   (one law if mean <= {OVERLAP_AGREE_EXP})")
+    if not v["powered"]:
+        print(f"      → BAND TOO NARROW TO DECIDE. Whatever this says, it "
+              f"says it about {v['width_log']:.2f} log units of distance.")
+    elif v["agree"]:
+        print(f"      → ONE LAW. The shapes agree where both sports "
+              f"measured; the level difference between them is terrain, "
+              f"which belongs to course difficulty. --merge-sports is "
+              f"justified for this pool.")
+    else:
+        print(f"      → TWO LAWS, or XC's confound. The shapes disagree by "
+              f"{v['mean_gap']:.3f} in the exponent where both measured. "
+              f"Merging would bake that disagreement into one curve. Check "
+              f"whether XC's side is below 1.0 anywhere before believing "
+              f"it — an impossible exponent is not evidence of a law.")
 
 
 # _printComparisonTable
@@ -2514,7 +3216,8 @@ def _spotCheck(entry, reference_time):
 
 def main():
     import argparse
-    global MIN_LOCAL_EXP, MONOTONE_SPORTS
+    global MIN_LOCAL_EXP, MONOTONE_SPORTS, MERGE_SPORTS, DEGREE_RULE
+    global PRIOR_SLOPE_WEIGHT
     parser = argparse.ArgumentParser(
         description="Fit the per-pool distance splines")
     parser.add_argument("--fresh", action="store_true",
@@ -2534,6 +3237,35 @@ def main():
     parser.add_argument("--monotone-sports", default=",".join(MONOTONE_SPORTS),
                         help="sports whose curves' local exponent is held non-increasing "
                              "with distance (default %(default)s; '' turns it off)")
+    parser.add_argument("--merge-sports", action="store_true",
+                        help="fit ONE shape per pool from BOTH sports' "
+                             "pairs (eps still per sport), stored under both "
+                             "sport keys. XC supplies distance resolution, TF "
+                             "supplies an unconfounded level, and terrain "
+                             "goes where it belongs -- course difficulty. "
+                             "Read the SHAPE TEST lines before using this: "
+                             "it is only right where the two curves' local "
+                             "exponents agree inside their overlap band.")
+    parser.add_argument("--degree-rule", default=DEGREE_RULE,
+                        choices=DEGREE_RULE_CHOICES,
+                        help="how a pool earns polynomial degree. 'edges' "
+                             "(default, historic) counts distinct distance "
+                             "transitions, which penalises track for racing "
+                             "standardised distances and flatters a narrow "
+                             "quasi-continuous XC band. 'locations' requires "
+                             "log-span and effective distinct endpoint "
+                             "locations instead. Both are reported either "
+                             "way.")
+    parser.add_argument("--slope-prior", type=float,
+                        default=PRIOR_SLOPE_WEIGHT,
+                        help=f"pull the local exponent toward {K_PRIOR} "
+                             f"WHERE THE PAIRS ARE ABSENT, in units of one "
+                             f"typical edge (default %(default)s = off). This "
+                             f"is what --min-exponent should have been: the "
+                             f"floor clamps an impossible curve after the "
+                             f"fit, this one keeps the fit from going there. "
+                             f"With it on, floored_segments should fall to "
+                             f"zero -- that is how you know it worked.")
     parser.add_argument("--min-per-rung", type=int, default=1,
                         help="with --season-best: a rung needs this many "
                              "races before its best counts (2 tightens the "
@@ -2541,6 +3273,9 @@ def main():
                              "distance)")
     args = parser.parse_args()
     MIN_LOCAL_EXP = float(args.min_exponent or 0.0)
+    MERGE_SPORTS = bool(args.merge_sports)
+    DEGREE_RULE = args.degree_rule
+    PRIOR_SLOPE_WEIGHT = float(args.slope_prior or 0.0)
     MONOTONE_SPORTS = tuple(x.strip() for x in (args.monotone_sports or "").split(",") if x.strip())
     print(f"MONOTONE EXPONENT: {', '.join(MONOTONE_SPORTS) or 'off'} (--monotone-sports; a "
           "curve's local exponent only falls with distance)\n")
@@ -2574,7 +3309,23 @@ def main():
 
     # PER-SPORT is the saved methodology (measured: XC exp ~0.95-1.05
     # vs TF ~1.06-1.22 — two laws; the old combined fit gated itself).
-    print("Fitting per-sport potentials...\n")
+    print(f"SLOPE PRIOR: "
+          + (f"{PRIOR_SLOPE_WEIGHT:g} typical edges toward {K_PRIOR} where "
+             f"the pairs are absent (--slope-prior). Watch floored_segments "
+             f"fall to zero."
+             if PRIOR_SLOPE_WEIGHT else
+             "off (--slope-prior; the exponent floor still clamps after the "
+             "fit, which makes a curve legal rather than right)") + "\n")
+    print(f"DEGREE RULE: {DEGREE_RULE} (--degree-rule). Every pool's line "
+          f"reports what BOTH rules would have granted, so one run settles "
+          f"which is right.\n")
+    if MERGE_SPORTS:
+        print("MERGING SPORTS (--merge-sports): one shape per pool, eps per "
+              "sport, terrain left to course difficulty. The SHAPE TEST "
+              "lines above are the evidence for or against this — read them "
+              "before trusting the artifact.\n")
+    print("Fitting "
+          + ("MERGED" if MERGE_SPORTS else "per-sport") + " potentials...\n")
     art = fitAllPotentials(xc_by_pool, tf_by_pool,
                            report_residuals=args.residuals)
     savePotentials(art)

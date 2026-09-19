@@ -116,6 +116,37 @@ def localExponent(entry, metres):
     return None
 
 
+# _supportedSegments
+# Purpose:   The indices of the knot segments whose MIDPOINT lies inside the
+#            entry's own fitted span -- the only segments that describe a
+#            measurement rather than the extrapolation policy.
+# Arguments: entry -- a pool curve with "knots" and "span".
+# Output:    an ascending list of segment indices (possibly empty).
+# ! MIDPOINT, NOT EITHER ENDPOINT. A segment straddling the span boundary is
+#   half policy; judging it by its inner endpoint would admit it and by its
+#   outer one would reject the last real segment of every pool.
+def _supportedSegments(entry):
+    k = entry.get("knots") or []
+    span = entry.get("span") or (None, None)
+    if len(k) < 2:
+        return []
+    lo, hi = span
+    if lo is None or hi is None:
+        return list(range(len(k) - 1))
+    llo, lhi = math.log(lo), math.log(hi)
+    out = [i for i in range(len(k) - 1)
+           if llo <= 0.5 * (k[i] + k[i + 1]) <= lhi]
+    # A span narrower than one knot pitch admits nothing; fall back to the
+    # single segment containing the span's own midpoint rather than print
+    # "(no segment)" for a pool that did fit.
+    if not out:
+        mid = 0.5 * (llo + lhi)
+        best = min(range(len(k) - 1),
+                   key=lambda i: abs(0.5 * (k[i] + k[i + 1]) - mid))
+        out = [best]
+    return out
+
+
 def flag(exp):
     if exp is None:
         return "  ?"
@@ -172,9 +203,20 @@ def main():
 
     # ★★ THE END SEGMENTS FIRST. An end segment has data on one side only and
     #    the thinnest knot spacing, so it bends where the middle cannot see --
-    #    which is the owner's 600/800 and 10k complaint, on distances that are
-    #    well inside the support and heavily raced.
-    print(f"  === the END segments, per pool: where the curve bends unseen ===")
+    #    which is the owner's 600/800 complaint, on distances that are well
+    #    inside the support and heavily raced.
+    #
+    # ⚠ AND THE ENDS MEAN THE ENDS OF THE SUPPORT, NOT THE ENDS OF THE KNOT
+    #   GRID (2026-09-19). _knotGrid deliberately runs past the fitted span
+    #   and _sampleClamped fills everything beyond it by LINEAR EXTENSION at
+    #   the boundary slope -- that is the extrapolation POLICY, baked into the
+    #   artifact on purpose. Reading the outermost knots therefore measured
+    #   the policy and reported it as a fit, in a distance range where
+    #   NOBODY RACES: hs_f|XC's grid runs to 11,843m and no high-school girl
+    #   has ever run one. The segments below are the outermost ones whose
+    #   MIDPOINT falls inside the entry's own span, so every number here is
+    #   somewhere the pool actually competed.
+    print(f"  === the END segments of the SUPPORT, per pool ===")
     print(f"  {'pool|sport':<22} {'shortest segment':>26} {'k':>7}"
           f"   {'longest segment':>26} {'k':>7}")
     print(f"  {'-' * 22} {'-' * 26} {'-' * 7}   {'-' * 26} {'-' * 7}")
@@ -190,8 +232,12 @@ def main():
             d0, d1 = math.exp(k[i]), math.exp(k[i + 1])
             x = (v[i + 1] - v[i]) / (k[i + 1] - k[i])
             return f"{d0:,.0f} -> {d1:,.0f}", x
-        lab_lo, x_lo = seg(0)
-        lab_hi, x_hi = seg(len(k) - 2)
+        inside = _supportedSegments(e)
+        if not inside:
+            print(f"  {key:<22} {'(no segment inside its own span)':>26}")
+            continue
+        lab_lo, x_lo = seg(inside[0])
+        lab_hi, x_hi = seg(inside[-1])
         print(f"  {key:<22} {lab_lo:>26} {x_lo:7.3f}   "
               f"{lab_hi:>26} {x_hi:7.3f}")
         for lab, x, where in ((lab_lo, x_lo, "short end"),
@@ -200,7 +246,7 @@ def main():
                 ends_bad.append((key, where, lab, x))
     if ends_bad:
         print(f"\n  ⚠ {len(ends_bad)} END segment(s) with an unphysical "
-              f"exponent -- these are the 600/800/10k cases:")
+              f"exponent, inside the support:")
         for key, where, lab, x in ends_bad:
             print(f"      {key:<22} {where:<10} {lab:>22}  {x:6.3f}{flag(x)}")
     else:
@@ -308,15 +354,25 @@ def main():
                 x = (e["values"][i + 1] - e["values"][i]) / (k[i + 1] - k[i])
                 print(f"    {d0:>8,.0f} -> {d1:>8,.0f}  {x:6.3f}{flag(x)}")
 
-    print(f"\n  READ IT THIS WAY. The END SEGMENTS are the owner's complaint: "
-          f"600m, 800m and\n  10,000m are ordinary college track distances "
-          f"with plenty of rows, well inside the\n  support, and the curve "
-          f"still bends at the ends because an end segment has data\n  on one "
-          f"side only and the thinnest knots. An exponent under 1.0 is "
-          f"impossible --\n  it says a runner's pace improves as the race "
-          f"lengthens -- so it is the fit, not\n  the runners. `in? = NO` is a "
-          f"second, separate fault: that pool's every row is\n  extrapolated, "
-          f"not only its tails.")
+    print(f"\n  READ IT THIS WAY, AND ONLY WHERE THEY RACE. The END SEGMENTS "
+          f"are the complaint:\n  600m and 800m are ordinary college track "
+          f"distances with plenty of rows, well\n  inside the support, and "
+          f"the curve still bends there because an end segment has\n  data on "
+          f"one side only and the thinnest knots. An exponent under 1.0 is\n"
+          f"  impossible -- it says a runner's pace improves as the race "
+          f"lengthens -- so it is\n  the fit, not the runners.\n"
+          f"\n  ⚠ A NUMBER FROM A DISTANCE NOBODY RUNS IS NOT A FINDING. "
+          f"Every segment above\n    is inside its pool's own fitted span, "
+          f"because reading the knot grid's ends\n    instead reported "
+          f"elementary-school exponents at 8,410m and high-school girls'\n"
+          f"    at 11,843m. Cross-country's 10k is the same trap: college men "
+          f"barely race\n    it, so its end segment is real arithmetic about "
+          f"an empty distance. Judge a\n    pool at its TARGET and across the "
+          f"distances its athletes actually contest.\n"
+          f"\n  `in? = NO` is a second, separate fault: that pool's every row "
+          f"is extrapolated,\n  not only its tails. All six are TF, and they "
+          f"are what --merge-sports exists to\n  fix -- a merged pool spans "
+          f"800..10,000 and contains every anchor.")
 
 
 if __name__ == "__main__":
