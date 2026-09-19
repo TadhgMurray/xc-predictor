@@ -1037,7 +1037,14 @@ def loadProTeams():
         cur.execute("SELECT to_regclass('team_pool')")
         if cur.fetchone()[0] is None:
             return set(), {}
-        cur.execute("SELECT team_id, reason FROM team_pool WHERE pool = 'pro'")
+        # ! THE COLUMN IS `kind`, NOT `pool` (2026-09-19). build_team_pool's
+        #   CREATE TABLE says kind; this asked for pool, so every call raised
+        #   UndefinedColumn, speed_ratings.loadProTeams swallowed it as
+        #   "team_pool unavailable" and returned an empty set. The wiring
+        #   reported as done had never repooled a single row -- it failed
+        #   SAFE, which is why the first real run did not show it.
+        cur.execute("SELECT team_id, reason FROM team_pool "
+                    "WHERE kind = 'pro'")
         rows = cur.fetchall()
     ids, why = set(), {}
     for tid, reason in rows:
