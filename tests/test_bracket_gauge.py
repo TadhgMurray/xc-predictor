@@ -35,7 +35,20 @@ class TheGaugeIsOutdoorByDefault(unittest.TestCase):
 
     def test_the_default_is_outdoor(self):
         self.assertIn('GAUGE_DEFAULT = "outdoor"', self.src)
-        self.assertIn('GAUGE_CHOICES = ("outdoor", "all")', self.src)
+        # ! THE HISTORIC TWO ARE STILL THERE, and the tuple is no longer
+        #   asserted whole: "flat400" joined it on 2026-09-19 (the owner's
+        #   flat-outdoor-400 pin, plan §2). Pinning the literal tuple made
+        #   ADDING a choice a failure, which is not the claim -- the claim is
+        #   that the DEFAULT is still outdoor and the old behaviour is still
+        #   reachable.
+        # ! READ FROM THE SOURCE, not by importing: this file is a pure
+        #   source check (see the header) and runs as a script with no path
+        #   set up, so `import bracket_engine` is not available here.
+        line = [l for l in self.src.splitlines()
+                if l.startswith("GAUGE_CHOICES = (")]
+        self.assertEqual(len(line), 1, "GAUGE_CHOICES moved or vanished")
+        for choice in ('"outdoor"', '"all"'):
+            self.assertIn(choice, line[0], line[0])
 
     # ★ cell_pg is 0 XC, 1 outdoor track, 2 indoor track (priorGroupOfKeys), so
     #   the reference is everything that is not indoor -- XC keeps its own
@@ -113,17 +126,37 @@ class TheArithmeticOfTheChange(unittest.TestCase):
 class TheHoldoutCanScoreBoth(unittest.TestCase):
     """A change to the gauge must be scored, not argued about."""
 
-    def test_the_flag_reaches_both_fit_calls(self):
-        # ! COUNT THE ARGUMENT, NOT ITS PUNCTUATION (2026-09-19). This asserted
-        #   on "gauge=gauge)" -- with the closing paren -- so it broke the
-        #   moment `gauge` stopped being the LAST argument to be.fit, which
-        #   adding prior_athlete did. The claim is that both call sites
-        #   forward the flag; where it sits in the argument list is not the
-        #   claim.
+    def test_the_flag_reaches_every_fit_call(self):
+        # ! THE CLAIM, NOT A COUNT (2026-09-19, twice in one day). First this
+        #   asserted on "gauge=gauge)" -- with the closing paren -- and broke
+        #   when gauge stopped being be.fit's last argument. Then it asserted
+        #   exactly two forwarding sites and broke when --sweep-shrinkage added
+        #   a third. Both times the CLAIM held and only the arithmetic failed.
+        #
+        #   So ask the question directly: every call to score() or fitAll() in
+        #   this file must forward a gauge, and score() must forward it to
+        #   be.fit. A new call site is now covered rather than counted.
+        import ast
         src = read("scripts/bracket_holdout.py")
         self.assertIn('ap.add_argument("--gauge"', src)
-        self.assertEqual(src.count("gauge=gauge"), 2)
-        self.assertEqual(src.count("gauge=args.gauge"), 2)
+        tree = ast.parse(src)
+        fns = {n.name: n for n in tree.body
+               if isinstance(n, ast.FunctionDef)}
+        sites = 0
+        for host in fns.values():
+            for node in ast.walk(host):
+                if (isinstance(node, ast.Call)
+                        and getattr(node.func, "id", "") in ("score", "fitAll")):
+                    kws = {k.arg for k in node.keywords}
+                    self.assertIn("gauge", kws,
+                                  f"{host.name} calls {node.func.id} without "
+                                  f"a gauge")
+                    sites += 1
+        self.assertGreaterEqual(sites, 2, "the call sites vanished")
+        for fn in ("score", "fitAll"):
+            body = ast.get_source_segment(src, fns[fn])
+            self.assertIn("gauge=gauge", body,
+                          f"{fn} does not pass its gauge to be.fit")
 
 
 if __name__ == "__main__":

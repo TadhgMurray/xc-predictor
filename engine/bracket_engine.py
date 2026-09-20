@@ -746,8 +746,22 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
             means = mean_of[np.unique(ii)]
             tau2 = float(means.var(ddof=1)) if means.size > 1 else 0.0
             # tau2 as measured is sigma2/n inflated; remove the sampling part
-            tau2 = max(tau2 - sigma2 / max(float(cnt[multi].mean()), 1.0),
-                       1e-12)
+            #
+            # ⚠⚠ cnt IS PER GROUP, multi IS PER ROW, and cnt[multi] mixed the
+            #    two: on the corpus that is a 505,986-long array indexed by a
+            #    3,287,804-long mask -- IndexError, straight out of the owner's
+            #    first real shrinkage sweep. The quantity wanted is the mean
+            #    rows per RETAINED athlete-season (the sampling variance in each
+            #    group's mean is sigma2/n), so the counts must be selected among
+            #    GROUPS, not among rows.
+            #
+            # ! AND IT SURVIVED ITS OWN TEST because of the line above: a pool
+            #   needs PRIOR_ATHLETE_MIN_ATHLETES (200) multi-row athlete-seasons
+            #   to be fitted at all, and no fixture had them, so every test took
+            #   the `continue` and this arithmetic never ran once. See
+            #   tests/test_athlete_prior.py, which now builds 250 of them.
+            n_bar = float(cnt[cnt >= 2].mean()) if np.any(cnt >= 2) else 1.0
+            tau2 = max(tau2 - sigma2 / max(n_bar, 1.0), 1e-12)
             k = sigma2 / tau2
             lo, hi = PRIOR_ATHLETE_RANGE
             rep[p_] = (k, int(means.size))

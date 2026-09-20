@@ -265,3 +265,83 @@ class TheJointDumpCannotCrashTheRun(unittest.TestCase):
             self._run(np.arange(0, 1000, 2))
         except Exception as exc:                                 # noqa: BLE001
             self.fail(f"a valid dump must not raise: {exc!r}")
+
+
+# ===================================================================== #
+#  THE FITTED BRANCH, WHICH NO TEST HAD EVER ENTERED                    #
+# ===================================================================== #
+
+class TheFitActuallyRuns(unittest.TestCase):
+    """⚠⚠ WHY THIS CLASS EXISTS. _fitAthletePrior computed
+
+            tau2 - sigma2 / cnt[multi].mean()
+
+       where cnt is per athlete-SEASON and multi is per ROW. On the corpus that
+       is a 505,986-long array indexed by a 3,287,804-long mask, and it raised
+       IndexError in the owner's first real shrinkage sweep -- after the `off`
+       rung had already spent its time.
+
+       It survived every test because a pool needs
+       PRIOR_ATHLETE_MIN_ATHLETES (200) multi-row athlete-seasons before it is
+       fitted at all, and no fixture had anywhere near that, so every test took
+       the `continue` above the bug and the arithmetic never ran once. A prior
+       that cannot be exercised at fixture scale needs a fixture at its scale,
+       so these build one: 250 athletes x 4 rows.
+    """
+
+    @staticmethod
+    def _world(n_ath=250, per=4, seed=5, tau=0.15, sigma=0.03):
+        """One pool, `n_ath` athlete-seasons of `per` rows each, planted with a
+        known between-athlete spread (tau) and within-athlete noise (sigma).
+        Two courses so the levels are identifiable."""
+        rng = np.random.default_rng(seed)
+        a_true = rng.normal(0, tau, n_ath)
+        ath = np.repeat(np.arange(n_ath), per)
+        course = np.tile(np.arange(per) % 2, n_ath)
+        doy = 100 + np.tile(np.arange(per) * 7, n_ath)
+        y = a_true[ath] + rng.normal(0, sigma, ath.size)
+        return dict(
+            athlete=ath, year=np.full(ath.size, 2025), course=course,
+            days=(366 - doy).astype(np.float64), doy=doy,
+            sport=np.ones(ath.size, dtype=np.int64), norm=np.exp(y),
+            dist_m=np.full(ath.size, 5000.0),
+            athlete_keys=[(i, "hs_m") for i in range(n_ath)],
+            course_keys=["XC:1:d5000", "XC:2:d5000"])
+
+    def _fit(self, **kw):
+        import contextlib
+        import io
+        cols = self._world()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            f = be.fit(cols, None, window=60, top=1.0, era_years=0,
+                       n_iter=20, prior_athlete="fit", verbose=True, **kw)
+        return f, buf.getvalue()
+
+    def test_the_fit_runs_and_does_not_raise(self):
+        """The regression itself. ! THE ASSERTION IS THAT THE POOL WAS FITTED,
+        not merely that fit() returned: "0 of 1 pools fitted" is exactly the
+        `continue` that hid the bug for a week, and it would pass a weaker
+        check."""
+        f, out = self._fit()
+        self.assertTrue(np.isfinite(np.asarray(f["D"])).all())
+        self.assertIn("1 of 1 pools fitted", out,
+                      "the fitted branch was skipped, so this test would not "
+                      "have caught the IndexError either:\n" + out)
+
+    def test_the_estimate_lands_inside_the_believable_range(self):
+        """k = sigma^2/tau^2, and the world is planted at sigma 0.03 against
+        tau 0.15, so the raw estimate (~0.04) is BELOW the range floor and must
+        come back clamped to it rather than as a number nobody believes. Little
+        shrinkage is the right answer here: the athletes really are different."""
+        _f, out = self._fit()
+        lo, _hi = be.PRIOR_ATHLETE_RANGE
+        line = [l for l in out.splitlines() if "athlete prior" in l][0]
+        self.assertIn(f"by {lo:g} rows' worth", line, line)
+
+    def test_both_shrinkage_targets_survive_the_fitted_branch(self):
+        """The sweep runs the fitted k against each target in turn, so both
+        paths have to reach the end."""
+        for target in be.PRIOR_TARGETS:
+            f, _out = self._fit(prior_target=target)
+            self.assertTrue(np.isfinite(np.asarray(f["D"])).all(), target)
