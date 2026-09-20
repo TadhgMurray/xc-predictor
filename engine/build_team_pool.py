@@ -63,6 +63,12 @@ PRO_MAX_ATHLETES = 15
 # team_id 0 is anet's unattached sentinel, not an id.
 REAL_TEAM = "team_id IS NOT NULL AND team_id <> 0"
 
+# ! THE LEVELS A SCHOOL CAN BE, so classify can say "this is not a club" once.
+#   college is here too: _collegeNames already keeps colleges out of
+#   loadClubPros, and this makes that protection a property of the rule rather
+#   than of one loader's name list.
+_SCHOOL_LEVELS = ("hs", "ms", "elem", "college")
+
 # ! THE FALLBACK MAPPING, used only when speed_ratings_db cannot be imported
 #   (it pulls numpy and the model stack). Measured from the census output, and
 #   deliberately NOT the primary source -- loadTeamLevels infers names from
@@ -157,10 +163,47 @@ def teamSizes(cur):
 #   Smallness wins over anet's level on the owner's explicit instruction ("if
 #   they're that small I'd prefer to make them pro"); a real college with
 #   under fifteen athletes in its whole history is not a real college.
+#
+# ⚠⚠ THE PROFESSIONAL RULE IS A *CLUB* RULE, AND DROPPING THAT WORD BROKE THE
+#    BOARDS (2026-09-20). The owner's sentence is "if anybody we've marked as
+#    pro is in a CLUB, make entire club pro", and this module's own header and
+#    tests/test_team_pool.py both say "a club with ANY professional in it is
+#    pro". The code tested `if n_pros:` against EVERY level, so a high school
+#    inherited the club rule.
+#
+#    That is not a rare edge. pro_flag.py classifies an athlete-SEASON, on
+#    purpose, and its own docstring names the cases: "Lutkenhaus raced Millrose
+#    as a junior", "Sadie Engelhardt forwent a high school outdoor season to
+#    race professionally". So a senior flagged pro while still at their high
+#    school puts n_pros=1 on THAT HIGH SCHOOL's team id -- and
+#    loadClubPros excludes college NAMES (_collegeNames) but has never
+#    excluded schools, because its only consumer until now was
+#    loadClubMajority, whose per-athlete majority gate made that safe.
+#
+#    team_pro has no such gate (pool_resolve: "UNGATED, LIKE no_team"), so one
+#    pro-flagged season repooled EVERY athlete who has ever worn that school's
+#    vest, in every season, all the way back. A pool-relative rating does not
+#    shift under that, it BENDS -- the ~50-point split the owner saw between
+#    American Fork / Herriman / Belen Jesuit and the schools beside them on the
+#    same result page.
+#
+# ! SO THE LEVEL IS TESTED FIRST, AND ONLY A CLUB INHERITS ITS PROS. A school
+#   or college that produced a professional is still a school: that is what the
+#   feed's level is FOR, and what the owner's word "club" was doing in the
+#   rule. Smallness still outranks everything, unchanged.
 def classify(n_athletes, level, n_pros, pro_max=PRO_MAX_ATHLETES):
     """(kind, reason). Pure."""
     if n_athletes < pro_max:
         return "pro", f"fewer than {pro_max} athletes all-time ({n_athletes})"
+    if level in _SCHOOL_LEVELS:
+        # ! COUNTED, NOT SILENT. A school that produced a professional is the
+        #   case this rule used to swallow, so the reason says so and
+        #   report() can price it.
+        if n_pros:
+            return level, (f"anet level (kept: {n_pros} professional "
+                           f"athlete-season(s) raced for it, but a {level} is "
+                           f"not a club)")
+        return level, "anet level"
     if n_pros:
         return "pro", f"{n_pros} professional athlete(s) raced for it"
     if level == "club":
@@ -225,6 +268,24 @@ def report(rows, show=20, pro_max=PRO_MAX_ATHLETES):
     print(f"\n  ! if real schools are in that list they are the accepted price "
           f"of the rule,\n    but they should be seen here rather than found "
           f"later on a rankings page.")
+
+    # ★★ AND THE COUNTERPART: THE SCHOOLS THE CLUB RULE USED TO SWALLOW.
+    #    Before 2026-09-20 `if n_pros:` ran against every level, so a high
+    #    school that produced one pro-flagged athlete-season was called pro and
+    #    -- because team_pro is ungated -- took every athlete in its history
+    #    out of the school pools with it. This is that set, now kept. It is
+    #    printed for the same reason the list above is: the one heuristic in
+    #    this file has to be visible before it lands.
+    kept = sorted((r for r in rows if r[1] in _SCHOOL_LEVELS and r[6]),
+                  key=lambda r: -r[6])
+    print(f"\n  kept as schools DESPITE pro-flagged athlete-seasons: "
+          f"{len(kept):,} team ids")
+    if kept:
+        print(f"    (a senior who races a professional field is still at their "
+              f"school --\n     pro_flag classifies a SEASON, not a career)")
+        print(f"    {'team':>8} {'pros':>5} {'ath':>6} {'rows':>9} level")
+        for r in kept[:show]:
+            print(f"    {r[0]:>8} {r[6]:>5} {r[3]:>6,} {r[4]:>9,} {r[5]}")
 
 
 def main():

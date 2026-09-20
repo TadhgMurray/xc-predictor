@@ -55,8 +55,23 @@ def _joinContinuations(text):
 _OPTIONAL = re.compile(r'\$\{[A-Za-z_][A-Za-z0-9_]*:\+([^}]*)\}')
 
 
-def _invocations(text):
-    """(label, script, flags) for every step line that runs a .py file."""
+# ★ THE SIGNATURE IS `step <name> <description> <command...>` (2026-09-20).
+#   The description is argument TWO, always, and it is the thing the progress
+#   log prints instead of a bare label. Taking it positionally is what lets
+#   test_every_step_describes_itself below notice a step that forgot one --
+#   sniffing for "the first token that looks like a command" would silently
+#   accept a step with no description at all, which is the state this change
+#   exists to leave behind.
+_INTERP = ("$PY", "python", "python3", "bash", "sh", "env")
+
+
+def _looksLikeCommand(tok):
+    return (_ENVVAR.match(tok) or tok in _INTERP
+            or tok.endswith(".py") or tok.endswith(".sh"))
+
+
+def _steps(text):
+    """(label, description, argv) for every step/step_fatal line."""
     out = []
     for line in _joinContinuations(text):
         line = _OPTIONAL.sub(r'\1', line)
@@ -70,9 +85,26 @@ def _invocations(text):
             toks = shlex.split(rest)
         except ValueError:
             continue
+        if not toks:
+            continue
+        # Argument two is the description, by contract. A step that passes a
+        # command here has no description, and that is a failure, not a parse
+        # to recover from -- so it is handed on as desc="" for the test to catch.
+        if _looksLikeCommand(toks[0]):
+            out.append((label, "", toks))
+            continue
+        out.append((label, toks[0], toks[1:]))
+    return out
+
+
+def _invocations(text):
+    """(label, script, flags) for every step line that runs a .py file."""
+    out = []
+    for label, _desc, toks in _steps(text):
+        toks = list(toks)
         # Drop leading VAR=value env prefixes and the interpreter itself.
         while toks and (_ENVVAR.match(toks[0]) or toks[0] in ("$PY", "python",
-                                                             "python3")):
+                                                              "python3", "env")):
             toks.pop(0)
         if not toks or not toks[0].endswith(".py"):
             continue
@@ -119,6 +151,51 @@ class ChainInvocations(unittest.TestCase):
         self.assertGreaterEqual(len(self.calls), 6,
                                 "step-line parser matched almost nothing; "
                                 "the chains' syntax changed")
+
+    # ★★ EVERY STEP SAYS WHAT IT IS DOING (owner, 2026-09-20: "change the
+    #    pipeline script so it print out what each step is doing rather than
+    #    just this"). The old progress log was START/ok around a bare label, so
+    #    a ten-hour `solve` told a reader nothing about what it was or whether
+    #    it was alive. The description is what the log prints, so a step
+    #    without one is the regression this pins.
+    def test_every_step_describes_itself(self):
+        seen = 0
+        for chain in CHAINS:
+            src = _sourceOf(chain)
+            for label, desc, argv in _steps(src):
+                seen += 1
+                self.assertTrue(
+                    desc.strip(),
+                    "%s step %s has no description -- the signature is "
+                    "`step <name> <description> <command...>` (argv=%s)"
+                    % (chain, label, argv[:3]))
+                # A label restated is not a description.
+                self.assertNotEqual(desc.strip().lower(), label.lower(),
+                                    "%s step %s just repeats its own name"
+                                    % (chain, label))
+                self.assertGreater(len(desc.strip()), 20,
+                                   "%s step %s's description says too little: %r"
+                                   % (chain, label, desc))
+        self.assertGreaterEqual(seen, 8,
+                                "step-line parser matched almost nothing; "
+                                "the chains' syntax changed")
+
+    # ! AND THE CHAIN MUST BE ABLE TO END. Every step runs under a wall-clock
+    #   cap so an unattended run always reaches its summary; the caps live in
+    #   the chain scripts as TIMEOUT_<step>, and step.sh enforces them.
+    def test_the_step_machinery_caps_every_step(self):
+        lib = _sourceOf("scripts/lib/step.sh")
+        self.assertIsNotNone(lib, "scripts/lib/step.sh is gone")
+        self.assertIn("timeout", lib)
+        self.assertIn("STEP_TIMEOUT", lib)
+        for chain in CHAINS:
+            src = _sourceOf(chain)
+            self.assertIn(". scripts/lib/step.sh", src,
+                          "%s does not use the shared step machinery" % chain)
+            for label, _desc, _argv in _steps(src):
+                self.assertIn("TIMEOUT_%s" % label, src,
+                              "%s step %s has no TIMEOUT_%s cap, so a hang "
+                              "there never ends" % (chain, label, label))
 
     def test_target_exists(self):
         for chain, label, script, _ in self.calls:

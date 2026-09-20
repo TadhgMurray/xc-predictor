@@ -117,9 +117,15 @@ export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 # Anything else already in the environment is left alone, so a one-off
 #   XCP_PROBES=16 bash scripts/overnight_fit_pool_solve.sh
 # still works.
+# ⚠ XCP_TEAM_POOL IS LISTED BUT DELIBERATELY NOT SET. It gates the
+#   15-athletes-all-time rule (speed_ratings.loadProTeams). It is here so that
+#   a run which DOES set it records the fact in its own log -- on 2026-09-20 it
+#   was absent from this list, so the progress log could not answer "was the
+#   new pooling on?" about the run whose ratings were being diagnosed. Listing
+#   a variable prints it when set and prints nothing when it is not.
 SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
-XCP_IMPORTANCE XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
+XCP_IMPORTANCE XCP_TEAM_POOL XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
 XCP_SPORT_LEVEL_POOLS XCP_BRACKET_PRIOR XCP_BRACKET_PLACE_RADIUS \
 XCP_BRACKET_PLACE_PRIOR XCP_BRACKET_WINDOW XCP_COURSE_SCALE \
 XCP_FROM_STATE XCP_PROBES"

@@ -52,8 +52,29 @@ scraper_pids() {
 # wait_for_team_scrape <say-function>
 # Purpose:   Block until no scraper is running. Polls, because the scraper is
 #            not this shell's child and `wait` cannot see it.
+#
+# ⚠⚠ BOUNDED, AND IT WAS NOT (2026-09-20). This loop had no exit but the
+#    scraper's: a scrape that wedged on a VPN rotation and never died held BOTH
+#    overnight chains at their very first step for ever, with the progress log
+#    stuck on one "waiting for the team scrape" line and nothing else to read.
+#    That is indistinguishable from a chain that crashed before it started.
+#    overnight_logos.sh already bounds its wait on the RESULTS-BUSY lock for
+#    exactly this reason ("a hard kill -9 cannot run a trap"); this is the same
+#    argument applied to the same shape of wait.
+#
+# ★ AND IT REPORTS WHILE IT WAITS. A line every WAIT_TICK seconds saying how
+#   long it has waited and for what, so the log shows a chain that is alive and
+#   blocked rather than a chain that is simply silent.
+#
+# ! PROCEEDING IS THE RIGHT ANSWER AT THE CAP, NOT STOPPING. The cost of
+#   starting while a scrape is still running is a slightly stale anet_team; the
+#   cost of stopping is no solve at all. It says loudly which one happened.
+#       WAIT_TIMEOUT=21600   how long to wait, 6h
+#       WAIT_TICK=600        seconds between "still waiting" lines
 wait_for_team_scrape() {
     local say_fn="${1:-echo}"
+    local cap="${WAIT_TIMEOUT:-21600}"
+    local tick="${WAIT_TICK:-600}"
     if [ "${SKIP_WAIT:-0}" = "1" ]; then
         "$say_fn" "SKIP_WAIT=1 — not waiting for the team scrape"
         return 0
@@ -65,8 +86,19 @@ wait_for_team_scrape() {
         return 0
     fi
     "$say_fn" "waiting for the team scrape, pid(s): $(echo $pids | tr '\n' ' ')"
-    while [ -n "$(scraper_pids)" ]; do
-        sleep 60
+    "$say_fn" "  (giving up and starting anyway after $((cap / 3600))h)"
+    local waited=0
+    while [ -n "$(scraper_pids)" ] && [ "$waited" -lt "$cap" ]; do
+        sleep 30
+        waited=$((waited + 30))
+        if [ $((waited % tick)) -eq 0 ]; then
+            "$say_fn" "  ...  still waiting for the team scrape ($((waited / 60))m of $((cap / 60))m)"
+        fi
     done
-    "$say_fn" "the team scrape has exited; continuing"
+    if [ -n "$(scraper_pids)" ]; then
+        "$say_fn" "⚠ the team scrape is STILL running after $((waited / 60))m — starting anyway."
+        "$say_fn" "  anet_team may be slightly stale for this run; the next run picks it up."
+        return 0
+    fi
+    "$say_fn" "the team scrape has exited after $((waited / 60))m; continuing"
 }

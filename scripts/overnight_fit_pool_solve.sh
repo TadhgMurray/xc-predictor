@@ -25,6 +25,11 @@
 #   Running the solve on yesterday's school_levels.pkl after a rescrape pools
 #   new schools as "tfrrs -> college".
 #
+# ⚠ AND IT IS OPT-IN: speed_ratings.loadProTeams reads team_pool only when
+#   XCP_TEAM_POOL=1. Neither this script nor deploy/solve_env.sh sets it, so
+#   the default is UNCHANGED POOLING. The banner below prints which state the
+#   run is in, and XCP_TEAM_POOL is in SOLVE_ENV_VARS so it lands in the log.
+#
 # ★ team_pool IS NOW WIRED, and the earlier claim that it was not was too
 #   broad. Team-id pooling was always live: speed_ratings calls
 #   teamLevelOf(team_id, slug, loadAnetLevels()) per row and resolvePool
@@ -105,6 +110,13 @@ PROG="$LOGDIR/00-progress.log"
 
 say() { echo "[$(date '+%F %T')] $*" | tee -a "$PROG"; }
 
+# ★ THE STEP MACHINERY IS SHARED (scripts/lib/step.sh): what each step is FOR,
+#   a heartbeat carrying the step's own last log line up into this log, a
+#   wall-clock cap per step, and the summary table at the end. Sourced after
+#   `say` and LOGDIR exist, because it uses both.
+CHAIN_T0=$(date +%s)
+. scripts/lib/step.sh
+
 # ★ THE CONSTANTS, SOURCED AND THEN PRINTED. A solve whose settings are not
 #   in its own log cannot be reproduced or argued with later.
 . deploy/solve_env.sh
@@ -118,41 +130,28 @@ say() { echo "[$(date '+%F %T')] $*" | tee -a "$PROG"; }
 LOCK="$LOGDIR/RESULTS-BUSY"
 trap 'rm -f "$LOCK"' EXIT INT TERM
 
-# step <name> <command...>
-# ★ A FAILING STEP STOPS THE CHAIN HERE, unlike the scrape script. These
-#   stages FEED each other: solving on a half-built school_levels.pkl or a
-#   curve that refused to save produces ratings that look fine and are wrong.
-#   Better to wake up to "stopped at pools" than to a published bad solve.
-step() {
-    local name="$1"; shift
-    say "START $name"
-    if "$@" > "$LOGDIR/$name.log" 2>&1; then
-        say "  ok   $name"
-        return 0
-    fi
-    say "  FAIL $name  (see $LOGDIR/$name.log)"
-    return 1
-}
+# ★ A FAILING STEP STOPS THE CHAIN HERE (step_fatal), unlike the scrape
+#   script. These stages FEED each other: solving on a half-built
+#   school_levels.pkl or a curve that refused to save produces ratings that
+#   look fine and are wrong. Better to wake up to "stopped at pools" than to a
+#   published bad solve. step/step_fatal/chain_summary live in
+#   scripts/lib/step.sh, sourced above.
 
-# step_fatal <name> <command...> -- a step whose failure MUST stop the chain.
-# ⚠ `step` USED TO CLAIM "CHAIN STOPPED" ITSELF AND IT WAS A LIE (2026-09-19).
-#   Whether a failure stops anything is the CALLER's `|| exit 1`, and the two
-#   steps written `|| true` -- team_identity and team_pool -- printed
-#   "CHAIN STOPPED" and then carried straight on to the solve. The 02:15 run's
-#   log says it twice and ran for another four and a half hours. A message that
-#   contradicts the next line of the same log is worse than no message: it sent
-#   the reader looking for a stop that never happened.
+# ★★ THE CAPS, AND WHY THESE NUMBERS. Every step is capped so the chain always
+#    reaches its summary; the caps are well above anything observed, because
+#    the cap is there to end a HANG, not to hurry a solve.
 #
-#   So the decision and the wording now live in one place each. step_fatal
-#   stops and says so; step returns and says only that it failed.
-step_fatal() {
-    local name="$1"; shift
-    if step "$name" "$@"; then
-        return 0
-    fi
-    say "  CHAIN STOPPED: $name feeds everything after it"
-    exit 1
-}
+#    The solve is deploy/run_pipeline.sh --from 5 -- backfill, pack, go-live,
+#    a ~40 minute holdout, tilt, rankings and the unit builders. The 2026-09-19
+#    run took about four and a half hours; 14h is triple that and still ends
+#    before a second night. Raise it here if the corpus grows, and say so.
+: "${TIMEOUT_curve:=10800}"            # 3h
+: "${TIMEOUT_ability_deciles:=3600}"   # 1h, read-only
+: "${TIMEOUT_school_levels:=7200}"     # 2h
+: "${TIMEOUT_team_identity:=7200}"     # 2h
+: "${TIMEOUT_team_pool:=7200}"         # 2h
+: "${TIMEOUT_solve:=50400}"            # 14h -- the whole pipeline
+: "${TIMEOUT_joint_vs_bracket:=3600}"  # 1h, read-only
 
 : > "$PROG"
 say "python: $PY"
@@ -193,7 +192,9 @@ say "results/results_tf marked BUSY ($LOCK) — the scrape chain will wait"
 # The live artifact, on purpose: this chain exists to produce a solve, and a
 # solve has to read one curve. overnight_distance_curve.sh is the separate
 # script that fits VARIANTS to their own files and touches nothing.
-step_fatal curve "$PY" engine/fit_distance_exponent.py --fresh
+step_fatal curve \
+    "fit the time-vs-distance curve -> engine/data/distance_spline.pkl; the backfill re-applies it to every normalized_time" \
+    "$PY" engine/fit_distance_exponent.py --fresh
 
 # ----------------------------------------------- 1b. the ability question
 # ★ READ ONLY, AND THE MEASUREMENT THAT IS STILL MISSING (owner, 2026-09-19:
@@ -209,27 +210,56 @@ step_fatal curve "$PY" engine/fit_distance_exponent.py --fresh
 #   exactly the pairs the spline was fitted on. No --pool means every pool.
 #
 # ! NOT FATAL. It changes nothing; a failure here must not stop a solve.
-step ability_deciles "$PY" engine/diag_exponent_by_ability.py || true
+step ability_deciles \
+    "read-only: does the distance exponent move with ability? every pool this time, not just college" \
+    "$PY" engine/diag_exponent_by_ability.py || true
 
 # ---------------------------------------------------------------- 2. pools
 # school_levels.pkl FIRST: it is the one the solve actually reads.
-step_fatal school_levels "$PY" scripts/build_school_levels.py
+step_fatal school_levels \
+    "re-learn each school's level from the freshly scraped anet grades -> school_levels.pkl; the solve reads it" \
+    "$PY" scripts/build_school_levels.py
 
 # Then the team-id pooling. Built and inspectable; consumed by nothing yet
 # (see the header). Not fatal to the chain for that exact reason -- a solve
 # does not depend on them, so a failure here must not block one.
-say "team_pool IS read by the solve below (the 15-athlete rule);"
+# ⚠⚠ THE BANNER USED TO ASSERT SOMETHING NOBODY HAD SET (2026-09-20). It read
+#    "team_pool IS read by the solve below (the 15-athlete rule)" -- but
+#    speed_ratings.loadProTeams is OPT-IN behind XCP_TEAM_POOL, deliberately
+#    (see its own comment: the column bug meant the rule had never fired, and
+#    switching it on in the same run as a bad solve would make the two
+#    inseparable). Nothing in this chain or in deploy/solve_env.sh sets it, and
+#    it was not in SOLVE_ENV_VARS either, so the run's own log could not say
+#    which state it was in -- which is the exact failure solve_env.sh exists to
+#    prevent. It now reports the truth instead of asserting a default.
+if [ "${XCP_TEAM_POOL:-}" = "1" ] || [ "${XCP_TEAM_POOL:-}" = "true" ]; then
+    say "team_pool IS read by the solve below — XCP_TEAM_POOL=${XCP_TEAM_POOL}"
+    say "  the <15-athletes-all-time rule repools those rows OFF every school"
+    say "  board. Grep team_pool_pro in solve.log for what it cost."
+else
+    say "team_pool is BUILT but NOT read by the solve (XCP_TEAM_POOL unset)."
+    say "  Pooling is unchanged; set XCP_TEAM_POOL=1 to apply the"
+    say "  <15-athletes-all-time rule. Confirm either way in solve.log:"
+    say "    grep '\[engine\] team_pool:' $LOGDIR/solve.log"
+fi
 say "team_identity and the tfrrs link are built and inspectable only"
-step team_identity "$PY" racecast/build_team_identity.py --write || true
-step team_pool     "$PY" engine/build_team_pool.py       --write || true
+step team_identity \
+    "resolve every anet team_id to (school, state); inspectable only -- read by nothing, Georgetown should come out DC" \
+    "$PY" racecast/build_team_identity.py --write || true
+step team_pool \
+    "one row per anet team saying which pool it is and why (the <15-athletes-all-time rule)" \
+    "$PY" engine/build_team_pool.py --write || true
 # ! NOT link_tfrrs_to_anet HERE. It is pipeline stage 10b0_tfrrs_link, with
 #   --write, and running it early without --write printed a verdict and
 #   changed nothing.
 
 if [ "${SKIP_SOLVE:-0}" = "1" ]; then
     rm -f "$LOCK"
+    step_skipped solve "SKIP_SOLVE=1"
+    step_skipped joint_vs_bracket "needs the solve"
     say "SKIP_SOLVE=1 — stopping before anything writes to results; released"
     say "done. read $LOGDIR/curve.log and $LOGDIR/school_levels.log"
+    chain_summary
     exit 0
 fi
 
@@ -249,19 +279,25 @@ fi
 #   on this pack", which is exactly what happened on 2026-09-19. Option (a) --
 #   publishing the joint solve's own difficulties -- cannot be measured without
 #   it, and measuring it is the point of this run.
-step_fatal solve bash deploy/run_pipeline.sh --from 5 \
-    --skip 08b_ladder
+step_fatal solve \
+    "the pipeline from stage 5: backfill -> pack -> 08_golive (the bracket solve) -> holdout -> tilt -> fill -> rankings -> unit builders" \
+    bash deploy/run_pipeline.sh --from 5 --skip 08b_ladder
 
 # ---------------------------------------------------- 4. the comparison (a)
 # ! AFTER THE SOLVE, READ-ONLY, AND NOT FATAL. Both estimators re-gauged onto
 #   the reference class, because comparing them on two different zeros measures
 #   the gauge and not the model. The joint solve's shift onto that reference is
 #   the "everything outside California went negative" complaint as a number.
-step joint_vs_bracket "$PY" engine/diag_joint_vs_bracket.py --show 25 || true
+step joint_vs_bracket \
+    "read-only: the joint and bracket difficulty estimators re-gauged onto ONE reference class" \
+    "$PY" engine/diag_joint_vs_bracket.py --show 25 || true
 
 rm -f "$LOCK"
 say "results/results_tf released — the scrape chain may retry meets now"
 
+chain_summary
+
+say ""
 say "done. read in this order:"
 say "  $LOGDIR/curve.log          — SHAPE TEST (ms_*/elem_* only), and whether"
 say "                               floored_segments reached zero"

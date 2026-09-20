@@ -66,16 +66,28 @@ PROG="$LOGDIR/00-progress.log"
 
 say() { echo "[$(date '+%F %T')] $*" | tee -a "$PROG"; }
 
-step() {
-    local name="$1"; shift
-    say "START $name"
-    if env "$@" > "$LOGDIR/$name.log" 2>&1; then
-        say "  ok   $name"
-        return 0
-    fi
-    say "  FAIL $name  (see $LOGDIR/$name.log) — continuing"
-    return 1
-}
+# ★ THE SAME STEP MACHINERY AS THE COMPUTE CHAIN (scripts/lib/step.sh): a
+#   description per step, a heartbeat relaying the step's own last log line,
+#   a wall-clock cap, and the summary table. These crawls are the steps that
+#   need it most -- a rate-limited image fetch over every team in the corpus
+#   looks identical to a wedged socket from outside.
+#
+# ! `env` IS AT THE CALL SITE NOW, not inside step. The shared step runs "$@"
+#   as given, so a step that needs an environment variable says `env VAR=1 ...`
+#   where a reader can see it -- and tests/test_chain_invocations.py still
+#   strips the VAR=value prefix exactly as before.
+CHAIN_T0=$(date +%s)
+. scripts/lib/step.sh
+
+# ★★ THE CAPS. This chain is bounded by anet's rate limit rather than by this
+#    box, so the caps are hours, not minutes -- they exist so that an
+#    unattended overnight run always ENDS, not to cut a crawl short. A capped
+#    crest run is not a lost one: the queue is re-derived from the table on the
+#    next run, so the following night resumes where this one stopped.
+: "${TIMEOUT_anet_crests:=43200}"   # 12h -- one image request per team
+: "${TIMEOUT_logos:=21600}"         # 6h  -- the open-web fallback
+: "${TIMEOUT_retry_anet:=21600}"    # 6h  -- 121 meets
+: "${TIMEOUT_retry_tfrrs:=10800}"   # 3h  -- 22 meets
 
 : > "$PROG"
 say "python: $PY"
@@ -112,14 +124,18 @@ wait_for_team_scrape say
 #   seconds. That is the cost of matching anet exactly, it is why this chain
 #   is separate from the compute chain, and nothing waits on it. Set
 #   ANET_CREST_LIMIT to cap a first run.
-step anet_crests "$PY" scripts/anet_teams.py --logos-only --write --replace \
+step anet_crests \
+    "install anet's own crest over every team's stored logo (one image request per team at ${ANET_CREST_RATE:-0.5}s — THE LONG ONE; the old PNG is kept under superseded/)" \
+    "$PY" scripts/anet_teams.py --logos-only --write --replace \
     --rate "${ANET_CREST_RATE:-0.5}" \
     ${ANET_CREST_LIMIT:+--limit "$ANET_CREST_LIMIT"} || true
 
 # Then the open web, which fills what anet has no mascot for. It cannot
 # undo the step above: kindRank puts anet ahead of every web source, so a
 # school that now wears anet's crest keeps it.
-step logos "$PY" scripts/scrape_school_logos.py --write --retry-failed || true
+step logos \
+    "fill the crests anet has no mascot for, from the open web; it cannot displace an anet crest (kindRank)" \
+    "$PY" scripts/scrape_school_logos.py --write --retry-failed || true
 
 # -------------------------------------------------------- 2. failed meets
 # 143 real meets: 121 anet stranded in state 3, 22 tfrrs. The retry mode claims
@@ -151,12 +167,21 @@ if [ "${SKIP_MEETS:-0}" != "1" ]; then
     fi
 fi
 if [ "${SKIP_MEETS:-0}" != "1" ]; then
-    step retry_anet  ANET_RETRY_FAILED=1  "$PY" scripts/launcher.py || true
-    step retry_tfrrs TFRRS_RETRY_FAILED=1 "$PY" tfrrs/driver/launch_tfrrs.py || true
+    step retry_anet \
+        "re-scrape the 121 anet meets stranded in state 3 (the retry is an ENV VAR — launcher.py has no argparse)" \
+        env ANET_RETRY_FAILED=1 "$PY" scripts/launcher.py || true
+    step retry_tfrrs \
+        "re-scrape the 22 failed tfrrs meets; a separate driver, the anet launcher does not cover tfrrs" \
+        env TFRRS_RETRY_FAILED=1 "$PY" tfrrs/driver/launch_tfrrs.py || true
 else
+    step_skipped retry_anet  "SKIP_MEETS=1 (or the compute lock never cleared)"
+    step_skipped retry_tfrrs "SKIP_MEETS=1 (or the compute lock never cleared)"
     say "SKIP_MEETS=1 — the 143 failed meets left alone"
 fi
 
+chain_summary
+
+say ""
 say "done. read:"
 say "  $LOGDIR/logos.log        — crest coverage, now that every team id exists"
 say "  $LOGDIR/retry_anet.log   — of the 121 anet meets, how many are still failed"

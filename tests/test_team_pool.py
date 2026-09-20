@@ -26,13 +26,49 @@ def _load():
                  encoding="utf-8") as fh:
         src = fh.read()
     ns = {}
+    # ! EVERY TOP-LEVEL CONSTANT, NOT A HAND-LISTED ONE. This used to exec
+    #   PRO_MAX_ATHLETES by name, so the day classify started reading a second
+    #   module constant (_SCHOOL_LEVELS) every test in ThePrecedence died with
+    #   NameError instead of failing on the arithmetic it exists to pin. A
+    #   literal assignment costs nothing to carry and cannot import a database.
+    for node in ast.parse(src).body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            try:
+                exec(ast.get_source_segment(src, node), ns)  # noqa: S102
+            except Exception:                                # noqa: BLE001
+                pass
     for node in ast.parse(src).body:
         if isinstance(node, ast.FunctionDef) and node.name == "classify":
             exec(ast.get_source_segment(src, node), ns)     # noqa: S102
-        if isinstance(node, ast.Assign) and getattr(
-                node.targets[0], "id", "") == "PRO_MAX_ATHLETES":
-            exec(ast.get_source_segment(src, node), ns)     # noqa: S102
     return ns["classify"], ns["PRO_MAX_ATHLETES"], src
+
+
+# ★ THE PARSED TREE, NOT THE TEXT. Two assertions below are about what this
+#   module CALLS and what its SQL says, and both used to be substring searches
+#   over a slice of the file -- so a COMMENT that merely mentioned
+#   loadClubMajority, or a comment sitting between two defs that used the word
+#   "season", failed them. That already happened once (see the note inside
+#   test_it_does_not_touch_the_athlete_majority_rule) and it happened again on
+#   2026-09-20. Asking the AST asks the question the tests actually mean.
+def _names(src):
+    """Every identifier this module REFERENCES, comments and strings excluded."""
+    out = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Name):
+            out.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            out.add(node.attr)
+        elif isinstance(node, ast.alias):
+            out.add((node.asname or node.name).split(".")[-1])
+    return out
+
+
+def _funcSource(src, name):
+    """The source of ONE function, with no neighbouring comment in it."""
+    for node in ast.parse(src).body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return ast.get_source_segment(src, node)
+    raise AssertionError(f"{name} is gone from build_team_pool.py")
 
 
 class ThePrecedence(unittest.TestCase):
@@ -59,6 +95,32 @@ class ThePrecedence(unittest.TestCase):
         self.assertEqual(self.classify(200, "club", 1)[0], "pro")
         self.assertEqual(self.classify(200, "club", 0)[0], "club")
 
+    # ⚠⚠ THE WORD "CLUB" IS THE RULE, AND THIS IS THE TEST THAT WAS MISSING.
+    #    Until 2026-09-20 classify ran `if n_pros:` against EVERY level, so a
+    #    high school that produced one professional was called pro. The suite
+    #    was green throughout, because the only case anyone asserted was the
+    #    club one directly above and the only case anyone asserted for a school
+    #    passed n_pros=0 -- the question that mattered was never asked.
+    #
+    # ! AND IT IS NOT A CORNER. pro_flag.py classifies an athlete-SEASON on
+    #   purpose ("Lutkenhaus raced Millrose as a junior"), so a senior flagged
+    #   pro is a pro-flagged season sitting on their HIGH SCHOOL's team id.
+    #   team_pro is ungated, so that one season repooled every athlete in the
+    #   school's history and bent their ratings ~50 points.
+    def test_a_school_that_produced_a_professional_is_still_a_school(self):
+        for level in ("hs", "ms", "elem", "college"):
+            for n_pros in (1, 3, 40):
+                kind, why = self.classify(200, level, n_pros)
+                self.assertEqual(kind, level, (level, n_pros))
+                # the rescue says so, so report() can price it
+                self.assertIn("not a club", why)
+
+    # ! SMALLNESS STILL OUTRANKS IT. The school rescue must not resurrect a
+    #   team the owner's 15-athlete rule has already condemned.
+    def test_the_school_rescue_does_not_beat_the_fifteen_rule(self):
+        for level in ("hs", "ms", "elem", "college"):
+            self.assertEqual(self.classify(14, level, 5)[0], "pro", level)
+
     def test_anet_level_decides_everything_else(self):
         for level in ("college", "hs", "ms", "elem"):
             self.assertEqual(self.classify(200, level, 0)[0], level)
@@ -70,7 +132,7 @@ class ThePrecedence(unittest.TestCase):
 
     def test_every_verdict_carries_a_reason(self):
         for args in ((14, None, 0), (200, "club", 1), (200, "club", 0),
-                     (200, "hs", 0), (200, None, 0)):
+                     (200, "hs", 0), (200, "hs", 1), (200, None, 0)):
             self.assertTrue(self.classify(*args)[1].strip(), args)
 
 
@@ -90,17 +152,20 @@ class WhatItReusesRatherThanRebuilds(unittest.TestCase):
     #   the owner's 2026-09-14 rule that a collegian racing the Euros is not a
     #   professional; a team-level flag must not override it.
     def test_it_does_not_touch_the_athlete_majority_rule(self):
-        # ! THE CODE, NOT THE DOCSTRING. The header names loadClubMajority on
-        #   purpose, to say why it is left alone -- asserting over the whole
-        #   file failed on the very sentence that documents the decision.
-        code = self.src.split('"""', 2)[2]
-        self.assertNotIn("loadClubMajority", code)
+        # ! WHAT IT CALLS, NOT WHAT IT MENTIONS. The header names
+        #   loadClubMajority on purpose, to say why it is left alone, and the
+        #   comment on classify now names it too -- so the question has to be
+        #   asked of the parsed tree. Prose about a rule is not a call to it.
+        self.assertNotIn("loadClubMajority", _names(self.src))
         self.assertIn("loadClubMajority", self.src.split('"""')[1])
 
     # ★ ALL TIME, NOT PER SEASON -- the owner said so twice.
     def test_the_size_count_has_no_season_in_it(self):
-        i = self.src.index("def teamSizes(")
-        body = self.src[i:self.src.index("\ndef ", i + 10)]
+        # ! THE FUNCTION, NOT EVERYTHING UP TO THE NEXT ONE. The old slice ran
+        #   to the next `def`, so it swallowed the comment block that documents
+        #   classify -- and the word "season" in that prose failed a test about
+        #   teamSizes' SQL.
+        body = _funcSource(self.src, "teamSizes")
         for token in ("season", "substr(date", "yr"):
             self.assertNotIn(token, body)
         self.assertIn("count(DISTINCT person_id)", body)
