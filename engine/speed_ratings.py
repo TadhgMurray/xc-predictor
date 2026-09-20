@@ -1258,9 +1258,26 @@ def attachCourseGeometry(cols):
               f"track_length; {ref:,} are flat outdoor 400s (the reference "
               f"class for the difficulty pin)")
     except Exception as exc:                                     # noqa: BLE001
-        print(f"[engine] track geometry unavailable ({type(exc).__name__}: {exc}) "
-              "-- the pack carries none and the bracket engine falls back to "
-              "the outdoor-mean gauge")
+        # ⚠⚠ THIS except IS WHY NOBODY KNEW (2026-09-20). loadCourseGeometry
+        #    named meets_tf.meet_date, which does not exist on this schema, so
+        #    every pack build raised UndefinedColumn here and printed ONE line
+        #    among thousands. The pack then shipped with no track_length,
+        #    gauge=flat400 silently became gauge=outdoor, and the reference pin
+        #    the owner asked for on 2026-09-19 had never once run.
+        #
+        # ★ SO IT SHOUTS, AND IT SAYS WHAT IT COSTS. The catch stays -- a pack
+        #   build must not die over a diagnostic column -- but a reader
+        #   skimming the log now cannot miss it, and XCP_GAUGE=flat400 will
+        #   refuse to run on the result rather than quietly re-gauge.
+        import traceback
+        print("[engine] ⚠⚠ TRACK GEOMETRY UNAVAILABLE -- THE PACK WILL CARRY "
+              "NONE.", flush=True)
+        print(f"[engine]    {type(exc).__name__}: {exc}", flush=True)
+        print("[engine]    gauge=flat400 CANNOT RUN on this pack; the solve "
+              "will refuse it.", flush=True)
+        print("[engine]    Fix this before the solve, or the run is on the "
+              "outdoor-mean gauge.", flush=True)
+        traceback.print_exc()
 
 
 # ------------------------------------------------------------------ #

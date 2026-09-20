@@ -1415,13 +1415,56 @@ def loadCourseGeometry(course_keys):
         for loc, ind, tt, ln, cnt in cur.fetchall():
             add(loc, ind, tt, ln, int(cnt))
         # 2. the override venues, meet by meet, through the real matcher
+        #
+        # ⚠⚠ meet_date IS NOT ON EVERY meets_tf, AND THAT COST THE WHOLE
+        #    GEOMETRY (2026-09-20). This query named it unconditionally; on a
+        #    schema without it Postgres raises UndefinedColumn, and
+        #    attachCourseGeometry catches EVERY exception and prints "track
+        #    geometry unavailable". So the pack shipped with no track_length,
+        #    gauge=flat400 silently became gauge=outdoor, and the owner's
+        #    reference pin had never once run. OVERRIDES is never empty -- five
+        #    curated venues -- so this branch always executes and the failure
+        #    was total rather than partial.
+        #
+        # ★ SO THE DATE IS PROBED, NOT ASSUMED. Where the column exists it is
+        #   used; where it does not, the meet's date comes from its own result
+        #   rows, which is where every other date in this file comes from
+        #   anyway. Only the five override venues are joined that way, so the
+        #   cost is nothing.
+        #
+        # ! AND A MISSING DATE IS PASSED AS None RATHER THAN SKIPPED. The
+        #   override rules are date-boundaried; applyVenueOverride already
+        #   decides what to do with an unknown date, and that is its decision
+        #   to make, not this loader's.
         if override_ids and applyVenueOverride is not None:
-            cur.execute("""
-                SELECT location_id, meet_id, meet_date, is_indoor,
-                       track_type, track_length
-                FROM   meets_tf
-                WHERE  location_id = ANY(%s)
-            """, (override_ids,))
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_schema = 'public'
+                             AND table_name = 'meets_tf'
+                             AND column_name IN ('meet_date', 'date')""")
+            have = {r[0] for r in cur.fetchall()}
+            date_col = ("m.meet_date" if "meet_date" in have
+                        else "m.date" if "date" in have else None)
+            if date_col:
+                sql = f"""
+                    SELECT m.location_id, m.meet_id, {date_col}, m.is_indoor,
+                           m.track_type, m.track_length
+                    FROM   meets_tf m
+                    WHERE  m.location_id = ANY(%s)
+                """
+            else:
+                print("[engine] meets_tf carries no meet_date; the five "
+                      "override venues take their date from results_tf",
+                      flush=True)
+                sql = """
+                    SELECT m.location_id, m.meet_id,
+                           (SELECT min(r.date) FROM results_tf r
+                             WHERE r.meet_id = m.meet_id
+                               AND r.div_id = m.div_id) AS meet_date,
+                           m.is_indoor, m.track_type, m.track_length
+                    FROM   meets_tf m
+                    WHERE  m.location_id = ANY(%s)
+                """
+            cur.execute(sql, (override_ids,))
             for loc, _mid, date, ind, tt, ln in cur.fetchall():
                 fields = {"track_type": tt, "track_length": ln,
                           "is_indoor": ind, "location_id": loc}

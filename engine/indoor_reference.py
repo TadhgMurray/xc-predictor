@@ -151,15 +151,27 @@ def referenceMask(cell_keys, table=None, verbose=False):
 
 
 def find(pattern, indoor_only=True):
+    """! THE DATE COLUMN IS PROBED, NOT ASSUMED. meets_tf does not carry
+    meet_date on every schema -- assuming it is what made this raise
+    UndefinedColumn on the owner's first run, and the same assumption in
+    speed_ratings_db.loadCourseGeometry is what had been costing the pack its
+    track geometry entirely."""
     from database import getConn
     with getConn() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT column_name FROM information_schema.columns
+                       WHERE table_schema = 'public' AND table_name = 'meets_tf'
+                         AND column_name IN ('meet_date', 'date')""")
+        have = {r[0] for r in cur.fetchall()}
+        dcol = "meet_date" if "meet_date" in have else ("date" if "date" in have else None)
+        dsel = (f"min({dcol}), max({dcol})" if dcol
+                else "NULL::text, NULL::text")
+        gate = "AND COALESCE(is_indoor::int, 0) <> 0" if indoor_only else ""
         cur.execute(f"""
-            SELECT location_id, min(venue_name), count(*),
-                   min(meet_date), max(meet_date),
+            SELECT location_id, min(venue_name), count(*), {dsel},
                    bool_or(COALESCE(is_indoor::int, 0) <> 0) AS any_indoor
             FROM   meets_tf
             WHERE  location_id IS NOT NULL AND venue_name ILIKE %s
-              {"AND COALESCE(is_indoor::int, 0) <> 0" if indoor_only else ""}
+              {gate}
             GROUP  BY location_id ORDER BY count(*) DESC LIMIT 40
         """, (pattern,))
         rows = cur.fetchall()

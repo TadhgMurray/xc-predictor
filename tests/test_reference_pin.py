@@ -743,3 +743,48 @@ class ANamedIndoorOvalJoinsTheReference(unittest.TestCase):
         with open(os.path.join(_ROOT, "deploy", "solve_env.sh"),
                   encoding="utf-8") as fh:
             self.assertIn('XCP_GAUGE_SCOPE:=merge', fh.read())
+
+
+class TheGeometryLoaderSurvivesTheSchema(unittest.TestCase):
+    """⚠⚠ THE REASON gauge=flat400 HAD NEVER RUN (2026-09-20).
+
+    loadCourseGeometry named meets_tf.meet_date unconditionally. That column
+    does not exist on the production schema, so every pack build raised
+    UndefinedColumn, attachCourseGeometry caught it and printed ONE line among
+    thousands, the pack shipped with no track_length, and flat400 silently
+    became the outdoor-mean gauge. OVERRIDES is never empty -- five curated
+    venues -- so the branch always ran and the failure was total.
+
+    Verified against a live Postgres whose meets_tf has no meet_date: the old
+    query raises, the new one returns the geometry.
+    """
+
+    def setUp(self):
+        with open(os.path.join(_ROOT, "engine", "speed_ratings_db.py"),
+                  encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def test_the_date_column_is_probed_not_assumed(self):
+        i = self.src.index("def loadCourseGeometry")
+        body = self.src[i:self.src.index("\ndef ", i + 10)]
+        self.assertIn("information_schema.columns", body)
+        self.assertIn("'meet_date', 'date'", body)
+
+    def test_there_is_a_fallback_when_the_column_is_absent(self):
+        """! THE OVERRIDE RULES ARE DATE-BOUNDARIED, so dropping the date
+        would silently mis-apply them. The meet's date comes from its own
+        result rows instead."""
+        i = self.src.index("def loadCourseGeometry")
+        body = self.src[i:self.src.index("\ndef ", i + 10)]
+        self.assertIn("FROM results_tf r", body)
+
+    def test_the_failure_is_loud_now(self):
+        """★ THE CATCH STAYS -- a pack build must not die over a diagnostic
+        column -- but a reader skimming the log cannot miss it, and the solve
+        refuses flat400 on such a pack rather than re-gauging itself."""
+        with open(os.path.join(_ROOT, "engine", "speed_ratings.py"),
+                  encoding="utf-8") as fh:
+            sr = fh.read()
+        self.assertIn("TRACK GEOMETRY UNAVAILABLE", sr)
+        self.assertIn("gauge=flat400 CANNOT RUN", sr)
+        self.assertIn("traceback.print_exc()", sr)
