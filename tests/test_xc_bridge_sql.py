@@ -65,7 +65,10 @@ class TheColumnTypes(unittest.TestCase):
         self.assertIn("NULL::boolean", self.src)
         self.assertIn("information_schema.columns", self.src)
         self.assertIn("to_regclass", self.src)
-        self.assertIn("split is UNKNOWN", self.src)
+        # ! THE ACTUAL SENTENCE, not the bare word -- "UNKNOWN" appears in
+        #   half a dozen places and would pass whatever the report said.
+        self.assertIn("has no is_indoor here", self.src)
+        self.assertIn("then an upper ", self.src)
 
 
 class TheJoinCannotExplode(unittest.TestCase):
@@ -73,17 +76,15 @@ class TheJoinCannotExplode(unittest.TestCase):
     def setUp(self):
         self.src = read()
 
-    def test_each_side_is_reduced_to_distinct_race_days_first(self):
-        """⚠ THE PERFORMANCE BUG THE TYPE ERROR WAS HIDING. Without DISTINCT
-        the pair count is quadratic in an athlete's races."""
-        # ! THE TWO CTEs THAT FEED THE JOIN, NAMED. Counting DISTINCTs over a
-        #   window caught the bridged_day/bridged_person CTEs too, which is an
-        #   assertion about the wrong thing.
-        for cte in ("xc AS MATERIALIZED", "tf AS MATERIALIZED"):
-            i = self.src.index(cte)
-            head = self.src[i:i + 200]
-            self.assertIn("SELECT DISTINCT", head,
-                          f"{cte} does not reduce to distinct race days")
+    def test_the_day_tables_are_built_once_and_reused(self):
+        """! ONE BUILD, MANY WINDOWS. The day tables do not depend on the
+        window, so rebuilding them per window would multiply the only
+        expensive part of the run by the number of windows asked for."""
+        self.assertIn("def build(", self.src)
+        self.assertIn("def measure(cur, window)", self.src)
+        i = self.src.index("def measure(cur, window)")
+        body = self.src[i:self.src.index("\ndef ", i + 10)]
+        self.assertNotIn("CREATE TEMP TABLE", body)
 
     def test_the_date_filter_cannot_be_separated_from_the_cast(self):
         """⚠ date IS TEXT and `date::date` throws on anything that is not a
@@ -98,6 +99,69 @@ class TheJoinCannotExplode(unittest.TestCase):
         project. Lowering it is one flag."""
         self.assertIn("DEFAULT_SINCE", self.src)
         self.assertIn('"--since"', self.src)
+
+
+class ItCannotHang(unittest.TestCase):
+    """⚠⚠ owner, 2026-09-20: "I have a feeling the bridge is gonna hang can you
+       fix it". It would have.
+
+       Reducing each side to DISTINCT (person, day) did almost nothing to the
+       XC side -- an athlete races cross country at most once a day, so
+       distinct person-days is very nearly the row count -- and the join then
+       hash-matched an athlete's ENTIRE CAREER against itself before the range
+       predicate narrowed anything. Ten years is ~150 XC days against ~200
+       track days: thirty thousand pairs per athlete.
+
+       The shape that works narrows the PEOPLE first and then asks each XC day
+       a yes/no question through an index. Verified on a live Postgres: the
+       plan is an Index Cond on (person_id, d) with one probe per XC day, not
+       a join.
+    """
+
+    def setUp(self):
+        self.src = read()
+
+    def test_the_range_join_is_gone(self):
+        """★ THE EXPLOSION ITSELF. A range predicate in a JOIN ... ON over
+        person_id is the thing that cannot be allowed back."""
+        self.assertNotIn("FROM   xc JOIN tf", self.src)
+        self.assertNotIn("tf.d BETWEEN xc.d", self.src)
+
+    def test_each_xc_day_is_an_index_probe(self):
+        self.assertIn("EXISTS (SELECT 1 FROM b_tf t", self.src)
+        self.assertIn("CREATE INDEX ON b_tf (person_id, d)", self.src)
+        self.assertIn("CREATE INDEX ON b_xc (person_id, d)", self.src)
+
+    def test_the_people_are_narrowed_before_anything_expensive(self):
+        """★ MOST CROSS-COUNTRY RUNNERS ARE NOT IN results_tf AT ALL, and they
+        cannot carry the anchor by definition. They leave first, and that step
+        needs no date cast, which also makes it the cheapest."""
+        i = self.src.index("CREATE TEMP TABLE b_people")
+        self.assertLess(i, self.src.index("CREATE TEMP TABLE b_xc"))
+        self.assertIn("INTERSECT", self.src)
+
+    def test_a_statement_cannot_run_forever(self):
+        """! IT GIVES UP LOUDLY rather than being discovered tomorrow."""
+        self.assertIn("SET statement_timeout", self.src)
+        self.assertIn("DEFAULT_TIMEOUT_S", self.src)
+        self.assertIn('"--timeout"', self.src)
+
+    def test_the_sample_escapes_its_percent_sign(self):
+        """⚠⚠ psycopg2 OWNS THE PERCENT SIGN. Every execute passes a params
+        dict, so the driver interpolates the string first and a bare `% 100`
+        is a broken placeholder -- "dict is not a sequence". Doubling it is
+        how a literal modulo survives into the SQL, and no amount of reading
+        the query finds this: it took running --sample against a real
+        Postgres."""
+        self.assertIn("%% 100", self.src)
+        self.assertNotIn("(abs(hashtext(person_id::text)) % 100)", self.src)
+
+    def test_the_sample_is_on_people_not_rows(self):
+        """! SAMPLING ROWS WOULD BIAS EVERY SHARE toward athletes who race a
+        lot; sampling PEOPLE does not, which is what makes --sample 5 a valid
+        answer rather than a hint."""
+        self.assertIn("hashtext(person_id::text)", self.src)
+        self.assertIn("percent of ATHLETES", self.src)
 
 
 class TheVerdictIsDecidedBeforeTheNumberIsSeen(unittest.TestCase):
@@ -116,7 +180,8 @@ class TheVerdictIsDecidedBeforeTheNumberIsSeen(unittest.TestCase):
         athletes with one race each carries far less than one reaching a
         hundred who race twenty times."""
         self.assertIn("xc_rows", self.src)
-        self.assertIn("ROWS, NOT ATHLETES", self.src)
+        self.assertIn("VOTE-WEIGHTED", self.src)
+        self.assertIn("share of ROWS", self.src)
 
     def test_outdoor_pairs_are_not_counted_as_evidence_about_surface(self):
         """⚠ AN XC-TO-OUTDOOR PAIR SPANS FALL TO SPRING, which is fitness

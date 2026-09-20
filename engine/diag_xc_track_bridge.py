@@ -54,6 +54,7 @@ diag_xc_track_bridge.py -- can the flat-400 reference anchor CROSS COUNTRY?
 import argparse
 import os
 import sys
+import time
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts")):
@@ -61,16 +62,13 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts"))
         sys.path.insert(0, _p)
 
 DEFAULT_WINDOWS = (21, 30, 45, 60)
-
-# ! A FLOOR ON THE YEARS, because the first run should not be a research
-#   project. The question is about how the corpus behaves now; 1990s rows
-#   cannot inform a gauge decision and they double the scan.
 DEFAULT_SINCE = 2010
+DEFAULT_TIMEOUT_S = 1800          # 30 min per statement, then it gives up loudly
+DEFAULT_SAMPLE = 100              # percent of athletes
 
-# ⚠ THE DATE COLUMNS ARE TEXT, and `date::date` throws on anything that is not
-#   a real date. The regex guard and the cast must not be separable by the
-#   planner, which is what AS MATERIALIZED buys (PG12+; the server is 18).
-#   engine/fit_weather_correction.py casts the same column the same way.
+# ⚠ date IS TEXT. `date::date` throws on anything that is not a real date, and
+#   so does substr(date,1,4)::int on 'unknown'. The guard and the cast must not
+#   be separable by the planner, which is what a MATERIALIZED subquery buys.
 _DATE_OK = r"^(19|20)[0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
 
 
@@ -86,172 +84,243 @@ def _hasTable(cur, name):
     return cur.fetchone()[0] is not None
 
 
-def measure(cur, window, since=DEFAULT_SINCE):
-    """Every number for one window, in ONE pass over each side.
+def _say(msg):
+    print(f"  ... {msg}", flush=True)
 
-    ⚠⚠ DISTINCT (person, DAY) BEFORE THE JOIN, AND THAT IS NOT A TIDY-UP.
-       The first version joined results to results_tf on person_id with a date
-       range and counted the pairs. An athlete with fifty XC rows and fifty
-       track rows inside the window contributes two and a half THOUSAND pairs,
-       and the join is 225M x 121M before the range narrows it -- a query that
-       would still be running tomorrow. Reducing each side to distinct race
-       DAYS first bounds it: an athlete has at most a couple of dozen race days
-       a season, so the pair count is a small multiple of the athlete count and
-       the answer is identical, because a second race on a day already bridged
-       adds no evidence about whether the sports connect.
 
-    ⚠ is_indoor IS AN INTEGER, NOT A BOOLEAN (the owner's traceback,
-      2026-09-20: "COALESCE types integer and boolean cannot be matched").
-      `::int` first makes this correct whether the column is an int or a bool,
-      so the same expression survives a schema that changes underneath it.
+def _timed(cur, label, sql, params=None):
+    t0 = time.time()
+    cur.execute(sql, params or {})
+    n = cur.rowcount
+    _say(f"{label}: {max(n, 0):,} rows, {time.time() - t0:.0f}s")
+    return n
+
+
+def build(cur, since=DEFAULT_SINCE, sample=DEFAULT_SAMPLE,
+          timeout_s=DEFAULT_TIMEOUT_S):
+    """The two indexed day-tables every window is then answered from.
+
+    ⚠⚠ WHY THIS IS NOT ONE QUERY ANY MORE (owner, 2026-09-20: "I have a
+       feeling the bridge is gonna hang"). It would have.
+
+       The previous version reduced each side to DISTINCT (person, day) and
+       joined them on person_id with a date range. That reduction does almost
+       nothing to the XC side -- an athlete races cross country at most once a
+       day, so distinct person-days is very nearly the row count -- and the
+       join then hash-matches an athlete's ENTIRE CAREER against itself before
+       the range predicate narrows anything. Ten years is ~150 XC days against
+       ~200 track days: thirty thousand pairs per athlete, of which a handful
+       are inside the window. That is the same explosion as the first version,
+       one grain further down.
+
+    ★ THE SHAPE THAT WORKS: narrow the PEOPLE first, then ask each XC day a
+      yes/no question through an index.
+
+        1. b_people  athletes with rows in BOTH tables. Most cross-country
+                     runners are not in results_tf at all, and they cannot
+                     carry the anchor by definition, so they leave here --
+                     before anything expensive touches them. No date cast in
+                     this step at all, which also makes it the cheapest.
+        2. b_xc/b_tf race days for those people only, indexed on
+                     (person_id, d).
+        3. per window an EXISTS per XC day, which is an index probe. No cross
+           product is ever materialised.
+
+    ! AND IT CANNOT RUN FOREVER. statement_timeout is set on the connection,
+      so a step that is going to take all night is killed and SAYS which step
+      it was, instead of being discovered tomorrow. --sample gets an answer
+      first: shares under a hash sample of PEOPLE are unbiased, so 5% answers
+      the question at a twentieth of the cost.
     """
+    cur.execute(f"SET statement_timeout = '{int(timeout_s) * 1000}'")
     have_meta = _hasTable(cur, "meets_tf") and _hasColumn(cur, "meets_tf", "is_indoor")
-    if have_meta:
-        indoor_sel = "COALESCE(m.is_indoor::int, 0) <> 0"
-        indoor_join = ("LEFT JOIN meets_tf m ON m.meet_id = t.meet_id "
-                       "AND m.div_id = t.div_id")
-    else:
-        indoor_sel, indoor_join = "NULL::boolean", ""
+    # ⚠ is_indoor IS AN INTEGER (the owner's traceback). ::int first, so the
+    #   expression is right whether the column is an int or a bool.
+    indoor_sel = ("COALESCE(m.is_indoor::int, 0) <> 0" if have_meta
+                  else "NULL::boolean")
+    indoor_join = ("LEFT JOIN meets_tf m ON m.meet_id = t.meet_id "
+                   "AND m.div_id = t.div_id") if have_meta else ""
+    # ! A HASH ON THE PERSON, NOT A LIMIT. Sampling rows would bias every
+    #   share toward athletes who race a lot; sampling PEOPLE does not.
+    # ⚠⚠ %% AND NOT %, BECAUSE psycopg2 OWNS THE PERCENT SIGN. Every execute
+    #    below passes a params dict, so the driver runs its own interpolation
+    #    over the string first and a bare `% 100` is read as a broken
+    #    placeholder -- "unsupported format character". Doubling it is how a
+    #    literal modulo survives into the SQL. Caught by running --sample
+    #    against a real Postgres; it is invisible to any amount of reading.
+    samp = ("" if sample >= 100
+            else f"AND (abs(hashtext(person_id::text)) %% 100) < {int(sample)}")
 
-    cur.execute(f"""
-        WITH xc AS MATERIALIZED (
-            SELECT DISTINCT person_id, date::date AS d
-            FROM   results
-            WHERE  person_id IS NOT NULL
-              AND  date ~ %(re)s
-              AND  substr(date, 1, 4)::int >= %(since)s
-        ),
-        tf AS MATERIALIZED (
-            SELECT DISTINCT t.person_id, t.date::date AS d,
-                   {indoor_sel} AS indoor
-            FROM   results_tf t
-            {indoor_join}
-            WHERE  t.person_id IS NOT NULL
-              AND  t.date ~ %(re)s
-              AND  substr(t.date, 1, 4)::int >= %(since)s
-        ),
-        pairs AS (
-            SELECT xc.person_id, xc.d AS xc_d, tf.indoor
-            FROM   xc JOIN tf
-                   ON tf.person_id = xc.person_id
-                  AND tf.d BETWEEN xc.d - %(w)s AND xc.d + %(w)s
-        ),
-        -- the XC race DAYS that can carry the anchor, and the people they
-        -- belong to: the two grains the report needs.
-        bridged_day AS (
-            SELECT DISTINCT person_id, xc_d FROM pairs
-        ),
-        bridged_person AS (
-            SELECT DISTINCT person_id FROM pairs
-        ),
-        -- ★ ROWS, NOT ATHLETES. The gauge is VOTE-WEIGHTED: an anchor that
-        --   reaches a thousand athletes with one race each carries far less
-        --   than one reaching a hundred who race twenty times. So the share
-        --   that decides this is a share of ROWS.
-        xc_rows AS (
-            SELECT r.person_id, r.date::date AS d
-            FROM   results r
-            WHERE  r.person_id IS NOT NULL
-              AND  r.date ~ %(re)s
-              AND  substr(r.date, 1, 4)::int >= %(since)s
+    cur.execute("DROP TABLE IF EXISTS b_people, b_xc, b_tf")
+    _timed(cur, "athletes in both sports", f"""
+        CREATE TEMP TABLE b_people AS
+        SELECT person_id FROM (
+            SELECT DISTINCT person_id FROM results
+             WHERE person_id IS NOT NULL {samp}
+            INTERSECT
+            SELECT DISTINCT person_id FROM results_tf
+             WHERE person_id IS NOT NULL {samp}
+        ) q
+    """)
+    cur.execute("CREATE INDEX ON b_people (person_id)")
+    cur.execute("ANALYZE b_people")
+
+    # ★ THE ROW COUNT RIDES ALONG. The gauge is VOTE-WEIGHTED, so the share
+    #   that decides this is a share of ROWS; carrying count(*) here costs
+    #   nothing and saves a second pass over results later.
+    _timed(cur, "XC race days (bridging-capable athletes)", f"""
+        CREATE TEMP TABLE b_xc AS
+        WITH src AS MATERIALIZED (
+            SELECT r.person_id, r.date
+            FROM   results r JOIN b_people p USING (person_id)
+            WHERE  r.date ~ %(re)s AND substr(r.date, 1, 4)::int >= %(since)s
         )
-        SELECT (SELECT count(*) FROM pairs),
-               (SELECT count(*) FROM bridged_person),
-               (SELECT count(*) FROM pairs WHERE indoor),
-               (SELECT count(*) FROM pairs WHERE indoor IS FALSE),
-               (SELECT count(*) FROM pairs WHERE indoor IS NULL),
-               (SELECT count(*) FROM xc_rows),
-               (SELECT count(*) FROM xc_rows x
-                 WHERE EXISTS (SELECT 1 FROM bridged_day b
-                                WHERE b.person_id = x.person_id AND b.xc_d = x.d)),
-               (SELECT count(*) FROM xc_rows x
-                 WHERE EXISTS (SELECT 1 FROM bridged_person b
-                                WHERE b.person_id = x.person_id))
-    """, {"w": window, "since": since, "re": _DATE_OK})
-    row = [int(v or 0) for v in cur.fetchone()]
-    keys = ("n_pairs", "n_people", "n_indoor", "n_outdoor", "n_unknown",
-            "xc_rows", "rows_own_day", "rows_same_person")
-    out = dict(zip(keys, row))
+        SELECT person_id, date::date AS d, count(*)::bigint AS n_rows
+        FROM   src GROUP BY 1, 2
+    """, {"re": _DATE_OK, "since": since})
+    cur.execute("CREATE INDEX ON b_xc (person_id, d)")
+    cur.execute("ANALYZE b_xc")
+
+    _timed(cur, "track race days", f"""
+        CREATE TEMP TABLE b_tf AS
+        WITH src AS MATERIALIZED (
+            SELECT t.person_id, t.date, {indoor_sel} AS indoor
+            FROM   results_tf t
+            JOIN   b_people p ON p.person_id = t.person_id
+            {indoor_join}
+            WHERE  t.date ~ %(re)s AND substr(t.date, 1, 4)::int >= %(since)s
+        )
+        SELECT DISTINCT person_id, date::date AS d, indoor FROM src
+    """, {"re": _DATE_OK, "since": since})
+    cur.execute("CREATE INDEX ON b_tf (person_id, d)")
+    cur.execute("ANALYZE b_tf")
+
+    # The denominator: every XC row in scope, bridging-capable or not.
+    _say("counting all XC rows in scope...")
+    cur.execute(f"""
+        SELECT count(*) FROM results
+        WHERE person_id IS NOT NULL AND date ~ %(re)s
+          AND substr(date, 1, 4)::int >= %(since)s {samp}
+    """, {"re": _DATE_OK, "since": since})
+    total_rows = int(cur.fetchone()[0] or 0)
+    _say(f"XC rows in scope: {total_rows:,}")
+    return {"total_rows": total_rows, "has_surface": have_meta,
+            "sample": sample, "since": since}
+
+
+def measure(cur, window):
+    """One window, answered by index probes. No cross product."""
+    t0 = time.time()
+    cur.execute("""
+        SELECT count(*)                                        AS xc_days,
+               sum(n_rows)                                     AS xc_rows,
+               count(*) FILTER (WHERE ind OR outd)             AS bridged_days,
+               sum(n_rows) FILTER (WHERE ind OR outd)          AS bridged_rows,
+               count(*) FILTER (WHERE ind)                     AS indoor_days,
+               sum(n_rows) FILTER (WHERE ind)                  AS indoor_rows,
+               count(*) FILTER (WHERE outd AND NOT COALESCE(ind, false))
+                                                               AS outdoor_only_days
+        FROM (
+            SELECT x.n_rows,
+                   EXISTS (SELECT 1 FROM b_tf t
+                            WHERE t.person_id = x.person_id
+                              AND t.d BETWEEN x.d - %(w)s AND x.d + %(w)s
+                              AND t.indoor)                    AS ind,
+                   EXISTS (SELECT 1 FROM b_tf t
+                            WHERE t.person_id = x.person_id
+                              AND t.d BETWEEN x.d - %(w)s AND x.d + %(w)s
+                              AND NOT COALESCE(t.indoor, false)) AS outd
+            FROM   b_xc x
+        ) q
+    """, {"w": window})
+    keys = ("xc_days", "xc_rows", "bridged_days", "bridged_rows",
+            "indoor_days", "indoor_rows", "outdoor_only_days")
+    out = dict(zip(keys, [int(v or 0) for v in cur.fetchone()]))
     out["window"] = window
-    out["has_surface"] = have_meta
+    _say(f"window {window}d: {time.time() - t0:.0f}s")
     return out
 
 
-def report(rows, since):
-    print(f"\n[bridge] can the flat-400 reference reach CROSS COUNTRY? "
-          f"(seasons {since}+)\n")
-    print(f"  {'window':>7} {'bridging pairs':>16} {'athletes':>11} "
-          f"{'indoor':>12} {'outdoor':>12}")
+def report(rows, meta):
+    total = max(meta["total_rows"], 1)
+    print(f"\n[bridge] can the flat-400 reference reach CROSS COUNTRY?")
+    print(f"  seasons {meta['since']}+, {meta['sample']}% of athletes, "
+          f"{meta['total_rows']:,} XC rows in scope\n")
+    print(f"  {'window':>7} {'bridged XC rows':>17} {'share':>8} "
+          f"{'via INDOOR':>13} {'share':>8}")
     for r in rows:
-        print(f"  {r['window']:>7} {r['n_pairs']:>16,} {r['n_people']:>11,} "
-              f"{r['n_indoor']:>12,} {r['n_outdoor']:>12,}")
-    if rows and not rows[0]["has_surface"]:
-        print("\n  ⚠ meets_tf has no is_indoor here, so the indoor/outdoor "
-              "split is UNKNOWN.\n    Treat the verdict below as an upper "
-              "bound: an XC-to-OUTDOOR pair is the\n    six-month gap mu "
-              "exists to define, not evidence about surface.")
+        print(f"  {r['window']:>7} {r['bridged_rows']:>17,} "
+              f"{100.0 * r['bridged_rows'] / total:>7.1f}% "
+              f"{r['indoor_rows']:>13,} "
+              f"{100.0 * r['indoor_rows'] / total:>7.1f}%")
+    if not meta["has_surface"]:
+        print("\n  ⚠ meets_tf has no is_indoor here, so 'via INDOOR' is "
+              "UNKNOWN and reads 0.\n    The bridged column is then an upper "
+              "bound only.")
 
-    print(f"\n  {'window':>7} {'XC rows':>14} {'row bridges':>14} {'share':>8}"
-          f"   {'athlete bridges':>16} {'share':>8}")
-    for r in rows:
-        t = max(r["xc_rows"], 1)
-        print(f"  {r['window']:>7} {r['xc_rows']:>14,} "
-              f"{r['rows_own_day']:>14,} {100.0 * r['rows_own_day'] / t:>7.1f}%"
-              f"   {r['rows_same_person']:>16,} "
-              f"{100.0 * r['rows_same_person'] / t:>7.1f}%")
-    print("\n  row bridges     = this XC row's OWN day has a track race within "
-          "the window\n  athlete bridges = the row belongs to an athlete who "
-          "bridges somewhere")
-
-    # ★★ THE VERDICT, STATED AGAINST THRESHOLDS WRITTEN BEFORE THE NUMBER WAS
-    #    SEEN, so it is not reinterpreted later by whoever is arguing for what
-    #    they already wanted. The strict grain decides: a row can only transmit
-    #    the anchor through its own athlete's nearby races.
-    best = max(rows, key=lambda r: r["rows_same_person"] / max(r["xc_rows"], 1))
-    share = best["rows_same_person"] / max(best["xc_rows"], 1)
-    ind, outd = best["n_indoor"], best["n_outdoor"]
-    print(f"\n  BEST WINDOW {best['window']}d: "
-          f"{100.0 * share:.1f}% of XC rows belong to a bridging athlete.")
+    # ★★ THE VERDICT ON THE INDOOR COLUMN, NOT THE HEADLINE. An XC-to-OUTDOOR
+    #    pair spans fall to spring: fitness plus surface, inseparably, which is
+    #    the reason mu is a definition rather than a measurement. Only the
+    #    indoor bridge is evidence about surface, so only it can decide this.
+    best = max(rows, key=lambda r: r["indoor_rows"])
+    share = best["indoor_rows"] / total
+    print(f"\n  BEST WINDOW {best['window']}d: {100.0 * share:.1f}% of XC rows "
+          f"sit within {best['window']} days of an INDOOR race by the same "
+          f"athlete.")
     if share >= 0.25:
         print("  -> FAT ENOUGH. Merging the gauge groups is identified: the "
-              "flat-400\n     reference can reach XC through these athletes. "
-              "Score it on the holdout\n     before it becomes the default.")
+              "flat-400\n     reference reaches XC through indoor. Score it "
+              "on the holdout before\n     it becomes the default.")
     elif share >= 0.05:
         print("  -> THIN. The bridge exists but carries little weight; merging "
-              "would let XC\n     drift on a small subset. Prefer a "
+              "would let\n     XC drift on a small subset. Prefer a "
               "hand-named XC reference class.")
     else:
         print("  -> ABSENT. XC cannot be anchored to the track reference by "
-              "iteration. It\n     needs its own reference class -- named "
+              "iteration.\n     It needs its own reference class -- named "
               "courses held at an asserted\n     value -- which is the only "
               "remaining option that breaks the see-saw.")
-    if ind or outd:
-        print(f"\n  ! {100.0 * ind / max(ind + outd, 1):.1f}% of the bridging "
-              f"pairs land on INDOOR track.")
-        print("    Only those are evidence about surface. An XC-to-OUTDOOR "
-              "pair spans the\n    fall-to-spring gap, which is fitness plus "
-              "surface inseparably -- the\n    reason mu is a definition. If "
-              "this share is low the bridge is weaker\n    than the headline "
-              "suggests.")
+    b = best["bridged_rows"] / total
+    if b > share * 1.5:
+        print(f"\n  ! the headline 'bridged' share is {100.0 * b:.1f}%, well "
+              f"above the indoor {100.0 * share:.1f}%.")
+        print("    The difference is XC-to-OUTDOOR pairs, which are the "
+              "fall-to-spring gap\n    and NOT evidence about surface. Read "
+              "the indoor column.")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--window", type=int, nargs="+", default=list(DEFAULT_WINDOWS),
-                    help="days either side of an XC race to look for a track one")
+    ap.add_argument("--window", type=int, nargs="+", default=list(DEFAULT_WINDOWS))
     ap.add_argument("--since", type=int, default=DEFAULT_SINCE,
-                    help=f"earliest season to count (default {DEFAULT_SINCE}); "
-                         f"lower it for the whole corpus and a longer run")
+                    help=f"earliest season (default {DEFAULT_SINCE})")
+    ap.add_argument("--sample", type=int, default=DEFAULT_SAMPLE,
+                    help="percent of ATHLETES to use (default 100). Shares "
+                         "under a person hash are unbiased, so --sample 5 "
+                         "answers the question at a twentieth of the cost -- "
+                         "run that first")
+    ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S,
+                    help=f"per-statement seconds before it gives up "
+                         f"(default {DEFAULT_TIMEOUT_S})")
     args = ap.parse_args()
 
     from database import getConn
     with getConn() as conn, conn.cursor() as cur:
-        rows = []
-        for w in args.window:
-            print(f"  ... window {w}d", flush=True)
-            rows.append(measure(cur, w, args.since))
-    report(rows, args.since)
+        try:
+            meta = build(cur, args.since, args.sample, args.timeout)
+            rows = [measure(cur, w) for w in args.window]
+        except Exception as exc:                          # noqa: BLE001
+            # ! WHICH STEP, NOT JUST "IT FAILED". A timeout here is a fact
+            #   about the corpus (or about work_mem), and the next run wants
+            #   to know where to point --sample.
+            print(f"\n[bridge] STOPPED: {type(exc).__name__}: {exc}")
+            print("  If that is a statement timeout, re-run with "
+                  "--sample 5 (or a smaller --since) first;\n  the shares are "
+                  "unbiased under a person hash, so a sample answers the "
+                  "question.")
+            raise SystemExit(1)
+    report(rows, meta)
 
 
 if __name__ == "__main__":
