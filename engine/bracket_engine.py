@@ -288,6 +288,37 @@ PG_XC, PG_OUTDOOR, PG_INDOOR = 0, 1, 2
 #   passes the same value here.
 INDOOR_CENTRE = 0.003
 
+# ★★ AND HOW THE CENTRE IS ENFORCED (owner, 2026-09-20: "indoor is still way
+#    too 'easy' difficulty wise"). It was, and the reason is that the centre
+#    above was ONLY a shrinkage target:
+#
+#      "shrink"  g_mean_[PG_INDOOR] = centre. A thin oval rests on +0.3%; a
+#                well-raced one reports what its races say. Indoor ovals are
+#                among the most heavily raced cells in the corpus -- the same
+#                few facilities host meet after meet all winter -- so w_b
+#                swamps k_g almost everywhere and the asserted centre moved
+#                almost nothing. The group's median stayed near the fit's
+#                -1.68%, which is indoor reading FASTER than outdoor: exactly
+#                the "too easy" the owner is looking at.
+#
+#      "pin"     the group's VOTE-WEIGHTED MEAN is set to the centre after the
+#                gauge pin, by a single additive shift. This is what "indoor
+#                tracks on avg +0.3 slower" literally says -- ON AVERAGE --
+#                and it is the same kind of statement as the flat-400 gauge:
+#                an assertion about where a class SITS, with the spread inside
+#                the class still decided entirely by the races. A fast oval is
+#                still fast relative to other ovals; the whole class just stops
+#                floating.
+#
+# ! THE TWO PINS ARE ON DISJOINT SETS, so they compose. hard_ref requires
+#   is_indoor == 0, so shifting the indoor group cannot move a reference cell
+#   off 0.0, and the gauge's zero survives the shift untouched.
+#
+# ! "shrink" RESTORES THE 2026-09-19 BEHAVIOUR for a run that wants to price
+#   the difference. XCP_BRACKET_INDOOR_MODE picks.
+INDOOR_MODES = ("pin", "shrink")
+INDOOR_MODE_DEFAULT = "pin"
+
 # ★ THE GATES (plan §3). Reported, never applied: a cell outside them is
 #   published as it is and COUNTED, because a clamped cell stops responding to
 #   evidence and cannot be told from a genuinely extreme one. A growing count
@@ -582,8 +613,8 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         prior_warmup=PRIOR_FIT_WARMUP, place_radius=PLACE_RADIUS_M,
         prior_place=PRIOR_PLACE, voter_agg="mean",
         prior_athlete=PRIOR_ATHLETE, prior_target=PRIOR_TARGET,
-        indoor_centre=INDOOR_CENTRE, gauge=GAUGE_DEFAULT,
-        day_noise=DAY_NOISE_DEFAULT):
+        indoor_centre=INDOOR_CENTRE, indoor_mode=INDOOR_MODE_DEFAULT,
+        gauge=GAUGE_DEFAULT, day_noise=DAY_NOISE_DEFAULT):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
@@ -723,6 +754,11 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     #   the track groups are anchored on outdoor. See GAUGE_DEFAULT.
     if gauge not in GAUGE_CHOICES:
         raise ValueError(f"gauge must be one of {GAUGE_CHOICES}, got {gauge!r}")
+    indoor_mode = str(indoor_mode or INDOOR_MODE_DEFAULT).strip().lower()
+    if indoor_mode not in INDOOR_MODES:
+        raise ValueError(f"indoor_mode must be one of {INDOOR_MODES}, "
+                         f"got {indoor_mode!r}")
+    pin_indoor = (indoor_mode == "pin") and indoor_centre is not None
     gauge_ref = (cell_pg != 2) if gauge == "outdoor" else np.ones(n_cell, bool)
     # ★ THE FLAT-OUTDOOR-400 REFERENCE (plan §2). Per BASE key on the pack,
     #   lifted to cells through base_of_cell.
@@ -986,6 +1022,26 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         #   race supports.
         if hard_ref.any():
             D_new_ = np.where(hard_ref & (w_c_ > 0), 0.0, D_new_)
+        # ★★ AND INDOOR'S LEVEL IS ASSERTED, NOT SHRUNK TOWARD (owner,
+        #    2026-09-20: "indoor is still way too 'easy' difficulty wise").
+        #    One additive shift so the group's vote-weighted mean IS the
+        #    asserted centre -- "indoor tracks on avg +0.3 slower", said as
+        #    arithmetic. See INDOOR_MODES for why the shrinkage target alone
+        #    could never deliver it on cells this heavily raced.
+        #
+        # ! ADDITIVE, SO THE SPREAD IS UNTOUCHED. Every oval keeps its exact
+        #   distance from every other; only where the class sits moves. That
+        #   is what makes this a gauge choice rather than a clamp -- no cell
+        #   stops responding to its own evidence, which is the objection the
+        #   gates note raises against clamping.
+        #
+        # ! AFTER THE GAUGE PIN AND ON A DISJOINT SET. hard_ref is outdoor by
+        #   construction, so this cannot move a reference cell off 0.0.
+        if pin_indoor:
+            ind_ = (cell_pg == PG_INDOOR) & (w_c_ > 0)
+            if ind_.any():
+                now = np.average(D_new_[ind_], weights=w_c_[ind_])
+                D_new_ = D_new_ + ind_ * (float(indoor_centre) - now)
         return dict(vote=vote_, D_race=D_r, w_race=w_r, ok_race=ok, num_c=num_c_,
                     w_c=w_c_, w_b=w_b_, g_mean=g_mean_, D_base=D_base_,
                     D_pre=D_pre, pin=pin, D_new=D_new_)
@@ -1136,13 +1192,29 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         outside = ind_cells & ((D < lo) | (D > hi))
         indoor_gate_report = dict(
             n_indoor=int(ind_cells.sum()), n_outside=int(outside.sum()),
-            gates=(lo, hi), centre=float(indoor_centre),
-            median=float(np.median(D[ind_cells])) if ind_cells.any() else 0.0)
+            gates=(lo, hi), centre=float(indoor_centre), mode=indoor_mode,
+            median=float(np.median(D[ind_cells])) if ind_cells.any() else 0.0,
+            # ★ THE NUMBER THAT SAYS WHETHER THE ASSERTION LANDED. Under
+            #   "pin" this must equal the centre; under "shrink" the gap
+            #   between the two IS what the shrinkage target failed to move,
+            #   which is the 2026-09-20 complaint as a measurement.
+            mean=(float(np.average(D[ind_cells], weights=w_c[ind_cells]))
+                  if ind_cells.any() else 0.0))
         if verbose and ind_cells.any():
             r = indoor_gate_report
             print(f"[bracket] indoor: centre asserted at "
-                  f"{100 * r['centre']:+.2f}%, {r['n_indoor']:,} indoor cells "
-                  f"with votes, median {100 * r['median']:+.2f}%")
+                  f"{100 * r['centre']:+.2f}% (mode={r['mode']}), "
+                  f"{r['n_indoor']:,} indoor cells with votes")
+            print(f"        vote-weighted mean {100 * r['mean']:+.2f}%, "
+                  f"median {100 * r['median']:+.2f}%")
+            if indoor_mode == "pin" and abs(r["mean"] - r["centre"]) > 1e-6:
+                print(f"        ⚠ the pin did NOT land: the mean should BE "
+                      f"the centre. Something re-centred indoor after the fit.")
+            if indoor_mode == "shrink":
+                print(f"        ! mode=shrink: the centre is only a shrinkage "
+                      f"target, so the mean is\n          free to sit "
+                      f"{100 * (r['mean'] - r['centre']):+.2f}% away from it. "
+                      f"XCP_BRACKET_INDOOR_MODE=pin asserts it.")
             print(f"        {r['n_outside']:,} outside the "
                   f"{100 * lo:+.1f}%..{100 * hi:+.1f}% gates "
                   f"({100.0 * r['n_outside'] / max(r['n_indoor'], 1):.1f}%) "

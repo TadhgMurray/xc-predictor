@@ -159,5 +159,86 @@ class TheHoldoutCanScoreBoth(unittest.TestCase):
                           f"{fn} does not pass its gauge to be.fit")
 
 
+class IndoorsLevelIsAsserted(unittest.TestCase):
+    """★★ owner, 2026-09-20: "indoor is still way too 'easy' difficulty wise".
+
+    It was, and the reason was mechanical rather than numerical. The centre
+    (+0.3%) was ONLY the TF:in group's shrinkage target, and indoor ovals are
+    among the most heavily raced cells in the corpus -- the same few facilities
+    host meet after meet all winter -- so w_b swamped k_g almost everywhere and
+    the asserted centre moved almost nothing. The published group stayed near
+    the fit's -1.68%: indoor reading FASTER than outdoor.
+
+    "pin" sets the group's vote-weighted MEAN to the centre with one additive
+    shift, which is what "indoor tracks on avg +0.3 slower" says. Source-level,
+    because the arithmetic needs a pack.
+    """
+
+    def setUp(self):
+        self.src = read("engine/bracket_engine.py")
+
+    def test_pin_is_the_default(self):
+        self.assertIn('INDOOR_MODE_DEFAULT = "pin"', self.src)
+        self.assertIn('INDOOR_MODES = ("pin", "shrink")', self.src)
+
+    def test_the_shift_is_additive_and_vote_weighted(self):
+        """! ADDITIVE, SO THE SPREAD IS UNTOUCHED -- every oval keeps its exact
+        distance from every other and no cell stops responding to its own
+        races. That is what makes this a gauge choice and not a clamp."""
+        i = self.src.index("if pin_indoor:")
+        body = self.src[i:i + 400]
+        self.assertIn("cell_pg == PG_INDOOR", body)
+        self.assertIn("np.average", body)
+        self.assertIn("weights=w_c_", body)
+        self.assertIn("float(indoor_centre) - now", body)
+
+    def test_it_runs_after_the_gauge_pin_on_a_disjoint_set(self):
+        """! hard_ref IS OUTDOOR BY CONSTRUCTION, so the indoor shift cannot
+        move a reference cell off 0.0 and the two pins compose."""
+        self.assertLess(self.src.index("hard_ref & (w_c_ > 0), 0.0"),
+                        self.src.index("if pin_indoor:"))
+
+    def test_the_mode_reaches_the_engine_from_the_pipeline(self):
+        """⚠ THE LESSON THE GAUGE ALREADY TAUGHT: an option the engine accepts
+        but no caller forwards silently takes the default. --gauge was
+        unreachable from a solve for exactly this reason, so every link is
+        asserted here."""
+        rj = read("engine/run_joint.py")
+        self.assertIn('ap.add_argument("--bracket-indoor-mode"', rj)
+        self.assertIn('place_kw["indoor_mode"] = indoor_mode', rj)
+        self.assertIn('indoor_mode=getattr(args, "bracket_indoor_mode"', rj)
+        self.assertIn("--bracket-indoor-mode", read("deploy/run_pipeline.sh"))
+        self.assertIn("XCP_BRACKET_INDOOR_MODE", read("deploy/solve_env.sh"))
+
+    def test_the_report_says_whether_the_pin_landed(self):
+        """★ THE MEAN IS PRINTED BESIDE THE CENTRE. Under pin they must be
+        equal; under shrink the gap is what the target failed to move."""
+        self.assertIn("vote-weighted mean", self.src)
+        self.assertIn("the pin did NOT land", self.src)
+
+
+class TheReferenceClassCoversUnrecordedOvals(unittest.TestCase):
+    """★★ owner, 2026-09-20: "track difficulty is not set to 0 for all outdoor
+    400m tracks". It was not -- the predicate demanded a positively-known
+    length, and an unrecorded track_length is by track_geometry's own words
+    "the commonest case in the corpus"."""
+
+    def test_the_policy_and_its_default(self):
+        tg = read("engine/track_geometry.py")
+        self.assertIn('UNKNOWN_LENGTH_DEFAULT = "assume400"', tg)
+        self.assertIn("XCP_GAUGE_UNKNOWN_LENGTH", tg)
+        self.assertIn("XCP_GAUGE_UNKNOWN_LENGTH", read("deploy/solve_env.sh"))
+
+    def test_it_matches_what_normalize_distance_already_assumes(self):
+        """★ THE ASSUMPTION IS ALREADY MADE UPSTREAM, by the code that
+        produces the very numbers being pinned. If that ever stops being true
+        this policy loses its justification, so it is asserted rather than
+        merely written down."""
+        nd = read("engine/normalize_distance.py")
+        i = nd.index("def _resolveTrackLength")
+        body = nd[i:i + 500]
+        self.assertIn("return REFERENCE_TRACK_LENGTH", body)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

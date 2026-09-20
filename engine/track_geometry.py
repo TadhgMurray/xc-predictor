@@ -32,13 +32,37 @@ track_geometry.py -- the reference class, defined once.
     outdoor  is_indoor false. Indoor gets a CENTRE of its own (+0.3%), not a
              place in the reference class.
 
-⚠ UNKNOWN IS NOT FLAT. A missing track_length is the commonest case in the
-  corpus and normalize_distance treats it as the 400m reference so it can
-  normalise the time at all. That is right for normalising and wrong here: a
-  cell admitted to the anchor on an assumption is pinned to 0.0 on an
-  assumption. So this predicate demands the fact and returns False without it,
-  and the census prints how many cells that costs.
+⚠⚠ UNKNOWN LENGTH IS THE 400m REFERENCE, AND THAT REVERSES A DECISION MADE
+   ON 2026-09-19 (owner, 2026-09-20: "track difficulty is not set to 0 for all
+   outdoor 400m tracks"). It was not: the predicate demanded a positively-known
+   length, a missing track_length is -- by this file's own words -- "the
+   commonest case in the corpus", so most outdoor ovals were never in the
+   reference class and were never pinned. The owner asked for ALL flat outdoor
+   400m tracks at 0.0 and got a small minority of them.
+
+   The old argument was "a cell admitted to the anchor on an assumption is
+   pinned to 0.0 on an assumption". The answer is that THE ASSUMPTION IS
+   ALREADY MADE, upstream, by the code that produces the very numbers being
+   pinned: normalize_distance._resolveTrackLength returns
+   REFERENCE_TRACK_LENGTH (400.0) for an unknown length, and its own diagram
+   says "a row we have no geometry for -- passes through unchanged", i.e. it is
+   normalised AS a flat 400m oval. So an unknown-length outdoor cell already
+   carries a normalized_time on the 400m reference scale. Refusing it a pinned
+   difficulty does not avoid the assumption; it just applies the assumption to
+   the numerator and not the denominator, which is the inconsistency, not the
+   protection.
+
+   What is still refused is a STATED fact to the contrary: a length that is
+   positively known and is not 400 (±3m), and a positively-known banked oval.
+   Unknown means "the standard oval", exactly as it does one module upstream.
+
+ ! AND IT IS A POLICY, NOT A REWRITE. XCP_GAUGE_UNKNOWN_LENGTH=strict restores
+   the 2026-09-19 behaviour for a run that wants to price the difference, and
+   the census prints BOTH counts so the cost is a number rather than an
+   argument.
 """
+
+import os
 
 # The 400m oval, with the tolerance the corpus actually needs: anet and tfrrs
 # both carry 400, 400.0 and the odd 402 (a quarter-mile, 402.34m, labelled as
@@ -57,27 +81,66 @@ def isBanked(track_type):
     return str(track_type or "").strip() == BANKED
 
 
-def isFlatOutdoor400(track_length, track_type=None, is_indoor=None):
+UNKNOWN_LENGTH_MODES = ("assume400", "strict")
+UNKNOWN_LENGTH_DEFAULT = "assume400"
+
+
+def unknownLengthMode():
+    """"assume400" (an unrecorded length is the standard oval, the default and
+    what normalize_distance already assumes) or "strict" (the fact or nothing,
+    the 2026-09-19 behaviour)."""
+    v = str(os.environ.get("XCP_GAUGE_UNKNOWN_LENGTH", "") or "").strip().lower()
+    return v if v in UNKNOWN_LENGTH_MODES else UNKNOWN_LENGTH_DEFAULT
+
+
+def _unknownCounts(unknown_is_400):
+    if unknown_is_400 is None:
+        return unknownLengthMode() == "assume400"
+    return bool(unknown_is_400)
+
+
+def isFlatOutdoor400(track_length, track_type=None, is_indoor=None,
+                     unknown_is_400=None):
     """The reference class: a flat, outdoor, 400m oval.
 
-    Returns False for anything whose geometry is unknown -- see the note in
-    the header. `is_indoor` may be None, 0/1, or a bool."""
+    An unrecorded length counts as the reference oval (see the header);
+    pass unknown_is_400=False for the strict reading. A length that is
+    positively known and not 400 never counts. `is_indoor` may be None, 0/1,
+    or a bool."""
+    known = True
     if track_length is None:
-        return False
-    try:
-        length = float(track_length)
-    except (TypeError, ValueError):
-        return False
+        known = False
+        length = FLAT_400
+    else:
+        try:
+            length = float(track_length)
+        except (TypeError, ValueError):
+            known = False
+            length = FLAT_400
     # ⚠ NaN IS UNKNOWN, AND abs(nan - 400) > 3 IS FALSE -- so without this
     #   line a NaN length PASSES every remaining test and joins the anchor.
     #   The pack stores unknown length as NaN, which is the commonest value in
     #   the corpus, so this was not a corner case: a test caught it before the
-    #   pin ever ran.
+    #   pin ever ran. It is still handled explicitly here: NaN is UNKNOWN and
+    #   takes the unknown branch, never the arithmetic one.
     if length != length:
+        known = False
+        length = FLAT_400
+    # ★ SILENCE AND CORRUPTION ARE NOT THE SAME THING. None and NaN are the
+    #   corpus saying nothing, and the policy above covers them. A length of 0
+    #   or a negative one is a STATED value that cannot be a track, so it is
+    #   refused in both modes -- reading it as "the standard oval" would let a
+    #   broken row into the anchor on the strength of its brokenness.
+    elif known and length <= 0:
         return False
-    if length <= 0:
-        return False
-    if abs(length - FLAT_400) > LENGTH_TOLERANCE_M:
+    if not known:
+        # ! THE ONLY PLACE THE POLICY APPLIES. Everything below is about a
+        #   length the corpus actually states.
+        if not _unknownCounts(unknown_is_400):
+            return False
+    elif abs(length - FLAT_400) > LENGTH_TOLERANCE_M:
+        # ★ A STATED LENGTH THAT IS NOT 400 IS NEVER THE REFERENCE, whatever
+        #   the policy. The policy is about silence, not about contradiction.
         return False
     if isBanked(track_type):
         return False
@@ -103,9 +166,14 @@ def isFlatOutdoor400(track_length, track_type=None, is_indoor=None):
 #   re-derivation in numpy. The arrays here are per COURSE KEY -- tens of
 #   thousands of entries, not per row -- so the loop costs nothing, and the
 #   test can assert the two agree.
-def flatOutdoor400Mask(track_length, track_type, is_indoor):
+def flatOutdoor400Mask(track_length, track_type, is_indoor,
+                       unknown_is_400=None):
     """A bool array, one entry per course key."""
     import numpy as np
+    # ! RESOLVED ONCE, not per key: the policy cannot change mid-array, and
+    #   reading the environment tens of thousands of times would be the only
+    #   cost this loop has.
+    unknown_is_400 = _unknownCounts(unknown_is_400)
     n = len(track_length)
     out = np.zeros(n, dtype=bool)
     for i in range(n):
@@ -117,7 +185,7 @@ def flatOutdoor400Mask(track_length, track_type, is_indoor):
             ln = None
         if ind is not None and isinstance(ind, float) and ind != ind:
             ind = None
-        out[i] = isFlatOutdoor400(ln, tt, ind)
+        out[i] = isFlatOutdoor400(ln, tt, ind, unknown_is_400)
     return out
 
 
@@ -131,6 +199,12 @@ def geometryCensus(course_keys, track_length, track_type, is_indoor,
     tf_out = np.array([k.startswith("TF:loc:") and not k.endswith(":in")
                        and ":in@" not in k for k in keys])
     ref = flatOutdoor400Mask(track_length, track_type, is_indoor)
+    # ★ BOTH READINGS, ALWAYS. The policy (unknown length = the standard oval)
+    #   is the one number the pin uses; the strict one is what 2026-09-19
+    #   would have anchored on. Printing them together is what makes the
+    #   choice a measurement instead of an argument.
+    ref_strict = flatOutdoor400Mask(track_length, track_type, is_indoor,
+                                    unknown_is_400=False)
     have = np.array([(ln is not None and ln == ln) for ln in track_length])
     w = (np.ones(len(keys)) if rows_per_key is None
          else np.asarray(rows_per_key, dtype=np.float64))
@@ -138,6 +212,9 @@ def geometryCensus(course_keys, track_length, track_type, is_indoor,
         "n_keys": len(keys),
         "n_tf_outdoor": int(tf_out.sum()),
         "n_reference": int((ref & tf_out).sum()),
+        "n_reference_strict": int((ref_strict & tf_out).sum()),
+        "rows_reference_strict": float(w[ref_strict & tf_out].sum()),
+        "mode": unknownLengthMode(),
         "n_unknown_length": int((tf_out & ~have).sum()),
         "rows_tf_outdoor": float(w[tf_out].sum()),
         "rows_reference": float(w[ref & tf_out].sum()),
@@ -155,8 +232,19 @@ def printCensus(c):
     print(f"    {c['n_reference']:,} of them qualify "
           f"({c['share_cells'] * 100:.1f}% of keys, "
           f"{c['share_rows'] * 100:.1f}% of rows)")
-    print(f"    {c['n_unknown_length']:,} carry no track_length at all "
-          f"-- unknown is NOT flat, see the header")
+    print(f"    {c['n_unknown_length']:,} carry no track_length at all")
+    # ★★ WHAT THE POLICY IS WORTH, IN CELLS. The gap between these two lines
+    #    is the answer to "track difficulty is not set to 0 for all outdoor
+    #    400m tracks": every cell in it is an outdoor oval that IS normalised
+    #    as a 400m track and, under strict, was not pinned as one.
+    print(f"    unknown-length policy: {c.get('mode', '?')}  "
+          f"(XCP_GAUGE_UNKNOWN_LENGTH=strict for the fact-only reading)")
+    print(f"      assume400 -> {c['n_reference']:,} reference keys")
+    print(f"      strict    -> {c.get('n_reference_strict', 0):,} reference keys")
+    gained = c['n_reference'] - c.get('n_reference_strict', 0)
+    if gained:
+        print(f"      the policy pins {gained:,} more outdoor "
+              f"{'cell' if gained == 1 else 'cells'} at 0.0")
     if c["share_rows"] < 0.10:
         print("    ⚠ THIN. Under a tenth of outdoor rows sit in the reference "
               "class, so pinning it\n      anchors the corpus on a small "

@@ -327,18 +327,6 @@ def hsFactor(pool, sport, distance_m):
         if not f_own or not f_hs:
             continue
         ratios.append((float(c_hs) / float(c_own)) * (float(f_own) / float(f_hs)))
-    if not ratios and pool.startswith("pro_"):
-        # ★ A PRO POOL RIDES ON THE COLLEGE FACTOR (2026-09-08, Graham
-        #   Blanks' page: a 29:41 10k at the World XC trials read 96.4
-        #   beside college rows at 146, because pro_m has too few rated
-        #   rows for a constant of its own and the rating stayed on the
-        #   pro scale). The college pool of the same gender is the nearest
-        #   scale with a factor; wrong by the pro-college gap, which is
-        #   small, rather than wrong by the whole conversion.
-        college = hsFactor("college_" + suffix, sport, distance_m)
-        if college:
-            _FACTOR_CACHE[key] = college
-            return college
     if not ratios:
         why = f"no sport with both constants and factors ({pool} and hs_{suffix})"
     else:
@@ -348,6 +336,28 @@ def hsFactor(pool, sport, distance_m):
                    f"{_FACTOR_LO}-{_FACTOR_HI} sanity rail "
                    f"(ratios {', '.join(f'{r:.3f}' for r in ratios)})")
             factor = None
+    # ★ A PRO POOL RIDES ON THE COLLEGE FACTOR (2026-09-08, Graham
+    #   Blanks' page: a 29:41 10k at the World XC trials read 96.4
+    #   beside college rows at 146, because pro_m has too few rated
+    #   rows for a constant of its own and the rating stayed on the
+    #   pro scale). The college pool of the same gender is the nearest
+    #   scale with a factor; wrong by the pro-college gap, which is
+    #   small, rather than wrong by the whole conversion.
+    #
+    # ⚠⚠ AND IT NOW CATCHES BOTH WAYS OF FAILING, NOT ONE (2026-09-20). It was
+    #    gated on `not ratios` -- "pro_m had no constants at all". The OTHER
+    #    failure is a pro pool that HAS constants whose factor then misses the
+    #    0.5-2.0 sanity rail, which is the likelier of the two: the pro-to-HS
+    #    gap is the largest in the corpus and the rail was sized on college and
+    #    middle school, "on the order of 10-30%". In that branch ratios was
+    #    non-empty, so the fallback was skipped, factor stayed None, and the
+    #    pro row kept its own-scale number -- the owner's "when ppl are in pro
+    #    pool they are not able to be hs-equivalent".
+    if factor is None and pool.startswith("pro_"):
+        college = hsFactor("college_" + suffix, sport, distance_m)
+        if college:
+            _FACTOR_CACHE[key] = college
+            return college
     # ! FAILURES ARE LOUD. A factor that cannot be built hides the toggle
     #   with no other symptom, so say why ONCE on the server console.
     if why is not None and key not in _FAILED:

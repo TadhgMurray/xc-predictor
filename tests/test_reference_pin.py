@@ -50,14 +50,49 @@ class ThePredicate(unittest.TestCase):
     def test_indoor_is_out(self):
         self.assertFalse(tg.isFlatOutdoor400(400, "Flat", 1))
 
-    def test_unknown_is_not_flat(self):
-        """⚠ THE ONE THAT MATTERS MOST. normalize_distance treats a missing
-        length as the 400m reference so it can normalise at all; admitting
-        those cells here would pin them to 0.0 on an assumption."""
-        self.assertFalse(tg.isFlatOutdoor400(None, "Flat", 0))
-        self.assertFalse(tg.isFlatOutdoor400(float("nan"), "Flat", 0))
+    def test_unknown_length_is_the_reference_oval(self):
+        """⚠⚠ THE ONE THAT MATTERS MOST, AND IT REVERSED ON 2026-09-20 (owner:
+        "track difficulty is not set to 0 for all outdoor 400m tracks").
+
+        It was not, because this predicate demanded a positively-known length
+        and an unrecorded track_length is the commonest value in the corpus --
+        so most outdoor ovals never entered the reference class. The
+        assumption is already made upstream:
+        normalize_distance._resolveTrackLength returns 400.0 for an unknown
+        length, so those cells' normalized_time is ALREADY on the 400m
+        reference scale. Refusing them a pinned difficulty applied the
+        assumption to the numerator only."""
+        self.assertTrue(tg.isFlatOutdoor400(None, "Flat", 0))
+        self.assertTrue(tg.isFlatOutdoor400(float("nan"), "Flat", 0))
+        self.assertTrue(tg.isFlatOutdoor400(None, "", 0))
+
+    def test_strict_restores_the_fact_only_reading(self):
+        """! A POLICY, NOT A REWRITE -- so the old behaviour is still one
+        argument away and a run can price the difference."""
+        for ln in (None, float("nan")):
+            self.assertFalse(tg.isFlatOutdoor400(ln, "Flat", 0,
+                                                 unknown_is_400=False))
+        self.assertEqual(tg.UNKNOWN_LENGTH_DEFAULT, "assume400")
+
+    def test_silence_is_not_contradiction(self):
+        """★ A STATED LENGTH THAT IS NOT 400 IS NEVER THE REFERENCE, and a
+        stated length that cannot be a track is refused rather than read as
+        silence -- otherwise a broken row joins the anchor on the strength of
+        being broken."""
+        for mode in (None, True, False):
+            self.assertFalse(tg.isFlatOutdoor400(420, "Flat", 0, mode), mode)
+            self.assertFalse(tg.isFlatOutdoor400(200, "Flat", 0, mode), mode)
+            self.assertFalse(tg.isFlatOutdoor400(0, "Flat", 0, mode), mode)
+            self.assertFalse(tg.isFlatOutdoor400(-5, "Flat", 0, mode), mode)
+            # banked and indoor still lose, whatever the length policy
+            self.assertFalse(tg.isFlatOutdoor400(None, "Banked", 0, mode), mode)
+            self.assertFalse(tg.isFlatOutdoor400(None, "Flat", 1, mode), mode)
+
+    def test_an_unstated_surface_is_still_refused(self):
+        """! NOT ASSUMED OUTDOOR. The length policy is about length; an
+        indoor 400 must not join the outdoor anchor by omission."""
         self.assertFalse(tg.isFlatOutdoor400(400, "Flat", None))
-        self.assertFalse(tg.isFlatOutdoor400(0, "Flat", 0))
+        self.assertFalse(tg.isFlatOutdoor400(None, "Flat", None))
 
     def test_the_vector_form_agrees_with_the_scalar_one(self):
         """! A SECOND IMPLEMENTATION IS THE FAILURE THE MODULE EXISTS TO
@@ -65,10 +100,23 @@ class ThePredicate(unittest.TestCase):
         lens = [400.0, 402.0, 200.0, np.nan, 400.0, 400.0, 420.0]
         types = ["Flat", "Flat", "Flat", "Flat", "Banked", "", "Flat"]
         inds = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
-        got = tg.flatOutdoor400Mask(lens, types, inds)
-        want = [tg.isFlatOutdoor400(None if l != l else l, t, i)
-                for l, t, i in zip(lens, types, inds)]
-        self.assertEqual(list(got), want)
+        for mode in (None, True, False):
+            got = tg.flatOutdoor400Mask(lens, types, inds, mode)
+            want = [tg.isFlatOutdoor400(None if l != l else l, t, i, mode)
+                    for l, t, i in zip(lens, types, inds)]
+            self.assertEqual(list(got), want, mode)
+
+    def test_the_policy_can_only_widen_the_class(self):
+        """! assume400 ADDS cells and never removes one, so the strict mask is
+        a subset. A policy that changed a stated fact would be a bug."""
+        lens = [400.0, 402.0, 200.0, np.nan, None, 400.0, 400.0, 420.0, 0.0]
+        types = ["Flat", "Flat", "Flat", "Flat", "", "Banked", "", "Flat", ""]
+        inds = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+        loose = tg.flatOutdoor400Mask(lens, types, inds, True)
+        strict = tg.flatOutdoor400Mask(lens, types, inds, False)
+        self.assertTrue(bool(np.all(loose | strict == loose)),
+                        "strict must be a subset of assume400")
+        self.assertGreater(int(loose.sum()), int(strict.sum()))
 
 
 class TheOverrideVenues(unittest.TestCase):

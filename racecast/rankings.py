@@ -1060,7 +1060,27 @@ def _whereClauses(f, params, with_dates):
 #   only fall outside it on a deep page at a factor boundary. The trade for
 #   keeping the 61M-row scan an index range.
 _SCALED_COLS = ("mean_rating", "best_rating", "speed_rating")
-_SCALE_POOLS = ("elem_m", "elem_f", "ms_m", "ms_f", "college_m", "college_f")
+# ★★ AND pro_m / pro_f ARE IN IT (owner, 2026-09-20: "when ppl are in pro pool
+#    they are not able to be hs-equivalent. We should make them able to be
+#    hs-equivalent"). They were not, and nothing else was wrong: pool_view has
+#    served a pro factor since 2026-09-08 -- hsFactor falls a pro pool back to
+#    the same-gender college factor when pro_m has too few rated rows for a
+#    constant of its own -- and pool_view's own diagnostic lists pro_m and
+#    pro_f. This tuple is what the BOARD's CASE is built from, so a pro row
+#    fell to the `ELSE 1.0` arm and kept its raw pro-scale number while every
+#    row beside it was converted.
+#
+# ⚠ WHICH IS WORSE THAN NO CONVERSION, because the board ORDERS on the scaled
+#   expression. A pro row at 141 on the pro scale sorted against high
+#   schoolers at 193 on the HS scale is not merely mislabelled, it is in the
+#   wrong place -- the exact failure the scale exists to prevent on a
+#   pool=all board ("a pool=all board reads unsorted").
+#
+# ! hs_m / hs_f ARE STILL ABSENT ON PURPOSE. Their factor is 1.0 by
+#   construction and `ELSE 1.0` already covers them; naming them would add two
+#   CASE arms that cannot change a number.
+_SCALE_POOLS = ("elem_m", "elem_f", "ms_m", "ms_f", "college_m", "college_f",
+                "pro_m", "pro_f")
 
 
 def _scaleActive(f):

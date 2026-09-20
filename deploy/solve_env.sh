@@ -51,7 +51,32 @@
 #   its zero, so the asserted +0.3% could not survive. Both are fixed; this is
 #   the same number, said to the engine that publishes.
 : "${XCP_GAUGE:=flat400}"                   # flat outdoor 400s at 0.0 each
-: "${XCP_BRACKET_INDOOR_CENTRE:=0.003}"     # indoor's shrinkage target
+: "${XCP_BRACKET_INDOOR_CENTRE:=0.003}"     # indoor's asserted centre
+
+# ★★ THE TWO THINGS THE OWNER SAID WERE STILL WRONG ON 2026-09-20, and what
+#    each one changes. Both are DEFAULTS IN CODE; they are set here so the run
+#    log records them, and either can be flipped back for one run to price it.
+#
+#  1. "track difficulty is not set to 0 for all outdoor 400m tracks". It was
+#     not. track_geometry demanded a POSITIVELY KNOWN 400m length, and an
+#     unrecorded track_length is the commonest value in the corpus, so most
+#     outdoor ovals never entered the reference class and were never pinned.
+#     assume400 reads an unrecorded length as the standard oval -- which is
+#     already what normalize_distance._resolveTrackLength does when it
+#     normalises those very times. A STATED non-400 length is still refused.
+#       strict = the fact-only reading (the 2026-09-19 behaviour).
+: "${XCP_GAUGE_UNKNOWN_LENGTH:=assume400}"
+#
+#  2. "indoor is still way too 'easy' difficulty wise". The centre above was
+#     only a SHRINKAGE TARGET, and indoor ovals are among the most heavily
+#     raced cells there are -- the same few facilities all winter -- so the
+#     evidence swamped the prior and the group stayed near the fit's -1.68%,
+#     i.e. indoor reading FASTER than outdoor. pin sets the indoor group's
+#     vote-weighted MEAN to the centre by one additive shift, which is what
+#     "indoor tracks on avg +0.3 slower" says. The spread between ovals is
+#     untouched, so no cell stops responding to its own races.
+#       shrink = target-only (the 2026-09-19 behaviour).
+: "${XCP_BRACKET_INDOOR_MODE:=pin}"
 
 # ★ §4 THE RACE-DAY TERM. "fitted" keeps the historic numerator (each group's
 #   own multi-race courses) and MEASURES the pinned cells' race-day spread
@@ -112,6 +137,7 @@
 
 export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
        XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
+       XCP_GAUGE_UNKNOWN_LENGTH XCP_BRACKET_INDOOR_MODE \
        XCP_IMPORTANCE XCP_DB_QUIET
 
 # Anything else already in the environment is left alone, so a one-off
@@ -125,7 +151,8 @@ export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 #   a variable prints it when set and prints nothing when it is not.
 SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
-XCP_IMPORTANCE XCP_TEAM_POOL XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
+XCP_IMPORTANCE XCP_TEAM_POOL XCP_GAUGE_UNKNOWN_LENGTH \
+XCP_BRACKET_INDOOR_MODE XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
 XCP_SPORT_LEVEL_POOLS XCP_BRACKET_PRIOR XCP_BRACKET_PLACE_RADIUS \
 XCP_BRACKET_PLACE_PRIOR XCP_BRACKET_WINDOW XCP_COURSE_SCALE \
 XCP_FROM_STATE XCP_PROBES"

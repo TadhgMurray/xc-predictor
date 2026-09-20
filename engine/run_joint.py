@@ -1621,8 +1621,16 @@ def buildParser():
                     help="the bracket course prior's numerator: fitted "
                          "(historic) or reference (the pinned cells)")
     ap.add_argument("--bracket-indoor-centre", type=float, default=None,
-                    help="log-time centre the indoor cells shrink toward "
+                    help="log-time centre asserted for the indoor cells "
                          f"(bracket_engine.INDOOR_CENTRE, {be.INDOOR_CENTRE})")
+    # ★ HOW THE CENTRE IS ENFORCED (owner, 2026-09-20: "indoor is still way
+    #   too 'easy'"). pin sets the indoor group's vote-weighted MEAN to the
+    #   centre -- "on avg +0.3 slower" as arithmetic; shrink is the old
+    #   target-only behaviour, which heavily-raced ovals simply ignored.
+    ap.add_argument("--bracket-indoor-mode", default=None,
+                    choices=list(be.INDOOR_MODES),
+                    help="pin the indoor group's mean to the centre (pin, "
+                         "default) or merely shrink toward it (shrink)")
     ap.add_argument("--no-race-effect", action="store_true",
                     help="leave the race-day effect out of per-result ratings")
     ap.add_argument("--race-effect-sports", default="",
@@ -1889,7 +1897,7 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         window=21.0, top=0.5, verbose=True, prior_group="fit",
                         track_level_by_pool=True, place_radius=None, prior_place=None,
                         course_scale="fit", gauge=None, indoor_centre=None,
-                        day_noise=None):
+                        indoor_mode=None, day_noise=None):
     """Swap the joint solve's course difficulties for the bracket engine's,
     in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
     delta kept as delta_joint). Returns a dict of what happened."""
@@ -1943,6 +1951,11 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         place_kw["gauge"] = gauge
     if indoor_centre is not None:
         place_kw["indoor_centre"] = float(indoor_centre)
+    # ! THE SAME LESSON AS THE GAUGE, ONE LINE DOWN. An option the engine
+    #   accepts but this call never forwards is an option that silently takes
+    #   the default -- which is exactly how --gauge could not reach the engine.
+    if indoor_mode is not None:
+        place_kw["indoor_mode"] = indoor_mode
     if day_noise is not None:
         place_kw["day_noise"] = day_noise
     f = be.fit(sub, npz_like, train=None, window=window, top=top, codes=codes, z=z,
@@ -2356,6 +2369,8 @@ def main():
                                 gauge=getattr(args, "gauge", None),
                                 indoor_centre=getattr(args, "bracket_indoor_centre",
                                                       None),
+                                indoor_mode=getattr(args, "bracket_indoor_mode",
+                                                    None),
                                 day_noise=getattr(args, "day_noise", None))
         except Exception:                                        # noqa: BLE001
             import traceback

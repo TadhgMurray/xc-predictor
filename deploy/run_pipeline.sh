@@ -656,6 +656,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_GAUGE:+--gauge "$XCP_GAUGE"} \
       ${XCP_DAY_NOISE:+--day-noise "$XCP_DAY_NOISE"} \
       ${XCP_BRACKET_INDOOR_CENTRE:+--bracket-indoor-centre "$XCP_BRACKET_INDOOR_CENTRE"} \
+      ${XCP_BRACKET_INDOOR_MODE:+--bracket-indoor-mode "$XCP_BRACKET_INDOOR_MODE"} \
       ${XCP_BRACKET_PLACE_PRIOR:+--bracket-place-prior "$XCP_BRACKET_PLACE_PRIOR"} \
       ${XCP_COURSE_SCALE:+--course-scale "$XCP_COURSE_SCALE"} \
       ${XCP_SPORT_LEVEL_POOLS:+--sport-level-pools "$XCP_SPORT_LEVEL_POOLS"} \
