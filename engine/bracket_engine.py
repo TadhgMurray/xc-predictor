@@ -910,6 +910,30 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         # ! EMPTY IS THE DEFAULT AND IS SAFE. With nothing named, xc_mask is
         #   all-False, gauge_ref is unchanged, and XC pins on its own mean
         #   exactly as before -- announced, so nobody believes it is anchored.
+        # ★★ NAMED INDOOR OVALS JOIN THE REFERENCE CLASS (owner, 2026-09-20:
+        #    "specifically BU which is as fast as a flat 400m so it works").
+        #    track_geometry refuses banked ovals by predicate, correctly --
+        #    banking is a real speed effect. This is a curated exception for
+        #    venues the owner asserts run at flat-400 pace, in the shape
+        #    venue_geometry_overrides already uses.
+        #
+        # ⚠ IT ANCHORS THE INDOOR GROUP. Cross country only benefits with
+        #   --gauge-scope merge, which puts them in one group so the pin
+        #   propagates through athletes who raced both.
+        try:
+            import indoor_reference as ir
+            in_mask, in_val = ir.referenceMask(cell_keys, verbose=verbose)
+        except Exception as exc:                              # noqa: BLE001
+            print(f"[bracket] indoor_reference unavailable ({exc})", flush=True)
+            in_mask = np.zeros(n_cell, dtype=bool)
+            in_val = np.zeros(n_cell, dtype=np.float64)
+        if in_mask.any():
+            hard_ref = hard_ref | in_mask
+            hard_val = np.where(in_mask, in_val, hard_val)
+            gauge_ref = gauge_ref | in_mask
+            if verbose:
+                print(f"[bracket] indoor anchor: {int(in_mask.sum()):,} indoor "
+                      f"cells asserted onto the reference class", flush=True)
         try:
             import xc_reference as xr
             xc_mask, xc_val = xr.referenceMask(cell_keys)
@@ -1186,8 +1210,13 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         #
         # ! AFTER THE GAUGE PIN AND ON A DISJOINT SET. hard_ref is outdoor by
         #   construction, so this cannot move a reference cell off 0.0.
+        # ! AND A PINNED OVAL IS EXEMPT FROM BOTH. An asserted reference cell
+        #   that the indoor mean-pin then slides, or the gate clamp then
+        #   squeezes, is not a reference at all -- it is the same "second
+        #   opinion" mistake skip_recentre and the population shift already
+        #   cost us twice.
         if pin_indoor:
-            ind_ = (cell_pg == PG_INDOOR) & (w_c_ > 0)
+            ind_ = (cell_pg == PG_INDOOR) & (w_c_ > 0) & ~hard_ref
             if ind_.any():
                 now = np.average(D_new_[ind_], weights=w_c_[ind_])
                 D_new_ = D_new_ + ind_ * (float(indoor_centre) - now)
@@ -1200,7 +1229,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         #   allowed outside the gates" asks for. The other order would put
         #   cells back outside on the very next line.
         if clamp_indoor:
-            ind_g = (cell_pg == PG_INDOOR) & (w_c_ > 0)
+            ind_g = (cell_pg == PG_INDOOR) & (w_c_ > 0) & ~hard_ref
             if ind_g.any():
                 D_new_ = np.where(ind_g, np.clip(D_new_, gate_lo, gate_hi),
                                   D_new_)

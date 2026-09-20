@@ -79,7 +79,7 @@ _step_cap() {
 # ! SLEEPS IN SHORT TICKS so it notices the step finishing promptly instead of
 #   sitting out the rest of a five-minute interval.
 _heartbeat() {
-    local pid="$1" name="$2" log="$3" t0="$4" cap="$5"
+    local pid="$1" name="$2" log="$3" t0="$4" cap="$5" stream="${6:-1}"
     local waited=0 tick
     while kill -0 "$pid" 2>/dev/null; do
         sleep 5
@@ -87,7 +87,14 @@ _heartbeat() {
         [ "$waited" -lt "$HEARTBEAT" ] && continue
         waited=0
         kill -0 "$pid" 2>/dev/null || break
-        tick=$(grep -av '^[[:space:]]*$' "$log" 2>/dev/null | tail -1 | tr -d '\r' | cut -c1-110)
+        # ! WHEN THE STEP IS STREAMING, ITS LAST LINE IS ALREADY ON SCREEN --
+        #   repeating it would double every log. The elapsed/cap line still
+        #   earns its place: it is what says a SILENT step is alive.
+        if [ "$stream" = "0" ]; then
+            tick=$(grep -av '^[[:space:]]*$' "$log" 2>/dev/null | tail -1 | tr -d '\r' | cut -c1-110)
+        else
+            tick=""
+        fi
         say "  ...  $name  $(hms $(( $(date +%s) - t0 )))/$(hms "$cap")${tick:+  | $tick}"
     done
 }
@@ -108,14 +115,46 @@ step() {
     # ! `timeout` IS COREUTILS AND IS ALWAYS HERE, but a chain that dies
     #   because a helper is missing is a chain that did not run, so it falls
     #   back to running uncapped and SAYS so rather than failing.
-    if command -v timeout >/dev/null 2>&1; then
-        timeout --signal=TERM --kill-after=120 "$cap" "$@" > "$log" 2>&1 &
+    # ★★ THE STEP'S OWN OUTPUT IS STREAMED, NOT HIDDEN (owner, 2026-09-20:
+    #    "I can't see what step it actually is on"). It used to go only to
+    #    $log, so `tail -f 00-progress.log` showed START and then silence for
+    #    hours while run_pipeline.sh printed every stage into a file nobody was
+    #    watching. Now each line lands in BOTH: raw in the step's log, prefixed
+    #    in the progress log, so one tail follows the whole chain.
+    #
+    # ! pipefail IN A SUBSHELL, so the pipe reports the COMMAND's status and
+    #   not tee's, and the option does not leak into the rest of the chain.
+    #
+    # ! stdbuf -oL ON sed, or the prefixer buffers 4KB at a time and the
+    #   streaming it exists to provide arrives in lumps, hours late.
+    #
+    #   STREAM_STEPS=0 restores the quiet behaviour.
+    local stream="${STREAM_STEPS:-1}"
+    # ! NO '|' IN THE PREFIX -- it is sed's delimiter below, and "  |name|"
+    #   made every prefixed line die with "unknown option to `s'". Brackets
+    #   read the same and cannot collide.
+    local pfx="  [$name]"
+    if [ "$stream" = "0" ]; then
+        if command -v timeout >/dev/null 2>&1; then
+            timeout --signal=TERM --kill-after=120 "$cap" "$@" > "$log" 2>&1 &
+        else
+            say "      ⚠ no timeout(1) — this step runs UNCAPPED"
+            "$@" > "$log" 2>&1 &
+        fi
     else
-        say "      ⚠ no timeout(1) — this step runs UNCAPPED"
-        "$@" > "$log" 2>&1 &
+        (
+            set -o pipefail
+            if command -v timeout >/dev/null 2>&1; then
+                timeout --signal=TERM --kill-after=120 "$cap" "$@" 2>&1
+            else
+                "$@" 2>&1
+            fi | tee "$log" \
+               | (stdbuf -oL sed "s|^|$pfx |" 2>/dev/null || sed "s|^|$pfx |") \
+               | tee -a "$PROG"
+        ) &
     fi
     local pid=$!
-    _heartbeat "$pid" "$name" "$log" "$t0" "$cap" &
+    _heartbeat "$pid" "$name" "$log" "$t0" "$cap" "$stream" &
     local hb=$!
     wait "$pid"; local rc=$?
     kill "$hb" 2>/dev/null

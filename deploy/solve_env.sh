@@ -89,7 +89,16 @@
 #       what share of XC weight is still negative; that is the owner's test.
 #     The other route is engine/xc_reference.py -- name ordinary XC courses
 #     and they become the zero, which breaks the see-saw without the bridge.
-: "${XCP_GAUGE_SCOPE:=sport}"
+#
+#     ★★ SET TO merge FOR THIS RUN (owner, 2026-09-20). The generic XC-to-
+#        indoor bridge is thin, but the owner's route does not need it wide --
+#        it needs one end KNOWN. engine/indoor_reference.py asserts Boston
+#        University's oval onto the reference class at 0.0 ("BU which is as
+#        fast as a flat 400m so it works"), and merge is what lets that pin
+#        reach cross country: it puts XC and track in one group per era, so
+#        the anchor propagates through athletes who raced both. Pinning BU
+#        WITHOUT merge anchors indoor and leaves XC exactly where it was.
+: "${XCP_GAUGE_SCOPE:=merge}"
 #
 #  4. The indoor gates are ENFORCED now (owner, 2026-09-20: "they should not
 #     be allowed outside the gates"). A cell outside -0.3%..+2.0% is pulled to

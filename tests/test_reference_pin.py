@@ -682,3 +682,64 @@ class TheGatesAreEnforced(unittest.TestCase):
         self.assertIn('place_kw["indoor_gate_mode"] = indoor_gate_mode', rj)
         self.assertIn("--bracket-indoor-gates", read("deploy/run_pipeline.sh"))
         self.assertIn("XCP_BRACKET_INDOOR_GATES", read("deploy/solve_env.sh"))
+
+
+class ANamedIndoorOvalJoinsTheReference(unittest.TestCase):
+    """★★ owner, 2026-09-20: "based on the xc -> indoor (specifically BU which
+    is as fast as a flat 400m so it works) conversions".
+
+    The generic XC-to-indoor bridge is thin. This route does not need it wide,
+    it needs one END KNOWN: assert BU onto the reference class at 0.0 and
+    everyone who races there is standing on the absolute scale.
+    """
+
+    def setUp(self):
+        import indoor_reference as ir
+        self.ir = ir
+        self.src = __import__("inspect").getsource(be.fit)
+
+    def test_indoor_cells_only(self):
+        """! THE SAME LOCATION HAS AN OUTDOOR CELL TOO, and the claim is about
+        the oval inside the building."""
+        self.assertEqual(self.ir.locationId("TF:loc:501:in@e0"), 501)
+        self.assertIsNone(self.ir.locationId("TF:loc:501:out@e0"))
+        self.assertIsNone(self.ir.locationId("XC:12:d5000"))
+
+    def test_the_mask_pins_only_named_venues(self):
+        keys = ["TF:loc:501:in", "TF:loc:501:out", "TF:loc:77:in"]
+        mask, val = self.ir.referenceMask(keys, {501: 0.0})
+        self.assertEqual(list(mask), [True, False, False])
+
+    def test_bu_is_the_named_venue(self):
+        self.assertTrue(any("boston" in k.lower()
+                            for k in self.ir.INDOOR_REFERENCE_NAMES))
+
+    def test_the_engine_adds_them_to_the_gauge_reference(self):
+        self.assertIn("hard_ref = hard_ref | in_mask", self.src)
+        self.assertIn("gauge_ref = gauge_ref | in_mask", self.src)
+
+    def test_a_pinned_oval_is_exempt_from_the_centre_and_the_gates(self):
+        """⚠ AN ASSERTED CELL THAT A LATER STEP SLIDES IS NOT A REFERENCE.
+        The indoor mean-pin and the gate clamp both skip hard_ref -- the same
+        "second opinion" mistake skip_recentre and the population shift
+        already cost two runs."""
+        self.assertIn("(w_c_ > 0) & ~hard_ref", self.src)
+        self.assertEqual(self.src.count("(w_c_ > 0) & ~hard_ref"), 2)
+
+    def test_names_are_resolved_loudly(self):
+        """! A location_id IS STABLE AND A NAME IS NOT, so the pin keys on
+        ids -- but the resolution is printed, because one careless pattern
+        could pin a venue nobody meant."""
+        import inspect
+        src = inspect.getsource(self.ir.resolve)
+        self.assertIn("is_indoor", src)
+        self.assertIn("print", src)
+
+    def test_it_only_reaches_xc_with_merge(self):
+        """⚠ PINNING BU ANCHORS THE INDOOR GROUP. Cross country is a different
+        (sport, era) group and keeps its own zero unless they are merged."""
+        import inspect
+        self.assertIn("gauge-scope merge", inspect.getdoc(self.ir))
+        with open(os.path.join(_ROOT, "deploy", "solve_env.sh"),
+                  encoding="utf-8") as fh:
+            self.assertIn('XCP_GAUGE_SCOPE:=merge', fh.read())
