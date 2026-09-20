@@ -70,7 +70,10 @@ class TheGaugeIsOutdoorByDefault(unittest.TestCase):
     # ⚠ AN ERA WITH NO OUTDOOR CELLS MUST STILL BE PINNED. An unpinned group
     #   drifts without limit, so the fallback is the whole group, never none.
     def test_an_era_with_no_outdoor_reference_falls_back(self):
-        i = self.src.index("m_ref = m_g & gauge_ref")
+        # ! THE CODE LINE, NOT THE FIRST MENTION. A comment elsewhere now
+        #   quotes this loop to explain how the XC anchor reuses it, and a
+        #   bare .index() found the prose first.
+        i = self.src.index("            m_ref = m_g & gauge_ref")
         block = self.src[i:i + 400]
         self.assertIn("use = m_ref if m_ref.any() else m_g", block)
 
@@ -195,7 +198,7 @@ class IndoorsLevelIsAsserted(unittest.TestCase):
     def test_it_runs_after_the_gauge_pin_on_a_disjoint_set(self):
         """! hard_ref IS OUTDOOR BY CONSTRUCTION, so the indoor shift cannot
         move a reference cell off 0.0 and the two pins compose."""
-        self.assertLess(self.src.index("hard_ref & (w_c_ > 0), 0.0"),
+        self.assertLess(self.src.index("hard_ref & (w_c_ > 0), hard_val"),
                         self.src.index("if pin_indoor:"))
 
     def test_the_mode_reaches_the_engine_from_the_pipeline(self):

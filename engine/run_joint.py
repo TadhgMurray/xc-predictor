@@ -1633,6 +1633,13 @@ def buildParser():
     #   too 'easy'"). pin sets the indoor group's vote-weighted MEAN to the
     #   centre -- "on avg +0.3 slower" as arithmetic; shrink is the old
     #   target-only behaviour, which heavily-raced ovals simply ignored.
+    # ★ XC's ZERO: its own (sport) or shared with track (merge). See
+    #   bracket_engine.GAUGE_SCOPES -- the bridge merge rests on is 0.2-0.5%
+    #   of XC rows at the bracket window, so this is a flag, not a default.
+    ap.add_argument("--gauge-scope", default=None, choices=list(be.GAUGE_SCOPES),
+                    help="sport (default): each (sport, era) keeps its own "
+                         "zero; merge: XC and track share one, so the "
+                         "flat-400 reference anchors cross country")
     ap.add_argument("--bracket-indoor-mode", default=None,
                     choices=list(be.INDOOR_MODES),
                     help="pin the indoor group's mean to the centre (pin, "
@@ -1903,7 +1910,7 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         window=21.0, top=0.5, verbose=True, prior_group="fit",
                         track_level_by_pool=True, place_radius=None, prior_place=None,
                         course_scale="fit", gauge=None, indoor_centre=None,
-                        indoor_mode=None, day_noise=None):
+                        indoor_mode=None, gauge_scope=None, day_noise=None):
     """Swap the joint solve's course difficulties for the bracket engine's,
     in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
     delta kept as delta_joint). Returns a dict of what happened."""
@@ -1962,6 +1969,8 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     #   the default -- which is exactly how --gauge could not reach the engine.
     if indoor_mode is not None:
         place_kw["indoor_mode"] = indoor_mode
+    if gauge_scope is not None:
+        place_kw["gauge_scope"] = gauge_scope
     if day_noise is not None:
         place_kw["day_noise"] = day_noise
     f = be.fit(sub, npz_like, train=None, window=window, top=top, codes=codes, z=z,
@@ -2421,6 +2430,7 @@ def main():
                                                       None),
                                 indoor_mode=getattr(args, "bracket_indoor_mode",
                                                     None),
+                                gauge_scope=getattr(args, "gauge_scope", None),
                                 day_noise=getattr(args, "day_noise", None))
         except Exception:                                        # noqa: BLE001
             import traceback

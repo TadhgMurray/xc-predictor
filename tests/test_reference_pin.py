@@ -188,7 +188,10 @@ class TheGaugeWiring(unittest.TestCase):
 
     def test_the_reference_cells_are_held_at_zero_not_their_mean(self):
         src = __import__("inspect").getsource(be.fit)
-        self.assertIn("np.where(hard_ref & (w_c_ > 0), 0.0, D_new_)", src)
+        self.assertIn("np.where(hard_ref & (w_c_ > 0), hard_val, D_new_)", src)
+        # ! hard_val IS 0.0 FOR EVERY FLAT-400 CELL (2026-09-20); only a
+        #   NAMED cross-country course can carry a different number.
+        self.assertIn("hard_val = np.zeros(n_cell", src)
         # ! and only where the cell has votes: forcing a cell nobody raced
         #   would publish a 0.0 no race supports
         self.assertIn("hard_ref & (w_c_ > 0)", src)

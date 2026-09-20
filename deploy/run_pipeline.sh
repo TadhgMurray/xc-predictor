@@ -654,6 +654,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_TRACK_LEVEL_BY_POOL:+--track-level-by-pool "$XCP_TRACK_LEVEL_BY_POOL"} \
       ${XCP_BRACKET_PLACE_RADIUS:+--bracket-place-radius "$XCP_BRACKET_PLACE_RADIUS"} \
       ${XCP_GAUGE:+--gauge "$XCP_GAUGE"} \
+      ${XCP_GAUGE_SCOPE:+--gauge-scope "$XCP_GAUGE_SCOPE"} \
       ${XCP_DAY_NOISE:+--day-noise "$XCP_DAY_NOISE"} \
       ${XCP_BRACKET_INDOOR_CENTRE:+--bracket-indoor-centre "$XCP_BRACKET_INDOOR_CENTRE"} \
       ${XCP_BRACKET_INDOOR_MODE:+--bracket-indoor-mode "$XCP_BRACKET_INDOOR_MODE"} \

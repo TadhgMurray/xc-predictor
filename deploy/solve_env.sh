@@ -77,6 +77,19 @@
 #     untouched, so no cell stops responding to its own races.
 #       shrink = target-only (the 2026-09-19 behaviour).
 : "${XCP_BRACKET_INDOOR_MODE:=pin}"
+#
+#  3. XC's zero. "sport" (default) is today: cross country pins on its own
+#     vote-weighted mean, which is the see-saw -- sum(w*D)=0 forces courses
+#     negative when the heavily-raced ones read high. "merge" shares one zero
+#     with track per era so the flat-400 reference anchors XC.
+#
+#     ⚠ THE BRIDGE merge RESTS ON IS THIN, MEASURED: 0.2-0.5% of XC rows at
+#       the bracket window, 2.7% at 60 days (diag_xc_track_bridge.py). Try it
+#       on ONE run and read "[bracket] gauge scope=" for how far XC moved and
+#       what share of XC weight is still negative; that is the owner's test.
+#     The other route is engine/xc_reference.py -- name ordinary XC courses
+#     and they become the zero, which breaks the see-saw without the bridge.
+: "${XCP_GAUGE_SCOPE:=sport}"
 
 # ★ §4 THE RACE-DAY TERM. "fitted" keeps the historic numerator (each group's
 #   own multi-race courses) and MEASURES the pinned cells' race-day spread
@@ -137,7 +150,7 @@
 
 export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
        XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
-       XCP_GAUGE_UNKNOWN_LENGTH XCP_BRACKET_INDOOR_MODE \
+       XCP_GAUGE_UNKNOWN_LENGTH XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE \
        XCP_IMPORTANCE XCP_DB_QUIET
 
 # Anything else already in the environment is left alone, so a one-off
@@ -152,7 +165,7 @@ export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
 XCP_IMPORTANCE XCP_TEAM_POOL XCP_GAUGE_UNKNOWN_LENGTH \
-XCP_BRACKET_INDOOR_MODE XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
+XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
 XCP_SPORT_LEVEL_POOLS XCP_BRACKET_PRIOR XCP_BRACKET_PLACE_RADIUS \
 XCP_BRACKET_PLACE_PRIOR XCP_BRACKET_WINDOW XCP_COURSE_SCALE \
 XCP_FROM_STATE XCP_PROBES"

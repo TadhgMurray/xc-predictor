@@ -268,6 +268,30 @@ def _weightedPoolMedian(vals, weights, pools, n_pool):
 #   other with scripts/bracket_holdout.py rather than argued about.
 GAUGE_DEFAULT = "outdoor"
 GAUGE_CHOICES = ("outdoor", "all", "flat400")
+
+# ★★ XC's GAUGE SCOPE (owner, 2026-09-20: "idk maybe 3 % could be useful let's
+#    try it out see what it says").
+#
+#      "sport"  (default) each (sport, era) group keeps its own zero. XC pins
+#               on its own vote-weighted mean unless xc_reference names
+#               courses.
+#      "merge"  XC and track share ONE zero per era, so the flat-400 reference
+#               anchors cross country through the athletes who race both.
+#
+# ⚠ THE BRIDGE THAT HAS TO CARRY "merge" WAS MEASURED AND IT IS THIN
+#   (diag_xc_track_bridge.py, 2026-09-20, 5% athlete sample): at the bracket
+#   window the XC-to-INDOOR bridge reaches 0.2-0.5% of XC rows, 2.7% at 60
+#   days. So merge anchors cross country on a few percent of its rows, and the
+#   fall-to-spring pairs it also picks up are fitness plus surface
+#   inseparably -- the reason mu is a definition.
+#
+# ! WHICH IS WHY IT IS A FLAG AND NOT THE DEFAULT, and why the run PRINTS HOW
+#   FAR XC MOVED. That shift is the whole question: a small one means the two
+#   zeros agreed anyway and merge buys nothing; a large one means a 2.7%
+#   subset just moved every cross-country course in the corpus, and the
+#   holdout has to say whether that was an improvement.
+GAUGE_SCOPES = ("sport", "merge")
+GAUGE_SCOPE_DEFAULT = "sport"
 PRIOR_GROUP_NAMES = ("XC", "TF:out", "TF:in")
 # ! THE INDEX, NAMED. priorGroupOfKeys returns 0 XC / 1 outdoor / 2 indoor and
 #   three places now depend on which one indoor is; a bare 2 in any of them is
@@ -614,7 +638,8 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         prior_place=PRIOR_PLACE, voter_agg="mean",
         prior_athlete=PRIOR_ATHLETE, prior_target=PRIOR_TARGET,
         indoor_centre=INDOOR_CENTRE, indoor_mode=INDOOR_MODE_DEFAULT,
-        gauge=GAUGE_DEFAULT, day_noise=DAY_NOISE_DEFAULT):
+        gauge=GAUGE_DEFAULT, gauge_scope=GAUGE_SCOPE_DEFAULT,
+        day_noise=DAY_NOISE_DEFAULT):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
@@ -744,6 +769,16 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     cell_era = np.array([int(k.rpartition("@e")[2]) if "@e" in k else 0
                          for k in cell_keys], dtype=np.int64)
     cell_group = cell_sport * 100_000 + cell_era
+    # ★ merge DROPS THE SPORT FROM THE GROUP KEY, and that is the entire
+    #   mechanism: one zero per era instead of one per (sport, era), so the
+    #   flat-400 reference cells sit in the SAME group as the XC cells and the
+    #   pin loop below anchors both on them. Nothing else changes.
+    gauge_scope = str(gauge_scope or GAUGE_SCOPE_DEFAULT).strip().lower()
+    if gauge_scope not in GAUGE_SCOPES:
+        raise ValueError(f"gauge_scope must be one of {GAUGE_SCOPES}, "
+                         f"got {gauge_scope!r}")
+    if gauge_scope == "merge":
+        cell_group = cell_era.copy()
     vote = np.zeros(n, dtype=bool)
     # the prior groups: XC, outdoor track, indoor track, per cell and course
     cell_pg = priorGroupOfKeys(cell_keys)
@@ -763,6 +798,12 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     # ★ THE FLAT-OUTDOOR-400 REFERENCE (plan §2). Per BASE key on the pack,
     #   lifted to cells through base_of_cell.
     hard_ref = np.zeros(n_cell, dtype=bool)
+    # ★★ WHAT EACH PINNED CELL IS PINNED AT. It was implicitly 0.0 everywhere,
+    #    which is right for a flat outdoor 400 -- that IS the zero, by
+    #    definition. Cross country's reference courses are named rather than
+    #    derived (engine/xc_reference.py) and the owner may want one of them
+    #    held at something other than zero, so the pin carries a value now.
+    hard_val = np.zeros(n_cell, dtype=np.float64)
     if gauge == "flat400":
         have_geom = (cols.get("track_length") is not None
                      and cols.get("track_indoor") is not None)
@@ -785,6 +826,47 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
             else:
                 hard_ref = ref_base[base_of_cell]
                 gauge_ref = hard_ref.copy()
+        # ★★ AND CROSS COUNTRY GETS THE SAME TREATMENT, FROM A NAMED LIST
+        #    (owner, 2026-09-20: "give Xc an absolute anchor too").
+        #
+        #    XC cells live in their own (sport, era) groups, and the loop below
+        #    already does `m_ref = m_g & gauge_ref; use = m_ref if m_ref.any()
+        #    else m_g` -- so adding XC reference cells to gauge_ref anchors the
+        #    XC groups on THEM instead of on the whole group's mean, with no
+        #    change to the loop at all. That mean is the see-saw: holding it at
+        #    zero is what forces every other course negative when the
+        #    heavily-raced ones read high.
+        #
+        # ⚠ THE TRACK ANCHOR CANNOT DO THIS JOB -- measured, not assumed. At
+        #   the bracket window the XC-to-indoor bridge reaches 0.2-0.5% of XC
+        #   rows (diag_xc_track_bridge.py, 2026-09-20), so merging the groups
+        #   would anchor XC on a half-percent subset. It is refuted; see
+        #   xc_reference.py's header before proposing it again.
+        #
+        # ! EMPTY IS THE DEFAULT AND IS SAFE. With nothing named, xc_mask is
+        #   all-False, gauge_ref is unchanged, and XC pins on its own mean
+        #   exactly as before -- announced, so nobody believes it is anchored.
+        try:
+            import xc_reference as xr
+            xc_mask, xc_val = xr.referenceMask(cell_keys)
+        except Exception as exc:                              # noqa: BLE001
+            print(f"[bracket] xc_reference unavailable ({exc}); cross country "
+                  f"pins on its own mean", flush=True)
+            xc_mask = np.zeros(n_cell, dtype=bool)
+            xc_val = np.zeros(n_cell, dtype=np.float64)
+        if xc_mask.any():
+            hard_ref = hard_ref | xc_mask
+            hard_val = np.where(xc_mask, xc_val, hard_val)
+            gauge_ref = gauge_ref | xc_mask
+            if verbose:
+                print(f"[bracket] xc anchor: {int(xc_mask.sum()):,} cross-"
+                      f"country cells are the reference, from "
+                      f"{len(xr.XC_REFERENCE)} named courses", flush=True)
+        elif verbose:
+            print("[bracket] xc anchor: NONE NAMED — cross country pins "
+                  "on its own vote-weighted mean, so its zero is a see-saw "
+                  "and courses are\n          negative BY CONSTRUCTION. "
+                  "Name some: engine/xc_reference.py --suggest", flush=True)
     if verbose:
         print(f"[bracket] gauge={gauge}: the zero is "
               + ("the OUTDOOR cells' weighted mean, so indoor's level is "
@@ -1021,7 +1103,10 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         #   reading to overwrite, and forcing it would publish a 0.0 that no
         #   race supports.
         if hard_ref.any():
-            D_new_ = np.where(hard_ref & (w_c_ > 0), 0.0, D_new_)
+            # ! hard_val IS 0.0 FOR EVERY FLAT-400 CELL, so this is the same
+            #   arithmetic it always was for track; only a named XC course can
+            #   carry a different number.
+            D_new_ = np.where(hard_ref & (w_c_ > 0), hard_val, D_new_)
         # ★★ AND INDOOR'S LEVEL IS ASSERTED, NOT SHRUNK TOWARD (owner,
         #    2026-09-20: "indoor is still way too 'easy' difficulty wise").
         #    One additive shift so the group's vote-weighted mean IS the
@@ -1223,6 +1308,28 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                 print("        ⚠ over a quarter are outside. That is evidence "
                       "the centre is wrong,\n          not evidence the ovals "
                       "are: read it before the next solve.")
+    # ★★ HOW FAR CROSS COUNTRY MOVED, WHICH IS THE WHOLE QUESTION ABOUT merge.
+    #    A small shift means the two zeros agreed anyway and merge bought
+    #    nothing; a large one means a 2.7%-of-rows bridge just moved every XC
+    #    course in the corpus, and only the holdout can say whether that helped.
+    if verbose:
+        xc_cells = (cell_sport == 0) & (w_c > 0)
+        if xc_cells.any():
+            xc_mean = float(np.average(D[xc_cells], weights=w_c[xc_cells]))
+            print(f"[bracket] gauge scope={gauge_scope}: cross country's "
+                  f"vote-weighted mean sits at {100 * xc_mean:+.2f}%",
+                  flush=True)
+            if gauge_scope == "sport" and abs(xc_mean) > 1e-6:
+                print("          (scope=sport holds it at 0 by construction; "
+                      "a non-zero here means\n           named reference "
+                      "courses are carrying the zero instead)", flush=True)
+            if gauge_scope == "merge":
+                neg = float(w_c[xc_cells & (D < 0)].sum()
+                            / max(w_c[xc_cells].sum(), 1e-9))
+                print(f"          {100 * neg:.1f}% of XC race weight now "
+                      f"reads NEGATIVE. Under scope=sport this is\n"
+                      f"          forced toward half by the mean pin; the "
+                      f"owner's test is whether it falls.", flush=True)
     if verbose and gauge == "flat400":
         n_ref = int((hard_ref & (w_c > 0)).sum())
         print(f"[bracket] gauge=flat400: {int(hard_ref.sum()):,} flat outdoor "
