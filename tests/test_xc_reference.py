@@ -14,8 +14,9 @@
 # ⚠ AND THE TRACK ANCHOR CANNOT REACH XC -- measured, not argued
 #   (diag_xc_track_bridge.py, 2026-09-20, 5% athlete sample): at the bracket
 #   window the XC-to-indoor bridge reaches 0.2-0.5% of XC rows, 2.7% even at
-#   60 days. Merging the gauge groups would anchor cross country on a
-#   half-percent subset. REFUTED -- re-run that script before proposing it.
+#   60 days. That is why merge is not the DEFAULT. Whether it HELPS is a
+#   held-out question, not a verdict from the bridge size --
+#   bracket_holdout.py --gauge-scope merge --compare settles it.
 #
 #   python -m unittest tests.test_xc_reference
 import io
@@ -150,7 +151,7 @@ class TheRefutationIsOnRecord(unittest.TestCase):
     def test_the_numbers_are_written_down_where_the_decision_lives(self):
         src = read("engine/xc_reference.py")
         self.assertIn("diag_xc_track_bridge", src)
-        for token in ("0.2%", "2.7%", "REFUTED"):
+        for token in ("0.2%", "2.7%", "bracket_holdout"):
             self.assertIn(token, src)
 
     def test_and_beside_the_engine_change(self):
@@ -202,3 +203,43 @@ class TheMergeScopeIsAvailableButNotTheDefault(unittest.TestCase):
         self.assertIn('gauge_scope=getattr(args, "gauge_scope", None)', rj)
         self.assertIn("--gauge-scope", read("deploy/run_pipeline.sh"))
         self.assertIn("XCP_GAUGE_SCOPE", read("deploy/solve_env.sh"))
+
+
+class TheMergeScopeIsScoredNotArgued(unittest.TestCase):
+    """★ owner, 2026-09-20: "we should see if the xc->indoor connection could
+    still be useful". A thin bridge is a NUMBER, not a verdict -- a small set
+    of athletes can still carry a level if they race a lot and are well
+    spread. What settles it is held-out error on the same rows, which is this
+    file's own standing rule: "a change to the gauge must be scored, not
+    argued about"."""
+
+    def test_the_holdout_can_score_both_scopes(self):
+        src = read("scripts/bracket_holdout.py")
+        self.assertIn('ap.add_argument("--gauge-scope"', src)
+        self.assertIn("gauge_scope=gauge_scope", src)
+
+    def test_every_call_site_forwards_it(self):
+        """⚠ THE LESSON --gauge TAUGHT TWICE. An option a call site does not
+        forward silently takes the default, so the run you think you scored is
+        not the run that happened."""
+        import ast
+        src = read("scripts/bracket_holdout.py")
+        tree = ast.parse(src)
+        fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        sites = 0
+        for host in fns.values():
+            for node in ast.walk(host):
+                if (isinstance(node, ast.Call)
+                        and getattr(node.func, "id", "") in ("score", "fitAll")):
+                    self.assertIn("gauge_scope", {k.arg for k in node.keywords},
+                                  f"{host.name} calls {node.func.id} without a "
+                                  f"gauge_scope")
+                    sites += 1
+        self.assertGreaterEqual(sites, 2, "the call sites vanished")
+
+    def test_nothing_calls_it_refuted(self):
+        """! THE MEASUREMENT IS NOT THE DECISION. 0.2-0.5% says merge cannot
+        be the DEFAULT on its own evidence; it does not say the connection is
+        useless, and the code must not pretend the holdout already ran."""
+        for f in ("engine/xc_reference.py", "engine/bracket_engine.py"):
+            self.assertNotIn("REFUTED", read(f), f)

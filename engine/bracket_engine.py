@@ -278,7 +278,8 @@ GAUGE_CHOICES = ("outdoor", "all", "flat400")
 #      "merge"  XC and track share ONE zero per era, so the flat-400 reference
 #               anchors cross country through the athletes who race both.
 #
-# ⚠ THE BRIDGE THAT HAS TO CARRY "merge" WAS MEASURED AND IT IS THIN
+# ⚠ THE BRIDGE THAT HAS TO CARRY "merge" WAS MEASURED AND IT IS THIN -- which
+#   is a reason to SCORE it, not a reason to dismiss it
 #   (diag_xc_track_bridge.py, 2026-09-20, 5% athlete sample): at the bracket
 #   window the XC-to-INDOOR bridge reaches 0.2-0.5% of XC rows, 2.7% at 60
 #   days. So merge anchors cross country on a few percent of its rows, and the
@@ -837,11 +838,11 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         #    zero is what forces every other course negative when the
         #    heavily-raced ones read high.
         #
-        # ⚠ THE TRACK ANCHOR CANNOT DO THIS JOB -- measured, not assumed. At
-        #   the bracket window the XC-to-indoor bridge reaches 0.2-0.5% of XC
-        #   rows (diag_xc_track_bridge.py, 2026-09-20), so merging the groups
-        #   would anchor XC on a half-percent subset. It is refuted; see
-        #   xc_reference.py's header before proposing it again.
+        # ⚠ THE TRACK ANCHOR REACHES XC ONLY THINLY -- measured, not assumed.
+        #   At the bracket window the XC-to-indoor bridge covers 0.2-0.5% of XC
+        #   rows (diag_xc_track_bridge.py, 2026-09-20). That is why merge
+        #   (GAUGE_SCOPES) is not the default; whether it HELPS is a holdout
+        #   question, and this named list is the route that needs no bridge.
         #
         # ! EMPTY IS THE DEFAULT AND IS SAFE. With nothing named, xc_mask is
         #   all-False, gauge_ref is unchanged, and XC pins on its own mean

@@ -64,6 +64,7 @@ def sampleAndSplit(cols, pct, seed, frac=0.10, split_seed=1):
 def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
           top=0.5, prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30,
           tilt=True, use_curve=True, verbose=True, joint_dump=None, gauge=be.GAUGE_DEFAULT,
+          gauge_scope=be.GAUGE_SCOPE_DEFAULT,
           prior_athlete=be.PRIOR_ATHLETE, prior_target=be.PRIOR_TARGET,
           day_noise=be.DAY_NOISE_DEFAULT, dump=None, compare=None):
     """Fit on the sample's training rows, score its held-out races.
@@ -82,6 +83,7 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
     f = be.fit(sub, npz, train=train_s, window=window, top=top, era_years=era_years,
                n_iter=iters, prior_races=prior_races, prior_group=prior_group, tilt=tilt,
                use_curve=use_curve, verbose=verbose, codes=codes, gauge=gauge,
+               gauge_scope=gauge_scope,
                prior_athlete=prior_athlete, prior_target=prior_target,
                day_noise=day_noise)
     pred, cov = be.predict(f)
@@ -380,6 +382,7 @@ def sameRows(sub, both, test_s, cov, pred, y, dump_path=None, full_ath=None,
 def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
            prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30, tilt=True,
            use_curve=True, gauge=be.GAUGE_DEFAULT,
+           gauge_scope=be.GAUGE_SCOPE_DEFAULT,
            prior_athlete=be.PRIOR_ATHLETE, prior_target=be.PRIOR_TARGET,
            day_noise=be.DAY_NOISE_DEFAULT):
     """Fit every row and write the difficulty file."""
@@ -389,6 +392,7 @@ def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
     f = be.fit(cols, npz, train=None, window=window, top=top, era_years=era_years,
                n_iter=iters, prior_races=prior_races, prior_group=prior_group, tilt=tilt,
                use_curve=use_curve, verbose=True, codes=codes, gauge=gauge,
+               gauge_scope=gauge_scope,
                prior_athlete=prior_athlete, prior_target=prior_target,
                day_noise=day_noise)
     np.savez(out_path, D=f["D"], votes=f["votes"], course_keys=np.array(f["cell_keys"]),
@@ -439,7 +443,7 @@ def _shrinkageSweep(cols, npz, codes, args, settings=None):
                     era_years=args.era_years, window=args.window, top=args.top,
                     prior_races=args.prior_races, prior_group=args.prior_group,
                     iters=args.iters, tilt=not args.no_tilt,
-                    use_curve=not args.no_curve, gauge=args.gauge,
+                    use_curve=not args.no_curve, gauge=args.gauge, gauge_scope=args.gauge_scope,
                     prior_athlete=k_a, prior_target=target, verbose=False)
         rows.append((label, k_a, target, out))
 
@@ -504,6 +508,18 @@ def main():
                     default=be.GAUGE_DEFAULT,
                     help="which cells are held at zero. Run both and compare "
                          "the held-out error before trusting either.")
+    # ★★ THE THING TO ACTUALLY SCORE (owner, 2026-09-20: "maybe 3 % could be
+    #    useful let's try it out see what it says"). The XC-to-indoor bridge is
+    #    thin -- 0.2-0.5% of XC rows at the bracket window -- but thin is not
+    #    the same as useless, and this file's own test says a gauge change
+    #    "must be scored, not argued about". Run both and compare on the SAME
+    #    held-out rows; that is what says whether it helps.
+    ap.add_argument("--gauge-scope", choices=be.GAUGE_SCOPES,
+                    default=be.GAUGE_SCOPE_DEFAULT,
+                    help="sport (default): each (sport, era) keeps its own "
+                         "zero; merge: XC and track share one, so the "
+                         "flat-400 reference anchors cross country. Score "
+                         "both with --dump/--compare before trusting either.")
     ap.add_argument("--prior-athlete", default=str(be.PRIOR_ATHLETE),
                     help="shrink each athlete-season's level toward its "
                          "POOL's mean by this many rows' worth. A number, or "
@@ -568,14 +584,14 @@ def main():
         fitAll(cols, npz, args.out, codes=codes, era_years=args.era_years,
                window=args.window, top=args.top, prior_races=args.prior_races,
                prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
-               use_curve=not args.no_curve, gauge=args.gauge,
+               use_curve=not args.no_curve, gauge=args.gauge, gauge_scope=args.gauge_scope,
                prior_athlete=_priorAthlete(args.prior_athlete),
                prior_target=args.prior_target, day_noise=args.day_noise)
         return
     score(cols, npz, codes=codes, pct=args.pct, seed=args.seed, era_years=args.era_years,
           window=args.window, top=args.top, prior_races=args.prior_races,
           prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
-          use_curve=not args.no_curve, gauge=args.gauge,
+          use_curve=not args.no_curve, gauge=args.gauge, gauge_scope=args.gauge_scope,
           prior_athlete=_priorAthlete(args.prior_athlete),
           prior_target=args.prior_target, day_noise=args.day_noise,
           dump=args.dump, compare=args.compare)

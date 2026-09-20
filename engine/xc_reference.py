@@ -25,12 +25,17 @@ xc_reference.py -- the cross-country courses that ARE the zero.
           45            33,695    1.9%       24,416    1.4%
           60            62,129    3.5%       48,906    2.7%
 
-  At the bracket window the indoor bridge reaches 0.2-0.5% of XC rows. The
-  idea was that XC ends in December and indoor starts in December, so athletes
-  racing both would carry the anchor across; they do not, in any number that
-  could hold a gauge. Merging the (sport, era) groups is therefore REFUTED --
-  do not propose it again without re-running that script. mu stays a
-  definition, which is what its own note always said.
+  At the bracket window the indoor bridge reaches 0.2-0.5% of XC rows, 2.7% at
+  60 days. That is THIN, and thin is a number rather than a verdict: a small
+  set of athletes can still carry a level if they are well spread and race a
+  lot, which is why merging the (sport, era) groups is available as
+  --gauge-scope merge and is SCORED rather than argued about
+  (scripts/bracket_holdout.py --gauge-scope merge --compare). What settles it
+  is held-out error on the same rows, not the size of the bridge.
+
+  What the number DOES say is that merge cannot be the default on its own
+  evidence, and that this file is the route that does not depend on the bridge
+  at all.
 
 ★ SO THE ANCHOR HAS TO BE INSIDE XC, AND IT CANNOT BE DERIVED. There is no
   terrain data: course_canonical holds a name and a GPS point, venue_elevation
