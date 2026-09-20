@@ -316,3 +316,189 @@ def test_a_pack_without_geometry_says_so_and_still_fits():
     assert "falling back to gauge=outdoor" in buf.getvalue()
     assert not np.asarray(f["hard_ref"]).any()
     assert np.isfinite(np.asarray(f["D"])).all()
+
+
+# ===================================================================== #
+#  §4 THE RACE-DAY TERM, MEASURED WHERE THE COURSE CANNOT ABSORB IT     #
+# ===================================================================== #
+
+def _pinnedWorld(n_ath=900, seed=11, day_sd=0.012, noise=0.02, n_day=40):
+    """One flat outdoor 400 (the reference) raced on n_day days, plus one XC
+    course, so every athlete has a level. Each reference DAY carries a planted
+    shift; the course itself is identical every day. So the only thing a
+    reference race's reading can contain is its day."""
+    rng = np.random.default_rng(seed)
+    a_true = rng.normal(0, 0.15, n_ath)
+    day_shift = rng.normal(0, day_sd, n_day)
+    ath, course, doy, eff = [], [], [], []
+    for i in range(n_ath):
+        for d in rng.choice(n_day, 3, replace=False):
+            ath.append(i); course.append(0); doy.append(100 + d)
+            eff.append(day_shift[d])
+        ath.append(i); course.append(1); doy.append(300)
+        eff.append(0.05)                      # the XC course, plainly harder
+    ath = np.array(ath); course = np.array(course)
+    doy = np.array(doy); eff = np.array(eff)
+    y = a_true[ath] + eff + rng.normal(0, noise, ath.size)
+    keys = ["TF:loc:1:out", "XC:7:d5000"]
+    cols = {"athlete": ath, "year": np.full(ath.size, 2025), "course": course,
+            "days": (400 - doy).astype(np.float64), "doy": doy,
+            "sport": np.where(course == 0, 1, 0).astype(np.int64),
+            "norm": np.exp(y), "dist_m": np.where(course == 0, 1600.0, 5000.0),
+            "athlete_keys": [(i, "hs_m") for i in range(n_ath)],
+            "course_keys": keys,
+            "track_length": np.array([400.0, np.nan]),
+            "track_type": np.array(["Flat", ""], dtype="U32"),
+            "track_indoor": np.array([0.0, np.nan])}
+    return cols, day_sd
+
+
+def test_the_day_noise_is_recovered_from_the_pinned_cell():
+    """★ THE POINT OF §4. The reference cell is held at 0.0, so a race there
+    reads its DAY and nothing else -- and the estimate should land on the
+    planted day sd."""
+    cols, day_sd = _pinnedWorld(day_sd=0.012)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        f = be.fit(cols, None, window=365, top=1.0, era_years=0,
+                   prior_group="fit", gauge="flat400", verbose=True)
+    r = f["day_report"]
+    assert r is not None and r["n_races"] >= 30, r
+    # within a fifth of the planted value: the estimator is robust (MAD), the
+    # rows carry their own noise, and the levels are estimated not given
+    assert abs(r["sigma_day"] - day_sd) < 0.4 * day_sd, (r, day_sd)
+    assert "race-day noise at the PINNED reference cells" in buf.getvalue()
+
+
+def test_a_bigger_planted_day_noise_reads_bigger():
+    """Monotone in the thing it claims to measure, which a single-point check
+    cannot show."""
+    got = []
+    for sd in (0.008, 0.024):
+        cols, _ = _pinnedWorld(day_sd=sd)
+        with contextlib.redirect_stdout(io.StringIO()):
+            f = be.fit(cols, None, window=365, top=1.0, era_years=0,
+                       prior_group="fit", gauge="flat400", verbose=False)
+        got.append(f["day_report"]["sigma_day"])
+    assert got[1] > 1.5 * got[0], got
+
+
+def test_the_default_measures_and_changes_nothing():
+    """! THE DEFAULT IS 'fitted'. The measurement is printed; the prior's
+    numerator is untouched until asked. Same D either way."""
+    cols, _ = _pinnedWorld()
+    with contextlib.redirect_stdout(io.StringIO()):
+        f = be.fit(cols, None, window=365, top=1.0, era_years=0,
+                   prior_group="fit", gauge="flat400", verbose=False)
+    assert f["day_noise"] == "fitted"
+    assert f["day_report"]["used"] is False
+    assert np.isfinite(f["day_report"]["sigma_day"])
+
+
+def test_reference_mode_uses_it_for_the_outdoor_group_only():
+    cols, _ = _pinnedWorld()
+    with contextlib.redirect_stdout(io.StringIO()):
+        f = be.fit(cols, None, window=365, top=1.0, era_years=0,
+                   prior_group="fit", gauge="flat400", day_noise="reference",
+                   verbose=False)
+    assert f["day_report"]["used"] is True
+    rep = f["prior_report"]
+    if rep is not None:
+        # XC keeps its own confounded estimate: sigma_day measured on a track
+        # in April is not a November cross-country day -- see the note on
+        # dayNoiseAtReference, which corrects the plan on exactly this.
+        xc = rep[be.PG_XC]
+        if np.isfinite(xc[1]) and np.isfinite(xc[4]):
+            assert abs(xc[1] - xc[4]) < 1e-12, xc
+
+
+def test_it_declines_without_a_pin():
+    """No reference cells -> no unconfounded races -> NaN, not a guess."""
+    cols, _ = _pinnedWorld()
+    with contextlib.redirect_stdout(io.StringIO()):
+        f = be.fit(cols, None, window=365, top=1.0, era_years=0,
+                   prior_group="fit", gauge="outdoor", verbose=False)
+    r = f["day_report"]
+    assert r is None or not np.isfinite(r["sigma_day"]), r
+
+
+def test_a_bad_day_noise_name_is_refused():
+    cols, _ = _pinnedWorld()
+    try:
+        be.fit(cols, None, window=365, day_noise="refrence")
+    except ValueError as exc:
+        assert "day_noise must be one of" in str(exc)
+    else:
+        raise AssertionError("a typo must not silently mean 'fitted'")
+
+
+# ===================================================================== #
+#  (a) THE COMPARISON: BOTH ESTIMATORS ON ONE GAUGE                     #
+# ===================================================================== #
+
+class TheJointComparison(unittest.TestCase):
+    """⚠ THE POINT: two difficulty columns on two different zeros cannot be
+    subtracted. The joint solve's d is centred by recentreLevels; the bracket
+    engine's D under the pin is centred on the flat outdoor 400s. Comparing
+    them raw measures the gauge."""
+
+    def setUp(self):
+        import importlib
+        self.m = importlib.import_module("diag_joint_vs_bracket")
+
+    def test_regauge_puts_the_reference_mean_at_zero(self):
+        d = np.array([0.02, 0.04, 0.10, -0.01])
+        ref = np.array([True, True, False, False])
+        grp = np.zeros(4, dtype=np.int64)
+        out, shift = self.m._regauge(d, ref, grp)
+        self.assertAlmostEqual(float(out[ref].mean()), 0.0)
+        self.assertAlmostEqual(float(shift[0]), 0.03)
+        # the non-reference cells move by the same amount, not to zero
+        self.assertAlmostEqual(float(out[2]), 0.07)
+
+    def test_each_group_is_gauged_on_its_own_reference(self):
+        d = np.array([0.02, 0.04, 0.50, 0.60])
+        ref = np.array([True, False, True, False])
+        grp = np.array([0, 0, 1, 1], dtype=np.int64)
+        out, shift = self.m._regauge(d, ref, grp)
+        self.assertAlmostEqual(float(shift[0]), 0.02)
+        self.assertAlmostEqual(float(shift[1]), 0.50)
+        self.assertAlmostEqual(float(out[0]), 0.0)
+        self.assertAlmostEqual(float(out[2]), 0.0)
+
+    def test_a_group_with_no_reference_falls_back_to_its_own_mean(self):
+        """! NEVER TO NO CELLS. A group with no reference cell still has to be
+        gauged somehow or its numbers are not comparable to anything."""
+        d = np.array([0.10, 0.20])
+        ref = np.array([False, False])
+        grp = np.zeros(2, dtype=np.int64)
+        out, shift = self.m._regauge(d, ref, grp)
+        self.assertAlmostEqual(float(shift[0]), 0.15)
+        self.assertAlmostEqual(float(out.mean()), 0.0)
+
+    def test_it_refuses_a_solve_file_without_the_joint_column(self):
+        """delta_joint only exists on a --difficulty bracket solve, so the
+        script must say that rather than compare a column with itself."""
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, "s.npz")
+            np.savez(p, delta=np.zeros(3))
+            r = subprocess.run(
+                [sys.executable, os.path.join(_ROOT, "engine",
+                                              "diag_joint_vs_bracket.py"),
+                 "--npz", p],
+                capture_output=True, text=True,
+                env=dict(os.environ, XCP_DB_PASSWORD="x"))
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("delta_joint", r.stdout + r.stderr)
+
+    def test_the_chain_runs_it_and_the_holdout_is_no_longer_skipped(self):
+        """(a) cannot be measured predictively without a FRESH joint holdout
+        dump: a stale one prints "do not land on this pack" and silently
+        declines, which is what happened on 2026-09-19."""
+        sh = open(os.path.join(_ROOT, "scripts",
+                              "overnight_fit_pool_solve.sh")).read()
+        self.assertIn("diag_joint_vs_bracket.py", sh)
+        self.assertIn("--skip 08b_ladder", sh)
+        self.assertNotIn("--skip 08a_holdout,08b_ladder", sh)

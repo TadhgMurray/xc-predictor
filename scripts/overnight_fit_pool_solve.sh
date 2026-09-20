@@ -240,11 +240,24 @@ fi
 #   after it -- 07_pack, 08_golive (the bracket engine), 09_tilt, 09b_fill,
 #   10_rankings and the unit builders -- then reads the rebuilt numbers.
 #
-# ! THE HOLDOUT AND THE LADDER ARE SKIPPED, as every documented run skips
-#   them: six to eight hours that do not change the site. Score the curve and
-#   the athlete prior afterwards with scripts/bracket_holdout.py instead.
+# ⚠ THE LADDER IS SKIPPED; THE HOLDOUT IS NOT, AND THAT IS A CHANGE. The
+#   ladder is the six-to-eight-hour step and it does not change the site, so it
+#   stays out. 08a_holdout is ~40 minutes and it is the thing that writes the
+#   joint model's per-row held-out predictions -- without a FRESH one, the
+#   joint-against-bracket comparison silently falls back to a dump written
+#   against another pack and prints "the joint file's held-out rows do not land
+#   on this pack", which is exactly what happened on 2026-09-19. Option (a) --
+#   publishing the joint solve's own difficulties -- cannot be measured without
+#   it, and measuring it is the point of this run.
 step_fatal solve bash deploy/run_pipeline.sh --from 5 \
-    --skip 08a_holdout,08b_ladder
+    --skip 08b_ladder
+
+# ---------------------------------------------------- 4. the comparison (a)
+# ! AFTER THE SOLVE, READ-ONLY, AND NOT FATAL. Both estimators re-gauged onto
+#   the reference class, because comparing them on two different zeros measures
+#   the gauge and not the model. The joint solve's shift onto that reference is
+#   the "everything outside California went negative" complaint as a number.
+step joint_vs_bracket "$PY" engine/diag_joint_vs_bracket.py --show 25 || true
 
 rm -f "$LOCK"
 say "results/results_tf released — the scrape chain may retry meets now"
@@ -253,6 +266,9 @@ say "done. read in this order:"
 say "  $LOGDIR/curve.log          — SHAPE TEST (ms_*/elem_* only), and whether"
 say "                               floored_segments reached zero"
 say "  $LOGDIR/school_levels.log  — schools added, and collisions still dropped"
+say "  $LOGDIR/joint_vs_bracket.log — (a): the two estimators on ONE gauge, and"
+say "                               how far the joint solve's zero sits from the"
+say "                               flat-outdoor-400 reference"
 say "  $LOGDIR/team_pool.log      — how many team ids fell to 'pro' under the"
 say "                               15-athletes-all-time rule"
 say "  $LOGDIR/ability_deciles.log — does the exponent move with ability, in"

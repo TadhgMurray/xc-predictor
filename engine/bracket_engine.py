@@ -294,6 +294,15 @@ INDOOR_CENTRE = 0.003
 #   is evidence the centre is wrong, which is the only way this number gets
 #   corrected.
 INDOOR_GATES = (-0.003, 0.020)
+
+# ★ WHERE THE COURSE PRIOR'S NUMERATOR COMES FROM (plan §4). "fitted" is the
+#   historic estimator: the within-course spread of race readings, over courses
+#   with 2+ races. "reference" uses the spread measured at the PINNED cells
+#   instead, for the group those cells belong to -- unconfounded, because a
+#   pinned cell's difficulty is 0.0 by construction. The default MEASURES both
+#   and changes nothing, so the choice is scored rather than assumed.
+DAY_NOISE_DEFAULT = "fitted"
+DAY_NOISE_CHOICES = ("fitted", "reference")
 PRIOR_FIT = "fit"
 PRIOR_FIT_WARMUP = 6           # passes on the stated priors before the estimate
 PRIOR_FIT_RANGE = (0.25, 8.0)  # races; outside it the estimate is not believed
@@ -413,7 +422,8 @@ def _statedPriors(prior_group):
 
 def fitPriors(D_race, w_race, ok_race, race_base, base_pg, n_base,
               stated, lo=PRIOR_FIT_RANGE[0], hi=PRIOR_FIT_RANGE[1],
-              min_courses=PRIOR_FIT_MIN_COURSES):
+              min_courses=PRIOR_FIT_MIN_COURSES, sigma_day=None,
+              sigma_day_groups=(PG_OUTDOOR,)):
     """Per prior group: (prior in races, sigma_day, tau, n multi-race
     courses). The within-course variance of the race readings (weighted
     as the engine weights them) against the between-course variance of
@@ -438,21 +448,87 @@ def fitPriors(D_race, w_race, ok_race, race_base, base_pg, n_base,
         m = multi & (base_pg == g)
         n_c = int(m.sum())
         if n_c < min_courses:
-            out.append((float(stated[g]), np.nan, np.nan, n_c))
+            out.append((float(stated[g]), np.nan, np.nan, n_c, np.nan))
             continue
         s_w2 = float(ss_b[m].sum() / max(df_b[m].sum(), 1e-12))
+        # ★ THE MEASURED DAY NOISE REPLACES THE CONFOUNDED ONE, where it was
+        #   measured. Only for the groups named -- by default just the group
+        #   the reference cells live in -- because sigma_day is an estimate for
+        #   THOSE days; see the note on dayNoiseAtReference.
+        s_w2_fitted = s_w2
+        if (sigma_day is not None and np.isfinite(sigma_day) and sigma_day > 0
+                and g in sigma_day_groups):
+            s_w2 = float(sigma_day) ** 2
         means = mean_b[m]
         # the between-course variance, less what the readings' own noise
         # puts into the means (each mean is s_w2 / effective races)
         eff = sw[m] ** 2 / np.maximum(sw2[m], 1e-12)
         tau2 = float(means.var() - np.mean(s_w2 / np.maximum(eff, 1e-12)))
         if not np.isfinite(s_w2) or s_w2 <= 0:
-            out.append((float(stated[g]), np.nan, np.nan, n_c))
+            out.append((float(stated[g]), np.nan, np.nan, n_c, np.nan))
             continue
         k = hi if tau2 <= 0 else s_w2 / tau2
         k = float(np.clip(k, lo, hi))
-        out.append((k, float(np.sqrt(s_w2)), float(np.sqrt(max(tau2, 0.0))), n_c))
+        # ! THE FITTED SIGMA IS STILL REPORTED even when it was not used, so
+        #   the two estimates can be compared in the log rather than one of
+        #   them quietly disappearing.
+        out.append((k, float(np.sqrt(s_w2)), float(np.sqrt(max(tau2, 0.0))),
+                    n_c, float(np.sqrt(s_w2_fitted))))
     return out
+
+
+# ★★ THE RACE-DAY TERM, FROM THE CELLS THAT CANNOT ABSORB IT (plan §4; the
+#    pin is what makes it possible).
+#
+#    In an ordinary cell the course effect and the day effect are the same
+#    quantity wearing two names, and in a ONE-RACE cell they are numerically
+#    identical -- tests/test_thin_course_shrinkage.py measured sigma_u
+#    collapsing to 0.0012, the course keeping 100% of one day's noise. There is
+#    nothing in the data to separate them, because separating them is what the
+#    cell's OWN races would have to do.
+#
+#    A pinned reference cell breaks that. Its difficulty is 0.0 by construction,
+#    so a deviation at one of its races is not partly the course: it IS the day.
+#    That gives a direct, unconfounded estimate of race-day spread.
+#
+# ⚠⚠ AND IT IS AN ESTIMATE FOR TRACK DAYS, NOT FOR ALL DAYS -- which is a
+#    correction to my own plan. §4 says to use this sigma as "the numerator of
+#    the XC shrinkage instead of estimating it from XC's own confounded cells".
+#    That is wrong as written, and the fitted priors say so: XC race-day sd
+#    measured 2.57% against TF:out's 1.60%. An outdoor track in April and a
+#    cross-country course in November do not have the same day noise -- mud,
+#    wind and course condition are most of the second number. Substituting the
+#    track figure into XC would SHRINK LESS (k = sigma^2/tau^2 falls), so thin
+#    XC courses would keep MORE of their day noise: the exact defect §4 exists
+#    to fix, arrived at backwards.
+#
+# ! SO WHAT THIS IS FOR. The reference races give an unconfounded sigma_day for
+#   the group the reference cells belong to (TF:out), and fitPriors gives a
+#   confounded one for the same group from multi-race courses only. Printing
+#   both MEASURES the selection bias -- the prior is fitted on the 17,333 XC
+#   courses with 2+ races and applied to the 14,147 with one -- instead of
+#   assuming its size. If the two agree on outdoor track, the confounded
+#   estimator is vindicated for XC too and nothing needs changing. If they
+#   disagree, the gap is the bias, and THEN we know what to do about XC.
+#   --day-noise reference makes it the numerator so the choice can be scored;
+#   the default measures and changes nothing.
+def dayNoiseAtReference(D_race, w_race, ok_race, race_cell, hard_ref,
+                        min_races=30):
+    """(sigma_day, n_races) from the races held at a pinned reference cell.
+
+    Robust by construction -- 1.4826 * MAD, not an sd -- because one scraped
+    1-second time is what took the first full-corpus run to NaN, and a
+    reference race has no course term to hide behind."""
+    if hard_ref is None or not np.any(hard_ref):
+        return float("nan"), 0
+    m = np.asarray(ok_race, dtype=bool) & hard_ref[np.asarray(race_cell)]
+    n = int(m.sum())
+    if n < min_races:
+        return float("nan"), n
+    u = np.asarray(D_race, dtype=np.float64)[m]
+    med = float(np.median(u))
+    mad = float(np.median(np.abs(u - med)))
+    return 1.4826 * mad, n
 
 
 # Purpose:   a race's reading from its voters, as a MEDIAN over each race.
@@ -506,7 +582,8 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         prior_warmup=PRIOR_FIT_WARMUP, place_radius=PLACE_RADIUS_M,
         prior_place=PRIOR_PLACE, voter_agg="mean",
         prior_athlete=PRIOR_ATHLETE, prior_target=PRIOR_TARGET,
-        indoor_centre=INDOOR_CENTRE, gauge=GAUGE_DEFAULT):
+        indoor_centre=INDOOR_CENTRE, gauge=GAUGE_DEFAULT,
+        day_noise=DAY_NOISE_DEFAULT):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
@@ -688,6 +765,12 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     prior_athlete_stated = 0.0 if fit_athlete else float(prior_athlete or 0.0)
     prior_g = prior_stated.copy()
     prior_report = None
+    day_report = None
+    dn = str(day_noise or DAY_NOISE_DEFAULT).strip().lower()
+    if dn not in DAY_NOISE_CHOICES:
+        raise ValueError(f"day_noise must be one of {DAY_NOISE_CHOICES}, "
+                         f"not {day_noise!r}")
+    use_ref_day = dn == "reference"
     # the places: courses within place_radius of each other, of one kind
     place_of_base, n_place = placeClusters(
         keys, cols.get("course_lat"), cols.get("course_lon"), place_radius)
@@ -922,8 +1005,37 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         st = cellStep(a_local, prior_g)
         if fit_priors and prior_report is None and it >= prior_warmup:
             race_base = base_of_cell[race_cell]
-            prior_report = fitPriors(st["D_race"], st["w_race"], st["ok_race"], race_base,
-                                     base_pg, n_base, prior_stated)
+            # ★ MEASURED FIRST, FROM THE PINNED CELLS (plan §4). At a reference
+            #   cell D is 0.0 by construction, so the race's reading is the DAY
+            #   and nothing else -- the one place the two come apart.
+            sigma_day_ref, n_ref_race = dayNoiseAtReference(
+                st["D_race"], st["w_race"], st["ok_race"], race_cell, hard_ref)
+            prior_report = fitPriors(st["D_race"], st["w_race"], st["ok_race"],
+                                     race_base, base_pg, n_base, prior_stated,
+                                     sigma_day=(sigma_day_ref if use_ref_day
+                                                else None))
+            day_report = dict(sigma_day=sigma_day_ref, n_races=n_ref_race,
+                              used=bool(use_ref_day
+                                        and np.isfinite(sigma_day_ref)))
+            if verbose and np.isfinite(sigma_day_ref):
+                fitted_out = prior_report[PG_OUTDOOR][4]
+                print(f"[bracket] race-day noise at the PINNED reference cells: "
+                      f"{100 * sigma_day_ref:.2f}% over {n_ref_race:,} races "
+                      f"(robust, 1.4826*MAD)")
+                if np.isfinite(fitted_out):
+                    gap = sigma_day_ref - fitted_out
+                    print(f"        TF:out's own multi-race estimate is "
+                          f"{100 * fitted_out:.2f}% -- the pinned cells say "
+                          f"{gap * 100:+.2f}% against it. That gap is the "
+                          f"selection bias,\n          measured rather than "
+                          f"assumed; it is "
+                          + ("USED as the numerator (--day-noise reference)"
+                             if day_report["used"] else
+                             "reported only (default; --day-noise reference "
+                             "uses it)"))
+            elif verbose and hard_ref.any():
+                print(f"[bracket] race-day noise at the reference cells: not "
+                      f"measurable ({n_ref_race:,} reference races, needs 30)")
             prior_g = np.array([p[0] for p in prior_report], dtype=np.float64)
             st = cellStep(a_local, prior_g)
         D_new, w_c, ok_race = st["D_new"], st["w_c"], st["ok_race"]
@@ -1059,6 +1171,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                 prior_group_stated=prior_stated, prior_group_fitted=fit_priors,
                 prior_report=prior_report, prior_lines=prior_lines,
                 gauge=gauge, hard_ref=hard_ref, indoor_centre=indoor_centre,
+                day_noise=dn, day_report=day_report,
                 indoor_gate_report=indoor_gate_report,
                 cell_prior_group=cell_pg, race_sat=race_sat,
                 D_cell_raw=D_cell_raw, D_base=D_base, base_votes=w_b,
@@ -1211,11 +1324,18 @@ def priorReport(prior_g, stated, report, fitted, races_per_base, w_b, base_pg):
         keep = 100.0 / (1.0 + k)
         src = f"stated {stated[g]:g}"
         if fitted and report is not None:
-            _k, s_day, tau, n_c = report[g]
+            _k, s_day, tau, n_c, s_fit = report[g]
             if np.isfinite(s_day):
                 src = (f"FITTED on {n_c:,} courses with 2+ races: race-day sd "
                        f"{100 * s_day:.2f}%, course sd {100 * tau:.2f}%, ratio "
                        f"{s_day ** 2 / max(tau ** 2, 1e-12):.2f} (stated {stated[g]:g})")
+                # ! BOTH ESTIMATES, SIDE BY SIDE, when the measured one was
+                #   used: the gap between them IS the selection bias (plan §4,
+                #   and see dayNoiseAtReference).
+                if np.isfinite(s_fit) and abs(s_fit - s_day) > 1e-9:
+                    src += (f" [race-day sd from the PINNED REFERENCE races, "
+                            f"not from these courses, which gave "
+                            f"{100 * s_fit:.2f}%]")
             else:
                 src = f"stated {stated[g]:g} ({n_c:,} courses with 2+ races, too few to fit)"
         lines.append(f"{name:<7} {k:5.2f} races  [{src}]; {n_courses:,} courses, "

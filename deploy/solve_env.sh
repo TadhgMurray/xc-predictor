@@ -52,6 +52,15 @@
 #   the same number, said to the engine that publishes.
 : "${XCP_GAUGE:=flat400}"                   # flat outdoor 400s at 0.0 each
 : "${XCP_BRACKET_INDOOR_CENTRE:=0.003}"     # indoor's shrinkage target
+
+# ★ §4 THE RACE-DAY TERM. "fitted" keeps the historic numerator (each group's
+#   own multi-race courses) and MEASURES the pinned cells' race-day spread
+#   beside it; the gap between the two is the selection bias, printed. Left at
+#   fitted deliberately for this run: the measurement comes first, and
+#   "reference" is scored against it with
+#   scripts/bracket_holdout.py --gauge flat400 --day-noise reference
+#   before it decides anything.
+: "${XCP_DAY_NOISE:=fitted}"
 # ★ MEASURED, NOT CHOSEN. run_joint's default is 21 days. Swept on the SAME
 #   held-out rows -- the only fair comparison, since a wider window also
 #   changes coverage -- against a 21-day baseline, 571,290 rows covered by all:
@@ -102,14 +111,14 @@
 : "${XCP_DB_QUIET:=1}"
 
 export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
-       XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE \
+       XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
        XCP_IMPORTANCE XCP_DB_QUIET
 
 # Anything else already in the environment is left alone, so a one-off
 #   XCP_PROBES=16 bash scripts/overnight_fit_pool_solve.sh
 # still works.
 SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
-XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE \
+XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
 XCP_IMPORTANCE XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
 XCP_SPORT_LEVEL_POOLS XCP_BRACKET_PRIOR XCP_BRACKET_PLACE_RADIUS \
 XCP_BRACKET_PLACE_PRIOR XCP_BRACKET_WINDOW XCP_COURSE_SCALE \

@@ -1614,6 +1614,12 @@ def buildParser():
     # ★ AND WHERE INDOOR SITS (plan §3). The same number XCP_INDOOR_LEVEL
     #   asserts to the joint solve, now reaching the bracket engine too: it is
     #   the TF:in group's shrinkage target, not a clamp.
+    # ★ §4. Only meaningful with --gauge flat400, which is what makes the
+    #   reference races unconfounded.
+    ap.add_argument("--day-noise", default=None,
+                    choices=list(be.DAY_NOISE_CHOICES),
+                    help="the bracket course prior's numerator: fitted "
+                         "(historic) or reference (the pinned cells)")
     ap.add_argument("--bracket-indoor-centre", type=float, default=None,
                     help="log-time centre the indoor cells shrink toward "
                          f"(bracket_engine.INDOOR_CENTRE, {be.INDOOR_CENTRE})")
@@ -1882,7 +1888,8 @@ def trackPopulationShift(D_b, cell_keys, cell_row, level_row, meet_class_row=Non
 def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         window=21.0, top=0.5, verbose=True, prior_group="fit",
                         track_level_by_pool=True, place_radius=None, prior_place=None,
-                        course_scale="fit", gauge=None, indoor_centre=None):
+                        course_scale="fit", gauge=None, indoor_centre=None,
+                        day_noise=None):
     """Swap the joint solve's course difficulties for the bracket engine's,
     in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
     delta kept as delta_joint). Returns a dict of what happened."""
@@ -1936,6 +1943,8 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         place_kw["gauge"] = gauge
     if indoor_centre is not None:
         place_kw["indoor_centre"] = float(indoor_centre)
+    if day_noise is not None:
+        place_kw["day_noise"] = day_noise
     f = be.fit(sub, npz_like, train=None, window=window, top=top, codes=codes, z=z,
                h_row=h, verbose=verbose, prior_group=be.parsePrior(prior_group), **place_kw)
     D_b = np.asarray(f["D"], dtype=np.float64).copy()
@@ -2346,7 +2355,8 @@ def main():
                                 course_scale=getattr(args, "course_scale", "fit"),
                                 gauge=getattr(args, "gauge", None),
                                 indoor_centre=getattr(args, "bracket_indoor_centre",
-                                                      None))
+                                                      None),
+                                day_noise=getattr(args, "day_noise", None))
         except Exception:                                        # noqa: BLE001
             import traceback
             traceback.print_exc()

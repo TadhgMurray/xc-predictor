@@ -65,7 +65,7 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
           top=0.5, prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30,
           tilt=True, use_curve=True, verbose=True, joint_dump=None, gauge=be.GAUGE_DEFAULT,
           prior_athlete=be.PRIOR_ATHLETE, prior_target=be.PRIOR_TARGET,
-          dump=None, compare=None):
+          day_noise=be.DAY_NOISE_DEFAULT, dump=None, compare=None):
     """Fit on the sample's training rows, score its held-out races.
     Returns dict(sd, covered, by_sport, n_train, n_test, seconds, base_line,
     same_rows). joint_dump: the joint model's per-row held-out predictions
@@ -82,7 +82,8 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
     f = be.fit(sub, npz, train=train_s, window=window, top=top, era_years=era_years,
                n_iter=iters, prior_races=prior_races, prior_group=prior_group, tilt=tilt,
                use_curve=use_curve, verbose=verbose, codes=codes, gauge=gauge,
-               prior_athlete=prior_athlete, prior_target=prior_target)
+               prior_athlete=prior_athlete, prior_target=prior_target,
+               day_noise=day_noise)
     pred, cov = be.predict(f)
     y = np.log(np.asarray(sub["norm"], dtype=np.float64))
     m = test_s & cov
@@ -379,7 +380,8 @@ def sameRows(sub, both, test_s, cov, pred, y, dump_path=None, full_ath=None,
 def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
            prior_races=be.PRIOR_RACES, prior_group=be.PRIOR_FIT, iters=30, tilt=True,
            use_curve=True, gauge=be.GAUGE_DEFAULT,
-           prior_athlete=be.PRIOR_ATHLETE, prior_target=be.PRIOR_TARGET):
+           prior_athlete=be.PRIOR_ATHLETE, prior_target=be.PRIOR_TARGET,
+           day_noise=be.DAY_NOISE_DEFAULT):
     """Fit every row and write the difficulty file."""
     t0 = time.time()
     if codes is None or "_cell" not in cols:
@@ -387,7 +389,8 @@ def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
     f = be.fit(cols, npz, train=None, window=window, top=top, era_years=era_years,
                n_iter=iters, prior_races=prior_races, prior_group=prior_group, tilt=tilt,
                use_curve=use_curve, verbose=True, codes=codes, gauge=gauge,
-               prior_athlete=prior_athlete, prior_target=prior_target)
+               prior_athlete=prior_athlete, prior_target=prior_target,
+               day_noise=day_noise)
     np.savez(out_path, D=f["D"], votes=f["votes"], course_keys=np.array(f["cell_keys"]),
              D_race=f["D_race"], votes_race=f["votes_race"],
              races_per_cell=f["races_per_cell"], races_per_base=f["races_per_base"],
@@ -528,6 +531,14 @@ def main():
                     choices=list(be.PRIOR_TARGETS),
                     help="the pool centre the athlete prior pulls toward "
                          f"(default {be.PRIOR_TARGET})")
+    # ★ §4: where the course prior's numerator comes from. "reference" uses
+    #   the day noise measured at the PINNED cells (needs --gauge flat400);
+    #   the default measures it and changes nothing.
+    ap.add_argument("--day-noise", default=be.DAY_NOISE_DEFAULT,
+                    choices=list(be.DAY_NOISE_CHOICES),
+                    help="the course prior's numerator: fitted (each group's "
+                         "own multi-race courses) or reference (the pinned "
+                         "cells' race-day spread)")
     ap.add_argument("--sweep-shrinkage", action="store_true",
                     help="score prior off / mean-target / median-target on the "
                          "SAME rows and print the table. Answers both 'does "
@@ -559,14 +570,14 @@ def main():
                prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
                use_curve=not args.no_curve, gauge=args.gauge,
                prior_athlete=_priorAthlete(args.prior_athlete),
-               prior_target=args.prior_target)
+               prior_target=args.prior_target, day_noise=args.day_noise)
         return
     score(cols, npz, codes=codes, pct=args.pct, seed=args.seed, era_years=args.era_years,
           window=args.window, top=args.top, prior_races=args.prior_races,
           prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
           use_curve=not args.no_curve, gauge=args.gauge,
           prior_athlete=_priorAthlete(args.prior_athlete),
-          prior_target=args.prior_target,
+          prior_target=args.prior_target, day_noise=args.day_noise,
           dump=args.dump, compare=args.compare)
 
 
