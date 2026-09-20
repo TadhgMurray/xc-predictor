@@ -217,6 +217,58 @@ class IndoorsLevelIsAsserted(unittest.TestCase):
         self.assertIn("the pin did NOT land", self.src)
 
 
+class NothingMovesTheCellsTheGaugePinned(unittest.TestCase):
+    """⚠⚠ THE SECOND HALF of "track difficulty is not set to 0 for all outdoor
+    400m tracks" (owner, 2026-09-20), and the half that widening the reference
+    class would NOT have fixed.
+
+    bracketDifficulties already refuses the outdoor-mean recentring under
+    gauge=flat400 ("under a gauge the engine itself enforces, re-centring is
+    not a correction, it is a second opinion"). trackPopulationShift, thirty
+    lines lower, was doing exactly the same thing: it subtracts each host
+    population's outdoor-cell MEAN from every cell of that population --
+    including the flat outdoor 400s just held at 0.0 exactly, and the indoor
+    cells whose mean was just asserted. So the engine's census line was true
+    of the fit and false of the published table.
+    """
+
+    def setUp(self):
+        self.src = read("engine/run_joint.py")
+
+    def test_the_population_shift_is_skipped_under_the_pinned_gauge(self):
+        self.assertIn("if skip_recentre and want_pop and not force_pop:",
+                      self.src)
+
+    def test_it_is_the_same_test_the_recentring_already_uses(self):
+        """★ ONE CONDITION, NOT TWO OPINIONS about when the gauge is in
+        force. Both guards key off skip_recentre."""
+        self.assertIn('skip_recentre = str(f.get("gauge") or "") == "flat400"',
+                      self.src)
+        self.assertLess(self.src.index("skip_recentre ="),
+                        self.src.index("if skip_recentre and want_pop"))
+
+    def test_the_shift_moves_indoor_with_its_population(self):
+        """! WHY IT MATTERED FOR INDOOR TOO, not just for the 400s -- the
+        docstring of the shift says indoor cells move with their population,
+        so an asserted indoor centre was moved by it as well."""
+        i = self.src.index("def trackPopulationShift")
+        body = self.src[i:i + 900]
+        self.assertIn("indoor cells of the", body)
+        self.assertIn("population move with it", body)
+
+    def test_force_survives_argparse(self):
+        """! A STRING, NOT AN int. The call site used to wrap the flag in
+        bool(), which would collapse "force" to True and lose the only way to
+        ask for the old behaviour."""
+        self.assertIn('choices=("0", "1", "force")', self.src)
+        self.assertNotIn('bool(getattr(args, "track_level_by_pool"', self.src)
+
+    def test_zero_still_means_off(self):
+        """⚠ "0" IS A NON-EMPTY STRING AND THEREFORE TRUTHY. Deciding "off"
+        explicitly is what stops --track-level-by-pool 0 turning it ON."""
+        self.assertIn('tlbp not in ("0", "false", "none", "")', self.src)
+
+
 class TheReferenceClassCoversUnrecordedOvals(unittest.TestCase):
     """★★ owner, 2026-09-20: "track difficulty is not set to 0 for all outdoor
     400m tracks". It was not -- the predicate demanded a positively-known

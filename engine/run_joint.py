@@ -1572,11 +1572,17 @@ def buildParser():
     ap.add_argument("--bracket-place-prior", type=float, default=None,
                     help="races' worth of pull of a course toward its place "
                          "(bracket_engine.PRIOR_PLACE, 2)")
-    ap.add_argument("--track-level-by-pool", type=int, default=1,
+    # ! A STRING, NOT AN int, SO "force" SURVIVES argparse. It used to be
+    #   type=int and the call site then wrapped it in bool(), which would have
+    #   collapsed "force" to True and lost the distinction the gauge needs.
+    ap.add_argument("--track-level-by-pool", default="1",
+                    choices=("0", "1", "force"),
                     help="1 (default): under --difficulty bracket, each host population's "
                          "outdoor tracks (hs, college, ms, ...) are recentred to the same "
-                         "zero (run_joint.trackPopulationShift); 0 leaves the level the "
-                         "linkage gave them")
+                         "zero (run_joint.trackPopulationShift), EXCEPT under "
+                         "--gauge flat400, where it would move the cells the gauge pinned "
+                         "at 0.0; 0 leaves the level the linkage gave them; force applies "
+                         "it even under flat400")
     ap.add_argument("--course-scale", default="fit",
                     help="under --difficulty bracket, the per-sport multiplier on the "
                          "course effects: 'fit' (default, from the tilt-by-band table so "
@@ -1991,7 +1997,51 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                 shift_cell[g == gg] = float(D_b[m].mean())
     D_b = D_b - shift_cell
     # the track level by host population (see trackPopulationShift)
+    #
+    # ⚠⚠ AND IT IS THE SAME SECOND OPINION skip_recentre REFUSES, ONE FUNCTION
+    #    LOWER DOWN (2026-09-20, owner: "track difficulty is not set to 0 for
+    #    all outdoor 400m tracks"). trackPopulationShift takes the MEAN of each
+    #    host population's outdoor cells and subtracts it from every cell of
+    #    that population -- which includes the flat outdoor 400s the engine has
+    #    just held at 0.0 EXACTLY, and the indoor cells whose mean it has just
+    #    asserted at +0.3%. A cell pinned to zero then publishes at minus that
+    #    population's mean, so the engine's own census line ("held at 0.0
+    #    exactly") was true of the fit and false of the table.
+    #
+    #    That is the second half of the owner's complaint, and it is why
+    #    widening the reference class alone would not have fixed it: even the
+    #    cells that WERE in the class were moved afterwards.
+    #
+    # ★ SO UNDER gauge=flat400 THE ZERO IS ALREADY SET, AND RE-CENTRING ANY
+    #   SUBSET OF IT IS NOT A CORRECTION. The gauge is an identity statement --
+    #   a flat outdoor 400 IS 0.0 -- and no later shift may contradict it. This
+    #   is the identical argument skip_recentre makes thirty lines above, and
+    #   it is applied here by the identical test.
+    #
+    # ! FORCEABLE, because the per-population level it removes may be real and
+    #   is a separate question from the gauge: XCP_TRACK_LEVEL_BY_POOL=force
+    #   applies it anyway and says so. Plain 1 (the default) no longer beats
+    #   the gauge.
     pop_rows = []
+    # ! "0" IS A NON-EMPTY STRING AND THEREFORE TRUTHY. The flag arrives as
+    #   text now (see --track-level-by-pool), so "off" is decided explicitly
+    #   rather than by Python's idea of truth -- otherwise
+    #   --track-level-by-pool 0 would silently turn the shift ON.
+    tlbp = str(track_level_by_pool).strip().lower()
+    force_pop = tlbp == "force"
+    want_pop = tlbp not in ("0", "false", "none", "")
+    track_level_by_pool = want_pop
+    if skip_recentre and want_pop and not force_pop:
+        print("[joint] bracket: gauge=flat400 pinned the reference cells at "
+              "0.0 and asserted indoor's centre, so the track-level-by-"
+              "population shift is SKIPPED -- it would move both. "
+              "XCP_TRACK_LEVEL_BY_POOL=force applies it anyway.", flush=True)
+        track_level_by_pool = 0
+    elif force_pop and skip_recentre:
+        print("[joint] bracket: ⚠ XCP_TRACK_LEVEL_BY_POOL=force -- the "
+              "population shift runs and WILL move the cells gauge=flat400 "
+              "pinned at 0.0. The published zero is then not the gauge's.",
+              flush=True)
     if track_level_by_pool and athlete_pool is not None:
         names = [str(n) for n in pool_names]
         level_of_pool = np.array([n.split("_", 1)[0] for n in names], dtype=object)
@@ -2362,7 +2412,7 @@ def main():
             bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                                 window=args.bracket_window, top=args.bracket_top,
                                 prior_group=getattr(args, "bracket_prior", "fit"),
-                                track_level_by_pool=bool(getattr(args, "track_level_by_pool", 1)),
+                                track_level_by_pool=getattr(args, "track_level_by_pool", "1"),
                                 place_radius=getattr(args, "bracket_place_radius", None),
                                 prior_place=getattr(args, "bracket_place_prior", None),
                                 course_scale=getattr(args, "course_scale", "fit"),
