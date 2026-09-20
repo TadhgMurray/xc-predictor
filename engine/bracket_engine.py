@@ -35,6 +35,7 @@ bracket_engine.py -- course difficulty the owner's way, as a second solve.
   joint model (scripts/bracket_holdout.py), so the two are compared with a
   number. predict() gives a held-out row's ln(norm) as a_s + h * D + curve.
 """
+import os
 import math
 
 import numpy as np
@@ -809,9 +810,33 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         have_geom = (cols.get("track_length") is not None
                      and cols.get("track_indoor") is not None)
         if not have_geom:
-            print("[bracket] gauge=flat400 asked for but the pack carries no "
-                  "track geometry -- falling back to gauge=outdoor. Rebuild "
-                  "the pack (speed_ratings.attachCourseGeometry).", flush=True)
+            # ⚠⚠ THIS USED TO FALL BACK SILENTLY, AND IT COST A REAL
+            #    EXPERIMENT (owner, 2026-09-20). Both arms of a
+            #    --gauge-scope sport/merge comparison printed this line and ran
+            #    as gauge=outdoor, so merge fused two MEAN-pinned groups into
+            #    one mean-pinned group -- there was no absolute anchor for it
+            #    to transmit. The two sds came out identical, which looked like
+            #    a finding and was an artefact.
+            #
+            #    docs/HANDOFF-2026-09-20.md PART 2 predicted exactly this: "If
+            #    K is small, or the line says unavailable, the pin silently
+            #    became the old outdoor-mean gauge and everything below is
+            #    moot." A warning that a reader has to notice is not a guard.
+            #
+            # ! ASKING FOR flat400 AND GETTING outdoor IS A DIFFERENT MODEL, so
+            #   it stops. XCP_GAUGE_FALLBACK=1 restores the old behaviour for a
+            #   run that genuinely wants whatever gauge is available.
+            msg = ("gauge=flat400 was asked for but the pack carries no track "
+                   "geometry (track_length/track_indoor). REBUILD THE PACK -- "
+                   "speed_ratings.attachCourseGeometry runs at pack time, so a "
+                   "pack cached before it existed has none: delete "
+                   "engine/data/packed_*.npz, or run the pipeline's 07_pack "
+                   "stage. Set XCP_GAUGE_FALLBACK=1 to run on gauge=outdoor "
+                   "instead, but know that is a DIFFERENT MODEL and any gauge "
+                   "comparison made under it is void.")
+            if os.environ.get("XCP_GAUGE_FALLBACK", "") in ("", "0", "false"):
+                raise ValueError(f"[bracket] {msg}")
+            print(f"[bracket] ⚠ {msg}", flush=True)
             gauge = "outdoor"
         else:
             import track_geometry as tg
@@ -820,9 +845,17 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                                              cols["track_indoor"])
             ref_base = np.asarray(ref_base, dtype=bool)
             if ref_base.size != n_base:
-                print(f"[bracket] gauge=flat400: the geometry has "
-                      f"{ref_base.size:,} entries and the pack has {n_base:,} "
-                      f"course keys -- falling back to gauge=outdoor", flush=True)
+                # ! THE SAME ARGUMENT AS ABOVE: a shape mismatch means the
+                #   geometry belongs to another pack, and silently gauging on
+                #   something else is how a void comparison looks like a
+                #   result.
+                msg = (f"gauge=flat400: the geometry has {ref_base.size:,} "
+                       f"entries and the pack has {n_base:,} course keys -- "
+                       f"they are from different packs. Rebuild the pack.")
+                if os.environ.get("XCP_GAUGE_FALLBACK", "") in ("", "0", "false"):
+                    raise ValueError(f"[bracket] {msg}")
+                print(f"[bracket] ⚠ {msg} Falling back to gauge=outdoor.",
+                      flush=True)
                 gauge = "outdoor"
             else:
                 hard_ref = ref_base[base_of_cell]

@@ -196,9 +196,18 @@ class TheGaugeWiring(unittest.TestCase):
         #   would publish a 0.0 no race supports
         self.assertIn("hard_ref & (w_c_ > 0)", src)
 
-    def test_a_pack_without_geometry_falls_back_out_loud(self):
+    def test_a_pack_without_geometry_STOPS(self):
+        """⚠ THIS TEST USED TO ASSERT THE OPPOSITE, and the opposite was wrong
+        (owner, 2026-09-20). "falls back out loud" was the design: print a
+        warning, run as gauge=outdoor, carry on. A warning a reader has to
+        notice is not a guard -- both arms of a real gauge comparison printed
+        it, ran on the wrong gauge, and produced two identical sds that looked
+        like a finding. Asking for flat400 and getting outdoor is a DIFFERENT
+        MODEL, so it stops now."""
         src = __import__("inspect").getsource(be.fit)
-        self.assertIn("falling back to gauge=outdoor", src)
+        self.assertIn("raise ValueError", src)
+        self.assertIn("REBUILD THE PACK", src)
+        self.assertNotIn("-- falling back to gauge=outdoor. Rebuild", src)
 
     def test_the_pipeline_can_ask_for_it(self):
         env = open(os.path.join(_ROOT, "deploy", "solve_env.sh")).read()
@@ -227,6 +236,49 @@ class TheGaugeWiring(unittest.TestCase):
         self.assertIn('skip_recentre = str(f.get("gauge") or "") == "flat400"',
                       body)
         self.assertIn("if skip_recentre:", body)
+
+
+class AMissingGaugeStopsTheRun(unittest.TestCase):
+    """⚠⚠ IT USED TO FALL BACK SILENTLY, AND IT VOIDED A REAL EXPERIMENT
+       (owner, 2026-09-20). Both arms of a --gauge-scope sport/merge comparison
+       printed one warning line and ran as gauge=outdoor, so merge fused two
+       MEAN-pinned groups into one mean-pinned group with no absolute anchor to
+       transmit. The sds came out identical -- which looked like a finding and
+       was an artefact of the fallback.
+
+       docs/HANDOFF-2026-09-20.md PART 2 predicted it: "the pin silently became
+       the old outdoor-mean gauge and everything below is moot." A warning a
+       reader has to notice is not a guard.
+    """
+
+    def setUp(self):
+        with open(os.path.join(_ROOT, "engine", "bracket_engine.py"),
+                  encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def test_absent_geometry_raises_instead_of_regauging(self):
+        i = self.src.index("if not have_geom:")
+        body = self.src[i:i + 1800]
+        self.assertIn("raise ValueError", body)
+        self.assertIn("REBUILD THE PACK", body)
+
+    def test_a_shape_mismatch_raises_too(self):
+        """! GEOMETRY FROM ANOTHER PACK IS THE SAME BUG WEARING A HAT."""
+        i = self.src.index("if ref_base.size != n_base:")
+        self.assertIn("raise ValueError", self.src[i:i + 900])
+
+    def test_the_old_behaviour_is_still_reachable_and_says_it_is_void(self):
+        """! A RUN MAY GENUINELY WANT WHATEVER GAUGE IS AVAILABLE -- but it is
+        told, in the message, that comparisons made under it do not count."""
+        self.assertIn("XCP_GAUGE_FALLBACK", self.src)
+        self.assertIn("void", self.src)
+
+    def test_os_is_imported(self):
+        """! py_compile DOES NOT CATCH A MISSING IMPORT. The guard reads an
+        environment variable, and bracket_engine did not import os -- so the
+        first pack without geometry would have raised NameError from inside
+        the error path."""
+        self.assertIn("\nimport os\n", self.src)
 
 
 class IndoorsCentre(unittest.TestCase):
