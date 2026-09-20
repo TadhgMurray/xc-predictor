@@ -375,6 +375,45 @@ def loadProTeams():
     return _PRO_TEAMS
 
 
+_UNATTACHED_LEVEL = None
+
+
+def loadUnattachedRaceLevel():
+    """{(sport, result_id): level} -- the ceiling of the race each UNATTACHED
+    row was run in (owner, 2026-09-20). Loaded once.
+
+    ★ THE RULE: "if a runner is unattached they should resolve to the highest
+      pool in the race they're running in". An unattached entry has no school,
+      so every school-based rule is blind to it and pool_resolve fell back to
+      professional. The race is the evidence.
+
+    ! EMPTY WITHOUT race_top_level, so a run before engine/level_graph.py pools
+      exactly as it did before and nothing has to be sequenced by hand -- the
+      same contract loadProTeams has.
+    """
+    global _UNATTACHED_LEVEL
+    if _UNATTACHED_LEVEL is not None:
+        return _UNATTACHED_LEVEL
+    _UNATTACHED_LEVEL = {}
+    try:
+        from speed_ratings_db import loadUnattachedRaceLevel as _load
+        got = _load()
+        _UNATTACHED_LEVEL = got
+        if got:
+            from collections import Counter
+            by = Counter(got.values())
+            print(f"[engine] unattached rows with a race ceiling: {len(got):,}")
+            for lvl, n in by.most_common():
+                print(f"            {n:>10,}  {lvl}")
+        else:
+            print("[engine] race_top_level: no table (or no rows) — unattached "
+                  "rows stay professional; run engine/level_graph.py --write")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[engine] race_top_level unavailable ({exc}); unattached rows "
+              f"pool as before")
+    return _UNATTACHED_LEVEL
+
+
 def loadAnetLevels():
     """{anet team_id: level name}, once; prints the code table. Empty when
     the database has no anet_team (a pack then pools as before)."""
@@ -869,7 +908,8 @@ _cachedPoolFor = memoPoolFor(_poolCache)
 #            TF abilities are solved independently and never contaminate.
 def poolOf(grade, gender, source, school, sport, merge=False,
            person_id=None, season=None, race_date=None, team_level=None,
-           team_has_pros=False, no_team=False, team_pro=False):
+           team_has_pros=False, no_team=False, team_pro=False,
+           race_top_level=None):
     """The pool for one row, sport-namespaced. "hs_m|XC", or None.
 
     ★ THE DECISION ITSELF NOW LIVES IN pool_resolve.resolvePool, SHARED WITH
@@ -962,7 +1002,8 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         team_level=team_level,
         team_has_pros=team_has_pros,
         no_team=no_team,
-        team_pro=team_pro)
+        team_pro=team_pro,
+        race_top_level=race_top_level)
 
 
 from concurrent.futures import ThreadPoolExecutor
@@ -1297,11 +1338,30 @@ def packResults(batches, today, merge=False):
                     if team_level == "club":
                         team_level = None
                         census["club_row_in_a_school_season"] += 1
+            # ★ THE RACE'S CEILING, FOR UNATTACHED ROWS ONLY (owner,
+            #   2026-09-20). Looked up only when it can be used: the map holds
+            #   unattached rows alone, so every other row skips the dict hit
+            #   entirely and pools exactly as before.
+            #
+            # ! THE SCHOOL-STRING CASE IS IN THE MAP TOO, not just team_id 0.
+            #   tfrrs carries no team id and says "Unattached" in the school,
+            #   so testing no_team alone would have covered anet and missed
+            #   every tfrrs row -- see loadUnattachedRaceLevel.
+            race_top_level = None
+            unatt = loadUnattachedRaceLevel()
+            if unatt:
+                try:
+                    race_top_level = unatt.get((str(r[_SPORT]), int(r[_RID])))
+                except (TypeError, ValueError):
+                    race_top_level = None
+                if race_top_level is not None:
+                    census[f"unattached_race_{race_top_level}"] += 1
             pool = poolOf(r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL],
                           r[_SPORT], merge,
                           person_id=r[_PID], season=d.year,
                           race_date=d, team_level=team_level, team_has_pros=has_pros,
-                          no_team=no_team, team_pro=team_pro)
+                          no_team=no_team, team_pro=team_pro,
+                          race_top_level=race_top_level)
             if has_pros and pool and pool.startswith("pro_"):
                 census["club_with_pros_repooled_pro"] += 1
             if pool is None:

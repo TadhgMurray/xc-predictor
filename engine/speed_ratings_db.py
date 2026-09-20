@@ -1057,6 +1057,71 @@ def loadProTeams():
     return ids, why
 
 
+# loadUnattachedRaceLevel
+# Purpose:   {(sport, result_id): level} -- for UNATTACHED rows only, the
+#            highest level raced in that row's race (race_top_level).
+# Arguments: none.
+# Output:    dict; empty when level_graph has not written race_top_level yet.
+#
+# ★★ THE OWNER'S RULE (2026-09-20): "if a runner is unattached they should
+#    resolve to the highest pool in the race they're running in". Until now an
+#    unattached row was professional, unconditionally -- pool_resolve's
+#    `no_team`, and the _NON_SCHOOLS strings through the school path. That is
+#    right about the absence of a school and wrong about what it implies: a
+#    runner with no team in a high school race is a high schooler, not a
+#    professional.
+#
+# ★ UNATTACHED ROWS ONLY, AND THAT IS WHAT MAKES IT AFFORDABLE. The answer is
+#   a property of the RACE, and there are tens of millions of races; keyed by
+#   result_id over the whole corpus this would be a dict the size of the pack.
+#   Restricting it to the rows that can actually use it -- the ones with no
+#   team -- is a small fraction, and every other row keeps the pool it had.
+#
+# ! TWO WAYS TO BE UNATTACHED, and both count. anet writes team_id = 0
+#   (pool_resolve.UNATTACHED_TEAM_ID); tfrrs carries no team id at all and
+#   says it in the school string, which is why _NON_SCHOOLS exists in
+#   normalize_distance. Asking only the first would have covered anet and
+#   missed every tfrrs row.
+#
+# ! ABSENT TABLE IS NOT AN ERROR, the same contract loadProTeams has: a pack
+#   built before level_graph ran pools exactly as it did before.
+def loadUnattachedRaceLevel():
+    out = {}
+    try:
+        from level_graph import _raceKeyExpr
+    except Exception:                                     # noqa: BLE001
+        return out
+    try:
+        from normalize_distance import _NON_SCHOOLS
+        junk = sorted(_NON_SCHOOLS)
+    except Exception:                                     # noqa: BLE001
+        junk = ["unattached", "unat", "independent", "individual", "none"]
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('race_top_level')")
+        if cur.fetchone()[0] is None:
+            return out
+        for table, sport in (("results", "XC"), ("results_tf", "TF")):
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_schema = 'public' AND table_name = %s
+                             AND column_name = 'team_id'""", (table,))
+            has_team = cur.fetchone() is not None
+            # ! THE team_id TEST ONLY WHERE THE COLUMN EXISTS. results_tf has
+            #   carried it and not carried it; a hard reference would make
+            #   this loader the thing that breaks on an older schema.
+            zero = "r.team_id = 0 OR " if has_team else ""
+            cur.execute(f"""
+                SELECT r.result_id, rl.top_level
+                FROM   {table} r
+                JOIN   race_top_level rl ON rl.race = {_raceKeyExpr('r')}
+                WHERE  {zero}
+                       lower(btrim(COALESCE(r.school, ''))) = ANY(%s)
+            """, (junk,))
+            for rid, lvl in cur.fetchall():
+                if lvl:
+                    out[(sport, int(rid))] = str(lvl)
+    return out
+
+
 def loadClubPros(min_pros=1):
     """({anet team_id: n pro athletes}, {normalised school: n}) for teams
     with at least min_pros professional athletes (pro_athlete_season) in

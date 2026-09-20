@@ -521,6 +521,102 @@ def raceLevels(cur, threshold=_THRESHOLD):
     return n
 
 
+# ★★ THE LEVEL ORDER, IN SQL, ONCE. The same ranking pool_resolve._LEVEL_RANK
+#    uses. It exists because `min(level)` is ALPHABETICAL -- 'college' sorts
+#    before 'hs' before 'ms' before 'pro' -- which is not the level order at
+#    all. raceLevels above gets away with min() only because its HAVING
+#    already forced a single distinct level; the moment a race is allowed to
+#    hold two, the order has to be stated.
+_LEVEL_RANK_SQL = """CASE lv
+                         WHEN 'elem'    THEN 0
+                         WHEN 'ms'      THEN 1
+                         WHEN 'hs'      THEN 2
+                         WHEN 'college' THEN 3
+                         WHEN 'pro'     THEN 4
+                     END"""
+
+
+def raceTopLevels(cur, threshold=_THRESHOLD):
+    """
+    race_top_level: the HIGHEST level present in each race, not the unanimous
+    one.
+
+    ★★ WHY A SECOND TABLE AND NOT A COLUMN ON race_level (owner, 2026-09-20:
+       "if a runner is unattached they should resolve to the highest pool in
+       the race they're running in").
+
+       race_level answers a different question and is consumed by
+       season_level, which relies on its meaning: a race is decided only when
+       its known teams are UNANIMOUS, so a mixed meet decides nothing and a
+       high schooler with one pro-meet appearance stays 'hs'. That rule is
+       right for the athlete-season it feeds and must not be weakened.
+
+       This table answers the owner's question instead: given a race, what is
+       the highest level anybody in it is racing at? A mixed open section at a
+       college meet DOES have an answer here -- 'college' -- where race_level
+       correctly has none.
+
+    ★ IT IS FOR ATHLETES WITH NO SCHOOL, AND ONLY THEM. An unattached entry
+      carries no team, so every school-based rule in the system is blind to
+      it and pool_resolve fell back to calling it professional. The race is
+      the only evidence there is, and the owner's rule is that the race's
+      ceiling is what an unattached runner is racing at.
+
+    ⚠ THE COST, STATED: THIS IS PER RACE, AND raceLevels' own warning applies.
+      An unattached athlete who races a high school meet and an open meet in
+      one season is now TWO pools, and the engine keys the athlete on
+      (person_id, pool) -- so they are fitted as two people on half the
+      evidence each. That is the owner's explicit instruction and the trade is
+      real: against it, the status quo pooled every one of those rows
+      professional, which is wrong in every race rather than in one of them.
+      resolvePool counts the rows this repools so the cost stays visible.
+
+    ! SAME known_frac BAR AS raceLevels. A race whose teams are mostly unknown
+      has no ceiling worth trusting, and a row with no verdict here falls back
+      to the old behaviour rather than to a guess.
+    """
+    cur.execute("DROP TABLE IF EXISTS race_top_level")
+    cur.execute("""CREATE TABLE race_top_level (
+                       race        bigint NOT NULL PRIMARY KEY,
+                       top_level   text   NOT NULL,
+                       n_levels    int    NOT NULL,
+                       known_frac  real   NOT NULL,
+                       n_teams     int    NOT NULL)""")
+    cur.execute(f"""
+        INSERT INTO race_top_level (race, top_level, n_levels, known_frac, n_teams)
+        SELECT race, lv, n_levels, known_frac, n_teams
+        FROM (
+            SELECT rt.race,
+                   l.level AS lv,
+                   count(DISTINCT l.level) OVER (PARTITION BY rt.race) AS n_levels,
+                   (count(l.school) OVER (PARTITION BY rt.race)::float
+                    / count(*) OVER (PARTITION BY rt.race))::real       AS known_frac,
+                   count(*) OVER (PARTITION BY rt.race)                 AS n_teams,
+                   row_number() OVER (PARTITION BY rt.race
+                                      ORDER BY {_LEVEL_RANK_SQL} DESC
+                                               NULLS LAST)              AS rn
+            FROM tmp_race_team rt
+            LEFT JOIN tmp_level l ON l.school = rt.school
+        ) q
+        WHERE rn = 1
+          AND lv IS NOT NULL
+          AND known_frac >= {threshold}
+    """)
+    n = cur.rowcount
+    cur.execute("CREATE INDEX ON race_top_level (top_level)")
+    cur.execute("SELECT count(DISTINCT race) FROM tmp_race_team")
+    total = cur.fetchone()[0]
+    print(f"    race ceilings: {n:,} of {total:,} races have one "
+          f"({100.0 * n / max(total, 1):.1f}%)")
+    cur.execute("""SELECT top_level, count(*), sum((n_levels > 1)::int)
+                   FROM race_top_level GROUP BY 1
+                   ORDER BY 2 DESC""")
+    print(f"      {'level':<9} {'races':>10} {'of which mixed':>16}")
+    for lvl, cnt, mixed in cur.fetchall():
+        print(f"      {lvl:<9} {cnt:>10,} {int(mixed or 0):>16,}")
+    return n
+
+
 # ------------------------------------------------------------------ #
 # CHUNK 4 -- CONTESTED SCHOOLS
 # ------------------------------------------------------------------ #
@@ -748,11 +844,41 @@ def main(live=False):
                 # committed, so the two artifacts can never disagree.
                 print("\n[level] deriving race verdicts...")
                 raceLevels(cur)
+                # ! THE CEILING IS A SEPARATE ARTIFACT, from the same
+                #   tmp_level, so the two can never disagree about a race.
+                raceTopLevels(cur)
                 conn.commit()
                 print(f"\n[level] wrote school_level_graph ({n:,} rows)")
             else:
                 conn.rollback()
                 print("\n[level] DRY RUN -- pass --write to save")
+
+
+# ⚠ A REAL PARSER, NOT `"--write" in sys.argv` (2026-09-20). The hand-rolled
+#   scan honoured --write, --find, --level= and --refresh and silently ignored
+#   everything else -- so a typo ran a DRY RUN and said nothing, and
+#   `--level hs` (a space, not an equals) read as no level at all.
+#
+#   It also made this script indistinguishable, to
+#   tests/test_chain_invocations.py, from launcher.py -- whose missing argparse
+#   is why `launcher.py --retry-failed` did nothing at night. That test's rule
+#   is "a script with NO argparse must be passed none", and it is a good rule;
+#   the fix is for a script that DOES take flags to declare them, not to carve
+#   an exception into the test.
+def _parser():
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--write", action="store_true",
+                    help="commit school_level_graph, race_level and "
+                         "race_top_level (without it, a dry run)")
+    ap.add_argument("--find", action="store_true",
+                    help="report candidate seed races instead of building")
+    ap.add_argument("--level", default=None,
+                    help="with --find, restrict to this level")
+    ap.add_argument("--refresh", action="store_true",
+                    help="with --find, rebuild meet_team_index first")
+    return ap
 
 
 if __name__ == "__main__":
@@ -761,15 +887,14 @@ if __name__ == "__main__":
         if os.path.isdir(_p) and _p not in sys.path:
             sys.path.insert(0, _p)
 
-    if "--find" in sys.argv:
-        lvl = next((a.split("=", 1)[1] for a in sys.argv
-                    if a.startswith("--level=")), None)
+    _args = _parser().parse_args()
+    if _args.find:
         from database import getConn
         with getConn() as conn:
             with conn.cursor() as cur:
-                buildMeetIndex(cur, refresh="--refresh" in sys.argv)
+                buildMeetIndex(cur, refresh=_args.refresh)
             conn.commit()            # keep the index for the next run
             with conn.cursor() as cur:
-                find(cur, level=lvl)
+                find(cur, level=_args.level)
     else:
-        main(live="--write" in sys.argv)
+        main(live=_args.write)

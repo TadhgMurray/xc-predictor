@@ -470,6 +470,15 @@ def _proPoolFor(gender):
     return None
 
 
+def _levelFromVerdict(level):
+    """A level name this module ranks, or None. Anything it does not rank --
+    None, '', 'club', a typo -- is 'no verdict', never a silent default."""
+    if level is None:
+        return None
+    lv = str(level).strip().lower()
+    return lv if lv in _LEVEL_RANK else None
+
+
 def _gradeLevel(grade):
     """'10' -> 'hs', '3' -> 'elem', 'JR-3' -> whatever the parser says,
     None when unreadable. The same parser poolFor uses."""
@@ -487,7 +496,8 @@ def resolvePool(grade, gender, source, school, sport,
                 race_date=None, merge=False, poolfor=poolFor,
                 fixed_grade=None, fixed_level=None,
                 grade_verdict=None, person_id=None, team_level=None,
-                team_has_pros=False, no_team=False, team_pro=False):
+                team_has_pros=False, no_team=False, team_pro=False,
+                race_top_level=None):
     """Which pool does this row belong to? Returns "hs_m|XC", or None.
 
     team_level: the team's level from the feeds (teamLevelOf): 'club'
@@ -587,8 +597,43 @@ def resolvePool(grade, gender, source, school, sport,
 
     # ! NO TEAM, NO SCHOOL. Before every other rule and ungated: see
     #   UNATTACHED_TEAM_ID for why it is not the club path.
+    #
+    # ★★ BUT THE RACE ANSWERS IT FIRST (owner, 2026-09-20: "if a runner is
+    #    unattached they should resolve to the highest pool in the race
+    #    they're running in").
+    #
+    #    "No team" is a fact about the ENTRY, not about the athlete's level,
+    #    and calling it professional was inferring the second from the first.
+    #    A runner with no vest in a high school race is a high schooler. The
+    #    race is the only evidence an unattached row carries, and
+    #    race_top_level (level_graph.raceTopLevels) is that evidence: the
+    #    highest level anybody in that race is racing at, over races whose
+    #    teams are >= 90% known.
+    #
+    # ! THE CEILING, NOT THE MODE, AND THAT IS THE OWNER'S WORD. race_level --
+    #   the artifact season_level reads -- requires UNANIMITY and so decides
+    #   nothing about a mixed open section at a college meet. This rule wants
+    #   exactly that race to resolve, and to resolve upward.
+    #
+    # ! PRO IS STILL THE FALLBACK, not the default. No verdict for the race
+    #   (too few known teams, or level_graph has not run) leaves the old
+    #   behaviour exactly as it was, so this can never be half-applied.
+    #
+    # ! AND A STATED CEILING OF 'pro' IS STILL 'pro'. An open race full of
+    #   professionals resolves an unattached entry to pro through the same
+    #   rule, rather than by assumption -- which is the difference.
     if no_team:
-        is_pro = True
+        top = _levelFromVerdict(race_top_level)
+        if top is None:
+            is_pro = True
+        elif top == "pro":
+            is_pro = True
+        else:
+            # The race's ceiling IS the level. It outranks the school name
+            # (there is none) and the stale grade a scraper copied forward,
+            # for the same reason season_level exists.
+            fixed_level = top
+            season_level = top
 
     # ★ AND THE TEAM ITSELF CAN BE PROFESSIONAL, BY TEAM ID (2026-09-19).
     #   team_pro is engine/build_team_pool.py's adjudicated verdict for this

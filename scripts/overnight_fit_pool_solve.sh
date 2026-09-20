@@ -148,6 +148,7 @@ trap 'rm -f "$LOCK"' EXIT INT TERM
 : "${TIMEOUT_curve:=10800}"            # 3h
 : "${TIMEOUT_ability_deciles:=3600}"   # 1h, read-only
 : "${TIMEOUT_school_levels:=7200}"     # 2h
+: "${TIMEOUT_level_graph:=14400}"       # 4h -- graph propagation over both feeds
 : "${TIMEOUT_team_identity:=7200}"     # 2h
 : "${TIMEOUT_team_pool:=7200}"         # 2h
 : "${TIMEOUT_solve:=50400}"            # 14h -- the whole pipeline
@@ -243,6 +244,32 @@ else
     say "    grep '\[engine\] team_pool:' $LOGDIR/solve.log"
 fi
 say "team_identity and the tfrrs link are built and inspectable only"
+# ★★ THE RACE LEVELS, AND WHAT DEPENDS ON THEM (owner, 2026-09-20: "if a
+#    runner is unattached they should resolve to the highest pool in the race
+#    they're running in"). level_graph writes three things: school_level_graph
+#    (levelForSchool's map), race_level (the UNANIMOUS verdict season_level
+#    aggregates) and, new, race_top_level (the race's CEILING, which is what
+#    an unattached row now resolves to).
+#
+# ⚠ IT WAS IN NO CHAIN AT ALL. Both artifacts were built by hand, occasionally,
+#   so "the level graph" on the server was whenever somebody last ran it. That
+#   is survivable for a map that changes slowly and fatal for a rule that
+#   depends on it: without race_top_level the unattached rule is inert and the
+#   solve pools exactly as before, silently.
+#
+# ! NOT FATAL. An absent or stale race_top_level costs the unattached rule and
+#   nothing else -- speed_ratings.loadUnattachedRaceLevel returns an empty map
+#   and says so -- so a failure here must not block a solve.
+#
+# ⚠ AND IT REBUILDS school_level_graph TOO, which levelForSchool reads. That is
+#   a second thing changing in the same run; it is the same argument
+#   build_school_levels already makes for itself ("a finished team scrape is
+#   precisely when it is stale"), but read its log before trusting a solve that
+#   moved a lot of schools.
+step level_graph \
+    "the school level graph, race_level (unanimous) and race_top_level (the race ceiling an unattached runner resolves to)" \
+    "$PY" engine/level_graph.py --write || true
+
 step team_identity \
     "resolve every anet team_id to (school, state); inspectable only -- read by nothing, Georgetown should come out DC" \
     "$PY" racecast/build_team_identity.py --write || true
@@ -305,6 +332,9 @@ say "  $LOGDIR/school_levels.log  — schools added, and collisions still droppe
 say "  $LOGDIR/joint_vs_bracket.log — (a): the two estimators on ONE gauge, and"
 say "                               how far the joint solve's zero sits from the"
 say "                               flat-outdoor-400 reference"
+say "  $LOGDIR/level_graph.log    — race ceilings by level, and how many races"
+say "                               are MIXED (those are the ones the old"
+say "                               unanimity rule decided nothing about)"
 say "  $LOGDIR/team_pool.log      — how many team ids fell to 'pro' under the"
 say "                               15-athletes-all-time rule"
 say "  $LOGDIR/ability_deciles.log — does the exponent move with ability, in"
