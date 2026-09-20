@@ -1159,6 +1159,7 @@ def packOrLoad(sports, today, merge, cache):
     cols = packResults(stream, today, merge=merge)
     print(f"[time] stream + pack: {time.time() - t0:.1f}s")
     attachCourseCoords(cols)
+    attachCourseGeometry(cols)
 
     if cache:
         saveCols(cols, path)
@@ -1184,6 +1185,41 @@ def attachCourseCoords(cols):
     except Exception as exc:                                     # noqa: BLE001
         print(f"[engine] course coordinates unavailable ({type(exc).__name__}: {exc}) "
               "-- the pack carries none and the bracket engine runs without a place prior")
+
+
+def attachCourseGeometry(cols):
+    """track_length / track_type / track_indoor per course key -- the reference
+    class the difficulty pin uses (engine/track_geometry.py, plan §1).
+
+    ! THE SAME SHAPE AND THE SAME FAILURE MODE AS attachCourseCoords: per
+      COURSE KEY rather than per row, and a failure leaves the pack without
+      them and says so. The engine then falls back to the outdoor-mean gauge,
+      which is what it did before this existed."""
+    if cols is None or "course_keys" not in cols:
+        return
+    try:
+        from speed_ratings_db import loadCourseGeometry
+        import track_geometry as tg
+        length, ttype, indoor = loadCourseGeometry(cols["course_keys"])
+        cols["track_length"] = np.asarray(length, dtype=np.float64)
+        # ⚠ A STRING ARRAY, NOT object. loadCols reads the pack with
+        #   allow_pickle=False, so an object array would save and then fail to
+        #   load -- silently costing the geometry on every later run. "" is the
+        #   unknown, which isBanked() already treats as not-banked.
+        cols["track_type"] = np.asarray([("" if t is None else str(t))
+                                         for t in ttype], dtype="U32")
+        cols["track_indoor"] = np.asarray(indoor, dtype=np.float64)
+        n = len(cols["course_keys"])
+        have = int(np.isfinite(cols["track_length"]).sum())
+        ref = int(tg.flatOutdoor400Mask(cols["track_length"], cols["track_type"],
+                                        cols["track_indoor"]).sum())
+        print(f"[engine] track geometry: {have:,} of {n:,} course keys carry a "
+              f"track_length; {ref:,} are flat outdoor 400s (the reference "
+              f"class for the difficulty pin)")
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[engine] track geometry unavailable ({type(exc).__name__}: {exc}) "
+              "-- the pack carries none and the bracket engine falls back to "
+              "the outdoor-mean gauge")
 
 
 # ------------------------------------------------------------------ #

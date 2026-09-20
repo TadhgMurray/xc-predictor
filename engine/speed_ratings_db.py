@@ -1285,6 +1285,116 @@ def loadCourseCoords(course_keys):
     return lat, lon
 
 
+# ★★ THE TRACK'S GEOMETRY, PER COURSE KEY (the reference pin, plan §1).
+#    A TF course key is TF:loc:<location_id>:in|:out -- surface and place, no
+#    length and no banking -- so the question "is this a flat outdoor 400" has
+#    to be answered by going back to the meets at that location and asking what
+#    they say. One row per (location, surface) comes back.
+#
+# ! THE MODAL CLAIM, WEIGHTED BY MEETS, not an average. track_length is a fact
+#   about a facility, not a quantity to average: a venue whose meets say 400
+#   four hundred times and 200 twice is a 400m oval with two bad rows, and the
+#   mean of that (398.99) rounds back to 400 by luck rather than by reasoning.
+#   The mode is the claim the venue actually makes.
+#
+# ⚠ AND THE CURATED OVERRIDES ARE APPLIED, which is the whole reason this is
+#   not one GROUP BY. venue_geometry_overrides corrects five hand-verified
+#   venues on DATE boundaries (Clemson's flat 200 became banked on 2017-01-07),
+#   so a group spanning a boundary would be corrected wrongly in one direction
+#   or the other. The five override venues are therefore fetched MEET BY MEET
+#   and pushed through applyVenueOverride itself -- the matcher exercised, never
+#   restated -- and everything else takes the cheap grouped path. Five venues
+#   is O(100) meets each.
+def loadCourseGeometry(course_keys):
+    """(track_length, track_type, is_indoor) per course key.
+
+    track_length is a float array with NaN for unknown; track_type is a list of
+    strings or None; is_indoor is a float array (0.0/1.0, NaN unknown). XC keys
+    get nothing -- they are not tracks."""
+    import numpy as np
+    try:
+        from venue_geometry_overrides import OVERRIDES, applyVenueOverride
+    except Exception:                                     # noqa: BLE001
+        OVERRIDES, applyVenueOverride = {}, None
+
+    n = len(course_keys)
+    length = np.full(n, np.nan)
+    ttype = [None] * n
+    indoor = np.full(n, np.nan)
+
+    # {(location_id, is_indoor): {(track_type, track_length): meets}}
+    tally = {}
+
+    def add(loc, ind, tt, ln, k=1):
+        if loc is None:
+            return
+        key = (int(loc), int(ind) if ind is not None else None)
+        tally.setdefault(key, {})
+        cell = (tt, None if ln is None else round(float(ln), 1))
+        tally[key][cell] = tally[key].get(cell, 0) + k
+
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('meets_tf')")
+        if cur.fetchone()[0] is None:
+            return length, ttype, indoor
+        override_ids = sorted(OVERRIDES.keys())
+        # 1. everything EXCEPT the override venues, grouped in the database
+        cur.execute("""
+            SELECT location_id, is_indoor, track_type, track_length,
+                   count(DISTINCT meet_id)
+            FROM   meets_tf
+            WHERE  location_id IS NOT NULL
+              AND  NOT (location_id = ANY(%s))
+            GROUP  BY location_id, is_indoor, track_type, track_length
+        """, (override_ids or [-1],))
+        for loc, ind, tt, ln, cnt in cur.fetchall():
+            add(loc, ind, tt, ln, int(cnt))
+        # 2. the override venues, meet by meet, through the real matcher
+        if override_ids and applyVenueOverride is not None:
+            cur.execute("""
+                SELECT location_id, meet_id, meet_date, is_indoor,
+                       track_type, track_length
+                FROM   meets_tf
+                WHERE  location_id = ANY(%s)
+            """, (override_ids,))
+            for loc, _mid, date, ind, tt, ln in cur.fetchall():
+                fields = {"track_type": tt, "track_length": ln,
+                          "is_indoor": ind, "location_id": loc}
+                fixed, _rule = applyVenueOverride(fields, int(loc), date)
+                add(loc, fixed.get("is_indoor"), fixed.get("track_type"),
+                    fixed.get("track_length"))
+
+    modal = {}
+    for key, cells in tally.items():
+        # most meets first; a tie goes to the one that states a length
+        best = max(cells.items(),
+                   key=lambda kv: (kv[1], kv[0][1] is not None))
+        modal[key] = best[0]
+
+    for i, raw in enumerate(course_keys):
+        k = str(raw)
+        if not k.startswith("TF:loc:"):
+            continue
+        body = k[7:]
+        loc = body.split(":", 1)[0]
+        if not loc.isdigit():
+            continue
+        is_in = 1 if (":in" in body) else 0
+        got = modal.get((int(loc), is_in))
+        if got is None:
+            # ! THE SURFACE FROM THE KEY, EVEN WHEN THE MEETS DISAGREE WITH IT.
+            #   The key is what the engine pinned the cell as; if no meet at
+            #   that location carries that surface the length stays unknown,
+            #   but the surface itself is not in doubt.
+            indoor[i] = float(is_in)
+            continue
+        ttype[i] = got[0]
+        if got[1] is not None:
+            length[i] = float(got[1])
+        indoor[i] = float(is_in)
+    return length, ttype, indoor
+
+
 # ------------------------------------------------------------------ #
 # STREAMING LOAD
 # ------------------------------------------------------------------ #

@@ -188,7 +188,10 @@ def _poolCodes(athlete_keys):
 # ------------------------------------------------------------------ #
 
 PACK_COLUMNS = ("athlete", "course", "norm", "days", "sport", "doy", "year",
-                "dist_m", "meet_class", "course_lat", "course_lon")
+                "dist_m", "meet_class", "course_lat", "course_lon",
+                # the reference class for the difficulty pin (plan §1); absent
+                # from an older pack, which the engine handles by falling back
+                "track_length", "track_type", "track_indoor")
 
 
 def loadInputs(pack_path, npz_path=None, only=PACK_COLUMNS):

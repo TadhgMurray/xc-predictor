@@ -254,13 +254,42 @@ def test_a_thin_oval_sits_at_the_indoor_level_not_the_outdoor_one():
     cols = {"athlete": ath, "year": np.full(ath.size, 2025), "course": course, "days": days,
             "sport": np.ones(ath.size, dtype=np.int64), "norm": np.exp(y),
             "athlete_keys": [(i, "hs_m") for i in range(n_ath)], "course_keys": keys}
+    pg = {"TF:in": 1.0, "TF:out": 2.5}
+    # ---- the historic rule: indoor's centre is the indoor cells' own mean --
+    # ! indoor_centre=None IS THE OLD BEHAVIOUR, and it is kept testable
+    #   precisely so that the change below reads as a change of TARGET and not
+    #   as the shrinkage machinery breaking.
     with contextlib.redirect_stdout(io.StringIO()):
-        f = be.fit(cols, None, window=21, top=1.0, prior_group={"TF:in": 1.0, "TF:out": 2.5})
-    D = f["D"]
-    lvl = D[20:25].mean() - D[:20].mean()
-    assert lvl > 0.010, lvl                        # the ovals' level is read
+        f0 = be.fit(cols, None, window=21, top=1.0, prior_group=pg,
+                    indoor_centre=None)
+    D0 = f0["D"]
+    lvl0 = D0[20:25].mean() - D0[:20].mean()
+    assert lvl0 > 0.010, lvl0                      # the ovals' level is read
     # the once-raced oval sits with the other ovals, not halfway to outdoor
-    assert D[25] - D[:20].mean() > 0.7 * lvl, (D[25], lvl)
+    assert D0[25] - D0[:20].mean() > 0.7 * lvl0, (D0[25], lvl0)
+
+    # ---- and the rule now in force (plan §3) ------------------------------
+    # ★ THE OWNER OVERRODE THE MEASUREMENT (2026-09-19: indoor is "+0.3
+    #   slower", and of the fit's -1.68%: "yeah the fit is wrong"). So a THIN
+    #   oval now inherits the ASSERTED centre rather than the measured indoor
+    #   level -- in this synthetic world the planted truth is +1.5%, so the
+    #   assertion is deliberately wrong here and the thin oval is dragged
+    #   toward +0.3%. That is the trade, stated: a thin cell inherits the
+    #   assertion, and the gate report is how a wrong assertion gets caught.
+    with contextlib.redirect_stdout(io.StringIO()):
+        f = be.fit(cols, None, window=21, top=1.0, prior_group=pg,
+                   indoor_centre=0.003)
+    D = f["D"]
+    # ! EVIDENCE STILL WINS WHERE THERE IS EVIDENCE. The five well-raced ovals
+    #   read their planted +1.5% whatever the centre says -- a target, not a
+    #   clamp, and this is the assertion that proves the difference.
+    lvl = D[20:25].mean() - D[:20].mean()
+    assert lvl > 0.010, lvl
+    # the thin oval is pulled to the asserted centre, NOT to the outdoor zero:
+    # it is still unmistakably an indoor cell
+    thin = D[25] - D[:20].mean()
+    assert thin > 0.5 * 0.003, (thin, D[25])
+    assert thin < 0.7 * lvl, (thin, lvl, "the assertion should have moved it")
 
 
 def test_the_prior_spec_parses():

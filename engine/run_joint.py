@@ -1261,6 +1261,10 @@ def holdout(cols, keep, args, athlete_pool, D_full):
 #   the baseline is a control group masquerading as a treatment, which is
 #   exactly what `--tau-max ,` used to be.
 def buildParser():
+    # ! IMPORTED HERE, LIKE EVERY OTHER USE OF IT IN THIS FILE. bracket_engine
+    #   is not a module-level import (it pulls numpy work nothing else needs),
+    #   so the two bracket flags below have to reach it the same way.
+    import bracket_engine as be
     ap = argparse.ArgumentParser()
     ap.add_argument("--pack", default=os.path.join(_HERE, "data",
                                                    "packed_XC_TF.npz"))
@@ -1598,6 +1602,21 @@ def buildParser():
     ap.add_argument("--collapse", default="best",
                     choices=("best", "recent", "weighted"),
                     help="season -> athlete_ratings row")
+    # ★★ THE GAUGE: WHAT THE ZERO IS (plan §2). Only read under --difficulty
+    #    bracket. "flat400" is the owner's design -- every flat outdoor 400m
+    #    track at 0.0 exactly, so the zero is a fixed reference rather than a
+    #    vote-weighted mean that a redistribution can push around. It needs the
+    #    pack's track geometry and says so and falls back if it is missing.
+    ap.add_argument("--gauge", default=None, choices=list(be.GAUGE_CHOICES),
+                    help="the bracket engine's zero: flat400 (flat outdoor "
+                         "400s at 0.0 each), outdoor (their mean at 0.0), or "
+                         "all (the whole group's mean, pre-2026-09-18)")
+    # ★ AND WHERE INDOOR SITS (plan §3). The same number XCP_INDOOR_LEVEL
+    #   asserts to the joint solve, now reaching the bracket engine too: it is
+    #   the TF:in group's shrinkage target, not a clamp.
+    ap.add_argument("--bracket-indoor-centre", type=float, default=None,
+                    help="log-time centre the indoor cells shrink toward "
+                         f"(bracket_engine.INDOOR_CENTRE, {be.INDOOR_CENTRE})")
     ap.add_argument("--no-race-effect", action="store_true",
                     help="leave the race-day effect out of per-result ratings")
     ap.add_argument("--race-effect-sports", default="",
@@ -1863,7 +1882,7 @@ def trackPopulationShift(D_b, cell_keys, cell_row, level_row, meet_class_row=Non
 def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         window=21.0, top=0.5, verbose=True, prior_group="fit",
                         track_level_by_pool=True, place_radius=None, prior_place=None,
-                        course_scale="fit"):
+                        course_scale="fit", gauge=None, indoor_centre=None):
     """Swap the joint solve's course difficulties for the bracket engine's,
     in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
     delta kept as delta_joint). Returns a dict of what happened."""
@@ -1908,6 +1927,15 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         place_kw["place_radius"] = float(place_radius)
     if prior_place is not None:
         place_kw["prior_place"] = float(prior_place)
+    # ⚠⚠ THE GAUGE WAS NEVER PASSED HERE, AND THAT IS HALF OF WHY THE ASSERTED
+    #    INDOOR LEVEL NEVER LANDED. This call took the engine's default
+    #    ("outdoor") whatever the pipeline asked for, so --gauge could not reach
+    #    the engine at all and the flat-400 pin would have been unreachable from
+    #    a solve. The other half is the recentring immediately below.
+    if gauge is not None:
+        place_kw["gauge"] = gauge
+    if indoor_centre is not None:
+        place_kw["indoor_centre"] = float(indoor_centre)
     f = be.fit(sub, npz_like, train=None, window=window, top=top, codes=codes, z=z,
                h_row=h, verbose=verbose, prior_group=be.parsePrior(prior_group), **place_kw)
     D_b = np.asarray(f["D"], dtype=np.float64).copy()
@@ -1915,13 +1943,30 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     # mean per sport is the zero; indoor cells keep their level
     g = np.asarray(D.group_of_cell)
     is_indoor = np.array([k.split("@", 1)[0].endswith(":in") for k in cell_keys], dtype=bool)
+    # ⚠⚠ AND THIS IS THE OTHER HALF OF THE INDOOR CONTRADICTION. The engine has
+    #    ALREADY set the zero -- that is what its gauge does -- and this loop
+    #    then subtracted the outdoor cells' unweighted mean from every cell
+    #    again. Applied twice it is nearly harmless for outdoor, but for indoor
+    #    it is not: whatever level the engine's asserted centre put indoor at,
+    #    this shift moved it by a second, differently-weighted amount, so
+    #    XCP_INDOOR_LEVEL=0.003 could assert +0.3% all it liked and the
+    #    published indoor cells came out at -1.68%. Under a gauge the engine
+    #    itself enforces, re-centring is not a correction, it is a second
+    #    opinion -- and under gauge=flat400 it would move the cells that were
+    #    just pinned to 0.0 exactly, undoing the pin.
+    skip_recentre = str(f.get("gauge") or "") == "flat400"
     shift_cell = np.zeros(D.n_cell)
-    for gg in range(int(g.max()) + 1):
-        m = (g == gg) & ~is_indoor
-        if not m.any():
-            m = g == gg
-        if m.any():
-            shift_cell[g == gg] = float(D_b[m].mean())
+    if skip_recentre:
+        print("[joint] bracket: gauge=flat400 set the zero (flat outdoor 400s "
+              "at 0.0 exactly), so the outdoor-mean recentring is SKIPPED -- "
+              "it would move the cells that were just pinned", flush=True)
+    else:
+        for gg in range(int(g.max()) + 1):
+            m = (g == gg) & ~is_indoor
+            if not m.any():
+                m = g == gg
+            if m.any():
+                shift_cell[g == gg] = float(D_b[m].mean())
     D_b = D_b - shift_cell
     # the track level by host population (see trackPopulationShift)
     pop_rows = []
@@ -2298,7 +2343,10 @@ def main():
                                 track_level_by_pool=bool(getattr(args, "track_level_by_pool", 1)),
                                 place_radius=getattr(args, "bracket_place_radius", None),
                                 prior_place=getattr(args, "bracket_place_prior", None),
-                                course_scale=getattr(args, "course_scale", "fit"))
+                                course_scale=getattr(args, "course_scale", "fit"),
+                                gauge=getattr(args, "gauge", None),
+                                indoor_centre=getattr(args, "bracket_indoor_centre",
+                                                      None))
         except Exception:                                        # noqa: BLE001
             import traceback
             traceback.print_exc()

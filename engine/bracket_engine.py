@@ -242,9 +242,58 @@ def _weightedPoolMedian(vals, weights, pools, n_pool):
 #
 # ! "all" is the old behaviour, kept so the two can be scored against each
 #   other with scripts/bracket_holdout.py rather than argued about.
+# ★★ AND "flat400" IS THE OWNER'S ACTUAL DESIGN (2026-09-19: "we're gonna make
+#    all falt outdoor 400m tracks 0.0, and indoor tracks on avg +0.3 slower").
+#    "outdoor" above is the approximation that shipped instead, because the cell
+#    key carries no track length -- see engine/track_geometry.py. With the
+#    geometry on the pack the real thing is available, and it differs in TWO
+#    ways, both deliberate:
+#
+#      WHICH cells are the reference: flat outdoor 400s only, not every outdoor
+#      cell. A banked 200 and an oversized flat are no longer part of the anchor.
+#
+#      HOW they are held: each reference cell is held at 0.0 EXACTLY, not the
+#      class's mean at 0.0. That is Slaney's Crystal Springs = 1.0 generalised
+#      from one course to a class, and it is what turns the gauge from a free
+#      parameter into a fixed reference. The measured case for it: TF:out fitted
+#      race-day sd 1.60% against course sd 0.71%, so a one-race outdoor track
+#      already keeps only 16% of its own reading. Fixing them is a short step
+#      past what the shrinkage does anyway.
+#
+# ⚠ IT NEEDS THE PACK'S GEOMETRY, and falls back to "outdoor" with a line
+#   printed when the pack has none. A silent fallback here would mean a solve
+#   that reports one gauge and applies another.
+#
+# ! "all" is the old behaviour, kept so the three can be scored against each
+#   other with scripts/bracket_holdout.py rather than argued about.
 GAUGE_DEFAULT = "outdoor"
-GAUGE_CHOICES = ("outdoor", "all")
+GAUGE_CHOICES = ("outdoor", "all", "flat400")
 PRIOR_GROUP_NAMES = ("XC", "TF:out", "TF:in")
+# ! THE INDEX, NAMED. priorGroupOfKeys returns 0 XC / 1 outdoor / 2 indoor and
+#   three places now depend on which one indoor is; a bare 2 in any of them is
+#   the kind of thing that survives a reordering and quietly means "outdoor".
+PG_XC, PG_OUTDOOR, PG_INDOOR = 0, 1, 2
+
+# ★★ WHERE INDOOR SITS, ASSERTED (owner, 2026-09-19: "indoor tracks on avg
+#    +0.3 slower", and on the fit's -1.68%: "yeah the fit is wrong"). Log-time,
+#    so 0.003 is +0.3% = slower. This is the shrinkage TARGET for the TF:in
+#    group, not a clamp -- see the note in cellStep.
+#
+# ⚠ AND IT IS THE SAME NUMBER XCP_INDOOR_LEVEL ALREADY ASSERTS to the joint
+#   solve, which is why the bracket engine publishing -1.68% was a real
+#   contradiction and not just a disagreement: the assertion reached the joint
+#   solve's own indoor term and then bracketDifficulties re-centred every cell
+#   on the OUTDOOR mean afterwards, so nothing held indoor anywhere near the
+#   asserted level. deploy/solve_env.sh sets XCP_INDOOR_LEVEL=0.003 and now
+#   passes the same value here.
+INDOOR_CENTRE = 0.003
+
+# ★ THE GATES (plan §3). Reported, never applied: a cell outside them is
+#   published as it is and COUNTED, because a clamped cell stops responding to
+#   evidence and cannot be told from a genuinely extreme one. A growing count
+#   is evidence the centre is wrong, which is the only way this number gets
+#   corrected.
+INDOOR_GATES = (-0.003, 0.020)
 PRIOR_FIT = "fit"
 PRIOR_FIT_WARMUP = 6           # passes on the stated priors before the estimate
 PRIOR_FIT_RANGE = (0.25, 8.0)  # races; outside it the estimate is not believed
@@ -457,7 +506,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         prior_warmup=PRIOR_FIT_WARMUP, place_radius=PLACE_RADIUS_M,
         prior_place=PRIOR_PLACE, voter_agg="mean",
         prior_athlete=PRIOR_ATHLETE, prior_target=PRIOR_TARGET,
-        gauge=GAUGE_DEFAULT):
+        indoor_centre=INDOOR_CENTRE, gauge=GAUGE_DEFAULT):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
@@ -598,6 +647,31 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     if gauge not in GAUGE_CHOICES:
         raise ValueError(f"gauge must be one of {GAUGE_CHOICES}, got {gauge!r}")
     gauge_ref = (cell_pg != 2) if gauge == "outdoor" else np.ones(n_cell, bool)
+    # ★ THE FLAT-OUTDOOR-400 REFERENCE (plan §2). Per BASE key on the pack,
+    #   lifted to cells through base_of_cell.
+    hard_ref = np.zeros(n_cell, dtype=bool)
+    if gauge == "flat400":
+        have_geom = (cols.get("track_length") is not None
+                     and cols.get("track_indoor") is not None)
+        if not have_geom:
+            print("[bracket] gauge=flat400 asked for but the pack carries no "
+                  "track geometry -- falling back to gauge=outdoor. Rebuild "
+                  "the pack (speed_ratings.attachCourseGeometry).", flush=True)
+            gauge = "outdoor"
+        else:
+            import track_geometry as tg
+            ref_base = tg.flatOutdoor400Mask(cols["track_length"],
+                                             cols.get("track_type"),
+                                             cols["track_indoor"])
+            ref_base = np.asarray(ref_base, dtype=bool)
+            if ref_base.size != n_base:
+                print(f"[bracket] gauge=flat400: the geometry has "
+                      f"{ref_base.size:,} entries and the pack has {n_base:,} "
+                      f"course keys -- falling back to gauge=outdoor", flush=True)
+                gauge = "outdoor"
+            else:
+                hard_ref = ref_base[base_of_cell]
+                gauge_ref = hard_ref.copy()
     if verbose:
         print(f"[bracket] gauge={gauge}: the zero is "
               + ("the OUTDOOR cells' weighted mean, so indoor's level is "
@@ -746,6 +820,27 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         g_num = np.bincount(base_pg, weights=num_b_, minlength=len(k_g))
         g_w = np.bincount(base_pg, weights=w_b_, minlength=len(k_g))
         g_mean_ = np.where(g_w > 0, g_num / np.maximum(g_w, 1e-12), 0.0)
+        # ★★ INDOOR'S CENTRE IS ASSERTED, NOT MEASURED (plan §3; owner,
+        #    2026-09-19: "indoor tracks on avg +0.3 slower"). Every other group
+        #    shrinks toward its own mean, which is right when the group's level
+        #    is what you are trying to learn. Indoor's level is NOT being
+        #    learned -- it is being stated, because the fit keeps answering
+        #    -1.68% (indoor FASTER than outdoor, the sign wrong for a tighter,
+        #    slower oval) and the owner's verdict on that is "yeah the fit is
+        #    wrong". So the TF:in group's shrinkage target becomes the asserted
+        #    centre and thin indoor ovals rest on +0.3% instead of resting on
+        #    the measured -1.68%.
+        #
+        # ! A TARGET, NOT A CLAMP, and that distinction is the point (plan §3:
+        #   "agreed as sanity gates, not clamps"). An indoor oval with plenty
+        #   of race days still reports what its races say -- k_g races of prior
+        #   against w_b of evidence -- so a genuinely +2.0% barn is still
+        #   +2.0%. What changes is where a cell goes when it has nothing of its
+        #   own to say. A clamp would make a clipped cell indistinguishable
+        #   from a real one, which is the mistake the distance floor made.
+        if indoor_centre is not None and len(g_mean_) > PG_INDOOR:
+            g_mean_ = g_mean_.copy()
+            g_mean_[PG_INDOOR] = float(indoor_centre)
         k_b = k_g[base_pg]
         D_base_ = np.where(w_b_ > 0,
                            (num_b_ + k_b * g_mean_[base_pg]) / np.maximum(w_b_ + k_b, 1e-9), 0.0)
@@ -778,9 +873,25 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
             #   group would drift without limit.
             use = m_ref if m_ref.any() else m_g
             pin[m_g] = np.average(D_pre[use], weights=w_c_[use])
+        D_new_ = D_pre - pin
+        # ★★ AND THE REFERENCE CLASS IS HELD AT 0.0 EXACTLY (plan §2). The pin
+        #    above only makes the class's MEAN zero; the members still vary
+        #    around it, so the zero is still a quantity the fit chose. Setting
+        #    them to 0.0 is what makes the gauge a fixed reference: every
+        #    athlete who has run a flat outdoor 400 then carries a calibrated
+        #    point, and cross-country is measured against that rather than
+        #    against itself -- which is how "every course outside California
+        #    went negative" became possible, a redistribution with nothing
+        #    absolute to push against.
+        #
+        # ! ONLY WHERE THE CELL HAS VOTES. A reference cell nobody raced has no
+        #   reading to overwrite, and forcing it would publish a 0.0 that no
+        #   race supports.
+        if hard_ref.any():
+            D_new_ = np.where(hard_ref & (w_c_ > 0), 0.0, D_new_)
         return dict(vote=vote_, D_race=D_r, w_race=w_r, ok_race=ok, num_c=num_c_,
                     w_c=w_c_, w_b=w_b_, g_mean=g_mean_, D_base=D_base_,
-                    D_pre=D_pre, pin=pin, D_new=D_pre - pin)
+                    D_pre=D_pre, pin=pin, D_new=D_new_)
 
     for it in range(n_iter):
         a_local = levels(D)
@@ -888,6 +999,42 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                   f"{place_radius:g} m ({n_in:,} courses, {n_voted:,} with votes); a course "
                   f"rests on its place by {k_place:g} races' worth before the group prior",
                   flush=True)
+    # ★ THE INDOOR GATES, AS A REPORT (plan §3). Counted and listed, never
+    #   applied. A rising count over successive solves is the evidence that the
+    #   asserted centre is wrong -- it is the only feedback an asserted number
+    #   gets, so it is printed every run rather than kept behind a flag.
+    indoor_gate_report = None
+    if indoor_centre is not None:
+        lo, hi = INDOOR_GATES
+        ind_cells = (cell_pg == PG_INDOOR) & (w_c > 0)
+        outside = ind_cells & ((D < lo) | (D > hi))
+        indoor_gate_report = dict(
+            n_indoor=int(ind_cells.sum()), n_outside=int(outside.sum()),
+            gates=(lo, hi), centre=float(indoor_centre),
+            median=float(np.median(D[ind_cells])) if ind_cells.any() else 0.0)
+        if verbose and ind_cells.any():
+            r = indoor_gate_report
+            print(f"[bracket] indoor: centre asserted at "
+                  f"{100 * r['centre']:+.2f}%, {r['n_indoor']:,} indoor cells "
+                  f"with votes, median {100 * r['median']:+.2f}%")
+            print(f"        {r['n_outside']:,} outside the "
+                  f"{100 * lo:+.1f}%..{100 * hi:+.1f}% gates "
+                  f"({100.0 * r['n_outside'] / max(r['n_indoor'], 1):.1f}%) "
+                  f"-- PUBLISHED ANYWAY, the gates report and never clamp")
+            if r["n_indoor"] and r["n_outside"] / r["n_indoor"] > 0.25:
+                print("        ⚠ over a quarter are outside. That is evidence "
+                      "the centre is wrong,\n          not evidence the ovals "
+                      "are: read it before the next solve.")
+    if verbose and gauge == "flat400":
+        n_ref = int((hard_ref & (w_c > 0)).sum())
+        print(f"[bracket] gauge=flat400: {int(hard_ref.sum()):,} flat outdoor "
+              f"400m cells are the reference, {n_ref:,} of them with votes and "
+              f"held at 0.0 exactly", flush=True)
+        if n_ref == 0:
+            print("        ⚠ NO reference cell has a vote, so the pin did "
+                  "nothing and the zero fell back to\n          the group "
+                  "mean. Check the geometry census "
+                  "(python engine/track_geometry.py).", flush=True)
     return dict(D=D, votes=w_c, D_race=D_race, votes_race=w_race, race=race,
                 cell=cell, cell_keys=cell_keys, base_of_cell=base_of_cell,
                 races_per_cell=races_per_cell, races_per_base=races_per_base,
@@ -897,6 +1044,8 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                 prior_group=prior_g, prior_group_names=PRIOR_GROUP_NAMES,
                 prior_group_stated=prior_stated, prior_group_fitted=fit_priors,
                 prior_report=prior_report, prior_lines=prior_lines,
+                gauge=gauge, hard_ref=hard_ref, indoor_centre=indoor_centre,
+                indoor_gate_report=indoor_gate_report,
                 cell_prior_group=cell_pg, race_sat=race_sat,
                 D_cell_raw=D_cell_raw, D_base=D_base, base_votes=w_b,
                 group_mean=g_mean, base_prior_group=base_pg, tilt_bands=tilt_bands,

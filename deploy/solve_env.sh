@@ -35,6 +35,23 @@
 : "${XCP_ERA_YEARS:=2}"             # course eras, in years
 : "${XCP_ALTITUDE:=1}"              # altitude correction on
 : "${XCP_INDOOR_LEVEL:=0.003}"      # indoor's level against outdoor
+
+# ★★ THE GAUGE, AND THE SAME INDOOR NUMBER REACHING THE BRACKET ENGINE (plan
+#    §2 and §3; owner, 2026-09-19: "we're gonna make all falt outdoor 400m
+#    tracks 0.0, and indoor tracks on avg +0.3 slower").
+#
+#    flat400 holds every flat outdoor 400m cell at 0.0 EXACTLY, so the zero is
+#    a fixed reference instead of a vote-weighted mean. That mean is how "every
+#    course outside California went negative" was possible at all: a
+#    redistribution with nothing absolute to push against.
+#
+# ⚠ XCP_INDOOR_LEVEL ABOVE ONLY EVER REACHED THE JOINT SOLVE. The bracket
+#   engine -- the one that publishes -- never saw it, and run_joint then
+#   re-centred every cell on the outdoor mean after the engine had already set
+#   its zero, so the asserted +0.3% could not survive. Both are fixed; this is
+#   the same number, said to the engine that publishes.
+: "${XCP_GAUGE:=flat400}"                   # flat outdoor 400s at 0.0 each
+: "${XCP_BRACKET_INDOOR_CENTRE:=0.003}"     # indoor's shrinkage target
 # ★ MEASURED, NOT CHOSEN. run_joint's default is 21 days. Swept on the SAME
 #   held-out rows -- the only fair comparison, since a wider window also
 #   changes coverage -- against a 21-day baseline, 571,290 rows covered by all:
@@ -85,13 +102,15 @@
 : "${XCP_DB_QUIET:=1}"
 
 export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
-       XCP_INDOOR_LEVEL XCP_IMPORTANCE XCP_DB_QUIET
+       XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE \
+       XCP_IMPORTANCE XCP_DB_QUIET
 
 # Anything else already in the environment is left alone, so a one-off
 #   XCP_PROBES=16 bash scripts/overnight_fit_pool_solve.sh
 # still works.
 SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
-XCP_INDOOR_LEVEL XCP_IMPORTANCE XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
+XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE \
+XCP_IMPORTANCE XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
 XCP_SPORT_LEVEL_POOLS XCP_BRACKET_PRIOR XCP_BRACKET_PLACE_RADIUS \
 XCP_BRACKET_PLACE_PRIOR XCP_BRACKET_WINDOW XCP_COURSE_SCALE \
 XCP_FROM_STATE XCP_PROBES"
