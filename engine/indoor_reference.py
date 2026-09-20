@@ -58,7 +58,17 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts"))
 # ★ {location_id: asserted difficulty}. Exact and stable; preferred once the
 #   id is known. Fill this from --find and the patterns below become
 #   unnecessary.
-INDOOR_REFERENCE = {}
+INDOOR_REFERENCE = {
+    # ★★ BOSTON UNIVERSITY (owner, 2026-09-20: "BU which is as fast as a flat
+    #    400m so it works"; id supplied as 111135/in). Held at 0.0 -- the same
+    #    value a flat outdoor 400m oval is held at, which is the claim.
+    #
+    # ⚠ IT IS A BANKED 200, so track_geometry's predicate refuses it and is
+    #   right to: banking is a real, measured speed effect. This is the
+    #   curated exception the module header describes -- the owner's judgement
+    #   that THIS oval runs at flat-400 pace, stated once, in one place.
+    111135: 0.0,
+}
 
 # ★ {name pattern (ILIKE, case-insensitive): asserted difficulty}. Resolved
 #   against meets_tf.venue_name for INDOOR meets only, and every match is
@@ -67,9 +77,12 @@ INDOOR_REFERENCE = {}
 # ⚠ 0.0 MEANS "AS FAST AS A FLAT OUTDOOR 400", which is the owner's claim
 #   about this oval specifically. It is not a claim about indoor tracks in
 #   general -- those sit at the asserted +0.3% centre.
-INDOOR_REFERENCE_NAMES = {
-    "%boston univ%": 0.0,          # BU -- the owner's anchor
-}
+# ! EMPTY, BECAUSE THE ID IS KNOWN. '%boston univ%' matched NOTHING on the
+#   real database -- the oval carries no venue_name and is identified only by
+#   the meets held on it -- which is exactly why an id is the key and a name
+#   is a convenience. The resolver and --find still search venue_name OR
+#   meet_name, for the next venue somebody has to locate.
+INDOOR_REFERENCE_NAMES = {}
 
 _RESOLVED = None
 
@@ -88,15 +101,21 @@ def resolve(verbose=True):
                 if cur.fetchone()[0] is None:
                     raise RuntimeError("meets_tf is missing")
                 for pat, val in INDOOR_REFERENCE_NAMES.items():
+                    # ! venue_name OR meet_name, THE SAME AS --find. A
+                    #   track in this feed is often identified only by the
+                    #   meets held on it; matching one field silently pinned
+                    #   nothing and said so in a line nobody reads.
                     cur.execute("""
-                        SELECT location_id, min(venue_name), count(*)
+                        SELECT location_id,
+                               COALESCE(min(venue_name), min(meet_name)),
+                               count(*)
                         FROM   meets_tf
                         WHERE  location_id IS NOT NULL
                           AND  COALESCE(is_indoor::int, 0) <> 0
-                          AND  venue_name ILIKE %s
+                          AND  (venue_name ILIKE %(p)s OR meet_name ILIKE %(p)s)
                         GROUP  BY location_id
                         ORDER  BY count(*) DESC
-                    """, (pat,))
+                    """, {"p": pat})
                     rows = cur.fetchall()
                     if verbose:
                         print(f"[indoor-ref] {pat!r} -> {len(rows)} indoor "
@@ -150,12 +169,19 @@ def referenceMask(cell_keys, table=None, verbose=False):
     return mask, val
 
 
-def find(pattern, indoor_only=True):
-    """! THE DATE COLUMN IS PROBED, NOT ASSUMED. meets_tf does not carry
-    meet_date on every schema -- assuming it is what made this raise
-    UndefinedColumn on the owner's first run, and the same assumption in
-    speed_ratings_db.loadCourseGeometry is what had been costing the pack its
-    track geometry entirely."""
+def find(pattern, indoor_only=True, limit=40):
+    """Search venue_name AND meet_name for a pattern.
+
+    ⚠ venue_name ALONE WAS NOT ENOUGH (owner, 2026-09-20: '%boston univ%'
+      matched nothing). A venue's NAME in this feed is whatever the meet
+      listing carried, and a track is very often identified only by the meets
+      held on it -- BU's oval is "BU Terrier Classic", "Valentine
+      Invitational", "John Thomas Terrier Classic". Searching one field and
+      reporting "nothing matched" was a false negative.
+
+    ! THE DATE COLUMN IS PROBED, NOT ASSUMED -- see loadCourseGeometry, where
+      assuming it cost the pack its geometry entirely.
+    """
     from database import getConn
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("""SELECT column_name FROM information_schema.columns
@@ -163,29 +189,71 @@ def find(pattern, indoor_only=True):
                          AND column_name IN ('meet_date', 'date')""")
         have = {r[0] for r in cur.fetchall()}
         dcol = "meet_date" if "meet_date" in have else ("date" if "date" in have else None)
-        dsel = (f"min({dcol}), max({dcol})" if dcol
-                else "NULL::text, NULL::text")
+        dsel = f"min({dcol}), max({dcol})" if dcol else "NULL::text, NULL::text"
         gate = "AND COALESCE(is_indoor::int, 0) <> 0" if indoor_only else ""
         cur.execute(f"""
-            SELECT location_id, min(venue_name), count(*), {dsel},
-                   bool_or(COALESCE(is_indoor::int, 0) <> 0) AS any_indoor
+            SELECT location_id,
+                   min(venue_name) FILTER (WHERE venue_name IS NOT NULL),
+                   count(*), {dsel},
+                   min(meet_name) FILTER (WHERE meet_name IS NOT NULL),
+                   min(state) FILTER (WHERE state IS NOT NULL)
             FROM   meets_tf
-            WHERE  location_id IS NOT NULL AND venue_name ILIKE %s
+            WHERE  location_id IS NOT NULL
+              AND  (venue_name ILIKE %(p)s OR meet_name ILIKE %(p)s)
               {gate}
-            GROUP  BY location_id ORDER BY count(*) DESC LIMIT 40
-        """, (pattern,))
+            GROUP  BY location_id ORDER BY count(*) DESC LIMIT %(lim)s
+        """, {"p": pattern, "lim": limit})
         rows = cur.fetchall()
-    print(f"\n[indoor-ref] venues matching {pattern!r}"
+    print(f"\n[indoor-ref] venue_name OR meet_name matching {pattern!r}"
           f"{' (indoor meets only)' if indoor_only else ''}\n")
-    print(f"  {'location_id':>12} {'meets':>8}  {'first':>10} {'last':>10}  name")
-    for loc, nm, n, d0, d1, _ind in rows:
-        print(f"  {int(loc):>12} {n:>8,}  {str(d0)[:10]:>10} "
-              f"{str(d1)[:10]:>10}  {nm}")
     if not rows:
-        print("  (nothing matched)")
+        print("  (nothing matched)\n")
+        print("  Try --top to list the biggest indoor venues and pick by eye,")
+        print("  or --all-surfaces if the meets are not flagged indoor.")
+        return
+    print(f"  {'location_id':>12} {'meets':>7} {'st':>3}  {'venue':<34} "
+          f"example meet")
+    for loc, venue, n, _d0, _d1, meet, st in rows:
+        print(f"  {int(loc):>12} {n:>7,} {str(st or '--'):>3}  "
+              f"{str(venue or '(no venue name)')[:34]:<34} "
+              f"{str(meet or '')[:40]}")
     print("\n  Put the id you want in INDOOR_REFERENCE in this file:\n")
-    for loc, nm, n, _a, _b, _c in rows[:2]:
-        print(f"      {int(loc)}: 0.0,    # {nm} -- {n:,} indoor meets")
+    for loc, venue, n, _a, meet, _st in rows[:2]:
+        print(f"      {int(loc)}: 0.0,    # {venue or meet} -- {n:,} indoor meets")
+
+
+def top(limit=40, indoor_only=True):
+    """★ THE BIGGEST INDOOR VENUES, to pick by eye when no pattern matches.
+    A famous oval is a heavily-raced one, so BU cannot be far down this list."""
+    from database import getConn
+    with getConn() as conn, conn.cursor() as cur:
+        gate = "AND COALESCE(is_indoor::int, 0) <> 0" if indoor_only else ""
+        cur.execute(f"""
+            SELECT location_id,
+                   min(venue_name) FILTER (WHERE venue_name IS NOT NULL),
+                   count(*),
+                   min(meet_name) FILTER (WHERE meet_name IS NOT NULL),
+                   min(state) FILTER (WHERE state IS NOT NULL),
+                   min(track_length), max(track_length),
+                   min(track_type) FILTER (WHERE track_type IS NOT NULL)
+            FROM   meets_tf
+            WHERE  location_id IS NOT NULL {gate}
+            GROUP  BY location_id ORDER BY count(*) DESC LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    print(f"\n[indoor-ref] the {len(rows)} most-raced "
+          f"{'indoor ' if indoor_only else ''}venues\n")
+    print(f"  {'location_id':>12} {'meets':>7} {'st':>3} {'len':>6} {'type':<8} "
+          f"{'venue':<30} example meet")
+    for loc, venue, n, meet, st, l0, l1, tt in rows:
+        ln = (f"{l0:.0f}" if l0 is not None and l0 == l1
+              else (f"{l0:.0f}-{l1:.0f}" if l0 is not None else "--"))
+        print(f"  {int(loc):>12} {n:>7,} {str(st or '--'):>3} {ln:>6} "
+              f"{str(tt or '--')[:8]:<8} "
+              f"{str(venue or '(no venue name)')[:30]:<30} "
+              f"{str(meet or '')[:34]}")
+    print("\n  ! BU is a 200m BANKED oval in MA. Match on that shape, then "
+          "confirm the\n    example meet name before pinning it.")
 
 
 def describe():
@@ -206,9 +274,15 @@ def main():
     ap.add_argument("--find", default=None, metavar="PATTERN",
                     help="search meets_tf.venue_name (ILIKE, use %% wildcards)")
     ap.add_argument("--all-surfaces", action="store_true",
-                    help="with --find, include outdoor meets too")
+                    help="with --find/--top, include outdoor meets too")
+    ap.add_argument("--top", type=int, nargs="?", const=40, default=None,
+                    metavar="N",
+                    help="list the N most-raced indoor venues, to pick by eye "
+                         "when no name pattern matches")
     args = ap.parse_args()
-    if args.find:
+    if args.top is not None:
+        top(args.top, indoor_only=not args.all_surfaces)
+    elif args.find:
         find(args.find, indoor_only=not args.all_surfaces)
     else:
         describe()

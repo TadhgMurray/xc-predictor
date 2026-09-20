@@ -710,9 +710,29 @@ class ANamedIndoorOvalJoinsTheReference(unittest.TestCase):
         mask, val = self.ir.referenceMask(keys, {501: 0.0})
         self.assertEqual(list(mask), [True, False, False])
 
-    def test_bu_is_the_named_venue(self):
-        self.assertTrue(any("boston" in k.lower()
-                            for k in self.ir.INDOOR_REFERENCE_NAMES))
+    def test_bu_is_pinned_by_id_at_zero(self):
+        """★ BY ID, NOT BY NAME (owner supplied 111135/in). '%boston univ%'
+        matched NOTHING on the real database -- the oval carries no
+        venue_name and is identified only by the meets held on it. An id is
+        stable; a name is a convenience for finding one."""
+        self.assertIn(111135, self.ir.INDOOR_REFERENCE)
+        self.assertEqual(self.ir.INDOOR_REFERENCE[111135], 0.0)
+
+    def test_only_the_indoor_cell_at_that_campus_is_pinned(self):
+        """! BU HAS AN OUTDOOR CELL TOO, and the claim is about the oval
+        inside the building."""
+        mask, _ = self.ir.referenceMask(
+            ["TF:loc:111135:in@e0", "TF:loc:111135:out@e0",
+             "TF:loc:111135:in", "TF:loc:999:in"])
+        self.assertEqual(list(mask), [True, False, True, False])
+
+    def test_the_name_search_covers_meet_names_too(self):
+        """⚠ venue_name ALONE GAVE A FALSE NEGATIVE. A track here is often
+        identified only by its meets, so both fields are searched."""
+        import inspect
+        for fn in (self.ir.resolve, self.ir.find):
+            src = inspect.getsource(fn)
+            self.assertIn("meet_name ILIKE", src, fn.__name__)
 
     def test_the_engine_adds_them_to_the_gauge_reference(self):
         self.assertIn("hard_ref = hard_ref | in_mask", self.src)
