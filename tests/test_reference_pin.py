@@ -605,3 +605,80 @@ class TheJointComparison(unittest.TestCase):
         self.assertIn("diag_joint_vs_bracket.py", sh)
         self.assertIn("--skip 08b_ladder", sh)
         self.assertNotIn("--skip 08a_holdout,08b_ladder", sh)
+
+
+class TheGatesAreEnforced(unittest.TestCase):
+    """★★ owner, 2026-09-20: "+0.3% is prolly too low, and they should not be
+    allowed outside the gates" -- said after a real solve put 30% of indoor
+    cells outside them.
+
+    ⚠ THIS REVERSES THE 2026-09-19 DESIGN, which counted and published anyway
+      ("the gates report and never clamp"). That note's argument is still
+      true -- a clamped cell stops responding to its own races and cannot be
+      told from one genuinely on the gate -- so the count is printed every run
+      and is the only evidence that the GATES are wrong.
+    """
+
+    def setUp(self):
+        self.src = __import__("inspect").getsource(be.fit)
+
+    def test_clamp_is_the_default(self):
+        self.assertEqual(be.INDOOR_GATE_MODE_DEFAULT, "clamp")
+        self.assertEqual(be.INDOOR_GATE_MODES, ("clamp", "report"))
+
+    def test_the_clamp_runs_after_the_mean_pin(self):
+        """! ORDER IS THE RULE. Pin first, clamp second, so the clamp has the
+        last word -- which is what "not allowed outside" asks for. The other
+        order puts cells back outside on the next line."""
+        self.assertLess(self.src.index("float(indoor_centre) - now"),
+                        self.src.index("np.clip(D_new_, gate_lo, gate_hi)"))
+
+    def test_report_mode_is_still_reachable(self):
+        self.assertIn('indoor_gate_mode == "clamp"', self.src)
+        self.assertIn("mode=report", __import__("inspect").getsource(be.fit))
+
+    def test_an_unknown_gate_mode_is_refused(self):
+        self.assertIn("indoor_gate_mode must be one of", self.src)
+
+    def test_the_clamp_holds_every_cell_inside(self):
+        """The arithmetic, not the comment."""
+        rng = np.random.default_rng(3)
+        D = rng.normal(0.004, 0.013, 2000)
+        w = rng.lognormal(1.0, 1.0, 2000)
+        lo, hi, centre = be.INDOOR_GATES[0], be.INDOOR_GATES[1], 0.003
+        pinned = D + (centre - np.average(D, weights=w))
+        self.assertGreater(((pinned < lo) | (pinned > hi)).mean(), 0.1)
+        clamped = np.clip(pinned, lo, hi)
+        self.assertEqual(int(((clamped < lo) | (clamped > hi)).sum()), 0)
+
+    def test_the_clamp_moves_the_mean_and_that_is_reported(self):
+        """! CLAMPING PERTURBS THE CENTRE, unavoidably -- upward when more
+        cells sat above the top gate. Both numbers are printed rather than
+        one of them being quietly wrong."""
+        rng = np.random.default_rng(3)
+        D = rng.normal(0.004, 0.013, 2000)
+        w = rng.lognormal(1.0, 1.0, 2000)
+        lo, hi, centre = be.INDOOR_GATES[0], be.INDOOR_GATES[1], 0.003
+        pinned = D + (centre - np.average(D, weights=w))
+        clamped = np.clip(pinned, lo, hi)
+        self.assertGreater(float(np.average(clamped, weights=w)), centre)
+        self.assertIn("vote-weighted mean", self.src)
+        self.assertIn("gates ENFORCED", self.src)
+
+    def test_it_helps_choose_the_centre(self):
+        """★ THE CENTRE IS ASSERTED, so the only honest way to pick it is to
+        show what each candidate costs -- in race WEIGHT, so a barn nobody
+        races cannot move the number."""
+        self.assertIn("choosing the centre", self.src)
+        self.assertIn("indoor race WEIGHT", self.src)
+        self.assertIn("THAT IS NOT A FIT", self.src)
+
+    def test_the_mode_reaches_the_engine_from_the_pipeline(self):
+        def read(rel):
+            with open(os.path.join(_ROOT, *rel.split("/")), encoding="utf-8") as fh:
+                return fh.read()
+        rj = read("engine/run_joint.py")
+        self.assertIn('ap.add_argument("--bracket-indoor-gates"', rj)
+        self.assertIn('place_kw["indoor_gate_mode"] = indoor_gate_mode', rj)
+        self.assertIn("--bracket-indoor-gates", read("deploy/run_pipeline.sh"))
+        self.assertIn("XCP_BRACKET_INDOOR_GATES", read("deploy/solve_env.sh"))

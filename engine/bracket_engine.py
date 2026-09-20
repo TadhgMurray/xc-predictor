@@ -352,6 +352,29 @@ INDOOR_MODE_DEFAULT = "pin"
 #   corrected.
 INDOOR_GATES = (-0.003, 0.020)
 
+# ★★ AND THEY ARE ENFORCED NOW (owner, 2026-09-20: "+0.3% is prolly too low,
+#    and they should not be allowed outside the gates").
+#
+#      "clamp"   (default) an indoor cell outside the gates is pulled to the
+#                nearest one. The owner's call, made after a real solve put
+#                30% of indoor cells outside them.
+#      "report"  the 2026-09-19 behaviour: count them and publish anyway.
+#
+# ⚠ WHAT CLAMPING COSTS, STATED ONCE AND KEPT. The gates note above argues
+#   against it, and the argument is still true: a clamped cell stops
+#   responding to its own races, and afterwards it cannot be told apart from a
+#   cell that genuinely sits on the gate. So the count is printed every run --
+#   a rising one means the gates are wrong, and the gates can only be judged
+#   from that number.
+#
+# ! AND CLAMPING PERTURBS THE CENTRE, unavoidably. The mean pin runs first and
+#   puts the group's vote-weighted mean exactly on the centre; clamping then
+#   moves some cells, so the achieved mean drifts off it -- upward when more
+#   cells were above the top gate than below the bottom one. Both numbers are
+#   printed. Re-pinning after the clamp would just push cells back outside.
+INDOOR_GATE_MODES = ("clamp", "report")
+INDOOR_GATE_MODE_DEFAULT = "clamp"
+
 # ★ WHERE THE COURSE PRIOR'S NUMERATOR COMES FROM (plan §4). "fitted" is the
 #   historic estimator: the within-course spread of race readings, over courses
 #   with 2+ races. "reference" uses the spread measured at the PINNED cells
@@ -640,6 +663,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         prior_place=PRIOR_PLACE, voter_agg="mean",
         prior_athlete=PRIOR_ATHLETE, prior_target=PRIOR_TARGET,
         indoor_centre=INDOOR_CENTRE, indoor_mode=INDOOR_MODE_DEFAULT,
+        indoor_gate_mode=INDOOR_GATE_MODE_DEFAULT, indoor_gates=INDOOR_GATES,
         gauge=GAUGE_DEFAULT, gauge_scope=GAUGE_SCOPE_DEFAULT,
         day_noise=DAY_NOISE_DEFAULT):
     """Fit on the rows where `train` is True (all rows when None); every
@@ -796,6 +820,12 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         raise ValueError(f"indoor_mode must be one of {INDOOR_MODES}, "
                          f"got {indoor_mode!r}")
     pin_indoor = (indoor_mode == "pin") and indoor_centre is not None
+    indoor_gate_mode = str(indoor_gate_mode or INDOOR_GATE_MODE_DEFAULT).strip().lower()
+    if indoor_gate_mode not in INDOOR_GATE_MODES:
+        raise ValueError(f"indoor_gate_mode must be one of {INDOOR_GATE_MODES}, "
+                         f"got {indoor_gate_mode!r}")
+    gate_lo, gate_hi = (float(indoor_gates[0]), float(indoor_gates[1]))
+    clamp_indoor = indoor_gate_mode == "clamp"
     gauge_ref = (cell_pg != 2) if gauge == "outdoor" else np.ones(n_cell, bool)
     # ★ THE FLAT-OUTDOOR-400 REFERENCE (plan §2). Per BASE key on the pack,
     #   lifted to cells through base_of_cell.
@@ -1161,6 +1191,19 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
             if ind_.any():
                 now = np.average(D_new_[ind_], weights=w_c_[ind_])
                 D_new_ = D_new_ + ind_ * (float(indoor_centre) - now)
+        # ★★ THEN THE GATES, AS A CLAMP (owner, 2026-09-20). Every indoor cell
+        #    with votes is held inside [gate_lo, gate_hi]; see INDOOR_GATE_MODES
+        #    for what that costs and why the count is printed every run.
+        #
+        # ! AFTER THE MEAN PIN, NOT BEFORE. Pinning first and clamping second
+        #   means the clamp has the last word, which is what "should not be
+        #   allowed outside the gates" asks for. The other order would put
+        #   cells back outside on the very next line.
+        if clamp_indoor:
+            ind_g = (cell_pg == PG_INDOOR) & (w_c_ > 0)
+            if ind_g.any():
+                D_new_ = np.where(ind_g, np.clip(D_new_, gate_lo, gate_hi),
+                                  D_new_)
         return dict(vote=vote_, D_race=D_r, w_race=w_r, ok_race=ok, num_c=num_c_,
                     w_c=w_c_, w_b=w_b_, g_mean=g_mean_, D_base=D_base_,
                     D_pre=D_pre, pin=pin, D_new=D_new_)
@@ -1306,7 +1349,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     #   gets, so it is printed every run rather than kept behind a flag.
     indoor_gate_report = None
     if indoor_centre is not None:
-        lo, hi = INDOOR_GATES
+        lo, hi = gate_lo, gate_hi
         ind_cells = (cell_pg == PG_INDOOR) & (w_c > 0)
         outside = ind_cells & ((D < lo) | (D > hi))
         indoor_gate_report = dict(
@@ -1338,10 +1381,51 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                   f"{100 * lo:+.1f}%..{100 * hi:+.1f}% gates "
                   f"({100.0 * r['n_outside'] / max(r['n_indoor'], 1):.1f}%) "
                   f"-- PUBLISHED ANYWAY, the gates report and never clamp")
-            if r["n_indoor"] and r["n_outside"] / r["n_indoor"] > 0.25:
-                print("        ⚠ over a quarter are outside. That is evidence "
-                      "the centre is wrong,\n          not evidence the ovals "
-                      "are: read it before the next solve.")
+            if clamp_indoor:
+                print(f"        gates ENFORCED: {r['n_outside']:,} cells "
+                      f"clamped into {100 * lo:+.1f}%..{100 * hi:+.1f}% "
+                      f"({100.0 * r['n_outside'] / max(r['n_indoor'], 1):.1f}%)")
+                print("        ! a clamped cell stops responding to its own "
+                      "races; a rising count here\n          is the only "
+                      "evidence that the gates themselves are wrong.")
+            else:
+                print(f"        {r['n_outside']:,} outside the gates -- "
+                      f"PUBLISHED ANYWAY (mode=report)")
+            # ★★ WHAT THE CENTRE SHOULD BE, AS A TABLE (owner, 2026-09-20:
+            #    "+0.3% is prolly too low"). The centre is ASSERTED, so the
+            #    only honest way to choose it is to show what each candidate
+            #    would cost -- how much of the indoor race weight it would
+            #    push outside the gates. Weight, not cells: a barn nobody
+            #    races should not move the number.
+            #
+            # ! MEASURED BEFORE THE CLAMP, from the cells' own readings
+            #   re-centred on each candidate. After clamping everything is
+            #   inside by construction and the table would say nothing.
+            d_ind = D[ind_cells] - float(indoor_centre)     # shape, centre-free
+            w_ind = w_c[ind_cells]
+            tot_w = float(w_ind.sum())
+            print(f"        choosing the centre — share of indoor race WEIGHT "
+                  f"outside the gates:")
+            print(f"          {'centre':>8} {'below':>8} {'above':>8} "
+                  f"{'outside':>9}")
+            best_c, best_share = None, None
+            for cand in (0.000, 0.003, 0.005, 0.008, 0.010, 0.012, 0.015):
+                dd = d_ind + cand
+                below = float(w_ind[dd < lo].sum()) / max(tot_w, 1e-9)
+                above = float(w_ind[dd > hi].sum()) / max(tot_w, 1e-9)
+                mark = "  <- now" if abs(cand - float(indoor_centre)) < 1e-9 else ""
+                print(f"          {100 * cand:>7.1f}% {100 * below:>7.1f}% "
+                      f"{100 * above:>7.1f}% {100 * (below + above):>8.1f}%"
+                      f"{mark}")
+                if best_share is None or (below + above) < best_share:
+                    best_c, best_share = cand, below + above
+            print(f"        the flattest of those is {100 * best_c:+.1f}% "
+                  f"({100 * best_share:.1f}% outside).")
+            print("        ! THAT IS NOT A FIT, it is the centre that argues "
+                  "least with the gates.\n          The gates were asserted "
+                  "too, so agreeing with them is weak evidence --\n"
+                  "          score a candidate on held-out rows before "
+                  "adopting it.")
     # ★★ HOW FAR CROSS COUNTRY MOVED, WHICH IS THE WHOLE QUESTION ABOUT merge.
     #    A small shift means the two zeros agreed anyway and merge bought
     #    nothing; a large one means a 2.7%-of-rows bridge just moved every XC

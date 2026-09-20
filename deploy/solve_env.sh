@@ -90,6 +90,13 @@
 #     The other route is engine/xc_reference.py -- name ordinary XC courses
 #     and they become the zero, which breaks the see-saw without the bridge.
 : "${XCP_GAUGE_SCOPE:=sport}"
+#
+#  4. The indoor gates are ENFORCED now (owner, 2026-09-20: "they should not
+#     be allowed outside the gates"). A cell outside -0.3%..+2.0% is pulled to
+#     the nearest gate. The count is printed every run, because a clamped cell
+#     stops responding to its own races and a rising count is the only evidence
+#     that the GATES are wrong. `report` restores counting without clamping.
+: "${XCP_BRACKET_INDOOR_GATES:=clamp}"
 
 # ★ §4 THE RACE-DAY TERM. "fitted" keeps the historic numerator (each group's
 #   own multi-race courses) and MEASURES the pinned cells' race-day spread
@@ -151,6 +158,7 @@
 export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
        XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
        XCP_GAUGE_UNKNOWN_LENGTH XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE \
+       XCP_BRACKET_INDOOR_GATES \
        XCP_IMPORTANCE XCP_DB_QUIET
 
 # Anything else already in the environment is left alone, so a one-off
@@ -165,7 +173,8 @@ export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
 XCP_IMPORTANCE XCP_TEAM_POOL XCP_GAUGE_UNKNOWN_LENGTH \
-XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
+XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE XCP_BRACKET_INDOOR_GATES \
+XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
 XCP_SPORT_LEVEL_POOLS XCP_BRACKET_PRIOR XCP_BRACKET_PLACE_RADIUS \
 XCP_BRACKET_PLACE_PRIOR XCP_BRACKET_WINDOW XCP_COURSE_SCALE \
 XCP_FROM_STATE XCP_PROBES"
