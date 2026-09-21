@@ -162,6 +162,34 @@ for _v in $SOLVE_ENV_VARS; do
     [ -n "$_val" ] && say "    $_v=$_val"
 done
 
+# ⚠⚠ THE PIPELINE LOCK IS CHECKED FIRST, BECAUSE IT COST 3h21m (2026-09-20).
+#    The chain ran curve (51m), level_graph (2h24m), team_identity and
+#    team_pool, reached `solve`, and deploy/run_pipeline.sh died in 0s with
+#    "another pipeline holds .pipeline.lock". Everything before it was thrown
+#    away for a condition that was already true when the chain started.
+#
+# ! flock IS A KERNEL LOCK, NOT A STALE FILE. It is held by a live process for
+#   the length of its run and released however that process dies, so a held
+#   lock means a pipeline IS RUNNING -- deleting the file does not help and
+#   makes a genuine double-run possible. The fix is to find the holder.
+#
+# ! ACQUIRED AND RELEASED IMMEDIATELY, in a subshell, so this only ASKS. The
+#   solve step needs to take the lock itself a few hours from now.
+if [ "${SKIP_SOLVE:-0}" != "1" ] && command -v flock >/dev/null 2>&1; then
+    if ! ( exec 9>".pipeline.lock"; flock -n 9 ) 2>/dev/null; then
+        say "FATAL: a pipeline already holds $(pwd)/.pipeline.lock, so the"
+        say "       solve at the end of this chain would fail. Stopping NOW"
+        say "       rather than after several hours of fitting."
+        say ""
+        say "       Find the holder:   fuser -v .pipeline.lock"
+        say "                     or:  tmux ls   (attach and Ctrl-C it)"
+        say ""
+        say "       SKIP_SOLVE=1 runs the curve and the pools anyway."
+        exit 1
+    fi
+    say "pipeline lock is free — the solve at the end of this chain can run"
+fi
+
 wait_for_team_scrape say
 
 # ⚠ THE LAUNCHER MUST BE OFF FOR backfill AND engine. Both swap the table out

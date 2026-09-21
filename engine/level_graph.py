@@ -582,25 +582,36 @@ def raceTopLevels(cur, threshold=_THRESHOLD):
                        n_levels    int    NOT NULL,
                        known_frac  real   NOT NULL,
                        n_teams     int    NOT NULL)""")
+    # ⚠⚠ NO count(DISTINCT ...) OVER (...) -- POSTGRES DOES NOT IMPLEMENT IT.
+    #    The first version used window functions to get n_levels and the top
+    #    rank in one pass, and Postgres answered "DISTINCT is not implemented
+    #    for window functions". It failed AFTER two and a half hours of graph
+    #    building, inside the same transaction, so school_level_graph and
+    #    race_level rolled back with it and the whole run was lost.
+    #
+    # ★ PLAIN AGGREGATION INSTEAD, and it is better anyway: max() over the
+    #   rank is one grouped scan with no window to sort, and the rank maps
+    #   back to a name at the end. Tested against a real Postgres.
     cur.execute(f"""
         INSERT INTO race_top_level (race, top_level, n_levels, known_frac, n_teams)
-        SELECT race, lv, n_levels, known_frac, n_teams
+        SELECT race,
+               CASE top_rank
+                   WHEN 0 THEN 'elem' WHEN 1 THEN 'ms'   WHEN 2 THEN 'hs'
+                   WHEN 3 THEN 'college' WHEN 4 THEN 'pro'
+               END,
+               n_levels, known_frac, n_teams
         FROM (
             SELECT rt.race,
-                   l.level AS lv,
-                   count(DISTINCT l.level) OVER (PARTITION BY rt.race) AS n_levels,
-                   (count(l.school) OVER (PARTITION BY rt.race)::float
-                    / count(*) OVER (PARTITION BY rt.race))::real       AS known_frac,
-                   count(*) OVER (PARTITION BY rt.race)                 AS n_teams,
-                   row_number() OVER (PARTITION BY rt.race
-                                      ORDER BY {_LEVEL_RANK_SQL} DESC
-                                               NULLS LAST)              AS rn
-            FROM tmp_race_team rt
-            LEFT JOIN tmp_level l ON l.school = rt.school
+                   count(DISTINCT l.level)                          AS n_levels,
+                   (count(l.school)::float / count(*))::real        AS known_frac,
+                   count(*)                                         AS n_teams,
+                   max({_LEVEL_RANK_SQL.replace("lv", "l.level")})  AS top_rank
+            FROM   tmp_race_team rt
+            LEFT   JOIN tmp_level l ON l.school = rt.school
+            GROUP  BY rt.race
+            HAVING count(l.school)::float / count(*) >= {threshold}
         ) q
-        WHERE rn = 1
-          AND lv IS NOT NULL
-          AND known_frac >= {threshold}
+        WHERE top_rank IS NOT NULL
     """)
     n = cur.rowcount
     cur.execute("CREATE INDEX ON race_top_level (top_level)")
@@ -819,11 +830,41 @@ def find(cur, level=None, top=15, min_teams=_MIN_TEAMS):
                       f"{first}-{last}  {name}")
 
 
+def preflight(cur):
+    """★★ RUN THE EXPENSIVE STATEMENTS AGAINST EMPTY TABLES FIRST (2026-09-20).
+
+    raceTopLevels used count(DISTINCT ...) OVER (...), which Postgres does not
+    implement. It failed AFTER two and a half hours of graph building, inside
+    the same transaction, so school_level_graph and race_level rolled back
+    with it and the entire run was lost.
+
+    A statement that cannot parse cannot parse on an empty table either, so
+    this costs milliseconds and catches every syntax error, unknown column and
+    unimplemented feature before the first row is read.
+
+    ! IT RUNS IN A SAVEPOINT and rolls back, so nothing it creates survives
+      and the real run is unaffected.
+    """
+    cur.execute("SAVEPOINT preflight")
+    try:
+        cur.execute("CREATE TEMP TABLE tmp_race_team "
+                    "(race bigint, school text, label text) ON COMMIT DROP")
+        cur.execute("CREATE TEMP TABLE tmp_level "
+                    "(school text, level text) ON COMMIT DROP")
+        raceLevels(cur)
+        raceTopLevels(cur)
+    finally:
+        cur.execute("ROLLBACK TO SAVEPOINT preflight")
+    print("    preflight ok: every race query parses")
+
+
 def main(live=False):
     from database import getConn
 
     with getConn() as conn:
         with conn.cursor() as cur:
+            print("[level] preflight (seconds, before hours of work)...")
+            preflight(cur)
             print("[level] building the race/team graph...")
             buildGraph(cur)
 
