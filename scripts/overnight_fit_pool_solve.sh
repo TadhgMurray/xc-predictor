@@ -181,7 +181,11 @@ if [ "${SKIP_SOLVE:-0}" != "1" ] && command -v flock >/dev/null 2>&1; then
         say "       solve at the end of this chain would fail. Stopping NOW"
         say "       rather than after several hours of fitting."
         say ""
-        say "       Find the holder:   fuser -v .pipeline.lock"
+        # ⚠ NOT fuser: IT IS NOT INSTALLED ON THIS SERVER, and neither is
+        #   lsof. Advice that does not run on the machine printing it is not
+        #   advice. scripts/who_holds_the_lock.sh reads /proc, which is always
+        #   there, and names the pid and its command line.
+        say "       Find the holder:   bash scripts/who_holds_the_lock.sh"
         say "                     or:  tmux ls   (attach and Ctrl-C it)"
         say ""
         say "       SKIP_SOLVE=1 runs the curve and the pools anyway."

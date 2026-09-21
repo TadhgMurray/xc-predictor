@@ -128,6 +128,35 @@ _MAX_ROUNDS = 12
 # short-circuit the whole graph by linking unrelated levels together.
 _JUNK = r"^\s*$|^0$|unattached|^una$|^unat|individual|^n/?a$|^\?+$"
 
+# ★ THE SAME RULE AS _JUNK, AS CHEAP SQL. One lower(btrim(...)) instead of a
+#   case-insensitive regex per row. `s` is that normalised string; the wider
+#   trim list matches the regex's \s, which covers tab and newline where
+#   btrim's default does not.
+_JUNK_S = r"lower(btrim(r.school, E' \t\r\n'))"
+_JUNK_SQL = f"""(
+        {_JUNK_S} <> ''
+    AND {_JUNK_S} <> '0'
+    AND {_JUNK_S} <> 'una'
+    AND {_JUNK_S} <> 'n/a'
+    AND {_JUNK_S} <> 'na'
+    AND {_JUNK_S} NOT LIKE %(junk_unattached)s
+    AND {_JUNK_S} NOT LIKE %(junk_unat)s
+    AND {_JUNK_S} NOT LIKE %(junk_individual)s
+    AND replace({_JUNK_S}, '?', '') <> ''
+)"""
+
+# ⚠ THE LIKE PATTERNS ARE PARAMETERS, NOT LITERALS, AND THAT IS NOT STYLE.
+#   psycopg2 owns the percent sign: a bare '%unattached%' in the SQL TEXT is
+#   read as a broken placeholder the moment anything passes params to the same
+#   execute -- "IndexError: tuple index out of range". Keeping the wildcards
+#   in VALUES means the hazard cannot come back when someone adds an argument
+#   later. (The same trap already cost a run in diag_xc_track_bridge.)
+_JUNK_PARAMS = {
+    "junk_unattached": "%unattached%",
+    "junk_unat": "unat%",
+    "junk_individual": "%individual%",
+}
+
 # team_id = 0 is a sentinel, not a team -- one "La Salle High School" row
 # carries it. Treated exactly like NULL.
 #
@@ -204,6 +233,44 @@ def _raceKeyExpr(alias="r"):
 # CHUNK 1 -- THE RACE / TEAM GRAPH
 # ------------------------------------------------------------------ #
 
+# ★★ THE SESSION'S MEMORY, AND temp_buffers IS THE ONE THAT MATTERS HERE
+#    (2026-09-20: level_graph took 2h24m).
+#
+#    tmp_race_team is a TEMP table holding tens of millions of rows, and a
+#    temp table lives in temp_buffers -- LOCAL buffers, default 8MB, not the
+#    16GB shared_buffers this server is tuned for. Every read and write past
+#    the first 8MB goes to local disk, and propagate() then joins against that
+#    table once per round. work_mem at 256MB is also far too small for a GROUP
+#    BY over 225M rows: it spills.
+#
+# ! temp_buffers CAN ONLY BE SET BEFORE THE SESSION TOUCHES A TEMP TABLE, so
+#   this runs before the preflight, which creates two.
+#
+# ! EVERY VALUE IS OVERRIDABLE AND PRINTED. A box with less RAM lowers them;
+#   a run that wants the old behaviour sets them back.
+def tune(cur, verbose=True):
+    import os as _os
+    wanted = (
+        ("temp_buffers", _os.environ.get("XCP_PG_TEMP_BUFFERS", "4GB")),
+        ("work_mem", _os.environ.get("XCP_PG_WORK_MEM", "2GB")),
+        ("maintenance_work_mem",
+         _os.environ.get("XCP_PG_MAINT_WORK_MEM", "8GB")),
+        ("max_parallel_workers_per_gather",
+         _os.environ.get("XCP_PG_PARALLEL", "6")),
+    )
+    got = []
+    for name, val in wanted:
+        try:
+            cur.execute(f"SET {name} = %s", (val,))
+            got.append(f"{name}={val}")
+        except Exception as exc:                              # noqa: BLE001
+            # ! A REFUSED SETTING IS NOT A FAILED RUN. It is slower, and it
+            #   says which one so the next run can lower it.
+            got.append(f"{name}=REFUSED({type(exc).__name__})")
+    if verbose:
+        print(f"    session: {', '.join(got)}", flush=True)
+
+
 def buildGraph(cur, min_teams=_MIN_TEAMS):
     """
     tmp_race_team: one row per (race, distinct school).
@@ -231,6 +298,16 @@ def buildGraph(cur, min_teams=_MIN_TEAMS):
     #   version did this with a self-join DELETE afterwards; on an unindexed
     #   temp table of tens of millions of rows that is a nested loop, and it
     #   dominated the whole run.)
+    # ⚠ THE JUNK TEST WAS A CASE-INSENSITIVE REGEX EVALUATED PER ROW, over
+    #   225M rows, twice. `!~*` cannot use an index and costs far more than
+    #   the equality and LIKE tests below, which say exactly the same thing --
+    #   asserted against the regex itself in tests/test_level_graph_speed.py
+    #   over a battery of real and adversarial spellings.
+    #
+    # ! THE LABEL STILL USES btrim(school), unchanged. Only the junk TEST uses
+    #   the wider trim, because the regex's \s covers tabs and newlines and
+    #   btrim's default does not -- a tab-only school would otherwise survive
+    #   a test that used to drop it.
     for table in ("results", "results_tf"):
         cur.execute(f"""
             INSERT INTO tmp_race_team (race, school, label)
@@ -239,10 +316,10 @@ def buildGraph(cur, min_teams=_MIN_TEAMS):
                    min(btrim(r.school))
             FROM {table} r
             WHERE r.school IS NOT NULL
-              AND btrim(r.school) !~* %s
+              AND {_JUNK_SQL}
             GROUP BY 1, 2
-        """, (_JUNK,))
-        print(f"    {table}: {cur.rowcount:,} race-team rows")
+        """, _JUNK_PARAMS)
+        print(f"    {table}: {cur.rowcount:,} race-team rows", flush=True)
 
     cur.execute(f"""
         DELETE FROM tmp_race_team t
@@ -863,6 +940,11 @@ def main(live=False):
 
     with getConn() as conn:
         with conn.cursor() as cur:
+            # ! TUNE BEFORE THE PREFLIGHT: temp_buffers cannot be changed
+            #   once the session has touched a temp table, and the preflight
+            #   creates two.
+            print("[level] session tuning...")
+            tune(cur)
             print("[level] preflight (seconds, before hours of work)...")
             preflight(cur)
             print("[level] building the race/team graph...")

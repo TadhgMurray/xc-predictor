@@ -273,7 +273,11 @@ class TheChainChecksTheLockBeforeHoursOfWork(unittest.TestCase):
     def test_it_says_a_held_lock_is_a_live_process(self):
         """! flock IS A KERNEL LOCK, NOT A STALE FILE -- deleting it does not
         help and makes a genuine double-run possible."""
-        self.assertIn("fuser -v .pipeline.lock", self.src)
+        # ! AND THE ADVICE MUST RUN HERE. fuser and lsof are not installed on
+        #   the server, so the chain points at scripts/who_holds_the_lock.sh,
+        #   which reads /proc.
+        self.assertIn("who_holds_the_lock.sh", self.src)
+        self.assertNotIn("fuser -v", self.src)
         self.assertIn("kernel lock", self.src.lower())
 
     def test_skip_solve_is_still_allowed_through(self):
