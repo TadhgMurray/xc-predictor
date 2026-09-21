@@ -34,9 +34,27 @@ ok(SF.floorLabel(2026) == "", "open seasons say nothing")
 sql = SF.floorSql(explicit=False)
 ok("OR s.year >= 2026" in sql and "%(min_races)s" in sql,
    "the default floor exempts open seasons")
-ok(SF.floorSql(explicit=True) == "s.n_races >= %(min_races)s",
+ok(SF.floorSql(explicit=True).startswith("s.n_races >= %(min_races)s"),
    "a typed minimum applies to every row")
 ok("p.n_races" in SF.floorSql(False, alias="p"), "alias is honoured")
+
+# ⚠⚠ AND A BOARD ROW MUST HAVE SOMETHING TO RANK (2026-09-21). athlete_season
+#    now carries seasons with no rating at all -- a sprinter's or a thrower's
+#    whole year, which the engine never rates -- and `ORDER BY mean_rating
+#    DESC` puts NULLs FIRST in Postgres, so those rows would HEAD every
+#    ability board and inflate the percentile denominator countOf computes.
+#    The predicate lives in floorSql so the board, countOf and rankOf cannot
+#    drift apart; that is why the equality above became a prefix test.
+ok("s.mean_rating IS NOT NULL" in SF.floorSql(explicit=True)
+   and "s.mean_rating IS NOT NULL" in SF.floorSql(explicit=False),
+   "both branches require a rating")
+ok("p.mean_rating IS NOT NULL" in SF.floorSql(False, alias="p"),
+   "the rating predicate honours the alias too")
+# ! THE OPEN-SEASON EXEMPTION IS AN OR AND MUST STAY PARENTHESISED, or the
+#   AND binds tighter and every open season loses its exemption.
+ok(SF.floorSql(False).startswith("(s.n_races")
+   and ") AND s.mean_rating IS NOT NULL" in SF.floorSql(False),
+   "the OR stays parenthesised ahead of the AND")
 
 ok(SF.percentileWords(41, 8123) == "top 0.6%", "41 of 8123 is 0.50..% -> 0.6")
 ok(SF.percentileWords(163, 8123) == "top 2.1%", "163 of 8123 is 2.00..% -> 2.1")
@@ -51,6 +69,8 @@ ok(SF.poolWords("hs_m|XC") == "high-school boys", "pool words strip the sport")
 # the readers all go through the module
 rk = read("racecast", "rankings.py")
 ok("s.n_races >= %(min_races)s" not in rk, "rankings.py has no bare floor")
+ok("s.mean_rating IS NOT NULL" not in rk,
+   "and no bare rating filter either -- floorSql is the one place")
 ok(rk.count("floorSql(") >= 4, "every board query uses floorSql")
 ok('"min_races_explicit"' in rk, "parseFilters records whether it was typed")
 app = read("racecast", "app.py")
