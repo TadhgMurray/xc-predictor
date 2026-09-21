@@ -188,6 +188,56 @@ def poolsSeen(cur, school):
 
 
 # ------------------------------------------------------------------ #
+#  B2 -- where athlete_season actually filed those people
+# ------------------------------------------------------------------ #
+def whereTheyWent(cur, school, show):
+    """For every (person, sport, year) ranking_results holds under this
+    school, the school athlete_season gives that same season.
+
+    ★★ THE QUESTION SECTION B RAISES AND CANNOT ANSWER (2026-09-21, De La
+       Salle): ranking_results held 1,036 athlete-seasons under the name and
+       athlete_season held 43. athlete_season is DERIVED from
+       ranking_results, so those people did not vanish -- they were filed
+       somewhere else, and this says where.
+
+       The mechanism is that the two tables answer different questions.
+       ranking_results carries a school PER ROW, so a person counts under
+       every spelling they ever raced under. athlete_season carries ONE
+       school per (person, pool, sport, year) -- `mode() WITHIN GROUP (ORDER
+       BY school)`, the majority spelling. So a school whose rows are split
+       across several strings keeps only the people whose MODAL string is
+       this one; the rest are filed under their own majority and disappear
+       from a roster query that is an exact-string equality.
+
+       A '(no athlete_season row)' bucket means something else again: the
+       rows reached ranking_results and the aggregate still dropped them --
+       the season-median outlier rule (_SEASON_OUTLIER_PTS), or a build that
+       did not finish.
+    """
+    if not (_tableExists(cur, "ranking_results")
+            and _tableExists(cur, "athlete_season")):
+        return None
+    cur.execute("""
+        WITH rr AS (
+            SELECT DISTINCT person_id, sport, year
+            FROM   ranking_results
+            WHERE  school = %(school)s
+        )
+        SELECT COALESCE(s.school, '(no athlete_season row)') AS school,
+               count(DISTINCT rr.person_id)                  AS n
+        FROM   rr
+        LEFT   JOIN athlete_season s
+               ON  s.person_id = rr.person_id
+               AND s.sport     = rr.sport
+               AND s.year      = rr.year
+        GROUP  BY 1
+        ORDER  BY n DESC
+        LIMIT  %(show)s
+    """, {"school": school, "show": show})
+    return cur.fetchall()
+
+
+# ------------------------------------------------------------------ #
 #  C -- the raw rows, behind the flag
 # ------------------------------------------------------------------ #
 def rawCount(cur, school, timeout_ms=DEEP_TIMEOUT_MS):
@@ -322,6 +372,35 @@ def report(cur, args):
         for r in pools:
             print(f"       {str(_val(r, 0, 'pool')):<22} "
                   f"{int(_val(r, 1, 'n')):>6,}")
+
+    # ---- B2
+    print("\n  B2 where athlete_season filed the people ranking_results has "
+          "under this name")
+    went = whereTheyWent(cur, school, args.show)
+    if went is None:
+        print("     ranking_results or athlete_season is missing.")
+    elif not went:
+        print("     ranking_results holds nobody under this name.")
+    else:
+        total = sum(int(_val(r, 1, "n")) for r in went)
+        here = 0
+        for r in went:
+            name, n = _val(r, 0, "school"), int(_val(r, 1, "n"))
+            if name == school:
+                here = n
+            mark = "  <-- this page" if name == school else ""
+            print(f"     {n:>7,}  {name}{mark}")
+        if total and here < total:
+            print(f"\n     ⚠ {total - here:,} of {total:,} are filed under "
+                  f"ANOTHER string.\n"
+                  f"       ranking_results carries a school per ROW, so a "
+                  f"person counts under every\n"
+                  f"       spelling they raced under. athlete_season carries "
+                  f"ONE per season -- the\n"
+                  f"       MAJORITY spelling -- and schoolRoster is an exact "
+                  f"string equality on it.\n"
+                  f"       A '(no athlete_season row)' line instead means the "
+                  f"aggregate dropped them.")
 
     # ---- C
     print("\n  C  the raw rows (what the athlete page renders from)")

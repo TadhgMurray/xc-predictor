@@ -101,6 +101,45 @@ class ItIsCheapUnlessAsked(unittest.TestCase):
         self.assertIn("if not args.deep", src)
 
 
+class ItNamesWhereThePeopleWent(unittest.TestCase):
+    """★★ THE QUESTION THE DE LA SALLE RUN RAISED (2026-09-21).
+    ranking_results held 1,036 athlete-seasons under the name and
+    athlete_season held 43 -- and athlete_season is DERIVED from
+    ranking_results, so they were filed somewhere, not lost.
+
+    The two tables answer different questions. ranking_results carries a
+    school PER ROW, so a person counts under every spelling they raced
+    under. athlete_season carries ONE per (person, pool, sport, year) --
+    `mode() WITHIN GROUP (ORDER BY school)`, the majority spelling -- and
+    schoolRoster is an exact string equality on it. Section B can show the
+    gap; only this section can say whether it is a split spelling or a
+    dropped row, and they need different fixes."""
+
+    def setUp(self):
+        self.body = _funcSource(_src(), "whereTheyWent")
+
+    def test_it_joins_the_two_tables_on_the_season_key(self):
+        """! (person, sport, year) -- NOT pool. athlete_season splits a
+        season by pool, so joining on pool would drop a person whose pool
+        changed and call it a missing row."""
+        for col in ("person_id", "sport", "year"):
+            self.assertIn(f"s.{col}", self.body, col)
+        self.assertNotIn("s.pool", self.body)
+
+    def test_a_missing_row_is_a_bucket_not_a_silence(self):
+        """⚠ A LEFT JOIN, AND THE NULL IS NAMED. An inner join would count
+        only the people who survived the aggregate and report a clean split
+        for a school the aggregate had dropped -- the opposite diagnosis."""
+        self.assertIn("LEFT", self.body)
+        self.assertIn("(no athlete_season row)", self.body)
+
+    def test_it_counts_people_not_rows(self):
+        """! count(DISTINCT person_id). ranking_results has one row per RACE,
+        so a plain count(*) would weight a sprinter's season above a
+        cross-country runner's and the buckets would not be comparable."""
+        self.assertIn("count(DISTINCT rr.person_id)", self.body)
+
+
 class ItAsksThePageRatherThanGuessing(unittest.TestCase):
     """★ SECTION D IMPORTS app.py's OWN HELPERS. The route forces a state and
     a level on a visitor who asked for neither (app.py:4630, app.py:4664), so
