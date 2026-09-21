@@ -69,6 +69,32 @@ REAL_TEAM = "team_id IS NOT NULL AND team_id <> 0"
 #   than of one loader's name list.
 _SCHOOL_LEVELS = ("hs", "ms", "elem", "college")
 
+# ⚠⚠ AND THE SIZE RULE DOES NOT REACH A K-12 SCHOOL (2026-09-21). The owner:
+#    "there are a lot of schools/high schools that must be pooling wrong".
+#    This is that bug, and it is the <15-athlete rule, not the club rule.
+#
+#    The size rule is a DOUBT about a level claim, and the owner's own
+#    rationale for it names the case it doubts: "a real college with under
+#    fifteen athletes in its whole history is not a real college" -- a
+#    programme that small is more likely a mislabel or a club wearing a
+#    college's level. That doubt does not transfer to a K-12 school. A high
+#    school with nine runners all-time is not suspicious, it is RURAL; so is
+#    a school with two seasons on the feed, a middle school that only ever
+#    reported a relay, and every programme that started last year. There are
+#    thousands of them, and the rule sent every one into the pro pool --
+#    which bends their runners' ratings (pool-relative: the yardstick moved)
+#    AND wrecks the pro pool from the inside, because a pool whose members
+#    are mostly high schoolers has a high-school mean. That second effect is
+#    the other half of the same report: the pro HS-equivalent factor is
+#    measured FROM this pool (racecast/pool_view._poolConstant).
+#
+#    So smallness still beats college, club, and no level at all -- the cases
+#    the owner's sentence was about -- and no longer beats hs/ms/elem.
+#    `--small-beats-level` restores the old behaviour for one run, and
+#    report() prints the catch broken down by level either way, so the size
+#    of this is a number on the next run rather than an argument.
+_SMALL_EXEMPT_LEVELS = ("hs", "ms", "elem")
+
 # ! THE FALLBACK MAPPING, used only when speed_ratings_db cannot be imported
 #   (it pulls numpy and the model stack). Measured from the census output, and
 #   deliberately NOT the primary source -- loadTeamLevels infers names from
@@ -160,9 +186,11 @@ def teamSizes(cur):
 
 
 # ★ PRECEDENCE IS THE WHOLE RULE, so it is one pure function and testable.
-#   Smallness wins over anet's level on the owner's explicit instruction ("if
-#   they're that small I'd prefer to make them pro"); a real college with
-#   under fifteen athletes in its whole history is not a real college.
+#   Smallness still wins over anet's level on the owner's explicit instruction
+#   ("if they're that small I'd prefer to make them pro") for the levels that
+#   instruction was about -- college, club, no level -- and a real college with
+#   under fifteen athletes in its whole history is still not a real college.
+#   It no longer reaches a K-12 school; _SMALL_EXEMPT_LEVELS has the why.
 #
 # ⚠⚠ THE PROFESSIONAL RULE IS A *CLUB* RULE, AND DROPPING THAT WORD BROKE THE
 #    BOARDS (2026-09-20). The owner's sentence is "if anybody we've marked as
@@ -191,11 +219,19 @@ def teamSizes(cur):
 #   or college that produced a professional is still a school: that is what the
 #   feed's level is FOR, and what the owner's word "club" was doing in the
 #   rule. Smallness still outranks everything, unchanged.
-def classify(n_athletes, level, n_pros, pro_max=PRO_MAX_ATHLETES):
+def classify(n_athletes, level, n_pros, pro_max=PRO_MAX_ATHLETES,
+             small_beats_level=False):
     """(kind, reason). Pure."""
-    if n_athletes < pro_max:
+    if n_athletes < pro_max and (small_beats_level
+                                 or level not in _SMALL_EXEMPT_LEVELS):
         return "pro", f"fewer than {pro_max} athletes all-time ({n_athletes})"
     if level in _SCHOOL_LEVELS:
+        if n_athletes < pro_max:
+            # ! SAID OUT LOUD, so a small school is findable in the table by
+            #   its reason rather than only by recounting its athletes.
+            return level, (f"anet level (kept: only {n_athletes} athlete(s) "
+                           f"all-time, under the {pro_max} bar, but a small "
+                           f"{level} is a small school, not a pro team)")
         # ! COUNTED, NOT SILENT. A school that produced a professional is the
         #   case this rule used to swallow, so the reason says so and
         #   report() can price it.
@@ -213,7 +249,8 @@ def classify(n_athletes, level, n_pros, pro_max=PRO_MAX_ATHLETES):
     return "unknown", "no anet level and big enough not to be called pro"
 
 
-def build(cur, pro_max=PRO_MAX_ATHLETES, verbose=True):
+def build(cur, pro_max=PRO_MAX_ATHLETES, verbose=True,
+          small_beats_level=False):
     cur.execute(DDL)
     levels = teamLevels(cur, verbose)
     pros = proTeams(cur, verbose)
@@ -225,7 +262,8 @@ def build(cur, pro_max=PRO_MAX_ATHLETES, verbose=True):
     for team_id, (n_ath, n_rows) in sizes.items():
         level = levels.get(team_id)
         n_pros = pros.get(team_id, 0)
-        kind, reason = classify(n_ath, level, n_pros, pro_max)
+        kind, reason = classify(n_ath, level, n_pros, pro_max,
+                                small_beats_level)
         rows.append((team_id, kind, reason, n_ath, n_rows, level, n_pros))
     return rows
 
@@ -265,9 +303,32 @@ def report(rows, show=20, pro_max=PRO_MAX_ATHLETES):
     for r in small[:show]:
         print(f"    {r[0]:>8} {r[3]:>5} {r[4]:>9,} {str(r[5] or '--'):<9} "
               f"{r[2]}")
-    print(f"\n  ! if real schools are in that list they are the accepted price "
-          f"of the rule,\n    but they should be seen here rather than found "
-          f"later on a rankings page.")
+
+    # ★★ THE BREAKDOWN THAT TURNS THE RULE INTO A NUMBER (2026-09-21). "If
+    #    real schools are in that list they are the accepted price of the
+    #    rule" was the old line here, and the price turned out to be the
+    #    owner's "a lot of schools/high schools that must be pooling wrong".
+    #    A count per level says how big the price is, on every run, instead
+    #    of leaving it to be found on a rankings page.
+    by_level = Counter(str(r[5] or "(no level)") for r in small)
+    print(f"    by level: " + ", ".join(f"{lv} {n:,}"
+                                        for lv, n in by_level.most_common())
+          if by_level else "    by level: none")
+    exempt = sorted((r for r in rows if r[3] < pro_max
+                     and r[5] in _SMALL_EXEMPT_LEVELS and r[1] != "pro"),
+                    key=lambda r: -r[4])
+    n_ath_ex = sum(r[3] for r in exempt)
+    print(f"\n  under the bar but KEPT as K-12 schools "
+          f"(_SMALL_EXEMPT_LEVELS): {len(exempt):,} teams, "
+          f"{n_ath_ex:,} athletes")
+    if exempt:
+        ex_level = Counter(str(r[5]) for r in exempt)
+        print(f"    by level: " + ", ".join(f"{lv} {n:,}"
+                                            for lv, n in ex_level.most_common()))
+        print(f"    (these are rural and new schools. Before 2026-09-21 every "
+              f"one of them was\n     pro -- which bent their runners' ratings "
+              f"and gave the pro pool a high-school\n     mean. "
+              f"--small-beats-level puts them back for one run.)")
 
     # ★★ AND THE COUNTERPART: THE SCHOOLS THE CLUB RULE USED TO SWALLOW.
     #    Before 2026-09-20 `if n_pros:` ran against every level, so a high
@@ -297,6 +358,10 @@ def main():
     ap.add_argument("--pro-max-athletes", type=int, default=PRO_MAX_ATHLETES,
                     help="the all-time distinct-athlete floor below which a "
                          "team is called pro (owner: 15)")
+    ap.add_argument("--small-beats-level", action="store_true",
+                    help="restore the pre-2026-09-21 rule where the "
+                         "athlete floor also called small HIGH SCHOOLS, "
+                         "middle schools and elementaries pro")
     args = ap.parse_args()
     if not (args.write or args.dry_run):
         ap.error("pass --dry-run or --write")
@@ -307,7 +372,8 @@ def main():
             if not _tableExists(cur, "anet_team"):
                 raise SystemExit("anet_team is missing; run "
                                  "scripts/anet_teams.py first")
-            rows = build(cur, args.pro_max_athletes)
+            rows = build(cur, args.pro_max_athletes,
+                         small_beats_level=args.small_beats_level)
             report(rows, args.show, args.pro_max_athletes)
             if args.write:
                 print(f"\n  wrote {write(cur, rows):,} rows to team_pool")

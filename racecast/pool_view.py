@@ -90,11 +90,34 @@ from database import getConn
 # process, so retrying per page load would re-learn nothing.
 _FACTOR_CACHE = {}
 
+# pool -> one line on WHERE that pool's factor came from: its own measurement,
+# the college fallback, or the reason there is none. Diagnostic only; the page
+# never reads it. It exists because the 2026-09-20 pro bug was invisible from
+# the factor table alone -- pro_m printed a perfectly ordinary x1.1 and there
+# was no way to see it was college_m's number wearing pro's name.
+_FACTOR_WHY = {}
+
 # ⚠ SANITY RAIL ON THE FACTOR ITSELF. Real level gaps are on the order of
 #   10-30% (college vs hs, ms vs hs); a ratio outside this band means a
 #   spline evaluated somewhere it has no business (a 100m dash through the
 #   XC spline) or a broken artifact -- refuse it and show own-scale.
 _FACTOR_LO, _FACTOR_HI = 0.5, 2.0
+
+# ⚠⚠ AND THE PRO POOL GETS ITS OWN CEILING, BECAUSE THE RAIL ABOVE WAS SIZED
+#    ON THE WRONG GAP (2026-09-21). "10-30%" is measured against college and
+#    middle school; the pro-to-HS gap is the largest in the corpus and a
+#    MEASURED pro factor can legitimately sit near 2. Capping it at 2.0 did
+#    not just hide the toggle -- on 2026-09-20 it routed pro through the
+#    college fallback below, which multiplied a pro rating by the
+#    COLLEGE-to-HS number. That is not a conversion of anything: it left the
+#    row on no scale at all, higher than it started, which is the owner's
+#    "hs-equivalent for pros fucks it up rather than doing nothing ... it
+#    makes pros have even higher speed rating".
+#
+#    So the rail is widened for pro instead of being worked around. 3.0 is
+#    still a rail: a pro median reading 300 on the high-school scale is a
+#    broken artifact, not a talent gap.
+_PRO_FACTOR_HI = 3.0
 
 # A factor within half a percent of 1.0 moves nothing a reader can see;
 # a page whose factors are all inside this band hides the toggle.
@@ -327,13 +350,14 @@ def hsFactor(pool, sport, distance_m):
         if not f_own or not f_hs:
             continue
         ratios.append((float(c_hs) / float(c_own)) * (float(f_own) / float(f_hs)))
+    hi = _PRO_FACTOR_HI if pool.startswith("pro_") else _FACTOR_HI
     if not ratios:
         why = f"no sport with both constants and factors ({pool} and hs_{suffix})"
     else:
         factor = float(np.exp(np.mean(np.log(ratios))))
-        if not (_FACTOR_LO <= factor <= _FACTOR_HI):
+        if not (_FACTOR_LO <= factor <= hi):
             why = (f"factor {factor:.3f} outside the "
-                   f"{_FACTOR_LO}-{_FACTOR_HI} sanity rail "
+                   f"{_FACTOR_LO}-{hi} sanity rail "
                    f"(ratios {', '.join(f'{r:.3f}' for r in ratios)})")
             factor = None
     # ★ A PRO POOL RIDES ON THE COLLEGE FACTOR (2026-09-08, Graham
@@ -344,25 +368,40 @@ def hsFactor(pool, sport, distance_m):
     #   scale with a factor; wrong by the pro-college gap, which is
     #   small, rather than wrong by the whole conversion.
     #
-    # ⚠⚠ AND IT NOW CATCHES BOTH WAYS OF FAILING, NOT ONE (2026-09-20). It was
-    #    gated on `not ratios` -- "pro_m had no constants at all". The OTHER
-    #    failure is a pro pool that HAS constants whose factor then misses the
-    #    0.5-2.0 sanity rail, which is the likelier of the two: the pro-to-HS
-    #    gap is the largest in the corpus and the rail was sized on college and
-    #    middle school, "on the order of 10-30%". In that branch ratios was
-    #    non-empty, so the fallback was skipped, factor stayed None, and the
-    #    pro row kept its own-scale number -- the owner's "when ppl are in pro
-    #    pool they are not able to be hs-equivalent".
-    if factor is None and pool.startswith("pro_"):
+    # ⚠⚠ AND IT IS GATED ON `not ratios` AGAIN, DELIBERATELY (2026-09-21). On
+    #    2026-09-20 I widened this to fire whenever `factor is None`, so a pro
+    #    pool that HAD been measured but missed the 0.5-2.0 rail got college's
+    #    multiplier instead of its own. That was the wrong repair for a real
+    #    problem: the rail was mis-sized for pro, and the fix for a mis-sized
+    #    rail is _PRO_FACTOR_HI above, not a substituted number. Substituting
+    #    college's factor takes a rating measured against the pro pool's mean
+    #    and multiplies it by the college-to-HS gap -- arithmetic with no
+    #    meaning, which is why the owner saw pro ratings go UP instead of
+    #    converting.
+    #
+    #    The fallback survives only for the case it was written for: pro_m has
+    #    no constants AT ALL (too few rated rows to sample), so there is
+    #    nothing to be wrong about and college is the nearest scale that
+    #    exists. When a pro pool does have constants, its own measurement wins
+    #    -- and if that measurement is mad enough to miss even a 3.0 rail, the
+    #    row stays on its own scale and says why on the console, because a
+    #    visibly unconverted number beats an invisibly wrong one.
+    if factor is None and not ratios and pool.startswith("pro_"):
         college = hsFactor("college_" + suffix, sport, distance_m)
         if college:
             _FACTOR_CACHE[key] = college
+            _FACTOR_WHY[key] = (f"college_{suffix} fallback (x{college:.4f}) "
+                                f"-- {pool} has no constants of its own")
             return college
     # ! FAILURES ARE LOUD. A factor that cannot be built hides the toggle
     #   with no other symptom, so say why ONCE on the server console.
     if why is not None and key not in _FAILED:
         _FAILED.add(key)
         print(f"pool_view: no HS factor for {pool} -- {why}", flush=True)
+    _FACTOR_WHY[key] = (why if factor is None else
+                        f"measured from {len(ratios)} sport ratio(s) "
+                        f"({', '.join(f'{r:.4f}' for r in ratios)}), "
+                        f"rail {_FACTOR_LO}-{hi}")
     _FACTOR_CACHE[key] = factor
     return factor
 
@@ -681,6 +720,14 @@ def _diag(person_id=None):
         print("  " + pool.ljust(12) + "".join(cells))
     print("  (sanity marks: college_m ~x1.2-1.35, ms_m ~x0.75-0.9, "
           "pro above college;\n  a -- cell printed its reason above)")
+
+    # ★ WHERE EACH FACTOR CAME FROM. The table above shows the number; this
+    #   shows whether it is the pool's OWN measurement or a borrowed one.
+    #   A pro pool reading college's factor is the 2026-09-20 bug and is
+    #   invisible without this line.
+    print("\n  -- provenance")
+    for pool in pools:
+        print("  " + pool.ljust(12) + str(_FACTOR_WHY.get(pool, "(not built)")))
 
     if person_id is None:
         print()

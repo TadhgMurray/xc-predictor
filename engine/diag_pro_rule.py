@@ -21,6 +21,19 @@ diag_pro_rule.py -- what the <15-athlete rule is actually catching.
   four team ids looks like. If that is what it is, the bar is being applied to
   a quarter of a roster at a time and the rule is stricter than it reads.
 
+⚠⚠ WHAT THE ANSWER TURNED OUT TO BE (2026-09-21). The owner, after the run:
+  "there are a lot fo schools/high schools that must be pooling wrong". It was
+  this rule, and the block of four `hs` ids above was the tell. A K-12 school
+  is now exempt from the athlete bar (build_team_pool._SMALL_EXEMPT_LEVELS),
+  so it is no longer called pro for being small -- whether it is one school
+  under four ids or genuinely a school with nine runners, neither is a pro
+  team. The bar still binds college, club and no-level teams.
+
+  So this script now counts EVERY team under the bar, not only the ones still
+  condemned by it, and prints the split. That keeps it answering the question
+  it was written for -- is the thing being counted a team? -- and makes the
+  size of the exemption visible next to it.
+
 ! THIS MEASURES, IT DOES NOT CHANGE ANYTHING. No writes, no table, no rule.
   The question it answers is a number: how many of the 11,998 would clear 15
   if the count were per SCHOOL (team_identity's school+state) rather than per
@@ -53,9 +66,9 @@ def _tableExists(cur, name):
 #   from a guess.
 SQL_SIBLINGS = """
 WITH pro AS (
-    SELECT tp.team_id, tp.n_athletes, tp.n_rows, tp.level
+    SELECT tp.team_id, tp.n_athletes, tp.n_rows, tp.level, tp.kind
     FROM   team_pool tp
-    WHERE  tp.kind = 'pro' AND tp.reason LIKE 'fewer than%%'
+    WHERE  tp.n_athletes < %(bar)s
 ), named AS (
     SELECT p.*, lower(btrim(ti.school)) AS school, ti.state
     FROM   pro p LEFT JOIN team_identity ti ON ti.team_id = p.team_id
@@ -64,7 +77,8 @@ SELECT school, state,
        count(*)            AS n_ids,
        sum(n_athletes)     AS sum_athletes,
        sum(n_rows)         AS sum_rows,
-       min(team_id)        AS a_team
+       min(team_id)        AS a_team,
+       count(*) FILTER (WHERE kind = 'pro')  AS n_still_pro
 FROM   named
 WHERE  school IS NOT NULL AND school <> ''
 GROUP  BY school, state
@@ -76,7 +90,7 @@ ORDER  BY count(*) DESC, sum(n_rows) DESC
 SQL_DISTINCT = """
 WITH pro AS (
     SELECT tp.team_id FROM team_pool tp
-    WHERE  tp.kind = 'pro' AND tp.reason LIKE 'fewer than%%'
+    WHERE  tp.n_athletes < %(bar)s
 ), ids AS (
     SELECT p.team_id, lower(btrim(ti.school)) AS school, ti.state
     FROM   pro p JOIN team_identity ti ON ti.team_id = p.team_id
@@ -117,33 +131,43 @@ def _report(cur, args):
         if not _tableExists(cur, t):
             raise SystemExit(f"{t} is missing; build it first")
 
-    cur.execute(SQL_SIBLINGS)
+    cur.execute(SQL_SIBLINGS, {"bar": args.bar})
     rows = [tuple(r) if not isinstance(r, dict) else tuple(r.values())
             for r in cur.fetchall()]
     if not rows:
-        raise SystemExit("no team was called pro by the athlete rule")
+        raise SystemExit(f"no team in team_pool has fewer than {args.bar} "
+                         f"athletes")
 
     n_ids = sum(r[2] for r in rows)
+    still_pro = sum(r[6] for r in rows)
     shared = [r for r in rows if r[2] > 1]
     alone = len(rows) - len(shared)
-    print(f"\n  {n_ids:,} teams called pro by the <{args.bar}-athlete rule "
+    print(f"\n  {n_ids:,} teams under the {args.bar}-athlete bar "
           f"sit on {len(rows):,} schools")
+    # ★ THE SPLIT THE 2026-09-21 EXEMPTION MADE. Before it, still_pro was
+    #   every one of these; the difference is the K-12 schools that used to
+    #   be pooled pro for being small.
+    print(f"    {still_pro:,} are still pooled pro by the bar "
+          f"(college, club, no level)")
+    print(f"    {n_ids - still_pro:,} are K-12 schools the bar no longer "
+          f"reaches")
     print(f"    {alone:,} schools hold exactly one such team id")
     print(f"    {len(shared):,} schools hold more than one "
           f"({sum(r[2] for r in shared):,} of the team ids)")
 
     print(f"\n  the {args.show} schools holding the most of them:")
-    print(f"    {'school':<34} {'st':<3} {'ids':>4} {'Σath':>6} {'Σrows':>9}")
-    for school, state, ids, sath, srows, _a in rows[:args.show]:
+    print(f"    {'school':<34} {'st':<3} {'ids':>4} {'pro':>4} "
+          f"{'Σath':>6} {'Σrows':>9}")
+    for school, state, ids, sath, srows, _a, npro in rows[:args.show]:
         print(f"    {school[:34]:<34} {(state or '--'):<3} {ids:>4} "
-              f"{sath:>6} {srows:>9,}")
+              f"{npro:>4} {sath:>6} {srows:>9,}")
 
     # ★ AND THE NUMBER THAT DECIDES IT. Merging only matters if the DISTINCT
     #   roster across a school's ids clears the bar -- four ids sharing one
     #   twelve-runner roster still total twelve.
     print("\n  counting distinct athletes per school across all of its ids "
           "(one pass over both tables)...", flush=True)
-    cur.execute(SQL_DISTINCT)
+    cur.execute(SQL_DISTINCT, {"bar": args.bar})
     per_school = {}
     for r in cur.fetchall():
         school, state, n = (tuple(r) if not isinstance(r, dict)
@@ -168,6 +192,9 @@ def _report(cur, args):
     print("\n  ! nothing was written. If `freed` is large the bar is being "
           "applied to a fraction of a roster;\n    if it is small the rule is "
           "catching what it says it catches and these are simply tiny teams.")
+    print(f"    Either way the K-12 ones are no longer pooled pro over it "
+          f"-- only the {still_pro:,}\n    college/club/no-level ids above "
+          f"still are.")
 
 
 if __name__ == "__main__":

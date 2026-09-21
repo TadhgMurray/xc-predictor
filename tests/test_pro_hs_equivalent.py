@@ -14,18 +14,27 @@
 #
 # ⚠ TWO SEPARATE PLACES SAID NO, AND ONLY ONE OF THEM WAS KNOWN:
 #
-#    1. pool_view.hsFactor HAS had a pro fallback since 2026-09-08 -- a pro
-#       pool rides on the same-gender college factor -- but it was gated on
-#       `not ratios`, i.e. "pro_m had no constants at all". The OTHER way to
-#       fail is a pro pool that HAS constants whose factor then misses the
-#       0.5-2.0 sanity rail, and that is the likelier one: the pro-to-HS gap is
-#       the largest in the corpus while the rail was sized on college and
-#       middle school ("on the order of 10-30%"). That branch left ratios
-#       non-empty, skipped the fallback, and returned None.
+#    1. pool_view.hsFactor could not price a pro pool whose own factor missed
+#       the 0.5-2.0 sanity rail -- and it missed it often, because the rail was
+#       sized on college and middle school ("on the order of 10-30%") while the
+#       pro-to-HS gap is the largest in the corpus.
 #
 #    2. rankings._SCALE_POOLS -- the pools the board's HS-equivalent CASE is
 #       built from -- simply did not list pro_m or pro_f, so a pro row fell to
 #       the `ELSE 1.0` arm.
+#
+# ⚠⚠ AND THE FIRST FIX FOR (1) WAS THE WRONG ONE, which is what most of this
+#    file now pins. On 2026-09-20 I widened the pro->college FALLBACK to fire
+#    on any None factor, rail rejections included. A rail rejection means the
+#    pool WAS measured, so that swapped a measured pro number for the
+#    college-to-HS gap and multiplied pro ratings by it -- arithmetic on no
+#    scale at all. The owner, next run: "hs-equivalent for pros fucks it up
+#    rather than doing nothing ... it makes pros have even higher speed rating
+#    rather than a hs equivalent one."
+#
+#    The rail was the thing that was wrong, so the rail is what moved
+#    (_PRO_FACTOR_HI). The fallback went back to the one case it was written
+#    for on 2026-09-08: a pro pool with NO constants at all.
 #
 #   python -m unittest tests.test_pro_hs_equivalent
 import ast
@@ -41,38 +50,104 @@ def read(rel):
         return fh.read()
 
 
-class TheFallbackCatchesBothFailures(unittest.TestCase):
-    """pool_view.hsFactor, read as a tree rather than as text: the pro
-    fallback must be reachable from EVERY way the factor can come out None."""
+def _hsFactor(measured=None, college=None):
+    """hsFactor, executed with its measurements stubbed.
 
-    def setUp(self):
-        self.src = read("racecast/pool_view.py")
-        self.fn = None
-        for node in ast.parse(self.src).body:
-            if isinstance(node, ast.FunctionDef) and node.name == "hsFactor":
-                self.fn = node
-        self.assertIsNotNone(self.fn, "hsFactor is gone from pool_view.py")
-        self.body = ast.get_source_segment(self.src, self.fn)
+    ★ RUN, NOT READ. The 2026-09-20 bug was a one-line gate change that every
+      string assertion in this file happily agreed with; only calling the
+      function with a pro pool that HAS constants shows what it returns. The
+      stub supplies C() and F() directly, so `measured` is literally the
+      per-sport ratio hsFactor will combine.
 
-    def test_the_fallback_is_not_gated_on_the_constants_alone(self):
-        """⚠ THE REGRESSION. `if not ratios and pool.startswith("pro_")` only
-        catches the no-constants case; the sanity-rail rejection fell straight
-        through it."""
-        self.assertNotIn('if not ratios and pool.startswith("pro_")',
-                         self.body)
-        self.assertIn('if factor is None and pool.startswith("pro_")',
-                      self.body)
+    `measured` maps pool -> the ratio C(hs)/C(pool) * F(pool)/F(hs) it should
+    see for both sports, or None for "this pool cannot be sampled".
+    """
+    import math
 
-    def test_the_fallback_runs_after_the_sanity_rail(self):
-        """★ ORDER IS THE WHOLE FIX. The rail sets factor = None; the fallback
-        has to be downstream of that or it cannot see it."""
-        self.assertLess(self.body.index("_FACTOR_LO <= factor <= _FACTOR_HI"),
-                        self.body.index('pool.startswith("pro_")'))
+    src = read("racecast/pool_view.py")
+    tree = ast.parse(src)
+    # numpy stands in for numpy only where hsFactor uses it: the geometric
+    # mean over the per-sport ratios. log is ELEMENTWISE on a list there.
+    ns = {"np": type("np", (), {
+              "exp": staticmethod(math.exp),
+              "log": staticmethod(
+                  lambda x: [math.log(v) for v in x]
+                  if isinstance(x, (list, tuple)) else math.log(x)),
+              "mean": staticmethod(lambda xs: sum(xs) / len(xs)),
+          })(),
+          "_FACTOR_CACHE": {}, "_FACTOR_WHY": {}, "_FAILED": set(),
+          "print": lambda *a, **k: None}
+    for node in tree.body:                     # the rails and _REP_DIST
+        # ! TUPLE TARGETS TOO. `_FACTOR_LO, _FACTOR_HI = 0.5, 2.0` is the rail
+        #   itself, and a Name-only filter silently skipped it -- the stub then
+        #   raised NameError from inside hsFactor rather than testing it.
+        if isinstance(node, ast.Assign) and isinstance(
+                node.targets[0], (ast.Name, ast.Tuple)):
+            try:
+                exec(ast.get_source_segment(src, node), ns)   # noqa: S102
+            except Exception:                                 # noqa: BLE001
+                pass
+    measured = dict(measured or {})
+    # C and F are stubbed so that their product is exactly measured[pool]:
+    # C(hs)/C(pool) carries the ratio and F(pool)/F(hs) is 1.
+    ns["_poolConstant"] = lambda pool, sport: (
+        1.0 if pool.startswith("hs_")
+        else (1.0 / measured[pool] if measured.get(pool) else None))
+    ns["_forward_factor"] = lambda *a, **k: 1.0
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "hsFactor":
+            exec(ast.get_source_segment(src, node), ns)       # noqa: S102
+            break
+    else:
+        raise AssertionError("hsFactor is gone from pool_view.py")
+    return ns["hsFactor"], ns
+
+
+class AProPoolUsesItsOwnMeasurement(unittest.TestCase):
+    """⚠⚠ THE REGRESSION THE OWNER SAW. A pro pool that HAS constants must be
+    priced by them -- never by college's number, which converts a rating the
+    pro row does not carry."""
+
+    def test_a_measured_pro_factor_above_two_is_kept(self):
+        """★ THE CASE THE OLD RAIL THREW AWAY. x2.4 is a plausible pro-to-HS
+        gap; the 0.5-2.0 rail rejected it, and the 2026-09-20 fallback then
+        handed back college's x1.25."""
+        f, ns = _hsFactor({"pro_m": 2.4, "college_m": 1.25})
+        got = f("pro_m", "TF", 1600.0)
+        self.assertAlmostEqual(got, 2.4, places=6)
+        self.assertNotAlmostEqual(got, 1.25, places=3)
+        self.assertIn("measured", ns["_FACTOR_WHY"]["pro_m"])
+
+    def test_college_is_never_substituted_for_a_measured_pro_pool(self):
+        """⚠ EVEN WHEN THE MEASUREMENT IS MAD. Past the pro rail the row stays
+        on its OWN scale -- a visibly unconverted number, not an invisibly
+        wrong one. 'Rather than doing nothing' was the owner's complaint about
+        the alternative."""
+        f, ns = _hsFactor({"pro_m": 9.0, "college_m": 1.25})
+        self.assertIsNone(f("pro_m", "TF", 1600.0))
+        self.assertIn("sanity rail", ns["_FACTOR_WHY"]["pro_m"])
+
+    def test_the_pro_rail_is_wider_than_the_general_one(self):
+        f, ns = _hsFactor({"pro_m": 2.4, "college_m": 2.4})
+        self.assertGreater(ns["_PRO_FACTOR_HI"], ns["_FACTOR_HI"])
+        # and the general rail still binds a non-pro pool at the same number
+        self.assertIsNone(f("college_m", "TF", 1600.0))
+        self.assertAlmostEqual(f("pro_m", "TF", 1600.0), 2.4, places=6)
+
+    def test_the_fallback_survives_for_a_pro_pool_with_no_constants(self):
+        """★ THE 2026-09-08 CASE, UNCHANGED (Graham Blanks' 29:41 reading 96.4
+        beside college rows at 146): pro_m cannot be sampled at all, so there
+        is no measurement to be wrong about and college is the nearest scale
+        that exists."""
+        f, ns = _hsFactor({"pro_m": None, "college_m": 1.25})
+        self.assertAlmostEqual(f("pro_m", "TF", 1600.0), 1.25, places=6)
+        self.assertIn("fallback", ns["_FACTOR_WHY"]["pro_m"])
 
     def test_it_falls_back_to_the_same_gender_college_pool(self):
         """★ SAME GENDER, ALWAYS -- the module's own rule. A pro_f row must
         not be scaled through college_m."""
-        self.assertIn('hsFactor("college_" + suffix', self.body)
+        f, ns = _hsFactor({"pro_f": None, "college_f": 1.3, "college_m": 2.0})
+        self.assertAlmostEqual(f("pro_f", "TF", 1600.0), 1.3, places=6)
 
     def test_the_fallback_cannot_recurse_forever(self):
         """! college_* does not start with pro_, so the one recursive call
@@ -80,6 +155,11 @@ class TheFallbackCatchesBothFailures(unittest.TestCase):
         it a loop."""
         self.assertFalse("college_m".startswith("pro_"))
         self.assertFalse("college_f".startswith("pro_"))
+
+    def test_an_hs_pool_is_still_exactly_one(self):
+        f, _ns = _hsFactor({})
+        self.assertEqual(f("hs_m", "TF", 1600.0), 1.0)
+        self.assertEqual(f("hs_f", "XC", 5000.0), 1.0)
 
 
 class TheBoardScalesProRows(unittest.TestCase):
