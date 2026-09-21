@@ -2521,12 +2521,46 @@ _SEASON_Q = 0.80
 #   the same rule (app.enrich_seasons, pinned together by test).
 _SEASON_OUTLIER_PTS = 20.0
 
+# ★★ AND A SEASON WITH NOTHING RATED IN IT IS STILL A SEASON (owner,
+#    2026-09-21: "all the ppl that are in a school are not actually being
+#    counted/shown for that school"). De La Salle, measured on the live box:
+#
+#        ranking_results   1,036 athlete-seasons under the name
+#        athlete_season       43
+#        of the 686 people, 617 had NO athlete_season row at all
+#
+#    The engine rates nothing under 800m, on purpose, and rates no field
+#    event. Those rows reach ranking_results unrated anyway (issue #46, so
+#    the sprint PR boards have a clock to rank). But season_med was built
+#    `WHERE speed_rating IS NOT NULL`, so a person-season made ENTIRELY of
+#    sprints and throws produced no group, the INNER JOIN below dropped it,
+#    and the athlete got no season row.
+#
+#    No season row means no school roster line, no school athlete count, no
+#    (school, state) cluster -- which is why De La Salle's chips read LA(19),
+#    CA(19) for a programme that is 1,446 athletes in California -- and no
+#    year in the year bar. A sprint-and-field programme was invisible on its
+#    own page, site-wide, while every one of its athletes' pages named it.
+#
+# ! PURELY ADDITIVE, AND THAT IS THE WHOLE DESIGN. `n_rated` splits the two
+#   cases. A season with any rated race takes the same WHERE it always took
+#   and comes out byte-identical -- n_races still counts RATED races only,
+#   which the comment below insists on and a hybrid sprinter/800m runner
+#   would otherwise have inflated. A season with none takes every row it has,
+#   and its three rating columns come out NULL: percentile_cont and max()
+#   over all-NULL are NULL, and the decayed rating's numerator is NULL while
+#   its denominator is not, so the division is NULL rather than zero.
+#
+# ⚠ SO EVERY READER MUST TOLERATE A NULL RATING, and in Postgres `ORDER BY
+#   rating DESC` puts NULLs FIRST. The boards that sort on these columns were
+#   audited for NULLS LAST and IS NOT NULL when this shipped.
 _ATHLETE_SEASON_SQL = f"""
 WITH season_med AS (
     SELECT person_id, pool, sport, year,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating)
+               FILTER (WHERE speed_rating IS NOT NULL)      AS med,
+           count(speed_rating)                              AS n_rated
     FROM   {{load_table}}
-    WHERE  speed_rating IS NOT NULL
     GROUP  BY person_id, pool, sport, year)
 INSERT INTO {{season_table}}
     (person_id, pool, sport, year, mean_rating, decayed_rating, best_rating,
@@ -2579,8 +2613,13 @@ JOIN season_med sm ON sm.person_id = base.person_id AND sm.pool = base.pool
 --   that have no rating, and -- worse -- decayed_rating's denominator
 --   sum(power(...)) counts every row while its numerator skips the NULLs, so
 --   every sprinter's decayed rating would be silently diluted toward zero.
-WHERE speed_rating IS NOT NULL
-  AND speed_rating >= sm.med - {_SEASON_OUTLIER_PTS}
+WHERE (sm.n_rated > 0
+       AND speed_rating IS NOT NULL
+       AND speed_rating >= sm.med - {_SEASON_OUTLIER_PTS})
+   -- ★ OR THE SEASON HAS NO RATED RACE AT ALL: a sprinter's or a thrower's
+   --   whole year. Every row counts, because there is no rated subset to
+   --   prefer and n_races would otherwise be zero for a season that happened.
+   OR sm.n_rated = 0
 GROUP BY base.person_id, base.pool, base.sport, base.year;
 """
 
@@ -2638,13 +2677,22 @@ def refreshAthleteSeason(conn):
         t0 = time.time()
         cur.execute(sql)
         print(f"    [{time.time() - t0:7.1f}s] GROUP BY -> {_LOAD_SEASON}")
-        cur.execute(f"SELECT count(*) FROM {_LOAD_SEASON}")
-        n = cur.fetchone()[0]
+        # ! THE UNRATED SHARE IS PRINTED, because it is a new population and
+        #   its size is the whole claim: these are the sprint-and-field
+        #   seasons that had no row at all before 2026-09-21. If this reads
+        #   zero on a corpus with sprints in it, the n_rated arm is not
+        #   firing and the school pages are still missing their people.
+        cur.execute(f"SELECT count(*), count(*) FILTER "
+                    f"(WHERE mean_rating IS NULL) FROM {_LOAD_SEASON}")
+        n, n_unrated = cur.fetchone()[:2]
     conn.commit()
 
     _stampSeasonUnits(conn, _LOAD_SEASON)
     analyze(conn, _LOAD_SEASON)
-    print(f"  athlete_season: {n:,} person-seasons")
+    pct = (100.0 * n_unrated / n) if n else 0.0
+    print(f"  athlete_season: {n:,} person-seasons "
+          f"({n_unrated:,} unrated -- {pct:.1f}% -- sprint/field seasons the "
+          f"engine never rates)")
     # ! AND ITS INDEXES. createShadow copies structure without them by design,
     #   and this call was missing -- so every run since swapped in a
     #   12.9M-row table with no index on it at all.
