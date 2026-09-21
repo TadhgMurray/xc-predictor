@@ -73,10 +73,15 @@
     {# the school's own facts, long-form: this line is not shared with a
        grade and a compare link, so there is room to spell them out #}
     {% if units %}<p class="meta">{{ unit_chips(units) }}</p>{% endif %}
+    {# ! EACH FACT IS OPTIONAL. schoolHeader's raw-results fallback is
+       bounded (school.RAW_HEADER_TIMEOUT_MS): past the budget it returns the
+       header with the counts set to None rather than 404-ing a school that
+       plainly has results, so the line prints what it was given. #}
     <p class="meta">
         {% if header.state %}{{ header.state }} · {% endif %}
-        {{ header.athletes }} athletes ·
-        {{ header.first_year }} to {{ header.last_year }} ·
+        {% if header.athletes %}{{ header.athletes }} athletes · {% endif %}
+        {% if header.first_year and header.last_year %}
+        {{ header.first_year }} to {{ header.last_year }} ·{% endif %}
         <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">School PRs →</a>
         {# a college's recruits (282): only a school with a college unit
            gets the link; a high school has no recruiting page #}

@@ -46,6 +46,14 @@ from school_identity import stateFilterSql
 from capped import fetchCapped
 
 
+# ⚠ THE BUDGET FOR THE RAW-RESULTS HEADER FALLBACK (schoolHeader, below).
+#   Two seconds: long enough that a warm cache answers, short enough that a
+#   school which will NEVER have athlete_season rows cannot spend a page view
+#   walking 61M unindexed rows twice.
+RAW_HEADER_TIMEOUT_MS = 2000
+_RAW_HEADER_COMPLAINED = False
+
+
 def seasonLabel(sport, year):
     """Stored season year -> what a person calls it."""
     if year is None:
@@ -88,7 +96,38 @@ def schoolHeader(cur, school):
       recovery, the UNLOGGED bug), and while it is empty every school
       page on the site 404'd. The header now falls back to
       ranking_results, then to the raw results tables -- the page
-      renders whatever sections have data instead of vanishing."""
+      renders whatever sections have data instead of vanishing.
+
+    ⚠⚠ AND THE THIRD SOURCE IS BOUNDED, BECAUSE IT IS A SEQ SCAN (2026-09-21).
+       `results.school` has no index -- scripts/database.py builds three, on
+       athlete_id, meet_id and normalized_time -- so that last query walks
+       both feeds end to end. It was written for the rebuild window, where
+       every school hits it for a few minutes and the cost is paid once.
+
+       It is not only the rebuild window. A school whose rows never REACH
+       ranking_results falls through to it on every single page view,
+       forever: a pool the boards refuse (pro_*), grade_trust 'low', out of
+       scope. Until 2026-09-21 the <15-athlete rule sent whole high schools
+       down that path -- the owner's "all the ppl that are in a school are
+       not actually being counted/shown for that school" -- and each of
+       those page views was two full scans of 61M rows.
+
+       So it runs under RAW_HEADER_TIMEOUT_MS inside a SAVEPOINT, in two
+       stages, and the split is the whole point:
+
+         3a  DOES this school have a raw row at all?  `LIMIT 1`, so a school
+             that HAS rows stops at the first one instead of scanning to the
+             end. This is the answer the route needs, because
+             `header is None` is what makes it abort(404).
+         3b  HOW MANY athletes, first year, last year -- the count(DISTINCT)
+             that costs the whole scan.
+
+       3b may time out; 3a decides whether the page exists. Past the budget
+       the header comes back with athletes/first_year/last_year set to None
+       and the page RENDERS -- the template drops the facts it was not given.
+       A missing count beats both a table scan and a 404 on a school that
+       plainly has results, and an unbounded query in this tree has already
+       taken the site down once."""
     label = _labelSql("year", "sport")
     cur.execute(f"""
         SELECT count(DISTINCT person_id)          AS athletes,
@@ -116,7 +155,57 @@ def schoolHeader(cur, school):
     if row and row["athletes"]:
         return row
 
-    cur.execute("""
+    # ! A SAVEPOINT, NOT A BARE ROLLBACK. This runs mid-request; rolling the
+    #   whole transaction back would abort reads the route has already done.
+    #   The savepoint scopes each timeout to its own statement.
+    def _bounded(sql, params):
+        """One statement under the budget. (row, True) or (None, False)."""
+        try:
+            cur.execute("SAVEPOINT raw_header")
+            cur.execute("SET LOCAL statement_timeout = %s",
+                        (RAW_HEADER_TIMEOUT_MS,))
+            cur.execute(sql, params)
+            got = cur.fetchone()
+        except Exception as exc:             # noqa: BLE001 -- a header, not a page
+            cur.execute("ROLLBACK TO SAVEPOINT raw_header")
+            # ! SAID ONCE, NOT SWALLOWED. A timeout here is expected and
+            #   uninteresting; a QueryCanceled is what the budget is for.
+            #   Anything else is a bug in this query, and the only symptom it
+            #   has is a 404 -- so it names itself on the console.
+            if "canceling statement" not in str(exc):
+                global _RAW_HEADER_COMPLAINED
+                if not _RAW_HEADER_COMPLAINED:
+                    _RAW_HEADER_COMPLAINED = True
+                    print(f"school.schoolHeader: raw fallback raised "
+                          f"{type(exc).__name__}: {exc}", flush=True)
+            return None, False
+        # ⚠⚠ RESET IT. `SET LOCAL` is scoped to the TRANSACTION, not to the
+        #    savepoint, so on the success path the 2s budget would survive the
+        #    RELEASE and apply to every later query in the same request -- the
+        #    roster, the meet list, the boards. A header's budget is not the
+        #    page's. (On the rollback path above, the savepoint undoes the SET
+        #    for us, which is why only this branch needs it.)
+        cur.execute("SET LOCAL statement_timeout = DEFAULT")
+        cur.execute("RELEASE SAVEPOINT raw_header")
+        return got, True
+
+    # 3a -- does it exist? LIMIT 1 short-circuits on the first matching row.
+    # ! THE PARENTHESES ARE LOAD-BEARING. `LIMIT` inside a bare UNION branch
+    #   is a syntax error in Postgres, and the first version of this shipped
+    #   without them -- the probe raised, _bounded swallowed it, and every
+    #   school on this path 404'd. Caught by running it, not by reading it.
+    exists, ok = _bounded("""
+        SELECT 1 AS present FROM (
+            (SELECT 1 FROM results    WHERE school = %(school)s LIMIT 1)
+            UNION ALL
+            (SELECT 1 FROM results_tf WHERE school = %(school)s LIMIT 1)
+        ) u LIMIT 1
+    """, {"school": school})
+    if not ok or not exists:
+        return None                          # unknown, or genuinely no rows
+
+    # 3b -- the facts, which cost the scan. Their absence is not a 404.
+    row, ok = _bounded("""
         SELECT count(DISTINCT person_id)              AS athletes,
                min(substring(date, 1, 4))::int        AS first_year,
                max(substring(date, 1, 4))::int        AS last_year,
@@ -130,8 +219,10 @@ def schoolHeader(cur, school):
         ) u
         WHERE date ~ '^[0-9]{4}'
     """, {"school": school})
-    row = cur.fetchone()
-    return row if row and row["athletes"] else None
+    if ok and row and row["athletes"]:
+        return row
+    return {"athletes": None, "first_year": None, "last_year": None,
+            "state": None}
 
 
 def schoolRoster(cur, school, year, sport, state=None, primary=None,
