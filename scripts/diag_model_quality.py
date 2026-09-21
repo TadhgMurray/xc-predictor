@@ -472,8 +472,13 @@ def seasonRatings(cur, ids, sport, year):
     cur.execute("""
         SELECT person_id, mean_rating FROM athlete_season
         WHERE person_id = ANY(%(ids)s) AND sport = %(s)s AND year = %(y)s
+          -- ⚠ NOT `or 0` (2026-09-21). An unrated sprint season coalesced to
+          --   0.0 is not a missing measurement, it is a catastrophically bad
+          --   one, and this dict is averaged. Leaving the person out lets the
+          --   caller see an absence.
+          AND mean_rating IS NOT NULL
     """, {"ids": list(ids), "s": sport, "y": year})
-    return {r["person_id"]: float(r["mean_rating"] or 0)
+    return {r["person_id"]: float(r["mean_rating"])
             for r in cur.fetchall()}
 
 

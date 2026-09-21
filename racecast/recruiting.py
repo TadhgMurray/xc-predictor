@@ -415,8 +415,13 @@ def collegePlacements(cur, sport, hs_pool, rating, label_year):
         return []
     equiv = float(rating) / float(factor)
     # the latest college season on the board at or before this one
+    # ! THE NEWEST year WITH A RATED SEASON IN IT (2026-09-21). Without the
+    #   filter this can land on a year whose only college seasons are
+    #   unrated sprint years, and every placement below comes back empty --
+    #   a page that silently shows nothing rather than the newest real board.
     cur.execute("""SELECT max(year) AS y FROM athlete_season
-                   WHERE pool = %s AND sport = %s AND year <= %s""",
+                   WHERE pool = %s AND sport = %s AND year <= %s
+                     AND mean_rating IS NOT NULL""",
                 (college, sport, storedYear(label_year, sport)))
     row = cur.fetchone()
     stored = (row["y"] if isinstance(row, dict) else row[0]) if row else None

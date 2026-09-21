@@ -2439,6 +2439,11 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
         WHERE  s.school = ANY(%(schools)s)
           AND  s.year   = %(yr)s
           AND  s.sport  = %(sport)s
+          -- ! A SQUAD IS PREDICTED FROM RATINGS (2026-09-21). An unrated
+          --   sprint season has nothing to project, and NULLS LAST would
+          --   only park it at the tail -- where it still consumes a squad
+          --   slot and the top-7 slice.
+          AND  s.mean_rating IS NOT NULL
           {grade_clause}
           {move_clause}
           {gender_clause}

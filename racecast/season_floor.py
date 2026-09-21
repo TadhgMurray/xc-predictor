@@ -31,17 +31,37 @@ def floorFor(stored_year):
 
 
 def floorSql(explicit, alias="s"):
-    """The WHERE fragment for a board.
+    """The WHERE fragment for a board: enough races, AND something to rank.
 
     explicit  the reader typed a minimum: it applies to every row, open
               seasons included -- a filter they set is theirs.
     default   the board's own floor, which open seasons are exempt from.
 
-    Both read %(min_races)s; the caller binds it either way."""
+    Both read %(min_races)s; the caller binds it either way.
+
+    ⚠⚠ AND THE ROW MUST HAVE A RATING (2026-09-21). athlete_season now
+       carries seasons with none at all -- a sprinter's or a thrower's whole
+       year, which the engine never rates (nothing under 800m, no field
+       event) and which used to produce no row. Those seasons belong on a
+       school roster and on an athlete page; they do not belong on a board
+       that ranks by rating, and they are not part of the population a
+       percentile is taken against.
+
+       The predicate lives HERE rather than at the five call sites because
+       countOf is the denominator for "top 2%" on the athlete header and
+       rankOf is the numerator: letting the two disagree would not fail, it
+       would just quietly misreport every percentile on the site. One rule,
+       every reader -- which is the same argument this module's own header
+       makes about the race floor.
+
+       It is a no-op for the two build_recruiting call sites (their CTEs
+       already filter mean_rating IS NOT NULL) and for rankings'
+       event-restricted source, which aggregates rated rows only."""
+    rated = f"{alias}.mean_rating IS NOT NULL"
     if explicit:
-        return f"{alias}.n_races >= %(min_races)s"
+        return f"{alias}.n_races >= %(min_races)s AND {rated}"
     return (f"({alias}.n_races >= %(min_races)s "
-            f"OR {alias}.year >= {int(OPEN_FROM)})")
+            f"OR {alias}.year >= {int(OPEN_FROM)}) AND {rated}")
 
 
 def floorLabel(stored_year):

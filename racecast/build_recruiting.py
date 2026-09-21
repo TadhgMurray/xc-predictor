@@ -314,8 +314,12 @@ def main():
             if cur.fetchone()["t"] is None:
                 print("  athlete_season missing -- run 10_rankings first.")
                 return
+            # ! RATED SEASONS ONLY: `newest` sets the whole build's window
+            #   (since = newest - classes + 1), so an unrated sprint year on
+            #   the end would shift every class by one.
             cur.execute("""SELECT max(year) AS y FROM athlete_season
-                           WHERE pool IN ('college_m', 'college_f')""")
+                           WHERE pool IN ('college_m', 'college_f')
+                             AND mean_rating IS NOT NULL""")
             newest = cur.fetchone()["y"]
             if newest is None:
                 print("  no college seasons -- college_recruit left as it was.")

@@ -2660,6 +2660,30 @@ def refreshAthleteSeason(conn):
     """
     print("\n  building athlete_season...")
     createShadow(conn, _LOAD_SEASON, "athlete_season")
+    # ⚠ THE RATING COLUMNS MUST BE NULLABLE, and this is checked BEFORE the
+    #   aggregate rather than discovered by it. Since 2026-09-21 a season
+    #   with no rated race writes NULL into all three; createShadow copies
+    #   the live table's constraints, so a NOT NULL left over from an old
+    #   migration would fail this step after its multi-GB sort has already
+    #   run -- an hour in, at the end of a pipeline. The repo's own DDL has
+    #   them nullable; this is the check that says so out loud if a server
+    #   disagrees, and names the fix.
+    with conn.cursor() as cur:
+        cur.execute("""SELECT column_name FROM information_schema.columns
+                       WHERE table_schema = 'public'
+                         AND table_name = %s
+                         AND is_nullable = 'NO'
+                         AND column_name IN ('mean_rating', 'decayed_rating',
+                                             'best_rating')""",
+                    (_LOAD_SEASON,))
+        bad = [r[0] for r in cur.fetchall()]
+    if bad:
+        raise RuntimeError(
+            f"athlete_season.{', '.join(bad)} is NOT NULL, but a season with "
+            f"no rated race (a sprinter's or a thrower's year) must write "
+            f"NULL there. Drop the constraint:\n"
+            + "\n".join(f"    ALTER TABLE athlete_season "
+                         f"ALTER COLUMN {c} DROP NOT NULL;" for c in bad))
     sql = _ATHLETE_SEASON_SQL.format(load_table=_LOAD_TABLE,
                                      season_table=_LOAD_SEASON)
     with conn.cursor() as cur:

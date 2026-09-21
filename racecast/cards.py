@@ -73,9 +73,14 @@ def athleteCardData(cur, person_id):
     if a is None:
         return None
     a = dict(a) if not isinstance(a, dict) else a
+    # ! THE SAME ORDER BY THE ATHLETE PAGE USES, INCLUDING THE RATED-FIRST
+    #   KEY (app.py, 2026-09-21). The card quotes a rating, so an unrated
+    #   sprint season must not be the season it quotes; keeping the two
+    #   queries identical is what stops the card and the page disagreeing.
     cur.execute("""SELECT mean_rating, sport, pool, year, n_races, state, school, grade
                    FROM athlete_season WHERE person_id = %s
-                   ORDER BY (n_races >= 3) DESC, last_race DESC NULLS LAST,
+                   ORDER BY (mean_rating IS NOT NULL) DESC,
+                            (n_races >= 3) DESC, last_race DESC NULLS LAST,
                             year DESC, n_races DESC LIMIT 1""", (person_id,))
     season = cur.fetchone()
     season = dict(season) if season is not None and not isinstance(season, dict) else season

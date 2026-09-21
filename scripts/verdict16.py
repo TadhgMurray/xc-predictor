@@ -51,6 +51,10 @@ def main():
               ON t.person_id = x.person_id AND t.pool = x.pool AND t.sport = 'TF' AND t.year = x.year
             WHERE x.pool = %s AND x.sport = 'XC' AND x.n_races >= 3 AND t.n_races >= 3
               AND x.year >= 2015
+              -- ! BOTH SIDES RATED (2026-09-21). A NULL on either makes
+              --   width_bucket NULL, which becomes its own group, and the
+              --   loop below computes `90 + (band - 1) * 10` on it.
+              AND x.mean_rating IS NOT NULL AND t.mean_rating IS NOT NULL
             GROUP BY 1 ORDER BY 1""", (args.pool,))
         for band, n, med, share in cur.fetchall():
             lo = 90 + (band - 1) * 10

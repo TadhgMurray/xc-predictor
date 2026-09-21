@@ -1395,7 +1395,19 @@ def athlete(person_id):
                     --   team and a grade one race attests; three races is
                     --   the boards' own floor. With no season that deep, the
                     --   latest season stands.
-                    ORDER  BY (n_races >= 3) DESC,
+                    -- ⚠⚠ AND A RATED SEASON FIRST OF ALL (2026-09-21).
+                    --   athlete_season now carries seasons with no rating at
+                    --   all -- a sprinter's or a thrower's whole year, which
+                    --   the engine never rates and which used to have no row.
+                    --   This ORDER BY names no rating column, so such a
+                    --   season wins whenever it is the newest with three
+                    --   races, and the header rating below came back None:
+                    --   float(athlete["rating"]) then raised on every load of
+                    --   that page. The page still SHOWS the sprint season in
+                    --   its season blocks; it just is not the season the
+                    --   header quotes a rating from.
+                    ORDER  BY (mean_rating IS NOT NULL) DESC,
+                              (n_races >= 3) DESC,
                               last_race DESC NULLS LAST, year DESC,
                               n_races DESC
                     LIMIT  1

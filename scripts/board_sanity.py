@@ -219,7 +219,16 @@ def loadPoolTops(cur, sport, n=TOP_SEASONS):
         SELECT pool, mean_rating FROM (
             SELECT pool, mean_rating,
                    row_number() OVER (PARTITION BY pool ORDER BY mean_rating DESC) AS rk
-            FROM   athlete_season WHERE sport = %s AND n_races >= 3) s
+            -- ⚠ RATED ONLY (2026-09-21). athlete_season now carries
+            --   sprint/field seasons with no rating, and `ORDER BY
+            --   mean_rating DESC` puts NULLs FIRST in Postgres: they would
+            --   take rk 1..N inside every pool, topMean would then average
+            --   whatever real seasons were left below them, and this
+            --   checker would stop flagging the ceiling breaches it exists
+            --   to flag. A sanity check that fails open is worse than none.
+            FROM   athlete_season
+            WHERE  sport = %s AND n_races >= 3
+              AND  mean_rating IS NOT NULL) s
         WHERE rk <= %s""", (sport, int(n)))
     by = {}
     for pool, m in cur.fetchall():
