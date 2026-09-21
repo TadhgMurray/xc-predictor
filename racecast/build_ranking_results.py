@@ -2085,10 +2085,41 @@ def buildIndexes(conn, name, like):
           f"the load, {_INDEX_JOBS} at a time)")
 
     def rename(idxname, ddl):
-        """The shadow's own name for this index, derived not accumulated."""
-        newname = (idxname if idxname.startswith(name)
-                   else idxname.replace(like, name, 1)
-                   if like in idxname else f"{name}_{idxname}")
+        """The shadow's own name for this index, derived not accumulated.
+
+        ⚠⚠ IT ACCUMULATED ANYWAY, AND THE LIVE DATABASE PROVES IT
+           (2026-09-21):
+
+               idx_athlete_season_new_new_new_new_new_new_new_new_new_person
+
+           `name` IS `like` + "_new", so idxname.replace(like, name, 1) inserts
+           another "_new" on every rebuild. The docstring above says the name
+           is "derived not accumulated"; it was derived from an already-derived
+           name, which is accumulation.
+
+        ⚠ AND THAT IS NOT COSMETIC, BECAUSE OF THE `IF NOT EXISTS` BELOW.
+          Postgres truncates identifiers at 63 characters, so two different
+          long names collapse to the same string -- and IF NOT EXISTS then
+          SKIPS the second one silently. A table swaps in missing an index and
+          nothing anywhere reports a failure. That is how ranking_results
+          reached 135M rows with 5 of its 13 canonical indexes present, and
+          how every page that calls stampRowsHs came to seq-scan the table.
+
+        ★ SO THE SHADOW SUFFIX IS STRIPPED FIRST, making this idempotent: the
+          same live index yields the same shadow name however many times it
+          has been through a rebuild.
+        """
+        stable = re.sub(re.escape(like) + r"(?:_new)+", like, idxname)
+        newname = (stable if stable.startswith(name)
+                   else stable.replace(like, name, 1)
+                   if like in stable else f"{name}_{stable}")
+        if len(newname) > 63:
+            # ! TRUNCATE DELIBERATELY AND UNIQUELY rather than letting
+            #   Postgres do it blindly: a short hash keeps two long names
+            #   distinct where a plain cut would merge them.
+            import hashlib
+            tag = hashlib.md5(newname.encode()).hexdigest()[:8]
+            newname = f"{newname[:54]}_{tag}"
         sql = ddl.replace(f" ON public.{like} ", f" ON public.{name} ")
         sql = sql.replace(f" ON {like} ", f" ON {name} ")
         sql = sql.replace(f"INDEX {idxname} ",
@@ -2138,7 +2169,87 @@ def buildIndexes(conn, name, like):
             newname, dt = build(job)
             print(f"    [{dt:7.1f}s] {newname[:60]}")
 
+    verifyIndexes(conn, name, like)
     analyze(conn, name)
+
+
+def _indexSignatures(conn, table):
+    """The COLUMN LISTS of every index on a table, normalised.
+
+    ! SIGNATURES, NOT NAMES. The shadow's names are derived and the live
+      table's are historical; what a query can actually use is the column
+      list, so that is what is compared.
+    """
+    def _cols(ddl):
+        i = ddl.find("(")
+        return ddl[i:].replace(" ", "").lower() if i >= 0 else ddl
+    with conn.cursor() as cur:
+        cur.execute("SELECT indexdef FROM pg_indexes WHERE tablename = %s",
+                    (table,))
+        return {_cols(r[0]) for r in cur.fetchall()}
+
+
+def verifyIndexes(conn, name, like):
+    """★★ THE POSTCONDITION, ASSERTED BEFORE THE SWAP (2026-09-21).
+
+    ⚠ WHY THIS EXISTS. ranking_results went live at 135M rows with 5 of its
+      13 canonical indexes, including rr_result_idx -- which
+      pool_view.stampRowsHs needs on EVERY race, course, compiled and compare
+      page. Without it each of those pages seq-scans the whole table; the
+      owner's site went from slow to unresponsive with all eight gunicorn
+      workers stuck in the same query, and nothing in the pipeline had
+      reported a single failure.
+
+      The build loop trusted itself. `CREATE INDEX IF NOT EXISTS` turns a name
+      collision into a silent skip, a thread that raises inside pool.map can
+      end the map early, and either way the run carried on and swapped the
+      table in.
+
+    ★ SO THE LOOP IS NO LONGER TRUSTED: after building, every canonical index
+      must actually be PRESENT on the shadow, by column signature. What is
+      missing is rebuilt once, serially, with its own name. What is still
+      missing after that raises -- before swapIn, so the live table keeps its
+      indexes and the site keeps working.
+
+    ! A BARE TABLE IS WORSE THAN A STALE ONE. Failing here leaves yesterday's
+      ranking_results serving pages; swapping leaves the site down.
+    """
+    want = _CANONICAL_INDEXES.get(like, [])
+    if not want:
+        return
+    def _sig(cols):
+        return cols.replace(" ", "").lower()
+    have = _indexSignatures(conn, name)
+    missing = [(n, c) for n, c in want if _sig(c) not in have]
+    if not missing:
+        print(f"  ✓ all {len(want)} canonical indexes present on {name}")
+        return
+    print(f"  ⚠ {len(missing)} canonical index(es) MISSING from {name} after "
+          f"the build -- rebuilding serially:")
+    for idxname, cols in missing:
+        newname = f"{name}_{idxname}"
+        sql = f"CREATE INDEX IF NOT EXISTS {newname} ON public.{name} {cols}"
+        t0 = time.time()
+        try:
+            with getConn() as c:
+                with c.cursor() as cur:
+                    cur.execute(f"SET maintenance_work_mem = "
+                                f"'{dbSetting('maintenance_work_mem', '2GB')}'")
+                    cur.execute(sql)
+                c.commit()
+            print(f"    [{time.time() - t0:7.1f}s] {newname[:60]}")
+        except Exception as exc:                              # noqa: BLE001
+            print(f"    ✗ {newname[:60]}: {type(exc).__name__}: {exc}")
+    have = _indexSignatures(conn, name)
+    still = [n for n, c in want if _sig(c) not in have]
+    if still:
+        # ⚠ RAISE, DO NOT SWAP. See the docstring: a bare table takes the site
+        #   down, a stale one merely serves yesterday's numbers.
+        raise RuntimeError(
+            f"{name} is missing {len(still)} canonical index(es) after a "
+            f"rebuild attempt: {', '.join(still)}. REFUSING to swap it in -- "
+            f"the live table keeps its indexes and the site keeps working. "
+            f"Fix the index build, then re-run this stage.")
 
 
 def seedOtherSports(conn, keep_sports):
