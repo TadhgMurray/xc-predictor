@@ -117,5 +117,48 @@ class TheTeamPoolReportNamesThings(unittest.TestCase):
         self.assertIn("school", src[i:i + 700])
 
 
+class TheReportSaysWhetherARouteIsEvenLive(unittest.TestCase):
+    """⚠⚠⚠ THE DIAGNOSTIC PRESENTED A DEAD ROUTE AS A LIVE ONE, and I read
+    its route 2 listing -- Japan 5,468 athletes, United States 5,189 --
+    as a population currently pooled professional. It is not.
+
+    speed_ratings.loadProTeams returns an EMPTY set unless XCP_TEAM_POOL=1,
+    deliberately since 2026-09-19, and nothing in deploy/solve_env.sh or
+    run_pipeline.ps1 sets it. The site never passes team_pro at all.
+
+    The module header's caveat -- "the counts here are the POPULATION each
+    route can claim, not the exact number it did claim" -- was written about
+    clubSeason's majority gate. It did not cover a route being switched off
+    at the source, and a reader who trusted it (me) got it wrong.
+    """
+
+    def setUp(self):
+        self.src = _src()
+
+    def test_route_2_reports_the_flag(self):
+        i = self.src.index('ROUTE 2 -- team_pro')
+        j = self.src.index('ROUTE 3 --', i)
+        section = self.src[i:j]
+        self.assertIn("XCP_TEAM_POOL", section)
+        self.assertIn("NOT LIVE", section)
+
+    def test_the_flag_is_read_not_assumed(self):
+        """! FROM THE ENVIRONMENT, and with the same truthiness test
+        speed_ratings uses -- a diagnostic that decided this differently
+        from the engine would be a third opinion about one switch."""
+        import ast
+        tree = ast.parse(self.src)
+        got = [n for n in ast.walk(tree)
+               if isinstance(n, ast.Constant) and n.value == "XCP_TEAM_POOL"]
+        self.assertTrue(got, "the flag name appears only in prose")
+        with io.open(os.path.join(_ROOT, "engine", "speed_ratings.py"),
+                     encoding="utf-8") as fh:
+            eng = fh.read()
+        i = eng.index('os.environ.get("XCP_TEAM_POOL"')
+        self.assertIn('("", "0", "false")', eng[i:i + 120])
+        j = self.src.index('os.environ.get("XCP_TEAM_POOL"')
+        self.assertIn('("", "0", "false")', self.src[j:j + 120])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

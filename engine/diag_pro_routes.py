@@ -152,6 +152,35 @@ def main():
             print("\n" + "=" * 74)
             print("  ROUTE 2 -- team_pro: team_pool.kind = 'pro'")
             print("=" * 74)
+            # ⚠⚠⚠ AND IT IS OFF BY DEFAULT, WHICH THIS FAILED TO SAY AND I
+            #     READ THE LISTING AS IF IT WERE LIVE (2026-09-22).
+            #
+            #     speed_ratings.loadProTeams returns an EMPTY set unless
+            #     XCP_TEAM_POOL=1 -- deliberately, since 2026-09-19: the
+            #     loader had been querying a column that does not exist, so
+            #     the rule had never fired, and switching it on during a bad
+            #     solve would have made two changes inseparable. Nothing in
+            #     deploy/solve_env.sh or run_pipeline.ps1 sets it.
+            #
+            #     The SITE never passes team_pro at all -- neither
+            #     build_ranking_results, panels nor fill_ratings names the
+            #     argument, so it defaults False there whatever the flag says.
+            #
+            #     So this listing is a population the rule COULD claim, and
+            #     under the current environment claims none of. The header's
+            #     "not the exact number it did claim" was about the majority
+            #     gate and did not cover a route being switched off entirely.
+            flag = os.environ.get("XCP_TEAM_POOL", "")
+            live = flag not in ("", "0", "false")
+            if live:
+                print(f"  ⚡ LIVE in the engine: XCP_TEAM_POOL={flag}")
+            else:
+                print("  ⚠ NOT LIVE. XCP_TEAM_POOL is unset, so "
+                      "speed_ratings.loadProTeams returns an empty set and\n"
+                      "    this route claims NOBODY in a solve. The site never "
+                      "passes team_pro at all.\n"
+                      "    The rows below are the population it WOULD claim "
+                      "with XCP_TEAM_POOL=1.")
             rows(r_team_pro, "every team team_pool calls pro",
                  "build_team_pool.classify decided these. A K-12 school here "
                  "is a bug.")
