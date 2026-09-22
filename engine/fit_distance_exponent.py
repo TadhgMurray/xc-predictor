@@ -2743,8 +2743,30 @@ def _levelEpsTable(first_pass):
 #    Independently measured from season bests (scripts/diag_event_pairs.py,
 #    30,142 college-men athlete-seasons), the real 10,000->5,000 fade is
 #    1.071; the shipped tangent runs 1.047, which reads a 32:15 10k as
-#    15:36.6 over 5K where the data says 15:21.9. Sixteen seconds, on every
-#    collegiate track 10k, because one pool had four tail pairs.
+#    15:36.6 over 5K where the data says 15:21.9.
+#
+# ⚠⚠ AND THAT SIXTEEN SECONDS IS THE SPLINE'S ERROR, NOT A RATING'S.
+#    Measured the same day with scripts/distance_curve_check.py, which lays
+#    the joint solve's fitted per-event offsets on the spline and prints
+#    what a rating ACTUALLY applies, college_m|TF at 8000->10000:
+#
+#        spline alone            1.040 (floored) / 1.047 (raw tangent)
+#        band 0 (~90)            1.069
+#        band 1 (~112)           1.071   <- the measured value, exactly
+#        band 2 (~127)           1.112
+#        band 3 (~145)           1.054
+#
+#    The solve's event offsets are keyed (pool, 100 m bucket, band), so a
+#    SYSTEMATIC spline error at one distance is exactly the thing they
+#    absorb -- and for the two most populated bands they have absorbed it
+#    almost perfectly. So this rung does NOT buy sixteen seconds of rating
+#    accuracy; the solve was already paying for the tangent.
+#
+#    What it buys is everything that reads normalized_time WITHOUT the
+#    offsets: the conversions page, predicted times, any equivalent quoted
+#    to a reader. Those see the bare spline, and there the sixteen seconds
+#    is real. Worth having, for a smaller and more specific reason than the
+#    one this note was first written with.
 #
 # ! THE MEDIAN, NOT THE MEAN, and weighted by pairs. elem's own slopes run
 #   1.10-1.15 because its "high side" is a different physical regime (a

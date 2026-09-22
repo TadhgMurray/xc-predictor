@@ -36,6 +36,47 @@
 #   table means the single curve is fine and the conversion complaint is
 #   about something else.
 #
+# ════════════════════════════════════════════════════════════════════════
+# ★★ MEASURED 2026-09-22, college_m. THE ANSWER IS NO FOR TRACK.
+#
+#       college_m|TF   310,999 pairs
+#         fastest decile (~14:17)  median k 1.128
+#         slowest decile (~19:37)  median k 1.139      spread +0.010
+#
+#       college_m|XC   207,981 pairs
+#         fastest decile (~14:34)  median k 0.998
+#         slowest decile (~22:20)  median k 1.049      spread +0.051
+#
+#    TF is flat -- and flat is the verdict this header wrote in advance.
+#    The single curve per pool is the right shape for the track; there is
+#    no pace-band fit to build, and the "strong athletes' ratings deflate"
+#    mechanism above does not operate. That is a design NOT to build,
+#    which is worth as much as one to build.
+#
+# ⚠ AND IT CAUGHT A CONFOUND WORTH REMEMBERING. The same question asked
+#   with scripts/diag_event_pairs.py -- bucket athletes by season best at
+#   event A, take the median at B -- looked like a strong positive: k ran
+#   1.201 at a 1:46 800 down to 1.125 at 2:12, a spread of 0.076, seven
+#   times what the deciles show. That is REGRESSION TO THE MEAN, not
+#   physiology. Bucketing on A puts specialists and lucky noise at A's
+#   tails, and their B regresses toward the population; "fast at A implies
+#   relatively worse at B" falls out of the conditioning whatever the true
+#   exponent does. The tell was that BOTH pairs showed it in opposite
+#   directions (fast 800s fading more, fast 10ks fading less), which is
+#   selection-on-A's signature and not a law's.
+#
+#   This script avoids it by ranking on an ability proxy rather than on
+#   either leg -- which is what the header above says it is for, and now
+#   the reason is on the record.
+#
+#    XC's +0.051 is the larger number but it is not the ability effect
+#    either: its fastest decile sits at 0.998, BELOW 1.0, which is the
+#    known college_m|XC pathology (a 10k is the November championship at
+#    peak fitness against an October 8k -- see fit_distance_exponent's
+#    MIN_LOCAL_EXP note). The spread is that confound varying with
+#    ability, not a fade that does.
+# ════════════════════════════════════════════════════════════════════════
+#
 # ! DIAGNOSTIC-ONLY RATIO FLOOR. The fitter keeps near-zero ratios because
 #   its aggregation handles them; a per-pair k at ratio ~1 divides by ~0 and
 #   is pure noise, so this report requires |log(d2/d1)| >= log(MIN_RATIO).
