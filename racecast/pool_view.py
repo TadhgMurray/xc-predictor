@@ -178,6 +178,56 @@ _CONST_SQL = {
     """,
 }
 
+# ⚠⚠⚠ AND A PRO POOL CANNOT BE SAMPLED FROM ranking_results AT ALL. That is
+#     not a shortage of rows, it is a guarantee: build_ranking_results.
+#     isRankablePool returns False for every pool starting "pro_", so the
+#     table the query above reads contains ZERO pro rows, by construction,
+#     and has since 2026-09-14.
+#
+#     So _poolConstant("pro_m") has always returned None, `ratios` has
+#     always come back empty, and hsFactor has ALWAYS taken the college
+#     fallback for a pro row. Every attempt to fix the pro factor by
+#     adjusting the measured path -- the widened _PRO_FACTOR_HI rail I
+#     added on 2026-09-21 among them -- was editing code that cannot run.
+#     The owner has reported this three times ("when ppl are in pro pool
+#     they are not able to be hs-equivalent", then "hs-equivalent for pros
+#     fucks it up rather than doing nothing ... it makes pros have even
+#     higher speed rating", then again on 2026-09-22) and each time I
+#     looked at the rail instead of at where the sample comes from.
+#
+# ! SO THE PRO SAMPLE READS THE RESULT TABLES, keyed on rating_pool -- "the
+#   pool the rating was computed in", written on the row by speed_ratings_db
+#   (issue 171). It is the same recovery arithmetic on the same two columns;
+#   only the source of the row list changes, because ranking_results is the
+#   one table guaranteed not to hold them.
+#
+# ⚠ rating_pool HAS NO INDEX, so this is a scan that stops at the LIMIT.
+#   Pro rows are about 1% of the corpus, so it reads ~150k rows to find
+#   1,500 -- but "about" is not "always", and this runs on a page. It is
+#   bounded below and falls back to exactly the old behaviour (the college
+#   factor) if the budget runs out, so it is never worse than before.
+#
+# ! split_part, BECAUSE THE GO-LIVE ONCE WROTE A SPORT SUFFIX. conversions
+#   records that rating_pool used to carry "pool|SPORT" and now carries the
+#   bare pool; matching the bare prefix reads both.
+_PRO_CONST_SQL = {
+    "XC": """
+        SELECT r.speed_rating, r.normalized_time
+        FROM   results r
+        WHERE  split_part(r.rating_pool, '|', 1) = %(pool)s
+          AND  r.speed_rating > 0 AND r.normalized_time > 0
+        LIMIT  %(n)s
+    """,
+    "TF": """
+        SELECT r.speed_rating, r.normalized_time
+        FROM   results_tf r
+        WHERE  split_part(r.rating_pool, '|', 1) = %(pool)s
+          AND  r.speed_rating > 0 AND r.normalized_time > 0
+        LIMIT  %(n)s
+    """,
+}
+_PRO_CONST_TIMEOUT_MS = 4000
+
 _CONST_CACHE = {}              # (pool, sport) -> constant or None
 _CONST_SAMPLE = 1500           # rows to median over; a constant needs few
 _CONST_MIN_ROWS = 50           # below this the median is an anecdote
@@ -252,13 +302,21 @@ def _poolConstant(pool, sport):
     until = _NONE_UNTIL.get(key)
     if until is not None and _time.time() < until:
         return None
-    sql = _CONST_SQL.get(sport)
+    # ! THE PRO POOLS TAKE THE OTHER SOURCE. See _PRO_CONST_SQL: the table
+    #   the normal query reads is guaranteed to hold none of their rows.
+    is_pro = pool.startswith("pro_")
+    sql = (_PRO_CONST_SQL if is_pro else _CONST_SQL).get(sport)
     vals = []
     if sql is not None:
         try:
             d = default_difficulty(sport)     # see the trade note above
             with getConn() as conn:
                 with conn.cursor() as cur:
+                    if is_pro:
+                        # bounded, and a timeout leaves the college fallback
+                        # in place -- exactly the pre-2026-09-22 behaviour
+                        cur.execute("SET LOCAL statement_timeout = %s",
+                                    (_PRO_CONST_TIMEOUT_MS,))
                     cur.execute(sql, {"pool": pool, "n": _CONST_SAMPLE})
                     for rating, norm in cur.fetchall():
                         if not rating or not norm:

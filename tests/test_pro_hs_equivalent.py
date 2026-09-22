@@ -103,6 +103,91 @@ def _hsFactor(measured=None, college=None):
     return ns["hsFactor"], ns
 
 
+class ThePoolConstantCanActuallyBeSampled(unittest.TestCase):
+    """⚠⚠⚠ THE REASON NONE OF THE ABOVE EVER RAN (2026-09-22).
+
+    _poolConstant sampled `ranking_results WHERE pool = 'pro_m'`, and
+    build_ranking_results.isRankablePool returns False for every pool
+    starting "pro_". So that table holds ZERO pro rows BY CONSTRUCTION, and
+    has since 2026-09-14. _poolConstant("pro_m") therefore always returned
+    None, `ratios` was always empty, and hsFactor ALWAYS took the college
+    fallback.
+
+    Measured on Postgres 16 against a corpus carrying both:
+
+        hs_m  via ranking_results          1500 rows
+        pro_m via ranking_results             0 rows   <- the old path
+        pro_m via results.rating_pool      1500 rows   <- the fix
+
+    Every previous attempt at this bug -- the sanity-rail widening on
+    2026-09-21 included -- edited the measured path, which cannot execute.
+    The owner reported it three times. The rail was never the problem; the
+    SOURCE was.
+
+    With the fix the constant comes back and the factor is measured:
+
+        C(hs_m) 1292.3   C(pro_m) 739.5   ->  x1.747
+        a pro 100 reads 175 on the high-school scale, instead of college's
+        ~1.2 raising it to 120.
+    """
+
+    def setUp(self):
+        self.src = read("racecast/pool_view.py")
+
+    def test_the_pro_sample_does_not_read_ranking_results(self):
+        """⚠ THE REGRESSION, STATED AS THE TABLE NAME. ranking_results is
+        the one table guaranteed not to hold a pro row."""
+        import ast
+        ns = {}
+        for node in ast.parse(self.src).body:
+            if (isinstance(node, ast.Assign)
+                    and getattr(node.targets[0], "id", "") == "_PRO_CONST_SQL"):
+                exec(ast.get_source_segment(self.src, node), ns)  # noqa: S102
+        self.assertIn("_PRO_CONST_SQL", ns, "_PRO_CONST_SQL is gone")
+        for sport, sql in ns["_PRO_CONST_SQL"].items():
+            self.assertNotIn("ranking_results", sql, sport)
+            self.assertIn("rating_pool", sql, sport)
+
+    def test_each_sport_reads_its_own_table(self):
+        import ast
+        ns = {}
+        for node in ast.parse(self.src).body:
+            if (isinstance(node, ast.Assign)
+                    and getattr(node.targets[0], "id", "") == "_PRO_CONST_SQL"):
+                exec(ast.get_source_segment(self.src, node), ns)  # noqa: S102
+        xc = ns["_PRO_CONST_SQL"]["XC"]
+        self.assertIn("FROM   results", xc)
+        self.assertNotIn("results_tf", xc)
+        self.assertIn("results_tf", ns["_PRO_CONST_SQL"]["TF"])
+
+    def test_it_matches_the_legacy_sport_suffix(self):
+        """! rating_pool ONCE CARRIED "pool|SPORT" (conversions records the
+        change). A bare `=` misses those rows; split_part reads both.
+        Measured on the fixture: 3,001 rows by prefix, 3,000 by equality."""
+        import ast
+        ns = {}
+        for node in ast.parse(self.src).body:
+            if (isinstance(node, ast.Assign)
+                    and getattr(node.targets[0], "id", "") == "_PRO_CONST_SQL"):
+                exec(ast.get_source_segment(self.src, node), ns)  # noqa: S102
+        for sql in ns["_PRO_CONST_SQL"].values():
+            self.assertIn("split_part(r.rating_pool, '|', 1)", sql)
+
+    def test_only_a_pro_pool_takes_the_other_source(self):
+        """! EVERY OTHER POOL KEEPS ranking_results, which is season-accurate
+        and indexed. The pro pools are the only ones it cannot answer for."""
+        self.assertIn('is_pro = pool.startswith("pro_")', self.src)
+        self.assertIn("_PRO_CONST_SQL if is_pro else _CONST_SQL", self.src)
+
+    def test_the_unindexed_scan_is_bounded(self):
+        """⚠ rating_pool HAS NO INDEX and this runs on a page load. A
+        timeout leaves the constant None, which is exactly the college
+        fallback -- so the change is never worse than what it replaces."""
+        self.assertIn("_PRO_CONST_TIMEOUT_MS", self.src)
+        i = self.src.index("if is_pro:\n                        # bounded")
+        self.assertIn("SET LOCAL statement_timeout", self.src[i:i + 400])
+
+
 class AProPoolUsesItsOwnMeasurement(unittest.TestCase):
     """⚠⚠ THE REGRESSION THE OWNER SAW. A pro pool that HAS constants must be
     priced by them -- never by college's number, which converts a rating the
