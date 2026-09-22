@@ -27,7 +27,7 @@ import psycopg2.errors
 from flask import Flask, render_template, abort, redirect, url_for, make_response
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
-from pool_view import (fetchPoolRows, stampHsRatings, seasonFactor,
+from pool_view import (fetchPoolRows, stampHsRatings, repFactor,
                        stampRowsHs, stampBoardRows, sortByShown)
 from teams import (parseFilters as parseTeamFilters, serveBoard,
                    getCoursePerformances as getTeamCoursePerformances)
@@ -1711,20 +1711,60 @@ def athlete(person_id):
         athlete["percentile"] = (percentileWords(nation["rank"],
                                                  nation.get("total"))
                                  if nation else None)
-        # A season MEAN has no single race context, so it scales by the
-        # median per-race factor of the same displayed season -- computed
-        # from the races already stamped above.
-        _sf = seasonFactor(races, label=str(label),
-                           sport=season_rating["sport"])
+        # ⚠ THE SAME DEFECT AS THE else: BRANCH BELOW, ONE DOOR OVER, and
+        #   found while fixing that one. A season MEAN has no single race
+        #   context, so this took the median per-race factor of the same
+        #   displayed season -- but a season is not a pool. A high school
+        #   senior who also raced a professional field that spring has both
+        #   1.00 and 0.78 rows inside one label, and the median slides
+        #   between them as the count does.
+        #
+        # ★ athlete_season IS KEYED BY POOL. Every rating inside the mean is
+        #   in season_rating["pool"] by construction, so that pool's factor
+        #   is not an approximation of the right answer, it IS the right
+        #   answer -- hsFactor being one number per pool. The median could
+        #   only ever have reproduced it, or been dragged off it.
+        _sf = repFactor(season_rating["pool"], season_rating["sport"])
         athlete["rating_hs"] = (float(athlete["rating"]) * _sf
                                 if athlete["rating"] is not None and _sf
                                 else None)
     else:
         athlete["rating"] = rating["speed_rating"] if rating else None
         athlete["rating_note"] = None
-        # The fallback number has no season attached; the career-wide
-        # median factor is the honest stand-in.
-        _sf = seasonFactor(races)
+        # ⚠⚠⚠ THE CAREER-WIDE MEDIAN WAS NOT AN HONEST STAND-IN, IT WAS A
+        #     BLEND OF TWO SCALES (owner, 2026-09-22: "athlete rating for
+        #     the pro pool ppl is completely fucked up for hs-equivalent.
+        #     However hs-equivalent now works for indiv races").
+        #
+        #     That sentence names both halves. The per-race numbers are
+        #     right because stampHsRatings gives each race ITS OWN pool's
+        #     factor. This line used seasonFactor(races) with no filter at
+        #     all -- the median hs/own ratio over the WHOLE CAREER -- and
+        #     then applied it to a single number out of athlete_ratings.
+        #     For anyone whose career spans pools that is a median of 1.00
+        #     (the high school races) and 0.78 (the pro ones), which is the
+        #     factor of no pool the athlete ever raced in.
+        #
+        #     Pro-pooled athletes take this branch ALWAYS and are the ones
+        #     it lands hardest on: athlete_season is built from
+        #     ranking_results, and build_ranking_results.isRankablePool
+        #     refuses pro_*, so season_rating is None for every one of them
+        #     by construction.
+        #
+        # ★ THE POOL IS RIGHT THERE ON THE ROW. The fallback SELECT above
+        #   reads `pool` beside `speed_rating` -- the number's own scale,
+        #   already fetched and until now unused. repFactor is the function
+        #   for exactly this: "aggregate numbers that carry a pool but no
+        #   single race distance". It is also EXACT rather than a stand-in,
+        #   hsFactor being one number per pool, so a median over that
+        #   pool's races could only reproduce it with sampling noise.
+        #
+        # ! None STAYS None, NOT 1.0. An unknown-gender pool has no HS twin
+        #   and hsFactor says so; the page then shows the own-pool number,
+        #   which is the posture every other caller takes.
+        _pool = rating.get("pool") if rating else None
+        _sf = repFactor(_pool, (_pool.split("|", 1)[1]
+                                if _pool and "|" in _pool else None))
         athlete["rating_hs"] = (float(athlete["rating"]) * _sf
                                 if athlete["rating"] is not None and _sf
                                 else None)
@@ -2416,8 +2456,17 @@ def enrich_seasons(seasons, board_seasons=None):
         #   "the source of truth got f'd again": header 130.3, block 127.7
         #   with the HS view on). The own-pool block took the board's 80th
         #   percentile; the HS view still averaged the rows. Now it is the
-        #   board number times the season's median per-row factor, the same
-        #   rule the header uses (seasonFactor).
+        #   board number times the season's median per-row factor.
+        #
+        # ! AND THIS ONE STAYS A MEDIAN, unlike the header, which moved to
+        #   repFactor on 2026-09-22. The header scales a number out of
+        #   athlete_season or athlete_ratings, and both are keyed BY POOL,
+        #   so the pool -- and therefore the exact factor -- is on the row.
+        #   This block's number is the 80th percentile of a (label, sport)
+        #   season's rows, which is not a per-pool quantity at all: a
+        #   senior who raced a professional field that spring has rows on
+        #   two scales inside it and no one factor is right for the mix.
+        #   The median at least moves with the rows it came from.
         rating = board_seasons.get(label_key, season_rating(races))
         rating_hs = season_rating(races, key="hs_rating")
         if label_key in board_seasons and rating is not None:
