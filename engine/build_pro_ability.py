@@ -71,6 +71,7 @@ from database import getConn                                   # noqa: E402
 from season_year import seasonYearFromIso                      # noqa: E402
 from pool_resolve import (PRO_ABILITY_5K, ABILITY_CURVE_POOL,  # noqa: E402
                           ABILITY_CURVE_SPORT)
+from normalize_distance import poolBandFor                     # noqa: E402
 from speed_ratings import _scaleFactor                         # noqa: E402
 from speed_ratings_db import COLUMNS, streamResults            # noqa: E402
 
@@ -108,8 +109,38 @@ def scan(min_time=200.0, max_time=6000.0, sports=("XC", "TF"), limit=None):
       the same scale. Taking them separately would let a 13:50 in October
       fail to vouch for the same athlete in April.
     """
+    # ⚠⚠⚠ THE SANITY BAND, AND THE DRY RUN IS WHY IT IS HERE (2026-09-22).
+    #     The first --dry-run's thirty fastest athlete-seasons were:
+    #
+    #         17494297  2023  F   0:00.2
+    #         25737720  2010  F   0:12.5
+    #
+    #     A 0.2-second 5,000m equivalent is not a performance. Solving
+    #     backwards, nt = t * k(d) reaches 0.195s at d = 4,700,000 metres
+    #     and 12.1s at d = 100,000 -- so these rows carry a dist_m of 100km
+    #     and 4,700km.
+    #
+    # ★ AND THEY ARE INVISIBLE UPSTREAM. streamResults bands the STORED
+    #   normalized_time at 200-6000s, which they pass, because that number
+    #   was written with a different distance than the one dist_m now
+    #   carries. The disagreement only shows when the mark is re-expressed,
+    #   which is exactly what this file does -- so this file is where it has
+    #   to be caught.
+    #
+    # ! THE RAIL IS THE ENGINE'S OWN, NOT A NUMBER INVENTED HERE.
+    #   normalize_distance.PACE_FLOOR is 0.12 s/m, "faster than any human
+    #   over any distance", and poolBandFor multiplies it by the anchor:
+    #   (600, 3600) at 5,000m. packResults keeps a row out of the SOLVE on
+    #   the same band and the boards gate on it, so a mark this rejects is
+    #   one the engine would not have stood behind either.
+    #
+    # ! THE ROW IS SKIPPED, NOT THE SEASON. One corrupt distance is one bad
+    #   mark; the athlete's other races in that season still speak for them.
+    band = {g: poolBandFor(ABILITY_CURVE_POOL[g], ABILITY_CURVE_SPORT)
+            for g in ("M", "F")}
     best = {}
-    n_rows = n_used = 0
+    n_rows = n_used = n_wild = 0
+    wild = []
     for sport in sports:
         for batch in streamResults(sport, min_time, max_time):
             for row in batch:
@@ -134,6 +165,13 @@ def scan(min_time=200.0, max_time=6000.0, sports=("XC", "TF"), limit=None):
                 if not f:
                     continue
                 nt = float(t) * f
+                lo, hi = band[gender]
+                if not (lo <= nt <= hi):
+                    n_wild += 1
+                    if len(wild) < 12:
+                        wild.append((int(pid), sport, float(dist),
+                                     float(t), nt))
+                    continue
                 n_used += 1
                 key = (int(pid), int(ay))
                 have = best.get(key)
@@ -154,12 +192,27 @@ def scan(min_time=200.0, max_time=6000.0, sports=("XC", "TF"), limit=None):
         row[i] += 1
         if nt < PRO_ABILITY_5K[gender]:
             able[key] = (nt, gender)
-    return able, best, hist, n_rows, n_used
+    return able, best, hist, n_rows, n_used, n_wild, wild
 
 
-def report(able, best, hist, n_rows, n_used, show=0):
+def report(able, best, hist, n_rows, n_used, n_wild, wild, show=0):
     print(f"\n  {n_rows:,} rows streamed, {n_used:,} usable "
           f"({len(best):,} athlete-seasons)")
+    if n_wild:
+        lo, hi = poolBandFor(ABILITY_CURVE_POOL["M"], ABILITY_CURVE_SPORT)
+        print(f"\n  ⚠ {n_wild:,} rows rejected outside the engine's own pace "
+              f"band ({_clock(lo)}-{_clock(hi)} as a 5K-equivalent;\n"
+              f"    normalize_distance.PACE_FLOOR = 0.12 s/m, faster than any "
+              f"human over any distance).\n"
+              f"    These passed streamResults because their STORED "
+              f"normalized_time is in range -- it was\n"
+              f"    written with a different distance than dist_m now "
+              f"carries. Worth chasing upstream:")
+        print(f"      {'person':>10} {'sp':>3} {'dist_m':>12} {'time_s':>9}"
+              f" {'5K-equiv':>10}")
+        for pid, sp, dist, t, nt in wild:
+            print(f"      {pid:>10} {sp:>3} {dist:>12,.0f} {t:>9.1f} "
+                  f"{_clock(nt):>10}")
     print(f"\n  the bar: men {_clock(PRO_ABILITY_5K['M'])}, "
           f"women {_clock(PRO_ABILITY_5K['F'])} "
           f"-- 5K-equivalent on the {ABILITY_CURVE_POOL['M']}/"
@@ -234,9 +287,9 @@ def main(argv=None):
         ap.error("--limit builds a partial table; it may not be written")
 
     sports = (args.sport,) if args.sport else ("XC", "TF")
-    able, best, hist, n_rows, n_used = scan(sports=sports,
-                                            limit=args.limit or None)
-    report(able, best, hist, n_rows, n_used, show=args.show)
+    able, best, hist, n_rows, n_used, n_wild, wild = scan(
+        sports=sports, limit=args.limit or None)
+    report(able, best, hist, n_rows, n_used, n_wild, wild, show=args.show)
     if args.write:
         write(able)
     else:

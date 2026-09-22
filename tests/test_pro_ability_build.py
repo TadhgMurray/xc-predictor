@@ -69,7 +69,7 @@ def _scan(rows_by_sport, monkeypatch=None):
 # ------------------------------------------------------------------ #
 
 def test_a_sub_14_man_is_able_and_a_15_00_man_is_not():
-    able, best, _h, _nr, _nu = _scan({"TF": [
+    able, best, _h, _nr, _nu, _w, _ws = _scan({"TF": [
         _row(1, "2026-04-11", "TF", "M", 5000.0, 810.0),       # 13:30
         _row(2, "2026-04-11", "TF", "M", 5000.0, 900.0),       # 15:00
     ]})
@@ -82,7 +82,7 @@ def test_the_womens_bar_is_its_own():
     """! A 15:00 5K is under the women's bar and over the men's. The same
     mark on the same curve, two verdicts -- which is the whole reason the
     threshold is keyed by gender rather than being one number."""
-    able, _b, _h, _nr, _nu = _scan({"TF": [
+    able, _b, _h, _nr, _nu, _w, _ws = _scan({"TF": [
         _row(1, "2026-04-11", "TF", "F", 5000.0, 900.0),       # 15:00
         _row(2, "2026-04-11", "TF", "M", 5000.0, 900.0),
         _row(3, "2026-04-11", "TF", "F", 5000.0, 960.0),       # 16:00
@@ -93,7 +93,7 @@ def test_the_womens_bar_is_its_own():
 
 
 def test_the_bar_is_strict_at_the_exact_second():
-    able, _b, _h, _nr, _nu = _scan({"TF": [
+    able, _b, _h, _nr, _nu, _w, _ws = _scan({"TF": [
         _row(1, "2026-04-11", "TF", "M", 5000.0, pr.PRO_ABILITY_5K["M"]),
     ]})
     assert (1, 2025) not in able
@@ -107,7 +107,7 @@ def test_an_800_is_converted_not_compared_raw():
     """A 1:45 800 is a professional mark; 105 seconds is not under 840 by
     accident of being a small number. It clears because the curve puts it
     at 13:42."""
-    able, best, _h, _nr, _nu = _scan({"TF": [
+    able, best, _h, _nr, _nu, _w, _ws = _scan({"TF": [
         _row(1, "2026-04-11", "TF", "M", 800.0, 105.0),        # 1:45
         _row(2, "2026-04-11", "TF", "M", 800.0, 110.0),        # 1:50
     ]})
@@ -122,7 +122,7 @@ def test_the_distance_is_what_makes_a_mark_qualify():
     in 1,380s is a jog. Same seconds, and the builder must not confuse
     them -- which is exactly what reading the stored normalized_time would
     have done."""
-    _a, best, _h, _nr, _nu = _scan({"XC": [
+    _a, best, _h, _nr, _nu, _w, _ws = _scan({"XC": [
         _row(1, "2025-10-11", "XC", "M", 8000.0, 1380.0),
         _row(2, "2025-10-11", "XC", "M", 5000.0, 1380.0),
     ]})
@@ -137,7 +137,7 @@ def test_one_athlete_season_takes_the_best_of_both_sports():
     """! A season is one season of one person's life. An October 13:30 and
     an April 15:00 are evidence about the same body, already on the same
     scale, so the season is able."""
-    able, _b, _h, _nr, _nu = _scan({
+    able, _b, _h, _nr, _nu, _w, _ws = _scan({
         "XC": [_row(1, "2025-10-11", "XC", "M", 5000.0, 810.0)],
         "TF": [_row(1, "2026-04-11", "TF", "M", 5000.0, 900.0)],
     })
@@ -148,7 +148,7 @@ def test_seasons_are_judged_separately():
     """★ THE SAME DESIGN AS pro_flag. Ability in 2025 says nothing about
     2023 -- an absorbing verdict is the bug Engelhardt's college seasons
     caught."""
-    able, _b, _h, _nr, _nu = _scan({"XC": [
+    able, _b, _h, _nr, _nu, _w, _ws = _scan({"XC": [
         _row(1, "2025-10-11", "XC", "M", 5000.0, 810.0),
         _row(1, "2023-10-11", "XC", "M", 5000.0, 1020.0),
     ]})
@@ -159,7 +159,7 @@ def test_seasons_are_judged_separately():
 def test_a_spring_race_belongs_to_the_autumn_that_opened_it():
     """! THE ACADEMIC YEAR, from season_year -- not left(date,4). April 2026
     is the 2025 season, which is the key pool_resolve looks up."""
-    able, _b, _h, _nr, _nu = _scan({"TF": [
+    able, _b, _h, _nr, _nu, _w, _ws = _scan({"TF": [
         _row(1, "2026-04-11", "TF", "M", 5000.0, 810.0),
     ]})
     assert list(able) == [(1, 2025)]
@@ -170,7 +170,7 @@ def test_a_spring_race_belongs_to_the_autumn_that_opened_it():
 # ------------------------------------------------------------------ #
 
 def test_unusable_rows_are_skipped_not_guessed():
-    able, best, _h, _nr, n_used = _scan({"TF": [
+    able, best, _h, _nr, n_used, _w, _ws = _scan({"TF": [
         _row(None, "2026-04-11", "TF", "M", 5000.0, 810.0),    # no person
         _row(2, None, "TF", "M", 5000.0, 810.0),               # no date
         _row(3, "2026-04-11", "TF", "M", None, 810.0),         # no distance
@@ -205,7 +205,7 @@ def test_the_bars_fall_on_a_bin_edge():
 def test_every_judged_season_lands_in_exactly_one_bin():
     rows = [_row(i, "2026-04-11", "TF", "M", 5000.0, t)
             for i, t in enumerate((700.0, 800.0, 860.0, 1000.0, 2000.0), 1)]
-    _a, best, hist, _nr, _nu = _scan({"TF": rows})
+    _a, best, hist, _nr, _nu, _w, _ws = _scan({"TF": rows})
     assert sum(hist["M"]) == len(best) == 5
     assert sum(hist["F"]) == 0
 
@@ -230,3 +230,94 @@ def test_the_builder_reuses_the_solves_own_loader_and_scale():
     # and it must not grow its own SQL over the result tables
     assert "FROM results" not in src
     assert "normalized_time" not in src.split('"""')[2]     # body, not header
+
+
+# ------------------------------------------------------------------ #
+#  THE PACE BAND
+# ------------------------------------------------------------------ #
+#
+# ⚠⚠⚠ THE FIRST --dry-run OVER THE REAL CORPUS listed these as the fastest
+#     athlete-seasons in the database:
+#
+#         17494297  2023  F   0:00.2
+#         25737720  2010  F   0:12.5
+#
+#     A 0.2-second 5,000m equivalent is not a performance. nt = t * k(d)
+#     reaches 0.195s at d = 4,700,000 metres and 12.1s at d = 100,000, so
+#     those rows carry distances of 4,700km and 100km.
+#
+# ★ AND THEY ARE INVISIBLE UPSTREAM. streamResults bands the STORED
+#   normalized_time at 200-6000s and they pass it, because that number was
+#   written with a different distance than dist_m now carries. Only
+#   re-expressing the mark exposes the disagreement -- which is what this
+#   builder does, so this is where it has to be caught.
+
+def test_a_corrupt_distance_cannot_make_an_athlete_a_professional():
+    """⚠ THE REAL ROWS, TO THE METRE. Without the band both of these are
+    'able', and the gate would pool them professional on a 0.2-second 5K."""
+    able, best, _h, _nr, _nu, n_wild, wild = _scan({"XC": [
+        _row(1, "2023-10-11", "XC", "F", 4_700_000.0, 300.0),
+        _row(2, "2010-10-11", "XC", "F", 100_000.0, 300.0),
+        _row(3, "2023-10-11", "XC", "F", 5000.0, 900.0),     # a real 15:00
+    ]})
+    assert (1, 2023) not in able
+    assert (2, 2010) not in able
+    assert (3, 2023) in able
+    assert n_wild == 2
+
+
+def test_the_band_is_the_engines_own_not_one_invented_here():
+    """! normalize_distance.PACE_FLOOR is 0.12 s/m -- "faster than any human
+    over any distance" -- and poolBandFor multiplies it by the anchor.
+    packResults keeps a row out of the SOLVE on the same band, so a mark
+    this rejects is one the engine would not stand behind either. A second
+    number spelled here would be free to drift from it."""
+    import ast
+    import io as _io
+    src = _io.open(os.path.join(_ROOT, "engine", "build_pro_ability.py"),
+                   encoding="utf-8").read()
+    imported = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.ImportFrom):
+            imported.update(a.name for a in node.names)
+    assert "poolBandFor" in imported
+    import normalize_distance as nd
+    assert nd.poolBandFor(pr.ABILITY_CURVE_POOL["M"],
+                          pr.ABILITY_CURVE_SPORT) == (600.0, 3600.0)
+
+
+def test_a_slow_mark_is_rejected_by_the_same_band():
+    """! BOTH RAILS. PACE_CEIL is 0.72 s/m, slower than walking. A row over
+    it is as broken as one under the floor, and skipping only the fast end
+    would leave the ceiling unguarded because the fast end is the one that
+    bit."""
+    _a, _b, _h, _nr, _nu, n_wild, _w = _scan({"XC": [
+        _row(1, "2023-10-11", "XC", "M", 5000.0, 4000.0),      # 66 min 5K
+    ]})
+    assert n_wild == 1
+
+
+def test_only_the_row_is_dropped_not_the_season():
+    """! One corrupt distance is one bad mark. The athlete's other races
+    that season still speak for them."""
+    able, _b, _h, _nr, _nu, n_wild, _w = _scan({"XC": [
+        _row(1, "2023-10-11", "XC", "M", 4_700_000.0, 300.0),  # corrupt
+        _row(1, "2023-11-11", "XC", "M", 5000.0, 810.0),       # a real 13:30
+    ]})
+    assert (1, 2023) in able
+    assert n_wild == 1
+
+
+def test_the_rejects_are_reported_with_enough_to_chase_them():
+    """! A COUNT IS NOT ACTIONABLE. dist_m and time_seconds together are
+    what say which of the two is wrong, and the sample is capped so a
+    corpus-wide fault cannot flood the log."""
+    _a, _b, _h, _nr, _nu, n_wild, wild = _scan({"XC": [
+        _row(i, "2023-10-11", "XC", "M", 4_700_000.0, 300.0)
+        for i in range(1, 40)
+    ]})
+    assert n_wild == 39
+    assert len(wild) == 12
+    pid, sport, dist, t, nt = wild[0]
+    assert (sport, dist, t) == ("XC", 4_700_000.0, 300.0)
+    assert nt < 1.0
