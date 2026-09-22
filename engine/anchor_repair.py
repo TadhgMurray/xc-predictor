@@ -128,10 +128,32 @@ _SELECT = """
     WHERE  r.normalized_time IS NOT NULL AND r.normalized_time > 0
       AND  r.time_seconds > 0
       AND  {pool_expr} IS NOT NULL
+      AND  r.result_id > %(after)s
       {person}
     ORDER  BY r.result_id
-    LIMIT  %(scan)s OFFSET %(off)s
+    LIMIT  %(scan)s
 """
+# ⚠⚠ KEYSET, NOT OFFSET (2026-09-22). This read
+#
+#        ORDER BY r.result_id LIMIT %(scan)s OFFSET %(off)s
+#
+#    with off advancing by the batch size. Postgres cannot skip an OFFSET --
+#    it must produce and discard every row before it -- so batch number i
+#    pays for i*batch rows and the whole walk costs n^2 / (2*batch) row
+#    visits instead of n. On results_tf at ~61M rows with the default
+#    200,000 batch that is about 9.3 BILLION visits for a 61M-row table,
+#    roughly 150x a single pass.
+#
+#    Measured on the 2026-09-21 run: 05b_anchor_repair_xc and _tf took
+#    7,681 s -- 2h08m, the third-largest step in a 12.6h pipeline -- for
+#    work this file's own placement note calls "cheap ... one scan,
+#    idempotent, no writes when nothing is wrong".
+#
+# ! result_id IS THE PRIMARY KEY of both results and results_tf, so
+#   `result_id > last ORDER BY result_id LIMIT n` is an index range scan
+#   that starts where the previous batch stopped. O(n) for the walk, and
+#   the batch loop below is otherwise unchanged -- same rows, same order,
+#   same writes.
 
 # ! ONE STATEMENT PER BATCH, KEYED BY result_id. A per-row UPDATE over a
 #   corpus this size is hours; VALUES-joined it is seconds.
@@ -183,16 +205,19 @@ def main():
                 pool_expr="COALESCE(r.rating_pool, k.pool)",
                 person="AND r.person_id = %(person)s" if args.person else "")
 
-            off = 0
+            # ! THE CURSOR INTO THE TABLE, not a row counter. Advancing it
+            #   by the last result_id SEEN is what makes the next batch an
+            #   index seek; advancing a count would put OFFSET back.
+            after = -1
             while True:
-                cur.execute(sql, {"sport": args.sport, "off": off,
+                cur.execute(sql, {"sport": args.sport, "after": after,
                                   "scan": args.batch,
                                   **({"person": args.person}
                                      if args.person else {})})
                 rows = cur.fetchall()
                 if not rows:
                     break
-                off += len(rows)
+                after = rows[-1]["result_id"]
                 n_seen += len(rows)
                 writes = []
                 for r in rows:
