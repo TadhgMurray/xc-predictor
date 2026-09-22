@@ -140,6 +140,7 @@ sys.path.insert(0, "engine")
 from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
 from season_floor import OPEN_FROM, floorFor, isOpen
 from pool_resolve import resolvePool, inScope
+from pro_ability import proAbilityFor
 from dbfast import dictRows, tuneSession
 
 
@@ -448,6 +449,14 @@ def _poolOf(row, sport):
                        fixed_grade=row.get("fixed_grade"),
                        fixed_level=row.get("fixed_level"),
                        is_pro=bool(row.get("is_pro")),
+                       # ★ THE ABILITY GATE (owner, 2026-09-22: "if they're
+                       #   sub 14:00? for men, or sub 15:30? for women put
+                       #   in pro, otherwise trust grade"). A SET LOOKUP,
+                       #   not a fourth LEFT JOIN -- the academic-vs-calendar
+                       #   season key has already been typed wrong twice in
+                       #   the joins right above, and pro_ability_season
+                       #   holds only the able, so it fits in memory.
+                       pro_ability=proAbilityFor(row.get("person_id"), season),
                        # ★ NO GATE ARGUMENTS AND NO DATE PARSE. Their only
                        #   readers were the promotion gates, now removed from
                        #   resolvePool.

@@ -109,6 +109,8 @@ $expect = @{
     "engine\normalize_distance.py"    = "def targetFor"
     "engine\pool_resolve.py"          = "THE PROMOTION GATES ARE GONE"
     "engine\pro_flag.py"              = "seasonYearSqlInt"
+    "engine\build_pro_ability.py"     = "PRO_ABILITY_5K"
+    "engine\pro_ability.py"           = "def proAbilityFor"
     "engine\season_year.py"           = "ACADEMIC_START_MONTH"
     "backfill\backfill_normalize.py"  = "_loadGradeFix"
     "racecast\build_ranking_results.py" = "prepareTfStateTemp"
@@ -247,6 +249,30 @@ if ($SkipBackfill) {
 } else {
     Step "05_backfill" { python backfill\backfill_normalize.py --sport both --apply }
 }
+
+# ★ THE PROFESSIONAL ABILITY GATE (owner, 2026-09-22: "if they're sub
+#   14:00? for men, or sub 15:30? for women put in pro, otherwise trust
+#   grade").
+#
+#   The pro pool's AVERAGE member runs a 25:53 5K-equivalent -- C(pro_m) =
+#   1553.1 against C(hs_m) = 1211.5. Because speed_rating is pool-relative
+#   every non-professional in it drags the pool's 100-anchor, so the
+#   contamination bends the rating of every genuine professional measured
+#   against them. pool_resolve's gate sits downstream of all six routes to
+#   is_pro; this builds the table it reads.
+#
+# ⚠ AFTER 05, AND BEFORE 07. It streams through speed_ratings_db's own
+#   loader, whose WHERE needs normalized_time -- which 05_backfill writes.
+#   And 07_pack resolves the pools, so a table built after it would not be
+#   read until the run after next.
+#
+# ! IT IS NOT CIRCULAR, THOUGH IT LOOKS IT. The verdict is computed from
+#   the RAW time and distance re-expressed on one fixed curve, never from
+#   the stored normalized_time -- whose scale depends on the pool the last
+#   run chose. The only thing the previous run's pooling reaches is
+#   streamResults' 200-6000s band, which is a garbage filter with two
+#   orders of magnitude of slack.
+Step "05b_pro_ability" { python engine\build_pro_ability.py --write }
 
 # ---- pack and solve -------------------------------------------------- #
 # Both caches must go: packed_XC_TF.npz is checked for existence only, and

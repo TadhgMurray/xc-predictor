@@ -61,6 +61,9 @@ try:
     from dbfast import tuneSession
     from pool_ceiling import ceilingFor
     from pool_resolve import resolvePool, inScope
+    # ★ THE SAME READER THE ENGINE USES (engine/pro_ability.py). Inside the
+    #   guard with its neighbours, for the reason the message below gives.
+    from pro_ability import proAbilityFor
 except ImportError as exc:
     raise SystemExit(
         f"Could not import poolFor ({exc}).\n"
@@ -1271,6 +1274,15 @@ def prepareRow(row, sport):
                            # ! FOR _PRO_PEOPLE -- see pool_resolve.
                            person_id=row.person_id,
                            is_pro=bool(row.is_pro),
+                           # ★ THE ABILITY GATE (owner, 2026-09-22), from
+                           #   the same reader the engine uses.
+                           #
+                           # ! THIS IS THE FALLBACK ARM. A row carrying
+                           #   rating_pool never reaches here -- the go-live
+                           #   stamped its pool, gate and all. So the gate's
+                           #   effect on the BOARDS arrives with the next
+                           #   solve's stamps, not with this file.
+                           pro_ability=proAbilityFor(row.person_id, season),
                            # ★ NO race_date, AND NO DATE PARSE AT ALL. Its only
                            #   readers were the two promotion gates, now gone. This
                            #   call was already lazy about building the date; now

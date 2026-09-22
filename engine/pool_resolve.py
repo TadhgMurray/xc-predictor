@@ -22,10 +22,11 @@ WHY THIS EXISTS
   the engine passes them from its dicts, the site passes them from LEFT JOINs,
   and the decision is identical either way.
 
-  The five facts and where the site gets them:
+  The six facts and where the site gets them:
       season_level      athlete_season_level      (person_id, ay)
       grade_untrusted   grade_untrusted           (person_id, season)
       is_pro            pro_athlete_season        (person_id, season)
+      pro_ability       pro_ability_season        (person_id, season) -> bool
       college_first     college_first_season      (person_id) -> date
       upperclass_first  upperclass_first_season   (person_id) -> date
 """
@@ -34,6 +35,52 @@ import re
 from functools import lru_cache
 
 from normalize_distance import poolFor
+
+# ===================================================================== #
+#  THE PROFESSIONAL ABILITY STANDARD
+# ===================================================================== #
+#
+# ★ OWNER, 2026-09-22: "if they're sub 14:00? for men, or sub 15:30? for
+#   women put in pro, otherwise trust grade." Seconds, as a 5000m-equivalent
+#   normalized time.
+#
+# ⚠ THE CURVE IS NOT OPTIONAL AND IT IS NOT THE ATHLETE'S OWN POOL.
+#   normalized_time is expressed at a DIFFERENT anchor distance per pool --
+#   normalize_distance.targetFor: 5000 hs and pro, 8000 college men, 6000
+#   college women, 3200 middle school. Reading the stored column would ask
+#   a college man for a 14:00 EIGHT thousand, which nobody alive has run.
+#   Every mark is measured on one common curve; see ABILITY_CURVE_POOL.
+#
+# ! MEASURED AGAINST REAL MARKS on the hs_m / hs_f potential, which is what
+#   put these numbers where they are:
+#
+#       men, 14:00              women, 15:30
+#         800  1:43 -> 13:27      800  1:56 -> 15:01
+#         800  1:47 -> 13:58      800  2:00 -> 15:32  (fails)
+#         800  1:50 -> 14:22      1500 4:05 -> 15:19
+#         Mile 4:00 -> 13:56      Mile 4:20 -> 15:00
+#         5000 13:30 -> 13:30     Mile 4:30 -> 15:35  (fails)
+#         10000 28:30 -> 13:32    10000 31:30 -> 15:00
+#
+#   The 800 cut lands near 1:47.5 for men and 1:59.5 for women, which is
+#   about the floor of professional half-lap racing. A 4:00 mile clears by
+#   four seconds. The standard is deliberately hard: it is separating
+#   professionals from a pool whose average member runs 25:53.
+#
+# ! STRICT. Exactly 14:00.0 does not qualify; the constant is the bar, not
+#   the last passing value.
+PRO_ABILITY_5K = {"M": 840.0, "F": 930.0}      # 14:00 / 15:30
+
+# ⚠ ONE CURVE FOR EVERY MARK, WHATEVER SPORT IT WAS RUN IN. Under
+#   fit_distance_exponent.MERGE_SPORTS (the default since 2026-09-19) XC
+#   and TF share one potential per pool and this is a no-op. It matters
+#   when the pickle on disk PREDATES that -- the Sep 15 build has separate
+#   hs_m|XC and hs_m|TF potentials that disagree by 10-25s at the same
+#   mark, enough to pass a 4:00 mile on one and fail it on the other. A
+#   threshold that moves with the age of a pickle is not a threshold.
+ABILITY_CURVE_POOL = {"M": "hs_m", "F": "hs_f"}
+ABILITY_CURVE_SPORT = "TF"
+
 
 # Level prefixes, kept here beside the promotions that use them.
 # ===================================================================== #
@@ -497,7 +544,7 @@ def resolvePool(grade, gender, source, school, sport,
                 fixed_grade=None, fixed_level=None,
                 grade_verdict=None, person_id=None, team_level=None,
                 team_has_pros=False, no_team=False, team_pro=False,
-                race_top_level=None):
+                race_top_level=None, pro_ability=None):
     """Which pool does this row belong to? Returns "hs_m|XC", or None.
 
     team_level: the team's level from the feeds (teamLevelOf): 'club'
@@ -784,6 +831,45 @@ def resolvePool(grade, gender, source, school, sport,
     above_hs = field in ("college", "pro")
     if field == "pro":
         is_pro = True                     # repooled below, as pro_flag would
+
+    # ================================================================== #
+    #  THE ABILITY GATE -- the last word on is_pro, over all SIX routes
+    # ================================================================== #
+    #
+    # ★ OWNER, 2026-09-22: "if they're sub 14:00? for men, or sub 15:30?
+    #   for women put in pro, otherwise trust grade."
+    #
+    # ⚠ WHY A GATE AND NOT A SIXTH FIX. The pro pool's average member runs
+    #   a 25:53 5K-equivalent -- C(pro_m) = 1553.1 against C(hs_m) =
+    #   1211.5. It is not lightly contaminated, it is DOMINATED by people
+    #   who are not professionals, and every one of them drags the pool's
+    #   100-anchor, which bends the rating of every real professional in
+    #   it. Three separate doors to is_pro have been found wrong in three
+    #   days (build_team_pool twice, team_has_pros once). This sits
+    #   DOWNSTREAM of all of them and of whatever the next one turns out
+    #   to be.
+    #
+    # ★ IT IS NECESSARY, NEVER SUFFICIENT. Being fast does not make anyone
+    #   professional -- that would pool every good high schooler pro,
+    #   which is the opposite of what the owner asked for ("their season
+    #   should still be hs"). This can only ever take is_pro away.
+    #
+    # ! TRI-STATE, AND None IS INERT. True/False are verdicts; None means
+    #   no verdict and behaves EXACTLY as before this existed -- the same
+    #   posture race_top_level takes. A caller that does not pass it, a
+    #   season with no rated mark, a database that has never built the
+    #   table: all unchanged. That is what makes this safe to ship before
+    #   every caller is wired.
+    #
+    # ! WHAT HAPPENS TO THE REFUSED (owner's call, 2026-09-22). They are
+    #   not moved to another pool, they fall through to the ordinary
+    #   ladder -- "otherwise trust grade". Where the grade, the school
+    #   level, the season verdict and the race ceiling are ALL absent,
+    #   stage 1 below returns None and the row goes unrated. That is the
+    #   gradeless unattached adult running a 40:00 10k, and dropping them
+    #   is the mechanism by which the pool actually gets clean.
+    if pro_ability is False:
+        is_pro = False
     # ! A LEVEL THE FEED STATES FOR THE TEAM COUNTS AS EVIDENCE. The three
     #   verdicts mean grade_sanity does not know the GRADE; the kill is
     #   there because the fallback would be the school name. When anet or

@@ -778,6 +778,24 @@ def loadProSeasons():
     return _PRO_SEASONS
 
 
+# ★ THE READER IS engine/pro_ability.py, NOT A COPY HERE. The site asks
+#   the same question from three more call sites and must get the same
+#   answer; a second implementation of a pool decision is the failure
+#   pool_resolve's header exists to record. This module keeps only the
+#   thin delegation so poolOf reads the same as its neighbours.
+def loadProAbility():
+    from pro_ability import loadProAbility as _load
+    return _load()
+
+
+def proAbilityFor(gkey):
+    """True / False / None for one (person_id, academic_year) tuple."""
+    from pro_ability import proAbilityFor as _for
+    if gkey is None:
+        return None
+    return _for(gkey[0], gkey[1])
+
+
 # loadNcaaFirst
 # Purpose:   fill _COLLEGE_FIRST from college_first_season.
 # Detail:    absent table is not an error -- pool exactly as before.
@@ -944,6 +962,11 @@ def poolOf(grade, gender, source, school, sport, merge=False,
     # the call with these unbound.
     untrusted = pro = False
     fixed_grade = fixed_level = None
+    # ! None, NOT False. False is a VERDICT ("measured, and not fast
+    #   enough") and would demote every row that cannot be looked up at
+    #   all. A row with no person_id has no season to ask about, which is
+    #   no verdict -- see pool_resolve's gate.
+    pro_able = None
     if pid is not None and season is not None:
         # ! TWO TABLES, TWO CLOCKS, AND THEY ARE NOT THE SAME KEY.
         #
@@ -978,6 +1001,9 @@ def poolOf(grade, gender, source, school, sport, merge=False,
             if gkey is not None else (None, None, None))
         pro_set = loadProSeasons()
         pro = bool(pro_set) and gkey is not None and gkey in pro_set
+        # ★ THE ABILITY GATE (owner, 2026-09-22). Tri-state; see
+        #   proAbilityFor and pool_resolve's veto.
+        pro_able = proAbilityFor(gkey)
 
     return resolvePool(
         grade, gender, source, school, sport,
@@ -994,6 +1020,7 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         person_id=pid,
         season=ay,
         is_pro=pro,
+        pro_ability=pro_able,
         college_first=None if pid is None else loadCollegeFirst().get(pid),
         upperclass_first=None if pid is None else loadUpperclassFirst().get(pid),
         race_date=race_date,

@@ -50,7 +50,8 @@ import psycopg2.extras                                    # noqa: E402
 from database import getConn                              # noqa: E402
 import build_ranking_results as B                         # noqa: E402
 from pool_resolve import resolvePool                      # noqa: E402
-from season_year import seasonYearFromIso                 # noqa: E402
+from season_year import seasonYearFromIso
+from pro_ability import proAbilityFor                 # noqa: E402
 from speed_ratings_db import saveResultSpeedRatings       # noqa: E402
 
 _TABLE = {"XC": "results", "TF": "results_tf"}
@@ -161,6 +162,12 @@ def _rowPool(row, sport):
                        grade_verdict=row.grade_verdict,
                        person_id=row.person_id,
                        is_pro=bool(row.is_pro),
+                       # ★ THE ABILITY GATE (owner, 2026-09-22), read from
+                       #   the same module the engine reads. This file
+                       #   prices rows for DISPLAY, so a pool it disagreed
+                       #   with the engine about would show one number on
+                       #   the board and another on the athlete page.
+                       pro_ability=proAbilityFor(row.person_id, season),
                        merge=True)
 
 
