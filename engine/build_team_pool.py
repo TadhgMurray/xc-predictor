@@ -280,9 +280,40 @@ def write(cur, rows):
     return len(rows)
 
 
-def report(rows, show=20, pro_max=PRO_MAX_ATHLETES):
+# ! A REPORT OF BARE TEAM IDS IS UNACTIONABLE (owner, 2026-09-22, on the
+#   forty-row list below: every line read the same reason with `--` for the
+#   level and a number nobody can look up). The name costs one indexed
+#   query against tables this script already requires.
+def teamNames(cur, ids):
+    """{team_id: "School (ST)"} from team_identity, then anet_team."""
+    out = {}
+    ids = sorted({int(i) for i in ids})
+    if not cur or not ids:
+        return out
+    try:
+        if _tableExists(cur, "team_identity"):
+            cur.execute("SELECT team_id, school, state FROM team_identity "
+                        "WHERE team_id = ANY(%s)", (ids,))
+            for t, school, state in cur.fetchall():
+                if school:
+                    out[int(t)] = f"{school}{f' ({state})' if state else ''}"
+        missing = [i for i in ids if i not in out]
+        if missing and _tableExists(cur, "anet_team"):
+            cur.execute("SELECT team_id, name, state FROM anet_team "
+                        "WHERE team_id = ANY(%s)", (missing,))
+            for t, name, state in cur.fetchall():
+                if name:
+                    out.setdefault(int(t),
+                                   f"{name}{f' ({state})' if state else ''}")
+    except Exception:                    # noqa: BLE001 -- a label, not the rule
+        pass
+    return out
+
+
+def report(rows, show=20, pro_max=PRO_MAX_ATHLETES, cur=None):
     from collections import Counter
     kinds = Counter(r[1] for r in rows)
+    _names = {}
     print(f"\n  {len(rows):,} teams classified")
     print(f"    {'kind':<10} {'teams':>8} {'athletes':>12} {'rows':>14}")
     for kind, n in kinds.most_common():
@@ -299,10 +330,11 @@ def report(rows, show=20, pro_max=PRO_MAX_ATHLETES):
                     and r[3] < pro_max), key=lambda r: -r[4])
     print(f"\n  called pro by the <{pro_max}-athlete rule: {len(small):,} teams. "
           f"The {min(show, len(small))} with the most rows:")
-    print(f"    {'team':>8} {'ath':>5} {'rows':>9} {'level':<9} reason")
+    _names.update(teamNames(cur, [r[0] for r in small[:show]]))
+    print(f"    {'team':>8} {'ath':>5} {'rows':>9} {'level':<9} school")
     for r in small[:show]:
         print(f"    {r[0]:>8} {r[3]:>5} {r[4]:>9,} {str(r[5] or '--'):<9} "
-              f"{r[2]}")
+              f"{_names.get(r[0], '(unnamed)')}")
 
     # ★★ THE BREAKDOWN THAT TURNS THE RULE INTO A NUMBER (2026-09-21). "If
     #    real schools are in that list they are the accepted price of the
@@ -344,9 +376,12 @@ def report(rows, show=20, pro_max=PRO_MAX_ATHLETES):
     if kept:
         print(f"    (a senior who races a professional field is still at their "
               f"school --\n     pro_flag classifies a SEASON, not a career)")
-        print(f"    {'team':>8} {'pros':>5} {'ath':>6} {'rows':>9} level")
+        _names.update(teamNames(cur, [r[0] for r in kept[:show]]))
+        print(f"    {'team':>8} {'pros':>5} {'ath':>6} {'rows':>9} "
+              f"{'level':<8} school")
         for r in kept[:show]:
-            print(f"    {r[0]:>8} {r[6]:>5} {r[3]:>6,} {r[4]:>9,} {r[5]}")
+            print(f"    {r[0]:>8} {r[6]:>5} {r[3]:>6,} {r[4]:>9,} "
+                  f"{str(r[5]):<8} {_names.get(r[0], '(unnamed)')}")
 
 
 def main():
@@ -374,7 +409,7 @@ def main():
                                  "scripts/anet_teams.py first")
             rows = build(cur, args.pro_max_athletes,
                          small_beats_level=args.small_beats_level)
-            report(rows, args.show, args.pro_max_athletes)
+            report(rows, args.show, args.pro_max_athletes, cur=cur)
             if args.write:
                 print(f"\n  wrote {write(cur, rows):,} rows to team_pool")
         if args.write:
