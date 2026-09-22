@@ -2502,12 +2502,45 @@ def _buildIndexes(cur, table, index_defs):
 #   all. A timeout mid-sequence rolls the whole thing back, which is why the
 #   retry can simply start over.
 SWAP_LOCK_TIMEOUT = "3s"
-SWAP_ATTEMPTS = 20
+SWAP_ATTEMPTS = int(_os.environ.get("XCP_SWAP_ATTEMPTS") or 20)
 SWAP_BACKOFF = 15          # seconds between attempts; 20 x 15s = 5 minutes
 
 
-def _swapWithRetry(cur, body, what):
+def _lockHolders(cur, table):
+    """Who holds a lock on `table` right now -- printed when the swap waits.
+
+    ⚠ THE 2026-09-22 RUN LOST ITS XC BACKFILL HERE AND COULD NOT SAY WHY.
+      "readers hold the table" twenty times, then a RuntimeError telling the
+      reader to check pg_stat_activity -- five minutes after the holder was
+      gone. So the holders are read WHILE they hold it: pid, what it is
+      (a client, or autovacuum -- an anti-wraparound vacuum does not yield),
+      how long its transaction has been open, and its query.
+    """
+    try:
+        cur.execute("""
+            SELECT a.pid, coalesce(a.application_name, ''), a.backend_type,
+                   coalesce(a.state, ''), l.mode,
+                   coalesce(extract(epoch FROM now() - a.xact_start)::int, 0),
+                   left(regexp_replace(coalesce(a.query, ''), '\\s+', ' ', 'g'),
+                        140)
+            FROM   pg_locks l
+            JOIN   pg_stat_activity a ON a.pid = l.pid
+            WHERE  l.relation = to_regclass(%s)
+              AND  l.granted
+              AND  a.pid <> pg_backend_pid()
+            ORDER  BY a.xact_start NULLS LAST""", (table,))
+        rows = cur.fetchall()
+        cur.execute("ROLLBACK")
+    except psycopg2.Error as exc:
+        cur.execute("ROLLBACK")
+        return [f"(could not read pg_locks: {type(exc).__name__})"]
+    return [f"pid {pid}  {app or btype}  {state}  {mode}  xact {age}s  {q}"
+            for pid, app, btype, state, mode, age, q in rows]
+
+
+def _swapWithRetry(cur, body, what, table=None):
     """Run `body(cur)` inside a transaction that refuses to queue for locks."""
+    holders = []
     for attempt in range(1, SWAP_ATTEMPTS + 1):
         try:
             cur.execute("BEGIN")
@@ -2526,14 +2559,21 @@ def _swapWithRetry(cur, body, what):
             cur.execute("ROLLBACK")
             print(f"    {what}: readers hold the table, attempt {attempt}"
                   f"/{SWAP_ATTEMPTS} -- retrying in {SWAP_BACKOFF}s")
+            if table and (attempt == 1 or attempt == SWAP_ATTEMPTS
+                          or attempt % 5 == 0):
+                holders = _lockHolders(cur, table)
+                for h in holders or ["(nobody holds it now -- a short read)"]:
+                    print(f"      holder: {h}")
             time.sleep(SWAP_BACKOFF)
     # ! A FAILURE HERE COSTS NOTHING BUT THE SWAP. The heap and its indexes
     #   are built and committed; <table>_new survives, so a rerun resumes
     #   rather than rebuilding. Raising beats swapping half of it.
     raise RuntimeError(
         f"{what}: could not take ACCESS EXCLUSIVE in "
-        f"{SWAP_ATTEMPTS} attempts. Something is holding a long read -- "
-        f"check pg_stat_activity. <table>_new is built and waiting.")
+        f"{SWAP_ATTEMPTS} attempts. Holders at the last attempt: "
+        f"{'; '.join(holders) or 'see the holder lines above'}. "
+        f"<table>_new is built and waiting; XCP_SWAP_ATTEMPTS raises the "
+        f"number of tries.")
 
 
 def _swapTables(cur, table, index_defs):
@@ -2562,7 +2602,7 @@ def _swapTables(cur, table, index_defs):
         for name, _ in index_defs:
             c.execute(f"ALTER INDEX {name}_new RENAME TO {name}")
 
-    _swapWithRetry(cur, _rename, f"{table} swap")
+    _swapWithRetry(cur, _rename, f"{table} swap", table=table)
     print(f"    swapped: {table}_new -> {table};  old kept as {table}_old")
 
 

@@ -369,6 +369,54 @@ shards() {
   fi
 }
 
+# bgstep <name> <command...> -- a LEAF step, started in the background.
+# bgwait                      -- wait for every one of them, and report.
+#
+# ★ FOR A STEP NOTHING LATER IN THE RUN READS (2026-09-22). 10f2_projection
+#   is 50 minutes of model inference whose table only the recruiting page
+#   joins; run in line, every step after it waited for it. Same --from,
+#   --skip and --dry-run rules as step; its summary line is written when
+#   bgwait collects it, so a failure still lands in FAILED and the exit code.
+# ! ONLY FOR LEAVES. A step whose output another step reads must stay a
+#   plain `step`, or the reader races the writer.
+BG_PIDS=(); BG_NAMES=(); BG_T0=()
+bgstep() {
+  name="$1"; shift
+  num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
+  if [ "${num:-0}" -lt "$FROM" ]; then
+    echo "  $name skipped (--from $FROM)"
+    return 0
+  fi
+  if skipped "$name"; then
+    echo "  $name skipped (--skip)"
+    return 0
+  fi
+  if [ "$DRY" -eq 1 ]; then
+    echo "  $name : $*   (in the background)"
+    return 0
+  fi
+  echo ""
+  echo "  $name    $(date +%H:%M:%S)   started IN THE BACKGROUND -> $LOGDIR/$name.log"
+  $NICE "$@" > "$LOGDIR/$name.log" 2>&1 &
+  BG_PIDS+=("$!"); BG_NAMES+=("$name"); BG_T0+=("$(date +%s)")
+}
+bgwait() {
+  local i rc el
+  for i in "${!BG_PIDS[@]}"; do
+    echo "  waiting for background step ${BG_NAMES[$i]}..."
+    if wait "${BG_PIDS[$i]}"; then rc=0; else rc=1; fi
+    el=$(( $(date +%s) - ${BG_T0[$i]} ))
+    tail -n 2 "$LOGDIR/${BG_NAMES[$i]}.log"
+    if [ "$rc" -ne 0 ]; then
+      echo "  ${BG_NAMES[$i]} FAILED after ${el}s (background)" | tee -a "$SUMMARY"
+      FAILED="$FAILED ${BG_NAMES[$i]}"
+    else
+      echo "  ${BG_NAMES[$i]} ok (${el}s, background)" | tee -a "$SUMMARY"
+    fi
+  done
+  BG_PIDS=(); BG_NAMES=(); BG_T0=()
+}
+
 # ---- verdicts ------------------------------------------------------- #
 # ! unlink.py IS NOT HERE ON PURPOSE -- it is the one non-idempotent step.
 step 01_season_year   "$PY" -u engine/season_year.py
@@ -450,6 +498,33 @@ else
   else
     steps2 05_backfill_xc "$PY -u backfill/backfill_normalize.py --sport XC --apply" \
            05_backfill_tf "$PY -u backfill/backfill_normalize.py --sport TF --apply"
+  fi
+fi
+
+# ⚠⚠ A FAILED BACKFILL STOPS THE RUN (2026-09-22). 05_backfill_xc could not
+#    take the lock to swap results in, failed after 50 minutes -- and the run
+#    carried on for ELEVEN MORE HOURS: packed, solved and published boards on
+#    XC times normalised by the OLD curve and the OLD pools, which is the
+#    exact thing the chain above the backfill exists to prevent (curve ->
+#    backfill -> solve). One FAILED line in the summary was the only sign.
+#
+#    Same shape as the 08_golive abort below. <table>_new survives a failed
+#    swap, so the rerun resumes at the swap rather than rebuilding.
+#    XCP_IGNORE_BACKFILL_FAIL=1 carries on anyway -- only when you have
+#    decided the times already in results are the ones you want solved.
+if [ "$DRY" -eq 0 ] && { failed 05_backfill_xc || failed 05_backfill_tf; }; then
+  if [ "${XCP_IGNORE_BACKFILL_FAIL:-0}" = "1" ]; then
+    echo "  ⚠ 05_backfill FAILED, and XCP_IGNORE_BACKFILL_FAIL=1 -- continuing" \
+         "on the normalized_time the PREVIOUS backfill wrote." | tee -a "$SUMMARY"
+  else
+    echo "" | tee -a "$SUMMARY"
+    echo "  ABORTING: 05_backfill failed, so results.normalized_time is not" \
+         "what this run was meant to solve. Nothing after this step is worth" \
+         "running on it." | tee -a "$SUMMARY"
+    echo "  read: $LOGDIR/05_backfill_xc.log / 05_backfill_tf.log (the swap" \
+         "prints the sessions holding the table)" | tee -a "$SUMMARY"
+    echo "  then: bash deploy/run_pipeline.sh --from 5 ..." | tee -a "$SUMMARY"
+    summarise
   fi
 fi
 
@@ -867,7 +942,9 @@ step 10f_recruits     "$PY" -u racecast/build_recruiting.py
 # who the MODEL thinks has room left (the coach's "underrated" sort). Needs a
 # trained model; without one it says so and exits clean, and the search falls
 # back to the rating sort while the table is absent.
-step 10f2_projection  "$PY" -u racecast/build_recruit_projection.py
+# ! IN THE BACKGROUND: only the recruiting page reads recruit_projection, so
+#   nothing below waits on its 50 minutes. Collected by bgwait before 17.
+bgstep 10f2_projection "$PY" -u racecast/build_recruit_projection.py
 # the athlete page's rank line, precomputed (311): every season's place in
 # every scope, one row per season, so the page runs no scoped counts
 step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py
@@ -908,6 +985,7 @@ step 15_rowguard_triage_tf "$PY" -u scripts/triage_suspects.py --sport TF
 step 16_rowguard_apply     "$PY" -u scripts/apply_triage.py
 
 # ---- the owner's go/no-go ------------------------------------------- #
+bgwait
 step 17_checklist     "$PY" -u scripts/run_checklist.py
 
 # ---- the gentle vacuum, last ----------------------------------------- #

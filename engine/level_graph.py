@@ -308,6 +308,12 @@ def buildGraph(cur, min_teams=_MIN_TEAMS):
     #   the wider trim, because the regex's \s covers tabs and newlines and
     #   btrim's default does not -- a tab-only school would otherwise survive
     #   a test that used to drop it.
+    # ⚠ A ROW WITH NO meet_id OR div_id HAS NO RACE (2026-09-22). The key is
+    #   md5(meet_id || ':' || div_id || ...), and || with a NULL is NULL, so
+    #   those rows all landed under race NULL -- one "race" holding every
+    #   orphan in the corpus. race_level's PRIMARY KEY refused it with a
+    #   NotNullViolation after 30 minutes of graph building, and the whole
+    #   step rolled back. No consumer could ever join a NULL key anyway.
     for table in ("results", "results_tf"):
         cur.execute(f"""
             INSERT INTO tmp_race_team (race, school, label)
@@ -316,6 +322,8 @@ def buildGraph(cur, min_teams=_MIN_TEAMS):
                    min(btrim(r.school))
             FROM {table} r
             WHERE r.school IS NOT NULL
+              AND r.meet_id IS NOT NULL
+              AND r.div_id IS NOT NULL
               AND {_JUNK_SQL}
             GROUP BY 1, 2
         """, _JUNK_PARAMS)

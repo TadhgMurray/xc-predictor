@@ -2010,6 +2010,103 @@ _CANONICAL_INDEXES = {
 }
 
 
+def _indexSig(ddl):
+    """An index's column list and predicate, normalised for comparison.
+
+    ⚠ PARENTHESES ARE STRIPPED, NOT JUST SPACES (2026-09-22). pg_indexes
+      writes a partial index's predicate back WRAPPED --
+      `(event_kind, mark DESC) WHERE (event_kind IS NOT NULL)` -- while
+      _CANONICAL_INDEXES states it bare. Compared with only the spaces
+      removed, rr_board_mark_idx never matched itself: it built in 62s on
+      the owner's run, verifyIndexes still called it missing, and the
+      finish refused to swap.
+    """
+    i = ddl.find("(")
+    tail = ddl[i:] if i >= 0 else ddl
+    return re.sub(r"[\s()]", "", tail).lower()
+
+
+def _canonicaliseIndexNames(conn, like):
+    """Take the shadow suffix back off the LIVE table's index names.
+
+    ⚠⚠ WHY (2026-09-22: 10_rankings_finish refused to swap, 8 indexes
+       "missing"). A shadow's indexes are named `<like>_new_*`, and the swap
+       renames only the TABLES -- so after it the live table owns those
+       names. Index names are unique per SCHEMA, so on the next build the
+       shadow's `CREATE INDEX IF NOT EXISTS ranking_results_new_rr_person_idx`
+       found the LIVE table's index of that name and silently did nothing
+       (0.0s in the log); verifyIndexes' serial retry derived the same name
+       and no-opped again. Since rename() was made idempotent on 09-21, this
+       happens on every second run by construction.
+
+    ★ SO THE LIVE NAMES ARE MADE CANONICAL: `<like>(_new)+` -> `<like>`. Run
+      before a build (repairs a table already swapped in with shadow names)
+      and after a swap (so it never happens again).
+
+    ! SAFE WITH THE SITE UP. ALTER INDEX ... RENAME takes SHARE UPDATE
+      EXCLUSIVE on the index, which does not conflict with readers (checked
+      on PG16 against an open reader). lock_timeout anyway, and a name that
+      cannot be taken is reported and left -- verifyIndexes still guards the
+      swap, and _freeIndexName still routes around the collision.
+    """
+    pat = re.compile(re.escape(like) + r"(?:_new)+")
+    with conn.cursor() as cur:
+        cur.execute("""SELECT indexname FROM pg_indexes
+                       WHERE schemaname = 'public' AND tablename = %s""",
+                    (like,))
+        names = [r[0] for r in cur.fetchall()]
+    conn.commit()
+    for old in names:
+        new = pat.sub(like, old)
+        if new == old:
+            continue
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL lock_timeout = '3s'")
+                cur.execute("SELECT to_regclass(%s)", (f"public.{new}",))
+                if cur.fetchone()[0] is not None:
+                    conn.rollback()
+                    print(f"    ⚠ {old}: cannot take the name {new}, "
+                          f"already in use -- left as is")
+                    continue
+                cur.execute(f'ALTER INDEX public."{old}" RENAME TO "{new}"')
+            conn.commit()
+            print(f"    renamed index {old} -> {new}")
+        except psycopg2.Error as exc:
+            conn.rollback()
+            print(f"    ⚠ {old}: rename failed ({type(exc).__name__}: "
+                  f"{exc}) -- left as is")
+
+
+def _freeIndexName(conn, candidate, table):
+    """`candidate`, unless ANOTHER table's index already owns that name.
+
+    The belt to _canonicaliseIndexNames' braces: `IF NOT EXISTS` must only
+    ever skip an index that is on THIS table. A name held elsewhere gets a
+    short deterministic tag, so the build cannot no-op against a stranger.
+    """
+    with conn.cursor() as cur:
+        cur.execute("""SELECT t.relname
+                       FROM   pg_class i
+                       JOIN   pg_index x ON x.indexrelid = i.oid
+                       JOIN   pg_class t ON t.oid = x.indrelid
+                       JOIN   pg_namespace n ON n.oid = i.relnamespace
+                       WHERE  n.nspname = 'public' AND i.relname = %s""",
+                    (candidate,))
+        row = cur.fetchone()
+        if row is None:
+            cur.execute("SELECT to_regclass(%s)", (f"public.{candidate}",))
+            taken = cur.fetchone()[0] is not None     # a non-index relation
+        else:
+            taken = row[0] != table
+    conn.commit()
+    if not taken:
+        return candidate
+    import hashlib
+    tag = hashlib.md5(f"{table}:{candidate}".encode()).hexdigest()[:6]
+    return f"{candidate[:56]}_{tag}"
+
+
 def indexDefs(conn, like):
     """The live table's index definitions, ready to replay on the shadow.
 
@@ -2029,13 +2126,9 @@ def indexDefs(conn, like):
     # Compare on the column list, not the name: the same index built by an
     # earlier run carries an auto-generated name, and adding ours beside it
     # would build the same tree twice.
-    def _cols(ddl):
-        i = ddl.find("(")
-        return ddl[i:].replace(" ", "").lower() if i >= 0 else ddl
-
-    have = {_cols(ddl) for _n, ddl in defs}
+    have = {_indexSig(ddl) for _n, ddl in defs}
     for name, cols in _CANONICAL_INDEXES.get(like, []):
-        if _cols(cols) in have:
+        if _indexSig(cols) in have:
             continue
         defs.append((f"{like}_{name}",
                      f"CREATE INDEX {like}_{name} ON public.{like} {cols}"))
@@ -2082,6 +2175,7 @@ def buildIndexes(conn, name, like):
       built rather than failing on it. The shadow is dropped and recreated on
       a normal run, so this only matters after a crash.
     """
+    _canonicaliseIndexNames(conn, like)
     defs = indexDefs(conn, like)
     if not defs:
         # Unreachable while _CANONICAL_INDEXES has an entry for this table,
@@ -2132,6 +2226,7 @@ def buildIndexes(conn, name, like):
             import hashlib
             tag = hashlib.md5(newname.encode()).hexdigest()[:8]
             newname = f"{newname[:54]}_{tag}"
+        newname = _freeIndexName(conn, newname, name)
         sql = ddl.replace(f" ON public.{like} ", f" ON public.{name} ")
         sql = sql.replace(f" ON {like} ", f" ON {name} ")
         sql = sql.replace(f"INDEX {idxname} ",
@@ -2192,13 +2287,10 @@ def _indexSignatures(conn, table):
       table's are historical; what a query can actually use is the column
       list, so that is what is compared.
     """
-    def _cols(ddl):
-        i = ddl.find("(")
-        return ddl[i:].replace(" ", "").lower() if i >= 0 else ddl
     with conn.cursor() as cur:
         cur.execute("SELECT indexdef FROM pg_indexes WHERE tablename = %s",
                     (table,))
-        return {_cols(r[0]) for r in cur.fetchall()}
+        return {_indexSig(r[0]) for r in cur.fetchall()}
 
 
 def verifyIndexes(conn, name, like):
@@ -2229,8 +2321,7 @@ def verifyIndexes(conn, name, like):
     want = _CANONICAL_INDEXES.get(like, [])
     if not want:
         return
-    def _sig(cols):
-        return cols.replace(" ", "").lower()
+    _sig = _indexSig
     have = _indexSignatures(conn, name)
     missing = [(n, c) for n, c in want if _sig(c) not in have]
     if not missing:
@@ -2239,7 +2330,7 @@ def verifyIndexes(conn, name, like):
     print(f"  ⚠ {len(missing)} canonical index(es) MISSING from {name} after "
           f"the build -- rebuilding serially:")
     for idxname, cols in missing:
-        newname = f"{name}_{idxname}"
+        newname = _freeIndexName(conn, f"{name}_{idxname}", name)
         sql = f"CREATE INDEX IF NOT EXISTS {newname} ON public.{name} {cols}"
         t0 = time.time()
         try:
@@ -2436,6 +2527,10 @@ def swapIn(conn):
         cur.execute("DROP TABLE ranking_results_old, athlete_season_old")
     conn.commit()
     print(f"    [{time.time() - t0:7.1f}s] dropped the old copies")
+    # the swapped-in tables carry their shadow index names; free them for the
+    # next build (see _canonicaliseIndexNames)
+    _canonicaliseIndexNames(conn, "ranking_results")
+    _canonicaliseIndexNames(conn, "athlete_season")
     print("  done -- the site was never served an empty board")
 
 

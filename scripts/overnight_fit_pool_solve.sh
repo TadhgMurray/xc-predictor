@@ -96,6 +96,16 @@
 #       SKIP_WAIT=1       start now, do not wait for the scrape
 #       SKIP_SOLVE=1      do the curve and the pools, stop before touching
 #                         results (useful the first time)
+#       SKIP_CURVE=1      keep engine/data/distance_spline.pkl as it is (~50
+#                         min). Only when nothing was scraped since it was
+#                         fitted -- the backfill applies whatever curve is on
+#                         disk, and a stale one is the thing this chain exists
+#                         to prevent. ability_deciles is skipped with it.
+#       SOLVE_SKIP=...    the --skip list handed to deploy/run_pipeline.sh
+#                         (default 08b_ladder). SOLVE_SKIP=08b_ladder,08a_holdout
+#                         also drops the ~55 min holdout, which scores the run
+#                         and changes nothing on the site; joint_vs_bracket
+#                         needs it, so it is skipped with it.
 set -u
 
 cd "$(dirname "$0")/.." || exit 1
@@ -145,6 +155,7 @@ trap 'rm -f "$LOCK"' EXIT INT TERM
 #    a ~40 minute holdout, tilt, rankings and the unit builders. The 2026-09-19
 #    run took about four and a half hours; 14h is triple that and still ends
 #    before a second night. Raise it here if the corpus grows, and say so.
+: "${SOLVE_SKIP:=08b_ladder}"           # see the header; 08a_holdout saves ~55 min
 : "${TIMEOUT_curve:=10800}"            # 3h
 : "${TIMEOUT_ability_deciles:=3600}"   # 1h, read-only
 : "${TIMEOUT_school_levels:=7200}"     # 2h
@@ -225,9 +236,13 @@ say "results/results_tf marked BUSY ($LOCK) — the scrape chain will wait"
 # The live artifact, on purpose: this chain exists to produce a solve, and a
 # solve has to read one curve. overnight_distance_curve.sh is the separate
 # script that fits VARIANTS to their own files and touches nothing.
+if [ "${SKIP_CURVE:-0}" = "1" ]; then
+    step_skipped curve "SKIP_CURVE=1 -- the backfill applies the distance_spline.pkl already on disk"
+else
 step_fatal curve \
     "fit the time-vs-distance curve -> engine/data/distance_spline.pkl; the backfill re-applies it to every normalized_time" \
     "$PY" engine/fit_distance_exponent.py --fresh
+fi
 
 # ----------------------------------------------- 1b. the ability question
 # ★ READ ONLY, AND THE MEASUREMENT THAT IS STILL MISSING (owner, 2026-09-19:
@@ -243,9 +258,13 @@ step_fatal curve \
 #   exactly the pairs the spline was fitted on. No --pool means every pool.
 #
 # ! NOT FATAL. It changes nothing; a failure here must not stop a solve.
+if [ "${SKIP_CURVE:-0}" = "1" ]; then
+    step_skipped ability_deciles "SKIP_CURVE=1 -- it judges the pairs the curve step rebuilds"
+else
 step ability_deciles \
     "read-only: does the distance exponent move with ability? every pool this time, not just college" \
     "$PY" engine/diag_exponent_by_ability.py || true
+fi
 
 # ---------------------------------------------------------------- 2. pools
 # school_levels.pkl FIRST: it is the one the solve actually reads.
@@ -340,16 +359,21 @@ fi
 #   it, and measuring it is the point of this run.
 step_fatal solve \
     "the pipeline from stage 5: backfill -> pack -> 08_golive (the bracket solve) -> holdout -> tilt -> fill -> rankings -> unit builders" \
-    bash deploy/run_pipeline.sh --from 5 --skip 08b_ladder
+    bash deploy/run_pipeline.sh --from 5 --skip "$SOLVE_SKIP"
 
 # ---------------------------------------------------- 4. the comparison (a)
 # ! AFTER THE SOLVE, READ-ONLY, AND NOT FATAL. Both estimators re-gauged onto
 #   the reference class, because comparing them on two different zeros measures
 #   the gauge and not the model. The joint solve's shift onto that reference is
 #   the "everything outside California went negative" complaint as a number.
+case ",$SOLVE_SKIP," in
+    *",08a_holdout,"*)
+        step_skipped joint_vs_bracket "08a_holdout is on SOLVE_SKIP; it reads the holdout's per-row dump" ;;
+    *)
 step joint_vs_bracket \
     "read-only: the joint and bracket difficulty estimators re-gauged onto ONE reference class" \
-    "$PY" engine/diag_joint_vs_bracket.py --show 25 || true
+    "$PY" engine/diag_joint_vs_bracket.py --show 25 || true ;;
+esac
 
 rm -f "$LOCK"
 say "results/results_tf released — the scrape chain may retry meets now"
