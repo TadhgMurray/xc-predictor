@@ -210,7 +210,7 @@ _CONST_SQL = {
 # ! split_part, BECAUSE THE GO-LIVE ONCE WROTE A SPORT SUFFIX. conversions
 #   records that rating_pool used to carry "pool|SPORT" and now carries the
 #   bare pool; matching the bare prefix reads both.
-_PRO_CONST_SQL = {
+_STAMPED_CONST_SQL = {
     "XC": """
         SELECT r.speed_rating, r.normalized_time
         FROM   results r
@@ -226,7 +226,7 @@ _PRO_CONST_SQL = {
         LIMIT  %(n)s
     """,
 }
-_PRO_CONST_TIMEOUT_MS = 4000
+_STAMPED_TIMEOUT_MS = 4000
 
 _CONST_CACHE = {}              # (pool, sport) -> constant or None
 _CONST_SAMPLE = 1500           # rows to median over; a constant needs few
@@ -302,10 +302,12 @@ def _poolConstant(pool, sport):
     until = _NONE_UNTIL.get(key)
     if until is not None and _time.time() < until:
         return None
-    # ! THE PRO POOLS TAKE THE OTHER SOURCE. See _PRO_CONST_SQL: the table
+    # ! THE PRO POOLS TAKE THE OTHER SOURCE. See _STAMPED_CONST_SQL: the table
     #   the normal query reads is guaranteed to hold none of their rows.
+    #   Since 2026-09-22 it is also the FALLBACK for every other pool;
+    #   see the note above the retry below.
     is_pro = pool.startswith("pro_")
-    sql = (_PRO_CONST_SQL if is_pro else _CONST_SQL).get(sport)
+    sql = (_STAMPED_CONST_SQL if is_pro else _CONST_SQL).get(sport)
     vals = []
     if sql is not None:
         try:
@@ -316,7 +318,7 @@ def _poolConstant(pool, sport):
                         # bounded, and a timeout leaves the college fallback
                         # in place -- exactly the pre-2026-09-22 behaviour
                         cur.execute("SET LOCAL statement_timeout = %s",
-                                    (_PRO_CONST_TIMEOUT_MS,))
+                                    (_STAMPED_TIMEOUT_MS,))
                     cur.execute(sql, {"pool": pool, "n": _CONST_SAMPLE})
                     for rating, norm in cur.fetchall():
                         if not rating or not norm:
@@ -328,6 +330,74 @@ def _poolConstant(pool, sport):
                 _FAILED.add(key)
                 print(f"pool_view: constant sample for {pool}/{sport} "
                       f"raised {type(exc).__name__}: {exc}", flush=True)
+    # ⚠⚠⚠ THE LIMIT WAS INSIDE THE CTE, SO THE SAMPLE WAS TAKEN BEFORE THE
+    #     ROWS WERE CHECKED (owner's pool_view run, 2026-09-22):
+    #
+    #         pool_view: constant for hs_m/TF unavailable (0 usable rows)
+    #         pool_view: constant for hs_f/TF unavailable (0 usable rows)
+    #
+    #     _CONST_SQL reads 1,500 ranking_results rows for the pool and only
+    #     THEN joins results_tf and drops the ones with no rating. An
+    #     unordered LIMIT over the biggest pool in the corpus returns a
+    #     correlated physical slice -- and high school track is mostly
+    #     sprints and field events, which the engine never rates. Zero of
+    #     1,500 survived, twice, while ms, college and pro all sampled
+    #     cleanly: reproduced on Postgres 16, 0 rows against 1,500 for the
+    #     same pool once the filter runs first.
+    #
+    # ★★ AND THE COST WAS NOT "NO TOGGLE ON HIGH SCHOOL TRACK". hsFactor
+    #    takes C(hs)/C(pool) per sport and combines the RATIOS, so losing
+    #    the hs TF constant costs every pool its TF ratio -- which is why
+    #    that same run printed "measured from 1 sport ratio(s)" for all
+    #    eight pools. One missing sample degraded the whole table to
+    #    half its evidence.
+    #
+    # ! THE RETRY IS THE PRO QUERY, WHICH IS WHY IT IS NOT CALLED PRO ANY
+    #   MORE. rating_pool is stamped by the go-live on every rated row,
+    #   boards or not, so it needs no join and no ranking_results at all --
+    #   and it is fast exactly where the primary fails. The primary reads
+    #   a bounded 1,500 rows and wins on a RARE pool; this one seq-scans
+    #   until the LIMIT fills and wins on a COMMON one, where matches are
+    #   everywhere. Measured on a fixture: 14ms for the big pool.
+    #
+    # ! PRIMARY FIRST, STILL. ranking_results is the narrower statement --
+    #   rows the athlete ran WHILE IN this pool, already adjudicated -- so
+    #   a pool that samples cleanly from it keeps doing so and nothing
+    #   about the working seven pools moves.
+    if len(vals) < _CONST_MIN_ROWS and not is_pro:
+        retry = _STAMPED_CONST_SQL.get(sport)
+        if retry is not None:
+            try:
+                with getConn() as conn:
+                    with conn.cursor() as cur:
+                        # bounded: a rare pool can scan a long way before
+                        # the LIMIT fills, and this is a page render
+                        cur.execute("SET LOCAL statement_timeout = %s",
+                                    (_STAMPED_TIMEOUT_MS,))
+                        cur.execute(retry, {"pool": pool, "n": _CONST_SAMPLE})
+                        rows = cur.fetchall()
+                        # ! PUT THE BUDGET BACK BEFORE THE CONNECTION GOES
+                        #   HOME. SET LOCAL is transaction-scoped, and this
+                        #   connection is pooled -- racecast/school.py
+                        #   leaked exactly this budget onto every later
+                        #   query in a request on 2026-09-21.
+                        cur.execute("SET LOCAL statement_timeout = DEFAULT")
+                d = default_difficulty(sport)
+                got = []
+                for rating, norm in rows:
+                    if not rating or not norm:
+                        continue
+                    got.append(float(rating) * float(norm) / (1.0 + d) / 100.0)
+                if len(got) > len(vals):
+                    print(f"pool_view: {pool}/{sport} sampled "
+                          f"{len(got):,} rows from rating_pool after "
+                          f"ranking_results gave {len(vals):,}", flush=True)
+                    vals = got
+            except Exception as exc:                 # noqa: BLE001
+                if key not in _FAILED:
+                    print(f"pool_view: rating_pool retry for {pool}/{sport} "
+                          f"raised {type(exc).__name__}: {exc}", flush=True)
+
     value = median(vals) if len(vals) >= _CONST_MIN_ROWS else None
     if value is None and key not in _FAILED:
         _FAILED.add(key)

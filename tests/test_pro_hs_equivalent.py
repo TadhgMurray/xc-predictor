@@ -141,10 +141,10 @@ class ThePoolConstantCanActuallyBeSampled(unittest.TestCase):
         ns = {}
         for node in ast.parse(self.src).body:
             if (isinstance(node, ast.Assign)
-                    and getattr(node.targets[0], "id", "") == "_PRO_CONST_SQL"):
+                    and getattr(node.targets[0], "id", "") == "_STAMPED_CONST_SQL"):
                 exec(ast.get_source_segment(self.src, node), ns)  # noqa: S102
-        self.assertIn("_PRO_CONST_SQL", ns, "_PRO_CONST_SQL is gone")
-        for sport, sql in ns["_PRO_CONST_SQL"].items():
+        self.assertIn("_STAMPED_CONST_SQL", ns, "_STAMPED_CONST_SQL is gone")
+        for sport, sql in ns["_STAMPED_CONST_SQL"].items():
             self.assertNotIn("ranking_results", sql, sport)
             self.assertIn("rating_pool", sql, sport)
 
@@ -153,12 +153,12 @@ class ThePoolConstantCanActuallyBeSampled(unittest.TestCase):
         ns = {}
         for node in ast.parse(self.src).body:
             if (isinstance(node, ast.Assign)
-                    and getattr(node.targets[0], "id", "") == "_PRO_CONST_SQL"):
+                    and getattr(node.targets[0], "id", "") == "_STAMPED_CONST_SQL"):
                 exec(ast.get_source_segment(self.src, node), ns)  # noqa: S102
-        xc = ns["_PRO_CONST_SQL"]["XC"]
+        xc = ns["_STAMPED_CONST_SQL"]["XC"]
         self.assertIn("FROM   results", xc)
         self.assertNotIn("results_tf", xc)
-        self.assertIn("results_tf", ns["_PRO_CONST_SQL"]["TF"])
+        self.assertIn("results_tf", ns["_STAMPED_CONST_SQL"]["TF"])
 
     def test_it_matches_the_legacy_sport_suffix(self):
         """! rating_pool ONCE CARRIED "pool|SPORT" (conversions records the
@@ -168,22 +168,22 @@ class ThePoolConstantCanActuallyBeSampled(unittest.TestCase):
         ns = {}
         for node in ast.parse(self.src).body:
             if (isinstance(node, ast.Assign)
-                    and getattr(node.targets[0], "id", "") == "_PRO_CONST_SQL"):
+                    and getattr(node.targets[0], "id", "") == "_STAMPED_CONST_SQL"):
                 exec(ast.get_source_segment(self.src, node), ns)  # noqa: S102
-        for sql in ns["_PRO_CONST_SQL"].values():
+        for sql in ns["_STAMPED_CONST_SQL"].values():
             self.assertIn("split_part(r.rating_pool, '|', 1)", sql)
 
     def test_only_a_pro_pool_takes_the_other_source(self):
         """! EVERY OTHER POOL KEEPS ranking_results, which is season-accurate
         and indexed. The pro pools are the only ones it cannot answer for."""
         self.assertIn('is_pro = pool.startswith("pro_")', self.src)
-        self.assertIn("_PRO_CONST_SQL if is_pro else _CONST_SQL", self.src)
+        self.assertIn("_STAMPED_CONST_SQL if is_pro else _CONST_SQL", self.src)
 
     def test_the_unindexed_scan_is_bounded(self):
         """⚠ rating_pool HAS NO INDEX and this runs on a page load. A
         timeout leaves the constant None, which is exactly the college
         fallback -- so the change is never worse than what it replaces."""
-        self.assertIn("_PRO_CONST_TIMEOUT_MS", self.src)
+        self.assertIn("_STAMPED_TIMEOUT_MS", self.src)
         i = self.src.index("if is_pro:\n                        # bounded")
         self.assertIn("SET LOCAL statement_timeout", self.src[i:i + 400])
 
