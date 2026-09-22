@@ -2195,6 +2195,11 @@ def _fitOnePotential(pairs, eps_fixed=None, tukey_c=None, degree_cap=None):
         MIN_LOCAL_EXP)
     return {"knots": [float(k) for k in knots],
             "values": values,
+            # ! THREE SOURCES, NAMED, the way eps_source names its rungs.
+            #   "tangent" is the one that needs finding in a log: it means
+            #   the high side is the cubic's boundary slope and nothing
+            #   measured it.
+            "ext_slope_source": ("own" if ext_slope is not None else "tangent"),
             "floored_segments": floored, "min_local_exp": float(MIN_LOCAL_EXP or 0.0),
             "n_edges": n_trans, "degree": degree,
             "degree_audit": degree_audit,
@@ -2705,6 +2710,113 @@ def _levelEpsTable(first_pass):
             for key, votes in acc.items()}
 
 
+# _sportExtSlopeTable
+# Purpose:   Rung 2 FOR THE EXTENSION SLOPE: per sport, the pair-weighted
+#            median of the high-side slopes its pools measured for
+#            THEMSELVES. Only an own measurement votes -- a borrowed or
+#            tangent slope is not evidence and must not circulate back in
+#            as if it were, which is exactly the rule _levelEpsTable states
+#            for eps.
+# Arguments: first_pass -- {(sport, pool): (entry, n_pairs)}.
+# Output:    {sport: slope}.
+#
+# ★★ WHY THIS RUNG WAS MISSING, AND WHAT IT COST (owner, 2026-09-22: "what
+#    about the spline per ability level? 1.6s in an 800->1500 is lowk
+#    crazy" -- the 10k half of the same investigation). eps has three rungs,
+#    own -> borrowed -> none. The extension slope had two: own, or the
+#    CUBIC'S BOUNDARY TANGENT. Measured on the shipped artifact:
+#
+#        hs_m|TF     15,182 tail pairs   own 1.0747
+#        hs_f|TF      6,820              own 1.0711
+#        ms_m|TF        711              own 1.0771
+#        elem_m|TF      978              own 1.1011
+#        elem_f|TF      617              own 1.1481
+#        ---------------------------------------------
+#        college_m|TF       4            NONE -> tangent 1.047
+#        college_f|TF      21            NONE -> tangent
+#        ms_f|TF          283            NONE -> tangent (17 short of 300)
+#
+#    Every pool that could measure its own 5K-and-up fade agreed within
+#    0.006. The pools that could not fell back to the tangent of a cubic
+#    fitted on 32 edges -- a number with no claim to be a fade at all.
+#
+#    Independently measured from season bests (scripts/diag_event_pairs.py,
+#    30,142 college-men athlete-seasons), the real 10,000->5,000 fade is
+#    1.071; the shipped tangent runs 1.047, which reads a 32:15 10k as
+#    15:36.6 over 5K where the data says 15:21.9. Sixteen seconds, on every
+#    collegiate track 10k, because one pool had four tail pairs.
+#
+# ! THE MEDIAN, NOT THE MEAN, and weighted by pairs. elem's own slopes run
+#   1.10-1.15 because its "high side" is a different physical regime (a
+#   span of 800-3000 m); a mean would let them drag the number the 5K-and-up
+#   pools agree on. A pool that measured its own keeps it either way -- this
+#   table is only ever read by a pool that measured nothing.
+def _sportExtSlopeTable(first_pass):
+    acc = {}                     # sport -> [(slope, n_ext_pairs), ...]
+    for (sport, pool), (entry, _n_pairs) in first_pass.items():
+        if entry is None or entry.get("ext_slope_hi") is None:
+            continue
+        acc.setdefault(sport, []).append(
+            (float(entry["ext_slope_hi"]), int(entry.get("n_ext_pairs") or 1)))
+    out = {}
+    for sport, votes in acc.items():
+        votes.sort()
+        total = sum(n for _s, n in votes)
+        seen = 0
+        for slope, n in votes:
+            seen += n
+            if seen * 2 >= total:
+                out[sport] = slope
+                break
+    return out
+
+
+# _printExtSlopes
+# Purpose:   What each pool's high-side extension ended up being, and where
+#            it came from. Printed because a borrowed slope is a judgement
+#            and the run log is where judgements belong.
+def _printExtSlopes(table, borrowed):
+    if not table:
+        print("  (no pool measured its own high-side extension slope)")
+        return
+    print("  high-side extension slope, borrowable per sport:")
+    for sport, slope in sorted(table.items()):
+        print(f"    {sport}: {slope:.4f}")
+    for name, slope in sorted(borrowed):
+        print(f"    {name}: BORROWED {slope:.4f} "
+              f"(too few tail pairs to measure its own)")
+
+
+# _reslopeEntry
+# Purpose:   The same entry with a different high-side extension, without
+#            re-running the shape solve.
+# Arguments: entry -- a _fitOnePotential result; slope -- the new s_hi.
+# Output:    a new entry dict, or `entry` unchanged when it measured its own.
+#
+# ! RE-SAMPLED, NOT RE-FITTED, AND THAT IS EXACT. s_hi_override enters only
+#   _sampleClamped, which reads coeffs, knots and the span -- all three are
+#   already on the entry and none of them depends on the slope. So this
+#   produces byte-for-byte what _fitOnePotential(..., that slope) would,
+#   for the cost of a resample instead of a second solve. (eps borrows by
+#   refitting because eps DOES enter the solve.)
+def _reslopeEntry(entry, slope):
+    if entry is None or entry.get("ext_slope_hi") is not None:
+        return entry
+    lo = math.log(entry["span"][0])
+    hi = math.log(entry["span"][1])
+    knots = entry["knots"]
+    values, floored = _floorLocalExponent(
+        knots, _sampleClamped(entry["coeffs"], knots, lo, hi,
+                              s_hi_override=float(slope)),
+        MIN_LOCAL_EXP)
+    out = dict(entry)
+    out["values"] = values
+    out["floored_segments"] = floored
+    out["ext_slope_hi"] = float(slope)
+    out["ext_slope_source"] = "borrowed"
+    return out
+
+
 # _printLevelEps
 # Purpose:   The eps findings table — the number the direction census
 #            predicted (~0.3% TF, ~1% HS/college XC, ~2% MS): read it
@@ -2834,6 +2946,11 @@ def fitAllPotentials(xc_by_pool, tf_by_pool, report_residuals=False):
 
     level_eps = _levelEpsTable(first)
     _printLevelEps(level_eps)
+    # ★ THE SAME RUNG, FOR THE EXTENSION SLOPE. Built from pass 1 so only
+    #   own measurements vote; applied in pass 2 to the pools that measured
+    #   none. See _sportExtSlopeTable for what it cost not to have this.
+    ext_slopes = _sportExtSlopeTable(first)
+    _borrowed_ext = []
 
     # PASS 2 — borrow where needed, then gate and store, in the same
     # report order as before (global|sport first, then its pools).
@@ -2854,6 +2971,14 @@ def fitAllPotentials(xc_by_pool, tf_by_pool, report_residuals=False):
                     and level_key in level_eps):
                 entry = _fitOnePotential(pairs,
                                          eps_fixed=level_eps[level_key])
+            # ! BEFORE CERTIFICATION, so the gate judges the curve that
+            #   will actually ship. Certifying the tangent version and then
+            #   swapping the slope underneath it would be a curve nothing
+            #   checked.
+            if entry is not None and entry.get("ext_slope_hi") is None \
+                    and sport in ext_slopes:
+                entry = _reslopeEntry(entry, ext_slopes[sport])
+                _borrowed_ext.append((f"{pool}|{sport}", ext_slopes[sport]))
             fitted = _certifyEntry(f"{pool}|{sport}", pairs, entry)
             # The demotion ladder: POOLS ONLY. A gated pool retries at
             # strictly lower degrees before exiling its rows to the
@@ -2886,6 +3011,7 @@ def fitAllPotentials(xc_by_pool, tf_by_pool, report_residuals=False):
     # ★ THE ANCHOR IS A PROPERTY OF THE POOL, NOT OF THE CURVE THAT HAPPENED
     #   TO ANSWER FOR IT. Writing the map lets the consumer resolve it from
     #   the pool name, whichever entry the fallback chain lands on.
+    _printExtSlopes(ext_slopes, _borrowed_ext)
     art["pool_targets"] = dict(POOL_TARGET_METERS)
     return art
 # ------------------------------------------------------------------ #
