@@ -83,10 +83,16 @@
 #    course pages all assume +5.83% (joint_solve.XC_TRACK_GAP = ln 1.06).
 #    The bracket engine had NO term for the gap -- XCP_SPORT_LEVEL above has
 #    been asserting it for the JOINT model all along, and XCP_DIFFICULTY=
-#    bracket publishes the bracket engine's courses. Unset here means the
-#    engine's own default, which is XC_TRACK_GAP; set XCP_BRACKET_XC_LEVEL_MODE
-#    =off to go back to letting the gauge decide.
-: "${XCP_BRACKET_XC_LEVEL_MODE:=pin}"
+#    bracket publishes the bracket engine's courses.
+#    ⚠⚠ SET TO pin FOR THE 2026-09-21 RUN AND REVERTED THE NEXT DAY. That
+#       run came back "XC difficulty is way too high" and "tf is rated way
+#       too low compared to xc". Under gauge=flat400 the go-live's
+#       track-level-by-population shift is skipped, so both sports sit at
+#       their own zero and the XC-vs-TF relationship is carried by the
+#       athlete term (resolvePool keys it without the sport). Adding the
+#       grass cost to XC's difficulty moved one sport with nothing to
+#       absorb it. See bracket_engine.XC_LEVEL_MODES.
+: "${XCP_BRACKET_XC_LEVEL_MODE:=off}"
 #
 #  3. XC's zero. "sport" (default) is today: cross country pins on its own
 #     vote-weighted mean, which is the see-saw -- sum(w*D)=0 forces courses

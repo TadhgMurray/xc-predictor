@@ -782,8 +782,17 @@ class ANamedIndoorOvalJoinsTheReference(unittest.TestCase):
                   encoding="utf-8") as fh:
             env = fh.read()
         self.assertIn('XCP_GAUGE_SCOPE:=sport', env)
-        # and the replacement route is configured, or XC has no anchor at all
-        self.assertIn('XCP_BRACKET_XC_LEVEL_MODE:=pin', env)
+        # ⚠⚠ AND THE REPLACEMENT ROUTE IS OFF AGAIN (2026-09-22). This
+        #    asserted `XCP_BRACKET_XC_LEVEL_MODE:=pin` for one day. The run
+        #    that carried it came back "XC difficulty is way too high" and
+        #    "tf is rated way too low compared to xc": under gauge=flat400
+        #    the go-live's track-level-by-population shift is skipped, so
+        #    both sports sit at their own zero and the relationship is
+        #    carried by the athlete term. Asserting XC's level moved one
+        #    sport with nothing to absorb it. Pinning a superseded
+        #    experiment is how a test starts arguing for the thing it was
+        #    written to check -- twice now, in this same assertion.
+        self.assertIn('XCP_BRACKET_XC_LEVEL_MODE:=off', env)
 
 
 class TheGeometryLoaderSurvivesTheSchema(unittest.TestCase):

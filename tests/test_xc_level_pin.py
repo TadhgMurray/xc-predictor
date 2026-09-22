@@ -145,14 +145,25 @@ class TheWiring(unittest.TestCase):
     def setUp(self):
         self.src = _src()
 
-    def test_the_default_is_to_assert(self):
+    def test_the_default_is_off(self):
+        """⚠⚠ IT DEFAULTED TO pin FOR ONE DAY AND THAT WAS WRONG. The run
+        came back "XC difficulty is way too high" / "tf is rated way too low
+        compared to xc". Under gauge=flat400 the go-live's
+        track-level-by-population shift is SKIPPED, so both sports sit at
+        their own zero and the XC-vs-TF relationship is carried by the
+        athlete term -- which resolvePool keys without the sport. Adding the
+        grass cost to XC's difficulty moved one sport with nothing on the
+        other side to absorb it.
+
+        The arithmetic below is still correct and still tested; it is the
+        DEFAULT that was wrong, so that is what this asserts."""
         ns = {}
         for node in ast.parse(self.src).body:
             if (isinstance(node, ast.Assign)
                     and getattr(node.targets[0], "id", "").startswith("XC_LEVEL")):
                 exec(ast.get_source_segment(self.src, node), ns)   # noqa: S102
-        self.assertEqual(ns["XC_LEVEL_MODE_DEFAULT"], "pin")
-        self.assertIn("off", ns["XC_LEVEL_MODES"])
+        self.assertEqual(ns["XC_LEVEL_MODE_DEFAULT"], "off")
+        self.assertIn("pin", ns["XC_LEVEL_MODES"])
 
     def test_the_gap_is_joint_solves_number_not_a_second_copy(self):
         """⚠ ONE DEFINITION. A literal 0.0583 here would be the third copy of

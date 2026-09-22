@@ -386,8 +386,42 @@ INDOOR_MODE_DEFAULT = "pin"
 # ! ONE ADDITIVE SHIFT, so every course keeps its exact distance from every
 #   other and only where the sport sits moves -- the indoor pin's argument,
 #   unchanged. "off" restores the pre-2026-09-21 behaviour.
+# ⚠⚠⚠ AND IT IS OFF BY DEFAULT AGAIN (2026-09-22). I shipped this as the
+#     default on 2026-09-21 and the next solve came back with the owner's
+#     "XC difficulty is way too high" and "tf is rated way too low compared
+#     to xc now" -- which is this pin, doing exactly what it was told, and
+#     it was told the wrong thing.
+#
+#     THE MISTAKE: diag_difficulty_anchor measures the PUBLISHED table
+#     against what conversions.venueEffect assumes (track 0.0, an ordinary
+#     XC course +5.83%). That mismatch is real. But it is a mismatch at the
+#     READING boundary, and I fixed it inside the SOLVE, where the sport
+#     relationship is already carried somewhere else.
+#
+#     Under gauge=flat400 the go-live's track-level-by-population shift is
+#     SKIPPED on purpose -- it would move the cells the gauge just pinned
+#     (run_joint.trackPopulationShift, --track-level-by-pool). So with
+#     scope=sport both groups sit at their own zero and the XC-vs-TF
+#     relationship is carried by the athlete term, which resolvePool keys
+#     WITHOUT the sport: one person's XC and TF share a single ability
+#     unknown. Adding +5.83% to every XC cell moved one sport's difficulty
+#     with nothing on the other side to absorb it, so every XC rating rose
+#     against every TF rating by about that much.
+#
+#     xc_reference.py says the same thing from the other direction and I
+#     read it without hearing it: "Pinning a course at 0.0 does NOT claim it
+#     is as fast as a track. It claims it sits exactly where mu says the
+#     average cross-country race sits." Zero is already the right mean for
+#     the XC group here. There was nothing to add.
+#
+# ! THE MECHANISM STAYS, TESTED, AND OFF. It is correct arithmetic for a
+#   configuration that wants an asserted XC level -- one that does NOT skip
+#   the population shift, or one publishing on venueEffect's convention.
+#   XCP_BRACKET_XC_LEVEL_MODE=pin turns it on for a run that means it.
+#   The anchor mismatch diag_difficulty_anchor reports is still open and
+#   still belongs at the publishing boundary, not here.
 XC_LEVEL_MODES = ("pin", "off")
-XC_LEVEL_MODE_DEFAULT = "pin"
+XC_LEVEL_MODE_DEFAULT = "off"
 
 # ★ THE GATES (plan §3). Reported, never applied: a cell outside them is
 #   published as it is and COUNTED, because a clamped cell stops responding to

@@ -693,7 +693,34 @@ def resolvePool(grade, gender, source, school, sport,
     #   "Asics Aggies" carry grades 9-12 (see _PRO_TEAMS), so a real high
     #   schooler racing mostly for such a club now pools pro. The owner
     #   priced that against the boards and chose this.
-    if team_has_pros and team_level != "college" and not is_pro:
+    # ⚠⚠⚠ AND A SCHOOL IS NOT A CLUB HERE EITHER (owner, 2026-09-22: "there
+    #     are way too many ppl getting put in pro due to their schools, when
+    #     their schools are hs in anet").
+    #
+    #     This is the SECOND implementation of the rule fixed in
+    #     build_team_pool.classify on 2026-09-20. That fix made team_pool
+    #     stop calling a school pro for having produced a professional --
+    #     and team_pool feeds the `team_pro` argument above. But this line
+    #     is a different route to the same verdict, from loadClubPros by way
+    #     of clubSeason's majority gate, and it tested only `!= "college"`.
+    #     So an anet high school with one pro-flagged athlete-season still
+    #     swept every athlete who raced mostly for it into the pro pool,
+    #     through a door I had not noticed was there.
+    #
+    #     That is exactly the failure this module's own header exists to
+    #     record -- "There were three implementations ... they disagreed on
+    #     about a million athlete-seasons" -- committed again by me, one
+    #     file away from the note about it.
+    #
+    # ! THE EXCLUSION IS THE SCHOOL LEVELS, NOT just college. pro_flag
+    #   classifies a SEASON on purpose ("Lutkenhaus raced Millrose as a
+    #   junior"), so a senior flagged pro is a pro-flagged season sitting on
+    #   their high school's team id, and the whole roster followed them out.
+    # ! A CLUB STILL SWEEPS, which keeps the case the note below prices: a
+    #   sponsor's youth squad carries grades 9-12 and is a club, so
+    #   "HOKA Aggie Running Club" behaves exactly as the owner chose.
+    if team_has_pros and team_level not in ("college", "hs", "ms", "elem") \
+            and not is_pro:
         is_pro = True
     elif team_level == "college" and not is_pro and school_grade in (None, "hs", "college"):
         fixed_level = fixed_level or "college"
