@@ -808,12 +808,51 @@ def _diag(person_id=None):
     print("  " + "pool".ljust(12) + "XC".rjust(10) + "TF".rjust(10)
           + "    (a pool equal to its HS twin here has its whole gap in "
             "the spline level)")
+    # ★★ THE GAP COLUMN IS A CONSISTENCY CHECK, AND IT IS FREE. Both
+    #    constants for one pool are expressed at the SAME anchor -- the
+    #    bare pool key decides it for both sports (normalize_distance.
+    #    targetFor) -- so ln(C_XC / C_TF) is that pool's own measurement of
+    #    what grass costs. It has nothing to do with the view factor and is
+    #    not used by it; it is here because two numbers printed side by side
+    #    for a year never got subtracted.
+    #
+    # ★ AND THERE IS A NUMBER TO CHECK IT AGAINST. bracket_engine's
+    #   XC_TRACK_GAP is ln(1.06) = 5.83%, a DEFINITION -- the seasons do
+    #   not overlap, so it could never be measured there. This is an
+    #   independent measurement of the same quantity, and on 2026-09-22 it
+    #   read 5.12% for hs_m and 4.98% for hs_f. Half a percent from a number
+    #   nothing here has ever seen.
+    #
+    # ⚠ A NEGATIVE GAP IS PHYSICALLY BACKWARDS. It says that pool's track
+    #   population is SLOWER than its cross-country population at the same
+    #   anchor, and no pool's runners get slower on a track. The same run
+    #   read college_m -2.02%, college_f -2.24% and pro_m -0.43%, which is
+    #   what dropped college_m's view factor to x1.15, below this module's
+    #   own printed sanity band. Whatever is wrong with those constants, the
+    #   gap says so in one column and the eight-number table did not.
+    import math as _math
+    _GRASS = _math.log(1.06)        # bracket_engine.XC_TRACK_GAP
     for pool in pools:
-        cells = []
+        cells, got = [], {}
         for sport in ("XC", "TF"):
             c = _poolConstant(pool, sport)
+            got[sport] = c
             cells.append((f"{c:.1f}" if c else "--").rjust(10))
-        print("  " + pool.ljust(12) + "".join(cells))
+        gap = ""
+        if got["XC"] and got["TF"]:
+            g = _math.log(float(got["XC"]) / float(got["TF"]))
+            note = ""
+            if g < 0:
+                note = "  <- BACKWARDS: track slower than grass"
+            elif abs(g - _GRASS) > 0.03:
+                note = "  <- far from the 5.83% grass cost"
+            gap = f"{100.0 * g:>8.2f}%{note}"
+        print("  " + pool.ljust(12) + "".join(cells) + gap)
+    print("\n    the last column is ln(C_XC/C_TF): this pool's own measure of"
+          "\n    what grass costs. bracket_engine DEFINES it as ln(1.06) = "
+          "5.83%\n    and cannot measure it (the seasons do not overlap), so "
+          "this is the\n    only independent read of it in the tree. Negative "
+          "is impossible.")
 
     print("\n  -- spline-level ratios F(pool)/F(hs) (arbitrary alone; "
           "cancelled by C)")
