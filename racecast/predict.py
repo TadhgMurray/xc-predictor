@@ -742,6 +742,15 @@ def _predictTimes(cur, person_ids, target):
     # ! THE FULL HISTORY STAYS for `actual`, which has to find the result on
     #   the day -- the one row the cut is there to hide from the model.
     cut = _asDate(spec.get("date"))
+    # ★ AND AN EARLIER CUT WHEN THE CALLER NAMES ONE (2026-09-22: projections
+    #   for every season since 2020). A 2021 projection aimed at 2022-08 is
+    #   made AS OF the end of the 2021 season: everything that athlete ran
+    #   between then and the target is the answer, not the question. Without
+    #   `history_before` the cut is the target date, which for a past season
+    #   would feed the model the whole year it is being asked to predict.
+    _hb = _asDate(target.get("history_before"))
+    if _hb is not None and (cut is None or _hb < cut):
+        cut = _hb
 
     def _before(rows):
         if cut is None:

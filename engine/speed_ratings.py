@@ -1332,11 +1332,30 @@ def packResults(batches, today, merge=False):
     v_lookup, v_uniq = {}, []
     chunks = []
 
-    for rows in batches:
+    # ★ WHERE THE PACK'S TWO HOURS GO (2026-09-22: "stream + pack: 7324.8s",
+    #   about 120 us a row, and nothing said whether that was Postgres or this
+    #   loop). Three clocks: waiting for the next batch from the database, the
+    #   pool resolution (team level, club gates, poolOf), and everything else
+    #   in the row loop. Two perf_counter pairs a row is ~0.3 us against ~120.
+    import time as _time
+    _clk = _time.perf_counter
+    t_fetch = t_pool = t_loop = 0.0
+    n_rows = 0
+    _it = iter(batches)
+
+    while True:
+        _t0 = _clk()
+        rows = next(_it, None)
+        t_fetch += _clk() - _t0
+        if rows is None:
+            break
+        _tb = _clk()
+        _pool_b = t_pool
         rid, acode, vcode, norm, wt, scode, doys, yrs = [], [], [], [], [], [], [], []
         dists = []
         mcls = []                                # meet_class per row (issue #22)
         for r in rows:
+            n_rows += 1
             # ⚠ DATE FIRST. The pool now depends on the SEASON, because a
             #   professional flag is per athlete-season. A row with an
             #   unusable date is therefore rejected before the pool is
@@ -1346,6 +1365,7 @@ def packResults(batches, today, merge=False):
             if d is None or (today - d).days < 0:
                 census["bad_or_future_date"] += 1
                 continue
+            _tp = _clk()
             team_level, has_pros, no_team = None, False, False
             team_pro = False
             if len(r) > _SLUG:
@@ -1406,6 +1426,7 @@ def packResults(batches, today, merge=False):
                           race_date=d, team_level=team_level, team_has_pros=has_pros,
                           no_team=no_team, team_pro=team_pro,
                           race_top_level=race_top_level)
+            t_pool += _clk() - _tp
             if has_pros and pool and pool.startswith("pro_"):
                 census["club_with_pros_repooled_pro"] += 1
             if pool is None:
@@ -1492,6 +1513,7 @@ def packResults(batches, today, merge=False):
 
         census["tf_rollover_moved"] = _rollover.moved
         census["tf_rows_seen"] = _rollover.tf_total
+        t_loop += (_clk() - _tb) - (t_pool - _pool_b)
 
         if rid:
             chunks.append((
@@ -1507,6 +1529,12 @@ def packResults(batches, today, merge=False):
                 np.asarray(dists, dtype=np.float32), # distance in metres, 0 = none
                 np.asarray(mcls, dtype=np.int8),     # meet class 0/1/2 (issue #22)
             ))
+
+    _us = 1e6 / max(n_rows, 1)
+    print(f"[time] pack: {t_fetch:.0f}s waiting on the database, "
+          f"{t_pool:.0f}s resolving pools ({t_pool * _us:.1f} us/row), "
+          f"{t_loop:.0f}s the rest of the row loop ({t_loop * _us:.1f} us/row), "
+          f"{n_rows:,} rows")
 
     if not chunks:
         return None

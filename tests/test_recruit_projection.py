@@ -178,3 +178,57 @@ def test_the_floor_binds_the_number_it_reads():
                             "build_recruit_projection.py")).read()
     assert '"min_races": int(min_races) if explicit else DEFAULT_FLOOR' in src
     assert "floorSql(explicit)" in src
+
+
+# ---------------------------------------------------------------------------
+# EVERY SEASON SINCE 2020 (owner, 2026-09-22: "can you do beyond just 2026.
+# Like do since 2020")
+# ---------------------------------------------------------------------------
+
+def test_a_past_season_is_projected_as_of_its_end_and_sees_nothing_after():
+    """★ The class of 2021 is asked what the model would have said THEN. Its
+    history is cut on 1 August 2022 (the academic year the season is stored
+    under is over), and the target is a year after that -- the same question
+    the current season is asked. Without the cut the model is fed the year
+    it is predicting."""
+    today = dt.date(2026, 9, 22)
+    as_of = B.seasonAsOf(2021, 2026, today)
+    assert as_of == dt.date(2022, 8, 1)
+    t = B.targetFor("XC", today=as_of, history_before=as_of)
+    assert t["history_before"] == "2022-08-01"
+    assert t["date"] == (as_of + dt.timedelta(weeks=52)).isoformat()
+
+
+def test_the_current_season_is_asked_exactly_as_before():
+    today = dt.date(2026, 9, 22)
+    assert B.seasonAsOf(2026, 2026, today) == today
+    # the last complete season before today is capped at today, never later
+    assert B.seasonAsOf(2025, 2026, dt.date(2026, 7, 1)) == dt.date(2026, 7, 1)
+    t = B.targetFor("XC", today=today)
+    assert "history_before" not in t          # no cut beyond the target
+
+
+def test_the_seasons_run_from_since_to_current():
+    assert B.SINCE_YEAR == 2020
+    assert B.seasonsFor(2026) == [2020, 2021, 2022, 2023, 2024, 2025, 2026]
+    assert B.seasonsFor(2025, since=2023) == [2023, 2024, 2025]
+    assert B.seasonsFor(2026, only=2021) == [2021]
+    assert B.seasonsFor(None) == []
+
+
+def test_one_row_per_athlete_per_season():
+    """The page joins on (person, sport, pool, year); a key without the year
+    would keep one season per athlete and silently drop the rest."""
+    assert "PRIMARY KEY (person_id, sport, year)" in B._DDL
+    assert "model_id" in B._DDL and "as_of" in B._DDL
+    assert "x.year = %(year)s" in R._PROJ_JOIN
+
+
+def test_the_prediction_cuts_history_at_the_earlier_of_the_two_dates():
+    """predict._predictTimes cuts at the target date; history_before may only
+    move that cut EARLIER. Read from the source: the function needs torch."""
+    src = open(os.path.join(_ROOT, "racecast", "predict.py")).read()
+    body = src[src.index("def _predictTimes"):]
+    body = body[:body.index("\ndef ")]
+    assert 'target.get("history_before")' in body
+    assert "_hb < cut" in body
