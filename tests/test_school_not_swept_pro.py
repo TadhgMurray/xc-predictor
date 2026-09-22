@@ -1,7 +1,7 @@
 # Project: xc-predictor / tests
 # File:    test_school_not_swept_pro.py
-# Purpose: an anet SCHOOL never sweeps its athletes into the pro pool,
-#          by EITHER of the two routes that can do it.
+# Purpose: a team anet has NOT called a club never sweeps its athletes into
+#          the pro pool, by either of the routes that can do it.
 #
 # ⚠⚠⚠ THE SAME BUG, TWICE, TWO DAYS APART (owner, 2026-09-22: "there are
 #     way too many ppl getting put in pro due to their schools, when their
@@ -17,6 +17,22 @@
 #     anet high school with one pro-flagged athlete-season still swept
 #     every athlete who raced mostly for it, and the first fix looked like
 #     it had not worked.
+#
+#     2026-09-22 found a THIRD, and it is route 2's alone. classify ran the
+#     club rule ABOVE the level test, so a team anet gives NO level became
+#     pro on one professional -- Japan (5,468 athletes), United States
+#     (5,189), France (5,080), Germany (4,260): national-team designations,
+#     carrying tens of thousands of juniors between them.
+#
+# ★ AND ROUTE 3 IS DELIBERATELY NOT TIGHTENED THE SAME WAY. I changed it to
+#   demand `team_level == "club"` for symmetry and had to put it back. The
+#   two routes are not symmetric: route 2 sweeps EVERYONE who ever raced for
+#   the team, route 3 only fires after clubSeason's MAJORITY gate -- which
+#   is the owner's own 2026-09-16 condition, "DO do this, only when they run
+#   a majority of races at that club". diag_pro_routes' route 3 listing is
+#   levelled teams throughout; no level-less team was ever shown sweeping
+#   through it. The gate is what makes a level-less elite squad safe there
+#   and a level-less national team unsafe in route 2.
 #
 #     pool_resolve's own header is about exactly this: "There were three
 #     implementations ... they disagreed on about a million
@@ -54,6 +70,25 @@ def _func(src, name):
     raise AssertionError(f"{name} is gone")
 
 
+def _classify():
+    """classify() lifted without importing the module, which wants a database.
+
+    ! EVERY LITERAL TOP-LEVEL CONSTANT comes with it, the way
+      tests/test_team_pool.py does it -- naming them by hand is how that file
+      once turned a real assertion failure into a NameError.
+    """
+    src = _src("engine/build_team_pool.py")
+    ns = {}
+    for node in ast.parse(src).body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            try:
+                exec(ast.get_source_segment(src, node), ns)      # noqa: S102
+            except Exception:                                    # noqa: BLE001
+                pass
+    exec(_func(src, "classify"), ns)                             # noqa: S102
+    return ns["classify"]
+
+
 class NeitherRouteSweepsASchool(unittest.TestCase):
 
     def setUp(self):
@@ -83,17 +118,53 @@ class NeitherRouteSweepsASchool(unittest.TestCase):
 
 class TheOtherRouteIsStillFixed(unittest.TestCase):
     """! THE 2026-09-20 FIX, ASSERTED HERE TOO. The two doors are what this
-    file is about, so it fails if either one reopens."""
+    file is about, so it fails if either one reopens.
+
+    ⚠ THIS USED TO READ THE SOURCE TEXT, and on 2026-09-22 it failed on a
+      CORRECT change -- the club rule moving below the level test -- because
+      it pinned the literal `return "pro", f"{n_pros} professional`. A test
+      that pins a string argues for the string. classify() takes no database,
+      so there is no excuse for asking anything but the function.
+    """
+
+    def setUp(self):
+        self.classify = _classify()
 
     def test_team_pool_keeps_a_school_that_produced_a_professional(self):
-        src = _src("engine/build_team_pool.py")
-        body = _func(src, "classify")
-        i = body.index("if level in _SCHOOL_LEVELS:")
-        j = body.index("if n_pros:", i)
-        self.assertIn("not a club", body[j:j + 400])
-        # and the pro verdict for n_pros must sit AFTER the school branch
-        self.assertGreater(body.index('return "pro", f"{n_pros} professional'),
-                           i)
+        """A 1,962-athlete high school with 224 pro-flagged seasons on it is
+        a high school."""
+        kind, why = self.classify(1962, "hs", 224)
+        self.assertEqual(kind, "hs")
+        self.assertIn("not a club", why)
+
+    def test_a_club_with_a_professional_is_still_pro(self):
+        """! THE OWNER'S RULE, UNTOUCHED: "a club with ANY professional in
+        it is pro"."""
+        self.assertEqual(self.classify(400, "club", 5)[0], "pro")
+
+    def test_a_levelless_team_with_a_professional_is_not_pro(self):
+        """⚠⚠⚠ THE THIRD DOOR (owner, 2026-09-22: "They shouldn't be pooled
+        pro ... Same for their team!").
+
+        The club rule ran ABOVE the level test, so a team anet gives NO
+        level became pro on one professional. diag_pro_routes found what
+        those teams are -- Japan (5,468 athletes), United States (5,189),
+        France (5,080), Germany (4,260): national-team designations, and
+        every junior who ever wore one was pooled professional for a whole
+        season.
+
+        Rule 4 in this module's own header already said so: "a missing anet
+        team id infers NOTHING. Absence of a link is absence of evidence,
+        not evidence of pro." A missing LEVEL is the same absence.
+        """
+        kind, why = self.classify(5468, None, 3)
+        self.assertEqual(kind, "unknown")
+        self.assertIn("rule 4", why)
+
+    def test_the_small_team_rule_still_outranks_a_missing_level(self):
+        """! AND THE SIZE BAR IS UNTOUCHED. A level-less team of three is
+        still pro, which is the rule that was there before any of this."""
+        self.assertEqual(self.classify(3, None, 0)[0], "pro")
 
 
 if __name__ == "__main__":

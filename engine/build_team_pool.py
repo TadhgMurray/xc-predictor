@@ -240,12 +240,66 @@ def classify(n_athletes, level, n_pros, pro_max=PRO_MAX_ATHLETES,
                            f"athlete-season(s) raced for it, but a {level} is "
                            f"not a club)")
         return level, "anet level"
-    if n_pros:
-        return "pro", f"{n_pros} professional athlete(s) raced for it"
+    # ⚠⚠⚠ THE CLUB RULE NEEDS A CLUB, AND THIS RAN BEFORE IT LOOKED
+    #     (owner, 2026-09-22: "They shouldn't be pooled pro ... Same for
+    #     their team!"). `if n_pros` sat ABOVE the level test, so a team
+    #     with NO anet level and one professional became pro. Measured on
+    #     the live table by engine/diag_pro_routes.py, the biggest of them:
+    #
+    #         Japan (TOCHIGI)          5,468 athletes
+    #         United States (OS)       5,189
+    #         France                   5,080
+    #         Pr Of China              4,517
+    #         Germany (BW)             4,260
+    #
+    #     National-team designations, every one, with no level and tens of
+    #     thousands of athletes between them -- and every junior who ever
+    #     wore one was pooled professional for the whole season.
+    #
+    # ★ AND IT CONTRADICTS RULE 4, WHICH IS IN THIS FILE'S OWN HEADER: "a
+    #   missing anet team id infers NOTHING. Absence of a link is absence of
+    #   evidence, not evidence of pro." The same holds for a missing LEVEL.
+    #   We do not know what "Japan" is; a professional having raced for it
+    #   is not evidence that everyone who did is professional.
+    #
+    #   The owner's rule was "a CLUB with ANY professional in it is pro",
+    #   and club is a thing anet states (level 16). So the rule now needs
+    #   anet to have said it.
+    #
+    # ! TWO SAFETY NETS CATCH THE REAL PROFESSIONALS, and between them they
+    #   are the owner's other half -- "their season should still be hs" for
+    #   everyone else:
+    #
+    #     isProPerson     pro_athlete_season, per (person, season). A real
+    #                     professional wearing a national vest is still pro.
+    #     team_has_pros   pool_resolve's route 3, which fires only after
+    #                     clubSeason's MAJORITY gate ("DO do this, only when
+    #                     they run a majority of races at that club",
+    #                     2026-09-16). An athlete who races MOSTLY for a
+    #                     level-less elite squad is still swept by it.
+    #
+    # ⚠ SO DO NOT "FIX" ROUTE 3 TO MATCH THIS. I tried, for symmetry, and
+    #   had to put it back: the routes are not symmetric. This one sweeps
+    #   everyone who ever pinned the number on, route 3 only the people whose
+    #   season the team actually is. That gate is why a level-less squad is
+    #   safe there and a level-less national team is not safe here.
+    #
+    # ! AND "Bowerman Track (OR)", 1,985 athletes in the route 2 listing, is
+    #   the case that proves it -- normalize_distance already records it as
+    #   "a youth club, not Bowerman TC". Calling it unknown is the right
+    #   answer, not a professional club lost.
     if level == "club":
+        if n_pros:
+            return "pro", (f"{n_pros} professional athlete(s) raced for it, "
+                           f"and anet says it is a club")
         return "club", "anet level says club"
     if level:
         return level, "anet level"
+    if n_pros:
+        return "unknown", (f"{n_pros} professional athlete(s) raced for it, "
+                           f"but anet gives it no level -- absence of a "
+                           f"level is not evidence of a club (rule 4). The "
+                           f"professionals are still pooled pro as PEOPLE.")
     return "unknown", "no anet level and big enough not to be called pro"
 
 
