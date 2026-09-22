@@ -1626,6 +1626,25 @@ def buildParser():
                     choices=list(be.DAY_NOISE_CHOICES),
                     help="the bracket course prior's numerator: fitted "
                          "(historic) or reference (the pinned cells)")
+    # ★★ CROSS COUNTRY'S LEVEL AGAINST THE TRACK (owner, 2026-09-21: "the xc
+    #    difficutly is fucked ngl"). The published table read XC - TF =
+    #    +1.27% where every reader assumes +5.83%; the bracket engine had no
+    #    term for the gap at all, while XCP_SPORT_LEVEL has been asserting it
+    #    for the JOINT model all along. See bracket_engine.XC_LEVEL_MODES.
+    ap.add_argument("--bracket-xc-level", type=float, default=None,
+                    metavar="G",
+                    help="ASSERT cross country's level: an average XC course "
+                         f"is G log-time above the track zero (default "
+                         f"{js.XC_TRACK_GAP:.4f} = ln 1.06, the stated grass "
+                         f"cost). One additive shift, so the spread is "
+                         f"untouched")
+    ap.add_argument("--bracket-xc-level-mode", choices=be.XC_LEVEL_MODES,
+                    default=None,
+                    help="pin (default): shift the XC group so its "
+                         "vote-weighted mean IS that level. off: leave it "
+                         "wherever the gauge left it -- 0 by construction "
+                         "under --gauge-scope sport, or inferred from a "
+                         "0.2-0.5%%-of-rows bridge under merge")
     ap.add_argument("--bracket-indoor-centre", type=float, default=None,
                     help="log-time centre asserted for the indoor cells "
                          f"(bracket_engine.INDOOR_CENTRE, {be.INDOOR_CENTRE})")
@@ -1916,7 +1935,8 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         track_level_by_pool=True, place_radius=None, prior_place=None,
                         course_scale="fit", gauge=None, indoor_centre=None,
                         indoor_mode=None, indoor_gate_mode=None,
-                        gauge_scope=None, day_noise=None):
+                        gauge_scope=None, xc_level=None,
+                        xc_level_mode=None, day_noise=None):
     """Swap the joint solve's course difficulties for the bracket engine's,
     in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
     delta kept as delta_joint). Returns a dict of what happened."""
@@ -1979,6 +1999,14 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         place_kw["indoor_gate_mode"] = indoor_gate_mode
     if gauge_scope is not None:
         place_kw["gauge_scope"] = gauge_scope
+    # ! AND THE XC LEVEL, FORWARDED FOR THE SAME REASON AS THE GAUGE ABOVE.
+    #   An option the engine accepts but this call never forwards is an
+    #   option that silently takes the default -- which is exactly how
+    #   --gauge could not reach the engine.
+    if xc_level is not None:
+        place_kw["xc_level"] = float(xc_level)
+    if xc_level_mode is not None:
+        place_kw["xc_level_mode"] = xc_level_mode
     if day_noise is not None:
         place_kw["day_noise"] = day_noise
     f = be.fit(sub, npz_like, train=None, window=window, top=top, codes=codes, z=z,
@@ -2441,6 +2469,8 @@ def main():
                                 indoor_gate_mode=getattr(
                                     args, "bracket_indoor_gates", None),
                                 gauge_scope=getattr(args, "gauge_scope", None),
+                                xc_level=getattr(args, "bracket_xc_level", None),
+                                xc_level_mode=getattr(args, "bracket_xc_level_mode", None),
                                 day_noise=getattr(args, "day_noise", None))
         except Exception:                                        # noqa: BLE001
             import traceback

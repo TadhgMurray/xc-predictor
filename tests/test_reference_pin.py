@@ -743,8 +743,17 @@ class ANamedIndoorOvalJoinsTheReference(unittest.TestCase):
         The indoor mean-pin and the gate clamp both skip hard_ref -- the same
         "second opinion" mistake skip_recentre and the population shift
         already cost two runs."""
-        self.assertIn("(w_c_ > 0) & ~hard_ref", self.src)
-        self.assertEqual(self.src.count("(w_c_ > 0) & ~hard_ref"), 2)
+        # ! COUNTED BY THE STEPS THAT MUST EXEMPT IT, not by a literal. The
+        #   count was 2 until the XC level pin became a third step on
+        #   2026-09-21, and a bare number here fails on the ADDITION of a
+        #   correct exemption -- the opposite of what this test is for.
+        # ! THE GUARD LINES, not the first mention of each name -- `pin_xc`
+        #   appears at its assignment hundreds of lines earlier.
+        guards = ("if pin_xc:", "if pin_indoor:", "ind_g = ")
+        for g in guards:
+            i = self.src.index(g)
+            self.assertIn("(w_c_ > 0) & ~hard_ref", self.src[i:i + 300], g)
+        self.assertEqual(self.src.count("(w_c_ > 0) & ~hard_ref"), len(guards))
 
     def test_names_are_resolved_loudly(self):
         """! A location_id IS STABLE AND A NAME IS NOT, so the pin keys on
@@ -757,12 +766,24 @@ class ANamedIndoorOvalJoinsTheReference(unittest.TestCase):
 
     def test_it_only_reaches_xc_with_merge(self):
         """⚠ PINNING BU ANCHORS THE INDOOR GROUP. Cross country is a different
-        (sport, era) group and keeps its own zero unless they are merged."""
+        (sport, era) group and keeps its own zero unless they are merged --
+        which is still true of the PIN, and is why indoor_reference says so.
+
+        ⚠⚠ BUT THE RUN CONFIG NO LONGER TAKES THAT ROUTE (2026-09-21). merge
+           was tried, and it put XC - TF at +1.27% against an expected
+           +5.83% on a bridge reaching 0.2-0.5% of XC rows. So cross
+           country's level is ASSERTED now (bracket_engine.XC_LEVEL_MODES)
+           and the scope is back to sport. This test used to pin
+           `XCP_GAUGE_SCOPE:=merge`; pinning a superseded experiment is how
+           a test starts arguing for the thing it was written to check."""
         import inspect
         self.assertIn("gauge-scope merge", inspect.getdoc(self.ir))
         with open(os.path.join(_ROOT, "deploy", "solve_env.sh"),
                   encoding="utf-8") as fh:
-            self.assertIn('XCP_GAUGE_SCOPE:=merge', fh.read())
+            env = fh.read()
+        self.assertIn('XCP_GAUGE_SCOPE:=sport', env)
+        # and the replacement route is configured, or XC has no anchor at all
+        self.assertIn('XCP_BRACKET_XC_LEVEL_MODE:=pin', env)
 
 
 class TheGeometryLoaderSurvivesTheSchema(unittest.TestCase):

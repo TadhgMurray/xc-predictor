@@ -77,6 +77,16 @@
 #     untouched, so no cell stops responding to its own races.
 #       shrink = target-only (the 2026-09-19 behaviour).
 : "${XCP_BRACKET_INDOOR_MODE:=pin}"
+# ★★ CROSS COUNTRY'S LEVEL IS ASSERTED, NOT DISCOVERED (owner, 2026-09-21:
+#    "the xc difficutly is fucked ngl"). The run before this published
+#    XC - TF = +1.27% where conversions.venueEffect, difficulty_view and the
+#    course pages all assume +5.83% (joint_solve.XC_TRACK_GAP = ln 1.06).
+#    The bracket engine had NO term for the gap -- XCP_SPORT_LEVEL above has
+#    been asserting it for the JOINT model all along, and XCP_DIFFICULTY=
+#    bracket publishes the bracket engine's courses. Unset here means the
+#    engine's own default, which is XC_TRACK_GAP; set XCP_BRACKET_XC_LEVEL_MODE
+#    =off to go back to letting the gauge decide.
+: "${XCP_BRACKET_XC_LEVEL_MODE:=pin}"
 #
 #  3. XC's zero. "sport" (default) is today: cross country pins on its own
 #     vote-weighted mean, which is the see-saw -- sum(w*D)=0 forces courses
@@ -90,15 +100,21 @@
 #     The other route is engine/xc_reference.py -- name ordinary XC courses
 #     and they become the zero, which breaks the see-saw without the bridge.
 #
-#     ★★ SET TO merge FOR THIS RUN (owner, 2026-09-20). The generic XC-to-
-#        indoor bridge is thin, but the owner's route does not need it wide --
-#        it needs one end KNOWN. engine/indoor_reference.py asserts Boston
-#        University's oval onto the reference class at 0.0 ("BU which is as
-#        fast as a flat 400m so it works"), and merge is what lets that pin
-#        reach cross country: it puts XC and track in one group per era, so
-#        the anchor propagates through athletes who raced both. Pinning BU
-#        WITHOUT merge anchors indoor and leaves XC exactly where it was.
-: "${XCP_GAUGE_SCOPE:=merge}"
+#     ★ IT WAS SET TO merge FOR THE 2026-09-20 RUN, and the reasoning was:
+#       the generic bridge is thin, but the route does not need it wide, it
+#       needs one end KNOWN -- engine/indoor_reference.py asserts Boston
+#       University's oval at 0.0 ("BU which is as fast as a flat 400m so it
+#       works") and merge is what lets that pin reach cross country.
+#       Kept here because it was a good argument and the run that tested it
+#       is the reason the line below now reads sport.
+# ⚠⚠ BACK TO sport (2026-09-21), AND THE MERGE RUN IS WHY. merge exists to
+#    MEASURE cross country's level from athletes who race both sports; the
+#    run measured +1.27% against an expected +5.83%, on a bridge reaching
+#    0.2-0.5% of XC rows (2.7% at 60 days). That is the experiment's answer.
+#    With XCP_BRACKET_XC_LEVEL_MODE=pin the level is asserted anyway, so
+#    merge would only measure it and then be overwritten -- two questions,
+#    one answer kept. The engine prints a warning if both are set.
+: "${XCP_GAUGE_SCOPE:=sport}"
 #
 #  4. The indoor gates are ENFORCED now (owner, 2026-09-20: "they should not
 #     be allowed outside the gates"). A cell outside -0.3%..+2.0% is pulled to
@@ -167,6 +183,7 @@
 export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
        XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
        XCP_GAUGE_UNKNOWN_LENGTH XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE \
+       XCP_BRACKET_XC_LEVEL XCP_BRACKET_XC_LEVEL_MODE \
        XCP_BRACKET_INDOOR_GATES \
        XCP_IMPORTANCE XCP_DB_QUIET
 
@@ -183,6 +200,7 @@ SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
 XCP_IMPORTANCE XCP_TEAM_POOL XCP_GAUGE_UNKNOWN_LENGTH \
 XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE XCP_BRACKET_INDOOR_GATES \
+XCP_BRACKET_XC_LEVEL XCP_BRACKET_XC_LEVEL_MODE \
 XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
 XCP_SPORT_LEVEL_POOLS XCP_BRACKET_PRIOR XCP_BRACKET_PLACE_RADIUS \
 XCP_BRACKET_PLACE_PRIOR XCP_BRACKET_WINDOW XCP_COURSE_SCALE \

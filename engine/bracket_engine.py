@@ -345,6 +345,50 @@ INDOOR_CENTRE = 0.003
 INDOOR_MODES = ("pin", "shrink")
 INDOOR_MODE_DEFAULT = "pin"
 
+# ★★ CROSS COUNTRY'S LEVEL IS ASSERTED, FOR THE SAME REASON INDOOR'S IS
+#    (owner, 2026-09-21: "the xc difficutly is fucked ngl"). Measured on the
+#    live table after the first merge run:
+#
+#        median XC course   +1.255%
+#        median TF venue    -0.015%
+#        XC - TF            +1.270%   expected +5.830%
+#
+#    scripts/diag_difficulty_anchor.py calls that "NOT TRACK-ANCHORED", and
+#    it is right: every reader of course_difficulties -- conversions.
+#    venueEffect, difficulty_view, the course pages -- assumes the
+#    joint_golive convention, where the average outdoor track is 0.0 and an
+#    ordinary cross-country course therefore carries the grass cost,
+#    joint_solve.XC_TRACK_GAP = ln(1.06) = 0.0583.
+#
+#    The bracket engine had NO term for that gap. Not a wrong one -- none.
+#    `grep -c sport_level engine/bracket_engine.py` was 0, while
+#    deploy/solve_env.sh has set XCP_SPORT_LEVEL=0.0583 all along and passes
+#    it to run_joint --sport-level. So the number was configured, exported,
+#    and honoured by the JOINT model, while XCP_DIFFICULTY=bracket published
+#    the bracket engine's courses on a scale that never saw it.
+#
+#    Both gauge scopes were therefore wrong, in different amounts:
+#      sport  XC pins on its own vote-weighted mean -> XC - TF = 0%, the
+#             whole 5.83 missing, and the engine already prints "courses are
+#             negative BY CONSTRUCTION" about it.
+#      merge  XC's level is inferred from athletes who race both, a bridge
+#             that reaches 0.2-0.5% of XC rows (2.7% at 60 days, measured
+#             2026-09-20) -> XC - TF = +1.27%, 91.9% of XC race weight
+#             negative.
+#
+# ! AND IT CANNOT BE MEASURED HERE, WHICH IS THE POINT. mu is a DEFINITION
+#   because the seasons do not overlap -- the same reason run_joint takes
+#   --sport-level as an assertion rather than fitting it. merge was the
+#   attempt to measure it anyway; +1.27% against an expected +5.83% is that
+#   attempt's answer. So the level is asserted and the SPREAD stays
+#   falsifiable, which is exactly the split joint_golive already prints.
+#
+# ! ONE ADDITIVE SHIFT, so every course keeps its exact distance from every
+#   other and only where the sport sits moves -- the indoor pin's argument,
+#   unchanged. "off" restores the pre-2026-09-21 behaviour.
+XC_LEVEL_MODES = ("pin", "off")
+XC_LEVEL_MODE_DEFAULT = "pin"
+
 # ★ THE GATES (plan §3). Reported, never applied: a cell outside them is
 #   published as it is and COUNTED, because a clamped cell stops responding to
 #   evidence and cannot be told from a genuinely extreme one. A growing count
@@ -665,6 +709,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         indoor_centre=INDOOR_CENTRE, indoor_mode=INDOOR_MODE_DEFAULT,
         indoor_gate_mode=INDOOR_GATE_MODE_DEFAULT, indoor_gates=INDOOR_GATES,
         gauge=GAUGE_DEFAULT, gauge_scope=GAUGE_SCOPE_DEFAULT,
+        xc_level=None, xc_level_mode=XC_LEVEL_MODE_DEFAULT,
         day_noise=DAY_NOISE_DEFAULT):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
@@ -815,6 +860,19 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     #   the track groups are anchored on outdoor. See GAUGE_DEFAULT.
     if gauge not in GAUGE_CHOICES:
         raise ValueError(f"gauge must be one of {GAUGE_CHOICES}, got {gauge!r}")
+    # ! THE DEFAULT IS joint_solve's NUMBER, NOT A LITERAL. One definition of
+    #   the grass cost for both engines; a second copy here would be the
+    #   third implementation of a constant this repo has already been bitten
+    #   by owning twice.
+    xc_level_mode = str(xc_level_mode or XC_LEVEL_MODE_DEFAULT).strip().lower()
+    if xc_level_mode not in XC_LEVEL_MODES:
+        raise ValueError(f"xc_level_mode must be one of {XC_LEVEL_MODES}, "
+                         f"got {xc_level_mode!r}")
+    if xc_level is None:
+        import joint_solve as _js
+        xc_level = _js.XC_TRACK_GAP
+    pin_xc = (xc_level_mode == "pin") and xc_level is not None
+
     indoor_mode = str(indoor_mode or INDOOR_MODE_DEFAULT).strip().lower()
     if indoor_mode not in INDOOR_MODES:
         raise ValueError(f"indoor_mode must be one of {INDOOR_MODES}, "
@@ -956,11 +1014,23 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                   "and courses are\n          negative BY CONSTRUCTION. "
                   "Name some: engine/xc_reference.py --suggest", flush=True)
     if verbose:
-        print(f"[bracket] gauge={gauge}: the zero is "
-              + ("the OUTDOOR cells' weighted mean, so indoor's level is "
-                 "measured against it" if gauge == "outdoor" else
-                 "every cell in the (sport, era) group, indoor included "
-                 "(pre-2026-09-18 behaviour)")
+        # ⚠ THREE GAUGES, THREE SENTENCES (2026-09-21). This was a two-way
+        #   ternary written when there were two gauges, so flat400 fell
+        #   through to the "all" branch and every run announced "the zero is
+        #   every cell in the (sport, era) group" -- directly contradicting
+        #   the flat400 line printed a few lines below it, which correctly
+        #   says the reference is the flat-400 cells. Reading a real log,
+        #   those two lines together are unresolvable: one of them has to be
+        #   a lie and the log does not say which. It cost a wrong first
+        #   diagnosis of "the xc difficutly is fucked".
+        _zero = {
+            "outdoor": "the OUTDOOR cells' weighted mean, so indoor's level "
+                       "is measured against it",
+            "flat400": "the FLAT OUTDOOR 400m cells, each held at 0.0 "
+                       "exactly (see the flat400 line below for how many)",
+        }.get(gauge, "every cell in the (sport, era) group, indoor included "
+                     "(pre-2026-09-18 behaviour)")
+        print(f"[bracket] gauge={gauge}: the zero is " + _zero
               + f"  [{int(gauge_ref.sum()):,} of {n_cell:,} cells are the "
                 f"reference]", flush=True)
     prior_stated, fit_priors = _statedPriors(prior_group)
@@ -1215,6 +1285,30 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         #   squeezes, is not a reference at all -- it is the same "second
         #   opinion" mistake skip_recentre and the population shift already
         #   cost us twice.
+        # ★★ AND CROSS COUNTRY'S LEVEL, BY THE SAME ARITHMETIC (2026-09-21).
+        #    See XC_LEVEL_MODES. After the gauge has put the track zero where
+        #    it belongs, one additive shift makes the XC group's vote-weighted
+        #    mean EQUAL the asserted grass cost, so an ordinary cross-country
+        #    course reads +5.83% against a track and course_difficulties means
+        #    the same thing to every reader of it.
+        #
+        # ! BEFORE THE INDOOR PIN AND ON A DISJOINT SET (PG_XC against
+        #   PG_INDOOR), so the two cannot see each other and the order does
+        #   not matter -- stated because the indoor pin's own note says the
+        #   order DOES matter against the gate clamp, and the difference is
+        #   worth having written down.
+        # ! AND A NAMED XC REFERENCE COURSE IS EXEMPT (~hard_ref). If
+        #   xc_reference.py ever names courses, they carry asserted values and
+        #   a mean-shift sliding them off those values would make them not
+        #   references -- the same mistake skip_recentre cost us twice.
+        # ! THE SPREAD IS UNTOUCHED: additive, so every course keeps its exact
+        #   distance from every other. The level is the definition; the spread
+        #   stays the falsifiable part (scripts/difficulty_spread.py).
+        if pin_xc:
+            xc_ = (cell_pg == PG_XC) & (w_c_ > 0) & ~hard_ref
+            if xc_.any():
+                now_xc = np.average(D_new_[xc_], weights=w_c_[xc_])
+                D_new_ = D_new_ + xc_ * (float(xc_level) - now_xc)
         if pin_indoor:
             ind_ = (cell_pg == PG_INDOOR) & (w_c_ > 0) & ~hard_ref
             if ind_.any():
@@ -1466,6 +1560,31 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
             print(f"[bracket] gauge scope={gauge_scope}: cross country's "
                   f"vote-weighted mean sits at {100 * xc_mean:+.2f}%",
                   flush=True)
+            # ★ AND WHETHER THAT NUMBER WAS CHOSEN OR MEASURED. Without this
+            #   line a reader cannot tell an asserted level from a fitted
+            #   one, which is the distinction the whole XC_LEVEL_MODES note
+            #   is about.
+            if pin_xc:
+                print(f"          ASSERTED: xc_level={100 * float(xc_level):+.2f}% "
+                      f"(joint_solve.XC_TRACK_GAP unless overridden) -- one "
+                      f"additive shift,\n          so the spread is untouched "
+                      f"and only the sport's level is a definition. "
+                      f"scripts/diag_difficulty_anchor.py\n          should now "
+                      f"read XC - TF within a rounding error of that.",
+                      flush=True)
+                if gauge_scope == "merge":
+                    print("          ⚠ scope=merge tries to MEASURE this same "
+                          "level from athletes who race both,\n"
+                          "            and the pin then overwrites whatever it "
+                          "found. Pick one: scope=sport\n"
+                          "            with the pin, or scope=merge with "
+                          "xc_level_mode=off.", flush=True)
+            else:
+                print("          NOT asserted (xc_level_mode=off): the level "
+                      "is whatever the gauge left it,\n          which for "
+                      "scope=sport is 0 by construction and for scope=merge "
+                      "rests on a\n          bridge covering 0.2-0.5% of XC "
+                      "rows.", flush=True)
             if gauge_scope == "sport" and abs(xc_mean) > 1e-6:
                 print("          (scope=sport holds it at 0 by construction; "
                       "a non-zero here means\n           named reference "
