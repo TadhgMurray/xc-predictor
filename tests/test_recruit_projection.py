@@ -153,9 +153,14 @@ def test_the_page_shows_the_band_and_the_caveat_not_a_bare_number():
 
 def test_the_build_is_a_pipeline_step_that_does_not_need_a_model_to_pass():
     sh = open(os.path.join(_ROOT, "deploy", "run_pipeline.sh")).read()
-    assert 'step 10f2_projection  "$PY" -u racecast/build_recruit_projection.py' in sh
+    # ! bgstep since 2026-09-22: a leaf (only the recruiting page reads the
+    #   table), so it runs beside the later steps and is collected by bgwait
+    assert 'bgstep 10f2_projection "$PY" -u racecast/build_recruit_projection.py' in sh
     # it runs after the recruits table it sits beside
-    assert sh.index("10f_recruits") < sh.index("10f2_projection")
+    assert sh.index("step 10f_recruits") < sh.index("bgstep 10f2_projection")
+    # and is collected before the run's last checks and its summary
+    assert sh.index("bgstep 10f2_projection") < sh.index("\nbgwait\n") \
+        < sh.index("step 17_checklist")
     src = open(os.path.join(_ROOT, "racecast",
                             "build_recruit_projection.py")).read()
     assert "no model, skipped" in src and "return 0" in src

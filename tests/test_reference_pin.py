@@ -10,6 +10,7 @@
 #
 #   python -m unittest tests.test_reference_pin
 import os
+import re
 import sys
 import unittest
 
@@ -603,8 +604,15 @@ class TheJointComparison(unittest.TestCase):
         sh = open(os.path.join(_ROOT, "scripts",
                               "overnight_fit_pool_solve.sh")).read()
         self.assertIn("diag_joint_vs_bracket.py", sh)
-        self.assertIn("--skip 08b_ladder", sh)
-        self.assertNotIn("--skip 08a_holdout,08b_ladder", sh)
+        # ! THE SKIP LIST IS SOLVE_SKIP SINCE 2026-09-22, and its DEFAULT is
+        #   what this pins: the ladder out, the holdout in. Dropping the
+        #   holdout is an explicit SOLVE_SKIP=..,08a_holdout, which skips
+        #   joint_vs_bracket with it rather than letting it read a stale dump.
+        self.assertIn('--skip "$SOLVE_SKIP"', sh)
+        default = re.search(r': "\$\{SOLVE_SKIP:=([^}]*)\}"', sh)
+        self.assertIsNotNone(default)
+        self.assertEqual(default.group(1), "08b_ladder")
+        self.assertIn('*",08a_holdout,"*)', sh)
 
 
 class TheGatesAreEnforced(unittest.TestCase):
