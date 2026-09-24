@@ -2899,6 +2899,24 @@ def _runBackfill(read_conn, write_conn, cfg, apply, limit):
                         wheel_persons=wheel_persons,
                         wheel_athletes=wheel_athletes)
 
+    # ⚠⚠ END THE LOOKUP TRANSACTION BEFORE THE STREAM OPENS (2026-09-24). The
+    #    lookups ran on read_conn, and psycopg2 keeps one transaction open until
+    #    it is told otherwise -- so every table they touched stayed locked
+    #    ACCESS SHARE for as long as the stream then ran on the same
+    #    transaction. _loadWheelchairPeople reads results, meets AND results_tf
+    #    by design (a chair athlete is one person across sports), so the TF
+    #    backfill held `results` for its whole 30-minute stream, and the XC
+    #    backfill, running beside it, could not swap `results` in: "could not
+    #    take ACCESS EXCLUSIVE in 20 attempts", holder
+    #    `xcp-pipeline idle in transaction xact 1816s FETCH FORWARD 50000 FROM
+    #    "backfill_stream_tf"`. The pipeline was blocking itself; the site's
+    #    readers, 0-3 s each, were never the problem. Same on 2026-09-22.
+    #
+    # ! COMMIT, NOT ROLLBACK. The lookups created TEMP _wcp in this
+    #   transaction, and a rollback would un-create it. Nothing was written to
+    #   a real table, so the commit changes nothing but the locks.
+    read_conn.commit()
+
     # WHERE the buffer lands. On the copy path it is the scratch table; on the
     # update path it is the results table itself. One variable, decided once.
     staging = None
