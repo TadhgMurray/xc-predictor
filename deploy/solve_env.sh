@@ -183,6 +183,18 @@
 #   this; it would paper over whatever is actually moving the cells.
 : "${XCP_IMPORTANCE:=none}"         # `field` is run_joint's own default
 
+# --- pooling ---------------------------------------------------------------
+# ★ THE 15-ATHLETES-ALL-TIME RULE IS ON (owner, 2026-09-24: "I like this
+#   rule"). A team with fewer than fifteen distinct athletes in its whole
+#   history is not a school (engine/build_team_pool.py), and its rows pool
+#   professional (speed_ratings.loadProTeams -> resolvePool's team_pro).
+#   overnight_fit_pool_solve.sh rebuilds team_pool before the solve.
+# ! THE ABILITY GATE SITS BELOW IT (pool_resolve: `if pro_ability is False`
+#   runs after `if team_pro`), so a small team's athletes who are not sub-14:00
+#   / sub-15:30 fall through to their grade instead of into the pro pool.
+# ! XCP_TEAM_POOL=0 turns it off for one run.
+: "${XCP_TEAM_POOL:=1}"
+
 # --- housekeeping the pipeline expects -----------------------------------
 : "${XCP_DB_QUIET:=1}"
 
@@ -191,17 +203,16 @@ export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
        XCP_GAUGE_UNKNOWN_LENGTH XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE \
        XCP_BRACKET_XC_LEVEL XCP_BRACKET_XC_LEVEL_MODE \
        XCP_BRACKET_INDOOR_GATES \
-       XCP_IMPORTANCE XCP_DB_QUIET
+       XCP_IMPORTANCE XCP_TEAM_POOL XCP_DB_QUIET
 
 # Anything else already in the environment is left alone, so a one-off
 #   XCP_PROBES=16 bash scripts/overnight_fit_pool_solve.sh
 # still works.
-# ⚠ XCP_TEAM_POOL IS LISTED BUT DELIBERATELY NOT SET. It gates the
-#   15-athletes-all-time rule (speed_ratings.loadProTeams). It is here so that
-#   a run which DOES set it records the fact in its own log -- on 2026-09-20 it
-#   was absent from this list, so the progress log could not answer "was the
-#   new pooling on?" about the run whose ratings were being diagnosed. Listing
-#   a variable prints it when set and prints nothing when it is not.
+# ! XCP_TEAM_POOL IS LISTED so every run records whether the
+#   15-athletes-all-time rule was on -- on 2026-09-20 it was absent from this
+#   list, and the progress log could not answer "was the new pooling on?"
+#   about the run whose ratings were being diagnosed. It is SET above since
+#   2026-09-24 (it was deliberately unset until the owner decided).
 SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
 XCP_IMPORTANCE XCP_TEAM_POOL XCP_GAUGE_UNKNOWN_LENGTH \

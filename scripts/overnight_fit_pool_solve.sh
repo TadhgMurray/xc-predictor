@@ -25,10 +25,11 @@
 #   Running the solve on yesterday's school_levels.pkl after a rescrape pools
 #   new schools as "tfrrs -> college".
 #
-# ⚠ AND IT IS OPT-IN: speed_ratings.loadProTeams reads team_pool only when
-#   XCP_TEAM_POOL=1. Neither this script nor deploy/solve_env.sh sets it, so
-#   the default is UNCHANGED POOLING. The banner below prints which state the
-#   run is in, and XCP_TEAM_POOL is in SOLVE_ENV_VARS so it lands in the log.
+# ⚠ AND IT IS GATED: speed_ratings.loadProTeams reads team_pool only when
+#   XCP_TEAM_POOL=1. deploy/solve_env.sh sets it by default since 2026-09-24
+#   (owner: "I like this rule"); XCP_TEAM_POOL=0 turns it off for a run. The
+#   banner below prints which state the run is in, and XCP_TEAM_POOL is in
+#   SOLVE_ENV_VARS so it lands in the log.
 #
 # ★ team_pool IS NOW WIRED, and the earlier claim that it was not was too
 #   broad. Team-id pooling was always live: speed_ratings calls
