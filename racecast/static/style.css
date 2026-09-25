@@ -4423,9 +4423,21 @@ tr.is-carried td a { color: var(--link); }
     font-weight: 600; margin-top: 4px; }
 .predict2 .add-menu[open] > summary.squad-btn { border-radius: 3px 3px 0 0;
     border-bottom-color: #eee; }
+/* ⚠ BORDER-BOX, OR THE BUTTON LEAVES THE CARD (owner, 2026-09-25: "fix the
+     ui for the add button"). .squad-btn is width:100% with padding and a
+     border on the default content-box, so every one of these came out
+     14px wider than the card body and the "+ Add" bar hung past the card's
+     right edge. The options under it were indented dashed boxes, narrower
+     than the bar and detached from it. Now the open menu is ONE box: the
+     bar, then the three choices as plain rows inside the same border. */
+.predict2 .squad-btn { box-sizing: border-box; }
 .predict2 .add-menu-body { display: flex; flex-direction: column; gap: 0;
-    margin: 0; padding: 0 0 0 0.6rem; }
-.predict2 .add-menu-body .squad-btn { margin-top: 3px; }
+    margin: 0; padding: 2px 0;
+    border: 1px solid #bbb; border-top: 0; border-radius: 0 0 3px 3px; }
+.predict2 .add-menu-body .squad-btn {
+    margin: 0; border: 0; border-radius: 0; padding: 4px 10px;
+    font-size: 0.8rem; color: #333; }
+.predict2 .add-menu-body .squad-btn:hover { background: #f3f3f0; color: #111; }
 .predict2 .squad-boxes .viewsel { margin-left: 0; }
 .predict2 .squad-boxes .vbtn:first-of-type { margin-left: 6px; }
 
