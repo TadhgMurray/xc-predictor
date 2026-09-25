@@ -72,7 +72,7 @@ def test_course_to_course_scales_by_the_two_difficulties(stubbed):
                              target_sport="XC", target_difficulty=0.107,
                              target_course="Mt. San Antonio College")
     for _r, here, there in pts[::20]:
-        assert there / here == pytest.approx(1.107 / 1.081, rel=1e-6)
+        assert there / here == pytest.approx(1.107 / 1.081, rel=2e-5)   # times round to 0.01 s
 
 
 def test_a_race_page_states_its_group_rather_than_offering_one():
