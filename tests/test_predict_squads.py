@@ -117,3 +117,39 @@ def test_the_same_name_is_not_added_twice(monkeypatch):
                    "pool": "college_m"}]})
     got = P._currentSquads(None, ["Tufts"], "XC", now)
     assert [r["person_id"] for r in got["Tufts"]] == [1, 78]
+
+
+def test_as_it_ran_carries_the_grade_and_rating_they_raced_with(monkeypatch):
+    """! owner, 2026-09-25: "for the as it ran grades/ratings we should use
+    their grade at that race not their current grade"."""
+    import pool_view
+    monkeypatch.setattr(pool_view, "stampBoardRows", lambda rows, **k: None)
+    monkeypatch.setattr(P, "_stampCrests", lambda *a, **k: None)
+    monkeypatch.setattr(P, "_stateOf", lambda s: None)
+    rows = [{"person_id": 5, "school": "Campolindo", "grade": "9",
+             "name": "Cody De la Cruz", "row_name": None,
+             "mean_rating": 118.44, "pool": "hs_m", "season": 2024}]
+    cur = _Cur(rows)
+    field = P.meetField(cur, 1, 2, "XC", season_year=2026, when="asran")
+    r = field["teams"][0]["runners"][0]
+    assert r["grade"] == "9" and r["rating"] == 118.4 and r["pool"] == "hs_m"
+    # the season of the RACE, off the row's own date
+    assert "r.grade" in cur.sql and "x.year =" in cur.sql and "r.date" in cur.sql
+
+
+def test_the_page_lineup_in_as_it_ran_mode_reads_the_race(monkeypatch):
+    monkeypatch.setattr(P, "_currentSeason", lambda cur, sport: 2026)
+    monkeypatch.setattr(P, "_athleteEntries", lambda *a, **k: [
+        {"person_id": 5, "name": "Cody De la Cruz", "grade": "11",
+         "rating": 131.0, "pool": "hs_m"}])
+    monkeypatch.setattr(P, "_exactField", lambda *a, **k: [
+        {"person_id": 5, "name": "Cody De la Cruz", "grade": "9",
+         "rating": 118.4, "pool": "hs_m", "hs_rating": 118.4}])
+    monkeypatch.setattr(P, "_stateOf", lambda s: None)
+    target = {"mode": "rerun_exact", "sport": "XC", "meet_id": 1,
+              "div_id": "2", "field": [["Campolindo", ["5"], 7]]}
+    got = P._teamRosters(None, None, target)
+    assert got[0]["grade"] == "9" and got[0]["rating"] == 118.4
+    target["mode"] = "rerun"                          # this year: current
+    got = P._teamRosters(None, None, target)
+    assert got[0]["grade"] == "11" and got[0]["rating"] == 131.0

@@ -1721,8 +1721,13 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
             team = by_school.setdefault(school, {"school": school,
                                                  "state": _stateOf(school),
                                                  "runners": [], "dropped": []})
+            # the grade and rating they raced with (_exactField)
             team["runners"].append({"person_id": r["person_id"],
-                                    "name": r["name"], "rating": None,
+                                    "name": r["name"],
+                                    "grade": r.get("grade"),
+                                    "pool": r.get("pool"),
+                                    "rating": r.get("rating"),
+                                    "hs_rating": r.get("hs_rating"),
                                     "n_races": None})
         teams = sorted(by_school.values(),
                        key=lambda t: (-len(t["runners"]), t["school"]))
@@ -2260,6 +2265,15 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
         known = {e["person_id"]: e
                  for e in _athleteEntries(cur, list(by_id), sport,
                                           _currentSeason(cur, sport))}
+        # ★ AS IT RAN: the grade and rating they had at that race, for
+        #   everyone who ran it (a hand-added runner keeps the lookup above)
+        if mode == "rerun_exact" and target.get("meet_id"):
+            for e in _exactField(cur, int(target["meet_id"]), div, sport):
+                k = known.setdefault(e["person_id"], {})
+                k.update({kk: e.get(kk) for kk in
+                          ("grade", "pool", "rating", "hs_rating")})
+                if e.get("name") and e["name"] != "Unknown":
+                    k["name"] = e["name"]
         entries = []
         for pid, school in by_id.items():
             k = known.get(pid) or {}
@@ -2267,6 +2281,7 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                             "name": k.get("name") or "Unknown",
                             "grade": k.get("grade"), "pool": k.get("pool"),
                             "rating": k.get("rating"),
+                            "hs_rating": k.get("hs_rating"),
                             "entered": entered.get(school),
                             "school_state": _stateOf(school)})
         return entries
@@ -2502,23 +2517,54 @@ _NAME_LATERAL = """
 
 
 def _exactField(cur, meet_id, div_id, sport):
-    """Everyone who actually ran a meet: person, name, school."""
+    """Everyone who actually ran a meet: person, name, school -- and the
+    grade and rating THEY HAD THEN.
+
+    ★ AS IT RAN MEANS AS THEY WERE (owner, 2026-09-25: "for the as it ran
+      grades/ratings we should use their grade at that race not their
+      current grade"). The grade is the one on the result row itself; the
+      rating is that athlete's season rating for the season the race was in
+      (athlete_season, the number the boards showed that year), in that
+      season's pool. A 2024 championship re-run lists its seniors as seniors
+      and its freshmen at their freshman rating, not at what they became.
+    """
+    from season_year import seasonYearSqlInt
     table = "results" if sport == "XC" else "results_tf"
     div_clause = "AND r.div_id = %(div)s" if div_id else ""
     cur.execute(f"""
         SELECT DISTINCT ON (r.person_id)
-               r.person_id, r.school,
+               r.person_id, r.school, r.grade,
                COALESCE(a.first_name, '') || ' '
-                   || COALESCE(a.last_name, '') AS name
+                   || COALESCE(a.last_name, '') AS name,
+               NULLIF(btrim(r.athlete_name), '') AS row_name,
+               s.mean_rating, s.pool, s.year AS season
         FROM   {table} r
         {_NAME_LATERAL.format(pid="r.person_id")}
+        LEFT JOIN LATERAL (
+            SELECT x.mean_rating, x.pool, x.year
+            FROM   athlete_season x
+            WHERE  x.person_id = r.person_id AND x.sport = %(sport)s
+              AND  x.year = {seasonYearSqlInt(sport, "r.date")}
+            ORDER  BY (x.mean_rating IS NOT NULL) DESC, x.n_races DESC
+            LIMIT  1
+        ) s ON TRUE
         WHERE  r.meet_id = %(meet)s {div_clause}
           AND  r.person_id IS NOT NULL
         ORDER  BY r.person_id
-    """, {"meet": meet_id, "div": div_id})
-    return [{"person_id": r["person_id"], "school": r["school"],
-             "name": (r["name"] or "").strip() or "Unknown"}
-            for r in cur.fetchall()]
+    """, {"meet": meet_id, "div": div_id, "sport": sport})
+    out = []
+    for r in cur.fetchall():
+        out.append({"person_id": r["person_id"], "school": r["school"],
+                    "name": ((r["name"] or "").strip() or r.get("row_name")
+                             or "Unknown"),
+                    "grade": r.get("grade"), "pool": r.get("pool"),
+                    "rating": (round(float(r["mean_rating"]), 1)
+                               if r.get("mean_rating") is not None else None),
+                    "as_of_season": r.get("season")})
+    if out:
+        from pool_view import stampBoardRows
+        stampBoardRows(out, rating_keys=("rating",), sport=sport)
+    return out
 
 
 # The class that graduates out of a level at season's end: a 12 leaves
