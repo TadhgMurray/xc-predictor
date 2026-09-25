@@ -2246,11 +2246,13 @@ function teamScoreTable(d) {
 function ratingBasisNote(runners) {
   const n = runners.filter((r) => r.basis === "rating").length;
   if (!n) return "";
-  return `<p class="meta"><sup class="pred-rb">r</sup> ${n} time${
-    n === 1 ? " comes" : "s come"} from the runner's recent race ratings,
-    converted to this course: the model's prediction for ${
-    n === 1 ? "them" : "those runners"} was out of line with how they have
-    been racing, or too uncertain to use. Hover a time to see the model's.</p>`;
+  const rest = runners.length - n;
+  return `<p class="meta">${rest ? `<sup class="pred-rb">r</sup> ` : ""}${
+    rest ? `${n} time${n === 1 ? " comes" : "s come"}` : "Times come"}
+    from each runner's race ratings, converted to this course${
+    rest ? `; the other ${rest} ${rest === 1 ? "comes" : "come"} from the
+    model, for runners with no rated race` : ""}. A runner whose last rated
+    race is over a year old gets a wider range.</p>`;
 }
 
 function timeBasisNote(runners) {
@@ -2272,6 +2274,9 @@ function timeBasisNote(runners) {
 function finishTable(d) {
   const runners = d.runners || [];
   if (!runners.length) return "";
+  // the r marker only means something when the field mixes the two bases
+  const mixed = runners.some((r) => r.basis === "rating")
+             && runners.some((r) => r.basis !== "rating");
   const rows = runners.map((r) => `<tr>
       <td>${r.place}</td>
       <td>${r.person_id
@@ -2282,9 +2287,10 @@ function finishTable(d) {
       <td>${schoolCell(r.school, r.school_state, r.school_href,
                        r.school_label, r.crest)}</td>
       <td class="no-break"${r.basis === "rating"
-          ? ` title="From this runner's recent race ratings${
-              r.model_seconds ? ` - the model said ${fmtTime(r.model_seconds)}, out of line with them` : ""}"` : ""
-        }>${fmtTime(r.seconds)}${r.basis === "rating"
+          ? ` title="From this runner's race ratings${
+              r.stale_years ? ` (last rated race over ${Math.floor(r.stale_years) + 1} years ago)` : ""}${
+              r.model_seconds ? ` - the model said ${fmtTime(r.model_seconds)}` : ""}"` : ""
+        }>${fmtTime(r.seconds)}${r.basis === "rating" && mixed
           ? `<sup class="pred-rb" aria-label="from race ratings">r</sup>` : ""}${
         r.lo !== undefined && r.lo !== null
           ? `<span class="pred-band">${fmtTime(r.lo)}–${

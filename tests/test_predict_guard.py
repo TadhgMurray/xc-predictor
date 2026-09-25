@@ -42,7 +42,8 @@ def stubbed(monkeypatch):
     monkeypatch.delenv("XCP_PREDICT_BASIS", raising=False)
 
 
-def test_the_guard_serves_ratings_where_the_model_is_out_of_line(stubbed):
+def test_the_guard_serves_ratings_where_the_model_is_out_of_line(stubbed, monkeypatch):
+    monkeypatch.setenv("XCP_PREDICT_BASIS", "guard")
     out = P._servedTimes(None, [1, 2, 3, 4, 5], {"mode": "rerun"})
     assert out[0]["basis"] == "rating" and out[0]["seconds"] == 960.0
     assert out[0]["model_seconds"] == 1905.6            # kept for the hover
@@ -58,10 +59,13 @@ def test_basis_model_is_the_raw_network(stubbed, monkeypatch):
     assert out[0]["seconds"] == 1905.6
 
 
-def test_basis_rating_serves_ratings_for_everyone_rated(stubbed, monkeypatch):
-    monkeypatch.setenv("XCP_PREDICT_BASIS", "rating")
+def test_rating_is_the_default_basis(stubbed):
+    """! One clock per race (owner, 2026-09-25): a 104.3 was predicted two
+    minutes ahead of a 114.5 because the guard mixed rating times with the
+    model's slow ones. Ratings for everyone rated; the model for the rest."""
     out = P._servedTimes(None, [1, 2, 3, 4, 5], {"mode": "rerun"})
     assert [o.get("basis") for o in out[:4]] == ["rating"] * 4
+    assert out[4]["seconds"] == 990.0 and out[4].get("basis") is None
 
 
 def test_form_rating_uses_the_latest_pool_and_drops_a_fall():
@@ -80,3 +84,42 @@ def test_only_the_page_is_guarded():
     assert src.count("_servedTimes(cur, [") == 3 and "_servedTimes(cur, [person_id]" in src
     for f in ("racecast/build_recruit_projection.py", "scripts/diag_model_quality.py"):
         assert "_servedTimes" not in open(os.path.join(_ROOT, f)).read()
+
+
+def test_the_target_sport_comes_first():
+    rows = [("2026-05-01", 125.0, "college_m", "TF"),
+            ("2026-04-20", 124.0, "college_m", "TF"),
+            ("2025-11-15", 104.0, "college_m", "XC"),
+            ("2025-11-01", 105.0, "college_m", "XC")]
+    assert P._formRating(rows, "XC")[0] < 106
+    assert P._formRating(rows, "TF")[0] > 123
+    one_xc = rows[:2] + rows[2:3]
+    assert P._formRating(one_xc, "XC")[0] > 115     # one XC race: all of them
+
+
+class _RowsCur:
+    def __init__(self, by_table):
+        self.by_table, self.last = by_table, None
+
+    def execute(self, sql, params=None):
+        self.last = "results_tf" if "results_tf" in sql else "results"
+
+    def fetchall(self):
+        return self.by_table.get(self.last, [])
+
+
+def test_an_old_form_still_predicts_with_a_wider_band(monkeypatch):
+    """The owner's own case: a 130.4 high-school season, nothing rated in
+    the last year, and the model's 30:49 for an 8K stood."""
+    import conversions
+    monkeypatch.setattr(conversions, "_norm_from_rating",
+                        lambda r, pool, d, sport: 100.0 * 1000.0 / r)
+    monkeypatch.setattr(P, "_raceSeconds", lambda norm, ctx: norm * 1.6)
+    cur = _RowsCur({"results": [
+        {"pid": 7, "date": "2023-11-04", "speed_rating": 130.0, "pool": "hs_m"},
+        {"pid": 7, "date": "2023-10-21", "speed_rating": 131.0, "pool": "hs_m"}]})
+    spec = {"distance_meters": 8000, "sport": "XC"}
+    got = P._ratingTimes(cur, [7], spec, P._asDate("2026-09-19"))[7]
+    assert got["stale_years"] > 1.5
+    assert got["sigma_pct"] > 5.0
+    assert 1150 < got["seconds"] < 1300

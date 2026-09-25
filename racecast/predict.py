@@ -605,6 +605,7 @@ def _score(field, preds):
                # model | rating -- see _servedTimes
                "basis": pred.get("basis"),
                "model_seconds": pred.get("model_seconds"),
+               "stale_years": pred.get("stale_years"),
                "school": team if isTeam(team) else None,
                "school_state": runner.get("school_state"),
                "grade": runner.get("grade"), "pool": runner.get("pool"),
@@ -921,18 +922,32 @@ def _predictTimes(cur, person_ids, target):
 #   diagnostics call _predictTimes directly, so the model's own quality stays
 #   measurable and nothing trains on the guard's output.
 #
-# XCP_PREDICT_BASIS: guard (default) | model (the raw network) | rating.
+# XCP_PREDICT_BASIS: rating (default) | guard | model (the raw network).
+#
+# ⚠ RATING IS THE DEFAULT WHILE THE MODEL IS THE ONE IT IS (owner,
+#   2026-09-25, Tufts v Williams: a 104.3 predicted two minutes ahead of a
+#   114.5). The guard served ratings to the runners the model was wrong
+#   about and kept the model's time for the rest -- and the model runs slow
+#   for everyone, so one race held two clocks and every runner the guard
+#   caught was handed a head start. One basis for the whole field; the
+#   model fills in only for a runner with no rated race at all. Set
+#   XCP_PREDICT_BASIS=guard once a model trained on one scale is live.
 _GUARD_MAX_SIGMA = 0.08    # a one-sigma band wider than 8% is not a prediction
 _GUARD_MAX_GAP = 0.08      # nor is a time 8% off the athlete's own ratings
 _RATING_WINDOW_DAYS = 365
 _RATING_LAST_N = 6
 _RATING_OUTLIER_PTS = 20.0   # build_ranking_results._SEASON_OUTLIER_PTS
 _RATING_SIGMA = (0.025, 0.06)
+# A form older than a year is still a form -- the owner's own 130.4 HS
+# season read 30:49 for an 8K because nothing inside the window was rated
+# -- but less of one: the band widens this much per year past the first.
+_RATING_STALE_PER_YEAR = 0.02
+_RATING_SIGMA_STALE_MAX = 0.12
 
 
 def _predictBasis():
-    b = (os.environ.get("XCP_PREDICT_BASIS") or "guard").strip().lower()
-    return b if b in ("guard", "model", "rating") else "guard"
+    b = (os.environ.get("XCP_PREDICT_BASIS") or "rating").strip().lower()
+    return b if b in ("guard", "model", "rating") else "rating"
 
 
 def _servedTimes(cur, person_ids, target):
@@ -972,13 +987,13 @@ def _servedTimes(cur, person_ids, target):
 
 
 def _ratingRows(cur, person_ids, lo_date, hi_date):
-    """{pid: [(date, rating, pool), newest first]} over both result tables,
-    strictly before hi_date."""
+    """{pid: [(date, rating, pool, sport), newest first]} over both result
+    tables, strictly before hi_date (and from lo_date, when given)."""
     ids = sorted({int(p) for p in person_ids if p})
     out = {}
     if not ids:
         return out
-    for table in ("results", "results_tf"):
+    for sport, table in (("XC", "results"), ("TF", "results_tf")):
         cur.execute(f"""
             SELECT COALESCE(r.person_id, r.athlete_id) AS pid, r.date,
                    r.speed_rating, split_part(r.rating_pool, '|', 1) AS pool
@@ -987,26 +1002,36 @@ def _ratingRows(cur, person_ids, lo_date, hi_date):
                     OR (r.person_id IS NULL AND r.athlete_id = ANY(%s)))
               AND  r.speed_rating > 0 AND r.rating_pool IS NOT NULL
               AND  r.date >= %s AND r.date < %s
-        """, (ids, ids, lo_date, hi_date))
+              AND  (r.time_seconds IS NULL OR r.time_seconds < 19999)
+        """, (ids, ids, lo_date or "0000", hi_date))
         for row in cur.fetchall():
             pid, d, rating, pool = (
                 (row["pid"], row["date"], row["speed_rating"], row["pool"])
                 if isinstance(row, dict) else tuple(row))
-            out.setdefault(pid, []).append((str(d), float(rating), pool))
+            out.setdefault(pid, []).append((str(d), float(rating), pool, sport))
     for rows in out.values():
         rows.sort(reverse=True)
     return out
 
 
-def _formRating(rows):
+def _formRating(rows, sport=None):
     """(rating, sigma_log, pool, n) from an athlete's recent rated races:
     the pool they raced in LAST (a rating is relative to its pool), the last
     few races in it, a fall or a DNF-shaped outlier dropped, recent races
-    weighted up. None when nothing is left."""
+    weighted up. None when nothing is left.
+
+    ★ THE TARGET'S SPORT FIRST, when it has two races or more. The two
+      sports' ratings are meant to be one scale and are not yet (the TF
+      sport-level gap is still being fitted), and a cross country prediction
+      read off a spring of track ratings came out two minutes fast."""
     if not rows:
         return None
+    if sport:
+        same = [r for r in rows if len(r) < 4 or r[3] == sport]
+        if len(same) >= 2:
+            rows = same
     pool = rows[0][2]
-    vals = [r for _d, r, p in rows if p == pool][:_RATING_LAST_N]
+    vals = [r[1] for r in rows if r[2] == pool][:_RATING_LAST_N]
     if not vals:
         return None
     med = sorted(vals)[len(vals) // 2]
@@ -1034,7 +1059,9 @@ def _ratingTimes(cur, person_ids, spec, cut):
     sport = spec.get("sport") or "XC"
     hi_d = cut or datetime.date.today() + datetime.timedelta(days=1)
     lo_d = hi_d - datetime.timedelta(days=_RATING_WINDOW_DAYS)
-    rows = _ratingRows(cur, person_ids, lo_d.isoformat(), hi_d.isoformat())
+    # the whole rated history before the cut; the window is applied per
+    # athlete below, so one with nothing recent still has their last form
+    rows = _ratingRows(cur, person_ids, None, hi_d.isoformat())
 
     def at(rating, pool):
         norm = conversions._norm_from_rating(rating, pool, 0.0, sport)
@@ -1050,11 +1077,22 @@ def _ratingTimes(cur, person_ids, spec, cut):
             "course": spec.get("course_name")})
 
     out = {}
+    lo_s = lo_d.isoformat()
     for pid in person_ids:
-        form = _formRating(rows.get(pid))
+        mine = rows.get(pid) or []
+        recent = [r for r in mine if r[0] >= lo_s]
+        stale_yrs = 0.0
+        if not recent and mine:
+            last = _asDate(mine[0][0])
+            if last:
+                stale_yrs = max(0.0, (hi_d - last).days / 365.25 - 1.0)
+        form = _formRating(recent or mine, sport)
         if form is None:
             continue
         rating, sig, pool, n = form
+        if stale_yrs:
+            sig = min(sig + _RATING_STALE_PER_YEAR * stale_yrs,
+                      _RATING_SIGMA_STALE_MAX)
         secs = at(rating, pool)
         if not secs:
             continue
@@ -1064,7 +1102,8 @@ def _ratingTimes(cur, person_ids, spec, cut):
                     "hi": round(hi, 1), "sigma_pct": round(100.0 * sig, 2),
                     "is_race_time": True, "time_basis": "rating",
                     "basis": "rating", "form_rating": round(rating, 1),
-                    "form_pool": pool, "n_races": n}
+                    "form_pool": pool, "n_races": n,
+                    "stale_years": round(stale_yrs, 1)}
     return out
 
 
