@@ -63,6 +63,7 @@ from normalize_distance import (
 # as `no_distance`. event_parse tries the dict first, then parses. It also
 # recovers the gender tfrrs TF rows lack, from the event name (20,027,808 rows).
 from event_parse import distanceFromEventShort
+from result_status import isSentinelTime as _statusSentinel
 
 
 # ================================================================== #
@@ -1138,8 +1139,11 @@ _ID, _SRC, _MEET, _DIV, _EVENT_ID, _EVENT_SHORT, _TIME, _GRADE, _AID, _DATE, \
 # ================================================================== #
 
 # DNF/DNS/DQ are stored as huge times; treat >100000 (or None) as non-times.
+# ! AND anet TF's 20,000 s (SortInt 20,000,000), which slipped under that line
+#   and was rated as a five-and-a-half-hour mile -- result_status owns the list.
 def _isSentinelTime(time_seconds):
-    return time_seconds is None or time_seconds > 100_000
+    return (time_seconds is None or time_seconds > 100_000
+            or _statusSentinel(time_seconds))
 
 
 # ---- distance + pace guards (the normalize-path defense the fitter's own

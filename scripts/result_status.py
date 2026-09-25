@@ -53,6 +53,42 @@ ALIASES = {"DSQ": "DQ"}
 #   before `status` existed -- never as the primary test.
 SENTINEL = 999999
 
+# ⚠ AND THE TRACK FEED'S OWN. anet TF sends times as SortInt milliseconds and
+#   writes a non-finish as 20,000,000 -- 20,000 s, which the savers' old
+#   "< 100,000,000" cap let through as a time. It reached a Diamond League
+#   mile as "5:33:20" with PR/SR flags and a 1.7 rating (owner, 2026-09-25:
+#   Kidder, Rudolf, Birnbaum, Abdilaahi). No track race takes five and a half
+#   hours, so every SortInt at or past it is a status, not a result.
+TF_SENTINEL_MS = 20_000_000
+TF_SENTINEL = TF_SENTINEL_MS / 1000          # 20000.0 s, the stored form
+
+
+def isSentinelTime(time_seconds):
+    """True when a stored time_seconds is one of the feeds' non-finish
+    sentinels rather than a time. None is not a sentinel (it is no time at
+    all -- the caller already knows). Pure."""
+    if time_seconds is None:
+        return False
+    try:
+        t = float(time_seconds)
+    except (TypeError, ValueError):
+        return False
+    return t >= SENTINEL or t == TF_SENTINEL
+
+
+def timeFromSortInt(sort_int):
+    """anet TF's SortInt (milliseconds) as seconds, or None for a missing
+    value or a non-finish sentinel. The one reading both TF savers share."""
+    if sort_int is None:
+        return None
+    try:
+        ms = float(sort_int)
+    except (TypeError, ValueError):
+        return None
+    if ms <= 0 or ms >= TF_SENTINEL_MS:
+        return None
+    return ms / 1000
+
 # The five answers a caller actually wants, derived from the token above.
 #   ok         finished, the time is real
 #   dnf        started, did not finish -- evidence they were racing
@@ -115,7 +151,7 @@ def kind(status, time_seconds=None):
     #   999999; a 100,000-second race is 27 hours, so the two only ever
     #   disagreed about rows that do not exist -- but they DID disagree, and
     #   this is the spelling that survives.
-    return "dns" if t >= SENTINEL else "ok"
+    return "dns" if isSentinelTime(t) else "ok"
 
 
 def isFinish(status, time_seconds=None):

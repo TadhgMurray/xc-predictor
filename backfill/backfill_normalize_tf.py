@@ -105,7 +105,8 @@ def main():
 
             # Skip sentinel values — athletic.net uses 999999 and similar large
             # numbers to indicate DNF, DNS, or DQ. Not real times.
-            if time_seconds is None or time_seconds > 100000:
+            if (time_seconds is None or time_seconds > 100000
+                    or float(time_seconds) == 20000.0):   # anet TF's non-finish
                 skipped += 1
                 continue
 

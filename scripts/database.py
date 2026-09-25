@@ -1687,13 +1687,9 @@ def saveMeetTF(conn, meet_info: dict, div_id: int, event_id: int,
 def saveResultTF(conn, result: dict, meet_info: dict, div_id: int,
                 event_id: int, event_short: str, is_relay: int, school: str = None):
     
-    # Convert milliseconds to seconds. < 100000000 to filter out
-    # sentinel values (DNS, DNF, DQ).
-    sort_int = result.get("SortInt")
-    if sort_int is not None and sort_int < 100000000:
-        time_seconds = sort_int / 1000
-    else:
-        time_seconds = None
+    # Milliseconds to seconds; a non-finish sentinel (anet TF writes
+    # 20,000,000) is no time -- see result_status.TF_SENTINEL_MS.
+    time_seconds = _timeFromSortInt(result.get("SortInt"))
 
     # Gets the meet date including the time, then splits off
     # and saves the mm/dd/yy.
@@ -1986,6 +1982,7 @@ def saveAthletesBulk(conn, athletes: list):
 #   different spellings. One module now, shared by both savers, both tfrrs
 #   parsers and every consumer -- see scripts/result_status.py.
 from result_status import fromFields as _statusFields   # noqa: E402
+from result_status import timeFromSortInt as _timeFromSortInt   # noqa: E402
 
 
 def _statusOf(resultData: dict):
@@ -2198,8 +2195,9 @@ def saveResultsTFBulk(conn, results: list):
             time_seconds = None
             mark = result.get("Result")
         else:
-            sort_int = result.get("SortInt")
-            time_seconds = sort_int / 1000 if (sort_int is not None and sort_int < 100000000) else None
+            # ! 20,000,000 IS anet TF's NON-FINISH, not a 5:33:20 --
+            #   result_status.timeFromSortInt knows every sentinel.
+            time_seconds = _timeFromSortInt(result.get("SortInt"))
             # a running non-finish keeps its letters in `mark`, the text
             # column the page already reads (issue 59); a real time keeps
             # mark NULL as before

@@ -2253,6 +2253,12 @@ def dedupe_races(races):
     return races
 
 
+# anet TF's non-finish, as stored: SortInt 20,000,000 ms. The one number
+# lives in scripts/result_status.py; mirrored here as a literal because the
+# SQL above needs it inline. tests/test_tf_sentinel.py holds them equal.
+_TF_SENTINEL = 20000
+
+
 def format_time(seconds):
     """Format raw seconds for display, keeping whatever precision the data has.
 
@@ -2268,7 +2274,8 @@ def format_time(seconds):
       nothing past 100,000 seconds is a running time.
     """
     seconds = float(seconds)
-    if seconds >= 100_000:
+    # ! and anet TF's 20,000 s (5:33:20) -- result_status.TF_SENTINEL
+    if seconds >= 100_000 or seconds == _TF_SENTINEL:
         return " - "
     whole   = int(seconds)                       # truncate, never round
     frac    = seconds - whole
@@ -3626,12 +3633,20 @@ def get_tf_race_results(cur, meet_id, div_id, event_id, source=None):
                r.place,
                r.round,
                r.heat,
-               r.time_seconds,
-               r.mark,
+               -- ! anet TF's NON-FINISH IS 20,000 s (SortInt 20,000,000),
+               --   stored as a time before the savers knew it: "5:33:20"
+               --   with PR/SR flags and a 1.7 rating on a Diamond League
+               --   mile (owner, 2026-09-25). Read as the non-finish it is
+               --   until scripts/repair_tf_sentinel.py has cleared the rows.
+               CASE WHEN r.time_seconds = {_TF_SENTINEL} THEN NULL
+                    ELSE r.time_seconds END AS time_seconds,
+               CASE WHEN r.time_seconds = {_TF_SENTINEL}
+                    THEN COALESCE(r.mark, 'DNF') ELSE r.mark END AS mark,
                r.is_field,
                r.grade,
                r.school,
-               r.speed_rating,
+               CASE WHEN r.time_seconds = {_TF_SENTINEL} THEN NULL
+                    ELSE r.speed_rating END AS speed_rating,
                {_ratingPoolCol(cur, 'results_tf')},
                r.date,
                {_name_sql('r')} AS athlete_name,
@@ -3644,7 +3659,7 @@ def get_tf_race_results(cur, meet_id, div_id, event_id, source=None):
           AND r.event_id = %(event)s
           AND (%(src)s::text IS NULL OR r.source = %(src)s)
           AND (r.time_seconds IS NOT NULL OR r.mark IS NOT NULL)
-        ORDER BY r.time_seconds ASC NULLS LAST
+        ORDER BY 6 ASC NULLS LAST
     """, {"meet": meet_id, "div": div_id, "event": event_id,
           "src": source})
     return cur.fetchall()
@@ -3892,7 +3907,8 @@ def race_tf(meet_id, event_id, div_id):
         elif row["time_seconds"] is not None:
             row["display_result"] = format_time(row["time_seconds"])
         else:
-            row["display_result"] = " - "
+            # a running non-finish: its status letters (DNF, DNS, DQ...)
+            row["display_result"] = row["mark"] or " - "
         row["points"] = points_by_result.get(row["result_id"], "")
 
     race_date = results[0]["date"] if results else None
