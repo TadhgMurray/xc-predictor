@@ -78,3 +78,18 @@ def test_the_loader_carries_the_team_and_the_pack_reads_it():
     for q in (sdb._xcQuery(200, 6000), sdb._tfQuery(200, 6000)):
         assert ("AS team_id" in q or "r.team_id" in q) and ("AS team_slug" in q or "r.team_slug" in q)
         assert q.index("team_id") > q.index("time_seconds")
+
+
+def test_a_pro_row_goes_onto_the_college_anchor_it_is_rated_against(monkeypatch):
+    """! Nuguse (owner, 2026-09-25): a 3:29.36 1500 stored at 771.67, a
+    5K-equivalent, rated as pro_m against the COLLEGE mean on the 8K anchor.
+    The pack must move it onto college_m's scale, not pro_m's own default."""
+    _F.update({"pro_m": 3.4, "college_m": 5.474})
+    _setup(monkeypatch)
+    t, d = 209.36, 1500.0
+    stored = t * _F["hs_m"] * 1.01              # a 5K-equivalent, as the dump showed
+    new, tag = sr.rescaleToPool(stored, t, d, "pro_m", "TF")
+    assert tag == "rescaled"
+    assert abs(new / (t * _F["college_m"] * 1.01) - 1) < 1e-9
+    assert sr._scalePool("pro_f") == "college_f"
+    assert sr._scalePool("hs_m") == "hs_m"

@@ -491,6 +491,22 @@ def _scaleFactor(dist, pool, sport):
     return f
 
 
+# ★ THE SCALE A POOL IS RATED ON (owner, 2026-09-25: Nuguse at ~208 against
+#   147.5 for his last college season; "it shouldn't be 200 in hs-equivalent
+#   land... and especially not in pro land"). A pro row is divided into the
+#   COLLEGE pool's mean (pair_write_results._proScaleMap) -- a mean held on
+#   the college anchor, 8000 m for men -- so the row has to be on that anchor
+#   too. Rescaling it onto pro_m's own scale left it on the 5000 m default:
+#   his dump read normalized_time ~770 on a 3:29 1500 (a 5K-equivalent)
+#   beside ~1,340 on his college races, and every pro race came out ~1.7x.
+def _scalePool(pool):
+    """The pool whose anchor a row rated in `pool` must sit on: its college
+    twin for a pro pool, itself for everything else."""
+    if pool and str(pool).startswith("pro_"):
+        return "college_" + str(pool)[4:]
+    return pool
+
+
 def rescaleToPool(norm, time_s, dist, pool, sport):
     """(normalized_time on `pool`'s scale, tag). tag: None when the stored
     value already is (or cannot be checked), 'rescaled' when it was moved
@@ -504,7 +520,7 @@ def rescaleToPool(norm, time_s, dist, pool, sport):
         return norm, None
     if t <= 0 or d <= 0 or nt <= 0:
         return norm, None
-    f_to = _scaleFactor(d, pool, sport)
+    f_to = _scaleFactor(d, _scalePool(pool), sport)
     if not f_to:
         return norm, None
     ratio = nt / (t * f_to)
@@ -598,7 +614,8 @@ def poolBand(pool):
     band = _band_cache.get(pool)
     if band is None:
         from normalize_distance import targetFor
-        t = targetFor(pool)
+        # on the anchor the row was just rescaled onto (_scalePool)
+        t = targetFor(_scalePool(pool))
         band = (_PACE_FLOOR * t, _PACE_CEIL * t)
         _band_cache[pool] = band
     return band
