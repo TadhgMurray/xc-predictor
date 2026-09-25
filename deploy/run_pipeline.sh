@@ -194,7 +194,14 @@ summarise() {
 #   Placing a fix at step 5 and then never running step 5 is not a fix.
 #   It is cheap once the corpus is clean -- one scan, idempotent, no
 #   writes when nothing is wrong -- so it runs on every --from.
-_ALWAYS="02_drop_old 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
+# ★ 04a_link_tfrrs TOO (owner, 2026-09-25: "yes add it to the pipeline").
+#   Not one 2026 tfrrs row had a person_id -- no name, no gender, no rating
+#   -- because the linking passes ran by hand after past seasons and never
+#   since. Who a row belongs to is a fact every later step reads
+#   (grade_sanity, twins, the pack, the boards), so it runs on every --from.
+#   XCP_LINK_TFRRS=0 turns it off; every stamp is logged in person_link_log
+#   and `scripts/link_tfrrs_rows.py --undo fanout|freshman|mint` reverses it.
+_ALWAYS="02_drop_old 04a_link_tfrrs 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
 step() {
   name="$1"; shift
@@ -432,6 +439,9 @@ step 03_pro_flag      "$PY" -u engine/pro_flag.py --skip-dist --write
 # ⚠ BEFORE grade_sanity: it decides whether "11-12" is grades or ages, and
 #   every rule downstream reads that answer.
 step 03b_age_bands    "$PY" -u engine/age_band_grades.py --write
+# every new tfrrs row gets a person: its athlete id's existing person, its own
+# high school career (a freshman), or one minted from the id -- see the script
+step 04a_link_tfrrs   "$PY" -u scripts/link_tfrrs_rows.py --apply
 step 04_grade_sanity  "$PY" -u engine/grade_sanity.py --write
 
 # ⚠ THIS STEP WAS MISSING, AND THAT IS HOW CHAIR ATHLETES CAME BACK (owner,
