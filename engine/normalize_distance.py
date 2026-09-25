@@ -982,22 +982,6 @@ def _distancePotentialEntry(pool, sport):
 #            anchors landed.
 # Arguments: pool -- bare or sport-suffixed ('ms_f' or 'ms_f|XC').
 # Output:    metres as float; the artifact's global target when unknown.
-# ⚠⚠ A PROFESSIONAL IS NORMALISED AT THE COLLEGE ANCHOR (owner, 2026-09-25:
-#    Nuguse's 3:29 1500 rated ~208 against 147.5 for his last college season;
-#    "it shouldn't be 200 in hs-equivalent land ... and especially not in pro
-#    land"). pair_write_results._proScaleMap rates every pro row against the
-#    COLLEGE pool's mean -- 100 * pool_mean / adjusted -- but the pro pools
-#    had no anchor of their own, so their times were 5000 m-equivalents
-#    divided into a college_m mean held in 8000 m seconds (college_f: 6000).
-#    Every professional was inflated by the ratio of the two distances'
-#    times, about 1.6x for men, before the solve soaked up a share of it.
-#    One anchor per scale: a pro row reads its college twin's. The pro curve
-#    still does the converting -- pros race 1500 to 10,000, so 8000 sits
-#    inside its span. Needs step 05 (renormalise) and the solve to land.
-ANCHOR_ALIAS = {"pro_m": "college_m", "pro_f": "college_f",
-                "pro_unknown_gender": "college_unknown_gender"}
-
-
 def targetFor(pool, sport=None):
     """The anchor for a pool -- the distance its normalized_time is expressed at.
 
@@ -1038,9 +1022,6 @@ def targetFor(pool, sport=None):
     base = (pool or "").split("|")[0]
     if base in targets:
         return float(targets[base])
-    # a pro pool reads its college twin's anchor -- see ANCHOR_ALIAS
-    if ANCHOR_ALIAS.get(base) in targets:
-        return float(targets[ANCHOR_ALIAS[base]])
     sp = sport or ((pool or "").split("|")[1] if "|" in (pool or "") else None)
     if sp and f"{base}|{sp}" in targets:
         return float(targets[f"{base}|{sp}"])
@@ -1092,9 +1073,7 @@ def _normalizeWithPotential(time_seconds, distance_meters, pool, sport=None):
     #   caller ever passes the sport-suffixed form, strip it here rather
     #   than letting the lookup miss silently.
     base = (pool or "").split("|")[0]
-    _pt = _SPLINES.get("pool_targets", {})
-    target = (_pt.get(base)
-              or _pt.get(ANCHOR_ALIAS.get(base))       # pro -> college anchor
+    target = (_SPLINES.get("pool_targets", {}).get(base)
               or entry.get("target")
               or _SPLINES["target"])
     g_d = _evalDistancePotential(entry, math.log(distance_meters))
