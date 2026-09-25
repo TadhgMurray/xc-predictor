@@ -5027,3 +5027,44 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
     color: var(--muted, #6b7280);
     line-height: 1.2;
 }
+
+/* ------------------------------------------------------------------ */
+/*  THE EQUIVALENCE LINE (race and course pages, 2026-09-25)           */
+/*  _equiv_line.html + equiv-line.js: times on this course along the   */
+/*  top, the same fitness on a track along the bottom.                 */
+/* ------------------------------------------------------------------ */
+.eqline { margin: 1.25rem 0 1.5rem; }
+.eqline h2 { margin-bottom: 0.4rem; }
+.eq-controls { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; font-size: 0.9rem;
+  color: var(--muted, #6b7280); margin-bottom: 0.4rem; }
+.eq-controls select { margin-left: 0.3rem; font: inherit; }
+.eq-readout { font-size: 1.05rem; margin: 0.3rem 0 0.5rem; }
+.eq-readout .eq-time { font: inherit; width: 5.5em; text-align: right;
+  border: 1px solid var(--line-2, #cbd0d6); border-radius: 4px; padding: 0.1rem 0.3rem; }
+.eq-readout .eq-out { font-size: 1.2rem; color: var(--accent, #14477d);
+  font-variant-numeric: tabular-nums; }
+.eq-strip { position: relative; height: 4.2rem; overflow-x: auto; overflow-y: hidden;
+  border: 1px solid var(--line, #e5e7eb); border-radius: 6px; background: var(--zebra, #fafbfc);
+  cursor: grab; scrollbar-width: thin; -webkit-overflow-scrolling: touch; user-select: none; }
+.eq-strip:focus-visible { outline: 2px solid var(--accent, #14477d); outline-offset: 2px; }
+.eq-strip.eq-dragging { cursor: grabbing; }
+.eq-track { position: relative; height: 100%; box-sizing: content-box; }
+.eq-tick { position: absolute; top: 1.9rem; width: 1px; height: 0.45rem;
+  background: var(--line-2, #cbd0d6); }
+.eq-tick.eq-major { top: 1.65rem; height: 0.95rem; background: var(--muted, #6b7280); }
+.eq-lab { position: absolute; transform: translateX(-50%); font-size: 0.78rem;
+  white-space: nowrap; font-variant-numeric: tabular-nums; }
+.eq-lab-course { top: 0.3rem; color: var(--ink, #111418); }
+.eq-lab-track { top: 2.75rem; color: var(--accent, #14477d); }
+.eq-field { position: absolute; top: 1.55rem; height: 1.15rem;
+  background: rgba(169, 122, 18, 0.18); border-radius: 3px; }
+.eq-wrap { position: relative; }
+.eq-marker { position: absolute; left: 50%; top: 0; height: 4.2rem; width: 2px;
+  margin-left: -1px; background: #b91c1c; pointer-events: none; }
+.eq-legend { font-size: 0.8rem; margin: 0.35rem 0 0; }
+.eq-key { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 2px;
+  vertical-align: -1px; margin: 0 0.25rem 0 0.6rem; }
+.eq-key-course { background: var(--ink, #111418); }
+.eq-key-track { background: var(--accent, #14477d); }
+.eq-key-field { background: rgba(169, 122, 18, 0.45); }
+.eq-status { font-size: 0.85rem; }

@@ -2,6 +2,7 @@
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
+{% from "_equiv_line.html" import equiv_line %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -76,6 +77,15 @@
         {% endfor %}
     </div>
     {% endif %}
+
+{# ★ THE EQUIVALENCE LINE (2026-09-25): the selected distance, or the usual
+   one, with every distance raced here selectable in place. #}
+{% set eq_dist = sel_dist or primary_dist %}
+{% if eq_dist and dist_table %}
+{{ equiv_line("hs_m", eq_dist,
+              sel_difficulty if sel_dist else primary_difficulty,
+              course_name, dists=dist_table) }}
+{% endif %}
 
 {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
 
@@ -296,5 +306,6 @@
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('staged.js') }}"></script>
+<script src="{{ static_v('equiv-line.js') }}"></script>
 </body>
 </html>

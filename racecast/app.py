@@ -3197,8 +3197,24 @@ def race_xc(meet_id, div_id):
                  and abs(header["corrected_distance"]
                          - header["listed_distance"]) >= 1)
 
+    # ★ THE EQUIVALENCE LINE'S DEFAULTS (2026-09-25): the group the race was
+    #   rated in (the rows' own majority rating_pool; the header's gender if
+    #   none is rated) and the field's time range, which the line shades and
+    #   opens on.
+    from collections import Counter as _Counter
+    _pools = _Counter((r.get("rating_pool") or "").split("|", 1)[0]
+                      for r in results if r.get("rating_pool"))
+    equiv_pool = (_pools.most_common(1)[0][0] if _pools else
+                  ("hs_f" if header.get("gender") == "F" else "hs_m"))
+    _times = [float(r["time_seconds"]) for r in results
+              if r.get("time_seconds") and r["time_seconds"] < 999999]
+    equiv_lo = min(_times) if _times else None
+    equiv_hi = max(_times) if _times else None
+
     return render_template("race.html", hl_school=hl_school,
                            has_hs_view=has_hs_view,
+                           equiv_pool=equiv_pool, equiv_lo=equiv_lo,
+                           equiv_hi=equiv_hi,
                            header=header,
                            results=results,
                            race_date=race_date,
@@ -6452,6 +6468,54 @@ def api_convert():
 
     result = convert_spread(source, xc_targets, tf_targets)
     return jsonify(result)
+
+# ★ THE EQUIVALENCE LINE for the race and course pages (owner, 2026-09-25):
+#   a time on this course against the same fitness on a track, at any track
+#   distance. conversions.equivalenceLine is the maths; this validates,
+#   caches and ships it. A few hundred bytes a response, cached per course
+#   distance x difficulty x pool x target -- the page scrolls, it does not
+#   ask again.
+_EQUIV_CACHE = {}
+_EQUIV_TTL = 6 * 3600
+_EQUIV_MAX = 4000
+_EQUIV_POOLS = {p for p, _ in _POOLS}
+
+
+@app.route("/api/equivalence")
+def api_equivalence():
+    pool = request.args.get("pool") or "hs_m"
+    dist = request.args.get("dist", type=float)
+    target = request.args.get("target", type=float) or 5000.0
+    diff = request.args.get("difficulty", type=float)
+    course = (request.args.get("course") or "").strip() or None
+    if pool not in _EQUIV_POOLS:
+        return jsonify({"error": "unknown pool"}), 400
+    if not dist or not 1000 <= dist <= 12000:
+        return jsonify({"error": "dist must be 1000-12000 m"}), 400
+    if not 400 <= target <= 10000:
+        return jsonify({"error": "target must be 400-10000 m"}), 400
+    if diff is not None and not -0.5 <= diff <= 0.5:
+        return jsonify({"error": "difficulty out of range"}), 400
+    key = (pool, round(dist), round(target, 2),
+           None if diff is None else round(diff, 4), course)
+    hit = _EQUIV_CACHE.get(key)
+    if hit and time.time() - hit[0] < _EQUIV_TTL:
+        return jsonify(hit[1])
+    import conversions as _cv
+    try:
+        pts = _cv.equivalenceLine(pool, dist, target, course_difficulty=diff,
+                                  course=course)
+    except Exception as exc:                          # noqa: BLE001
+        print(f"equivalence: {type(exc).__name__}: {exc}", flush=True)
+        return jsonify({"error": "could not convert"}), 500
+    body = {"pool": pool, "dist": dist, "target": target,
+            "difficulty": diff, "points": pts}
+    _EQUIV_CACHE[key] = (time.time(), body)
+    if len(_EQUIV_CACHE) > _EQUIV_MAX:
+        _EQUIV_CACHE.pop(min(_EQUIV_CACHE, key=lambda k: _EQUIV_CACHE[k][0]),
+                         None)
+    return jsonify(body)
+
 
 @app.route("/api/course_search")
 def course_search():

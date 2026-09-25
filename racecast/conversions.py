@@ -1056,6 +1056,51 @@ def athlete_paces(person_id):
     return {"year": newest, "paces": [], "reason": why}
 
 
+# ★ THE EQUIVALENCE LINE (owner, 2026-09-25: "on a race page ... the number
+#   line scroller that shows running what on a certain course is
+#   equivalently in a track 5k ... we should be able to change the dist.
+#   This should also be on the course page").
+#
+#   One normalized_time per rating, expressed twice -- on THIS course (its
+#   distance and difficulty) and on a typical track at the chosen distance --
+#   so the page can put the two clocks on one number line and interpolate
+#   between points. It is convert_spread's algebra exactly: the same
+#   normalized_to_time on both sides, the same "no venue named = a typical
+#   track" default, so the line and /conversions can never disagree.
+#
+# ! BY RATING, NOT BY COURSE TIME. A rating is where a normalized_time comes
+#   from without guessing a range; 40-170 spans every pool's boards, and the
+#   page scrolls the part it needs.
+EQUIV_RATINGS = tuple(range(40, 171))
+
+
+def equivalenceLine(pool, course_distance, target_distance,
+                    course_difficulty=None, course=None, ratings=EQUIV_RATINGS):
+    """[(rating, seconds_on_course, seconds_on_track), ...], course time
+    ascending. Points that do not resolve, or would break monotonicity, are
+    dropped rather than guessed."""
+    out = []
+    xc_ctx = {"distance": float(course_distance), "pool": pool, "sport": "XC",
+              "course": course}
+    if course_difficulty is not None:
+        xc_ctx["difficulty"] = float(course_difficulty)
+    tf_ctx = {"distance": float(target_distance), "pool": pool, "sport": "TF"}
+    last = None
+    for r in sorted(ratings, reverse=True):          # fastest first
+        norm = _norm_from_rating(float(r), pool, 0.0, "XC")
+        if norm is None:
+            continue
+        tc = normalized_to_time(norm, xc_ctx)
+        tt = normalized_to_time(norm, tf_ctx)
+        if not tc or not tt or tc <= 0 or tt <= 0:
+            continue
+        if last is not None and (tc <= last[1] or tt <= last[2]):
+            continue
+        last = (int(r), round(tc, 2), round(tt, 2))
+        out.append(last)
+    return out
+
+
 def convert_spread(source, xc_targets, tf_targets):
     """The whole tool in one call.
 

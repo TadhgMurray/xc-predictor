@@ -2,6 +2,7 @@
 {% from "_scale.html" import rv, scale_toggle %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
 {% from "_recflag.html" import recflag, ratflag %}
+{% from "_equiv_line.html" import equiv_line %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -63,6 +64,11 @@
     {% endif %}
 
     <p><a class="meet-link" href="/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}">View full meet →</a></p>
+
+    {% if header.distance %}
+    {{ equiv_line(equiv_pool, header.distance, header.difficulty, header.course_name,
+                  lo=equiv_lo, hi=equiv_hi) }}
+    {% endif %}
 
 {% if scores is not defined or scores is none %}
     {# ⚠ THE ROUTE DID NOT PASS scores. Almost always app.py not reloaded --
@@ -205,5 +211,6 @@
 </main>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('equiv-line.js') }}"></script>
 </body>
 </html>

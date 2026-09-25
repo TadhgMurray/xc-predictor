@@ -1,0 +1,73 @@
+{#
+  THE EQUIVALENCE LINE (owner, 2026-09-25): a number line of times on this
+  course with the same fitness on a track underneath, at a track distance the
+  reader picks. The maths is /api/equivalence (conversions.equivalenceLine,
+  the same algebra as /conversions); static/equiv-line.js draws and scrolls.
+
+  equiv_line(pool, dist, difficulty, course,
+             dists=None,    [{"distance": m, "difficulty": d}] -- the course
+                            page's distances; a select appears when given
+             lo=None, hi=None)  the race's fastest and slowest times, shaded
+                            as "this race" and the line opens on lo
+#}
+{% macro equiv_line(pool, dist, difficulty, course, dists=None, lo=None, hi=None) %}
+<section class="eqline" aria-label="Time equivalents on the track"
+         data-pool="{{ pool or 'hs_m' }}"
+         data-dist="{{ dist|int if dist else '' }}"
+         data-diff="{{ difficulty if difficulty is not none else '' }}"
+         data-course="{{ course or '' }}"
+         data-lo="{{ lo if lo else '' }}" data-hi="{{ hi if hi else '' }}"
+         {% if dists %}data-dists='{{ dists|tojson }}'{% endif %}>
+    <h2>Track equivalents <span class="dist-note">drag the line, or type a time</span></h2>
+    <div class="eq-controls">
+        {% if dists %}
+        <label>Course distance
+            <select class="eq-dist">
+                {% for d in dists %}
+                <option value="{{ d.distance|int }}" data-diff="{{ d.difficulty if d.difficulty is not none else '' }}"
+                        {% if dist and d.distance|int == dist|int %}selected{% endif %}>{{ d.distance|int }}m</option>
+                {% endfor %}
+            </select>
+        </label>
+        {% endif %}
+        <label>Group
+            <select class="eq-pool">
+                {% for p, label in [("hs_m", "HS Boys"), ("hs_f", "HS Girls"),
+                                    ("college_m", "College Men"), ("college_f", "College Women"),
+                                    ("ms_m", "MS Boys"), ("ms_f", "MS Girls")] %}
+                <option value="{{ p }}" {% if p == pool %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Track distance
+            <select class="eq-target">
+                {% for m, label in [(800, "800m"), (1500, "1500m"), (1600, "1600m"),
+                                    (1609.34, "Mile"), (3000, "3000m"), (3200, "3200m"),
+                                    (3218.69, "2 Mile"), (5000, "5000m"), (10000, "10,000m")] %}
+                <option value="{{ m }}" {% if m == 5000 %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </div>
+    <p class="eq-readout">
+        <input class="eq-time" type="text" inputmode="decimal" size="7"
+               aria-label="Time on this course" placeholder="16:00">
+        <span class="eq-here">here</span> ≈
+        <b class="eq-out">–</b> <span class="eq-tlabel">on a track</span>
+        <span class="eq-rating muted"></span>
+    </p>
+    <div class="eq-wrap">
+        <div class="eq-strip" tabindex="0" role="slider" aria-label="Time on this course"
+             aria-valuetext="">
+            <div class="eq-track"></div>
+        </div>
+        <div class="eq-marker" aria-hidden="true"></div>
+    </div>
+    <p class="eq-legend muted">
+        <span class="eq-key eq-key-course"></span> this course
+        <span class="eq-key eq-key-track"></span> the same fitness on a typical outdoor track
+        <span class="eq-key-field-wrap" hidden><span class="eq-key eq-key-field"></span> this race's field</span>
+    </p>
+    <p class="eq-status muted" hidden></p>
+</section>
+{% endmacro %}
