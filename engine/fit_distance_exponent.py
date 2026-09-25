@@ -132,6 +132,11 @@ POOL_TARGET_METERS = {
     # sits inside the mass with span on both sides. Chosen, not derived.
     "college_f": 6000.0,
     "college_unknown_gender": 6000.0,
+    # ! PROS AT THE COLLEGE ANCHORS: they are rated against the college mean
+    #   (pair_write_results._proScaleMap), so their times must be on its
+    #   distance -- normalize_distance.ANCHOR_ALIAS says the same for an
+    #   artifact written before these two lines.
+    "pro_m": 8000.0, "pro_f": 6000.0, "pro_unknown_gender": 6000.0,
 
     # ============================================================== #
     #  PER-SPORT ANCHORS. A KEY WITH A SPORT WINS OVER THE BARE POOL.
