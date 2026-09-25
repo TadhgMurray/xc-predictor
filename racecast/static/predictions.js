@@ -2127,11 +2127,11 @@ function scoreSpreadTip(t, d, teams) {
   const s = t.sim;
   if (!s) return "";
   const lines = [];
-  if (s.score_p10 !== null && s.score_p90 !== null)
+  if (s.score_p10 != null && s.score_p90 != null)
     lines.push(`${Math.round(s.score_p10)}\u2013${Math.round(s.score_p90)} points in 8 draws out of 10`);
-  if (s.score_mean !== null)
+  if (s.score_mean != null)
     lines.push(`mean ${s.score_mean.toFixed(1)}, sd ${
-      s.score_sd === null ? "?" : s.score_sd.toFixed(1)}`);
+      s.score_sd == null ? "?" : s.score_sd.toFixed(1)}`);
   const w = pct(s.p_win), t3 = pct(s.p_top3);
   if (w) lines.push(`wins ${w}, top three ${t3}`);
   if (s.p_incomplete > 0.005)
@@ -2175,9 +2175,6 @@ function teamScoreTable(d, opts) {
         be scored.${short.length ? ` Runners per team: ${shortList}.` : ""}</p>`;
   }
 
-  // picking two of two teams is the race already on screen
-  const pickable = tools && full.length > 2;
-
   const rows = full.map((t, i) => {
     /* ! ONE CELL PER SCORING POSITION, 1..7, and a team that has fewer shows
          " - " in the rest. A fixed seven columns is what makes two teams
@@ -2196,10 +2193,7 @@ function teamScoreTable(d, opts) {
               esc(r.name || "")} – ${fmtTime(r.seconds)}">${n}</a>`
           : " - "}</td>`);
     }
-    const name = esc(t.school_label || schoolWithState(t.team, t.state));
     return `<tr>
-      ${pickable ? `<td class="h2h-cell"><input type="checkbox" class="h2h-pick"
-        data-team="${esc(t.team)}" aria-label="Score ${name} head to head"></td>` : ""}
       <td>${i + 1}</td>
       <td>${schoolCell(t.team, t.state, t.school_href, t.school_label,
                        t.crest)}${
@@ -2213,9 +2207,6 @@ function teamScoreTable(d, opts) {
       ${anySim ? `<td class="pwin">${pct((t.sim || {}).p_win) ?? " - "}</td>` : ""}
       ${scored ? `<td class="actual">${t.actual_score ?? " - "}</td>` : ""}
       ${cells.join("")}
-      ${tools ? `<td class="bl-cell"><button type="button" class="bl-btn"
-        data-team="${esc(t.team)}" title="Search ${name}'s whole squad for the
-seven most likely to win this race">Best 7</button></td>` : ""}
     </tr>`;
   }).join("");
 
@@ -2231,24 +2222,43 @@ seven most likely to win this race">Best 7</button></td>` : ""}
     d.sim && d.sim.available === false && d.sim.reason
       ? ` (No win chances: ${esc(d.sim.reason)})` : ""}</p>`;
 
-  const toolbar = pickable
+  /* ★ TWO FOLLOW-UP QUESTIONS, ASKED IN WORDS UNDER THE TABLE (owner,
+       2026-09-25: a checkbox column and a per-row "Best 7" button read as
+       clutter nobody could decode). Each row is a sentence with the teams
+       to fill in, and the answer opens underneath. */
+  const opt = (sel) => full.map((t) => `<option value="${esc(t.team)}"${
+    t.team === sel ? " selected" : ""}>${esc(t.school_label
+      || schoolWithState(t.team, t.state))}</option>`).join("");
+  const toolbar = tools && full.length >= 2
     ? `<div class="team-tools">
-         <button type="button" class="h2h-go" disabled>Score the ticked teams alone</button>
-         <span class="meta">Tick two or more teams to see who beats whom with
-           nobody else in the race.</span></div>`
+        <div class="tt-row">
+          <span class="tt-q">Dual meet</span>
+          <select class="h2h-a" aria-label="First team">${opt(full[0].team)}</select>
+          <span class="tt-vs">vs</span>
+          <select class="h2h-b" aria-label="Second team">${opt(full[1].team)}</select>
+          <button type="button" class="h2h-go">Score</button>
+          <span class="tt-hint">These two teams scored against each other, as if nobody else ran.</span>
+        </div>
+        <div class="tt-row">
+          <span class="tt-q">Best seven for</span>
+          <select class="bl-team" aria-label="Team">${opt(full[0].team)}</select>
+          <button type="button" class="bl-btn">Find</button>
+          <span class="tt-hint">Which seven of this team's whole squad give it the best chance to win this race.</span>
+        </div>
+      </div>`
     : "";
 
-  return `<h2>${esc((opts && opts.title) || "Predicted team scores")}</h2>
+  const heading = opts && opts.title === "" ? ""
+    : `<h2>${esc((opts && opts.title) || "Predicted team scores")}</h2>`;
+  return `${heading}
     <table>
       <thead><tr>
-        ${pickable ? `<th class="h2h-cell" title="Tick teams to score them head to head">vs</th>` : ""}
         <th>Place</th><th>Team</th><th>Points</th>
         ${anySim ? `<th class="pwin" title="How often this team wins when the
           race is run ${(d.sim || {}).draws || 0} times, drawing each runner
           out of the band the model published for them.">Win</th>` : ""}
         ${scored ? "<th>Actual</th>" : ""}
         <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th>
-        ${tools ? "<th></th>" : ""}
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>${note}${toolbar}${tools ? '<div class="team-tool-out"></div>' : ""}`;
@@ -2385,8 +2395,12 @@ async function headToHead(btn) {
   const box = btn.closest(".team-result");
   const idx = Number(box.dataset.t);
   const out = box.querySelector(".team-tool-out");
-  const picked = [...box.querySelectorAll(".h2h-pick:checked")]
-    .map((x) => x.dataset.team);
+  const picked = [box.querySelector(".h2h-a").value,
+                  box.querySelector(".h2h-b").value];
+  if (picked[0] === picked[1]) {
+    out.innerHTML = `<p class="meta">Pick two different teams.</p>`;
+    return;
+  }
   const q = buildQuery(state.lastTargets[idx]);
   const field = JSON.parse(q.get("field") || "[]")
     .filter((row) => picked.includes(row[0]));
@@ -2399,7 +2413,7 @@ async function headToHead(btn) {
   q.set("head_to_head", "1");
   const names = picked.map((s) => teamLabelIn(state.lastResults[idx], s));
   btn.disabled = true;
-  out.innerHTML = `<p class="meta">Scoring ${esc(names.join(" vs "))}…</p>`;
+  out.innerHTML = `<p class="meta">Scoring ${esc(names.join(" vs "))}\u2026</p>`;
   try {
     const res = await sendQuery("/api/predict/team", q);
     const data = await readJson(res);
@@ -2408,11 +2422,7 @@ async function headToHead(btn) {
                                              || "That did not work.")}</p>`;
       return;
     }
-    out.innerHTML = `<div class="tool-panel">
-      ${teamScoreTable(data, { tools: false,
-                               title: "Head to head: " + names.join(" vs ") })}
-      <p class="meta">Places are counted among these teams' runners only, so
-        a runner who was 40th in the full race can score 9 here.</p></div>`;
+    out.innerHTML = dualPanel(data, picked, names);
   } catch (err) {
     out.innerHTML = `<p class="meta">${esc(err.message || "That did not work.")}</p>`;
   } finally {
@@ -2420,11 +2430,37 @@ async function headToHead(btn) {
   }
 }
 
+/* ★ A DUAL MEET READS AS A SCOREBOARD: two names, two scores, low wins --
+   the way a dual meet result is announced -- with the win chance under each
+   and the scoring places folded away underneath. */
+function dualPanel(d, picked, names) {
+  const byTeam = new Map((d.teams || []).map((t) => [t.team, t]));
+  const sides = picked.map((s, k) => {
+    const t = byTeam.get(s) || {};
+    return { name: names[k], score: t.score, p: (t.sim || {}).p_win };
+  });
+  const scores = sides.map((x) => x.score).filter((x) => x != null);
+  const low = scores.length === 2 ? Math.min(...scores) : null;
+  const side = (x) => `<div class="dual-side${
+      x.score != null && x.score === low && scores[0] !== scores[1] ? " is-win" : ""}">
+      <span class="dual-name">${esc(x.name)}</span>
+      <span class="dual-pts">${x.score ?? "no score"}</span>
+      ${x.p != null ? `<span class="dual-p">wins ${pct(x.p)}</span>` : ""}
+    </div>`;
+  return `<div class="tool-panel dual-panel">
+    <div class="dual-board">${side(sides[0])}<span class="dual-dash">\u2013</span>${side(sides[1])}</div>
+    <p class="meta">Low score wins. Places are counted among these two teams'
+      runners only, so a runner 40th in the full race can score 9 here.</p>
+    <details class="dual-more"><summary>Scoring places</summary>
+      ${teamScoreTable(d, { tools: false, title: "" })}</details>
+  </div>`;
+}
+
 async function bestSeven(btn) {
   const box = btn.closest(".team-result");
   const idx = Number(box.dataset.t);
   const out = box.querySelector(".team-tool-out");
-  const school = btn.dataset.team;
+  const school = box.querySelector(".bl-team").value;
   const target = state.lastTargets[idx];
   const card = cardTeam(target, school);
   if (!card) {
@@ -2586,13 +2622,6 @@ function applyLineup(btn) {
   btn.textContent = "On the card - press Predict to score it";
 }
 
-$("output").addEventListener("change", (e) => {
-  if (!e.target.classList.contains("h2h-pick")) return;
-  const box = e.target.closest(".team-result");
-  const n = box.querySelectorAll(".h2h-pick:checked").length;
-  const go = box.querySelector(".h2h-go");
-  if (go) go.disabled = n < 2;
-});
 
 $("output").addEventListener("click", (e) => {
   const b = e.target.closest && e.target.closest("button");
