@@ -18,6 +18,16 @@
   <p class="meta">{{ st.now.strftime("%Y-%m-%d %H:%M") }} server time · season {{ st.season }} ·
     <a href="/account">Settings</a></p>
 
+  {# ★ THE HEADLINE FIRST: everything that needs the owner, in one line,
+       so a glance says whether to scroll. #}
+  {% set flags = [] %}
+  {% if st.pipeline.latest and st.pipeline.latest.failed %}{% set _ = flags.append((st.pipeline.latest.failed|length|string) ~ " pipeline step" ~ ("s" if st.pipeline.latest.failed|length > 1 else "") ~ " failed") %}{% endif %}
+  {% if st.pipeline.latest and st.pipeline.latest.open %}{% set _ = flags.append("a step still running or stopped") %}{% endif %}
+  {% if st.reports.open %}{% set _ = flags.append((st.reports.open|string) ~ " open report" ~ ("s" if st.reports.open > 1 else "")) %}{% endif %}
+  {% if st.blank.blank %}{% set _ = flags.append("{:,}".format(st.blank.blank) ~ " blank athletes") %}{% endif %}
+  {% if st.queries is sequence and st.queries is not mapping and st.queries|selectattr("seconds", "gt", 600)|list %}{% set _ = flags.append("queries over 10 minutes") %}{% endif %}
+  <p class="st-head {{ 'st-head-bad' if flags else 'st-head-ok' }}">{{ flags|join(" · ") if flags else "Nothing needs you." }}</p>
+
   {% macro err(block) %}<p class="st-err">Could not read this: {{ block.error }}</p>{% endmacro %}
   {% macro n(x) %}{{ "{:,}".format(x) if x is not none else " - " }}{% endmacro %}
 

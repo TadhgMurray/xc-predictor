@@ -5244,3 +5244,6 @@ input.eqc-big:focus { outline: none; border-bottom-color: var(--eqc-accent); }
 .status-page .st-btn { font: inherit; font-size: .8rem; padding: 3px 10px; border: 1px solid #cfd4da;
     border-radius: 3px; background: #fff; cursor: pointer; }
 .status-page .st-btn:hover { border-color: #111; }
+.status-page .st-head { padding: .5rem .8rem; border-radius: 3px; font-weight: 600; margin: .8rem 0 0; }
+.status-page .st-head-bad { background: #fef2f2; color: #991b1b; }
+.status-page .st-head-ok { background: #f0fdf4; color: #166534; }

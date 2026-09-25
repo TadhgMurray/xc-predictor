@@ -163,6 +163,8 @@ class Route(unittest.TestCase):
         r = self.client.get("/account/status")
         self.assertEqual(r.status_code, 200, r.data[:500])
         html = r.get_data(as_text=True)
+        self.assertIn("1 pipeline step failed", html)
+        self.assertIn("1 open report", html)
         for want in ("05_backfill_xc", "probably dead", "79,291", "69,278",
                      "1,200", "Lock:relation", "/athlete/5", "Resolve"):
             self.assertIn(want, html)

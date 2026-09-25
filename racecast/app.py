@@ -8432,6 +8432,13 @@ def _statusAdmin():
         from urllib.parse import urlencode
         return None, redirect("/login?" + urlencode({"next": request.path}))
     if not _accounts.isAdmin(sess["account"]):
+        # ! THE READER GETS A PLAIN 404; THE LOG SAYS WHY, so the owner
+        #   locked out by a missing or misspelt XCP_ADMIN_EMAILS can tell
+        #   that from a route that does not exist (owner, 2026-09-25).
+        app.logger.warning(
+            "/account/status refused: %s is not in XCP_ADMIN_EMAILS "
+            "(%d address(es) configured)",
+            sess["account"].get("email"), len(_accounts.adminEmails()))
         abort(404)
     return sess, None
 
