@@ -1373,8 +1373,29 @@ def athlete(person_id):
                 LIMIT  1
             """, (person_id,))
             athlete = cur.fetchone()
-            if athlete is None:
-                abort(404)
+            # ★ A PERSON THE athletes TABLE CANNOT NAME, NAMED BY THEIR OWN
+            #   ROWS (owner, 2026-09-25: freshmen "link to a page with only
+            #   that result and the name None"). A tfrrs-only person has no
+            #   athletes row, or one with no name; every tfrrs result carries
+            #   the name inline, which is what the race pages already show.
+            if athlete is None or not athlete.get("name"):
+                cur.execute("""
+                    SELECT NULLIF(btrim(athlete_name), '') AS name, school
+                    FROM   (SELECT athlete_name, school, date FROM results
+                            WHERE person_id = %(p)s AND athlete_name IS NOT NULL
+                            UNION ALL
+                            SELECT athlete_name, school, date FROM results_tf
+                            WHERE person_id = %(p)s AND athlete_name IS NOT NULL) x
+                    WHERE  NULLIF(btrim(athlete_name), '') IS NOT NULL
+                    ORDER  BY date DESC LIMIT 1
+                """, {"p": person_id})
+                row = cur.fetchone()
+                if row is None and athlete is None:
+                    abort(404)
+                if row is not None:
+                    athlete = dict(athlete or {"gender": None})
+                    athlete["name"] = row["name"]
+                    athlete["school"] = athlete.get("school") or row["school"]
             # ★ THE HEADER RATING COMES FROM athlete_season -- the table the
             #   boards rank -- so the number up top is one the athlete can go
             #   find on /rankings. The old source, athlete_ratings, holds one

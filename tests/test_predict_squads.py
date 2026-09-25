@@ -79,3 +79,41 @@ def test_track_entrants_skip_field_and_relays(monkeypatch):
 def test_the_level_of_a_grade():
     assert P._levelOfGrade("9") == "hs" and P._levelOfGrade("7") == "ms"
     assert P._levelOfGrade("SO-2") == "college" and P._levelOfGrade("") is None
+
+
+def test_an_unnamed_person_takes_the_name_on_their_own_rows():
+    """! "all freshman are unknown" (owner, 2026-09-25): a tfrrs-only person
+    has no athletes row; their result rows carry the name."""
+    class Cur:
+        def execute(self, sql, params=None):
+            self.tf = "results_tf" in sql
+
+        def fetchall(self):
+            return ([] if self.tf else
+                    [{"person_id": 9, "name": "Jane Frosh", "school": "Tufts"}])
+    rows = [{"person_id": 9, "name": "Unknown", "school": None},
+            {"person_id": 3, "name": "Named Person", "school": "Tufts"}]
+    P._fillNames(Cur(), rows)
+    assert rows[0]["name"] == "Jane Frosh" and rows[0]["school"] == "Tufts"
+    assert rows[1]["name"] == "Named Person"
+
+
+def test_the_same_name_is_not_added_twice(monkeypatch):
+    """An unlinked runner is two person_ids; the squad found one, the
+    results supplement must not add the other."""
+    now = 2026
+    import season_year
+    monkeypatch.setattr(season_year, "academicYear", lambda d: now)
+    monkeypatch.setattr(P, "_squadsForYear", lambda *a, **k: {
+        "Tufts": [{"person_id": 1, "name": "Meba Henok", "rating": 110.0,
+                   "pool": "college_m"}]})
+    import roster
+    monkeypatch.setattr(roster, "carryingSchools", lambda *a, **k: set())
+    monkeypatch.setattr(P, "_fillNames", lambda cur, rows: None)
+    monkeypatch.setattr(P, "_raceEntrants", lambda *a, **k: {
+        "Tufts": [{"person_id": 77, "name": "Meba  HENOK", "rating": 111.0,
+                   "pool": "college_m"},
+                  {"person_id": 78, "name": "New Frosh", "rating": 105.0,
+                   "pool": "college_m"}]})
+    got = P._currentSquads(None, ["Tufts"], "XC", now)
+    assert [r["person_id"] for r in got["Tufts"]] == [1, 78]

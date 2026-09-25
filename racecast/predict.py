@@ -2665,19 +2665,27 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
     #    for is still last one (stale), there is no freshman in it at all.
     #    The race they ran IS in `results`, with the school on the row.
     try:
+        _fillNames(cur, [r for rows in squads.values() for r in rows])
+    except Exception:                                   # noqa: BLE001
+        _rollback(cur)
+    try:
         fresh = _raceEntrants(cur, schools, sport, now, gender=gender,
                               levels=levels)
     except Exception:                                   # noqa: BLE001
         import logging
         logging.getLogger(__name__).exception("season entrants lookup failed")
-        try:
-            cur.connection.rollback()
-        except Exception:                               # noqa: BLE001
-            pass
+        _rollback(cur)
         fresh = {}
     for sch, rows in fresh.items():
         have = {r["person_id"] for rr in squads.values() for r in rr}
-        add = [r for r in rows if r["person_id"] not in have]
+        # ! AND NOT A SECOND COPY OF SOMEONE ALREADY ON THE SQUAD. A runner
+        #   whose tfrrs rows are not yet linked to their anet person is two
+        #   person_ids; the squad above found one, this would add the other.
+        #   Same name at the same school is the same runner.
+        names = {_nameKey(r.get("name")) for r in squads.get(sch, [])}
+        add = [r for r in rows if r["person_id"] not in have
+               and not (_nameKey(r.get("name")) and
+                        _nameKey(r.get("name")) in names)]
         if add:
             merged = sorted(squads.get(sch, []) + add,
                             key=lambda r: -(r.get("rating") or 0))
@@ -2691,7 +2699,29 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
 #            as _squadsForYear. Rating: the 80th percentile of the season's
 #            race ratings (athlete_season's own statistic), in the pool of
 #            their latest rated race; None while nothing is rated.
+_ENTRANTS_CACHE = {}
+_ENTRANTS_TTL_S = 600
+
+
 def _raceEntrants(cur, schools, sport, year, gender=None, levels=None):
+    """Cached for ten minutes per (schools, sport, year, gender, levels):
+    one page visit asks for the same squads from the field, each card and
+    the prediction itself, and results only change when a scrape lands."""
+    import copy
+    import time as _t
+    key = (tuple(sorted(x for x in schools if x)), sport, year, gender,
+           tuple(sorted(levels)) if levels else None)
+    hit = _ENTRANTS_CACHE.get(key)
+    if hit and _t.time() - hit[0] < _ENTRANTS_TTL_S:
+        return copy.deepcopy(hit[1])
+    out = _raceEntrantsUncached(cur, schools, sport, year, gender, levels)
+    if len(_ENTRANTS_CACHE) > 512:
+        _ENTRANTS_CACHE.clear()
+    _ENTRANTS_CACHE[key] = (_t.time(), out)
+    return copy.deepcopy(out)
+
+
+def _raceEntrantsUncached(cur, schools, sport, year, gender=None, levels=None):
     schools = [x for x in schools if x]
     if not schools or year is None:
         return {}
@@ -2711,8 +2741,14 @@ def _raceEntrants(cur, schools, sport, year, gender=None, levels=None):
                count(*)                                            AS n_races,
                (SELECT x.gender FROM athletes x
                 WHERE  x.athlete_id = r.person_id LIMIT 1)         AS gender,
-               max(COALESCE(a.first_name, '') || ' '
-                   || COALESCE(a.last_name, ''))                   AS name
+               -- ★ THE ROW'S OWN NAME WHEN athletes HAS NONE (owner,
+               --   2026-09-25: "all freshman are unknown"). A tfrrs-only
+               --   person -- a freshman whose high school career is on anet
+               --   under another id -- has no athletes row; the tfrrs row
+               --   carries the name inline, as the race pages already read.
+               COALESCE(NULLIF(btrim(max(COALESCE(a.first_name, '') || ' '
+                   || COALESCE(a.last_name, ''))), ''),
+                   max(NULLIF(btrim(r.athlete_name), '')))         AS name
         FROM   {table} r
         {_NAME_LATERAL.format(pid="r.person_id")}
         WHERE  r.school = ANY(%(schools)s)
@@ -2753,6 +2789,51 @@ def _advanced(grade, years, pool):
     read it (an unknown spelling is still better than a blank)."""
     from grade_label import advanceGrade
     return advanceGrade(grade, years, pool) or grade
+
+
+def _rollback(cur):
+    """Clear a failed statement so the request's later queries can run."""
+    try:
+        cur.connection.rollback()
+    except Exception:                                   # noqa: BLE001
+        pass
+
+
+def _nameKey(name):
+    """A name for matching: lower case, letters and spaces only; None for
+    a missing or placeholder name."""
+    import re as _re
+    n = _re.sub(r"[^a-z ]+", "", str(name or "").lower())
+    n = " ".join(n.split())
+    return n if n and n not in ("unknown", "none") else None
+
+
+def _fillNames(cur, entries):
+    """Give an 'Unknown' entry the name its own result rows carry. The
+    athletes table has no row for a tfrrs-only person; their rows do."""
+    ids = sorted({e["person_id"] for e in entries
+                  if e.get("person_id") and _nameKey(e.get("name")) is None})
+    if not ids:
+        return
+    got = {}
+    for table in ("results", "results_tf"):
+        cur.execute(f"""
+            SELECT DISTINCT ON (person_id) person_id,
+                   btrim(athlete_name) AS name, school
+            FROM   {table}
+            WHERE  person_id = ANY(%s)
+              AND  NULLIF(btrim(athlete_name), '') IS NOT NULL
+            ORDER  BY person_id, date DESC
+        """, (ids,))
+        for row in cur.fetchall():
+            pid, nm, sch = ((row["person_id"], row["name"], row["school"])
+                            if isinstance(row, dict) else tuple(row))
+            got.setdefault(pid, (nm, sch))
+    for e in entries:
+        if e.get("person_id") in got and _nameKey(e.get("name")) is None:
+            e["name"] = got[e["person_id"]][0]
+            if not e.get("school"):
+                e["school"] = got[e["person_id"]][1]
 
 
 def _levelOfGrade(grade):
@@ -2989,4 +3070,14 @@ def _athleteEntries(cur, person_ids, sport, season_year):
         for r in cur.fetchall():
             out.append({"person_id": r["person_id"], "school": r["school"],
                         "name": r["name"] or "Unknown"})
+    # and anyone the athletes table could not name, from their own rows --
+    # including an id with no athletes row at all, which the query above
+    # never returns
+    named = {e["person_id"] for e in out}
+    out.extend({"person_id": i, "school": None, "name": "Unknown"}
+               for i in ids if i not in named)
+    try:
+        _fillNames(cur, out)
+    except Exception:                                   # noqa: BLE001
+        _rollback(cur)
     return out
