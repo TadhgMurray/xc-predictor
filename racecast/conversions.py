@@ -1075,23 +1075,32 @@ EQUIV_RATINGS = tuple(range(40, 171))
 
 
 def equivalenceLine(pool, course_distance, target_distance,
-                    course_difficulty=None, course=None, ratings=EQUIV_RATINGS):
-    """[(rating, seconds_on_course, seconds_on_track), ...], course time
-    ascending. Points that do not resolve, or would break monotonicity, are
-    dropped rather than guessed."""
+                    course_difficulty=None, course=None, ratings=EQUIV_RATINGS,
+                    source_sport="XC", target_sport="TF"):
+    """[(rating, seconds_at_source, seconds_at_target), ...], source time
+    ascending. The source is THIS course or track (its distance and fitted
+    difficulty); the target is a typical venue of `target_sport` at
+    `target_distance`. Points that do not resolve, or would break
+    monotonicity, are dropped rather than guessed.
+
+    ★ BOTH SPORTS AS SOURCE (2026-09-25, "add to track page too"): a track
+      race page converts from ITS venue -- the TF cell difficulty, indoor or
+      out -- to the other track distances, or to an average cross country
+      course."""
     out = []
-    xc_ctx = {"distance": float(course_distance), "pool": pool, "sport": "XC",
-              "course": course}
+    src_ctx = {"distance": float(course_distance), "pool": pool,
+               "sport": source_sport, "course": course}
     if course_difficulty is not None:
-        xc_ctx["difficulty"] = float(course_difficulty)
-    tf_ctx = {"distance": float(target_distance), "pool": pool, "sport": "TF"}
+        src_ctx["difficulty"] = float(course_difficulty)
+    tgt_ctx = {"distance": float(target_distance), "pool": pool,
+               "sport": target_sport}
     last = None
     for r in sorted(ratings, reverse=True):          # fastest first
-        norm = _norm_from_rating(float(r), pool, 0.0, "XC")
+        norm = _norm_from_rating(float(r), pool, 0.0, source_sport)
         if norm is None:
             continue
-        tc = normalized_to_time(norm, xc_ctx)
-        tt = normalized_to_time(norm, tf_ctx)
+        tc = normalized_to_time(norm, src_ctx)
+        tt = normalized_to_time(norm, tgt_ctx)
         if not tc or not tt or tc <= 0 or tt <= 0:
             continue
         if last is not None and (tc <= last[1] or tt <= last[2]):

@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
+{% from "_equiv_line.html" import equiv_line %}
 {% from "_recflag.html" import recflag, ratflag %}
 <html lang="en">
 <head>
@@ -54,6 +55,11 @@
             View venue →
         </a>
     </p>
+
+    {% if equiv_dist %}
+    {{ equiv_line(equiv_pool, equiv_dist, header.difficulty, none, sport="TF",
+                  lo=equiv_lo, hi=equiv_hi, target="5000:XC") }}
+    {% endif %}
 
     {% set has_wind = results | selectattr("wind", "ne", None) | list | length > 0 %}
     {# Points exist only where this event scored: a prelim page's rows
@@ -118,5 +124,6 @@
 </main>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('equiv-line.js') }}"></script>
 </body>
 </html>

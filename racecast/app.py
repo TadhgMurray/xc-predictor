@@ -3899,8 +3899,33 @@ def race_tf(meet_id, event_id, div_id):
     sections = _tf_heat_sections(results,
                                  any(r.get("is_field") for r in results))
 
+    # ★ THE EQUIVALENT-TIMES CARD ON A TRACK PAGE (owner, 2026-09-25: "add
+    #   to track page too"). A running event of 800 m and up -- what the
+    #   engine rates -- converted from THIS venue (header.difficulty, the
+    #   TF:loc cell, indoor or out) to the other track distances or an
+    #   average cross country 5K. Not for field events or relays.
+    equiv_dist = header.get("distance_meters")
+    if not equiv_dist and header.get("event_short"):
+        from normalize_distance import parseEventShort
+        equiv_dist = parseEventShort(header["event_short"]).get("meters")
+    _ev = (header.get("event_short") or "").lower()
+    _run = [r for r in results if not r.get("is_field")
+            and r.get("time_seconds") and r["time_seconds"] < 999999]
+    if (not equiv_dist or not 800 <= float(equiv_dist) <= 10000
+            or not _run or "relay" in _ev or re.search(r"\dx\d", _ev)):
+        equiv_dist = None
+    from collections import Counter as _Counter
+    _pools = _Counter((r.get("rating_pool") or "").split("|", 1)[0]
+                      for r in _run if r.get("rating_pool"))
+    equiv_pool = (_pools.most_common(1)[0][0] if _pools else
+                  ("hs_f" if header.get("gender") == "F" else "hs_m"))
+    equiv_lo = min((float(r["time_seconds"]) for r in _run), default=None)
+    equiv_hi = max((float(r["time_seconds"]) for r in _run), default=None)
+
     return render_template("race_tf.html", hl_school=hl_school,
                            has_hs_view=has_hs_view,
+                           equiv_dist=equiv_dist, equiv_pool=equiv_pool,
+                           equiv_lo=equiv_lo, equiv_hi=equiv_hi,
                            college=(race_src == "tfrrs"),
                            meet_id=meet_id, event_id=event_id, div_id=div_id,
                            header=header,
@@ -6488,15 +6513,19 @@ def api_equivalence():
     target = request.args.get("target", type=float) or 5000.0
     diff = request.args.get("difficulty", type=float)
     course = (request.args.get("course") or "").strip() or None
+    sport = (request.args.get("sport") or "XC").upper()
+    tsport = (request.args.get("tsport") or "TF").upper()
+    if sport not in ("XC", "TF") or tsport not in ("XC", "TF"):
+        return jsonify({"error": "sport must be XC or TF"}), 400
     if pool not in _EQUIV_POOLS:
         return jsonify({"error": "unknown pool"}), 400
-    if not dist or not 1000 <= dist <= 12000:
-        return jsonify({"error": "dist must be 1000-12000 m"}), 400
+    if not dist or not 400 <= dist <= 12000:
+        return jsonify({"error": "dist must be 400-12000 m"}), 400
     if not 400 <= target <= 10000:
         return jsonify({"error": "target must be 400-10000 m"}), 400
     if diff is not None and not -0.5 <= diff <= 0.5:
         return jsonify({"error": "difficulty out of range"}), 400
-    key = (pool, round(dist), round(target, 2),
+    key = (pool, sport, tsport, round(dist), round(target, 2),
            None if diff is None else round(diff, 4), course)
     hit = _EQUIV_CACHE.get(key)
     if hit and time.time() - hit[0] < _EQUIV_TTL:
@@ -6504,12 +6533,23 @@ def api_equivalence():
     import conversions as _cv
     try:
         pts = _cv.equivalenceLine(pool, dist, target, course_difficulty=diff,
-                                  course=course)
+                                  course=course, source_sport=sport,
+                                  target_sport=tsport)
     except Exception as exc:                          # noqa: BLE001
         print(f"equivalence: {type(exc).__name__}: {exc}", flush=True)
         return jsonify({"error": "could not convert"}), 500
-    body = {"pool": pool, "dist": dist, "target": target,
-            "difficulty": diff, "points": pts}
+    # ★ THE HS-EQUIVALENT FACTOR RIDES ALONG (owner, 2026-09-25: "rating
+    #   isn't scaled as hs-equivalent when hs-equivalent is put"). The page's
+    #   scale toggle is client-side, so the widget needs the pool's factor to
+    #   follow it; repFactor is the one every other HS view uses.
+    try:
+        from pool_view import repFactor
+        hs_factor = repFactor(pool, sport)
+    except Exception:                                 # noqa: BLE001
+        hs_factor = None
+    body = {"pool": pool, "sport": sport, "tsport": tsport, "dist": dist,
+            "target": target, "difficulty": diff, "points": pts,
+            "hs_factor": hs_factor}
     _EQUIV_CACHE[key] = (time.time(), body)
     if len(_EQUIV_CACHE) > _EQUIV_MAX:
         _EQUIV_CACHE.pop(min(_EQUIV_CACHE, key=lambda k: _EQUIV_CACHE[k][0]),

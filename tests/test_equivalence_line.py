@@ -54,12 +54,38 @@ def test_the_track_distance_moves_only_the_track_clock(stubbed):
         assert b[r][1] < a[r][1]
 
 
+def test_a_track_page_converts_from_its_track_to_xc(stubbed):
+    """From a track (source TF) to an average XC 5K: the same fitness is
+    slower over grass and 3.4x the distance, and both clocks still rise."""
+    pts = cv.equivalenceLine("hs_m", 1609.34, 5000, course_difficulty=0.01,
+                             source_sport="TF", target_sport="XC")
+    assert len(pts) > 100
+    r, tc, tt = zip(*pts)
+    assert list(tc) == sorted(tc) and list(tt) == sorted(tt)
+    assert all(b > 2.5 * a for a, b in zip(tc, tt))
+
+
+def test_the_group_does_not_move_the_course_clock_in_the_widget():
+    """! owner, 2026-09-25: "changing the pool changed the predicted time".
+    A group change must reload AT THE CURRENT TIME, not reopen on the new
+    group's average runner."""
+    js = open(os.path.join(_ROOT, "racecast", "static", "equiv-line.js")).read()
+    assert 'selPool.addEventListener("change", function () { load(st.cur); });' in js
+
+
+def test_the_rating_follows_the_hs_equivalent_toggle():
+    js = open(os.path.join(_ROOT, "racecast", "static", "equiv-line.js")).read()
+    assert "rc-scale-change" in js and "st.hs" in js
+    app = open(os.path.join(_ROOT, "racecast", "app.py")).read()
+    assert '"hs_factor": hs_factor' in app
+
+
 def test_the_templates_parse_and_load_the_script():
     import jinja2
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(
         os.path.join(_ROOT, "racecast", "templates")))
-    for name in ("_equiv_line.html", "race.html", "course.html"):
+    for name in ("_equiv_line.html", "race.html", "course.html", "race_tf.html"):
         env.parse(env.loader.get_source(env, name)[0])
-    for name in ("race.html", "course.html"):
+    for name in ("race.html", "course.html", "race_tf.html"):
         src = open(os.path.join(_ROOT, "racecast", "templates", name)).read()
         assert "equiv-line.js" in src and "equiv_line(" in src, name

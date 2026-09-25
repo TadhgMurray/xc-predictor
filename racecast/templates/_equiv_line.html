@@ -1,37 +1,34 @@
 {#
-  THE EQUIVALENCE LINE (owner, 2026-09-25): a number line of times on this
-  course with the same fitness on a track underneath, at a track distance the
-  reader picks. The maths is /api/equivalence (conversions.equivalenceLine,
-  the same algebra as /conversions); static/equiv-line.js draws and scrolls.
+  THE EQUIVALENCE LINE (owner, 2026-09-25): a ruler of times at this course
+  or track, with the same fitness at another distance underneath -- on a
+  typical track, or (from a track page) on an average cross country course.
+  The maths is /api/equivalence (conversions.equivalenceLine, the same
+  algebra as /conversions); static/equiv-line.js draws and scrolls it.
 
   equiv_line(pool, dist, difficulty, course,
-             dists=None,    [{"distance": m, "difficulty": d}] -- the course
-                            page's distances; a select appears when given
-             lo=None, hi=None)  the race's fastest and slowest times, shaded
-                            as "this race" and the line opens on lo
+             sport="XC"          the SOURCE sport: this page's venue
+             dists=None          [{"distance", "difficulty"}] -- the course
+                                 page's distances, offered as pills
+             lo=None, hi=None    the race's fastest and slowest times: shaded
+                                 on the ruler, and the line opens on lo
+             target="5000:TF")   the pill selected first, "<metres>:<sport>"
 #}
-{% macro equiv_line(pool, dist, difficulty, course, dists=None, lo=None, hi=None) %}
-<section class="eqline" aria-label="Time equivalents on the track"
-         data-pool="{{ pool or 'hs_m' }}"
-         data-dist="{{ dist|int if dist else '' }}"
+{% macro equiv_line(pool, dist, difficulty, course, sport="XC", dists=None,
+                    lo=None, hi=None, target="5000:TF") %}
+{% set targets = [(800, "TF", "800"), (1600, "TF", "1600"), (1609.34, "TF", "Mile"),
+                  (3200, "TF", "3200"), (5000, "TF", "5K"), (10000, "TF", "10K")] %}
+{% if sport == "TF" %}{% set targets = targets + [(5000, "XC", "XC 5K")] %}{% endif %}
+<section class="eqc" aria-label="Equivalent times"
+         data-pool="{{ pool or 'hs_m' }}" data-sport="{{ sport }}"
+         data-dist="{{ dist|round(2) if dist else '' }}"
          data-diff="{{ difficulty if difficulty is not none else '' }}"
          data-course="{{ course or '' }}"
-         data-lo="{{ lo if lo else '' }}" data-hi="{{ hi if hi else '' }}"
-         {% if dists %}data-dists='{{ dists|tojson }}'{% endif %}>
-    <h2>Track equivalents <span class="dist-note">drag the line, or type a time</span></h2>
-    <div class="eq-controls">
-        {% if dists %}
-        <label>Course distance
-            <select class="eq-dist">
-                {% for d in dists %}
-                <option value="{{ d.distance|int }}" data-diff="{{ d.difficulty if d.difficulty is not none else '' }}"
-                        {% if dist and d.distance|int == dist|int %}selected{% endif %}>{{ d.distance|int }}m</option>
-                {% endfor %}
-            </select>
-        </label>
-        {% endif %}
-        <label>Group
-            <select class="eq-pool">
+         data-lo="{{ lo if lo else '' }}" data-hi="{{ hi if hi else '' }}">
+    <header class="eqc-head">
+        <h2 class="eqc-title">{{ "Track equivalents" if sport == "XC" else "Equivalent times" }}</h2>
+        <label class="eqc-group">
+            <span class="eqc-sr">Group</span>
+            <select class="eq-pool" aria-label="Group">
                 {% for p, label in [("hs_m", "HS Boys"), ("hs_f", "HS Girls"),
                                     ("college_m", "College Men"), ("college_f", "College Women"),
                                     ("ms_m", "MS Boys"), ("ms_f", "MS Girls")] %}
@@ -39,35 +36,50 @@
                 {% endfor %}
             </select>
         </label>
-        <label>Track distance
-            <select class="eq-target">
-                {% for m, label in [(800, "800m"), (1500, "1500m"), (1600, "1600m"),
-                                    (1609.34, "Mile"), (3000, "3000m"), (3200, "3200m"),
-                                    (3218.69, "2 Mile"), (5000, "5000m"), (10000, "10,000m")] %}
-                <option value="{{ m }}" {% if m == 5000 %}selected{% endif %}>{{ label }}</option>
-                {% endfor %}
-            </select>
-        </label>
+    </header>
+
+    {% if dists and dists|length > 1 %}
+    <div class="eqc-pills eqc-dists" role="group" aria-label="Distance on this course">
+        <span class="eqc-pill-label">Course</span>
+        {% for d in dists %}
+        <button type="button" class="eqc-pill" data-dist="{{ d.distance|int }}"
+                data-diff="{{ d.difficulty if d.difficulty is not none else '' }}"
+                aria-pressed="{{ 'true' if dist and d.distance|int == dist|int else 'false' }}">{{ d.distance|int }}m</button>
+        {% endfor %}
     </div>
-    <p class="eq-readout">
-        <input class="eq-time" type="text" inputmode="decimal" size="7"
-               aria-label="Time on this course" placeholder="16:00">
-        <span class="eq-here">here</span> ≈
-        <b class="eq-out">–</b> <span class="eq-tlabel">on a track</span>
-        <span class="eq-rating muted"></span>
-    </p>
-    <div class="eq-wrap">
-        <div class="eq-strip" tabindex="0" role="slider" aria-label="Time on this course"
-             aria-valuetext="">
-            <div class="eq-track"></div>
+    {% endif %}
+
+    <div class="eqc-readout">
+        <div class="eqc-side">
+            <div class="eqc-cap">{{ "On this course" if sport == "XC" else "At this track" }}
+                · <span class="eqc-srcdist">{{ dist|int if dist else "" }}m</span></div>
+            <input class="eqc-big eq-time" type="text" inputmode="decimal" spellcheck="false"
+                   aria-label="Time here -- type one, or drag the ruler" value="">
         </div>
-        <div class="eq-marker" aria-hidden="true"></div>
+        <div class="eqc-arrow" aria-hidden="true">&rarr;</div>
+        <div class="eqc-side eqc-side-out">
+            <div class="eqc-cap eqc-tcap">&nbsp;</div>
+            <div class="eqc-big eqc-out" aria-live="polite">–</div>
+        </div>
     </div>
-    <p class="eq-legend muted">
-        <span class="eq-key eq-key-course"></span> this course
-        <span class="eq-key eq-key-track"></span> the same fitness on a typical outdoor track
-        <span class="eq-key-field-wrap" hidden><span class="eq-key eq-key-field"></span> this race's field</span>
-    </p>
-    <p class="eq-status muted" hidden></p>
+    <div class="eqc-sub"><span class="eqc-rating"></span></div>
+
+    <div class="eqc-pills eqc-targets" role="group" aria-label="Convert to">
+        {% for m, sp, label in targets %}
+        {% set key = (m|string) ~ ":" ~ sp %}
+        <button type="button" class="eqc-pill" data-target="{{ m }}" data-tsport="{{ sp }}"
+                aria-pressed="{{ 'true' if key == target else 'false' }}">{{ label }}</button>
+        {% endfor %}
+    </div>
+
+    <div class="eqc-ruler-wrap">
+        <div class="eqc-ruler" tabindex="0" role="slider" aria-label="Time here" aria-valuetext="">
+            <div class="eqc-scale"></div>
+        </div>
+        <div class="eqc-pointer" aria-hidden="true"></div>
+    </div>
+    <p class="eqc-hint">Drag the ruler, use the arrow keys, or type a time.
+        <span class="eqc-field-key" hidden><i></i> this race's field</span></p>
+    <p class="eqc-status" hidden></p>
 </section>
 {% endmacro %}
