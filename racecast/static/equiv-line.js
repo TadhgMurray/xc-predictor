@@ -88,7 +88,7 @@
       course: root.dataset.course || "",
       lo: parseFloat(root.dataset.lo) || null,
       hi: parseFloat(root.dataset.hi) || null,
-      target: 5000, tsport: "TF", tlabel: "5K",
+      target: 5000, tsport: "TF", tlabel: "5K", tdiff: null, tcourse: "",
       points: [], hs: null, tmin: 0, tmax: 0, cur: null, seq: 0, sc: null
     };
 
@@ -101,6 +101,8 @@
       st.target = parseFloat(b.dataset.target);
       st.tsport = b.dataset.tsport;
       st.tlabel = b.textContent.trim();
+      st.tdiff = b.dataset.tdiff ? parseFloat(b.dataset.tdiff) : null;
+      st.tcourse = b.dataset.tcourse || "";
     }
     function readDist() {
       var b = pressed(".eqc-dists");
@@ -118,6 +120,7 @@
                 document.querySelector("button[data-scale]") && st.hs);
     }
     function targetCaption() {
+      if (st.tcourse) return "At " + st.tcourse + " · " + Math.round(st.target) + "m";
       if (st.tsport === "XC") return "XC 5K · average course";
       return "On a track · " + st.tlabel;
     }
@@ -188,6 +191,8 @@
                                     tsport: st.tsport });
       if (st.diff != null && isFinite(st.diff)) q.set("difficulty", String(st.diff));
       if (st.course) q.set("course", st.course);
+      if (st.tdiff != null && isFinite(st.tdiff)) q.set("tdifficulty", String(st.tdiff));
+      if (st.tcourse) q.set("tcourse", st.tcourse);
       var seq = ++st.seq;
       root.classList.add("eqc-loading");
       fetch("/api/equivalence?" + q.toString())
@@ -260,6 +265,7 @@
       if (!box) return;
       box.addEventListener("click", function (e) {
         var b = e.target.closest(".eqc-pill");
+        if (b && b.classList.contains("eqc-add")) { toggleSearch(); return; }
         if (!b || b.getAttribute("aria-pressed") === "true") return;
         var all = box.querySelectorAll(".eqc-pill");
         for (var i = 0; i < all.length; i++) all[i].setAttribute("aria-pressed", "false");
@@ -267,6 +273,81 @@
         onPick();
       });
     }
+    // --- another course (owner, 2026-09-25: "some way to compare course to
+    //     course"). /api/course_search gives each course its distances with
+    //     their fitted difficulties; picking one adds a pill for it. ------- //
+    var addBtn = root.querySelector(".eqc-add");
+    var panel = root.querySelector(".eqc-search");
+    var sIn = root.querySelector(".eqc-search-in");
+    var sList = root.querySelector(".eqc-search-list");
+    function toggleSearch(force) {
+      if (!panel) return;
+      var open = force != null ? force : panel.hidden;
+      panel.hidden = !open;
+      addBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) { sIn.value = ""; sList.innerHTML = ""; sIn.focus(); }
+    }
+    function esc(t) {
+      return String(t).replace(/[&<>"]/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+      });
+    }
+    var sTimer = null, sSeq = 0;
+    if (sIn) sIn.addEventListener("input", function () {
+      clearTimeout(sTimer);
+      var q = sIn.value.trim();
+      if (q.length < 2) { sList.innerHTML = ""; return; }
+      sTimer = setTimeout(function () {
+        var my = ++sSeq;
+        fetch("/api/course_search?q=" + encodeURIComponent(q))
+          .then(function (r) { return r.json(); })
+          .then(function (rows) {
+            if (my !== sSeq) return;
+            var html = [];
+            (rows || []).forEach(function (c) {
+              (c.distances || []).slice(0, 3).forEach(function (d) {
+                if (!d.distance) return;
+                html.push('<li><button type="button" class="eqc-opt" data-name="' +
+                  esc(c.name) + '" data-dist="' + d.distance + '" data-diff="' +
+                  (d.difficulty == null ? "" : d.difficulty) + '"><b>' + esc(c.name) +
+                  "</b> <span>" + Math.round(d.distance) + "m" +
+                  (d.n ? " · " + Number(d.n).toLocaleString() + " results" : "") +
+                  "</span></button></li>");
+              });
+            });
+            sList.innerHTML = html.join("") ||
+              '<li class="eqc-none">No course by that name.</li>';
+          });
+      }, 180);
+    });
+    if (sList) sList.addEventListener("click", function (e) {
+      var o = e.target.closest(".eqc-opt");
+      if (!o) return;
+      var box = root.querySelector(".eqc-targets");
+      var old = box.querySelector(".eqc-pill-course");
+      if (old) old.remove();
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "eqc-pill eqc-pill-course";
+      b.dataset.target = o.dataset.dist;
+      b.dataset.tsport = "XC";
+      b.dataset.tdiff = o.dataset.diff;
+      b.dataset.tcourse = o.dataset.name;
+      b.title = o.dataset.name + ", " + Math.round(o.dataset.dist) + "m";
+      b.textContent = o.dataset.name.length > 18
+        ? o.dataset.name.slice(0, 17) + "…" : o.dataset.name;
+      box.insertBefore(b, addBtn);
+      var all = box.querySelectorAll(".eqc-pill");
+      for (var i = 0; i < all.length; i++) all[i].setAttribute("aria-pressed", "false");
+      b.setAttribute("aria-pressed", "true");
+      toggleSearch(false);
+      readTarget();
+      load(st.cur);
+    });
+    if (sIn) sIn.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { toggleSearch(false); addBtn.focus(); }
+    });
+
     pillGroup(".eqc-targets", function () { readTarget(); load(st.cur); });
     pillGroup(".eqc-dists", function () { readDist(); load(null); });
     // ! KEEP THE TIME ON A GROUP CHANGE (owner, 2026-09-25: "changing the

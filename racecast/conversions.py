@@ -1076,7 +1076,8 @@ EQUIV_RATINGS = tuple(range(40, 171))
 
 def equivalenceLine(pool, course_distance, target_distance,
                     course_difficulty=None, course=None, ratings=EQUIV_RATINGS,
-                    source_sport="XC", target_sport="TF"):
+                    source_sport="XC", target_sport="TF",
+                    target_difficulty=None, target_course=None):
     """[(rating, seconds_at_source, seconds_at_target), ...], source time
     ascending. The source is THIS course or track (its distance and fitted
     difficulty); the target is a typical venue of `target_sport` at
@@ -1092,8 +1093,13 @@ def equivalenceLine(pool, course_distance, target_distance,
                "sport": source_sport, "course": course}
     if course_difficulty is not None:
         src_ctx["difficulty"] = float(course_difficulty)
+    # ★ COURSE TO COURSE (owner, 2026-09-25: "some way to compare course to
+    #   course"): a named target course brings its own fitted difficulty;
+    #   without one the target is that sport's typical venue.
     tgt_ctx = {"distance": float(target_distance), "pool": pool,
-               "sport": target_sport}
+               "sport": target_sport, "course": target_course}
+    if target_difficulty is not None:
+        tgt_ctx["difficulty"] = float(target_difficulty)
     last = None
     for r in sorted(ratings, reverse=True):          # fastest first
         norm = _norm_from_rating(float(r), pool, 0.0, source_sport)

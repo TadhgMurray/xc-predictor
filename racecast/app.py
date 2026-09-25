@@ -6523,10 +6523,15 @@ def api_equivalence():
         return jsonify({"error": "dist must be 400-12000 m"}), 400
     if not 400 <= target <= 10000:
         return jsonify({"error": "target must be 400-10000 m"}), 400
+    tdiff = request.args.get("tdifficulty", type=float)
+    tcourse = (request.args.get("tcourse") or "").strip() or None
     if diff is not None and not -0.5 <= diff <= 0.5:
         return jsonify({"error": "difficulty out of range"}), 400
+    if tdiff is not None and not -0.5 <= tdiff <= 0.5:
+        return jsonify({"error": "tdifficulty out of range"}), 400
     key = (pool, sport, tsport, round(dist), round(target, 2),
-           None if diff is None else round(diff, 4), course)
+           None if diff is None else round(diff, 4), course,
+           None if tdiff is None else round(tdiff, 4), tcourse)
     hit = _EQUIV_CACHE.get(key)
     if hit and time.time() - hit[0] < _EQUIV_TTL:
         return jsonify(hit[1])
@@ -6534,7 +6539,8 @@ def api_equivalence():
     try:
         pts = _cv.equivalenceLine(pool, dist, target, course_difficulty=diff,
                                   course=course, source_sport=sport,
-                                  target_sport=tsport)
+                                  target_sport=tsport, target_difficulty=tdiff,
+                                  target_course=tcourse)
     except Exception as exc:                          # noqa: BLE001
         print(f"equivalence: {type(exc).__name__}: {exc}", flush=True)
         return jsonify({"error": "could not convert"}), 500

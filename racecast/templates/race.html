@@ -67,7 +67,7 @@
 
     {% if header.distance %}
     {{ equiv_line(equiv_pool, header.distance, header.difficulty, header.course_name,
-                  lo=equiv_lo, hi=equiv_hi) }}
+                  lo=equiv_lo, hi=equiv_hi, fixed_pool=True) }}
     {% endif %}
 
 {% if scores is not defined or scores is none %}

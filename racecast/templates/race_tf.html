@@ -58,7 +58,7 @@
 
     {% if equiv_dist %}
     {{ equiv_line(equiv_pool, equiv_dist, header.difficulty, none, sport="TF",
-                  lo=equiv_lo, hi=equiv_hi, target="5000:XC") }}
+                  lo=equiv_lo, hi=equiv_hi, target="5000:XC", fixed_pool=True) }}
     {% endif %}
 
     {% set has_wind = results | selectattr("wind", "ne", None) | list | length > 0 %}

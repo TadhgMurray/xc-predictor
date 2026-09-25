@@ -65,6 +65,26 @@ def test_a_track_page_converts_from_its_track_to_xc(stubbed):
     assert all(b > 2.5 * a for a, b in zip(tc, tt))
 
 
+def test_course_to_course_scales_by_the_two_difficulties(stubbed):
+    """★ "some way to compare course to course" (owner, 2026-09-25): at one
+    distance the equivalent is the time times (1 + d_target) / (1 + d_here)."""
+    pts = cv.equivalenceLine("hs_m", 4828, 4828, course_difficulty=0.081,
+                             target_sport="XC", target_difficulty=0.107,
+                             target_course="Mt. San Antonio College")
+    for _r, here, there in pts[::20]:
+        assert there / here == pytest.approx(1.107 / 1.081, rel=1e-6)
+
+
+def test_a_race_page_states_its_group_rather_than_offering_one():
+    """! "changing pool still changed the track time": the conversion is
+    genuinely per group, so a race page fixes it to the race's group."""
+    for name in ("race.html", "race_tf.html"):
+        src = open(os.path.join(_ROOT, "racecast", "templates", name)).read()
+        assert "fixed_pool=True" in src, name
+    mac = open(os.path.join(_ROOT, "racecast", "templates", "_equiv_line.html")).read()
+    assert '{% if fixed_pool %}' in mac and 'type="hidden" class="eq-pool"' in mac
+
+
 def test_the_group_does_not_move_the_course_clock_in_the_widget():
     """! owner, 2026-09-25: "changing the pool changed the predicted time".
     A group change must reload AT THE CURRENT TIME, not reopen on the new

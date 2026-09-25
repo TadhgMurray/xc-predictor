@@ -14,7 +14,9 @@
              target="5000:TF")   the pill selected first, "<metres>:<sport>"
 #}
 {% macro equiv_line(pool, dist, difficulty, course, sport="XC", dists=None,
-                    lo=None, hi=None, target="5000:TF") %}
+                    lo=None, hi=None, target="5000:TF", fixed_pool=False) %}
+{% set pool_names = {"hs_m": "HS Boys", "hs_f": "HS Girls", "college_m": "College Men",
+                     "college_f": "College Women", "ms_m": "MS Boys", "ms_f": "MS Girls"} %}
 {% set targets = [(800, "TF", "800"), (1600, "TF", "1600"), (1609.34, "TF", "Mile"),
                   (3200, "TF", "3200"), (5000, "TF", "5K"), (10000, "TF", "10K")] %}
 {% if sport == "TF" %}{% set targets = targets + [(5000, "XC", "XC 5K")] %}{% endif %}
@@ -26,16 +28,25 @@
          data-lo="{{ lo if lo else '' }}" data-hi="{{ hi if hi else '' }}">
     <header class="eqc-head">
         <h2 class="eqc-title">{{ "Track equivalents" if sport == "XC" else "Equivalent times" }}</h2>
+        {# ! A RACE PAGE'S GROUP IS THE RACE'S (owner, 2026-09-25: "changing
+             pool still changed the track time"). The conversion is genuinely
+             per group -- its own distance curve, how a course's difficulty
+             lands at that group's level, its own track shift -- so on a race
+             page the group is stated, not offered. The course page, which has
+             no one group, keeps the choice and says why it moves. #}
+        {% if fixed_pool %}
+        <span class="eqc-groupchip" title="Converted as {{ pool_names.get(pool, pool) }}, the group this race was rated in">{{ pool_names.get(pool, pool) }}</span>
+        <input type="hidden" class="eq-pool" value="{{ pool }}">
+        {% else %}
         <label class="eqc-group">
             <span class="eqc-sr">Group</span>
             <select class="eq-pool" aria-label="Group">
-                {% for p, label in [("hs_m", "HS Boys"), ("hs_f", "HS Girls"),
-                                    ("college_m", "College Men"), ("college_f", "College Women"),
-                                    ("ms_m", "MS Boys"), ("ms_f", "MS Girls")] %}
+                {% for p, label in pool_names.items() %}
                 <option value="{{ p }}" {% if p == pool %}selected{% endif %}>{{ label }}</option>
                 {% endfor %}
             </select>
         </label>
+        {% endif %}
     </header>
 
     {% if dists and dists|length > 1 %}
@@ -70,6 +81,13 @@
         <button type="button" class="eqc-pill" data-target="{{ m }}" data-tsport="{{ sp }}"
                 aria-pressed="{{ 'true' if key == target else 'false' }}">{{ label }}</button>
         {% endfor %}
+        <button type="button" class="eqc-pill eqc-add" aria-expanded="false"
+                title="Compare with another cross country course">+ Course</button>
+    </div>
+    <div class="eqc-search" hidden>
+        <input type="search" class="eqc-search-in" placeholder="Search a course, e.g. Mt. SAC"
+               aria-label="Search a course to compare with" autocomplete="off">
+        <ul class="eqc-search-list" role="listbox"></ul>
     </div>
 
     <div class="eqc-ruler-wrap">
@@ -79,6 +97,8 @@
         <div class="eqc-pointer" aria-hidden="true"></div>
     </div>
     <p class="eqc-hint">Drag the ruler, use the arrow keys, or type a time.
+        {% if not fixed_pool %}The group matters a little: each converts on its own
+        distance curve and course effect.{% endif %}
         <span class="eqc-field-key" hidden><i></i> this race's field</span></p>
     <p class="eqc-status" hidden></p>
 </section>
