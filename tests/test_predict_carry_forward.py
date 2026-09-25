@@ -136,7 +136,15 @@ def _spyOn(empty_for):
                                  "pool": "hs_m"}]})
 
     predict._squadsForYear = spy
-    return calls, lambda: setattr(predict, "_squadsForYear", saved)
+    # ! THE RESULTS SUPPLEMENT (freshmen off the result table, 2026-09-25) is
+    #   test_predict_squads' question; here it adds nobody.
+    saved_fresh = predict._raceEntrants
+    predict._raceEntrants = lambda *a, **k: {}
+
+    def restore():
+        predict._squadsForYear = saved
+        predict._raceEntrants = saved_fresh
+    return calls, restore
 
 
 def _now():

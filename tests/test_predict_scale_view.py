@@ -75,7 +75,8 @@ def test_both_roster_endpoints_stamp_the_hs_number():
     predict = read("racecast", "predict.py")
     app = read("racecast", "app.py")
     # the squads (runners on a card, and /api/predict/squad through them)
-    assert predict.count('stampBoardRows(flat, rating_keys=("rating",), sport=sport)') == 2
+    # (three: the season squads, and the entrants read off the results)
+    assert predict.count('stampBoardRows(flat, rating_keys=("rating",), sport=sport)') == 3
     # ! AND THE DROPPED, which come from _lastKnownRatings and not from the
     #   squad build -- the one column that had two scales in it.
     assert 's.person_id, s.mean_rating, s.n_races, s.year, s.pool' in predict

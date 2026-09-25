@@ -43,3 +43,30 @@ def gradeLabel(grade, pool=None):
     if g.isdigit():
         return str(int(g))
     return g
+
+
+def advanceGrade(grade, years, pool=None):
+    """A stored grade `years` seasons on, spelled for the page (owner,
+    2026-09-25: a runner who has not raced yet this season showed a blank
+    grade; "it should just increment grade by whatever from their last
+    year"). '10' +1 -> '11'; 'JR-3' +1 -> 'SR-4'; 'SR-4' +1 -> 'SR-5' (a
+    fifth year); 'So' in a high-school pool +1 -> '11'. A school grade past
+    12 has graduated and comes back None, as does anything unreadable."""
+    if grade is None or years is None:
+        return None
+    label = gradeLabel(grade, pool)
+    if not label:
+        return None
+    years = int(years)
+    if years <= 0:
+        return label
+    if label.isdigit():
+        n = int(label) + years
+        return str(n) if n <= 12 else None
+    m = _ELIG.match(label)
+    if m:
+        order = ("FR", "SO", "JR", "SR")
+        cls = order.index(m.group(1).upper())
+        n = int(m.group(2)) + years
+        return f"{order[min(cls + years, 3)]}-{n}" if n <= 6 else None
+    return None

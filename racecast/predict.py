@@ -2539,6 +2539,12 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
                             exclude_terminal=stale,
                             active_year=now if stale else None,
                             gender=gender, levels=levels)
+    # a finished season read as this one: every grade is that much older
+    if stale:
+        for rows in squads.values():
+            for r in rows:
+                r["grade"] = _advanced(r.get("grade"), now - season_year,
+                                       r.get("pool"))
 
     # ★ THE CARRY-FORWARD IS PER SCHOOL AND PER RACE NOW, NOT ALL-OR-NOTHING
     #   (owner, 2026-09-15: "keep everybody else on the roster until they
@@ -2574,6 +2580,8 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
             add = [r for r in rows if r["person_id"] not in have]
             for r in add:
                 r["carried"] = True   # last season's roster, aged forward
+                # ...and a year older on the page, like the roster itself
+                r["grade"] = _advanced(r.get("grade"), 1, r.get("pool"))
             if add:
                 # ⚠ SORTED EXPLICITLY FIRST. _bestFirst only REORDERS a squad
                 #   that spans pools -- with one pool it hands the list back
@@ -2584,7 +2592,117 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
                 merged = sorted(squads.get(sch, []) + add,
                                 key=lambda r: -(r.get("rating") or 0))
                 squads[sch] = _bestFirst(merged, sport)
+
+    # ⚠⚠ AND WHOEVER HAS RACED FOR THE SCHOOL THIS SEASON, FROM THE RESULTS
+    #    THEMSELVES (owner, 2026-09-25: "when predicting a race from last
+    #    year in current year new freshman aren't added that have raced for
+    #    those schools"). Everything above reads athlete_season, the BOARDS'
+    #    table, and a new freshman is the athlete it is most likely to miss:
+    #    it is only as new as the last good pipeline run; it holds back a
+    #    season whose grade verdict is not trusted yet, which is what a
+    #    first-year's lone season usually is; and while the season it is read
+    #    for is still last one (stale), there is no freshman in it at all.
+    #    The race they ran IS in `results`, with the school on the row.
+    try:
+        fresh = _raceEntrants(cur, schools, sport, now, gender=gender,
+                              levels=levels)
+    except Exception:                                   # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("season entrants lookup failed")
+        try:
+            cur.connection.rollback()
+        except Exception:                               # noqa: BLE001
+            pass
+        fresh = {}
+    for sch, rows in fresh.items():
+        have = {r["person_id"] for rr in squads.values() for r in rr}
+        add = [r for r in rows if r["person_id"] not in have]
+        if add:
+            merged = sorted(squads.get(sch, []) + add,
+                            key=lambda r: -(r.get("rating") or 0))
+            squads[sch] = _bestFirst(merged, sport)
     return squads
+
+
+# Purpose:   {school: [entries]} of everyone with a result for the school in
+#            academic season `year`, straight off the result table -- the
+#            athletes athlete_season has not caught up with. Same entry shape
+#            as _squadsForYear. Rating: the 80th percentile of the season's
+#            race ratings (athlete_season's own statistic), in the pool of
+#            their latest rated race; None while nothing is rated.
+def _raceEntrants(cur, schools, sport, year, gender=None, levels=None):
+    schools = [x for x in schools if x]
+    if not schools or year is None:
+        return {}
+    from season_year import ACADEMIC_START_MONTH as _m
+    lo = f"{int(year):04d}-{_m:02d}-01"
+    hi = f"{int(year) + 1:04d}-{_m:02d}-01"
+    table = "results" if sport == "XC" else "results_tf"
+    running = ("" if sport == "XC" else
+               "AND COALESCE(r.is_field, 0) = 0 AND COALESCE(r.is_relay, 0) = 0")
+    cur.execute(f"""
+        SELECT r.school, r.person_id,
+               (array_agg(r.grade ORDER BY r.date DESC))[1]       AS grade,
+               (array_agg(split_part(r.rating_pool, '|', 1) ORDER BY r.date DESC)
+                   FILTER (WHERE r.rating_pool IS NOT NULL))[1]    AS pool,
+               percentile_cont(0.8) WITHIN GROUP (ORDER BY r.speed_rating)
+                   FILTER (WHERE r.speed_rating > 0)               AS rating,
+               count(*)                                            AS n_races,
+               (SELECT x.gender FROM athletes x
+                WHERE  x.athlete_id = r.person_id LIMIT 1)         AS gender,
+               max(COALESCE(a.first_name, '') || ' '
+                   || COALESCE(a.last_name, ''))                   AS name
+        FROM   {table} r
+        {_NAME_LATERAL.format(pid="r.person_id")}
+        WHERE  r.school = ANY(%(schools)s)
+          AND  r.person_id IS NOT NULL
+          AND  r.date >= %(lo)s AND r.date < %(hi)s
+          AND  r.time_seconds > 0 AND r.time_seconds < 19999
+          {running}
+        GROUP  BY r.school, r.person_id
+    """, {"schools": schools, "lo": lo, "hi": hi})
+    out = {}
+    for r in cur.fetchall():
+        pool = r.get("pool") or None
+        g = (pool[-1].upper() if pool and pool[-2:] in ("_m", "_f")
+             else (r.get("gender") or "").upper()[:1] or None)
+        if gender in ("M", "F") and g and g != gender:
+            continue
+        if levels:
+            lvl = (pool.split("_", 1)[0] if pool
+                   else _levelOfGrade(r.get("grade")))
+            if lvl and lvl not in levels:
+                continue
+        out.setdefault(r["school"], []).append({
+            "person_id": r["person_id"], "school": r["school"],
+            "pool": pool, "grade": r.get("grade"),
+            "name": (r.get("name") or "").strip() or "Unknown",
+            "rating": (round(float(r["rating"]), 1)
+                       if r.get("rating") is not None else None),
+            "n_races": r["n_races"], "from_results": True})
+    flat = [e for rows in out.values() for e in rows]
+    if flat:
+        from pool_view import stampBoardRows
+        stampBoardRows(flat, rating_keys=("rating",), sport=sport)
+    return out
+
+
+def _advanced(grade, years, pool):
+    """grade_label.advanceGrade, keeping the stored value when it cannot
+    read it (an unknown spelling is still better than a blank)."""
+    from grade_label import advanceGrade
+    return advanceGrade(grade, years, pool) or grade
+
+
+def _levelOfGrade(grade):
+    """'ms' / 'hs' / 'college' from a stored grade, or None."""
+    g = (str(grade) if grade is not None else "").strip().upper()
+    if g.isdigit():
+        n = int(g)
+        return "ms" if n <= 8 else "hs" if n <= 12 else None
+    if g[:2] in ("FR", "SO", "JR", "SR", "GR", "RS"):
+        return "college"
+    return None
 
 
 def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
@@ -2766,6 +2884,36 @@ def _athleteEntries(cur, person_ids, sport, season_year):
                                    if r["rating"] is not None else None),
                         "name": (r["name"] or "").strip() or "Unknown"})
     rest = [i for i in ids if i not in seen]
+    # ★ NOT RACED YET THIS SEASON: THEIR LAST SEASON, A YEAR OLDER (owner,
+    #   2026-09-25: "sometimes grade is just blank... it should just
+    #   increment grade by whatever from their last year... only ppl who
+    #   haven't run yet"). With no row this season they fell through to the
+    #   athletes table, which has no grade, rating or pool.
+    if rest and season_year is not None:
+        from grade_label import advanceGrade
+        cur.execute(f"""
+            SELECT DISTINCT ON (s.person_id)
+                   s.person_id, s.school, s.grade, s.pool, s.year,
+                   s.mean_rating AS rating,
+                   COALESCE(a.first_name, '') || ' '
+                       || COALESCE(a.last_name, '') AS name
+            FROM   athlete_season s
+            {_NAME_LATERAL.format(pid="s.person_id")}
+            WHERE  s.person_id = ANY(%(ids)s) AND s.year < %(yr)s
+            ORDER  BY s.person_id, (s.sport = %(sport)s) DESC, s.year DESC
+        """, {"ids": rest, "yr": season_year, "sport": sport})
+        for r in cur.fetchall():
+            seen.add(r["person_id"])
+            out.append({"person_id": r["person_id"], "school": r["school"],
+                        "grade": advanceGrade(r["grade"],
+                                              season_year - int(r["year"]),
+                                              r["pool"]),
+                        "pool": r["pool"],
+                        "rating": (round(float(r["rating"]), 1)
+                                   if r["rating"] is not None else None),
+                        "carried": True,
+                        "name": (r["name"] or "").strip() or "Unknown"})
+        rest = [i for i in rest if i not in seen]
     if rest:
         cur.execute("""
             SELECT DISTINCT ON (athlete_id) athlete_id AS person_id,
