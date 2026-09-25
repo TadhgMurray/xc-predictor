@@ -17,7 +17,7 @@
 {% include "_topbar.html" %}
 <main class="page account-page" data-role="{{ account.role }}">
   <h1>Settings</h1>
-  <p class="meta">{{ account.email }}{% if account.google_sub %} · signed in with Google{% endif %}{% if admin %} · admin{% endif %}</p>
+  <p class="meta">{{ account.email }}{% if account.google_sub %} · signed in with Google{% endif %}{% if admin %} · admin · <a href="/account/status">Site status</a>{% endif %}</p>
   {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
   {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
 

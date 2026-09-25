@@ -5223,3 +5223,24 @@ input.eqc-big:focus { outline: none; border-bottom-color: var(--eqc-accent); }
     background-clip: padding-box;
 }
 *::-webkit-scrollbar-thumb:hover { background-color: rgba(0, 0, 0, 0.34); }
+
+/* The owner's status page (/account/status, site_status.py). */
+.status-page h2 { margin-top: 2rem; }
+.status-page table { width: 100%; margin: .4rem 0 .6rem; }
+.status-page .st-ok { color: #15803d; }
+.status-page .st-warn { color: #b45309; }
+.status-page .st-bad, .status-page td.st-bad { color: #b91c1c; font-weight: 600; }
+.status-page .st-err { color: #b91c1c; font-size: .9rem; }
+.status-page .st-open { border-left: 3px solid #d97706; padding: .3rem .8rem; margin: .5rem 0;
+    background: #fffbeb; font-size: .9rem; }
+.status-page .st-failed { border-left-color: #b91c1c; background: #fef2f2; }
+.status-page pre { font-size: .75rem; line-height: 1.35; overflow-x: auto; margin: .4rem 0 0;
+    white-space: pre-wrap; word-break: break-all; color: #374151; }
+.status-page .st-steps { margin: .6rem 0; }
+.status-page .st-steps summary { cursor: pointer; color: #374151; }
+.status-page .st-q code, .status-page .st-reports td { font-size: .8rem; word-break: break-word; }
+.status-page .st-kind { font-size: .72rem; border-radius: 10px; padding: 1px 8px; background: #f3f4f6;
+    color: #374151; white-space: nowrap; }
+.status-page .st-btn { font: inherit; font-size: .8rem; padding: 3px 10px; border: 1px solid #cfd4da;
+    border-radius: 3px; background: #fff; cursor: pointer; }
+.status-page .st-btn:hover { border-color: #111; }

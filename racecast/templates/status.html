@@ -1,0 +1,140 @@
+{# status.html -- the owner's status page (site_status.py). Admins only;
+   every block renders its own error rather than failing the page. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Site status" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+<main class="page status-page">
+  <h1>Site status</h1>
+  <p class="meta">{{ st.now.strftime("%Y-%m-%d %H:%M") }} server time · season {{ st.season }} ·
+    <a href="/account">Settings</a></p>
+
+  {% macro err(block) %}<p class="st-err">Could not read this: {{ block.error }}</p>{% endmacro %}
+  {% macro n(x) %}{{ "{:,}".format(x) if x is not none else " - " }}{% endmacro %}
+
+  {# ---------------------------------------------------------------- #}
+  <h2>Pipeline</h2>
+  {% set pl = st.pipeline %}
+  {% if pl.error %}{{ err(pl) }}{% else %}
+  {% set run = pl.latest %}
+  <p>
+    Latest run <code>{{ run.dir }}</code>
+    {% if run.started %}({{ ago((st.now - run.started).total_seconds()) }} ago){% endif %}:
+    {% if run.failed %}<span class="st-bad">{{ run.failed|length }} failed</span>
+    {% elif run.open %}<span class="st-warn">still running, or stopped mid-step</span>
+    {% else %}<span class="st-ok">every step ok</span>{% endif %}
+    · {{ run.steps|length }} steps finished · {{ ago(run.seconds) }} of step time
+  </p>
+  {% for s in run.open %}
+    <div class="st-open"><b>{{ s.step }}</b> has no summary line; its log was last written
+      {{ ago(s.idle_s) }} ago{% if s.idle_s > 1800 %} <span class="st-warn">(probably dead)</span>{% endif %}
+      {% if s.tail %}<pre>{{ s.tail|join("\n") }}</pre>{% endif %}</div>
+  {% endfor %}
+  {% for s in run.steps if not s.ok %}
+    <div class="st-open st-failed"><b>{{ s.step }}</b> failed after {{ ago(s.seconds) }}
+      {% if s.tail %}<pre>{{ s.tail|join("\n") }}</pre>{% endif %}</div>
+  {% endfor %}
+  <details class="st-steps"><summary>Every step ({{ run.steps|length }})</summary>
+    <table><thead><tr><th>Step</th><th></th><th>Took</th></tr></thead><tbody>
+    {% for s in run.steps %}
+      <tr><td><code>{{ s.step }}</code></td>
+          <td>{% if s.ok %}<span class="st-ok">ok</span>{% else %}<span class="st-bad">FAILED</span>{% endif %}</td>
+          <td>{{ ago(s.seconds) }}{% if s.how %} <span class="meta">{{ s.how }}</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody></table></details>
+  {% if pl.recent %}
+    <table class="st-recent"><thead><tr><th>Earlier runs</th><th>Steps</th><th>Result</th></tr></thead><tbody>
+    {% for r in pl.recent %}
+      <tr><td><code>{{ r.dir }}</code></td><td>{{ r.n }}</td>
+        <td>{% if r.failed %}<span class="st-bad">failed: {{ r.failed|join(", ") }}</span>
+            {% elif r.open %}<span class="st-warn">stopped mid-step</span>
+            {% else %}<span class="st-ok">ok</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody></table>
+  {% endif %}
+  {% endif %}
+
+  {# ---------------------------------------------------------------- #}
+  <h2>tfrrs rows tied to a person</h2>
+  {% if st.identity.error %}{{ err(st.identity) }}{% else %}
+  <table><thead><tr><th>Sport</th><th>Season</th><th>Rows</th><th>Person</th>
+    <th>tfrrs id only</th><th>Normalized</th><th>Rated</th></tr></thead><tbody>
+  {% for r in st.identity %}
+    {% set gap = r.rows - r.person %}
+    <tr><td>{{ r.sport }}</td><td>{{ r.season }}</td><td>{{ n(r.rows) }}</td>
+      <td>{{ n(r.person) }}{% if r.rows %} <span class="meta">{{ (100 * r.person / r.rows)|round|int }}%</span>{% endif %}</td>
+      <td{% if r.native_only > 0.1 * r.rows %} class="st-bad"{% endif %}>{{ n(r.native_only) }}</td>
+      <td>{{ n(r.normalized) }}</td><td>{{ n(r.rated) }}</td></tr>
+  {% endfor %}
+  </tbody></table>
+  <p class="meta">A row with only a tfrrs id has no athlete page name and no rating.
+    <code>scripts/link_tfrrs_rows.py --apply</code> (pipeline step 04a) closes the gap.</p>
+  {% endif %}
+
+  {# ---------------------------------------------------------------- #}
+  <h2>This season's rated rows</h2>
+  {% if st.rated.error %}{{ err(st.rated) }}{% else %}
+  <table><thead><tr><th>Sport</th><th>Source</th><th>Rows</th><th>Rated</th><th>Latest result</th></tr></thead><tbody>
+  {% for r in st.rated %}
+    <tr><td>{{ r.sport }}</td><td>{{ r.source }}</td><td>{{ n(r.rows) }}</td>
+      <td>{{ n(r.rated) }}{% if r.rows %} <span class="meta">{{ (100 * r.rated / r.rows)|round|int }}%</span>{% endif %}</td>
+      <td>{{ r.latest or " - " }}</td></tr>
+  {% endfor %}
+  </tbody></table>
+  {% endif %}
+
+  {# ---------------------------------------------------------------- #}
+  <h2>Blank athletes</h2>
+  {% if st.blank.error %}{{ err(st.blank) }}{% else %}
+  <p>{% if st.blank.blank %}<span class="st-warn">{{ n(st.blank.blank) }}</span>{% else %}<span class="st-ok">0</span>{% endif %}
+    anet athletes stored with no name · {{ n(st.blank.queued_meets) }} anet meets waiting to be scraped.</p>
+  {% if st.blank.blank %}<p class="meta">They show as Unknown. <code>scripts/requeue_blank_athletes.py --apply</code>
+    puts their meets back on the queue; the next scrape fills the names in.</p>{% endif %}
+  {% endif %}
+
+  {# ---------------------------------------------------------------- #}
+  <h2>Queries running over 5 seconds</h2>
+  {% if st.queries.error %}{{ err(st.queries) }}
+  {% elif not st.queries %}<p class="st-ok">None.</p>
+  {% else %}
+  <table class="st-q"><thead><tr><th>pid</th><th>For</th><th>App</th><th>Waiting on</th><th>Query</th></tr></thead><tbody>
+  {% for q in st.queries %}
+    <tr><td>{{ q.pid }}</td><td class="no-break{% if q.seconds > 600 %} st-bad{% endif %}">{{ ago(q.seconds) }}</td>
+      <td>{{ q.app }}</td><td>{{ q.wait }}</td><td><code>{{ q.query }}</code></td></tr>
+  {% endfor %}
+  </tbody></table>
+  <p class="meta">To end one: <code>scripts/slow_queries.py --terminate &lt;pid&gt;</code>.</p>
+  {% endif %}
+
+  {# ---------------------------------------------------------------- #}
+  <h2 id="reports">Open reports</h2>
+  {% if done %}<p class="predict-status show acct-notice">Report {{ done }} resolved.</p>{% endif %}
+  {% if st.reports.error %}{{ err(st.reports) }}
+  {% elif not st.reports.rows %}<p class="st-ok">None open.</p>
+  {% else %}
+  <p class="meta">{{ st.reports.open }} open{% if st.reports.open > st.reports.rows|length %}, newest {{ st.reports.rows|length }} shown{% endif %}.</p>
+  <table class="st-reports"><thead><tr><th>When</th><th>Kind</th><th>Page</th><th>What they said</th><th></th></tr></thead><tbody>
+  {% for r in st.reports.rows %}
+    <tr><td class="no-break">{{ ago((st.now.astimezone() - r.at).total_seconds()) if r.at.tzinfo else r.at }} ago</td>
+      <td><span class="st-kind">{{ r.kind }}</span></td>
+      <td>{% if r.page and r.page.startswith("/") %}<a href="{{ r.page }}">{{ r.page }}</a>{% else %}{{ r.page or " - " }}{% endif %}</td>
+      <td>{{ r.detail }}{% if r.email %}<br><span class="meta">{{ r.email }}</span>{% endif %}</td>
+      <td><form method="post" action="/account/status/resolve">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="report_id" value="{{ r.id }}">
+        <button type="submit" class="st-btn">Resolve</button></form></td></tr>
+  {% endfor %}
+  </tbody></table>
+  {% endif %}
+</main>
+</body>
+</html>

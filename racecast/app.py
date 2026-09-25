@@ -8419,5 +8419,52 @@ def api_report():
 
     return jsonify({"ok": True, "report_id": report_id})
 
+
+# ★ THE OWNER'S STATUS PAGE (owner, 2026-09-25). The last pipeline run, the
+#   tfrrs identity gap, rated rows, blank athletes, long-running queries and
+#   the open issue reports, on one page -- see site_status.py.
+# ! ADMINS ONLY, AND A 404 FOR ANYONE ELSE: a signed-in reader is not told
+#   the page exists. Admin is accounts.isAdmin (XCP_ADMIN_EMAILS). Under
+#   /account, so it is already never cached and never crawled.
+def _statusAdmin():
+    sess = _accounts.currentSession()
+    if not sess:
+        from urllib.parse import urlencode
+        return None, redirect("/login?" + urlencode({"next": request.path}))
+    if not _accounts.isAdmin(sess["account"]):
+        abort(404)
+    return sess, None
+
+
+@app.route("/account/status")
+def status_page():
+    import site_status
+    sess, go = _statusAdmin()
+    if go:
+        return go
+    with getConn() as conn:
+        st = site_status.gather(conn)
+    return render_template("status.html", st=st, ago=site_status.ago,
+                           csrf=sess["csrf"],
+                           done=request.args.get("done", "")[:40])
+
+
+@app.route("/account/status/resolve", methods=["POST"])
+def status_resolve():
+    import site_status
+    sess, go = _statusAdmin()
+    if go:
+        return go
+    if not _accounts.csrfOk(sess):
+        abort(403)
+    rid = request.form.get("report_id") or ""
+    if not rid.isdigit():
+        abort(400)
+    with getConn() as conn:
+        site_status.resolveReport(conn, int(rid),
+                                  (request.form.get("note") or "").strip()[:500]
+                                  or None)
+    return redirect("/account/status?done=" + rid + "#reports")
+
 if __name__ == "__main__":
     app.run(debug=True)
