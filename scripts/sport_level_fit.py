@@ -109,8 +109,13 @@ def main():
         shift = d["gap"] + d["gain"] if math.isfinite(d["gap"]) and math.isfinite(d["gain"]) else float("nan")
         print(f"  {level:<9}{d['n_gap']:>12,}{d['gap']:>+11.4f}{d['n_growth']:>12,}{d['growth']:>+9.4f}"
               f"{d['gain']:>+9.4f}{shift:>+16.4f}")
+    # ! THE SIGN OF `shift` IS THE GO-LIVE'S (2026-09-25). joint_golive adds it
+    #   to the track rows' EFFECT, which is divided out of the time, so a
+    #   positive shift makes track times faster and track ratings HIGHER.
+    #   This legend used to say the opposite, which read hs's +0.0276 as a
+    #   cut when it is the raise the gap calls for.
     print("\n  (gap: negative = track already rates higher; shift: what the go-live adds to "
-          "the track rows' log time, negative = track rated up)")
+          "the track rows' effect, POSITIVE = track rated UP, negative = down)")
     print("\n" + envLine(summary))
     return 0
 
