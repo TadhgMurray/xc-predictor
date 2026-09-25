@@ -1298,6 +1298,9 @@ def curveWindowGaps(c_free, vecs):
                      for g in vecs])
 
 
+from joint_kernels import fusedMatvec as _fusedMatvec          # noqa: E402
+
+
 class _Operator:
     """(Z'WZ + P) as a matvec, with its diagonal, for one outer iteration."""
 
@@ -1421,7 +1424,13 @@ class _Operator:
     def matvec(self, theta):
         D = self.D
         b = D.unpack(theta)
-        out = self.adjoint(self.w * rowPrediction(b, D, self.h, self.amp))
+        # ★ ONE COMPILED PASS WHEN IT CAN (joint_kernels, 2026-09-25): the
+        #   same Z'W(Z theta) without the 64M-row temporaries. None means
+        #   numba is missing, XCP_JOINT_KERNELS=0, or the rows are not
+        #   sorted by athlete -- and the numpy path below runs as before.
+        out = _fusedMatvec(D, self.w, self.h, self.amp, b)
+        if out is None:
+            out = self.adjoint(self.w * rowPrediction(b, D, self.h, self.amp))
         out[D.o_d:D.o_u] += self.pen_cell * b["d"]
         # ★★ THE RANDOM WALK BETWEEN ERAS. The penalty is
         #    0.5 * pen_era * sum_pairs w * (d[a] - d[b])^2, so its gradient
