@@ -19,12 +19,21 @@ import pool_view                 # noqa: E402
 
 
 def main():
-    for pool in sorted(POOLS):
-        for sport in ("XC", "TF"):
-            v = pool_view._poolConstant(pool, sport)
-            shown = f"{v:.4f}" if v is not None else "unavailable"
-            print(f"  {pool:<10} {sport}: {shown}")
-    print(f"written to {pool_view._constFile()}")
+    # ⚠ REFRESH, NOT READ (2026-09-25). This used to call _poolConstant,
+    #   which answers from the week-old sidecar -- so the step after a solve
+    #   re-saved the previous solve's constants. refreshConstants clears the
+    #   cache and measures the database as this solve left it.
+    stale = 0
+    for pool, sport, old, new, kept in pool_view.refreshConstants(sorted(POOLS)):
+        o = f"{old:.4f}" if old is not None else "--"
+        n = f"{new:.4f}" if new is not None else "unavailable"
+        note = "  ⚠ SAMPLE FAILED, previous value kept" if kept else ""
+        stale += kept
+        print(f"  {pool:<10} {sport}: {o:>10} -> {n}{note}")
+    print(f"written to {pool_view._constFile()}"
+          + (f"  ({stale} kept from before -- see above)" if stale else ""))
+    print("  ! restart the site (systemctl restart xc-predictor): running "
+          "workers hold the old constants in memory.")
 
 
 if __name__ == "__main__":

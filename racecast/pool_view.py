@@ -646,6 +646,42 @@ def stampHsRatings(pool_rows, races):
 # per (pool, sport) is honest for aggregate numbers.
 
 
+def refreshConstants(pools, sports=("XC", "TF")):
+    """Re-measure every pool constant from the CURRENT database and persist.
+
+    ⚠⚠ WHY (2026-09-25). _poolConstant answers from the JSON sidecar for its
+       whole week-long TTL, and the pipeline's 13b step warmed the constants
+       by CALLING _poolConstant -- so after a solve it read last week's
+       numbers back out of the file and wrote them in again. The ability
+       gate went live and the pro pool's HS factor stayed x0.7491, a value
+       measured on the contaminated pool the gate exists to clean up.
+       A constant is a fact about ONE solve; the step that follows the solve
+       has to measure it, not remember it.
+
+    ! A FAILED SAMPLE KEEPS THE OLD VALUE, and says so. Dropping a pool would
+      switch its HS-equivalent off on every page until someone noticed; a
+      stale number beside a warning is the lesser failure.
+
+    Returns [(pool, sport, old, new, kept_old)].
+    """
+    old = dict(_CONST_CACHE)
+    _CONST_CACHE.clear()
+    _FACTOR_CACHE.clear()
+    _NONE_UNTIL.clear()
+    out = []
+    for pool in pools:
+        for sport in sports:
+            key = (pool, sport)
+            v = _poolConstant(pool, sport)
+            kept = False
+            if v is None and old.get(key) is not None:
+                _CONST_CACHE[key] = old[key]
+                kept = True
+            out.append((pool, sport, old.get(key), _CONST_CACHE.get(key), kept))
+    _saveConstFile()
+    return out
+
+
 def repFactor(pool, sport):
     """The representative factor for aggregate numbers (season means, career
     bests, board rows) that carry a pool but no single race distance."""
@@ -937,4 +973,10 @@ def _diag(person_id=None):
 
 
 if __name__ == "__main__":
-    _diag(int(sys.argv[1]) if len(sys.argv) > 1 else None)
+    # --fresh: measure from the database instead of the sidecar -- without
+    # it this prints whatever the last warm-up saved, up to a week old.
+    _args = [a for a in sys.argv[1:] if a != "--fresh"]
+    if "--fresh" in sys.argv[1:]:
+        from rankings import POOLS
+        refreshConstants(sorted(POOLS))
+    _diag(int(_args[0]) if _args else None)
