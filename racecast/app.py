@@ -3050,6 +3050,53 @@ def _borrowTwins(cur, rows, table, meet_id, source, name_key="name"):
     return n
 
 
+def _graftPublished(pub, computed_teams):
+    """{id(published team): computed team} -- which computed team (and so
+    which seven runners) each published team is. See race_xc."""
+    from collections import defaultdict
+
+    def _norm(s):
+        return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+    comp_by, pub_by = defaultdict(list), defaultdict(list)
+    for t in computed_teams:
+        comp_by[_norm(t["school"])].append(t)
+    for t in pub:
+        pub_by[_norm(t["school"])].append(t)
+    graft = {}
+    for nm, group in pub_by.items():
+        cands = sorted(comp_by.get(nm, []), key=lambda c: c["points"])
+        for p, c in zip(sorted(group,
+                               key=lambda p: (p.get("points") is None,
+                                              p.get("points"))),
+                        cands):
+            graft[id(p)] = c
+    # ★ AND A LOOSER SECOND PASS FOR WHAT IS STILL UNPAIRED (owner,
+    #   2026-09-25: "de la salle should have those places linked in the
+    #   teams" -- points 67, every scorer column '-'). The meet publishes
+    #   its own spelling, and "De La Salle" in the results is "De La Salle
+    #   (Concord)" or "De La Salle HS" in the scores, so the exact
+    #   normalized match found nothing. An unpaired published team takes
+    #   the one unpaired computed team whose name is a prefix of its own
+    #   (or the reverse), else the one with the SAME POINTS. Only a
+    #   single candidate counts; two is a guess, and a guess stays blank.
+    used = {id(c) for c in graft.values()}
+    for p in pub:
+        if id(p) in graft:
+            continue
+        free = [c for c in computed_teams if id(c) not in used]
+        pn = _norm(p.get("school"))
+        cands = [c for c in free if pn and _norm(c["school"])
+                 and (pn.startswith(_norm(c["school"]))
+                      or _norm(c["school"]).startswith(pn))]
+        if len(cands) != 1 and p.get("points") is not None:
+            cands = [c for c in free if c.get("points") == p.get("points")]
+        if len(cands) == 1:
+            graft[id(p)] = cands[0]
+            used.add(id(cands[0]))
+    return graft
+
+
 def get_race_results(cur, meet_id, div_id, source=None):
     """Every athlete's result in one XC race, fastest first; `source`
     keeps a colliding meet's finishers out (see get_race_header)."""
@@ -3333,24 +3380,7 @@ def race_xc(meet_id, div_id):
         #   points order, so each Jesuit gets its OWN seven runners and its
         #   own state tag instead of the old all-blank columns. A name with
         #   no computed counterpart still shows no scorers -- honest blank.
-        from collections import defaultdict
-
-        def _norm(s):
-            return re.sub(r"[^a-z0-9]", "", (s or "").lower())
-
-        comp_by, pub_by = defaultdict(list), defaultdict(list)
-        for t in computed["teams"]:
-            comp_by[_norm(t["school"])].append(t)
-        for t in pub:
-            pub_by[_norm(t["school"])].append(t)
-        graft = {}
-        for nm, group in pub_by.items():
-            cands = sorted(comp_by.get(nm, []), key=lambda c: c["points"])
-            for p, c in zip(sorted(group,
-                                   key=lambda p: (p.get("points") is None,
-                                                  p.get("points"))),
-                            cands):
-                graft[id(p)] = c
+        graft = _graftPublished(pub, computed["teams"])
         teams = [{**t,
                   "runners": graft.get(id(t), {}).get("runners", []),
                   "state": graft.get(id(t), {}).get("state")}

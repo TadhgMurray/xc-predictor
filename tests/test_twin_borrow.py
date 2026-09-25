@@ -78,3 +78,23 @@ def test_the_compiled_link_survives_an_unknown_gender():
     assert "/compiled/{{ g.distance }}/{{ g.gender|urlencode }}" in src
     mc = open(os.path.join(_ROOT, "racecast", "meet_compile.py")).read()
     assert "->> 'div_name') ~* '(women|girls|female)'" in mc
+
+
+def test_a_published_team_under_another_spelling_still_gets_its_scorers():
+    """! owner, 2026-09-25: "de la salle should have those places linked in
+    the teams" -- published 67 points, every scorer column '-'."""
+    comp = [{"school": "College Park", "points": 60, "runners": ["cp"]},
+            {"school": "De La Salle", "points": 67, "runners": ["dls"]},
+            {"school": "Amador Valley", "points": 76, "runners": ["av"]}]
+    pub = [{"school": "College Park", "points": 60},
+           {"school": "De La Salle (Concord)", "points": 67},
+           {"school": "Amador Valley HS", "points": 76}]
+    g = A._graftPublished(pub, comp)
+    assert [g[id(p)]["runners"] for p in pub] == [["cp"], ["dls"], ["av"]]
+
+
+def test_two_loose_candidates_stay_blank():
+    comp = [{"school": "Saint", "points": 90, "runners": ["a"]},
+            {"school": "Saint Ignatius", "points": 91, "runners": ["b"]}]
+    pub = [{"school": "Saint Ignatius Prep", "points": 95}]
+    assert A._graftPublished(pub, comp) == {}
