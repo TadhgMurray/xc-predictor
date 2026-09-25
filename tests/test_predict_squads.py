@@ -126,7 +126,8 @@ def test_as_it_ran_carries_the_grade_and_rating_they_raced_with(monkeypatch):
     monkeypatch.setattr(pool_view, "stampBoardRows", lambda rows, **k: None)
     monkeypatch.setattr(P, "_stampCrests", lambda *a, **k: None)
     monkeypatch.setattr(P, "_stateOf", lambda s: None)
-    monkeypatch.setattr(P, "_teamStates", lambda cur, rows: {})
+    monkeypatch.setattr(P, "_teamStates", lambda cur, rows, *a: {})
+    monkeypatch.setattr(P, "_meetState", lambda *a: None)
     rows = [{"person_id": 5, "school": "Campolindo", "grade": "9",
              "name": "Cody De la Cruz", "row_name": None,
              "mean_rating": 118.44, "pool": "hs_m", "season": 2024}]
@@ -170,10 +171,27 @@ def test_a_team_takes_its_runners_state_not_the_names(monkeypatch):
     rows = [{"school": "Antioch", "person_id": i} for i in (1, 2, 3, 4, 5)]
     assert P._teamStates(None, rows) == {"Antioch": "CA"}
     monkeypatch.setattr(P, "_stateOf", lambda s: "IL")
-    monkeypatch.setattr(P, "_teamStates", lambda cur, rows: {"Antioch": "CA"})
+    monkeypatch.setattr(P, "_teamStates", lambda cur, rows, *a: {"Antioch": "CA"})
     target = {"mode": "rerun", "sport": "XC",
               "field": [["Antioch", ["1", "2"], 7]]}
     monkeypatch.setattr(P, "_currentSeason", lambda cur, sport: 2026)
     monkeypatch.setattr(P, "_athleteEntries", lambda *a, **k: [])
     got = P._teamRosters(None, None, target)
     assert {e["school_state"] for e in got} == {"CA"}
+
+
+def test_with_no_runner_resolved_the_meets_state_decides(monkeypatch):
+    """! "Still antioch (IL) and Washington (WA)": the race page's CA is the
+    meet's state (row.school_state or header.state), not a per-athlete one."""
+    import meet_compile
+    import school_identity
+    monkeypatch.setattr(meet_compile, "stampSchoolStates", lambda cur, rows: None)
+    monkeypatch.setattr(school_identity, "contextState",
+                        lambda sch, st, trusted=False:
+                        st if (sch, st) in {("Antioch", "CA"),
+                                            ("Washington", "CA")} else "ZZ")
+    rows = [{"school": "Antioch", "person_id": 1},
+            {"school": "Washington", "person_id": 2}]
+    assert P._teamStates(None, rows, "CA") == {"Antioch": "CA",
+                                               "Washington": "CA"}
+    assert P._teamStates(None, rows) == {}

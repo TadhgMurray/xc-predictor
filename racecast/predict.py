@@ -1717,7 +1717,8 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     if when == "asran":
         by_school = {}
         exact = _exactField(cur, meet_id, div_id, sport)
-        states = _teamStates(cur, [dict(r) for r in exact])
+        states = _teamStates(cur, [dict(r) for r in exact],
+                             _meetState(cur, meet_id, sport))
         for r in exact:
             school = r["school"] or "Unattached"
             team = by_school.setdefault(school, {"school": school,
@@ -1760,7 +1761,8 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     #   hand on the page.
     at_meet_counts = countsBySchool(originals)
     # the school as the people who ran this meet for it wore it
-    states = _teamStates(cur, [dict(r) for r in originals])
+    states = _teamStates(cur, [dict(r) for r in originals],
+                         _meetState(cur, meet_id, sport))
     by_school = {}
     for school in at_meet:
         sq = squads.get(school, [])
@@ -2209,9 +2211,18 @@ def _currentSeasonUncached(cur, sport):
 #   AS THAT ATHLETE wore it). A team is labelled by its runners' majority;
 #   the name-only answer is the fallback for a team none of whose runners
 #   resolves.
-def _teamStates(cur, rows):
+def _teamStates(cur, rows, meet_state=None):
     """{school: state} by the majority of `rows`' own resolved states (rows
-    carry school and person_id; school_state is stamped on them in place)."""
+    carry school and person_id; school_state is stamped on them in place),
+    then -- for a school none of whose runners resolves -- the race page's
+    own fallback: the MEET's state, if the name has a school there
+    (school_identity.contextState, the rule schoolLabelIn labels with).
+
+    ⚠ THAT FALLBACK IS THE ONE THAT MATTERED (owner, 2026-09-25, twice:
+      "Still antioch (IL) and Washington (WA)"). The race page's "Antioch
+      (CA)" is `row.school_state or header.state` -- the per-athlete table
+      had nothing for those runners and the California meet decided it.
+      The predictor fell back to the name alone instead."""
     from collections import Counter
     rows = [r for r in rows if r.get("school")]
     if not rows:
@@ -2221,12 +2232,40 @@ def _teamStates(cur, rows):
         stampSchoolStates(cur, rows)
     except Exception:                                   # noqa: BLE001
         _rollback(cur)
-        return {}
     votes = {}
     for r in rows:
         if r.get("school_state"):
             votes.setdefault(r["school"], Counter())[r["school_state"]] += 1
-    return {sch: c.most_common(1)[0][0] for sch, c in votes.items()}
+    out = {sch: c.most_common(1)[0][0] for sch, c in votes.items()}
+    if meet_state:
+        try:
+            from school_identity import contextState
+        except Exception:                               # noqa: BLE001
+            contextState = None
+        if contextState:
+            for sch in {r["school"] for r in rows} - set(out):
+                st = contextState(sch, meet_state, False)
+                if st:
+                    out[sch] = st
+    return out
+
+
+def _meetState(cur, meet_id, sport):
+    """The state a meet was held in, or None."""
+    if not meet_id:
+        return None
+    table = "meets" if sport == "XC" else "meets_tf"
+    try:
+        cur.execute(f"SELECT state FROM {table} WHERE meet_id = %s "
+                    f"AND NULLIF(btrim(state), '') IS NOT NULL LIMIT 1",
+                    (int(meet_id),))
+        got = cur.fetchone()
+    except Exception:                                   # noqa: BLE001
+        _rollback(cur)
+        return None
+    if not got:
+        return None
+    return got["state"] if isinstance(got, dict) else got[0]
 
 
 def _stateOf(school):
@@ -2318,7 +2357,8 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                             "hs_rating": k.get("hs_rating"),
                             "entered": entered.get(school),
                             "school_state": None})
-        states = _teamStates(cur, [dict(e) for e in entries])
+        states = _teamStates(cur, [dict(e) for e in entries],
+                             _meetState(cur, target.get("meet_id"), sport))
         for e in entries:
             e["school_state"] = (states.get(e["school"])
                                  or _stateOf(e["school"]))
@@ -2387,7 +2427,8 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                 cur, int(target["meet_id"]), div, sport)]
         except Exception:                               # noqa: BLE001
             _rollback(cur)
-    states = _teamStates(cur, evidence)
+    states = _teamStates(cur, evidence,
+                         _meetState(cur, target.get("meet_id"), sport))
     for e in entries:
         e["school_state"] = states.get(e.get("school")) or _stateOf(e.get("school"))
     return entries
