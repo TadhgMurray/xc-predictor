@@ -1944,7 +1944,17 @@ def saveAthletesBulk(conn, athletes: list):
         INSERT INTO athletes (athlete_id, first_name, last_name, gender, school,
                               source, id_system, person_id)
         VALUES %s
-        ON CONFLICT (athlete_id, school) DO NOTHING
+        -- a blank placeholder (see saveResultsBulk) is filled, a real row kept
+        ON CONFLICT (athlete_id, school) DO UPDATE SET
+            first_name = CASE WHEN COALESCE(btrim(athletes.first_name), '') = ''
+                              THEN EXCLUDED.first_name ELSE athletes.first_name END,
+            last_name  = CASE WHEN COALESCE(btrim(athletes.last_name), '') = ''
+                              THEN EXCLUDED.last_name ELSE athletes.last_name END,
+            gender     = CASE WHEN COALESCE(btrim(athletes.gender), '') = ''
+                              THEN EXCLUDED.gender ELSE athletes.gender END
+        WHERE COALESCE(btrim(athletes.first_name), '') = ''
+           OR COALESCE(btrim(athletes.last_name), '') = ''
+           OR COALESCE(btrim(athletes.gender), '') = ''
     """, rows)
 
 # saveResultsBulk
@@ -2072,6 +2082,23 @@ def saveResultsBulk(conn, results: list):
     # middle school then high school) - each (athlete_id, school) is its own
     # row, so this adds the ones not already present. Built from `rows` so the
     # school is byte-identical to what the result writes.
+    # ⚠⚠ WITH THE NAME AND GENDER THE RESULT CARRIES (owner, 2026-09-25: a
+    #    dual meet listing every freshman as "Unknown", each rated ~25 points
+    #    above named runners with the same time). This is the ONLY athletes
+    #    write on the XC save path -- _saveXCMeet never calls saveAthletesBulk
+    #    -- and it wrote "", "", "": every athlete first seen in a cross
+    #    country meet had no name and no gender, so no name on any page and
+    #    the unknown-gender pool (a different mean) for their ratings. The
+    #    result JSON has FirstName / LastName / Gender on every row.
+    # ! AND A BLANK ROW IS FILLED, never a real one overwritten: the conflict
+    #   update only touches names/gender that are empty.
+    names = {}
+    for resultData, _m, _s, _d in results:
+        aid = resultData.get("AthleteID")
+        if aid is not None and aid not in names:
+            names[aid] = (_clean(resultData.get("FirstName")) or "",
+                          _clean(resultData.get("LastName")) or "",
+                          _clean(resultData.get("Gender")) or "")
     seen = set()
     athlete_rows = []
     for row in rows:
@@ -2082,7 +2109,9 @@ def saveResultsBulk(conn, results: list):
         if pair in seen:
             continue
         seen.add(pair)
-        athlete_rows.append((aid, "", "", "", school, "anet", "anet", aid))  # last aid = person_id seed
+        first, last, gender = names.get(aid, ("", "", ""))
+        athlete_rows.append((aid, first, last, gender, school,
+                             "anet", "anet", aid))   # last aid = person_id seed
 
     if athlete_rows:
         acur = conn.cursor()
@@ -2090,7 +2119,16 @@ def saveResultsBulk(conn, results: list):
             INSERT INTO athletes (athlete_id, first_name, last_name, gender, school,
                               source, id_system, person_id)
             VALUES %s
-            ON CONFLICT (athlete_id, school) DO NOTHING
+            ON CONFLICT (athlete_id, school) DO UPDATE SET
+                first_name = CASE WHEN COALESCE(btrim(athletes.first_name), '') = ''
+                                  THEN EXCLUDED.first_name ELSE athletes.first_name END,
+                last_name  = CASE WHEN COALESCE(btrim(athletes.last_name), '') = ''
+                                  THEN EXCLUDED.last_name ELSE athletes.last_name END,
+                gender     = CASE WHEN COALESCE(btrim(athletes.gender), '') = ''
+                                  THEN EXCLUDED.gender ELSE athletes.gender END
+            WHERE COALESCE(btrim(athletes.first_name), '') = ''
+               OR COALESCE(btrim(athletes.last_name), '') = ''
+               OR COALESCE(btrim(athletes.gender), '') = ''
         """, athlete_rows)
 
     # ON CONFLICT refreshes capture columns + time_seconds on every conflict
