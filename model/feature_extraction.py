@@ -652,8 +652,53 @@ def _streamRows(conn, sql, params, name):
     cursor.itersize = _STREAM_BATCH
     cursor.execute(sql, params)
     for row in cursor:
-        yield dict(row)
+        yield toCommonScale(dict(row))
     cursor.close()
+
+
+# ★ ONE SCALE (owner, 2026-09-25: "the model basically always predicts ppl
+#   slower than they run... can you implement the one scale thing?").
+#
+# ⚠ normalized_time IS WRITTEN ON ITS POOL'S ANCHOR -- ms 3200, hs 5000,
+#   college men 8000, women 6000 -- so one athlete's history was a mixture of
+#   distances wearing one column name, and the target could sit on a
+#   different one from every race before it. The model learned that mixture.
+#
+# ★ SO EVERY ROW IS MOVED ONTO COMMON_ANCHOR_M HERE, AS IT IS READ, with its
+#   own pool's curve (normalize_distance.anchorShift). The pool is the one
+#   the BACKFILL wrote it in (normPoolFor, the backfill's own function), so
+#   the shift undoes exactly the anchor that was applied. Sequence, target
+#   and baseline all read the moved value; the stored one stays on the row
+#   as normalized_time_pool.
+#
+# ! XCP_MODEL_NORM_SCALE=pool keeps the old mixture, for comparing against a
+#   model trained before this. metadata.pkl records which one a run used, and
+#   train.py carries it into target_stats.pkl for inference.
+NORM_SCALE = ("pool" if (os.environ.get("XCP_MODEL_NORM_SCALE") or "").strip()
+              .lower() == "pool" else "common5000")
+
+
+def toCommonScale(row, scale=None):
+    """The row with normalized_time on the common anchor. Pure but for the
+    spline artifact; a row whose pool cannot be told keeps its value and is
+    marked. `scale` overrides NORM_SCALE -- inference passes the scale the
+    loaded model was trained on."""
+    nt = row.get("normalized_time")
+    row["normalized_time_pool"] = nt
+    if (scale or NORM_SCALE) != "common5000" or nt is None:
+        return row
+    from normalize_distance import normPoolFor, anchorShift
+    fixed = ((row.get("fixed_grade"), row.get("fixed_level"))
+             if row.get("grade_untrusted") else None)
+    pool = normPoolFor(row.get("grade"), row.get("gender"), row.get("source"),
+                       row.get("school"), season_level=row.get("season_level"),
+                       fixed=fixed)
+    if pool is None:
+        row["norm_unshifted"] = True
+        return row
+    row["normalized_time"] = float(nt) * anchorShift(
+        pool, "XC" if row.get("is_xc") else "TF")
+    return row
 
 
 # A weather-shaped nothing, for a database where the table was never
@@ -2685,6 +2730,8 @@ def _saveMetadata(max_len: int, total_examples: int,
             "total_examples": total_examples,
             "num_chunks":     num_chunks,
             "chunk_size":     CHUNK_SIZE,
+            # which scale normalized_time was on (toCommonScale)
+            "norm_scale":     NORM_SCALE,
         }, f)
     print(f"  Saved {path}")
 

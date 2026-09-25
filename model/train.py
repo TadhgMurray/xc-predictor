@@ -290,6 +290,11 @@ class ChunkedRaceDataset(Dataset):
 
         self.total_examples = meta["total_examples"]
         self.chunk_size     = meta.get("chunk_size", 10_000)
+        # ★ WHICH SCALE normalized_time WAS EXTRACTED ON, carried to
+        #   target_stats.pkl so inference feeds the model the same one. A
+        #   metadata.pkl from before the key existed is the pool mixture.
+        global NORM_SCALE_SEEN
+        NORM_SCALE_SEEN = meta.get("norm_scale", "pool")
         self.num_chunks = meta["num_chunks"]
 
         # ★ WHICH CHUNKS THIS RUN SEES. --max-chunks N is the prefix 0:N,
@@ -901,6 +906,9 @@ def _statsFromModel(model, fallback: dict) -> dict:
     return out
 
 
+NORM_SCALE_SEEN = "pool"
+
+
 def saveTargetStats(stats: dict, path: str) -> None:
     """Persist the target stats beside model.pt.
 
@@ -921,7 +929,9 @@ def saveTargetStats(stats: dict, path: str) -> None:
            "ctx_std": stats["ctx_std"].tolist(),
            "max_year": float(stats.get("max_year") or 0.0),
            "n_examples": int(stats["n_examples"]),
-           "n_chunks": int(stats["n_chunks"])}
+           "n_chunks": int(stats["n_chunks"]),
+           # feature_extraction.toCommonScale: "common5000" or "pool"
+           "norm_scale": NORM_SCALE_SEEN}
     with open(path, "wb") as f:
         pickle.dump(doc, f)
 

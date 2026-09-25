@@ -982,6 +982,73 @@ def _distancePotentialEntry(pool, sport):
 #            anchors landed.
 # Arguments: pool -- bare or sport-suffixed ('ms_f' or 'ms_f|XC').
 # Output:    metres as float; the artifact's global target when unknown.
+# normPoolFor
+# Purpose:   the pool the BACKFILL normalises a row in -- the one whose anchor
+#            its normalized_time is written on. One function, so the model's
+#            feature extraction (which has to know that anchor to put every
+#            row on one scale) and the backfill cannot drift apart.
+# Arguments: the row's raw grade, gender, source and school; season_level,
+#            the athlete-season verdict; fixed, grade_fix's (grade, level)
+#            for that athlete-season, or None.
+# Output:    a pool name, or None (the backfill skips the row).
+#
+# ★ THE VERDICT OUTRANKS THE ROW'S OWN GRADE, exactly as resolvePool's stage
+#   0 does for the engine: a corroborated grade replaces the raw one and
+#   silences the season level; a verdict with no grade means the raw grade is
+#   not to be used and the verdict's level carries the row; with no verdict a
+#   usable raw grade silences the season level (resolvePool's stage 1).
+def normPoolFor(grade, gender, source, school, season_level=None, fixed=None):
+    if fixed is not None:
+        fixed_grade, fixed_level = fixed
+        if fixed_grade is not None:
+            grade, season_level = fixed_grade, None
+        else:
+            grade, season_level = None, fixed_level
+    elif grade is not None:
+        season_level = None
+    return poolFor(grade, gender, source, school, season_level=season_level)
+
+
+# anchorShift
+# Purpose:   the multiplier that moves a normalized_time written on its
+#            pool's anchor onto `to_m` metres, with that pool's own curve:
+#            exp(g(log to_m) - g(log anchor)). The distance normalisation's
+#            own difference form, so everything else the row was corrected
+#            for (course, geometry, weather, era) rides along untouched.
+# Output:    float; 1.0 when there is nothing to move (no artifact, a legacy
+#            artifact whose rows all sit on the global target already, or a
+#            pool already anchored at to_m).
+#
+# ⚠⚠ WHY (owner, 2026-09-25: "can you implement the one scale thing?"). The
+#    anchors went per pool -- ms 3200, hs 5000, college men 8000, women 6000
+#    -- so one athlete's history holds a middle-school 3200-equivalent, a
+#    high-school 5K-equivalent and a college 8K-equivalent side by side, and
+#    the prediction model was trained on exactly that mixture. Its
+#    predictions came back 2x slow for some runners and slow on average.
+COMMON_ANCHOR_M = 5000.0
+_SHIFT_CACHE = {}
+
+
+def anchorShift(pool, sport=None, to_m=COMMON_ANCHOR_M):
+    if not pool or not _SPLINES or _SPLINES.get("kind") != "distance_potential":
+        return 1.0
+    key = (pool, sport, float(to_m))
+    got = _SHIFT_CACHE.get(key)
+    if got is not None:
+        return got
+    entry = _distancePotentialEntry(pool, sport)
+    base = str(pool).split("|")[0]
+    anchor = (_SPLINES.get("pool_targets", {}).get(base)
+              or entry.get("target") or _SPLINES["target"])
+    if abs(float(anchor) - float(to_m)) < 1e-6:
+        got = 1.0
+    else:
+        got = math.exp(_evalDistancePotential(entry, math.log(float(to_m)))
+                       - _evalDistancePotential(entry, math.log(float(anchor))))
+    _SHIFT_CACHE[key] = got
+    return got
+
+
 def targetFor(pool, sport=None):
     """The anchor for a pool -- the distance its normalized_time is expressed at.
 

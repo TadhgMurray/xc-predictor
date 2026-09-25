@@ -159,6 +159,11 @@ def _loadModel():
                       # _clampYear. Absent in a model trained before the year
                       # feature existed, and the clamp then does nothing.
                       "max_year": stats.get("max_year"),
+                      # ★ THE SCALE ITS HISTORIES WERE ON (train.py, from
+                      #   feature_extraction.toCommonScale). A model from
+                      #   before the key was trained on the pool mixture and
+                      #   must be fed it.
+                      "norm_scale": stats.get("norm_scale", "pool"),
                       "encoders": encoders, "vocab": vocab}
         _model = model
     except Exception as exc:                       # noqa: BLE001
@@ -1185,7 +1190,8 @@ def _raceSeconds(norm, ctx):
         return None
     try:
         import conversions
-        out = conversions.normalized_to_time(float(norm), ctx)
+        norm = float(norm) / float(ctx.get("scale_shift") or 1.0)
+        out = conversions.normalized_to_time(norm, ctx)
     except Exception:                                   # noqa: BLE001
         return None
     return float(out) if out and out > 0 else None
@@ -1214,7 +1220,13 @@ def _denormContext(spec, last_row):
     if not pool or pool == "unknown_level":
         return None
     date = _asDate(spec.get("date"))
-    return {"distance": float(dist), "pool": pool,
+    # ★ A COMMON-SCALE PREDICTION GOES BACK ONTO THIS POOL'S ANCHOR before
+    #   conversions reads it (_raceSeconds divides by this).
+    shift = 1.0
+    if _normScale() == "common5000":
+        from normalize_distance import anchorShift
+        shift = anchorShift(pool, spec.get("sport"))
+    return {"distance": float(dist), "pool": pool, "scale_shift": shift,
             "sport": spec.get("sport"),
             "season": date.year if date else None,
             "difficulty": spec.get("course_difficulty"),
@@ -1368,9 +1380,19 @@ def _historyRows(cur, person_ids):
             row = dict(r)
             pid = row.get("person_id") or row.get("athlete_id")
             out.setdefault(pid, []).append(row)
+    # ★ ON THE SCALE THE MODEL WAS TRAINED ON -- the same function the
+    #   extraction ran, fed the loaded model's own record of which scale.
+    scale = _normScale()
     for rows in out.values():
+        for row in rows:
+            fx.toCommonScale(row, scale=scale)
         rows.sort(key=lambda r: r["date"])
     return out
+
+
+def _normScale():
+    """'common5000' or 'pool': the scale the loaded model's inputs are on."""
+    return (_artifacts or {}).get("norm_scale", "pool")
 
 
 def _targetSpec(cur, target):

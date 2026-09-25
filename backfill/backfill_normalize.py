@@ -55,7 +55,7 @@ from database import getConn, initPool
 # any of that logic here — it just calls the same functions the library uses.
 from normalize_distance import (
     weatherTempAgg,
-    normalizeResult, EVENT_DISTANCES_TF, poolFor, metersFromDistance,
+    normalizeResult, EVENT_DISTANCES_TF, poolFor, normPoolFor, metersFromDistance,
 )
 # results_tf.event_short is FREE TEXT: 64,079 distinct values across two scraper
 # conventions ('3200m' vs "Men's 3200 Meters"). The exact-match dict priced only
@@ -1874,34 +1874,14 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         #     stopped advancing) means the raw grade is NOT to be used, so
         #     the grade goes to None and the verdict's level carries the row;
         #     no verdict at all leaves both exactly as they were.
-        _grade = row[_GRADE]
+        # The precedence (verdict over grade, grade over season level) is
+        # normalize_distance.normPoolFor now -- one function, shared with the
+        # model's feature extraction, which must know this row's anchor.
+        # See its header for the rule and why it mirrors resolvePool.
         _gf = (season_levels[2].get(_sl_key)
                if (season_levels[2] and row[_PERSON] and _ay) else None)
-        if _gf is not None:
-            _fixed_grade, _fixed_level = _gf
-            if _fixed_grade is not None:
-                _grade, _season_lvl = _fixed_grade, None
-            else:
-                _grade, _season_lvl = None, _fixed_level
-        elif _grade is not None:
-            # ⚠ AND A USABLE RAW GRADE ALSO SUPPRESSES THE SEASON LEVEL, for
-            #   the same reason. resolvePool's stage 1 reads
-            #       season_for_pool = None if (grade is not None
-            #                                  and not grade_untrusted)
-            #                         else season_level
-            #   so with no verdict and a grade on the row, the engine never
-            #   consults athlete_season_level at all -- it hands poolFor a
-            #   grade and nothing else.
-            #
-            #   This file used to pass both and let poolFor's arbitrateLevel
-            #   choose. Wherever it chose the season, the backfill pooled the
-            #   row one way and the engine another, and the anchor written
-            #   was not the anchor read. Aligning costs the season verdict
-            #   nothing it still had: the engine had already stopped using it
-            #   in this case, so the two now agree instead of half-agreeing.
-            _season_lvl = None
-        pool = poolFor(_grade, gender, row[_SRC], row[_SCHOOL],
-                       season_level=_season_lvl)
+        pool = normPoolFor(row[_GRADE], gender, row[_SRC], row[_SCHOOL],
+                           season_level=_season_lvl, fixed=_gf)
         if pool is None:                           # grade+gender+source -> no pool
             trace = _makeTrace(row, "unknown_pool", distance)
             return row[_ID], None, _SkipReason.UNKNOWN_POOL, trace
