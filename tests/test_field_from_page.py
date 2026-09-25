@@ -96,8 +96,10 @@ def test_the_server_prefers_it_over_deriving():
     # ! THE SCHOOL COMES FROM THE PAGE TOO. Re-resolving it could put a
     #   runner on a different team and re-open the divergence one level down.
     assert '"school": school' in body, body[:600]
-    # and it returns before the derivation below can run
-    assert body.index("return entries") < body.index("_exactField"), \
+    # and it returns before the derivation below can run. (The explicit
+    # branch reads _exactField too, but only for the grade and rating each
+    # runner had at the race -- who races still comes from the page.)
+    assert body.index("return entries") < body.index("originals = _exactField"), \
         "the derived field must not run when the page sent one"
 
 

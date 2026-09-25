@@ -1919,9 +1919,13 @@ async function predict() {
                 : (state.groups.length ? state.groups.map((g) => g.slice())
                                        : [null]);
 
+  /* the Best 7 and head-to-head tools re-ask the same race, so they need
+     the request each result came from */
+  state.lastTargets = targets;
+  state.lastResults = [];
   try {
     const parts = [];
-    for (const div of targets) {
+    for (const [idx, div] of targets.entries()) {
       const res = await sendQuery(path, buildQuery(div));
       const data = await readJson(res);
       if (!res.ok) { setStatus(data.error || res.statusText, true); return; }
@@ -1932,11 +1936,13 @@ async function predict() {
         setStatus(data.reason || "Not available yet.", false);
         return;
       }
+      state.lastResults[idx] = data;
       const body = state.who === "individual"
-        ? renderIndividual(data) : renderTeam(data);
+        ? renderIndividual(data)
+        : `<div class="team-result" data-t="${idx}">${renderTeam(data)}</div>`;
       parts.push(targets.length > 1
         ? `<section class="div-result"
-                    style="--race:${raceColour(targets.indexOf(div))}">
+                    style="--race:${raceColour(idx)}">
              <h3 class="div-result-h">${esc(divLabel(div))}</h3>${body}
            </section>`
         : body);
@@ -2140,7 +2146,10 @@ function scoreSpreadTip(t, d, teams) {
   return esc(lines.concat(odds).join("\n"));
 }
 
-function teamScoreTable(d) {
+function teamScoreTable(d, opts) {
+  /* ★ THE TOOLS RIDE ON THE PAGE'S OWN RESULT ONLY: a head-to-head drawn
+       under it is an answer, not a new place to start from. */
+  const tools = !(opts && opts.tools === false) && state.who === "team";
   const scored = (d.teams || []).some((t) => t.actual_score !== undefined
                                           && t.actual_score !== null);
   /* ⚠ AN INCOMPLETE TEAM IS NOT A ROW, IT IS A SENTENCE -- which is what
@@ -2166,6 +2175,9 @@ function teamScoreTable(d) {
         be scored.${short.length ? ` Runners per team: ${shortList}.` : ""}</p>`;
   }
 
+  // picking two of two teams is the race already on screen
+  const pickable = tools && full.length > 2;
+
   const rows = full.map((t, i) => {
     /* ! ONE CELL PER SCORING POSITION, 1..7, and a team that has fewer shows
          " - " in the rest. A fixed seven columns is what makes two teams
@@ -2184,7 +2196,10 @@ function teamScoreTable(d) {
               esc(r.name || "")} – ${fmtTime(r.seconds)}">${n}</a>`
           : " - "}</td>`);
     }
+    const name = esc(t.school_label || schoolWithState(t.team, t.state));
     return `<tr>
+      ${pickable ? `<td class="h2h-cell"><input type="checkbox" class="h2h-pick"
+        data-team="${esc(t.team)}" aria-label="Score ${name} head to head"></td>` : ""}
       <td>${i + 1}</td>
       <td>${schoolCell(t.team, t.state, t.school_href, t.school_label,
                        t.crest)}${
@@ -2198,6 +2213,9 @@ function teamScoreTable(d) {
       ${anySim ? `<td class="pwin">${pct((t.sim || {}).p_win) ?? " - "}</td>` : ""}
       ${scored ? `<td class="actual">${t.actual_score ?? " - "}</td>` : ""}
       ${cells.join("")}
+      ${tools ? `<td class="bl-cell"><button type="button" class="bl-btn"
+        data-team="${esc(t.team)}" title="Search ${name}'s whole squad for the
+seven most likely to win this race">Best 7</button></td>` : ""}
     </tr>`;
   }).join("");
 
@@ -2213,18 +2231,27 @@ function teamScoreTable(d) {
     d.sim && d.sim.available === false && d.sim.reason
       ? ` (No win chances: ${esc(d.sim.reason)})` : ""}</p>`;
 
-  return `<h2>Predicted team scores</h2>
+  const toolbar = pickable
+    ? `<div class="team-tools">
+         <button type="button" class="h2h-go" disabled>Score the ticked teams alone</button>
+         <span class="meta">Tick two or more teams to see who beats whom with
+           nobody else in the race.</span></div>`
+    : "";
+
+  return `<h2>${esc((opts && opts.title) || "Predicted team scores")}</h2>
     <table>
       <thead><tr>
+        ${pickable ? `<th class="h2h-cell" title="Tick teams to score them head to head">vs</th>` : ""}
         <th>Place</th><th>Team</th><th>Points</th>
         ${anySim ? `<th class="pwin" title="How often this team wins when the
           race is run ${(d.sim || {}).draws || 0} times, drawing each runner
           out of the band the model published for them.">Win</th>` : ""}
         ${scored ? "<th>Actual</th>" : ""}
         <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th>
+        ${tools ? "<th></th>" : ""}
       </tr></thead>
       <tbody>${rows}</tbody>
-    </table>${note}`;
+    </table>${note}${toolbar}${tools ? '<div class="team-tool-out"></div>' : ""}`;
 }
 
 /* Every predicted finisher, one per row -- race.html's second table.
@@ -2319,6 +2346,261 @@ function renderTeam(d) {
     : `<p class="meta">Scored against the full field.</p>`;
   return note + teamScoreTable(d) + finishTable(d);
 }
+
+/* ------------------------------------------------------------------ *
+ *  BEST 7 AND HEAD TO HEAD, UNDER A TEAM RESULT
+ * ------------------------------------------------------------------ */
+
+/*
+ * ★ TWO QUESTIONS A COACH ASKS OF THE TABLE (owner, 2026-09-25). "Who do I
+ *   run?" is /api/predict/lineup: race_sim.bestLineup searches the squad for
+ *   the seven most likely to win against the rest of the field, held as it
+ *   is on the cards. "Do we beat them?" is the same race scored with only
+ *   the ticked teams in it -- predictTeam's head_to_head.
+ *
+ * ! BOTH RE-ASK THE REQUEST THE RESULT CAME FROM (state.lastTargets), with
+ *   the field on the cards narrowed or widened. The cards are the truth, as
+ *   everywhere on this page; neither tool derives a field of its own.
+ */
+
+/* The card a school sits on inside one predicted race (a group of divisions
+   or one), with the edit record it belongs to. */
+function cardTeam(target, school) {
+  const group = Array.isArray(target) ? target
+              : (target == null ? [null] : [target]);
+  for (const div of group) {
+    const e = editsFor(div);
+    const t = (e.field?.teams || []).find((x) => x.school === school);
+    if (t) return { div: div, e: e, t: t };
+  }
+  return null;
+}
+
+function teamLabelIn(d, school) {
+  const t = (d.teams || []).find((x) => x.team === school);
+  return t ? (t.school_label || schoolWithState(t.team, t.state)) : school;
+}
+
+async function headToHead(btn) {
+  const box = btn.closest(".team-result");
+  const idx = Number(box.dataset.t);
+  const out = box.querySelector(".team-tool-out");
+  const picked = [...box.querySelectorAll(".h2h-pick:checked")]
+    .map((x) => x.dataset.team);
+  const q = buildQuery(state.lastTargets[idx]);
+  const field = JSON.parse(q.get("field") || "[]")
+    .filter((row) => picked.includes(row[0]));
+  if (field.length < 2) {
+    out.innerHTML = `<p class="meta">Those teams are not on the cards any
+      more; press Predict again first.</p>`;
+    return;
+  }
+  q.set("field", JSON.stringify(field));
+  q.set("head_to_head", "1");
+  const names = picked.map((s) => teamLabelIn(state.lastResults[idx], s));
+  btn.disabled = true;
+  out.innerHTML = `<p class="meta">Scoring ${esc(names.join(" vs "))}…</p>`;
+  try {
+    const res = await sendQuery("/api/predict/team", q);
+    const data = await readJson(res);
+    if (!res.ok || data.available === false) {
+      out.innerHTML = `<p class="meta">${esc(data.error || data.reason
+                                             || "That did not work.")}</p>`;
+      return;
+    }
+    out.innerHTML = `<div class="tool-panel">
+      ${teamScoreTable(data, { tools: false,
+                               title: "Head to head: " + names.join(" vs ") })}
+      <p class="meta">Places are counted among these teams' runners only, so
+        a runner who was 40th in the full race can score 9 here.</p></div>`;
+  } catch (err) {
+    out.innerHTML = `<p class="meta">${esc(err.message || "That did not work.")}</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function bestSeven(btn) {
+  const box = btn.closest(".team-result");
+  const idx = Number(box.dataset.t);
+  const out = box.querySelector(".team-tool-out");
+  const school = btn.dataset.team;
+  const target = state.lastTargets[idx];
+  const card = cardTeam(target, school);
+  if (!card) {
+    out.innerHTML = `<p class="meta">${esc(school)} is not on the cards any
+      more; press Predict again first.</p>`;
+    return;
+  }
+  const label = teamLabelIn(state.lastResults[idx], school);
+  const now = (state.lastResults[idx].teams || [])
+    .find((t) => t.team === school) || {};
+  const nowSim = now.sim || {};
+
+  /* ★ WHO IS CHOSEN FROM. This year: the school's whole current squad plus
+       whoever is on its card. As it ran: the people who ran it -- a team
+       that ran nine can still ask which seven should have scored. */
+  const pool = new Map();
+  for (const r of card.t.runners || []) {
+    pool.set(String(r.person_id), r);
+  }
+  btn.disabled = true;
+  out.innerHTML = `<p class="meta">Looking at ${esc(label)}'s squad…</p>`;
+  try {
+    if (state.when !== "asran") {
+      const squad = await loadSquad(school, card.e.field?.gender);
+      for (const r of squad.runners || []) {
+        if (r.person_id != null && !pool.has(String(r.person_id)))
+          pool.set(String(r.person_id), r);
+      }
+    }
+    const ids = [...pool.keys()];
+    if (ids.length <= 7) {
+      out.innerHTML = `<p class="meta">${esc(label)} has ${ids.length}
+        runner${ids.length === 1 ? "" : "s"} to choose from, so the card
+        already runs all of them.</p>`;
+      return;
+    }
+    const q = buildQuery(target);
+    q.delete("sim");
+    q.set("team", school);
+    /* ! A TEAM WITH NO REAL CHANCE IS SEARCHED FOR ITS SCORE. Maximising a
+         win chance that is 0 in every lineup picks at random; the lowest
+         average score is the question such a team is actually asking. */
+    const objective = nowSim.p_win != null && nowSim.p_win < 0.03
+      ? "score" : "p_win";
+    q.set("objective", objective);
+    const field = JSON.parse(q.get("field") || "[]");
+    const row = field.find((r) => r[0] === school);
+    // entered = null: the squad is candidates, not an entry list
+    if (row) { row[1] = ids; row[2] = null; }
+    else field.push([school, ids, null]);
+    q.set("field", JSON.stringify(field));
+
+    out.innerHTML = `<p class="meta">Racing lineups from ${ids.length}
+      runners… (a few seconds)</p>`;
+    const res = await sendQuery("/api/predict/lineup", q);
+    const data = await readJson(res);
+    if (!res.ok || data.available === false) {
+      out.innerHTML = `<p class="meta">${esc(data.error || data.reason
+                                             || "That did not work.")}</p>`;
+      return;
+    }
+    state.lastLineup = state.lastLineup || {};
+    state.lastLineup[idx] = { data: data, div: card.div, school: school };
+    const onCard = new Set((card.t.runners || [])
+      .map((r) => String(r.person_id))
+      .filter((id) => !card.e.removed.has(id)));
+    out.innerHTML = lineupPanel(data, label, onCard, nowSim, objective, idx);
+  } catch (err) {
+    out.innerHTML = `<p class="meta">${esc(err.message || "That did not work.")}</p>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function lineupPanel(d, label, onCard, nowSim, objective, idx) {
+  const rows = [...(d.lineup || []), ...(d.bench || [])];
+  const nameOf = new Map(rows.map((r) => [String(r.person_id),
+                                          r.name || "Unknown"]));
+  const best = new Set((d.lineup || []).map((r) => String(r.person_id)));
+  const ins = [...best].filter((id) => !onCard.has(id));
+  const outs = [...onCard].filter((id) => !best.has(id));
+  const pts = (x) => (x == null ? " - " : x.toFixed(1));
+
+  const line = (r, tag) => `<tr>
+      <td>${r.person_id ? `<a href="/athlete/${encodeURIComponent(r.person_id)}">${
+             esc(r.name || "Unknown")}</a>` : esc(r.name || "Unknown")}</td>
+      <td>${esc(r.grade_label || " - ")}</td>
+      <td class="no-break">${fmtTime(r.seconds)}</td>
+      <td class="no-break">${rv(r.rating, r.hs_rating) || " - "}</td>
+      <td class="bl-tag">${tag}</td></tr>`;
+  const lineupRows = (d.lineup || []).map((r) => line(r,
+    onCard.has(String(r.person_id)) ? "" : "<b>in</b>")).join("");
+  const benchRows = (d.bench || []).map((r) => line(r,
+    onCard.has(String(r.person_id)) ? "<b>out</b>" : "")).join("");
+
+  const change = ins.length
+    ? `Run ${ins.map((id) => esc(nameOf.get(id) || id)).join(", ")} instead of
+       ${outs.map((id) => esc(nameOf.get(id) || id)).join(", ") || "nobody"}.`
+    : "The card already runs this seven.";
+
+  const alts = (d.alternatives || []).slice(0, 4).map((a) => {
+    const set = new Set((a.lineup || []).map(String));
+    const aIn = [...set].filter((id) => !best.has(id));
+    const aOut = [...best].filter((id) => !set.has(id));
+    if (!aIn.length) return "";
+    return `<li>${aIn.map((id) => esc(nameOf.get(id) || id)).join(", ")} for
+      ${aOut.map((id) => esc(nameOf.get(id) || id)).join(", ")}:
+      wins ${pct(a.p_win) ?? " - "}, ${pts(a.score_mean)} points</li>`;
+  }).filter(Boolean).join("");
+
+  return `<div class="tool-panel bl-panel">
+    <h3>Best seven for ${esc(label)}</h3>
+    <p class="bl-sum">
+      <span>Wins <b>${pct(d.p_win) ?? " - "}</b>${nowSim.p_win != null
+        ? ` <em>(the card's seven: ${pct(nowSim.p_win)})</em>` : ""}</span>
+      <span>Averages <b>${pts(d.score_mean)}</b> points${nowSim.score_mean != null
+        ? ` <em>(card: ${pts(nowSim.score_mean)})</em>` : ""}</span></p>
+    <p>${change}</p>
+    <table class="bl-table">
+      <thead><tr><th>Runs</th><th>Grade</th><th>Time</th><th>Rating</th><th></th></tr></thead>
+      <tbody>${lineupRows}</tbody>
+      ${benchRows ? `<thead><tr><th colspan="5">Rests</th></tr></thead>
+        <tbody class="bl-bench">${benchRows}</tbody>` : ""}
+    </table>
+    ${alts ? `<p class="meta">Close behind:</p><ul class="bl-alts">${alts}</ul>` : ""}
+    ${ins.length ? `<button type="button" class="bl-apply" data-t="${idx}">Put this seven on the card</button>` : ""}
+    <p class="meta">${objective === "score"
+      ? "Chosen for the lowest average score: no lineup gives this team a real chance to win, so the win chance cannot tell them apart."
+      : "Chosen for the best chance to win."} ${d.considered
+      ? `${d.considered.toLocaleString()} lineups raced${d.method === "greedy" ? " (a swap search, not every combination)" : ""}.` : ""}
+      Everyone else runs as they are on the cards. These chances come from
+      fewer draws than the table above, so a point or two either way is noise.</p>
+  </div>`;
+}
+
+/* The found seven onto the card: the rest of the card comes off (kept, so
+   the row's Add undoes it), the new names go on. */
+function applyLineup(btn) {
+  const got = (state.lastLineup || {})[btn.dataset.t];
+  if (!got) return;
+  const card = cardTeam(got.div, got.school);
+  if (!card) return;
+  const best = new Set((got.data.lineup || []).map((r) => String(r.person_id)));
+  for (const r of card.t.runners || []) {
+    const id = String(r.person_id);
+    if (!best.has(id)) card.e.removed.add(id);
+  }
+  const have = new Set((card.t.runners || []).map((r) => String(r.person_id)));
+  for (const r of got.data.lineup || []) {
+    const id = String(r.person_id);
+    if (have.has(id)) { card.e.removed.delete(id); continue; }
+    addRunner(got.school, id, r.name || "Unknown",
+              r.rating == null ? null : Number(r.rating), got.div,
+              r.hs_rating == null ? null : Number(r.hs_rating));
+  }
+  renderField();
+  saveState();
+  btn.disabled = true;
+  btn.textContent = "On the card - press Predict to score it";
+}
+
+$("output").addEventListener("change", (e) => {
+  if (!e.target.classList.contains("h2h-pick")) return;
+  const box = e.target.closest(".team-result");
+  const n = box.querySelectorAll(".h2h-pick:checked").length;
+  const go = box.querySelector(".h2h-go");
+  if (go) go.disabled = n < 2;
+});
+
+$("output").addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest("button");
+  if (!b) return;
+  if (b.classList.contains("h2h-go")) headToHead(b);
+  else if (b.classList.contains("bl-btn")) bestSeven(b);
+  else if (b.classList.contains("bl-apply")) applyLineup(b);
+});
 
 
 /* ------------------------------------------------------------------ *

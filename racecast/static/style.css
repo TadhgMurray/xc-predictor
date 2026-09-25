@@ -5015,6 +5015,40 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 }
 .predict2 #output td.pwin { color: #374151; }
 .predict2 #output td.has-tip { cursor: help; }
+
+/* Best 7 and head to head under a team result. Quiet by default: the table
+   is the answer, these are follow-up questions. */
+.predict2 #output .h2h-cell { width: 1.6rem; text-align: center; padding-right: 0; }
+.predict2 #output .h2h-cell input { margin: 0; cursor: pointer; }
+.predict2 #output .bl-cell { text-align: right; white-space: nowrap; }
+.predict2 #output .bl-btn,
+.predict2 #output .h2h-go,
+.predict2 #output .bl-apply {
+    font: inherit; font-size: 0.78rem; line-height: 1.2;
+    padding: 3px 8px; border: 1px solid #cfd4da; border-radius: 3px;
+    background: #fff; color: #222; cursor: pointer; white-space: nowrap;
+}
+.predict2 #output .bl-btn:hover,
+.predict2 #output .h2h-go:hover:not(:disabled),
+.predict2 #output .bl-apply:hover:not(:disabled) { border-color: #111; }
+.predict2 #output .h2h-go:disabled,
+.predict2 #output .bl-apply:disabled { color: #9ca3af; cursor: default; }
+.predict2 #output .bl-apply:not(:disabled) { background: #111; border-color: #111; color: #fff; }
+.predict2 #output .team-tools { display: flex; gap: 10px; align-items: center;
+    flex-wrap: wrap; margin: 0.4rem 0 0; }
+.predict2 #output .team-tools .meta { margin: 0; }
+.predict2 #output .tool-panel { margin: 0.9rem 0 1.4rem; padding: 0.8rem 1rem;
+    border: 1px solid #e5e7eb; border-left: 3px solid #111; border-radius: 3px;
+    background: #fafafa; }
+.predict2 #output .tool-panel h2,
+.predict2 #output .tool-panel h3 { font-size: 1rem; margin: 0 0 0.5rem; }
+.predict2 #output .bl-sum { display: flex; gap: 1.4rem; flex-wrap: wrap; margin: 0 0 0.4rem; }
+.predict2 #output .bl-sum em { color: #6b7280; font-style: normal; }
+.predict2 #output .bl-table { width: 100%; }
+.predict2 #output .bl-bench td { color: #6b7280; }
+.predict2 #output .bl-tag { width: 2.5rem; font-size: 0.75rem; text-transform: uppercase;
+    letter-spacing: 0.04em; }
+.predict2 #output .bl-alts { margin: 0.2rem 0 0.6rem; padding-left: 1.2rem; font-size: 0.88rem; }
 .predict2 #output .tip-dot {
     color: #9ca3af;
     font-weight: 700;
