@@ -1766,12 +1766,25 @@ def saveAthleteRatings(ratings: dict, sports=("XC", "TF")) -> None:
     with getConn() as conn:
         with conn.cursor() as cur:
             if merged:
-                # NOT LIKE '%|%' is the complement of the per-sport pattern, so
-                # a merged run clears every bare-pool row and leaves any
-                # suffixed leftovers from an older per-sport run untouched.
+                # ⚠⚠ THE WHOLE TABLE, SUFFIXED ROWS INCLUDED (2026-09-25).
+                #    This used to clear only bare-pool rows and leave the
+                #    per-sport ones ('pro_m|TF') "untouched" -- but nothing has
+                #    written that format since the engine merged the sports,
+                #    so they were never refreshed and never removed. The
+                #    athlete page falls back to this table when an athlete has
+                #    no season row, picks the row with the most races, and so
+                #    headed a four-year high schooler with a stale pro_m|TF
+                #    124.65 (x0.749 on the HS view: 93.4) while every one of
+                #    his races was rated hs_m. A merged solve rates every
+                #    athlete it knows; nothing older than it should survive.
+                cur.execute("DELETE FROM athlete_ratings "
+                            "WHERE pool LIKE '%|%'")
+                stale = cur.rowcount
                 cur.execute("DELETE FROM athlete_ratings "
                             "WHERE pool NOT LIKE '%|%'")
-                print(f"[db] cleared {cur.rowcount:,} merged athlete ratings")
+                print(f"[db] cleared {cur.rowcount:,} merged athlete ratings"
+                      + (f" and {stale:,} stale per-sport rows from an older "
+                         f"engine" if stale else ""))
             else:
                 for sp in sports:
                     cur.execute("DELETE FROM athlete_ratings WHERE pool LIKE %s",
