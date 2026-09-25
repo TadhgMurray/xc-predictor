@@ -102,8 +102,8 @@ def main():
                   flush=True)
             cur.execute(f"""
                 SELECT result_id FROM results_tf
-                WHERE  time_seconds = %s AND COALESCE(is_field::int, 0) = 0
-            """, (value,))
+                WHERE  time_seconds BETWEEN %s - 1 AND %s + 1 AND COALESCE(is_field::int, 0) = 0
+            """, (value, value))
             ids = [r[0] for r in cur.fetchall()]
             print(f"[sentinel] {len(ids):,} rows ({time.time() - t0:.0f}s)")
             if not ids:
@@ -146,16 +146,16 @@ def main():
                             speed_rating)
                     SELECT result_id, time_seconds, mark, {norm}, speed_rating
                     FROM   results_tf
-                    WHERE  result_id = ANY(%s) AND time_seconds = %s
+                    WHERE  result_id = ANY(%s) AND time_seconds BETWEEN %s - 1 AND %s + 1
                     ON CONFLICT (result_id) DO NOTHING
-                """, (chunk, value))
+                """, (chunk, value, value))
                 cur.execute(f"""
                     UPDATE results_tf
                     SET    time_seconds = NULL,
                            mark         = COALESCE(mark, {status}, 'DNF'),
                            speed_rating = NULL{set_norm}
-                    WHERE  result_id = ANY(%s) AND time_seconds = %s
-                """, (chunk, value))
+                    WHERE  result_id = ANY(%s) AND time_seconds BETWEEN %s - 1 AND %s + 1
+                """, (chunk, value, value))
                 done += cur.rowcount
                 conn.commit()
                 print(f"[sentinel] cleared {done:,} / {len(ids):,}", flush=True)

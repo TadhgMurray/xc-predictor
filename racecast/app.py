@@ -2284,6 +2284,8 @@ def dedupe_races(races):
 # lives in scripts/result_status.py; mirrored here as a literal because the
 # SQL above needs it inline. tests/test_tf_sentinel.py holds them equal.
 _TF_SENTINEL = 20000
+# stored as 20000.002 -- a window, not an equality (result_status)
+_TF_SENTINEL_SQL = "r.time_seconds BETWEEN 19999 AND 20001"
 
 
 def format_time(seconds):
@@ -2302,7 +2304,7 @@ def format_time(seconds):
     """
     seconds = float(seconds)
     # ! and anet TF's 20,000 s (5:33:20) -- result_status.TF_SENTINEL
-    if seconds >= 100_000 or seconds == _TF_SENTINEL:
+    if seconds >= 100_000 or abs(seconds - _TF_SENTINEL) < 1.0:
         return " - "
     whole   = int(seconds)                       # truncate, never round
     frac    = seconds - whole
@@ -3691,14 +3693,14 @@ def get_tf_race_results(cur, meet_id, div_id, event_id, source=None):
                --   with PR/SR flags and a 1.7 rating on a Diamond League
                --   mile (owner, 2026-09-25). Read as the non-finish it is
                --   until scripts/repair_tf_sentinel.py has cleared the rows.
-               CASE WHEN r.time_seconds = {_TF_SENTINEL} THEN NULL
+               CASE WHEN {_TF_SENTINEL_SQL} THEN NULL
                     ELSE r.time_seconds END AS time_seconds,
-               CASE WHEN r.time_seconds = {_TF_SENTINEL}
-                    THEN COALESCE(r.mark, 'DNF') ELSE r.mark END AS mark,
+               CASE WHEN {_TF_SENTINEL_SQL}
+                    THEN COALESCE(r.mark, r.status, 'DNF') ELSE r.mark END AS mark,
                r.is_field,
                r.grade,
                r.school,
-               CASE WHEN r.time_seconds = {_TF_SENTINEL} THEN NULL
+               CASE WHEN {_TF_SENTINEL_SQL} THEN NULL
                     ELSE r.speed_rating END AS speed_rating,
                {_ratingPoolCol(cur, 'results_tf')},
                r.date,

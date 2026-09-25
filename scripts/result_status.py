@@ -60,7 +60,11 @@ SENTINEL = 999999
 #   Kidder, Rudolf, Birnbaum, Abdilaahi). No track race takes five and a half
 #   hours, so every SortInt at or past it is a status, not a result.
 TF_SENTINEL_MS = 20_000_000
-TF_SENTINEL = TF_SENTINEL_MS / 1000          # 20000.0 s, the stored form
+TF_SENTINEL = TF_SENTINEL_MS / 1000          # 20000 s
+# ! STORED AS 20000.002, NOT 20000 (measured 2026-09-25: 43,852 anet rows,
+#   every one carrying DNS/DNF/DQ/NT/SCR/FS). An equality test found none of
+#   them, so the rule is a window: nothing real lands within a second of it.
+TF_SENTINEL_TOL = 1.0
 
 
 def isSentinelTime(time_seconds):
@@ -73,7 +77,7 @@ def isSentinelTime(time_seconds):
         t = float(time_seconds)
     except (TypeError, ValueError):
         return False
-    return t >= SENTINEL or t == TF_SENTINEL
+    return t >= SENTINEL or abs(t - TF_SENTINEL) < TF_SENTINEL_TOL
 
 
 def timeFromSortInt(sort_int):

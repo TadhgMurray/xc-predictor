@@ -33,7 +33,7 @@ def test_a_real_sortint_is_seconds():
 
 
 def test_a_stored_sentinel_is_a_non_finish():
-    assert R.isSentinelTime(20000.0) and R.isSentinelTime(20000)
+    assert R.isSentinelTime(20000.0) and R.isSentinelTime(20000.002)
     assert R.isSentinelTime(999999)
     assert not R.isSentinelTime(225.69) and not R.isSentinelTime(None)
     assert R.kind(None, 20000.0) == "dns"
@@ -70,7 +70,7 @@ def test_the_page_mirror_matches_the_rule():
 def test_format_time_hides_it():
     pytest.importorskip("flask")
     import app as A
-    assert A.format_time(20000) == " - "
+    assert A.format_time(20000.002) == " - "
     assert A.format_time(225.69) == "3:45.69"
 
 
