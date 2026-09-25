@@ -87,23 +87,38 @@ def _hasTable(cur, name):
     return cur.fetchone()[0] is not None
 
 
-def freshmen(cur, y):
-    """{person_id: (raw_name, college, gender, n_rows)} -- tfrrs persons whose
-    first race anywhere is in academic year y, with no anet row at all."""
-    lo, hi = f"{y}-08-01", f"{y + 1}-08-01"
+def _step(cur, what, sql, params=None):
+    """Run one statement and say how long it took -- a scan of a 200M-row
+    table is minutes, and silence reads as a hang."""
+    import time
+    t0 = time.time()
+    print(f"[link]   {what} ...", end="", flush=True)
+    cur.execute(sql, params or {})
+    print(f" {time.time() - t0:.0f}s"
+          + (f", {cur.rowcount:,} rows" if cur.rowcount >= 0 else ""),
+          flush=True)
+
+
+def freshmen(cur, years):
+    """{y: {person_id: (raw_name, college, gender, n_rows)}} -- tfrrs
+    persons whose first race anywhere is in academic year y, with no anet
+    row at all. ONE scan per result table covers every year."""
+    lo, hi = f"{min(years)}-08-01", f"{max(years) + 1}-08-01"
+    cur.execute("SET LOCAL work_mem = '512MB'")
     cur.execute("DROP TABLE IF EXISTS lf_t")
-    cur.execute("""
+    _step(cur, "tfrrs rows in those seasons (a scan of both result tables)", """
         CREATE TEMP TABLE lf_t AS
         SELECT person_id,
+               min(date)                                          AS first,
                mode() WITHIN GROUP (ORDER BY btrim(athlete_name)) AS name,
                mode() WITHIN GROUP (ORDER BY school)              AS school,
                count(*)                                           AS n
         FROM (
-            SELECT person_id, athlete_name, school FROM results
+            SELECT person_id, date, athlete_name, school FROM results
             WHERE  source = 'tfrrs' AND person_id IS NOT NULL
               AND  date >= %(lo)s AND date < %(hi)s
             UNION ALL
-            SELECT person_id, athlete_name, school FROM results_tf
+            SELECT person_id, date, athlete_name, school FROM results_tf
             WHERE  source = 'tfrrs' AND person_id IS NOT NULL
               AND  date >= %(lo)s AND date < %(hi)s
               AND  COALESCE(is_relay, 0) = 0
@@ -112,36 +127,52 @@ def freshmen(cur, y):
         GROUP  BY person_id
     """, {"lo": lo, "hi": hi})
     cur.execute("CREATE INDEX ON lf_t (person_id)")
-    # a stranger: nothing earlier, nothing on anet
-    cur.execute("""
+    # the season they first appear in, then: a stranger has nothing earlier
+    # than that season and nothing on anet at all (person_id index probes)
+    cur.execute("""ALTER TABLE lf_t ADD COLUMN y int""")
+    cur.execute("""UPDATE lf_t SET y = CASE WHEN substring(first, 6, 2) >= '08'
+                   THEN substring(first, 1, 4)::int
+                   ELSE substring(first, 1, 4)::int - 1 END""")
+    _step(cur, "dropping anyone with an anet row or an earlier race", """
         DELETE FROM lf_t t
         WHERE EXISTS (SELECT 1 FROM results r WHERE r.person_id = t.person_id
-                        AND (r.date < %(lo)s OR r.source <> 'tfrrs'))
+                        AND (r.date < (t.y::text || '-08-01')
+                             OR r.source <> 'tfrrs'))
            OR EXISTS (SELECT 1 FROM results_tf r WHERE r.person_id = t.person_id
-                        AND (r.date < %(lo)s OR r.source <> 'tfrrs'))
-    """, {"lo": lo})
+                        AND (r.date < (t.y::text || '-08-01')
+                             OR r.source <> 'tfrrs'))
+    """)
     gender = ("(SELECT g.gender FROM person_gender g "
               "WHERE g.person_id = t.person_id LIMIT 1)"
               if _hasTable(cur, "person_gender") else "NULL::text")
-    cur.execute(f"SELECT t.person_id, t.name, t.school, {gender}, t.n FROM lf_t t")
-    return {pid: (nm, sch, g, n) for pid, nm, sch, g, n in cur.fetchall()}
+    cur.execute(f"SELECT t.y, t.person_id, t.name, t.school, {gender}, t.n "
+                f"FROM lf_t t WHERE t.y = ANY(%s)", (list(years),))
+    out = {y: {} for y in years}
+    for y, pid, nm, sch, g, n in cur.fetchall():
+        out[y][pid] = (nm, sch, g, n)
+    return out
 
 
-def seniors(cur, y):
-    """{person_id: (name, high_school, gender, has_tfrrs)} -- anet persons
-    with a senior high school row in academic year y - 1."""
-    lo, hi = f"{y - 1}-08-01", f"{y}-08-01"
+def seniors(cur, years):
+    """{y: {person_id: (name, high_school, gender, has_tfrrs)}} -- anet
+    persons with a senior high school row in academic year y - 1. One scan
+    per table for every year."""
+    lo, hi = f"{min(years) - 1}-08-01", f"{max(years)}-08-01"
     cur.execute("DROP TABLE IF EXISTS lf_a")
-    cur.execute("""
+    _step(cur, "anet senior rows in the seasons before (a scan of both tables)", """
         CREATE TEMP TABLE lf_a AS
-        SELECT person_id, mode() WITHIN GROUP (ORDER BY school) AS school
+        SELECT person_id,
+               CASE WHEN substring(max(date), 6, 2) >= '08'
+                    THEN substring(max(date), 1, 4)::int + 1
+                    ELSE substring(max(date), 1, 4)::int END      AS y,
+               mode() WITHIN GROUP (ORDER BY school)              AS school
         FROM (
-            SELECT person_id, school FROM results
+            SELECT person_id, date, school FROM results
             WHERE  source = 'anet' AND person_id IS NOT NULL
               AND  date >= %(lo)s AND date < %(hi)s
               AND  lower(btrim(grade)) = ANY(%(sr)s)
             UNION ALL
-            SELECT person_id, school FROM results_tf
+            SELECT person_id, date, school FROM results_tf
             WHERE  source = 'anet' AND person_id IS NOT NULL
               AND  date >= %(lo)s AND date < %(hi)s
               AND  lower(btrim(grade)) = ANY(%(sr)s)
@@ -149,8 +180,9 @@ def seniors(cur, y):
         GROUP  BY person_id
     """, {"lo": lo, "hi": hi, "sr": list(SENIOR)})
     cur.execute("CREATE INDEX ON lf_a (person_id)")
-    cur.execute("""
-        SELECT a.person_id,
+    _step(cur, "their names, genders and any tfrrs rows (index probes)", """
+        CREATE TEMP TABLE lf_a2 AS
+        SELECT a.y, a.person_id,
                (SELECT concat_ws(' ', btrim(x.first_name), btrim(x.last_name))
                 FROM athletes x WHERE x.athlete_id = a.person_id
                 ORDER BY (NULLIF(btrim(x.last_name), '') IS NOT NULL) DESC
@@ -162,9 +194,13 @@ def seniors(cur, y):
                          AND r.source = 'tfrrs')
                OR EXISTS (SELECT 1 FROM results_tf r WHERE r.person_id = a.person_id
                          AND r.source = 'tfrrs')           AS has_tfrrs
-        FROM lf_a a
-    """)
-    return {pid: (nm, sch, g, ht) for pid, nm, sch, g, ht in cur.fetchall()}
+        FROM lf_a a WHERE a.y = ANY(%(ys)s)
+    """, {"ys": list(years)})
+    cur.execute("SELECT y, person_id, name, school, gender, has_tfrrs FROM lf_a2")
+    out = {y: {} for y in years}
+    for y, pid, nm, sch, g, ht in cur.fetchall():
+        out[y][pid] = (nm, sch, g, ht)
+    return out
 
 
 def _g(v):
@@ -295,9 +331,12 @@ def main():
             return
         all_pairs = []
         with conn.cursor() as cur:
+            print(f"[link] academic years {a.years}; each step prints when "
+                  f"it finishes", flush=True)
+            fresh_by = freshmen(cur, a.years)
+            senior_by = seniors(cur, a.years)
             for y in a.years:
-                fresh = freshmen(cur, y)
-                senior = seniors(cur, y)
+                fresh, senior = fresh_by[y], senior_by[y]
                 pairs, skipped = pairsFor(fresh, senior)
                 print(f"[link] {y}: {len(fresh):,} tfrrs first-years with no "
                       f"anet identity, {len(senior):,} anet seniors of {y - 1}; "
