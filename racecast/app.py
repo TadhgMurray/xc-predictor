@@ -1561,7 +1561,13 @@ def athlete(person_id):
         #   to a dash; the letters, when the scraper kept them, replace it.
         #   A TF non-finish arrives with no time and its letters in result.
         t = race.get("time_raw")
-        if t is not None and float(t) < 100_000:
+        # ! A SENTINEL IS NOT A TIME ANYWHERE ON THE PAGE: cleared here, it
+        #   cannot be a PR, an SR, a place or a chart point, and its rating
+        #   (anet TF's 20000.002 rows were rated) goes with it.
+        if t is not None and (float(t) >= 100_000 or _isSentinelTime(t)):
+            race["time_raw"] = t = None
+            race["speed_rating"] = None
+        if t is not None:
             race["result"] = format_time(t)
         else:
             race["result"] = (race.get("status")
@@ -1868,7 +1874,7 @@ def _hasResultTwin(cur):
     return _RESULT_TWIN["present"]
 
 
-_RESULTS_STATUS = {"checked": False, "present": False}
+_RESULTS_STATUS = {}              # table -> has a status column
 _RACE_DAY = {"until": 0.0, "present": False}
 _RATING_POOL = {}
 
@@ -1917,20 +1923,21 @@ def _hasRaceDayEffect(cur):
     return _RACE_DAY["present"]
 
 
-def _hasResultsStatus(cur):
-    """Does results carry `status` yet (issue 59)? The scraper adds it on
-    its first save after deploy; until then the page reads NULL."""
-    if not _RESULTS_STATUS["checked"]:
+def _hasResultsStatus(cur, table="results"):
+    """Does `table` carry `status` yet (issue 59)? The scrapers add it on
+    their first save after deploy; until then the page reads NULL.
+    results_tf has had one since the TF saver started writing it."""
+    key = table
+    if key not in _RESULTS_STATUS:
         try:
             cur.execute("""SELECT 1 FROM information_schema.columns
-                           WHERE table_name = 'results'
-                             AND column_name = 'status'""")
-            _RESULTS_STATUS["present"] = cur.fetchone() is not None
+                           WHERE table_name = %s
+                             AND column_name = 'status'""", (table,))
+            _RESULTS_STATUS[key] = cur.fetchone() is not None
         except Exception:                            # noqa: BLE001
             cur.connection.rollback()
-            _RESULTS_STATUS["present"] = False
-        _RESULTS_STATUS["checked"] = True
-    return _RESULTS_STATUS["present"]
+            _RESULTS_STATUS[key] = False
+    return _RESULTS_STATUS[key]
 
 
 def get_races(cur, person_id):
@@ -1942,6 +1949,11 @@ def get_races(cur, person_id):
     """
     # results.status exists only once the scraper has run after deploy
     status_sql = "r.status" if _hasResultsStatus(cur) else "NULL::text"
+    # ★ AND THE TRACK HALF'S (owner, 2026-09-25: "print status letters if we
+    #   have"). results_tf carries DNS/DNF/DQ/NT/SCR/FS on 43,852 sentinel
+    #   rows alone; this read NULL for every one of them.
+    status_tf_sql = ("r.status" if _hasResultsStatus(cur, "results_tf")
+                     else "NULL::text")
     # ★ A FLAGGED TWIN IS NOT ON THE PAGE (issue 94): the same run stored
     #   twice shows once. result_twin is the verdict the engine and the
     #   boards already use; the page reads the same one.
@@ -2099,7 +2111,7 @@ def get_races(cur, person_id):
                -- sit in mark (issue 59)
                CASE WHEN r.is_field = 1 OR r.time_seconds IS NULL THEN r.mark
                     ELSE r.time_seconds::text END AS result,
-               NULL::text                    AS status,
+               {status_tf_sql}               AS status,
                r.grade                       AS grade,
                r.school                      AS school,
                r.speed_rating                AS speed_rating,
@@ -2284,6 +2296,7 @@ def dedupe_races(races):
 # lives in scripts/result_status.py; mirrored here as a literal because the
 # SQL above needs it inline. tests/test_tf_sentinel.py holds them equal.
 _TF_SENTINEL = 20000
+from result_status import isSentinelTime as _isSentinelTime   # noqa: E402
 # stored as 20000.002 -- a window, not an equality (result_status)
 _TF_SENTINEL_SQL = "r.time_seconds BETWEEN 19999 AND 20001"
 
@@ -2956,6 +2969,7 @@ def get_race_results(cur, meet_id, div_id, source=None):
                r.speed_rating,
                {_ratingPoolCol(cur, 'results')},
                r.date,
+               {"r.status" if _hasResultsStatus(cur) else "NULL::text"} AS status,
                {_name_sql('r')} AS name
         FROM results r
         {_athlete_lateral('r')}
@@ -3170,10 +3184,12 @@ def race_xc(meet_id, div_id):
 
     # format times for display
     for row in results:
-        if row["time_seconds"] is not None:
-            row["display_time"] = format_time(row["time_seconds"])
+        t = row["time_seconds"]
+        if t is not None and not (float(t) >= 100_000 or _isSentinelTime(t)):
+            row["display_time"] = format_time(t)
         else:
-            row["display_time"] = " - "
+            # a non-finish says which, when the feed said (issue 59)
+            row["display_time"] = row.get("status") or " - "
 
     # the race date comes from the results (meets has no date column)
     race_date = results[0]["date"] if results else None
@@ -4151,8 +4167,11 @@ def get_tf_loose_results(cur, meet_id, source=None):
         r = dict(r)
         if r["is_field"]:
             r["display_result"] = r["mark"] or " - "
-        elif r["time_seconds"] is not None and r["time_seconds"] < 999999:
+        elif (r["time_seconds"] is not None and r["time_seconds"] < 999999
+              and not _isSentinelTime(r["time_seconds"])):
             r["display_result"] = format_time(r["time_seconds"])
+        elif r.get("mark") and not r["time_seconds"]:
+            r["display_result"] = r["mark"]      # a non-finish's letters
         else:
             continue                     # DNS/DNF sentinel: nothing to list
         name = (prettyEventName(r["event_short"]) if r["event_short"]
@@ -4358,10 +4377,11 @@ def _stamp_tf_display(rows):
     for r in rows:
         if r.get("is_field") or r.get("result_kind") in ("field", "combined"):
             r["display_result"] = r["mark"] if r.get("mark") else " - "
-        elif r.get("time_seconds") is not None:
+        elif (r.get("time_seconds") is not None
+              and not _isSentinelTime(r["time_seconds"])):
             r["display_result"] = format_time(r["time_seconds"])
         else:
-            r["display_result"] = " - "
+            r["display_result"] = r.get("status") or r.get("mark") or " - "
 
 
 @app.route("/meet/tf/<int:meet_id>")
