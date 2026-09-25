@@ -115,7 +115,7 @@
             <tr>
                 <td>{{ "Boys" if g.gender == 'M' else "Girls" if g.gender == 'F' else " - " }}</td>
                 <td>
-                    <a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender }}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}{% endif %}{% if school %}{% set _ = _q.append('school=' ~ (school|urlencode)) %}{% endif %}{% if _q %}?{{ _q|join('&') }}{% endif %}">
+                    <a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender|urlencode }}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}{% endif %}{% if school %}{% set _ = _q.append('school=' ~ (school|urlencode)) %}{% endif %}{% if _q %}?{{ _q|join('&') }}{% endif %}">
 
                         {{ g.distance }}m
                     </a>

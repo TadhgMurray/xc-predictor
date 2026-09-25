@@ -160,9 +160,22 @@ def compiledResults(cur, meet_id, source=None):
                    m.distance,
                    (mt.division_distances -> r.div_id::text ->> 'distance')::real
                 ) / 100.0) * 100)::int                AS distance,
-               COALESCE(a.first_name, '') || ' '
-                   || COALESCE(a.last_name, '')       AS name,
-               a.gender
+               COALESCE(NULLIF(btrim(COALESCE(a.first_name, '') || ' '
+                   || COALESCE(a.last_name, '')), ''),
+                   NULLIF(btrim(r.athlete_name), ''))   AS name,
+               -- ★ AND THE DIVISION'S OWN WORD FOR IT (owner, 2026-09-25:
+               --   "compiled race for that race 404s"). Gender came only off
+               --   athletes through person_id, and an unlinked tfrrs row has
+               --   none: the whole meet grouped as "?", and the link the meet
+               --   page drew -- .../compiled/8000/? -- never reached the
+               --   route. tfrrs names every division ("Men's 8k").
+               COALESCE(a.gender,
+                   CASE WHEN (mt.division_distances -> r.div_id::text
+                              ->> 'div_name') ~* '(women|girls|female)'
+                        THEN 'F'
+                        WHEN (mt.division_distances -> r.div_id::text
+                              ->> 'div_name') ~* '(men|boys|male)'
+                        THEN 'M' END)                 AS gender
         FROM   results r
         LEFT JOIN meets m ON m.meet_id = r.meet_id
                          AND m.div_id  = r.div_id
@@ -187,7 +200,7 @@ def compiledResults(cur, meet_id, source=None):
                  m.distance,
                  (mt.division_distances -> r.div_id::text ->> 'distance')::real
                ) > 0
-        ORDER  BY distance, a.gender, r.time_seconds
+        ORDER  BY 9, 11, r.time_seconds       -- distance, gender (computed), time
     """, {"meet": meet_id, "src": source})
 
     groups = {}

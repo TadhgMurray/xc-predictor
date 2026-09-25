@@ -68,6 +68,12 @@ WANTED = [
     #   AND athlete_id = ANY(...))`; the planner BitmapOrs the two index
     #   scans, so both columns need one. Measured on a 2M-row stand-in:
     #   2,938 ms seq-scanned against 7.2 ms with these.
+    # ★ THE TWIN BORROW (owner, 2026-09-25: a tfrrs race page with every
+    #   rating "-" while the athletes' pages had that race rated). The race
+    #   page looks up the other feed's copy by canon_meet_id; without these a
+    #   page view would scan the table (it is timed out at 1.5 s instead).
+    ("results",         "canon_meet_id", "idx_results_canon_meet_id", None),
+    ("results_tf",      "canon_meet_id", "idx_results_tf_canon_meet_id", None),
     ("results",         "person_id",  "idx_results_person", None),
     ("results",         "athlete_id", "idx_results_athlete", None),
     ("results_tf",      "person_id",  "idx_results_tf_person", None),

@@ -2977,6 +2977,79 @@ def raceExtras(cur, meet_id, div_id, source):
     return out
 
 
+# ★ THE OTHER FEED'S COPY OF THE SAME ROW (owner, 2026-09-25: "on this race
+#   page ppl are unlinked but when you look up their athlete page it has that
+#   race with ratings"). A race scraped by both feeds is two meets joined by
+#   canon_meet_id; the anet copy is the one linked to a person and rated,
+#   and a tfrrs row with no person_id is neither. The page borrows the
+#   person, rating and pool from the twin: the same person where both rows
+#   have one, else the same name finishing within a second.
+# ! BOUNDED. canon_meet_id is indexed by scripts/add_page_indexes.py; on a
+#   database without it the lookup times out after 1.5 s inside a savepoint
+#   and the page renders as it did before.
+def _borrowTwins(cur, rows, table, meet_id, source, name_key="name"):
+    need = [r for r in rows if r.get("speed_rating") is None
+            or r.get("person_id") is None]
+    if not need or not source:
+        return 0
+    cur.execute("SHOW statement_timeout")
+    got = cur.fetchone()
+    was = got["statement_timeout"] if isinstance(got, dict) else got[0]
+    cur.execute("SAVEPOINT twin_borrow")
+    try:
+        cur.execute("SET LOCAL statement_timeout = 1500")
+        cur.execute(f"""SELECT canon_meet_id FROM {table}
+                        WHERE meet_id = %s AND source = %s
+                          AND canon_meet_id IS NOT NULL LIMIT 1""",
+                    (meet_id, source))
+        got = cur.fetchone()
+        canon = got and (got["canon_meet_id"] if isinstance(got, dict) else got[0])
+        if not canon:
+            cur.execute("ROLLBACK TO SAVEPOINT twin_borrow")   # and the timeout
+            return 0
+        cur.execute(f"""
+            SELECT r.person_id, r.time_seconds, r.speed_rating,
+                   {_ratingPoolCol(cur, table)},
+                   {_name_sql('r')} AS name
+            FROM   {table} r
+            {_athlete_lateral('r')}
+            WHERE  r.canon_meet_id = %s AND r.source <> %s
+              AND  r.time_seconds IS NOT NULL
+        """, (canon, source))
+        twins = cur.fetchall()
+        cur.execute("SET LOCAL statement_timeout = %s", (was,))
+        cur.execute("RELEASE SAVEPOINT twin_borrow")
+    except Exception:                                   # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT twin_borrow")
+        return 0
+
+    def key(n):
+        n = re.sub(r"[^a-z ]+", "", str(n or "").lower())
+        return " ".join(n.split())
+    by_pid, by_name = {}, {}
+    for t in twins:
+        if t.get("person_id") is not None:
+            by_pid.setdefault(t["person_id"], []).append(t)
+        by_name.setdefault(key(t.get("name")), []).append(t)
+    n = 0
+    for r in need:
+        cands = by_pid.get(r.get("person_id")) if r.get("person_id") else None
+        if not cands:
+            cands = [t for t in by_name.get(key(r.get(name_key)), [])
+                     if r.get("time_seconds") is not None
+                     and abs(float(t["time_seconds"]) - float(r["time_seconds"])) <= 1.0]
+        if len(cands) != 1:
+            continue
+        t = cands[0]
+        if r.get("person_id") is None and t.get("person_id") is not None:
+            r["person_id"] = t["person_id"]
+        if r.get("speed_rating") is None and t.get("speed_rating") is not None:
+            r["speed_rating"] = t["speed_rating"]
+            r["rating_pool"] = t.get("rating_pool")
+        n += 1
+    return n
+
+
 def get_race_results(cur, meet_id, div_id, source=None):
     """Every athlete's result in one XC race, fastest first; `source`
     keeps a colliding meet's finishers out (see get_race_header)."""
@@ -3175,6 +3248,8 @@ def race_xc(meet_id, div_id):
                 cur, meet_id, request.args, div_id)
             header  = get_race_header(cur, meet_id, div_id, source=src)
             results = get_race_results(cur, meet_id, div_id, source=src)
+            results = [dict(r) for r in results]
+            _borrowTwins(cur, results, "results", meet_id, src)
             # ★ WHICH school each row MEANS, from the athlete's own
             #   assignment rather than from the meet's state: see
             #   meet_compile.stampSchoolStates. The template falls back to
@@ -3952,6 +4027,9 @@ def race_tf(meet_id, event_id, div_id):
                                          source=race_src)
             results = get_tf_race_results(cur, meet_id, div_id, event_id,
                                           source=race_src)
+            results = [dict(r) for r in results]
+            _borrowTwins(cur, results, "results_tf", meet_id, race_src,
+                         name_key="athlete_name")
             # HS-equivalent view: the event's distance; pools per row.
             has_hs_view = (stampRowsHs(cur, "TF", results,
                                        distance=header.get("distance_meters"))
