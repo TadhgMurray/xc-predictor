@@ -165,12 +165,18 @@ class ItRefusesToRunAgainstANotNullColumn(unittest.TestCase):
         for col in ("mean_rating", "decayed_rating", "best_rating"):
             self.assertIn(f"'{col}'", self.body, col)
 
-    def test_it_raises_rather_than_warning(self):
+    def test_it_repairs_the_shadow_rather_than_stopping(self):
         """⚠ A WARNING HERE WOULD BE READ AS NOISE and the step would fail
         anyway, three hours later, with a constraint violation instead of
-        an explanation."""
-        self.assertIn("raise RuntimeError", self.body)
-        self.assertIn("DROP NOT NULL", self.body)
+        an explanation. It used to RAISE instead -- and on 2026-09-24 that
+        stopped the boards swapping for a third run, after every index had
+        built. The shadow is the script's own table, read by nothing until
+        swapIn, so the constraint is dropped THERE, before the aggregate,
+        and the swap carries the fix to the live table."""
+        i = self.body.index("ALTER TABLE {_LOAD_SEASON}")
+        self.assertIn("DROP NOT NULL", self.body[i:i + 120])
+        self.assertLess(i, self.body.index("cur.execute(sql)"))
+        self.assertNotIn("ALTER TABLE athlete_season ", self.body)
 
 
 class TheBoardsExcludeThem(unittest.TestCase):

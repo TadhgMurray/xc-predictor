@@ -2784,13 +2784,22 @@ def refreshAthleteSeason(conn):
                                              'best_rating')""",
                     (_LOAD_SEASON,))
         bad = [r[0] for r in cur.fetchall()]
+    # ★ REPAIRED ON THE SHADOW, NOT REPORTED (2026-09-25). This used to raise
+    #   and ask a human to ALTER the live table -- and on the owner's run of
+    #   09-24 it did, after 16 index builds and an hour of streaming, so the
+    #   boards stayed stale for a third run in a row. The shadow is this
+    #   script's own table and nothing reads it until swapIn, so dropping the
+    #   constraint here is free, and the swap then makes the live table
+    #   nullable for good.
     if bad:
-        raise RuntimeError(
-            f"athlete_season.{', '.join(bad)} is NOT NULL, but a season with "
-            f"no rated race (a sprinter's or a thrower's year) must write "
-            f"NULL there. Drop the constraint:\n"
-            + "\n".join(f"    ALTER TABLE athlete_season "
-                         f"ALTER COLUMN {c} DROP NOT NULL;" for c in bad))
+        with conn.cursor() as cur:
+            for c in bad:
+                cur.execute(f"ALTER TABLE {_LOAD_SEASON} "
+                            f"ALTER COLUMN {c} DROP NOT NULL")
+        conn.commit()
+        print(f"    {_LOAD_SEASON}: dropped a stale NOT NULL on "
+              f"{', '.join(bad)} (a season with no rated race writes NULL); "
+              f"the swap carries the fix to athlete_season")
     sql = _ATHLETE_SEASON_SQL.format(load_table=_LOAD_TABLE,
                                      season_table=_LOAD_SEASON)
     with conn.cursor() as cur:
