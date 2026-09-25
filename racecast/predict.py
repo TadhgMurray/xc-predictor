@@ -1716,10 +1716,13 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
 
     if when == "asran":
         by_school = {}
-        for r in _exactField(cur, meet_id, div_id, sport):
+        exact = _exactField(cur, meet_id, div_id, sport)
+        states = _teamStates(cur, [dict(r) for r in exact])
+        for r in exact:
             school = r["school"] or "Unattached"
             team = by_school.setdefault(school, {"school": school,
-                                                 "state": _stateOf(school),
+                                                 "state": (states.get(school)
+                                                           or _stateOf(school)),
                                                  "runners": [], "dropped": []})
             # the grade and rating they raced with (_exactField)
             team["runners"].append({"person_id": r["person_id"],
@@ -1756,12 +1759,14 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     #   school that really is fielding seven this year can be corrected by
     #   hand on the page.
     at_meet_counts = countsBySchool(originals)
+    # the school as the people who ran this meet for it wore it
+    states = _teamStates(cur, [dict(r) for r in originals])
     by_school = {}
     for school in at_meet:
         sq = squads.get(school, [])
         cap = squadCap(at_meet_counts.get(school, 0))
         by_school[school] = {"school": school,
-                             "state": _stateOf(school),
+                             "state": states.get(school) or _stateOf(school),
                              # ! HOW MANY THIS SCHOOL ACTUALLY HAD ON THE
                              #   LINE. The page sends it back so _score can
                              #   tell a team from a lone qualifier with six
@@ -1784,7 +1789,8 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         if r["person_id"] in current_ids or not r.get("school"):
             continue
         team = by_school.setdefault(r["school"], {"school": r["school"],
-                                                  "state": _stateOf(r["school"]),
+                                                  "state": (states.get(r["school"])
+                                                            or _stateOf(r["school"])),
                                                   "entered": at_meet_counts.get(
                                                       r["school"], 0),
                                                   "runners": [],
@@ -2195,6 +2201,34 @@ def _currentSeasonUncached(cur, sport):
 #     search_index emits one ROW PER STATE for those. primaryState returns the
 #     largest cluster; a genuinely split name shows its main state, and that
 #     is better than showing none.
+# ★ THE STATE OF THE TEAM THAT WAS THERE, NOT OF THE NAME (owner,
+#   2026-09-25: "the predict takes the wrong antioch while the athletes in it
+#   have the correct antioch (CA)"). _stateOf answers from the name alone --
+#   the largest school called Antioch is in Illinois -- while the race page
+#   resolves each runner's school through school_athlete_state (the school
+#   AS THAT ATHLETE wore it). A team is labelled by its runners' majority;
+#   the name-only answer is the fallback for a team none of whose runners
+#   resolves.
+def _teamStates(cur, rows):
+    """{school: state} by the majority of `rows`' own resolved states (rows
+    carry school and person_id; school_state is stamped on them in place)."""
+    from collections import Counter
+    rows = [r for r in rows if r.get("school")]
+    if not rows:
+        return {}
+    try:
+        from meet_compile import stampSchoolStates
+        stampSchoolStates(cur, rows)
+    except Exception:                                   # noqa: BLE001
+        _rollback(cur)
+        return {}
+    votes = {}
+    for r in rows:
+        if r.get("school_state"):
+            votes.setdefault(r["school"], Counter())[r["school_state"]] += 1
+    return {sch: c.most_common(1)[0][0] for sch, c in votes.items()}
+
+
 def _stateOf(school):
     if not school:
         return None
@@ -2283,7 +2317,11 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                             "rating": k.get("rating"),
                             "hs_rating": k.get("hs_rating"),
                             "entered": entered.get(school),
-                            "school_state": _stateOf(school)})
+                            "school_state": None})
+        states = _teamStates(cur, [dict(e) for e in entries])
+        for e in entries:
+            e["school_state"] = (states.get(e["school"])
+                                 or _stateOf(e["school"]))
         return entries
 
     # ★ SEVERAL DIVISIONS AS ONE RACE (issue #86). Each division's roster is
@@ -2340,8 +2378,18 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     #   this function once per division and THEN rewrites `school` to
     #   "Broughton (Varsity)" for a school in two of them. Reading the state
     #   after that would be reading it off a name that no longer exists.
+    # the team's state by its runners, as the race page resolves them; the
+    # meet's own field first when there is a meet (it is who was there)
+    evidence = list(entries)
+    if target.get("meet_id"):
+        try:
+            evidence += [dict(r) for r in _exactField(
+                cur, int(target["meet_id"]), div, sport)]
+        except Exception:                               # noqa: BLE001
+            _rollback(cur)
+    states = _teamStates(cur, evidence)
     for e in entries:
-        e["school_state"] = _stateOf(e.get("school"))
+        e["school_state"] = states.get(e.get("school")) or _stateOf(e.get("school"))
     return entries
 
 

@@ -126,6 +126,7 @@ def test_as_it_ran_carries_the_grade_and_rating_they_raced_with(monkeypatch):
     monkeypatch.setattr(pool_view, "stampBoardRows", lambda rows, **k: None)
     monkeypatch.setattr(P, "_stampCrests", lambda *a, **k: None)
     monkeypatch.setattr(P, "_stateOf", lambda s: None)
+    monkeypatch.setattr(P, "_teamStates", lambda cur, rows: {})
     rows = [{"person_id": 5, "school": "Campolindo", "grade": "9",
              "name": "Cody De la Cruz", "row_name": None,
              "mean_rating": 118.44, "pool": "hs_m", "season": 2024}]
@@ -153,3 +154,26 @@ def test_the_page_lineup_in_as_it_ran_mode_reads_the_race(monkeypatch):
     target["mode"] = "rerun"                          # this year: current
     got = P._teamRosters(None, None, target)
     assert got[0]["grade"] == "11" and got[0]["rating"] == 131.0
+
+
+def test_a_team_takes_its_runners_state_not_the_names(monkeypatch):
+    """! owner, 2026-09-25: "the predict takes the wrong antioch while the
+    athletes in it have the correct antioch (CA)"."""
+    import meet_compile
+    def stamp(cur, rows):
+        for r in rows:
+            if r["person_id"] in (1, 2, 3):
+                r["school_state"] = "CA"
+            elif r["person_id"] == 4:
+                r["school_state"] = "IL"
+    monkeypatch.setattr(meet_compile, "stampSchoolStates", stamp)
+    rows = [{"school": "Antioch", "person_id": i} for i in (1, 2, 3, 4, 5)]
+    assert P._teamStates(None, rows) == {"Antioch": "CA"}
+    monkeypatch.setattr(P, "_stateOf", lambda s: "IL")
+    monkeypatch.setattr(P, "_teamStates", lambda cur, rows: {"Antioch": "CA"})
+    target = {"mode": "rerun", "sport": "XC",
+              "field": [["Antioch", ["1", "2"], 7]]}
+    monkeypatch.setattr(P, "_currentSeason", lambda cur, sport: 2026)
+    monkeypatch.setattr(P, "_athleteEntries", lambda *a, **k: [])
+    got = P._teamRosters(None, None, target)
+    assert {e["school_state"] for e in got} == {"CA"}

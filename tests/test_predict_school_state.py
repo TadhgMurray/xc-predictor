@@ -27,8 +27,9 @@ def ok(cond, msg):
 
 
 # 1. The state is a SEPARATE field. Nothing writes it into `school`.
-ok('"state": _stateOf(school)' in PY or '"state": _stateOf(r["school"])' in PY,
-   "meetField's teams carry a state")
+ok('"state": states.get(school) or _stateOf(school)' in PY,
+   "meetField's teams carry a state -- their runners' first, the name's second "
+   "(owner, 2026-09-25: the wrong Antioch)")
 ok(PY.count("_stateOf(") >= 4,
    "every team-building path stamps one, not just the first")
 ok(not re.search(r'"school":\s*f"\{[^"]*\}\s*\(\{_stateOf', PY),
@@ -37,7 +38,7 @@ ok(not re.search(r'"school":\s*f"\{[^"]*\}\s*\(\{_stateOf', PY),
 # 2. It is stamped BEFORE _combinedRoster rewrites the name. A school in two
 #    divisions comes back as "Broughton (Varsity)", which the identity table
 #    has never heard of.
-stamp = PY.index('e["school_state"] = _stateOf(e.get("school"))')
+stamp = PY.index('e["school_state"] = states.get(e.get("school")) or _stateOf(e.get("school"))')
 suffix = PY.index('e["school"] = f"{sch} ({labels[d]})"')
 ok(stamp < suffix,
    "roster entries are stamped before the division suffix is applied -- "

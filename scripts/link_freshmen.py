@@ -99,57 +99,107 @@ def _step(cur, what, sql, params=None):
           flush=True)
 
 
+# A college freshman's grade, however the feed spells it. The tfrrs side of a
+# pair must carry one in its first season: tfrrs also hosts some high school
+# and middle school meets, and the first dry run paired high school seniors
+# with "first-years" at Forest Park Jr High and Darnell Cookman MS.
+FRESHMAN_RE = r"^(fr|freshman|13)"
+
+
 def freshmen(cur, years):
-    """{y: {person_id: (raw_name, college, gender, n_rows)}} -- tfrrs
-    persons whose first race anywhere is in academic year y, with no anet
-    row at all. ONE scan per result table covers every year."""
+    """{y: {key: (raw_name, college, gender, n_rows)}} -- tfrrs identities
+    whose first race anywhere is in academic year y, graded as a college
+    freshman, with no anet row at all. ONE scan per result table.
+
+    ★ AN IDENTITY IS A person_id, OR A tfrrs ATHLETE ID WHEN THERE IS NONE
+      (key 'p:<person_id>' or 'n:<id_system>:<native_id>'). The linking
+      passes stamp person_id on tfrrs rows after the fact and none of them
+      runs on a schedule, so this season's rows mostly carry only the tfrrs
+      athlete id -- the first dry run found 0 freshmen in 2026 for exactly
+      that reason. Linking by native_id is how merge_links/stamp_fanout
+      write a tfrrs person too."""
     lo, hi = f"{min(years)}-08-01", f"{max(years) + 1}-08-01"
     cur.execute("SET LOCAL work_mem = '512MB'")
     cur.execute("DROP TABLE IF EXISTS lf_t")
-    _step(cur, "tfrrs rows in those seasons (a scan of both result tables)", """
+    cur.execute("DROP TABLE IF EXISTS lf_early")
+    key = ("CASE WHEN person_id IS NOT NULL THEN 'p:' || person_id "
+           "ELSE 'n:' || COALESCE(id_system, 'tfrrs') || ':' || native_id END")
+    _step(cur, "tfrrs rows in those seasons (a scan of both result tables)", f"""
         CREATE TEMP TABLE lf_t AS
-        SELECT person_id,
+        SELECT k,
+               min(person_id)                                     AS person_id,
+               min(native_id)                                     AS native_id,
+               min(id_system)                                     AS id_system,
                min(date)                                          AS first,
+               bool_or(lower(btrim(grade)) ~ %(fr)s)              AS freshman,
                mode() WITHIN GROUP (ORDER BY btrim(athlete_name)) AS name,
                mode() WITHIN GROUP (ORDER BY school)              AS school,
                count(*)                                           AS n
         FROM (
-            SELECT person_id, date, athlete_name, school FROM results
-            WHERE  source = 'tfrrs' AND person_id IS NOT NULL
+            SELECT {key} AS k, person_id, native_id, 'tfrrs'::text AS id_system,
+                   date, grade, athlete_name, school
+            FROM   results
+            WHERE  source = 'tfrrs'
+              AND  (person_id IS NOT NULL OR native_id IS NOT NULL)
               AND  date >= %(lo)s AND date < %(hi)s
             UNION ALL
-            SELECT person_id, date, athlete_name, school FROM results_tf
-            WHERE  source = 'tfrrs' AND person_id IS NOT NULL
+            SELECT {key} AS k, person_id, native_id, id_system,
+                   date, grade, athlete_name, school
+            FROM   results_tf
+            WHERE  source = 'tfrrs'
+              AND  (person_id IS NOT NULL OR native_id IS NOT NULL)
               AND  date >= %(lo)s AND date < %(hi)s
               AND  COALESCE(is_relay, 0) = 0
         ) x
         WHERE  NULLIF(btrim(athlete_name), '') IS NOT NULL
-        GROUP  BY person_id
-    """, {"lo": lo, "hi": hi})
+        GROUP  BY k
+    """, {"lo": lo, "hi": hi, "fr": FRESHMAN_RE})
+    _step(cur, "keeping only college freshmen",
+          "DELETE FROM lf_t WHERE NOT COALESCE(freshman, false)")
     cur.execute("CREATE INDEX ON lf_t (person_id)")
-    # the season they first appear in, then: a stranger has nothing earlier
-    # than that season and nothing on anet at all (person_id index probes)
-    cur.execute("""ALTER TABLE lf_t ADD COLUMN y int""")
+    cur.execute("ALTER TABLE lf_t ADD COLUMN y int")
     cur.execute("""UPDATE lf_t SET y = CASE WHEN substring(first, 6, 2) >= '08'
                    THEN substring(first, 1, 4)::int
                    ELSE substring(first, 1, 4)::int - 1 END""")
-    _step(cur, "dropping anyone with an anet row or an earlier race", """
+    # a stranger: nothing earlier than that season and nothing on anet
+    _step(cur, "dropping linked people with an anet row or an earlier race", """
         DELETE FROM lf_t t
-        WHERE EXISTS (SELECT 1 FROM results r WHERE r.person_id = t.person_id
+        WHERE t.person_id IS NOT NULL AND (
+              EXISTS (SELECT 1 FROM results r WHERE r.person_id = t.person_id
                         AND (r.date < (t.y::text || '-08-01')
                              OR r.source <> 'tfrrs'))
            OR EXISTS (SELECT 1 FROM results_tf r WHERE r.person_id = t.person_id
                         AND (r.date < (t.y::text || '-08-01')
-                             OR r.source <> 'tfrrs'))
+                             OR r.source <> 'tfrrs')))
+    """)
+    # ! ONE GROUPED SCAN, NOT A PROBE PER CANDIDATE: native_id has no index,
+    #   so an EXISTS per unlinked freshman would scan the table each time
+    _step(cur, "earliest race of each unlinked one (a scan of both tables)", """
+        CREATE TEMP TABLE lf_early AS
+        SELECT sys, native_id, min(date) AS first_any FROM (
+            SELECT 'tfrrs'::text AS sys, native_id, date FROM results
+            WHERE  source = 'tfrrs' AND native_id IN
+                   (SELECT native_id FROM lf_t WHERE person_id IS NULL)
+            UNION ALL
+            SELECT COALESCE(id_system, 'tfrrs'), native_id, date FROM results_tf
+            WHERE  source = 'tfrrs' AND native_id IN
+                   (SELECT native_id FROM lf_t WHERE person_id IS NULL)
+        ) x GROUP BY sys, native_id
+    """)
+    _step(cur, "dropping unlinked ones with an earlier race", """
+        DELETE FROM lf_t t USING lf_early e
+        WHERE t.person_id IS NULL AND e.native_id = t.native_id
+          AND e.sys = t.id_system
+          AND e.first_any < (t.y::text || '-08-01')
     """)
     gender = ("(SELECT g.gender FROM person_gender g "
               "WHERE g.person_id = t.person_id LIMIT 1)"
               if _hasTable(cur, "person_gender") else "NULL::text")
-    cur.execute(f"SELECT t.y, t.person_id, t.name, t.school, {gender}, t.n "
+    cur.execute(f"SELECT t.y, t.k, t.name, t.school, {gender}, t.n "
                 f"FROM lf_t t WHERE t.y = ANY(%s)", (list(years),))
     out = {y: {} for y in years}
-    for y, pid, nm, sch, g, n in cur.fetchall():
-        out[y][pid] = (nm, sch, g, n)
+    for y, k, nm, sch, g, n in cur.fetchall():
+        out[y][k] = (nm, sch, g, n)
     return out
 
 
@@ -267,28 +317,57 @@ CREATE TABLE IF NOT EXISTS person_link_log (
 
 
 def write(conn, pairs):
+    """Stamp the anet person onto every row of each tfrrs identity: by
+    person_id ('p:') or by tfrrs athlete id ('n:system:id', the rows that
+    carry no person_id yet -- as merge_links and stamp_fanout write one)."""
     with conn.cursor() as cur:
         cur.execute(LOG_DDL)
+        by_p = [(int(t[2:]), a) for t, a, *_ in pairs if t.startswith("p:")]
+        by_n = []
+        for t, a, *_ in pairs:
+            if t.startswith("n:"):
+                _n, system, native = t.split(":", 2)
+                by_n.append((system, int(native), a))
+        from psycopg2.extras import execute_values
         cur.execute("DROP TABLE IF EXISTS lf_map")
         cur.execute("CREATE TEMP TABLE lf_map (from_person bigint PRIMARY KEY,"
                     " to_person bigint NOT NULL)")
-        from psycopg2.extras import execute_values
-        execute_values(cur, "INSERT INTO lf_map VALUES %s",
-                       [(t, a) for t, a, *_ in pairs])
+        cur.execute("DROP TABLE IF EXISTS lf_nmap")
+        cur.execute("CREATE TEMP TABLE lf_nmap (id_system text, native_id bigint,"
+                    " to_person bigint NOT NULL, PRIMARY KEY (id_system, native_id))")
+        if by_p:
+            execute_values(cur, "INSERT INTO lf_map VALUES %s", by_p)
+        if by_n:
+            execute_values(cur, "INSERT INTO lf_nmap VALUES %s", by_n)
         moved = {}
         for sport, table in (("XC", "results"), ("TF", "results_tf")):
+            sysx = ("'tfrrs'" if sport == "XC"
+                    else "COALESCE(r.id_system, 'tfrrs')")
+            # from_person 0 in the log = "had no person_id" (undo -> NULL)
             cur.execute(f"""
                 INSERT INTO person_link_log (sport, result_id, from_person,
                                              to_person, rule)
                 SELECT %s, r.result_id, m.from_person, m.to_person, %s
                 FROM   {table} r JOIN lf_map m ON r.person_id = m.from_person
+                UNION ALL
+                SELECT %s, r.result_id, 0, n.to_person, %s
+                FROM   {table} r JOIN lf_nmap n
+                       ON r.source = 'tfrrs' AND r.person_id IS NULL
+                      AND r.native_id = n.native_id AND {sysx} = n.id_system
                 ON CONFLICT DO NOTHING
-            """, (sport, RULE))
+            """, (sport, RULE, sport, RULE))
             cur.execute(f"""
                 UPDATE {table} r SET person_id = m.to_person
                 FROM   lf_map m WHERE r.person_id = m.from_person
             """)
-            moved[sport] = cur.rowcount
+            a = cur.rowcount
+            cur.execute(f"""
+                UPDATE {table} r SET person_id = n.to_person
+                FROM   lf_nmap n
+                WHERE  r.source = 'tfrrs' AND r.person_id IS NULL
+                  AND  r.native_id = n.native_id AND {sysx} = n.id_system
+            """)
+            moved[sport] = a + cur.rowcount
     conn.commit()
     return moved
 
@@ -301,7 +380,7 @@ def undo(conn):
         back = {}
         for sport, table in (("XC", "results"), ("TF", "results_tf")):
             cur.execute(f"""
-                UPDATE {table} r SET person_id = l.from_person
+                UPDATE {table} r SET person_id = NULLIF(l.from_person, 0)
                 FROM   person_link_log l
                 WHERE  l.sport = %s AND l.rule = %s
                   AND  r.result_id = l.result_id AND r.person_id = l.to_person
@@ -343,7 +422,7 @@ def main():
                       f"{len(pairs):,} pairs; skipped {skipped}")
                 for t, s, nm, col, hs in pairs[:a.show]:
                     print(f"    {nm:<28} {str(hs)[:30]:<30} -> {str(col)[:28]:<28}"
-                          f"  tfrrs {t} -> anet {s}")
+                          f"  tfrrs {t} -> anet person {s}")
                 all_pairs += pairs
         conn.rollback()                       # the temp tables only
         # one tfrrs person, one target, across years (a person is a

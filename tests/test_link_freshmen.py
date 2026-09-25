@@ -56,3 +56,21 @@ def test_academic_year():
     import datetime
     assert L.academicYear(datetime.date(2026, 9, 25)) == 2026
     assert L.academicYear(datetime.date(2026, 5, 1)) == 2025
+
+
+def test_only_a_college_freshman_grade_counts():
+    """! The first dry run paired seniors with 'first-years' at a junior high
+    -- tfrrs hosts some school meets too."""
+    import re
+    fr = re.compile(L.FRESHMAN_RE)
+    for g in ("fr", "fr-1", "freshman", "13"):
+        assert fr.match(g), g
+    for g in ("8", "12", "so-2", "sr", "7th"):
+        assert not fr.match(g), g
+
+
+def test_unlinked_tfrrs_identities_pair_by_their_athlete_id():
+    fresh = {"n:tfrrs:8812345": ("Jane Frosh", "Tufts", None, 3)}
+    senior = {1: ("Jane Frosh", "Newton North", "F", False)}
+    pairs, _ = L.pairsFor(fresh, senior)
+    assert [(t, a) for t, a, *_ in pairs] == [("n:tfrrs:8812345", 1)]
