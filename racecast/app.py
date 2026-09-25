@@ -1769,6 +1769,33 @@ def athlete(person_id):
                                 if athlete["rating"] is not None and _sf
                                 else None)
 
+    # ⚠ A PROFESSIONAL SEASON NEWER THAN THE HEADER'S (owner, 2026-09-25,
+    #   Jared Nuguse: "147.5 · 2022 TF season · top 0.1% of college men" over
+    #   four years of Diamond League races rated ~208). athlete_season holds
+    #   no pro season -- isRankablePool refuses pro_*, there is no pro board
+    #   -- so for a career that turned professional the query above can only
+    #   find the last SCHOOL season, and headed the page with it: the rating,
+    #   the rank line, the grade and the conference chips all four years
+    #   stale. The pro season's number is the block's own, the one the page
+    #   shows under it; it has no board, so no percentile and no rank line.
+    pro_head = _proHeaderSeason(ordered, season_rating) if season_rating else None
+    if pro_head:
+        (_plabel, _psport), _pblk = pro_head
+        athlete["rating"] = _pblk["rating"]
+        athlete["rating_hs"] = _pblk["rating_hs"]
+        athlete["rating_note"] = f"{_plabel} {_psport} season · professional"
+        athlete["percentile"] = None
+        athlete["equiv_time"] = athlete["equiv_dist"] = None
+        athlete["rank_floor"] = None
+        athlete["grade"] = None
+        athlete["pro_header"] = True
+        athlete["header_pool"] = _pblk.get("pool")
+        athlete["header_state"] = None
+        if _pblk.get("school"):
+            athlete["school"] = _pblk["school"]
+        rank_line = None
+        units = []
+
     # ★ THE HEADER STAT STRIP. These numbers all existed -- in the sidebar,
     #   below the fold, or not at all -- while the header carried just a name
     #   and a grey line. They are derived here rather than in the template so
@@ -2402,6 +2429,32 @@ def event_label(event):
         return f"{round(float(text))}m"
     except (TypeError, ValueError):
         return text
+
+
+def _proHeaderSeason(ordered, season_rating):
+    """The newest rated professional season block, as ((label, sport), block),
+    when it raced later than the season the header was going to quote; else
+    None. Deep seasons (three rated races, the boards' floor) first, as the
+    header query does."""
+    def last(blk):
+        return max((str(r.get("date") or "") for r in blk["races"]), default="")
+
+    head = None
+    if season_rating and season_rating.get("year") is not None:
+        lab = int(season_rating["year"]) + (1 if season_rating["sport"] == "TF" else 0)
+        blocks = dict(ordered)
+        head = (blocks.get((lab, season_rating["sport"]))
+                or blocks.get((str(lab), season_rating["sport"])))
+    head_last = last(head) if head else ""
+    pro = [(k, v) for k, v in ordered
+           if str(v.get("pool") or "").startswith("pro_")
+           and v.get("rating") is not None]
+    if not pro:
+        return None
+    deep = [kv for kv in pro
+            if sum(r.get("speed_rating") is not None for r in kv[1]["races"]) >= 3]
+    k, v = max(deep or pro, key=lambda kv: last(kv[1]))
+    return (k, v) if last(v) > head_last else None
 
 
 def group_into_seasons(races):

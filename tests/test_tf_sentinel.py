@@ -72,3 +72,34 @@ def test_format_time_hides_it():
     import app as A
     assert A.format_time(20000) == " - "
     assert A.format_time(225.69) == "3:45.69"
+
+
+# ---- the header of a career that turned professional (same day, Nuguse) ----
+
+def _blk(pool, dates, rating=208.0):
+    return {"pool": pool, "rating": rating, "rating_hs": rating,
+            "school": "United States" if pool.startswith("pro") else "Notre Dame",
+            "races": [{"date": d, "speed_rating": rating} for d in dates]}
+
+
+def test_a_newer_pro_season_heads_the_page():
+    pytest.importorskip("flask")
+    import app as A
+    ordered = sorted({
+        (2027, "TF"): _blk("pro_m", ["2026-08-26", "2026-09-04", "2026-09-11"]),
+        (2026, "TF"): _blk("pro_m", ["2026-05-31", "2026-07-18", "2026-07-04"]),
+        (2022, "TF"): _blk("college_m", ["2022-05-01", "2022-06-10"], 147.5),
+    }.items(), reverse=True)
+    season = {"year": 2021, "sport": "TF"}
+    (label, sport), blk = A._proHeaderSeason(ordered, season)
+    assert (label, sport) == (2027, "TF") and blk["pool"] == "pro_m"
+
+
+def test_a_school_season_newer_than_any_pro_one_keeps_the_header():
+    pytest.importorskip("flask")
+    import app as A
+    ordered = sorted({
+        (2026, "TF"): _blk("college_m", ["2026-05-01", "2026-06-10", "2026-06-12"]),
+        (2025, "TF"): _blk("pro_m", ["2025-02-01", "2025-02-08", "2025-03-01"]),
+    }.items(), reverse=True)
+    assert A._proHeaderSeason(ordered, {"year": 2025, "sport": "TF"}) is None
