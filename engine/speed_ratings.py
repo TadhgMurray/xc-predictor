@@ -1206,6 +1206,56 @@ def loadCols(path, only=None):
     return cols
 
 
+# _prefetched
+# Purpose:   run a batch iterator in a background thread, `depth` batches
+#            ahead, so the database and the row loop work AT THE SAME TIME.
+#
+# ★ WHY (2026-09-25). The pack's own timer: "5127s waiting on the database,
+#   2426s resolving pools, 652s the rest of the row loop" -- 8,274 s spent
+#   strictly one after the other. psycopg2 releases the GIL while it waits on
+#   the server, so a fetcher thread can pull batch n+1 while this thread
+#   resolves batch n; the pack then costs about the larger of the two rather
+#   than their sum.
+#
+# ! SAME ROWS, SAME ORDER. One producer, one bounded FIFO, one consumer:
+#   nothing is reordered, so the codes, the stable sort by athlete and the
+#   packed arrays are identical. The streaming generator and its connection
+#   live entirely in the producer thread.
+# ! AN ERROR IN THE PRODUCER IS RAISED IN THE CONSUMER, at the point the
+#   failed batch would have arrived -- a dead fetcher must never look like
+#   the end of the data.
+# ! XCP_PACK_PREFETCH=0 turns it off.
+def _prefetched(it, depth=4):
+    if os.environ.get("XCP_PACK_PREFETCH", "1") in ("0", "false"):
+        return it
+    import queue
+    import threading
+    q = queue.Queue(maxsize=depth)
+    _END = object()
+
+    def produce():
+        try:
+            for batch in it:
+                q.put(batch)
+        except BaseException as exc:            # noqa: BLE001 -- re-raised below
+            q.put(("__prefetch_error__", exc))
+            return
+        q.put(_END)
+
+    threading.Thread(target=produce, name="pack-prefetch", daemon=True).start()
+
+    def consume():
+        while True:
+            item = q.get()
+            if item is _END:
+                return
+            if (isinstance(item, tuple) and len(item) == 2
+                    and item[0] == "__prefetch_error__"):
+                raise item[1]
+            yield item
+    return consume()
+
+
 # packOrLoad
 # Purpose:   packed arrays, from cache when available.
 # Arguments: sports -- tuple of sports to stream; today; merge; cache -- bool.
@@ -1223,7 +1273,7 @@ def packOrLoad(sports, today, merge, cache):
     # was unknown -- and an unknown phase cannot be weighed against the solve
     # when deciding what is worth optimising.
     t0 = time.time()
-    stream = chain(*(streamResults(s) for s in sports))
+    stream = _prefetched(chain(*(streamResults(s) for s in sports)))
     cols = packResults(stream, today, merge=merge)
     print(f"[time] stream + pack: {time.time() - t0:.1f}s")
     attachCourseCoords(cols)
