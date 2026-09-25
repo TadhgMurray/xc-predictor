@@ -2285,3 +2285,25 @@ it is the right set.
 
 **Practical upshot:** after the team-id scrape finishes, run the retry (143
 meets, quick) and then a normal run for the 5,420 genuinely-due ids.
+
+---
+
+## 2026-09-25 — 📋 LOGGED, NOT ACTIONED: eight features built but not wired
+
+Owner: "log those 8 and we'll deal with after this." Each was checked for
+callers with a grep over `racecast/templates` and `racecast/static/*.js`.
+Closest to done first.
+
+| # | Feature | What exists | What is missing |
+|---|---|---|---|
+| 1 | **Lineup search** — `/api/predict/lineup` (`app.py`), `predict.predictTeamLineup`, `race_sim.bestLineup` | Route, model and `tests/test_race_sim.py`. Returns best 7, bench, win chance, expected score, 5 alternatives, in the page's runner-row shape | Any caller: a "Best lineup" button per team row and a panel. `coaches.html` still says "Lineup simulator — being built" |
+| 2 | **Head-to-head scoring** — `head_to_head=1` on `/api/predict/team` | Backend, and `predictions.js` already renders "Scored as if only these teams raced" | The page never sends it: a toggle. `team_rho` and `draws` are never sent either |
+| 3 | **Model status** — `/api/predict/status` | Route over `predict.modelStatus` | No fetch, no banner |
+| 4 | **Compiled meet JSON** — `/api/meet/xc/<id>/compiled` | Backend | No caller; `meet.html` / `compiled.html` render on the server |
+| 5 | **Recruit projections on athlete pages** — `recruit_projection` | Built every run; the coach search sorts on it | `athlete.html`, `recruit.html`, `recruiting.html`, `recruitProfile` never read it. `coaches.html` still lists it as being built |
+| 6 | **`team_identity`** — `racecast/build_team_identity.py` | Built every run (anet team id → school, state; Georgetown TX vs DC) | Only `diag_school_roster.py` reads it; `school_identity.py` and the pages do not |
+| 7 | **Team records on track venue pages** — `venue_tf.html` "Team records - coming later" | The XC version: `get_course_team_records`, `course.html` | A TF query and the table |
+| 8 | **Dead leftovers** | — | Remove: `/hello`, `templates/_result_row.html`, `static/hero.png`, `static/cards/athlete-1.png`; stale text: the athlete rank line's "Greyed scopes are coming soon" tooltip (no scope is wip any more), `coaches.html` "being built" items. `tilt.difficultyFor` has no caller |
+
+Idea stage only, no backend: "Programme development", "Saved boards and
+watchlists" (`coaches.html`).

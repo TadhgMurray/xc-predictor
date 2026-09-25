@@ -5164,3 +5164,7 @@ input.eqc-big:focus { outline: none; border-bottom-color: var(--eqc-accent); }
 .eqc-opt:hover, .eqc-opt:focus-visible { background: #f3f6fa; outline: none; }
 .eqc-opt span { color: var(--eqc-muted); white-space: nowrap; }
 .eqc-none { font-size: 0.85rem; color: var(--eqc-muted); padding: 0.45rem 0.7rem; }
+
+/* a predicted time served from the runner's race ratings (predict._servedTimes) */
+.predict2 .pred-rb { color: #8a5a00; font-size: 0.65rem; margin-left: 1px;
+                     font-weight: 600; }

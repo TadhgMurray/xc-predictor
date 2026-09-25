@@ -50,20 +50,60 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--apply", action="store_true",
                     help="clear the rows (default: count them only)")
+    ap.add_argument("--value", type=float, default=TF_SENTINEL,
+                    help="the stored sentinel to clear (default %(default)g); "
+                         "the dry run lists the candidates")
+    ap.add_argument("--meet", type=int,
+                    help="also print every running row over an hour at "
+                         "this meet_id -- the race you saw it on")
     args = ap.parse_args()
+    value = args.value
 
     with getConn() as conn:
         with conn.cursor() as cur:
             cols = _columns(cur, "results_tf")
             status = "status" if "status" in cols else "NULL::text"
+            # ⚠ FIRST RUN FOUND NOTHING AT 20,000 (owner, 2026-09-25), though a
+            #   page showed 5:33:20. So the dry run says what IS there: every
+            #   running "time" over two hours, grouped by value. A sentinel is
+            #   one value repeated thousands of times; a real slow race is not.
+            if not args.apply:
+                t0 = time.time()
+                print("[sentinel] running rows over 2 hours, by value "
+                      "(a full scan):", flush=True)
+                cur.execute(f"""
+                    SELECT time_seconds::float8, COALESCE(source, '?'),
+                           COALESCE({status}, '(none)'), count(*),
+                           count(speed_rating)
+                    FROM   results_tf
+                    WHERE  time_seconds > 7200
+                      AND  COALESCE(is_field::int, 0) = 0
+                    GROUP  BY 1, 2, 3 ORDER BY 4 DESC LIMIT 25
+                """)
+                print(f"  {'time_seconds':>14} {'source':<7} {'status':<8} "
+                      f"{'rows':>9} {'rated':>8}")
+                for t, src, st, n, rated in cur.fetchall():
+                    print(f"  {t:>14.3f} {src:<7} {st:<8} {n:>9,} {rated:>8,}")
+                print(f"  ({time.time() - t0:.0f}s)")
+                if args.meet:
+                    cur.execute(f"""
+                        SELECT result_id, event_id, div_id, source,
+                               time_seconds::float8, mark, {status},
+                               speed_rating
+                        FROM   results_tf
+                        WHERE  meet_id = %s AND time_seconds > 3600
+                    """, (args.meet,))
+                    print(f"[sentinel] meet {args.meet}, rows over an hour:")
+                    for row in cur.fetchall():
+                        print("  ", row)
             t0 = time.time()
             print(f"[sentinel] scanning results_tf for time_seconds = "
-                  f"{TF_SENTINEL:g} (a full scan -- minutes on the whole table)",
+                  f"{value:g} (a full scan -- minutes on the whole table)",
                   flush=True)
             cur.execute(f"""
                 SELECT result_id FROM results_tf
                 WHERE  time_seconds = %s AND COALESCE(is_field::int, 0) = 0
-            """, (TF_SENTINEL,))
+            """, (value,))
             ids = [r[0] for r in cur.fetchall()]
             print(f"[sentinel] {len(ids):,} rows ({time.time() - t0:.0f}s)")
             if not ids:
@@ -108,14 +148,14 @@ def main():
                     FROM   results_tf
                     WHERE  result_id = ANY(%s) AND time_seconds = %s
                     ON CONFLICT (result_id) DO NOTHING
-                """, (chunk, TF_SENTINEL))
+                """, (chunk, value))
                 cur.execute(f"""
                     UPDATE results_tf
                     SET    time_seconds = NULL,
                            mark         = COALESCE(mark, {status}, 'DNF'),
                            speed_rating = NULL{set_norm}
                     WHERE  result_id = ANY(%s) AND time_seconds = %s
-                """, (chunk, TF_SENTINEL))
+                """, (chunk, value))
                 done += cur.rowcount
                 conn.commit()
                 print(f"[sentinel] cleared {done:,} / {len(ids):,}", flush=True)

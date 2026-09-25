@@ -2239,6 +2239,20 @@ function teamScoreTable(d) {
      cannot (no pool on record, no fitted factor for that distance) the row
      keeps the 5K equivalent, and printing that unlabelled over an 8K race
      is exactly the bug being fixed. */
+/* ★ WHICH TIMES ARE THE ENGINE'S (owner, 2026-09-25: "why does a 15 min
+   5ker get predicted at 30 mins"). predict._servedTimes serves a runner's
+   recent race ratings, converted to this course, where the model's time is
+   out of line with them or its band is too wide to mean anything. */
+function ratingBasisNote(runners) {
+  const n = runners.filter((r) => r.basis === "rating").length;
+  if (!n) return "";
+  return `<p class="meta"><sup class="pred-rb">r</sup> ${n} time${
+    n === 1 ? " comes" : "s come"} from the runner's recent race ratings,
+    converted to this course: the model's prediction for ${
+    n === 1 ? "them" : "those runners"} was out of line with how they have
+    been racing, or too uncertain to use. Hover a time to see the model's.</p>`;
+}
+
 function timeBasisNote(runners) {
   const known = runners.filter((r) => r.seconds !== null
                                    && r.seconds !== undefined);
@@ -2267,7 +2281,11 @@ function finishTable(d) {
       <td>${esc(r.grade_label || " - ")}</td>
       <td>${schoolCell(r.school, r.school_state, r.school_href,
                        r.school_label, r.crest)}</td>
-      <td class="no-break">${fmtTime(r.seconds)}${
+      <td class="no-break"${r.basis === "rating"
+          ? ` title="From this runner's recent race ratings${
+              r.model_seconds ? ` - the model said ${fmtTime(r.model_seconds)}, out of line with them` : ""}"` : ""
+        }>${fmtTime(r.seconds)}${r.basis === "rating"
+          ? `<sup class="pred-rb" aria-label="from race ratings">r</sup>` : ""}${
         r.lo !== undefined && r.lo !== null
           ? `<span class="pred-band">${fmtTime(r.lo)}–${
               fmtTime(r.hi)}</span>` : ""}</td>
@@ -2282,7 +2300,7 @@ function finishTable(d) {
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    ${timeBasisNote(runners)}
+    ${timeBasisNote(runners)}${ratingBasisNote(runners)}
     <p class="meta">Each time is the model's prediction with its likely range
       underneath. Points is the scoring place: the gap from Place is the
       unattached runners, the incomplete teams and the eighth runners.</p>`;

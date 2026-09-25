@@ -33,6 +33,7 @@ TEAM SCORING IS NOT A SEPARATE MODEL
 """
 
 import datetime
+import math
 import os
 
 from meet_compile import isTeam
@@ -199,7 +200,7 @@ def predictIndividual(cur, person_id, target):
         return {"available": False,
                 "reason": "No rated races found for this athlete."}
 
-    out = _predictTimes(cur, [person_id], target)[0]
+    out = _servedTimes(cur, [person_id], target)[0]
     if out.get("seconds") is None:
         return {"available": False,
                 "reason": out.get("reason",
@@ -238,7 +239,7 @@ def predictTeam(cur, schools, target, head_to_head=False,
                 "reason": "No athletes found for those teams."}
 
     field = roster if head_to_head else _fullField(cur, roster, target)
-    preds = _predictTimes(cur, [r["person_id"] for r in field], target)
+    preds = _servedTimes(cur, [r["person_id"] for r in field], target)
 
     # ★ A COALESCED SQUAD ENTERS SEVEN (issue #86). Two divisions merged under
     #   one name bring fourteen, and all fourteen would take places -- pushing
@@ -381,7 +382,7 @@ def predictTeamLineup(cur, schools, target, team, remove=None, add=None,
         return {"available": False,
                 "reason": "No athletes found for those teams."}
     field = _fullField(cur, roster, target)
-    preds = _predictTimes(cur, [r["person_id"] for r in field], target)
+    preds = _servedTimes(cur, [r["person_id"] for r in field], target)
 
     own = [f for f in field if f.get("school") == team]
     if not own:
@@ -596,6 +597,9 @@ def _score(field, preds):
                "normalized": pred.get("normalized"),
                "is_race_time": pred.get("is_race_time"),
                "lo": pred.get("lo"), "hi": pred.get("hi"),
+               # model | rating -- see _servedTimes
+               "basis": pred.get("basis"),
+               "model_seconds": pred.get("model_seconds"),
                "school": team if isTeam(team) else None,
                "school_state": runner.get("school_state"),
                "grade": runner.get("grade"), "pool": runner.get("pool"),
@@ -884,6 +888,179 @@ def _predictTimes(cur, person_ids, target):
                     "source": fc_row.get("source")}
             entries[slot] = entry
     return entries
+
+
+# ------------------------------------------------------------------ #
+#  THE RATING GUARD -- what the page serves
+# ------------------------------------------------------------------ #
+#
+# ⚠⚠ THE MODEL IS STALE AND ITS INPUTS MOVED UNDER IT (owner, 2026-09-25:
+#    "why does a 15 min 5ker get predicted at 30 mins", "a 9:01 guy gets
+#    predicted 30 mins for an 8k"). The network reads each athlete's history
+#    of normalized_time, and the normaliser has since moved to an anchor PER
+#    POOL -- ms 3200, hs 5000, college 8000, pro now 8000 too -- so one
+#    athlete's sequence mixes scales the weights never saw together. The
+#    worst rows came back 2x slow with a one-sigma band of 20 to 50 minutes,
+#    and the race simulation drew from those bands: a team carrying three
+#    such runners read 2% to win on 210 points while a 134-point team read
+#    under 1%.
+#
+# ★ THE ENGINE'S OWN NUMBER IS THE CHECK. Every athlete here has race
+#   ratings, fitted against everyone they raced; through the conversions
+#   algebra (the same inverse the conversions page and the equivalents card
+#   use) a rating is a time on any course at any distance. The page keeps
+#   the model's time where it agrees with that and its band is a band, and
+#   serves the rating's time otherwise -- saying so on the row (`basis`).
+#
+# ! ONLY THE PAGE IS GUARDED. build_recruit_projection and the model
+#   diagnostics call _predictTimes directly, so the model's own quality stays
+#   measurable and nothing trains on the guard's output.
+#
+# XCP_PREDICT_BASIS: guard (default) | model (the raw network) | rating.
+_GUARD_MAX_SIGMA = 0.08    # a one-sigma band wider than 8% is not a prediction
+_GUARD_MAX_GAP = 0.08      # nor is a time 8% off the athlete's own ratings
+_RATING_WINDOW_DAYS = 365
+_RATING_LAST_N = 6
+_RATING_OUTLIER_PTS = 20.0   # build_ranking_results._SEASON_OUTLIER_PTS
+_RATING_SIGMA = (0.025, 0.06)
+
+
+def _predictBasis():
+    b = (os.environ.get("XCP_PREDICT_BASIS") or "guard").strip().lower()
+    return b if b in ("guard", "model", "rating") else "guard"
+
+
+def _servedTimes(cur, person_ids, target):
+    """_predictTimes, checked against the athletes' own ratings -- what every
+    page entry point serves. See the note above."""
+    basis = _predictBasis()
+    preds = _predictTimes(cur, person_ids, target)
+    if basis == "model":
+        return preds
+    try:
+        spec = _targetSpec(cur, target)
+        cut = _asDate(spec.get("date"))
+        _hb = _asDate(target.get("history_before"))
+        if _hb is not None and (cut is None or _hb < cut):
+            cut = _hb
+        rated = _ratingTimes(cur, person_ids, spec, cut)
+    except Exception:                                   # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("rating guard failed")
+        return preds
+    for pid, entry in zip(person_ids, preds):
+        r = rated.get(pid)
+        if r is None:
+            continue
+        secs, sig = entry.get("seconds"), entry.get("sigma_pct")
+        keep = (basis == "guard" and secs and entry.get("is_race_time")
+                and sig is not None and float(sig) / 100.0 <= _GUARD_MAX_SIGMA
+                and abs(math.log(float(secs) / r["seconds"])) <= _GUARD_MAX_GAP)
+        if keep:
+            entry["basis"] = "model"
+            continue
+        if secs:
+            entry["model_seconds"] = secs
+        entry.update(r)
+        entry.pop("reason", None)
+    return preds
+
+
+def _ratingRows(cur, person_ids, lo_date, hi_date):
+    """{pid: [(date, rating, pool), newest first]} over both result tables,
+    strictly before hi_date."""
+    ids = sorted({int(p) for p in person_ids if p})
+    out = {}
+    if not ids:
+        return out
+    for table in ("results", "results_tf"):
+        cur.execute(f"""
+            SELECT COALESCE(r.person_id, r.athlete_id) AS pid, r.date,
+                   r.speed_rating, split_part(r.rating_pool, '|', 1) AS pool
+            FROM   {table} r
+            WHERE  (r.person_id = ANY(%s)
+                    OR (r.person_id IS NULL AND r.athlete_id = ANY(%s)))
+              AND  r.speed_rating > 0 AND r.rating_pool IS NOT NULL
+              AND  r.date >= %s AND r.date < %s
+        """, (ids, ids, lo_date, hi_date))
+        for row in cur.fetchall():
+            pid, d, rating, pool = (
+                (row["pid"], row["date"], row["speed_rating"], row["pool"])
+                if isinstance(row, dict) else tuple(row))
+            out.setdefault(pid, []).append((str(d), float(rating), pool))
+    for rows in out.values():
+        rows.sort(reverse=True)
+    return out
+
+
+def _formRating(rows):
+    """(rating, sigma_log, pool, n) from an athlete's recent rated races:
+    the pool they raced in LAST (a rating is relative to its pool), the last
+    few races in it, a fall or a DNF-shaped outlier dropped, recent races
+    weighted up. None when nothing is left."""
+    if not rows:
+        return None
+    pool = rows[0][2]
+    vals = [r for _d, r, p in rows if p == pool][:_RATING_LAST_N]
+    if not vals:
+        return None
+    med = sorted(vals)[len(vals) // 2]
+    vals = [v for v in vals if v >= med - _RATING_OUTLIER_PTS]
+    w = [0.8 ** k for k in range(len(vals))]
+    tot = sum(w)
+    rating = sum(wi * v for wi, v in zip(w, vals)) / tot
+    if len(vals) > 1:
+        lg = [math.log(v) for v in vals]
+        m = sum(wi * x for wi, x in zip(w, lg)) / tot
+        sig = math.sqrt(sum(wi * (x - m) ** 2 for wi, x in zip(w, lg)) / tot)
+    else:
+        sig = 0.05
+    sig = min(max(sig, _RATING_SIGMA[0]), _RATING_SIGMA[1])
+    return rating, sig, pool, len(vals)
+
+
+def _ratingTimes(cur, person_ids, spec, cut):
+    """{pid: entry} -- each athlete's recent form, as a time at the target
+    race, with its band. Shaped like a _predictTimes entry."""
+    import conversions
+    dist = spec.get("distance_meters")
+    if not dist:
+        return {}
+    sport = spec.get("sport") or "XC"
+    hi_d = cut or datetime.date.today() + datetime.timedelta(days=1)
+    lo_d = hi_d - datetime.timedelta(days=_RATING_WINDOW_DAYS)
+    rows = _ratingRows(cur, person_ids, lo_d.isoformat(), hi_d.isoformat())
+
+    def at(rating, pool):
+        norm = conversions._norm_from_rating(rating, pool, 0.0, sport)
+        if not norm:
+            return None
+        return _raceSeconds(norm, {
+            "distance": float(dist), "pool": pool, "sport": sport,
+            "season": hi_d.year,
+            "difficulty": spec.get("course_difficulty"),
+            "canonical_id": spec.get("canonical_id"),
+            "location_id": spec.get("location_id"),
+            "is_indoor": spec.get("is_indoor"),
+            "course": spec.get("course_name")})
+
+    out = {}
+    for pid in person_ids:
+        form = _formRating(rows.get(pid))
+        if form is None:
+            continue
+        rating, sig, pool, n = form
+        secs = at(rating, pool)
+        if not secs:
+            continue
+        lo = at(rating * math.exp(sig), pool) or secs * math.exp(-sig)
+        hi = at(rating * math.exp(-sig), pool) or secs * math.exp(sig)
+        out[pid] = {"seconds": round(secs, 1), "lo": round(lo, 1),
+                    "hi": round(hi, 1), "sigma_pct": round(100.0 * sig, 2),
+                    "is_race_time": True, "time_basis": "rating",
+                    "basis": "rating", "form_rating": round(rating, 1),
+                    "form_pool": pool, "n_races": n}
+    return out
 
 
 def _fc():
