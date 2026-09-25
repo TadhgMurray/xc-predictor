@@ -4,6 +4,11 @@ slow_queries.py -- what the database is doing right now, longest first.
 
     /srv/venv/bin/python scripts/slow_queries.py          # once
     /srv/venv/bin/python scripts/slow_queries.py --watch  # every 3 s
+    /srv/venv/bin/python scripts/slow_queries.py --terminate 543606 544061
+
+! A Ctrl-C'd script can leave its query running on the SERVER (2026-09-25:
+  three backends of an interrupted link_freshmen dry run held results_tf
+  and blocked the backfill's swap). --terminate ends those backends by pid.
 
 For "the site is slow": a page query that runs for seconds shows here with
 its text, next to whatever else (a pipeline step, a repair, an extraction)
@@ -46,7 +51,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--watch", action="store_true")
     ap.add_argument("--width", type=int, default=160)
+    ap.add_argument("--terminate", type=int, nargs="+", metavar="PID",
+                    help="end these backends (pg_terminate_backend)")
     a = ap.parse_args()
+    if a.terminate:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                for pid in a.terminate:
+                    cur.execute("SELECT pg_terminate_backend(%s)", (pid,))
+                    print(f"  pid {pid}: {'ended' if cur.fetchone()[0] else 'not found'}")
+            conn.commit()
+        return
     while True:
         show(a.width)
         if not a.watch:

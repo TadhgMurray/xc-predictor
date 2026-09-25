@@ -2524,6 +2524,16 @@ def _lockHolders(cur, table):
 
 def _swapWithRetry(cur, body, what, table=None):
     """Run `body(cur)` inside a transaction that refuses to queue for locks."""
+    # ⚠⚠ COMMIT WHAT CAME BEFORE, OR THE FIRST ROLLBACK TAKES IT (2026-09-25:
+    #    "relation results_tf_new does not exist" on attempt 4). The merge
+    #    builds <table>_new and every index on the SAME connection, in the
+    #    transaction psycopg2 opened implicitly; the `BEGIN` below is then
+    #    only a warning inside it, and the lock-timeout ROLLBACK undid the
+    #    whole rebuild -- heap and indexes -- after three readers (a
+    #    link_freshmen dry run left running server-side) held the table.
+    #    Committed here, <table>_new survives a failed swap, which is what
+    #    the RuntimeError below has always promised.
+    cur.connection.commit()
     holders = []
     for attempt in range(1, SWAP_ATTEMPTS + 1):
         try:

@@ -71,3 +71,36 @@ def test_the_lookup_transaction_ends_before_the_stream_opens(monkeypatch):
     j = log.index("stream on read")
     assert "read.commit" in log[i:j], log
     assert "read.rollback" not in log[i:j], log     # would drop TEMP _wcp
+
+
+def test_a_blocked_swap_cannot_roll_back_the_rebuilt_table(monkeypatch):
+    """! 2026-09-25: "relation results_tf_new does not exist" -- the rebuilt
+    heap and indexes sat uncommitted in the connection's open transaction,
+    and the swap retry's ROLLBACK after a lock timeout took them with it."""
+    import psycopg2.errors
+    log = []
+
+    class Conn:
+        def commit(self):
+            log.append("COMMIT(conn)")
+
+    class Cur:
+        connection = Conn()
+
+        def execute(self, sql, params=None):
+            log.append(sql.split()[0] if sql.split() else sql)
+
+    tries = {"n": 0}
+
+    def body(cur):
+        tries["n"] += 1
+        if tries["n"] == 1:
+            raise psycopg2.errors.LockNotAvailable()
+
+    monkeypatch.setattr(B.time, "sleep", lambda s: None)
+    monkeypatch.setattr(B, "_lockHolders", lambda cur, t: [])
+    B._swapWithRetry(Cur(), body, "results_tf swap", table="results_tf")
+    first_rollback = log.index("ROLLBACK")
+    assert "COMMIT(conn)" in log[:first_rollback]      # the rebuild was kept
+    assert log.index("COMMIT(conn)") < log.index("BEGIN")
+    assert tries["n"] == 2 and log[-1] == "COMMIT"
