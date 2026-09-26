@@ -323,14 +323,18 @@ def build(cur, pro_max=PRO_MAX_ATHLETES, verbose=True,
 
 
 def write(cur, rows):
-    cur.execute("TRUNCATE team_pool")
+    """Fill team_pool_new; main() swaps it in (database.swapTable).
+
+    ! NOT TRUNCATE team_pool: that holds an exclusive lock on the live table
+      for the whole insert, and every page reading it waited behind it."""
+    cur.execute("DROP TABLE IF EXISTS team_pool_new")
+    cur.execute(DDL.replace("team_pool (", "team_pool_new (", 1))
     cur.executemany("""
-        INSERT INTO team_pool (team_id, kind, reason, n_athletes, n_rows,
-                               level, n_pros, built)
+        INSERT INTO team_pool_new (team_id, kind, reason, n_athletes, n_rows,
+                                   level, n_pros, built)
         VALUES (%s, %s, %s, %s, %s, %s, %s, current_date)
     """, rows)
-    cur.execute("CREATE INDEX IF NOT EXISTS team_pool_kind_idx "
-                "ON team_pool (kind)")
+    cur.execute("CREATE INDEX team_pool_new_kind_idx ON team_pool_new (kind)")
     return len(rows)
 
 
@@ -468,6 +472,8 @@ def main():
                 print(f"\n  wrote {write(cur, rows):,} rows to team_pool")
         if args.write:
             conn.commit()
+            from database import swapTable
+            swapTable(conn, "team_pool", "team_pool_new")
             print("  committed.")
         else:
             conn.rollback()

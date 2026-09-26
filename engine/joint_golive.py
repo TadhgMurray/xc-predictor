@@ -513,9 +513,9 @@ def writeRaceDays(day_rows):
                            "race_date", "day_effect", "n_rows"), rows)
         cur.execute("CREATE INDEX ON race_day_effect_new (canonical_id, distance_m, race_date)")
         cur.execute("CREATE INDEX ON race_day_effect_new (course_name, race_date)")
-        cur.execute("DROP TABLE IF EXISTS race_day_effect")
-        cur.execute("ALTER TABLE race_day_effect_new RENAME TO race_day_effect")
-        conn.commit()
+        # the page reads race_day_effect: short-lock swap with retries
+        from database import swapTable
+        swapTable(conn, "race_day_effect", "race_day_effect_new")
     print(f"[joint/live] race_day_effect: {total:,} race days written "
           f"(dates from the pack of {pack_date})")
 

@@ -146,10 +146,9 @@ LEFT   JOIN person_gender o USING (person_id)
 WHERE  o.person_id IS NULL OR o.gender IS DISTINCT FROM n.gender
    OR  o.split IS DISTINCT FROM n.split;
 ALTER TABLE person_gender_changed ADD PRIMARY KEY (person_id);
-DROP TABLE IF EXISTS person_gender;
-ALTER TABLE person_gender_new RENAME TO person_gender;
-ANALYZE person_gender;
 """
+# the swap itself is database.swapTable (short lock, retries), run after
+# _BUILD commits -- a bare DROP here queued every page behind any reader
 
 _REPORT = """
     SELECT count(*), count(*) FILTER (WHERE split),
@@ -173,6 +172,10 @@ def main():
             cur.execute("SET max_parallel_workers_per_gather = 4")
             cur.execute("SET work_mem = '1GB'")
             cur.execute(_BUILD)
+            conn.commit()
+            from database import swapTable
+            swapTable(conn, "person_gender", "person_gender_new")
+            cur.execute("ANALYZE person_gender")
             conn.commit()
         if not available(cur):
             print("  person_gender: not built (run with --write)")

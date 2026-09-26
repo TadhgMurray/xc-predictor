@@ -582,6 +582,53 @@ def _relaxed(spec):
 _LOCK_TIMEOUT = "5s"
 
 
+# ★ ONE WAY TO PUT A REBUILT TABLE LIVE (sweep, 2026-09-26). A bare
+#   `DROP TABLE x; ALTER TABLE x_new RENAME TO x` in a pipeline connection
+#   (which has no lock_timeout) waits for ever behind any page still reading
+#   x -- and every page query that arrives after it queues behind the DROP
+#   and fails at the site's 5 s lock_timeout. Pages errored for as long as
+#   one slow reader lived.
+# ! SO: commit whatever came before (never hold the new table's build locks
+#   into the swap), then try the swap under a SHORT lock_timeout and, when a
+#   reader is in the way, give up the lock, wait, and try again. The pages
+#   queue behind it for at most lock_ms at a time.
+# ! AND THE INDEXES KEEP THEIR NAMES. x_new's indexes (x_new_pkey, ...) are
+#   renamed to x_... so the next run's x_new can use the same names again.
+def swapTable(conn, table, new, lock_ms=3000, tries=40, pause=3.0,
+              verbose=True):
+    """Replace `table` with `new` (DROP + RENAME) in one short transaction,
+    retrying while readers hold the old table. Returns the attempts used."""
+    from psycopg2 import errors as _pgerr
+    conn.commit()
+    for attempt in range(1, tries + 1):
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET LOCAL lock_timeout = '{int(lock_ms)}ms'")
+                cur.execute(f"DROP TABLE IF EXISTS {table}")
+                cur.execute(f"ALTER TABLE {new} RENAME TO {table}")
+                cur.execute("""SELECT indexname FROM pg_indexes
+                               WHERE schemaname = 'public' AND tablename = %s
+                                 AND indexname LIKE %s""",
+                            (table, new.replace("_", r"\_") + r"\_%"))
+                for (ix,) in cur.fetchall():
+                    want = table + ix[len(new):]
+                    cur.execute("SELECT to_regclass(%s)", (f"public.{want}",))
+                    if cur.fetchone()[0] is None:
+                        cur.execute(f'ALTER INDEX "{ix}" RENAME TO "{want}"')
+            conn.commit()
+            if verbose and attempt > 1:
+                print(f"[DB] {table}: swapped on attempt {attempt}", flush=True)
+            return attempt
+        except _pgerr.LockNotAvailable:
+            conn.rollback()
+            if verbose:
+                print(f"[DB] {table}: busy, swap attempt {attempt}/{tries} "
+                      f"yielded; retrying in {pause:.0f}s", flush=True)
+            time.sleep(pause)
+    raise RuntimeError(f"{table}: could not take the swap lock in {tries} "
+                       f"tries; {new} is built and left in place")
+
+
 def _liveColumns(cursor, table):
     """{column} the live table actually has. A catalogue read: no locks."""
     cursor.execute("""SELECT lower(column_name)

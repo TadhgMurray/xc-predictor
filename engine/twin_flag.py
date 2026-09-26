@@ -391,8 +391,10 @@ def build(conn, write=False):
                 print(f"  [{sport}] {reason:<14} {n:>12,}  ({time.time() - t0:.0f}s)",
                       flush=True)
         if write:
-            cur.execute("DROP TABLE result_twin")
-            cur.execute("ALTER TABLE result_twin_new RENAME TO result_twin")
+            # short-lock swap with retries, then ANALYZE outside the lock
+            # (database.swapTable says why a bare DROP was a site outage)
+            from database import swapTable
+            swapTable(conn, "result_twin", "result_twin_new")
             cur.execute("ANALYZE result_twin")
             cur.execute("SELECT count(*) FROM result_twin")
             print(f"  result_twin: {cur.fetchone()[0]:,} rows")
