@@ -370,6 +370,13 @@ def main():
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             if not a.dry_run:
                 cur.execute(_DDL)
+                # ★ COMMIT AS IT GOES (2026-09-26). This ran as ONE transaction
+                #   for its whole length -- 678 minutes on 2026-09-25 -- and
+                #   every CREATE INDEX CONCURRENTLY in the database waits for
+                #   older transactions to end: 11b_indexes sat 626 minutes
+                #   behind it. The shadow table is nobody's until the swap, so
+                #   committing each slice into it changes nothing a reader sees.
+                conn.commit()
             carry = (not a.dry_run and not a.refresh_past and mid is not None
                      and _liveHasModelId(cur))
             total = 0
@@ -397,6 +404,7 @@ def main():
                         got = buildOne(cur, pool, sport, year, a.min_races,
                                        a.weeks, a.limit, as_of=as_of,
                                        past=past)
+                        conn.commit()           # end the read before the write
                         if a.dry_run:
                             for item in sorted(
                                     (g for g in got if g[5] is not None),
@@ -421,6 +429,7 @@ def main():
                                band, n, a.weeks, row["n_races"], as_of, mid)
                               for row, pr, gain, pct, sig, resid, band, n
                               in got])
+                        conn.commit()
                         total += len(got)
             # ! A NARROW RUN MUST NOT DELETE THE REST. The table swaps whole,
             #   so `--year 2021` or `--sport XC` would otherwise publish that

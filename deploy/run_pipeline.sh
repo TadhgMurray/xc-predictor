@@ -995,9 +995,6 @@ step 10f_recruits     "$PY" -u racecast/build_recruiting.py
 # who the MODEL thinks has room left (the coach's "underrated" sort). Needs a
 # trained model; without one it says so and exits clean, and the search falls
 # back to the rating sort while the table is absent.
-# ! IN THE BACKGROUND: only the recruiting page reads recruit_projection, so
-#   nothing below waits on its 50 minutes. Collected by bgwait before 17.
-bgstep 10f2_projection "$PY" -u racecast/build_recruit_projection.py
 # the athlete page's rank line, precomputed (311): every season's place in
 # every scope, one row per season, so the page runs no scoped counts
 step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py
@@ -1006,6 +1003,13 @@ step 11_teams         "$PY" -u racecast/build_team_season.py
 #   (step 14), so every course page of a first run was built without the
 #   indexes the course queries need; 12b took 41,047 s on 2026-09-02.
 step 11b_indexes      "$PY" -u scripts/add_page_indexes.py
+# ! IN THE BACKGROUND: only the recruiting page reads recruit_projection, so
+#   nothing below waits on it. Collected by bgwait before 17.
+# ! AND STARTED AFTER 11b, NOT BEFORE (2026-09-26). CREATE INDEX CONCURRENTLY
+#   waits for every older open transaction in the database; with this
+#   running beside it, 11b_indexes took 626 minutes. The script now commits
+#   per slice too, so 13c's concurrent index build does not wait on it either.
+bgstep 10f2_projection "$PY" -u racecast/build_recruit_projection.py
 step 12_courses       "$PY" -u racecast/build_course_rank.py
 # ★ COURSE PAGES IN THREE SHARDS (issue 140). One process building 1,200
 #   courses in a row was mostly waiting on the database; three workers on
