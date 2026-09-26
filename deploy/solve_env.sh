@@ -172,7 +172,10 @@
 #   whole point of the restoration is that it changes nothing but undoing a bad
 #   run. Set it on the run AFTER the restoration verifies, one change at a
 #   time:  XCP_BRACKET_WINDOW=30 bash deploy/run_pipeline.sh --from 8 ...
-# : "${XCP_BRACKET_WINDOW:=30}"
+# ★ ON BY DEFAULT FROM 2026-09-26 (owner: "have 30 day as default now").
+#   XCP_BRACKET_WINDOW=21 in the environment puts run_joint's old default back
+#   for one run.
+: "${XCP_BRACKET_WINDOW:=30}"
 # ⚠ LEAVE THIS AT none. I argued for `field` here on 2026-09-19 and the owner
 #   refuted it on the spot, with the right instrument: if an untapered
 #   championship field were the cause, NXN AND FOOT LOCKER WOULD BOTH SHOW IT,
@@ -209,7 +212,8 @@ export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
        XCP_GAUGE_UNKNOWN_LENGTH XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE \
        XCP_BRACKET_XC_LEVEL XCP_BRACKET_XC_LEVEL_MODE \
        XCP_BRACKET_INDOOR_GATES \
-       XCP_IMPORTANCE XCP_TEAM_POOL XCP_DB_QUIET XCP_SPORT_LEVEL_POOLS
+       XCP_IMPORTANCE XCP_TEAM_POOL XCP_DB_QUIET XCP_SPORT_LEVEL_POOLS \
+       XCP_BRACKET_WINDOW
 
 # Anything else already in the environment is left alone, so a one-off
 #   XCP_PROBES=16 bash scripts/overnight_fit_pool_solve.sh
