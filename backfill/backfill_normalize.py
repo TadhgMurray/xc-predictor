@@ -470,11 +470,11 @@ def _snapCell(lat, lon):
 #           local hour = UTC + round(signed_lon/15)). `hours` is the (lo, hi)
 #           LOCAL window read from the artifact, so it equals the fit window.
 # Output  : { (cell_lat, cell_lon, "YYYY-MM-DD") : (temp, wind, precip, soil, snow) }.
-def _loadWxDict(cur, hours, temp_agg="avg(apparent_temperature)"):
+def _wxSql(hours, temp_agg):
     lo, hi = hours
     signed = "(CASE WHEN cell_lon > 180 THEN cell_lon - 360 ELSE cell_lon END)"
     local = f"mod(mod(hour + round({signed} / 15.0)::int, 24) + 24, 24)"
-    cur.execute(f"""
+    return f"""
         SELECT cell_lat, cell_lon, date,
                {temp_agg}, avg(wind_speed_10m),
                sum(precipitation), avg(soil_moisture),
@@ -482,11 +482,123 @@ def _loadWxDict(cur, hours, temp_agg="avg(apparent_temperature)"):
         FROM   weather_grid
         WHERE  {local} BETWEEN {lo} AND {hi}
         GROUP  BY cell_lat, cell_lon, date
-    """)
+    """
+
+
+def _loadWxDict(cur, hours, temp_agg="avg(apparent_temperature)"):
+    cur.execute(_wxSql(hours, temp_agg))
     wx = {}
     for clat, clon, d, temp, wind, precip, soil, snow in cur:
         key = (round(float(clat), 2), round(float(clon), 2), d.isoformat())
         wx[key] = (temp, wind, precip, soil, snow)
+    return wx
+
+
+# ★ THE AGGREGATE IS CACHED BETWEEN RUNS (2026-09-26, owner: "speed up every
+#   step in pipeline possible"). _loadWxDict groups the WHOLE of weather_grid
+#   every run, in both backfills, behind a local-hour filter no index can
+#   serve -- and between two weekly runs the grid usually has not changed at
+#   all. The dict is pickled per sport and reused only while its KEY matches:
+#
+#     * the query text itself -- which carries race_local_hours and the
+#       temperature aggregate from the artifact, so a refit that moves the
+#       window or the aggregate misses; so does any edit to the SQL;
+#     * _WX_CACHE_VERSION -- bump it when the Python side of _loadWxDict
+#       (the key rounding, the value tuple) changes;
+#     * a signal that weather_grid's ROWS have not changed, _wxGridSignal.
+#
+# ! THE SIGNAL IS THE TABLE'S OWN WRITE COUNTERS, NOT count(*) + max(date).
+#   Those two cost a full scan -- the thing being avoided -- and they miss
+#   the write that matters most: recompute_apparent_temp.py UPDATEs every
+#   apparent_temperature in place, and neither number moves. So:
+#     n_tup_ins / n_tup_upd / n_tup_del (pg_stat_user_tables) -- every row
+#       inserted, updated or deleted since the counters began (checked on
+#       PG16: an ON CONFLICT DO NOTHING skip does not count, a rolled-back
+#       insert does -- a needless rebuild, never a stale hit);
+#     the table's oid and pg_relation_filenode -- a drop/recreate, TRUNCATE,
+#       VACUUM FULL or CLUSTER, none of which move those counters;
+#     pg_stat_database.stats_reset and pg_postmaster_start_time() -- the
+#       counters restart from zero after pg_stat_reset(), a single-table
+#       reset (it stamps the database's stats_reset, checked on PG16), a
+#       crash or a restart, and could otherwise climb back to the same
+#       numbers over different rows. Any restart costs one rebuild.
+#   With track_counts off the counters do not move at all, so the cache is
+#   not used.
+#
+# ⚠ THE ONE WINDOW: a backend's counts reach the shared stats within ~10 s
+#   of its commit, or at once when it exits. A write committed seconds
+#   before this reads the signal, from a session still open, can be missed.
+#   The pipeline's writer (04e) is a finished process by 05, so this
+#   matters only to a hand-run writer racing a backfill -- and that race
+#   gives a stale answer without the cache too. The signal is read BEFORE
+#   the aggregate, so a write landing between the two makes the next run's
+#   key differ: stale in the safe direction only.
+#
+# ! XC and TF each have their own file (their windows differ: 8-12 vs 9-20
+#   local), so the two backfills running side by side never share one; the
+#   write is tmp + os.replace, so a reader never sees half a pickle. Any
+#   failure to read or write the cache falls back to the query.
+_WX_CACHE = _os.path.join(_os.path.dirname(__file__), "..", "engine", "data",
+                          "backfill_wx_{sport}.pkl")
+_WX_CACHE_VERSION = 1
+
+
+def _wxGridSignal(cur):
+    """weather_grid's change signal (see above), or None when the counters
+    cannot vouch for it and the aggregate must run."""
+    cur.execute("""
+        SELECT c.oid::bigint, pg_relation_filenode(c.oid)::bigint,
+               s.n_tup_ins, s.n_tup_upd, s.n_tup_del,
+               d.stats_reset::text, pg_postmaster_start_time()::text,
+               current_setting('track_counts')
+        FROM   pg_class c
+        JOIN   pg_stat_user_tables s ON s.relid = c.oid
+        JOIN   pg_stat_database d ON d.datname = current_database()
+        WHERE  c.oid = to_regclass('weather_grid')
+    """)
+    row = cur.fetchone()
+    if row is None or row[-1] != "on":
+        return None
+    return tuple(row[:-1])
+
+
+def _loadWxDictCached(cur, sport, hours, temp_agg):
+    path = _WX_CACHE.format(sport=sport)
+    sig = _wxGridSignal(cur)                  # BEFORE the aggregate -- see above
+    key = (_WX_CACHE_VERSION, " ".join(_wxSql(hours, temp_agg).split()), sig)
+    if sig is not None:
+        try:
+            with open(path, "rb") as f:
+                saved = pickle.load(f)
+            if saved.get("key") == key:
+                print(f"  weather: grid aggregate reused from {path} "
+                      f"(weather_grid unchanged since it was built)")
+                return saved["wx"]
+        except FileNotFoundError:
+            pass
+        except Exception as exc:                          # noqa: BLE001
+            print(f"  weather: cache unreadable ({type(exc).__name__}); "
+                  f"rebuilding it")
+    t0 = time.time()
+    wx = _loadWxDict(cur, hours, temp_agg)
+    print(f"  weather: grid aggregate built in {time.time() - t0:.1f}s")
+    if sig is None:
+        print("  weather: no trustworthy change signal on weather_grid "
+              "(track_counts off?) -- not cached")
+        return wx
+    tmp = f"{path}.{_os.getpid()}.tmp"
+    try:
+        with open(tmp, "wb") as f:
+            pickle.dump({"key": key, "wx": wx}, f,
+                        protocol=pickle.HIGHEST_PROTOCOL)
+        _os.replace(tmp, path)
+    except OSError as exc:
+        print(f"  weather: could not write the cache {path} ({exc}); "
+              f"the run is unaffected")
+        try:
+            _os.remove(tmp)
+        except OSError:
+            pass
     return wx
 
 
@@ -591,7 +703,7 @@ class WeatherIndex:
             #                                            correcting an indoor race)
         # the temperature aggregate the artifact was fitted on (avg for XC,
         # max for track); normalize_distance refuses one it does not know
-        wx = _loadWxDict(cur, hours, weatherTempAgg(art))
+        wx = _loadWxDictCached(cur, sport, hours, weatherTempAgg(art))
         return cls(anet, tfrrs, wx)
 
     # lookup: (source, meet_id, race_date) -> (weather dict | None, course | None).

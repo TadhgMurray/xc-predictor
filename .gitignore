@@ -58,6 +58,10 @@ engine/data/era_stream_cache/
 engine/data/weather_cache_*.npz
 engine/data/distance_pairs_cache.pkl
 engine/data/pair_solve_cache.npz
+# the backfill's weather-grid aggregate, keyed by weather_grid's write
+# counters (backfill_normalize._loadWxDictCached)
+engine/data/backfill_wx_*.pkl
+engine/data/backfill_wx_*.pkl.*.tmp
 
 # Solver state and per-run artifacts. packed_XC_TF.npz is deleted by hand
 # before every run in the documented pipeline; that alone disqualifies it.
