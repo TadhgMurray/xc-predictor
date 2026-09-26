@@ -5305,3 +5305,4 @@ input.eqc-big:focus { outline: none; border-bottom-color: var(--eqc-accent); }
 .relay-card table { width: 100%; }
 .relay-card .meta { margin: 0.2rem 0 0; font-size: 0.8rem; }
 @media (max-width: 480px) { .relay-grid { grid-template-columns: 1fr; } }
+.eqc .eqc-day { font-size: 0.8rem; color: #6b7280; margin: 0.4rem 0 0; }

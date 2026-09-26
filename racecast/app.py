@@ -3119,6 +3119,51 @@ def _graftPublished(pub, computed_teams):
     return graft
 
 
+def raceDayShift(results, pool, distance, difficulty, course):
+    """How much slower (+) or faster (-) this race ran than an ordinary day
+    on this course, in log time, from its own rated finishers -- or 0.0.
+
+    ★ WHY (owner, 2026-09-26: "this doesn't make sense ... the weather was
+      bad that day"). The equivalents ruler was drawn for an ORDINARY day at
+      this course: the fitted difficulty, no weather. The times it shades
+      were run in THAT day's rain and wind, so a real time on the ruler read
+      as a different rating from the one the runner got. Every finisher's
+      rating already holds that day -- the weather correction and the
+      race-day effect are inside it -- so the median gap between each rated
+      time and the ruler's time for that rating IS the day, measured the
+      engine's own way rather than re-modelled here.
+    ! AT LEAST FIVE RATED FINISHERS IN THE RULER'S GROUP, and clamped to
+      +-15%: a handful of rows, or a gap that big, is not a day.
+    """
+    import statistics
+    try:
+        import conversions as _cv
+        pts = _cv.equivalenceLine(pool, distance, 5000.0,
+                                  course_difficulty=difficulty, course=course)
+    except Exception:                                   # noqa: BLE001
+        return 0.0
+    if len(pts) < 2:
+        return 0.0
+    pts = sorted(pts)                                   # by rating
+    gaps = []
+    for r in results:
+        rt, t = r.get("speed_rating"), r.get("time_seconds")
+        if rt is None or not t or t >= 99999:
+            continue
+        if (r.get("rating_pool") or "").split("|", 1)[0] != pool:
+            continue
+        rt = float(rt)
+        for (r0, t0, _a), (r1, t1, _b) in zip(pts, pts[1:]):
+            if r0 <= rt <= r1:
+                f = (rt - r0) / (r1 - r0) if r1 > r0 else 0.0
+                tc = math.exp(math.log(t0) + f * (math.log(t1) - math.log(t0)))
+                gaps.append(math.log(float(t) / tc))
+                break
+    if len(gaps) < 5:
+        return 0.0
+    return max(-0.15, min(0.15, statistics.median(gaps)))
+
+
 def get_race_results(cur, meet_id, div_id, source=None):
     """Every athlete's result in one XC race, fastest first; `source`
     keeps a colliding meet's finishers out (see get_race_header)."""
@@ -3443,11 +3488,14 @@ def race_xc(meet_id, div_id):
               if r.get("time_seconds") and r["time_seconds"] < 999999]
     equiv_lo = min(_times) if _times else None
     equiv_hi = max(_times) if _times else None
+    equiv_day = (raceDayShift(results, equiv_pool, float(header["distance"]),
+                              header.get("difficulty"), header.get("course_name"))
+                 if header and header.get("distance") else 0.0)
 
     return render_template("race.html", hl_school=hl_school,
                            has_hs_view=has_hs_view,
                            equiv_pool=equiv_pool, equiv_lo=equiv_lo,
-                           equiv_hi=equiv_hi,
+                           equiv_hi=equiv_hi, equiv_day=equiv_day,
                            header=header,
                            results=results,
                            race_date=race_date,
@@ -6921,6 +6969,11 @@ def api_equivalence():
         return jsonify({"error": "target must be 400-10000 m"}), 400
     tdiff = request.args.get("tdifficulty", type=float)
     tcourse = (request.args.get("tcourse") or "").strip() or None
+    # ★ HOW THIS RACE RAN (raceDayShift): the source times as run that day,
+    #   weather and all, rather than on an ordinary day at this course
+    day = request.args.get("day", type=float) or 0.0
+    if not -0.2 <= day <= 0.2:
+        return jsonify({"error": "day out of range"}), 400
     if diff is not None and not -0.5 <= diff <= 0.5:
         return jsonify({"error": "difficulty out of range"}), 400
     if tdiff is not None and not -0.5 <= tdiff <= 0.5:
@@ -6928,9 +6981,16 @@ def api_equivalence():
     key = (pool, sport, tsport, round(dist), round(target, 2),
            None if diff is None else round(diff, 4), course,
            None if tdiff is None else round(tdiff, 4), tcourse)
+    def _asRun(body):
+        if not day:
+            return jsonify(body)
+        k = math.exp(day)
+        return jsonify(dict(body, day=day, points=[
+            (r, round(tc * k, 2), tt) for r, tc, tt in body["points"]]))
+
     hit = _EQUIV_CACHE.get(key)
     if hit and time.time() - hit[0] < _EQUIV_TTL:
-        return jsonify(hit[1])
+        return _asRun(hit[1])
     import conversions as _cv
     try:
         pts = _cv.equivalenceLine(pool, dist, target, course_difficulty=diff,
@@ -6956,7 +7016,7 @@ def api_equivalence():
     if len(_EQUIV_CACHE) > _EQUIV_MAX:
         _EQUIV_CACHE.pop(min(_EQUIV_CACHE, key=lambda k: _EQUIV_CACHE[k][0]),
                          None)
-    return jsonify(body)
+    return _asRun(body)
 
 
 @app.route("/api/course_search")

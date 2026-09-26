@@ -88,6 +88,10 @@
       course: root.dataset.course || "",
       lo: parseFloat(root.dataset.lo) || null,
       hi: parseFloat(root.dataset.hi) || null,
+      // how this race ran (app.raceDayShift); only on a race page, and only
+      // for the page's own distance -- another pill is an ordinary day
+      day: parseFloat(root.dataset.day) || 0,
+      dist0: parseFloat(root.dataset.dist) || null,
       target: 5000, tsport: "TF", tlabel: "5K", tdiff: null, tcourse: "",
       points: [], hs: null, tmin: 0, tmax: 0, cur: null, seq: 0, sc: null
     };
@@ -193,6 +197,7 @@
       if (st.course) q.set("course", st.course);
       if (st.tdiff != null && isFinite(st.tdiff)) q.set("tdifficulty", String(st.tdiff));
       if (st.tcourse) q.set("tcourse", st.tcourse);
+      if (st.day && st.dist === st.dist0) q.set("day", String(st.day));
       var seq = ++st.seq;
       root.classList.add("eqc-loading");
       fetch("/api/equivalence?" + q.toString())

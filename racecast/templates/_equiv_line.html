@@ -14,7 +14,8 @@
              target="5000:TF")   the pill selected first, "<metres>:<sport>"
 #}
 {% macro equiv_line(pool, dist, difficulty, course, sport="XC", dists=None,
-                    lo=None, hi=None, target="5000:TF", fixed_pool=False) %}
+                    lo=None, hi=None, target="5000:TF", fixed_pool=False,
+                    day=None) %}
 {% set pool_names = {"hs_m": "HS Boys", "hs_f": "HS Girls", "college_m": "College Men",
                      "college_f": "College Women", "ms_m": "MS Boys", "ms_f": "MS Girls"} %}
 {% set targets = [(800, "TF", "800"), (1600, "TF", "1600"), (1609.34, "TF", "Mile"),
@@ -25,7 +26,8 @@
          data-dist="{{ dist|round(2) if dist else '' }}"
          data-diff="{{ difficulty if difficulty is not none else '' }}"
          data-course="{{ course or '' }}"
-         data-lo="{{ lo if lo else '' }}" data-hi="{{ hi if hi else '' }}">
+         data-lo="{{ lo if lo else '' }}" data-hi="{{ hi if hi else '' }}"
+         data-day="{{ day if day else '' }}">
     <header class="eqc-head">
         <h2 class="eqc-title">{{ "Track equivalents" if sport == "XC" else "Equivalent times" }}</h2>
         {# ! A RACE PAGE'S GROUP IS THE RACE'S (owner, 2026-09-25: "changing
@@ -101,5 +103,14 @@
         distance curve and course effect.{% endif %}
         <span class="eqc-field-key" hidden><i></i> shaded: the times run in this race, fastest to slowest</span></p>
     <p class="eqc-status" hidden></p>
+    {% if day and (day > 0.005 or day < -0.005) %}
+    {# ★ SAID IN WORDS: the course side is THAT day, not an ordinary one
+       (app.raceDayShift, owner 2026-09-26) #}
+    <p class="eqc-day">Times on this course are as they ran that day: the field
+       ran about {{ "%.1f"|format((2.718281828 ** (day if day > 0 else -day) - 1) * 100) }}%
+       {{ "slower" if day > 0 else "faster" }} than on an ordinary day here
+       (weather and conditions), so a time from this race lines up with the
+       rating it earned.</p>
+    {% endif %}
 </section>
 {% endmacro %}
