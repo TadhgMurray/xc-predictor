@@ -147,6 +147,7 @@ def main():
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            srdb.preparePackQuery(cur, "XC")   # the temp tables it joins
             cur.execute(sql, {"meet": args.meet, "div": args.div,
                               "lim": args.limit})
             rows = cur.fetchall()

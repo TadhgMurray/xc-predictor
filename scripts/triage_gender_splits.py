@@ -196,6 +196,8 @@ def _tuneSession(cur):
 #           `place` is the new column and the whole basis of this revision.
 #           Sentinels are filtered here so the place logic never sees a 0.
 def _loadDivision(cur, meet, div, names):
+    from speed_ratings_db import preparePackQuery
+    preparePackQuery(cur, "XC")        # the temp tables the query joins
     sql = _xcQuery(MIN_TIME, MAX_TIME, tw="") + \
         "\n          AND r.meet_id = %s AND r.div_id = %s"
     cur.execute(sql, (meet, div))

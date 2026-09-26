@@ -1572,6 +1572,14 @@ def ensurePackMeetClass(cur, sport):
     cur.execute(_packMeetClassSql(sport))
 
 
+def preparePackQuery(cur, sport):
+    """Everything _xcQuery/_tfQuery join that is built per connection:
+    tmp_pack_gender and tmp_pack_meet_class. Any caller that runs those
+    queries itself (the probe and triage scripts) calls this first."""
+    ensurePackGender(cur)
+    ensurePackMeetClass(cur, sport)
+
+
 def streamResults(sport: str, min_time: float = 200.0, max_time: float = 6000.0,
                   batch: int = 200_000):
     # Materialise the twin keys BEFORE opening the stream. This is one scan and

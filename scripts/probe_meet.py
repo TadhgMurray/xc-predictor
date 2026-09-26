@@ -119,6 +119,8 @@ def loadEngineRows(cur, meet_id, div_id):
     Appending to _xcQuery's text is safe because that text ends inside its
     WHERE clause. tw="" disables the dedup anti-join (no scratch table).
     """
+    from speed_ratings_db import preparePackQuery
+    preparePackQuery(cur, "XC")        # the temp tables the query joins
     sql = _xcQuery(MIN_TIME, MAX_TIME, tw="") + \
         "\n          AND r.meet_id = %s AND r.div_id = %s"
     return asDicts(fetch(cur, sql, (meet_id, div_id)))

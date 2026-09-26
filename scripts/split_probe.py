@@ -108,6 +108,8 @@ def loadEngineRows(cur, meet_id, div_id):
     which is why `canon link` is a discriminator below -- if a twin is the
     cause, that column will show it.
     """
+    from speed_ratings_db import preparePackQuery
+    preparePackQuery(cur, "XC")        # the temp tables the query joins
     sql = _xcQuery(MIN_TIME, MAX_TIME, tw="") + \
         "\n          AND r.meet_id = %s AND r.div_id = %s"
     return [dict(zip(COLUMNS, r)) for r in fetch(cur, sql, (meet_id, div_id))]
