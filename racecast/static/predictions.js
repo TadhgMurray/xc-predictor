@@ -472,8 +472,14 @@ function restoreState() {
   try {
     saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null");
   } catch (err) { return; }
-  if (!saved || !saved.meet) {
-    if (/[?&]meet_id=/.test(location.search)) restoreFromLink();
+  /* ★ A LINK NAMING A DIFFERENT MEET WINS OVER THE SAVED SESSION. The
+       "Predict this race" links on race and meet pages land here with
+       ?meet_id=, and a tab that had predicted another meet used to reopen
+       that one and ignore the link (sweep, 2026-09-26). */
+  const linked = new URLSearchParams(location.search).get("meet_id");
+  const savedId = saved && saved.meet ? String(saved.meet.id || "") : "";
+  if (!saved || !saved.meet || (linked && linked !== savedId)) {
+    if (linked) restoreFromLink();
     return;
   }
 

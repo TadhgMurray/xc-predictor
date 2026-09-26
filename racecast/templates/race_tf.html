@@ -50,11 +50,15 @@
         Venue difficulty: {{ dv(header.difficulty, "TF", day_effect) }}{{ difficulty_i("TF") }}
     </p>
     <p><a class="meet-link" href="/meet/tf/{{ header.meet_id }}">View full meet →</a></p>
+    {# no venue on record (a race with no meet row) has no venue page: the
+       link went to /venue/tf/None/out and 404'd (ISSUES-RUNNING, 15,971) #}
+    {% if header.location_id %}
     <p>
         <a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">
             View venue →
         </a>
     </p>
+    {% endif %}
 
     {% if equiv_dist %}
     {{ equiv_line(equiv_pool, equiv_dist, header.difficulty, none, sport="TF",

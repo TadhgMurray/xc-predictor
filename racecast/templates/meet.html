@@ -50,6 +50,7 @@
         {% if meet_date %} · {{ meet_date }}{% endif %}
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
+    <p><a class="meet-link" href="/predictions?meet_id={{ header.meet_id }}&amp;sport=XC">Predict this meet →</a></p>
 
     {% if other_sources %}
     {# Two source id spaces overlap: this id holds two DIFFERENT real-world
@@ -129,6 +130,8 @@
     </table>
 {% endif %}
 
+    <div class="page-report">Something wrong on this page?
+        <a href="/report?about={{ request.full_path.rstrip('?')|urlencode }}&amp;kind=meet">Report it →</a></div>
 </main>
 <script src="{{ static_v('share.js') }}"></script>
 </body>

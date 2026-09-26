@@ -5263,3 +5263,16 @@ input.eqc-big:focus { outline: none; border-bottom-color: var(--eqc-accent); }
 .status-page .st-head { padding: .5rem .8rem; border-radius: 3px; font-weight: 600; margin: .8rem 0 0; }
 .status-page .st-head-bad { background: #fef2f2; color: #991b1b; }
 .status-page .st-head-ok { background: #f0fdf4; color: #166534; }
+
+/* The Predict button: the page's one primary action, which had no rule at
+   all under .predict2 and rendered as the browser's grey default (sweep,
+   2026-09-26). Same black as the page's other primary buttons. */
+.predict2 .go {
+    font: inherit; font-weight: 600; font-size: 1rem;
+    padding: 0.6rem 1.6rem; border: 1px solid #111; border-radius: 4px;
+    background: #111; color: #fff; cursor: pointer;
+}
+.predict2 .go:hover:not(:disabled) { background: #333; }
+.predict2 .go:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.predict2 .go:disabled { background: #9ca3af; border-color: #9ca3af; cursor: default; }
+.predict2 .page-report { margin-top: 2rem; }

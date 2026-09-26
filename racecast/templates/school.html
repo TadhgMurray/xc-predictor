@@ -123,10 +123,15 @@
        the active one and leaving the other a link made them read as two
        unrelated items; a joined pair with one filled makes the choice and the
        current state obvious at a glance. #}
+    {# ! WHICH SCHOOL THIS IS RIDES ALONG (sweep, 2026-09-26). Two schools
+       can share a name (Oregon IL / Oregon OR, Amherst the college and the
+       middle school); a sport or year link that dropped ?state= / ?level=
+       quietly switched to the other one. #}
+    {% set keep %}{% if state %}&amp;state={{ state|urlencode }}{% endif %}{% if level %}&amp;level={{ level|urlencode }}{% endif %}{% endset %}
     <div class="seg">
         {% for s in ['XC', 'TF'] %}
           <a class="seg-btn{{ ' is-on' if s == sport }}"
-             href="/school/{{ school|urlencode }}?sport={{ s }}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
+             href="/school/{{ school|urlencode }}?sport={{ s }}{{ keep }}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
         {% endfor %}
     </div>
 
@@ -145,10 +150,10 @@
     {% if season_years %}
     <div class="yearbar">
         <a class="yb{{ ' is-on' if not picked }}"
-           href="/school/{{ school|urlencode }}?sport={{ sport }}">All time</a>
+           href="/school/{{ school|urlencode }}?sport={{ sport }}{{ keep }}">All time</a>
         {% for y in season_years %}
           <a class="yb{{ ' is-on' if picked == y }}"
-             href="/school/{{ school|urlencode }}?sport={{ sport }}&amp;year={{ y }}">{{ y }}</a>
+             href="/school/{{ school|urlencode }}?sport={{ sport }}&amp;year={{ y }}{{ keep }}">{{ y }}</a>
         {% endfor %}
     </div>
     {% endif %}
@@ -340,6 +345,8 @@
 {# Staged reveal -- shared with the home page's Latest results table. #}
 <script src="{{ static_v('staged.js') }}"></script>
 
+    <div class="page-report">Something wrong on this page?
+        <a href="/report?about={{ request.full_path.rstrip('?')|urlencode }}">Report it →</a></div>
 </main>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
