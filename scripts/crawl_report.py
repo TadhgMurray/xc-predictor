@@ -61,10 +61,11 @@ def genuine(ip, bot):
 def prefix(ip):
     """The /16 of an IPv4 address (the /32 of an IPv6 one): a scraper
     rotating addresses usually rotates inside one provider's block."""
-    if ":" in ip:
-        return ":".join(ip.split(":")[:2]) + "::/32"
-    parts = ip.split(".")
-    return ".".join(parts[:2]) + ".0.0/16" if len(parts) == 4 else ip
+    import ipaddress
+    try:
+        return str(ipaddress.ip_network(f"{ip}/{32 if ':' in ip else 16}", strict=False))
+    except ValueError:
+        return ip
 
 
 def lines(pattern):
@@ -125,6 +126,15 @@ def detail(a, bot_404, bot_crawlfiles, ppl_ip, ppl_ip_err, ppl_ip_ua, ppl_ua, fa
     for b, n in blocks.most_common(a.top):
         print(f"  {n:>9,}  {100.0 * n / max(total, 1):5.1f}%  {b:<22} "
               f"{len(ips_in[b]):>6,} addresses")
+    rotating = sorted(b for b, n in blocks.items()
+                      if n >= a.rotator_min and len(ips_in[b]) >= 0.8 * n)
+    if rotating:
+        share = sum(blocks[b] for b in rotating)
+        print(f"\n  {len(rotating)} blocks use a NEW ADDRESS FOR ALMOST EVERY REQUEST "
+              f"({share:,} page views, {100.0 * share / max(total, 1):.0f}% of the "
+              "total).\n  People do not do that; a rotating proxy pool does. "
+              "Cloudflare rule expression, to paste as is:\n")
+        print("  (ip.src in {" + " ".join(rotating) + "} and not cf.client.bot)")
     print(f"\n  the {min(a.top, 8)} commonest user agents among them:")
     for ua, n in ppl_ua.most_common(min(a.top, 8)):
         print(f"  {n:>9,}  {100.0 * n / max(total, 1):5.1f}%  {ua[:100]}")
@@ -137,6 +147,8 @@ def main():
     ap.add_argument("--recent", type=int, default=3,
                     help="days of non-bot traffic to break down by address and agent")
     ap.add_argument("--top", type=int, default=15)
+    ap.add_argument("--rotator-min", type=int, default=5000,
+                    help="page views a block needs before it is listed as rotating")
     ap.add_argument("--no-verify", action="store_true",
                     help="trust the user agent (skip the reverse-DNS check)")
     ap.add_argument("--bot", default="googlebot",

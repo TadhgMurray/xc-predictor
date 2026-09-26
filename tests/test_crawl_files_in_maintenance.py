@@ -48,3 +48,12 @@ class CrawlFilesInMaintenance(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FinishTimesAreNotTeams(unittest.TestCase):
+    def test_times_are_refused_and_schools_kept(self):
+        from panels import isTeamName
+        for t in ("5:22.9", "12:16.57", "2:44.48", "4:01"):
+            self.assertFalse(isTeamName(t), t)
+        for s in ("Jesuit", "49ers Academy", "1st Philadelphia", "Oregon"):
+            self.assertTrue(isTeamName(s), s)

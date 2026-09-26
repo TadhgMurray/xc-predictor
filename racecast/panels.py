@@ -241,6 +241,12 @@ def isTeamName(school):
     if not school:
         return False
     s = school.strip().lower()
+    # ★ A FINISH TIME IS NOT A TEAM (crawl log, 2026-09-26: Googlebot was
+    #   sent to /school/5%3A22.9 and /school/12%3A16.57 -- rows whose columns
+    #   shifted, so the time landed in the school field and the race page
+    #   linked it). Digits and time punctuation only is never a school.
+    if re.fullmatch(r"[\d:.,\s'\"-]+", s):
+        return False
     if _is_non_school(s) or s in _NOT_A_TEAM_EXACT:
         return False
     if any(frag in s for frag in _NOT_A_TEAM_FRAGMENTS):
