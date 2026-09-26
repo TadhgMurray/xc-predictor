@@ -2334,3 +2334,78 @@ but log it for future things"):**
 | 11 | **Model upkeep** (HANDOFF-ENGINE §5) | `BASELINE_EWMA` baseline built; tfrrs-college training rows code-complete | Neither used in a trained model; missing weather is still a 0 with no `has_weather` flag; the predict page runs on ratings (`XCP_PREDICT_BASIS=rating`) with no backtest of those times |
 | 12 | **30-day bracket window** — `XCP_BRACKET_WINDOW=30` (-1.28% held-out error) | Measured; commented in `deploy/solve_env.sh` | Switched on for one run on its own, after a verified run (the file's own rule) |
 | 13 | **Shared prediction links** | The share URL carries the whole request | `restoreFromLink` reads only meet, race and sport: mode, date, course and edits are lost |
+
+## 2026-09-26 — 📋 LOGGED, NOT ACTIONED: race-to-track conversions, black-ground crests
+
+Owner, going to sleep: "I'm not certain the race conversions to the track
+are much better now. Just log it and the black logos as issues for now."
+
+### A. Conversions and the equivalents card still read wrong
+
+**What was reported.**
+1. `/conversions`, source "a specific result": the owner's 9:01.10 3200 at the
+   Arcadia Invitational (2025-04-12, result 258164858, hs_m, rating 136.59)
+   converts to **9:05.93** over 3200 on a neutral track. The owner: the
+   weather was bad that day, and a track has no difficulty, so the neutral
+   time should be FASTER than 9:01.10, not slower.
+2. Race page equivalents card, Hayward High School 4828 m, Boys D2,
+   2024-11-23 (difficulty +4.8%, 54 °F, wind 16 mph, rain before the race):
+   "On this course 11:40 → On a track 5K 11:51, rating 170.0". A harder
+   course in bad weather should convert to a faster track 5K than distance
+   alone gives. `e9dac11` moved the course side by the race's own day
+   (raceDayShift); the owner is not convinced that fixed it.
+
+**Measured for the Arcadia row** (`scripts/diag_track_conversion.py`,
+`scripts/diag_row_weather.py --tf 258164858`):
+
+| term | effect | note |
+|---|---|---|
+| venue difficulty | ~0 | cell `TF:loc:62277:out` difficulty −0.00015; the −5.04% the script printed is the track anchor shift (−0.0581 × tilt 0.887), which is applied to the neutral target too and cancels |
+| era | +0.42% | 2025's era factor against now's (1.62267 / 1.61594 for hs_m 3200) — the neutral is expressed in today's era |
+| race day | −0.39% (i.e. +0.39% on the neutral) | `race_day_effect`, 891 rows that day; without it the neutral is 9:03.79 |
+| event offset, track gain | −0.48%, +3.20% | applied on both sides; cancel |
+| **weather** | **multiplier 1.00727: "−0.72% slower than run, ~0.9 rating points taken"** | grid cell (34.25, 242.0), local hours 9–20: apparent 24 °C, wind 8.1, precip 0 |
+
+**⚠ The weather term looks backwards and is the lead to chase.** The track
+weather artifact (`engine/data/weather_correction_TF.pkl`) says heat is SLOW
+at 3200 m — +1.0% at 70 °F, +1.3% at 75 °F against its 55 °F reference, from
+`_rcsValue` with the distance interaction — and wind costs 0.00102 per unit
+above a reference of 3.0. An apparent 24 °C (75 °F) with wind 8.1 should
+therefore CREDIT the run by roughly +1.3% + 0.5%. Instead the row lost 0.9
+rating points to weather. Candidates, in order:
+1. the sign of the multiplier in the TF backfill path (norm = time × factor
+   / wmult vs × wmult) — check against an XC row with a known hot day;
+2. the venue normal (`_weatherReference`, `venue_norms["by_event"]`) for
+   this event/fortnight being hotter and windier than the day, so the day
+   reads as *better* than normal — print the reference `diag_row_weather`
+   compared against;
+3. the window: the artifact reads the whole local 9–20 window
+   (`race_local_hours`) with max/avg temperature for every track race; the
+   Arcadia 3200 heats run in the evening (20:00 local: 17.6 °C, wind
+   6 km/h), so an all-day window is not the race's weather. Changing it is
+   an engine-wide call (refit), the owner's.
+
+**For the race-page card:** once the weather sign/normal is settled, re-check
+Hayward: its fastest time (11:40 for 4828 m, rating 170 — beyond any high
+schooler) is probably a bad row, and the ruler opens on it; the 09d outlier
+step may flag it. `raceDayShift` measures the day from the race's own rated
+finishers, so it inherits whatever the weather term gets wrong.
+
+### B. Crests damaged by the black-ground key
+
+The flat-ground key removed the ground's colour EVERYWHERE, so crests on a
+black card lost their own black outlines, lettering and shading (the owner's
+Jesuit (CA) screenshot). Fixed at the source in `251610e`
+(`_edgeConnected`: only ground reachable from the card's edge comes off).
+**The crests already stored are still damaged**: the PNGs were resized after
+the key, so the lost black is not in the files. Repair, not yet run:
+
+    /srv/venv/bin/python scripts/scrape_school_logos.py --rekey --dry-run --only Jesuit
+    /srv/venv/bin/python scripts/scrape_school_logos.py --rekey --dry-run
+    /srv/venv/bin/python scripts/scrape_school_logos.py --rekey --write
+    systemctl restart xc-predictor
+
+`--rekey` re-fetches only crests with transparency enclosed by the mark
+(`enclosedHoles` ≥ 0.2%) from their `source_url` and writes them back only if
+the fixed key changes them. Check afterwards: the Jesuit (CA) crest, and a
+sample of the "re-keyed" list it prints for anything that got worse.
