@@ -97,14 +97,18 @@ def test_a_failed_build_drops_the_new_table_and_raises(monkeypatch):
                    for e in log)                     # the live table: never
 
 
-def test_the_builders_ask_no_more_than_the_quiet_caps(monkeypatch):
+def test_the_primary_key_keeps_its_budget_and_the_secondaries_ask_the_caps(monkeypatch):
+    # the PK runs alone with the 8GB / 6 workers it always had (those SETs
+    # never went through dbSetting); the concurrent secondaries are capped
     monkeypatch.setenv("XCP_DB_QUIET", "1")
     log = []
     cur = _Cur(log)
     monkeypatch.setattr(B, "_buildOneIndex", lambda job: (job[0], 0.0))
     B._buildIndexes(cur, "t", _DEFS)
-    assert "SET maintenance_work_mem = '2GB'" in log
-    assert "SET max_parallel_maintenance_workers = 2" in log
+    assert "SET maintenance_work_mem = '8GB'" in log
+    assert "SET max_parallel_maintenance_workers = 6" in log
+    assert B.dbSetting("maintenance_work_mem", B._INDEX_MEM) == "2GB"
+    assert B.dbSetting("max_parallel_maintenance_workers", B._INDEX_WORKERS) == "2"
 
 
 # ---- the rewrite-only-changed path (2026-09-26) ---------------------------

@@ -2632,10 +2632,14 @@ def _buildIndexes(cur, table, index_defs):
     # maintenance_work_mem sizes the SORT that builds each B-tree bottom-up.
     # This is the whole reason the rebuild is fast: sorted, sequential writes
     # instead of 34.8M random single-key insertions. Both are session settings.
-    cur.execute(f"SET maintenance_work_mem = "
-                f"'{dbSetting('maintenance_work_mem', '8GB')}'")
-    cur.execute(f"SET max_parallel_maintenance_workers = "
-                f"{dbSetting('max_parallel_maintenance_workers', 6)}")
+    # ! THE PRIMARY KEY KEEPS ITS 8GB AND 6 WORKERS, UNCAPPED, AS IT ALWAYS
+    #   HAD (2026-09-26). These two SETs never went through dbSetting, so the
+    #   quiet caps never reached them; routing them through it would have
+    #   halved the budget of the one build that sorts every row of the table.
+    #   It runs alone. The secondaries below go through the caps, several at
+    #   a time, because several at once is where their memory multiplies.
+    cur.execute("SET maintenance_work_mem = '8GB'")
+    cur.execute("SET max_parallel_maintenance_workers = 6")
     # The PK alone, on this connection, before anything else: ADD PRIMARY KEY
     # takes ACCESS EXCLUSIVE and would queue every concurrent build behind it.
     _timedExec(cur,
