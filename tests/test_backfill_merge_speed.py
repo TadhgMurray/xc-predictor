@@ -25,7 +25,17 @@ if "corrections" not in sys.modules:            # 165 MB, not in git
 
 import pytest                                                   # noqa: E402
 
+# ! THE REAL database MODULE, NOT ANOTHER TEST'S STAND-IN (2026-09-26). In a
+#   whole-suite run test_accounts.py has already put a two-function stub in
+#   sys.modules["database"], and backfill_normalize now also imports dbJobs
+#   and dbSetting from it. Load the real one for this import, then put the
+#   stub back so the tests after this one see the world as they left it.
+_stub = sys.modules.get("database")
+if _stub is not None and not hasattr(_stub, "dbJobs"):
+    del sys.modules["database"]
 import backfill_normalize as B                                  # noqa: E402
+if _stub is not None:
+    sys.modules["database"] = _stub
 
 
 class _Conn:
