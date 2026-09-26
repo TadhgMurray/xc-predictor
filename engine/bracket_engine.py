@@ -66,18 +66,6 @@ import run_joint as rj
 #   prints the held-out error by the number of races behind a cell, which
 #   is where a wrong prior shows.
 RACE_SAT = 5.0
-
-# ★ A COURSE NEEDS ENOUGH LINKED RUNNERS TO BE MEASURED AT ALL (owner,
-#   2026-09-26: "races with 130 results, 130 athletes only run once, getting
-#   20% difficulty"). min_voters counts a RACE's linked voters and three is
-#   its floor, so a cell whose field is almost all one-off runners was set by
-#   the three or four who happened to have another race within the window --
-#   and with a thin group prior those few decided it. A cell whose DISTINCT
-#   linked voters (athlete-seasons) fall below this gets no weight from its
-#   races and takes the same path as a cell nobody could place: its course's
-#   other cells, else the level. XCP_BRACKET_MIN_LINKED moves it; 1 is the
-#   old behaviour.
-MIN_LINKED_CELL = int(os.environ.get("XCP_BRACKET_MIN_LINKED", "8"))
 PRIOR_GROUP = 1.0
 PRIOR_RACES = 2.0
 
@@ -747,8 +735,7 @@ def _raceMedian(race_v, r_v, n_race):
 
 def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         n_iter=60, damping=0.5, prior_races=PRIOR_RACES, prior_group=PRIOR_FIT,
-        race_sat=RACE_SAT, min_voters=3, min_linked_cell=MIN_LINKED_CELL,
-        tilt=True, use_curve=True, tol=1e-5,
+        race_sat=RACE_SAT, min_voters=3, tilt=True, use_curve=True, tol=1e-5,
         verbose=False, codes=None, prior_rows=None, z=None, h_row=None,
         prior_warmup=PRIOR_FIT_WARMUP, place_radius=PLACE_RADIUS_M,
         prior_place=PRIOR_PLACE, voter_agg="mean",
@@ -1231,13 +1218,6 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
             D_r = np.where(ok, num / np.maximum(cnt, 1), 0.0)
         # a race's weight saturates in its voters: one reading, many witnesses
         w_r = np.where(ok, cnt / (cnt + race_sat), 0.0)
-        # ...and a cell too thin in DISTINCT linked runners is not read at all
-        #   (MIN_LINKED_CELL): its races lend it no weight
-        if min_linked_cell > 1 and vote_.any():
-            keys = np.unique(cell[vote_].astype(np.int64) * np.int64(n_season)
-                             + season[vote_].astype(np.int64))
-            linked = np.bincount(keys // np.int64(n_season), minlength=n_cell)
-            w_r = np.where(linked[race_cell] < min_linked_cell, 0.0, w_r)
         # the course's history, shrunk toward ITS GROUP's average course by
         # the group's prior (in races); then each era cell pulled toward that
         num_c_ = np.bincount(race_cell, weights=w_r * D_r, minlength=n_cell)
