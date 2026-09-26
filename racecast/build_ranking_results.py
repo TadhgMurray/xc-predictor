@@ -1255,7 +1255,7 @@ def prepareRow(row, sport):
     #
     #   inScope keeps anything it cannot PROVE is foreign, including a null
     #   state, so this removes only what the data is explicit about.
-    if not inScope(row.state):
+    if not inScope(row.state, school):
         return None
 
     # ★ THE ENGINE'S DECISION, NOT A REIMPLEMENTATION OF IT. resolvePool is

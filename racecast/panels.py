@@ -1044,7 +1044,7 @@ def _collectPerformances(conn, sport, season_year, buckets, stats):
             #   athletes whose ratings are solved on a circuit that barely
             #   touches the American one, so they are not comparable even when
             #   they are correct.
-            if not inScope(row.get("state")):
+            if not inScope(row.get("state"), row.get("school")):
                 stats["out_of_scope"] = stats.get("out_of_scope", 0) + 1
                 continue
             if not _isRankablePool(pool):
@@ -1209,7 +1209,7 @@ def _collectAthletes(conn, sport, season_year, buckets, stats):
             #   athletes whose ratings are solved on a circuit that barely
             #   touches the American one, so they are not comparable even when
             #   they are correct.
-            if not inScope(row.get("state")):
+            if not inScope(row.get("state"), row.get("school")):
                 stats["out_of_scope"] = stats.get("out_of_scope", 0) + 1
                 continue
             if not _isRankablePool(pool):

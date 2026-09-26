@@ -133,23 +133,90 @@ US_NAMES = frozenset("""
 
 
 # ! FIFTY-ONE POSSIBLE ANSWERS, ASKED ONCE PER ROW. Cached.
-@lru_cache(maxsize=4096)
-def inScope(state):
-    """True when this result belongs on a US board.
+# ★ A NATIONAL TEAM IS NOT A US ATHLETE'S SCHOOL (owner, 2026-09-26: "we
+#   have ppl from outside the US being ranked ... if they are not in the US
+#   they should not be ranked"). Spain, Great Britain & N.I. and Puerto Rico
+#   raced an 800 at a US meet, so the row's state was the meet's (MD, WA) and
+#   passed. The country in the school field is the signal.
+#
+# ⚠ ONLY COUNTRIES NO US SCHOOL IS NAMED FOR. Poland (Poland Regional, ME),
+#   Norway, Denmark, Lebanon, Jamaica, Cuba, Peru, Mexico, Panama, China,
+#   Scotland, Wales, Holland, Jordan, Chad, Canton and Georgia (the state AND
+#   the university) are all real American school strings, so they are not
+#   here: a national team under one of those names gets through, which is
+#   the cheaper mistake. Whole-string match only ("Spain", "Spain (ESP)",
+#   "Spain National Team"), never a substring.
+# ! PUERTO RICO IS HERE AS A TEAM NAME, not as a place: a school in Puerto
+#   Rico has its own name and state PR, which stays in scope.
+NATIONAL_TEAMS = frozenset("""
+    afghanistan albania algeria andorra angola argentina armenia australia austria
+    azerbaijan bahamas bahrain bangladesh barbados belarus belgium belize benin
+    bermuda bhutan bolivia botswana brazil brunei bulgaria burundi cambodia
+    cameroon canada colombia comoros croatia cyprus czechia djibouti dominica
+    ecuador egypt eritrea estonia eswatini ethiopia fiji finland france gabon
+    gambia germany ghana greece grenada guatemala guyana haiti honduras hungary
+    iceland india indonesia iran iraq ireland israel italy japan kazakhstan kenya
+    kosovo kuwait kyrgyzstan laos latvia lesotho liberia libya liechtenstein
+    lithuania luxembourg madagascar malawi malaysia maldives malta mauritius
+    moldova monaco mongolia montenegro morocco mozambique myanmar namibia nepal
+    nicaragua nigeria oman pakistan paraguay philippines portugal qatar romania
+    russia rwanda senegal serbia seychelles singapore slovakia slovenia somalia
+    spain sudan suriname switzerland syria taiwan tajikistan tanzania thailand
+    togo tunisia turkey turkiye uganda ukraine uruguay uzbekistan venezuela
+    vietnam yemen zambia zimbabwe
+""".split()) | {
+    "great britain", "great britain & n.i.", "great britain and northern ireland",
+    "gbr", "united kingdom", "new zealand", "south africa", "south korea",
+    "korea", "north macedonia", "costa rica", "el salvador", "sri lanka",
+    "saudi arabia", "united arab emirates", "czech republic", "ivory coast",
+    "cote d'ivoire", "dominican republic", "trinidad and tobago",
+    "trinidad & tobago", "puerto rico", "hong kong", "chinese taipei",
+    "bosnia and herzegovina", "burkina faso", "cape verde", "sierra leone",
+    "south sudan", "papua new guinea", "british virgin islands",
+    "cayman islands", "antigua and barbuda", "saint lucia", "st. lucia",
+    "st. kitts and nevis", "saint vincent and the grenadines",
+}
+_NT_SUFFIX = re.compile(r"\s*\([a-z .]{2,6}\)\s*$|\s+(national team|nt|team)\s*$", re.I)
 
-    Case-insensitive: the column carries 'Ca' and 'CA' for California, and the
-    site upper-cases on the way in while the engine does not.
-    """
+
+@lru_cache(maxsize=65536)
+def isNationalTeam(school):
+    """True when the school string is a (non-US) national team."""
+    if not school:
+        return False
+    s = str(school).strip().lower()
+    s = _NT_SUFFIX.sub("", s).strip()
+    return s in NATIONAL_TEAMS
+
+
+@lru_cache(maxsize=4096)
+def _stateInScope(state):
     if state is None:
         return True                      # unprovable, so kept: see above
     s = str(state).strip().upper()
     if not s:
         return True
     if s.isdigit():
-        # FIPS. 01-56 are states, 60+ are territories; anything else is not a
-        # state code at all and is treated as unknown rather than foreign.
-        return 1 <= int(s) <= 78
+        # ★ A NUMBER IS A FOREIGN REGION CODE, NOT A US ONE (2026-09-26: the
+        #   Kinki inter-high regional in Japan, state "28", "46", "16" --
+        #   prefecture numbers -- topped the US high school boards). This used
+        #   to read 01-56 as US FIPS codes, but US results carry the postal
+        #   code; the numbers that actually arrive are other countries'
+        #   regions.
+        return False
     return s in US_STATES or s in US_NAMES
+
+
+def inScope(state, school=None):
+    """True when this result belongs on a US board: the state is not
+    provably foreign, and the school is not a national team.
+
+    Case-insensitive: the column carries 'Ca' and 'CA' for California, and the
+    site upper-cases on the way in while the engine does not.
+    """
+    if school is not None and isNationalTeam(school):
+        return False
+    return _stateInScope(state)
 
 
 _SUB_HS_LEVELS = ("elem", "ms")

@@ -57,3 +57,26 @@ class ItDoesNotMoveTheBoards(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ForeignRowsOffTheBoards(unittest.TestCase):
+    """Owner, 2026-09-26: national teams at US meets, and a Japanese
+    regional whose prefecture numbers read as US codes, were on the boards."""
+
+    def test_national_teams_are_out_whatever_the_meet_state(self):
+        from pool_resolve import inScope
+        self.assertFalse(inScope("MD", "Spain"))
+        self.assertFalse(inScope("WA", "Great Britain & N.I."))
+        self.assertFalse(inScope("CAROLINA", "Puerto Rico"))
+        self.assertFalse(inScope("MA", "Kenya (KEN)"))
+
+    def test_us_schools_named_for_countries_stay(self):
+        from pool_resolve import inScope
+        for school in ("Poland", "Norway", "Georgia", "Jamaica", "Lebanon",
+                       "Spain Park", "Colegio San Ignacio"):
+            self.assertTrue(inScope("ME", school), school)
+
+    def test_numeric_region_codes_are_foreign(self):
+        from pool_resolve import inScope
+        self.assertFalse(inScope("28"))
+        self.assertFalse(inScope("46", "Katsura Prefectural-Kyoto"))
