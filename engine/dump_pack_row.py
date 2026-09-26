@@ -72,7 +72,7 @@ def fetchRows(person_id, sport, twin):
       filter down to an index. The alternative -- streaming 121M rows and
       filtering in Python -- reads the whole corpus to find sixty rows.
     """
-    from speed_ratings_db import _xcQuery, _tfQuery
+    from speed_ratings_db import _xcQuery, _tfQuery, ensurePackGender
     from database import getConn
 
     tw = ""
@@ -86,6 +86,7 @@ def fetchRows(person_id, sport, twin):
     inner = {"XC": _xcQuery, "TF": _tfQuery}[sport](600.0, 3600.0, tw)
     sql = f"SELECT * FROM ({inner}) q WHERE q.person_id = %s ORDER BY q.date"
     with getConn() as conn, conn.cursor() as cur:
+        ensurePackGender(cur)          # the queries join tmp_pack_gender
         cur.execute(sql, (person_id,))
         return cur.fetchall()
 

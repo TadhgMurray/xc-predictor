@@ -664,32 +664,13 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
         -- no fan-out. Same join every other reader uses.
         LEFT JOIN dist_override dov
                ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
-        LEFT JOIN LATERAL (
-               -- ⚠ MAJORITY, NOT ALPHABETICAL-BY-SCHOOL. This was
-               --   `ORDER BY a.school LIMIT 1`, which is deterministic but
-               --   arbitrary: when one person_id carries rows of both
-               --   genders -- two real people merged, or a mis-sexed feed
-               --   row -- the winner was whichever SCHOOL NAME sorted first.
-               --   Reported for Cam Kuss (owner, 2026-09-01), where
-               --   "Broughton (NC)" beat "Unattached (TX)" and a boy was
-               --   rated in a girls' pool for his whole career.
-               -- ! COUNT FIRST, THEN 'M'. The count is the evidence; the
-               --   letter is only the tie-break, and DESC puts 'M' above
-               --   'F' so an exact 50/50 lands male, which is what the
-               --   owner asked for. Both keys are needed: count alone is
-               --   not deterministic.
-               -- ⚠ THIS ORDERING IS DUPLICATED in
-               --   racecast/build_ranking_results._GENDER_TEMP_SQL and the
-               --   two MUST match -- a different tie-break there would
-               --   silently repool athletes relative to the engine.
-               --   tests/test_gender_pick.py pins them together.
-               SELECT a.gender FROM athletes a
-               WHERE a.athlete_id = COALESCE(r.person_id, r.athlete_id)
-                 AND a.gender IN ('M', 'F')
-               GROUP BY a.gender
-               ORDER BY count(*) DESC, a.gender DESC
-               LIMIT 1
-        ) a ON TRUE{_personGenderJoin()}{_dedupJoin(tw, 'XC')}
+        -- ★ THE MAJORITY GENDER, FROM A TABLE BUILT ONCE (ensurePackGender),
+        --   NOT A SUBQUERY PER ROW. The lateral this replaces was an index
+        --   probe plus a group-and-sort for every one of ~100M rows. Same
+        --   rule: count first, ties to 'M' -- see _PACK_GENDER_SQL, which
+        --   tests/test_gender_pick.py pins to build_ranking_results'.
+        LEFT JOIN tmp_pack_gender a
+               ON a.athlete_id = COALESCE(r.person_id, r.athlete_id){_personGenderJoin()}{_dedupJoin(tw, 'XC')}
         WHERE r.normalized_time IS NOT NULL
           AND r.normalized_time BETWEEN {min_time} AND {max_time}
           AND r.date IS NOT NULL
@@ -788,32 +769,13 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
         LEFT JOIN meets_tf m
                ON m.meet_id = r.meet_id AND m.div_id = r.div_id
               AND m.event_id = r.event_id AND m.source = r.source
-        LEFT JOIN LATERAL (
-               -- ⚠ MAJORITY, NOT ALPHABETICAL-BY-SCHOOL. This was
-               --   `ORDER BY a.school LIMIT 1`, which is deterministic but
-               --   arbitrary: when one person_id carries rows of both
-               --   genders -- two real people merged, or a mis-sexed feed
-               --   row -- the winner was whichever SCHOOL NAME sorted first.
-               --   Reported for Cam Kuss (owner, 2026-09-01), where
-               --   "Broughton (NC)" beat "Unattached (TX)" and a boy was
-               --   rated in a girls' pool for his whole career.
-               -- ! COUNT FIRST, THEN 'M'. The count is the evidence; the
-               --   letter is only the tie-break, and DESC puts 'M' above
-               --   'F' so an exact 50/50 lands male, which is what the
-               --   owner asked for. Both keys are needed: count alone is
-               --   not deterministic.
-               -- ⚠ THIS ORDERING IS DUPLICATED in
-               --   racecast/build_ranking_results._GENDER_TEMP_SQL and the
-               --   two MUST match -- a different tie-break there would
-               --   silently repool athletes relative to the engine.
-               --   tests/test_gender_pick.py pins them together.
-               SELECT a.gender FROM athletes a
-               WHERE a.athlete_id = COALESCE(r.person_id, r.athlete_id)
-                 AND a.gender IN ('M', 'F')
-               GROUP BY a.gender
-               ORDER BY count(*) DESC, a.gender DESC
-               LIMIT 1
-        ) a ON TRUE{_personGenderJoin()}{_dedupJoin(tw, 'TF')}
+        -- ★ THE MAJORITY GENDER, FROM A TABLE BUILT ONCE (ensurePackGender),
+        --   NOT A SUBQUERY PER ROW. The lateral this replaces was an index
+        --   probe plus a group-and-sort for every one of ~100M rows. Same
+        --   rule: count first, ties to 'M' -- see _PACK_GENDER_SQL, which
+        --   tests/test_gender_pick.py pins to build_ranking_results'.
+        LEFT JOIN tmp_pack_gender a
+               ON a.athlete_id = COALESCE(r.person_id, r.athlete_id){_personGenderJoin()}{_dedupJoin(tw, 'TF')}
         WHERE r.normalized_time IS NOT NULL
           AND r.normalized_time BETWEEN {min_time} AND {max_time}
           AND r.date IS NOT NULL
@@ -1534,6 +1496,31 @@ def loadCourseGeometry(course_keys):
 #
 # ★ THE REAL BAND MOVED TO packResults, where the pool is known and it can be
 #   expressed as a PACE rather than a time. See _POOL_PACE_BAND there.
+# ★ THE MAJORITY GENDER PER ID, ONCE PER STREAM (2026-09-26). Same rule the
+#   per-row lateral applied: rows per gender, most first, ties to 'M' (DESC),
+#   'M'/'F' only. build_ranking_results._GENDER_TEMP_SQL states the same
+#   ordering; tests/test_gender_pick.py holds the two together.
+_PACK_GENDER_SQL = """
+    DROP TABLE IF EXISTS tmp_pack_gender;
+    CREATE TEMP TABLE tmp_pack_gender AS
+    SELECT DISTINCT ON (athlete_id) athlete_id, gender
+    FROM (
+        SELECT a.athlete_id, a.gender, count(*) AS n
+        FROM   athletes a
+        WHERE  a.gender IN ('M', 'F')
+        GROUP  BY a.athlete_id, a.gender
+    ) s
+    ORDER BY athlete_id, n DESC, gender DESC;
+    CREATE UNIQUE INDEX ON tmp_pack_gender (athlete_id);
+    ANALYZE tmp_pack_gender;
+"""
+
+
+def ensurePackGender(cur):
+    """Build tmp_pack_gender on this connection; _xcQuery/_tfQuery join it."""
+    cur.execute(_PACK_GENDER_SQL)
+
+
 def streamResults(sport: str, min_time: float = 200.0, max_time: float = 6000.0,
                   batch: int = 200_000):
     # Materialise the twin keys BEFORE opening the stream. This is one scan and
@@ -1547,6 +1534,8 @@ def streamResults(sport: str, min_time: float = 200.0, max_time: float = 6000.0,
     sql = {"XC": _xcQuery, "TF": _tfQuery}[sport](min_time, max_time, tw)
     total = 0
     with getConn() as conn:
+        with conn.cursor() as prep:
+            ensurePackGender(prep)
         cur = conn.cursor(name=f"speed_ratings_{sport.lower()}")
         cur.itersize = batch
         cur.execute(sql)

@@ -34,21 +34,23 @@ def norm(sql):
     return re.sub(r"\s+", " ", sql).strip().lower()
 
 
-# 1. THE ENGINE. Both query builders carry the lateral and both must agree.
-laterals = re.findall(
-    r"SELECT a\.gender FROM athletes a.*?LIMIT 1", DB, re.S)
-ok(len(laterals) == 2, f"expected 2 gender laterals in the engine, "
-                       f"found {len(laterals)}")
-ok(len(set(norm(x) for x in laterals)) == 1,
-   "the engine's two gender laterals have drifted apart")
-
-lat = norm(laterals[0]) if laterals else ""
-ok("group by a.gender" in lat, "the engine counts rows per gender")
-ok("order by count(*) desc" in lat, "majority decides")
-ok("a.gender desc" in lat, "ties go to 'M' ('M' > 'F', so DESC)")
+# 1. THE ENGINE. The per-row lateral became a table built once per stream
+#    (2026-09-26); the rule is stated once, in _PACK_GENDER_SQL, and both
+#    query builders join it.
+em = re.search(r"_PACK_GENDER_SQL = \"\"\"(.*?)\"\"\"", DB, re.S)
+ok(em is not None, "_PACK_GENDER_SQL not found in the engine")
+lat = norm(em.group(1)) if em else ""
+ok("group by a.athlete_id, a.gender" in lat, "the engine counts rows per gender")
+ok("order by athlete_id, n desc, gender desc" in lat,
+   "majority decides, ties to 'M' ('M' > 'F', so DESC)")
+ok("a.gender in ('m', 'f')" in lat, "only M and F count")
 ok("order by a.school" not in lat,
    "the alphabetical-by-school tie-break is gone -- it picked a gender by "
    "which school NAME sorted first")
+ok(DB.count("LEFT JOIN tmp_pack_gender a") == 2,
+   "both query builders join the one table")
+ok("SELECT a.gender FROM athletes a" not in DB,
+   "no per-row gender lateral is left in the engine")
 
 # 2. THE SITE. Same rule, expressed as DISTINCT ON over a pre-aggregate.
 m = re.search(r"_GENDER_TEMP_SQL = \"\"\"(.*?)\"\"\"", BR, re.S)
@@ -77,7 +79,7 @@ ok("select athlete_id, gender from athletes\"" not in norm(BF),
 
 # 4. ALL THREE AGREE. Same evidence (count of `athletes` rows), same direction,
 #    same tie-break letter -- stated as one check so a half-change fails.
-ok(("count(*) desc" in lat) == ("n desc" in tmp) == ("n desc" in bf),
+ok(("n desc" in lat) == ("n desc" in tmp) == ("n desc" in bf) == True,
    "one of the three ranks by count and the others do not")
 for name, sql in (("engine lateral", lat), ("ranking temp", tmp),
                   ("backfill", bf)):
