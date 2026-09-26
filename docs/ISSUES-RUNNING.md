@@ -2313,6 +2313,12 @@ for [team]" and "Dual meet [A] vs [B]" rows under the team table (`b704ebb`,
 `1633639`); the lineup line is off the coaches page's "Being built" list.
 #8 is done: `/hello`, `_result_row.html`, `hero.png`, `cards/athlete-1.png`
 removed, the "greyed scopes" tooltip line dropped. Still open: #3-#7.
+#4 closed 2026-09-26 by deletion (owner: "delete it"): the compiled-meet
+JSON route had no caller and ran the full compile, uncached, for anyone.
+#6 closed the same day: team_identity is read first by race scoring, school
+links and the predict page (meet_compile.teamStates). #7 closed: track venue
+team records are the relays. #10 closed: rating_outlier is built (09d) and
+read, rank-only. #12 closed: the 30-day window is the default.
 
 **Also logged 2026-09-26, not built (owner: "I don't want the per-row flag
 but log it for future things"):**

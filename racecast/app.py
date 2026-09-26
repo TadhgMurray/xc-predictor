@@ -3825,31 +3825,6 @@ def compiled_race(meet_id, distance, gender):
                            has_hs_view=has_hs_view)
 
 
-@app.route("/api/meet/xc/<int:meet_id>/compiled")
-def api_meet_compiled(meet_id):
-    """Compiled results and team scores, as JSON.
-
-    Split out from the page so the compiled view can be loaded on demand --
-    a big invitational is several thousand rows across four groups, and most
-    visits only want one of them.
-    """
-    from meet_compile import compiledResults, publishedScores
-
-    with getConn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            sources = meet_sources(cur, "results", meet_id)
-            src, _idx, _others = pick_source(sources,
-                                             request.args.get("alt"))
-            compiled = compiledResults(cur, meet_id, source=src)
-            published = publishedScores(cur, meet_id)
-
-    return jsonify({
-        "compiled": compiled,
-        # Keys are tuples server-side; JSON needs strings.
-        "published": {f"{d}|{g or ''}": v for (d, g), v in published.items()},
-    })
-
-
 # ===================================================================== #
 #  TF RACE
 # ===================================================================== #
