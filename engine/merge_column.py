@@ -588,17 +588,26 @@ def mergeColumn(conn, table, column, staging, key="result_id", val="val",
         #
         #   IS DISTINCT FROM, not <>: a NULL on either side means the value
         #   changed, and <> would silently report those as unchanged.
-        _timed(cur, f"""
-            SELECT count(*)
-            FROM   {staging} s
-            JOIN   {table} t ON t.{key} = s.{key}
-            WHERE  t.{column} IS DISTINCT FROM s.{val}
-        """, f"count changed rows in {table}")
-        changed = cur.fetchone()[0]
+        # ! ONLY WHEN THE ANSWER CAN SKIP SOMETHING (2026-09-26). With
+        #   preserve_unmatched=False (the go-live's mode) a zero delta is not
+        #   a no-op, so the rebuild runs whatever the count says -- and the
+        #   count was a full join of the staging table against the live one,
+        #   per table, bought only for a print.
+        changed = None
+        if preserve_unmatched:
+            _timed(cur, f"""
+                SELECT count(*)
+                FROM   {staging} s
+                JOIN   {table} t ON t.{key} = s.{key}
+                WHERE  t.{column} IS DISTINCT FROM s.{val}
+            """, f"count changed rows in {table}")
+            changed = cur.fetchone()[0]
 
         cur.execute(f"SELECT count(*) FROM {staging}")
         staged = cur.fetchone()[0]
-        print(f"    {changed:,} of {staged:,} staged rows differ")
+        print(f"    {staged:,} staged rows" + (
+            f", {changed:,} differ" if changed is not None else
+            " (changed-row count skipped: this mode rebuilds regardless)"))
 
         if changed == 0 and preserve_unmatched:
             # preserve_unmatched=False would also NULL every unmatched row, so

@@ -355,11 +355,21 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     suspect_days = []
     if capped.any():
         days_ago = np.asarray(cols["days"][keep])
-        for r_idx in np.unique(D.race[capped]):
-            m = D.race == r_idx
-            c = int(D.cell[m][0])
-            suspect_days.append((keys[c], int(np.median(days_ago[m])),
-                                 float(out["race_effect"][r_idx]), int(m.sum())))
+        # ! ONE SORT, NOT ONE FULL-LENGTH COMPARISON PER CAPPED RACE: the old
+        #   loop did `D.race == r_idx` over every row for each race. Same
+        #   rows per race, same median, same first cell.
+        want = np.unique(D.race[capped])
+        sel = np.flatnonzero(np.isin(D.race, want))
+        order = sel[np.argsort(D.race[sel], kind="stable")]
+        rs = D.race[order]
+        starts = np.flatnonzero(np.r_[True, rs[1:] != rs[:-1]])
+        ends = np.r_[starts[1:], rs.size]
+        for a, b in zip(starts, ends):
+            idx = order[a:b]
+            r_idx = int(rs[a])
+            c = int(D.cell[np.min(idx)])
+            suspect_days.append((keys[c], int(np.median(days_ago[idx])),
+                                 float(out["race_effect"][r_idx]), int(b - a)))
         suspect_days.sort(key=lambda t: -abs(t[2]))
         print(f"[joint/live] race-day cap {js.RACE_DAY_CAP:+.2f}: "
               f"{len(suspect_days):,} race days beyond it on {int(capped.sum()):,} "

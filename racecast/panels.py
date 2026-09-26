@@ -1074,6 +1074,19 @@ def _collectPerformances(conn, sport, season_year, buckets, stats):
                 seen[key] = score
             # ------------------------------------------------------------
 
+            # ★ WOULD IT MAKE EITHER BOARD? ASK BEFORE BUILDING IT (2026-09-26).
+            #   ~30M rows reach here and 250 per pool survive; the payload --
+            #   name, detail, links, two dict copies -- was built for all of
+            #   them. Same comparison _pushTop makes, so the boards are
+            #   identical.
+            h_all = buckets[("performance", "alltime", sport, pool)]
+            h_sea = buckets[("performance", "season", sport, pool)]
+            row_season = str(seasonYearFromIso(sport, row["date"]))
+            if not ((len(h_all) < COLLECT_N or score > h_all[0][0])
+                    or (row_season == season_year
+                        and (len(h_sea) < COLLECT_N or score > h_sea[0][0]))):
+                continue
+
             payload = {
                 "person_id":   row["person_id"],
                 "name":        _fullName(row),
@@ -1093,7 +1106,7 @@ def _collectPerformances(conn, sport, season_year, buckets, stats):
                 #   silently failed the test and the whole board went empty.
                 #   It is also stored in homepage_panels.season_year, which is
                 #   a text column.
-                "season_year": str(seasonYearFromIso(sport, row["date"])),
+                "season_year": row_season,
                 "detail":      _perfDetail(sport, row),
                 "link":        _perfLink(sport, row),
                 "name_link":   f"/athlete/{row['person_id']}",

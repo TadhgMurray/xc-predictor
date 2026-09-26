@@ -1632,7 +1632,12 @@ def _applyEra(normalized, season, era_key=None):
 def _rcsValue(spline, x, dc=0.0):
     # coefficients shift with distance (dc) so the whole curve SHAPE changes:
     # c_effective = coef + coef_dist * dc.
-    k = sorted(set(spline["knots"]))
+    # ! SORTED ONCE PER SPLINE, not on every call: this runs up to four
+    #   times per weather row, tens of millions of times in a backfill. The
+    #   knots are the artifact's and never change in a process.
+    k = spline.get("_sorted_knots")
+    if k is None:
+        k = spline["_sorted_knots"] = sorted(set(spline["knots"]))
     coef = spline["coef"]
     cdist = spline.get("coef_dist")
     if cdist is not None and dc != 0.0:

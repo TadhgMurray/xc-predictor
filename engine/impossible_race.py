@@ -383,10 +383,13 @@ def build(conn, write, show=20, own_since=None, explain=()):
         cur.execute(f"DROP TABLE IF EXISTS {race_t}_new, {res_t}_new")
         cur.execute(_DDL.format(race=f"{race_t}_new", result=f"{res_t}_new"))
         if race_recs:
-            cur.executemany(f"""INSERT INTO {race_t}_new VALUES
-                                (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", race_recs)
-            cur.executemany(f"INSERT INTO {res_t}_new VALUES (%s,%s) ON CONFLICT DO NOTHING",
-                            res_recs)
+            # ! execute_values, NOT executemany: executemany is one round trip
+            #   per row, and a condemned race list runs to tens of thousands
+            from psycopg2.extras import execute_values
+            execute_values(cur, f"INSERT INTO {race_t}_new VALUES %s", race_recs,
+                           page_size=5000)
+            execute_values(cur, f"INSERT INTO {res_t}_new VALUES %s ON CONFLICT DO NOTHING",
+                           res_recs, page_size=10000)
         conn.commit()
     swapTable(conn, race_t)
     swapTable(conn, res_t, renames=((f"{res_t}_new_pkey", f"{res_t}_pkey"),))

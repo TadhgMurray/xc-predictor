@@ -52,25 +52,31 @@ _CONVENTIONS = (1200, 1500, 1600, 2000, 2400, 2500, 3000, 3200, 4000, 4023,
 
 def ownOtherMeans(pk, day, race, lnt, window=WINDOW):
     """Per row: (sum, count) of the same person's log normalized times at
-    OTHER races within +-window days. Arrays in any order."""
+    OTHER races within +-window days. Arrays in any order.
+
+    ! ONLY THE PAIRS STILL ALIVE ARE CARRIED TO THE NEXT LAG. Sorted by
+      (person, day), a row whose partner k places on is another person or
+      out of the window has no partner at k+1 either, so each lag looks at
+      the survivors of the last one instead of every row again."""
     order = np.lexsort((day, pk))
     p, d, r, v = pk[order], day[order], race[order], lnt[order]
-    s = np.zeros(p.size)
-    c = np.zeros(p.size, dtype=np.int64)
+    n = p.size
+    s = np.zeros(n)
+    c = np.zeros(n, dtype=np.int64)
+    i = np.arange(max(n - 1, 0))
     k = 1
-    while k < p.size:
-        i = np.arange(p.size - k)
+    while i.size:
         j = i + k
         near = (p[i] == p[j]) & (d[j] - d[i] <= window)
-        if not near.any():
-            break
-        ok = near & (r[i] != r[j])
-        np.add.at(s, i[ok], v[j[ok]])
-        np.add.at(c, i[ok], 1)
-        np.add.at(s, j[ok], v[i[ok]])
-        np.add.at(c, j[ok], 1)
+        i, j = i[near], j[near]
+        ok = r[i] != r[j]
+        ii, jj = i[ok], j[ok]
+        s += np.bincount(ii, weights=v[jj], minlength=n)
+        s += np.bincount(jj, weights=v[ii], minlength=n)
+        c += np.bincount(ii, minlength=n) + np.bincount(jj, minlength=n)
         k += 1
-    out_s, out_c = np.zeros(p.size), np.zeros(p.size, dtype=np.int64)
+        i = i[i + k < n]
+    out_s, out_c = np.zeros(n), np.zeros(n, dtype=np.int64)
     out_s[order], out_c[order] = s, c
     return out_s, out_c
 

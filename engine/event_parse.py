@@ -62,6 +62,7 @@
 # Exact keys in EVENT_DISTANCES_TF are tried FIRST, so the 12 events the fitters
 # already price return byte-identical values and nothing downstream shifts.
 
+from functools import lru_cache
 import re
 
 from normalize_distance import EVENT_DISTANCES_TF   # one-way import; no cycle
@@ -265,6 +266,10 @@ def sprintDistanceFromEventShort(ev):
     return got
 
 
+# ★ CACHED (2026-09-26): 05_backfill and the ranking stream parse every
+#   track row's event name -- ~60M calls over ~64k distinct names. Pure, and
+#   it returns an immutable (metres, gender) tuple, so the cache is exact.
+@lru_cache(maxsize=None)
 def _distanceFromEventShort(ev, lo, hi):
     if not ev:
         return None, None

@@ -180,7 +180,7 @@ NATIONAL_TEAMS = frozenset("""
 _NT_SUFFIX = re.compile(r"\s*\([a-z .]{2,6}\)\s*$|\s+(national team|nt|team)\s*$", re.I)
 
 
-@lru_cache(maxsize=65536)
+@lru_cache(maxsize=None)                  # ~300k distinct schools
 def isNationalTeam(school):
     """True when the school string is a (non-US) national team."""
     if not school:
