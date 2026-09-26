@@ -74,6 +74,10 @@
   {% endif %}
 
   {# ---------------------------------------------------------------- #}
+  <p class="meta st-snap">{% if st.snapshot_at %}The three sections below were counted
+    {{ ago((st.now.astimezone() - st.snapshot_at).total_seconds()) if st.snapshot_at.tzinfo else st.snapshot_at }} ago;
+    {% else %}The three sections below have not been counted yet;
+    {% endif %}<code>scripts/print_status.py</code> counts them again (a few minutes).</p>
   <h2>tfrrs rows tied to a person</h2>
   {% if st.identity.error %}{{ err(st.identity) }}{% else %}
   <table><thead><tr><th>Sport</th><th>Season</th><th>Rows</th><th>Person</th>
@@ -106,7 +110,7 @@
   <h2>Blank athletes</h2>
   {% if st.blank.error %}{{ err(st.blank) }}{% else %}
   <p>{% if st.blank.blank %}<span class="st-warn">{{ n(st.blank.blank) }}</span>{% else %}<span class="st-ok">0</span>{% endif %}
-    anet athletes stored with no name · {{ n(st.blank.queued_meets) }} anet meets waiting to be scraped.</p>
+    anet athletes with no name on any row · {{ n(st.blank.queued_meets) }} anet meets waiting to be scraped.</p>
   {% if st.blank.blank %}<p class="meta">They show as Unknown. <code>scripts/requeue_blank_athletes.py --apply</code>
     puts their meets back on the queue; the next scrape fills the names in.</p>{% endif %}
   {% endif %}

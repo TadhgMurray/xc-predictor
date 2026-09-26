@@ -91,6 +91,17 @@ class BrokenConn:
         self.rolled += 1
 
 
+class Snapshot(unittest.TestCase):
+    def test_the_page_reads_the_slow_counts_from_the_snapshot(self):
+        # no snapshot table readable: each slow block says how to count it,
+        # and nothing slow runs on the page load
+        with tempfile.TemporaryDirectory() as root:
+            st = S.gather(BrokenConn(), log_root=root)
+        for k in S.HEAVY:
+            self.assertIn("print_status", st[k]["error"])
+        self.assertIsNone(st["snapshot_at"])
+
+
 class Blocks(unittest.TestCase):
     def test_a_failing_block_is_an_error_not_a_crash(self):
         conn = BrokenConn()

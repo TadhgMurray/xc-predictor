@@ -10,6 +10,7 @@ print_status.py -- the owner's status page, printed.
 """
 import os
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
@@ -29,9 +30,21 @@ def _err(block):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--no-save", action="store_true",
+                    help="do not save the slow counts for /account/status")
+    a = ap.parse_args()
+    t0 = time.time()
     with getConn() as conn:
-        st = S.gather(conn)
-    print(f"SITE STATUS  {st['now']:%Y-%m-%d %H:%M}  season {st['season']}")
+        # the slow counts, with no time limit; saved so the page can show
+        # them without scanning a season on every load
+        st = S.gather(conn, live_heavy=True)
+        if not a.no_save:
+            S.saveSnapshot(conn, {k: st[k] for k in S.HEAVY})
+    print(f"SITE STATUS  {st['now']:%Y-%m-%d %H:%M}  season {st['season']}"
+          f"  ({time.time() - t0:.0f}s"
+          f"{'' if a.no_save else ', counts saved for /account/status'})")
 
     print("\nPIPELINE")
     pl = st["pipeline"]
@@ -71,7 +84,7 @@ def main():
 
     print("\nBLANK ATHLETES")
     if not _err(st["blank"]):
-        print(f"  {st['blank']['blank']:,} anet athletes with no name; "
+        print(f"  {st['blank']['blank']:,} anet athletes with no name on any row; "
               f"{st['blank']['queued_meets']:,} anet meets queued")
 
     print("\nQUERIES OVER 5 SECONDS")

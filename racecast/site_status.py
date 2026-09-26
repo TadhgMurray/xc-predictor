@@ -118,11 +118,12 @@ def pipeline(log_root=LOG_ROOT, runs=6):
 
 # ---- the database -------------------------------------------------------
 
-def _block(conn, fn):
-    """Run one block under a timeout; its rows, or {"error": why}."""
+def _block(conn, fn, timeout_ms=BLOCK_TIMEOUT_MS):
+    """Run one block under a timeout (0 = none); its rows, or
+    {"error": why}."""
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = %s", (BLOCK_TIMEOUT_MS,))
+            cur.execute("SET LOCAL statement_timeout = %s", (int(timeout_ms),))
             got = fn(cur)
         conn.rollback()
         return got
@@ -141,7 +142,7 @@ _IDENTITY_SQL = """
 """
 
 
-def identity(conn, seasons):
+def identity(conn, seasons, timeout_ms=BLOCK_TIMEOUT_MS):
     """tfrrs rows per season: how many have a person, and are rated. The
     gap diag_tfrrs_identity measured, which link_tfrrs_rows closes."""
     def run(cur):
@@ -155,10 +156,10 @@ def identity(conn, seasons):
                             "person": wp, "native_only": nat,
                             "normalized": norm, "rated": rated})
         return out
-    return _block(conn, run)
+    return _block(conn, run, timeout_ms)
 
 
-def rated(conn, season):
+def rated(conn, season, timeout_ms=BLOCK_TIMEOUT_MS):
     """This season's rows and rated rows, per sport and source."""
     def run(cur):
         out = []
@@ -172,24 +173,26 @@ def rated(conn, season):
                 out.append({"sport": sport, "source": source, "rows": n,
                             "rated": r, "latest": last})
         return out
-    return _block(conn, run)
+    return _block(conn, run, timeout_ms)
 
 
-def blankAthletes(conn):
-    """anet athletes saved with no name (the old placeholder bug; see
-    scripts/requeue_blank_athletes.py, which re-scrapes their meets)."""
+def blankAthletes(conn, timeout_ms=BLOCK_TIMEOUT_MS):
+    """anet athletes with no name on ANY of their rows -- the same count
+    scripts/requeue_blank_athletes.py prints, so the two agree -- and the
+    anet meets waiting to be scraped (requeued ones included)."""
     def run(cur):
         cur.execute("""
-            SELECT count(*) FROM athletes
-            WHERE  source = 'anet'
-              AND  COALESCE(btrim(first_name), '') = ''
-              AND  COALESCE(btrim(last_name), '') = ''
+            SELECT count(*) FROM (
+                SELECT athlete_id FROM athletes WHERE source = 'anet'
+                GROUP  BY athlete_id
+                HAVING bool_and(COALESCE(btrim(first_name), '') = ''
+                                AND COALESCE(btrim(last_name), '') = '')) b
         """)
         n = cur.fetchone()[0]
         cur.execute("SELECT count(*) FROM meet_queue "
                     "WHERE source = 'anet' AND scraped = 0")
         return {"blank": n, "queued_meets": cur.fetchone()[0]}
-    return _block(conn, run)
+    return _block(conn, run, timeout_ms)
 
 
 def activeQueries(conn, min_seconds=5):
@@ -237,16 +240,73 @@ def resolveReport(conn, report_id, note=None):
     return n
 
 
-def gather(conn, log_root=LOG_ROOT):
+# ★ THE SLOW COUNTS ARE A SNAPSHOT (owner's first run, 2026-09-26: both
+#   tfrrs blocks hit the 8 s page timeout). Counting a season of results is
+#   a scan of tens of millions of rows -- fine for a script, not for a page
+#   load. scripts/print_status.py counts them with no time limit and saves
+#   the answer here; the page shows the saved copy and how old it is. The
+#   pipeline, the running queries and the reports stay live.
+HEAVY = ("identity", "rated", "blank")
+_SNAP_DDL = """CREATE TABLE IF NOT EXISTS site_status_snapshot (
+                   taken_at timestamptz NOT NULL DEFAULT now(),
+                   data     jsonb NOT NULL)"""
+
+
+def heavy(conn, season, timeout_ms=0):
+    return {"identity": identity(conn, [season - 1, season], timeout_ms),
+            "rated": rated(conn, season, timeout_ms),
+            "blank": blankAthletes(conn, timeout_ms)}
+
+
+def saveSnapshot(conn, data):
+    import json
+    with conn.cursor() as cur:
+        cur.execute(_SNAP_DDL)
+        cur.execute("INSERT INTO site_status_snapshot (data) VALUES (%s)",
+                    (json.dumps(data, default=str),))
+        # the last few are plenty; this is a status page, not a history
+        cur.execute("""DELETE FROM site_status_snapshot WHERE taken_at <
+                       (SELECT min(taken_at) FROM (SELECT taken_at
+                        FROM site_status_snapshot ORDER BY taken_at DESC
+                        LIMIT 20) k)""")
+    conn.commit()
+
+
+def loadSnapshot(conn):
+    """(taken_at, {identity, rated, blank}) of the newest snapshot, or
+    (None, None)."""
+    def run(cur):
+        cur.execute("SELECT to_regclass('public.site_status_snapshot')")
+        if cur.fetchone()[0] is None:
+            return None
+        cur.execute("SELECT taken_at, data FROM site_status_snapshot "
+                    "ORDER BY taken_at DESC LIMIT 1")
+        return cur.fetchone()
+    got = _block(conn, run)
+    if not got or isinstance(got, dict):
+        return None, None
+    return got[0], got[1]
+
+
+def gather(conn, log_root=LOG_ROOT, live_heavy=False):
+    """Everything the page shows. live_heavy counts the slow blocks now
+    (with no time limit) instead of reading the last snapshot."""
     ay = academicYear()
-    return {"now": datetime.datetime.now(),
-            "season": ay,
-            "pipeline": pipeline(log_root),
-            "identity": identity(conn, [ay - 1, ay]),
-            "rated": rated(conn, ay),
-            "blank": blankAthletes(conn),
-            "queries": activeQueries(conn),
-            "reports": openReports(conn)}
+    out = {"now": datetime.datetime.now(),
+           "season": ay,
+           "pipeline": pipeline(log_root),
+           "queries": activeQueries(conn),
+           "reports": openReports(conn),
+           "snapshot_at": None}
+    if live_heavy:
+        out.update(heavy(conn, ay))
+    else:
+        at, data = loadSnapshot(conn)
+        missing = {"error": "not counted yet -- run scripts/print_status.py"}
+        for k in HEAVY:
+            out[k] = (data or {}).get(k) or missing
+        out["snapshot_at"] = at
+    return out
 
 
 def ago(seconds):
