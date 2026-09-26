@@ -172,6 +172,42 @@ _WEATHER = {sp: _loadPickle(os.path.join(_DATA_DIR, f"weather_correction_{sp}.pk
                             f"Weather correction {sp}")
             for sp in ("XC", "TF")}
 
+
+# ★ A WEATHER ARTIFACT FITTED ON THE OLD TEMPERATURES IS REFUSED (owner,
+#   2026-09-26: "extreme weather races not being helped"). Until
+#   scripts/recompute_apparent_temp.py fixed the sun term, every sunny hour
+#   in weather_grid read 20-35 C too hot, and the artifacts fitted on those
+#   numbers carry that scale: a 55 "deg F" reference, venue normals of
+#   37-41, spline knots up to 56-65. Applied to the CORRECTED grid, a real
+#   24 C afternoon sits far below every normal -- the hot day reads as a
+#   cool one and loses its credit: Arcadia 2025-04-12, apparent 24 C and
+#   windy, was DOCKED 0.72% (0.9 rating points) for its weather.
+# ! NO CORRECTION IS LESS WRONG THAN AN INVERTED ONE, so a stale artifact is
+#   a no-op until fit_weather_correction --refresh refits it on the grid as
+#   it is (pipeline: XCP_WEATHER_FIT=1). XCP_WEATHER_ALLOW_STALE=1 applies it
+#   anyway, for comparing old runs.
+# ! THE TEST IS THE ARTIFACT'S OWN REFERENCE: the fitter's no-op point is
+#   13 C since 2026-09-06; anything over 30 was fitted on the old numbers.
+def _weatherStale(art):
+    try:
+        return float(art["reference"]["apparent_temp"]) > 30.0
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+for _sp, _art in list(_WEATHER.items()):
+    if _art and _weatherStale(_art):
+        if os.environ.get("XCP_WEATHER_ALLOW_STALE") == "1":
+            print(f"[normalize_distance] ⚠ weather correction {_sp} was fitted on "
+                  "the OLD apparent temperatures and is applied anyway "
+                  "(XCP_WEATHER_ALLOW_STALE=1)", flush=True)
+        else:
+            print(f"[normalize_distance] ⚠ weather correction {_sp} was fitted on "
+                  "the OLD apparent temperatures (reference "
+                  f"{_art['reference'].get('apparent_temp')}); NOT applied. "
+                  "Refit: XCP_WEATHER_FIT=1 (pipeline step 04f)", flush=True)
+            _WEATHER[_sp] = None
+
 # School -> level map, built once by scripts/build_school_levels.py from anet's
 # REAL grades (the ground truth tfrrs lacks). None -> levelForSchool() is a
 # clean no-op and pooling behaves exactly as it did before this change.
