@@ -614,12 +614,6 @@ def not_found(_err):
     return render_template("404.html"), 404
 
 
-# When someone visits the address "/" run the function below.
-# This is a decorator, it connects a URL to a function.
-@app.route("/hello")
-def yay():
-    return "Hello from Flask"
-
 def get_homepage_panels(cur):
     """Every visible panel row, flat. panels.py already ranked and filtered
     these, so the route does no work beyond reshaping. `visible` hides boards

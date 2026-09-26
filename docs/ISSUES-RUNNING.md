@@ -2307,3 +2307,20 @@ Closest to done first.
 
 Idea stage only, no backend: "Programme development", "Saved boards and
 watchlists" (`coaches.html`).
+
+**Update 2026-09-26.** #1 and #2 are wired: the predict page's "Best seven
+for [team]" and "Dual meet [A] vs [B]" rows under the team table (`b704ebb`,
+`1633639`); the lineup line is off the coaches page's "Being built" list.
+#8 is done: `/hello`, `_result_row.html`, `hero.png`, `cards/athlete-1.png`
+removed, the "greyed scopes" tooltip line dropped. Still open: #3-#7.
+
+**Also logged 2026-09-26, not built (owner: "I don't want the per-row flag
+but log it for future things"):**
+
+| # | Feature | What exists | What is missing |
+|---|---|---|---|
+| 9 | **Per-result "report this" flag** — a faint flag on each result row (race and athlete pages) opening the report form under the row, pre-filled with the athlete, school, place, time and result id | The report form and `/api/report`, the `issue_reports` table, the status page's Open reports list with Resolve; page-level "Report it" links on athlete, race, meet, school and predict pages. The mockup is in the renders page of 2026-09-25 | The row flag, the inline form, and `issue_reports` columns for `person_id` / `result_id` so a report names its row |
+| 10 | **`rating_outlier`** — `engine/rating_outliers.py` (the owner's 09-18 "more than N sigma from the season, do not rate or rank") | Builds the table; `tests/test_rating_outliers.py` | No reader and no pipeline step, so a wrong-distance or merged-person spike still reaches pages, boards and predictions |
+| 11 | **Model upkeep** (HANDOFF-ENGINE §5) | `BASELINE_EWMA` baseline built; tfrrs-college training rows code-complete | Neither used in a trained model; missing weather is still a 0 with no `has_weather` flag; the predict page runs on ratings (`XCP_PREDICT_BASIS=rating`) with no backtest of those times |
+| 12 | **30-day bracket window** — `XCP_BRACKET_WINDOW=30` (-1.28% held-out error) | Measured; commented in `deploy/solve_env.sh` | Switched on for one run on its own, after a verified run (the file's own rule) |
+| 13 | **Shared prediction links** | The share URL carries the whole request | `restoreFromLink` reads only meet, race and sport: mode, date, course and edits are lost |
