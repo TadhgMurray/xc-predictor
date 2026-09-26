@@ -1407,6 +1407,118 @@ _COLLEGIATE_SQL = """
 #  RESOLVE
 # ------------------------------------------------------------------ #
 
+# ================================================================== #
+#  RULE 7 -- THE ELITE FIELD
+# ================================================================== #
+#
+# ★ EVERY INPUT IS ONE THE POOLING DOES NOT PRODUCE, AND THAT IS THE POINT.
+#   The rule reads the RAW grade, the RAW time and distance (a 5 km
+#   equivalent by the normaliser's own exponent, ELITE_K), and the race's
+#   ceiling from race_top_level -- the teams' own levels (level_graph), not
+#   the pools. Judged on last run's pools or normalized times, a repooled
+#   athlete would stop matching next run and flip back: a rule that
+#   oscillates every night.
+#
+# ★ THE BAR IS MEASURED: the fastest ELITE_QUANTILE (1 in 10,000) of that
+#   grade level's 5 km equivalents in races whose ceiling IS that level --
+#   middle schoolers racing middle schoolers. Nothing a real middle schooler
+#   runs in a middle school race is excluded by it, give or take one in ten
+#   thousand.
+#
+# ! ELEMENTARY AND MIDDLE SCHOOL ONLY. A national-class high school senior
+#   at a college invitational is a high schooler, and the fastest high
+#   school times ARE in college races; a high school grade here would sweep
+#   them into pro. College athletes with a stray school grade are the
+#   college-team rule's (pool_resolve, team_level 'college'), so a school
+#   the college directory lists is skipped too.
+# ! DISTANCE RACES ONLY (1500 m to 10 km): a 5 km equivalent from a sprint
+#   is an extrapolation, not a measurement.
+ELITE_QUANTILE = 0.0001
+ELITE_K = 1.06
+
+
+def _eliteRowsSql(sport):
+    from level_graph import _raceKeyExpr
+    if sport == "XC":
+        dist = """COALESCE(dov.distance, m.distance,
+                           (mt.division_distances -> r.div_id::text ->> 'distance')::real,
+                           mt.distance)::float8"""
+        joins = """LEFT JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+                   LEFT JOIN meets_tfrrs mt ON r.source = 'tfrrs' AND mt.meet_id = r.meet_id
+                                          AND mt.sport = 'XC'
+                   LEFT JOIN dist_override dov ON dov.meet_id = r.meet_id
+                                              AND dov.div_id = r.div_id"""
+        table, extra = "results", ""
+    else:
+        from speed_ratings_db import _eventMetersSql
+        dist = f"({_eventMetersSql('r')})::float8"
+        joins = ""
+        table, extra = "results_tf", "AND COALESCE(r.is_relay, 0) = 0"
+    return f"""
+        SELECT r.person_id, {_ACAD} AS acad, gradeLevel(normGrade(r.grade)) AS lvl,
+               g.gender, rl.top_level,
+               r.time_seconds::float8 * power(5000.0 / d.dist, {ELITE_K}) AS t5k,
+               lower(btrim(COALESCE(r.school, ''))) AS school
+        FROM   {table} r
+        JOIN   race_top_level rl ON rl.race = {_raceKeyExpr('r')}
+        JOIN   tmp_elite_gender g ON g.id = COALESCE(r.person_id, r.athlete_id)
+        {joins}
+        CROSS JOIN LATERAL (SELECT {dist} AS dist) d
+        WHERE  r.person_id IS NOT NULL AND r.date IS NOT NULL
+          AND  r.time_seconds > 0 AND d.dist BETWEEN 1500 AND 10000 {extra}
+          AND  gradeLevel(normGrade(r.grade)) IN ('elem', 'ms')
+          AND  rl.top_level IN ('elem', 'ms', 'college', 'pro')"""
+
+
+def eliteFieldSeasons(cur):
+    """{(person_id, academic year)} whose season holds an elementary or
+    middle school grade on a row, in a college or pro race, faster than that
+    level's measured bar. Empty (and says so) without race_top_level."""
+    cur.execute("SELECT to_regclass('race_top_level')")
+    if cur.fetchone()[0] is None:
+        print("    [7] race_top_level absent (engine/level_graph.py --write): skipped")
+        return set()
+    colleges = set()
+    cur.execute("SELECT to_regclass('college_directory')")
+    if cur.fetchone()[0] is not None:
+        cur.execute("SELECT lower(btrim(name)) FROM college_directory")
+        colleges = {r[0] for r in cur.fetchall() if r[0]}
+    # one gender per id, only where the athletes table agrees with itself
+    cur.execute("""
+        DROP TABLE IF EXISTS tmp_elite_gender;
+        CREATE TEMP TABLE tmp_elite_gender AS
+            SELECT athlete_id AS id, min(gender) AS gender
+            FROM   athletes WHERE gender IN ('M', 'F')
+            GROUP  BY athlete_id HAVING count(DISTINCT gender) = 1;
+        CREATE INDEX ON tmp_elite_gender (id);
+        ANALYZE tmp_elite_gender;""")
+    out = set()
+    for sport in ("XC", "TF"):
+        cur.execute(f"""
+            CREATE TEMP TABLE tmp_elite AS {_eliteRowsSql(sport)};
+            SELECT lvl, gender,
+                   percentile_cont({float(ELITE_QUANTILE)!r}) WITHIN GROUP (ORDER BY t5k)
+            FROM   tmp_elite WHERE top_level = lvl GROUP BY 1, 2""")
+        # ! NO BIND PARAMETERS IN THAT STATEMENT: _eventMetersSql carries
+        #   LIKE '%mile%', which psycopg2 would read as a placeholder.
+        bars = {(lvl, g): float(b) for lvl, g, b in cur.fetchall() if b}
+        cur.execute("""SELECT person_id, acad, lvl, gender, t5k, school
+                       FROM tmp_elite WHERE top_level IN ('college', 'pro')""")
+        n_rows = 0
+        for pid, ay, lvl, g, t5k, school in cur.fetchall():
+            bar = bars.get((lvl, g))
+            if bar is None or t5k >= bar or school in colleges:
+                continue
+            out.add((int(pid), int(ay)))
+            n_rows += 1
+        cur.execute("DROP TABLE tmp_elite")
+        print(f"    [7] {sport}: bars " + ", ".join(
+            f"{lvl}_{g} {int(b // 60)}:{b % 60:04.1f}" for (lvl, g), b in sorted(bars.items()))
+              + f" (5 km equivalent); {n_rows:,} rows under them in college/pro races")
+    cur.execute("DROP TABLE IF EXISTS tmp_elite_gender")
+    return out
+
+
 def resolve(cur, audit=False):
     """{(person_id, calendar_year): {grade, level, method}}.
 
@@ -1504,6 +1616,20 @@ def resolve(cur, audit=False):
         #   about it being unattested.
         acad[key] = {"grade": None, "level": "pro", "method": "stale_grade"}
         n_stale += 1
+
+    # ★ RULE 7, THE ELITE FIELD (owner, 2026-09-26, the David Hemery Valentine
+    #   3000: "a lot of them should be pooled as pro but def not as msers").
+    #   A middle- or elementary-school grade on a row in a college or pro
+    #   race, run faster than that level has ever run in its own races, is
+    #   not a school grade -- on a club it is usually years with the club.
+    #   Overrides a corroborated grade for the same reason rule 5 does: a
+    #   club's "8" is consistent every season, which is not the same as true.
+    n_elite = 0
+    for key in eliteFieldSeasons(cur):
+        acad[key] = {"grade": None, "level": "pro", "method": "elite_field"}
+        n_elite += 1
+    print(f"    [7] {n_elite:,} seasons: a school grade that out-ran its own "
+          f"level in a college or pro race -> pro")
 
     # ============================================================== #
     #  RULE 3b: THE GRADE THAT DOES NOT FIT THE PROGRESSION
