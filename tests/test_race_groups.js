@@ -172,7 +172,8 @@ const D = ["10", "11", "12", "13"];
       ["the field blocks", /style="--race:\$\{raceColour\(gi\)\}"/],
       ["the race chips", /raceColour\(gi\)\)/],
       ["the grouping rows", /--race:\$\{\s*\n?\s*raceColour\(mine/],
-      ["the result sections", /--race:\$\{raceColour\(targets\.indexOf\(div\)\)\}/]])
+      // idx is the section's index in targets (predict loops entries())
+      ["the result sections", /--race:\$\{raceColour\((idx|targets\.indexOf\(div\))\)\}/]])
     chk(re.test(SRC), `the colour reaches ${what}`);
 
   /* ⚠ AND IT IS NEVER THE ONLY SIGNAL. Every coloured thing also carries the
