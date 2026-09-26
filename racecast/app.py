@@ -3351,9 +3351,16 @@ def race_xc(meet_id, div_id):
     #   merges two schools into one impossible team and mislabels both
     #   with the biggest namesake's state. The rows here are copies, so
     #   the rendered table is untouched.
+    # ★ AND WHAT THE MEET PUBLISHED, so a name it scored as ONE team is not
+    #   split into two by its runners' identities (De La Salle, 09-26)
+    pub = (published.get((div_id, header.get("gender")))
+           or published.get((div_id, None)))
     if ranked:
+        from collections import Counter
         with getConn() as _conn, _conn.cursor() as _cur:
-            splitCollisionTeams(_cur, ranked)
+            splitCollisionTeams(
+                _cur, ranked, meet_state=header.get("state"),
+                published_names=Counter(t.get("school") for t in (pub or [])))
 
     # ★ PUBLISHED FIRST, COMPUTED AS A FALLBACK. What the meet reported
     #   includes whatever local scoring applied -- byes, exhibition runners,
@@ -3362,8 +3369,7 @@ def race_xc(meet_id, div_id):
     #
     # ⚠ THE KEY IS (div_id, gender). One division can carry both, so a gender
     #   is tried before falling back to a genderless entry.
-    pub = (published.get((div_id, header.get("gender")))
-           or published.get((div_id, None)))
+    # (pub: the published scores, read above for the split)
 
     # ★ ALWAYS COMPUTE, EVEN WHEN PUBLISHED SCORES EXIST. The published data
     #   carries points and a finishing place but NOT which runners scored --

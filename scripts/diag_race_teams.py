@@ -79,10 +79,14 @@ def main():
             published = publishedScores(cur, meet_id)
             ranked = [{**r, "place": i} for i, r in enumerate(results, 1)
                       if r.get("time_seconds") is not None]
-            splitCollisionTeams(cur, ranked)
+            pub = (published.get((div_id, (header or {}).get("gender")))
+                   or published.get((div_id, None)) or [])
+            # exactly as race_xc calls it
+            splitCollisionTeams(cur, ranked,
+                                meet_state=(header or {}).get("state"),
+                                published_names=Counter(t.get("school")
+                                                        for t in pub))
     computed = unsplitTeams(scoreRows(ranked))
-    pub = (published.get((div_id, (header or {}).get("gender")))
-           or published.get((div_id, None)) or [])
 
     print(f"race {meet_id}/{div_id} (source {src or 'any'}): "
           f"{len(results)} results, {len(ranked)} with a time")

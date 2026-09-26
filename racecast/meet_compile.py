@@ -479,9 +479,15 @@ def stampSchoolStates(cur, rows):
             r["school_state"] = st
 
 
-def splitCollisionTeams(cur, rows):
+def splitCollisionTeams(cur, rows, meet_state=None, published_names=None):
     """Stamp rows of colliding school names with a home-state identity.
-    Mutates rows in place (callers score COPIES). No-op mid-rebuild."""
+    Mutates rows in place (callers score COPIES). No-op mid-rebuild.
+
+    meet_state: the race's own state -- the identity a wrongly split team
+    is put back under (see _rejoinFalseSplits). published_names: the school
+    names in the meet's published team scores, each with how many times it
+    appears; a name published ONCE is one team here, however its runners'
+    identities resolve."""
     def _has(t):
         # ⚠ ALIASED AND READ BY NAME, BECAUSE THIS CURSOR IS NOT ALWAYS A
         #   TUPLE CURSOR. app.py's meet route opens a RealDictCursor and
@@ -588,6 +594,58 @@ def splitCollisionTeams(cur, rows):
             if st not in clus[s]:
                 st = clus[s][0]
             r["school"] = f"{s}{_KEYSEP}{st}"
+    _rejoinFalseSplits(rows, multi, meet_state, published_names)
+
+
+def _rejoinFalseSplits(rows, names, meet_state=None, published_names=None):
+    """Undo a split that made one real team into several short ones.
+
+    ★ WHY (owner, 2026-09-26: De La Salle 2nd on 67 published points at a
+      California meet, every place column blank). Its seven runners came out
+      of the identity split as four "De La Salle (LA)" and three "De La
+      Salle (CA)" -- the name is a Concord school and a New Orleans one, and
+      four of the Concord runners' own assignments said Louisiana. Neither
+      piece reached five, neither could score, and the published team had
+      nothing to attach to.
+
+    ! TWO RULES, BOTH NARROW:
+      1. no piece of the name can score (fewer than five runners each) but
+         all of them together can -- a real two-school collision leaves at
+         least one scoring team, as the two Jesuits at NXN did;
+      2. the meet published the name exactly ONCE in its team scores -- the
+         meet itself says there was one team of that name.
+      The pieces go back under the meet's own state when one of them has
+      it, else under the biggest piece.
+    """
+    from collections import Counter
+    pieces = {}
+    for r in rows:
+        sc = r.get("school") or ""
+        if _KEYSEP not in sc:
+            continue
+        base, st = sc.split(_KEYSEP, 1)
+        if base in names:
+            pieces.setdefault(base, Counter())[st] += 1
+    def _n(x):
+        return re.sub(r"[^a-z0-9]", "", (x or "").lower())
+    # the meet spells schools its own way: compare letters and digits only
+    counts = Counter()
+    for n, k in (published_names or {}).items():
+        counts[_n(n)] += k
+    once = {n for n, k in counts.items() if k == 1}
+    for base, by_state in pieces.items():
+        if len(by_state) < 2:
+            continue
+        total = sum(by_state.values())
+        short = all(n < SCORERS for n in by_state.values()) and total >= SCORERS
+        if not (short or _n(base) in once):
+            continue
+        keep = (meet_state if meet_state in by_state
+                else by_state.most_common(1)[0][0])
+        for r in rows:
+            sc = r.get("school") or ""
+            if sc.startswith(base + _KEYSEP):
+                r["school"] = f"{base}{_KEYSEP}{keep}"
 
 
 def unsplitTeams(scores):
