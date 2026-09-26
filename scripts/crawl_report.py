@@ -27,7 +27,7 @@ import glob
 import gzip
 import re
 
-LINE = re.compile(r'^\S+ \S+ \S+ \[(\d{2}/\w{3}/\d{4}):[^\]]*\] "(\S+) (\S+)[^"]*" '
+LINE = re.compile(r'^(\S+) \S+ \S+ \[(\d{2}/\w{3}/\d{4}):[^\]]*\] "(\S+) (\S+)[^"]*" '
                   r'(\d{3}) \S+ "[^"]*" "([^"]*)"')
 BOTS = re.compile(r"bot|crawl|spider|slurp|facebookexternalhit|preview", re.I)
 
@@ -42,10 +42,41 @@ def lines(pattern):
             print(f"  (skipped {path}: {e})")
 
 
+def detail(a, bot_404, bot_crawlfiles, ppl_ip, ppl_ip_err, ppl_ip_ua, ppl_ua):
+    """What the crawler could not find, whether it could read robots.txt
+    and the sitemaps, and who the non-bot traffic is."""
+    print(f"\n{a.bot}: robots.txt and sitemap fetches, by answer")
+    for (path, cls), n in sorted(bot_crawlfiles.items()):
+        print(f"  {n:>7,}  {cls:<4} {path}")
+    if not bot_crawlfiles:
+        print("  none -- it has not fetched robots.txt or a sitemap in the window")
+    print(f"\n{a.bot}: the {a.top} URLs it asked for most that were NOT FOUND (404)")
+    for path, n in bot_404.most_common(a.top):
+        print(f"  {n:>7,}  {path[:110]}")
+    kinds = collections.Counter((p.split("?", 1)[0].split("/")[1] or "/") for p in bot_404.elements())
+    if kinds:
+        print("  by section: " + ", ".join(f"/{k} {v:,}" for k, v in kinds.most_common(8)))
+    total = sum(ppl_ip.values())
+    print(f"\nnon-bot page views, last {a.recent} days: {total:,}. The {a.top} biggest "
+          "addresses:")
+    print("  (a Cloudflare address here means deploy/cloudflare_realip.sh is not "
+          "installed, and\n   every visitor is hiding behind the edge that "
+          "carried them)")
+    for ip, n in ppl_ip.most_common(a.top):
+        print(f"  {n:>9,}  {100.0 * n / max(total, 1):5.1f}%  5xx {ppl_ip_err[ip]:>7,}  "
+              f"{ip:<40} {ppl_ip_ua.get(ip, '')[:60]}")
+    print(f"\n  the {min(a.top, 8)} commonest user agents among them:")
+    for ua, n in ppl_ua.most_common(min(a.top, 8)):
+        print(f"  {n:>9,}  {100.0 * n / max(total, 1):5.1f}%  {ua[:100]}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--logs", default="/var/log/nginx/access.log*")
     ap.add_argument("--days", type=int, default=21)
+    ap.add_argument("--recent", type=int, default=3,
+                    help="days of non-bot traffic to break down by address and agent")
+    ap.add_argument("--top", type=int, default=15)
     ap.add_argument("--bot", default="googlebot",
                     help="user-agent substring for the crawler column (googlebot, bingbot)")
     a = ap.parse_args()
@@ -53,11 +84,18 @@ def main():
     bot = collections.defaultdict(collections.Counter)
     ppl = collections.defaultdict(collections.Counter)
     bot_paths = collections.defaultdict(collections.Counter)
+    bot_404 = collections.Counter()
+    bot_crawlfiles = collections.Counter()
+    recent = dt.date.today() - dt.timedelta(days=a.recent)
+    ppl_ip = collections.Counter()
+    ppl_ip_err = collections.Counter()
+    ppl_ip_ua = {}
+    ppl_ua = collections.Counter()
     for ln in lines(a.logs):
         m = LINE.match(ln)
         if not m:
             continue
-        day_s, method, path, status, ua = m.groups()
+        ip, day_s, method, path, status, ua = m.groups()
         try:
             day = dt.datetime.strptime(day_s, "%d/%b/%Y").date()
         except ValueError:
@@ -71,9 +109,20 @@ def main():
             bot[day][cls] += 1
             if s >= 500:
                 bot_paths[day][path.split("?", 1)[0].split("/")[1] or "/"] += 1
+            if s == 404:
+                bot_404[path] += 1
+            if "sitemap" in path or path == "/robots.txt":
+                bot_crawlfiles[(path.split("?", 1)[0] if "sitemap" not in path
+                                else re.sub(r"sitemap-[^/]*", "sitemap-*", path), cls)] += 1
         elif (method == "GET" and not BOTS.search(ua)
               and not path.startswith(("/static/", "/img/", "/api/", "/card/"))):
             ppl[day][cls] += 1           # page views by non-bots (people, mostly)
+            if day >= recent:
+                ppl_ip[ip] += 1
+                if s >= 500:
+                    ppl_ip_err[ip] += 1
+                ppl_ip_ua.setdefault(ip, ua)
+                ppl_ua[ua] += 1
     days = sorted(set(bot) | set(ppl))
     if not days:
         print(f"no log lines since {since} in {a.logs}")
@@ -90,6 +139,7 @@ def main():
         print(f"{d.isoformat():<12}{nb:>10,}{b['2xx']:>7,}{b['5xx']:>6,}{b['404']:>6,}"
               f"{b['429']:>6,}{err:>5.1f}%   {sum(p.values()):>7,}{p['5xx']:>6,}"
               f"   {where}{flag}")
+    detail(a, bot_404, bot_crawlfiles, ppl_ip, ppl_ip_err, ppl_ip_ua, ppl_ua)
     print("\n  <-- = 5% or more of the crawler's requests failed that day. Google "
           "slows its crawl\n  and can drop pages after days like that; it "
           "recovers over one to three weeks\n  of clean answers.")

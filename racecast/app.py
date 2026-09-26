@@ -572,6 +572,8 @@ def sitemap_index():
 #   debris. See engine/maintenance.py.
 from maintenance import isMaintenance as _inMaintenance
 
+_CRAWL_FILES = ("/robots.txt", "/sitemap.xml")
+
 
 @app.before_request
 def _maintenance():
@@ -581,6 +583,15 @@ def _maintenance():
     # ! IMAGES TOO: a crest is a file, and a 503 on forty of them per page
     #   is forty template renders per view during a swap (2026-09-13)
     if request.path.startswith(("/static/", "/img/")):
+        return None
+    # ★★ AND NEVER robots.txt, OR THE CRAWL FILES (2026-09-26). Google reads a
+    #    5xx on robots.txt as "do not crawl this site" and stops until it gets
+    #    a clean answer; the nginx logs show Googlebot's robots.txt fetches
+    #    answered 503 during the 2026-09-21 swaps, in the fortnight its crawl
+    #    fell from 49k requests a day to ~100. None of these read the database.
+    if request.path in _CRAWL_FILES or request.path.startswith("/google"):
+        return None
+    if INDEXNOW_KEY and request.path == f"/{INDEXNOW_KEY}.txt":
         return None
     if _inMaintenance():
         return render_template("error.html", code=503), 503, {"Retry-After": "120"}
