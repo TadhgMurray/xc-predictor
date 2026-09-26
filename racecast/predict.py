@@ -986,6 +986,29 @@ def _servedTimes(cur, person_ids, target):
     return preds
 
 
+_HAS_OUTLIERS = None
+
+
+def _outlierFilter(cur, sport):
+    """The anti-join on rating_outlier (engine/rating_outliers.py): a race
+    far faster than the athlete's own season -- a wrong distance, a merged
+    person -- is left out of the ratings a prediction is served from, as it
+    is left off the boards. Empty until the table exists; asked once."""
+    global _HAS_OUTLIERS
+    if _HAS_OUTLIERS is None:
+        try:
+            cur.execute("SELECT to_regclass('public.rating_outlier') AS t")
+            row = cur.fetchone()
+            _HAS_OUTLIERS = bool(row and (row["t"] if isinstance(row, dict)
+                                          else row[0]))
+        except Exception:                               # noqa: BLE001
+            _HAS_OUTLIERS = False
+    if not _HAS_OUTLIERS:
+        return ""
+    return (" AND NOT EXISTS (SELECT 1 FROM rating_outlier ro "
+            f"WHERE ro.sport = '{sport}' AND ro.result_id = r.result_id)")
+
+
 def _ratingRows(cur, person_ids, lo_date, hi_date):
     """{pid: [(date, rating, pool, sport), newest first]} over both result
     tables, strictly before hi_date (and from lo_date, when given)."""
@@ -994,6 +1017,7 @@ def _ratingRows(cur, person_ids, lo_date, hi_date):
     if not ids:
         return out
     for sport, table in (("XC", "results"), ("TF", "results_tf")):
+        skip = _outlierFilter(cur, sport)
         cur.execute(f"""
             SELECT COALESCE(r.person_id, r.athlete_id) AS pid, r.date,
                    r.speed_rating, split_part(r.rating_pool, '|', 1) AS pool
@@ -1003,6 +1027,7 @@ def _ratingRows(cur, person_ids, lo_date, hi_date):
               AND  r.speed_rating > 0 AND r.rating_pool IS NOT NULL
               AND  r.date >= %s AND r.date < %s
               AND  (r.time_seconds IS NULL OR r.time_seconds < 19999)
+              {skip}
         """, (ids, ids, lo_date or "0000", hi_date))
         for row in cur.fetchall():
             pid, d, rating, pool = (

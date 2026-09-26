@@ -1147,7 +1147,30 @@ def _sourceSql(conn, sport):
                          AND column_name = 'rating_pool'""", (table,))
         have = cur.fetchone() is not None
     sql = _SQL[sport].replace("__RATING_POOL__", "r.rating_pool" if have else "NULL::text")
-    return sql.replace("__IMPOSSIBLE__", _impossibleClause(conn, sport))
+    return sql.replace("__IMPOSSIBLE__", _impossibleClause(conn, sport)
+                       + _outlierClause(conn, sport))
+
+
+def _outlierClause(conn, sport):
+    """The anti-join on engine/rating_outliers.py's table (owner, 2026-09-18:
+    "If a result is more than 5-15 sigma away from their season... do not
+    rate or rank"; wired 2026-09-26: "do the outlier table too").
+
+    ★ RANK-ONLY, as that module prescribes: the row keeps its rating and its
+      place on the athlete page (marked), and only stops ranking. Dropping
+      it from the ratings would change the solve's input and every rating
+      downstream. Only the FAST side is flagged by default -- a wrong
+      distance, a wrong time, a merged person -- never a slow race.
+    ! EMPTY WHEN THE TABLE IS NOT THERE, so a database before the step runs
+      builds exactly as it did.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.rating_outlier')")
+        have = cur.fetchone()[0] is not None
+    if not have:
+        return ""
+    return (f"\n          AND NOT EXISTS (SELECT 1 FROM rating_outlier ro\n"
+            f"                          WHERE ro.sport = '{sport}' AND ro.result_id = r.result_id)")
 
 
 def _impossibleClause(conn, sport):

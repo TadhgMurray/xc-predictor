@@ -924,6 +924,14 @@ step 09b_fill         "$PY" -u engine/fill_ratings.py
 #   (scripts/merge_school_names.py --show 80) before trusting a change to
 #   the bars, and drop the table to undo it on the next run.
 step 09c_school_names "$PY" -u scripts/merge_school_names.py --write
+# ★ THE OUTLIER RULE (owner, 2026-09-18: "more than 5-15 sigma away from
+#   their season ... do not rate or rank"; wired 2026-09-26). After the last
+#   rating is written (09b) and before the boards are built from them, which
+#   leave the flagged rows out (build_ranking_results._outlierClause).
+#   Rank-only: no rating changes. The fast side at 8 sigma, the module's own
+#   default; XCP_OUTLIER_SIGMA moves the bar.
+step 09d_outliers     "$PY" -u engine/rating_outliers.py --write --show 10 \
+                      --fast-sigma "${XCP_OUTLIER_SIGMA:-8}"
 step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prepare
 # each sport in two halves on a date seam (XCP_RANK_SEAM), four streams
 # into one shadow: the row walk is Python per row and was 52 minutes

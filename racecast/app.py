@@ -1638,6 +1638,32 @@ def athlete(person_id):
         race["is_star_course"] = rid in star_course_ids
         race["is_star_rating"] = rid in star_rating_ids
 
+    # ★ A RACE FAR FASTER THAN ITS OWN SEASON (engine/rating_outliers.py,
+    #   owner 2026-09-18/26): kept on the page, marked, and off the boards.
+    #   What makes one -- a wrong distance, a wrong time, a merged person --
+    #   also makes its "PR" a false one, so the record flags come off it.
+    try:
+        ids = {}
+        for race in races:
+            ids.setdefault(race.get("sport") or "XC", []).append(race["result_id"])
+        cur.execute("SELECT to_regclass('public.rating_outlier') AS t")
+        if cur.fetchone()["t"] and ids:
+            flagged = set()
+            for sp, rids in ids.items():
+                cur.execute("SELECT result_id FROM rating_outlier "
+                            "WHERE sport = %s AND result_id = ANY(%s)",
+                            (sp, rids))
+                flagged |= {(sp, r["result_id"]) for r in cur.fetchall()}
+            for race in races:
+                if (race.get("sport") or "XC", race["result_id"]) in flagged:
+                    race["rank_outlier"] = True
+                    for k in ("is_pr", "is_sr", "is_course_pr", "is_rating_pr",
+                              "is_course_sr", "is_rating_sr", "is_star_pr",
+                              "is_star_course", "is_star_rating"):
+                        race[k] = False
+    except Exception:                                # noqa: BLE001
+        conn.rollback()
+
     # 5. group/enrich/sort
     seasons = group_into_seasons(races)
     # ★ THE SEASON NUMBER IS THE BOARD'S (owner, 2026-09-05): athlete_season

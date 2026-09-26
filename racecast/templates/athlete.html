@@ -263,6 +263,7 @@
                         {% if race.is_sr %}{{ flag('sr') }}{% endif %}
                         {% if race.is_course_sr and race.sport == 'XC' %}{{ flag('csr') }}{% endif %}
                         {% if race.is_rating_sr %}{{ flag('rsr') }}{% endif %}
+                        {% if race.rank_outlier %}<span class="flag flag--out" tabindex="0" data-title="Not ranked" data-blurb="Far faster than the rest of this athlete's season -- usually a wrong distance, a wrong time, or two people's results under one name. It keeps its rating here but stays off the rankings and out of predictions until it is checked." aria-label="Not ranked: far faster than the rest of this season">not ranked</span>{% endif %}
                         {% if race.season_outlier %}<span class="flag flag--out" tabindex="0" data-title="Left out of season averages" data-blurb="More than twenty points under this season's median: not a run at the right distance on the right day, so it does not count toward the season's numbers." aria-label="Left out of season averages">out</span>{% endif %}
                     </td>
                 </tr>
