@@ -2372,6 +2372,31 @@ Then sweep: rows on the hottest, coldest, windiest and wettest race days
 (both sports), and whether their weather multipliers point the way the
 artifact's own curves say they should.
 
+**2026-09-26, later -- rain in particular** (owner: "even just beyond the
+Celsius weather doesn't feel right. I see a ton of rain races not getting
+accurate benefit"). What the model has for rain, read off the artifacts:
+
+- XC: +0.131% per mm of rain INSIDE the 8-12 local window at 5 km, less
+  0.039% per mm for each extra 5 km -- a 10 mm morning is +1.3%.
+- TF: +0.008% per mm over the 9-20 window -- a 10 mm day is +0.08%, i.e.
+  track has effectively no rain term.
+- Rain before the window (overnight, the day before) counts only through
+  soil moisture, and only on courses with a fitted mud sensitivity.
+- The fit is athlete + (venue, fortnight) fixed effects: only venues raced
+  in the same fortnight across years, in different weather, teach it, and
+  ERA5's 0.25-degree rain is a smoothed proxy for rain at the course.
+  Both pull a slope toward zero.
+- With the stale (pre-Celsius-fix) artifacts, a 12 C, 10 mm XC morning
+  scored against the global reference
+  nets -1.8%: the rain's +1.3% is swamped by the temperature term.
+
+Measure before changing any of it: `scripts/diag_weather_credit.py`
+compares every race's runners with their own other races within +-30 days
+and buckets the gap by rain (in the window, and the day before), soil,
+temperature and wind, next to what the model credited. A wet bucket below
+the dry one is rain short-changed, by that gap. Run it after the weather
+refit (RUNBOOK-2026-09-27 step 3), since the stale artifact muddies it.
+
 ### B. The race page's equivalents card and /conversions give different answers
 
 **Owner:** the equivalents card on a race page and the /conversions page
