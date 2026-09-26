@@ -441,15 +441,45 @@ function writeState() {
   } catch (err) { /* nothing here is worth breaking the page for */ }
 }
 
-/* A shared prediction link (/predictions?meet_id=...&div_id=...&sport=...)
-   picks that meet, and its race, as if it had been chosen from the search:
-   the person it was sent to sees the same field and presses Predict. */
-async function restoreFromLink() {
-  const p = new URLSearchParams(location.search);
+/* ★ A SHARED PREDICTION, RESTORED WHOLE (owner, 2026-09-26: "do the shared
+   prediction links next"). The link used to reopen only the meet and race;
+   everything the sender had set -- as it ran or this year, the date, the
+   course, the grouped races, the athletes, every card's lineup -- was lost,
+   and the recipient saw a different prediction from the card that brought
+   them. Now the request is read back field by field, the lineups are put on
+   the cards (runners off, runners added), and the prediction runs.
+
+   `p` is the request's own query (a saved link's, from /api/predict/share,
+   or an old long link's); `names` carries the names the request does not
+   (hand-picked athletes, hand-added runners). */
+function showWhen(when) {
+  state.when = when;
+  document.querySelectorAll(".card[data-when]").forEach((b) =>
+    b.classList.toggle("is-on", b.dataset.when === when));
+  document.querySelectorAll(".when-pane").forEach((pn) =>
+    pn.classList.toggle("hidden", pn.dataset.pane !== when));
+}
+
+function showWho(who) {
+  state.who = who;
+  document.querySelectorAll(".card[data-who]").forEach((b) =>
+    b.classList.toggle("is-on", b.dataset.who === who));
+  document.querySelectorAll(".who-pane").forEach((pn) =>
+    pn.classList.toggle("hidden", pn.dataset.pane !== who));
+}
+
+async function restoreFromQuery(p, names) {
+  names = names || {};
   const id = (p.get("meet_id") || "").trim();
   if (!/^\d+$/.test(id)) return false;
   const sport = (p.get("sport") || "XC").toUpperCase() === "TF" ? "tf" : "xc";
+  const divIds = (p.get("div_ids") || "").split(",").filter(Boolean);
   const div = (p.get("div_id") || "").trim();
+  const pids = (p.get("person_id") || "").split(",").filter(Boolean);
+
+  showWhen(p.get("mode") === "rerun_exact" ? "asran" : "thisyear");
+  showWho(pids.length ? "individual" : "team");
+
   let name = "", date = null;
   try {
     const res = await fetch("/api/predict/races?" + new URLSearchParams({ meet_id: id, sport: sport.toUpperCase() }));
@@ -457,14 +487,67 @@ async function restoreFromLink() {
     name = data.meet_name || "";
     date = data.date || null;
   } catch (err) { /* the meet still opens, unnamed */ }
-  await chooseMeet({ link: div ? `/race/${sport}/${id}/${div}` : `/meet/${sport}/${id}`,
+  const first = divIds[0] || div;
+  await chooseMeet({ link: first ? `/race/${sport}/${id}/${first}` : `/meet/${sport}/${id}`,
                      label: name || `Meet ${id}`, sub: date || "" });
-  if (div) {
-    state.divs = [div];
-    state.groups = normalizeGroups(state.divs, groupsForMode(state.divs, "separate"));
-    loadRaces();
+
+  // the races, as one group: a single division, or several scored as one
+  const group = divIds.length ? divIds : (div ? [div] : []);
+  if (group.length) {
+    state.divs = group.slice();
+    state.raceMode = group.length > 1 ? "combined" : "separate";
+    state.groups = normalizeGroups(state.divs, [group.slice()]);
   }
+  state.coalesce = p.get("coalesce") === "1";
+  if ($("coalesce")) $("coalesce").checked = state.coalesce;
+  await loadRaces();
+  // ! AFTER loadRaces, which re-proposes a date of its own
+  if (p.get("date") && $("t-date")) $("t-date").value = p.get("date");
+  state.course = p.get("course") || null;
+  if ($("t-course")) $("t-course").value = state.course || "";
+
+  if (pids.length) {
+    state.athletes = pids.map((pid) => ({
+      id: pid, name: names[pid] || `Athlete ${pid}`, school: null,
+      year: null, rating: null, hs_rating: null }));
+    renderAthletes();
+  } else {
+    await loadField();
+    applySharedField(p, names);
+    renderField();
+  }
+  saveState();
+  predict();
   return true;
+}
+
+/* The cards made to match a shared request's `field` -- the lineup the
+   sender pressed Predict on: whoever is not in it comes off, whoever is in
+   it and not on the card goes on. */
+function applySharedField(p, names) {
+  let field = null;
+  try { field = JSON.parse(p.get("field") || "null"); } catch (err) { field = null; }
+  if (!Array.isArray(field)) return;
+  const want = new Map(field.map((row) => [row[0], new Set((row[1] || []).map(String))]));
+  const placed = new Set();
+  for (const d of activeBlocks()) {
+    const e = editsFor(d);
+    for (const t of (e.field?.teams || [])) {
+      const ids = want.get(t.school);
+      const have = new Set((t.runners || []).map((r) => String(r.person_id)));
+      for (const r of t.runners || []) {
+        const pid = String(r.person_id);
+        if (!ids || !ids.has(pid)) e.removed.add(pid);
+        else placed.add(pid);
+      }
+      for (const pid of ids || []) {
+        if (have.has(pid) || placed.has(pid)) continue;
+        addRunner(t.school, pid, names[pid] || "Added runner", null, d, null);
+        placed.add(pid);
+      }
+      e.open.delete(t.school);        // arrive with the cards closed
+    }
+  }
 }
 
 function restoreState() {
@@ -476,10 +559,27 @@ function restoreState() {
        "Predict this race" links on race and meet pages land here with
        ?meet_id=, and a tab that had predicted another meet used to reopen
        that one and ignore the link (sweep, 2026-09-26). */
-  const linked = new URLSearchParams(location.search).get("meet_id");
+  const url = new URLSearchParams(location.search);
+  // a saved link (?s=) is read back first, then restored like a long one
+  const sid = url.get("s");
+  if (sid) {
+    fetch("/api/predict/share/" + encodeURIComponent(sid))
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && d.query) {
+          restoreFromQuery(new URLSearchParams(d.query),
+                           (d.extra && d.extra.names) || {});
+        } else {
+          setStatus(d.error || "That shared prediction was not found.", true);
+        }
+      })
+      .catch(() => setStatus("Could not open that shared prediction.", true));
+    return;
+  }
+  const linked = url.get("meet_id");
   const savedId = saved && saved.meet ? String(saved.meet.id || "") : "";
   if (!saved || !saved.meet || (linked && linked !== savedId)) {
-    if (linked) restoreFromLink();
+    if (linked) restoreFromQuery(url, {});
     return;
   }
 
@@ -1959,6 +2059,7 @@ async function predict() {
          prediction card drawn from the same request. */
     const share = state.who === "team" ? shareBox(buildQuery(targets[0])) : "";
     $("output").innerHTML = share + parts.join("");
+    if (share) saveShare(buildQuery(targets[0]));
   } catch (err) {
     /* ! A REAL NETWORK FAILURE AND A BAD RESPONSE READ DIFFERENTLY. fetch
          itself rejects with a TypeError when the request never landed;
@@ -1970,6 +2071,31 @@ async function predict() {
     state.busy = false;
     $("predict").disabled = false;
   }
+}
+
+/* ★ THE LINK SHARED IS A SAVED ONE (api_predict_share). The box renders
+   with the long link at once, and the short /predictions?s=<id> replaces it
+   as soon as the server has stored the request -- so a Share pressed in
+   that moment still shares something that works (unless the field is too
+   big for a URL, which is what the saved link is for). The names ride
+   along: a request carries ids, and a hand-added runner's name is not
+   anywhere the recipient's page could look it up. */
+function saveShare(q) {
+  const names = {};
+  for (const a of state.athletes || []) if (a.id) names[a.id] = a.name || "";
+  for (const e of _edits.values()) {
+    for (const a of e.added || []) if (a.person_id) names[a.person_id] = a.name || "";
+  }
+  fetch("/api/predict/share", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: q.toString(), extra: { names } }),
+  }).then((r) => r.json()).then((d) => {
+    if (!d || !d.url) return;
+    document.querySelectorAll("#output .share-btn").forEach((b) => {
+      b.dataset.shareUrl = d.url;
+    });
+  }).catch(() => { /* the long link stays */ });
 }
 
 function shareBox(q) {

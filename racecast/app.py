@@ -3,6 +3,8 @@ import os
 import sys
 import re
 import time          # _reportThrottled
+import json
+import urllib.parse
 
 sys.path.insert(0, "scripts")
 # ★ db_timing BEFORE every other racecast import: it patches
@@ -5411,9 +5413,15 @@ def card_meet_tf(meet_id, kind="teams"):
 @app.route("/card/predict.png")
 def card_predict():
     """The prediction card takes the same query the page sends to
-    /api/predict/team, so the page can share what it just showed."""
+    /api/predict/team, so the page can share what it just showed -- or
+    ?s=<id>, a saved one (api_predict_share)."""
     import cards
     args = {k: v for k, v in request.args.items() if v}
+    if args.get("s"):
+        q, _ = _loadShare(args["s"].lower())
+        if q is None:
+            abort(404)
+        args = {k: v[0] for k, v in urllib.parse.parse_qs(q).items() if v and v[0]}
     return _serveCard("predict", lambda cur: cards.cachedPredictionCard(cur, args))
 
 
@@ -7368,12 +7376,117 @@ def api_rankings_rank():
                     "offset": ((rank - 1) // limit) * limit})
 
 
+# ★ A SHARED PREDICTION IS SAVED, AND THE LINK NAMES IT (owner, 2026-09-26:
+#   "do the shared prediction links next"). The link used to BE the request:
+#   every card's lineup as JSON in the query string -- so a championship
+#   field made a link past nginx's 8 KB request line, refused before Flask
+#   saw it (the note above api_predict_individual), and the page restored
+#   only the meet from it anyway. Now the Share box saves the request once
+#   and shares /predictions?s=<id>; the page reads it back and restores the
+#   whole prediction -- mode, date, course, races, athletes, the lineups.
+#
+# ! THE ID IS THE REQUEST'S HASH, so sharing the same prediction twice is
+#   one row and one link, and nobody can walk the table by counting.
+# ! LONG LINKS ALREADY SENT STILL WORK: ?meet_id=... is read as before.
+_SHARE_MAX = 64 * 1024
+_SHARE_DDL = """CREATE TABLE IF NOT EXISTS shared_prediction (
+                    share_id   text PRIMARY KEY,
+                    query      text NOT NULL,
+                    extra      jsonb,
+                    created_at timestamptz NOT NULL DEFAULT now(),
+                    opened     int NOT NULL DEFAULT 0,
+                    last_open  timestamptz)"""
+
+
+def _shareId(query):
+    import base64
+    import hashlib
+    raw = hashlib.sha256(query.encode("utf-8")).digest()
+    return base64.b32encode(raw).decode("ascii").lower().rstrip("=")[:12]
+
+
+def _loadShare(share_id, count=False):
+    """(query, extra) for a saved prediction, or (None, None)."""
+    if not share_id or not re.fullmatch(r"[a-z2-7]{6,32}", share_id):
+        return None, None
+    try:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.shared_prediction')")
+                if cur.fetchone()[0] is None:
+                    return None, None
+                cur.execute("SELECT query, extra FROM shared_prediction "
+                            "WHERE share_id = %s", (share_id,))
+                row = cur.fetchone()
+                if row and count:
+                    cur.execute("UPDATE shared_prediction SET opened = opened + 1,"
+                                " last_open = now() WHERE share_id = %s",
+                                (share_id,))
+                    conn.commit()
+    except Exception:                                   # noqa: BLE001
+        app.logger.exception("shared prediction %s", share_id)
+        return None, None
+    return (row[0], row[1]) if row else (None, None)
+
+
 @app.route("/predictions")
 def predictions_page():
-    # a shared prediction link carries the request in its query; the page
-    # previews with that prediction's card and restores the meet from it
+    # a shared prediction link carries the request (?meet_id=..., the old
+    # long form) or names a saved one (?s=<id>); the page previews with
+    # that prediction's card and restores it
+    sid = (request.args.get("s") or "").strip().lower()
+    if sid:
+        q, _ = _loadShare(sid, count=True)
+        # the card is asked for BY ID too, so its URL is short whatever the
+        # field's size
+        return render_template("predictions.html",
+                               card_query=("s=" + sid) if q else "")
     q = request.query_string.decode("utf-8", "replace") if request.args.get("meet_id") else ""
     return render_template("predictions.html", card_query=q)
+
+
+@app.route("/api/predict/share", methods=["POST"])
+def api_predict_share():
+    """Save a prediction request; {"id", "url"}. Body: {"query": the
+    query string the page sent, "extra": {"names": {person_id: name}}}."""
+    body = request.get_json(silent=True) or {}
+    query = str(body.get("query") or "").lstrip("?")
+    if not query or len(query) > _SHARE_MAX:
+        return jsonify({"error": "Nothing to share, or too large."}), 400
+    args = urllib.parse.parse_qs(query)
+    if not (args.get("meet_id") or [""])[0].isdigit():
+        return jsonify({"error": "A shared prediction names a meet."}), 400
+    _t, err = _target({k: v[0] for k, v in args.items()})
+    if err:
+        return jsonify({"error": err}), 400
+    extra = body.get("extra") if isinstance(body.get("extra"), dict) else {}
+    names = {str(k)[:12]: str(v)[:80]
+             for k, v in list((extra.get("names") or {}).items())[:400]
+             if str(k).isdigit()}
+    sid = _shareId(query)
+    try:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_SHARE_DDL)
+                cur.execute("""INSERT INTO shared_prediction
+                                   (share_id, query, extra)
+                               VALUES (%s, %s, %s)
+                               ON CONFLICT (share_id) DO NOTHING""",
+                            (sid, query, json.dumps({"names": names})))
+            conn.commit()
+    except Exception:                                   # noqa: BLE001
+        app.logger.exception("/api/predict/share failed")
+        return jsonify({"error": "Could not save the link."}), 500
+    return jsonify({"id": sid,
+                    "url": f"{SITE_ORIGIN}/predictions?s={sid}"})
+
+
+@app.route("/api/predict/share/<share_id>")
+def api_predict_share_get(share_id):
+    q, extra = _loadShare((share_id or "").lower())
+    if q is None:
+        return jsonify({"error": "That shared prediction was not found."}), 404
+    return jsonify({"query": q, "extra": extra or {}})
 
 
 @app.route("/api/predict/status")

@@ -2318,7 +2318,11 @@ JSON route had no caller and ran the full compile, uncached, for anyone.
 #6 closed the same day: team_identity is read first by race scoring, school
 links and the predict page (meet_compile.teamStates). #7 closed: track venue
 team records are the relays. #10 closed: rating_outlier is built (09d) and
-read, rank-only. #12 closed: the 30-day window is the default.
+read, rank-only. #12 closed: the 30-day window is the default. #13 closed:
+the Share box saves the request (/api/predict/share, table
+shared_prediction) and shares /predictions?s=<id>; opening one -- or an old
+long link -- restores mode, date, course, races, athletes and every card's
+lineup, then predicts.
 
 **Also logged 2026-09-26, not built (owner: "I don't want the per-row flag
 but log it for future things"):**
