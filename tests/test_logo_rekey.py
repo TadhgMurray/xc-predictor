@@ -52,5 +52,30 @@ class Key(unittest.TestCase):
         self.assertLess(self.L.enclosedHoles(fixed), self.L.REKEY_MIN_HOLES)
 
 
+@unittest.skipUnless(_HAVE, "Pillow not installed")
+class Vanish(unittest.TestCase):
+    """A light mark on a dark card keeps its card: keyed out, a white mark
+    sits on the site's white and the crest is gone (owner, 2026-09-26)."""
+    def setUp(self):
+        import scrape_school_logos as L
+        self.L = L
+
+    def draw(self, mark):
+        im = Image.new("RGBA", (200, 200), (0, 0, 0, 255))
+        d = ImageDraw.Draw(im)
+        d.ellipse((40, 40, 160, 160), fill=mark)
+        return im
+
+    def test_white_on_black_keeps_the_card(self):
+        data, _sha, _ = self.L.finish(self.draw((255, 255, 255, 255)))
+        out = Image.open(io.BytesIO(data)).convert("RGBA")
+        self.assertEqual(out.getchannel("A").getpixel((5, 100)), 255)
+
+    def test_a_coloured_mark_still_loses_its_card(self):
+        data, _sha, _ = self.L.finish(self.draw((200, 20, 20, 255)))
+        out = Image.open(io.BytesIO(data)).convert("RGBA")
+        self.assertEqual(out.getchannel("A").getpixel((2, 2)), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -837,6 +837,39 @@ def _flatGround(im):
     return mean
 
 
+# ★ A LIGHT MARK ON A DARK CARD KEEPS ITS CARD (owner, 2026-09-26:
+#   "removing the black background on logos removed some logos"). The site
+#   draws every crest on white (.school-mark), so keying the black card out
+#   from under a white or pale mark leaves a white mark on a white page --
+#   the crest is gone. When the ground is dark and what would be left is
+#   mostly light, the key is not applied and the crest keeps its card, the
+#   way the source shows it.
+VANISH_GROUND_LUM = 80      # a ground darker than this can hide a light mark
+VANISH_LIGHT_LUM = 200      # a pixel this light disappears on the white page
+VANISH_LIGHT_SHARE = 0.6    # ... and this share of the mark is too much
+
+
+def _lightShare(im):
+    """The share of `im`'s opaque pixels that are near-white, or None."""
+    import numpy as np
+    a = np.asarray(im.convert("RGBA"), dtype=np.float32)
+    opaque = a[..., 3] >= 128
+    n = int(opaque.sum())
+    if not n:
+        return None
+    lum = 0.299 * a[..., 0] + 0.587 * a[..., 1] + 0.114 * a[..., 2]
+    return float((lum[opaque] >= VANISH_LIGHT_LUM).sum()) / n
+
+
+def _vanishes(keyed, ground):
+    """True when keying `ground` out leaves a mark the white page hides."""
+    lum = 0.299 * ground[0] + 0.587 * ground[1] + 0.114 * ground[2]
+    if lum >= VANISH_GROUND_LUM:
+        return False
+    share = _lightShare(keyed)
+    return share is not None and share >= VANISH_LIGHT_SHARE
+
+
 def normalise(raw, px=LOGO_PX, ctype="", kind=None):
     """(png_bytes, sha256, (w, h)) for a fetched image, or (None, None,
     reason). A flat opaque ground is keyed out, transparent margins come
@@ -879,7 +912,8 @@ def finish(im, px=LOGO_PX, kind=None):
     if ground is not None:
         keyed, n = _keyGround(im, ground)
         kbox = keyed.getbbox() if n else None
-        if kbox and acceptable(kbox[2] - kbox[0], kbox[3] - kbox[1], kind):
+        if (kbox and acceptable(kbox[2] - kbox[0], kbox[3] - kbox[1], kind)
+                and not _vanishes(keyed, ground)):
             im = keyed
     box = im.getbbox()                       # transparent margin off
     if box:
@@ -2089,7 +2123,11 @@ def rekeyAll(cur, manners, directory=None, write=False, limit=None, only=None,
         except Exception:                                 # noqa: BLE001
             census["missing"] += 1
             continue
-        if holes < REKEY_MIN_HOLES:
+        # ! AND A CREST LEFT MOSTLY WHITE: the old key took a dark card
+        #   from under a light mark, which the white page then hides
+        light = _lightShare(im)
+        if holes < REKEY_MIN_HOLES and not (light is not None
+                                            and light >= VANISH_LIGHT_SHARE):
             continue
         census["holed"] += 1
         raw, why = manners.get(row["source_url"])
@@ -2106,10 +2144,9 @@ def rekeyAll(cur, manners, directory=None, write=False, limit=None, only=None,
         census["fixed"] += 1
         fixed.append((row, holes))
         if write:
-            tmp = f"{full}.{os.getpid()}.tmp"
-            with open(tmp, "wb") as fh:
-                fh.write(data)
-            os.replace(tmp, full)
+            # through writeFile, so the damaged one is kept in superseded/
+            writeFile(row["school"], row["state"], data, directory,
+                      level=row["level"] or None)
             cur.execute("""UPDATE school_logo SET sha = %s
                            WHERE school = %s AND state = %s
                              AND COALESCE(level, '') = %s""",
@@ -2120,13 +2157,54 @@ def rekeyAll(cur, manners, directory=None, write=False, limit=None, only=None,
             f"{100 * holes:.1f}% holes, re-keyed")
     if len(fixed) > 25:
         out(f"    ... and {len(fixed) - 25:,} more")
-    out(f"  {census['holed']:,} crests had holes: {census['fixed']:,} re-keyed, "
+    out(f"  {census['holed']:,} crests had holes or were left mostly white: "
+        f"{census['fixed']:,} re-keyed, "
         f"{census['same']:,} came back the same (real see-through parts), "
         f"{census['fetch_failed']:,} source unreachable, "
         f"{census['refused']:,} refused, {census['missing']:,} unreadable")
     if not write:
         out("  --dry-run: nothing was written.")
     return census
+
+
+def setLogo(cur, manners, school, state, url, level=None, directory=None,
+            write=False, out=print):
+    """Pin one school's crest to an image URL (owner, 2026-09-26: "Some
+    logos still wrong Oregon (OR). idk what to do anymore"). The image is
+    fetched and normalised like any other, stored, and the URL written to
+    `override` -- the top of KIND_RANK -- so no later scrape replaces it.
+    `override = 'none'` (via --set-logo ... --url none) hides a crest."""
+    level = level or ""
+    if url.lower() == "none":
+        if write:
+            cur.execute("""
+                INSERT INTO school_logo (school, state, level, override, status)
+                VALUES (%s, %s, %s, 'none', 'none')
+                ON CONFLICT (school, state, level) DO UPDATE SET override = 'none'
+            """, (school, state, level))
+        out(f"  {school} ({state or '-'}{'/' + level if level else ''}): crest "
+            f"{'hidden' if write else 'would be hidden'}")
+        return True
+    raw, why = manners.get(url)
+    if raw is None:
+        out(f"  could not fetch {url}: {why}")
+        return False
+    data, sha, size = normalise(raw, ctype=why, kind="override")
+    if data is None:
+        out(f"  {url} is not a usable crest ({size})")
+        return False
+    out(f"  {school} ({state or '-'}{'/' + level if level else ''}): "
+        f"{size[0]}x{size[1]} from {url}")
+    if not write:
+        out("  --dry-run: nothing written; add --write to pin it")
+        return True
+    name = writeFile(school, state, data, directory, level=level or None)
+    record(cur, school, state, name, url, "override", sha, "ok", level=level)
+    cur.execute("""UPDATE school_logo SET override = %s
+                   WHERE school = %s AND state = %s AND level = %s""",
+                (url, school, state, level))
+    out(f"  pinned as {name}; restart the site to show it")
+    return True
 
 
 def main():
@@ -2164,6 +2242,14 @@ def main():
                          "the Amherst case, where anet's modal team is the "
                          "bigger school and its mascot replaced the other's "
                          "real crest. Implies --redo. See damagedPairs.")
+    ap.add_argument("--set-logo", metavar="SCHOOL", default=None,
+                    help="pin this school's crest to --url (with --state, and "
+                         "--level when two schools share the name). --url "
+                         "none hides it. Pair with --dry-run first, then "
+                         "--write.")
+    ap.add_argument("--url", default=None, help="the image for --set-logo")
+    ap.add_argument("--level", default=None,
+                    help="with --set-logo: hs, college, ms ... ('' = any)")
     ap.add_argument("--rekey", action="store_true",
                     help="re-fetch the crests the old background key punched "
                          "holes in (black outlines and lettering keyed out "
@@ -2188,7 +2274,7 @@ def main():
         # which is exactly the row you are trying to redo an hour later
         args.refresh_days, args.retry_failed = -1, True
     if not (args.write or args.dry_run or args.stats or args.sweep_only
-            or args.reground or args.rekey):
+            or args.reground or args.rekey or args.set_logo):
         ap.error("pass --stats, --dry-run, --write, --sweep-only or --reground")
 
     from database import getConn
@@ -2196,6 +2282,19 @@ def main():
         with conn.cursor() as cur:
             if args.stats:
                 print(stats(cur))
+                return
+            if args.set_logo:
+                if not args.url:
+                    raise SystemExit("--set-logo needs --url (an image, or none)")
+                ensureTable(cur, DDL)
+                ensureLevelKey(cur)
+                setLogo(cur, Manners(rate=args.rate), args.set_logo,
+                        (args.state or "").upper(), args.url, level=args.level,
+                        directory=args.dir, write=args.write)
+                if args.write:
+                    conn.commit()
+                else:
+                    conn.rollback()
                 return
             if args.rekey:
                 ensureTable(cur, DDL)
