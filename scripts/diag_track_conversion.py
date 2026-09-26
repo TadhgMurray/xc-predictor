@@ -126,8 +126,19 @@ def main():
             if not (t and norm and pool and dist):
                 print("  (missing time, norm, pool or distance -- nothing to take apart)")
                 continue
-            factor = C._forward_factor(float(dist), pool, None, None, None,
+            # ! THE RACE'S OWN SEASON, so the era is its own line: with no
+            #   season the factor is the current era's, and the 2025-vs-now
+            #   era gap landed in "weather" (owner's run, 2026-09-26)
+            try:
+                from season_year import seasonYearFromIso
+                season = seasonYearFromIso("TF", str(date))
+            except Exception:                           # noqa: BLE001
+                season = int(str(date)[:4])
+            f_now = C._forward_factor(float(dist), pool, None, None, None,
+                                      "TF", ev)
+            factor = C._forward_factor(float(dist), pool, season, None, None,
                                        "TF", ev)
+            era = math.log(factor / f_now) if factor and f_now else None
             w = math.log(float(t) * factor / float(norm)) if factor else None
             sc = C.engineScale(pool, "TF")
             tilt = C._tilt(float(rating)) if rating else None
@@ -136,7 +147,11 @@ def main():
                      if tilt is not None and delta is not None else None)
             off = C.distance_offset(pool, "TF", float(dist), rating=rating)
             gain = C.sport_gain(pool, "TF", rating)
-            print(f"  weather   {pct(w):>8}   (time x distance factor / norm)")
+            print(f"  era       {pct(era):>8}   (season {season} against now: the "
+                  f"conversion's neutral is today's era)")
+            print(f"  weather+  {pct(w):>8}   (time x factor / norm: the weather "
+                  f"correction and anything else inside normalized_time; "
+                  f"scripts/diag_row_weather.py --tf {rid} splits it)")
             print(f"  venue     {pct(venue):>8}   (difficulty {delta}, tilt {tilt}, "
                   f"track anchor shift {shift:+.4f})")
             print(f"  race day  {pct(u):>8}   (race_day_effect, "
