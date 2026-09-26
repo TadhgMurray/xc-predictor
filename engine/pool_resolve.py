@@ -141,26 +141,27 @@ US_NAMES = frozenset("""
 #
 # ⚠ ONLY COUNTRIES NO US SCHOOL IS NAMED FOR. Poland (Poland Regional, ME),
 #   Norway, Denmark, Lebanon, Jamaica, Cuba, Peru, Mexico, Panama, China,
-#   Scotland, Wales, Holland, Jordan, Chad, Canton and Georgia (the state AND
-#   the university) are all real American school strings, so they are not
+#   Scotland, Wales, Holland, Jordan, Chad, Russia (OH), Italy (TX), Angola
+#   (IN), Grenada (MS), Greece (NY) and Georgia (the state AND the
+#   university) are all real American school strings, so they are not
 #   here: a national team under one of those names gets through, which is
 #   the cheaper mistake. Whole-string match only ("Spain", "Spain (ESP)",
 #   "Spain National Team"), never a substring.
 # ! PUERTO RICO IS HERE AS A TEAM NAME, not as a place: a school in Puerto
 #   Rico has its own name and state PR, which stays in scope.
 NATIONAL_TEAMS = frozenset("""
-    afghanistan albania algeria andorra angola argentina armenia australia austria
+    afghanistan albania algeria andorra argentina armenia australia austria
     azerbaijan bahamas bahrain bangladesh barbados belarus belgium belize benin
     bermuda bhutan bolivia botswana brazil brunei bulgaria burundi cambodia
     cameroon canada colombia comoros croatia cyprus czechia djibouti dominica
     ecuador egypt eritrea estonia eswatini ethiopia fiji finland france gabon
-    gambia germany ghana greece grenada guatemala guyana haiti honduras hungary
-    iceland india indonesia iran iraq ireland israel italy japan kazakhstan kenya
+    gambia germany ghana guatemala guyana haiti honduras hungary
+    iceland india indonesia iran iraq ireland israel japan kazakhstan kenya
     kosovo kuwait kyrgyzstan laos latvia lesotho liberia libya liechtenstein
     lithuania luxembourg madagascar malawi malaysia maldives malta mauritius
     moldova monaco mongolia montenegro morocco mozambique myanmar namibia nepal
     nicaragua nigeria oman pakistan paraguay philippines portugal qatar romania
-    russia rwanda senegal serbia seychelles singapore slovakia slovenia somalia
+    rwanda senegal serbia seychelles singapore slovakia slovenia somalia
     spain sudan suriname switzerland syria taiwan tajikistan tanzania thailand
     togo tunisia turkey turkiye uganda ukraine uruguay uzbekistan venezuela
     vietnam yemen zambia zimbabwe

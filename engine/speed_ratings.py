@@ -272,6 +272,17 @@ def loadClubPros():
             by_team[k] = max(by_team.get(k, 0), 1)
         for k in cs:
             by_school[k] = max(by_school.get(k, 0), 1)
+        # ★ AND EVERY NATIONAL TEAM (owner, 2026-09-26: "A person who runs a
+        #   majority of their races for their national team is not a
+        #   collegiate athlete"; John Rivera, racing for Puerto Rico, was
+        #   pooled high school). A national team only entered this set when
+        #   pro_flag already knew one of its athletes, or when its rows were
+        #   gradeless -- Puerto Rico's carry grade 12. The majority gate is
+        #   unchanged (clubSeason): one national-team race in a college year
+        #   is still a college year, as the owner said on 2026-09-14.
+        from pool_resolve import NATIONAL_TEAMS
+        for k in NATIONAL_TEAMS:
+            by_school[k] = max(by_school.get(k, 0), 1)
         _CLUB_PROS = (by_team, by_school)
         print(f"[engine] clubs: {n_pro_t:,} anet teams and {n_pro_s:,} school names carry a "
               f"professional; {len(ct):,} teams and {len(cs):,} names are gradeless non-schools; "
