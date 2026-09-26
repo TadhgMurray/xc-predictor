@@ -2509,3 +2509,19 @@ Next, larger (each needs a measured run to confirm):
    pack XC and TF in two processes.
 6. **09b_fill**: fold its three passes over results_tf into the go-live
    write.
+
+**Update, same day -- the larger items:**
+- DONE 05_backfill: secondary indexes built several at a time (the primary
+  key alone, with its old 8GB); the weather-grid aggregate cached until
+  weather_grid's write counters move; and when at most 200,000 rows would
+  change, only those rows are updated in place (no rebuild, no swap, no
+  `_old` undo copy that run) -- otherwise the full rebuild as before.
+- DONE 05b_anchor_repair: two set-based passes; Python sees only rows
+  outside the band.
+- DONE 10b_school_ids: one scan of the anet-team rows shared by both readers.
+- DONE 07_pack: meet_class looked up per meet name; loaders out of the row
+  loop.
+- NO CHANGE 09b_fill: nothing provably safe without a measured run.
+- NOT MERGED 08 warm start: it works (same answer to the solver's
+  tolerance) but only pass one of five speeds up, ~20% on a normal day's
+  change -- about 4% of the step -- for ~700 lines and +0.5 GB state.
