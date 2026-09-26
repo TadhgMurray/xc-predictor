@@ -94,12 +94,16 @@ def test_csrf_needs_the_token_and_this_origin():
     assert not AC.csrfOk(None)
 
 
-def test_client_ip_prefers_cloudflare_s_header():
+def test_client_ip_trusts_only_nginx_s_header():
+    # a visitor can send CF-Connecting-IP or X-Forwarded-For themselves;
+    # only X-Real-IP, which nginx overwrites, names them
     app = flask.Flask(__name__)
-    with app.test_request_context("/", headers={"CF-Connecting-IP": "1.2.3.4", "X-Forwarded-For": "5.6.7.8, 9.9.9.9"}):
+    with app.test_request_context("/", headers={"X-Real-IP": "1.2.3.4", "CF-Connecting-IP": "6.6.6.6",
+                                                "X-Forwarded-For": "5.6.7.8, 9.9.9.9"}):
         assert AC.clientIp() == "1.2.3.4"
-    with app.test_request_context("/", headers={"X-Forwarded-For": "5.6.7.8, 9.9.9.9"}):
-        assert AC.clientIp() == "5.6.7.8"
+    with app.test_request_context("/", headers={"CF-Connecting-IP": "6.6.6.6", "X-Forwarded-For": "5.6.7.8"},
+                                  environ_base={"REMOTE_ADDR": "127.0.0.1"}):
+        assert AC.clientIp() == "127.0.0.1"
     with app.test_request_context("/", headers={"X-Forwarded-Proto": "https"}):
         assert AC.isSecure()
 

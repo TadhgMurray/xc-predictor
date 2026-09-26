@@ -230,13 +230,19 @@ def hashToken(raw):
 
 
 def clientIp():
-    """The real client IP behind Cloudflare and nginx (cloudflare_realip.sh
-    sets CF-Connecting-IP; X-Forwarded-For is nginx's own)."""
-    cf = request.headers.get("CF-Connecting-IP", "").strip()
-    if cf:
-        return cf[:64]
-    fwd = request.headers.get("X-Forwarded-For", "")
-    return (fwd.split(",")[0].strip() or request.remote_addr or "")[:64]
+    """The real client IP: the X-Real-IP header nginx sets from its own
+    $remote_addr.
+
+    ! ONLY THAT HEADER (sweep, 2026-09-26). CF-Connecting-IP and
+      X-Forwarded-For were read first, and a visitor can send either one
+      themselves -- straight to the origin, or X-Forwarded-For through
+      anything -- so every per-IP limit (login links, reports) was one
+      made-up header away from not applying. nginx overwrites X-Real-IP on
+      every request (proxy_set_header), and with cloudflare_realip.sh
+      installed its $remote_addr is the visitor, checked against
+      Cloudflare's own ranges."""
+    return ((request.headers.get("X-Real-IP") or "").strip()
+            or request.remote_addr or "")[:64]
 
 
 def isSecure():

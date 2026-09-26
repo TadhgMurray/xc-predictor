@@ -5396,6 +5396,12 @@ def debug_athlete(person_id):
     latest season grouped by feed, school, pool and division, and the
     college directory's answer for each school name. For the owner, when
     a header names the wrong team (267). Robots are kept out of /debug/."""
+    # ! OWNER ONLY (sweep, 2026-09-26): robots.txt kept crawlers out, but
+    #   anyone could read other visitors' request paths here, or run the
+    #   un-cached queries behind it. A signed-in admin, or a 404.
+    _, go = _statusAdmin()
+    if go:
+        return go
     from flask import Response
     from school_identity import _collegeState
     out = []
@@ -5445,6 +5451,12 @@ def debug_queries():
     """The site's own query log: slowest recent statements and the
     aggregate per statement, plain text. Local tooling, not a feature
     page -- the timing layer is db_timing.py."""
+    # ! OWNER ONLY (sweep, 2026-09-26): robots.txt kept crawlers out, but
+    #   anyone could read other visitors' request paths here, or run the
+    #   un-cached queries behind it. A signed-in admin, or a 404.
+    _, go = _statusAdmin()
+    if go:
+        return go
     from flask import Response
     rows, by_total = db_timing.summary()
     out = ["SLOWEST RECENT QUERIES (this process)", "=" * 76]
@@ -8321,17 +8333,20 @@ def _reportThrottled(ip):
     now = time.time()
     hits = [t for t in _REPORT_HITS.get(ip, []) if now - t < _REPORT_WINDOW]
     _REPORT_HITS[ip] = hits + [now]
+    # ! AND FORGET IPs WHOSE WINDOW HAS PASSED, or the dict grows for as
+    #   long as the worker lives
+    if len(_REPORT_HITS) > 5000:
+        for k in [k for k, v in _REPORT_HITS.items()
+                  if not v or now - v[-1] >= _REPORT_WINDOW]:
+            del _REPORT_HITS[k]
     return len(hits) >= _REPORT_MAX
 
 
 def _reporterIp():
-    """The real client IP.
-
-    X-Forwarded-For FIRST: behind nginx, remote_addr is always 127.0.0.1, so
-    throttling on it would throttle every visitor as one.
-    """
-    fwd = request.headers.get("X-Forwarded-For", "")
-    return fwd.split(",")[0].strip() or request.remote_addr
+    """The real client IP -- accounts.clientIp, which says why only nginx's
+    X-Real-IP is trusted. (Behind nginx remote_addr is always 127.0.0.1,
+    so throttling on it would throttle every visitor as one.)"""
+    return _accounts.clientIp()
 
 
 @app.route("/report")
