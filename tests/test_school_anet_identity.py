@@ -131,7 +131,12 @@ def test_the_anet_team_id_leg_is_not_gated_at_all():
     team = _SRC[_SRC.index("def buildTeamStates("):_SRC.index("# ⚠ AND THE PAIRWISE")]
     assert "JOIN   si_names sn" not in team, "ts must not be name-filtered"
     assert "if not contested:" not in team, "ts must not abstain on quiet names"
-    assert "r.team_id <> 0" in team          # the unattached sentinel, still
+    # ! 2026-09-26: the scan is _teamRows', shared with authoritativeStates
+    rows = _SRC[_SRC.index("def _teamRows("):_SRC.index("def buildTeamStates(")]
+    assert "JOIN   si_names sn" not in rows, "ts must not be name-filtered"
+    assert "r.team_id <> 0" in rows          # the unattached sentinel, still
+    assert "for table in _teamRows(cur):" in team
+    assert "WHERE  person_id IS NOT NULL" in team
     assert "def buildTeamStates(cur, contested=None):" in _SRC
 
 
@@ -155,13 +160,18 @@ def test_the_anet_states_come_from_the_rows_not_from_anets_spelling():
     spelling, in the middle of a fix about keying on names. team_id is the
     join that needs no spelling."""
     body = _SRC[_SRC.index("def authoritativeStates("):_SRC.index("def _schoolNames(")]
-    assert "JOIN   anet_team t ON t.team_id = r.team_id" in body
-    assert "lower(btrim(r.school)) AS name" in body
+    # ! 2026-09-26: the rows come from _teamRows, the pass it shares with
+    #   buildTeamStates; the name is lowered and the blank school dropped here
+    rows = _SRC[_SRC.index("def _teamRows("):_SRC.index("def buildTeamStates(")]
+    assert "JOIN   anet_team t ON t.team_id = r.team_id" in rows
+    assert "for table in _teamRows(cur):" in body
+    assert "SELECT lower(btrim(school)) AS name, state AS st" in body
+    assert "btrim(school) <> ''" in body
     # the old shape must not come back
     assert "FROM   anet_team\n            WHERE  school IS NOT NULL" not in body
     # both feeds, and never the unattached sentinel
-    assert 'for table in ("results", "results_tf")' in body
-    assert "r.team_id <> 0" in body
+    assert 'for table in ("results", "results_tf")' in rows
+    assert "r.team_id <> 0" in rows
 
 
 def test_it_all_degrades_without_either_source():
@@ -718,7 +728,8 @@ def test_anets_own_state_outranks_our_inference():
     src = _identitySource()
     assert "COALESCE(t.state, t.anet_state)" not in src, \
         "the inference must not outvote the id"
-    assert src.count("COALESCE(t.anet_state, t.state)") >= 6
+    # ! 3 since 2026-09-26: two copies of the same scan became one (_teamRows)
+    assert src.count("COALESCE(t.anet_state, t.state)") >= 3
 
     with open(os.path.join(_ROOT, "scripts", "link_tfrrs_to_anet.py")) as fh:
         link = fh.read()

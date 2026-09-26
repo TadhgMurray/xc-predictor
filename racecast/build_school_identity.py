@@ -122,44 +122,25 @@ def authoritativeStates(cur):
       cannot invent one either.
 
     ! ONE AGGREGATE PASS over results and results_tf, joined to a 40k-row
-      table. It is the price of a correct list; buildTeamStates' scan is
-      still filtered by the list this produces."""
+      table -- and since 2026-09-26 the SAME pass buildTeamStates reads
+      (_teamRows), not a second one. The pairs come out of it with this
+      function's own filter, btrim(school) <> ''."""
     by_name = {}
     cur.execute("SELECT to_regclass('anet_team')")
     if cur.fetchone()[0] is not None:
-        for table in ("results", "results_tf"):
-            cur.execute("""
-                SELECT column_name FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = %s
-                  AND column_name = 'team_id'
-            """, (table,))
-            if cur.fetchone() is None:
-                continue
-            # ! IT SAYS WHERE IT IS. This is a full pass over results
-            #   (39M rows / 12 GB) and then results_tf (191M / 72 GB), and
-            #   it used to print nothing until both were done -- which is
-            #   indistinguishable from hung, and has now cost this project
-            #   two separate "it's hanging" reports in one afternoon.
+        for table in _teamRows(cur):
             _t = time.time()
-            print(f"    authoritativeStates: scanning {table} for the states "
-                  f"of the anet teams its rows use...", flush=True)
-            cur.execute(f"""
-                -- ⚠⚠ anet_state FIRST -- see the note in buildTeamStates.
-                SELECT lower(btrim(r.school)) AS name,
-                       upper(btrim(COALESCE(t.anet_state, t.state))) AS st
-                FROM   {table} r
-                JOIN   anet_team t ON t.team_id = r.team_id
-                WHERE  r.team_id IS NOT NULL AND r.team_id <> 0
-                  AND  r.school IS NOT NULL AND btrim(r.school) <> ''
-                  AND  COALESCE(t.anet_state, t.state) IS NOT NULL
-                  AND  btrim(COALESCE(t.anet_state, t.state)) <> ''
+            cur.execute("""
+                SELECT lower(btrim(school)) AS name, state AS st
+                FROM   si_team_raw
+                WHERE  src = %s AND btrim(school) <> ''
                 GROUP  BY 1, 2
-            """)
+            """, (table,))
             got = cur.fetchall()
             for name, st in got:
                 by_name.setdefault(name, set()).add(st)
-            print(f"      {len(got):,} (name, state) pairs "
-                  f"({time.time() - _t:.0f}s)", flush=True)
+            print(f"    authoritativeStates: {len(got):,} (name, state) "
+                  f"pairs from {table} ({time.time() - _t:.0f}s)", flush=True)
     n_anet = len(by_name)
 
     # ★ AND THE DIRECTORY, THROUGH ITS OWN MATCHER. lookup() is the
@@ -419,6 +400,80 @@ def _namesTemp(cur, names, table="si_names"):
     return table
 
 
+# ⚠⚠ THE SAME TWO SCANS, TWICE (2026-09-26). authoritativeStates and
+#    buildTeamStates each read results (12 GB) and then results_tf (72 GB)
+#    with the SAME join to anet_team -- four full passes, ~7-10 min of this
+#    step, to answer two questions about one set of rows. They differ only
+#    in what they keep: authoritativeStates wants (name, state) for every
+#    row whose school is not blank, whoever ran it; buildTeamStates wants
+#    (person, school, state) counts for rows with a person, blank school or
+#    not.
+#
+# ★ SO THE AGGREGATE IS BUILT ONCE, WIDE ENOUGH FOR BOTH, and each consumer
+#   applies its own filter when it reads it. Grouped by (src, person_id,
+#   school, state) -- person_id NULL kept, school kept raw -- it is
+#   buildTeamStates' old si_team_raw plus the NULL-person rows, and
+#   authoritativeStates' (lower(btrim(school)), state) pairs are a GROUP BY
+#   of it. src keeps the per-table counts the log prints.
+#
+# ! BUILT ON FIRST USE, NOT IN main. Either consumer may run first or alone;
+#   the temp table's presence is the "already built" flag, so a rollback in
+#   between (which takes the table with it) means a rebuild, not a stale
+#   read.
+def _teamRows(cur):
+    """Build si_team_raw(src, person_id, school, state, n) once per session.
+    Returns the tables it covers -- those that have a team_id column."""
+    cur.execute("SELECT to_regclass('pg_temp.si_team_raw')")
+    built = cur.fetchone()[0] is not None
+    tables = []
+    for table in ("results", "results_tf"):
+        cur.execute(f"""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+              AND column_name = 'team_id'
+        """, (table,))
+        if cur.fetchone() is not None:
+            tables.append(table)
+    if built:
+        return tables
+    cur.execute("CREATE TEMP TABLE si_team_raw (src text, person_id bigint, "
+                "school text, state text, n bigint)")
+    for table in tables:
+        # ! IT SAYS WHERE IT IS. This is a full pass over results
+        #   (39M rows / 12 GB) and then results_tf (191M / 72 GB), and
+        #   it used to print nothing until both were done -- which is
+        #   indistinguishable from hung, and has now cost this project
+        #   two separate "it's hanging" reports in one afternoon.
+        _t = time.time()
+        print(f"    anet team rows: scanning {table} for the anet teams its "
+              f"rows use...", flush=True)
+        cur.execute(f"""
+            INSERT INTO si_team_raw (src, person_id, school, state, n)
+            -- ⚠⚠ anet_state FIRST. `anet_team.state` IS OUR GUESS, NOT
+            --    anet's (anet_teams.storeTeam: `state` is the queue's
+            --    (school, state) pair, inferred from where the athletes
+            --    RACE; `anet_state` is team["State"], which is where the
+            --    school IS). COALESCEing our guess first lets the inference
+            --    outvote the id -- the exact thing this file's header
+            --    forbids -- and the dry run showed it plainly (2026-09-17):
+            --    Cornell NC, Ithaca WI, Tiffin IA, Hartnell TX, Cerritos AZ,
+            --    Iowa Central CC IN. Every one a travel state. Our pair is
+            --    kept only as the fallback for a team anet gave no State for.
+            SELECT %s, r.person_id, r.school,
+                   upper(btrim(COALESCE(t.anet_state, t.state))), count(*)
+            FROM   {table} r
+            JOIN   anet_team t ON t.team_id = r.team_id
+            WHERE  r.team_id IS NOT NULL AND r.team_id <> 0
+              AND  r.school IS NOT NULL
+              AND  COALESCE(t.anet_state, t.state) IS NOT NULL
+              AND  btrim(COALESCE(t.anet_state, t.state)) <> ''
+            GROUP  BY 2, 3, 4
+        """, (table,))
+        print(f"      {cur.rowcount:,} rows ({time.time() - _t:.0f}s)",
+              flush=True)
+    return tables
+
+
 # ⚠⚠ NO NAME FILTER ANY MORE (owner, 2026-09-17: "isn't this quite easy to
 #    fix, all we're doing is taking anet as source of truth for all
 #    schools/states ... and then linking with tfrrs by athletes?" -- yes, and
@@ -442,59 +497,28 @@ def buildTeamStates(cur, contested=None):
     anet team for that school string is. The modal state across both
     sports' rows, so one stray row cannot move it.
 
-    ⚠ ONE PASS OVER results AND results_tf. Everything else in this step
-      reads athlete_season for a reason (owner, 2026-09-15: the gateway
-      timeout), but team_id exists only on the raw tables.
+    ⚠ ONE PASS OVER results AND results_tf -- the one _teamRows shares
+      with authoritativeStates. Everything else in this step reads
+      athlete_season for a reason (owner, 2026-09-15: the gateway timeout),
+      but team_id exists only on the raw tables.
     """
     cur.execute("DROP TABLE IF EXISTS si_team_state")
     cur.execute("CREATE TEMP TABLE si_team_state "
                 "(person_id bigint, school text, state text)")
-    cur.execute("DROP TABLE IF EXISTS si_team_raw")
-    cur.execute("CREATE TEMP TABLE si_team_raw "
-                "(person_id bigint, school text, state text, n bigint)")
-    for table in ("results", "results_tf"):
-        cur.execute(f"""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = %s
-              AND column_name = 'team_id'
-        """, (table,))
-        if cur.fetchone() is None:
-            continue
-        _t = time.time()
-        print(f"    buildTeamStates: scanning {table} for the contested "
-              f"names' anet teams...", flush=True)
-        cur.execute(f"""
-            INSERT INTO si_team_raw (person_id, school, state, n)
-            -- ⚠⚠ anet_state FIRST. `anet_team.state` IS OUR GUESS, NOT
-            --    anet's (anet_teams.storeTeam: `state` is the queue's
-            --    (school, state) pair, inferred from where the athletes
-            --    RACE; `anet_state` is team["State"], which is where the
-            --    school IS). COALESCEing our guess first lets the inference
-            --    outvote the id -- the exact thing this file's header
-            --    forbids -- and the dry run showed it plainly (2026-09-17):
-            --    Cornell NC, Ithaca WI, Tiffin IA, Hartnell TX, Cerritos AZ,
-            --    Iowa Central CC IN. Every one a travel state. Our pair is
-            --    kept only as the fallback for a team anet gave no State for.
-            SELECT r.person_id, r.school,
-                   upper(btrim(COALESCE(t.anet_state, t.state))), count(*)
-            FROM   {table} r
-            JOIN   anet_team t ON t.team_id = r.team_id
-            WHERE  r.person_id IS NOT NULL
-              AND  r.team_id IS NOT NULL AND r.team_id <> 0
-              AND  r.school IS NOT NULL
-              AND  COALESCE(t.anet_state, t.state) IS NOT NULL
-              AND  btrim(COALESCE(t.anet_state, t.state)) <> ''
-            GROUP  BY 1, 2, 3
-        """)
-        print(f"      {cur.rowcount:,} rows ({time.time() - _t:.0f}s)",
-              flush=True)
+    for table in _teamRows(cur):
+        cur.execute("SELECT count(*) FROM si_team_raw "
+                    "WHERE src = %s AND person_id IS NOT NULL", (table,))
+        print(f"    buildTeamStates: {cur.fetchone()[0]:,} (athlete, school, "
+              f"state) rows from {table}", flush=True)
     cur.execute("""
         INSERT INTO si_team_state (person_id, school, state)
         SELECT person_id, school, state FROM (
             SELECT person_id, school, state,
                    row_number() OVER (PARTITION BY person_id, school
                                       ORDER BY sum(n) DESC, state) AS rk
-            FROM   si_team_raw GROUP BY 1, 2, 3) x
+            FROM   si_team_raw
+            WHERE  person_id IS NOT NULL
+            GROUP  BY 1, 2, 3) x
         WHERE  rk = 1
     """)
     cur.execute("CREATE INDEX si_team_state_idx ON si_team_state (person_id, school)")
@@ -1102,7 +1126,7 @@ def main():
         # ★ ANET FIRST: which names it places in two states, and where
         #   each athlete's own team for those names is. Both feed the
         #   clusters CTE below and the co-racing merge after it.
-        print("  the anet passes: four scans of results / results_tf "
+        print("  the anet passes: two scans of results / results_tf "
               "(12 GB and 72 GB). Each says which table it is on.", flush=True)
         contested, dir_states = authoritativeStates(cur)
         buildTeamStates(cur, contested)
