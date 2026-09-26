@@ -2472,3 +2472,40 @@ Until then, the no-code route: make the prediction 2-4 days out, post the
 short share link where the meet is discussed (r/Cross_Country race
 threads, LetsRun/MileSplit forums, state XC groups, team socials), and post
 the predicted-vs-actual after.
+
+## 2026-09-26 — pipeline speed: done, and what is next
+
+Last full run: about 30 hours. Owner: "speed up every step in pipeline
+possible". Done (commits 90fb044 through 54be799):
+
+- **11b_indexes waited 626 min on 10f2_projection** (CREATE INDEX
+  CONCURRENTLY waits for every older transaction; 10f2 was one 11-hour
+  transaction). 10f2 commits per slice and starts after 11b.
+- **Database caps: strict -> balanced** (XCP_DB_QUIET=1 now 2 parallel
+  workers, 2GB maintenance_work_mem, two builder jobs; `strict` restores
+  the old). cursor_tuple_fraction=1.0 on every pipeline connection, so
+  streamed reads stop being planned as nested-loop probes. XCP_STREAMS 4,
+  XCP_COURSE_SHARDS 3.
+- **10_rankings_finish**: SET LOGGED before the index builds (it rebuilt
+  every index a second time), one index per signature, per-sport temp
+  tables in the shards.
+- **07_pack**: majority gender from one table, not a subquery per row.
+- Exact small ones: 08's needless changed-row count and capped-race loop,
+  06c's pairing and inserts, the event-name parser cache, the weather
+  spline's knot sort, the home-page board skipping rows that cannot place.
+
+Next, larger (each needs a measured run to confirm):
+1. **08_golive (3.5 h)**: warm-start the joint solve's conjugate gradient
+   from the previous run's saved state (engine/run_joint.py saves it;
+   joint_solve.py starts from zero); map by athlete/cell/race key, 0 for new.
+2. **05_backfill (55 min x2)**: rewrite only rows whose normalized_time
+   changed instead of rebuilding both tables; build its indexes three at a
+   time; cache the weather-grid aggregate between runs.
+3. **05b_anchor_repair (21 min)**: do the "is this row off its anchor"
+   test in SQL on (distance, pool) factors, so Python sees only the rows
+   that move.
+4. **10b_school_ids**: one scan of results/results_tf instead of two each.
+5. **07_pack**: meet_class once per meet instead of seven regexes per row;
+   pack XC and TF in two processes.
+6. **09b_fill**: fold its three passes over results_tf into the go-live
+   write.
