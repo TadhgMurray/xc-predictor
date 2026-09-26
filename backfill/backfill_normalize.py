@@ -38,6 +38,7 @@ import re                             # the wheelchair/seated title pattern
 import heapq                          # fixed-size top/bottom-N heaps (sanity panel)
 import random                         # bounded reservoir sample (approx percentiles)
 import argparse
+import concurrent.futures as cf       # the index builds, several at a time
 from dataclasses import dataclass, field
 from datetime import date            # date.fromisoformat parses the text date col
 
@@ -48,7 +49,7 @@ sys.path.insert(0, "scripts")
 
 import psycopg2.errors           # LockNotAvailable, for the swap retry
 import psycopg2.extras
-from database import getConn, initPool
+from database import getConn, initPool, dbJobs, dbSetting
 # poolFor + metersFromDistance are the SINGLE SOURCE OF TRUTH for pool + distance
 # classification (the fitters import the same two). We import them so the backfill
 # can name WHY a row is skipped (unknown pool vs no distance) WITHOUT re-deriving
@@ -2439,17 +2440,114 @@ def _buildNewTable(cur, table, staging, cols):
 #           UPDATE path could never do: it inserted one random key at a time.
 # maintenance_work_mem governs how much of that sort stays in RAM.
 # max_parallel_maintenance_workers lets Postgres sort with several cores.
+#
+# ★ THE SECONDARY INDEXES ARE BUILT SEVERAL AT A TIME (2026-09-26, owner:
+#   "speed up every step in pipeline possible"). Eight indexes one after
+#   another is eight full scans of the heap (58GB on results_tf) in series. They are
+#   independent -- same table, different columns, no shared state -- and
+#   concurrent CREATE INDEXes on one table take SHARE locks, which do not
+#   conflict with each other. The heap scans also ride each other's pages
+#   (synchronize_seqscans), so two builds read the heap about once. Same
+#   shape as racecast/build_ranking_results.py's _INDEX_JOBS; the DDL is
+#   the same statements, so the indexes are the same indexes.
+#
+# ⚠ WHICH MEANS <table>_new IS COMMITTED BEFORE THE SWAP, NOT AT IT. Another
+#   connection cannot see a table this connection has not committed. So the
+#   heap and its PK commit first, then the builders run on their own pooled
+#   connections, then the swap -- whose first act was already a commit (see
+#   _swapWithRetry). Nothing reads <table>_new until the swap renames it, so
+#   the live table is never touched by any of this.
+#
+# ! A FAILED BUILD DROPS <table>_new, so a failed run leaves what it always
+#   left: the live table as it was, no <table>_new, the staging table intact
+#   for scripts/resume_merge.py --finish. Only a process KILLED mid-build
+#   (SIGKILL, power loss) now leaves <table>_new behind; the next run's
+#   _assertNoLeftovers stops at second zero and resume_merge.py --clean
+#   drops it (it was never live, so dropping it is always safe).
+#
+# ! EVERY SETTING GOES THROUGH dbSetting()/dbJobs(). This builder used to SET
+#   8GB and 6 workers straight over the quiet caps (16GB of sort memory with
+#   both sports building); at several builds per sport that would multiply.
+#   Now the peak is jobs x memory x 2 sports: under XCP_DB_QUIET=1, 2 builds
+#   x 2GB x 2 sports = 8GB; unquieted, 3 x 2GB x 2 = 12GB; strict, one build
+#   at a time at 512MB, serial as before.
+_INDEX_JOBS = dbJobs(3)
+_INDEX_MEM = "2GB"          # per build -- see the peak above
+_INDEX_WORKERS = 2          # per build; 3 builds x 2 workers stays inside
+                            # max_parallel_workers (8); a build granted fewer
+                            # workers than it asked for just runs with fewer
+
+
+def _buildOneIndex(job):
+    """One CREATE INDEX on its own pooled connection, committed there."""
+    name, ddl = job
+    t0 = time.time()
+    with getConn() as c:
+        with c.cursor() as cur:
+            cur.execute(f"SET maintenance_work_mem = "
+                        f"'{dbSetting('maintenance_work_mem', _INDEX_MEM)}'")
+            cur.execute(f"SET max_parallel_maintenance_workers = "
+                        f"{dbSetting('max_parallel_maintenance_workers', _INDEX_WORKERS)}")
+            cur.execute(ddl)
+        c.commit()
+    return name, time.time() - t0
+
+
+def _buildSecondaries(index_defs):
+    """Every secondary index, _INDEX_JOBS at a time. On the first failure the
+    builds not yet started are cancelled, the running ones finish, and the
+    failure is raised."""
+    jobs = max(1, min(_INDEX_JOBS, len(index_defs)))
+    print(f"    building {len(index_defs)} secondary indexes, {jobs} at a time")
+    pool = cf.ThreadPoolExecutor(max_workers=jobs)
+    try:
+        futs = [pool.submit(_buildOneIndex, job) for job in index_defs]
+        cf.wait(futs, return_when=cf.FIRST_EXCEPTION)
+    finally:
+        # ! cancel_futures: on a failure (or Ctrl-C) the builds not yet
+        #   started never start; the running ones finish before we return,
+        #   so the DROP that follows a failure does not queue behind them.
+        pool.shutdown(wait=True, cancel_futures=True)
+    for f in futs:
+        if not f.cancelled() and f.exception() is not None:
+            raise f.exception()
+    for f in futs:
+        name, dt = f.result()
+        print(f"    [{dt:7.1f}s] index {name}_new")
+
+
 def _buildIndexes(cur, table, index_defs):
     # maintenance_work_mem sizes the SORT that builds each B-tree bottom-up.
     # This is the whole reason the rebuild is fast: sorted, sequential writes
     # instead of 34.8M random single-key insertions. Both are session settings.
-    cur.execute("SET maintenance_work_mem = '8GB'")
-    cur.execute("SET max_parallel_maintenance_workers = 6")
+    cur.execute(f"SET maintenance_work_mem = "
+                f"'{dbSetting('maintenance_work_mem', '8GB')}'")
+    cur.execute(f"SET max_parallel_maintenance_workers = "
+                f"{dbSetting('max_parallel_maintenance_workers', 6)}")
+    # The PK alone, on this connection, before anything else: ADD PRIMARY KEY
+    # takes ACCESS EXCLUSIVE and would queue every concurrent build behind it.
     _timedExec(cur,
         f"ALTER TABLE {table}_new ADD PRIMARY KEY (result_id)",
         f"PRIMARY KEY on {table}_new")
-    for name, ddl in index_defs:
-        _timedExec(cur, ddl, f"index {name}_new")
+    cur.connection.commit()               # the builders can see <table>_new now
+    try:
+        _buildSecondaries(index_defs)
+    except BaseException:
+        _dropHalfBuilt(cur, table)
+        raise
+
+
+def _dropHalfBuilt(cur, table):
+    """Put a failed index phase back to where a rolled-back merge would be."""
+    try:
+        cur.connection.rollback()
+        cur.execute(f"DROP TABLE IF EXISTS {table}_new")
+        cur.connection.commit()
+        print(f"    index build failed: dropped {table}_new "
+              f"({table} untouched; staging kept for resume_merge.py --finish)")
+    except Exception as exc:                               # noqa: BLE001
+        print(f"    index build failed, and {table}_new could not be dropped "
+              f"({type(exc).__name__}): resume_merge.py --table {table} --clean")
 
 
 # _swapTables
