@@ -84,11 +84,17 @@ def writeSitemaps(by_kind, out_dir, origin, gzipped=True):
     """by_kind: {kind: [(path, lastmod), ...]}. Writes the files and the
     index, replacing what is there. Returns the file names written."""
     import gzip
+    # ⚠⚠ NOTHING IS DELETED UNTIL THE NEW INDEX IS IN PLACE (2026-09-26).
+    #    This used to empty the folder FIRST and then spend minutes writing,
+    #    so every sitemap the live index named was a 404 for the length of
+    #    the build -- and Googlebot's log shows 115 sitemap-file 404s against
+    #    189 good fetches. Now each file is written beside itself and renamed
+    #    over the old one (a reader sees the old bytes or the new, never a
+    #    gap), the index goes last, and only files the NEW index no longer
+    #    names are removed after it.
     os.makedirs(out_dir, exist_ok=True)
-    for old in os.listdir(out_dir):
-        if old.startswith("sitemap") and (old.endswith(".xml")
-                                          or old.endswith(".xml.gz")):
-            os.remove(os.path.join(out_dir, old))
+    before = {f for f in os.listdir(out_dir)
+              if f.startswith("sitemap") and (f.endswith(".xml") or f.endswith(".xml.gz"))}
     files = []
     for kind, entries in by_kind.items():
         parts = chunk(entries)
@@ -100,19 +106,28 @@ def writeSitemaps(by_kind, out_dir, origin, gzipped=True):
             body = urlsetXml(part).replace("{ORIGIN}", origin).encode("utf-8")
             if gzipped:
                 name += ".gz"
+            tmp = os.path.join(out_dir, "." + name + ".tmp")
+            if gzipped:
                 # mtime=0: the same URLs produce the same bytes, so an
                 # unchanged sitemap keeps its ETag and is not re-fetched
-                with gzip.GzipFile(os.path.join(out_dir, name), "wb",
-                                   compresslevel=9, mtime=0) as fh:
+                with gzip.GzipFile(tmp, "wb", compresslevel=9, mtime=0) as fh:
                     fh.write(body)
             else:
-                with open(os.path.join(out_dir, name), "wb") as fh:
+                with open(tmp, "wb") as fh:
                     fh.write(body)
+            os.replace(tmp, os.path.join(out_dir, name))
             files.append(name)
     # the INDEX stays uncompressed: robots.txt names it, it is small, and
     # it is the one file a human ever opens
-    with open(os.path.join(out_dir, "sitemap.xml"), "w", encoding="utf-8") as fh:
+    tmp = os.path.join(out_dir, ".sitemap.xml.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(indexXml(files).replace("{ORIGIN}", origin))
+    os.replace(tmp, os.path.join(out_dir, "sitemap.xml"))
+    for old in before - set(files) - {"sitemap.xml"}:
+        try:
+            os.remove(os.path.join(out_dir, old))
+        except OSError:
+            pass
     return files
 
 

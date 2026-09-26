@@ -31,6 +31,41 @@ LINE = re.compile(r'^(\S+) \S+ \S+ \[(\d{2}/\w{3}/\d{4}):[^\]]*\] "(\S+) (\S+)[^
                   r'(\d{3}) \S+ "[^"]*" "([^"]*)"')
 BOTS = re.compile(r"bot|crawl|spider|slurp|facebookexternalhit|preview", re.I)
 
+# ★ A USER AGENT IS A CLAIM, NOT AN IDENTITY (owner's first run, 2026-09-26:
+#   "googlebot"'s top 404s were /.git/HEAD and /wp-config.php -- scanners
+#   wearing Google's name). The engines' documented check: the address
+#   reverse-resolves to their domain, and that name resolves back to it.
+GENUINE = {"googlebot": (".googlebot.com", ".google.com", ".googleusercontent.com"),
+           "bingbot": (".search.msn.com",)}
+_verified = {}
+
+
+def genuine(ip, bot):
+    """True / False for a crawler we know how to check; None when we don't."""
+    suffixes = GENUINE.get(bot.lower())
+    if suffixes is None:
+        return None
+    if ip not in _verified:
+        import socket
+        ok = False
+        try:
+            host = socket.gethostbyaddr(ip)[0].lower()
+            if host.endswith(suffixes):
+                ok = ip in socket.gethostbyname_ex(host)[2] or ":" in ip
+        except OSError:
+            ok = False
+        _verified[ip] = ok
+    return _verified[ip]
+
+
+def prefix(ip):
+    """The /16 of an IPv4 address (the /32 of an IPv6 one): a scraper
+    rotating addresses usually rotates inside one provider's block."""
+    if ":" in ip:
+        return ":".join(ip.split(":")[:2]) + "::/32"
+    parts = ip.split(".")
+    return ".".join(parts[:2]) + ".0.0/16" if len(parts) == 4 else ip
+
 
 def lines(pattern):
     for path in sorted(glob.glob(pattern)):
@@ -42,7 +77,7 @@ def lines(pattern):
             print(f"  (skipped {path}: {e})")
 
 
-def detail(a, bot_404, bot_crawlfiles, ppl_ip, ppl_ip_err, ppl_ip_ua, ppl_ua):
+def detail(a, bot_404, bot_crawlfiles, ppl_ip, ppl_ip_err, ppl_ip_ua, ppl_ua, fakes):
     """What the crawler could not find, whether it could read robots.txt
     and the sitemaps, and who the non-bot traffic is."""
     print(f"\n{a.bot}: robots.txt and sitemap fetches, by answer")
@@ -53,9 +88,24 @@ def detail(a, bot_404, bot_crawlfiles, ppl_ip, ppl_ip_err, ppl_ip_ua, ppl_ua):
     print(f"\n{a.bot}: the {a.top} URLs it asked for most that were NOT FOUND (404)")
     for path, n in bot_404.most_common(a.top):
         print(f"  {n:>7,}  {path[:110]}")
-    kinds = collections.Counter((p.split("?", 1)[0].split("/")[1] or "/") for p in bot_404.elements())
+    kinds = collections.Counter()
+    samples = collections.defaultdict(list)
+    for p, n in bot_404.most_common():
+        k = p.split("?", 1)[0].split("/")[1] or "/"
+        kinds[k] += n
+        if len(samples[k]) < 4:
+            samples[k].append(p)
     if kinds:
-        print("  by section: " + ", ".join(f"/{k} {v:,}" for k, v in kinds.most_common(8)))
+        print("  by section, with examples:")
+        for k, v in kinds.most_common(8):
+            print(f"  {v:>7,}  /{k}")
+            for p in samples[k]:
+                print(f"             {p[:110]}")
+    if fakes:
+        print(f"\n  requests that CLAIMED to be {a.bot} from addresses that are not "
+              f"its: {sum(fakes.values()):,}\n  (left out of everything above; "
+              "the biggest: "
+              + ", ".join(f"{ip} {n:,}" for ip, n in fakes.most_common(5)) + ")")
     total = sum(ppl_ip.values())
     print(f"\nnon-bot page views, last {a.recent} days: {total:,}. The {a.top} biggest "
           "addresses:")
@@ -65,6 +115,16 @@ def detail(a, bot_404, bot_crawlfiles, ppl_ip, ppl_ip_err, ppl_ip_ua, ppl_ua):
     for ip, n in ppl_ip.most_common(a.top):
         print(f"  {n:>9,}  {100.0 * n / max(total, 1):5.1f}%  5xx {ppl_ip_err[ip]:>7,}  "
               f"{ip:<40} {ppl_ip_ua.get(ip, '')[:60]}")
+    blocks = collections.Counter()
+    ips_in = collections.defaultdict(set)
+    for ip, n in ppl_ip.items():
+        blocks[prefix(ip)] += n
+        ips_in[prefix(ip)].add(ip)
+    print(f"\n  the same traffic by address block (a scraper rotating addresses "
+          f"shows up here):")
+    for b, n in blocks.most_common(a.top):
+        print(f"  {n:>9,}  {100.0 * n / max(total, 1):5.1f}%  {b:<22} "
+              f"{len(ips_in[b]):>6,} addresses")
     print(f"\n  the {min(a.top, 8)} commonest user agents among them:")
     for ua, n in ppl_ua.most_common(min(a.top, 8)):
         print(f"  {n:>9,}  {100.0 * n / max(total, 1):5.1f}%  {ua[:100]}")
@@ -77,6 +137,8 @@ def main():
     ap.add_argument("--recent", type=int, default=3,
                     help="days of non-bot traffic to break down by address and agent")
     ap.add_argument("--top", type=int, default=15)
+    ap.add_argument("--no-verify", action="store_true",
+                    help="trust the user agent (skip the reverse-DNS check)")
     ap.add_argument("--bot", default="googlebot",
                     help="user-agent substring for the crawler column (googlebot, bingbot)")
     a = ap.parse_args()
@@ -91,6 +153,9 @@ def main():
     ppl_ip_err = collections.Counter()
     ppl_ip_ua = {}
     ppl_ua = collections.Counter()
+    fakes = collections.Counter()
+    import socket
+    socket.setdefaulttimeout(3)
     for ln in lines(a.logs):
         m = LINE.match(ln)
         if not m:
@@ -106,6 +171,9 @@ def main():
         cls = "2xx" if s < 300 else "3xx" if s < 400 else str(s) if s in (404, 429) \
             else "4xx" if s < 500 else "5xx"
         if a.bot.lower() in ua.lower():
+            if not a.no_verify and genuine(ip, a.bot) is False:
+                fakes[ip] += 1
+                continue
             bot[day][cls] += 1
             if s >= 500:
                 bot_paths[day][path.split("?", 1)[0].split("/")[1] or "/"] += 1
@@ -139,7 +207,7 @@ def main():
         print(f"{d.isoformat():<12}{nb:>10,}{b['2xx']:>7,}{b['5xx']:>6,}{b['404']:>6,}"
               f"{b['429']:>6,}{err:>5.1f}%   {sum(p.values()):>7,}{p['5xx']:>6,}"
               f"   {where}{flag}")
-    detail(a, bot_404, bot_crawlfiles, ppl_ip, ppl_ip_err, ppl_ip_ua, ppl_ua)
+    detail(a, bot_404, bot_crawlfiles, ppl_ip, ppl_ip_err, ppl_ip_ua, ppl_ua, fakes)
     print("\n  <-- = 5% or more of the crawler's requests failed that day. Google "
           "slows its crawl\n  and can drop pages after days like that; it "
           "recovers over one to three weeks\n  of clean answers.")
