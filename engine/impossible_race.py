@@ -107,7 +107,13 @@ CREATE TABLE {race} (
     record_pace      real,
     sample_result_id bigint,
     sample_time      real,
-    sample_distance  real
+    sample_distance  real,
+    -- 'record': a row beat the open world record. 'own_races': the field
+    -- ran far faster than its own runners' other races that month
+    -- (own_race_shift.py) -- the wrong distance a record cannot catch.
+    reason           text,
+    shift            real,
+    implied_distance real
 );
 CREATE TABLE {result} (
     sport     text   NOT NULL,
@@ -263,7 +269,74 @@ def raceRows(cur, sport, key):
     return [r[0] for r in cur.fetchall()]
 
 
-def build(conn, write, show=20):
+def ownRaceShift(conn, cur, since, already, race_recs, res_recs, show, explain=()):
+    """The second rule: XC races whose runners all ran far faster than in
+    their own other races (own_race_shift.py). Appends to the same lists
+    the record rule fills, so the pack, the fill and the boards leave them
+    out exactly as they do a record-beating race. Returns (races, rows)."""
+    import math as _m
+    import own_race_shift as ors
+    t0 = time.time()
+    stats, fast, slow, info = ors.findXc(conn, since)
+    if "centre" not in stats:
+        print(f"  XC own-races: {stats.get('note')} -- nothing condemned")
+        return 0, 0
+    print(f"  XC own-races since {since}: {stats['rows']:,} rows, {stats['races']:,} races "
+          f"with {ors.MIN_LINKED}+ linked runners; races vary by "
+          f"{100 * stats['s_between']:.1f}% (runners inside one by "
+          f"{100 * stats['s_within']:.1f}%); cut at {stats['z_cut']:.2f} sd "
+          f"(5% chance of any false call among them) -- a 3-runner race needs to be "
+          f"{100 * (1 - stats['ratio_at_3']):.0f}% faster than its runners elsewhere  "
+          f"({time.time() - t0:.1f}s)")
+    for want in explain:
+        meet, _, div = str(want).strip("/").rpartition("/")
+        hits = [r for r, v in info.items() if str(v[1]) == meet.split("/")[-1] and str(v[2]) == div]
+        for r in hits or [None]:
+            if r is None:
+                print(f"      --race {want}: no XC rows with a normalized time since {since}")
+                continue
+            v = stats["every"].get(r)
+            src, m_, d_, date, dist = info[r]
+            if v is None:
+                print(f"      --race {want} ({src}, {date}): fewer than {ors.MIN_LINKED} runners "
+                      f"have another race within +-{ors.WINDOW} days -- the rule cannot judge it")
+                continue
+            n, m, z = v
+            print(f"      --race {want} ({src}, {date}): {n} linked runners, "
+                  f"{100 * (_m.exp(m - stats['centre']) - 1):+.1f}% vs their own races, "
+                  f"{z:.1f} sd (condemned below -{stats['z_cut']:.2f}); stored "
+                  f"{(dist or 0):.0f} m, looks like {ors.impliedDistance(dist, m, stats['centre'])} m")
+    n_races = n_rows = 0
+    for rid, n, m, z in fast:
+        src, meet, div, date, dist = info[rid]
+        key = (src, meet, div, None)
+        if key in already:
+            continue
+        ids = raceRows(cur, "XC", key)
+        implied = ors.impliedDistance(dist, m, stats["centre"])
+        race_recs.append(("XC", src, meet, div, None, len(ids), int(n), None, None, None, None,
+                          None if dist is None else float(dist), "own_races", float(m),
+                          None if implied is None else float(implied)))
+        res_recs.extend(("XC", rid_) for rid_ in ids)
+        n_races += 1; n_rows += len(ids)
+    print(f"  XC own-races: {n_races:,} races condemned ({n_rows:,} rows) -- listed fastest first:")
+    for rid, n, m, z in fast[:show]:
+        src, meet, div, date, dist = info[rid]
+        print(f"      /race/xc/{meet}/{div}  {date}  {n} linked runners  "
+              f"{100 * (_m.exp(m - stats['centre']) - 1):+.0f}% vs their own races  "
+              f"({z:.1f} sd)  stored {(dist or 0):.0f} m, looks like "
+              f"{ors.impliedDistance(dist, m, stats['centre'])} m")
+    print(f"  XC own-races, SLOW side (not condemned -- the course difficulty absorbs "
+          f"these when the race has voters; check the distance by hand):")
+    for rid, n, m, z in slow[:min(show, 15)]:
+        src, meet, div, date, dist = info[rid]
+        print(f"      /race/xc/{meet}/{div}  {date}  {n} linked  "
+              f"{100 * (_m.exp(m - stats['centre']) - 1):+.0f}%  ({z:.1f} sd)  stored "
+              f"{(dist or 0):.0f} m, looks like {ors.impliedDistance(dist, m, stats['centre'])} m")
+    return n_races, n_rows
+
+
+def build(conn, write, show=20, own_since=None, explain=()):
     from dbfast import swapTable
     race_t, res_t = "impossible_race", "impossible_result"
     total_races = total_rows = 0
@@ -280,7 +353,8 @@ def build(conn, write, show=20):
                 n_rows += len(ids)
                 worst = min(hits, key=lambda h: h[3] / h[4])
                 race_recs.append((sport, key[0], key[1], key[2], key[3], len(ids), len(hits),
-                                  worst[3], worst[4], worst[0], worst[1], worst[2]))
+                                  worst[3], worst[4], worst[0], worst[1], worst[2],
+                                  "record", None, None))
                 res_recs.extend((sport, rid) for rid in ids)
             # the pool-floor rows, one by one: the row leaves, the race stays
             res_recs.extend((sport, rid) for rid, _k, _t, _d, _p, _f in floor_rows)
@@ -300,6 +374,9 @@ def build(conn, write, show=20):
                 print(f"      {sport} row {rid}: {pace:.0f} s/km over {d:.0f} m against a pool floor of "
                       f"{floor:.0f} (meet={key[1]} div={key[2]}{'' if sport == 'XC' else ' event=' + str(key[3])})")
             total_races += len(bad); total_rows += n_rows + len(floor_rows)
+            if sport == "XC" and own_since:
+                r_, n_ = ownRaceShift(conn, cur, own_since, set(bad), race_recs, res_recs, show, explain)
+                total_races += r_; total_rows += n_
         if not write:
             print(f"  DRY RUN: {total_races:,} races, {total_rows:,} rows would be written")
             return total_races, total_rows
@@ -307,7 +384,7 @@ def build(conn, write, show=20):
         cur.execute(_DDL.format(race=f"{race_t}_new", result=f"{res_t}_new"))
         if race_recs:
             cur.executemany(f"""INSERT INTO {race_t}_new VALUES
-                                (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", race_recs)
+                                (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", race_recs)
             cur.executemany(f"INSERT INTO {res_t}_new VALUES (%s,%s) ON CONFLICT DO NOTHING",
                             res_recs)
         conn.commit()
@@ -321,11 +398,21 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--write", action="store_true", help="build and swap the tables")
     ap.add_argument("--show", type=int, default=20, help="races listed per sport")
+    ap.add_argument("--own-since", default=None,
+                    help="first date the own-races rule judges (default: 400 days ago; "
+                         "'off' to skip the rule)")
+    ap.add_argument("--race", action="append", default=[],
+                    help="meet/div (as in /race/xc/<meet>/<div>): print where this race "
+                         "lands under the own-races rule")
     args = ap.parse_args()
+    import datetime as _dt
+    own = args.own_since or os.environ.get("XCP_OWN_SHIFT_SINCE") or \
+        (_dt.date.today() - _dt.timedelta(days=400)).isoformat()
+    own = None if str(own).lower() in ("off", "none", "0") else own
     print(f"[impossible] prefilter {PREFILTER_PACE:.0f} s/km; college pools exempt; "
           f"{'writing' if args.write else 'DRY RUN'}")
     with getConn() as conn:
-        build(conn, args.write, args.show)
+        build(conn, args.write, args.show, own, args.race)
     return 0
 
 
