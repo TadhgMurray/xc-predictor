@@ -2144,7 +2144,23 @@ def indexDefs(conn, like):
             FROM   pg_indexes
             WHERE  schemaname = 'public' AND tablename = %s
         """, (like,))
-        defs = list(cur.fetchall())
+        found = list(cur.fetchall())
+
+    # ★ ONE TREE PER COLUMN LIST (2026-09-26). The catalogue itself held
+    #   pairs -- rr_result_idx beside idx_rr_result, rr_person_cover_idx
+    #   beside idx_rr_person_cover -- and every run rebuilt both, and
+    #   carried both forward to be rebuilt again. The first of each
+    #   signature is kept; a UNIQUE index is never folded into a plain one.
+    defs, seen = [], set()
+    for n, ddl in found:
+        using = re.search(r"\bUSING\s+(\w+)", ddl, re.I)
+        key = (_indexSig(ddl), "UNIQUE" in ddl.upper(),
+               (using.group(1).lower() if using else "btree"))
+        if key in seen:
+            print(f"    {n}: same columns as an index already listed -- not rebuilt")
+            continue
+        seen.add(key)
+        defs.append((n, ddl))
 
     # Compare on the column list, not the name: the same index built by an
     # earlier run carries an auto-generated name, and adding ours beside it
@@ -2437,6 +2453,24 @@ def buildBoardSizes(conn):
             cur, "INSERT INTO board_size (board, pool, sport, n) VALUES %s", rows)
     conn.commit()
     print(f"    [{time.time() - t0:7.1f}s] board_size: {len(rows)} default boards counted")
+
+
+def setLogged(conn, table):
+    """UNLOGGED -> LOGGED while the table has NO indexes yet.
+
+    ★ BEFORE THE INDEX BUILD, NOT AFTER IT (2026-09-26; 10_rankings_finish
+      took 45 minutes on one run and 133 on the next). SET LOGGED rewrites
+      the table AND REBUILDS EVERY INDEX on it, all through the WAL. Done in
+      swapIn, after buildIndexes, every index on both tables was built twice
+      -- once unlogged, once again inside the rewrite -- and the whole lot
+      went through WAL checkpoints. On a bare heap it is one sequential
+      rewrite. swapIn still asks, as a no-op safety net.
+    """
+    t0 = time.time()
+    with conn.cursor() as cur:
+        cur.execute(f"ALTER TABLE {table} SET LOGGED")
+    conn.commit()
+    print(f"    [{time.time() - t0:7.1f}s] {table}: set logged (before its indexes)")
 
 
 def swapIn(conn):
@@ -2859,6 +2893,7 @@ def refreshAthleteSeason(conn):
     # ! AND ITS INDEXES. createShadow copies structure without them by design,
     #   and this call was missing -- so every run since swapped in a
     #   12.9M-row table with no index on it at all.
+    setLogged(conn, _LOAD_SEASON)
     buildIndexes(conn, _LOAD_SEASON, "athlete_season")
 
 
@@ -3092,6 +3127,7 @@ def main():
         #   refreshAthleteSeason below reads this table, so they have to exist
         #   before it runs.
         with phase("index ranking_results"):
+            setLogged(conn, _LOAD_TABLE)
             buildIndexes(conn, _LOAD_TABLE, "ranking_results")
 
         with phase("athlete_season"):
