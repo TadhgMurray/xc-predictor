@@ -465,6 +465,7 @@
         paintBaseRating();
         fill('#xc-body', data.xc);
         fill('#tf-body', data.tf);
+        resultNote(data);
         paintPaces(data);
     }
 
@@ -680,11 +681,52 @@
         }
     );
 
+    var racesById = {};
+
+    /* ★ SAY WHY THE SAME EVENT READS DIFFERENTLY (owner, 2026-09-26: a
+         9:01.10 3200 at Arcadia converted to 9:05.93 over 3200). The table
+         is the run at an AVERAGE track on an AVERAGE day; the stored rating
+         carries the race's own venue and day, and Arcadia rates fast. That
+         is the point of a conversion, but a reader seeing their own event
+         come back 5 seconds slower needs the sentence. */
+    function resultNote(data) {
+        var el = document.getElementById('tf-note');
+        if (!el) return;
+        el.textContent = '';
+        if (typeSel.value !== 'result') return;
+        var sel = document.getElementById('in-result-select');
+        var r = sel && racesById[sel.value];
+        if (!r || !r.time_seconds || !r.event_short) return;
+        var ev = String(r.event_short).toLowerCase();
+        var m = /mile/.test(ev) && !/2\s*mile/.test(ev) ? 1609.34
+              : /2\s*mile/.test(ev) ? 3218.69
+              : parseFloat(ev.replace(/,/g, ''));
+        if (!(m > 0)) return;
+        var rows = document.querySelectorAll('#tf-body tr');
+        for (var i = 0; i < rows.length; i++) {
+            var d = parseFloat(rows[i].getAttribute('data-distance'));
+            var c = (data.tf || [])[i];
+            if (Math.abs(d - m) > 1 || !c || c.time == null) continue;
+            var pct = (c.time / r.time_seconds - 1) * 100;
+            var where = r.meet_name ? ' at ' + r.meet_name : '';
+            el.textContent = 'These times are for an average track on an ' +
+                'average day. Your ' + fmt(r.time_seconds) + where +
+                ' comes out as ' + fmt(c.time) + ' here' +
+                (Math.abs(pct) < 0.2 ? ', so that race rated about average.'
+                 : ': the ratings put that race\u2019s track and day about ' +
+                   Math.abs(pct).toFixed(1) + '% ' + (pct > 0 ? 'fast' : 'slow') +
+                   ' (weather, the venue, and how that meet ran).');
+            return;
+        }
+    }
+
     function loadRaces(pid) {
         var sel = document.getElementById('in-result-select');
         fetch('/api/athlete_results?person_id=' + pid + '&sport=' + sportSel.value)
             .then(function (r) { return r.json(); })
             .then(function (races) {
+                racesById = {};
+                races.forEach(function (r) { racesById[r.result_id] = r; });
                 sel.innerHTML = races.map(function (r) {
                     var t = r.time_seconds ? fmt(r.time_seconds) : '?';
                     return '<option value="' + r.result_id + '">' +
