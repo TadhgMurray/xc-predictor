@@ -1267,6 +1267,12 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
                     # exhaust retries, we skip the meet and move on.
 
                     n = -1       # default to failed if we never succeed
+                    # ! AND exists WITH IT (2026-09-26). It was never reset per
+                    #   meet: when the Cloudflare retries ran out it still held
+                    #   the PREVIOUS meet's answer, and a real meet could be
+                    #   written as state 4, "no meet here", never asked again.
+                    #   A meet we never reached is a failure (state 2), retried.
+                    exists = True
                     block_retries = 0
 
                     # Scrape the meet — tries XC first, then TF.

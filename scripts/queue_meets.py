@@ -40,6 +40,7 @@
 import sys
 import argparse
 import datetime
+import os
 
 sys.path.insert(0, "scripts")
 
@@ -227,6 +228,40 @@ def emptyRecent(cur, sport, since, source="anet"):
     return [r[0] for r in cur.fetchall()]
 
 
+UNDATED_SPAN = int(os.environ.get("SEED_UNDATED_SPAN", "30000"))
+
+
+def emptyUndated(cur, sport, top, span=UNDATED_SPAN, source="anet"):
+    """Meets we finished with 0 results, whose row has NO date, within
+    `span` ids below the watermark.
+
+    ★ THE GAP emptyRecent CANNOT SEE (owner, 2026-09-26: "find out why St.
+      Mary's Invite wasn't scraped"). An anet meet is asked while still
+      scheduled, saved with 0 results, and marked done; newer ids post
+      results and the watermark passes it. After that only emptyRecent can
+      wake it -- and that pass needs the meet's date, a column that only
+      exists since 2026-09-18. Every empty meet saved before then has none,
+      and stayed done for ever.
+    ! BOUNDED BY ID, since there is no date to bound it by: anet ids are
+      handed out as meets are created, so the last SEED_UNDATED_SPAN ids
+      below the watermark are this season's and last."""
+    t = _t(source, sport)
+    cur.execute(f"""
+        SELECT DISTINCT q.meet_id
+        FROM   meet_queue q
+        JOIN   {t['dates']} d ON d.meet_id = q.meet_id
+                                 {_clause(t['dates_where'], 'd')}
+        WHERE  q.source = %s AND q.sport = %s
+          AND  q.scraped IN (1, 2)
+          AND  q.meet_id BETWEEN %s AND %s
+          AND  d.{t['date_col']} IS NULL
+          AND  NOT EXISTS (SELECT 1 FROM {t['results']} r
+                           WHERE r.meet_id = q.meet_id AND r.source = %s)
+        ORDER  BY q.meet_id
+    """, (source, sport, max(0, top - span), top, source))
+    return [r[0] for r in cur.fetchall()]
+
+
 def scheduledToRetry(cur, sport, above, has_date, source="anet"):
     """Scheduled meets worth asking again: real meets above the watermark with
     no results, minus any we know are still in the future.
@@ -401,6 +436,11 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
             say(f"  [{tag}] {t['dates']}.{t['date_col']} does not exist yet "
                 f"-- no dated pass; the scheduled pass below still runs.")
         sched_retry = scheduledToRetry(cur, sport, top, has_date, source)
+        undated = emptyUndated(cur, sport, top, source=source) if has_date else []
+        out["undated"] = len(undated)
+        say(f"  [{tag}] undated with 0 results in the last {UNDATED_SPAN:,} ids: "
+            f"{len(undated):,}")
+        dated = sorted(set(dated) | set(undated))
         out["dated"] = len(dated)
         out["scheduled_retry"] = len(sched_retry)
         say(f"  [{tag}] dated since {since} with 0 results: {len(dated):,}")

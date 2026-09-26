@@ -1301,9 +1301,13 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
             raise
         except Exception as e:
             print(f"{label} [!] getMeetData failed for meet {meet_id}: {e}")
-            # Treat fetch-level errors the same as "doesn't exist" —
-            # writing nothing means we'll try again on a future pass.
-            return 0, False
+            # ⚠ A FAILED FETCH IS A FAILURE, NOT "NO MEET HERE" (2026-09-26,
+            #   owner: "find out why St. Mary's Invite wasn't scraped"). The
+            #   comment used to say writing nothing retries it; the launcher
+            #   in fact writes state 4 for (0, False), which only a new
+            #   forward block ever re-asks -- so one timeout lost a real
+            #   meet. (-1, True) is state 2: retried on the next start.
+            return -1, True
         
         # meet_info["ID"] missing means: no XC meet at this ID, OR the
         # response was empty/malformed (these are indistinguishable —
@@ -1367,7 +1371,7 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
             raise
         except Exception as e:
             print(f"{label} [!] getMeetDataTF failed for meet {meet_id}: {e}")
-            return 0, False
+            return -1, True         # a failure to retry, not "no meet" (XC above)
         
         # Same existence check as XC, mirrored for TF.
         if not meet_info.get("ID"):
@@ -1494,7 +1498,7 @@ async def scrapeMeetTFMetaOnly(page, meet_id: int, label: str, vpn_rotator) -> t
         raise                               # IP block — bubble to launcher rotation
     except Exception as e:
         print(f"{label} [!] getMeetDataTF failed for meet {meet_id}: {e}")
-        return 0, False
+        return -1, True             # a failure to retry, not "no meet"
 
     # No TF meet at this id (or empty/malformed response).
     if not meet_info.get("ID"):
