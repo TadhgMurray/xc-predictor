@@ -3123,6 +3123,7 @@ def get_race_results(cur, meet_id, div_id, source=None):
     cur.execute(f"""
         SELECT r.result_id,
                r.person_id,
+               r.team_id,
                r.place,
                r.time_seconds,
                r.grade,

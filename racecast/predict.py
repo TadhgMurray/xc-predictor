@@ -2647,7 +2647,7 @@ def _exactField(cur, meet_id, div_id, sport):
     div_clause = "AND r.div_id = %(div)s" if div_id else ""
     cur.execute(f"""
         SELECT DISTINCT ON (r.person_id)
-               r.person_id, r.school, r.grade,
+               r.person_id, r.team_id, r.school, r.grade,
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '') AS name,
                NULLIF(btrim(r.athlete_name), '') AS row_name,
@@ -2669,6 +2669,8 @@ def _exactField(cur, meet_id, div_id, sport):
     out = []
     for r in cur.fetchall():
         out.append({"person_id": r["person_id"], "school": r["school"],
+                    # anet's team id: meet_compile.teamStates reads it
+                    "team_id": r.get("team_id"),
                     "name": ((r["name"] or "").strip() or r.get("row_name")
                              or "Unknown"),
                     "grade": r.get("grade"), "pool": r.get("pool"),

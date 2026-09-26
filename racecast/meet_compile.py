@@ -154,8 +154,8 @@ def compiledResults(cur, meet_id, source=None):
     #   cost of reading the scalar instead: a women's 5000 and a men's 8000 at
     #   one meet sharing one distance.
     cur.execute("""
-        SELECT r.result_id, r.person_id, r.place, r.time_seconds, r.grade,
-               r.school, r.speed_rating, r.div_id,
+        SELECT r.result_id, r.person_id, r.team_id, r.place, r.time_seconds,
+               r.grade, r.school, r.speed_rating, r.div_id,
                (round(COALESCE(
                    m.distance,
                    (mt.division_distances -> r.div_id::text ->> 'distance')::real
@@ -454,6 +454,58 @@ _KEYSEP = "\x00"
 # ! EVERY ROW, NOT ONLY COLLIDING ONES, and a no-op without the table: a
 #   one-school name's assignment IS its only cluster, so stamping it changes
 #   nothing and costs one indexed lookup per page.
+def _schoolKey(s):
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def teamStates(cur, rows):
+    """{team_id: state} from team_identity for the rows' anet team ids --
+    anet's OWN record of where each team is (build_team_identity.py; owner,
+    2026-09-18: "Ur gonna do schools by team id. Only, everywhere").
+
+    ★ A FACT, NOT A COUNT. school_athlete_state and the home-state clusters
+      infer a school's state from where its athletes raced, and lose to
+      their own evidence whenever a name is shared -- De La Salle's Concord
+      runners filed under New Orleans (2026-09-26), Georgetown University
+      under a Texas high school. A team id is anet's identifier and
+      anet_state is anet's record of where it is.
+    ! ONLY WHEN THE NAMES AGREE. The team's name must be the row's school
+      name (letters and digits, or one a prefix of the other); a row whose
+      team id names some other school keeps the inferred answer.
+    ! A ROW WITH NO TEAM ID (every tfrrs row) is untouched.
+    """
+    ids = sorted({int(r["team_id"]) for r in rows
+                  if r.get("team_id") not in (None, 0)})
+    if not ids:
+        return {}
+    try:
+        cur.execute("SELECT to_regclass('public.team_identity') IS NOT NULL AS ok")
+        got = cur.fetchone()
+        if not bool(got["ok"] if isinstance(got, dict) else got[0]):
+            return {}
+        cur.execute("SELECT team_id, school, state FROM team_identity "
+                    "WHERE team_id = ANY(%s) AND state IS NOT NULL", (ids,))
+        found = {}
+        for row in cur.fetchall():
+            tid, sc, st = ((row["team_id"], row["school"], row["state"])
+                           if isinstance(row, dict) else tuple(row))
+            found[int(tid)] = (_schoolKey(sc), st)
+    except Exception:                                   # noqa: BLE001
+        cur.connection.rollback()
+        return {}
+    out = {}
+    for r in rows:
+        tid = r.get("team_id")
+        if tid in (None, 0) or int(tid) not in found:
+            continue
+        key, st = found[int(tid)]
+        mine = _schoolKey((r.get("school") or "").split(_KEYSEP, 1)[0])
+        if key and mine and (key == mine or key.startswith(mine)
+                             or mine.startswith(key)):
+            out[int(tid)] = st
+    return out
+
+
 def stampSchoolStates(cur, rows):
     """Set r["school_state"] from school_athlete_state, in place."""
     pairs = {(r["school"], r["person_id"]) for r in rows
@@ -463,6 +515,11 @@ def stampSchoolStates(cur, rows):
     cur.execute("SELECT to_regclass('school_athlete_state') IS NOT NULL AS ok")
     got = cur.fetchone()
     if not bool(got["ok"] if isinstance(got, dict) else got[0]):
+        by_team = teamStates(cur, rows)
+        for r in rows:
+            tid = r.get("team_id")
+            if tid not in (None, 0) and int(tid) in by_team:
+                r["school_state"] = by_team[int(tid)]
         return
     cur.execute(
         "SELECT school, person_id, state FROM school_athlete_state "
@@ -477,6 +534,12 @@ def stampSchoolStates(cur, rows):
         st = seen.get((r.get("school"), r.get("person_id")))
         if st:
             r["school_state"] = st
+    # ★ THE TEAM ID OUTRANKS THE INFERENCE (teamStates)
+    by_team = teamStates(cur, rows)
+    for r in rows:
+        tid = r.get("team_id")
+        if tid not in (None, 0) and int(tid) in by_team:
+            r["school_state"] = by_team[int(tid)]
 
 
 def splitCollisionTeams(cur, rows, meet_state=None, published_names=None):
@@ -580,9 +643,17 @@ def splitCollisionTeams(cur, rows, meet_state=None, published_names=None):
                           if isinstance(row, dict) else (row[0], row[1], row[2]))
             alias[(sc, hs)] = st
 
+    by_team = teamStates(cur, [r for r in rows if r.get("school") in multi])
     for r in rows:
         s = r.get("school")
         if s in multi:
+            # ★ anet's own team id first (teamStates): where the team IS,
+            #   not where its athletes raced. Kept even when the clusters
+            #   do not list that state -- a fact is not clamped to a guess.
+            tid = r.get("team_id")
+            if tid not in (None, 0) and int(tid) in by_team:
+                r["school"] = f"{s}{_KEYSEP}{by_team[int(tid)]}"
+                continue
             # the athlete's home state, resolved through the merge that
             # school_identity already did, then clamped to a cluster the
             # name actually has -- an unknown or a travel state falls to

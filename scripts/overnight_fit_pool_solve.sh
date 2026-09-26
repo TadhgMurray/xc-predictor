@@ -323,7 +323,7 @@ step level_graph \
     "$PY" engine/level_graph.py --write || true
 
 step team_identity \
-    "resolve every anet team_id to (school, state); inspectable only -- read by nothing, Georgetown should come out DC" \
+    "resolve every anet team_id to (school, state); race pages, meet scoring and the predict page read it first (meet_compile.teamStates)" \
     "$PY" racecast/build_team_identity.py --write || true
 step team_pool \
     "one row per anet team saying which pool it is and why (the <15-athletes-all-time rule)" \
