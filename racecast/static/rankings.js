@@ -149,10 +149,19 @@ function crestMark(url) {
              + ` width="18" height="18" loading="lazy" decoding="async">` : "";
 }
 
+/* ★ THE STATE RIDES IN THE LINK (owner, 2026-09-26: "pressing Jesuit (CA)
+   here goes to Jesuit (LA)"). /school/<name> alone opens the biggest
+   school of that name; the row knows which one it is, so the link says so,
+   the way the school page's own links do (?state=). */
+function schoolHref(school, state) {
+  return `/school/${encodeURIComponent(school)}`
+       + (state ? `?state=${encodeURIComponent(state)}` : "");
+}
+
 function schoolCell(school, state, crest) {
   const st = state ? ` <span class="state">${esc(state)}</span>` : "";
   if (!school) return `<td> - ${st}</td>`;
-  return `<td>${crestMark(crest)}<a href="/school/${encodeURIComponent(school)}">`
+  return `<td>${crestMark(crest)}<a href="${schoolHref(school, state)}">`
        + `${esc(school)}</a>${st}</td>`;
 }
 
@@ -1440,7 +1449,7 @@ function renderTeams(rows, span) {
       <td class="rank${r.rank <= 3 ? " top3" : ""}"${r.board_rank
         ? ` title="${ordinal(r.board_rank)} ${where(r)}, ` +
           `on ${r.board_points} points"` : ""}>${r.rank}</td>
-      <td>${crestMark(r.crest)}<a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
+      <td>${crestMark(r.crest)}<a href="${schoolHref(r.school, r.state)}">${esc(r.school)}</a></td>
       <td><span class="state">${esc(r.state)}</span></td>
       <td>${academicLabel(r.year)}</td>
       <td class="rating">${r.points}</td>
@@ -1464,7 +1473,7 @@ function renderTeamsCourse(rows) {
   const body = rows.map((r, i) => `
     <tr>
       <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
-      <td>${crestMark(r.crest)}<a href="/school/${encodeURIComponent(r.school)}">${esc(r.school)}</a></td>
+      <td>${crestMark(r.crest)}<a href="${schoolHref(r.school, r.state)}">${esc(r.school)}</a></td>
       <td class="rating">${fmtRating(rval(r, "top5_mean"))}</td>
       <td>${r.distance}m</td>
       <td><a href="/race/xc/${r.meet_id}/${r.div_id}">${esc(r.meet_name || ("Meet " + r.meet_id))}</a></td>
