@@ -18,7 +18,9 @@ TMP=$(mktemp)
   echo "# Cloudflare edge ranges -- written by deploy/cloudflare_realip.sh $(date -u +%F)"
   echo "# Trust CF-Connecting-IP only from these; see https://www.cloudflare.com/ips/"
   for url in https://www.cloudflare.com/ips-v4 https://www.cloudflare.com/ips-v6; do
-    curl -fsS "$url" | sed 's/^/set_real_ip_from /; s/$/;/'
+    # ! the lists end without a newline, which ran the last v4 range and
+    #   the first v6 range onto one line; the echo ends each list
+    { curl -fsS "$url"; echo; } | sed '/^$/d; s/^/set_real_ip_from /; s/$/;/'
   done
   echo "real_ip_header CF-Connecting-IP;"
 } > "$TMP"
