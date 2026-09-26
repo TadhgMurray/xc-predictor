@@ -32,6 +32,14 @@
 #   `result_id > last ORDER BY result_id LIMIT n` is an index range scan
 #   starting where the last batch stopped.
 #
+# ★ 2026-09-26: THE BATCHES ARE GONE ALTOGETHER. The walk is two set-based
+#   passes now (engine/anchor_repair.py, "A PYTHON LOOP OVER EVERY ROW"):
+#   one GROUP BY over the table, then one streamed read of only the rows
+#   outside the band. There is no keyset left to test, so this file now
+#   holds the line that mattered: no pass pages the table with OFFSET, and
+#   each reads it once. tests/test_anchor_repair_setbased.py proves the new
+#   walk writes exactly what the keyset one did.
+#
 #   python -m unittest tests.test_anchor_repair_keyset
 import ast
 import io
@@ -47,65 +55,60 @@ def _src():
         return fh.read()
 
 
-class TheWalkIsKeyset(unittest.TestCase):
+def _consts(src):
+    ns = {}
+    for node in ast.parse(src).body:
+        if (isinstance(node, ast.Assign)
+                and getattr(node.targets[0], "id", "") in
+                ("_FROM", "_GROUPS", "_CANDIDATES", "_UPDATE")):
+            exec(ast.get_source_segment(src, node), ns)  # noqa: S102
+    return ns
+
+
+class TheWalkReadsTheTableOnce(unittest.TestCase):
 
     def setUp(self):
         self.src = _src()
-        ns = {}
-        for node in ast.parse(self.src).body:
-            if (isinstance(node, ast.Assign)
-                    and getattr(node.targets[0], "id", "") == "_SELECT"):
-                exec(ast.get_source_segment(self.src, node), ns)  # noqa: S102
-        self.sql = ns.get("_SELECT")
-        self.assertIsNotNone(self.sql, "_SELECT is gone")
+        self.sql = _consts(self.src)
+        for name in ("_FROM", "_GROUPS", "_CANDIDATES"):
+            self.assertIn(name, self.sql, f"{name} is gone")
 
     def test_there_is_no_offset(self):
-        """⚠ THE REGRESSION. OFFSET makes the walk quadratic in the corpus."""
-        self.assertNotIn("OFFSET", self.sql.upper())
+        """⚠ THE REGRESSION. OFFSET makes a paged walk quadratic."""
+        for name in ("_FROM", "_GROUPS", "_CANDIDATES"):
+            self.assertNotIn("OFFSET", self.sql[name].upper(), name)
 
-    def test_it_seeks_past_the_last_row_it_saw(self):
-        self.assertIn("r.result_id > %(after)s", self.sql)
+    def test_there_is_no_batch_loop_over_the_table(self):
+        """No `result_id > after` seek and no LIMIT: each pass is one
+        statement over the whole table."""
+        for name in ("_FROM", "_GROUPS", "_CANDIDATES"):
+            self.assertNotIn("%(after)s", self.sql[name], name)
+            self.assertNotIn("LIMIT", self.sql[name].upper(), name)
 
-    def test_the_order_matches_the_seek_column(self):
-        """! KEYSET IS ONLY CORRECT IF THE ORDER IS THE SEEK COLUMN. Sorted
-        by anything else, `result_id > after` skips rows rather than
-        resuming -- silent data loss, not a slow query."""
-        self.assertIn("ORDER  BY r.result_id", self.sql)
-        i = self.sql.index("ORDER  BY r.result_id")
-        self.assertIn("LIMIT", self.sql[i:])
-
-    def test_the_cursor_advances_by_the_last_id_not_a_count(self):
-        """⚠ `after += len(rows)` WOULD BE OFFSET WEARING A NEW NAME, and it
-        would also be wrong: result_ids are not dense."""
-        body = self.src[self.src.index("after = -1"):]
-        body = body[:body.index("writes = []")]
-        self.assertIn('after = rows[-1]["result_id"]', body)
-        self.assertNotIn("after +=", body)
-
-    def test_it_starts_below_every_real_id(self):
-        """! -1, NOT 0. A result_id of 0 would be skipped by `> 0`."""
-        self.assertIn("after = -1", self.src)
-
-    def test_the_batch_still_terminates_on_a_short_read(self):
-        self.assertIn("if len(rows) < args.batch:", self.src)
+    def test_the_candidates_are_streamed_in_result_id_order(self):
+        """! ORDER MATTERS: the _FACTOR slots fill in result_id order, and
+        the candidate loop replays that order."""
+        self.assertIn("ORDER  BY r.result_id", self.sql["_CANDIDATES"])
+        self.assertIn('conn.cursor(name="anchor_repair_candidates")',
+                      self.src)
+        self.assertIn("cur.itersize", self.src)
 
     def test_the_person_filter_survives(self):
-        """! --person IS A DEBUGGING PATH and must still compose with the
-        seek; a keyset rewrite that dropped it would be found by hand, at
-        the worst moment."""
-        self.assertIn("{person}", self.sql)
+        """! --person IS A DEBUGGING PATH and must still compose with both
+        passes."""
+        self.assertIn("{person}", self.sql["_FROM"])
         self.assertIn("AND r.person_id = %(person)s", self.src)
 
 
 class TheWriteIsStillBatched(unittest.TestCase):
     """! UNCHANGED, AND ASSERTED SO. The file's own note says a per-row
-    UPDATE over this corpus is hours and the VALUES join is seconds. The
-    read fix must not have disturbed the write."""
+    UPDATE over this corpus is hours and the VALUES join is seconds."""
 
     def test_one_statement_per_batch(self):
         src = _src()
         self.assertIn("FROM  (VALUES %s) AS v(result_id, nt)", src)
         self.assertIn("execute_values", src)
+        self.assertIn("if len(writes) >= batch:", src)
 
 
 if __name__ == "__main__":

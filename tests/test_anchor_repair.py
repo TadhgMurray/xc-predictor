@@ -37,7 +37,10 @@ def ok(cond, msg):
 # ---- 0. it cannot write by accident ------------------------------------ #
 ok('"--apply"' in SRC and 'action="store_true"' in SRC,
    "the repair must be a dry run by default")
-ok("if writes and args.apply" in SRC,
+# ! 2026-09-26: the writes go through their own connection, which main()
+#   opens only under --apply; walk() writes nothing without one.
+ok("if writes and wconn is not None" in SRC
+   and "if args.apply:\n            with getConn() as wconn:" in SRC,
    "the UPDATE must be gated on --apply, not merely reported")
 ok("conn.rollback()" in SRC,
    "a dry run must roll back rather than trust that it wrote nothing")

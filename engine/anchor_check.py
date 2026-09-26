@@ -130,15 +130,29 @@ def _expected(t, d, pool, sport):
     key = (round(d), pool, sport)
     factor = _FACTOR.get(key)
     if factor is None:
-        # 1000 seconds, then divided back out: normalizeTime rounds its
-        # RESULT to two decimals, so asking with a large t keeps the factor
-        # accurate to eight digits instead of five.
-        got = normalizeTime(1000.0, d, pool, sport)
-        if not got:
+        factor = _factorOf(d, pool, sport)
+        if factor is None:
             return None
-        factor = got / 1000.0
         _FACTOR[key] = factor
     return t * factor
+
+
+# ⚠ THE CACHE ABOVE IS KEYED BY THE METRE, BUT THE FACTOR IS NOT (2026-09-26).
+#   normalizeTime keys its own cache on the distance rounded to 3 decimals, so
+#   1609 and 1609.344 share a _FACTOR slot and still give factors 2.4e-4
+#   apart -- whichever of them reaches the slot FIRST is what every later row
+#   in that metre is checked and rescaled with. anchor_repair's set-based walk
+#   has to reproduce that order, so it needs the factor of one distance
+#   WITHOUT filling the slot; this is that, and _expected is built on it so
+#   the two cannot drift.
+def _factorOf(d, pool, sport):
+    # 1000 seconds, then divided back out: normalizeTime rounds its RESULT to
+    # two decimals, so asking with a large t keeps the factor accurate to
+    # eight digits instead of five.
+    got = normalizeTime(1000.0, d, pool, sport)
+    if not got:
+        return None
+    return got / 1000.0
 
 
 def whichPool(time_seconds, distance, stored_nt, pools, sport=None):

@@ -577,6 +577,8 @@ fi
 #   corrections already inside the stored value survive exactly. It is
 #   idempotent: a repaired row reads as already right on the next pass, so
 #   running it every pipeline costs one scan and changes nothing once clean.
+#   (2026-09-26: two set-based passes now -- a GROUP BY, then only the rows
+#   outside the band -- instead of ~300 batches through Python.)
 if [ "${XCP_SKIP_ANCHOR_REPAIR:-0}" = "1" ]; then
   echo "  05b_anchor_repair skipped (XCP_SKIP_ANCHOR_REPAIR=1)"
 else
