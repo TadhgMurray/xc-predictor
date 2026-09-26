@@ -2810,6 +2810,132 @@ def _swapTables(cur, table, index_defs):
     print(f"    swapped: {table}_new -> {table};  old kept as {table}_old")
 
 
+# _rewriteChangedRows
+# Purpose : when only a few rows' normalized_time changed, UPDATE those rows
+#           in place instead of rebuilding the whole table.
+# Output  : True when done (the table is final, staging dropped); False when
+#           the caller must rebuild -- and then NOTHING has been written.
+#
+# ★ A WEEK WITH LITTLE NEW LEAVES MOST OF THE TABLE AS IT WAS (2026-09-26,
+#   owner: "speed up every step in pipeline possible"). The rebuild rewrites
+#   every row and every index -- 495.6s of heap and 338.7s of indexes on
+#   results_tf -- even when a handful of values moved. The rows whose value
+#   changed are exactly the rows where the rebuild's
+#       s.nt AS normalized_time   (LEFT JOIN staging s: NULL when unstaged)
+#   differs from what the row holds now. Writing just those gives the same
+#   normalized_time on every row as the rebuild, and every other column is
+#   untouched either way.
+#
+# ! THE COMPARISON IS BITWISE AND NULL-AWARE: float4send() on both sides,
+#   IS DISTINCT FROM. A plain `<>` calls 0 and -0 equal and NULL unknown;
+#   bytes cannot disagree with what the rebuild would have written.
+#
+# ! TWO LOOKS, CHEAP ONE FIRST. A 1% block sample (TABLESAMPLE SYSTEM)
+#   joined to staging estimates the count; a big estimate goes straight to
+#   the rebuild, so an in-season week (hundreds of thousands of new rows)
+#   pays a staging scan, not a full diff. Only a small estimate runs the
+#   exact diff, and its LIMIT stops it at the first row past the threshold.
+#   The estimate is only a gate: the exact diff decides.
+#
+# ⚠ WHAT IT DOES NOT DO THAT THE REBUILD DID. No swap, so no <table>_old
+#   undo copy (02_drop_old removes that next run anyway), and nothing about
+#   the table is reset: a CREATE TABLE AS strips defaults, CHECKs, NOT NULLs
+#   and triggers (scripts/repair_constraints.py), an UPDATE keeps them. So a
+#   table carrying a trigger is REBUILT -- an UPDATE would fire it -- and any
+#   error here (a CHECK, a lock timeout) rolls the UPDATE back and rebuilds.
+#   Readers are never blocked: an UPDATE's ROW EXCLUSIVE lock does not
+#   conflict with them, where the swap needed ACCESS EXCLUSIVE.
+#
+# _REWRITE_MAX_ROWS: past this, the rebuild. Each changed row costs a PK
+#   probe, a new heap tuple and an entry in every index (not HOT: the
+#   normalized_time index sees the column change) -- about a dozen random
+#   pages. 200,000 of them is a minute or two even from a cold cache, where
+#   the rebuild writes the whole heap and all nine indexes; and 200,000 dead
+#   tuples is under 0.6% of results' ~35M rows, a small fraction of
+#   autovacuum's 20% trigger, so the table stays near as compact as a
+#   rebuild leaves it.
+_REWRITE_MAX_ROWS = 200_000
+_REWRITE_SAMPLE_PCT = 1       # ~1.9M rows of results_tf: enough to see 0.1%
+_CHANGED = ("float4send(r.normalized_time) "
+            "IS DISTINCT FROM float4send(s.nt)")
+
+
+def _rewriteChangedRows(write_conn, table, staging):
+    print("-" * 70)
+    print(f"REWRITE: does {table} need a rebuild, or only its changed rows?")
+    try:
+        with write_conn.cursor() as cur:
+            cur.execute("SET LOCAL lock_timeout = '2min'")
+            # the exact diff hashes staging, as the rebuild's CREATE does
+            cur.execute(f"SET LOCAL work_mem = '{dbSetting('work_mem', '2GB')}'")
+            cur.execute("SELECT count(*) FROM pg_trigger "
+                        "WHERE tgrelid = %s::regclass AND NOT tgisinternal",
+                        (table,))
+            if cur.fetchone()[0]:
+                print(f"    {table} carries triggers an UPDATE would fire "
+                      f"-- rebuilding instead")
+                write_conn.rollback()
+                return False
+            _timedExec(cur, f"ANALYZE {staging}", f"ANALYZE {staging}")
+            t0 = time.time()
+            cur.execute(f"""
+                SELECT count(*) FILTER (WHERE {_CHANGED})
+                FROM   (SELECT result_id, normalized_time FROM {table}
+                        TABLESAMPLE SYSTEM ({_REWRITE_SAMPLE_PCT})) r
+                LEFT JOIN {staging} s ON s.result_id = r.result_id
+            """)
+            est = cur.fetchone()[0] * 100 // _REWRITE_SAMPLE_PCT
+            print(f"    [{time.time() - t0:7.1f}s] ~{est:,} changed rows "
+                  f"(from a {_REWRITE_SAMPLE_PCT}% block sample)")
+            if est > _REWRITE_MAX_ROWS:
+                print(f"    more than {_REWRITE_MAX_ROWS:,} -- rebuilding")
+                write_conn.rollback()
+                return False
+            t0 = time.time()
+            cur.execute(f"""
+                CREATE TEMP TABLE bf_changed ON COMMIT DROP AS
+                SELECT r.result_id, s.nt
+                FROM   {table} r
+                LEFT JOIN {staging} s ON s.result_id = r.result_id
+                WHERE  {_CHANGED}
+                LIMIT  {_REWRITE_MAX_ROWS + 1}
+            """)
+            n = cur.rowcount
+            print(f"    [{time.time() - t0:7.1f}s] exact diff: "
+                  f"{n:,}{'+' if n > _REWRITE_MAX_ROWS else ''} changed rows")
+            if n > _REWRITE_MAX_ROWS:
+                print(f"    more than {_REWRITE_MAX_ROWS:,} -- rebuilding")
+                write_conn.rollback()
+                return False
+            cur.execute("ANALYZE bf_changed")       # a PK probe per row, not a scan
+            _timedExec(cur, f"""
+                UPDATE {table} r SET normalized_time = c.nt
+                FROM   bf_changed c
+                WHERE  r.result_id = c.result_id
+            """, f"UPDATE {n:,} rows of {table}")
+            if cur.rowcount != n:
+                # the PK makes this impossible; a rebuild's own PK would fail
+                # loudly on whatever made it possible, so hand it over
+                print(f"    UPDATE touched {cur.rowcount:,} rows, not {n:,} "
+                      f"-- rolled back, rebuilding")
+                write_conn.rollback()
+                return False
+        write_conn.commit()
+    except psycopg2.Error as exc:
+        write_conn.rollback()
+        print(f"    rewrite failed ({type(exc).__name__}: "
+              f"{str(exc).strip().splitlines()[0] if str(exc).strip() else ''})"
+              f" -- rolled back, nothing written; rebuilding instead")
+        return False
+    with write_conn.cursor() as cur:
+        cur.execute(f"DROP TABLE IF EXISTS {staging}")
+    write_conn.commit()
+    print(f"REWRITE COMPLETE: {n:,} rows of {table} updated in place "
+          f"(no rebuild, no swap, no {table}_old)")
+    print("-" * 70)
+    return True
+
+
 # _mergeStagingIntoTable
 # Purpose : the whole merge, orchestrated. Called ONCE, after the stream drains.
 # Arguments: write_conn; table -- 'results'/'results_tf'; staging -- scratch name.
@@ -3139,7 +3265,8 @@ def _runBackfill(read_conn, write_conn, cfg, apply, limit):
     # The read transaction is now over, so its ACCESS SHARE lock on `table` is
     # gone and the merge's ALTER TABLE ... RENAME can take ACCESS EXCLUSIVE.
     # Only merge if we actually staged rows.
-    if staging is not None:
+    if staging is not None and not _rewriteChangedRows(
+            write_conn, cfg.table, staging):
         _mergeStagingIntoTable(write_conn, cfg.table, staging)
     return out
 

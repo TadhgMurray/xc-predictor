@@ -95,3 +95,93 @@ def test_the_builders_ask_no_more_than_the_quiet_caps(monkeypatch):
     B._buildIndexes(cur, "t", _DEFS)
     assert "SET maintenance_work_mem = '2GB'" in log
     assert "SET max_parallel_maintenance_workers = 2" in log
+
+
+# ---- the rewrite-only-changed path (2026-09-26) ---------------------------
+# Its SQL was checked against the rebuild on a scratch PG16 cluster (the same
+# bytes on every row, 0/-0 and NaN included); these pin the control flow: any
+# doubt hands over to the rebuild with nothing written.
+
+class _RwCur(_Cur):
+    def __init__(self, log, answers, fail_on=None):
+        super().__init__(log)
+        self.answers, self.fail_on, self.rowcount = answers, fail_on, 0
+
+    def execute(self, sql, params=None):
+        flat = " ".join(sql.split())
+        self.log.append(flat)
+        if self.fail_on and self.fail_on in flat:
+            import psycopg2.errors
+            raise psycopg2.errors.CheckViolation("nt_pos")
+        if flat.startswith("CREATE TEMP TABLE bf_changed"):
+            self.rowcount = self.answers["exact"]
+        elif flat.startswith("UPDATE"):
+            self.rowcount = self.answers.get("updated", self.answers["exact"])
+
+    def fetchone(self):
+        if "pg_trigger" in self.log[-1]:
+            return (self.answers.get("triggers", 0),)
+        return (self.answers["sample_hits"],)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _RwConn(_Conn):
+    def __init__(self, log, cur):
+        super().__init__(log)
+        self._cur = cur
+
+    def cursor(self):
+        return self._cur
+
+
+def _rewrite(answers, fail_on=None):
+    log = []
+    cur = _RwCur(log, answers, fail_on)
+    ok = B._rewriteChangedRows(_RwConn(log, cur), "results", "bf_staging_xc")
+    return ok, log
+
+
+def test_few_changes_are_updated_in_place_and_staging_dropped():
+    ok, log = _rewrite({"sample_hits": 3, "exact": 543})
+    assert ok
+    assert any(e.startswith("UPDATE results r SET normalized_time = c.nt")
+               for e in log)
+    assert log.index("COMMIT") < log.index("DROP TABLE IF EXISTS bf_staging_xc")
+    assert "ROLLBACK" not in log
+
+
+def test_the_diff_is_bitwise_and_null_aware():
+    _ok, log = _rewrite({"sample_hits": 0, "exact": 1})
+    diff = next(e for e in log if e.startswith("CREATE TEMP TABLE bf_changed"))
+    assert ("float4send(r.normalized_time) IS DISTINCT FROM float4send(s.nt)"
+            in diff)
+    assert "LEFT JOIN bf_staging_xc s" in diff        # unstaged -> NULL
+    assert f"LIMIT {B._REWRITE_MAX_ROWS + 1}" in diff
+
+
+def test_a_big_estimate_rebuilds_without_the_exact_diff():
+    ok, log = _rewrite({"sample_hits": B._REWRITE_MAX_ROWS, "exact": 1})
+    assert not ok
+    assert not any(e.startswith(("CREATE TEMP", "UPDATE", "DROP")) for e in log)
+    assert log[-1] == "ROLLBACK"
+
+
+def test_a_big_exact_count_rebuilds_with_nothing_written():
+    ok, log = _rewrite({"sample_hits": 0, "exact": B._REWRITE_MAX_ROWS + 1})
+    assert not ok
+    assert not any(e.startswith(("UPDATE", "DROP")) for e in log)
+    assert "COMMIT" not in log
+
+
+def test_a_trigger_or_an_error_hands_over_to_the_rebuild():
+    ok, log = _rewrite({"sample_hits": 0, "exact": 5, "triggers": 1})
+    assert not ok and not any(e.startswith("UPDATE") for e in log)
+    ok, log = _rewrite({"sample_hits": 0, "exact": 5}, fail_on="UPDATE results")
+    assert not ok and "COMMIT" not in log and log[-1] == "ROLLBACK"
+    ok, log = _rewrite({"sample_hits": 0, "exact": 5, "updated": 4})
+    assert not ok and "COMMIT" not in log
