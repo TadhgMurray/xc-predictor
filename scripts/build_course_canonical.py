@@ -273,6 +273,70 @@ def _printPlan(rows, stats, radiusMeters, minNameSimilarity):
             print(f"         {item[6]:>7,}  {item[0]}")
 
 
+def loadExisting():
+    """{(course_name, lat, lng): (canonical_id, canonical_name)} from the live
+    table, keyed exactly as loadVenues keys a venue; {} when there is none."""
+    with getConn() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT to_regclass('course_canonical')")
+            if cursor.fetchone()[0] is None:
+                return {}
+            cursor.execute("""SELECT course_name, round(gps_lat::numeric, 5)::float8,
+                                     round(gps_long::numeric, 5)::float8,
+                                     canonical_id, canonical_name
+                              FROM course_canonical""")
+            return {(n, la, lo): (cid, cname) for n, la, lo, cid, cname in cursor.fetchall()}
+
+
+def keepIds(rows, old):
+    """The fresh clustering, renumbered so every course keeps the id it has.
+
+    ★ WHY (2026-09-26: Penrose Park, raced this season, had no difficulty
+      because this table was last built by hand before it existed, and the
+      build was never in the pipeline). It could not simply be added: ids
+      come from a counter over sorted clusters, so ONE new venue shifts the
+      id of every course after it -- and course_difficulties, keyed by id,
+      would then hand every race page another course's number until the
+      next solve went live. So:
+        a venue already mapped      keeps its id and name, always;
+        a new venue in a cluster    takes the id of that cluster's biggest
+          with mapped venues          mapped venue (it is the same course);
+        a new venue in a new        gets a fresh id above every id in use.
+          cluster
+      Two existing ids are never merged, even when a new venue bridges them:
+      that would renumber a course, which is the thing this exists to stop.
+    Pure. rows: buildMapping's tuples. Returns (rows, n_new_venues, n_new_ids).
+    """
+    by_cluster = {}
+    for r in rows:
+        by_cluster.setdefault(r[3], []).append(r)
+    next_id = max((cid for cid, _ in old.values()), default=0) + 1
+    out, n_new_v, n_new_ids = [], 0, 0
+    for cid in sorted(by_cluster):
+        members = by_cluster[cid]
+        mapped = [(old[(m[0], m[1], m[2])], m[6]) for m in members
+                  if (m[0], m[1], m[2]) in old]
+        if mapped:
+            (host_id, host_name), _n = max(mapped, key=lambda t: t[1])
+        else:
+            host_id, host_name = next_id, members[0][4]
+            next_id += 1
+            n_new_ids += 1
+        for m in members:
+            key = (m[0], m[1], m[2])
+            if key in old:
+                oid, oname = old[key]
+            else:
+                oid, oname = host_id, host_name
+                n_new_v += 1
+            out.append((m[0], m[1], m[2], oid, oname, 0, m[6]))
+    sizes = {}
+    for r in out:
+        sizes[r[3]] = sizes.get(r[3], 0) + 1
+    out = [(a, b, c, d, e, sizes[d], g) for a, b, c, d, e, _f, g in out]
+    return out, n_new_v, n_new_ids
+
+
 def writeMapping(rows):
     """
     Create the table and insert every row.
@@ -306,10 +370,20 @@ def main():
                         help="minimum name similarity (default 0.8)")
     parser.add_argument("--apply", action="store_true",
                         help="actually write; without this it is a dry run")
+    parser.add_argument("--incremental", action="store_true",
+                        help="keep every existing course's id; new venues join their "
+                             "cluster's id or get a fresh one (the pipeline's mode, 06b)")
     args = parser.parse_args()
 
     venues = loadVenues()
     rows, stats = buildMapping(venues, args.radius, args.min_sim)
+    if args.incremental:
+        old = loadExisting()
+        rows, n_new_v, n_new_ids = keepIds(rows, old)
+        print(f"\nincremental: {len(old):,} venues already mapped keep their ids; "
+              f"{n_new_v:,} new venues ({n_new_ids:,} new courses, "
+              f"{n_new_v - n_new_ids:,}-ish joining existing ones)")
+        stats["canonical_venues"] = len({r[3] for r in rows})
 
     print(f"\nLoaded {len(venues):,} venues, "
           f"{sum(v['n_rows'] for v in venues):,} meet rows.")

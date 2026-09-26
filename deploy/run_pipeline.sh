@@ -638,6 +638,12 @@ fi
 #   meets_tf on the row's own keys, and tfrrs rows had rows there only
 #   where a geometry stamp existed, unnamed. Idempotent, seconds.
 step 06_tfrrs_meets   "$PY" -u scripts/land_tfrrs_meet_names.py --apply
+# ★ EVERY COURSE GETS A CANONICAL ID BEFORE THE PACK (2026-09-26: Penrose
+#   Park had no difficulty -- this table was last built by hand, before the
+#   course was first raced, and the build was never in the pipeline).
+#   --incremental keeps every existing course's id, so course_difficulties
+#   still points at the right courses while the solve runs.
+step 06b_course_canonical "$PY" -u scripts/build_course_canonical.py --incremental --apply
 # ★ THE RACES THE RECORD CONDEMNED (owner, 2026-09-14): a time faster than
 #   the world record allows, outside the college pools, marks its whole
 #   race; the pack, the fill and the boards all anti-join the table.
