@@ -3199,6 +3199,38 @@ def raceDayShift(results, pool, distance, difficulty, course):
     return max(-0.15, min(0.15, statistics.median(gaps)))
 
 
+def fillUnknownNames(cur, rows, key):
+    """Rows whose name came out 'Unknown' take the name the same person
+    carries on their newest other row, in either sport.
+
+    ★ WHY (owner, 2026-09-26: "this guy shows as unknown but I press on him
+      and it says John Rivera"). The race page names a row from `athletes`,
+      then from the row's own athlete_name; the athlete page also looks at
+      the person's OTHER rows. A row with neither -- a tfrrs row whose name
+      landed on another row -- read Unknown on the race and a name one click
+      later. This is the athlete page's lookup, run once per page for the
+      rows that need it, not once per row.
+    """
+    need = sorted({r["person_id"] for r in rows
+                   if r.get(key) == "Unknown" and r.get("person_id")})
+    if not need:
+        return rows
+    cur.execute("""
+        SELECT DISTINCT ON (person_id) person_id, btrim(athlete_name) AS name
+        FROM (SELECT person_id, athlete_name, date FROM results
+              WHERE person_id = ANY(%(p)s) AND NULLIF(btrim(athlete_name), '') IS NOT NULL
+              UNION ALL
+              SELECT person_id, athlete_name, date FROM results_tf
+              WHERE person_id = ANY(%(p)s) AND NULLIF(btrim(athlete_name), '') IS NOT NULL) x
+        ORDER BY person_id, date DESC
+    """, {"p": need})
+    names = {r["person_id"]: r["name"] for r in cur.fetchall()}
+    for r in rows:
+        if r.get(key) == "Unknown" and names.get(r.get("person_id")):
+            r[key] = names[r["person_id"]]
+    return rows
+
+
 def get_race_results(cur, meet_id, div_id, source=None):
     """Every athlete's result in one XC race, fastest first; `source`
     keeps a colliding meet's finishers out (see get_race_header)."""
@@ -3223,7 +3255,7 @@ def get_race_results(cur, meet_id, div_id, source=None):
           AND r.time_seconds IS NOT NULL
         ORDER BY r.time_seconds ASC
     """, {"meet": meet_id, "div": div_id, "src": source})
-    return cur.fetchall()
+    return fillUnknownNames(cur, cur.fetchall(), "name")
 
 
 # Same distance band the PR rankings board uses (rankings.PR_DISTANCE_TOL):
@@ -4012,7 +4044,7 @@ def get_tf_race_results(cur, meet_id, div_id, event_id, source=None):
         ORDER BY 6 ASC NULLS LAST
     """, {"meet": meet_id, "div": div_id, "event": event_id,
           "src": source})
-    return cur.fetchall()
+    return fillUnknownNames(cur, cur.fetchall(), "athlete_name")
 
 
 def _field_gender(results):
