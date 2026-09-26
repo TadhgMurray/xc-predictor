@@ -5923,6 +5923,86 @@ def get_tf_venue_bests(cur, location_id, is_indoor, limit=25):
     """, {"loc": location_id, "indoor": 1 if is_indoor else 0, "limit": limit})
     return cur.fetchall()
 
+# The relay events a venue's team records cover, as (key, label, sort):
+# the key is event_short lower-cased with spaces, dashes and "m"s removed.
+_RELAY_EVENTS = (
+    (r"4x100", "4x100", 1), (r"4x200", "4x200", 2), (r"4x400", "4x400", 3),
+    (r"4x800", "4x800", 4), (r"4x1600|4x1mile|4xmile", "4x1600", 5),
+    (r"dmr|distancemedley", "Distance medley", 6),
+    (r"smr|sprintmedley", "Sprint medley", 7),
+)
+
+
+def get_tf_venue_relay_records(cur, location_id, is_indoor, per_event=5):
+    """The team records at a track venue: each relay's fastest squads here,
+    best time per school, by event and gender (owner, 2026-09-26: "fix team
+    records too" -- the page said "Team records - coming later").
+
+    ★ RELAYS ARE A TRACK VENUE'S TEAM RECORDS. Cross country's are top-five
+      totals in one race (get_course_team_records); track has no such score,
+      and the relay list is what a meet's own record board carries.
+    ! GENDER FROM THE ROW, THEN THE MEET, THEN THE EVENT'S WORDS. A relay
+      row's athlete is a squad placeholder, so its gender is often blank;
+      meets_tf_meta.gender covers a single-gender meet and "Boys 4x400"
+      names itself. A squad still unknown is listed apart rather than
+      guessed into a gender.
+    """
+    cur.execute(f"""
+        WITH venue_meets AS (
+            SELECT meet_id, div_id, event_id, meet_name
+            FROM   meets_tf
+            WHERE  location_id = %(loc)s
+              AND  COALESCE(is_indoor, 0) = %(indoor)s
+        ), rel AS (
+            SELECT r.result_id, r.school, r.time_seconds, r.date,
+                   r.event_short, vm.meet_id, vm.meet_name,
+                   regexp_replace(lower(COALESCE(r.event_short, '')),
+                                  '[^a-z0-9]', '', 'g') AS ekey,
+                   COALESCE(
+                       CASE WHEN a.gender IN ('M', 'F') THEN a.gender END,
+                       CASE WHEN mm.gender IN ('M', 'F') THEN mm.gender END,
+                       CASE WHEN r.event_short ~* '(^|[^a-z])(boys|men|mens|men''s)([^a-z]|$)' THEN 'M'
+                            WHEN r.event_short ~* '(^|[^a-z])(girls|women|womens|women''s)([^a-z]|$)' THEN 'F'
+                       END) AS gender
+            FROM   venue_meets vm
+            JOIN   results_tf r
+                   ON r.meet_id = vm.meet_id AND r.div_id = vm.div_id
+                  AND r.event_id = vm.event_id
+            LEFT   JOIN meets_tf_meta mm ON mm.meet_id = vm.meet_id
+            {_athlete_lateral('r')}
+            WHERE  COALESCE(r.is_relay, 0) = 1
+              AND  r.time_seconds > 0 AND r.time_seconds < 19999
+              AND  NULLIF(btrim(r.school), '') IS NOT NULL
+        )
+        SELECT * FROM rel
+    """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
+    import re as _re
+    keyed = {}
+    for r in cur.fetchall():
+        k = (r["ekey"] or "").replace("meters", "").replace("meter", "")
+        k = _re.sub(r"(?<=\d)m(?=\d|$)", "", k)          # 4x400m -> 4x400
+        for pat, label, order in _RELAY_EVENTS:
+            if _re.search(pat, k):
+                break
+        else:
+            continue
+        g = r["gender"] or "?"
+        best = keyed.setdefault((order, label, g), {})
+        sch = r["school"].strip()
+        if sch not in best or r["time_seconds"] < best[sch]["time_seconds"]:
+            best[sch] = dict(r)
+    out = []
+    for (order, label, g), by_school in sorted(
+            keyed.items(), key=lambda kv: ({"M": 0, "F": 1}.get(kv[0][2], 2),
+                                           kv[0][0])):
+        rows = sorted(by_school.values(), key=lambda x: x["time_seconds"])
+        for x in rows:
+            x["display_time"] = format_time(x["time_seconds"])
+        out.append({"event": label, "gender": g, "rows": rows[:per_event],
+                    "n_schools": len(rows)})
+    return out
+
+
 def get_tf_venue_meets(cur, location_id, is_indoor, limit=50):
     """Meets held at this venue, newest first."""
     cur.execute("""
@@ -5953,6 +6033,13 @@ def venue_tf(location_id, indoor):
             difficulty = get_tf_venue_difficulty(cur, location_id, is_indoor)
             bests      = get_tf_venue_bests(cur, location_id, is_indoor)
             venue_meets = get_tf_venue_meets(cur, location_id, is_indoor)
+            try:
+                relays = get_tf_venue_relay_records(cur, location_id, is_indoor)
+            except Exception:                           # noqa: BLE001
+                app.logger.exception("relay records failed for venue %s",
+                                     location_id)
+                conn.rollback()
+                relays = []
             # HS-equivalent view: distance parsed from each row's event.
             has_hs_view = stampRowsHs(cur, "TF", bests,
                                       event_key="event_short")
@@ -5972,6 +6059,7 @@ def venue_tf(location_id, indoor):
                            is_indoor=is_indoor,
                            difficulty=difficulty,
                            bests=bests,
+                           relays=relays,
                            venue_meets=venue_meets)
 
 def pad_pool_pairs(panels):

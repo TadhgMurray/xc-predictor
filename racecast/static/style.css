@@ -5297,3 +5297,11 @@ input.eqc-big:focus { outline: none; border-bottom-color: var(--eqc-accent); }
     border-radius: 3px; background: #fff; cursor: pointer; }
 .empty-clear:first-child { background: #111; color: #fff; border-color: #111; }
 .empty-clear:hover { border-color: #111; }
+
+/* track venue team records: one small table per relay and gender */
+.relay-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+    gap: 1rem 1.5rem; margin-bottom: 1.5rem; }
+.relay-card h3 { font-size: 0.95rem; margin: 0 0 0.3rem; }
+.relay-card table { width: 100%; }
+.relay-card .meta { margin: 0.2rem 0 0; font-size: 0.8rem; }
+@media (max-width: 480px) { .relay-grid { grid-template-columns: 1fr; } }

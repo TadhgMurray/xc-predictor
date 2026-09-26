@@ -34,9 +34,35 @@
         {% endif %}
     </p>
 
-    <div class="placeholder-slot">
-        Team records - coming later
+    {# ★ TEAM RECORDS ARE THE RELAYS (owner, 2026-09-26): each relay's
+       fastest squads here, best time per school. app.get_tf_venue_relay_records #}
+    <h2>Team records</h2>
+    {% if relays %}
+    <div class="relay-grid">
+    {% for ev in relays %}
+        <div class="relay-card">
+            <h3>{{ {"M": "Boys / Men", "F": "Girls / Women"}.get(ev.gender, "Gender not recorded") }} · {{ ev.event }}</h3>
+            <table>
+                <thead><tr><th>#</th><th>Team</th><th>Time</th><th>Meet</th><th>Date</th></tr></thead>
+                <tbody>
+                {% for r in ev.rows %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{% if r.school|is_team %}<a href="{{ school_href(r.school, none) }}">{{ r.school|school_label }}</a>{% else %}{{ r.school }}{% endif %}</td>
+                    <td class="no-break">{{ r.display_time }}</td>
+                    <td><a href="/meet/tf/{{ r.meet_id }}">{{ r.meet_name }}</a></td>
+                    <td class="no-break">{{ r.date }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% if ev.n_schools > ev.rows|length %}<p class="meta">{{ ev.n_schools }} schools have run it here.</p>{% endif %}
+        </div>
+    {% endfor %}
     </div>
+    {% else %}
+    <p class="meta">No relay results are recorded at this venue.</p>
+    {% endif %}
 
     <h2>Meets held here</h2>
     <table>
