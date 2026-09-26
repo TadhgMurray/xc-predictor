@@ -68,8 +68,18 @@ def prefix(ip):
         return ip
 
 
-def lines(pattern):
+def lines(pattern, since=None):
+    """Every line of every log matching pattern -- skipping a rotated file
+    last written before `since`, since nothing in it can be in the window
+    (the scraper made these logs gigabytes; reading them all took minutes)."""
+    import os
+    cutoff = (dt.datetime.combine(since, dt.time()).timestamp() if since else None)
     for path in sorted(glob.glob(pattern)):
+        try:
+            if cutoff and os.path.getmtime(path) < cutoff:
+                continue
+        except OSError:
+            continue
         opener = gzip.open if path.endswith(".gz") else open
         try:
             with opener(path, "rt", errors="replace") as f:
@@ -168,7 +178,7 @@ def main():
     fakes = collections.Counter()
     import socket
     socket.setdefaulttimeout(3)
-    for ln in lines(a.logs):
+    for ln in lines(a.logs, since):
         m = LINE.match(ln)
         if not m:
             continue
