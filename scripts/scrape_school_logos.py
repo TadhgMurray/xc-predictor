@@ -739,6 +739,30 @@ KEY_MAX_SPREAD = 28         # the corners must agree this closely
 GROUND_MAX_SHARE = 0.995
 
 
+def _edgeConnected(mask, box):
+    """The part of `mask` (L, 255 = ground-coloured) reachable from the edge
+    of `box` through ground-coloured pixels, 4-connected.
+
+    ★ THE GROUND IS WHAT TOUCHES THE EDGE (owner, 2026-09-26: "when we
+      removed the excess black background from some logos it fucked with
+      some logos" -- Jesuit (CA), its skull and outlines gone). Keying every
+      pixel of the ground's colour ANYWHERE also keyed the mark's own black:
+      its outlines, lettering and shading, which a crest on a black card is
+      made of. The card is the colour that reaches the card's edge; the same
+      colour enclosed by the mark is the mark, and stays.
+    """
+    from PIL import ImageDraw
+    m = mask.copy()
+    x0, y0, x1, y1 = box
+    px = m.load()
+    edge = ([(x, y0) for x in range(x0, x1)] + [(x, y1 - 1) for x in range(x0, x1)]
+            + [(x0, y) for y in range(y0, y1)] + [(x1 - 1, y) for y in range(y0, y1)])
+    for xy in edge:
+        if px[xy] == 255:
+            ImageDraw.floodfill(m, xy, 128)
+    return m.point(lambda v: 255 if v == 128 else 0)
+
+
 def _keyGround(im, ground, tol=KEY_TOLERANCE):
     """`im` with every pixel within `tol` of `ground` made transparent.
     Returns (image, pixels keyed)."""
@@ -752,6 +776,7 @@ def _keyGround(im, ground, tol=KEY_TOLERANCE):
 
     mask = ImageChops.multiply(ImageChops.multiply(band(r, 0), band(g, 1)),
                               band(b, 2))
+    mask = _edgeConnected(mask, _opaqueBox(im) or ((0, 0) + im.size))
     # ! getdata() is deprecated in Pillow 12 and gone in 14; a histogram
     #   counts the same thing and is faster
     n = mask.histogram()[255] if mask.mode == "L" else 0
@@ -1989,6 +2014,121 @@ def regroundAll(cur, directory=None, write=False, limit=None, only=None,
     return census
 
 
+# ===================================================================== #
+#  THE RE-KEY: fetch the damaged crests again and key them properly     #
+# ===================================================================== #
+#
+# ★ WHY A FETCH, NOT A REPAIR ON DISK (owner, 2026-09-26: "when we removed
+#   the excess black background from some logos it fucked with some logos").
+#   The old key took the ground's colour out EVERYWHERE, the mark's own
+#   black with it, and the stored PNG was then resized -- which zeroes the
+#   colour under every transparent pixel -- so what was lost is not in the
+#   file to be put back. The source still has it. This re-fetches each
+#   crest that shows the damage and runs it through the fixed key
+#   (_edgeConnected: only ground that touches the edge comes off).
+#
+# ! ONLY CRESTS WITH HOLES. The damage is transparency ENCLOSED by the mark;
+#   a crest whose transparency all reaches its edge was not touched by the
+#   bug and is not fetched. A crest with real see-through counters (an "O"
+#   in a transparent PNG) is fetched too and comes back the same -- then it
+#   is left alone.
+REKEY_MIN_HOLES = 0.002     # enclosed transparent pixels, share of the square
+
+
+def enclosedHoles(im):
+    """The share of `im`'s pixels that are transparent AND enclosed by the
+    mark -- not reachable from the edge of the square through transparency."""
+    from PIL import ImageDraw
+    a = im.getchannel("A")
+    t = a.point(lambda v: 255 if v < 16 else 0)
+    m = t.copy()
+    w, h = m.size
+    px = m.load()
+    edge = ([(x, 0) for x in range(w)] + [(x, h - 1) for x in range(w)]
+            + [(0, y) for y in range(h)] + [(w - 1, y) for y in range(h)])
+    for xy in edge:
+        if px[xy] == 255:
+            ImageDraw.floodfill(m, xy, 128)
+    enclosed = m.point(lambda v: 255 if v == 255 else 0).histogram()[255]
+    return enclosed / float(w * h)
+
+
+def rekeyAll(cur, manners, directory=None, write=False, limit=None, only=None,
+             out=print):
+    from PIL import Image
+    directory = directory or LOGO_DIR
+    params, where = {}, ["path IS NOT NULL", "source_url IS NOT NULL"]
+    if only:
+        params["only"] = f"%{only}%"
+        where.append("school ILIKE %(only)s")
+    cur.execute(f"""
+        SELECT school, state, COALESCE(level, '') AS level, path, kind,
+               source_url
+        FROM   school_logo WHERE {' AND '.join(where)}
+        ORDER  BY school, state, level
+        {"LIMIT %(limit)s" if limit else ""}
+    """, dict(params, limit=limit))
+    cols = ("school", "state", "level", "path", "kind", "source_url")
+    rows = [dict(zip(cols, r)) if not isinstance(r, dict) else dict(r)
+            for r in cur.fetchall()]
+    out(f"  {len(rows):,} crests to check for holes in {directory}", flush=True)
+    census = {"holed": 0, "fixed": 0, "same": 0, "fetch_failed": 0,
+              "refused": 0, "missing": 0}
+    fixed = []
+    for i, row in enumerate(rows):
+        if i and i % PROGRESS_EVERY == 0:
+            out(f"    {i:,}/{len(rows):,}  {census['holed']:,} with holes, "
+                f"{census['fixed']:,} re-keyed", flush=True)
+        full = os.path.join(directory, row["path"])
+        try:
+            with open(full, "rb") as fh:
+                raw_disk = fh.read()
+            im = Image.open(io.BytesIO(raw_disk))
+            im.load()
+            holes = enclosedHoles(im.convert("RGBA"))
+        except Exception:                                 # noqa: BLE001
+            census["missing"] += 1
+            continue
+        if holes < REKEY_MIN_HOLES:
+            continue
+        census["holed"] += 1
+        raw, why = manners.get(row["source_url"])
+        if raw is None:
+            census["fetch_failed"] += 1
+            continue
+        data, sha, _size = normalise(raw, ctype=why, kind=row.get("kind"))
+        if data is None:
+            census["refused"] += 1
+            continue
+        if data == raw_disk:
+            census["same"] += 1
+            continue
+        census["fixed"] += 1
+        fixed.append((row, holes))
+        if write:
+            tmp = f"{full}.{os.getpid()}.tmp"
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+            os.replace(tmp, full)
+            cur.execute("""UPDATE school_logo SET sha = %s
+                           WHERE school = %s AND state = %s
+                             AND COALESCE(level, '') = %s""",
+                        (sha, row["school"], row["state"], row["level"]))
+    for row, holes in fixed[:25]:
+        out(f"    {row['school']} ({row['state'] or '-'}"
+            f"{'/' + row['level'] if row['level'] else ''}): "
+            f"{100 * holes:.1f}% holes, re-keyed")
+    if len(fixed) > 25:
+        out(f"    ... and {len(fixed) - 25:,} more")
+    out(f"  {census['holed']:,} crests had holes: {census['fixed']:,} re-keyed, "
+        f"{census['same']:,} came back the same (real see-through parts), "
+        f"{census['fetch_failed']:,} source unreachable, "
+        f"{census['refused']:,} refused, {census['missing']:,} unreadable")
+    if not write:
+        out("  --dry-run: nothing was written.")
+    return census
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -2024,6 +2164,12 @@ def main():
                          "the Amherst case, where anet's modal team is the "
                          "bigger school and its mascot replaced the other's "
                          "real crest. Implies --redo. See damagedPairs.")
+    ap.add_argument("--rekey", action="store_true",
+                    help="re-fetch the crests the old background key punched "
+                         "holes in (black outlines and lettering keyed out "
+                         "with the card) and key them with the fixed rule. "
+                         "Network: one request per damaged crest. "
+                         "Pair with --dry-run first.")
     ap.add_argument("--reground", action="store_true",
                     help="re-key the ground out of the crests ALREADY ON "
                          "DISK and stop. No network: the black background is "
@@ -2042,7 +2188,7 @@ def main():
         # which is exactly the row you are trying to redo an hour later
         args.refresh_days, args.retry_failed = -1, True
     if not (args.write or args.dry_run or args.stats or args.sweep_only
-            or args.reground):
+            or args.reground or args.rekey):
         ap.error("pass --stats, --dry-run, --write, --sweep-only or --reground")
 
     from database import getConn
@@ -2050,6 +2196,16 @@ def main():
         with conn.cursor() as cur:
             if args.stats:
                 print(stats(cur))
+                return
+            if args.rekey:
+                ensureTable(cur, DDL)
+                ensureLevelKey(cur)
+                rekeyAll(cur, Manners(rate=args.rate), args.dir,
+                         write=args.write, limit=args.limit, only=args.only)
+                if args.write:
+                    conn.commit()
+                else:
+                    conn.rollback()
                 return
             if args.reground:
                 # ! THE MIGRATION FIRST, as below: this reads `level`.
