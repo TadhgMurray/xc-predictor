@@ -564,12 +564,55 @@ def _seasonYear(conn, sport):
     rows = _yearCounts(conn, sport)
     if not rows:
         return None
+    return pickSeason(rows, sport, datetime.date.today(),
+                      lambda yr, cutoff: _rowsToDate(conn, sport, yr, cutoff))
 
-    floor = max(n for _, n in rows) * SEASON_MIN_SHARE
+
+def pickSeason(rows, sport, today, rows_to_date):
+    """The season the boards show. rows: [(season, rated rows)] newest
+    first; rows_to_date(season, cutoff_iso) counts a season's rows dated on
+    or before cutoff.
+
+    ★ A SEASON UNDER WAY COUNTS AGAINST THE SAME DATE LAST YEARS, NOT
+      AGAINST A WHOLE SEASON (owner, 2026-09-26: "since xc 2026 is > tf 2026
+      it should be default ... whichever season is closer"). On Sept 26 the
+      2026 XC season holds a fraction of a full season's rows, so the
+      whole-season quarter rule picked 2025 and the home page opened on
+      track. While the sport is IN SEASON (XC_MONTHS for XC, the rest for
+      track), the newest season is taken when it holds a quarter of what the
+      busiest season held BY THE SAME DATE -- on pace, not finished.
+    ! OUT OF SEASON THE OLD RULE STANDS, which is what keeps the spring
+      middle-school leagues from making an April "XC 2026" the board.
+    """
+    busiest_yr, busiest_n = max(rows, key=lambda r: r[1])
+    floor = busiest_n * SEASON_MIN_SHARE
+    newest_yr, newest_n = rows[0]
+    in_season = (today.month in XC_MONTHS) == (sport == "XC")
+    if in_season and newest_n < floor and newest_yr != busiest_yr:
+        shift = int(newest_yr) - int(busiest_yr)
+        try:
+            cutoff = today.replace(year=today.year - shift)
+        except ValueError:                                   # 29 Feb
+            cutoff = today.replace(year=today.year - shift, day=28)
+        then = rows_to_date(busiest_yr, cutoff.isoformat())
+        if then and newest_n >= then * SEASON_MIN_SHARE:
+            return newest_yr
     for yr, n in rows:                 # newest first
         if n >= floor:
             return yr
     return rows[0][0]                  # nothing qualifies -> newest anyway
+
+
+def _rowsToDate(conn, sport, season, cutoff):
+    """Rated rows of one season dated on or before cutoff (ISO)."""
+    table = "results" if sport == "XC" else "results_tf"
+    season_sql = seasonYearSql(sport, "date")
+    with conn.cursor() as cur:
+        cur.execute(f"""SELECT COUNT(*) FROM {table}
+                        WHERE speed_rating IS NOT NULL AND date ~ %s
+                          AND {season_sql} = %s AND date <= %s""",
+                    (_SANE_YEAR, season, cutoff))
+        return cur.fetchone()[0]
 
 
 # ===================================================================== #
