@@ -3094,11 +3094,18 @@ def main():
                   "team, as before", flush=True)
             with phase("temp indexes (gender, tfrrs distance, TF state, sprints)"):
                 prepareGenderTemp(conn)
-                prepareXcTfrrsDistTemp(conn)
                 ensureResultTwin(conn)
                 ensureWheelchairPerson(conn)
-                prepareTfStateTemp(conn)
-                prepareSprintEvents(conn)
+                # ! ONLY THE SPORT THIS PROCESS STREAMS (2026-09-26). The four
+                #   shards each built all four tables; the XC shards paid for
+                #   a DISTINCT over the whole of results_tf (prepareSprintEvents)
+                #   and the TF state index, which only the TF query joins, and
+                #   the TF shards for the XC tfrrs distances.
+                if "XC" in sports:
+                    prepareXcTfrrsDistTemp(conn)
+                if "TF" in sports:
+                    prepareTfStateTemp(conn)
+                    prepareSprintEvents(conn)
 
         if stage in (None, "prepare"):
             with phase("create shadow"):
