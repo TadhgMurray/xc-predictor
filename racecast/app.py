@@ -3485,6 +3485,62 @@ def get_meet_date(cur, table, meet_id, source=None):
     return row["date"] if row else None
 
 
+def meetWinners(cur, meet_id, divisions, source=None, published=None):
+    """{div_id: {"winner": {...}, "team": {...}}} for the meet page's race
+    rows (owner, 2026-09-26: a meet page listed only gender, division,
+    distance and a count -- not who won).
+
+    ★ THE WINNER is the fastest finishing time in the division (a non-finish
+      has no time; XC's 999999 sentinel is excluded by the ceiling).
+    ★ THE TOP TEAM is the meet's PUBLISHED first place when it published
+      scores for that division -- the same source the race page trusts --
+      else our own scoring of the division's finishers (meet_compile.
+      scoreRows: five score, two displace, incomplete teams lifted out).
+    ! ONE QUERY FOR THE WHOLE MEET, grouped here: a meet page must not run a
+      query per division.
+    """
+    from meet_compile import scoreRows
+    cur.execute(f"""
+        SELECT r.div_id, r.person_id, r.time_seconds, r.school,
+               {_name_sql('r')} AS name
+        FROM   results r
+        {_athlete_lateral('r')}
+        WHERE  r.meet_id = %(meet)s
+          AND  (%(src)s::text IS NULL OR r.source = %(src)s)
+          AND  r.time_seconds > 0 AND r.time_seconds < 90000
+        ORDER  BY r.div_id, r.time_seconds
+    """, {"meet": meet_id, "src": source})
+    by_div = {}
+    for row in cur.fetchall():
+        by_div.setdefault(row["div_id"], []).append(dict(row))
+    out = {}
+    for d in divisions:
+        rows = by_div.get(d["div_id"]) or []
+        if not rows:
+            continue
+        w = rows[0]
+        got = {"winner": {"person_id": w.get("person_id"),
+                          "name": w.get("name") or "Unknown",
+                          "time": format_time(w.get("time_seconds")),
+                          "school": w.get("school")}}
+        pub = ((published or {}).get((d["div_id"], d.get("gender")))
+               or (published or {}).get((d["div_id"], None)))
+        if pub:
+            first = min(pub, key=lambda t: (t.get("place") is None,
+                                            t.get("place") or 0,
+                                            t.get("points") or 10 ** 6))
+            got["team"] = {"school": first.get("school"),
+                           "points": first.get("points")}
+        else:
+            ranked = [{**r, "place": i} for i, r in enumerate(rows, 1)]
+            teams = scoreRows(ranked).get("teams") or []
+            if teams:
+                got["team"] = {"school": teams[0]["school"],
+                               "points": teams[0]["points"]}
+        out[d["div_id"]] = got
+    return out
+
+
 def get_meet_divisions(cur, meet_id, source=None):
     """Every division in this meet, with how many results each has.
 
@@ -3683,6 +3739,15 @@ def meet_xc(meet_id):
             #   query now.
             compiled_index = compiledIndex(cur, meet_id, source=src)
             meet_date = get_meet_date(cur, "results", meet_id, source=src)
+            # who won each race, and which team (meetWinners)
+            try:
+                winners = meetWinners(cur, meet_id, divisions, source=src,
+                                      published=publishedScores(cur, meet_id))
+            except Exception:                           # noqa: BLE001
+                # the table still renders without the two columns
+                app.logger.exception("meetWinners failed for %s", meet_id)
+                conn.rollback()
+                winners = {}
 
 
     if header is None:
@@ -3692,6 +3757,7 @@ def meet_xc(meet_id):
                            school=school, school_divs=school_divs,
 
                            compiled=compiled_index, meet_date=meet_date,
+                           winners=winners,
                            alt_idx=alt_idx, other_sources=other_sources)
 
 

@@ -1576,6 +1576,72 @@ document.addEventListener("rc-scale-change", () => {
   $("results").innerHTML = renderBoard(_lastBoard.rows, _lastBoard.data);
 });
 
+/* ★ AN EMPTY BOARD SAYS WHICH FILTER EMPTIED IT, AND UNDOES IT (owner,
+   2026-09-26). "No results for these filters." left the reader to find the
+   culprit among a dozen controls. This names what is set -- the group and
+   sport, then every narrowing box -- and gives each a Clear button, plus
+   one that clears them all. Paging past the end is the other way to an
+   empty page, and says so. */
+const EMPTY_WORDS = { school: "school", state: "state", grade: "grade",
+                      year: "season" };
+
+function activeNarrowing() {
+  const out = [];
+  for (const f of ["school", "state", "grade", "year", ...UNIT_KEYS]) {
+    const vals = combos[f] ? combos[f].values() : [];
+    if (!vals.length) continue;
+    const host = document.querySelector(`[data-field="${f}"]`);
+    const lab = EMPTY_WORDS[f]
+      || (host && host.closest(".field")
+          && (host.closest(".field").querySelector("label") || {}).textContent)
+      || f.replace(/_/g, " ");
+    out.push({ field: f, label: String(lab).trim().toLowerCase(), vals });
+  }
+  return out;
+}
+
+function emptyBoard() {
+  if (state.offset > 0) {
+    return '<div class="status empty-board">No more rows past this page.</div>';
+  }
+  const opt = (id) => {
+    const el = $(id);
+    return el && el.selectedOptions && el.selectedOptions[0]
+      ? el.selectedOptions[0].text : "";
+  };
+  const what = [opt("pool"), opt("sport")].filter(Boolean).join(" \u00b7 ");
+  const active = activeNarrowing();
+  const shown = (v) => v.slice(0, 3).join(", ") + (v.length > 3 ? ` +${v.length - 3}` : "");
+  const lead = active.length
+    ? `Nothing on this board matches ${esc(what)} with ${active.map((a) =>
+        `${esc(a.label)} ${esc(shown(a.vals))}`).join(" and ")}.`
+    : `Nothing on this board matches ${esc(what)}.`;
+  const buttons = active.map((a) =>
+    `<button type="button" class="empty-clear" data-field="${esc(a.field)}">Clear ${
+      esc(a.label)}</button>`).join("");
+  return `<div class="status empty-board"><p><b>${lead}</b></p>${
+    active.length
+      ? `<div class="empty-btns">${buttons}${active.length > 1
+          ? '<button type="button" class="empty-clear" data-field="*">Clear them all</button>'
+          : ""}</div>`
+      : `<p class="meta">Try another group or sport.</p>`}</div>`;
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest(".empty-clear");
+  if (!b) return;
+  const f = b.dataset.field;
+  for (const a of activeNarrowing()) {
+    if (f !== "*" && a.field !== f) continue;
+    combos[a.field].set([]);
+    // what a hand-cleared box announces, so dependent boxes follow
+    document.dispatchEvent(new CustomEvent("combochange",
+                                           { detail: { field: a.field } }));
+  }
+  state.offset = 0;
+  load();
+});
+
 async function load() {
   if (state.busy) return;
   state.busy = true;
@@ -1667,8 +1733,7 @@ async function load() {
 
     if (rows.length === 0) {
       _lastBoard = null;
-      $("results").innerHTML =
-        '<div class="status">No results for these filters.</div>';
+      $("results").innerHTML = emptyBoard();
       // Keep the pager visible past page 1 so there is a way back.
       $("pager").classList.toggle("hidden", state.offset === 0);
     } else {

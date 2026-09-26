@@ -40,12 +40,26 @@
             if (q.length < 2) { box.innerHTML = ''; active = -1; return; }
             closed = false;             // typing re-opens what a click shut
             var mySeq = ++seq;
+            // ★ SAY IT IS WORKING (sweep, 2026-09-26): the box stayed blank
+            //   until the answer came, and a slow answer read as none
+            if (!box.querySelector('.sr-item')) {
+                box.innerHTML = '<div class="sr-state">Searching\u2026</div>';
+            }
             timer = setTimeout(function () {
                 fetch('/search/api?q=' + encodeURIComponent(q))
-                    .then(function (r) { return r.json(); })
+                    .then(function (r) {
+                        if (!r.ok) throw new Error(r.status);
+                        return r.json();
+                    })
                     .then(function (rows) {
                         if (mySeq !== seq || closed) return;
                         render(rows, q);
+                    })
+                    .catch(function () {
+                        if (mySeq !== seq || closed) return;
+                        active = -1;
+                        box.innerHTML = '<div class="sr-state">Search is not ' +
+                            'answering right now. Try again in a moment.</div>';
                     });
             }, 150);
         });
@@ -54,7 +68,13 @@
             active = -1;
             var more = '<a class="sr-more" href="/search?q=' +
                     encodeURIComponent(q) + '">See all results →</a>';
-            if (!rows.length) { box.innerHTML = more; return; }
+            if (!rows.length) {
+                // ★ AND SAY WHEN NOTHING MATCHED, rather than showing only
+                //   a link to a results page that will say the same
+                box.innerHTML = '<div class="sr-state">No athletes, teams, ' +
+                    'meets or courses match \u201c' + esc(q) + '\u201d.</div>' + more;
+                return;
+            }
             var items = rows.map(function (r) {
                 var sub = r.sublabel ? '<span class="sr-sub">' + esc(r.sublabel) + '</span>' : '';
                 return '<a class="sr-item" href="' + r.link + '">' +

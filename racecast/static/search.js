@@ -1,4 +1,8 @@
 document.addEventListener('click', function (e) {
+    // the name in each row is a real link; a click on it (and a ctrl- or
+    // middle-click anywhere, which means "new tab") is the browser's own
+    if (e.target.closest('a') || e.ctrlKey || e.metaKey || e.shiftKey ||
+        e.button !== 0) return;
     var tr = e.target.closest('.result-row');
     if (tr && tr.dataset.href) window.location = tr.dataset.href;
 });
@@ -33,8 +37,12 @@ document.addEventListener('DOMContentLoaded', function () {
         else if (kind === 'venue')   cells = [r.label, r.sublabel, r.sort_count];
         else if (kind === 'school')  cells = [r.label, r.sort_count];
         else                         cells = [r.label, r.kind, r.sublabel];
-        tr.innerHTML = cells.map(function (c) {
-            return '<td>' + esc(c == null || c === 0 ? ' - ' : c) + '</td>';
+        tr.innerHTML = cells.map(function (c, i) {
+            var text = esc(c == null || c === 0 ? ' - ' : c);
+            // the first cell is the name: a real link, as in search.html
+            return '<td>' + (i === 0 && r.link
+                ? '<a class="sr-link" href="' + esc(r.link) + '">' + text + '</a>'
+                : text) + '</td>';
         }).join('');
         // the school crest (305), into the first cell only, and only when
         // the server said there is one -- the page's own rows are built the

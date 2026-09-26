@@ -1,30 +1,34 @@
 {% macro result_row(r, kind) %}
+{# ★ THE NAME IS A REAL LINK (sweep, 2026-09-26): the row was clickable
+     only through search.js, so it could not be opened in a new tab,
+     middle-clicked, reached with Tab, or read as a link by a screen
+     reader. The whole row still clicks through for mouse users. #}
 <tr class="result-row" data-href="{{ r.link }}">
     {% if kind == 'athlete' %}
-        <td>{{ r.label }}</td>
+        <td><a class="sr-link" href="{{ r.link }}">{{ r.label }}</a></td>
         <td>{{ r.sublabel or ' - ' }}</td>
         <td>{{ r.sort_year or ' - ' }}</td>
         <td>{{ r.sort_count or ' - ' }}</td>
     {% elif kind == 'meet' %}
-        <td>{{ r.label }}</td>
+        <td><a class="sr-link" href="{{ r.link }}">{{ r.label }}</a></td>
         <td>{{ r.sort_year or ' - ' }}</td>
         <td>{{ r.sort_count or ' - ' }}</td>
     {% elif kind == 'course' %}
-        <td>{{ r.label }}</td>
+        <td><a class="sr-link" href="{{ r.link }}">{{ r.label }}</a></td>
         <td>{{ r.sort_count or ' - ' }}</td>
     {% elif kind == 'venue' %}
-        <td>{{ r.label }}</td>
+        <td><a class="sr-link" href="{{ r.link }}">{{ r.label }}</a></td>
         <td>{{ r.sublabel or ' - ' }}</td>
         <td>{{ r.sort_count or ' - ' }}</td>
     {% elif kind == 'school' %}
         {# the crest is stamped onto school rows by _run_search; a school
            without one has no key and this renders the label alone #}
         <td>{% if r.crest %}<img class="school-mark" src="{{ r.crest }}" alt=""
-                 width="18" height="18" loading="lazy" decoding="async">{% endif %}{{ r.label }}</td>
+                 width="18" height="18" loading="lazy" decoding="async">{% endif %}<a class="sr-link" href="{{ r.link }}">{{ r.label }}</a></td>
         <td>{{ r.sort_count or ' - ' }}</td>
     {% else %}  {# all: mixed kinds, uniform columns #}
         <td>{% if r.crest %}<img class="school-mark" src="{{ r.crest }}" alt=""
-                 width="18" height="18" loading="lazy" decoding="async">{% endif %}{{ r.label }}</td>
+                 width="18" height="18" loading="lazy" decoding="async">{% endif %}<a class="sr-link" href="{{ r.link }}">{{ r.label }}</a></td>
         <td>{{ r.kind }}</td>
         <td>{{ r.sublabel or ' - ' }}</td>
     {% endif %}

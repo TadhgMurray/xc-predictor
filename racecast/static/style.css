@@ -5276,3 +5276,24 @@ input.eqc-big:focus { outline: none; border-bottom-color: var(--eqc-accent); }
 .predict2 .go:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 .predict2 .go:disabled { background: #9ca3af; border-color: #9ca3af; cursor: default; }
 .predict2 .page-report { margin-top: 2rem; }
+
+/* The top-bar search's own words: working, nothing matched, not answering
+   (sweep, 2026-09-26). */
+.sr-state { padding: 0.55rem 0.7rem; color: #555; font-size: 0.9rem; }
+/* search results page: the name is a link, styled as the row's text */
+.result-row .sr-link { color: inherit; text-decoration: none; font-weight: 500; }
+.result-row .sr-link:hover, .result-row .sr-link:focus-visible { text-decoration: underline; }
+
+/* meet page race rows: the second line under a cell (distance, time and
+   school, points) -- app.meetWinners */
+.meet-races .cell-sub { display: block; font-size: 0.78rem; color: #6b7280; }
+
+/* rankings: an empty board names its filters and clears them (rankings.js
+   emptyBoard) */
+.empty-board { text-align: left; }
+.empty-board p { margin: 0 0 0.4rem; }
+.empty-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 0.5rem; }
+.empty-clear { font: inherit; font-size: 0.85rem; padding: 5px 12px; border: 1px solid #cfd4da;
+    border-radius: 3px; background: #fff; cursor: pointer; }
+.empty-clear:first-child { background: #111; color: #fff; border-color: #111; }
+.empty-clear:hover { border-color: #111; }
