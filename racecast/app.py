@@ -1361,6 +1361,21 @@ def buildRankLine(cur, person_id, season):
     return entries
 
 
+def _personRedirect(cur, person_id):
+    """The surviving id for an athlete id that was merged away, or None --
+    also None before person_redirect exists, so the page just 404s."""
+    try:
+        cur.execute("SELECT to_regclass('person_redirect') IS NOT NULL AS ok")
+        row = cur.fetchone()
+        if not (row["ok"] if isinstance(row, dict) else row[0]):
+            return None
+        import person_redirects
+        return person_redirects.follow(cur, person_id)
+    except psycopg2.Error:
+        cur.connection.rollback()
+        return None
+
+
 @app.route("/athlete/<int:person_id>")
 def athlete(person_id):
     with getConn() as conn:                # reuse the engine's connection
@@ -1398,6 +1413,15 @@ def athlete(person_id):
                 """, {"p": person_id})
                 row = cur.fetchone()
                 if row is None and athlete is None:
+                    # ★ A MERGED-AWAY ID IS A 301, NOT A 404 (2026-09-26):
+                    #   the page Google indexed, and every link shared to it,
+                    #   follow the athlete to their surviving id
+                    #   (scripts/person_redirects.py, pipeline 13c0).
+                    moved = _personRedirect(cur, person_id)
+                    if moved:
+                        qs = request.query_string.decode()
+                        return redirect(f"/athlete/{moved}" + (f"?{qs}" if qs else ""),
+                                        code=301)
                     abort(404)
                 if row is not None:
                     athlete = dict(athlete or {"gender": None})

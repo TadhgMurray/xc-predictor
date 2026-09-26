@@ -206,7 +206,7 @@ summarise() {
 #   (grade_sanity, twins, the pack, the boards), so it runs on every --from.
 #   XCP_LINK_TFRRS=0 turns it off; every stamp is logged in person_link_log
 #   and `scripts/link_tfrrs_rows.py --undo fanout|freshman|mint` reverses it.
-_ALWAYS="02_drop_old 04a_link_tfrrs 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
+_ALWAYS="01a_person_probe 02_drop_old 04a_link_tfrrs 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
 step() {
   name="$1"; shift
@@ -432,6 +432,12 @@ bgwait() {
 # ---- verdicts ------------------------------------------------------- #
 # ! unlink.py IS NOT HERE ON PURPOSE -- it is the one non-idempotent step.
 step 01_season_year   "$PY" -u engine/season_year.py
+# ★ WHERE EVERY ATHLETE'S ROWS ARE, BEFORE ANYTHING MOVES THEM (2026-09-26).
+#   Twins, tfrrs links and mints all change person ids, and the old id's page
+#   404s. 13c0 compares against this and 301s each vanished id to its
+#   successor. Two result ids per person per sport; on every --from, because
+#   04a (always) moves ids too.
+step 01a_person_probe "$PY" -u scripts/person_redirects.py --snapshot
 step 02_drop_old      "$PY" -u engine/drop_old.py
 # ! BEFORE ANYTHING LABELS A VENUE. meets_tf.venue_name is NULL on a lot of
 #   anet track meets, and the engine then prints the LOCATION ID as if it
@@ -1011,6 +1017,9 @@ step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 #   pipeline, so new athletes and meets stayed unsearchable until someone
 #   rebuilt it by hand. Built into a shadow table and swapped, so search
 #   never goes dark.
+# athlete ids that vanished since 01a -> the id their rows went to (the
+# athlete page 301s them; see scripts/person_redirects.py)
+step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
 step 13c_search_index "$PY" -u racecast/search_index.py
 # the sitemap for Google: every ranked athlete, school, course and meet
 step 13d_sitemap      "$PY" -u racecast/build_sitemap.py
