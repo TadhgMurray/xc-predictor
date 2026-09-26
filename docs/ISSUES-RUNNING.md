@@ -2335,63 +2335,71 @@ but log it for future things"):**
 | 12 | **30-day bracket window** — `XCP_BRACKET_WINDOW=30` (-1.28% held-out error) | Measured; commented in `deploy/solve_env.sh` | Switched on for one run on its own, after a verified run (the file's own rule) |
 | 13 | **Shared prediction links** | The share URL carries the whole request | `restoreFromLink` reads only meet, race and sport: mode, date, course and edits are lost |
 
-## 2026-09-26 — 📋 LOGGED, NOT ACTIONED: race-to-track conversions, black-ground crests
+## 2026-09-26 — 📋 LOGGED, NOT ACTIONED: weather, race-page vs /conversions, black-ground crests
 
 Owner, going to sleep: "I'm not certain the race conversions to the track
-are much better now. Just log it and the black logos as issues for now."
+are much better now ... just log both as separate issues", and "I'm not
+certain weather is correct rn, I've noticed extreme weather races not being
+helped!"
 
-### A. Conversions and the equivalents card still read wrong
+### A. The weather correction does not seem to help extreme-weather races
 
-**What was reported.**
-1. `/conversions`, source "a specific result": the owner's 9:01.10 3200 at the
-   Arcadia Invitational (2025-04-12, result 258164858, hs_m, rating 136.59)
-   converts to **9:05.93** over 3200 on a neutral track. The owner: the
-   weather was bad that day, and a track has no difficulty, so the neutral
-   time should be FASTER than 9:01.10, not slower.
-2. Race page equivalents card, Hayward High School 4828 m, Boys D2,
-   2024-11-23 (difficulty +4.8%, 54 °F, wind 16 mph, rain before the race):
-   "On this course 11:40 → On a track 5K 11:51, rating 170.0". A harder
-   course in bad weather should convert to a faster track 5K than distance
-   alone gives. `e9dac11` moved the course side by the race's own day
-   (raceDayShift); the owner is not convinced that fixed it.
+**Owner's observation:** races run in extreme weather are not being credited
+for it. Not tied to one page -- it is in the ratings themselves.
 
-**Measured for the Arcadia row** (`scripts/diag_track_conversion.py`,
-`scripts/diag_row_weather.py --tf 258164858`):
+**One measured case** (`scripts/diag_row_weather.py --tf 258164858`,
+`scripts/diag_track_conversion.py`): the owner's 9:01.10 3200 at the Arcadia
+Invitational, 2025-04-12, hs_m, rating 136.59.
 
-| term | effect | note |
-|---|---|---|
-| venue difficulty | ~0 | cell `TF:loc:62277:out` difficulty −0.00015; the −5.04% the script printed is the track anchor shift (−0.0581 × tilt 0.887), which is applied to the neutral target too and cancels |
-| era | +0.42% | 2025's era factor against now's (1.62267 / 1.61594 for hs_m 3200) — the neutral is expressed in today's era |
-| race day | −0.39% (i.e. +0.39% on the neutral) | `race_day_effect`, 891 rows that day; without it the neutral is 9:03.79 |
-| event offset, track gain | −0.48%, +3.20% | applied on both sides; cancel |
-| **weather** | **multiplier 1.00727: "−0.72% slower than run, ~0.9 rating points taken"** | grid cell (34.25, 242.0), local hours 9–20: apparent 24 °C, wind 8.1, precip 0 |
+    grid cell (34.25, 242.0), local hours 9-20: apparent 24 C, wind 8.1, precip 0
+    weather multiplier 1.00727: "-0.72% slower than run, ~0.9 rating points taken"
 
-**⚠ The weather term looks backwards and is the lead to chase.** The track
-weather artifact (`engine/data/weather_correction_TF.pkl`) says heat is SLOW
-at 3200 m — +1.0% at 70 °F, +1.3% at 75 °F against its 55 °F reference, from
-`_rcsValue` with the distance interaction — and wind costs 0.00102 per unit
-above a reference of 3.0. An apparent 24 °C (75 °F) with wind 8.1 should
-therefore CREDIT the run by roughly +1.3% + 0.5%. Instead the row lost 0.9
-rating points to weather. Candidates, in order:
-1. the sign of the multiplier in the TF backfill path (norm = time × factor
-   / wmult vs × wmult) — check against an XC row with a known hot day;
-2. the venue normal (`_weatherReference`, `venue_norms["by_event"]`) for
-   this event/fortnight being hotter and windier than the day, so the day
-   reads as *better* than normal — print the reference `diag_row_weather`
-   compared against;
-3. the window: the artifact reads the whole local 9–20 window
-   (`race_local_hours`) with max/avg temperature for every track race; the
-   Arcadia 3200 heats run in the evening (20:00 local: 17.6 °C, wind
-   6 km/h), so an all-day window is not the race's weather. Changing it is
-   an engine-wide call (refit), the owner's.
+The track artifact (`engine/data/weather_correction_TF.pkl`) prices heat as
+SLOW at 3200 m -- +1.0% at 70 F, +1.3% at 75 F against its 55 F reference
+(`_rcsValue`, with the distance interaction) -- and wind at 0.00102 per unit
+above 3.0. A 24 C, windy day should therefore CREDIT the run (roughly +1.3%
+and +0.5%); this one lost 0.9 points. Candidates, in order:
+1. the sign of the multiplier in the backfill path (norm = time x factor /
+   wmult vs x wmult) -- check against an XC row on a known hot day;
+2. the event's weather normal (`_weatherReference`, `venue_norms["by_event"]`)
+   being hotter and windier than the day, so the day reads as BETTER than
+   normal -- print the reference diag_row_weather compared against;
+3. the window: every track race reads the whole local 9-20 window
+   (`race_local_hours`); the Arcadia 3200 heats run in the evening (20:00:
+   17.6 C, wind 6 km/h). Changing it is an engine-wide refit, the owner's
+   call.
+Then sweep: rows on the hottest, coldest, windiest and wettest race days
+(both sports), and whether their weather multipliers point the way the
+artifact's own curves say they should.
 
-**For the race-page card:** once the weather sign/normal is settled, re-check
-Hayward: its fastest time (11:40 for 4828 m, rating 170 — beyond any high
-schooler) is probably a bad row, and the ruler opens on it; the 09d outlier
-step may flag it. `raceDayShift` measures the day from the race's own rated
-finishers, so it inherits whatever the weather term gets wrong.
+### B. The race page's equivalents card and /conversions give different answers
 
-### B. Crests damaged by the black-ground key
+**Owner:** the equivalents card on a race page and the /conversions page
+disagree for the same race, and that disagreement is the complaint -- not
+either number alone.
+
+**Case:** Hayward High School, 4828 m, Boys Division 2, 2024-11-23, CA
+(difficulty +4.8%; 54 F, wind 16 mph, humidity 89%, rain before the race).
+The card read "On this course 11:40 -> On a track 5K 11:51, rating 170.0".
+**11:40 is not a time in this race's results** (owner) -- so the value the
+ruler opens on, or the rating it shows, is coming from somewhere other than
+the results (check `equiv_lo` in race_xc: `min()` over `results`, which now
+includes rows `_borrowTwins` adds; and the widget's own opening value).
+
+**Why they differ, as built:**
+- the card (`conversions.equivalenceLine` via `/api/equivalence`) runs a
+  RATING through `normalized_to_time` for this course (its fitted
+  difficulty) and for a typical track, with no race-day weather; since
+  `e9dac11` the course side is shifted by `raceDayShift` (the median gap
+  between the race's rated times and the ruler), which inherits whatever
+  the weather term (A) gets wrong;
+- /conversions from a specific result (`_norm_from_result`) inverts the
+  STORED RATING, so it carries that row's weather multiplier, era and
+  race-day term.
+Make both go through one function for "this race's time -> a neutral
+track", and compare the two for a handful of races before trusting either.
+
+### C. Crests damaged by the black-ground key
 
 The flat-ground key removed the ground's colour EVERYWHERE, so crests on a
 black card lost their own black outlines, lettering and shading (the owner's
