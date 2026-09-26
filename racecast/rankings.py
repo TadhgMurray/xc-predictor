@@ -988,7 +988,15 @@ def _whereClauses(f, params, with_dates):
     #   predicate on the same column only costs a plan.
     if f.get("scope", "usa") == "usa" and not f.get("state"):
         params["us_states"] = list(US_STATES)
-        parts.append(" AND state = ANY(%(us_states)s)")
+        # ★ AND tfrrs ROWS, WHICH CARRY NO STATE (owner, 2026-09-26: "not all
+        #   best performances show"). ranking_results.state comes from the
+        #   anet meet tables, so every tfrrs row stores NULL and the USA
+        #   board dropped most college racing. tfrrs is US collegiate
+        #   racing; its result ids are the negative ones (app._ridArg). A
+        #   NULL-state anet row is still left out: that is the foreign meet
+        #   this scope exists to exclude.
+        parts.append(" AND (state = ANY(%(us_states)s)"
+                     " OR (state IS NULL AND result_id < 0))")
     # ★ = ANY(%(x)s), NOT AN INTERPOLATED IN-LIST. psycopg2 adapts a Python
     #   list to a Postgres array, so the SQL text is IDENTICAL whether the
     #   filter carries one value or fifty -- one bind parameter either way, no
@@ -1342,7 +1350,12 @@ def getPerformanceRankings(cur, f):
         ),
         deduped AS (
             SELECT *, row_number() OVER (
-                       PARTITION BY sport,
+                       -- ! AND THE ATHLETE (owner, 2026-09-26: "not all best
+                       --   performances show"). The key is there to fold the
+                       --   anet and tfrrs copies of ONE run; without the
+                       --   person it also folded two DIFFERENT runners who
+                       --   tied at the same meet, and one of them vanished.
+                       PARTITION BY sport, person_id,
                                     COALESCE(canon_meet_id, -result_id),
                                     round(time_seconds::numeric, 1)
                        ORDER BY speed_rating DESC) AS dup_rn
@@ -1592,7 +1605,7 @@ def _rankInResults(cur, f, person_id):
     #   per person, so two of somebody else's fast times are one competitor,
     #   not two.
     key = ("person_id" if is_pr else
-           "sport, COALESCE(canon_meet_id, -result_id), "
+           "sport, person_id, COALESCE(canon_meet_id, -result_id), "
            "round(time_seconds::numeric, 1)")
     cur.execute(f"""
         SELECT count(*) FROM (

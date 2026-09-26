@@ -930,8 +930,15 @@ step 09c_school_names "$PY" -u scripts/merge_school_names.py --write
 #   leave the flagged rows out (build_ranking_results._outlierClause).
 #   Rank-only: no rating changes. The fast side at 8 sigma, the module's own
 #   default; XCP_OUTLIER_SIGMA moves the bar.
+# ! THE SPREAD FLOOR IS 4 POINTS, NOT THE MODULE'S 2 (2026-09-26). A steady
+#   season's MAD is tiny, so at a 2-point floor one real breakout race --
+#   17 points over a flat season median -- read as 8.5 sigma and came off
+#   the boards (owner: "not all best performances show"). At 4, 8 sigma is
+#   32 points faster than the athlete's own median: a wrong distance or a
+#   merged person, not a PR. XCP_OUTLIER_SPREAD moves it.
 step 09d_outliers     "$PY" -u engine/rating_outliers.py --write --show 10 \
-                      --fast-sigma "${XCP_OUTLIER_SIGMA:-8}"
+                      --fast-sigma "${XCP_OUTLIER_SIGMA:-8}" \
+                      --min-spread "${XCP_OUTLIER_SPREAD:-4}"
 step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prepare
 # each sport in two halves on a date seam (XCP_RANK_SEAM), four streams
 # into one shadow: the row walk is Python per row and was 52 minutes
