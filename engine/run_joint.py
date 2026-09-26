@@ -1870,8 +1870,9 @@ def courseScales(spec, tilt_rows):
 
 def parseLevelGains(spec):
     """{level: gain} from 'college=0,hs=0.008,ms=0.012,elem=0.015' (log-time
-    fall-to-spring gain per pool level; None for nothing)."""
-    if not spec:
+    fall-to-spring gain per pool level; None for nothing). 'off' / 'none'
+    is nothing too, now that solve_env.sh sets a default to turn off."""
+    if not spec or str(spec).strip().lower() in ("off", "none", "0"):
         return None
     out = {}
     for part in str(spec).split(","):

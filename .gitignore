@@ -254,3 +254,4 @@ static/cards/
 # account pictures (283/305): uploaded on the server, never in git
 racecast/static/photos/
 racecast/static/mock/
+.pipeline.lock

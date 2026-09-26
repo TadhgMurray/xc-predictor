@@ -168,6 +168,11 @@ summarise() {
   if [ -n "$FAILED" ]; then
     echo "  FAILED STEPS:$FAILED"
     echo "  logs: $LOGDIR"
+    # ★ AND TELL THE OWNER (sweep, 2026-09-26): a failure used to be found
+    #   whenever someone next read this terminal. Never fails the run itself.
+    if [ "$DRY" -eq 0 ]; then
+      "$PY" scripts/notify_owner.py "$LOGDIR" $FAILED 2>&1 | tail -3 || true
+    fi
     exit 1
   fi
   echo "  all steps ok -- logs: $LOGDIR"
@@ -593,6 +598,17 @@ fi
 #   solve with their abilities intact -- off every board, because the fill
 #   and the board builds anti-join the list directly, but still perturbing
 #   everyone they raced. Out of the RATINGS needs --from 7 or lower.
+# ★ THE PROFESSIONAL ABILITY GATE (owner, 2026-09-22: "if they're sub
+#   14:00? for men, or sub 15:30? for women put in pro, otherwise trust
+#   grade"). pool_resolve reads pro_ability_season to decide who belongs in
+#   the pro pool; only the old Windows chain (run_pipeline.ps1) ever built
+#   it, so on this server the gate saw last season's table or none at all
+#   (sweep, 2026-09-26).
+# ⚠ AFTER 05, AND BEFORE 07 -- the ps1's own reasoning: it streams through
+#   the loader whose WHERE needs normalized_time (05 writes it), and 07_pack
+#   resolves the pools, so a table built after 07 is read a run late.
+step 05c_pro_ability  "$PY" -u engine/build_pro_ability.py --write
+
 if [ "$FROM" -le 7 ]; then
   if [ "$DRY" -eq 1 ]; then
     echo "  06_clear_cache : rm engine/data/{packed_XC_TF,pair_solve_cache}.npz"
@@ -997,6 +1013,9 @@ step 16_rowguard_apply     "$PY" -u scripts/apply_triage.py
 # ---- the owner's go/no-go ------------------------------------------- #
 bgwait
 step 17_checklist     "$PY" -u scripts/run_checklist.py
+# the status page's slow counts (tfrrs identity, rated rows, blank
+# athletes), recounted after the run so /account/status is current
+step 17b_status       "$PY" -u scripts/print_status.py
 
 # ---- the gentle vacuum, last ----------------------------------------- #
 # the boards tables are built with autovacuum off (createShadow); this is

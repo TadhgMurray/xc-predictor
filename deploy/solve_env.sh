@@ -195,6 +195,12 @@
 # ! XCP_TEAM_POOL=0 turns it off for one run.
 : "${XCP_TEAM_POOL:=1}"
 
+# ★ THE PER-LEVEL TF<->XC GAP, AS A DEFAULT (sweep, 2026-09-26). The owner
+#   has typed exactly this on every run since 2026-09-24 (HANDOFF-ENGINE
+#   §0), and a run where it was forgotten underrated every track athlete.
+#   A value already in the environment still wins, and 'off' turns it off.
+: "${XCP_SPORT_LEVEL_POOLS:=college=0.0037,hs=0.0092,ms=0.0191,elem=0.0186}"
+
 # --- housekeeping the pipeline expects -----------------------------------
 : "${XCP_DB_QUIET:=1}"
 
@@ -203,7 +209,7 @@ export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
        XCP_GAUGE_UNKNOWN_LENGTH XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE \
        XCP_BRACKET_XC_LEVEL XCP_BRACKET_XC_LEVEL_MODE \
        XCP_BRACKET_INDOOR_GATES \
-       XCP_IMPORTANCE XCP_TEAM_POOL XCP_DB_QUIET
+       XCP_IMPORTANCE XCP_TEAM_POOL XCP_DB_QUIET XCP_SPORT_LEVEL_POOLS
 
 # Anything else already in the environment is left alone, so a one-off
 #   XCP_PROBES=16 bash scripts/overnight_fit_pool_solve.sh
