@@ -643,8 +643,13 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                         (mt.division_distances -> r.div_id::text
                            ->> 'distance')::real,
                         mt.distance)::real AS dist_m,
-               {_meetClassSql("COALESCE(m.meet_name, mt.meet_name, '')",
-                              "COALESCE(mt.is_championship, 0) = 1")} AS meet_class,
+               -- ★ LOOKED UP PER NAME, NOT RUN PER ROW (ensurePackMeetClass,
+               --   2026-09-26); the in-line CASE is only the fallback for a
+               --   name the table has not seen.
+               COALESCE(CASE WHEN COALESCE(mt.is_championship, 0) = 1
+                             THEN mc.cls_flag ELSE mc.cls END,
+                        {_meetClassSql("COALESCE(m.meet_name, mt.meet_name, '')",
+                                       "COALESCE(mt.is_championship, 0) = 1")}) AS meet_class,
                r.time_seconds::real AS time_seconds,
                {_teamColumns('results')}
         FROM results r{_ageBandJoin('XC')}
@@ -664,6 +669,8 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
         -- no fan-out. Same join every other reader uses.
         LEFT JOIN dist_override dov
                ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
+        LEFT JOIN tmp_pack_meet_class mc
+               ON mc.name = COALESCE(m.meet_name, mt.meet_name, '')
         -- ★ THE MAJORITY GENDER, FROM A TABLE BUILT ONCE (ensurePackGender),
         --   NOT A SUBQUERY PER ROW. The lateral this replaces was an index
         --   probe plus a group-and-sort for every one of ~100M rows. Same
@@ -762,13 +769,18 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                --   Same parse the backfill uses, in SQL: digits, 'k' =
                --   thousands, 'mile' = 1609.34 each.
                COALESCE(m.distance_meters::real, {_eventMetersSql('r')}) AS dist_m,
-               {_meetClassSql("COALESCE(m.meet_name, '')")} AS meet_class,
+               -- ★ LOOKED UP PER NAME, NOT RUN PER ROW (ensurePackMeetClass,
+               --   2026-09-26); the in-line CASE is only the fallback.
+               COALESCE(mc.cls,
+                        {_meetClassSql("COALESCE(m.meet_name, '')")}) AS meet_class,
                r.time_seconds::real AS time_seconds,
                {_teamColumns('results_tf')}
         FROM results_tf r{_ageBandJoin('TF')}
         LEFT JOIN meets_tf m
                ON m.meet_id = r.meet_id AND m.div_id = r.div_id
               AND m.event_id = r.event_id AND m.source = r.source
+        LEFT JOIN tmp_pack_meet_class mc
+               ON mc.name = COALESCE(m.meet_name, '')
         -- ★ THE MAJORITY GENDER, FROM A TABLE BUILT ONCE (ensurePackGender),
         --   NOT A SUBQUERY PER ROW. The lateral this replaces was an index
         --   probe plus a group-and-sort for every one of ~100M rows. Same
@@ -1521,6 +1533,45 @@ def ensurePackGender(cur):
     cur.execute(_PACK_GENDER_SQL)
 
 
+# ★ THE MEET CLASS PER MEET NAME, ONCE PER STREAM (2026-09-26). The class is
+#   a function of the name (and, for tfrrs XC, the championship flag) and of
+#   nothing else, yet the queries ran its up-to-seven case-insensitive regexes
+#   on every one of ~100M rows. The same _meetClassSql now runs once per
+#   distinct name, twice over: `cls` without the flag, `cls_flag` with it
+#   true. A row picks cls_flag exactly when its own flag test was true, so it
+#   reads what the in-line CASE would have said.
+# ! EVERY NAME THE JOIN CAN PRODUCE IS HERE: the COALESCE in the query only
+#   ever yields a meet_name from the tables listed below, or ''. The query
+#   still falls back to the in-line CASE on a miss (a meet written between
+#   this build and the cursor's snapshot), so a miss can never read as 0.
+# ! NO INDEX ON name. A btree entry has a size limit a pathological name
+#   could exceed, and the pack hash-joins this table anyway.
+_MEET_CLASS_NAMES = {
+    "XC": """SELECT COALESCE(meet_name, '') FROM meets
+             UNION SELECT COALESCE(meet_name, '') FROM meets_tfrrs
+                   WHERE sport = 'XC'""",
+    "TF": "SELECT COALESCE(meet_name, '') FROM meets_tf",
+}
+
+
+def _packMeetClassSql(sport):
+    return f"""
+    DROP TABLE IF EXISTS tmp_pack_meet_class;
+    CREATE TEMP TABLE tmp_pack_meet_class AS
+    SELECT name,
+           {_meetClassSql("name")} AS cls,
+           {_meetClassSql("name", "TRUE")} AS cls_flag
+    FROM ({_MEET_CLASS_NAMES[sport]} UNION SELECT '') s (name);
+    ANALYZE tmp_pack_meet_class;
+"""
+
+
+def ensurePackMeetClass(cur, sport):
+    """Build tmp_pack_meet_class for this sport on this connection;
+    _xcQuery/_tfQuery join it."""
+    cur.execute(_packMeetClassSql(sport))
+
+
 def streamResults(sport: str, min_time: float = 200.0, max_time: float = 6000.0,
                   batch: int = 200_000):
     # Materialise the twin keys BEFORE opening the stream. This is one scan and
@@ -1536,6 +1587,7 @@ def streamResults(sport: str, min_time: float = 200.0, max_time: float = 6000.0,
     with getConn() as conn:
         with conn.cursor() as prep:
             ensurePackGender(prep)
+            ensurePackMeetClass(prep, sport)
         cur = conn.cursor(name=f"speed_ratings_{sport.lower()}")
         cur.itersize = batch
         cur.execute(sql)

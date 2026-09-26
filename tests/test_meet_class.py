@@ -51,6 +51,31 @@ def test_sql_is_the_same_rule_in_the_same_order():
     assert "%" not in s and "{" not in s and "}" not in s
 
 
+def test_the_pack_looks_the_class_up_by_name_under_the_same_rule():
+    """★ 2026-09-26: the pack builds tmp_pack_meet_class once per stream
+    instead of running the regexes on every row. The table must hold THIS
+    module's rule, both queries must join it, and the in-line CASE must stay
+    as the fallback for a name the table has not seen."""
+    os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+    sys.path.insert(0, os.path.join(_ROOT, "scripts"))
+    import speed_ratings_db as sdb
+    for sport in ("XC", "TF"):
+        t = sdb._packMeetClassSql(sport)
+        assert mcl.sql("name") + " AS cls," in t
+        assert mcl.sql("name", "TRUE") + " AS cls_flag" in t
+    xc, tf = sdb._xcQuery(200, 6000), sdb._tfQuery(200, 6000)
+    assert "LEFT JOIN tmp_pack_meet_class mc" in xc
+    assert "LEFT JOIN tmp_pack_meet_class mc" in tf
+    assert mcl.sql("COALESCE(m.meet_name, mt.meet_name, '')",
+                   "COALESCE(mt.is_championship, 0) = 1") in xc
+    assert mcl.sql("COALESCE(m.meet_name, '')") in tf
+    # built wherever the queries run
+    src = open(os.path.join(_ROOT, "engine", "speed_ratings_db.py")).read()
+    assert "ensurePackMeetClass(prep, sport)" in src
+    dump = open(os.path.join(_ROOT, "engine", "dump_pack_row.py")).read()
+    assert "ensurePackMeetClass(cur, sport)" in dump
+
+
 def test_the_season_window_still_exists_for_the_census():
     assert mcl.inWindow(np.array([0]), np.array([92.0]))[0]
     assert not mcl.inWindow(np.array([1]), np.array([40.0]))[0]

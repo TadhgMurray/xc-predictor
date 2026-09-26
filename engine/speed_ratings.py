@@ -1421,6 +1421,17 @@ def packResults(batches, today, merge=False):
     n_rows = 0
     _it = iter(batches)
 
+    # ★ THE ROW LOOP'S LOOKUPS, BOUND ONCE (2026-09-26). The import and the
+    #   three loaders below ran on every one of ~100M rows. Each loader caches
+    #   its table after its first call, so every later call only paid the
+    #   call and the global check -- small per row, real over the corpus.
+    # ! STILL FETCHED LAZILY, AT THE SAME POINT IN THE LOOP: a loader's first
+    #   call queries the database and prints its table, so calling them here
+    #   up front would move those lines and run them on a pack that never
+    #   reaches a row. None = not fetched yet; each returns a dict or a set.
+    from pool_resolve import teamLevelOf, UNATTACHED_TEAM_ID
+    _levels = _pro_teams = _unatt = None
+
     while True:
         _t0 = _clk()
         rows = next(_it, None)
@@ -1447,8 +1458,9 @@ def packResults(batches, today, merge=False):
             team_level, has_pros, no_team = None, False, False
             team_pro = False
             if len(r) > _SLUG:
-                from pool_resolve import teamLevelOf, UNATTACHED_TEAM_ID
-                team_level = teamLevelOf(r[_TEAM], r[_SLUG], loadAnetLevels())
+                if _levels is None:
+                    _levels = loadAnetLevels()
+                team_level = teamLevelOf(r[_TEAM], r[_SLUG], _levels)
                 # ★ NO TEAM AT ALL (owner, 2026-09-16: "If any school has
                 #   id == 0 we should just put them in pro"), and ungated --
                 #   see pool_resolve.UNATTACHED_TEAM_ID. Counted, because it
@@ -1465,7 +1477,10 @@ def packResults(batches, today, merge=False):
                 #   rule that repools rows out of the school boards must have
                 #   its cost visible in the census, exactly like no_team_pro.
                 try:
-                    team_pro = int(r[_TEAM]) in loadProTeams()
+                    _tid = int(r[_TEAM])         # first, as before: a bad id
+                    if _pro_teams is None:       # never triggered the load
+                        _pro_teams = loadProTeams()
+                    team_pro = _tid in _pro_teams
                 except (TypeError, ValueError):
                     team_pro = False
                 if team_pro:
@@ -1490,7 +1505,9 @@ def packResults(batches, today, merge=False):
             #   so testing no_team alone would have covered anet and missed
             #   every tfrrs row -- see loadUnattachedRaceLevel.
             race_top_level = None
-            unatt = loadUnattachedRaceLevel()
+            if _unatt is None:
+                _unatt = loadUnattachedRaceLevel()
+            unatt = _unatt
             if unatt:
                 try:
                     race_top_level = unatt.get((str(r[_SPORT]), int(r[_RID])))
