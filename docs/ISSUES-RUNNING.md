@@ -2442,3 +2442,33 @@ the key, so the lost black is not in the files. Repair, not yet run:
 (`enclosedHoles` ≥ 0.2%) from their `source_url` and writes them back only if
 the fixed key changes them. Check afterwards: the Jesuit (CA) crest, and a
 sample of the "re-keyed" list it prints for anything that got worse.
+
+## 2026-09-26 — 📋 LOGGED, NOT ACTIONED: indexable meet preview pages
+
+Owner: "I think the last big is good. For now just log it bcs I'd like to
+fix the model and engine first." Deferred until the model work is done.
+
+**The gap.** A shared prediction (`/predictions?s=<id>`) renders with the
+title "Predictions" and a canonical of plain `/predictions`
+(`templates/predictions.html` sets `meta_title`; `_meta.html` defaults the
+canonical to `request.path`), and the tables are drawn by JavaScript. So
+every meet's prediction reads to Google as one page, and none can rank
+for "[meet] 2026 predictions" -- the search that peaks the week before
+each invitational, conference and state meet.
+
+**The build.**
+- `/preview/<meet-slug>-<year>`, one per upcoming big meet, rendered on
+  the server: predicted team scores and top individuals as HTML, title
+  "[Meet] 2026 Predictions | Racecast", its own canonical, the share card
+  as `og:image`.
+- Which meets: the saved predictions (`shared_prediction`) and/or a
+  hand-kept list of the season's big meets, dated before the meet.
+- Into the sitemap (`build_sitemap.py`, a `previews` kind) and IndexNow.
+- A "This weekend" strip on the home page linking them.
+- After the meet: the same URL shows prediction against result (the
+  follow-up that earns trust), rather than going away.
+
+Until then, the no-code route: make the prediction 2-4 days out, post the
+short share link where the meet is discussed (r/Cross_Country race
+threads, LetsRun/MileSplit forums, state XC groups, team socials), and post
+the predicted-vs-actual after.
