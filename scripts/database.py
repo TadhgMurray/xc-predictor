@@ -85,7 +85,7 @@ _PG_CONFIG_WITH_TIMEOUT["application_name"] = os.environ.get("XCP_DB_APP") or "x
 #   drives it. The builders' own SET statements go through dbSetting() so
 #   they cannot ask for more than the cap. The site's service unit never
 #   sets the variable, so the site's connections are untouched.
-_QUIET_SETTINGS = {
+_QUIET_STRICT = {
     # ! 256MB, NOT 64MB (2026-09-15): a smaller sort budget makes a
     #   61.6M-row GROUP BY SPILL to disk, and temp-file I/O on the site's
     #   disk is exactly what the mode exists to prevent. One process, no
@@ -99,24 +99,58 @@ _QUIET_SETTINGS = {
     # site's disk queue
     "synchronous_commit": "off",
 }
+# ★★ BALANCED IS THE DEFAULT NOW (owner, 2026-09-26: "speed up every step in
+#    pipeline possible"). The strict caps made every index build serial at
+#    512MB, every scan single-worker and every builder one job wide -- the
+#    last full run took about 30 hours. They were set while every page
+#    request reached Postgres; the site is now served from Cloudflare's edge
+#    cache and the scraper that sent 1.5M requests a day is blocked, so the
+#    database has room. XCP_DB_QUIET=strict puts the old caps back.
+# ★ cursor_tuple_fraction = 1.0 ON EVERY PIPELINE CONNECTION. A named
+#   (streaming) cursor is planned for its first 10% of rows by default,
+#   which picks nested-loop index probes -- a dozen per row over 61.6M rows
+#   in the ranking build. Every pipeline cursor reads its query to the end,
+#   so plan for the end (panels.py found and fixed this for itself).
+_QUIET_SETTINGS = {
+    "work_mem": "512MB",
+    "maintenance_work_mem": "2GB",
+    "max_parallel_workers_per_gather": "2",
+    "max_parallel_maintenance_workers": "2",
+    "synchronous_commit": "off",
+    "cursor_tuple_fraction": "1.0",
+}
+
+
+def _caps():
+    """The caps in force: strict when XCP_DB_QUIET=strict, else balanced.
+    Read per call, so a process that sets the variable late still gets it."""
+    if os.environ.get("XCP_DB_QUIET", "0") == "strict":
+        return dict(_QUIET_STRICT, cursor_tuple_fraction="1.0")
+    return _QUIET_SETTINGS
 _QUIET_NICE = int(os.environ.get("XCP_DB_QUIET_NICE") or 10)
 
 
 def dbQuiet():
-    """Is the quiet (site-first) mode on for this process?"""
-    return os.environ.get("XCP_DB_QUIET", "0") == "1"
+    """Is the quiet (site-first) mode on for this process? '1' is the
+    balanced caps, 'strict' the old ones."""
+    return os.environ.get("XCP_DB_QUIET", "0") in ("1", "strict")
 
 
 def dbSetting(name, default):
     """The value a builder may SET for `name`: its own default, or the
     quiet cap when quiet mode is on and the cap is stricter by intent
     (the caps are absolute in quiet mode; a builder never out-asks it)."""
-    return _QUIET_SETTINGS.get(name, default) if dbQuiet() else default
+    return _caps().get(name, default) if dbQuiet() else default
 
 
 def dbJobs(default, quiet=1):
-    """How many database-heavy workers a builder may run side by side."""
-    return quiet if dbQuiet() else default
+    """How many database-heavy workers a builder may run side by side:
+    one in strict mode, up to two in the balanced default."""
+    if not dbQuiet():
+        return default
+    if os.environ.get("XCP_DB_QUIET") == "strict":
+        return quiet
+    return max(quiet, min(default, 2))
 
 
 _TUNED = {}          # id(conn) -> conn, connections already capped
@@ -136,7 +170,7 @@ def _quietTune(conn):
     global _QUIET_SAID
     applied, refused, niced = [], [], []
     with conn.cursor() as cur:
-        for name, value in _QUIET_SETTINGS.items():
+        for name, value in _caps().items():
             try:
                 cur.execute(f"SET {name} = %s", (value,))
                 applied.append(f"{name}={value}")

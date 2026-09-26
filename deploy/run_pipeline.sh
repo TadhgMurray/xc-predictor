@@ -40,15 +40,17 @@ export OMP_NUM_THREADS="$XCP_THREADS" OPENBLAS_NUM_THREADS="$XCP_THREADS" \
 # ★ AND INSIDE POSTGRES (owner, 2026-09-14: "especially the steps past the
 #   solve"). nice never reached the Postgres backends that do the boards'
 #   COPY, the heap rebuilds and the index builds; XCP_DB_QUIET=1 caps every
-#   pipeline connection (no parallel workers, 64MB work_mem, 512MB
-#   maintenance_work_mem, the backend reniced where the OS allows it) --
-#   see scripts/database.py. XCP_STREAMS is how many of the board row
-#   walks run side by side (was 4), XCP_COURSE_SHARDS the course-page
-#   workers (was 3). XCP_DB_QUIET=0 XCP_STREAMS=4 XCP_COURSE_SHARDS=3 is
-#   the old, site-blind speed.
+#   pipeline connection -- see scripts/database.py.
+# ★★ BALANCED, NOT STRICT, SINCE 2026-09-26 (owner: "speed up every step in
+#    pipeline possible"). XCP_DB_QUIET=1 is now 2 parallel workers, 512MB
+#    work_mem, 2GB maintenance_work_mem, two builder jobs, and every cursor
+#    planned to read to the end; the site is served from Cloudflare's cache
+#    and the scraper is blocked, so the strict caps (XCP_DB_QUIET=strict,
+#    with XCP_STREAMS=2 XCP_COURSE_SHARDS=2) were buying little. The board
+#    row walks run four at a time again and the course pages in three.
 export XCP_DB_QUIET="${XCP_DB_QUIET:-1}"
-XCP_STREAMS="${XCP_STREAMS:-2}"
-XCP_COURSE_SHARDS="${XCP_COURSE_SHARDS:-2}"
+XCP_STREAMS="${XCP_STREAMS:-4}"
+XCP_COURSE_SHARDS="${XCP_COURSE_SHARDS:-3}"
 ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 
 FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""

@@ -26,13 +26,24 @@ def test_the_caps_apply_only_in_quiet_mode(monkeypatch):
     assert not db.dbQuiet()
     assert db.dbSetting("maintenance_work_mem", "8GB") == "8GB"
     assert db.dbJobs(3) == 3
+    # the balanced default (2026-09-26): room to work, still bounded
     monkeypatch.setenv("XCP_DB_QUIET", "1")
+    assert db.dbQuiet()
+    assert db.dbSetting("maintenance_work_mem", "8GB") == "2GB"
+    assert db.dbSetting("work_mem", "2GB") == "512MB"
+    assert db.dbSetting("max_parallel_maintenance_workers", 6) == "2"
+    assert db.dbSetting("max_parallel_workers_per_gather", 4) == "2"
+    assert db.dbSetting("cursor_tuple_fraction", "0.1") == "1.0"
+    assert db.dbSetting("lock_timeout", "5s") == "5s"        # not a cap: untouched
+    assert db.dbJobs(3) == 2
+    assert db.dbJobs(1) == 1
+    # the old site-first caps, on request
+    monkeypatch.setenv("XCP_DB_QUIET", "strict")
     assert db.dbQuiet()
     assert db.dbSetting("maintenance_work_mem", "8GB") == "512MB"
     assert db.dbSetting("work_mem", "2GB") == "256MB"
     assert db.dbSetting("max_parallel_maintenance_workers", 6) == "0"
     assert db.dbSetting("max_parallel_workers_per_gather", 4) == "0"
-    assert db.dbSetting("lock_timeout", "5s") == "5s"        # not a cap: untouched
     assert db.dbJobs(3) == 1
 
 
@@ -60,7 +71,8 @@ def test_a_quiet_connection_is_capped_once_and_the_backend_is_reniced_best_effor
     conn = _Conn()
     db._quietTune(conn)
     sets = [p[0] for sql, p in conn.log if sql.startswith("SET ") and p]
-    assert "256MB" in sets and "512MB" in sets and "0" in sets and "off" in sets
+    assert "512MB" in sets and "2GB" in sets and "2" in sets and "off" in sets
+    assert "1.0" in sets                               # cursor_tuple_fraction
     assert any("application_name" in sql for sql, _ in conn.log)
     assert seen["nice"] == (4242, db._QUIET_NICE)
     assert conn.commits == 1
@@ -78,10 +90,10 @@ def test_a_denied_renice_is_survived(monkeypatch):
 
 def test_the_builders_ask_through_the_caps(monkeypatch):
     monkeypatch.setenv("XCP_DB_QUIET", "1")
-    assert mc._dbSetting("maintenance_work_mem", "8GB") == "512MB"
+    assert mc._dbSetting("maintenance_work_mem", "8GB") == "2GB"
     conn = _Conn()
     applied = dbfast.tuneSession(conn, quiet=True)
-    assert "work_mem=256MB" in applied and "max_parallel_maintenance_workers=0" in applied
+    assert "work_mem=512MB" in applied and "max_parallel_maintenance_workers=2" in applied
     monkeypatch.delenv("XCP_DB_QUIET")
     assert mc._dbSetting("maintenance_work_mem", "8GB") == "8GB"
     src = open(os.path.join(_ROOT, "engine", "merge_column.py")).read()
@@ -91,10 +103,10 @@ def test_the_builders_ask_through_the_caps(monkeypatch):
     assert "_INDEX_JOBS = dbJobs(3)" in src
 
 
-def test_the_pipeline_turns_quiet_on_and_runs_fewer_streams():
+def test_the_pipeline_turns_quiet_on_and_runs_four_streams():
     sh = open(os.path.join(_ROOT, "deploy", "run_pipeline.sh")).read()
     assert 'export XCP_DB_QUIET="${XCP_DB_QUIET:-1}"' in sh
-    assert 'XCP_STREAMS="${XCP_STREAMS:-2}"' in sh
+    assert 'XCP_STREAMS="${XCP_STREAMS:-4}"' in sh
     assert '"$inflight" -ge "$XCP_STREAMS"' in sh
     assert 'shards 12b_course_pages "$XCP_COURSE_SHARDS"' in sh
     assert sh.index('export XCP_DB_QUIET') < sh.index('step 01_season_year')
