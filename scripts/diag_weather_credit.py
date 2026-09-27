@@ -6,6 +6,8 @@ enough? Measured on the ratings, not on the model.
     /srv/venv/bin/python scripts/diag_weather_credit.py                 # both sports, since 2025
     /srv/venv/bin/python scripts/diag_weather_credit.py --sport XC --since 2024-08-01
     /srv/venv/bin/python scripts/diag_weather_credit.py --sport TF --list 40
+    /srv/venv/bin/python scripts/diag_weather_credit.py --sport XC --since 2015-08-01 \
+        --course Glendoveer --course Ultimook          # every race day there, year by year
 
 ★ WHY (owner, 2026-09-26: "even just beyond the Celsius weather doesn't
   feel right. I see a ton of rain races not getting accurate benefit").
@@ -30,6 +32,18 @@ enough? Measured on the ratings, not on the model.
   wet one-off course is credited through its difficulty, not its weather --
   which is why the tables split races on courses raced once from courses
   raced on several days.
+
+★ AND THE SAME COURSE AGAINST ITSELF (owner, 2026-09-27: "when the weather
+  is good [Glendoveer, Ultimook] is A LOT less difficult, but since weather
+  corrections aren't doing enough, the easy years aren't penalized
+  enough"). Across all courses a bucket mixes hard courses with easy ones.
+  The "in-course" column takes each race's gap less its course's average
+  gap over the course's race days, so it compares a course only with its
+  own other years. If the weather and the day term did their job it reads
+  about 0 in every bucket. A mild dry bucket above 0 and a wet or hot one
+  below 0 is the owner's point, measured: the good years are rated too
+  high and the bad years too low, by the numbers shown. --course lists
+  every race day at the named courses with its weather and gap.
 
 READ-ONLY. Minutes: one pass over the rated rows since --since and one
 weather_grid query for the race days.
@@ -204,6 +218,26 @@ def _pct(x):
     return f"{100.0 * math.expm1(x):+6.2f}%"
 
 
+def withinCourse(races):
+    """Each race's gap less its course's runner-weighted mean gap, for
+    courses with two or more race days here (None for the rest)."""
+    by = {}
+    for r in races:
+        if not r["once"]:
+            by.setdefault(r["ck"], []).append(r)
+    for rs in by.values():
+        if len(rs) < 2:
+            for r in rs:
+                r["within"] = None
+            continue
+        w = sum(r["n"] for r in rs)
+        mean = sum(r["gap"] * r["n"] for r in rs) / w
+        for r in rs:
+            r["within"] = r["gap"] - mean
+    for r in races:
+        r.setdefault("within", None)
+
+
 def report(sport, races, list_n):
     print(f"\n{'=' * 78}\n{sport}: {len(races):,} races with weather and "
           f"at least 3 runners who have other races within the window\n"
@@ -212,7 +246,9 @@ def report(sport, races, list_n):
           "races\n          (negative = rated LOWER here: the race was short-"
           "changed)\n  vs dry = the same, minus the driest bucket's gap\n"
           "  model = what the weather correction credited (rain / mud / temp "
-          "terms)\n  rows weighted by runner count; 'once' = the course has one "
+          "terms)\n  in-course = the gap against the SAME course's other race "
+          "days (0 = the\n          weather and day terms did their job)\n"
+          "  rows weighted by runner count; 'once' = the course has one "
           "race day in this data")
     for title, (feat, edges) in BUCKETS.items():
         vals = np.array([r["wx"].get(feat) if r["wx"].get(feat) is not None
@@ -221,10 +257,12 @@ def report(sport, races, list_n):
         n = np.array([r["n"] for r in races], dtype=np.float64)
         once = np.array([r["once"] for r in races])
         cr = np.array([r["credit"] for r in races])            # (k, 4)
+        wi = np.array([r["within"] if r["within"] is not None else np.nan
+                       for r in races], dtype=np.float64)
         print(f"\n  {title}")
         print(f"    {'bucket':<14}{'races':>7}{'gap':>9}{'vs dry':>9}"
               f"{'model':>9}{'rain':>8}{'mud':>8}{'temp':>8}"
-              f"{'once: races':>13}{'gap':>9}")
+              f"{'once: races':>13}{'gap':>9}{'in-course':>11}")
         base = None
         for b in range(len(edges)):
             lo = edges[b]
@@ -239,10 +277,13 @@ def report(sport, races, list_n):
             mo = m & once
             go = (f"{_pct(float(np.average(gap[mo], weights=n[mo])))}"
                   if mo.sum() >= 5 else "      -")
+            mw = m & np.isfinite(wi)
+            gw = (f"{_pct(float(np.average(wi[mw], weights=n[mw])))}"
+                  if mw.sum() >= 5 else "      -")
             lab = f"{lo:g}-{hi:g}" if np.isfinite(hi) else f"{lo:g}+"
             print(f"    {lab:<14}{int(m.sum()):>7,}{_pct(g):>9}{_pct(g - base):>9}"
                   f"{_pct(c[0]):>9}{_pct(c[1]):>8}{_pct(c[2]):>8}{_pct(c[3]):>8}"
-                  f"{int(mo.sum()):>13,}{go:>9}")
+                  f"{int(mo.sum()):>13,}{go:>9}{gw:>11}")
     if list_n:
         wet = sorted(races, key=lambda r: -((r["wx"].get("precip") or 0.0)
                                             + 0.5 * r["wx"].get("rain_before", 0.0)))
@@ -258,7 +299,31 @@ def report(sport, races, list_n):
                   f"{(r['course'] or '')[:30]}{' (once)' if r['once'] else ''}")
 
 
-def runSport(conn, sport, since, window, list_n):
+def courseDays(races, names):
+    """Every race day at a course whose name contains one of `names`, year
+    by year, with its weather, gap and in-course gap."""
+    want = [n.lower() for n in names]
+    hit = sorted((r for r in races if r["course"]
+                  and any(w in r["course"].lower() for w in want)),
+                 key=lambda r: (r["course"], r["iso"]))
+    print(f"\n  Race days at {', '.join(names)} ({len(hit)}):")
+    if not hit:
+        print("    none (the name is matched against the backfill's course name;"
+              " try a shorter piece of it)")
+        return
+    print(f"    {'date':<11}{'meet':>10} {'rain':>6}{'before':>8}{'soil':>6}"
+          f"{'temp':>6}{'wind':>6}{'runners':>8}{'gap':>9}{'in-course':>11}{'model':>9}  course")
+    for r in hit:
+        w = r["wx"]
+        wi = _pct(r["within"]) if r["within"] is not None else "      -"
+        print(f"    {r['iso']:<11}{r['meet']:>10} {(w.get('precip') or 0):>6.1f}"
+              f"{w.get('rain_before', 0):>8.1f}{(w.get('soil') or 0):>6.2f}"
+              f"{(w.get('apparent_temp') or 0):>6.0f}{(w.get('wind') or 0):>6.1f}"
+              f"{r['n']:>8}{_pct(r['gap']):>9}{wi:>11}{_pct(r['credit'][0]):>9}  "
+              f"{r['course'][:30]}")
+
+
+def runSport(conn, sport, since, window, list_n, courses=()):
     art = nd._weatherArtifactFor(sport)
     if art is None:
         print(f"\n{sport}: no weather artifact loaded -- nothing to compare against")
@@ -322,10 +387,13 @@ def runSport(conn, sport, since, window, list_n):
         if cr is None:
             continue
         ck = course or f"cell:{clat},{clon}:{s_}:{m_}"
-        races.append(dict(src=s_, meet=m_, iso=iso_, course=course, wx=wx,
+        races.append(dict(src=s_, meet=m_, iso=iso_, course=course, wx=wx, ck=ck,
                           n=int(g_n[k]), gap=float(g_sum[k] / g_n[k]),
                           credit=cr, once=len(course_days.get(ck, ())) == 1))
+    withinCourse(races)
     report(sport, races, list_n)
+    if courses:
+        courseDays(races, courses)
 
 
 def main():
@@ -335,11 +403,14 @@ def main():
     ap.add_argument("--window", type=int, default=30,
                     help="days either side for the runner's own other races")
     ap.add_argument("--list", type=int, default=25, help="wettest races to list")
+    ap.add_argument("--course", action="append", default=[],
+                    help="list every race day at courses whose name contains this "
+                         "(repeatable)")
     a = ap.parse_args()
     sports = ("XC", "TF") if a.sport == "both" else (a.sport,)
     with getConn() as conn:
         for sp in sports:
-            runSport(conn, sp, a.since, a.window, a.list)
+            runSport(conn, sp, a.since, a.window, a.list, a.course)
         conn.rollback()
 
 

@@ -2548,3 +2548,24 @@ Now (engine/twin_flag.py):
   now keeps last run's flags too, instead of dropping them.
 - `python engine/twin_flag.py --explain TF:dup_race_copy` prints a rule's
   plan without running it. "Nested Loop" in it is the problem.
+
+## 2026-09-27 — good-weather years at hard courses rated too high? (MEASURING)
+
+Owner: "part of the issue with races like Ultimook/Glendoveer is the
+weather. When the weather is good the course is a lot less difficult, but
+since weather corrections aren't doing enough, the easy years aren't
+penalized enough." The course difficulty is per (course, 2-year era); a
+single day's conditions reach a rating only through the weather correction
+and the joint solve's shrunk race-day term. If those under-correct, a mild
+dry year at a hard course is charged the course's average difficulty and
+its runners rate high.
+
+Test (scripts/diag_weather_credit.py): new "in-course" column -- each
+race's gap (its runners here against their own other races within 30 days)
+less its course's average gap, so a course is compared only with its own
+other years. About 0 in every bucket = handled; mild/dry above 0 and
+wet/hot below 0 = the owner's point, by the amount shown. `--course
+Glendoveer --course Ultimook` lists their race days year by year.
+The fix, if it measures: a race-day term that the weather cannot absorb
+is shrunk less (or the weather betas are too small; the bucket's "model"
+column says which).
