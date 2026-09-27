@@ -108,6 +108,7 @@ def test_rules_on_fixtures():
             got = [r[0] for r in cur.fetchall()]
             assert got == _EXPECTED[(sport, reason)], (sport, reason, got)
     # and the build writes the union, earlier reasons winning the key
+    _stubSwap()
     TF.build(conn, write=True)
     cur.execute("SELECT reason, count(*) FROM result_twin GROUP BY 1 ORDER BY 1")
     by = dict(cur.fetchall())
@@ -115,3 +116,57 @@ def test_rules_on_fixtures():
     assert by["dup_same_feed"] == 2          # 502 and 1602 file here, not as cross-date
     conn.rollback()
 
+
+
+def _stubSwap():
+    """The module stub for database has no swapTable; the real one is a
+    lock-guarded DROP and RENAME, which is all a scratch database needs."""
+    def swap(conn, live, new):
+        with conn.cursor() as c:
+            c.execute(f"DROP TABLE IF EXISTS {live}")
+            c.execute(f"ALTER TABLE {new} RENAME TO {live}")
+    sys.modules["database"].swapTable = swap
+
+
+def test_rules_plan_without_nested_loops():
+    """2026-09-27: track dup_race_copy ran over 24 h because the planner put
+    a HAVING-built CTE at one row and self-joined it in a nested loop."""
+    assert "SET enable_nestloop = off" in TF.SESSION
+    src = read("engine", "twin_flag.py")
+    assert "_session(conn, cur)" in src.split("def build(")[1]
+
+
+def test_a_rule_past_its_limit_keeps_last_runs_flags():
+    import pytest
+    dsn = os.environ.get("XCP_TWIN_TEST_DSN")
+    if not dsn:
+        pytest.skip("set XCP_TWIN_TEST_DSN to a scratch Postgres to run the rules")
+    import importlib
+    for name in [n for n in sys.modules if n == "psycopg2" or n.startswith("psycopg2.")]:
+        if not hasattr(sys.modules[name], "__file__"):
+            del sys.modules[name]
+    psycopg2 = importlib.import_module("psycopg2")
+    importlib.import_module("psycopg2.errors")
+    conn = psycopg2.connect(dsn)
+    cur = conn.cursor()
+    cur.execute("DROP TABLE IF EXISTS result_twin, result_twin_new")
+    TF.ensureTable(cur)
+    cur.execute("INSERT INTO result_twin VALUES ('XC', 999, 'twin_race'), ('XC', 998, 'twin_person')")
+    saved = TF.RULES, TF.TABLES, TF.RULE_TIMEOUT
+    try:
+        TF.TABLES = {"XC": "results"}
+        TF.RULES = (("twin_race", lambda t, s: "SELECT 1::bigint AS result_id FROM pg_sleep(2)"),
+                    ("twin_person", lambda t, s: "SELECT 5::bigint AS result_id"))
+        TF.RULE_TIMEOUT = 0.2
+        _stubSwap()
+        TF.build(conn, write=True)
+    finally:
+        TF.RULES, TF.TABLES, TF.RULE_TIMEOUT = saved
+    cur = conn.cursor()
+    cur.execute("SELECT result_id, reason FROM result_twin ORDER BY 1")
+    assert cur.fetchall() == [(5, "twin_person"), (999, "twin_race")], \
+        "the slow rule keeps last run's flags; the rule that ran is rebuilt"
+    cur.execute("SHOW statement_timeout")
+    assert cur.fetchone()[0] == "0", "the limit does not outlive the rules"
+    cur.execute("DROP TABLE result_twin")
+    conn.commit()

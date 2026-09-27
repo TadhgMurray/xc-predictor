@@ -2525,3 +2525,26 @@ Next, larger (each needs a measured run to confirm):
 - NOT MERGED 08 warm start: it works (same answer to the solver's
   tolerance) but only pass one of five speeds up, ~20% on a normal day's
   change -- about 4% of the step -- for ~700 lines and +0.5 GB state.
+
+## 2026-09-27 — 04c stuck over 24 h in track's dup_race_copy (FIXED IN CODE)
+
+The run sat in 04c_twins for more than a day after `[TF] dup_cross_date
+152,563 (5473s)`: the next rule, dup_race_copy, took 557 s on 2026-09-07.
+Cause, reproduced on a scratch Postgres 16: the rule self-joins a CTE built
+from a `HAVING count(*) BETWEEN 2 AND 8`, the planner puts that CTE at ONE
+row, and joins `rows_ a` to `rows_ b` in a nested loop -- every row against
+every row. With 2M repeated-time rows the old plan was still running when
+cancelled at 3 min; with nested loops off, 45 s. On the server the CTE is
+tens of millions of rows, so the old plan cannot finish. Whether a run got
+the good plan or the bad one depended on the statistics that day.
+
+Now (engine/twin_flag.py):
+- the rules' session has `enable_nestloop = off`; every join in every rule
+  has an equality key, so each is a hash join. This likely speeds up TF
+  dup_cross_date as well (its `c2` self-join has the same shape).
+- no rule may run past XCP_TWIN_RULE_TIMEOUT seconds (default 7200). A
+  rule that does is cancelled and keeps LAST run's flags for that rule; the
+  log says `TIMED OUT ... N flags kept from the last run`. XCP_TWIN_SKIP
+  now keeps last run's flags too, instead of dropping them.
+- `python engine/twin_flag.py --explain TF:dup_race_copy` prints a rule's
+  plan without running it. "Nested Loop" in it is the problem.

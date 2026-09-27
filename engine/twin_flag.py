@@ -3,6 +3,7 @@ twin_flag.py -- one physical race stored twice, flagged ONCE, by result_id.
 
     python engine/twin_flag.py            # report: counts and samples
     python engine/twin_flag.py --write    # (re)build result_twin
+    python engine/twin_flag.py --explain TF:dup_race_copy   # one rule's plan, not run
 
 Pipeline step 04c, before the pack. Issues 15 and 94.
 
@@ -352,42 +353,111 @@ RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("dup_race_copy", dupRaceCopySql))
 
 
+# ★ NO NESTED LOOPS (2026-09-27: run stuck over 24 h in track's
+#   dup_race_copy, a rule that took 557 s on 2026-09-07). The rules group
+#   and self-join CTEs, and Postgres cannot estimate a CTE built from a
+#   HAVING: EXPLAIN on a 4M-row copy put rows_ at ONE row and joined
+#   rows_ a to rows_ b in a nested loop -- every row against every row.
+#   On the server rows_ is tens of millions, so that is n^2, forever.
+#   Every join in every rule has an equality key, so with nested loops off
+#   each one is a hash join: the plan the rules were written for.
+SESSION = ("SET work_mem = '2GB'", "SET max_parallel_workers_per_gather = 4",
+           "SET enable_nestloop = off")
+
+# ★ NO RULE GETS TO HOLD THE PIPELINE. A rule that runs past this many
+#   seconds is cancelled and its flags from the LAST run are carried over
+#   (stale by one run is better than a day lost). XCP_TWIN_RULE_TIMEOUT=0
+#   turns the limit off.
+RULE_TIMEOUT = int(os.environ.get("XCP_TWIN_RULE_TIMEOUT", "7200"))
+
+
+def _session(conn, cur):
+    """The rules' settings, for this session only: memory so the hash
+    passes do not spill, and no nested loops (SESSION says why)."""
+    for stmt in SESSION:
+        try:
+            cur.execute(stmt)
+        except Exception:                        # noqa: BLE001
+            conn.rollback()
+
+
+def carryOver(cur, sport, reason):
+    """Last run's flags for one rule, into result_twin_new. The number
+    carried; 0 when there is no last run."""
+    cur.execute("SELECT to_regclass('result_twin')")
+    if cur.fetchone()[0] is None:
+        return 0
+    cur.execute("""
+        INSERT INTO result_twin_new (sport, result_id, reason)
+        SELECT sport, result_id, reason FROM result_twin
+        WHERE  sport = %s AND reason = %s
+        ON CONFLICT DO NOTHING""", (sport, reason))
+    return cur.rowcount
+
+
+def explain(conn, which):
+    """Print the plan (no run) of one rule, e.g. TF:dup_race_copy, under
+    the settings build() uses. dup_cross_date builds its meet pairs first."""
+    sport, _, reason = which.partition(":")
+    fn = dict(RULES)[reason]
+    table = TABLES[sport]
+    with conn.cursor() as cur:
+        _session(conn, cur)
+        if reason == "dup_cross_date":
+            prepareCrossDate(cur, table, sport)
+        cur.execute(f"EXPLAIN {fn(table, sport)}")
+        for (line,) in cur.fetchall():
+            print(line)
+    conn.rollback()
+
+
 def build(conn, write=False):
+    import psycopg2.errors
     with conn.cursor() as cur:
         ensureTable(cur)
-        # the rules are hash passes over the whole table; give them memory
-        # so they do not spill, for this session only
-        for stmt in ("SET work_mem = '2GB'", "SET max_parallel_workers_per_gather = 4"):
-            try:
-                cur.execute(stmt)
-            except Exception:                        # noqa: BLE001
-                conn.rollback()
+        _session(conn, cur)
         if write:
             cur.execute("CREATE TABLE result_twin_new (LIKE result_twin INCLUDING ALL)")
         # ! XCP_TWIN_SKIP=dup_cross_date,dup_race_copy skips named rules for
         #   one run (2026-09-06): a rule that stalls should cost the run
-        #   that rule, not the whole pipeline. Says so in the log.
+        #   that rule, not the whole pipeline. Says so in the log; since
+        #   2026-09-27 a skipped rule keeps its flags from the last run.
         skip = {r.strip() for r in os.environ.get("XCP_TWIN_SKIP", "").split(",") if r.strip()}
         for sport, table in TABLES.items():
             for reason, fn in RULES:
                 t0 = time.time()
                 if reason in skip:
-                    print(f"  [{sport}] {reason:<14} skipped (XCP_TWIN_SKIP)", flush=True)
+                    kept = carryOver(cur, sport, reason) if write else 0
+                    print(f"  [{sport}] {reason:<14} skipped (XCP_TWIN_SKIP); "
+                          f"{kept:,} flags kept from the last run", flush=True)
                     continue
-                if reason == "dup_cross_date":
-                    prepareCrossDate(cur, table, sport)
-                if write:
-                    # earlier reasons win the primary key: a row that is a
-                    # cross-feed twin is filed as one, not as a feed dup
-                    cur.execute(f"""
-                        INSERT INTO result_twin_new (sport, result_id, reason)
-                        SELECT %s, s.result_id, %s FROM ({fn(table, sport)}) s
-                        ON CONFLICT DO NOTHING
-                    """, (sport, reason))
-                    n = cur.rowcount
-                else:
-                    cur.execute(f"SELECT count(*) FROM ({fn(table, sport)}) s")
-                    n = cur.fetchone()[0]
+                cur.execute("SAVEPOINT twin_rule")
+                cur.execute(f"SET statement_timeout = {int(RULE_TIMEOUT * 1000)}")
+                try:
+                    if reason == "dup_cross_date":
+                        prepareCrossDate(cur, table, sport)
+                    if write:
+                        # earlier reasons win the primary key: a row that is a
+                        # cross-feed twin is filed as one, not as a feed dup
+                        cur.execute(f"""
+                            INSERT INTO result_twin_new (sport, result_id, reason)
+                            SELECT %s, s.result_id, %s FROM ({fn(table, sport)}) s
+                            ON CONFLICT DO NOTHING
+                        """, (sport, reason))
+                        n = cur.rowcount
+                    else:
+                        cur.execute(f"SELECT count(*) FROM ({fn(table, sport)}) s")
+                        n = cur.fetchone()[0]
+                except psycopg2.errors.QueryCanceled:
+                    # the SET above is undone with the savepoint
+                    cur.execute("ROLLBACK TO SAVEPOINT twin_rule")
+                    kept = carryOver(cur, sport, reason) if write else 0
+                    print(f"  [{sport}] {reason:<14} TIMED OUT after {time.time() - t0:.0f}s "
+                          f"(XCP_TWIN_RULE_TIMEOUT={RULE_TIMEOUT}); {kept:,} flags kept "
+                          "from the last run", flush=True)
+                    continue
+                cur.execute("RESET statement_timeout")
+                cur.execute("RELEASE SAVEPOINT twin_rule")
                 print(f"  [{sport}] {reason:<14} {n:>12,}  ({time.time() - t0:.0f}s)",
                       flush=True)
         if write:
@@ -406,9 +476,14 @@ def build(conn, write=False):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true")
+    ap.add_argument("--explain", metavar="SPORT:RULE",
+                    help="print one rule's plan without running it, e.g. TF:dup_race_copy")
     args = ap.parse_args()
     with getConn() as conn:
-        build(conn, write=args.write)
+        if args.explain:
+            explain(conn, args.explain)
+        else:
+            build(conn, write=args.write)
 
 
 if __name__ == "__main__":
