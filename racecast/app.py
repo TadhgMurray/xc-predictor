@@ -2366,8 +2366,11 @@ def dedupe_races(races):
     """
     races = _merge_by_canon(races)
     races = _merge_cross_source(races)
-    # newest first; on one day the later round on top (round_order)
-    races.sort(key=lambda r: (r["date"], round_order(r)), reverse=True)
+    # newest first; on one day the later round on top (round_order).
+    # ! THE DAY, NOT THE STRING: the feeds store the date in different
+    #   shapes ('2025-06-11' and '2025-06-11T00:00:00'), and compared whole
+    #   the longer string won before the round was ever read.
+    races.sort(key=lambda r: (str(r["date"] or "")[:10], round_order(r)), reverse=True)
     return races
 
 

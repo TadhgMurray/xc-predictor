@@ -33,7 +33,13 @@ def test_same_day_final_on_top():
         {"date": "2026-05-09", "sport": "TF", "event": "400m Final", "round": None, "id": "f2"},
         {"date": "2026-05-09", "sport": "TF", "event": "400m Heats", "round": None, "id": "h"},
     ]
-    races.sort(key=lambda r: (r["date"], A.round_order(r)), reverse=True)
-    assert [r["id"] for r in races] == ["next", "f", "p", "f2", "s", "h"]
-    src = open(os.path.join(_ROOT, "racecast", "app.py")).read()
-    assert 'races.sort(key=lambda r: (r["date"], round_order(r)), reverse=True)' in src
+    assert [r["id"] for r in A.dedupe_races(races)] == ["next", "f", "p", "f2", "s", "h"]
+
+
+def test_date_shapes_do_not_beat_the_round():
+    # the prelim stored with a time on its date, the final without
+    races = [
+        {"date": "2025-06-11", "sport": "TF", "event": "1500m", "round": "Finals", "id": "f"},
+        {"date": "2025-06-11T00:00:00", "sport": "TF", "event": "1500m", "round": "Prelims", "id": "p"},
+    ]
+    assert [r["id"] for r in A.dedupe_races(races)] == ["f", "p"]
