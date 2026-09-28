@@ -2665,3 +2665,48 @@ whole weather_grid first; same rows to float precision on a scratch DB),
 rows load a batch of columns at a time, the undo runs once per race, the
 two-way demeaning stops when a pass moves nothing, and each stage prints
 its seconds.
+
+## 2026-09-28 — 📋 LOGGED, NOT ACTIONED: summer 800s rated ~92, an 880y on top of all-time, foreign Olympians on the HS all-time board
+
+Owner: "just log these for now".
+
+**1. Post-collegiate summer 800m finals rated in the low 90s.** One athlete's
+page (a college 1500 runner):
+
+    Jul 19, 2025  Stumptown Twilight           800m Final    1:44.89  1st  92.4  0.0%  PR SR
+    Jul 12, 2025  Sound Running Sunset Tour    800m Final    1:46.25  1st  91.2  0.0%  SR
+    Jun 11, 2025  NCAA D1 Outdoor Champs       1500m Prelims 3:52.76  31st 138.6 0.0%
+
+A 1:44.89 is worth far more than a 3:52.76 1500, not 46 points less. Both
+summer rows are open/pro meets after the college season: suspect the pool
+(the row priced in a pool whose mean does not fit -- masters, open, or the
+wrong gender), or the 800 read as another distance. Check the rows' pool
+and normalized_time (scripts/explain_joint_row.py --tf <id>, diag_row_weather).
+
+**2. The HS all-time board's #1 is an 880-yard run.** "the best performance
+of all time being an 880Y 1:53 isn't right": Jonathon Riley, Brookline MA,
+1997-06-07, 159.8. An 880y is 804.67 m; 159.8 is what a 1:53 is worth if it
+is read as 880 METRES (about a 1:42.7 800). Suspect the event parser taking
+"880Y"/"880 yards" as 880 m. Others on the page from yards eras or odd
+events to check the same way: Mike Flynn and Michael Charron (Griswold CT,
+1999-2000), Will Jackson and Michael Katzeff (Brookline MA, 2009-01-21,
+same day -- an indoor meet, maybe an unbanked or short track), Larry
+Cardona (Garfield CA 2004), Michael Granville (Bell Gardens CA 1996).
+
+**3. Foreign national teams on the US HS all-time board, as US towns:**
+Joao Baptista N'Tyamba "Angola IN" (1992-08-09 and 1995-03-10), Vyacheslav
+Shabunin "Russia OH" (1996-08-04), Clive Terrelonge "Jamaica CA"
+(1992-08-09, the Barcelona Olympics). Angola, Russia and Jamaica are the
+names NATIONAL_TEAMS left out ON PURPOSE because they are also US towns
+(Angola IN, Russia OH), so the state gate then reads a US state. A national
+team is an Olympic/World meet entry, not a town: the meet (Olympics, World
+Championships) or the athlete's other rows say which. Also "Unknown, Puerto
+Rico, CAROLINA" (2026-02-06, 147.9): a foreign row with no name.
+
+**4. Two "Unknown" names on the board:** #29 (Puerto Rico) and #48
+("Enclave DC MA", 2025-06-14, 147.3). fillUnknownNames covers race pages;
+the all-time board needs the same fill.
+
+**5. Non-school entries:** Carter Vangessel "Indiana BLAST Track Club IN"
+(grade -, 2022-01-08, 154.8, #2 all time) -- a club row with no grade on the
+HS board; check its pool and whether the mark is real.
