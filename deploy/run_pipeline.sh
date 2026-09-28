@@ -749,9 +749,10 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   average (bracket_engine.placeClusters). Needs a pack built with the
   #   course coordinates (07_pack from 2026-09-14 on).
   # ★ XCP_COURSE_SCALE (2026-09-15): the per-sport multiplier on the bracket
-  #   engine's course effects, 'fit' by default (from the tilt-by-band
-  #   table, so the voters' implied multiplier equals the applied one),
-  #   'off', or 'XC=1.1,TF=1'. XCP_SPORT_LEVEL_POOLS='college=0,hs=0.008,
+  #   engine's course effects, 'fit' by default (since 2026-09-28 from the
+  #   tilt-by-races rows of courses with 4+ races, where the prior's in-sample
+  #   signature does not pose as a scale; 'bands' is the old all-voter
+  #   reading that put XC at x1.11), 'off', or 'XC=1.1,TF=1'. XCP_SPORT_LEVEL_POOLS='college=0,hs=0.008,
   #   ms=0.012,elem=0.015' states the fall-to-spring gain per pool level
   #   that the go-live shifts the track rows to show; scripts/
   #   sport_level_fit.py measures it from the boards.

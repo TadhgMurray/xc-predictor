@@ -1455,6 +1455,10 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     D_cell_raw = np.where(w_c > 0, num_c / np.maximum(w_c, 1e-12), np.nan)
     tilt_bands = tiltByBand(z, a_local, h, D, cell, vote, rating, cell_sport)
     tilt_races = tiltByRaces(z, a_local, h, D, cell, vote, races_per_cell, cell_sport)
+    # the same band table on the courses the prior barely touches, where the
+    # in-sample ratio is not the prior's signature (courseScaleFromRaces)
+    tilt_bands_known = tiltByBand(z, a_local, h, D, cell, vote, rating, cell_sport,
+                                  cell_ok=races_per_cell >= WELL_KNOWN_RACES)
     if verbose:
         print(f"[bracket] priors: a race weighs n/(n+{race_sat:g}) voters; an era is "
               f"pulled to the course's history by {prior_races:g} races; a course to "
@@ -1655,7 +1659,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                 cell_prior_group=cell_pg, race_sat=race_sat,
                 D_cell_raw=D_cell_raw, D_base=D_base, base_votes=w_b,
                 group_mean=g_mean, base_prior_group=base_pg, tilt_bands=tilt_bands,
-                tilt_races=tilt_races,
+                tilt_races=tilt_races, tilt_bands_known=tilt_bands_known,
                 pin=st["pin"], D_fit=st["D_new"],
                 place_of_base=place_of_base, n_place=int(n_place),
                 place_radius=float(place_radius or 0.0), prior_place=k_place)
@@ -1665,7 +1669,7 @@ TILT_BANDS = (100.0, 120.0, 130.0, 140.0, 150.0, 160.0)
 
 
 def tiltByBand(z, a_local, h, D, cell, vote, rating, cell_sport, bands=TILT_BANDS,
-               min_rows=2000, min_course=0.02):
+               min_rows=2000, min_course=0.02, cell_ok=None):
     """★ THE TILT THE BRACKETS IMPLY, PER RATING BAND AND SPORT (owner,
     2026-09-13: the hardest venues -- Mt. SAC, Crystal Springs, Glendoveer
     -- "seem overstated"). Those venues are read through elite runners,
@@ -1689,6 +1693,8 @@ def tiltByBand(z, a_local, h, D, cell, vote, rating, cell_sport, bands=TILT_BAND
     edges = (-np.inf,) + tuple(bands) + (np.inf,)
     rows = []
     base = vote & np.isfinite(b) & (np.abs(d) >= min_course)
+    if cell_ok is not None:
+        base = base & np.asarray(cell_ok, dtype=bool)[np.maximum(cell, 0)]
     for s_code, s_name in ((0, "XC"), (1, "TF")):
         for lo, hi in zip(edges, edges[1:]):
             m = base & (sp == s_code) & (r >= lo) & (r < hi)
@@ -1752,6 +1758,41 @@ def courseScaleFromBands(rows, sport, max_se=0.02, min_rows=5000):
     num = den = 0.0
     for s_name, _lab, n, applied, implied, se in rows or ():
         if s_name != sport or n < min_rows or se > max_se or applied <= 0:
+            continue
+        num += n * (implied / applied)
+        den += n
+    return (num / den) if den > 0 else 1.0
+
+
+# ★ THE SCALE IS READ WHERE THE PRIOR DOES NOT REACH (owner's run,
+#   2026-09-28, after "is difficulty tilt actually real?"). The tilt-by-races
+#   table fell steeply with races per cell -- implied/applied 1.26 on
+#   one-race courses, 1.09 on 2-3, 1.01 on 4-9, 0.955 on 10+ -- which the
+#   table's own legend reads as "the prior, not the sport's scale". It is
+#   also what shrinkage looks like IN SAMPLE: a one-race course's number is
+#   its voters' reading times the fraction the prior lets it keep, so those
+#   same voters regressed on it return one over that fraction, whatever the
+#   true scale. So the band table's x1.11, two thirds of whose voters stand
+#   on 1-3 race courses, was mostly the prior's own signature -- and it was
+#   applied to EVERY course, so the well-known hard venues (Glendoveer,
+#   Ultimook, Mt. SAC: 10+ races, implied/applied 0.955 BEFORE the scale)
+#   were charged about 16% more of their difficulty than their runners pay.
+#   The courses with 4+ races are barely shrunk, so their ratio is the
+#   sport's scale; that is what 'fit' reads now. Thin courses keep the
+#   prior's pull toward average, which is the prior's job.
+WELL_KNOWN_RACES = 4
+WELL_KNOWN_BUCKETS = ("4-9", "10+")
+
+
+def courseScaleFromRaces(rows, sport, buckets=WELL_KNOWN_BUCKETS, max_se=0.02,
+                         min_rows=5000):
+    """The course scale from the tilt-by-races rows of the well-known
+    buckets only: voter-weighted implied / applied. 1.0 without such a
+    bucket (never the band table's number: see WELL_KNOWN_RACES)."""
+    num = den = 0.0
+    for s_name, lab, n, applied, implied, se in rows or ():
+        if (s_name != sport or lab not in buckets or n < min_rows or se > max_se
+                or applied <= 0):
             continue
         num += n * (implied / applied)
         den += n

@@ -1847,13 +1847,18 @@ TRACK_POP_MIN_SHARE = 0.6
 TRACK_POP_MIN_CELLS = 20
 
 
-def courseScales(spec, tilt_rows):
+def courseScales(spec, tilt_rows, race_rows=None):
     """{0: XC scale, 1: TF scale} from --course-scale: 'fit' (from the
-    tilt-by-band rows, bracket_engine.courseScaleFromBands), 'off' or
-    '1' (1.0 both), one number (both), or 'XC=1.1,TF=1'."""
+    tilt-by-races rows of courses with 4+ races,
+    bracket_engine.courseScaleFromRaces), 'bands' (the old reading, every
+    band's voters: see WELL_KNOWN_RACES for why it is not the default),
+    'off' or '1' (1.0 both), one number (both), or 'XC=1.1,TF=1'."""
     import bracket_engine as be
     spec = (str(spec) if spec is not None else "fit").strip().lower()
     if spec in ("", "fit"):
+        return {0: be.courseScaleFromRaces(race_rows, "XC"),
+                1: be.courseScaleFromRaces(race_rows, "TF")}
+    if spec == "bands":
         return {0: be.courseScaleFromBands(tilt_rows, "XC"),
                 1: be.courseScaleFromBands(tilt_rows, "TF")}
     if spec in ("off", "none", "1", "1.0"):
@@ -2111,7 +2116,9 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     #   cell (the prior) or is flat (the scale): read it before trusting
     #   the number, and the tilt-by-band table after the scale is applied
     #   is the acceptance test -- implied should equal applied.
-    scale_sport = courseScales(course_scale, f.get("tilt_bands"))
+    #   2026-09-28: 'fit' now reads the scale from the courses with 4+ races
+    #   only (bracket_engine.WELL_KNOWN_RACES says why); 'bands' is the old.
+    scale_sport = courseScales(course_scale, f.get("tilt_bands"), f.get("tilt_races"))
     cell_is_tf = np.array([1 if str(k).startswith("TF:") else 0 for k in cell_keys], dtype=np.int8)
     scale_cell = np.where(cell_is_tf == 1, scale_sport[1], scale_sport[0])
     D_b = D_b * scale_cell
@@ -2199,6 +2206,14 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
               "hard venue read by a band whose implied h is below its applied h is "
               "overstated by the ratio):")
         for ln in tl:
+            print("        " + ln)
+    tk = be.tiltLines(f.get("tilt_bands_known"))
+    if tk:
+        print(f"[joint] bracket tilt by band, courses with {be.WELL_KNOWN_RACES}+ races "
+              "only, before the course scale (the prior barely touches these, so this "
+              "is the tilt's own test: implied/applied the same in every band = the "
+              "slope is right):")
+        for ln in tk:
             print("        " + ln)
     tr = be.tiltRaceLines(f.get("tilt_races"))
     if tr:

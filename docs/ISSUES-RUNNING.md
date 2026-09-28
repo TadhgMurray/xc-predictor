@@ -2569,3 +2569,36 @@ Glendoveer --course Ultimook` lists their race days year by year.
 The fix, if it measures: a race-day term that the weather cannot absorb
 is shrunk less (or the weather betas are too small; the bucket's "model"
 column says which).
+
+## 2026-09-28 — the XC course scale x1.11 was the prior's signature; hard well-known courses overcharged (FIXED IN CODE, NEEDS 08)
+
+Owner: "is difficulty tilt actually real?" This run's go-live tables:
+
+    tilt by band (XC)      applied  implied       tilt by races per cell (XC)  applied  implied
+    <100                     1.012    1.161       1 race                         0.968    1.220
+    100-120                  0.970    1.075       2-3                            0.967    1.057
+    120-130                  0.926    1.008       4-9                            0.964    0.977
+    130-140                  0.897    0.996       10+                            0.960    0.917
+    140-150                  0.867    0.997       -> course scale XC x1.110
+
+The races table falls from 1.26 to 0.955 -- by its own legend "the prior,
+not the sport's scale". In sample that is what shrinkage looks like: a
+one-race course's number is its voters' reading times what the prior lets
+it keep, so the same voters regressed on it return the inverse. The band
+table's x1.11 averaged that over all voters (two thirds on 1-3 race
+courses) and was applied to EVERY course, so the well-known hard venues
+(10+ races, 0.955 before the scale) were charged about 16% more of their
+difficulty than their runners pay: at a +10% course, ~1.6% of time, a
+couple of rating points for everyone who raced there. It is the
+"Glendoveer / Mt. SAC / Crystal Springs seem overstated" complaint.
+
+Now `--course-scale fit` reads the scale from the 4-9 and 10+ buckets only
+(bracket_engine.courseScaleFromRaces; about x1.00 on this run's numbers);
+`bands` is the old reading. And a new table, tilt by band on courses with
+4+ races only, is the tilt's own test without the prior mixed in: if
+implied/applied is the same in every band, the slope is right; if it rises
+at 140+, the elite tilt is too steep. Applies at the next 08 (from state:
+no re-solve).
+
+Also: diag_weather_credit read `results.distance`, which does not exist;
+it now takes the race's distance the way grade_sanity does.

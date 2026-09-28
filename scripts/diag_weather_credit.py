@@ -89,8 +89,16 @@ def _rows(cur, sport, since):
     so a 400 is compared with the same runner's 400s."""
     if sport == "XC":
         cur.execute(f"""
-            SELECT r.person_id, r.date, r.source, r.meet_id, r.speed_rating, r.distance
+            SELECT r.person_id, r.date, r.source, r.meet_id, r.speed_rating,
+                   COALESCE(dov.distance, m.distance,
+                            (mt.division_distances -> r.div_id::text ->> 'distance')::real,
+                            mt.distance)::float8
             FROM   results r
+            -- results has no distance column: the race's, as grade_sanity reads it
+            LEFT JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+            LEFT JOIN meets_tfrrs mt ON r.source = 'tfrrs' AND mt.meet_id = r.meet_id
+                                   AND mt.sport = 'XC'
+            LEFT JOIN dist_override dov ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
             WHERE  r.speed_rating > 0 AND r.person_id IS NOT NULL
               AND  r.date ~ '{_DATE_OK}' AND r.date >= %s
         """, (since,))

@@ -37,7 +37,11 @@ def test_the_course_scale_is_the_voter_weighted_ratio_over_trusted_bands():
 
 def test_course_scale_specs():
     rows = [("XC", "100-120", 4_000_000, 1.0, 1.1, 0.0)]
-    assert rj.courseScales("fit", rows) == {0: 1.1, 1: 1.0}
+    races = [("XC", "10+", 700_000, 1.0, 0.95, 0.001)]
+    assert rj.courseScales("bands", rows) == {0: 1.1, 1: 1.0}
+    assert rj.courseScales("fit", rows, races) == {0: 0.95, 1: 1.0}
+    assert rj.courseScales("fit", rows) == {0: 1.0, 1: 1.0}, \
+        "no race rows: 1.0, never the band table's number"
     assert rj.courseScales("off", rows) == {0: 1.0, 1: 1.0}
     assert rj.courseScales("1.05", rows) == {0: 1.05, 1: 1.05}
     assert rj.courseScales("XC=1.1,TF=1", rows) == {0: 1.1, 1: 1.0}
@@ -125,3 +129,35 @@ def test_the_sanity_step_checks_the_level_and_the_tilt():
     assert [(s, ok) for s, lo, n, r, ok in got] == [("XC", True), ("XC", True), ("TF", True)]
     got = bs.tiltCheck(bands, np.array([1.0, 1.0]))          # unscaled, XC is a tenth off
     assert [(s, ok) for s, lo, n, r, ok in got] == [("XC", False), ("XC", False), ("TF", True)]
+
+
+def test_the_fitted_scale_ignores_the_thin_courses_the_prior_shrinks():
+    # the owner's run, 2026-09-28: the ratio falls with races per cell
+    races = [("XC", "1", 1_666_532, 0.968, 1.220, 0.001),
+             ("XC", "2-3", 2_856_132, 0.967, 1.057, 0.000),
+             ("XC", "4-9", 1_889_142, 0.964, 0.977, 0.001),
+             ("XC", "10+", 664_500, 0.960, 0.917, 0.001)]
+    s = be.courseScaleFromRaces(races, "XC")
+    assert 0.99 < s < 1.01, s          # was x1.110 from every band's voters
+    assert be.courseScaleFromRaces(races, "TF") == 1.0
+    assert be.courseScaleFromRaces(None, "XC") == 1.0
+
+
+def test_tilt_by_band_can_be_limited_to_well_known_courses():
+    rng = np.random.default_rng(5)
+    n_cell = 40
+    D = rng.normal(0, 0.05, n_cell)
+    cell = np.repeat(np.arange(n_cell), 300)
+    known = np.arange(n_cell) >= 20
+    ratio = np.where(known[cell], 1.0, 1.3)
+    a_local = rng.normal(0, 0.01, cell.size)
+    z = a_local + ratio * D[cell] + rng.normal(0, 0.002, cell.size)
+    h = np.ones(cell.size)
+    rating = np.full(cell.size, 110.0)
+    vote = np.ones(cell.size, dtype=bool)
+    sport = np.zeros(n_cell, dtype=np.int64)
+    every = be.tiltByBand(z, a_local, h, D, cell, vote, rating, sport, min_rows=100)
+    wk = be.tiltByBand(z, a_local, h, D, cell, vote, rating, sport, min_rows=100,
+                       cell_ok=known)
+    assert every[0][4] > 1.05                  # the thin cells pull the whole band up
+    assert abs(wk[0][4] - 1.0) < 0.02          # the known ones read the truth
