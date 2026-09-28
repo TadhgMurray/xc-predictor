@@ -2653,3 +2653,15 @@ season position (August time trials vs December championships at one
 course); the refit holds the calendar fortnight fixed, so it measures only
 the part that is weather. --course now also matches meet names (Ultimook's
 course carries another name).
+
+## 2026-09-28 — 04f too slow and silent (FIXED IN CODE)
+
+Owner: "this is taking too long, also don't only print it to a file, print
+to console too". The parallel runners (steps2, stepsN, shards, bgstep) now
+stream every line to the console prefixed `[step]` as well as to the log
+(`_live`; XCP_LIVE=0 for logs only; exit codes unchanged). The weather fitter:
+the grid is aggregated only over the cell-days a race used (it grouped the
+whole weather_grid first; same rows to float precision on a scratch DB),
+rows load a batch of columns at a time, the undo runs once per race, the
+two-way demeaning stops when a pass moves nothing, and each stage prints
+its seconds.

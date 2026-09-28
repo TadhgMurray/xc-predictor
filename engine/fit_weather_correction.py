@@ -124,23 +124,34 @@ CACHE_DIR = "engine/data"
 # CHUNK 1 — SQL (per sport).
 # ------------------------------------------------------------------ #
 
-def _weatherCte():
+def _weatherCte(need=None):
+    """The race-window weather per (cell, day).
+
+    ★ ONLY THE CELL-DAYS A RACE USES (2026-09-28, owner: "this is taking too
+      long"). Grouped over the whole of weather_grid this aggregated every
+      cell of the continent for every day of the year before the join threw
+      nearly all of it away. With `need` (a CTE of cell_lat, cell_lon, date)
+      the grid is read through its (cell_lat, cell_lon, date) index for the
+      days a race was run there, and nothing else."""
     lo, hi = RACE_LOCAL_HOURS
     aggs = ",\n                   ".join(f"{expr} AS {name}"
                                           for name, expr in WX_AGG.items())
     # local hour = UTC hour + offset, offset = round(signed_lon / 15). Keep the
     # stored UTC hours that fall in the venue's LOCAL morning -- so a 9am race is
     # scored on 9am weather everywhere, not a fixed UTC block (dawn out west).
-    signed = "(CASE WHEN cell_lon > 180 THEN cell_lon - 360 ELSE cell_lon END)"
+    signed = "(CASE WHEN g.cell_lon > 180 THEN g.cell_lon - 360 ELSE g.cell_lon END)"
     offset = f"round({signed} / 15.0)::int"
-    local_hour = f"mod(mod(hour + {offset}, 24) + 24, 24)"
+    local_hour = f"mod(mod(g.hour + {offset}, 24) + 24, 24)"
+    join = (f"JOIN {need} n ON n.cell_lat = g.cell_lat AND n.cell_lon = g.cell_lon "
+            f"AND n.date = g.date" if need else "")
     return f"""
         wx AS (
-            SELECT cell_lat, cell_lon, date,
+            SELECT g.cell_lat, g.cell_lon, g.date,
                    {aggs}
-            FROM   weather_grid
+            FROM   weather_grid g
+            {join}
             WHERE  {local_hour} BETWEEN {lo} AND {hi}
-            GROUP  BY cell_lat, cell_lon, date
+            GROUP  BY g.cell_lat, g.cell_lon, g.date
         )
     """
 
@@ -174,8 +185,7 @@ def xcQuery():
     clat, clon = _snapSql("mv.gps_lat", "mv.gps_long")
     event = _eventKey("mv.course_name", "r.date::date")
     return f"""
-        WITH {_weatherCte()},
-        meet_venues AS (
+        WITH meet_venues AS (
             -- collapse meets (keyed on div_id, many rows per meet) to one row per
             -- meet_id, or the results join fans out ~5x per division.
             SELECT DISTINCT ON (meet_id)
@@ -185,7 +195,16 @@ def xcQuery():
             WHERE  meet_id IS NOT NULL AND course_name IS NOT NULL
               AND  gps_lat IS NOT NULL AND gps_long IS NOT NULL
             ORDER  BY meet_id
-        )
+        ),
+        need AS MATERIALIZED (
+            SELECT DISTINCT {clat} AS cell_lat, {clon} AS cell_lon, rd.d AS date
+            FROM   (SELECT DISTINCT r.meet_id, r.date::date AS d
+                    FROM   results r
+                    WHERE  r.source = 'anet' AND r.normalized_time IS NOT NULL
+                      AND  r.date ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}$') rd
+            JOIN   meet_venues mv ON mv.meet_id = rd.meet_id
+        ),
+        {_weatherCte("need")}
         SELECT COALESCE(r.person_id, r.athlete_id) AS ath,
                mv.course_name                      AS course,
                {event}                             AS event,
@@ -238,8 +257,13 @@ def tfQuery():
              "CASE WHEN mm.is_indoor = 1 THEN ':in' ELSE ':out' END")
     event = _eventKey(venue, "mm.d")
     return f"""
-        WITH {_weatherCte()},
-        {_TF_META}
+        WITH {_TF_META.strip()},
+        need AS MATERIALIZED (
+            SELECT DISTINCT {clat} AS cell_lat, {clon} AS cell_lon, mm.d AS date
+            FROM   tfmeta mm
+            WHERE  mm.is_indoor = 0 AND mm.location_id IS NOT NULL
+        ),
+        {_weatherCte("need")}
         SELECT COALESCE(r.person_id, r.athlete_id) AS ath,
                {venue}                             AS course,
                {event}                             AS event,
@@ -324,23 +348,43 @@ def loadRaces(conn, sql, sport, limit=None):
 
     if limit:
         sql = sql + f"\n        LIMIT {int(limit)}"
+    import time as _time
     names = ["ath", "course", "event", "date", "nt", "dist", *QUERIED_FEATURES]
     acc = {k: [] for k in names}
+    t0 = _time.time()
+    # ★ COLUMNS A BATCH AT A TIME (2026-09-28): zip(*batch) transposes in C;
+    #   the old per-row, per-column append was 25M x 11 Python calls.
     with conn.cursor(name="weather_stream") as cur:
-        cur.itersize = 100_000
+        cur.itersize = 200_000
         cur.execute(sql)
-        for row in cur:
-            for k, v in zip(names, row):
-                acc[k].append(v)
+        print(f"[load] query started returning rows after {_time.time() - t0:.0f}s",
+              flush=True)
+        n = 0
+        while True:
+            batch = cur.fetchmany(200_000)
+            if not batch:
+                break
+            for k, col in zip(names, zip(*batch)):
+                acc[k].extend(col)
+            n += len(batch)
+            if n % 2_000_000 < 200_000:
+                print(f"[load] {n:,} rows ({_time.time() - t0:.0f}s)", flush=True)
+    memo = {}
+
+    def dist(raw):
+        m = memo.get(raw)
+        if m is None:
+            m = memo[raw] = _distMeters(sport, raw)
+        return m
     out = {"ath":    np.asarray(acc["ath"], dtype=object),
            "course": np.asarray(acc["course"], dtype=object),
            "event":  np.asarray(acc["event"], dtype=object),
            "date":   np.asarray([str(x) for x in acc["date"]], dtype=object),
            "nt":     np.asarray(acc["nt"], dtype=np.float64),
-           "dist":   np.asarray([_distMeters(sport, r) for r in acc["dist"]],
-                                dtype=np.float64)}
+           "dist":   np.asarray([dist(r) for r in acc["dist"]], dtype=np.float64)}
     for f in QUERIED_FEATURES:
-        out[f] = np.asarray(acc[f], dtype=np.float64)
+        out[f] = np.asarray([np.nan if v is None else v for v in acc[f]], dtype=np.float64)
+    print(f"[load] {out['nt'].size:,} rows loaded in {_time.time() - t0:.0f}s", flush=True)
     return _gateImplausibleCells(out)          # STREAM path
 
 
@@ -413,24 +457,31 @@ def _subtractGroupMean(v, codes, n):
     return v - (s / c)[codes]
 
 
-def _twoWayWithin(y, X, ac, na, ec, ne):
-    y = y.copy()
-    X = X.copy().astype(float)
+DEMEAN_TOL = 1e-9     # stop when a pass moves no value by more than this
+
+
+def _demeanColumn(v, ac, na, ec, ne):
+    """Alternate the two group demeanings until a pass moves nothing by more
+    than DEMEAN_TOL (at most DEMEAN_ITERS passes). The fixed 25 passes ran
+    on every column whether it had converged at pass 3 or not."""
+    v = v.astype(float).copy()
     for _ in range(DEMEAN_ITERS):
-        y = _subtractGroupMean(y, ac, na)
-        y = _subtractGroupMean(y, ec, ne)
-        for j in range(X.shape[1]):
-            X[:, j] = _subtractGroupMean(X[:, j], ac, na)
-            X[:, j] = _subtractGroupMean(X[:, j], ec, ne)
+        prev = v
+        v = _subtractGroupMean(_subtractGroupMean(v, ac, na), ec, ne)
+        if np.max(np.abs(v - prev)) < DEMEAN_TOL:
+            break
+    return v
+
+
+def _twoWayWithin(y, X, ac, na, ec, ne):
+    y = _demeanColumn(y, ac, na, ec, ne)
+    X = np.column_stack([_demeanColumn(X[:, j], ac, na, ec, ne)
+                         for j in range(X.shape[1])]) if X.shape[1] else X.astype(float)
     return y, X
 
 
 def _twoWayDemeanY(y, ac, na, ec, ne):
-    y = y.copy()
-    for _ in range(DEMEAN_ITERS):
-        y = _subtractGroupMean(y, ac, na)
-        y = _subtractGroupMean(y, ec, ne)
-    return y
+    return _demeanColumn(y, ac, na, ec, ne)
 
 
 # _nsBasis: restricted (natural) cubic spline basis. K knots -> K-1 columns, and
@@ -575,23 +626,27 @@ def undoAppliedWeather(cols, sport, art=None, source=""):
     nd._WEATHER[sport] = art
     try:
         n = cols["nt"].size
-        mult = np.ones(n)
-        memo = {}
         feats = [f for f in QUERIED_FEATURES if f in cols]
-        for i in range(n):
-            key = (cols["course"][i], cols["date"][i], float(cols["dist"][i]))
-            m = memo.get(key)
-            if m is None:
-                wx = {f: (None if not np.isfinite(cols[f][i]) else float(cols[f][i]))
-                      for f in feats}
-                try:
-                    wx["doy"] = _dt.date.fromisoformat(str(cols["date"][i])[:10]).timetuple().tm_yday
-                except ValueError:
-                    wx["doy"] = None
-                course = cols["course"][i] if sport == "TF" else (cols["course"][i] or None)
-                inv = nd._applyWeather(1.0, wx, course, sport, float(cols["dist"][i]))
-                m = memo[key] = (1.0 / inv) if inv else 1.0
-            mult[i] = m
+        # one multiplier per (course, date, distance): the codes are found
+        # vectorised, and _applyWeather runs once per race, not per row
+        cc, _ = _denseCode(cols["course"].astype(str))
+        dcode, _ = _denseCode(cols["date"])
+        dd, _ = _denseCode(np.round(cols["dist"], 1))
+        key = (cc.astype(np.int64) * (int(dcode.max()) + 1) + dcode) * (int(dd.max()) + 1) + dd
+        _, first, inverse = np.unique(key, return_index=True, return_inverse=True)
+        per_race = np.ones(first.size)
+        for k, i in enumerate(first):
+            wx = {f: (None if not np.isfinite(cols[f][i]) else float(cols[f][i]))
+                  for f in feats}
+            try:
+                wx["doy"] = _dt.date.fromisoformat(str(cols["date"][i])[:10]).timetuple().tm_yday
+            except ValueError:
+                wx["doy"] = None
+            course = cols["course"][i] if sport == "TF" else (cols["course"][i] or None)
+            inv = nd._applyWeather(1.0, wx, course, sport, float(cols["dist"][i]))
+            per_race[k] = (1.0 / inv) if inv else 1.0
+        mult = per_race[inverse]
+        memo = first
     finally:
         nd._WEATHER[sport] = saved
     out = dict(cols)
@@ -959,11 +1014,15 @@ def main():
     if cols["nt"].size == 0:
         print("[load] no rows matched -- check the weather join / filters.")
         return
-    print(f"[load] {cols['nt'].size:,} races joined to weather.")
+    import time as _time
+    print(f"[load] {cols['nt'].size:,} races joined to weather.", flush=True)
+    t0 = _time.time()
     art, src = appliedArtifact(args.sport)
     cols = undoAppliedWeather(cols, args.sport, art, src)
-
+    print(f"[time] undo {_time.time() - t0:.0f}s", flush=True)
+    t0 = _time.time()
     betas, splines, dist_betas, coef, n_used, counts, yd, Xd, layout = fitWeather(cols)
+    print(f"[time] fit {_time.time() - t0:.0f}s", flush=True)
     coverage = _eventCoverage(cols)
     reportGate(betas, splines, dist_betas, n_used, counts, coverage)
     _collinearity(cols)

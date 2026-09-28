@@ -252,6 +252,24 @@ step() {
   fi
 }
 
+# _live <name> <log> <command...>  -- run the command with its output in
+# <log> AND on the console, every line prefixed "[name]"; the exit code is
+# the COMMAND's (pipefail, in the function's own subshell).
+# ★ PARALLEL STEPS PRINT TO THE CONSOLE TOO (owner, 2026-09-28: "don't only
+#   print it to a file, print to console too"). steps2, stepsN, shards and
+#   bgstep used to write only to their logs and show a tail at the end, so
+#   an hours-long step (04f, 05) was silent until it finished.
+#   XCP_LIVE=0 goes back to logs only.
+_live() (
+  set -o pipefail
+  nm="$1"; log="$2"; shift 2
+  if [ "${XCP_LIVE:-1}" = "0" ]; then
+    "$@" > "$log" 2>&1
+  else
+    "$@" 2>&1 | tee "$log" | sed -u "s/^/  [$nm] /"
+  fi
+)
+
 # steps2 <nameA> "<cmdA>" <nameB> "<cmdB>"  -- two INDEPENDENT steps at
 # once, one log each, one summary line each. For the pairs that read and
 # write nothing in common (the two rowguard diags: 10 minutes each,
@@ -276,9 +294,9 @@ steps2() {
   echo "  $nameA + $nameB    $(date +%H:%M:%S)   (in parallel)"
   echo "======================================================================"
   t0=$(date +%s)
-  $NICE sh -c "$cmdA" > "$LOGDIR/$nameA.log" 2>&1 &
+  _live "$nameA" "$LOGDIR/$nameA.log" $NICE sh -c "$cmdA" &
   pa=$!
-  $NICE sh -c "$cmdB" > "$LOGDIR/$nameB.log" 2>&1 &
+  _live "$nameB" "$LOGDIR/$nameB.log" $NICE sh -c "$cmdB" &
   pb=$!
   wait "$pa"; ra=$?
   wait "$pb"; rb=$?
@@ -322,7 +340,7 @@ stepsN() {
   #   were four backends scanning results side by side under the site.
   names=""; rcs=""; batch_pids=""; batch_names=""; inflight=0
   while [ $# -ge 2 ]; do
-    $NICE sh -c "$2" > "$LOGDIR/$1.log" 2>&1 &
+    _live "$1" "$LOGDIR/$1.log" $NICE sh -c "$2" &
     batch_pids="$batch_pids $!"; batch_names="$batch_names $1"; inflight=$((inflight + 1)); shift 2
     if [ "$inflight" -ge "$XCP_STREAMS" ] || [ $# -lt 2 ]; then
       for pid in $batch_pids; do wait "$pid"; rcs="$rcs $?"; done
@@ -365,7 +383,7 @@ shards() {
   pids=""
   k=0
   while [ "$k" -lt "$n" ]; do
-    $NICE "$@" --shard "$k/$n" > "$LOGDIR/${name}_shard$k.log" 2>&1 &
+    _live "${name}_shard$k" "$LOGDIR/${name}_shard$k.log" $NICE "$@" --shard "$k/$n" &
     pids="$pids $!"
     k=$((k + 1))
   done
@@ -411,7 +429,7 @@ bgstep() {
   fi
   echo ""
   echo "  $name    $(date +%H:%M:%S)   started IN THE BACKGROUND -> $LOGDIR/$name.log"
-  $NICE "$@" > "$LOGDIR/$name.log" 2>&1 &
+  _live "$name" "$LOGDIR/$name.log" $NICE "$@" &
   BG_PIDS+=("$!"); BG_NAMES+=("$name"); BG_T0+=("$(date +%s)")
 }
 bgwait() {
