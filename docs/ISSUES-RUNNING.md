@@ -2722,3 +2722,56 @@ at ~5,000 rows/s: a named cursor plans for 10% of its rows, and the weather
 CTE (referenced once, so inlined) could be re-aggregated per row. Now the
 CTE is MATERIALIZED and the session plans for the whole result
 (cursor_tuple_fraction 1.0, 1 GB work_mem). The fit itself took 1,344 s.
+
+## 2026-09-28 — 📋 LOGGED: Mt. SAC split, Foot Locker Nationals too easy, NCS 2024, from two athlete pages
+
+Read off the live pages (Trey Caldwell /athlete/29406443, Tadhg Murray
+/athlete/29603086), same team, same races:
+
+**Mt. SAC 2024 was cannibalised by a distance split.** 2021-2023 are stored
+at 4715 m and read +11.8%; 2024 is stored at 4828 m (3 mi) and reads +6.3%.
+The difficulty cell is keyed on the distance rounded to 100 m, so 2024 is a
+different cell with one race day, pulled toward the average by the prior.
+Trey: 14:49 in 2023 = 140.6, 14:46 in 2024 (a faster time on a course
+listed 2.4% LONGER) = 137.8. Either 2024 is the same 2.93 mi course listed
+as 3 mi (a distance override, and the cell rejoins its history), or a
+course's cells at distances within a few percent should share one history.
+
+**Foot Locker Nationals (Morley Field) reads far too easy: +4.7%.** Trey
+rates 131.5 / 132.1 / 131.4 there (12th, 25th, 30th at Nationals, 2022-24)
+against 136-140 everywhere else that month, a week after 137.6-139.9 at
+the West regional. The cell is Morley Field 5000 m, shared with the local
+San Diego meets on other loops, so the Nationals days are diluted. The
+fix is its own cell (meet_cells --meet "Foot Locker" was the open item).
+West regional at Mt. SAC 5000 m reads +9.6% and lines up with his other
+races. ⚠ The pending course-scale change (x1.11 -> ~x1.00) lowers every XC
+course number by about a tenth of itself, Morley Field included; read this
+again after that run.
+
+**NCS 2024 (Hayward HS, Nov 23, rain before, 16 mph wind) is short-changed.**
+Trey 130.1 (won) against 135-138 around it; Tadhg 123.7 against 129-131.
+The race page itself says the field ran about 1.6% slower than an ordinary
+day there -- the day term knows -- but no rating carries the day term
+(2026-09-06: "a slow race is a slow race"). The old weather artifact gave
+it little (rain credited backwards until the refit fixed in 9f2f099).
+After the refit, check diag_row_weather --xc 59845239; what is left is the
+slow-day question, which is the owner's call.
+
+**Also on these two pages:**
+- Tadhg's Foot Locker West 2024 row sits on a separate person, "Tadhg
+  Murray -- Unknown (WA)", /athlete/13642378; Trey's FL rows merged fine.
+- The 2021 Mariner Invitational is listed twice under two names ("38th
+  Mariner-XC-Invitational", "38th P. Wilder Mariner XC Invitational"), same
+  day, place and time: dup_cross_date needs the same normalised name.
+- "Mid-Season Mania 1600m Invitational (XC Calendar Placeholder)", a 1600 on
+  the TRACK, shows in the XC season with a course difficulty (+3.2%), and
+  again in track. A placeholder meet in the XC calendar should not be XC.
+- Michael Rynne, JAMBAR Dec 13, 2025: "2miles 9:35.09" and "3200m 9:31.74"
+  are one race stored twice (9:35.09 x 3200/3218.7 = 9:31.6), not two
+  events given one rating.
+
+## 2026-09-28 — rankings boards down (FIXED IN CODE, 8b1c993)
+
+Every ability board, the default board included, answered 400 "column
+result_id does not exist": the USA scope's tfrrs clause (06d112b) went into
+the shared filter builder, and the season boards read athlete_season.
