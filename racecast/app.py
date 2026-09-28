@@ -2366,8 +2366,42 @@ def dedupe_races(races):
     """
     races = _merge_by_canon(races)
     races = _merge_cross_source(races)
-    races.sort(key=lambda r: r["date"], reverse=True)
+    # newest first; on one day the later round on top (round_order)
+    races.sort(key=lambda r: (r["date"], round_order(r)), reverse=True)
     return races
+
+
+# ★ ON ONE DAY THE FINAL SITS ABOVE THE PRELIM (owner, 2026-09-28). The
+#   page is newest first, and a prelim and its final share a date, so their
+#   order was whatever the query returned. Rank by round, from the round
+#   column or, for a feed that writes it into the event name ("1600m
+#   Prelims"), from the name: heats and prelims 0, quarters 1, semis 2, a
+#   row that names no round 3 (on a day with a prelim it is the final), a
+#   final 4. Sorted descending, so the later round is on top.
+_ROUND_ORDER = (("final", 4), ("semi", 2), ("quarter", 1), ("prelim", 0),
+                ("heat", 0), ("qualif", 0), ("trial", 0))
+_ROUND_IN_NAME = re.compile(
+    r"\b(preliminaries|preliminary|prelims?|heats?|qualifying|qualifiers?|"
+    r"quarter[- ]?finals?|quarters?|semi[- ]?finals?|semis?|finals?)\b", re.IGNORECASE)
+
+
+def round_order(race):
+    """0 (heats, prelims) .. 4 (final); 3 when nothing names a round."""
+    rnd = str(race.get("round") or "").strip().lower()
+    if rnd:
+        if re.fullmatch(r"\d{1,3}", rnd):
+            return 0                                   # a numbered heat
+        word = _ROUND_WORDS.get(rnd, rnd).lower()
+        for stem, rank in _ROUND_ORDER:
+            if word.startswith(stem):
+                return rank
+    m = _ROUND_IN_NAME.search(str(race.get("event") or ""))
+    if m:
+        w = m.group(1).lower()
+        for stem, rank in _ROUND_ORDER:
+            if w.startswith(stem):
+                return rank
+    return 3
 
 
 # anet TF's non-finish, as stored: SortInt 20,000,000 ms. The one number
