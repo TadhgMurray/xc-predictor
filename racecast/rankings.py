@@ -995,8 +995,16 @@ def _whereClauses(f, params, with_dates):
         #   racing; its result ids are the negative ones (app._ridArg). A
         #   NULL-state anet row is still left out: that is the foreign meet
         #   this scope exists to exclude.
-        parts.append(" AND (state = ANY(%(us_states)s)"
-                     " OR (state IS NULL AND result_id < 0))")
+        # ⚠⚠ ONLY WHERE THERE IS A result_id (2026-09-28: every ability
+        #   board, the default board included, answered "column result_id
+        #   does not exist"). The season boards read athlete_season, which
+        #   has no result ids; with_dates is True exactly for the per-result
+        #   sources (ranking_results), so it says which kind this is.
+        if with_dates:
+            parts.append(" AND (state = ANY(%(us_states)s)"
+                         " OR (state IS NULL AND result_id < 0))")
+        else:
+            parts.append(" AND state = ANY(%(us_states)s)")
     # ★ = ANY(%(x)s), NOT AN INTERPOLATED IN-LIST. psycopg2 adapts a Python
     #   list to a Postgres array, so the SQL text is IDENTICAL whether the
     #   filter carries one value or fifty -- one bind parameter either way, no
