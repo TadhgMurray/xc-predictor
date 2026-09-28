@@ -42,11 +42,11 @@ def test_within_course_compares_a_course_with_its_own_years():
     # Glendoveer: a mild year rated 3% high, a wet year 1% low, runner-weighted
     wx = {"precip": 0.0, "rain_before": 0.0, "soil": 0.2, "apparent_temp": 10.0, "wind": 1.0}
     races = [
-        dict(ck="Glendoveer", course="Glendoveer", iso="2023-10-01", meet=1, n=100,
+        dict(ck="Glendoveer", course="Glendoveer", iso="2023-10-01", meet=1, src="anet", n=100,
              gap=0.03, once=False, wx=wx, credit=(0.0, 0.0, 0.0, 0.0)),
-        dict(ck="Glendoveer", course="Glendoveer", iso="2024-10-01", meet=2, n=300,
+        dict(ck="Glendoveer", course="Glendoveer", iso="2024-10-01", meet=2, src="anet", n=300,
              gap=-0.01, once=False, wx={**wx, "precip": 9.0}, credit=(0.01, 0.01, 0.0, 0.0)),
-        dict(ck="Lone", course="Lone", iso="2024-10-02", meet=3, n=50,
+        dict(ck="Lone", course="Lone", iso="2024-10-02", meet=3, src="anet", n=50,
              gap=0.05, once=True, wx=wx, credit=(0.0, 0.0, 0.0, 0.0)),
     ]
     W.withinCourse(races)

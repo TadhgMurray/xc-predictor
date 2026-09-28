@@ -307,13 +307,30 @@ def report(sport, races, list_n):
                   f"{(r['course'] or '')[:30]}{' (once)' if r['once'] else ''}")
 
 
-def courseDays(races, names):
-    """Every race day at a course whose name contains one of `names`, year
-    by year, with its weather, gap and in-course gap."""
+def meetsNamed(cur, names):
+    """{(source, meet_id)} whose MEET name contains one of `names`: a meet
+    is found even when its course carries another name (Ultimook)."""
+    out = set()
+    for n in names:
+        pat = f"%{n}%"
+        cur.execute("SELECT DISTINCT 'anet', meet_id FROM meets "
+                    "WHERE meet_name ILIKE %s AND meet_id IS NOT NULL", (pat,))
+        out |= {(a, int(b)) for a, b in cur.fetchall()}
+        cur.execute("SELECT DISTINCT 'tfrrs', meet_id FROM meets_tfrrs "
+                    "WHERE sport = 'XC' AND (meet_name ILIKE %s OR venue_name ILIKE %s)",
+                    (pat, pat))
+        out |= {(a, int(b)) for a, b in cur.fetchall()}
+    return out
+
+
+def courseDays(races, names, meets=frozenset()):
+    """Every race day at a course whose name contains one of `names`, or at
+    a meet so named, year by year, with its weather, gap and in-course gap."""
     want = [n.lower() for n in names]
-    hit = sorted((r for r in races if r["course"]
-                  and any(w in r["course"].lower() for w in want)),
-                 key=lambda r: (r["course"], r["iso"]))
+    hit = sorted((r for r in races
+                  if (r["course"] and any(w in r["course"].lower() for w in want))
+                  or (r["src"], r["meet"]) in meets),
+                 key=lambda r: (r["course"] or "", r["iso"]))
     print(f"\n  Race days at {', '.join(names)} ({len(hit)}):")
     if not hit:
         print("    none (the name is matched against the backfill's course name;"
@@ -328,7 +345,7 @@ def courseDays(races, names):
               f"{w.get('rain_before', 0):>8.1f}{(w.get('soil') or 0):>6.2f}"
               f"{(w.get('apparent_temp') or 0):>6.0f}{(w.get('wind') or 0):>6.1f}"
               f"{r['n']:>8}{_pct(r['gap']):>9}{wi:>11}{_pct(r['credit'][0]):>9}  "
-              f"{r['course'][:30]}")
+              f"{(r['course'] or '(no course name)')[:30]}")
 
 
 def runSport(conn, sport, since, window, list_n, courses=()):
@@ -401,7 +418,9 @@ def runSport(conn, sport, since, window, list_n, courses=()):
     withinCourse(races)
     report(sport, races, list_n)
     if courses:
-        courseDays(races, courses)
+        with conn.cursor() as cur:
+            named = meetsNamed(cur, courses) if sport == "XC" else set()
+        courseDays(races, courses, named)
 
 
 def main():

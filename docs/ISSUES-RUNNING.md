@@ -2623,3 +2623,33 @@ diag_weather_credit's in-course column before and after.
 
 Also: the conversions note said "how that meet ran" -- no rating carries
 the day term, so it now says the venue and the measured weather.
+
+## 2026-09-28 — the weather fitter fitted leftovers: rain credited backwards (FIXED IN CODE, NEEDS 04f + 05 + 08)
+
+diag_weather_credit (XC since 2015, 108,630 races), in-course gap by rain
+in the race window: 0-0.1 mm +0.07%, 1-3 -0.21%, 3-8 -0.37%, 8-20 -0.90%,
+20+ -2.57% -- rain races rated low against the same course's other days --
+while the model's RAIN term was NEGATIVE in every wet bucket (-0.02% to
+-0.51%): the correction took credit AWAY for rain. This run's XC betas:
+precip -0.00024/mm, wind -0.00018, snow -0.399/m; an earlier fit had snow
++0.748/m.
+
+Cause: fit_weather_correction reads results.normalized_time, which 05 wrote
+with the previous artifact divided in, and 04f runs before 05. Each refit
+measured only the previous correction's leftover, and 05 then applied that
+leftover instead of the effect, so refits alternate between the effect and
+about nothing (the sign flips are that). Also: the athlete effect was one
+per career, so a high schooler's yearly improvement sat in the residual of
+the event (same venue and fortnight across years) and any drift of the
+weather over the years leaked into the betas.
+
+Now: the fitter divides the applied correction back out before fitting
+(undoAppliedWeather; the backfill records the artifact it applied in
+engine/data/weather_applied_<sport>.pkl, and without a record the current
+artifact is taken as applied, which is true for this run's rows), and the
+athlete effect is per (person, season). The temperature column (cool days
++0.4-0.7% high, hot days -0.2-0.6% low against the same course) is partly
+season position (August time trials vs December championships at one
+course); the refit holds the calendar fortnight fixed, so it measures only
+the part that is weather. --course now also matches meet names (Ultimook's
+course carries another name).

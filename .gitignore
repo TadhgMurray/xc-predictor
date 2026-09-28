@@ -259,3 +259,5 @@ static/cards/
 racecast/static/photos/
 racecast/static/mock/
 .pipeline.lock
+engine/data/weather_applied_*.pkl
+engine/data/weather_applied_*.pkl.tmp

@@ -3493,6 +3493,29 @@ def _runOneSport(sport: str, apply: bool, limit: int, profile: bool = False,
     return processed, written, skipped
 
 
+def recordAppliedWeather(sport):
+    """★ WHAT THE ROWS CARRY, WRITTEN DOWN (2026-09-28). The weather fitter
+    reads normalized_time, which has this run's artifact divided in; it
+    must divide exactly that back out (fit_weather_correction.
+    undoAppliedWeather), and the artifact file itself is replaced by the
+    next refit. So a full --apply records the artifact it applied -- None
+    when the correction was off or refused -- beside it."""
+    import pickle
+    import normalize_distance as _nd
+    art = _nd._weatherArtifactFor(sport)
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    path = _os.path.join(root, "engine", "data", f"weather_applied_{sport}.pkl")
+    try:
+        with open(path + ".tmp", "wb") as f:
+            pickle.dump({"artifact": art}, f)
+        _os.replace(path + ".tmp", path)
+        print(f"  weather: recorded the {sport} correction these rows carry "
+              f"({'none' if art is None else 'artifact'}) -> {path}")
+    except OSError as exc:
+        print(f"  weather: could not record the applied correction ({exc}); the "
+              f"next refit assumes the current artifact was applied")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Backfill normalized_time (XC, TF, or both).")
     # `both` runs XC then TF in one invocation. They touch DIFFERENT tables
@@ -3537,6 +3560,8 @@ def main():
             print()
         totals[sport] = _runOneSport(sport, args.apply, args.limit,
                                      args.profile, args.write_mode)
+        if args.apply and not args.limit and not args.only_changed:
+            recordAppliedWeather(sport)
 
     if len(sports) > 1:
         print("\n" + "=" * 70)

@@ -502,7 +502,7 @@ def _collinearity(cols):
     """Within-event demeaned correlation among the weather features -- the tangle
        the fit actually sees. Strong pairs (|r|>~0.3) mean a solo beta is suspect
        (e.g. rain & temp: rainy days are cool, so temp can eat rain's signal)."""
-    ac, na = _denseCode(cols["ath"]); ec, ne = _denseCode(cols["event"])
+    ac, na = _denseCode(athleteSeason(cols)); ec, ne = _denseCode(cols["event"])
     dem = {f: _twoWayDemeanY(_featureColumn(cols, f).astype(float), ac, na, ec, ne)
            for f in QUERIED_FEATURES}
     # drop features with ~no within-event variation (e.g. snow in a snowless set)
@@ -530,8 +530,94 @@ def _eventCoverage(cols):
     return ne, float(usable.mean())
 
 
+# ★★ THE FIT READS TIMES THAT ALREADY CARRY THE LAST CORRECTION (2026-09-28,
+#    owner: "weather corrections aren't doing enough"). normalized_time is
+#    written by 05_backfill with the weather artifact of THAT run divided in,
+#    and 04f runs before 05 -- so every refit measured only what the previous
+#    artifact had left over, and 05 then applied that leftover INSTEAD of the
+#    effect. Refits alternate between the effect and about nothing: the snow
+#    beta was +0.748/m, then -0.399/m; this run's rain and wind betas came
+#    out NEGATIVE (rain making runners faster), and diag_weather_credit's
+#    in-course column had rain races short-changed by 0.2-2.6%. The fix is
+#    to divide the applied correction back OUT before fitting: the artifact
+#    the backfill applied is recorded beside it (weather_applied_<sport>.pkl,
+#    backfill_normalize.recordAppliedWeather), and without that record the
+#    current artifact is the one the last backfill used.
+APPLIED_PATH = os.path.join(CACHE_DIR, "weather_applied_{sport}.pkl")
+
+
+def appliedArtifact(sport):
+    """(artifact or None, where it came from): the weather correction the
+    rows' normalized_time was written with."""
+    rec = APPLIED_PATH.format(sport=sport)
+    if os.path.exists(rec):
+        with open(rec, "rb") as f:
+            art = pickle.load(f)
+        return (art.get("artifact") if isinstance(art, dict) and "artifact" in art
+                else art), f"the backfill's record {rec}"
+    cur = os.path.join(CACHE_DIR, f"weather_correction_{sport}.pkl")
+    if os.path.exists(cur):
+        with open(cur, "rb") as f:
+            return pickle.load(f), f"{cur} (no backfill record yet: assumed applied)"
+    return None, "no artifact: the rows carry no weather"
+
+
+def undoAppliedWeather(cols, sport, art=None, source=""):
+    """cols with nt multiplied back by the weather multiplier the backfill
+    divided in, so the fit sees the whole weather effect. One multiplier per
+    (course, date, distance): a race shares its weather."""
+    import datetime as _dt
+    import normalize_distance as nd
+    if art is None:
+        print(f"[undo] {sport}: {source}; nothing to undo")
+        return cols
+    saved = nd._WEATHER.get(sport)
+    nd._WEATHER[sport] = art
+    try:
+        n = cols["nt"].size
+        mult = np.ones(n)
+        memo = {}
+        feats = [f for f in QUERIED_FEATURES if f in cols]
+        for i in range(n):
+            key = (cols["course"][i], cols["date"][i], float(cols["dist"][i]))
+            m = memo.get(key)
+            if m is None:
+                wx = {f: (None if not np.isfinite(cols[f][i]) else float(cols[f][i]))
+                      for f in feats}
+                try:
+                    wx["doy"] = _dt.date.fromisoformat(str(cols["date"][i])[:10]).timetuple().tm_yday
+                except ValueError:
+                    wx["doy"] = None
+                course = cols["course"][i] if sport == "TF" else (cols["course"][i] or None)
+                inv = nd._applyWeather(1.0, wx, course, sport, float(cols["dist"][i]))
+                m = memo[key] = (1.0 / inv) if inv else 1.0
+            mult[i] = m
+    finally:
+        nd._WEATHER[sport] = saved
+    out = dict(cols)
+    out["nt"] = cols["nt"] * mult
+    lm = np.log(mult)
+    print(f"[undo] {sport}: the applied correction divided back out ({source}): "
+          f"{len(memo):,} races, median |effect| {100 * float(np.median(np.abs(lm))):.2f}%, "
+          f"p99 {100 * float(np.percentile(np.abs(lm), 99)):.2f}%")
+    return out
+
+
+def athleteSeason(cols):
+    """★ THE ATHLETE EFFECT IS PER SEASON (2026-09-28). Keyed on the person
+    alone, the effect spans a career, and the event effect (one venue and
+    fortnight across YEARS) then leaves each runner's year-to-year
+    improvement in the residual -- a high schooler is 2-4% faster every
+    year, so any drift of the weather across the years of the data leaks
+    into the betas. Per (person, year) the athlete is compared only with
+    themselves that season; the event effect still holds the course and
+    the calendar week."""
+    return np.asarray([f"{a}|{str(d)[:4]}" for a, d in zip(cols["ath"], cols["date"])],
+                      dtype=object)
+
+
 def fitWeather(cols):
-    ac, na = _denseCode(cols["ath"])
+    ac, na = _denseCode(athleteSeason(cols))
     ec, ne = _denseCode(cols["event"])                # RACE-EVENT, not venue
     knots_by = {f: np.quantile(cols[f], KNOT_Q) for f in SPLINE_FEATURES}  # data-placed
     y = np.log(cols["nt"])
@@ -669,7 +755,7 @@ def reportCourse(cols, needle):
     if not mask.any():
         print(f"\n[course] no course matched '{needle}'.")
         return
-    ac, na = _denseCode(cols["ath"])
+    ac, na = _denseCode(athleteSeason(cols))
     adj = np.log(cols["nt"]) - _groupMeanFull(np.log(cols["nt"]), ac, na)
     d_, a_, t_, p_ = (cols["date"][mask], adj[mask],
                       cols["apparent_temp"][mask], cols["precip"][mask])
@@ -700,7 +786,7 @@ def reportShape(cols, feature, nbins=8):
     if feature not in FEATURES:
         print(f"\n[shape] '{feature}' not a feature ({', '.join(FEATURES)}).")
         return
-    ac, na = _denseCode(cols["ath"])
+    ac, na = _denseCode(athleteSeason(cols))
     ec, ne = _denseCode(cols["event"])
     resid = _twoWayDemeanY(np.log(cols["nt"]), ac, na, ec, ne)          # weather+noise
     xdev = _twoWayDemeanY(_featureColumn(cols, feature).astype(float), ac, na, ec, ne)
@@ -874,6 +960,8 @@ def main():
         print("[load] no rows matched -- check the weather join / filters.")
         return
     print(f"[load] {cols['nt'].size:,} races joined to weather.")
+    art, src = appliedArtifact(args.sport)
+    cols = undoAppliedWeather(cols, args.sport, art, src)
 
     betas, splines, dist_betas, coef, n_used, counts, yd, Xd, layout = fitWeather(cols)
     coverage = _eventCoverage(cols)
