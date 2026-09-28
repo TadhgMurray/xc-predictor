@@ -145,7 +145,7 @@ def _weatherCte(need=None):
     join = (f"JOIN {need} n ON n.cell_lat = g.cell_lat AND n.cell_lon = g.cell_lon "
             f"AND n.date = g.date" if need else "")
     return f"""
-        wx AS (
+        wx AS MATERIALIZED (
             SELECT g.cell_lat, g.cell_lon, g.date,
                    {aggs}
             FROM   weather_grid g
@@ -352,6 +352,16 @@ def loadRaces(conn, sql, sport, limit=None):
     names = ["ath", "course", "event", "date", "nt", "dist", *QUERIED_FEATURES]
     acc = {k: [] for k in names}
     t0 = _time.time()
+    # ★★ PLAN FOR THE WHOLE RESULT, NOT THE FIRST ROW (2026-09-28: 34M rows
+    #    at ~5,000 a second, 6,518 s, the first row after 0 s). A named
+    #    cursor plans for cursor_tuple_fraction (default 0.1) of its rows,
+    #    so Postgres picked a fast-start nested loop that re-aggregated a
+    #    day of hourly weather for every result row. At 1.0, and with the
+    #    weather CTE materialised, it is one aggregate and hash joins.
+    with conn.cursor() as c:
+        for stmt in ("SET cursor_tuple_fraction = 1.0", "SET work_mem = '1GB'",
+                     "SET max_parallel_workers_per_gather = 4"):
+            c.execute(stmt)
     # ★ COLUMNS A BATCH AT A TIME (2026-09-28): zip(*batch) transposes in C;
     #   the old per-row, per-column append was 25M x 11 Python calls.
     with conn.cursor(name="weather_stream") as cur:

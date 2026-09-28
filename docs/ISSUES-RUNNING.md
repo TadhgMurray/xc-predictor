@@ -2710,3 +2710,15 @@ the all-time board needs the same fill.
 **5. Non-school entries:** Carter Vangessel "Indiana BLAST Track Club IN"
 (grade -, 2022-01-08, 154.8, #2 all time) -- a club row with no grade on the
 HS board; check its pool and whether the mark is real.
+
+## 2026-09-28 — the corrected weather refit (XC, measure-only on the server)
+
+With the applied correction divided back out ([undo]: 161,127 races, median
+0.46%, p99 3.28%) and athletes per season, XC signs are physical again:
+wind +0.00072/(m/s) (was -0.00018), rain +0.00071/mm (was -0.00024), snow
++0.738/m (was -0.399; the older good fit had +0.748), heat +1.3% at 20 C,
++3.1% at 27 C, +4.8% at 33 C (5k), mud +1.8% at soil 0.50. Load took 6,518 s
+at ~5,000 rows/s: a named cursor plans for 10% of its rows, and the weather
+CTE (referenced once, so inlined) could be re-aggregated per row. Now the
+CTE is MATERIALIZED and the session plans for the whole result
+(cursor_tuple_fraction 1.0, 1 GB work_mem). The fit itself took 1,344 s.
