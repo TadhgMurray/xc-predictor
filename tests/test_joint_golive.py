@@ -156,6 +156,26 @@ def per_sport_day_term():
     print("  race-day term per sport: XC keeps it, TF drops it, default none  OK")
 
 
+def fast_day_only():
+    """'XC:fast' (owner, 2026-09-28): a fast XC day reaches the rating, a
+    slow one does not; TF untouched."""
+    out, D, cols, keep, truth, raw = synthetic_pack()
+    sport = np.asarray(cols["sport"][keep])
+    u = np.asarray(out["race_effect"])[D.race]
+    fast = jg.buildLive(out, D, cols, keep, race_effect_sports=("XC:fast",))
+    full = jg.buildLive(out, D, cols, keep, race_effect_sports=("XC",))
+    none = jg.buildLive(out, D, cols, keep, use_race_effect=False)
+    f, a, n = fast["chosen"], full["chosen"], none["chosen"]
+    fast_xc = (sport == 0) & (u < 0)
+    slow_xc = (sport == 0) & (u > 0)
+    assert fast_xc.any() and slow_xc.any()
+    assert np.allclose(f[fast_xc], a[fast_xc]), "a fast day is applied in full"
+    assert np.allclose(f[slow_xc], n[slow_xc]), "a slow day stays out"
+    assert np.allclose(f[sport == 1], n[sport == 1]), "track untouched"
+    assert jg.dayModes(("XC:fast", "tf")) == {"XC": "fast", "TF": "all"}
+    print("  race-day term, XC fast days only ...................... OK")
+
+
 def winter_gain_paths():
     """The winter gain by LEVEL, by BAND, by both and by neither.
 
@@ -200,4 +220,5 @@ def winter_gain_paths():
 if __name__ == "__main__":
     main()
     per_sport_day_term()
+    fast_day_only()
     winter_gain_paths()

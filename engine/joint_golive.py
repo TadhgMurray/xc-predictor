@@ -56,6 +56,20 @@ from pair_write_results import poolMeanPerGroup, ratedMask
 # Output:    dict: diffs (course_difficulties dict), athletes (the
 #            saveAthleteRatings dict), per-sport (result_id, rating) pairs,
 #            the pair_difficulty-shaped arrays, and a summary.
+def dayModes(race_effect_sports):
+    """{'XC': 'all' | 'fast'} from ('XC', 'TF:fast', ...); absent = out."""
+    modes = {}
+    for x in race_effect_sports or ():
+        name, _, mode = str(x).strip().upper().partition(":")
+        if name in ("XC", "TF"):
+            modes[name] = "fast" if mode == "FAST" else "all"
+    return modes
+
+
+def _dayWord(mode):
+    return {"all": "IN", "fast": "FAST DAYS ONLY IN"}.get(mode, "OUT OF")
+
+
 def buildLive(out, D, cols, keep, collapse="best", anchor="career",
               use_race_effect=True, gain_bands=None, pack_date=None,
               race_effect_sports=(), gain_levels=None):
@@ -93,17 +107,32 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     #   for both (it protects the venue from the weather); the RATING
     #   applies it for the sports named. `race_effect_in_rating` in the
     #   npz and the site's hover both say which.
+    # ★ 'XC:fast' APPLIES ONLY A FAST DAY (owner, 2026-09-28: "when the
+    #   weather is good [Ultimook] is A LOT less difficult ... the easy years
+    #   aren't penalized enough"). With the term out of the rating, the solve
+    #   still puts a good day into u -- which protects the COURSE number --
+    #   so the course keeps its all-years difficulty and every runner on the
+    #   easy day is credited the full hard course. The 2026-09-06 objection
+    #   to the term ("a slow race is a slow race; the model cannot tell mud
+    #   from a jog") is about SLOW days: a field can jog, it cannot run
+    #   collectively faster than itself. A fast day is ground, weather or a
+    #   short course (06c condemns the short ones), so under ':fast' only
+    #   u < 0 reaches the rating and slow days stay out, as decided.
     day_on = np.zeros(sport.size, dtype=bool)
-    if use_race_effect:
-        for code, name in ((0, "XC"), (1, "TF")):
-            if name in race_effect_sports:
-                day_on |= sport == code
+    fast_only = np.zeros(sport.size, dtype=bool)
+    for code, name in ((0, "XC"), (1, "TF")):
+        mode = dayModes(race_effect_sports).get(name) if use_race_effect else None
+        if mode:
+            day_on |= sport == code
+            if mode == "fast":
+                fast_only |= sport == code
     if day_on.any():
         # tilted like the course (issue 156): the solve fitted h * u --
         # and CLIPPED for the rating (issue 187): a day beyond the cap is
         # a broken result sheet, not a credit
-        eff = eff + np.where(day_on, out["h"] * np.clip(u_row, -js.RACE_DAY_CAP,
-                                                        js.RACE_DAY_CAP), 0.0)
+        u_cl = np.clip(u_row, -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
+        u_cl = np.where(fast_only, np.minimum(u_cl, 0.0), u_cl)
+        eff = eff + np.where(day_on, out["h"] * u_cl, 0.0)
     eff_venue = eff.copy()           # the venue's share, for engine_scale (177)
     # ★ THE TRACK DISTANCE OFFSET IS IN THE RATING (issue 148): it corrects
     #   the normalisation the row arrived with, exactly as the cell corrects
@@ -433,7 +462,7 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
             pts = 130.0 * (np.exp(np.abs(out["race_effect"][D.race][m])) - 1)
             print(f"[joint/live] race-day term, {name}: median {np.median(pts):.2f} "
                   f"points at 130, p90 {np.percentile(pts, 90):.2f}, "
-                  f"{'IN' if name in race_effect_sports and use_race_effect else 'OUT OF'} "
+                  f"{_dayWord(dayModes(race_effect_sports).get(name) if use_race_effect else None)} "
                   f"the rating")
     summary = {
         "n_rated": int(rated.sum()), "n_rows": int(rated.size),

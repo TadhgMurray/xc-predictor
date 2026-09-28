@@ -756,6 +756,9 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   ms=0.012,elem=0.015' states the fall-to-spring gain per pool level
   #   that the go-live shifts the track rows to show; scripts/
   #   sport_level_fit.py measures it from the boards.
+  # ★ XCP_RACE_EFFECT_SPORTS (2026-09-28): unset = the race-day term is in
+  #   no rating (2026-09-06). 'XC:fast' puts a FAST XC day into the rating
+  #   and leaves slow days out (joint_golive.dayModes says why).
   # ★ XCP_TRACK_LEVEL_BY_POOL=0 leaves the college-only and high-school-only
   #   tracks at the level the linkage gave them; default 1 recentres each host
   #   population's outdoor tracks to the same zero (run_joint.trackPopulationShift).
@@ -781,6 +784,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_BRACKET_XC_LEVEL_MODE:+--bracket-xc-level-mode "$XCP_BRACKET_XC_LEVEL_MODE"} \
       ${XCP_BRACKET_PLACE_PRIOR:+--bracket-place-prior "$XCP_BRACKET_PLACE_PRIOR"} \
       ${XCP_COURSE_SCALE:+--course-scale "$XCP_COURSE_SCALE"} \
+      ${XCP_RACE_EFFECT_SPORTS:+--race-effect-sports "$XCP_RACE_EFFECT_SPORTS"} \
       ${XCP_SPORT_LEVEL_POOLS:+--sport-level-pools "$XCP_SPORT_LEVEL_POOLS"} \
       ${XCP_FROM_STATE:+--from-state "$XCP_FROM_STATE"} \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \

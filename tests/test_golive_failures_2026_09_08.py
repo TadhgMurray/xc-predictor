@@ -193,10 +193,16 @@ _flag = re.search(r'ap\.add_argument\("--race-effect-sports",\s*default="([^"]*)
 ok(_flag is not None and _flag.group(1) == "",
    "--race-effect-sports must default to none: the solve keeps the term, "
    "the rating does not carry it for either sport")
-ok("--race-effect-sports" not in PIPE,
-   "run_pipeline must not put the race-day term back into the ratings")
+# 2026-09-28: the pipeline FORWARDS XCP_RACE_EFFECT_SPORTS (the owner's
+# 'XC:fast' choice) and nothing else; it never sets the term by itself
+_uses = re.findall(r'[^\n]*--race-effect-sports[^\n]*', PIPE)
+ok(all('${XCP_RACE_EFFECT_SPORTS:+' in u for u in _uses),
+   "run_pipeline must not put the race-day term back into the ratings "
+   "except when XCP_RACE_EFFECT_SPORTS asks")
+ok("XCP_RACE_EFFECT_SPORTS:=" not in _src("deploy", "solve_env.sh"),
+   "solve_env must not give the race-day term a default")
 # and the go-live has to SAY which way it went, in the log
-ok("the rating\"" in JG and "'IN' if name in race_effect_sports" in JG,
+ok("the rating\"" in JG and "_dayWord(" in JG and '"OUT OF"' in JG,
    "joint_golive must log IN/OUT OF the rating per sport")
 
 

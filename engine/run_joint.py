@@ -1677,7 +1677,10 @@ def buildParser():
                          "model cannot tell mud from a jog -- measured "
                          "weather is credited in the normalisation instead). "
                          "The solve keeps the term for both sports, the "
-                         "hover shows it")
+                         "hover shows it. 'XC:fast' applies only a FAST "
+                         "day (u < 0): a good-weather year at a hard course "
+                         "is charged less, a slow day stays out "
+                         "(joint_golive.dayModes)")
     return ap
 
 

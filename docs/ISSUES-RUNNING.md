@@ -2602,3 +2602,24 @@ no re-solve).
 
 Also: diag_weather_credit read `results.distance`, which does not exist;
 it now takes the race's distance the way grade_sanity does.
+
+## 2026-09-28 — why good-weather years at hard courses rate high, and XC:fast (IN CODE, OFF UNTIL CHOSEN)
+
+The mechanism behind the owner's Ultimook point is the 2026-09-06 decision
+itself. The solve still fits a race-day term u, so a good-weather year's
+speed goes into u and the COURSE keeps its all-years difficulty; but u is in
+no rating. So every runner on the easy day is credited the full hard course.
+The weather correction is the only thing that can take it back, and it is
+small (XC betas: rain -0.02%/mm, wind -0.02% per m/s).
+
+`XCP_RACE_EFFECT_SPORTS=XC:fast` puts only a FAST XC day into the rating
+(u < 0, clipped at the cap as before); slow days stay out. The 09-06
+objection ("a slow race is a slow race; the model cannot tell mud from a
+jog") is about slow days: a field can jog, it cannot run collectively
+faster than itself. Cost to know about: a championship where the whole
+field peaks reads as a fast day too (the form curve takes some of that).
+Off unless set; applies from state (no re-solve). Judge it with
+diag_weather_credit's in-course column before and after.
+
+Also: the conversions note said "how that meet ran" -- no rating carries
+the day term, so it now says the venue and the measured weather.

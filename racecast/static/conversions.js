@@ -713,9 +713,10 @@
                 'average day. Your ' + fmt(r.time_seconds) + where +
                 ' comes out as ' + fmt(c.time) + ' here' +
                 (Math.abs(pct) < 0.2 ? ', so that race rated about average.'
-                 : ': the ratings put that race\u2019s track and day about ' +
+                 : ': the ratings put that race\u2019s track and weather about ' +
                    Math.abs(pct).toFixed(1) + '% ' + (pct > 0 ? 'fast' : 'slow') +
-                   ' (weather, the venue, and how that meet ran).');
+                   ' against a typical track (the venue and the measured weather;' +
+                   ' how fast the field ran that day is not in a rating).');
             return;
         }
     }
