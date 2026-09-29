@@ -95,7 +95,15 @@ MIN_GAP = 25.0
 #   survivors, the gap bar is that evidence. Without them, the field's own
 #   MEDIAN pace at the stored label decides: no full field's median
 #   approaches world-record pace (0.151 s/m for the 5k WR), and none walks.
-NUKE_FAST_SM = 0.18    # 3:00/km at the label -- the label is too long
+#
+# ⚠⚠ THE FAST BAR WAS 0.18 s/m, "3:00/km -- BEYOND ANY HUMAN", AND IT WAS A
+#    30:00 10k (owner, 2026-09-29: the NCAA DI 2025 men's championship,
+#    "it's NCAA nationals and obv a 10k", nuked). A D1 national final's
+#    median runs about there, and the rest of this block's own argument is
+#    "no full field's median approaches world-record pace". So the bound IS
+#    the world record at the label (impossible_distance.wrTime, men's, the
+#    faster of the two): a median faster than that is impossible by
+#    definition and nothing slower is.
 NUKE_SLOW_SM = 0.90    # 15:00/km at the label -- the label is too short
 
 
@@ -103,8 +111,9 @@ def paceImpossible(med_time, label):
     """A reason string when the field's median pace refutes the label."""
     if not med_time or not label:
         return None
+    from impossible_distance import wrTime
     sm = float(med_time) / float(label)
-    if sm < NUKE_FAST_SM:
+    if float(med_time) < wrTime(float(label), "M"):
         return f"median pace {sm:.3f} s/m at {label:.0f} -- beyond any human"
     if sm > NUKE_SLOW_SM:
         return f"median pace {sm:.3f} s/m at {label:.0f} -- slower than a walk"
@@ -129,9 +138,14 @@ WITH own AS (
     GROUP  BY 1
     HAVING count(*) >= 3
 ),
+-- ⚠ ONLY A FINISHER WHO COULD BE ON A BOARD COUNTS (2026-09-29). A row
+--   with no person_id is never on one, and for a year no 2026-season tfrrs
+--   row had a person: NCAA DI 2025 read as a field of 250 whose ratings
+--   had all been deleted. And (meet, div) is grouped WITH the source: the
+--   anet and tfrrs id spaces overlap, and two meets are not one division.
 div AS (
-    SELECT r.meet_id, r.div_id,
-           count(*)                                    AS n_rows,
+    SELECT r.meet_id, r.div_id, r.source,
+           count(*) FILTER (WHERE r.person_id IS NOT NULL) AS n_rows,
            count(k.result_id)                          AS n_rated,
            -- ! THE SURVIVORS' OWN VERDICT, carried up with them. avg over a
            --   handful of rows, because that is all a broken division leaves.
@@ -148,8 +162,8 @@ div AS (
     LEFT   JOIN ranking_results k ON k.result_id = r.result_id
                                  AND k.sport = 'XC'
     LEFT   JOIN own o ON o.ident = COALESCE(r.person_id, r.athlete_id)
-    GROUP  BY 1, 2
-    HAVING count(*) >= %(min_rows)s
+    GROUP  BY 1, 2, 3
+    HAVING count(*) FILTER (WHERE r.person_id IS NOT NULL) >= %(min_rows)s
 )
 SELECT d.*,
        COALESCE(dov.distance, m.distance, x.distance) AS label,
@@ -160,15 +174,17 @@ LEFT   JOIN dist_override dov
        ON dov.meet_id = d.meet_id AND dov.div_id = d.div_id
 LEFT   JOIN LATERAL (
     SELECT course_name, distance FROM meets
-     WHERE meets.meet_id = d.meet_id AND meets.div_id = d.div_id LIMIT 1
+     WHERE d.source = 'anet'
+       AND meets.meet_id = d.meet_id AND meets.div_id = d.div_id LIMIT 1
 ) m ON TRUE
 LEFT   JOIN LATERAL (
     SELECT distance FROM tmp_xc_tfrrs_dist t
-     WHERE t.meet_id = d.meet_id AND t.div_id = d.div_id LIMIT 1
+     WHERE t.meet_id = d.meet_id AND t.div_id = d.div_id
+       AND t.source = d.source LIMIT 1
 ) x ON TRUE
 LEFT   JOIN LATERAL (
     SELECT venue_name, meet_name FROM meets_tfrrs
-     WHERE meets_tfrrs.meet_id = d.meet_id LIMIT 1
+     WHERE d.source = 'tfrrs' AND meets_tfrrs.meet_id = d.meet_id LIMIT 1
 ) mt ON TRUE
 """
 
