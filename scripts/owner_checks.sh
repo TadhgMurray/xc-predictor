@@ -43,10 +43,12 @@ CHECKS=(
 # switch is turned on (see the commit messages of df34f33 and the B+C merge)
 LONG_RUNS=(
   "$PY -u scripts/ablation_ladder.py --only base,season-tie,tilt-hs --pct 15 --outer 5   # then switch_scorecard.py --holdout base vs each"
-  "$PY engine/fit_distance_ability.py                         # writes distance_ability.pkl (30-60 min)"
+  "$PY engine/fit_distance_ability.py --dry-run               # the curve AND its joint fit with the per-pool residual; read the JOINT lines (2026-09-29)"
+  "$PY engine/fit_distance_ability.py                         # writes distance_ability.pkl (longer than before: a second CV for the joint fit)"
+  "$PY -u scripts/diag_one_scale.py --all                      # A: the label the residual brings back; B: pool / ability / abil+res held out, a verdict per pool"
   "$PY scripts/bracket_holdout.py --pct 15 --seed 11 --era-years 2 --window 30 --gauge flat400 --dump /tmp/holdout_pin.npz   # indoor: pin (today)"
   "$PY scripts/bracket_holdout.py --pct 15 --seed 11 --era-years 2 --window 30 --gauge flat400 --indoor-mode geometry --compare /tmp/holdout_pin.npz   # indoor: by track type"
-  "XCP_DISTANCE_BY=ability bash deploy/run_pipeline.sh --from 5 --skip 08a_holdout,08b_ladder   # adopt C; revert with XCP_DISTANCE_BY=pool"
+  "XCP_DISTANCE_BY=ability bash deploy/run_pipeline.sh --from 5 --skip 08a_holdout,08b_ladder   # adopt C with the per-pool residual; XCP_DISTANCE_RESIDUAL=0 for the curve alone; revert with XCP_DISTANCE_BY=pool"
 )
 
 # printed, never run: each needs the owner's yes after reading the checks

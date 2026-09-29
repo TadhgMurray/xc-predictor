@@ -13,7 +13,13 @@
 #      under every pool label of one gender -- where the pool curves gave
 #      the report's 156.6 / 150.0 / 147.6;
 #   4. the conversions round trip closes by ability, and the backfill
-#      refuses a partial write in a new mode.
+#      refuses a partial write in a new mode;
+#   5. THE PER-POOL RESIDUAL (owner, 2026-09-29: "adopt the ability curve
+#      with the per-pool residual applied"): the joint fit recovers a
+#      planted residual (closer than the measured-after number), applies
+#      only a significant one with support, the conversion applies it and
+#      inverts exactly, high school is unchanged, the label dependence it
+#      brings back is the size the delta says, and the mode is recorded.
 #
 #   XCP_DB_PASSWORD=x python -m pytest -q tests/test_distance_ability.py
 import math
@@ -66,16 +72,20 @@ def _pairs(rng, pool, n, mu, sd, dists, pool_delta=0.0, noise=0.02, cal=-0.003):
     return out
 
 
-def _corpus(seed=1, college_delta=0.0, n=6000):
+def _corpus(seed=1, college_delta=0.0, n=6000, ms_delta=0.0, extra=()):
     """Three pools of different speed over different distances: high school
     3k-8k, college (faster) 5k-10k, middle school (slower) 1600-3200 --
-    no pool covers the whole range, the family does."""
+    no pool covers the whole range, the family does. `extra`: more
+    (pool, n, mu, sd, dists, delta) groups."""
     rng = np.random.default_rng(seed)
-    return F.pairArrays(
-        _pairs(rng, "hs_m", n, 0.0, 0.08, [3000, 4000, 4828, 5000, 8000])
-        + _pairs(rng, "college_m", n, -0.12, 0.06, [5000, 6000, 8000, 10000],
-                 pool_delta=college_delta)
-        + _pairs(rng, "ms_m", n, 0.25, 0.10, [1600, 2414, 3000, 3200]))
+    pairs = (_pairs(rng, "hs_m", n, 0.0, 0.08, [3000, 4000, 4828, 5000, 8000])
+             + _pairs(rng, "college_m", n, -0.12, 0.06, [5000, 6000, 8000, 10000],
+                      pool_delta=college_delta)
+             + _pairs(rng, "ms_m", n, 0.25, 0.10, [1600, 2414, 3000, 3200],
+                      pool_delta=ms_delta))
+    for pool, k, mu, sd, dists, dl in extra:
+        pairs += _pairs(rng, pool, k, mu, sd, dists, pool_delta=dl)
+    return F.pairArrays(pairs)
 
 
 # ------------------------------------------------------------------ #
@@ -137,7 +147,7 @@ def test_fit_all_keys_families_by_gender_and_sport():
     tf = F.pairArrays([])
     art = F.fitAll(xc, tf, verbose=False, degrees={k: (2, 2) for k in
                                                      ("m|XC", "u|XC", "m|*", "u|*")},
-                   agreement=False)
+                   agreement=False, degrees_joint={"m|XC": (2, 2)})
     assert art["kind"] == DA.KIND and art["target"] == 5000.0
     assert {"m|XC", "u|XC", "m|*", "u|*"} <= set(art["families"])
     assert "f|XC" not in art["families"]            # no women's pairs, no family
@@ -426,3 +436,306 @@ def test_group_reference_is_the_harmonic_mean():
     assert rows[("division", "college_m", "D1")][1] == pytest.approx(100.0)
     # a group under MIN_SEASONS is an anecdote and is left out
     assert not G.groupRefs(seasons[:10], {"college_m": 1.2})
+
+
+# ------------------------------------------------------------------ #
+# 5. THE PER-POOL RESIDUAL
+# ------------------------------------------------------------------ #
+
+def test_the_joint_fit_recovers_a_planted_residual():
+    """College planted +0.03 of exponent, middle school -0.05, at equal
+    ability. The joint fit finds both, never gives high school one, and
+    lands closer than the number measured after the shared fit (whose curve
+    had already bent toward them)."""
+    arr = _corpus(college_delta=0.03, ms_delta=-0.05)
+    j, why = F.fitJoint(arr, 2, 2, span=None)
+    assert why is None
+    got = j[DA.APPLIED_KEY]
+    assert set(got) == {"college_m", "ms_m"}
+    assert "hs_m" not in j["residual_tested"]
+    after = F.poolResidual(arr, F.fitFamily(arr, 2, 2))
+    for pool, true in (("college_m", 0.03), ("ms_m", -0.05)):
+        # ! 20%: at the corpus's leg noise (2%) the ability index is read
+        #   off noisy legs and the alternation settles a little short of
+        #   the planted value (exact at 0.1% noise: the next test)
+        assert got[pool] == pytest.approx(true, rel=0.2), (pool, got[pool])
+        assert abs(got[pool] - true) < abs(after[pool][0] - true), (pool, got, after)
+    assert F.checkFamily(j)[0]
+
+
+def test_the_joint_fit_is_exact_without_noise():
+    rng = np.random.default_rng(5)
+    arr = F.pairArrays(
+        _pairs(rng, "hs_m", 3000, 0.0, 0.08, [3000, 4000, 5000, 8000], noise=0.001)
+        + _pairs(rng, "college_m", 3000, -0.12, 0.06, [5000, 6000, 8000, 10000],
+                 pool_delta=0.03, noise=0.001)
+        + _pairs(rng, "elem_m", 3000, 0.4, 0.08, [1000, 1600, 2000, 3000],
+                 pool_delta=-0.04, noise=0.001))
+    j, _ = F.fitJoint(arr, 2, 2, span=None)
+    assert j[DA.APPLIED_KEY]["college_m"] == pytest.approx(0.03, abs=0.001)
+    assert j[DA.APPLIED_KEY]["elem_m"] == pytest.approx(-0.04, abs=0.001)
+
+
+def test_a_residual_without_significance_or_support_is_not_applied():
+    """College planted nothing: tested, not significant, not applied. An
+    elementary pool with too few pairs for a pool curve gets no column at
+    all, whatever its own residual. Middle school's is applied.
+    ! Seeded: a null residual is a draw, and at another seed college's comes
+      out past 1.96 SE about as often as that bar says it should (the SE is
+      conditional on the abilities, as the measured-after one always was)."""
+    arr = _corpus(seed=4, ms_delta=-0.05,
+                  extra=[("elem_m", F.MIN_FAMILY_PAIRS // 2, 0.45, 0.08,
+                          [1000, 1600, 2000], -0.04)])
+    j, _ = F.fitJoint(arr, 2, 2, span=None)
+    applied, tested = j[DA.APPLIED_KEY], j["residual_tested"]
+    assert "ms_m" in applied
+    assert "elem_m" not in tested and "elem_m" not in applied
+    assert not tested["college_m"]["significant"] and not tested["college_m"]["applied"]
+    assert "college_m" not in applied
+    # the evaluator gives an unapplied pool exactly nothing
+    assert DA.delta(j, "college_m") == 0.0 and DA.delta(j, "elem_m|XC") == 0.0
+    assert DA.delta(j, "ms_m|XC") == applied["ms_m"]
+
+
+def test_no_high_school_pairs_no_joint_fit():
+    arr = _corpus(ms_delta=-0.05)
+    no_hs = F.subset(arr, ~F.hsMask(arr))
+    j, why = F.fitJoint(no_hs, 2, 2, span=None)
+    assert j is None and "high-school" in why
+
+
+def test_the_artifact_says_which_residuals_are_applied():
+    xc = _corpus(n=1500, ms_delta=-0.05)
+    art = F.fitAll(xc, F.pairArrays([]), verbose=False, agreement=False,
+                   degrees={k: (2, 2) for k in ("m|XC", "u|XC", "m|*", "u|*")},
+                   degrees_joint={"m|XC": (2, 2)})
+    j = art["families"]["m|XC"][DA.JOINT_KEY]
+    assert art["residual_applied"] == {"m|XC": j[DA.APPLIED_KEY]}
+    assert "ms_m" in j[DA.APPLIED_KEY] and j["check"]["ok"]
+    # the gender-blind and sport-blind families pool what it separates
+    for k in ("u|XC", "m|*", "u|*"):
+        assert DA.JOINT_KEY not in art["families"][k]
+    # the shared curve is still there, for XCP_DISTANCE_RESIDUAL=0
+    assert DA.family(art, "ms_m", "XC") is art["families"]["m|XC"]
+    assert DA.family(art, "ms_m", "XC", residual=True) is j
+
+
+JOINT_M = dict(FAM_M, alpha=[1.05, 0.03],
+               applied_residual={"college_m": -0.017, "ms_m": -0.058, "elem_m": -0.039})
+FAM_MJ = dict(FAM_M, joint=JOINT_M)
+ART_J = {"kind": DA.KIND, "target": 5000.0,
+         "families": {"m|XC": FAM_MJ, "f|XC": FAM_F, "u|XC": FAM_MJ,
+                      "m|*": FAM_MJ, "f|*": FAM_F, "u|*": FAM_MJ}}
+
+
+def _clearCaches():
+    for fn in (nd._normalizationFactorCached, nd._otherFactorCached, nd._abilityPQ):
+        fn.cache_clear()
+
+
+@pytest.fixture
+def residual(monkeypatch):
+    monkeypatch.setattr(nd, "_ABILITY", ART_J)
+    monkeypatch.setattr(nd, "DISTANCE_RESIDUAL", True)
+    _clearCaches()
+    yield
+    _clearCaches()
+
+
+def _refTime(fam, d, a=0.0):
+    """The raw time at d of the runner at ability a on the reference curve."""
+    x = math.log(d / 5000.0)
+    return math.exp(DA.inverseLog(fam, math.log(fam["ref_5k"]) + a, x))
+
+
+def test_the_conversion_applies_the_pools_residual(residual):
+    assert nd.residualMode()
+    for d in (1600.0, 3000.0, 8000.0, 10000.0):
+        x = math.log(d / 5000.0)
+        for a in (-0.1, 0.0, 0.2):
+            t = _refTime(JOINT_M, d, a)
+            f_hs = nd.factorForTime(t, d, "hs_m", sport="XC")
+            # ★ HIGH SCHOOL IS THE REFERENCE: the joint curve, no residual
+            assert f_hs == pytest.approx(DA.factorForTime(JOINT_M, t, d), rel=1e-12)
+            _p, q = DA._pq(JOINT_M, x)
+            for pool, dl in JOINT_M["applied_residual"].items():
+                f = nd.factorForTime(t, d, pool, sport="XC")
+                # unclamped: log T5_p - log T5_hs = -delta x / (1 + Q(x))
+                assert math.log(f / f_hs) == pytest.approx(-dl * x / (1 + q), abs=1e-12)
+                norm = nd.normalizeTime(t, d, pool, sport="XC")
+                assert norm == pytest.approx(t * f, abs=0.006)
+    # a pool the fitter did not apply converts exactly as high school
+    t = _refTime(JOINT_M, 10000.0)
+    assert (nd.factorForTime(t, 10000.0, "pro_m", sport="XC")
+            == nd.factorForTime(t, 10000.0, "hs_m", sport="XC"))
+    # 5000 m is 5000 m under every label: g_p(0) = 0
+    assert len({nd.normalizeTime(900.0, 5000.0, p, sport="XC")
+                for p in ("hs_m", "college_m", "ms_m", "elem_m")}) == 1
+    # the women's family has no joint fit: its shared curve, untouched
+    assert (nd.factorForTime(2000.0, 6000.0, "college_f", sport="XC")
+            == pytest.approx(DA.factorForTime(FAM_F, 2000.0, 6000.0), rel=1e-12))
+
+
+def test_the_residual_inverts_exactly(residual):
+    for pool in ("hs_m", "college_m", "ms_m", "elem_m", "pro_m"):
+        for d in (800.0, 1600.0, 3000.0, 5000.0, 8000.0, 10000.0, 15000.0):
+            x = math.log(d / 5000.0)
+            last = None
+            # the clamped tails included: far faster / slower than any pair
+            for t5 in np.linspace(REF * 0.5, REF * 2.0, 40):
+                lt = DA.inverseLog(JOINT_M, math.log(t5), x, pool)
+                assert DA.forwardLog(JOINT_M, lt, x, pool) == pytest.approx(
+                    math.log(t5), abs=1e-12)
+                if last is not None:
+                    assert lt > last, "a slower 5K must be a slower race"
+                last = lt
+                t = math.exp(lt)
+                norm = t * nd.factorForTime(t, d, pool, sport="XC")
+                assert t == pytest.approx(
+                    norm / nd.factorForNorm(norm, d, pool, sport="XC"), rel=1e-12)
+
+
+def test_the_conversion_round_trip_closes_with_the_residual(monkeypatch, residual):
+    import conversions as C
+    monkeypatch.setattr(C, "engineScale", lambda pool, sport=None: None)
+    monkeypatch.setattr(C, "pool_mean", lambda pool, sport=None: _MEANS.get(pool.split("|")[0]))
+    monkeypatch.setattr(C, "distance_offset", lambda *a, **k: 0.0)
+    monkeypatch.setitem(C._DEFAULT_DIFFICULTY_CACHE, "XC", 0.0)
+    for pool in ("college_m", "ms_m", "hs_m"):
+        for t, d in ((1714.0, 10000.0), (900.0, 5000.0), (560.0, 3000.0)):
+            norm = C._norm_from_time(t, d, pool, 0.0, sport="XC")
+            back = C.normalized_to_time(norm, {"distance": d, "pool": pool,
+                                               "sport": "XC", "difficulty": 0.0})
+            # normalizeTime rounds to the hundredth: 0.005 s of a 5K
+            # equivalent is 0.011 s back at 10 km
+            assert back == pytest.approx(t, rel=1e-5)
+
+
+def test_the_anchor_and_bands_do_not_move(residual):
+    for p in ("hs_m", "college_m", "ms_m", "elem_m"):
+        assert nd.targetFor(p, "XC") == 5000.0
+        assert nd.anchorShift(p, "XC") == 1.0
+        assert nd.poolBandFor(p) == (nd.PACE_FLOOR * 5000.0, nd.PACE_CEIL * 5000.0)
+    # a move to another anchor is the pool's reference runner's: it differs
+    # from high school's by exactly the residual
+    x = math.log(8000.0 / 5000.0)
+    assert (nd.anchorShift("ms_m", "XC", 8000.0) / nd.anchorShift("hs_m", "XC", 8000.0)
+            == pytest.approx(math.exp(-0.058 * x), rel=1e-12))
+
+
+def test_the_residual_off_is_the_shared_curve(monkeypatch, residual):
+    monkeypatch.setattr(nd, "DISTANCE_RESIDUAL", False)
+    _clearCaches()
+    assert not nd.residualMode()
+    t, d = 28 * 60 + 34.0, 10000.0
+    norms = {p: nd.normalizeTime(t, d, p, sport="XC")
+             for p in ("hs_m", "college_m", "ms_m", "elem_m")}
+    assert len(set(norms.values())) == 1, norms
+    assert norms["hs_m"] == pytest.approx(t * DA.factorForTime(FAM_M, t, d), abs=0.006)
+
+
+def test_the_label_dependence_is_the_residuals_size(residual):
+    """Section A of diag_one_scale in miniature: the report's run under each
+    label. Middle school's -0.058 at 10 km is ~4%; college's -0.017 ~1%."""
+    t, d = 28 * 60 + 34.0, 10000.0
+    hs = nd.normalizeTime(t, d, "hs_m", sport="XC")
+    _p, q = DA._pq(JOINT_M, math.log(2.0))
+    for pool, dl in JOINT_M["applied_residual"].items():
+        rel = hs / nd.normalizeTime(t, d, pool, sport="XC") - 1
+        assert rel == pytest.approx(math.expm1(dl * math.log(2.0) / (1 + q)), abs=1e-5)
+    assert 0.03 < abs(hs / nd.normalizeTime(t, d, "ms_m", sport="XC") - 1) < 0.05
+
+
+def test_the_one_scale_factor_ignores_the_residual(monkeypatch, residual):
+    """The F ratio converts anchors; by ability every anchor is 5000 m, so
+    it is 1 -- the residual lives in the rows' normalized_time, not in a
+    per-pool multiplier read at a representative 1600."""
+    import conversions as C
+    PV = _freshPoolView()
+    monkeypatch.setenv("XCP_ONE_SCALE", "1")
+    monkeypatch.setattr(C, "engineScale",
+                        lambda pool, sport=None: (_MEANS[pool.split("|")[0]], 0.0, 0.0))
+    assert PV.hsFactor("ms_m", "TF", 1600) == pytest.approx(1000.0 / 1150.0, rel=1e-12)
+    assert PV.hsFactor("college_m", "XC", 5000) == pytest.approx(1000.0 / 900.0, rel=1e-12)
+    try:
+        import run_joint as rj
+    except Exception as exc:                                    # noqa: BLE001
+        pytest.skip(f"run_joint unavailable here: {exc}")
+    got = rj.tiltScaleInputs(["hs_m", "college_m", "ms_m"], verbose=False)
+    assert list(got["f_ratio"]) == [1.0, 1.0, 1.0]
+
+
+def _lift(name, extra_ns=None):
+    """One function lifted out of backfill_normalize.py (see _guard)."""
+    import ast
+    path = os.path.join(_ROOT, "backfill", "backfill_normalize.py")
+    src = open(path, encoding="utf-8").read()
+    for node in ast.parse(src).body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            ns = dict(extra_ns or {})
+            exec(ast.get_source_segment(src, node), ns)            # noqa: S102
+            return ns[name]
+    raise AssertionError(f"{name} is gone from backfill_normalize.py")
+
+
+def test_the_record_carries_the_residual(monkeypatch, residual, tmp_path):
+    import json
+    (tmp_path / "engine" / "data").mkdir(parents=True)
+    record = _lift("recordAppliedDistance",
+                   {"_os": os, "__file__": str(tmp_path / "backfill" / "b.py")})
+    applied = {"m|XC": {"ms_m": -0.058}, "m|TF": {"elem_m": -0.039}}
+    monkeypatch.setattr(nd, "_ABILITY", dict(ART_J, residual_applied=applied,
+                                             fitted="2026-09-29 12:00:00"))
+    record("XC")
+    path = tmp_path / "engine" / "data" / "distance_applied_XC.json"
+    rec = json.loads(path.read_text())
+    assert rec["distance_by"] == "ability" and rec["residual"] is True
+    assert rec["residual_applied"] == {"m|XC": {"ms_m": -0.058}}
+    # and the readers read it back as the rows' state
+    monkeypatch.setattr(nd, "_DATA_DIR", str(tmp_path / "engine" / "data"))
+    assert nd.appliedResiduals() == {"XC": True}
+    monkeypatch.setattr(nd, "DISTANCE_RESIDUAL", False)
+    record("XC")
+    rec = json.loads(path.read_text())
+    assert rec["residual"] is False and "residual_applied" not in rec
+
+
+def test_the_residual_is_resolved_like_the_mode(monkeypatch, tmp_path):
+    import json
+    monkeypatch.setattr(nd, "_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("XCP_DISTANCE_RESIDUAL", raising=False)
+    assert nd._resolveResidual("pool", "default") == (False, "n/a")
+    # the writer asking for ability gets its residual by default
+    assert nd._resolveResidual("ability", "env")[0] is True
+    # a record from before the residual: the rows carry none
+    for sp in ("XC", "TF"):
+        (tmp_path / f"distance_applied_{sp}.json").write_text(
+            json.dumps({"distance_by": "ability"}))
+    assert nd._resolveResidual("ability", "recorded") == (False, "recorded")
+    for sp in ("XC", "TF"):
+        (tmp_path / f"distance_applied_{sp}.json").write_text(
+            json.dumps({"distance_by": "ability", "residual": True}))
+    assert nd._resolveResidual("ability", "recorded") == (True, "recorded")
+    monkeypatch.setenv("XCP_DISTANCE_RESIDUAL", "0")
+    assert nd._resolveResidual("ability", "recorded") == (False, "env")
+    assert nd._resolveResidual("ability", "env") == (False, "env")
+    monkeypatch.delenv("XCP_DISTANCE_RESIDUAL")
+    (tmp_path / "distance_applied_TF.json").write_text(
+        json.dumps({"distance_by": "ability", "residual": False}))
+    assert nd._resolveResidual("ability", "recorded") == (False, "mixed")
+
+
+def test_the_backfill_refuses_a_partial_write_across_the_residual(monkeypatch, residual):
+    guard = _guard()
+    monkeypatch.setattr(nd, "appliedDistanceModes", lambda: {"XC": "ability", "TF": "ability"})
+    monkeypatch.setattr(nd, "appliedResiduals", lambda: {"XC": False, "TF": False})
+    assert "residual" in guard(["XC"], apply=True, only_changed=True, limit=0)
+    assert guard(["XC"], apply=True, only_changed=False, limit=0) is None
+    monkeypatch.setattr(nd, "appliedResiduals", lambda: {"XC": True, "TF": True})
+    assert guard(["XC"], apply=True, only_changed=True, limit=0) is None
+    # the residual asked for over an artifact that has none: refused
+    monkeypatch.setattr(nd, "_ABILITY", ART)
+    monkeypatch.setattr(nd, "DISTANCE_BY", "ability")
+    assert "XCP_DISTANCE_RESIDUAL=0" in guard(["XC"], True, False, 0)
+    monkeypatch.setattr(nd, "DISTANCE_RESIDUAL", False)
+    assert guard(["XC"], True, False, 0) is None

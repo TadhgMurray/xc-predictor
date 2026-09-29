@@ -1318,9 +1318,16 @@ def tiltScaleInputs(pool_names, factor_fn=None, verbose=True):
     if factor_fn is None:
         import normalize_distance as nd
 
-        def factor_fn(d, pool, sport):
-            return nd._normalizationFactorCached(d, pool, None, None, None,
-                                                 sport, None)
+        # ★ BY ABILITY THE F RATIO IS 1 (pool_view.hsFactor, 2026-09-29):
+        #   every anchor is 5000 m, and the time-free factor carries each
+        #   pool's residual, which is not an anchor to convert
+        if nd.abilityMode():
+            def factor_fn(d, pool, sport):
+                return 1.0
+        else:
+            def factor_fn(d, pool, sport):
+                return nd._normalizationFactorCached(d, pool, None, None, None,
+                                                     sport, None)
     index = {n: i for i, n in enumerate(names)}
     hs_of = np.full(len(names), -1, dtype=np.int64)
     fr = np.full(len(names), np.nan)

@@ -451,6 +451,7 @@ def _oneScale():
     return os.environ.get("XCP_ONE_SCALE", "0").strip() == "1"
 
 
+
 def _engineMean(pool):
     """engine_scale.pool_mean for a pool (one number per pool: the go-live
     writes the same mean on its XC and TF rows), or None."""
@@ -507,6 +508,13 @@ def hsFactor(pool, sport, distance_m):
     #   alone is. Fixed at the sport's representative distance, the factor
     #   is still one number per pool.
     ratios = []
+    # by ability every anchor is 5000 m (the F ratio note below); read here,
+    # inside hsFactor, so the function stands alone as the tests lift it
+    try:
+        import normalize_distance as _nd_mode
+        by_ability = _nd_mode.abilityMode()
+    except Exception:                    # noqa: BLE001 -- a view, not a page
+        by_ability = False
     for sp in ("XC", "TF"):
         c_own = _poolConstant(pool, sp)
         c_hs = _poolConstant("hs_" + suffix, sp)
@@ -523,6 +531,15 @@ def hsFactor(pool, sport, distance_m):
             continue
         if not f_own or not f_hs:
             continue
+        # ★ BY ABILITY THE F RATIO IS 1 BY DEFINITION (2026-09-29). It exists
+        #   to convert the pools' anchors, and by ability every anchor is
+        #   5000 m. Without the per-pool residual it came out 1 anyway (one
+        #   family per gender); WITH it the time-free factor is each pool's
+        #   own reference runner, and its ratio at REP_DIST would put the
+        #   residual of a 1600 into every TF rating's HS-equivalent. The
+        #   residual belongs in the row's normalized_time, where it is.
+        if by_ability:
+            f_own = f_hs = 1.0
         ratios.append((float(c_hs) / float(c_own)) * (float(f_own) / float(f_hs)))
     hi = _PRO_FACTOR_HI if pool.startswith("pro_") else _FACTOR_HI
     if not ratios:

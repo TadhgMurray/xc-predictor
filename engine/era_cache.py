@@ -96,6 +96,9 @@ def _cacheStamp() -> dict:
     if _nd.abilityMode():
         stamp["distance_by"] = "ability"
         stamp["ability_mtime"] = _mtimeOr0(_nd._ABILITY_FILE)
+        # the per-pool residual (2026-09-29) moves a non-HS row's
+        # normalized_time with the artifact unchanged: it stamps too
+        stamp["distance_residual"] = bool(_nd.residualMode())
     return stamp
 
 

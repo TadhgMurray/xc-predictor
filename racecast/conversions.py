@@ -919,8 +919,9 @@ def _forward_factor(distance_meters, pool, season, track_length,
       inverting (`norm`, weather put back) and gets THAT runner's factor --
       normalize_distance.factorForNorm, the exact inverse of the forward.
       Without `norm` it is the reference runner's, the same for every
-      same-gender pool (pool_view's F ratio is then 1, as one scale says).
-      By pool, `norm` changes nothing."""
+      same-gender pool but for the pool's own residual when that is applied
+      (XCP_DISTANCE_RESIDUAL, 2026-09-29; pool_view's F ratio is 1 by
+      ability either way). By pool, `norm` changes nothing."""
     if norm is not None:
         return _nd.factorForNorm(norm, distance_meters, pool, season,
                                  track_length, track_type, sport, event_short)

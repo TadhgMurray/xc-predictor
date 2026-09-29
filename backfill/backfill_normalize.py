@@ -3586,12 +3586,23 @@ def recordAppliedDistance(sport):
             "written": datetime.now().isoformat(timespec="seconds")}
     if mode == "ability":
         body["fitted"] = (_nd._ABILITY or {}).get("fitted")
+        # ★ AND WHETHER THE PER-POOL RESIDUAL IS IN THE ROWS (2026-09-29),
+        #   with the deltas it applied, so the site and the solve read the
+        #   rows as they were written (normalize_distance._resolveResidual)
+        #   and the owner can see which pools moved
+        body["residual"] = bool(_nd.residualMode())
+        if body["residual"]:
+            body["residual_applied"] = {
+                k: v for k, v in ((_nd._ABILITY or {}).get("residual_applied") or {}).items()
+                if k.endswith("|" + sport)}
     try:
         with open(path + ".tmp", "w") as f:
             json.dump(body, f)
         _os.replace(path + ".tmp", path)
         print(f"  distance: recorded that the {sport} rows are normalised by "
-              f"{mode.upper()} -> {path}")
+              f"{mode.upper()}"
+              + (f" (per-pool residual {'ON' if body['residual'] else 'OFF'})"
+                 if mode == "ability" else "") + f" -> {path}")
     except OSError as exc:
         print(f"  ⚠ distance: could not record the mode ({exc}); readers keep "
               f"the previous record, or 'pool' without one")
@@ -3612,12 +3623,21 @@ def distanceModeGuard(sports, apply, only_changed, limit):
         return None
     mode = "ability" if _nd.abilityMode() else "pool"
     rec = _nd.appliedDistanceModes()
+    # the residual is part of the mode: a partial write with it over rows
+    # written without it (or the reverse) leaves one pool on two curves
+    res = bool(_nd.residualMode())
+    res_rec = _nd.appliedResiduals()
     for sp in sports:
         was = rec.get(sp, "pool")
         if (only_changed or limit) and was != mode:
             return (f"a partial {sp} write (--only-changed/--limit) in distance "
                     f"mode '{mode}' over rows written as '{was}' would leave "
                     f"the table on two anchors; run the full backfill")
+        if (only_changed or limit) and mode == "ability" and res_rec.get(sp, False) != res:
+            return (f"a partial {sp} write (--only-changed/--limit) with the "
+                    f"per-pool residual {'on' if res else 'off'} over rows written "
+                    f"with it {'on' if res_rec.get(sp, False) else 'off'} would "
+                    f"leave the table on two curves; run the full backfill")
     return None
 
 
@@ -3662,7 +3682,9 @@ def main():
     import normalize_distance as _nd
     print(f"  distance curve: "
           f"{'ABILITY (one scale, 5000 m)' if _nd.abilityMode() else 'POOL'}"
-          f" [{_nd.DISTANCE_BY_SOURCE}]")
+          f" [{_nd.DISTANCE_BY_SOURCE}]"
+          + (f", per-pool residual {'ON' if _nd.residualMode() else 'OFF'}"
+             f" [{_nd.DISTANCE_RESIDUAL_SOURCE}]" if _nd.abilityMode() else ""))
     why = distanceModeGuard(sports, args.apply, args.only_changed, args.limit)
     if why:
         print(f"  REFUSING: {why}")

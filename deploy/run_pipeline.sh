@@ -570,6 +570,16 @@ fi
 #   full -- and XCP_DISTANCE_BY=pool the same way reverts it. The backfill
 #   refuses a partial (--only-changed) write in a new mode, and refuses
 #   'ability' without its artifact. Restart the site afterwards.
+# ★ AND THE PER-POOL RESIDUAL COMES WITH IT (owner, 2026-09-29: "adopt the
+#   ability curve with the per-pool residual applied"): by ability a row in
+#   pool p also gets p's extra exponent at equal ability, delta_p *
+#   log(d/5000) (high school 0; only the pools the fitter found significant
+#   with support -- distance_ability.pkl's residual_applied). It needs an
+#   artifact fitted with the joint fit (fit_distance_ability.py since
+#   2026-09-29; the backfill refuses an older one). XCP_DISTANCE_RESIDUAL=0
+#   on the same `--from 5` run writes the curve alone instead; the record
+#   carries which ("residual" in distance_applied_*.json), so the site and
+#   the solve follow it with nothing in /etc/xc-predictor.env.
 if [ "$SKIP_BACKFILL" -eq 1 ]; then
   echo "  05_backfill skipped (--skip-backfill)"
 else

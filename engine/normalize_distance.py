@@ -238,25 +238,57 @@ _SCHOOL_LEVELS = (_loadPickle(_SCHOOL_FILE, "School levels") or {}).get("levels"
 #       XCP_DISTANCE_BY=pool bash deploy/run_pipeline.sh --from 5
 #   A missing artifact under 'ability' is a loud no-op here (the site must
 #   not die over it) and a refusal in the backfill (see abilityModeProblem).
+#
+# ★ THE PER-POOL RESIDUAL RIDES WITH ABILITY MODE (owner, 2026-09-29: "adopt
+#   the ability curve with the per-pool residual applied"). By ability, a
+#   row in pool p converts on its family's JOINT fit -- the curve plus p's
+#   applied extra exponent, delta_p * log(d / 5000), 0 for high school and
+#   for every pool the fitter did not apply (distance_ability's header).
+#   It is ON whenever the mode is ability; XCP_DISTANCE_RESIDUAL=0 turns it
+#   off (the shared curve alone, exactly the pre-residual ability mode).
+#   Like the mode it is a fact about the rows, so it is resolved the same
+#   way and recorded in the same file ("residual": true/false):
+#       XCP_DISTANCE_RESIDUAL set    -> that (0 or 1)
+#       else XCP_DISTANCE_BY set     -> on (the writer asking for ability)
+#       else the record              -> what the rows carry (a record from
+#                                       before the residual says false)
+#   A residual asked for over an artifact that has none (fitted before
+#   2026-09-29's joint fit) is refused by the backfill and a loud no-op
+#   here, as a missing artifact is.
 _ABILITY_FILE = os.path.join(_DATA_DIR, "distance_ability.pkl")
 DISTANCE_MODES = ("pool", "ability")
 
 
-def appliedDistanceModes():
-    """{'XC': 'ability', 'TF': 'pool'}: what the last full backfill of each
-    sport wrote. Empty when neither has recorded one."""
+def appliedDistanceRecords():
+    """{'XC': {...}, 'TF': {...}}: the records the last full backfill of
+    each sport wrote (distance_applied_<SPORT>.json), as written."""
     import json
     out = {}
     for sp in ("XC", "TF"):
         path = os.path.join(_DATA_DIR, f"distance_applied_{sp}.json")
         try:
             with open(path) as f:
-                m = (json.load(f) or {}).get("distance_by")
-            if m in DISTANCE_MODES:
-                out[sp] = m
+                rec = json.load(f) or {}
+            if rec.get("distance_by") in DISTANCE_MODES:
+                out[sp] = rec
         except (OSError, ValueError):
             pass
     return out
+
+
+def appliedDistanceModes():
+    """{'XC': 'ability', 'TF': 'pool'}: what the last full backfill of each
+    sport wrote. Empty when neither has recorded one."""
+    return {sp: r["distance_by"] for sp, r in appliedDistanceRecords().items()}
+
+
+def appliedResiduals():
+    """{'XC': True, ...} for each sport whose rows were written by ability:
+    whether the per-pool residual was in them. A record without the key
+    predates the residual, so False."""
+    return {sp: bool(r.get("residual", False))
+            for sp, r in appliedDistanceRecords().items()
+            if r["distance_by"] == "ability"}
 
 
 def _resolveDistanceMode():
@@ -284,7 +316,45 @@ def _resolveDistanceMode():
     return "pool", "default"
 
 
+def _resolveResidual(mode, mode_source):
+    """(asked, source): whether the per-pool residual is to be applied (see
+    the header above appliedDistanceRecords)."""
+    if mode != "ability":
+        return False, "n/a"
+    env = os.environ.get("XCP_DISTANCE_RESIDUAL", "").strip()
+    rec = appliedResiduals()
+    if env and env not in ("0", "1"):
+        print(f"[normalize_distance] ⚠ XCP_DISTANCE_RESIDUAL={env!r} is not 0 or "
+              f"1; ignored")
+        env = ""
+    if env:
+        want = env == "1"
+        other = {sp: r for sp, r in rec.items() if r != want}
+        if other:
+            print(f"[normalize_distance] ⚠ XCP_DISTANCE_RESIDUAL={env} but the rows "
+                  f"were written with residual {other} (distance_applied_*.json). "
+                  f"Only the backfill that is changing them should run like this.")
+        return want, "env"
+    if mode_source == "env":
+        off = {sp: r for sp, r in rec.items() if not r}
+        if off:
+            print(f"[normalize_distance] ⚠ XCP_DISTANCE_BY=ability turns the per-pool "
+                  f"residual on, but the rows were written without it {off}. Only the "
+                  f"backfill that is changing them should run like this "
+                  f"(XCP_DISTANCE_RESIDUAL=0 reads them as written).")
+        return True, "on with XCP_DISTANCE_BY=ability"
+    vals = set(rec.values())
+    if len(vals) > 1:
+        print(f"[normalize_distance] ⚠ the two sports' rows were written with and "
+              f"without the per-pool residual {rec}; reading without. Re-run the "
+              f"backfill of both sports in one mode.")
+        return False, "mixed"
+    return (vals.pop() if vals else False), "recorded"
+
+
 DISTANCE_BY, DISTANCE_BY_SOURCE = _resolveDistanceMode()
+DISTANCE_RESIDUAL, DISTANCE_RESIDUAL_SOURCE = _resolveResidual(
+    DISTANCE_BY, DISTANCE_BY_SOURCE)
 _ABILITY = None
 if DISTANCE_BY == "ability":
     _ABILITY = _loadPickle(_ABILITY_FILE, "Distance-by-ability curves")
@@ -296,13 +366,32 @@ if DISTANCE_BY == "ability":
         print("[normalize_distance] ⚠⚠ XCP_DISTANCE_BY=ability but no usable "
               "distance_ability.pkl: the POOL curves are in use. Fit it: "
               "engine/fit_distance_ability.py")
+
+
+def _artifactHasResidual():
+    import distance_ability as _da
+    return _da.hasResidual(_ABILITY)
+
+
+if _ABILITY is not None and DISTANCE_RESIDUAL and not _artifactHasResidual():
+    print("[normalize_distance] ⚠⚠ the per-pool residual is on but "
+          "distance_ability.pkl carries none (fitted before the joint fit): "
+          "the shared curve is in use. Refit: engine/fit_distance_ability.py")
 print(f"[normalize_distance] distance curve by "
-      f"{'ABILITY' if _ABILITY is not None else 'POOL'} ({DISTANCE_BY_SOURCE})")
+      f"{'ABILITY' if _ABILITY is not None else 'POOL'} ({DISTANCE_BY_SOURCE})"
+      + (f"; per-pool residual {'ON' if DISTANCE_RESIDUAL else 'OFF'} "
+         f"({DISTANCE_RESIDUAL_SOURCE})" if _ABILITY is not None else ""))
 
 
 def abilityMode():
     """True when rows are normalised by the ability family (and onto 5000 m)."""
     return _ABILITY is not None
+
+
+def residualMode():
+    """True when, by ability, each row's pool residual is applied: asked
+    for, and the artifact carries the joint fits that hold them."""
+    return _ABILITY is not None and bool(DISTANCE_RESIDUAL) and _artifactHasResidual()
 
 
 def abilityModeProblem():
@@ -312,12 +401,20 @@ def abilityModeProblem():
     if DISTANCE_BY == "ability" and _ABILITY is None:
         return ("XCP_DISTANCE_BY=ability but engine/data/distance_ability.pkl "
                 "is missing or unusable -- run engine/fit_distance_ability.py")
+    if DISTANCE_BY == "ability" and DISTANCE_RESIDUAL and not _artifactHasResidual():
+        return ("the per-pool residual is on (the default with "
+                "XCP_DISTANCE_BY=ability) but engine/data/distance_ability.pkl "
+                "carries none -- refit it with engine/fit_distance_ability.py, "
+                "or XCP_DISTANCE_RESIDUAL=0 for the shared curve alone")
     return None
 
 
 def _abilityFamily(pool, sport):
+    """The curve a row in `pool` converts on: the joint fit (with the
+    residuals) in residual mode, else the shared one. The residual itself
+    is applied by distance_ability from the pool every caller passes."""
     import distance_ability as _da
-    return _da.family(_ABILITY, pool, sport)
+    return _da.family(_ABILITY, pool, sport, residual=residualMode())
 
 from functools import lru_cache
 
@@ -360,13 +457,17 @@ def _normalizationFactorCached(distance_meters, pool, season, track_length,
     #   factor can only be the family's REFERENCE runner's (the typical
     #   high schooler of that gender). normalizeTime and factorForNorm use
     #   the exact per-time leg; this answers the callers that carry no time
-    #   (pool_view's representative factor -- equal for every same-gender
-    #   pool, which is the point -- and the distance tables).
+    #   (anchor_repair's probe and the distance tables).
+    # ⚠ WITH THE RESIDUAL IT IS THE REFERENCE RUNNER FILED IN THIS POOL, so
+    #   it differs by pool by exactly the pool's residual -- that is the
+    #   conversion a row of the pool gets. pool_view's and the tilt's F
+    #   RATIO does not read it by ability: every anchor is 5000 m there, and
+    #   the ratio is 1 by definition (hsFactor, run_joint.tiltScaleInputs).
     if _ABILITY is not None:
         fam = _abilityFamily(pool, sport)
         if fam is not None:
             import distance_ability as _da
-            return (_da.factorAtReference(fam, distance_meters)
+            return (_da.factorAtReference(fam, distance_meters, pool)
                     * _otherFactorCached(distance_meters, pool, season,
                                          track_length, track_type, sport,
                                          event_short))
@@ -416,13 +517,15 @@ def _otherFactorCached(distance_meters, pool, season, track_length,
 #            cached: g(x; A) = P + A Q, so the per-row work is one division
 #            (distance_ability's closed form, inlined for the backfill's
 #            hundred million rows). None when the artifact has no family.
+#            The pool's applied residual is inside P (distance_ability._pq),
+#            and the key already carries the pool.
 @lru_cache(maxsize=100_000)
 def _abilityPQ(distance_meters, pool, sport):
     fam = _abilityFamily(pool, sport)
     if fam is None:
         return None
     import distance_ability as _da
-    p, q = _da._pq(fam, math.log(float(distance_meters) / _da.TARGET_M))
+    p, q = _da._pq(fam, math.log(float(distance_meters) / _da.TARGET_M), pool)
     return (p, q, math.log(fam["ref_5k"]), fam["a_lo"], fam["a_hi"])
 
 
@@ -479,7 +582,7 @@ def factorForNorm(norm, distance_meters, pool, season=None, track_length=None,
         if fam is not None:
             import distance_ability as _da
             other = _otherFactorCached(dm, pool_k, season_k, tl, tt, sport_k, ev)
-            return other * _da.factorForNorm(fam, float(norm) / other, dm)
+            return other * _da.factorForNorm(fam, float(norm) / other, dm, pool_k)
     return _normalizationFactorCached(dm, pool_k, season_k, tl, tt, sport_k, ev)
 
 
@@ -1312,13 +1415,16 @@ def anchorShift(pool, sport=None, to_m=COMMON_ANCHOR_M):
 
 
 def _abilityAnchorShift(pool, sport, to_m):
-    """By ability, 5000 m -> to_m for the family's reference runner (a
-    caller that asks for another anchor carries no runner)."""
+    """By ability, 5000 m -> to_m for the family's reference runner filed in
+    this pool (a caller that asks for another anchor carries no runner; the
+    pool's residual is part of its conversion). To 5000 m it is 1 exactly:
+    g_p(0) = 0 with or without a residual."""
     fam = _abilityFamily(pool, sport)
     if fam is None:
         return 1.0
     import distance_ability as _da
-    return _da.factorAtReference(fam, COMMON_ANCHOR_M) / _da.factorAtReference(fam, to_m)
+    return (_da.factorAtReference(fam, COMMON_ANCHOR_M, pool)
+            / _da.factorAtReference(fam, to_m, pool))
 
 
 def targetFor(pool, sport=None):

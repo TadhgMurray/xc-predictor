@@ -20,6 +20,31 @@
 #     /srv/venv/bin/python engine/fit_distance_ability.py             # fit, report, write
 #     /srv/venv/bin/python engine/fit_distance_ability.py --dry-run   # fit and report only
 #
+# ★ AND A SECOND FIT PER FAMILY, THE CURVE WITH THE PER-POOL RESIDUAL
+#   (owner, 2026-09-29: "adopt the ability curve with the per-pool residual
+#   applied"). The first dry run measured, at equal ability, how much more
+#   each pool slows per unit log distance than a high schooler (ms_m XC
+#   -0.0580 +- 0.0005, college_m -0.0168, elem_m TF -0.0390), and stored it
+#   without applying it. Measured AFTER the shared fit, on its abilities and
+#   its weights, that number is not the one to apply: the shared curve had
+#   already bent part of the way toward every non-HS pool, and each pair's
+#   ability was read off that bent curve. So the family carries a JOINT fit
+#   beside the shared one (fitJoint):
+#       y = g(x2; A) - g(x1; A) + sum_p delta_p [pool = p] (x2 - x1) + k0
+#   the curve, the calendar and the pool deltas in one robust solve, the
+#   abilities re-read every outer pass WITH the deltas, the high-school pool
+#   the reference (no column: delta_hs = 0), degrees by the same 5-fold CV
+#   and one-SE rule on the same folds as the shared curve. A pool gets a
+#   column when it has MIN_FAMILY_PAIRS pairs (the support a pool curve
+#   needed); its delta is APPLIED only when significant by the fitter's own
+#   95% interval (|delta| > Z95 se); the rest are dropped and the family
+#   refitted without them until the set holds, so an unapplied pool rides
+#   the reference curve and informs it. The artifact says which, per
+#   family: joint.applied_residual {pool: delta} (what the evaluator
+#   applies) and joint.residual_tested (every candidate's first-pass delta,
+#   se, n and verdict). The shared fit is kept, unchanged: it is what
+#   XCP_DISTANCE_RESIDUAL=0 evaluates.
+#
 # THE PAIRS ARE THE POOL FITTER'S, UNCHANGED: fit_distance_exponent.
 # loadAllPairs -- same athlete, two distances, <= 21 days apart, one pair
 # per (athlete, transition, season), raw times, every guard and override
@@ -93,6 +118,9 @@ MIN_FAMILY_PAIRS = 500       # = fit_distance_exponent.MIN_PAIRS_FOR_POOL_SPLINE
 ABILITY_PCT = (1.0, 99.0)
 SPAN_PCT = (0.5, 99.5)
 SEED = 20260929
+Z95 = 1.959964               # the two-sided 95% normal quantile: the
+                             # interval printFamily has always printed, now
+                             # also the bar a residual clears to be applied
 
 
 # ------------------------------------------------------------------ #
@@ -160,21 +188,28 @@ def _pqArrays(alpha, beta, x, lo, hi):
     return P, Q
 
 
-def pairAbility(alpha, beta, lref, a_lo, a_hi, x1, x2, lt1, lt2, lo, hi):
+def pairAbility(alpha, beta, lref, a_lo, a_hi, x1, x2, lt1, lt2, lo, hi,
+                dlt=0.0):
     """Each pair's clamped ability, the symmetric index (header), closed form:
-    a (1 + (Q1+Q2)/2) = (lt1+lt2)/2 - (P1+P2)/2 - lref."""
+    a (1 + (Q1+Q2)/2) = (lt1+lt2)/2 - (P1+P2)/2 - lref. `dlt` is each pair's
+    pool residual (0, or an array): it adds dlt * x to P, as the evaluator's
+    _pq does."""
     P1, Q1 = _pqArrays(alpha, beta, x1, lo, hi)
     P2, Q2 = _pqArrays(alpha, beta, x2, lo, hi)
+    P1 = P1 + dlt * x1
+    P2 = P2 + dlt * x2
     den = 1.0 + 0.5 * (Q1 + Q2)
     den = np.where(np.abs(den) < 1e-6, 1e-6, den)
     a = (0.5 * (lt1 + lt2) - 0.5 * (P1 + P2) - lref) / den
     return np.clip(a, a_lo, a_hi), a
 
 
-def pairFiveK(alpha, beta, A, x1, x2, lt1, lt2, lo, hi):
+def pairFiveK(alpha, beta, A, x1, x2, lt1, lt2, lo, hi, dlt=0.0):
     """The pair's mean log 5K equivalent at ability A."""
     P1, Q1 = _pqArrays(alpha, beta, x1, lo, hi)
     P2, Q2 = _pqArrays(alpha, beta, x2, lo, hi)
+    P1 = P1 + dlt * x1
+    P2 = P2 + dlt * x2
     return 0.5 * ((lt1 - P1 - A * Q1) + (lt2 - P2 - A * Q2))
 
 
@@ -245,10 +280,19 @@ def _spanOf(x1, x2):
             float(np.percentile(xs, SPAN_PCT[1])))
 
 
+def poolNames(arr):
+    """Each pair's bare pool ('college_m|XC' -> 'college_m')."""
+    return np.array([str(p).split("|")[0] for p in arr["pool"]], dtype=object)
+
+
 def fitFamily(arr, Ja, Jb, span=None, hs=None, extra=None, verbose=False,
-              label=""):
+              label="", residual_pools=()):
     """Fit one family at fixed degrees. Returns the entry dict plus the
-    internals the reports need (under "_")."""
+    internals the reports need (under "_"). `residual_pools` fits the JOINT
+    model (header): one extra exponent per named pool beside the curve, the
+    abilities read with them; every other pool (the high-school one always)
+    is the reference. The fitted deltas are in entry["_"]["residual"] as
+    {pool: (delta, se, n)}; which to APPLY is fitJoint's decision."""
     d1, d2, t1, t2 = arr["d1"], arr["d2"], arr["t1"], arr["t2"]
     x1, x2 = np.log(d1 / DA.TARGET_M), np.log(d2 / DA.TARGET_M)
     lt1, lt2 = np.log(t1), np.log(t2)
@@ -256,6 +300,16 @@ def fitFamily(arr, Ja, Jb, span=None, hs=None, extra=None, verbose=False,
     lo, hi = span if span is not None else _spanOf(x1, x2)
     hs = hsMask(arr) if hs is None else hs
     ref_rows = hs if hs.sum() >= MIN_FAMILY_PAIRS else np.ones(y.size, bool)
+    rp = list(residual_pools or ())
+    if rp:
+        pools = poolNames(arr)
+        Z = np.stack([(pools == p).astype(np.float64) for p in rp], axis=1)
+        zcols = Z * (x2 - x1)[:, None]
+        full_extra = zcols if extra is None else np.hstack([zcols, extra])
+    else:
+        Z = None
+        full_extra = extra
+    dlt = 0.0                  # each pair's residual, from the last pass
 
     # start from Riegel's 1.06 (the pool fitter's physical prior) with no
     # ability term; the first ref and range come off that
@@ -263,7 +317,7 @@ def fitFamily(arr, Ja, Jb, span=None, hs=None, extra=None, verbose=False,
     beta = np.zeros(Jb)
     k0 = 0.0
     lref = float(np.median(pairFiveK(alpha, beta, np.zeros(y.size),
-                                     x1, x2, lt1, lt2, lo, hi)[ref_rows]))
+                                     x1, x2, lt1, lt2, lo, hi, dlt)[ref_rows]))
     a_lo, a_hi = -np.inf, np.inf
     A = np.zeros(y.size)
     history = []
@@ -275,18 +329,23 @@ def fitFamily(arr, Ja, Jb, span=None, hs=None, extra=None, verbose=False,
             # one: (alpha, beta) are fitted on abilities measured from THIS
             # ref, and the stored triple must be the one they were fitted on
             lref = float(np.median(pairFiveK(alpha, beta, A, x1, x2, lt1, lt2,
-                                             lo, hi)[ref_rows]))
+                                             lo, hi, dlt)[ref_rows]))
         # the range is re-read every pass: it is a fact about the pairs'
         # abilities, and those move with the curve
         _A, a_raw = pairAbility(alpha, beta, lref, -np.inf, np.inf,
-                                x1, x2, lt1, lt2, lo, hi)
+                                x1, x2, lt1, lt2, lo, hi, dlt)
         a_lo, a_hi = (float(np.percentile(a_raw, ABILITY_PCT[0])),
                       float(np.percentile(a_raw, ABILITY_PCT[1])))
         A = np.clip(a_raw, a_lo, a_hi)
-        X = design(x1, x2, A, lo, hi, Ja, Jb, extra)
+        X = design(x1, x2, A, lo, hi, Ja, Jb, full_extra)
         coef, w, scale, M = irls(X, y, w)
         alpha, beta = coef[:Ja], coef[Ja:Ja + Jb]
         k0 = float(coef[Ja + Jb])
+        if rp:
+            # the deltas feed the NEXT pass's abilities (and its ref), so
+            # A, the curve and the residuals settle together
+            deltas = coef[Ja + Jb + 1:Ja + Jb + 1 + len(rp)]
+            dlt = Z @ deltas
         history.append((float(alpha[0]), float(beta[0]) if Jb else 0.0,
                         math.exp(lref), a_lo, a_hi))
     if verbose:
@@ -302,48 +361,92 @@ def fitFamily(arr, Ja, Jb, span=None, hs=None, extra=None, verbose=False,
         "n_weighted": int((w > 0).sum()), "scale": float(scale),
         "degree": (Ja, Jb),
     }
+    residual = {}
+    if rp:
+        # the solve's own covariance, as poolResidual reads it, on this
+        # fit's final weights (the whisper of ridge in M is 1e-10 of its
+        # trace, nothing against a delta's information)
+        r = y - X @ coef
+        s2 = float(np.sum(w * r ** 2) / max(np.sum(w > 0) - X.shape[1], 1))
+        cov = np.linalg.inv(M) * s2
+        k = Ja + Jb + 1
+        pools_n = Z.sum(axis=0)
+        residual = {p: (float(coef[k + i]),
+                        float(math.sqrt(max(cov[k + i, k + i], 0.0))),
+                        int(pools_n[i]))
+                    for i, p in enumerate(rp)}
     entry["_"] = {"coef": coef, "w": w, "M": M, "A": A, "X": X, "y": y,
-                  "x1": x1, "x2": x2, "scale": scale}
+                  "x1": x1, "x2": x2, "scale": scale, "residual": residual}
     return entry
 
 
-def predictPairs(entry, arr):
+def pairDeltas(entry, arr, deltas=None):
+    """Each pair's pool residual on this entry: `deltas` ({pool: delta}),
+    else the entry's applied ones, else 0."""
+    got = deltas if deltas is not None else (entry.get(DA.APPLIED_KEY) or {})
+    if not got:
+        return 0.0
+    return np.array([got.get(p, 0.0) for p in poolNames(arr)], dtype=np.float64)
+
+
+def predictPairs(entry, arr, deltas=None):
     """Predicted log(t2/t1) at each pair's own symmetric ability -- for the
-    CV loss (both legs known, as in the fit)."""
+    CV loss (both legs known, as in the fit). A joint entry's pool
+    residuals ride along (pairDeltas)."""
     x1 = np.log(arr["d1"] / DA.TARGET_M); x2 = np.log(arr["d2"] / DA.TARGET_M)
     lt1, lt2 = np.log(arr["t1"]), np.log(arr["t2"])
     lo, hi = entry["x_lo"], entry["x_hi"]
+    dlt = pairDeltas(entry, arr, deltas)
     A, _ = pairAbility(entry["alpha"], entry["beta"], math.log(entry["ref_5k"]),
-                       entry["a_lo"], entry["a_hi"], x1, x2, lt1, lt2, lo, hi)
+                       entry["a_lo"], entry["a_hi"], x1, x2, lt1, lt2, lo, hi, dlt)
     P1, Q1 = _pqArrays(entry["alpha"], entry["beta"], x1, lo, hi)
     P2, Q2 = _pqArrays(entry["alpha"], entry["beta"], x2, lo, hi)
-    return (P2 + A * Q2) - (P1 + A * Q1) + entry["calendar"]
+    return (P2 + A * Q2) - (P1 + A * Q1) + dlt * (x2 - x1) + entry["calendar"]
 
 
-def cvDegrees(arr, rng, verbose=True, label=""):
-    """5-fold CV over (alpha, beta) degrees; the one-SE rule picks."""
+def cvSetup(arr, rng):
+    """The CV's pairs and folds, drawn once so every model -- the shared
+    curve and the joint one -- is scored on the same held-out pairs in the
+    same order (the paired one-SE rule and the paired gain need exactly
+    that)."""
     n = len(arr["d1"])
     idx = np.arange(n)
     if n > CV_MAX_PAIRS:
         idx = rng.choice(n, CV_MAX_PAIRS, replace=False)
     sub = subset(arr, idx)
     x1 = np.log(sub["d1"] / DA.TARGET_M); x2 = np.log(sub["d2"] / DA.TARGET_M)
-    span = _spanOf(x1, x2)
-    hs = hsMask(sub)
-    fold = rng.integers(0, CV_FOLDS, size=idx.size)
-    scores, per_pair = {}, {}
+    return {"sub": sub, "span": _spanOf(x1, x2), "hs": hsMask(sub),
+            "fold": rng.integers(0, CV_FOLDS, size=idx.size), "n": idx.size}
+
+
+def cvLosses(setup, residual_pools=()):
+    """{(Ja, Jb): per-pair truncated squared held-out error}. With
+    `residual_pools` every fold fits the joint model with those columns (no
+    significance pruning inside a fold: the degrees are chosen for the
+    model family; the pruning is the full fit's)."""
+    sub, span, hs, fold = setup["sub"], setup["span"], setup["hs"], setup["fold"]
+    per_pair = {}
     for Ja in ALPHA_DEGREES:
         for Jb in BETA_DEGREES:
             losses = []
             for k in range(CV_FOLDS):
                 tr, te = fold != k, fold == k
-                e = fitFamily(subset(sub, tr), Ja, Jb, span=span, hs=hs[tr])
-                r = np.log(sub["t2"][te] / sub["t1"][te]) - predictPairs(e, subset(sub, te))
+                e = fitFamily(subset(sub, tr), Ja, Jb, span=span, hs=hs[tr],
+                              residual_pools=residual_pools)
+                dl = {p: v[0] for p, v in e["_"]["residual"].items()}
+                r = (np.log(sub["t2"][te] / sub["t1"][te])
+                     - predictPairs(e, subset(sub, te), deltas=dl))
                 cap = (TUKEY_C * e["scale"]) ** 2
                 losses.append(np.minimum(r ** 2, cap))
-            lo = np.concatenate(losses)
-            per_pair[(Ja, Jb)] = lo
-            scores[(Ja, Jb)] = (float(lo.mean()), float(lo.std() / math.sqrt(lo.size)))
+            per_pair[(Ja, Jb)] = np.concatenate(losses)
+    return per_pair
+
+
+def oneSE(per_pair):
+    """(pick, scores, best): the simplest model within one paired SE of the
+    best."""
+    scores = {k: (float(v.mean()), float(v.std() / math.sqrt(v.size)))
+              for k, v in per_pair.items()}
     best = min(scores, key=lambda k: scores[k][0])
     # ★ THE ONE-SE RULE ON THE PAIRED DIFFERENCE. Every model is scored on
     #   the same held-out pairs in the same order, so the question "is this
@@ -360,15 +463,34 @@ def cvDegrees(arr, rng, verbose=True, label=""):
     # the simplest eligible model: fewest parameters, then fewest ability
     # terms
     pick = min(ok, key=lambda k: (k[0] + k[1], k[1], k[0]))
+    return pick, scores, best
+
+
+def _printCV(label, what, n, scores, best, pick):
+    print(f"    [{label}] CV{what} (truncated squared error x1e4, +-SE) on "
+          f"{n:,} pairs:")
+    for Ja in ALPHA_DEGREES:
+        print("      " + "  ".join(
+            f"a{Ja}b{Jb} {1e4 * scores[(Ja, Jb)][0]:.3f}+-{1e4 * scores[(Ja, Jb)][1]:.3f}"
+            f"{'*' if (Ja, Jb) == pick else ' '}"
+            for Jb in BETA_DEGREES))
+    print(f"      best a{best[0]}b{best[1]}; one-SE pick a{pick[0]}b{pick[1]}")
+
+
+def cvDegrees(arr, rng, verbose=True, label="", setup=None, residual_pools=(),
+              losses_out=None):
+    """5-fold CV over (alpha, beta) degrees; the one-SE rule picks. Returns
+    (pick, scores). `setup` (cvSetup) scores on folds shared with another
+    model; `residual_pools` scores the joint model; `losses_out`, a dict,
+    receives the per-pair losses (for the paired shared-vs-joint gain)."""
+    setup = setup or cvSetup(arr, rng)
+    per_pair = cvLosses(setup, residual_pools)
+    pick, scores, best = oneSE(per_pair)
     if verbose:
-        print(f"    [{label}] CV (truncated squared error x1e4, +-SE) on "
-              f"{idx.size:,} pairs:")
-        for Ja in ALPHA_DEGREES:
-            print("      " + "  ".join(
-                f"a{Ja}b{Jb} {1e4 * scores[(Ja, Jb)][0]:.3f}+-{1e4 * scores[(Ja, Jb)][1]:.3f}"
-                f"{'*' if (Ja, Jb) == pick else ' '}"
-                for Jb in BETA_DEGREES))
-        print(f"      best a{best[0]}b{best[1]}; one-SE pick a{pick[0]}b{pick[1]}")
+        _printCV(label, " joint (curve + pool residuals)" if residual_pools else "",
+                 setup["n"], scores, best, pick)
+    if losses_out is not None:
+        losses_out.update(per_pair)
     return pick, scores
 
 
@@ -402,6 +524,61 @@ def poolResidual(arr, entry, min_pairs=MIN_FAMILY_PAIRS):
     return {p: (float(coef[k + i]), float(math.sqrt(max(cov[k + i, k + i], 0.0))),
                 int((pools == p).sum()))
             for i, p in enumerate(names)}
+
+
+def residualCandidates(arr, min_pairs=MIN_FAMILY_PAIRS):
+    """The pools that get a residual column: every non-high-school pool
+    with the support a pool curve needed (MIN_FAMILY_PAIRS pairs)."""
+    pools = poolNames(arr)
+    return [p for p in sorted(set(pools))
+            if not p.startswith("hs_") and (pools == p).sum() >= min_pairs]
+
+
+def fitJoint(arr, Ja, Jb, span, verbose=False, label="",
+             min_pairs=MIN_FAMILY_PAIRS):
+    """The family's JOINT fit (header): the curve with one residual exponent
+    per supported pool, fitted together; the insignificant ones dropped and
+    the family refitted until every column left clears Z95 standard errors.
+    Returns (entry, why): entry is None, with the reason, when the family
+    has no high-school reference to measure a residual against. The entry
+    carries applied_residual {pool: delta} -- what the evaluator applies --
+    and residual_tested {pool: {delta, se, n, significant, applied}}, the
+    first pass over every candidate (the owner's table)."""
+    hs = hsMask(arr)
+    if hs.sum() < min_pairs:
+        return None, (f"{int(hs.sum()):,} high-school pairs, under {min_pairs}: "
+                      f"no reference to measure a pool against")
+    cands = residualCandidates(arr, min_pairs)
+    keep = list(cands)
+    e = fitFamily(arr, Ja, Jb, span=span, hs=hs, residual_pools=keep)
+    first = dict(e["_"]["residual"])
+    rounds = 1
+    # ★ PRUNE, THEN REFIT, UNTIL THE SET HOLDS. A dropped pool's pairs stay
+    #   in the fit on the reference curve, so the survivors' deltas move a
+    #   little when it goes; one pass could leave a column that no longer
+    #   clears the bar. At most one round per candidate.
+    for _ in range(len(cands)):
+        res = e["_"]["residual"]
+        sig = [p for p in keep if abs(res[p][0]) > Z95 * res[p][1]]
+        if sig == keep:
+            break
+        keep = sig
+        e = fitFamily(arr, Ja, Jb, span=span, hs=hs, residual_pools=keep)
+        rounds += 1
+    res = e["_"]["residual"]
+    e[DA.APPLIED_KEY] = {p: res[p][0] for p in keep}
+    e["applied_residual_se"] = {p: res[p][1] for p in keep}
+    e["residual_tested"] = {
+        p: {"delta": d, "se": se, "n": n,
+            "significant": bool(abs(d) > Z95 * se), "applied": p in keep}
+        for p, (d, se, n) in first.items()}
+    e["residual_rule"] = (f"a non-high-school pool with >= {min_pairs} pairs gets "
+                          f"a column; applied when |delta| > {Z95:.2f} se, "
+                          f"refitted until the set holds ({rounds} fit(s))")
+    if verbose:
+        print(f"    [{label}] joint fit: {len(cands)} candidate pool(s), "
+              f"{len(keep)} applied after {rounds} fit(s)")
+    return e, None
 
 
 def curveAgreement(arr, entry, pool_a, pool_b, grid=25):
@@ -467,13 +644,18 @@ def checkFamily(entry):
     in distance iff dg/dx > 0 for every ability in range."""
     xs = np.linspace(entry["x_lo"] - 0.3, entry["x_hi"] + 0.3, 61)
     worst_den, worst_k = np.inf, np.inf
+    # a joint entry is checked for the reference AND every applied pool: a
+    # residual adds delta_p to the local exponent (never to 1 + Q)
+    pools = [None] + sorted(entry.get(DA.APPLIED_KEY) or {})
     for x in xs:
         p, q = DA._pq(entry, float(x))
         worst_den = min(worst_den, 1.0 + q)
         for a in np.linspace(entry["a_lo"], entry["a_hi"], 9):
             h = 1e-4
-            k = (DA.g(entry, float(x) + h, a) - DA.g(entry, float(x) - h, a)) / (2 * h)
-            worst_k = min(worst_k, k)
+            for pool in pools:
+                k = (DA.g(entry, float(x) + h, a, pool)
+                     - DA.g(entry, float(x) - h, a, pool)) / (2 * h)
+                worst_k = min(worst_k, k)
     return (worst_den > 0.2 and worst_k > 0.0), float(worst_den), float(worst_k)
 
 
@@ -502,8 +684,12 @@ FAMILY_GENDERS = ("m", "f", "u")
 FAMILY_SPORTS = ("XC", "TF", "*")
 
 
-def fitAll(xc, tf, verbose=True, degrees=None, agreement=True):
-    """xc, tf: pairArrays of each sport. Returns the artifact dict."""
+def fitAll(xc, tf, verbose=True, degrees=None, agreement=True, residual=True,
+           degrees_joint=None):
+    """xc, tf: pairArrays of each sport. Returns the artifact dict.
+    `degrees` / `degrees_joint` ({family: (Ja, Jb)}) skip the CV of the
+    shared / joint fit (the tests, and diag_one_scale's refit on its 80%);
+    `residual=False` skips the joint fits altogether."""
     rng = np.random.default_rng(SEED)
     fams, report = {}, {}
     by_sport = {"XC": xc, "TF": tf, "*": concatArrays([xc, tf])}
@@ -519,10 +705,32 @@ def fitAll(xc, tf, verbose=True, degrees=None, agreement=True):
             t0 = time.time()
             if verbose:
                 print(f"\n  {key}: {n:,} pairs")
+            # ★ THE JOINT FIT IS PER (gender, sport) ONLY: the gender-blind
+            #   and sport-blind families pool what the residual separates,
+            #   and a row that reaches one has no pool worth a residual
+            joint_ok = residual and s != "*" and gdr != "u"
+            cands = residualCandidates(arr) if joint_ok else []
             pick = (degrees or {}).get(key)
-            cv = None
+            jpick = (degrees_joint or {}).get(key)
+            cv = cvj = gain = None
+            # one draw of folds for both models (cvSetup consumes the rng
+            # exactly as cvDegrees always has, so the shared CV is unmoved)
+            setup = cvSetup(arr, rng) if (pick is None or (cands and jpick is None)) else None
+            ls, lj = {}, {}
             if pick is None:
-                pick, cv = cvDegrees(arr, rng, verbose=verbose, label=key)
+                pick, cv = cvDegrees(arr, rng, verbose=verbose, label=key,
+                                     setup=setup, losses_out=ls)
+            if cands and jpick is None:
+                jpick, cvj = cvDegrees(arr, rng, verbose=verbose, label=key,
+                                       setup=setup, residual_pools=cands,
+                                       losses_out=lj)
+                if ls:
+                    # the residual's out-of-sample worth, paired on the
+                    # same held-out pairs: shared loss minus joint loss
+                    dl = ls[pick] - lj[jpick]
+                    gain = (float(dl.mean()), float(dl.std() / math.sqrt(dl.size)),
+                            float(ls[pick].mean()))
+            jpick = tuple(jpick or pick)
             e = fitFamily(arr, *pick, verbose=verbose, label=key)
             ok, den, kmin = checkFamily(e)
             e["check"] = {"ok": ok, "min_denominator": den, "min_local_exponent": kmin}
@@ -537,14 +745,31 @@ def fitAll(xc, tf, verbose=True, degrees=None, agreement=True):
                     for other in ("college", "ms", "pro"):
                         rep["agreement"][other] = curveAgreement(
                             arr, e, f"hs_{gdr}", f"{other}_{gdr}")
+            if joint_ok:
+                j, why = fitJoint(arr, *jpick, span=(e["x_lo"], e["x_hi"]),
+                                  verbose=verbose, label=key)
+                if j is not None:
+                    ok, den, kmin = checkFamily(j)
+                    j["check"] = {"ok": ok, "min_denominator": den,
+                                  "min_local_exponent": kmin}
+                    j.pop("_", None)
+                    e[DA.JOINT_KEY] = j
+                rep["joint"] = {"why": why, "cv": cvj, "degree": jpick,
+                                "cv_gain": gain}
             e.pop("_", None)
             fams[key] = e
             report[key] = rep
             if verbose:
                 printFamily(key, e, rep)
+                printJoint(key, e, rep)
                 print(f"    ({time.time() - t0:.0f}s)")
-    return {"kind": DA.KIND, "version": 1, "target": DA.TARGET_M,
-            "families": fams, "report": report,
+    # ★ WHICH RESIDUALS ARE APPLIED, SAID ONCE AT THE TOP: {family: {pool:
+    #   delta}}, exactly each joint fit's applied_residual. The backfill
+    #   copies it into its record (distance_applied_<SPORT>.json).
+    applied = {k: dict(e[DA.JOINT_KEY][DA.APPLIED_KEY]) for k, e in fams.items()
+               if e.get(DA.JOINT_KEY) is not None}
+    return {"kind": DA.KIND, "version": 2, "target": DA.TARGET_M,
+            "families": fams, "report": report, "residual_applied": applied,
             "fitted": time.strftime("%Y-%m-%d %H:%M:%S")}
 
 
@@ -575,8 +800,9 @@ def printFamily(key, e, rep):
         print(f"      {lo:+.3f}..{hi:+.3f} {n:>9,}  {p1:>6.0f} {p50:>6.0f} {p99:>6.0f}")
     pr = rep.get("pool_residual") or {}
     if pr:
-        print("    pool residual (extra exponent vs the HS pool at equal ability; "
-              "effect on a 5K->10K, 95% CI):")
+        print("    pool residual MEASURED AFTER the shared fit (extra exponent vs the "
+              "HS pool at equal ability; effect on a 5K->10K, 95% CI; the applied "
+              "one is the JOINT fit's, below):")
         for p, (dlt, se, n) in sorted(pr.items()):
             eff = dlt * math.log(2.0)
             sig = abs(dlt) > 1.96 * se
@@ -597,6 +823,49 @@ def printFamily(key, e, rep):
               f"({o[0]:.0f}-{o[1]:.0f} m, ability {o[2]:+.2f}..{o[3]:+.2f}): "
               f"median |diff| {100 * res['median_abs']:.2f}%, max {100 * res['max_abs']:.2f}% "
               f"(at {wd:.0f} m, a {wa:+.2f})")
+
+
+def printJoint(key, e, rep):
+    """The joint fit: the residual per pool, applied or not, and what it
+    buys out of sample."""
+    jr = rep.get("joint")
+    if jr is None:
+        return
+    j = e.get(DA.JOINT_KEY)
+    if j is None:
+        print(f"    JOINT (curve + pool residual): not fitted -- {jr['why']}")
+        return
+    print(f"    JOINT (curve + pool residual, HS the reference): degree alpha "
+          f"{j['degree'][0]}, beta {j['degree'][1]}; alpha "
+          f"{np.round(j['alpha'], 4).tolist()} beta {np.round(j['beta'], 4).tolist()}; "
+          f"ref 5K {j['ref_5k']:.1f}s; calendar {_pct(j['calendar'])}; "
+          f"monotone check {'ok' if j['check']['ok'] else 'FAILED'} (min local "
+          f"exponent {j['check']['min_local_exponent']:.3f})")
+    print(f"      rule: {j['residual_rule']}")
+    tested = j.get("residual_tested") or {}
+    if not tested:
+        print("      no pool with the support for a residual: the joint fit is the "
+              "shared curve on the HS reference")
+    ln2 = math.log(2.0)
+    for p in sorted(tested):
+        t = tested[p]
+        if t["applied"]:
+            d, se = j[DA.APPLIED_KEY][p], j["applied_residual_se"][p]
+            verdict = (f"APPLIED delta {d:+.4f} +- {se:.4f} -> 5K->10K "
+                       f"{100 * math.expm1(d * ln2):+.2f}%, 5K->3K "
+                       f"{100 * math.expm1(d * math.log(0.6)):+.2f}%")
+        else:
+            verdict = ("not applied: " + ("not significant" if not t["significant"]
+                                          else "dropped when the others were refitted"))
+        print(f"      {p:<12} first pass {t['delta']:+.4f} +- {t['se']:.4f} "
+              f"n={t['n']:,}  {verdict}")
+    g = jr.get("cv_gain")
+    if g:
+        m, se, base = g
+        print(f"      CV: shared a{e['degree'][0]}b{e['degree'][1]} vs joint "
+              f"a{j['degree'][0]}b{j['degree'][1]} on the same held-out pairs: "
+              f"loss down {1e4 * m:.3f} +- {1e4 * se:.3f} x1e-4 "
+              f"({100 * m / base:+.2f}% of the shared loss)")
 
 
 # ------------------------------------------------------------------ #
@@ -639,7 +908,9 @@ def main():
     xc, tf = loadPairs(args.fresh)
     print(f"  pairs: XC {len(xc['d1']):,}, TF {len(tf['d1']):,}")
     art = fitAll(xc, tf, agreement=not args.no_agreement)
-    bad = [k for k, e in art["families"].items() if not e["check"]["ok"]]
+    bad = [k for k, e in art["families"].items()
+           if not e["check"]["ok"]
+           or (e.get(DA.JOINT_KEY) is not None and not e[DA.JOINT_KEY]["check"]["ok"])]
     if bad:
         print(f"\n  ⚠ monotone check FAILED for {bad}: NOT writing. A family whose "
               f"forward map is not increasing would reorder two runners on one "

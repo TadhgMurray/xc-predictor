@@ -21,6 +21,11 @@ ABILITY (engine/data/distance_ability.pkl), before anything is switched.
      exact under XCP_ONE_SCALE). By ability every same-gender pool shares
      one family, so the ratio is 1 by construction; the section prints both
      so the size of what disappears is on the page. Artifacts only.
+     ★ WITH THE PER-POOL RESIDUAL (2026-09-29, the adopted setting) the
+     label comes back by design, by exactly the residual the fitter
+     applied: the "abil+res" column and the table under each gender print
+     its size (the owner's dry run: ~0.2% high school vs college, a few %
+     for middle school at 3k and 10k).
   B  DOES IT PREDICT BETTER? Same-athlete pairs (the fitters' cache: <= 21
      days apart), 20% held out by a fixed seed. The ability family is
      refitted on the other 80% HERE; the live pool curves were fitted on
@@ -28,13 +33,18 @@ ABILITY (engine/data/distance_ability.pkl), before anything is switched.
      baseline, so a win for the ability curve is conservative. Each
      longer race is predicted from the shorter one alone (your 5K, what is
      your 8K?), with each model's own calendar offset. Median error and
-     median |error|, per pool and transition.
+     median |error|, per pool and transition, for THREE models on the same
+     held-out pairs: the pool curves, the ability curve alone, and the
+     ability curve with the per-pool residual (its joint fit, refitted on
+     the same 80%) -- then one verdict line per pool.
   C  THE BOARDS. The top of each pool's XC board for a season, re-priced to
      first order without a re-solve: a row's normalized_time moves by
          rho = [F_pool(d) / F_pool(5k)] / F_ability(t, d)
      its own-pool rating by rho / median(rho over the pool) (the pool mean
      re-anchors), and its HS-equivalent by rho / median(rho over the HS
-     pool). Ranks inside the pool before and after.
+     pool). Ranks inside the pool before and after. F_ability is the
+     adopted setting: with the per-pool residual when the artifact has it
+     (--no-residual for the curve alone).
   D  RATINGS AS 5K TIMES. conversions.fiveKForHsRating: an HS-equivalent as
      a 5K on an average XC course and on a track, both genders, and each
      pool's own 100 -- "HS-equivalent 150 = 14:xx on the track".
@@ -108,9 +118,11 @@ def poolInSpan(art, pool, sport, d):
     return bool(sp) and sp[0] * 0.99 <= d <= sp[1] * 1.01
 
 
-def abilityRel(art, pool, sport, t, d):
-    fam = DA.family(art, pool, sport)
-    return None if fam is None else DA.factorForTime(fam, t, d)
+def abilityRel(art, pool, sport, t, d, residual=False):
+    """T5 / t by ability: the shared curve, or with `residual` the family's
+    joint fit with this pool's applied residual (distance_ability)."""
+    fam = DA.family(art, pool, sport, residual=residual)
+    return None if fam is None else DA.factorForTime(fam, t, d, pool)
 
 
 # ------------------------------------------------------------------ #
@@ -135,7 +147,8 @@ def sectionA(pool_art, ab_art, sport="XC"):
         print(f"\n   {sport} {'boys/men' if g == 'm' else 'girls/women'} "
               f"(runners by their 5K equivalent on the ability family)")
         hdr = "".join(f"{p:>12}" for p in POOLS if p != "hs")
-        print(f"   {'run':<24}{'5K eq':>8}{hdr}{'spread':>9}{'ability':>9}")
+        print(f"   {'run':<24}{'5K eq':>8}{hdr}{'spread':>9}{'ability':>9}{'abil+res':>10}")
+        res_rows = []
         for label, t5 in grid:
             for d in DISTANCES:
                 t = (math.exp(DA.inverseLog(fam, math.log(t5), math.log(d / 5000.0)))
@@ -152,13 +165,37 @@ def sectionA(pool_art, ab_art, sport="XC"):
                     cells.append(f"{r:>11.4f}{star or ' '}")
                 hs_star = "" if poolInSpan(pool_art, f"hs_{g}", sport, d) else " (hs*)"
                 spread = 100 * (max(vals) / min(vals) - 1)
-                ab = "-"
+                ab = abr = "-"
                 if ab_art and t:
                     rs = [abilityRel(ab_art, f"{p}_{g}", sport, t, d) for p in POOLS]
                     rs = [v for v in rs if v]
                     ab = f"{100 * (max(rs) / min(rs) - 1):.2f}%" if rs else "-"
+                    if DA.hasResidual(ab_art):
+                        rr = {p: abilityRel(ab_art, f"{p}_{g}", sport, t, d, residual=True)
+                              for p in POOLS + ("elem",)}
+                        rr = {p: v for p, v in rr.items() if v}
+                        if rr:
+                            abr = f"{100 * (max(rr.values()) / min(rr.values()) - 1):.2f}%"
+                            res_rows.append((label, t, d, t5, rr))
                 print(f"   {label[:10]:<10}{mmss(t):>7} {d / 1000:>4.0f}k{hs_star:<6}"
-                      f"{mmss(t5):>8}{''.join(cells)}{spread:>8.2f}%{ab:>9}")
+                      f"{mmss(t5):>8}{''.join(cells)}{spread:>8.2f}%{ab:>9}{abr:>10}")
+        if res_rows:
+            # ★ THE LABEL THE RESIDUAL BRINGS BACK, pool by pool: HS(pool) /
+            #   HS(hs) = F_hs(t, d) / F_pool(t, d) on the joint fit -- 1 at
+            #   5k for everyone, and exactly the applied residual elsewhere
+            fam_j = DA.family(ab_art, f"hs_{g}", sport, residual=True)
+            applied = (fam_j or {}).get(DA.APPLIED_KEY) or {}
+            print("   with the per-pool residual (applied: "
+                  + (", ".join(f"{p} {v:+.4f}" for p, v in sorted(applied.items()))
+                     or "none") + "):")
+            others = [p for p in POOLS + ("elem",) if p != "hs"]
+            print(f"   {'run':<24}{'5K eq':>8}" + "".join(f"{p:>12}" for p in others))
+            for label, t, d, t5, rr in res_rows:
+                cells = "".join(
+                    f"{rr['hs'] / rr[p]:>12.4f}" if p in rr and "hs" in rr else f"{'-':>12}"
+                    for p in others)
+                print(f"   {label[:10]:<10}{mmss(t):>7} {d / 1000:>4.0f}k{'':<6}"
+                      f"{mmss(t5):>8}{cells}")
     # the owner's own example, conversion by conversion
     t, d = 28 * 60 + 34.0, 10000.0
     print(f"\n   the report's run, {mmss(t)} over {d:.0f} m (XC): 10000 -> 5000 multiplier")
@@ -167,6 +204,9 @@ def sectionA(pool_art, ab_art, sport="XC"):
         ab = abilityRel(ab_art, p, sport, t, d) if ab_art else None
         ext = "" if poolInSpan(pool_art, p, sport, d) else " (extrapolated)"
         tail = f"   by ability x{ab:.4f}" if ab else ""
+        if ab_art and DA.hasResidual(ab_art):
+            abr = abilityRel(ab_art, p, sport, t, d, residual=True)
+            tail += f"   + residual x{abr:.4f}" if abr else ""
         print(f"     {p:<10} pool curve x{base:.4f}{ext:<15}{tail}")
 
 
@@ -200,10 +240,27 @@ def predictBaseline(pool_art, pool, sport, t_in, d_in, d_out, later):
     return math.log(t_in) + y + (-eps if later else eps)
 
 
-def predictAbility(fam, t_in, d_in, d_out, later):
-    l5 = DA.forwardLog(fam, math.log(t_in), math.log(d_in / 5000.0))
-    lo = DA.inverseLog(fam, l5, math.log(d_out / 5000.0))
+def predictAbility(fam, t_in, d_in, d_out, later, pool=None):
+    """By ability: the input leg's 5K equivalent, back out at d_out. With a
+    joint fit and the row's pool, the pool's residual on both legs."""
+    l5 = DA.forwardLog(fam, math.log(t_in), math.log(d_in / 5000.0), pool)
+    lo = DA.inverseLog(fam, l5, math.log(d_out / 5000.0), pool)
     return lo + (fam["calendar"] if later else -fam["calendar"])
+
+
+MODELS = ("pool", "ability", "abil+res")
+
+
+def verdict(pool, stats):
+    """One line per pool: which model predicts its held-out races best
+    (median |error|), and which is least biased."""
+    have = [m for m in MODELS if m in stats]
+    best = min(have, key=lambda m: stats[m][1])
+    least = min(have, key=lambda m: abs(stats[m][0]))
+    cells = " / ".join(f"{m} {100 * stats[m][1]:.2f}" for m in have)
+    bias = " / ".join(f"{100 * stats[m][0]:+.2f}" for m in have)
+    return (f"   {pool:<12} MdAE {cells} -> {best.upper()}; bias {bias} -> "
+            f"least biased {least}")
 
 
 def _stats(errs):
@@ -225,12 +282,22 @@ def sectionB(pool_art, ab_art, fresh=False):
         rng = np.random.default_rng(HOLDOUT_SEED)
         test = rng.random(n) < HOLDOUT_FRAC
         out[sport] = (F.subset(arr, ~test), F.subset(arr, test))
-    degrees = None
+    degrees = degrees_joint = None
     if ab_art:
         degrees = {k: tuple(e["degree"]) for k, e in ab_art["families"].items()}
-    print(f"   refitting the ability families on the 80% ({'the artifact' if degrees else 'CV'}'s degrees)...")
+        degrees_joint = {k: tuple(e[DA.JOINT_KEY]["degree"])
+                         for k, e in ab_art["families"].items()
+                         if e.get(DA.JOINT_KEY) is not None}
+    print(f"   refitting the ability families, and their joint fits with the per-pool "
+          f"residual, on the 80% ({'the artifact' if degrees else 'CV'}'s degrees)...")
     art = F.fitAll(out["XC"][0], out["TF"][0], verbose=False, degrees=degrees,
-                   agreement=False)
+                   agreement=False, degrees_joint=degrees_joint)
+    for k, e in sorted(art["families"].items()):
+        j = e.get(DA.JOINT_KEY)
+        if j is not None:
+            print(f"   {k}: residual applied on the 80%: "
+                  + (", ".join(f"{p} {v:+.4f}" for p, v in sorted(j[DA.APPLIED_KEY].items()))
+                     or "none"))
     for sport in ("XC", "TF"):
         te = out[sport][1]
         rows = {}
@@ -238,6 +305,7 @@ def sectionB(pool_art, ab_art, fresh=False):
             d1, d2, t1, t2 = te["d1"][i], te["d2"][i], te["t1"][i], te["t2"][i]
             pool = str(te["pool"][i]).split("|")[0]
             fam = DA.family(art, pool, sport)
+            fam_j = DA.family(art, pool, sport, residual=True)
             if fam is None:
                 continue
             # the shorter leg is the input; `later` = the output is race 2
@@ -247,27 +315,36 @@ def sectionB(pool_art, ab_art, fresh=False):
                 t_in, d_in, t_out, d_out, later = t2, d2, t1, d1, False
             eb = math.log(t_out) - predictBaseline(pool_art, pool, sport, t_in, d_in, d_out, later)
             ea = math.log(t_out) - predictAbility(fam, t_in, d_in, d_out, later)
+            er = math.log(t_out) - predictAbility(fam_j, t_in, d_in, d_out, later, pool)
             keys = [(pool, "all")]
             for a, b in TRANSITIONS[sport]:
                 if _near(d_in, a) and _near(d_out, b):
                     keys.append((pool, f"{a}->{b}"))
             for k in keys:
-                rows.setdefault(k, ([], []))
+                rows.setdefault(k, ([], [], []))
                 rows[k][0].append(eb)
                 rows[k][1].append(ea)
+                rows[k][2].append(er)
         print(f"\n   {sport}: {len(te['d1']):,} held-out pairs. error = log(actual / "
               f"predicted), in % of time")
-        print(f"   {'pool':<12}{'transition':<13}{'n':>8}   {'baseline bias/MdAE/p90':>26}"
-              f"   {'ability bias/MdAE/p90':>26}   better")
-        for (pool, tr), (eb, ea) in sorted(rows.items(),
-                                           key=lambda kv: (kv[0][0], kv[0][1] != "all", kv[0][1])):
-            if len(eb) < 30:
+        print(f"   {'pool':<12}{'transition':<13}{'n':>8}   {'pool curves bias/MdAE/p90':>26}"
+              f"   {'ability bias/MdAE/p90':>24}   {'abil+res bias/MdAE/p90':>24}   better")
+        verdicts = []
+        for (pool, tr), errs in sorted(rows.items(),
+                                       key=lambda kv: (kv[0][0], kv[0][1] != "all", kv[0][1])):
+            if len(errs[0]) < 30:
                 continue
-            sb, sa = _stats(eb), _stats(ea)
-            win = "ability" if sa[1] < sb[1] else "pool" if sb[1] < sa[1] else "="
-            print(f"   {pool:<12}{tr:<13}{len(eb):>8,}   "
-                  f"{100 * sb[0]:>+7.2f} {100 * sb[1]:>6.2f} {100 * sb[2]:>6.2f}      "
-                  f"{100 * sa[0]:>+7.2f} {100 * sa[1]:>6.2f} {100 * sa[2]:>6.2f}      {win}")
+            st = dict(zip(MODELS, (_stats(e) for e in errs)))
+            win = min(MODELS, key=lambda m: st[m][1])
+            print(f"   {pool:<12}{tr:<13}{len(errs[0]):>8,}   "
+                  + "      ".join(f"{100 * st[m][0]:>+7.2f} {100 * st[m][1]:>6.2f} "
+                                  f"{100 * st[m][2]:>6.2f}" for m in MODELS)
+                  + f"      {win}")
+            if tr == "all":
+                verdicts.append(verdict(pool, st))
+        print(f"\n   {sport} verdict per pool (all transitions; MdAE and bias in %):")
+        for line in verdicts:
+            print(line)
 
 
 # ------------------------------------------------------------------ #
@@ -301,19 +378,21 @@ _SAMPLE_SQL = """
 """
 
 
-def _rho(pool_art, ab_art, pool, t, d):
-    ab = abilityRel(ab_art, pool, "XC", t, d)
+def _rho(pool_art, ab_art, pool, t, d, residual=True):
+    ab = abilityRel(ab_art, pool, "XC", t, d, residual=residual)
     if not ab:
         return None
     return poolRel(pool_art, pool, "XC", d) / ab
 
 
-def sectionC(pool_art, ab_art, year=None, top=25, pct=0.5):
+def sectionC(pool_art, ab_art, year=None, top=25, pct=0.5, residual=True):
     import numpy as np
     from database import getConn
     import pool_view
+    residual = residual and DA.hasResidual(ab_art)
     print("\nC. THE TOP OF THE XC BOARDS, re-priced to first order (no re-solve; "
-          "see the header)")
+          f"see the header); by ability {'WITH' if residual else 'without'} the "
+          f"per-pool residual")
     with getConn() as conn, conn.cursor() as cur:
         if year is None:
             cur.execute("SELECT max(year) FROM ranking_results WHERE sport = 'XC'")
@@ -321,7 +400,7 @@ def sectionC(pool_art, ab_art, year=None, top=25, pct=0.5):
         med = {}
         for pool in ("hs_m", "hs_f", "college_m", "college_f"):
             cur.execute(_SAMPLE_SQL, {"pool": pool, "pct": pct})
-            rh = [_rho(pool_art, ab_art, pool, float(t), float(d))
+            rh = [_rho(pool_art, ab_art, pool, float(t), float(d), residual)
                   for t, d in cur.fetchall() if t and d]
             rh = [v for v in rh if v]
             med[pool] = float(np.median(rh)) if rh else None
@@ -340,7 +419,7 @@ def sectionC(pool_art, ab_art, year=None, top=25, pct=0.5):
             for pid, name, r, t, d in cur.fetchall():
                 if not d:
                     continue
-                rho = _rho(pool_art, ab_art, pool, float(t), float(d))
+                rho = _rho(pool_art, ab_art, pool, float(t), float(d), residual)
                 if not rho:
                     continue
                 own_new = float(r) * rho / s_pool
@@ -400,6 +479,8 @@ def main():
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--fresh", action="store_true", help="re-stream the pairs")
     ap.add_argument("--ability", default=ABILITY_ART)
+    ap.add_argument("--no-residual", action="store_true",
+                    help="C: re-price with the ability curve alone")
     args = ap.parse_args()
     pool_art = _load(POOL_ART)
     ab_art = _load(args.ability)
@@ -411,11 +492,19 @@ def main():
     else:
         print(f"  ability artifact: fitted {ab_art.get('fitted')}, families "
               f"{sorted(ab_art['families'])}")
+        if DA.hasResidual(ab_art):
+            print("  per-pool residual applied: " + "; ".join(
+                f"{k} " + (", ".join(f"{p} {v:+.4f}" for p, v in sorted(r.items())) or "none")
+                for k, r in sorted((ab_art.get("residual_applied") or {}).items())))
+        else:
+            print("  ! this artifact predates the per-pool residual: refit it "
+                  "(engine/fit_distance_ability.py) for the abil+res columns")
     sectionA(pool_art, ab_art)
     if args.holdout or args.all:
         sectionB(pool_art, ab_art, fresh=args.fresh)
     if (args.boards or args.all) and ab_art:
-        sectionC(pool_art, ab_art, year=args.year, top=args.top)
+        sectionC(pool_art, ab_art, year=args.year, top=args.top,
+                 residual=not args.no_residual)
     if args.fivek or args.all:
         sectionD()
 

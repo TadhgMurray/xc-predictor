@@ -132,7 +132,9 @@ def _expected(t, d, pool, sport):
     #   RUNNER'S, so a real time is checked with its own (one closed-form
     #   division; no per-metre cache can hold it). Inside a gender the pool
     #   no longer moves a row at all -- the check can only find a GENDER
-    #   seam then, which is exactly what is left to find.
+    #   seam then, which is exactly what is left to find. (With the per-pool
+    #   residual, 2026-09-29, it moves a row by that residual: 4% for a
+    #   middle schooler at 10 km, far inside TOLERANCE.)
     # ! A PROBE IS NOT A RUNNER. anchor_repair asks _expected(1.0, ...) for
     #   a bare factor; a "time" faster than PACE_FLOOR (0.12 s/m, faster
     #   than any human over any distance) is that probe, and gets the
