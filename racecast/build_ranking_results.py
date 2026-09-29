@@ -496,6 +496,8 @@ _GATE_JOINS = """
         --   college board. Keeping them cost two index probes and two output
         --   columns on every one of 61.6M rows, to produce arguments the
         --   decision function now discards.
+        -- ! ONE COMES BACK, AS A VETO (2026-09-29): see _collegeFirstSql.
+        __COLLEGE_FIRST_JOIN__
 """
 
 
@@ -596,7 +598,9 @@ _SQL = {
                    -- ! TRUST. A verdict can be the best reading of the
                    --   evidence and still be too thin to headline a board.
                    COALESCE(gu.trust, 'high')  AS grade_trust,
-               (pas.person_id IS NOT NULL) AS is_pro
+               (pas.person_id IS NOT NULL) AS is_pro,
+               -- ★ FOR THE COLLEGE VETO (2026-09-29), see _collegeFirstSql
+               __COLLEGE_FIRST__ AS college_first
         FROM results r
         LEFT JOIN meets m
                ON m.div_id = r.div_id AND m.source = r.source
@@ -683,7 +687,9 @@ _SQL = {
                    -- ! TRUST. A verdict can be the best reading of the
                    --   evidence and still be too thin to headline a board.
                    COALESCE(gu.trust, 'high')  AS grade_trust,
-               (pas.person_id IS NOT NULL) AS is_pro
+               (pas.person_id IS NOT NULL) AS is_pro,
+               -- ★ FOR THE COLLEGE VETO (2026-09-29), see _collegeFirstSql
+               __COLLEGE_FIRST__ AS college_first
         FROM results_tf r
         LEFT JOIN dist_override dov
                ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
@@ -1147,8 +1153,41 @@ def _sourceSql(conn, sport):
                          AND column_name = 'rating_pool'""", (table,))
         have = cur.fetchone() is not None
     sql = _SQL[sport].replace("__RATING_POOL__", "r.rating_pool" if have else "NULL::text")
+    sql = _collegeFirstSql(conn, sql)
     return sql.replace("__IMPOSSIBLE__", _impossibleClause(conn, sport)
                        + _outlierClause(conn, sport))
+
+
+def _collegeFirstSql(conn, sql):
+    """The college_first_season join and column, where the table exists.
+
+    ★ WHY IT IS BACK (owner, 2026-09-29: "a season before the person's
+      college_first_season, with a school grade (<= 12), cannot be level
+      college"). resolvePool reads the date again, as a VETO on a college
+      season verdict: Tayvon Kitchen's grade-12 track spring carried a
+      'college' TF verdict from his unattached indoor races, and the fill
+      priced it college_m. The engine passes the same date from its own
+      dict (speed_ratings.loadCollegeFirst); the fill and the build's
+      fallback arm must pass it too, or the two decide the same row twice
+      on different facts -- the failure pool_resolve's header records.
+
+    ! ONE PRIMARY-KEY JOIN, NOT THE OLD TWO, and its answer is used.
+    ! NULL WHERE THE TABLE IS ABSENT: resolvePool then refuses every college
+      verdict on a school grade, the same thing the engine does with an
+      empty dict -- the two sides agree on a database without it too.
+    """
+    have = False
+    if conn is not None:                 # None: a caller with no database
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.college_first_season')")
+            got = cur.fetchone()
+        have = bool(got and got[0])
+    return (sql.replace("__COLLEGE_FIRST_JOIN__",
+                        "LEFT JOIN college_first_season cfs\n"
+                        "               ON cfs.person_id = r.person_id"
+                        if have else "")
+               .replace("__COLLEGE_FIRST__",
+                        "cfs.first_date" if have else "NULL::date"))
 
 
 def _outlierClause(conn, sport):
@@ -1312,6 +1351,8 @@ def prepareRow(row, sport):
                            #   effect on the BOARDS arrives with the next
                            #   solve's stamps, not with this file.
                            pro_ability=proAbilityFor(row.person_id, season),
+                           # ★ THE COLLEGE VETO (2026-09-29): _collegeFirstSql
+                           college_first=getattr(row, "college_first", None),
                            # ★ NO race_date, AND NO DATE PARSE AT ALL. Its only
                            #   readers were the two promotion gates, now gone. This
                            #   call was already lazy about building the date; now

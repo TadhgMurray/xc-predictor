@@ -76,6 +76,9 @@ from level_graph import _raceKeyExpr
 #   This module is a PRODUCER of season_level and poolFor is its CONSUMER:
 #   two callers of one definition -> import.
 from normalize_distance import arbitrateLevel, levelToPool, POOLABLE_LEVELS
+# ★ THE SCHOOL-GRADE TEST IS normalize_distance's TOO, for the college veto
+#   (CHUNK 3b): the table and resolvePool must agree on what a school grade is.
+from normalize_distance import isSchoolGrade, isCollegeClass
 # ! THE ONE CLOCK. This module used to hard-roll its own July seam; see
 #   _academicYearExpr for why that was a silent mis-join and what to rebuild.
 from season_year import seasonYearSqlInt, seasonYearFromIso, seasonYearFor
@@ -141,19 +144,29 @@ def _collectVotes(cur):
     # ★ THE SPORT IS NOW RECORDED. The collector already knew it -- it loops
     #   results then results_tf -- but threw it away. Keeping it is what lets
     #   _resolveSeasons produce a per-sport verdict as well as a combined one.
+    # ★ n_school / n_class: how many of the VOTING rows carried a school grade
+    #   (a number 1-12) and how many a college class word. The college veto
+    #   (CHUNK 3b) reads them: the races that voted a season 'college' were
+    #   run under the grade they say. See _gradeKinds.
     cur.execute("""CREATE TEMP TABLE tmp_season_vote
-                   (person_id bigint, ay int, sport text, level text, n int)""")
+                   (person_id bigint, ay int, sport text, level text, n int,
+                    n_school int, n_class int)""")
+    _gradeKinds(cur)
 
     for table, sport in (("results", "XC"), ("results_tf", "TF")):
         cur.execute(f"""
-            INSERT INTO tmp_season_vote (person_id, ay, sport, level, n)
+            INSERT INTO tmp_season_vote
+                   (person_id, ay, sport, level, n, n_school, n_class)
             SELECT r.person_id,
                    {_academicYearExpr('r')} AS ay,
                    '{sport}',
                    rl.level,
-                   count(*)
+                   count(*),
+                   count(*) FILTER (WHERE gk.school),
+                   count(*) FILTER (WHERE NOT gk.school)
             FROM {table} r
             JOIN race_level rl ON rl.race = {_raceKeyExpr('r')}
+            LEFT JOIN tmp_grade_kind gk ON gk.g = r.grade
             WHERE r.person_id IS NOT NULL
               AND r.date IS NOT NULL
             GROUP BY 1, 2, 3, 4
@@ -164,6 +177,43 @@ def _collectVotes(cur):
 
     cur.execute("CREATE INDEX ON tmp_season_vote (person_id, ay, sport)")
     cur.execute("ANALYZE tmp_season_vote")
+
+
+def _gradeKinds(cur):
+    """tmp_grade_kind: every raw grade spelling in the results tables and
+    grade_fix that means a SCHOOL grade (school = true) or a COLLEGE CLASS
+    (school = false). Anything else -- '-', age bands, years -- is absent,
+    and a row carrying it counts toward neither.
+
+    ★ CLASSIFIED IN PYTHON BY normalize_distance, NOT BY A PATTERN HERE --
+      the same distinct-spellings trick college_flag.schoolGradeVeto uses, so
+      '09', '12th', 'SO-2' and 'Sophomore' are read exactly as resolvePool
+      reads them. A regex in this file would be a second grade parser.
+    """
+    cur.execute("SELECT to_regclass('public.grade_fix')")
+    gf = cur.fetchone()[0] is not None
+    cur.execute("SELECT grade FROM results GROUP BY grade "
+                "UNION SELECT grade FROM results_tf GROUP BY grade"
+                + (" UNION SELECT grade FROM grade_fix GROUP BY grade"
+                   if gf else ""))
+    kinds = []
+    for (g,) in cur.fetchall():
+        if g is None:
+            continue
+        if isSchoolGrade(g):
+            kinds.append((g, True))
+        elif isCollegeClass(g):
+            kinds.append((g, False))
+    cur.execute("DROP TABLE IF EXISTS tmp_grade_kind")
+    cur.execute("CREATE TEMP TABLE tmp_grade_kind "
+                "(g text PRIMARY KEY, school boolean NOT NULL)")
+    if kinds:
+        from psycopg2.extras import execute_values
+        execute_values(cur, "INSERT INTO tmp_grade_kind VALUES %s", kinds,
+                       page_size=5000)
+    cur.execute("ANALYZE tmp_grade_kind")
+    print(f"    {sum(1 for _g, k in kinds if k):,} school-grade spellings, "
+          f"{sum(1 for _g, k in kinds if not k):,} college-class spellings")
 
 
 # ------------------------------------------------------------------ #
@@ -246,14 +296,18 @@ def _collectMaskVotes(cur):
         sport = "XC" if table == "results" else "TF"
 
         cur.execute(f"""
-            INSERT INTO tmp_season_vote (person_id, ay, sport, level, n)
+            INSERT INTO tmp_season_vote
+                   (person_id, ay, sport, level, n, n_school, n_class)
             SELECT r.person_id,
                    {_academicYearExpr('r')} AS ay,
                    '{sport}',
                    CASE {mask_col} & 14 {level_case} END AS level,
-                   count(*)
+                   count(*),
+                   count(*) FILTER (WHERE gk.school),
+                   count(*) FILTER (WHERE NOT gk.school)
             FROM {table} r
             {join_sql}
+            LEFT JOIN tmp_grade_kind gk ON gk.g = r.grade
             -- The anti-join: only races race_level could NOT decide.
             LEFT JOIN race_level rl ON rl.race = {_raceKeyExpr('r')}
             WHERE r.person_id IS NOT NULL
@@ -345,11 +399,14 @@ def _resolveSeasons(cur, min_decided=MIN_DECIDED_RACES,
                        n_levels     int     NOT NULL,
                        chosen_share real,
                        unanimous    boolean NOT NULL,
+                       n_school     int     NOT NULL DEFAULT 0,
+                       n_class      int     NOT NULL DEFAULT 0,
+                       refused      text,
                        PRIMARY KEY (person_id, ay, sport))""")
     cur.execute(f"""
         INSERT INTO athlete_season_level
               (person_id, ay, sport, level, n_decided, n_levels, chosen_share,
-               unanimous)
+               unanimous, n_school, n_class)
         WITH ord(level, rank) AS (VALUES {order_sql}),
         -- ★ GROUPING SETS, not two queries. This produces the per-sport rows
         --   AND the combined row in one pass over the votes. Two passes would
@@ -358,7 +415,9 @@ def _resolveSeasons(cur, min_decided=MIN_DECIDED_RACES,
         tot AS (
             SELECT person_id, ay, COALESCE(sport, 'ALL') AS sport,
                    sum(n)                AS n_decided,
-                   count(DISTINCT level) AS n_levels
+                   count(DISTINCT level) AS n_levels,
+                   sum(n_school)         AS n_school,
+                   sum(n_class)          AS n_class
             FROM   tmp_season_vote
             GROUP  BY GROUPING SETS ((person_id, ay, sport), (person_id, ay))
         ),
@@ -389,12 +448,15 @@ def _resolveSeasons(cur, min_decided=MIN_DECIDED_RACES,
                t.n_decided,
                t.n_levels,
                p.share,
-               (t.n_levels = 1 AND t.n_decided >= {min_decided})
+               (t.n_levels = 1 AND t.n_decided >= {min_decided}),
+               t.n_school,
+               t.n_class
         FROM   tot t
         LEFT   JOIN pick p ON p.person_id = t.person_id AND p.ay = t.ay
                           AND p.sport = t.sport
     """)
     total = cur.rowcount
+    refuseCollegeBeforeCollege(cur)
     cur.execute("CREATE INDEX ON athlete_season_level (level)")
     cur.execute("ANALYZE athlete_season_level")
 
@@ -412,6 +474,88 @@ def _resolveSeasons(cur, min_decided=MIN_DECIDED_RACES,
     for lvl, n in cur.fetchall():
         print(f"        {lvl:<10}{n:>12,}")
     return resolved
+
+
+# ------------------------------------------------------------------ #
+# CHUNK 3b -- A HIGH SCHOOL SEASON IS NOT A COLLEGE SEASON
+# ------------------------------------------------------------------ #
+
+def seasonIsSchool(has_fix, fix_grade, n_school, n_class):
+    """The season-grade half of the rule below, in Python, for the dry-run
+    census (scripts/college_veto_census.py) and the tests. The UPDATE in
+    refuseCollegeBeforeCollege is the same rule in SQL; the scratch-Postgres
+    test holds the two to the same answers."""
+    if has_fix:
+        return isSchoolGrade(fix_grade) and n_class <= n_school
+    return n_school > n_class
+
+
+def refuseCollegeBeforeCollege(cur):
+    """Refuse a 'college' verdict on a school season before the person's
+    first collegiate season. The rule, its owner and its cases are
+    normalize_distance.seasonVerdictFor's; this is the same rule at the
+    SOURCE, so every reader of the table gets it, not only resolvePool.
+
+    ⚠ Tayvon Kitchen (29332123) is the case: TF ay 2024 = 'college' off his
+      unattached winter races at college-hosted meets, grade 12 on every
+      row, grade_fix 2024 '12', first collegiate season 2025.
+
+    THE SEASON'S GRADE, as resolvePool reads it per row:
+      grade_fix's grade where the season has a grade_fix row -- a level
+        verdict (stale_grade, field) has none, and nothing is refused;
+      the voting rows' own grades otherwise: more school grades than
+        college class words among the rows that voted.
+      And either way, not when the voting rows' own grades are mostly class
+        words (the Amherst runner: the feed said SO-2, grade_sanity said 10).
+
+    ! THE VERDICT GOES TO NULL, AND THE REFUSED LEVEL IS KEPT IN `refused`.
+      NULL is "no verdict", which every reader already handles: the grade
+      decides. The 'ALL' fallback of a refused sport row is screened by the
+      same rule, so a refusal cannot be undone by the COALESCE readers take.
+
+    ! AN ABSENT college_first_season REFUSES EVERY SUCH SEASON, the same
+      answer resolvePool gives a person with no row -- a veto can only
+      take a college season away, never give one.
+    """
+    cur.execute("SELECT to_regclass('public.grade_fix'), "
+                "to_regclass('public.college_first_season')")
+    have_gf, have_cfs = (x is not None for x in cur.fetchone())
+    if have_gf:
+        school = """CASE WHEN gf.person_id IS NOT NULL
+                         THEN COALESCE(gf.grade IN (SELECT g FROM tmp_grade_kind
+                                                    WHERE school), FALSE)
+                              AND asl.n_class <= asl.n_school
+                         ELSE asl.n_school > asl.n_class END"""
+        join = """LEFT JOIN grade_fix gf ON gf.person_id = asl.person_id
+                                        AND gf.season = asl.ay"""
+    else:
+        school, join = "asl.n_school > asl.n_class", ""
+    before = "TRUE"
+    if have_cfs:
+        # first_date on the ONE clock; first_season is a calendar year
+        first_ay = seasonYearSqlInt(None, "c.first_date::text")
+        before = f"""NOT EXISTS (SELECT 1 FROM college_first_season c
+                                 WHERE c.person_id = asl.person_id
+                                   AND {first_ay} <= asl.ay)"""
+    else:
+        print("    ⚠ college_first_season not found -- every college verdict "
+              "on a school grade is refused (run engine/college_flag.py "
+              "--write first)")
+    cur.execute(f"""
+        UPDATE athlete_season_level t
+           SET refused = t.level, level = NULL
+          FROM athlete_season_level asl
+          {join}
+         WHERE t.person_id = asl.person_id AND t.ay = asl.ay
+           AND t.sport = asl.sport
+           AND asl.level = 'college'
+           AND {school}
+           AND {before}
+    """)
+    n = cur.rowcount
+    print(f"    {n:,} college verdicts refused: a school grade before the "
+          f"person's first collegiate season")
+    return n
 
 
 # ------------------------------------------------------------------ #

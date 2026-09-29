@@ -1017,6 +1017,118 @@ def arbitrateLevel(grade_level, season_level, grade=None):
                                         # the season is the fresher witness
 
 
+# ================================================================== #
+#  A HIGH SCHOOL SEASON IS NOT A COLLEGE SEASON BECAUSE OF THE MEETS
+# ================================================================== #
+#
+# ⚠ THE FAULT (owner's server, why_unrated --replay, 2026-09-29). Tayvon
+#   Kitchen (29332123): grade_fix 2024 '12', 2025 'FR'; athlete_season_level
+#   TF ay 2024 = 'college' while XC and ALL ay 2024 = 'hs';
+#   college_first_season 2025-08-01. Every TF row of his senior year --
+#   Crater OR, grade 12, Dec 2024 - Jul 2025 -- pooled college_m and rated
+#   106-116 on the college scale, where his junior spring rated 130-139 in
+#   hs_m. The voters were his unattached winter indoor races at
+#   college-hosted meets: a high schooler in a college field is still a
+#   high schooler.
+#
+# ★ THE RULE (owner, 2026-09-29: "a season before the person's
+#   college_first_season, with a school grade (<= 12), cannot be level
+#   college -- not in athlete_season_level, not in the backfill's season
+#   lookup, not in resolvePool"). A 'college' verdict stands only in a
+#   season at or after the person's first collegiate season. Before it --
+#   or with no collegiate season at all -- a school grade outranks the
+#   company the athlete kept. The verdict is refused, not replaced: the
+#   grade decides, exactly as it does when there is no verdict.
+#
+# ! A VETO, NEVER A PROMOTION. college_first_season left pooling because it
+#   PROMOTED from one per-person date (27072849, a grade 8 girl, onto the
+#   college board). This reads the same date the other way: it can only
+#   take a college verdict away, never give one. A missing table therefore
+#   refuses more, and can never put anybody on the college board.
+#
+# ⚠ A CLASS WORD IS NOT A SCHOOL GRADE, EVEN WHEN A NUMBER WAS MADE OF IT.
+#   The Amherst College runner in pool_resolve's field rule wrote "SO-2";
+#   grade_sanity, reading a field its name map calls a Wisconsin high
+#   school, resolved that to 10. The number is derived; the feed's own word
+#   was a college class. So the season counts as a school season only when
+#   the RESOLVED grade is a number 1-12 AND the row's own grade is not a
+#   college class word. The same line college_flag.schoolGradeVeto draws:
+#   "Nothing writes '8' for a college sophomore" -- and nothing else is
+#   certain.
+#
+# ! AND A STALE GRADE IS NOT A SCHOOL GRADE EITHER, which is what keeps
+#   Pieter Heesters (grade '12' four years after Gilman) out of this. The
+#   grade that decides here is grade_sanity's when it has a verdict, and
+#   its stale_grade verdict carries no grade at all (level 'pro'). Only a
+#   season with no grade_fix row falls back to the raw grade.
+
+def isSchoolGrade(grade):
+    """True when `grade` reads as a school grade 1-12 -- a NUMBER, the way
+    college_flag.schoolGradeVeto counts it. Class words ('Sr', 'FR-1') and
+    age bands ('11-12') are not: both are ambiguous about the level."""
+    key = normalizeGrade(grade)
+    return bool(key) and key.isdigit() \
+        and GRADE_TO_LEVEL.get(key) in ("elem", "ms", "hs")
+
+
+def isCollegeClass(grade):
+    """True when the feed wrote a college class word (Fr/So/Jr/Sr/RS, in
+    any of the spellings normalizeGrade knows, 'SO-2' included)."""
+    return GRADE_TO_LEVEL.get(normalizeGrade(grade)) == "college"
+
+
+def academicYearOfDate(value):
+    """season_year's academic year for a date, a datetime or an ISO
+    'YYYY-MM-DD' string; None for anything else. A thin, tolerant front on
+    the ONE clock -- it decides nothing itself.
+
+    ⚠ AN int IS REFUSED, NOT GUESSED AT. college_first_season.first_season
+      is EXTRACT(year FROM first_date) -- the CALENDAR year -- so a first
+      collegiate race in January 2022 reads 2022 there and belongs to season
+      2021 here. Nothing can tell a calendar year from an academic one by
+      looking at it, so only a date is accepted."""
+    if value is None or isinstance(value, (int, float)):
+        return None
+    from season_year import seasonYearFor, seasonYearFromIso
+    if isinstance(value, str):
+        s = value.strip()
+        if len(s) < 7 or not (s[:4].isdigit() and s[5:7].isdigit()):
+            return None
+        return seasonYearFromIso(None, s[:10])
+    try:
+        return seasonYearFor(None, value)
+    except AssertionError:
+        return None
+
+
+def firstCollegeSeason(college_first):
+    """The academic year of a person's first collegiate race, from
+    college_first_season.first_date -- never from its first_season column
+    (see academicYearOfDate)."""
+    return academicYearOfDate(college_first)
+
+
+def seasonVerdictFor(season_level, grade, season=None, college_first_ay=None,
+                     raw_grade=None):
+    """The season verdict a row may pool on: `season_level` itself, or None
+    when it is a 'college' verdict on a school season before college.
+
+    grade            -- the season's grade: grade_fix's when the season has a
+                        verdict row (None when that verdict is a level), else
+                        the row's own grade.
+    season           -- the row's academic year (season_year's clock).
+    college_first_ay -- firstCollegeSeason() of the person, or None.
+    raw_grade        -- the row's own grade, for the class-word exemption.
+    """
+    if season_level != "college" or not isSchoolGrade(grade) \
+            or isCollegeClass(raw_grade):
+        return season_level
+    if college_first_ay is not None and season is not None \
+            and int(season) >= int(college_first_ay):
+        return season_level               # a college season: the verdict stands
+    return None
+
+
 # levelToPool
 # Purpose: level + gender -> pool string, or None when the level has no pool.
 # Detail: gender handling is identical to getPool's, so the two can never
@@ -1356,16 +1468,50 @@ def _distancePotentialEntry(pool, sport):
 #   silences the season level; a verdict with no grade means the raw grade is
 #   not to be used and the verdict's level carries the row; with no verdict a
 #   usable raw grade silences the season level (resolvePool's stage 1).
-def normPoolFor(grade, gender, source, school, season_level=None, fixed=None):
+#
+# ★ AND A COLLEGE SEASON OUTRANKS A HIGH SCHOOL GRADE HERE TOO, as it does in
+#   resolvePool's field rule (college_season). This function used to let a
+#   trusted grade 12 silence a 'college' verdict that resolvePool obeyed, so
+#   the row was written on the 5000 m anchor and rated on the 8000 m one --
+#   Kitchen's senior track season, both halves of it. Both sides now read the
+#   verdict through seasonVerdictFor first, so a refused verdict is refused
+#   on both, and a standing one wins on both.
+#
+# ! season AND college_first_ay DEFAULT TO None, which refuses every college
+#   verdict on a school grade -- the pre-existing answer here. A caller that
+#   does not pass them keeps its old pools exactly.
+def normPoolFor(grade, gender, source, school, season_level=None, fixed=None,
+                season=None, college_first_ay=None):
+    raw_grade = grade
+    fixed_grade, fixed_level = fixed if fixed is not None else (None, None)
     if fixed is not None:
-        fixed_grade, fixed_level = fixed
-        if fixed_grade is not None:
-            grade, season_level = fixed_grade, None
-        else:
-            grade, season_level = None, fixed_level
+        grade = fixed_grade                  # None when the verdict is a level
+    season_level = seasonVerdictFor(season_level, grade, season,
+                                    college_first_ay, raw_grade=raw_grade)
+    field = fixed_level or season_level
+    if field == "college" \
+            and GRADE_TO_LEVEL.get(normalizeGrade(grade)) in (None, "hs",
+                                                              "college"):
+        return poolFor(None, gender, source, school, season_level="college")
+    if fixed is not None:
+        season_level = None if fixed_grade is not None else fixed_level
     elif grade is not None:
         season_level = None
     return poolFor(grade, gender, source, school, season_level=season_level)
+
+
+# ratedScalePool
+# Purpose:   the pool whose ANCHOR a row rated in `pool` sits on: its college
+#            twin for a pro pool, itself for everything else.
+# ★ MOVED HERE FROM speed_ratings._scalePool (2026-09-29), which still calls
+#   it: the backfill has to ask the same question -- "is the scale I wrote
+#   this row on the scale it was rated on?" -- and cannot import the engine.
+#   A pro row is divided into the COLLEGE pool's mean (owner, 2026-09-25,
+#   Nuguse), so its row has to sit on the college anchor.
+def ratedScalePool(pool):
+    if pool and str(pool).startswith("pro_"):
+        return "college_" + str(pool)[4:]
+    return pool
 
 
 # anchorShift

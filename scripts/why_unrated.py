@@ -58,11 +58,13 @@ def _swapWhere(sql, cond):
     return sql[:m.start()] + "WHERE " + cond + sql[end:]
 
 
-def _sqlFor(sport, rated):
+def _sqlFor(sport, rated, conn=None):
     """The board build's source query narrowed to one person, every row of
     theirs: the impossible/outlier anti-joins are left out, so a row they
     would hide is still listed."""
     sql = B._SQL[sport].replace("__RATING_POOL__", "NULL::text")
+    # ! THE COLLEGE VETO'S DATE (2026-09-29), exactly as the build reads it
+    sql = B._collegeFirstSql(conn, sql)
     sql = sql.replace("__IMPOSSIBLE__", "")
     cond = ("COALESCE(r.person_id, r.athlete_id) = %(pid)s"
             + ("" if rated is None else
@@ -168,7 +170,7 @@ def main():
                 B.prepareSprintEvents(conn)
         with conn.cursor(
                 cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
-            cur.execute(_sqlFor(args.sport, rated=None),
+            cur.execute(_sqlFor(args.sport, rated=None, conn=conn),
                         {"pid": args.person_id, "since": "1990-01-01",
                          "until": "2100-01-01"})
             rows = sorted(cur.fetchall(), key=lambda r: r.date)

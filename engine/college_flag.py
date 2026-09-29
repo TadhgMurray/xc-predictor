@@ -183,7 +183,10 @@ def schoolGradeVeto(cur):
     Uses the engine's own normaliser, so every spelling it knows -- '09',
     '8th', '6t' -- is covered without a second pattern to drift.
     """
-    from normalize_distance import normalizeGrade, GRADE_TO_LEVEL
+    # ! THE TEST IS normalize_distance.isSchoolGrade NOW (2026-09-29), the
+    #   same definition the college veto on season verdicts uses, so "a
+    #   school grade" cannot mean one thing here and another there.
+    from normalize_distance import isSchoolGrade
 
     cur.execute("""
         SELECT grade FROM results     GROUP BY grade
@@ -194,12 +197,10 @@ def schoolGradeVeto(cur):
     for (raw,) in cur.fetchall():
         if raw is None:
             continue
-        key = normalizeGrade(raw)
         # A numeric key the engine maps to a school level. Class words map to
         # 'college' and are deliberately NOT here -- they are the ambiguous
         # ones, and vetoing on them would delete real collegiate rows.
-        if key and key.isdigit() and GRADE_TO_LEVEL.get(key) in (
-                "elem", "ms", "hs"):
+        if isSchoolGrade(raw):
             out.append(raw)
     return out
 

@@ -55,7 +55,7 @@ from datetime import date, datetime
 
 import numpy as np
 
-from normalize_distance import poolFor
+from normalize_distance import poolFor, ratedScalePool
 from season_year import seasonYearFor, RolloverLedger
 import speed_ratings_kernels as K
 from speed_ratings_db import (streamResults, saveCourseDifficulties,
@@ -512,10 +512,9 @@ def _scaleFactor(dist, pool, sport):
 #   beside ~1,340 on his college races, and every pro race came out ~1.7x.
 def _scalePool(pool):
     """The pool whose anchor a row rated in `pool` must sit on: its college
-    twin for a pro pool, itself for everything else."""
-    if pool and str(pool).startswith("pro_"):
-        return "college_" + str(pool)[4:]
-    return pool
+    twin for a pro pool, itself for everything else. The rule is
+    normalize_distance.ratedScalePool, shared with the backfill's census."""
+    return ratedScalePool(pool)
 
 
 def rescaleToPool(norm, time_s, dist, pool, sport):

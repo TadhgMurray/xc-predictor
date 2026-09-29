@@ -687,12 +687,19 @@ def toCommonScale(row, scale=None):
     row["normalized_time_pool"] = nt
     if (scale or NORM_SCALE) != "common5000" or nt is None:
         return row
-    from normalize_distance import normPoolFor, anchorShift
+    from normalize_distance import (normPoolFor, anchorShift,
+                                    academicYearOfDate, firstCollegeSeason)
     fixed = ((row.get("fixed_grade"), row.get("fixed_level"))
              if row.get("grade_untrusted") else None)
+    # ! THE SEASON AND THE FIRST COLLEGE SEASON TOO (2026-09-29), exactly as
+    #   the backfill passes them, or the college veto would move this row's
+    #   anchor differently from the one the backfill wrote it on.
     pool = normPoolFor(row.get("grade"), row.get("gender"), row.get("source"),
                        row.get("school"), season_level=row.get("season_level"),
-                       fixed=fixed)
+                       fixed=fixed,
+                       season=academicYearOfDate(row.get("date")),
+                       college_first_ay=firstCollegeSeason(
+                           row.get("college_first")))
     if pool is None:
         row["norm_unshifted"] = True
         return row

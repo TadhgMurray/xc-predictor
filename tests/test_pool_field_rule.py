@@ -16,8 +16,17 @@ def _pool(grade, level, **kw):
 
 
 def test_a_college_field_outranks_a_high_school_grade():
-    assert _pool("10", "college") == "college_m|XC"
+    # ! IN A COLLEGE SEASON (2026-09-29). A school grade before the person's
+    #   first collegiate season -- or with none -- keeps its school pool now;
+    #   see tests/test_college_verdict_school_season.py.
+    assert _pool("10", "college", season=2025,
+                 college_first="2024-09-01") == "college_m|XC"
+    assert _pool("10", "college") == "hs_m|XC"
     assert _pool("SO", "college") == "college_m|XC"
+    # the Amherst runner as he really was: the feed wrote SO-2 and
+    # grade_sanity made a 10 of it; the class word keeps the field's say
+    assert _pool("SO-2", "college", grade_untrusted=True,
+                 fixed_grade="10") == "college_m|XC"
 
 
 def test_a_college_field_rescues_a_contradicted_season():

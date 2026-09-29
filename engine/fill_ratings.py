@@ -89,7 +89,8 @@ def _sqlFor(sport, conn=None):
     #   the impossible-race anti-join (2026-09-14), so a race the record
     #   condemned is never priced either -- unrated means unrated.
     sql = (B._sourceSql(conn, sport) if conn is not None
-           else B._SQL[sport].replace("__IMPOSSIBLE__", ""))
+           else B._collegeFirstSql(None, B._SQL[sport])
+                 .replace("__IMPOSSIBLE__", ""))
     mark, inverse = _MARK[sport]
     assert mark in sql, (
         f"build_ranking_results._SQL[{sport!r}] no longer carries the WHERE "
@@ -168,6 +169,11 @@ def _rowPool(row, sport):
                        #   with the engine about would show one number on
                        #   the board and another on the athlete page.
                        pro_ability=proAbilityFor(row.person_id, season),
+                       # ★ THE COLLEGE VETO (2026-09-29): a 'college' season
+                       #   verdict on a school grade stands only from the
+                       #   person's first collegiate season on. The engine
+                       #   passes the same date; see B._collegeFirstSql.
+                       college_first=getattr(row, "college_first", None),
                        merge=True)
 
 

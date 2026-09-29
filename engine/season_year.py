@@ -260,6 +260,16 @@ def seasonYearSqlInt(sport=None, date_col="date"):
 #   with no reference to the row's own grade, and both were measured putting
 #   middle schoolers on the college board. They are not season-keyed and need
 #   nothing from this module.
+# ★ EXCEPT THAT college_first_season IS READ AGAIN, AS A VETO (2026-09-29):
+#   a 'college' season verdict on a school grade stands only from the
+#   person's first collegiate season on. That comparison IS season-keyed, so
+#   it goes through this clock -- first_date -> seasonYearFor, never the
+#   table's first_season column, which is EXTRACT(year) and so a calendar
+#   year (normalize_distance.academicYearOfDate).
+# ! AND THE BACKFILL'S _academicYearOf WAS THE LAST PRIVATE JULY SEAM. It
+#   keyed Ajani Salcido's 2021-07-02 senior race on his freshman season and
+#   normalised it as college (nt 1358.6 against 862-906); it delegates here
+#   now.
 
 
 # ------------------------------------------------------------------ #

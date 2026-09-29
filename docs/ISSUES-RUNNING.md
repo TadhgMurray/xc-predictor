@@ -3054,3 +3054,42 @@ lands.**
     amnesty_division_drops --write && dump_overrides;
     rating_outliers --write (after decision 1);
     XCP_WEATHER_FIT=1 bash deploy/run_pipeline.sh --from 3
+
+## 2026-09-29 — ✅ THE BLOCKER, FIXED: a senior's season pooled as college
+
+**(b) Salcido's July row -- the backfill's own clock.** backfill_normalize's
+`_academicYearOf` was the last private July seam (`month >= 7`): it keyed
+2021-07-02 on season 2021 -- grade_fix 'FR', season verdict college -- so
+normPoolFor wrote the row on the college anchor (nt 1358.6). Every other
+reader (grade_fix/athlete_season_level joins in build_ranking_results,
+fill_ratings._rowPool, speed_ratings.poolOf) keys it with
+season_year.seasonYearFromIso on the August seam: season 2020, grade '12',
+hs_m. season_level._academicYearExpr had moved to August with a "REBUILD"
+note; its twin in the backfill never moved. It delegates to season_year now.
+
+**(a) Kitchen's college track season.** Nothing stopped a 'college' season
+verdict (votes from unattached indoor races at college meets) from
+outranking a corroborated grade 12: resolvePool's field rule took it, while
+normPoolFor let the 12 silence it -- so his rows were written on hs_m's
+anchor and rated on college_m's. Now one rule,
+`normalize_distance.seasonVerdictFor`: a college verdict on a school grade
+(a number 1-12, not a class word) stands only from the person's first
+collegiate season (college_first_season.first_date, academic year) on.
+Applied at the source (season_level.refuseCollegeBeforeCollege: level NULL,
+`refused` = 'college'), in resolvePool (incl. the unattached race ceiling,
+screened by grade_sanity's grade only), and in normPoolFor, which now also
+takes a standing college verdict over an hs grade exactly as resolvePool
+does. college_first_season is read again -- as a veto only.
+
+**Census.** The backfill prints "scale split": written rows whose pool's
+anchor differs from the pool the last go-live rated them in
+(results.rating_pool), by pair. 05b_anchor_repair still rescales them.
+
+**Before the next run** (read-only count first; the two --write steps go
+after meet_date_fix / person_collision in the order above, since both read
+dates and person ids, and before `--from 3`; neither is in run_pipeline.sh):
+
+    /srv/venv/bin/python scripts/college_veto_census.py --show 20
+    /srv/venv/bin/python engine/college_flag.py --write
+    /srv/venv/bin/python engine/season_level.py --write
+    XCP_WEATHER_FIT=1 bash deploy/run_pipeline.sh --from 3

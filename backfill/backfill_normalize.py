@@ -57,7 +57,10 @@ from database import getConn, initPool, dbJobs, dbSetting
 from normalize_distance import (
     weatherTempAgg,
     normalizeResult, EVENT_DISTANCES_TF, poolFor, normPoolFor, metersFromDistance,
+    ratedScalePool,
 )
+# ! THE ONE CLOCK. See _academicYearOf for what a private copy of it cost.
+from season_year import seasonYearFor, seasonYearFromIso, seasonYearSqlInt
 # results_tf.event_short is FREE TEXT: 64,079 distinct values across two scraper
 # conventions ('3200m' vs "Men's 3200 Meters"). The exact-match dict priced only
 # the 12 anet short codes, silently dropping 7,157,445 timed tfrrs distance rows
@@ -863,6 +866,28 @@ def _loadGradeFix(cur):
     return out
 
 
+def _loadCollegeFirst(cur):
+    """{person_id: academic year of the first collegiate race}, from
+    college_first_season.first_date on season_year's clock.
+
+    ★ FOR THE VETO ONLY (normalize_distance.seasonVerdictFor, owner
+      2026-09-29): a 'college' season verdict on a school grade stands only
+      from this season on. It never promotes anything.
+
+    ⚠ first_date, NOT first_season: that column is the CALENDAR year.
+    ⚠ ABSENT TABLE -> EMPTY DICT, which refuses every college verdict on a
+      school grade -- the answer this backfill gave before it read the
+      verdict for them at all."""
+    cur.execute("SELECT to_regclass('public.college_first_season')")
+    if cur.fetchone()[0] is None:
+        return {}
+    cur.execute(f"""SELECT person_id,
+                           {seasonYearSqlInt(None, "first_date::text")}
+                    FROM   college_first_season
+                    WHERE  first_date IS NOT NULL""")
+    return {int(pid): int(ay) for pid, ay in cur if pid is not None}
+
+
 def _loadSeasonLevels(cur):
     cur.execute("SELECT to_regclass('public.athlete_season_level')")
     if cur.fetchone()[0] is None:
@@ -870,7 +895,10 @@ def _loadSeasonLevels(cur):
         #   becoming a fourth argument threaded through _buildLookups and
         #   _makeRowFn. Every existing `season_levels[0]` and `[1]` keeps its
         #   meaning, so no other call site changes and none can be missed.
-        return {}, {}, _loadGradeFix(cur)
+        # ! AND FOUR NOW: college_first_season rides the same way, as [3].
+        #   _makeRowFn reads it only if it is there, so a three-element
+        #   tuple built by an older caller still works.
+        return {}, {}, _loadGradeFix(cur), _loadCollegeFirst(cur)
     # ⚠ athlete_season_level IS NOW KEYED (person_id, ay, sport). Rows come in
     #   three flavours -- 'XC', 'TF', and 'ALL' (the combined verdict, which is
     #   what this table held entirely before). Selecting without the sport
@@ -894,26 +922,41 @@ def _loadSeasonLevels(cur):
             combined[key] = sys.intern(lvl)
         else:
             by_sport[(key, sport)] = sys.intern(lvl)
-    return by_sport, combined, _loadGradeFix(cur)
+    return by_sport, combined, _loadGradeFix(cur), _loadCollegeFirst(cur)
 
 
 # _academicYearOf
-# Purpose : July onward belongs to the year the season STARTS, so a fall XC
-#           season and the following spring TF are ONE season.
+# Purpose : the season a row belongs to -- season_year's academic year, the
+#           clock every season table is keyed on (Aug-Jul, stored as the year
+#           it opens).
 # Arguments: date - a date object or an ISO 'YYYY-MM-DD' string.
 # Output  : int year, or None.
 #
-# * MUST MATCH season_level._academicYearExpr EXACTLY. If the SQL and this
-#   disagree by one year the lookup misses on every row and the override
-#   silently stops firing -- no error, no warning, just a no-op.
+# ⚠ THIS WAS THE LAST PRIVATE JULY SEAM, AND IT PUT A SENIOR'S LAST RACE IN
+#   COLLEGE (owner's server, 2026-09-29). Ajani Salcido (19068584), Brooks PR
+#   2021-07-02, grade 12, Jesuit: every season table -- grade_fix,
+#   athlete_season_level, the board's joins, fill_ratings._rowPool -- keys a
+#   July race on the season it CLOSES (2020, hs; season_year's seam is
+#   August). This said `month >= 7` and keyed it on 2021 -- his first
+#   college year, grade_fix 'FR' -- so normPoolFor read a corroborated
+#   freshman and normalised the row on the college anchor (8000 m): the
+#   replay wrote nt 1358.6 where every other senior-spring row of his
+#   replays at 862-906, and the board, on the right season, still rated it
+#   hs_m. Josh Edwards (21572633, grade 11, same race) replayed at 849.8
+#   only because his 2021 is hs too. season_level._academicYearExpr moved to
+#   the August seam and said "REBUILD"; its twin here was never moved.
+#
+# ★ SO IT DELEGATES, WITH NO RULE OF ITS OWN: seasonYearFromIso for text,
+#   exactly what fill_ratings._rowPool and build_ranking_results call on
+#   the same row. A malformed date is None, as before.
 def _academicYearOf(date):
     if date is None:
         return None
     if isinstance(date, str):
-        if len(date) < 7:
+        if len(date) < 7 or not (date[0:4].isdigit() and date[5:7].isdigit()):
             return None
-        return int(date[0:4]) if int(date[5:7]) >= 7 else int(date[0:4]) - 1
-    return date.year if date.month >= 7 else date.year - 1
+        return seasonYearFromIso(None, date[:10])
+    return seasonYearFor(None, date)
 
 
 # _loadMatchedTwinKeys
@@ -1199,7 +1242,7 @@ def _loadTfrrsBlobDistances(cur):
 _ONLY_CHANGED = {"on": False}
 
 
-def _streamSQL(cfg, age_band=False):
+def _streamSQL(cfg, age_band=False, rating_pool=False):
     # Per-sport literal-NULL for the TF-only columns, so both sports yield the
     # SAME 10 columns in the SAME order.
     # ! THE ALIAS IS BAKED IN HERE, NOT ADDED AT THE CALL SITE. The table now
@@ -1235,11 +1278,16 @@ def _streamSQL(cfg, age_band=False):
     #   --write-mode update: the staging set is a sliver of the table.
     only = (f"\n        JOIN person_gender_changed pgc ON pgc.person_id = r.person_id"
             if _ONLY_CHANGED["on"] else "")
+    # ! THE RATED POOL ONLY WHERE THE COLUMN EXISTS -- the go-live adds it,
+    #   and a database that has never packed has none. Literal NULL keeps
+    #   the column shape either way, the same trick as event_id above.
+    rating_pool_col = ("r.rating_pool" if rating_pool
+                       else "NULL::text AS rating_pool")
     return f"""
         SELECT r.result_id, r.source, r.meet_id, r.div_id, {event_id_col},
                {event_short_col}, r.time_seconds, {grade_col},
                r.athlete_id, r.date,
-               r.person_id, r.canon_meet_id, {school_col}
+               r.person_id, r.canon_meet_id, {school_col}, {rating_pool_col}
         FROM {cfg.table} r{band_join}{only}
     """
 
@@ -1264,6 +1312,10 @@ def _openStream(read_conn, cfg):
         probe.execute(
             "SELECT to_regclass('public.age_band_result') IS NOT NULL")
         age_band = bool(probe.fetchone()[0])
+        probe.execute("""SELECT 1 FROM information_schema.columns
+                         WHERE table_schema = 'public' AND table_name = %s
+                           AND column_name = 'rating_pool'""", (cfg.table,))
+        rating_pool = probe.fetchone() is not None
     if age_band:
         print(f"[{cfg.sport}] #47 age bands ON -- rows in age-banded divisions "
               f"reach poolFor with no grade")
@@ -1273,14 +1325,17 @@ def _openStream(read_conn, cfg):
               f"(issue #47)")
     cur = read_conn.cursor(name=f"backfill_stream_{cfg.sport.lower()}")  # named => server-side
     cur.itersize = cfg.batch          # rows shipped per network round trip
-    cur.execute(_streamSQL(cfg, age_band))   # begins the single full-table scan
+    cur.execute(_streamSQL(cfg, age_band, rating_pool))   # the single full-table scan
     return cur
 
 
 # Row tuple positions, named once (order MUST match _readSQL's SELECT).
 # _DATE is followed by the dedup columns person_id + canon_meet_id -> range(12).
 _ID, _SRC, _MEET, _DIV, _EVENT_ID, _EVENT_SHORT, _TIME, _GRADE, _AID, _DATE, \
-    _PERSON, _CANON, _SCHOOL = range(13)
+    _PERSON, _CANON, _SCHOOL, _RATING_POOL = range(14)
+# _RATING_POOL is appended after it for the same reason (2026-09-29): the pool
+# the last go-live rated the row in, read only by the scale-split census
+# (_countSplit). A 13-column row -- a test, an older caller -- simply has none.
 # _SCHOOL is APPENDED last on purpose: every existing index keeps its position,
 # so no other unpack site can silently shift. It feeds poolFor's school lookup,
 # which recovers the level tfrrs's NULL grade cannot supply.
@@ -1805,6 +1860,62 @@ def _callLibrary(cfg, row, distance, gender, track_type, track_length, race_date
     )
 
 
+# _seasonPool
+# Purpose : the pool this backfill normalises a row in -- its season's
+#           verdicts looked up on season_year's clock and handed to
+#           normPoolFor. Lifted out of the row function unchanged, so the
+#           pool path can be tested on a synthetic row (Salcido, Kitchen).
+# Arguments: row -- a stream tuple; gender -- resolved by the row function;
+#            season_levels -- _loadSeasonLevels' tuple; college_first --
+#            {person_id: first collegiate academic year}; sport -- 'XC'/'TF'.
+# Output  : a pool name, or None.
+def _seasonPool(row, gender, season_levels, college_first, sport):
+    _ay = _academicYearOf(row[_DATE])
+    # This sport's verdict if it has one, else the combined verdict --
+    # so a season with no votes for this sport is no worse off than it was
+    # before the table gained a sport dimension.
+    # ! _sl_key IS BUILT UNCONDITIONALLY NOW, because the grade_fix
+    #   lookup below needs it whether or not athlete_season_level exists.
+    #   It was previously scoped inside this branch, so an empty
+    #   season-level table would have left it unbound.
+    _sl_key = (row[_PERSON] * 10000 + _ay
+               if (row[_PERSON] and _ay) else None)
+    if season_levels[1] is not None and _sl_key is not None:
+        _season_lvl = (season_levels[0].get((_sl_key, sport))
+                       or season_levels[1].get(_sl_key))
+    else:
+        _season_lvl = None
+    # ★ THE VERDICT OUTRANKS THE ROW'S OWN GRADE, exactly as
+    #   pool_resolve.resolvePool's stage 0 does for the engine. The two
+    #   must agree or normalized_time is written on one pool's anchor
+    #   and read on another's.
+    #
+    #   The precedence mirrors resolvePool line for line:
+    #     a corroborated grade REPLACES the raw one, and having replaced
+    #     it the season level is suppressed -- a trusted grade decides
+    #     alone;
+    #     a verdict with no grade (the field rule, or a grade that
+    #     stopped advancing) means the raw grade is NOT to be used, so
+    #     the grade goes to None and the verdict's level carries the row;
+    #     no verdict at all leaves both exactly as they were.
+    # The precedence (verdict over grade, grade over season level) is
+    # normalize_distance.normPoolFor now -- one function, shared with the
+    # model's feature extraction, which must know this row's anchor.
+    # See its header for the rule and why it mirrors resolvePool.
+    _gf = (season_levels[2].get(_sl_key)
+           if (season_levels[2] and row[_PERSON] and _ay) else None)
+    # ★ THE SEASON AND THE FIRST COLLEGE SEASON RIDE ALONG (2026-09-29),
+    #   so normPoolFor screens a 'college' verdict on a school grade
+    #   exactly as resolvePool does: before college it is refused on both
+    #   sides, after it it wins on both.
+    pool = normPoolFor(row[_GRADE], gender, row[_SRC], row[_SCHOOL],
+                       season_level=_season_lvl, fixed=_gf,
+                       season=_ay,
+                       college_first_ay=(college_first.get(row[_PERSON])
+                                         if row[_PERSON] else None))
+    return pool
+
+
 # Purpose : build the hot per-row classifier with all lookups + sport baked in,
 #           so the loop calls it with just (row). The closure keeps the per-row
 #           signature to one argument while carrying every constant.
@@ -1820,7 +1931,6 @@ def _callLibrary(cfg, row, distance, gender, track_type, track_length, race_date
 # The four skip branches are tested in the SAME order documented in _SkipReason,
 # and a row is charged to the FIRST cause it trips. Each branch is one short
 # step; the helpers above keep this body from growing long.
-#
 def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
                tfrrs_distances,
                matched_twins, canon_distances, wx_idx,
@@ -1832,6 +1942,20 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
     result_drop = _RESULT_DROP_BY_SPORT[cfg.sport]
     gender_ov = _GENDER_OVERRIDES_BY_SPORT[cfg.sport]
     result_ov = _RESULT_OVERRIDE_BY_SPORT[cfg.sport]
+    # [3] only when the loader supplied it; see _loadSeasonLevels
+    college_first = season_levels[3] if len(season_levels) > 3 else {}
+    # ★ THE SCALE SPLIT, COUNTED (2026-09-29). {(written pool, rated scale):
+    #   rows} for every row this run wrote on a different pool's anchor than
+    #   the one the last go-live rated it on (results.rating_pool). That
+    #   mismatch is the whole bug class -- Kitchen's senior spring (written
+    #   hs_m, rated college_m), Salcido's July 2 (the replay would have
+    #   written college_m under an hs_m rating), the John Reif Open Race
+    #   (college_unknown_gender under college_m). Counted, not refused:
+    #   the rating pool is last run's, and a season that legitimately moved
+    #   level this run shows here too. 05b_anchor_repair rescales these rows
+    #   onto the rated pool right after this step; this line is how many it
+    #   will have to, and which pairs, before it runs.
+    pool_split = {}
 
     def fn(row):
         # 0) RESULT DROP — a hand-confirmed cooked individual row (real division,
@@ -2006,42 +2130,11 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         #     The row already carries person_id and date, so this costs one
         #     dict lookup and no change to the SELECT -- adding a column there
         #     would have shifted every index constant in the row tuple.
-        _ay = _academicYearOf(row[_DATE])
-        # This sport's verdict if it has one, else the combined verdict --
-        # so a season with no votes for this sport is no worse off than it was
-        # before the table gained a sport dimension.
-        # ! _sl_key IS BUILT UNCONDITIONALLY NOW, because the grade_fix
-        #   lookup below needs it whether or not athlete_season_level exists.
-        #   It was previously scoped inside this branch, so an empty
-        #   season-level table would have left it unbound.
-        _sl_key = (row[_PERSON] * 10000 + _ay
-                   if (row[_PERSON] and _ay) else None)
-        if season_levels[1] is not None and _sl_key is not None:
-            _season_lvl = (season_levels[0].get((_sl_key, cfg.sport))
-                           or season_levels[1].get(_sl_key))
-        else:
-            _season_lvl = None
-        # ★ THE VERDICT OUTRANKS THE ROW'S OWN GRADE, exactly as
-        #   pool_resolve.resolvePool's stage 0 does for the engine. The two
-        #   must agree or normalized_time is written on one pool's anchor
-        #   and read on another's.
-        #
-        #   The precedence mirrors resolvePool line for line:
-        #     a corroborated grade REPLACES the raw one, and having replaced
-        #     it the season level is suppressed -- a trusted grade decides
-        #     alone;
-        #     a verdict with no grade (the field rule, or a grade that
-        #     stopped advancing) means the raw grade is NOT to be used, so
-        #     the grade goes to None and the verdict's level carries the row;
-        #     no verdict at all leaves both exactly as they were.
-        # The precedence (verdict over grade, grade over season level) is
-        # normalize_distance.normPoolFor now -- one function, shared with the
-        # model's feature extraction, which must know this row's anchor.
-        # See its header for the rule and why it mirrors resolvePool.
-        _gf = (season_levels[2].get(_sl_key)
-               if (season_levels[2] and row[_PERSON] and _ay) else None)
-        pool = normPoolFor(row[_GRADE], gender, row[_SRC], row[_SCHOOL],
-                           season_level=_season_lvl, fixed=_gf)
+        # ★ ONE FUNCTION, SO A TEST CAN ASK IT (2026-09-29): _seasonPool
+        #   holds the season lookup and normPoolFor call that were inline
+        #   here, unchanged but for the clock and the college veto.
+        pool = _seasonPool(row, gender, season_levels, college_first,
+                           cfg.sport)
         if pool is None:                           # grade+gender+source -> no pool
             trace = _makeTrace(row, "unknown_pool", distance)
             return row[_ID], None, _SkipReason.UNKNOWN_POOL, trace
@@ -2095,10 +2188,28 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
             #   table so the rebuild's gap table can finally see the division
             #   the bad label broke. packResults' pool pace band keeps it out
             #   of the ratings.
+            _countSplit(pool_split, row, pool)
             return (row[_ID], out["normalized_time"],
                     _SkipReason.INSANE_PACE, trace)
+        _countSplit(pool_split, row, pool)
         return row[_ID], out["normalized_time"], _SkipReason.WRITTEN, trace
+    fn.pool_split = pool_split
     return fn
+
+
+# _countSplit
+# Purpose : tally a written row whose pool's anchor is not the anchor of the
+#           pool it was last rated in. One tuple index and two string compares
+#           on the hot path; nothing when the stream carries no rating_pool.
+def _countSplit(pool_split, row, written):
+    rated = row[_RATING_POOL] if len(row) > _RATING_POOL else None
+    if not rated or not written:
+        return
+    rated = ratedScalePool(str(rated).split("|", 1)[0])
+    written = str(written).split("|", 1)[0]
+    if rated != written:
+        key = (written, rated)
+        pool_split[key] = pool_split.get(key, 0) + 1
 
 
 # ================================================================== #
@@ -2258,6 +2369,8 @@ class _Census:
     slowest:   _TopBucket = field(default_factory=lambda: _TopBucket(_TOP_N, largest=True))
     reservoir: _Reservoir = field(default_factory=lambda: _Reservoir(_RESERVOIR_CAP))
     suspects:  _SuspectDivisions = field(default_factory=_SuspectDivisions)
+    # the row function's scale-split tally, handed over after the drain
+    pool_split: dict = field(default_factory=dict)
 
     # Tally one row. Always bump its reason counter; and if it was WRITTEN,
     # feed the normalized value into both extreme buckets, the reservoir, and
@@ -3175,6 +3288,7 @@ def _buildLookups(read_conn, cfg):
     print(f"  lookups: {len(genders):,} genders, "
           f"{len(season_levels[0]) + len(season_levels[1]):,} season levels, "
           f"{len(season_levels[2]):,} grade verdicts, "
+          f"{len(season_levels[3]):,} first college seasons, "
           f"{len(meet_distances):,} anet XC distances, "
           f"{len(tfrrs_distances):,} tfrrs XC distances, "
           f"{len(matched_twins):,} canon twins, "
@@ -3314,6 +3428,7 @@ def _runBackfill(read_conn, write_conn, cfg, apply, limit):
     stream = _openStream(read_conn, cfg)           # server-side cursor, single scan
     try:
         out = _drainStream(stream, write_conn, cfg, row_fn, apply, limit, target)
+        out[3].pool_split = getattr(row_fn, "pool_split", {})
     finally:
         _closeStreamQuietly(stream)                # never masks the real error
         _releaseReadLocks(read_conn)               # MUST precede the merge (see above)
@@ -3508,8 +3623,28 @@ def _printFooter(sport, processed, written, skipped, census, apply):
     print(f"done. processed {processed:,} | {verb} {written:,} | skipped {skipped:,}")
     # The two reports: WHY rows were skipped, and WHAT the values look like.
     _printReasonCensus(census, processed)
+    _printPoolSplit(census)
     _printSanityPanel(census)
     _printSuspectAudit(census, f"suspects_{sport.lower()}.txt")
+
+
+# _printPoolSplit
+# Purpose : the scale-split census (see _countSplit): rows written on one
+#           pool's anchor that the last go-live rated in another's.
+# ! EXPECTED TO BE SMALL, NEVER ASSUMED ZERO. A season whose level legitimately
+#   moved since the last solve lands here, and so does every row the engine
+#   pools on facts this file does not load (team level, pro routes, the
+#   unattached race ceiling, non-unanimous season verdicts).
+#   05b_anchor_repair rescales them; a pair that dominates this list is a
+#   pooling rule the two sides disagree about, which is the thing to look at.
+def _printPoolSplit(census):
+    split = census.pool_split
+    n = sum(split.values())
+    print(f"  scale split: {n:,} written rows sit on another pool's anchor "
+          f"than the one they were last rated in (05b_anchor_repair rescales "
+          f"them)")
+    for (written, rated), k in sorted(split.items(), key=lambda kv: -kv[1])[:10]:
+        print(f"      written {written:<24} rated {rated:<24} {k:>12,}")
 
 
 # _runOneSport

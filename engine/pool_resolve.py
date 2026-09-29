@@ -34,7 +34,8 @@ WHY THIS EXISTS
 import re
 from functools import lru_cache
 
-from normalize_distance import poolFor
+from normalize_distance import (poolFor, seasonVerdictFor,
+                                firstCollegeSeason, academicYearOfDate)
 
 # ===================================================================== #
 #  THE PROFESSIONAL ABILITY STANDARD
@@ -665,6 +666,10 @@ def resolvePool(grade, gender, source, school, sport,
       for both sports. Comparing years promoted 288,264 genuine high-school
       athlete-seasons -- 42% of all promotions. The date puts spring before the
       boundary and autumn after it. Do not "simplify" this to a year.
+      ! 2026-09-29: the college veto compares ACADEMIC years (season_year's
+        August seam), which is the other correct answer -- the senior spring
+        is season Y, the first college autumn Y+1. The calendar year was the
+        wrong one, not the idea of a season.
     """
     # -- stage 0: THE RESOLVED GRADE, WHERE THERE IS ONE ------------
     #
@@ -722,6 +727,27 @@ def resolvePool(grade, gender, source, school, sport,
     if isParaSchool(school):
         return None
 
+    # ★ A COLLEGE VERDICT ON A HIGH SCHOOL SEASON DOES NOT STAND (owner,
+    #   2026-09-29; the rule and its cases are normalize_distance's, above
+    #   seasonVerdictFor). Screened HERE, where athlete_season_level arrives,
+    #   as well as where the table is built -- so a table written before the
+    #   rule, or by anything that skipped it, cannot leak a college season
+    #   onto a senior's track spring (Tayvon Kitchen, TF ay 2024).
+    #
+    # ! THE SEASON'S GRADE IS grade_sanity's WHEN IT HAS SPOKEN. A grade_fix
+    #   row makes the raw grade untrusted; its grade replaces it, and a
+    #   verdict that is a LEVEL (stale_grade, field) leaves no grade -- so
+    #   the screen is inert and the verdict decides, as before.
+    # ! season IS THE ACADEMIC YEAR every caller already passes; race_date is
+    #   the fallback for the one caller (feature_extraction) that passes a
+    #   date instead.
+    season_ay = season if season is not None else academicYearOfDate(race_date)
+    first_ay = firstCollegeSeason(college_first)
+    season_grade = fixed_grade if (fixed_grade is not None or grade_untrusted) \
+        else grade
+    season_level = seasonVerdictFor(season_level, season_grade, season_ay,
+                                    first_ay, raw_grade=grade)
+
     # ! NO TEAM, NO SCHOOL. Before every other rule and ungated: see
     #   UNATTACHED_TEAM_ID for why it is not the club path.
     #
@@ -749,6 +775,21 @@ def resolvePool(grade, gender, source, school, sport,
     # ! AND A STATED CEILING OF 'pro' IS STILL 'pro'. An open race full of
     #   professionals resolves an unattached entry to pro through the same
     #   rule, rather than by assumption -- which is the difference.
+    # ⚠ AND THE CEILING IS SCREENED TOO, BUT ONLY BY A CORROBORATED GRADE.
+    #   Kitchen's unattached winter races at college-hosted meets are this
+    #   rule's rows: grade 12, no team, a college ceiling. The owner's
+    #   2026-09-20 rule exists because an unattached row's RAW grade is the
+    #   one a scraper copies forward (Pieter Heesters' '12', four years
+    #   stale), so a raw grade does not screen the ceiling -- only
+    #   grade_sanity's own grade for the season (fixed_grade) does. Kitchen
+    #   has one ('12', 2024); Pieter's is stale_grade, with none.
+    #   A refused ceiling leaves the row to its grade, not to pro: the season
+    #   HAS a level, it is just not the race's.
+    if no_team and fixed_grade is not None \
+            and _levelFromVerdict(race_top_level) == "college" \
+            and seasonVerdictFor("college", fixed_grade, season_ay, first_ay,
+                                 raw_grade=grade) is None:
+        no_team = False
     if no_team:
         top = _levelFromVerdict(race_top_level)
         if top is None:
@@ -1114,7 +1155,12 @@ def resolvePool(grade, gender, source, school, sport,
         #    four call sites to drop an argument is four chances to change
         #    three. They are accepted and discarded here, in one place,
         #    visibly.
-        _ = (college_first, upperclass_first, race_date)
+        #
+        #  ★ EXCEPT college_first, WHICH IS READ AGAIN -- AS A VETO, AT THE
+        #    TOP (2026-09-29). It can only refuse a college verdict for a
+        #    season before it, never promote one after it, so neither case
+        #    above can recur through it.
+        _ = (upperclass_first,)
         # ============================================================ #
 
     # merge=True drops the sport from the athlete key, so one person's XC and
