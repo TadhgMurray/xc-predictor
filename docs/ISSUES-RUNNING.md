@@ -2775,3 +2775,26 @@ slow-day question, which is the owner's call.
 Every ability board, the default board included, answered 400 "column
 result_id does not exist": the USA scope's tfrrs clause (06d112b) went into
 the shared filter builder, and the season boards read athlete_season.
+
+## 2026-09-29 — college first-years rated on the HIGH SCHOOL scale (FOUND, NEEDS THE SERVER TO SAY WHY)
+
+Bates NCAA DIII East Region Preview, 2026-09-05, men 4340 m
+(/race/xc/282053/1126781): 45 "Unknown" rows, nearly all FR-1, person ids
+33160712-33160785 (one batch), rated like high schoolers -- Brandeis's
+2nd man 13:23.6 = 140.2 while the winner's 13:21.8 = 109.2; UMaine
+Farmington 13:26.3 = 139.7. The named runners are on the college scale.
+Not the grade: normalizeGrade('FR-1') -> 'Fr' -> college. Candidates: the
+rows are newer than the last solve and 09b fill_ratings priced them with
+a pool the fill chose (new persons, no gender/level yet), or 04a linked
+them to a high-school career whose season verdict says hs. Settle with:
+
+    /srv/venv/bin/python engine/explain_row.py --person 33160729
+
+This is the outside review's issue 5 ("first-years not linked"), and worse
+than it said: they are not just unnamed, they are on the wrong scale and
+may be on the HS boards.
+
+Also on that page: Bates' seven men finished 60-65 and 69 together (the
+review's "pack workout" reading fits: one team, not the field), and the
+race-day weather reads "wind 48 mph", which is not a plausible September
+morning in Maine -- check the wind unit on the race page.
