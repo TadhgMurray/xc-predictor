@@ -461,6 +461,16 @@ def main():
                 print(f"   rating x norm = {float(sr) * norm:,.0f} "
                       f"(the pool's K)")
             continue
+        # ★ THE PACK'S TIME IS THE ONE THE SOLVE RATED (2026-09-29, a 1997
+        #   880y: stored 159.9, which only follows from the pack's ~780 s,
+        #   while the database now holds 905.5 s). When the two disagree,
+        #   the row was re-normalised after the pack was built, and the
+        #   stored rating is the old time's until 07_pack and 08 run again.
+        if nt is not None and float(nt) > 0 and abs(np.log(norm / float(nt))) > 0.005:
+            print(f"   ⚠ PACK norm {norm:.1f}s vs database {float(nt):.1f}s "
+                  f"({100.0 * np.expm1(np.log(norm / float(nt))):+.1f}%): the solve "
+                  "rated the pack's time; rebuild the pack (07) and re-solve (08) "
+                  "to rate the database's")
         t = rowTerms(D, npz, pos[i])
         disp = 100.0 * np.expm1(t["delta_anchored"])
         print(f"   cell {keys[t['cell']]}   delta raw {t['delta']:+.4f}   "
