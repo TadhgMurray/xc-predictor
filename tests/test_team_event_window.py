@@ -40,11 +40,14 @@ class Parsing(unittest.TestCase):
     def test_it_needs_exactly_one_year(self):
         """No prebuilt board for a restricted window, so the field is raced
         live -- and every season at once is a pile, not a meet."""
-        self.assertIn("an event window needs exactly one year selected",
-                      self.src)
-        i = self.src.index("an event window needs exactly one year")
-        self.assertIn('len(f["year"] or ()) != 1',
-                      self.src[max(0, i - 400):i])
+        # ★ AND IT FILLS THE ONE YEAR RATHER THAN REFUSING (owner,
+        #   2026-09-15: "for teams choosing events still causes an error"):
+        #   the current season is taken, and the page is told it was.
+        self.assertIn('needs_one_year and len(f["year"] or ()) != 1', self.src)
+        self.assertIn('f["year"] = [int(default_year)]', self.src)
+        self.assertIn('f["year_defaulted"] = True', self.src)
+        # several seasons at once is still refused: that is a pile, not a meet
+        self.assertIn("an event or grade filter needs ONE season", self.src)
 
 
 class TheSource(unittest.TestCase):
@@ -95,7 +98,7 @@ class TheRouting(unittest.TestCase):
 
     def test_the_response_says_which_kind_of_board_it_is(self):
         self.assertIn('"event_window": eventRestricted(f)', self.src)
-        self.assertIn('"returning": gradeExcluded(f)', self.src)
+        self.assertIn('"returning": bool(f.get("exclude_grade"))', self.src)
 
     def test_the_window_rides_back_so_the_page_can_explain_itself(self):
         self.assertIn('"dist_min": f.get("dist_min")', self.src)
