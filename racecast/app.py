@@ -3095,6 +3095,17 @@ def raceExtras(cur, meet_id, div_id, source):
         cur.execute("SELECT 1 FROM dist_drop WHERE sport = 'XC' "
                     "AND meet_id = %s AND div_id = %s", (meet_id, div_id))
         out["withheld"] = cur.fetchone() is not None
+        # ⚠ dist_drop IS KEYED (meet, div) WITH NO SOURCE, and the anet and
+        #   tfrrs id spaces collide (owner, 2026-09-29: the NCAA DI 2025
+        #   men's 10k, tfrrs meet 27301 div 1, said "Ratings withheld" over
+        #   a column of ratings). A tfrrs division is called withheld only
+        #   when none of its rows carries a rating -- the page never says
+        #   one thing over a table showing the other.
+        if out["withheld"] and source and source != "anet":
+            cur.execute("SELECT 1 FROM results WHERE meet_id = %s AND div_id = %s "
+                        "AND source = %s AND speed_rating IS NOT NULL LIMIT 1",
+                        (meet_id, div_id, source))
+            out["withheld"] = cur.fetchone() is None
     if reg["w"] and source:
         cur.execute("""
             SELECT temp_c, wind_speed_kmh, humidity,
@@ -3581,7 +3592,8 @@ def race_xc(meet_id, div_id):
         with getConn() as _conn, _conn.cursor() as _cur:
             splitCollisionTeams(
                 _cur, ranked, meet_state=header.get("state"),
-                published_names=Counter(t.get("school") for t in (pub or [])))
+                published_names=Counter(t.get("school") for t in (pub or [])),
+                source=header.get("source"))
 
     # ★ PUBLISHED FIRST, COMPUTED AS A FALLBACK. What the meet reported
     #   includes whatever local scoring applied -- byes, exhibition runners,

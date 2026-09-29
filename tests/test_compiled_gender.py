@@ -90,3 +90,14 @@ def test_compiled_results_run_in_time_order():
     assert [r["place"] for r in men] == [1, 2, 3, 4, 5]
     assert [r["name"] for r in men][:2] == ["A One", "B Two"]
     conn.rollback()
+
+
+def test_a_college_race_is_never_split_by_home_state():
+    """NCAA DI 2025: "Butler (IN)" / "Butler (NC)" -- a tfrrs race's team is
+    the college's own name, whatever its runners' home states."""
+    class NoCur:
+        def execute(self, *a, **k):
+            raise AssertionError("a tfrrs race must not look anything up")
+    rows = [{"school": "Butler", "person_id": i} for i in range(7)]
+    MC.splitCollisionTeams(NoCur(), rows, source="tfrrs")
+    assert {r["school"] for r in rows} == {"Butler"}

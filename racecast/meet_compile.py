@@ -294,7 +294,7 @@ def compiledResults(cur, meet_id, source=None):
         g["divisions"] = sorted(g["divisions"])
         # identity-split colliding school names for scoring, then restore
         # the row dicts (the results table renders row.school directly)
-        splitCollisionTeams(cur, g["results"])
+        splitCollisionTeams(cur, g["results"], source=source)
         g["scores"] = unsplitTeams(scoreRows(g["results"]))
         unstampRows(g["results"])
         out.append(g)
@@ -582,9 +582,19 @@ def stampSchoolStates(cur, rows):
             r["school_state"] = by_team[int(tid)]
 
 
-def splitCollisionTeams(cur, rows, meet_state=None, published_names=None):
+def splitCollisionTeams(cur, rows, meet_state=None, published_names=None,
+                        source=None):
     """Stamp rows of colliding school names with a home-state identity.
     Mutates rows in place (callers score COPIES). No-op mid-rebuild.
+
+    ★ NEVER IN A tfrrs RACE (owner, 2026-09-29, NCAA DI 2025 men's 10k:
+      "Butler (IN)" and "Butler (NC)", "Syracuse (UT)", "Notre Dame (NJ)",
+      "Georgetown (TX)", "Portland (MI)" -- one college team broken into
+      two, and the pieces scored or dropped apart). tfrrs is the college
+      feed: its team names are the colleges' own, one team per name per
+      race, and a runner's home or high school state says nothing about
+      which. The split exists for two high schools under one string at an
+      anet meet (two Jesuits at NXN), which is not this.
 
     meet_state: the race's own state -- the identity a wrongly split team
     is put back under (see _rejoinFalseSplits). published_names: the school
@@ -609,6 +619,8 @@ def splitCollisionTeams(cur, rows, meet_state=None, published_names=None):
         cur.execute("SELECT to_regclass(%s) IS NOT NULL AS present", (t,))
         row = cur.fetchone()
         return bool(row["present"] if isinstance(row, dict) else row[0])
+    if source == "tfrrs":
+        return
     schools = sorted({r["school"] for r in rows if r.get("school")})
     if not schools or not _has("school_identity") \
             or not _has("person_home_state"):
