@@ -327,6 +327,11 @@ def report(splits, limit=25):
         print()
 
 
+# above link_tfrrs_rows.MINT_BASE's ranges (tfrrs 1e9, DirectAthletics 1.5e9,
+# each up to +MINT_MAX_NATIVE); tests/test_unlink_ids.py holds them apart
+SPLIT_BASE = 2_000_000_000
+
+
 def write(cur, splits):
     """Reassign the minority clusters and record every move.
 
@@ -334,15 +339,24 @@ def write(cur, splits):
       maximum once and counting up guarantees no collision with an existing id
       and no dependence on a sequence that other scripts may also be drawing
       from.
+    ⚠ AND FROM ITS OWN RANGE, ABOVE EVERY MINT (2026-09-29). link_tfrrs_rows
+      mints tfrrs people at 1,000,000,000 + the tfrrs id and DirectAthletics
+      people at 1,500,000,000 + theirs, up to 2,000,000,000. max()+1 landed
+      INSIDE that range, above today's highest id, where a later mint of a
+      new tfrrs/DA athlete would take the same number and merge two unrelated
+      people. A split person is numbered from SPLIT_BASE up, where no mint
+      reaches.
     """
     from psycopg2.extras import execute_values
 
     cur.execute("""
         SELECT GREATEST(
-            COALESCE((SELECT max(person_id) FROM results), 0),
-            COALESCE((SELECT max(person_id) FROM results_tf), 0))
-    """)
-    next_id = int(cur.fetchone()[0]) + 1
+            COALESCE((SELECT max(person_id) FROM results
+                      WHERE person_id >= %(b)s), 0),
+            COALESCE((SELECT max(person_id) FROM results_tf
+                      WHERE person_id >= %(b)s), 0))
+    """, {"b": SPLIT_BASE})
+    next_id = max(int(cur.fetchone()[0]) + 1, SPLIT_BASE)
 
     moves = []            # (old_id, season, new_id)
     for pid, groups in splits:
