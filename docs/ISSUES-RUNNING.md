@@ -2891,3 +2891,41 @@ tells the two apart.
   later is not a graduate and is not paired.
 - `link_idless_by_name`: a college row never joins a person with a high
   school row in the same season.
+## 2026-09-29 — one runner, two people: teamless anet profiles (FIXED IN CODE, NEEDS A DRY RUN, THEN 04a2)
+
+Logged 2026-09-28 from Tadhg Murray's page: his Foot Locker West Regional
+(Mt. SAC, 2024-12-07, 16:34, 129.4) sits on /athlete/13642378, "Unknown
+(WA)", while his De La Salle career is /athlete/29603086. anet filed that
+race under a second profile with no school -- every runner at a Foot Locker
+regional is listed under a HOMETOWN ("Danville CA") -- and anet rows keep
+person_id = athlete_id for ever. Trey Caldwell's merged only because anet
+had filed his under his real profile. Owner: a Foot-Locker-only rule is too
+narrow; handle any anet profile with no real team.
+
+**Now:** `scripts/link_teamless.py`, pipeline step `04a2_link_teamless`
+(after 04a, before grade_sanity/twins/gender/the pack; in `_ALWAYS`). A
+profile whose EVERY row has no team (anet team 0, Unknown, Unattached in
+any spelling, a "City ST" hometown) joins the ONE same-name, same-gender
+athlete with a real-team row within 60 days of each of its rows -- counted
+before the grade filters, so two namesakes is a refusal -- when the grades
+fit (class year within one; never a high school all-star onto a college
+namesake) and two of three agree: rating within 6 of the namesake's median
+there, the same state, a postseason meet in the 21 days before an all-star
+race. Rating off by 15+ refuses outright; two teamless profiles claiming
+one target are both refused. Tadhg: all three (129.4 vs 129.0; CA; CIF
+State 7 days before).
+
+Every moved row is in `person_link_log` rule `teamless`; the decision in
+`teamless_merge`. The profile's `athletes` rows move too -- without that,
+`person_redirects` calls the old id alive, 13c0 writes no redirect and the
+old page renders empty; with it, 13c0 derives the same redirect from 01a's
+snapshot (the script also writes it, for runs outside the pipeline). A
+re-scrape's next teamless row for a merged profile is re-homed on the next
+run. `--undo <id>` reverses one and vetoes it; `--undo all` reverses every
+one (then `XCP_LINK_TEAMLESS=0`).
+
+Not done: the Foot Locker row is still priced as `no_team` (pro) by
+pool_resolve whichever person carries it -- that is 2026-09-06's
+"team_id = 0 is pro, unconditionally" if its team id is 0, or the hometown
+pseudo-team's level if not. A tfrrs-only namesake (no anet profile) is not
+seen by the name search, which reads `athletes`.

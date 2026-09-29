@@ -208,7 +208,8 @@ summarise() {
 #   (grade_sanity, twins, the pack, the boards), so it runs on every --from.
 #   XCP_LINK_TFRRS=0 turns it off; every stamp is logged in person_link_log
 #   and `scripts/link_tfrrs_rows.py --undo fanout|freshman|mint` reverses it.
-_ALWAYS="01a_person_probe 02_drop_old 04a_link_tfrrs 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
+# ★ 04a2_link_teamless TOO, for the same reason: it moves ids (2026-09-29).
+_ALWAYS="01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
 step() {
   name="$1"; shift
@@ -486,6 +487,21 @@ step 03b_age_bands    "$PY" -u engine/age_band_grades.py --write
 # every new tfrrs row gets a person: its athlete id's existing person, its own
 # high school career (a freshman), or one minted from the id -- see the script
 step 04a_link_tfrrs   "$PY" -u scripts/link_tfrrs_rows.py --apply
+# ★ A TEAMLESS anet PROFILE JOINS THE SCHOOL ATHLETE IT IS (owner,
+#   2026-09-28/29: Tadhg Murray's Foot Locker West Regional sat on a second
+#   profile, "Unknown (WA)", /athlete/13642378; "a Foot-Locker-only rule is
+#   too narrow"). A profile whose every row has no team (team 0, Unknown,
+#   Unattached, a "Danville CA" hometown) joins the ONE same-name, same-gender
+#   school athlete racing within 60 days, when two of rating / region /
+#   qualifier agree -- see the script's header for every guard. AFTER 04a
+#   (a profile a tfrrs row was just linked to is not a stray) and BEFORE
+#   grade_sanity, twins and the pack, which all read who a row belongs to.
+#   Always, like 04a: it is also what re-homes a merged profile's NEXT
+#   teamless row, which a re-scrape seeds with the old id. Between 01a and
+#   13c0, so the old id 301s (it writes the redirect itself as well).
+#   XCP_LINK_TEAMLESS=0 turns it off; every move is in person_link_log rule
+#   'teamless'; `scripts/link_teamless.py --undo <id>|all` reverses it.
+step 04a2_link_teamless "$PY" -u scripts/link_teamless.py --apply
 step 04_grade_sanity  "$PY" -u engine/grade_sanity.py --write
 
 # ⚠ THIS STEP WAS MISSING, AND THAT IS HOW CHAIR ATHLETES CAME BACK (owner,
