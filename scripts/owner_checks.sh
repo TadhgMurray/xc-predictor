@@ -27,16 +27,9 @@ PY="${PY:-/srv/venv/bin/python}"
 
 # name | command -- the name is what --only matches
 CHECKS=(
-  # read 2026-09-29 (log 20260929-142744): collision-mosley clean, the MS
-  # zone replays, NCS weather + explain, outliers dry run, board plan,
-  # sport gap, amnesty, ability curve, one-scale, group means, indoor levels.
-  # Still open:
-  "why-unrated-sahlman|$PY scripts/why_unrated.py 29347137 --sport TF"
-  "why-unrated-kitchen|$PY scripts/why_unrated.py 29332123 --sport TF"
-  "brooks-salcido|$PY scripts/why_unrated.py 19068584 --sport TF --replay"
-  "brooks-edwards|$PY scripts/why_unrated.py 21572633 --sport TF --replay"
+  # read-only: how many seasons the senior-season fix (5468094) changes
+  "college-veto-census|$PY scripts/college_veto_census.py --show 20"
   "ms-zone-pins|$PY scripts/peek_override.py --result 37812888 37812889 37812890 37812894 37812898 37812891 37812892"
-  "brooks-pins|$PY scripts/peek_override.py --sport TF --result 156938747 156938748"
 )
 
 # printed, never run: hours each, and each is a comparison to read before a
@@ -56,8 +49,9 @@ PENDING_WRITES=(
   "$PY engine/meet_date_fix.py --write                      # XC 25 meets + TF 50, read 2026-09-29: grades agree"
   "$PY scripts/person_collision.py --write                  # 11,186; Hanna Mosley clean (read 2026-09-29)"
   "$PY scripts/amnesty_division_drops.py --write && $PY engine/dump_overrides.py   # 15 pardons incl. NCAA DI 2025"
-  "$PY -u engine/rating_outliers.py --write --show 10       # measured cuts 7.5 fast / 8 slow; see the slow-cut question"
-  "runuser -u postgres -- psql -d xc_predictor -c 'CREATE INDEX CONCURRENTLY IF NOT EXISTS as_pool_mean_nl_idx ON athlete_season (pool, mean_rating DESC NULLS LAST, person_id)'   # optional: fast boards now, before the pipeline rebuilds them"
+  "$PY engine/college_flag.py --write && $PY engine/season_level.py --write   # the senior-season fix; after the two above"
+  "$PY -u engine/rating_outliers.py --write --show 10       # cuts 7.5 fast / 8 slow (owner: keep 8)"
+  "runuser -u postgres -- psql -d xc_predictor -c 'CREATE INDEX CONCURRENTLY IF NOT EXISTS as_pool_mean_nl_idx ON athlete_season (pool, mean_rating DESC NULLS LAST, person_id)'   # optional: fast boards now"
   "XCP_WEATHER_FIT=1 bash deploy/run_pipeline.sh --from 3   # last: rebuilds everything above"
 )
 
