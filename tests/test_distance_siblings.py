@@ -6,6 +6,10 @@
 #          +11.8%), 2024 at 4828 m (key d4800, +6.3%): the thin d4800 cell
 #          must rest on d4700's history, not on the sport's average, and a
 #          course without a near sibling must not move.
+#          ✗ OFF BY DEFAULT since 2026-09-29 (owner: "they are diff courses
+#          with diff difficulties"); the venue prior replaced it
+#          (tests/test_venue_prior.py). These pin the switch when asked for,
+#          with the venue prior off so each mechanism is seen alone.
 #
 #   XCP_DB_PASSWORD=x python -m pytest -q tests/test_distance_siblings.py
 import io
@@ -103,9 +107,9 @@ def test_a_one_race_sibling_rests_on_its_course_not_the_average():
     of its +10%). Now it rests on d4700's 21 races, and the control course --
     identical evidence, no sibling -- is exactly where it was."""
     cols, MTSAC, SIB, LONE = _mt_sac_world()
-    kw = dict(window=21, top=1.0, prior_group=1.0, era_years=2)
+    kw = dict(window=21, top=1.0, prior_group=1.0, era_years=2, place_venue=False)
     with contextlib.redirect_stdout(log := io.StringIO()):
-        f = be.fit(cols, None, verbose=True, **kw)
+        f = be.fit(cols, None, verbose=True, sibling_tol=be.SIBLING_DIST_TOL, **kw)
     with contextlib.redirect_stdout(io.StringIO()):
         f0 = be.fit(cols, None, sibling_tol=0, **kw)
     assert "distance siblings: 1 XC courses" in log.getvalue()
@@ -141,7 +145,8 @@ def test_the_trace_reconciles_with_the_shared_history():
     that must still be the engine's own pre-pin number, cell by cell."""
     cols, MTSAC, SIB, LONE = _mt_sac_world(seed=8)
     with contextlib.redirect_stdout(io.StringIO()):
-        f = be.fit(cols, None, window=21, top=1.0, prior_group=1.0, era_years=2)
+        f = be.fit(cols, None, window=21, top=1.0, prior_group=1.0, era_years=2,
+                   sibling_tol=be.SIBLING_DIST_TOL, place_venue=False)
     b_of = np.asarray(f["base_of_cell"])
     base = np.asarray(f["D_base"])[b_of]
     raw = np.nan_to_num(f["D_cell_raw"])
@@ -163,9 +168,18 @@ def test_worlds_without_siblings_are_unchanged():
     keys = list(cols["course_keys"])
     keys[SIB] = "XC:500:d5200"                         # 10.6% off: not a sibling
     cols["course_keys"] = keys
-    kw = dict(window=21, top=1.0, prior_group=1.0, era_years=2)
+    kw = dict(window=21, top=1.0, prior_group=1.0, era_years=2, place_venue=False)
     with contextlib.redirect_stdout(io.StringIO()):
-        f = be.fit(cols, None, **kw)
+        f = be.fit(cols, None, sibling_tol=be.SIBLING_DIST_TOL, **kw)
         f0 = be.fit(cols, None, sibling_tol=0, **kw)
     assert f["n_sibling"] == 0
     assert np.array_equal(f["D"], f0["D"])
+
+
+def test_off_by_default():
+    """The owner's ruling: a new layout at a new distance is a new course."""
+    cols, MTSAC, SIB, LONE = _mt_sac_world(seed=4)
+    with contextlib.redirect_stdout(io.StringIO()):
+        f = be.fit(cols, None, window=21, top=1.0, prior_group=1.0, era_years=2)
+    assert f["n_sibling"] == 0
+    assert (f["history_of_base"] == np.arange(len(cols["course_keys"]))).all()

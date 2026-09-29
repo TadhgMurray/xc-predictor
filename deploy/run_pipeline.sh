@@ -774,10 +774,14 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   of one kind within the radius rest on each other before the sport's
   #   average (bracket_engine.placeClusters). Needs a pack built with the
   #   course coordinates (07_pack from 2026-09-14 on).
-  # ★ XCP_BRACKET_SIBLING_TOL (fraction, default 0.03; 0 off, 2026-09-29):
-  #   one course's cells at listed distances within 3% share one history
-  #   (Mt. SAC at 4715 m and 4828 m), each distance keeping its own cell
-  #   (bracket_engine.SIBLING_DIST_TOL).
+  # ★ XCP_BRACKET_PLACE_VENUE (1 default, 0 off; 2026-09-29): one canonical
+  #   XC course's cells at other distances are a place too, so a new layout
+  #   with one meet (Mt. SAC's 4828 m) is shrunk toward its venue, not the
+  #   average course (bracket_engine VENUE PRIOR).
+  # ★ XCP_BRACKET_SIBLING_TOL (fraction, default off; 2026-09-29): one
+  #   course's cells at listed distances within this fraction share one
+  #   history, each keeping its own cell (bracket_engine.SIBLING_DIST_TOL).
+  #   Off because Mt. SAC's 4715 m and 4828 m are different layouts.
   # ★ XCP_COURSE_SCALE (2026-09-15): the per-sport multiplier on the bracket
   #   engine's course effects, 'fit' by default (since 2026-09-28 from the
   #   tilt-by-races rows of courses with 4+ races, where the prior's in-sample
@@ -814,6 +818,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_BRACKET_XC_LEVEL:+--bracket-xc-level "$XCP_BRACKET_XC_LEVEL"} \
       ${XCP_BRACKET_XC_LEVEL_MODE:+--bracket-xc-level-mode "$XCP_BRACKET_XC_LEVEL_MODE"} \
       ${XCP_BRACKET_PLACE_PRIOR:+--bracket-place-prior "$XCP_BRACKET_PLACE_PRIOR"} \
+      ${XCP_BRACKET_PLACE_VENUE:+--bracket-place-venue "$XCP_BRACKET_PLACE_VENUE"} \
       ${XCP_COURSE_SCALE:+--course-scale "$XCP_COURSE_SCALE"} \
       ${XCP_RACE_EFFECT_SPORTS:+--race-effect-sports "$XCP_RACE_EFFECT_SPORTS"} \
       ${XCP_SPORT_LEVEL_POOLS:+--sport-level-pools "$XCP_SPORT_LEVEL_POOLS"} \

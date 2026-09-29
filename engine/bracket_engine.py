@@ -486,52 +486,88 @@ PLACE_RADIUS_M = 400.0
 PRIOR_PLACE = 2.0
 
 
-def placeClusters(keys, lat, lon, radius_m=PLACE_RADIUS_M):
-    """Per base course: its place id (-1 for a course alone, or without
-    coordinates). Courses cluster only within one kind -- an XC key's
-    distance suffix, a TF key's surface -- through a KD-tree on local
-    metres, connected components over pairs within radius_m."""
+def placeClusters(keys, lat, lon, radius_m=PLACE_RADIUS_M, venue=True):
+    """Per base course: its place id (-1 for a course alone). Two kinds of
+    link, joined into connected components:
+      - coordinates: courses of one kind -- an XC key's distance suffix, a
+        TF key's surface -- within radius_m (a KD-tree on local metres);
+      - venue (XC, venue=True): one canonical course's cells at different
+        distances, the key less its ':d<m>' (see VENUE PRIOR below).
+    Without coordinates only the venue links are made."""
     keys = [str(k) for k in keys]
     n = len(keys)
     place = np.full(n, -1, dtype=np.int64)
-    if lat is None or lon is None or n == 0 or not radius_m or radius_m <= 0:
+    if n == 0:
         return place, 0
-    lat = np.asarray(lat, dtype=np.float64)
-    lon = np.asarray(lon, dtype=np.float64)
-    ok = np.isfinite(lat) & np.isfinite(lon)
-    kind = np.empty(n, dtype=object)
-    for i, k in enumerate(keys):
-        if k.startswith("XC:"):
-            kind[i] = "XC:d" + k.rpartition(":d")[2] if ":d" in k else "XC"
-        else:
-            kind[i] = "TF:" + ("in" if k.split("@", 1)[0].endswith(":in") else "out")
     try:
-        from scipy.spatial import cKDTree
         from scipy.sparse import coo_matrix
         from scipy.sparse.csgraph import connected_components
     except Exception:                                            # noqa: BLE001
         return place, 0
-    next_id = 0
-    for kd in sorted(set(kind[ok])):
-        idx = np.flatnonzero(ok & (kind == kd))
-        if idx.size < 2:
-            continue
-        lat0 = float(np.mean(lat[idx]))
-        x = np.radians(lon[idx]) * 6_371_000.0 * math.cos(math.radians(lat0))
-        y = np.radians(lat[idx]) * 6_371_000.0
-        pts = np.c_[x, y]
-        prs = cKDTree(pts).query_pairs(float(radius_m), output_type="ndarray")
-        if prs.size == 0:
-            continue
-        m = idx.size
-        adj = coo_matrix((np.ones(prs.shape[0]), (prs[:, 0], prs[:, 1])), shape=(m, m))
-        n_comp, lab = connected_components(adj, directed=False)
-        sizes = np.bincount(lab, minlength=n_comp)
-        for c in np.flatnonzero(sizes >= 2):
-            place[idx[lab == c]] = next_id
-            next_id += 1
-    return place, next_id
+    ei, ej = [], []
+    if lat is not None and lon is not None and radius_m and radius_m > 0:
+        try:
+            from scipy.spatial import cKDTree
+        except Exception:                                        # noqa: BLE001
+            cKDTree = None
+        lat = np.asarray(lat, dtype=np.float64)
+        lon = np.asarray(lon, dtype=np.float64)
+        ok = np.isfinite(lat) & np.isfinite(lon)
+        kind = np.empty(n, dtype=object)
+        for i, k in enumerate(keys):
+            if k.startswith("XC:"):
+                kind[i] = "XC:d" + k.rpartition(":d")[2] if ":d" in k else "XC"
+            else:
+                kind[i] = "TF:" + ("in" if k.split("@", 1)[0].endswith(":in") else "out")
+        for kd in (sorted(set(kind[ok])) if cKDTree is not None else ()):
+            idx = np.flatnonzero(ok & (kind == kd))
+            if idx.size < 2:
+                continue
+            lat0 = float(np.mean(lat[idx]))
+            x = np.radians(lon[idx]) * 6_371_000.0 * math.cos(math.radians(lat0))
+            y = np.radians(lat[idx]) * 6_371_000.0
+            prs = cKDTree(np.c_[x, y]).query_pairs(float(radius_m), output_type="ndarray")
+            if prs.size:
+                ei.append(idx[prs[:, 0]])
+                ej.append(idx[prs[:, 1]])
+    if venue:
+        by_head = {}
+        for i, k in enumerate(keys):
+            head, _dist = _courseAndDistance(k)
+            if head is not None:
+                by_head.setdefault(head, []).append(i)
+        for members in by_head.values():
+            if len(members) >= 2:
+                ei.append(np.full(len(members) - 1, members[0], dtype=np.int64))
+                ej.append(np.asarray(members[1:], dtype=np.int64))
+    if not ei:
+        return place, 0
+    ei = np.concatenate(ei)
+    ej = np.concatenate(ej)
+    adj = coo_matrix((np.ones(ei.size), (ei, ej)), shape=(n, n))
+    n_comp, lab = connected_components(adj, directed=False)
+    sizes = np.bincount(lab, minlength=n_comp)
+    big = np.flatnonzero(sizes >= 2)
+    renum = np.full(n_comp, -1, dtype=np.int64)
+    renum[big] = np.arange(big.size)
+    place = renum[lab]
+    return place, int(big.size)
 
+
+# ★ THE VENUE PRIOR (owner, 2026-09-29: Mt. SAC's 2024 course "got
+#   cannibalized"; and of pooling it with the old one, "they are diff courses
+#   with diff difficulties"). Both are right. The 4828 m layout of 2024 is its
+#   own course and keeps its own cell and its own number. But its evidence is
+#   ONE meet, and a race here is a (course, day): the whole invitational's
+#   forty heats are one or two race days, because they share one day's ground
+#   and weather and cannot tell a hard course from a hard day. So the course
+#   is shrunk about halfway -- and before this, halfway to the AVERAGE
+#   course, as if nothing were known about a new loop on Mt. SAC's hills.
+#   Now a canonical course's cells at other distances form a place, and a
+#   thin cell rests on that venue's reading (PRIOR_PLACE races' worth) before
+#   the sport's average. A layout with a season of its own days reads its own
+#   days; the prior only decides where one day's evidence is shrunk to. It
+#   adds nothing for a course listed at one distance.
 
 # ★★ ONE COURSE AT TWO LISTED DISTANCES IS ONE HISTORY (owner, 2026-09-28:
 #    "Mt. SAC 2024 was cannibalised by a distance split"). The XC cell key is
@@ -570,9 +606,15 @@ def placeClusters(keys, lat, lon, radius_m=PLACE_RADIUS_M):
 #    three or more near distances; two always pair.
 #
 #  ! XC ONLY: a track key carries a surface, not a distance, and is untouched.
-#    0 turns it off (fit(sibling_tol=0), run_joint --bracket-sibling-tol 0,
-#    XCP_BRACKET_SIBLING_TOL=0 in the pipeline).
+#
+#  ✗ OFF BY DEFAULT (owner, 2026-09-29: "they are diff courses with diff
+#    difficulties"). Mt. SAC's 4828 m of 2024 is a different layout, not the
+#    4715 m loop relabelled, so its history is not the old course's.
+#    SIBLING_DEFAULT is what fit() uses; SIBLING_DIST_TOL is the tolerance
+#    when it is asked for (run_joint --bracket-sibling-tol 0.03,
+#    XCP_BRACKET_SIBLING_TOL=0.03 in the pipeline).
 SIBLING_DIST_TOL = 0.03
+SIBLING_DEFAULT = 0.0
 
 
 def _courseAndDistance(key):
@@ -825,14 +867,14 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         n_iter=60, damping=0.5, prior_races=PRIOR_RACES, prior_group=PRIOR_FIT,
         race_sat=RACE_SAT, min_voters=3, tilt=True, use_curve=True, tol=1e-5,
         verbose=False, codes=None, prior_rows=None, z=None, h_row=None,
-        prior_warmup=PRIOR_FIT_WARMUP, place_radius=PLACE_RADIUS_M,
+        prior_warmup=PRIOR_FIT_WARMUP, place_radius=PLACE_RADIUS_M, place_venue=True,
         prior_place=PRIOR_PLACE, voter_agg="mean",
         prior_athlete=PRIOR_ATHLETE, prior_target=PRIOR_TARGET,
         indoor_centre=INDOOR_CENTRE, indoor_mode=INDOOR_MODE_DEFAULT,
         indoor_gate_mode=INDOOR_GATE_MODE_DEFAULT, indoor_gates=INDOOR_GATES,
         gauge=GAUGE_DEFAULT, gauge_scope=GAUGE_SCOPE_DEFAULT,
         xc_level=None, xc_level_mode=XC_LEVEL_MODE_DEFAULT,
-        day_noise=DAY_NOISE_DEFAULT, sibling_tol=SIBLING_DIST_TOL):
+        day_noise=DAY_NOISE_DEFAULT, sibling_tol=SIBLING_DEFAULT):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
@@ -1184,7 +1226,8 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     use_ref_day = dn == "reference"
     # the places: courses within place_radius of each other, of one kind
     place_of_base, n_place = placeClusters(
-        keys, cols.get("course_lat"), cols.get("course_lon"), place_radius)
+        keys, cols.get("course_lat"), cols.get("course_lon"), place_radius,
+        venue=place_venue)
     in_place = place_of_base >= 0
     k_place = float(prior_place or 0.0)
 
@@ -1603,15 +1646,17 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                      f" within {100 * float(sibling_tol):g}%"), flush=True)
         if cols.get("course_lat") is None:
             print("[bracket] place prior: the pack carries no course coordinates "
-                  "(rebuild it at 07_pack); no places", flush=True)
-        elif n_place == 0:
+                  "(rebuild it at 07_pack); venue links only", flush=True)
+        if n_place == 0:
             print(f"[bracket] place prior: no two courses of one kind within "
                   f"{place_radius:g} m; no places", flush=True)
         else:
             n_in = int(in_place.sum())
             n_voted = int((in_place & (w_b > 0)).sum())
             print(f"[bracket] place prior: {n_place:,} places of 2+ courses within "
-                  f"{place_radius:g} m ({n_in:,} courses, {n_voted:,} with votes); a course "
+                  f"{place_radius:g} m or at one venue"
+                  + ("" if place_venue else " (venue links off)")
+                  + f" ({n_in:,} courses, {n_voted:,} with votes); a course "
                   f"rests on its place by {k_place:g} races' worth before the group prior",
                   flush=True)
     # ★ THE INDOOR GATES, AS A REPORT (plan §3). Counted and listed, never

@@ -1572,8 +1572,11 @@ def buildParser():
     ap.add_argument("--bracket-sibling-tol", type=float, default=None,
                     help="a course's cells at distances within this fraction of "
                          "each other share one history in the bracket engine "
-                         "(bracket_engine.SIBLING_DIST_TOL, 0.03; 0 = off). Mt. SAC "
-                         "at 4715 m and at 4828 m is one course")
+                         "(off by default; bracket_engine.SIBLING_DIST_TOL is 0.03 "
+                         "when asked for)")
+    ap.add_argument("--bracket-place-venue", type=int, default=None, choices=(0, 1),
+                    help="1 (default): one canonical XC course's cells at other "
+                         "distances are a place too (bracket_engine VENUE PRIOR); 0 off")
     ap.add_argument("--bracket-place-prior", type=float, default=None,
                     help="races' worth of pull of a course toward its place "
                          "(bracket_engine.PRIOR_PLACE, 2)")
@@ -1950,7 +1953,8 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         course_scale="fit", gauge=None, indoor_centre=None,
                         indoor_mode=None, indoor_gate_mode=None,
                         gauge_scope=None, xc_level=None,
-                        xc_level_mode=None, day_noise=None, sibling_tol=None):
+                        xc_level_mode=None, day_noise=None, sibling_tol=None,
+                        place_venue=None):
     """Swap the joint solve's course difficulties for the bracket engine's,
     in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
     delta kept as delta_joint). Returns a dict of what happened."""
@@ -1995,6 +1999,8 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         place_kw["place_radius"] = float(place_radius)
     if prior_place is not None:
         place_kw["prior_place"] = float(prior_place)
+    if place_venue is not None:
+        place_kw["place_venue"] = bool(int(place_venue))
     # ⚠⚠ THE GAUGE WAS NEVER PASSED HERE, AND THAT IS HALF OF WHY THE ASSERTED
     #    INDOOR LEVEL NEVER LANDED. This call took the engine's default
     #    ("outdoor") whatever the pipeline asked for, so --gauge could not reach
@@ -2024,7 +2030,7 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     if day_noise is not None:
         place_kw["day_noise"] = day_noise
     # ★ A COURSE'S NEAR DISTANCES SHARE ONE HISTORY (bracket_engine.
-    #   SIBLING_DIST_TOL; Mt. SAC d4700/d4800). None keeps the engine's 3%.
+    #   SIBLING_DIST_TOL; Mt. SAC d4700/d4800). None keeps the engine's default, off.
     if sibling_tol is not None:
         place_kw["sibling_tol"] = float(sibling_tol)
     f = be.fit(sub, npz_like, train=None, window=window, top=top, codes=codes, z=z,
@@ -2488,6 +2494,7 @@ def main():
                                 track_level_by_pool=getattr(args, "track_level_by_pool", "1"),
                                 place_radius=getattr(args, "bracket_place_radius", None),
                                 prior_place=getattr(args, "bracket_place_prior", None),
+                                place_venue=getattr(args, "bracket_place_venue", None),
                                 course_scale=getattr(args, "course_scale", "fit"),
                                 gauge=getattr(args, "gauge", None),
                                 indoor_centre=getattr(args, "bracket_indoor_centre",
