@@ -27,28 +27,16 @@ PY="${PY:-/srv/venv/bin/python}"
 
 # name | command -- the name is what --only matches
 CHECKS=(
-  "collision-mosley|$PY scripts/person_collision.py --show 20000 | grep -i -E 'mosley|^\[collision\]' || true"
+  # read 2026-09-29 (log 20260929-142744): collision-mosley clean, the MS
+  # zone replays, NCS weather + explain, outliers dry run, board plan,
+  # sport gap, amnesty, ability curve, one-scale, group means, indoor levels.
+  # Still open:
   "why-unrated-sahlman|$PY scripts/why_unrated.py 29347137 --sport TF"
   "why-unrated-kitchen|$PY scripts/why_unrated.py 29332123 --sport TF"
   "brooks-salcido|$PY scripts/why_unrated.py 19068584 --sport TF --replay"
   "brooks-edwards|$PY scripts/why_unrated.py 21572633 --sport TF --replay"
-  "ms-zone-lutkenhaus|$PY scripts/why_unrated.py 30245014 --sport XC --replay"
-  "ms-zone-vijaykumar|$PY scripts/why_unrated.py 17385087 --sport XC --replay"
   "ms-zone-pins|$PY scripts/peek_override.py --result 37812888 37812889 37812890 37812894 37812898 37812891 37812892"
   "brooks-pins|$PY scripts/peek_override.py --sport TF --result 156938747 156938748"
-  "ncs-weather|$PY scripts/diag_row_weather.py --xc 59845242 52770927 46185539"
-  "ncs-explain|$PY scripts/explain_joint_row.py --xc 59845242 52770927 46185539"
-  "outliers-dry|$PY -u engine/rating_outliers.py --dry-run --show 20"
-  "outliers-moretta|$PY -u engine/rating_outliers.py --dry-run --person 29603084"
-  "board-plan|$PY scripts/explain_board.py 'board=ability&pool=hs_m&sport=both&scope=usa&scale=hs&limit=50&offset=0&sort=rating' --plans"
-  "sport-gap|$PY scripts/diag_sport_gap_ability.py"
-  "amnesty-dry|$PY scripts/amnesty_division_drops.py"
-  "ability-curve-dry|$PY engine/fit_distance_ability.py --dry-run"
-  "one-scale|$PY scripts/diag_one_scale.py --all"
-  "group-means|$PY scripts/build_group_means.py"
-  # ! writes engine/data/indoor_geometry_levels.json only (no database):
-  #   the measured level per indoor track type, which the holdout below reads
-  "indoor-levels|$PY scripts/indoor_outdoor_check.py --by geometry --write-levels"
 )
 
 # printed, never run: hours each, and each is a comparison to read before a
@@ -64,9 +52,9 @@ LONG_RUNS=(
 # printed, never run: each needs the owner's yes after reading the checks
 PENDING_WRITES=(
   "$PY engine/meet_date_fix.py --write                      # XC 25 meets + TF 50, read 2026-09-29: grades agree"
-  "$PY scripts/person_collision.py --write                  # if collision-mosley shows no Mosley"
-  "$PY scripts/amnesty_division_drops.py --write && $PY engine/dump_overrides.py"
-  "$PY -u engine/rating_outliers.py --write --show 10       # after reading outliers-dry"
+  "$PY scripts/person_collision.py --write                  # 11,186; Hanna Mosley clean (read 2026-09-29)"
+  "$PY scripts/amnesty_division_drops.py --write && $PY engine/dump_overrides.py   # 15 pardons incl. NCAA DI 2025"
+  "$PY -u engine/rating_outliers.py --write --show 10       # measured cuts 7.5 fast / 8 slow; see the slow-cut question"
   "runuser -u postgres -- psql -d xc_predictor -c 'CREATE INDEX CONCURRENTLY IF NOT EXISTS as_pool_mean_nl_idx ON athlete_season (pool, mean_rating DESC NULLS LAST, person_id)'   # optional: fast boards now, before the pipeline rebuilds them"
   "XCP_WEATHER_FIT=1 bash deploy/run_pipeline.sh --from 3   # last: rebuilds everything above"
 )
