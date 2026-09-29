@@ -30,6 +30,8 @@ CHECKS=(
   "collision-mosley|$PY scripts/person_collision.py --show 20000 | grep -i -E 'mosley|^\[collision\]' || true"
   "why-unrated-sahlman|$PY scripts/why_unrated.py 29347137 --sport TF"
   "why-unrated-kitchen|$PY scripts/why_unrated.py 29332123 --sport TF"
+  "brooks-salcido|$PY scripts/why_unrated.py 19068584 --sport TF --replay"
+  "brooks-edwards|$PY scripts/why_unrated.py 21572633 --sport TF --replay"
   "ncs-weather|$PY scripts/diag_row_weather.py --xc 59845242 52770927 46185539"
   "ncs-explain|$PY scripts/explain_joint_row.py --xc 59845242 52770927 46185539"
   "outliers-dry|$PY -u engine/rating_outliers.py --dry-run --show 20"
