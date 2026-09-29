@@ -35,6 +35,8 @@ sys.path.insert(0, "scripts")
 from database import getConn                                   # noqa: E402
 
 PROFILE_VOTES = 3            # a scraped profile's weight against labelled rows
+FIELD_MIN = 3                # known-gender runners a division needs to vote
+FIELD_SHARE = 9              # ...and one gender must outnumber the other 9 to 1
 M_RX = r"\m(boys?|men|mens|male|males)\M"
 F_RX = r"\m(girls?|women|womens|female|females)\M"
 
@@ -89,6 +91,32 @@ WITH ev AS (
     FROM   results_tf r
     WHERE  r.person_id IS NOT NULL
       AND  r.event_short ~* '{M_RX}|{F_RX}'
+    UNION ALL
+    -- ★ THE FIELD, WHERE THE DIVISION SAYS NOTHING (2026-09-29). A college
+    --   division on athletic.net is often just "Collegiate": no gender
+    --   word, so a first-year with no scraped profile had no vote at all,
+    --   was normalised as 'college_unknown_gender' on the women's 6 km
+    --   anchor, and rated like a woman -- 45 men at the Bates Preview
+    --   2026, a 13:23.6 at 140.2 beside the winner's 13:21.8 at 109.2.
+    --   A cross country division is one gender; its known runners say
+    --   which, when there are {FIELD_MIN}+ of them and one side outnumbers
+    --   the other {FIELD_SHARE} to 1. Only for rows whose own label is empty.
+    SELECT r.person_id,
+           CASE WHEN f.fm >= {FIELD_MIN} AND f.fm >= {FIELD_SHARE} * f.ff THEN 'M'
+                WHEN f.ff >= {FIELD_MIN} AND f.ff >= {FIELD_SHARE} * f.fm THEN 'F' END
+    FROM   results r
+    JOIN   (SELECT fr.source, fr.meet_id, fr.div_id,
+                   count(*) FILTER (WHERE fa.gender = 'M') AS fm,
+                   count(*) FILTER (WHERE fa.gender = 'F') AS ff
+            FROM   results fr JOIN athletes fa ON fa.athlete_id = fr.athlete_id
+            WHERE  fa.gender IN ('M', 'F')
+            GROUP  BY fr.source, fr.meet_id, fr.div_id) f
+           ON f.source = r.source AND f.meet_id = r.meet_id
+          AND f.div_id IS NOT DISTINCT FROM r.div_id
+    LEFT   JOIN meets m        ON m.div_id = r.div_id AND r.source = 'anet'
+    LEFT   JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id AND r.source = 'tfrrs'
+    WHERE  r.person_id IS NOT NULL
+      AND  ({labelExpr(ROW_LABEL_PACK['XC'])}) IS NULL
 ),
 -- ★ THE PROFILES VOTE TOO, AT {PROFILE_VOTES} EACH (2026-09-06). A boy
 --   whose every division read "Varsity" had ONE row labelled the other
