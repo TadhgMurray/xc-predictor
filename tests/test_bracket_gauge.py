@@ -182,7 +182,9 @@ class IndoorsLevelIsAsserted(unittest.TestCase):
 
     def test_pin_is_the_default(self):
         self.assertIn('INDOOR_MODE_DEFAULT = "pin"', self.src)
-        self.assertIn('INDOOR_MODES = ("pin", "shrink")', self.src)
+        # ! "geometry" joined on 2026-09-29 as a flag; pin stays the default
+        #   until the owner has seen the holdout
+        self.assertIn('INDOOR_MODES = ("pin", "shrink", "geometry")', self.src)
 
     def test_the_shift_is_additive_and_vote_weighted(self):
         """! ADDITIVE, SO THE SPREAD IS UNTOUCHED -- every oval keeps its exact

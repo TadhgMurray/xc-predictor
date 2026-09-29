@@ -828,6 +828,16 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   ms=0.012,elem=0.015' states the fall-to-spring gain per pool level
   #   that the go-live shifts the track rows to show; scripts/
   #   sport_level_fit.py measures it from the boards.
+  # ★ XCP_BRACKET_INDOOR_MODE=geometry (2026-09-29, a flag; pin stays the
+  #   default): each indoor geometry class -- under 200m, flat 200m, banked
+  #   200m, 300m+, unknown -- is pinned on its MEASURED level from
+  #   engine/data/indoor_geometry_levels.json (XCP_BRACKET_INDOOR_LEVELS for
+  #   another file). Measure first:
+  #     scripts/indoor_outdoor_check.py --by geometry --write-levels
+  #   run_joint refuses to start without the file, and replaces
+  #   XCP_INDOOR_LEVEL with the class levels' row-weighted mean so the joint
+  #   solve and the engine assert one indoor level (bracket_engine.
+  #   geometryJointLevel).
   # ★ XCP_RACE_EFFECT_SPORTS (2026-09-28): unset = the race-day term is in
   #   no rating (2026-09-06). 'XC:fast' puts a FAST XC day into the rating
   #   and leaves slow days out (joint_golive.dayModes says why).
@@ -866,6 +876,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_DAY_NOISE:+--day-noise "$XCP_DAY_NOISE"} \
       ${XCP_BRACKET_INDOOR_CENTRE:+--bracket-indoor-centre "$XCP_BRACKET_INDOOR_CENTRE"} \
       ${XCP_BRACKET_INDOOR_MODE:+--bracket-indoor-mode "$XCP_BRACKET_INDOOR_MODE"} \
+      ${XCP_BRACKET_INDOOR_LEVELS:+--bracket-indoor-levels "$XCP_BRACKET_INDOOR_LEVELS"} \
       ${XCP_BRACKET_XC_LEVEL:+--bracket-xc-level "$XCP_BRACKET_XC_LEVEL"} \
       ${XCP_BRACKET_XC_LEVEL_MODE:+--bracket-xc-level-mode "$XCP_BRACKET_XC_LEVEL_MODE"} \
       ${XCP_BRACKET_PLACE_PRIOR:+--bracket-place-prior "$XCP_BRACKET_PLACE_PRIOR"} \

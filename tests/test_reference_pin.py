@@ -767,7 +767,9 @@ class ANamedIndoorOvalJoinsTheReference(unittest.TestCase):
         #   correct exemption -- the opposite of what this test is for.
         # ! THE GUARD LINES, not the first mention of each name -- `pin_xc`
         #   appears at its assignment hundreds of lines earlier.
-        guards = ("if pin_xc:", "if pin_indoor:", "ind_g = ")
+        # ! "ind_geo = " is the per-class pin of indoor_mode="geometry"
+        #   (2026-09-29): a fourth step, and it exempts a pinned oval too.
+        guards = ("if pin_xc:", "if pin_indoor:", "ind_geo = ", "ind_g = ")
         for g in guards:
             i = self.src.index(g)
             self.assertIn("(w_c_ > 0) & ~hard_ref", self.src[i:i + 300], g)

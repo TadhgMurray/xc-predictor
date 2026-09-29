@@ -2021,7 +2021,15 @@ def buildParser():
     ap.add_argument("--bracket-indoor-mode", default=None,
                     choices=list(be.INDOOR_MODES),
                     help="pin the indoor group's mean to the centre (pin, "
-                         "default) or merely shrink toward it (shrink)")
+                         "default), merely shrink toward it (shrink), or pin "
+                         "each indoor geometry class on its measured level "
+                         "(geometry; --bracket-indoor-levels)")
+    ap.add_argument("--bracket-indoor-levels", default=None,
+                    help="the measured per-geometry-class indoor levels for "
+                         "--bracket-indoor-mode geometry (default "
+                         "engine/data/indoor_geometry_levels.json, written by "
+                         "scripts/indoor_outdoor_check.py --by geometry "
+                         "--write-levels)")
     ap.add_argument("--no-race-effect", action="store_true",
                     help="leave the race-day effect out of per-result ratings")
     ap.add_argument("--race-effect-sports", default="",
@@ -2056,6 +2064,18 @@ def applyImplications(args, ap):
             except ValueError:
                 ap.error(f"--indoor-level wants a log-time number or 'fit', "
                          f"not {lvl!r}")
+    # ★ ONE INDOOR LEVEL FOR BOTH ENGINES UNDER --bracket-indoor-mode geometry
+    #   (2026-09-29): see bracket_engine.geometryJointLevel. Read here, before
+    #   the solve, so a missing levels file stops the run in seconds, not after it.
+    if (getattr(args, "difficulty", "joint") == "bracket"
+            and getattr(args, "bracket_indoor_mode", None) == "geometry"
+            and not getattr(args, "no_indoor", False)):
+        import bracket_engine as be
+        try:
+            args.indoor_level = be.geometryJointLevel(
+                getattr(args, "bracket_indoor_levels", None), args.indoor_level)
+        except (OSError, ValueError) as exc:
+            ap.error(str(exc))
     if args.tau_max:
         # ⚠ 'none' MEANS NO CAP AT ALL, and it needs to be sayable. An empty
         #   'XC,TF' parses to an empty dict, which silently fell through to
@@ -2298,7 +2318,7 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         track_level_by_pool=True, place_radius=None, prior_place=None,
                         course_scale="fit", gauge=None, indoor_centre=None,
                         indoor_mode=None, indoor_gate_mode=None,
-                        gauge_scope=None, xc_level=None,
+                        indoor_levels=None, gauge_scope=None, xc_level=None,
                         xc_level_mode=None, day_noise=None, sibling_tol=None,
                         place_venue=None):
     """Swap the joint solve's course difficulties for the bracket engine's,
@@ -2363,6 +2383,8 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         place_kw["indoor_mode"] = indoor_mode
     if indoor_gate_mode is not None:
         place_kw["indoor_gate_mode"] = indoor_gate_mode
+    if indoor_levels is not None:
+        place_kw["indoor_levels"] = indoor_levels
     if gauge_scope is not None:
         place_kw["gauge_scope"] = gauge_scope
     # ! AND THE XC LEVEL, FORWARDED FOR THE SAME REASON AS THE GAUGE ABOVE.
@@ -2852,6 +2874,7 @@ def main():
                                                     None),
                                 indoor_gate_mode=getattr(
                                     args, "bracket_indoor_gates", None),
+                                indoor_levels=getattr(args, "bracket_indoor_levels", None),
                                 gauge_scope=getattr(args, "gauge_scope", None),
                                 xc_level=getattr(args, "bracket_xc_level", None),
                                 xc_level_mode=getattr(args, "bracket_xc_level_mode", None),

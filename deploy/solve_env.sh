@@ -77,6 +77,21 @@
 #     untouched, so no cell stops responding to its own races.
 #       shrink = target-only (the 2026-09-19 behaviour).
 : "${XCP_BRACKET_INDOOR_MODE:=pin}"
+#     ★ geometry (2026-09-29; owner: "indoor difficulty is too easy
+#       generally") pins each indoor GEOMETRY class on its own measured level
+#       instead of one +0.3% for every oval: small flat ovals and unrecorded
+#       (mostly high-school) ones measured ~+0.7..+0.9%, flat 200s ~+0.2%,
+#       banked 200s ~-0.6% and 300m+ ovals ~-0.5% (indoor_outdoor_check.py
+#       --by geometry). The levels are a FILE, written by
+#         scripts/indoor_outdoor_check.py --by geometry --write-levels
+#       and XCP_BRACKET_INDOOR_LEVELS names another one. Not the default until
+#       the owner has seen scripts/bracket_holdout.py score it against pin.
+#     ! AND XCP_INDOOR_LEVEL BELOW IS THEN NOT THE NUMBER THE JOINT SOLVE USES.
+#       Under geometry run_joint replaces it with the class levels' mean
+#       weighted by indoor rows and prints both, so the two engines are never
+#       told two different indoor levels again (the INDOOR_CENTRE note in
+#       engine/bracket_engine.py is what that cost last time). The 0.003 here
+#       stays for pin, and for the joint-only holdout (08a).
 # ★★ CROSS COUNTRY'S LEVEL IS ASSERTED, NOT DISCOVERED (owner, 2026-09-21:
 #    "the xc difficutly is fucked ngl"). The run before this published
 #    XC - TF = +1.27% where conversions.venueEffect, difficulty_view and the
@@ -211,7 +226,7 @@ export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
        XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
        XCP_GAUGE_UNKNOWN_LENGTH XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE \
        XCP_BRACKET_XC_LEVEL XCP_BRACKET_XC_LEVEL_MODE \
-       XCP_BRACKET_INDOOR_GATES \
+       XCP_BRACKET_INDOOR_GATES XCP_BRACKET_INDOOR_LEVELS \
        XCP_IMPORTANCE XCP_TEAM_POOL XCP_DB_QUIET XCP_SPORT_LEVEL_POOLS \
        XCP_BRACKET_WINDOW
 
@@ -227,6 +242,7 @@ SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
 XCP_IMPORTANCE XCP_TEAM_POOL XCP_GAUGE_UNKNOWN_LENGTH \
 XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE XCP_BRACKET_INDOOR_GATES \
+XCP_BRACKET_INDOOR_LEVELS \
 XCP_BRACKET_XC_LEVEL XCP_BRACKET_XC_LEVEL_MODE \
 XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
 XCP_SPORT_LEVEL_POOLS XCP_BRACKET_PRIOR XCP_BRACKET_PLACE_RADIUS \

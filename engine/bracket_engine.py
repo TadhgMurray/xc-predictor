@@ -342,7 +342,45 @@ INDOOR_CENTRE = 0.003
 #
 # ! "shrink" RESTORES THE 2026-09-19 BEHAVIOUR for a run that wants to price
 #   the difference. XCP_BRACKET_INDOOR_MODE picks.
-INDOOR_MODES = ("pin", "shrink")
+#
+# ★★ "geometry": ONE LEVEL PER KIND OF OVAL, MEASURED (owner, 2026-09-29:
+#    "indoor difficulty is too easy generally"). scripts/indoor_outdoor_check.py
+#    --by geometry split the same-athlete indoor-minus-outdoor comparison by
+#    the oval's geometry and the classes came out on both sides of +0.3%
+#    (curve medians and zero-day readings, log-time %):
+#
+#        under 200m  +0.7..+1.0     flat 200m  -0.0..+0.3
+#        unknown     -0.1..+1.2     banked 200m  -0.8..-0.2
+#        300m+       -0.7..-0.4
+#
+#    So the one centre under-credited the small ovals and the unrecorded ones
+#    (mostly high-school facilities), and the -0.3% floor gate held every
+#    banked 200 and oversized oval ABOVE where its own athletes put it.
+#
+#      "geometry"  each indoor cell with votes gets its class
+#                  (track_geometry.geometryClass, the definition the
+#                  measurement used) and the pin runs PER CLASS: one additive
+#                  shift per class so the class's vote-weighted mean IS its
+#                  level from engine/data/indoor_geometry_levels.json
+#                  (written by indoor_outdoor_check.py --write-levels). The
+#                  class level is also each thin oval's shrinkage target, per
+#                  course rather than per group.
+#
+# ! THE GATES MOVE WITH THE CLASS, AND ONLY MOVE. Under "geometry" a class's
+#   gates are its level plus the offsets the global gates have from the
+#   centre (gate_lo - INDOOR_CENTRE, gate_hi - INDOOR_CENTRE: -0.6% and
+#   +1.7%), so every class keeps the owner's 2.3%-wide window and only its
+#   middle moves. The global pair would clamp a banked class measured at
+#   -0.6% straight back up to -0.3% -- the very error being fixed.
+#
+# ⚠ NO FILE, NO GEOMETRY: IT RAISES. A missing levels file or a pack without
+#   track geometry stops the fit rather than running "pin" under a
+#   "geometry" label -- the gauge=flat400 lesson of 2026-09-20, where a
+#   silent fallback made a void comparison look like a finding.
+#
+# ! "pin" STAYS THE DEFAULT until the owner has seen the holdout
+#   (scripts/bracket_holdout.py --indoor-mode geometry against pin, same rows).
+INDOOR_MODES = ("pin", "shrink", "geometry")
 INDOOR_MODE_DEFAULT = "pin"
 
 # ★★ CROSS COUNTRY'S LEVEL IS ASSERTED, FOR THE SAME REASON INDOOR'S IS
@@ -863,6 +901,140 @@ def _raceMedian(race_v, r_v, n_race):
     return np.where(n > 0, out, 0.0), cnt
 
 
+def _indoorGeometry(cols, n_base, own_base_of_cell, base_pg, cell_pg, levels,
+                    centre, gate_lo, gate_hi):
+    """indoor_mode="geometry": each indoor course's geometry class, its
+    measured level, and its gates. RAISES without the pack's geometry or the
+    levels file (see INDOOR_MODES)."""
+    import track_geometry as tg
+    if cols.get("track_length") is None:
+        raise ValueError(
+            "[bracket] indoor_mode=geometry was asked for but the pack carries "
+            "no track geometry (track_length). REBUILD THE PACK -- "
+            "speed_ratings.attachCourseGeometry runs at pack time (07_pack). "
+            "There is no fallback: pin under a geometry label is a different "
+            "model.")
+    length = np.asarray(cols["track_length"], dtype=np.float64)
+    if length.size != n_base:
+        raise ValueError(
+            f"[bracket] indoor_mode=geometry: the geometry has {length.size:,} "
+            f"entries and the pack has {n_base:,} course keys -- they are from "
+            f"different packs. Rebuild the pack.")
+    try:
+        doc = tg.loadIndoorLevels(levels)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"[bracket] indoor_mode=geometry: {exc}") from exc
+    level = np.array(tg.classLevels(doc), dtype=np.float64)
+    cls_base = tg.geometryClassIndex(length, cols.get("track_type"))
+    # ! THE CELL'S OWN COURSE'S GEOMETRY, as gauge=flat400 reads it; the
+    #   shrinkage target is per HISTORY base (base_pg's grain), which for an
+    #   indoor oval is the same course -- siblings are an XC thing.
+    ind_cell = cell_pg == PG_INDOOR
+    cls_cell = np.where(ind_cell, cls_base[own_base_of_cell], -1)
+    base_is_geo = base_pg == PG_INDOOR
+    c0 = float(INDOOR_CENTRE if centre is None else centre)
+    lvl_cell = np.where(ind_cell, level[np.maximum(cls_cell, 0)], np.nan)
+    return dict(doc=doc, level=level, cls_base=cls_base, cls_cell=cls_cell,
+                base_is_geo=base_is_geo, level_base=level[cls_base],
+                lo_cell=lvl_cell + (gate_lo - c0), hi_cell=lvl_cell + (gate_hi - c0),
+                off_lo=gate_lo - c0, off_hi=gate_hi - c0, centre=c0)
+
+
+# ★★ THE JOINT SOLVE'S ONE INDOOR NUMBER, UNDER "geometry" (2026-09-29).
+#    XCP_INDOOR_LEVEL asserts ONE indoor level to the joint solve's indoor
+#    term; the INDOOR_CENTRE note records what it cost when that number and
+#    the bracket engine's disagreed (-1.68% published against +0.3%
+#    asserted). Under "geometry" the engine pins five class levels, so the
+#    joint's single number becomes the class levels weighted by the indoor
+#    ROWS each class holds -- the value that one coefficient over every indoor
+#    row would have to take for the two engines to agree on average
+#    (track_geometry.jointIndoorLevel). run_joint.applyImplications sets it
+#    before the solve and says so.
+#
+# ! WHY IT IS SECOND-ORDER, AND STILL SET. The published indoor numbers do
+#   not come from it: bracketDifficulties hands the engine z with the joint's
+#   indoor term still IN it, every indoor cell absorbs whatever that term was,
+#   and the per-class pin then puts each class where it was measured. What
+#   the joint's level does move is the joint's own fit -- the ratings that
+#   pick the voters and set the tilt, and the curve -- so a joint solve told
+#   +0.3% while the engine publishes a +0.1% average would be the 2026-09-19
+#   contradiction again, smaller. An asserted 'fit' (None) is left alone.
+def geometryJointLevel(levels=None, current=None, verbose=True):
+    """The joint solve's indoor level under indoor_mode="geometry": the
+    row-weighted mean of the class levels. RAISES when the levels file is
+    missing, like the engine."""
+    import track_geometry as tg
+    doc = tg.loadIndoorLevels(levels)
+    lv, how = tg.jointIndoorLevel(doc)
+    if current is None:
+        if verbose:
+            print(f"[joint] indoor level: --indoor-level fit, left to the fit; the "
+                  f"geometry classes average {100 * lv:+.3f}% by {how}", flush=True)
+        return None
+    if verbose:
+        print(f"[joint] indoor level: --bracket-indoor-mode geometry, so the joint "
+              f"solve asserts the class levels' mean weighted by indoor {how}, "
+              f"{100 * lv:+.3f}% (XCP_INDOOR_LEVEL said {100 * float(current):+.3f}%; "
+              f"{doc.get('_path')}, measured {doc.get('measured')})", flush=True)
+    return float(lv)
+
+
+def _geometryReport(geo, D, w_c, pre_clamp, cell_pg, hard_ref, clamped, verbose):
+    """★ PER CLASS, WHAT WAS ASKED AND WHAT LANDED: the measured level, the
+    vote-weighted mean the pin produced (before the clamp: must BE the level),
+    the published mean (after the clamp and the damped iteration), the cells
+    and how many the class's gates clamped. A class whose clamp count climbs
+    run over run has gates, or a level, that its ovals disagree with."""
+    import track_geometry as tg
+    ind = (cell_pg == PG_INDOOR) & (w_c > 0)
+    free = ind & ~hard_ref
+    out_g = free & ((pre_clamp < geo["lo_cell"]) | (pre_clamp > geo["hi_cell"]))
+    rows = []
+    for c_i, name in enumerate(tg.GEO_CLASSES):
+        m = ind & (geo["cls_cell"] == c_i)
+        mf = free & (geo["cls_cell"] == c_i)
+        rows.append(dict(
+            cls=name, level=float(geo["level"][c_i]), n_cells=int(m.sum()),
+            n_pinned=int(mf.sum()), n_clamped=int((out_g & m).sum()),
+            pinned=(float(np.average(pre_clamp[mf], weights=w_c[mf]))
+                    if mf.any() else np.nan),
+            mean=(float(np.average(D[m], weights=w_c[m])) if m.any() else np.nan),
+            gates=(float(geo["level"][c_i] + geo["off_lo"]),
+                   float(geo["level"][c_i] + geo["off_hi"]))))
+    rep = dict(n_indoor=int(ind.sum()), n_outside=int(out_g.sum()), gates=None,
+               centre=None, mode="geometry",
+               median=float(np.median(D[ind])) if ind.any() else 0.0,
+               mean=(float(np.average(D[ind], weights=w_c[ind])) if ind.any() else 0.0),
+               classes=rows, levels_file=geo["doc"].get("_path"),
+               measured=geo["doc"].get("measured"))
+    if not verbose or not ind.any():
+        return rep
+    print(f"[bracket] indoor: mode=geometry -- each class pinned on its measured "
+          f"level ({rep['levels_file']}, measured {rep['measured']}); "
+          f"{rep['n_indoor']:,} indoor cells with votes")
+    print(f"        gates per class: level {100 * geo['off_lo']:+.1f}%.."
+          f"{100 * geo['off_hi']:+.1f}% (the global gates' offsets from the "
+          f"{100 * geo['centre']:+.1f}% centre)"
+          + ("" if clamped else " -- REPORTED ONLY (gates=report)"))
+    print(f"          {'class':<12} {'target':>7} {'pinned':>7} {'published':>9} "
+          f"{'cells':>6} {'clamped':>8} {'gates':>15}")
+    f = lambda v: "      -" if not np.isfinite(v) else f"{100 * v:+7.2f}"
+    for r in rows:
+        print(f"          {r['cls']:<12} {f(r['level'])} {f(r['pinned'])} "
+              f"{f(r['mean']):>9} {r['n_cells']:>6,} {r['n_clamped']:>8,} "
+              f"{100 * r['gates'][0]:+6.2f}..{100 * r['gates'][1]:+.2f}%")
+        if np.isfinite(r["pinned"]) and abs(r["pinned"] - r["level"]) > 1e-9:
+            print(f"          ⚠ {r['cls']}: the pin did NOT land on its level")
+    print(f"        all indoor: vote-weighted mean {100 * rep['mean']:+.2f}%, "
+          f"median {100 * rep['median']:+.2f}%; {rep['n_outside']:,} cells "
+          + ("clamped into their class's gates" if clamped else
+             "outside their class's gates, PUBLISHED ANYWAY"))
+    print("        ! 'pinned' is the class mean the pin set (it must BE the target);"
+          " 'published'\n          is after the clamp and the damped iteration, "
+          "so it drifts by what the clamp moved.")
+    return rep
+
+
 def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         n_iter=60, damping=0.5, prior_races=PRIOR_RACES, prior_group=PRIOR_FIT,
         race_sat=RACE_SAT, min_voters=3, tilt=True, use_curve=True, tol=1e-5,
@@ -872,6 +1044,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         prior_athlete=PRIOR_ATHLETE, prior_target=PRIOR_TARGET,
         indoor_centre=INDOOR_CENTRE, indoor_mode=INDOOR_MODE_DEFAULT,
         indoor_gate_mode=INDOOR_GATE_MODE_DEFAULT, indoor_gates=INDOOR_GATES,
+        indoor_levels=None,
         gauge=GAUGE_DEFAULT, gauge_scope=GAUGE_SCOPE_DEFAULT,
         xc_level=None, xc_level_mode=XC_LEVEL_MODE_DEFAULT,
         day_noise=DAY_NOISE_DEFAULT, sibling_tol=SIBLING_DEFAULT):
@@ -883,7 +1056,9 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     for every group, or a dict / "XC=1,TF:out=2.5,TF:in=1" per group;
     voter_agg: "mean" (what shipped) or "median" -- how a race's reading is
     taken over its voters. See _raceMedian for why it is a rung rather than a
-    change. prior_rows is the old name of prior_races and still accepted. min_voters: a race
+    change. indoor_levels: under indoor_mode="geometry", the measured levels
+    file (a path or its dict; default engine/data/indoor_geometry_levels.json).
+    prior_rows is the old name of prior_races and still accepted. min_voters: a race
     with fewer voters casts no vote (3: with top=0.5 a race of six counts,
     at weight 3/8 of a full race; a course with no such race sits at its
     sport's average). z: the response per
@@ -1068,6 +1243,13 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                          f"got {indoor_gate_mode!r}")
     gate_lo, gate_hi = (float(indoor_gates[0]), float(indoor_gates[1]))
     clamp_indoor = indoor_gate_mode == "clamp"
+    # ★ THE GEOMETRY MODE'S PIECES (see INDOOR_MODES "geometry"): per base
+    #   course its class and level, per cell the same plus its gates.
+    geo_indoor = indoor_mode == "geometry"
+    geo = None
+    if geo_indoor:
+        geo = _indoorGeometry(cols, n_base, own_base_of_cell, base_pg, cell_pg,
+                              indoor_levels, indoor_centre, gate_lo, gate_hi)
     gauge_ref = (cell_pg != 2) if gauge == "outdoor" else np.ones(n_cell, bool)
     # ★ THE FLAT-OUTDOOR-400 REFERENCE (plan §2). Per BASE key on the pack,
     #   lifted to cells through base_of_cell.
@@ -1400,9 +1582,15 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         if indoor_centre is not None and len(g_mean_) > PG_INDOOR:
             g_mean_ = g_mean_.copy()
             g_mean_[PG_INDOOR] = float(indoor_centre)
+        # the target each course's history is shrunk toward: its group's
+        # average course, or under indoor_mode="geometry" an indoor course's
+        # own class level (per course, not per group -- INDOOR_MODES)
+        target_b = g_mean_[base_pg]
+        if geo_indoor:
+            target_b = np.where(geo["base_is_geo"], geo["level_base"], target_b)
         k_b = k_g[base_pg]
         D_base_ = np.where(w_b_ > 0,
-                           (num_b_ + k_b * g_mean_[base_pg]) / np.maximum(w_b_ + k_b, 1e-9), 0.0)
+                           (num_b_ + k_b * target_b) / np.maximum(w_b_ + k_b, 1e-9), 0.0)
         if n_place and k_place > 0:
             # the place's reading, shrunk to the group by the group prior;
             # each member pulled toward it by prior_place races' worth
@@ -1410,7 +1598,15 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
             pl_num = np.bincount(pl, weights=num_b_[in_place], minlength=n_place)
             pl_w = np.bincount(pl, weights=w_b_[in_place], minlength=n_place)
             pl_kg = np.zeros(n_place); pl_kg[pl] = k_b[in_place]
-            pl_gm = np.zeros(n_place); pl_gm[pl] = g_mean_[base_pg[in_place]]
+            pl_gm = np.zeros(n_place); pl_gm[pl] = target_b[in_place]
+            if geo_indoor:
+                # ! A PLACE CAN HOLD OVALS OF TWO CLASSES (a fieldhouse and a
+                #   gym on one campus), and the assignment above keeps the last
+                #   member's; the members' mean is the place's target. Only
+                #   here: every member of a place shares one group target
+                #   otherwise, and the other modes stay byte-identical.
+                pl_gm = (np.bincount(pl, weights=target_b[in_place], minlength=n_place)
+                         / np.maximum(np.bincount(pl, minlength=n_place), 1))
             m_place = np.where(pl_w > 0, (pl_num + pl_kg * pl_gm) / np.maximum(pl_w + pl_kg, 1e-9), 0.0)
             D_pl = (num_b_[in_place] + k_place * m_place[pl]) / np.maximum(w_b_[in_place] + k_place, 1e-9)
             D_base_[in_place] = np.where(pl_w[pl] > 0, D_pl, D_base_[in_place])
@@ -1502,6 +1698,18 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
             if ind_.any():
                 now = np.average(D_new_[ind_], weights=w_c_[ind_])
                 D_new_ = D_new_ + ind_ * (float(indoor_centre) - now)
+        # ★★ AND UNDER "geometry", THE SAME PIN ONCE PER CLASS (2026-09-29).
+        #    One additive shift per geometry class, so each class's
+        #    vote-weighted mean IS its measured level; the spread inside a
+        #    class stays the races'. The same exemptions as the pin above.
+        if geo_indoor:
+            ind_geo = (cell_pg == PG_INDOOR) & (w_c_ > 0) & ~hard_ref
+            for c_i in range(geo["level"].size):
+                m_c = ind_geo & (geo["cls_cell"] == c_i)
+                if m_c.any():
+                    now = np.average(D_new_[m_c], weights=w_c_[m_c])
+                    D_new_ = D_new_ + m_c * (geo["level"][c_i] - now)
+        pre_clamp = D_new_
         # ★★ THEN THE GATES, AS A CLAMP (owner, 2026-09-20). Every indoor cell
         #    with votes is held inside [gate_lo, gate_hi]; see INDOOR_GATE_MODES
         #    for what that costs and why the count is printed every run.
@@ -1512,12 +1720,18 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         #   cells back outside on the very next line.
         if clamp_indoor:
             ind_g = (cell_pg == PG_INDOOR) & (w_c_ > 0) & ~hard_ref
-            if ind_g.any():
+            if ind_g.any() and geo_indoor:
+                # ! PER CLASS: its level plus the global gates' offsets from
+                #   the centre, so the width is the owner's and only the
+                #   middle moves (INDOOR_MODES "geometry")
+                D_new_ = np.where(ind_g, np.clip(D_new_, geo["lo_cell"], geo["hi_cell"]),
+                                  D_new_)
+            elif ind_g.any():
                 D_new_ = np.where(ind_g, np.clip(D_new_, gate_lo, gate_hi),
                                   D_new_)
         return dict(vote=vote_, D_race=D_r, w_race=w_r, ok_race=ok, num_c=num_c_,
                     w_c=w_c_, w_b=w_b_, g_mean=g_mean_, D_base=D_base_,
-                    D_pre=D_pre, pin=pin, D_new=D_new_,
+                    D_pre=D_pre, pin=pin, D_new=D_new_, pre_clamp=pre_clamp,
                     level=D_new_ - before_level)
 
     for it in range(n_iter):
@@ -1675,7 +1889,10 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     #   asserted centre is wrong -- it is the only feedback an asserted number
     #   gets, so it is printed every run rather than kept behind a flag.
     indoor_gate_report = None
-    if indoor_centre is not None:
+    if geo_indoor:
+        indoor_gate_report = _geometryReport(geo, D, w_c, st["pre_clamp"], cell_pg,
+                                             hard_ref, clamp_indoor, verbose)
+    elif indoor_centre is not None:
         lo, hi = gate_lo, gate_hi
         ind_cells = (cell_pg == PG_INDOOR) & (w_c > 0)
         outside = ind_cells & ((D < lo) | (D > hi))
@@ -1821,7 +2038,10 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                 prior_report=prior_report, prior_lines=prior_lines,
                 gauge=gauge, hard_ref=hard_ref, indoor_centre=indoor_centre,
                 day_noise=dn, day_report=day_report,
-                indoor_gate_report=indoor_gate_report,
+                indoor_gate_report=indoor_gate_report, indoor_mode=indoor_mode,
+                # per cell, the geometry class index (track_geometry.
+                # GEO_CLASSES) under indoor_mode="geometry", else None
+                indoor_class=(geo["cls_cell"] if geo_indoor else None),
                 cell_prior_group=cell_pg, race_sat=race_sat,
                 D_cell_raw=D_cell_raw, D_base=D_base, base_votes=w_b,
                 group_mean=g_mean, base_prior_group=base_pg, tilt_bands=tilt_bands,

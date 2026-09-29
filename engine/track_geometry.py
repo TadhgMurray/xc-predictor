@@ -158,6 +158,141 @@ def isFlatOutdoor400(track_length, track_type=None, is_indoor=None,
 
 
 # ------------------------------------------------------------------ #
+# INDOOR OVALS BY GEOMETRY
+# ------------------------------------------------------------------ #
+
+# ★★ ONE DEFINITION FOR THE MEASUREMENT AND THE ENGINE (owner, 2026-09-29:
+#    "indoor difficulty is too easy generally"). scripts/indoor_outdoor_check.py
+#    --by geometry measured indoor minus outdoor per class of oval and found
+#    them far apart -- small flat ovals and the unrecorded (mostly high-school)
+#    ones ~0.7-0.9% slower than a flat outdoor 400, flat 200s ~+0.2%, banked
+#    200s ~-0.6% and oversized 300m+ ~-0.5%, i.e. FASTER. The engine now pins
+#    each class on its own measured level (bracket_engine.INDOOR_MODES
+#    "geometry"), and a level measured on one split of the ovals and applied
+#    on another would be a number about nothing. So the split lives here, once,
+#    and both import it.
+#
+# ! UNKNOWN LENGTH IS ITS OWN CLASS, NOT THE STANDARD OVAL. That is the
+#   opposite of isFlatOutdoor400's assume400, and deliberately: there the
+#   question is "is this the reference?" and normalize_distance has already
+#   answered it for the numerator. Here the class IS the measurement, and an
+#   assumption would put the answer into the question -- the unknowns measured
+#   +0.5..+0.9%, nothing like a 200.
+GEO_CLASSES = ("under 200m", "flat 200m", "banked 200m", "300m+", "unknown")
+# ! THE BOUNDARIES ARE THE ONES THE 2026-09-29 MEASUREMENT WAS TAKEN WITH
+#   (indoor_outdoor_check.geometryClass, moved here unchanged): below 190 m is
+#   a sub-200 oval, 290 m and up the 300 m-and-longer family. Moving either
+#   re-classes ovals, and then the levels file describes classes that no
+#   longer exist -- re-measure (--write-levels) after any change here.
+GEO_SMALL_BELOW_M = 190.0
+GEO_LARGE_FROM_M = 290.0
+
+
+def geometryClass(length, ttype):
+    """One of GEO_CLASSES for an indoor track.
+
+    ! A STATED LENGTH OF 0 OR LESS IS "unknown", not "under 200m": the same
+      "silence and corruption" line isFlatOutdoor400 draws -- a length that
+      cannot be a track says nothing about the track."""
+    try:
+        v = float(length)
+    except (TypeError, ValueError):
+        return "unknown"
+    if v != v or v in (float("inf"), float("-inf")) or v <= 0:
+        return "unknown"
+    if v >= GEO_LARGE_FROM_M:
+        return "300m+"
+    if v < GEO_SMALL_BELOW_M:
+        return "under 200m"
+    return "banked 200m" if isBanked(ttype) else "flat 200m"
+
+
+def geometryClassIndex(track_length, track_type):
+    """Per course key, the index into GEO_CLASSES (an int array). Like
+    flatOutdoor400Mask: the scalar rule applied elementwise, never a second
+    implementation."""
+    import numpy as np
+    n = len(track_length)
+    out = np.zeros(n, dtype=np.int64)
+    for i in range(n):
+        tt = track_type[i] if track_type is not None else None
+        out[i] = GEO_CLASSES.index(geometryClass(track_length[i], tt))
+    return out
+
+
+# ★ WHERE THE MEASURED LEVELS LIVE. Written by
+#   scripts/indoor_outdoor_check.py --by geometry --write-levels, read by the
+#   bracket engine under indoor_mode="geometry" and by run_joint for the
+#   joint solve's single indoor level. The file is the measurement; nothing
+#   in code carries a copy of the numbers.
+INDOOR_LEVELS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "data", "indoor_geometry_levels.json")
+
+
+def loadIndoorLevels(path=None):
+    """The measured levels file as a dict, with every class present and every
+    level a finite number. RAISES when it is missing or incomplete: the
+    geometry mode has no default to fall back on, and a run that silently
+    used one would be a different model reporting itself as this one (the
+    gauge=flat400 lesson, 2026-09-20)."""
+    import json
+    if isinstance(path, dict):
+        doc = path
+        where = "<dict>"
+    else:
+        where = path or INDOOR_LEVELS_FILE
+        if not os.path.exists(where):
+            raise FileNotFoundError(
+                f"indoor geometry levels: no file at {where}. Measure them "
+                f"first: scripts/indoor_outdoor_check.py --by geometry "
+                f"--write-levels")
+        with open(where) as fh:
+            doc = json.load(fh)
+    classes = doc.get("classes") or {}
+    missing = [c for c in GEO_CLASSES if c not in classes]
+    if missing:
+        raise ValueError(f"indoor geometry levels ({where}) lack "
+                         f"{', '.join(missing)}; rerun --write-levels")
+    for c in GEO_CLASSES:
+        lv = classes[c].get("level") if isinstance(classes[c], dict) else None
+        try:
+            lv = float(lv)
+        except (TypeError, ValueError):
+            lv = float("nan")
+        if lv != lv:
+            raise ValueError(f"indoor geometry levels ({where}): class {c!r} "
+                             f"has no finite level")
+    doc = dict(doc)
+    doc["_path"] = where
+    return doc
+
+
+def classLevels(doc):
+    """(level per GEO_CLASSES index), as floats, from loadIndoorLevels."""
+    return [float(doc["classes"][c]["level"]) for c in GEO_CLASSES]
+
+
+def jointIndoorLevel(doc):
+    """★ THE JOINT SOLVE'S ONE INDOOR NUMBER UNDER THE GEOMETRY MODE: the
+    class levels weighted by the indoor ROWS each class holds in the pack
+    (n_rows, counted by the writer over the whole pack). The joint solve's
+    indoor term is one coefficient over every indoor row, so a row-weighted
+    mean is the number that term would have to be for the two engines to
+    agree on average. Falls back to n_pairs weights for a file written
+    before n_rows existed, and says so in the returned tuple."""
+    lv = classLevels(doc)
+    w = [float(doc["classes"][c].get("n_rows") or 0) for c in GEO_CLASSES]
+    how = "rows"
+    if sum(w) <= 0:
+        w = [float(doc["classes"][c].get("n_pairs") or 0) for c in GEO_CLASSES]
+        how = "pairs"
+    if sum(w) <= 0:
+        raise ValueError("indoor geometry levels carry no n_rows or n_pairs "
+                         "to weight the joint level by; rerun --write-levels")
+    return sum(a * b for a, b in zip(lv, w)) / sum(w), how
+
+
+# ------------------------------------------------------------------ #
 # THE SAME QUESTION, ON WHOLE ARRAYS
 # ------------------------------------------------------------------ #
 

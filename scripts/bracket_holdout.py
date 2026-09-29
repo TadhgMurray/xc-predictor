@@ -66,7 +66,8 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
           tilt=True, use_curve=True, verbose=True, joint_dump=None, gauge=be.GAUGE_DEFAULT,
           gauge_scope=be.GAUGE_SCOPE_DEFAULT,
           prior_athlete=be.PRIOR_ATHLETE, prior_target=be.PRIOR_TARGET,
-          day_noise=be.DAY_NOISE_DEFAULT, dump=None, compare=None):
+          day_noise=be.DAY_NOISE_DEFAULT, dump=None, compare=None,
+          indoor_mode=be.INDOOR_MODE_DEFAULT, indoor_levels=None):
     """Fit on the sample's training rows, score its held-out races.
     Returns dict(sd, covered, by_sport, n_train, n_test, seconds, base_line,
     same_rows). joint_dump: the joint model's per-row held-out predictions
@@ -85,7 +86,8 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
                use_curve=use_curve, verbose=verbose, codes=codes, gauge=gauge,
                gauge_scope=gauge_scope,
                prior_athlete=prior_athlete, prior_target=prior_target,
-               day_noise=day_noise)
+               day_noise=day_noise, indoor_mode=indoor_mode,
+               indoor_levels=indoor_levels)
     pred, cov = be.predict(f)
     y = np.log(np.asarray(sub["norm"], dtype=np.float64))
     m = test_s & cov
@@ -106,6 +108,7 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
                 e = y[mm] - pred[mm]
                 out["by_sport"][name] = (float(e.std()), int(mm.sum()))
                 print(f"        {name}: {e.std():.6f}  ({int(mm.sum()):,} rows)")
+    out["by_indoor_class"] = indoorByClass(sub, m, y, pred, indoor_mode)
     # ★ THE SAME-ROWS COMPARISON GOES BEFORE THE JOINT-MODEL BLOCK, so it sits
     #   next to the headline it is correcting.
     if compare:
@@ -136,6 +139,50 @@ def score(cols, npz, codes=None, pct=15.0, seed=11, era_years=0, window=21.0,
                                 rows_at_athlete=_rowsPerAthleteSeason(
                                     sub, train_s))
     return out
+
+
+# ★★ THE INDOOR LEVELS, SCORED WHERE THEY ACT (2026-09-29). An indoor level
+#    moves only the indoor rows, so the corpus-wide sd barely notices it; this
+#    table is the held-out error on the INDOOR rows, per geometry class
+#    (track_geometry.geometryClass), printed under every indoor mode so pin and
+#    geometry are read side by side on the same rows. 'bias' is the mean of
+#    actual minus predicted: + means the class's ovals ran slower than the
+#    engine said, i.e. its level is too EASY. A right level puts it near zero.
+def indoorByClass(sub, m, y, pred, indoor_mode):
+    if sub.get("track_length") is None:
+        return None
+    import track_geometry as tg
+    keys = [str(k) for k in sub["course_keys"]]
+    base_in = np.array([k.startswith("TF:") and k.split("@", 1)[0].endswith(":in")
+                        for k in keys], dtype=bool)
+    length = np.asarray(sub["track_length"], dtype=np.float64)
+    if length.size != len(keys):
+        return None
+    cls_base = tg.geometryClassIndex(length, sub.get("track_type"))
+    course = np.asarray(sub["course"]).astype(np.int64)
+    ok = m & (course >= 0)
+    ok[ok] = base_in[course[ok]]
+    if not ok.any():
+        return None
+    cls_row = np.full(course.size, -1)
+    cls_row[ok] = cls_base[course[ok]]
+    res = {}
+    print(f"        indoor rows by geometry class (indoor mode {indoor_mode}; "
+          f"bias = actual - predicted, + = the class reads too easy):")
+    print(f"          {'class':<12} {'rows':>8} {'bias':>8} {'sd':>9}")
+    for c_i, name in enumerate(tg.GEO_CLASSES):
+        mm = ok & (cls_row == c_i)
+        if mm.sum() < 2:
+            continue
+        e = y[mm] - pred[mm]
+        res[name] = (float(e.mean()), float(e.std()), int(mm.sum()))
+        print(f"          {name:<12} {int(mm.sum()):>8,} {100 * e.mean():>+7.2f}% "
+              f"{e.std():>9.6f}")
+    e = y[ok] - pred[ok]
+    res["all indoor"] = (float(e.mean()), float(e.std()), int(ok.sum()))
+    print(f"          {'all indoor':<12} {int(ok.sum()):>8,} {100 * e.mean():>+7.2f}% "
+          f"{e.std():>9.6f}")
+    return res
 
 
 # _rowsPerAthleteSeason
@@ -384,7 +431,8 @@ def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
            use_curve=True, gauge=be.GAUGE_DEFAULT,
            gauge_scope=be.GAUGE_SCOPE_DEFAULT,
            prior_athlete=be.PRIOR_ATHLETE, prior_target=be.PRIOR_TARGET,
-           day_noise=be.DAY_NOISE_DEFAULT):
+           day_noise=be.DAY_NOISE_DEFAULT, indoor_mode=be.INDOOR_MODE_DEFAULT,
+           indoor_levels=None):
     """Fit every row and write the difficulty file."""
     t0 = time.time()
     if codes is None or "_cell" not in cols:
@@ -394,7 +442,8 @@ def fitAll(cols, npz, out_path, codes=None, era_years=0, window=21.0, top=0.5,
                use_curve=use_curve, verbose=True, codes=codes, gauge=gauge,
                gauge_scope=gauge_scope,
                prior_athlete=prior_athlete, prior_target=prior_target,
-               day_noise=day_noise)
+               day_noise=day_noise, indoor_mode=indoor_mode,
+               indoor_levels=indoor_levels)
     np.savez(out_path, D=f["D"], votes=f["votes"], course_keys=np.array(f["cell_keys"]),
              D_race=f["D_race"], votes_race=f["votes_race"],
              races_per_cell=f["races_per_cell"], races_per_base=f["races_per_base"],
@@ -444,7 +493,8 @@ def _shrinkageSweep(cols, npz, codes, args, settings=None):
                     prior_races=args.prior_races, prior_group=args.prior_group,
                     iters=args.iters, tilt=not args.no_tilt,
                     use_curve=not args.no_curve, gauge=args.gauge, gauge_scope=args.gauge_scope,
-                    prior_athlete=k_a, prior_target=target, verbose=False)
+                    prior_athlete=k_a, prior_target=target, verbose=False,
+                    indoor_mode=args.indoor_mode, indoor_levels=args.indoor_levels)
         rows.append((label, k_a, target, out))
 
     print("\n[bracket] ===== SHRINKAGE SWEEP =====")
@@ -555,6 +605,16 @@ def main():
                     help="the course prior's numerator: fitted (each group's "
                          "own multi-race courses) or reference (the pinned "
                          "cells' race-day spread)")
+    # ★ THE INDOOR MODE, SO geometry IS SCORED AGAINST pin BEFORE IT SHIPS
+    #   (owner, 2026-09-29). Run both with --dump/--compare on the same
+    #   --pct/--seed, and read the 'indoor rows by geometry class' table.
+    ap.add_argument("--indoor-mode", default=be.INDOOR_MODE_DEFAULT,
+                    choices=list(be.INDOOR_MODES),
+                    help="how indoor's level is held (bracket_engine."
+                         "INDOOR_MODES; default %(default)s)")
+    ap.add_argument("--indoor-levels", default=None,
+                    help="--indoor-mode geometry's levels file (default "
+                         "engine/data/indoor_geometry_levels.json)")
     ap.add_argument("--sweep-shrinkage", action="store_true",
                     help="score prior off / mean-target / median-target on the "
                          "SAME rows and print the table. Answers both 'does "
@@ -586,7 +646,8 @@ def main():
                prior_group=args.prior_group, iters=args.iters, tilt=not args.no_tilt,
                use_curve=not args.no_curve, gauge=args.gauge, gauge_scope=args.gauge_scope,
                prior_athlete=_priorAthlete(args.prior_athlete),
-               prior_target=args.prior_target, day_noise=args.day_noise)
+               prior_target=args.prior_target, day_noise=args.day_noise,
+               indoor_mode=args.indoor_mode, indoor_levels=args.indoor_levels)
         return
     score(cols, npz, codes=codes, pct=args.pct, seed=args.seed, era_years=args.era_years,
           window=args.window, top=args.top, prior_races=args.prior_races,
@@ -594,7 +655,8 @@ def main():
           use_curve=not args.no_curve, gauge=args.gauge, gauge_scope=args.gauge_scope,
           prior_athlete=_priorAthlete(args.prior_athlete),
           prior_target=args.prior_target, day_noise=args.day_noise,
-          dump=args.dump, compare=args.compare)
+          dump=args.dump, compare=args.compare,
+          indoor_mode=args.indoor_mode, indoor_levels=args.indoor_levels)
 
 
 if __name__ == "__main__":
