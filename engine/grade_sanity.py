@@ -527,7 +527,15 @@ _BUILD = f"""
     -- ★ RS IS COLLEGE AND WAS MISSING. GRADE_TO_LEVEL maps 'RS' -- redshirt --
     --   to college, and this function did not know it, so 67 seasons of RS
     --   corroborated as free text and resolved to nothing.
-    CREATE OR REPLACE FUNCTION classGrade(g text) RETURNS text AS $$
+    --
+    -- ★ ANY ELIGIBILITY DIGIT, NOT THE FOUR TEXTBOOK PAIRS (2026-09-29,
+    --   NCAA DI 2024: Dylan Schubert SR-5, Lucas Bons SR-5, Rikus Van
+    --   Niekerk SO-3, Luke Marsanskis SR-5). tfrrs writes class and year of
+    --   eligibility separately, so a redshirt is SO-3 or JR-4 and a fifth
+    --   year SR-5. Only 'fr-1' .. 'sr-4' were listed, every other pair fell
+    --   to NULL, the season went needy, and it came out in the high school
+    --   pool: unrated, and spelled "Grade 12" on the page.
+    CREATE OR REPLACE FUNCTION classWord(g text) RETURNS text AS $$
         SELECT CASE lower(rtrim(TRIM(g), '. '))
             WHEN 'fr' THEN 'FR' WHEN 'fresh'     THEN 'FR'
             WHEN 'freshman' THEN 'FR' WHEN 'freshmen' THEN 'FR'
@@ -542,6 +550,15 @@ _BUILD = f"""
         END
     $$ LANGUAGE sql IMMUTABLE;
 
+    CREATE OR REPLACE FUNCTION classGrade(g text) RETURNS text AS $$
+        SELECT CASE
+            WHEN lower(TRIM(g)) ~ '^(fr|so|jr|sr)-?[1-6]$'
+            THEN upper(left(TRIM(g), 2))
+            ELSE classWord(g)
+        END
+    $$ LANGUAGE sql IMMUTABLE;
+
+
     -- isDefiniteClass: does this row use the tfrrs CLASS+ELIGIBILITY form?
     --
     -- ★ §1.6, ENCODED. 'SR-4' can only be a fourth-year collegiate athlete --
@@ -549,7 +566,7 @@ _BUILD = f"""
     --   bare 'Sr' is a senior in either world. Rule 5b already leans on this
     --   distinction; rule 2c can now read it too.
     CREATE OR REPLACE FUNCTION isDefiniteClass(g text) RETURNS boolean AS $$
-        SELECT upper(TRIM(g)) ~ '^(FR|SO|JR|SR)-[1-4]$'
+        SELECT upper(TRIM(g)) ~ '^(FR|SO|JR|SR)-[1-6]$'
     $$ LANGUAGE sql IMMUTABLE;
 
     -- The banded keys GRADE_TO_LEVEL carries verbatim. They are grades, not

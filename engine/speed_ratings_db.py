@@ -928,6 +928,7 @@ def loadTeamLevels(min_rows=200, share=0.5, college_share=0.25):
                                  'jr', 'junior', 'jr-3',
                                  'sr', 'senior', 'sr-4',
                                  'rs', 'redshirt') THEN 'coll'
+                        WHEN lower(btrim(r.grade)) ~ '^(fr|so|jr|sr)-[1-6]$' THEN 'coll'
                         WHEN r.grade IS NULL OR btrim(r.grade) IN ('', '-') THEN 'none'
                         ELSE 'other' END AS lv,
                    count(*)
@@ -1246,7 +1247,8 @@ def loadClubTeams(min_rows=20, max_grade_share=0.05):
     rows carry (almost) no school grade and that are not colleges."""
     by_team, by_school = {}, {}
     grade_expr = ("CASE WHEN r.grade ~ '^([1-9]|1[0-2])$' OR lower(btrim(r.grade)) "
-                  "IN ('fr','so','jr','sr','fr-1','so-2','jr-3','sr-4') THEN 1 ELSE 0 END")
+                  "IN ('fr','so','jr','sr') "
+                  "OR lower(btrim(r.grade)) ~ '^(fr|so|jr|sr)-[1-6]$' THEN 1 ELSE 0 END")
     with getConn() as conn, conn.cursor() as cur:
         colleges = _collegeNames(cur)
         for table in ("results", "results_tf"):
