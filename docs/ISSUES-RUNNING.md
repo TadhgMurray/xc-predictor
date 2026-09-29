@@ -2970,3 +2970,87 @@ claimed / no meet / never seeded).
     /srv/venv/bin/python scripts/queue_meets.py --source tfrrs
     NO_VPN=1 ANET_RETRY_FAILED=1 xvfb-run -a scripts/launcher.py        # failures first
     NO_VPN=1 PER_MEET_DELAY=3,6 xvfb-run -a scripts/launcher.py         # then everything due
+
+## 2026-09-29 — 📋 COMPILED: what the owner's check runs said (logs/checks 142744, 161158, 161425)
+
+The owner, after two runner logs: "can we just compile and log after this,
+feels like a lot of runaway". So: no new checks. This is the state.
+
+### ⚠ BLOCKER FOR THE NEXT PIPELINE RUN: a graduating senior's summer race, normalised as college
+
+**Ajani Salcido, Brooks PR 2021-07-02 (grade 12, Jesuit OR).** The live row
+holds nt 823.4 (the pack, 19 h old, agrees with the database) and rates
+149.4 in hs_m. The backfill's own replay on today's code writes **nt 1358.6**
+for the same row: the college normalisation (the 8000 m anchor). Every other
+senior-spring row of his replays at 862-906. The board still resolves the
+row to hs_m, so the next 05 backfill would rate a college-normalised time on
+the HS scale -- about 90 instead of 149.
+
+**Tayvon Kitchen (29332123) is the same fault already live.**
+athlete_season_level says TF ay 2024 = **college** while XC ay 2024 = hs, and
+college_first_season is 2025 (2025-08-01). So his whole senior spring (grade
+12, Crater OR, Dec 2024 - Jul 2025) is pooled college_m: 106-116 on the
+college scale, HS-equivalent about 128-139. That is why his 8:43.94 at
+Arcadia reads below the owner's 9:01. (His unattached winter meets at
+college-hosted meets are the likely voters.)
+
+**The fix, not yet written:** a season before the person's
+college_first_season, with a school grade (<= 12), cannot be level college --
+not in athlete_season_level, not in the backfill's season lookup, not in
+resolvePool. Plus: check the backfill's season boundary for a July row
+against season_year.seasonYearFor (Aug-Jul). Salcido's 2021-07-02 belongs to
+ay 2020 (hs); ay 2021 is his first college year. Test cases: both people
+above. **Do not run 05_backfill (pipeline --from 3 or --from 5) until this
+lands.**
+
+### Answered
+
+- **Hanna Mosley**: clean. `person_collision --write` (11,186) is safe.
+- **Amnesty**: 15 pardons, including NCAA DI 2025 (median 1790 s vs the
+  deepest real field's 1789 s). The other 130 stay dropped (5:50-median 5Ks
+  and similar).
+- **Meet dates**: XC 25 + TF 50, the grades agree. `meet_date_fix --write`.
+- **Sahlman (29347137)**: the TF why_unrated ran (sprint temp table fixed in
+  3f961a1). His unrated rows are in the 161158 log; not read yet.
+- **MS zone meet 200996/806899**: Lutkenhaus's 12:14 was normalised from
+  ~2,400 m (nt 967.7, x1.32), Vijaykumar's 13:17 from 2 miles (nt 771.9,
+  x0.97): same division, same ms_m pool. Only a per-result pin
+  (_RESULT_OVERRIDE) gives one row its own distance; `peek_override
+  --result` (355b572) can now see those pins -- the old lookup used a
+  (meet, div) key and never could. Not yet run.
+- **NCS 2024**: weather credited +0.7% (2023 got +1.3%); the day was +6.9%
+  slow and stays out of the rating by the 2026-09-06 rule. With it: ~131.7
+  instead of 123.7. Open decision below.
+- **Boards**: still 4.2 s -- the NULLS LAST index lands when athlete_season
+  is rebuilt, or now with the CREATE INDEX line in owner_checks.
+- **Group means**: pools read ~100 on themselves. HS-equivalent: NCAA DI men
+  128.7 (16:00 XC 5K), DII 120.3, DIII 116.5; DI women 130.0.
+- **Indoor levels** written: under 200 m +0.91%, flat 200 +0.22%, banked
+  -0.64%, 300 m+ -0.54%, unknown +0.68%; joint level +0.02%.
+
+### Open decisions (the owner's)
+
+1. **Outlier slow cut.** Measured cuts: 7.5 sigma fast, 8 slow (5,788 fast,
+   77,536 slow flags; the slowest are broken rows rated ~2). Bobby Doyle is
+   80.4 vs a neighbour median of 100.7, z = -4.2: kept at 8. A cut near 4
+   catches it but flags ~427,000 slow races, a third of them genuine bad days
+   by the tail fit.
+2. **Distance curve by ability (B+C).** Held-out bias: HS girls XC -2.7% ->
+   -0.3%, HS girls track 1600->5000 -6.1% -> -0.1%, HS boys XC -1.4% ->
+   -0.3%. Worse: college men slightly, elementary track clearly (-2.3%).
+   The pool still matters after ability for middle school (5K->10K -4%),
+   hardly for college (0.2%). Recommendation: adopt with the per-pool
+   residual applied (a small change, not made).
+3. **The grass-to-track gap per pool.** Same athletes, same ability: HS
+   girls' track rates ~6% under their XC, HS boys 2.5%, college ~0, MS +2.5%
+   (diag_sport_gap_ability). One constant serves every pool today. Re-measure
+   after (2) -- the HS girls' curves are also the most biased there -- then
+   set per-pool, per-gender shifts from what is left.
+4. **Slow race days in XC** (NCS 2024): still out by rule.
+
+### Order, when the blocker is fixed
+
+    meet_date_fix --write; person_collision --write;
+    amnesty_division_drops --write && dump_overrides;
+    rating_outliers --write (after decision 1);
+    XCP_WEATHER_FIT=1 bash deploy/run_pipeline.sh --from 3
