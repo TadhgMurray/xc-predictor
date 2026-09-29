@@ -356,7 +356,9 @@ def report(result, names=None, top=0.0):
                       f"{_pct(e.get('anchor', 0.0)):>7} {_pct(e['published']):>10}")
             print("    read: raw = the era's vote-weighted mean of its races' readings "
                   "(each race weighs voters/(voters+sat)); history = every era of the "
-                  "course pulled toward its group's average by `prior` races' worth; "
+                  "course pulled toward its group's average by `prior` races' worth, "
+                  "and shared with the same course's cells at distances within 3% "
+                  "(Mt. SAC d4700/d4800: bracket_engine.SIBLING_DIST_TOL); "
                   "place = the cells this course rests on first (#id, how many) when the "
                   "pack carries coordinates; "
                   "era = (raw x votes + 2 x history) / (votes + 2); then the (sport, "

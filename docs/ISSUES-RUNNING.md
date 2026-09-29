@@ -2812,3 +2812,31 @@ thin class explains ~18 points. Settle with:
 Fixed on the way (event_parse): '880yd' (glued) and a bare '880' / '1320' /
 '1760' / '660' were read as METRES; they are yards now (600 and 1000 stay
 metric). Lands at the next 05 backfill.
+## 2026-09-29 — Mt. SAC distance split and Foot Locker Nationals' cell (FIXED IN CODE, NEEDS 07 + 08)
+
+The two course items logged on 2026-09-28, from Trey Caldwell's page.
+
+**Mt. SAC d4700/d4800: one course, one history.** The cell key rounds the
+distance to 100 m, so 4715 m (2021-2023) and 4828 m (2024) were two BASE
+courses and the one-race 2024 cell rested on the sport's average.
+bracket_engine.nearDistanceSiblings now gives a course's cells at distances
+within 3% (SIBLING_DIST_TOL) one base: the era prior pulls d4800 toward
+d4700's history, each distance keeps its own cell and number. Anchored on
+the most-raced distance, not chained; a corpus with no near sibling is
+bit-for-bit unchanged, and a course without one moves only through the
+shared pin (0.03% in the planted world, tests/test_distance_siblings.py). Off:
+XCP_BRACKET_SIBLING_TOL=0 (run_joint --bracket-sibling-tol). The log prints
+`[bracket] distance siblings: N XC courses ...`. Needs 08 only.
+
+**Foot Locker's own course key.** engine/champ_course.py: a meet named for
+the Foot Locker / Champs Sports / Eastbay national final or a regional is
+keyed `XC:champ:<slug>:d<m>` instead of the park's canonical id, so the
+final is one cell across years, spellings and sponsors and no longer shares
+Morley Field with the local San Diego meets. Read per name in
+tmp_pack_meet_class (column `champ`); publishes as "XC:Foot Locker
+Nationals" with canonical_id NULL. `scripts/meet_cells.py --meet "Foot
+Locker"` now shows the champ key as the cell. Needs 07 (the pack) + 08.
+⚠ NOT YET ON THE PAGE: app.py resolves a row's difficulty and day through
+course_canonical -> (canonical_id, distance), so a Foot Locker row will SHOW
+the park's (now local-only) cell and no day term while its RATING comes from
+the championship cell. The joins need the champ key before they agree.

@@ -1569,6 +1569,11 @@ def buildParser():
                     help="metres within which courses of one kind form a PLACE the "
                          "bracket engine pulls them toward (bracket_engine.PLACE_RADIUS_M, "
                          "%s; 0 = no place prior)" % 400)
+    ap.add_argument("--bracket-sibling-tol", type=float, default=None,
+                    help="a course's cells at distances within this fraction of "
+                         "each other share one history in the bracket engine "
+                         "(bracket_engine.SIBLING_DIST_TOL, 0.03; 0 = off). Mt. SAC "
+                         "at 4715 m and at 4828 m is one course")
     ap.add_argument("--bracket-place-prior", type=float, default=None,
                     help="races' worth of pull of a course toward its place "
                          "(bracket_engine.PRIOR_PLACE, 2)")
@@ -1945,7 +1950,7 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         course_scale="fit", gauge=None, indoor_centre=None,
                         indoor_mode=None, indoor_gate_mode=None,
                         gauge_scope=None, xc_level=None,
-                        xc_level_mode=None, day_noise=None):
+                        xc_level_mode=None, day_noise=None, sibling_tol=None):
     """Swap the joint solve's course difficulties for the bracket engine's,
     in place in `out` (delta, d, ability, rating, cell_var/se; the joint's
     delta kept as delta_joint). Returns a dict of what happened."""
@@ -2018,6 +2023,10 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         place_kw["xc_level_mode"] = xc_level_mode
     if day_noise is not None:
         place_kw["day_noise"] = day_noise
+    # ★ A COURSE'S NEAR DISTANCES SHARE ONE HISTORY (bracket_engine.
+    #   SIBLING_DIST_TOL; Mt. SAC d4700/d4800). None keeps the engine's 3%.
+    if sibling_tol is not None:
+        place_kw["sibling_tol"] = float(sibling_tol)
     f = be.fit(sub, npz_like, train=None, window=window, top=top, codes=codes, z=z,
                h_row=h, verbose=verbose, prior_group=be.parsePrior(prior_group), **place_kw)
     D_b = np.asarray(f["D"], dtype=np.float64).copy()
@@ -2490,7 +2499,8 @@ def main():
                                 gauge_scope=getattr(args, "gauge_scope", None),
                                 xc_level=getattr(args, "bracket_xc_level", None),
                                 xc_level_mode=getattr(args, "bracket_xc_level_mode", None),
-                                day_noise=getattr(args, "day_noise", None))
+                                day_noise=getattr(args, "day_noise", None),
+                                sibling_tol=getattr(args, "bracket_sibling_tol", None))
         except Exception:                                        # noqa: BLE001
             import traceback
             traceback.print_exc()

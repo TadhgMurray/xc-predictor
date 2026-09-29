@@ -766,6 +766,10 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   of one kind within the radius rest on each other before the sport's
   #   average (bracket_engine.placeClusters). Needs a pack built with the
   #   course coordinates (07_pack from 2026-09-14 on).
+  # ★ XCP_BRACKET_SIBLING_TOL (fraction, default 0.03; 0 off, 2026-09-29):
+  #   one course's cells at listed distances within 3% share one history
+  #   (Mt. SAC at 4715 m and 4828 m), each distance keeping its own cell
+  #   (bracket_engine.SIBLING_DIST_TOL).
   # ★ XCP_COURSE_SCALE (2026-09-15): the per-sport multiplier on the bracket
   #   engine's course effects, 'fit' by default (since 2026-09-28 from the
   #   tilt-by-races rows of courses with 4+ races, where the prior's in-sample
@@ -792,6 +796,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_BRACKET_WINDOW:+--bracket-window "$XCP_BRACKET_WINDOW"} \
       ${XCP_TRACK_LEVEL_BY_POOL:+--track-level-by-pool "$XCP_TRACK_LEVEL_BY_POOL"} \
       ${XCP_BRACKET_PLACE_RADIUS:+--bracket-place-radius "$XCP_BRACKET_PLACE_RADIUS"} \
+      ${XCP_BRACKET_SIBLING_TOL:+--bracket-sibling-tol "$XCP_BRACKET_SIBLING_TOL"} \
       ${XCP_GAUGE:+--gauge "$XCP_GAUGE"} \
       ${XCP_GAUGE_SCOPE:+--gauge-scope "$XCP_GAUGE_SCOPE"} \
       ${XCP_BRACKET_INDOOR_GATES:+--bracket-indoor-gates "$XCP_BRACKET_INDOOR_GATES"} \

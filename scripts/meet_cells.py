@@ -28,13 +28,19 @@ for _p in (_ROOT, _HERE):
         sys.path.insert(0, _p)
 
 from database import getConn                                    # noqa: E402
+sys.path.insert(0, os.path.join(_ROOT, "engine"))
+import champ_course                                             # noqa: E402
 
+# ★ THE CELL IS WHAT THE ENGINE KEYS, and since 2026-09-29 a championship
+#   with its own course (engine/champ_course.py) is keyed by its name, not
+#   the park: the `champ` column is that key, and wins over the canonical id.
 _MEET_SQL = """
     WITH rows AS (
         SELECT r.meet_id, r.div_id, r.source, r.date,
                COALESCE(m.meet_name, mt.meet_name)        AS meet_name,
                COALESCE(m.course_name, mt.venue_name)     AS course_name,
-               cc.canonical_id, cc.canonical_name
+               cc.canonical_id, cc.canonical_name,
+               """ + champ_course.sql("COALESCE(m.meet_name, mt.meet_name, '')") + """ AS champ
         FROM   results r
         LEFT   JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
         LEFT   JOIN meets_tfrrs mt ON r.source = 'tfrrs'
@@ -47,13 +53,13 @@ _MEET_SQL = """
                 = round(COALESCE(m.gps_long, mt.gps_long)::numeric, 5)
         WHERE  COALESCE(m.meet_name, mt.meet_name) ILIKE %(pat)s
     )
-    SELECT canonical_id, min(canonical_name), course_name,
+    SELECT COALESCE(champ, canonical_id::text), min(canonical_name), course_name,
            substr(date::text, 1, 4) AS yr, count(*) AS n,
            count(DISTINCT meet_id || '/' || div_id::text) AS divisions,
            min(meet_name)
     FROM   rows
-    GROUP  BY canonical_id, course_name, yr
-    ORDER  BY canonical_id NULLS LAST, yr
+    GROUP  BY COALESCE(champ, canonical_id::text), course_name, yr
+    ORDER  BY COALESCE(champ, canonical_id::text) NULLS LAST, yr
 """
 
 

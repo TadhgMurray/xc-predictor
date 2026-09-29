@@ -577,6 +577,21 @@ def _placeholderSql() -> str:
 #   The rule lives in engine/meet_class.py (one place, with a Python twin
 #   the tests and scripts/meet_class_census.py run); this is its SQL.
 from meet_class import sql as _meetClassSql          # noqa: E402
+# ★ A CHAMPIONSHIP'S OWN COURSE AT A SHARED VENUE, FROM ITS NAME (owner,
+#   2026-09-28: Foot Locker Nationals at Morley Field "reads far too easy").
+#   The venue part of the key becomes 'champ:<slug>' for the meets named in
+#   engine/champ_course.py, so the final is one cell across years, spellings
+#   and sponsors instead of a day diluted by the park's local meets. Looked
+#   up per name in tmp_pack_meet_class (the champ column), like the class.
+import champ_course as _champ                        # noqa: E402
+
+
+def _champKeySql(name_expr: str = "COALESCE(m.meet_name, mt.meet_name, '')") -> str:
+    """The champ venue key for a row: the per-name table's answer when the
+    name is in it, the in-line rule only for a name it has not seen -- so the
+    regexes do not run per row (see ensurePackMeetClass)."""
+    return (f"CASE WHEN mc.name IS NOT NULL THEN mc.champ "
+            f"ELSE {_champ.sql(name_expr)} END")
 
 
 def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
@@ -611,6 +626,9 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                     WHEN COALESCE(m.course_name, mt.venue_name) IS NULL
                     THEN NULL
                     ELSE COALESCE(
+                            -- ★ a championship's own course first
+                            --   (engine/champ_course.py), then the venue
+                            {_champKeySql()},
                             cc.canonical_id::text,
                             'name:' || btrim(COALESCE(m.course_name,
                                                       mt.venue_name)))
@@ -1560,7 +1578,8 @@ def _packMeetClassSql(sport):
     CREATE TEMP TABLE tmp_pack_meet_class AS
     SELECT name,
            {_meetClassSql("name")} AS cls,
-           {_meetClassSql("name", "TRUE")} AS cls_flag
+           {_meetClassSql("name", "TRUE")} AS cls_flag,
+           {_champ.sql("name")} AS champ
     FROM ({_MEET_CLASS_NAMES[sport]} UNION SELECT '') s (name);
     ANALYZE tmp_pack_meet_class;
 """
@@ -1733,6 +1752,14 @@ def _splitVenueKey(key: str, names: dict):
 
     if venuePart.startswith("name:"):
         return (f"XC:{venuePart[5:]}", None, distance)
+
+    # ★ a championship's own course (engine/champ_course.py): its display
+    #   name, and NO canonical_id -- the venue's id belongs to the park's
+    #   own cell, and two rows under one (canonical_id, distance) would fan
+    #   out every page join on it
+    champ = _champ.displayName(venuePart)
+    if champ is not None:
+        return (f"XC:{champ}", None, distance)
 
     return (f"XC:{venuePart}", None, distance)
 

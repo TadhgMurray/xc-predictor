@@ -533,6 +533,94 @@ def placeClusters(keys, lat, lon, radius_m=PLACE_RADIUS_M):
     return place, next_id
 
 
+# ★★ ONE COURSE AT TWO LISTED DISTANCES IS ONE HISTORY (owner, 2026-09-28:
+#    "Mt. SAC 2024 was cannibalised by a distance split"). The XC cell key is
+#    the course AND its distance rounded to 100 m (speed_ratings_db._xcQuery,
+#    `/ 100.0) * 100)::int`), because one venue can host a 2300 and an 8000
+#    and one difficulty cannot cover both. But the same loop listed as
+#    2.93 mi one year and 3 mi the next is also split by that rounding: the
+#    Mt. SAC Invitational is stored at 4715 m for 2021-2023 (d4700, +11.8%)
+#    and at 4828 m for 2024 (d4800, +6.3%). d4800 is a separate BASE course
+#    with one race day, so the era prior pulled it toward a history of one
+#    race, and the group prior pulled that toward the sport's average -- the
+#    exact thing the era prior exists to stop. Trey Caldwell: 14:49 there in
+#    2023 rated 140.6, 14:46 in 2024 rated 137.8 -- a FASTER time on a course
+#    listed 2.4% LONGER rated LOWER.
+#
+#  ★ SO: cells of ONE course (the key less its ':d<m>') whose distances are
+#    within SIBLING_DIST_TOL of each other share one BASE, so the history the
+#    era prior pulls toward is the course's, not one day's. Each distance
+#    KEEPS ITS OWN CELL -- its own number, its own time normalisation in the
+#    joint solve, its own era split -- only the history under it is shared.
+#    It is a prior, PRIOR_RACES races' worth: a sibling with a season of its
+#    own days reads its own days.
+#
+#  ! ANCHORED, NOT CHAINED. Within a course the base with the most rows
+#    anchors, and takes every distance within the tolerance of ITS distance;
+#    what is left anchors the next. Chaining (4600-4700-4800-4900-5000, each
+#    step 2%) would fold a 4600 into a 5000, which the tolerance says is a
+#    different course. A course with one distance, or distances further
+#    apart (Mt. SAC's 4715 against the West regional's 5000, 6%), is exactly
+#    as before -- tests/test_distance_siblings.py pins both.
+#
+#  ! THE TOLERANCE IS ON THE KEYS, which step 100 m: 2% at 5000 m, but 3.1%
+#    at 3200 m, so short courses never join their neighbouring key at 3%.
+#    The anchor is read off the rows the fit is given, so a holdout's
+#    athlete sample could pick a different anchor -- only where a course has
+#    three or more near distances; two always pair.
+#
+#  ! XC ONLY: a track key carries a surface, not a distance, and is untouched.
+#    0 turns it off (fit(sibling_tol=0), run_joint --bracket-sibling-tol 0,
+#    XCP_BRACKET_SIBLING_TOL=0 in the pipeline).
+SIBLING_DIST_TOL = 0.03
+
+
+def _courseAndDistance(key):
+    """'XC:13433:d4700' -> ('XC:13433', 4700); (None, None) for a track key,
+    a key with no ':d<m>' suffix, or an era cell key."""
+    k = str(key)
+    if not k.startswith("XC:") or "@e" in k:
+        return None, None
+    head, tag, dist = k.rpartition(":d")
+    if not tag or not dist.isdigit() or int(dist) <= 0:
+        return None, None
+    return head, int(dist)
+
+
+def nearDistanceSiblings(keys, weight=None, tol=SIBLING_DIST_TOL):
+    """Per base course: the base whose history it shares (itself for a
+    course with no near-distance sibling). `weight` (rows per base) picks the
+    anchor, most first; ties by distance, then key order, so the answer is
+    reproducible. See SIBLING_DIST_TOL."""
+    keys = [str(k) for k in keys]
+    n = len(keys)
+    hist = np.arange(n, dtype=np.int64)
+    if not tol or tol <= 0 or n < 2:
+        return hist
+    w = (np.zeros(n) if weight is None
+         else np.asarray(weight, dtype=np.float64).reshape(-1))
+    by_course = {}
+    for i, k in enumerate(keys):
+        head, dist = _courseAndDistance(k)
+        if head is not None:
+            by_course.setdefault(head, []).append((i, dist))
+    for members in by_course.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda t: (-w[t[0]], t[1], t[0]))
+        left = list(members)
+        while left:
+            a, d_a = left.pop(0)
+            keep = []
+            for b, d_b in left:
+                if abs(d_b - d_a) <= tol * min(d_a, d_b):
+                    hist[b] = a
+                else:
+                    keep.append((b, d_b))
+            left = keep
+    return hist
+
+
 def parsePrior(spec):
     """A prior spec from the command line: 'fit', a number (every group),
     or 'XC=1,TF:out=2.5,TF:in=1' (a group left out keeps its stated
@@ -744,7 +832,7 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         indoor_gate_mode=INDOOR_GATE_MODE_DEFAULT, indoor_gates=INDOOR_GATES,
         gauge=GAUGE_DEFAULT, gauge_scope=GAUGE_SCOPE_DEFAULT,
         xc_level=None, xc_level_mode=XC_LEVEL_MODE_DEFAULT,
-        day_noise=DAY_NOISE_DEFAULT):
+        day_noise=DAY_NOISE_DEFAULT, sibling_tol=SIBLING_DIST_TOL):
     """Fit on the rows where `train` is True (all rows when None); every
     row, held out or not, gets its local level and a prediction.
 
@@ -805,6 +893,18 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                                  dtype=np.int64) if era_years else np.arange(n_cell))
         season, n_season = pe.athleteSeasonCodes(ath_raw, year)
         race, n_race = rj.raceCodes(course, days)
+    # ★ A COURSE'S CELLS AT NEAR DISTANCES SHARE ONE HISTORY (Mt. SAC's 4715
+    #   and 4828; see SIBLING_DIST_TOL). The cells, their keys and the races
+    #   are untouched; only the base each cell's era prior pulls toward moves,
+    #   so everything below that reads base_of_cell (the group and place
+    #   priors, the fitted priors' course count, races_per_base, the trace)
+    #   sees one course. `own_base_of_cell` is what it was.
+    own_base_of_cell = base_of_cell.copy()
+    ok_c = course >= 0
+    rows_per_base = np.bincount(course[ok_c], minlength=n_base)[:n_base]
+    history_of_base = nearDistanceSiblings(keys, rows_per_base, sibling_tol)
+    base_of_cell = history_of_base[base_of_cell]
+    n_sibling = int((history_of_base != np.arange(n_base)).sum())
     # the athlete's rating (for the voters and the tilt) and curve point
     rating = None
     if npz is not None and "rating" in npz and np.asarray(npz["rating"]).size == n_season:
@@ -980,7 +1080,8 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                       flush=True)
                 gauge = "outdoor"
             else:
-                hard_ref = ref_base[base_of_cell]
+                # the cell's OWN course's geometry, not its history's
+                hard_ref = ref_base[own_base_of_cell]
                 gauge_ref = hard_ref.copy()
         # ★★ AND CROSS COUNTRY GETS THE SAME TREATMENT, FROM A NAMED LIST
         #    (owner, 2026-09-20: "give Xc an absolute anchor too").
@@ -1491,6 +1592,15 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                       f"{prior_athlete_stated:g} "
                       f"(needs {PRIOR_ATHLETE_MIN_ATHLETES} athlete-seasons "
                       f"with 2+ rows)", flush=True)
+        if n_sibling:
+            print(f"[bracket] distance siblings: {n_sibling:,} XC courses share the "
+                  f"history of the same course at a distance within "
+                  f"{100 * float(sibling_tol):g}% (Mt. SAC d4700/d4800); each keeps "
+                  f"its own cell", flush=True)
+        else:
+            print(f"[bracket] distance siblings: none"
+                  + (" (sibling_tol=0)" if not sibling_tol else
+                     f" within {100 * float(sibling_tol):g}%"), flush=True)
         if cols.get("course_lat") is None:
             print("[bracket] place prior: the pack carries no course coordinates "
                   "(rebuild it at 07_pack); no places", flush=True)
@@ -1662,7 +1772,9 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                 tilt_races=tilt_races, tilt_bands_known=tilt_bands_known,
                 pin=st["pin"], D_fit=st["D_new"],
                 place_of_base=place_of_base, n_place=int(n_place),
-                place_radius=float(place_radius or 0.0), prior_place=k_place)
+                place_radius=float(place_radius or 0.0), prior_place=k_place,
+                own_base_of_cell=own_base_of_cell, history_of_base=history_of_base,
+                n_sibling=n_sibling, sibling_tol=float(sibling_tol or 0.0))
 
 
 TILT_BANDS = (100.0, 120.0, 130.0, 140.0, 150.0, 160.0)
