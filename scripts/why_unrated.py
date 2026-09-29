@@ -33,16 +33,41 @@ import build_ranking_results as B                     # noqa: E402
 from fill_ratings import _rowPool                     # noqa: E402
 from normalize_distance import poolBandFor            # noqa: E402
 
-_MARK = "WHERE r.speed_rating IS NOT NULL"
+# ★ THE BOARD BUILD'S OWN WHERE, WHATEVER SHAPE IT HAS TAKEN (owner's run,
+#   2026-09-29: an AssertionError on --sport TF). The track query admits
+#   "(rated OR a sprint OR a field event)", so the bare "IS NOT NULL" line
+#   this looked for is only the XC one. Either head is swapped for this
+#   person's own rows, rated or not.
+import re                                             # noqa: E402
+
+_MARK = re.compile(r"WHERE\s+(\(\s*)?r\.speed_rating IS NOT NULL")
+
+
+def _swapWhere(sql, cond):
+    """Replace the head of the board query's WHERE -- the bare XC line, or
+    the whole parenthesised track group, matched paren for paren."""
+    m = _MARK.search(sql)
+    assert m, "the board query's WHERE moved again"
+    end = m.end()
+    if m.group(1):
+        depth, i = 1, m.end()
+        while depth:
+            depth += {"(": 1, ")": -1}.get(sql[i], 0)
+            i += 1
+        end = i
+    return sql[:m.start()] + "WHERE " + cond + sql[end:]
 
 
 def _sqlFor(sport, rated):
-    sql = B._SQL[sport]
-    assert _MARK in sql
+    """The board build's source query narrowed to one person, every row of
+    theirs: the impossible/outlier anti-joins are left out, so a row they
+    would hide is still listed."""
+    sql = B._SQL[sport].replace("__RATING_POOL__", "NULL::text")
+    sql = sql.replace("__IMPOSSIBLE__", "")
     cond = ("COALESCE(r.person_id, r.athlete_id) = %(pid)s"
             + ("" if rated is None else
                f" AND r.speed_rating IS {'NOT ' if rated else ''}NULL"))
-    return sql.replace(_MARK, "WHERE " + cond)
+    return _swapWhere(sql, cond)
 
 
 def _verdict(row, sport):
@@ -140,7 +165,8 @@ def main():
         with conn.cursor(
                 cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
             cur.execute(_sqlFor(args.sport, rated=None),
-                        {"pid": args.person_id, "since": "1990-01-01"})
+                        {"pid": args.person_id, "since": "1990-01-01",
+                         "until": "2100-01-01"})
             rows = sorted(cur.fetchall(), key=lambda r: r.date)
 
             print(f"\n  person {args.person_id}, {args.sport}: "
