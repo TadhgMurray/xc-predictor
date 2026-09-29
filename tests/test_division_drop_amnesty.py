@@ -17,6 +17,9 @@ _DISTANCE_DROP_XC.update({
     (27301, 1),  # 250 rows at 10000m: median pace 0.179 s/m at 10000 -- beyond any human; nothing rated to size it
     (26359, 1),  # 145 rows at 8047m: median pace 0.118 s/m at 8047 -- beyond any human; nothing rated to size it
     (555, 2),  # 40 rows at 5000m: survivors +40 off their own heads, implied 7100 snaps to no rung (err +9%)
+    (25430, 1),  # 60 rows at 8047m: median pace 0.179 s/m at 8047 -- beyond any human; nothing rated to size it
+    (26598, 0),  # 50 rows at 8047m: median pace 0.158 s/m at 8047 -- beyond any human; nothing rated to size it
+    (105185, 414123),  # 90 rows at 5000m: median pace 0.178 s/m at 5000 -- beyond any human; nothing rated to size it
 })
 """
 
@@ -30,10 +33,19 @@ def test_the_fast_bar_is_the_world_record():
 
 def test_only_the_pace_bar_convictions_are_retried():
     convs = AD.convictions(TEXT)
-    assert [(c[0], c[1]) for c in convs] == [(27301, 1), (26359, 1)]
+    assert [(c[0], c[1]) for c in convs] == [(27301, 1), (26359, 1), (25430, 1),
+                                             (26598, 0), (105185, 414123)]
     free, keep = AD.pardonable(convs)
-    assert [(f[0], f[1]) for f in free] == [(27301, 1)]
-    assert [(k[0], k[1]) for k in keep] == [(26359, 1)]
+    # NCAA DI 2025 and a 24:00 college 8k median: fields that really run that
+    assert [(f[0], f[1]) for f in free] == [(27301, 1), (25430, 1)]
+    # the owner's dry run: a 21:11 8k median and a 14:50 anet 5k median are
+    # faster than any real field of their feed, and stay dropped
+    assert [(k[0], k[1]) for k in keep] == [(26359, 1), (26598, 0), (105185, 414123)]
+
+
+def test_a_feed_comes_from_the_rows_when_known():
+    assert AD.feedOf((27301, 1)) == "tfrrs" and AD.feedOf((105185, 414123)) == "anet"
+    assert AD.feedOf((27301, 1), {(27301, 1): {"anet", "tfrrs"}}) == "anet"
 
 
 def test_the_pardon_block_runs_and_is_not_repeated():
@@ -41,6 +53,6 @@ def test_the_pardon_block_runs_and_is_not_repeated():
     text = TEXT + AD.block(free)
     ns = {}
     exec(text, ns)
-    assert ns["_DISTANCE_DROP_XC"] == {(26359, 1), (555, 2)}
+    assert ns["_DISTANCE_DROP_XC"] == {(26359, 1), (555, 2), (26598, 0), (105185, 414123)}
     assert "_DIVISION_DROP_PARDON" not in ns
-    assert AD.alreadyPardoned(text) == {(27301, 1)}
+    assert AD.alreadyPardoned(text) == {(27301, 1), (25430, 1)}
