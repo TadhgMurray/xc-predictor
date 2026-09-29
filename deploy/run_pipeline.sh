@@ -456,10 +456,10 @@ bgwait() {
 #   227716, a 2023 Middlesex League race stored as 2025-10-26, put four
 #   runners' own high school race on their college seasons. Every step after
 #   this one reads the season off results.date, so the date is corrected in
-#   place before any of them runs: the meet's id neighbours say which year it
-#   is, the athletes' grades must agree, and every fix is a row of
-#   meet_date_fix (`engine/meet_date_fix.py --undo <meet> --sport XC` puts
-#   one back). Idempotent: a second run moves nothing; a re-scrape that
+#   place before any of them runs: the athletes' grades say which year it is
+#   (anet meet ids are not a clock -- the first cut's dry run), and every
+#   fix is a row of meet_date_fix (`engine/meet_date_fix.py --undo <meet>
+#   --sport XC` puts one back). Idempotent: a second run moves nothing; a re-scrape that
 #   writes the wrong year back is moved again. NOT on the always-run list: a
 #   --from run keeps the verdicts steps 01-04 made on the old dates, and a
 #   date moved under them would split the pack from them.

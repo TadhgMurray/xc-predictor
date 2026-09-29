@@ -14,57 +14,116 @@ Issue: the first server run of engine/level_conflict.py (2026-09-29).
   Bates, Jared Rife / Middlebury, Tyler Johnson / Trinity, Max Bennett /
   Conn) each carried an anet row at meet 227716 dated 2025-10-26, grades 11
   and 12, schools Winchester / Belmont / Watertown -- the Middlesex League.
-  But anet hands out meet ids in the order meets are LISTED, and 227716 sits
-  among 2023 listings: meet 228191 is 2023-08-26, meet 229092 is 2023-09-02,
-  and the rows' own native ids (52163xxx) are 2023-era (native 52093608 is
-  2023-10-28). It is their OWN 2023 high school race under a wrong year. The
+  Their grades there are their 2023 grades: juniors and seniors in the
+  autumn of 2023, collegians by 2025. It is their OWN 2023 high school race
+  under a wrong year (its neighbours in id, meet 228191 of 2023-08-26 and
+  229092 of 2023-09-02, and its rows' 2023-era native ids say the same). The
   person was right; the DATE was wrong. level_conflict flagged the race off
   four real careers, and every reader that asks "which season is this" --
   season_year, grade_sanity, the pack, the boards, the athlete page -- asked
   it of 2025.
 
-★ THE CLOCK THAT CATCHES IT: THE MEET ID. A meet is listed weeks or months
-  before it is run, so the dates of the meets listed around it -- its id
-  neighbours -- say when it ran, to within the normal lead time. The
-  neighbourhood is the median date of the K = 200 nearest meet ids (100 each
-  side, the meet itself left out). A median, so up to 100 bad dates in one
-  window cannot move it; 200 meets is a few days of anet listings in season,
-  so the window is narrow in time as well.
+⚠ THE MEET ID IS NOT A CLOCK (the owner's dry run of the first cut,
+  2026-09-29). The first cut read a meet's year off the median date of its
+  200 nearest meet ids. Over the whole corpus |date - id neighbourhood| was
+      XC  p50 13d   p90 385d   p99 10,560d
+      TF                       p99 15,292d
+  -- every meet REPORT ONLY, nothing fixed. anet ids are not chronological:
+  historic results are uploaded in bulk years later (the Sunfair
+  Invitational of 1999 carries id 244560, among 2024 meets) and current
+  meets are listed next to historic batches (First to the Finish 2023 has
+  neighbours from 2004). Those stored dates are RIGHT. So the neighbourhood
+  is gone, and the athletes are the clock.
 
-★ THE CUT IS MEASURED, NOT CHOSEN (owner: no arbitrary numbers). For every
-  anet meet, dev = its date - its neighbourhood's. The NORMAL SPREAD is the
-  99th percentile of |dev| over the whole sport: 99 meets in 100 sit inside
-  it, and it is printed with p50 / p90 / p99.9 so the shape can be read. A
-  wrong year moves a date by a whole year (365 days) or more. So the cut is
-  HALFWAY between the edge of normal and the smallest wrong-year error:
+★ THE CLOCK: THE ATHLETES' GRADES. Every high schooler at an anet meet with
+  a numeric grade (9-12) and other anet rows is a VOTER. Their other rows --
+  every other meet of either sport -- say which class they are in:
+  class_of = season + 13 - grade, the mode over those meets, the meet being
+  voted on left out (a voter cannot vouch for their own meet). Their grade
+  AT this meet then says which season it was: class_of - 13 + grade. A
+  voter says "k years from the stored season", k = that season - the stored
+  one. For meet 227716 the Middlesex League's own juniors and seniors, whose
+  other races are 2023's, say k = -2. Every anet meet in both sports is
+  voted on; one set-based pass (below) builds every vote at once.
 
-      cut = (spread + 365.25) / 2
+★ THE VERDICT. A meet is a FIX when
+    - it has at least MIN VOTERS (measured, next note),
+    - a STRICT MAJORITY of them name the same season, and at least THE BAR
+      of them (measured, two notes down),
+    - that season is not the stored one (k != 0: a whole number of years,
+      because seasons are), and
+    - that majority outnumbers the voters for the stored season (implied by
+      the strict majority, and checked anyway: it is the rule).
+  A meet everyone agrees with keeps its date however far its id is from its
+  neighbours: an old season uploaded late is voted into its own year by its
+  own athletes. Too few voters, or a split, is no verdict, and the meet stays.
 
-  -- a meet past it is nearer "a year off" than "listed early". And if the
-  spread itself reaches half a year, no cut can separate the two (a normal
-  meet would sit as far out as a wrong one): the sport is then reported
-  and nothing in it is changed.
+★ THE MINIMUM VOTER COUNT IS MEASURED, NOT CHOSEN (owner: no arbitrary
+  numbers). A voter can be wrong on their own -- a grade typed wrong, a row
+  on the wrong person -- and a meet is falsely moved when MOST of its voters
+  are wrong the same way. So:
+    1. THE NOISE: over every meet with two or more voters and one clear
+       winner, the share of voters who disagree with their own meet's
+       winner, by how many years (d). A meet-wide error -- a wrong year, the
+       thing hunted -- moves every voter together and is not noise; this
+       measures the voters who go their own way.
+    2. THE CHANCE OF A FALSE FIX at a meet of n voters is the chance that a
+       strict majority of them err by the same d: sum over d of
+       P(Binomial(n, rate_d) > n/2) -- the d are exclusive, as only one
+       season can hold a strict majority.
+    3. THE MINIMUM is the smallest n at which the sport's own meets -- every
+       meet with n or more voters, each at its own n -- EXPECT FEWER THAN
+       ONE false FIX between them (EXPECTED_FALSE). The corpus sets it:
+       noisier grades or more small meets raise it.
+  It is printed with the noise and the expected count, so it can be read.
+  It is derived at the weakest bar a verdict can have, a strict majority;
+  the measured bar (next note) only ever asks for more, so the true
+  expectation is lower still.
+  ! THE MODEL TAKES VOTERS AS INDEPENDENT. A whole meet graded one way is
+    not independent noise; that is the seam note.
 
-★ ONLY THE YEAR IS CORRECTED, AND ONLY WHEN THAT IS ALL THAT IS WRONG.
-  The fix keeps the month and day and moves the year by k = round(dev /
-  365.25): 2025-10-26 -> 2023-10-26. It is proposed only when the moved date
-  lands INSIDE the normal spread of its neighbourhood -- the month-day is
-  plausible and only the year was off. A date that no whole number of years
-  can bring home (a 1900-01-01 placeholder, a day typed wrong too) is
-  reported, never guessed.
+★ THE BAR IS MEASURED TOO: A WRONG YEAR IS AS UNANIMOUS AS A RIGHT ONE.
+  A strict majority is the floor -- the least share at which one season is
+  the answer, and no other, the stored one included, can outvote it. But a
+  meet stored under a wrong year is still ONE meet: its voters' grades are
+  all from its true season, so they should agree with that season as well
+  as a right-year meet's voters agree with theirs. A 52% / 48% meet is not
+  that; it is a mix (two meets under one id, one school graded its own
+  way), and moving it would put half its rows in the wrong year. So the bar
+  is the 1st percentile of the share backing the stored season, over the
+  meets that back it with a strict majority and have MIN VOTERS: 99
+  right-year meets in 100 agree with themselves at least this well (the
+  99-in-100 edge of normal the first cut used for its spread). It is never
+  below a strict majority, and it is printed with the agreement quantiles.
 
-⚠ AND THE ATHLETES MUST AGREE. A meet far from its id neighbours is not
-  always a typo: a coach who uploads an old season's results gets a NEW id
-  for an OLD meet, and that date is right. The athletes' grades tell the two
-  apart. Each high schooler at the meet with a numeric grade has other anet
-  rows, and those say which class they are in (class_of = season + 13 -
-  grade, the mode over their other rows); their grade AT THIS MEET then says
-  which season this meet was (season = class_of - 13 + grade). The fix is
-  applied only when those votes are a strict majority for the corrected
-  season and outnumber the stored one. No votes (nobody with a grade and a
-  history) is no evidence, and is reported. For meet 227716 the vote is the
-  Middlesex League's own juniors and seniors, whose other 2023 races put
-  this one in 2023.
+⚠ THE SEASON SEAM: A ONE-YEAR VOTE CAN BE A CONVENTION, NOT A WRONG YEAR.
+  Our season opens in August (season_year.ACADEMIC_START_MONTH). A feed
+  whose season opens elsewhere -- a summer race graded for the coming
+  school year -- has EVERY runner at the meet one grade "ahead", and the
+  whole meet votes k = +1 (or -1 on the other side of the seam) as one. The
+  voters agree, so neither the majority nor the minimum count can see it;
+  but a convention belongs to the MONTH and a wrong year does not. So for
+  each sport and stored month, k = -1 and k = +1 majorities are counted
+  against the meets there (with at least MIN VOTERS), and a month is a
+  CONVENTION for that k when its count is more than a typical month's rate
+  can explain: P(Binomial(meets, typical rate) >= count) under
+  EXPECTED_FALSE / 24 -- fewer than one of the sport's 24 month-and-
+  direction cells so flagged by chance. The typical rate is the median over
+  the months that hold an even share of the sport's meets or more (1/12:
+  the quiet months are too small to say what is typical), each month's
+  rate counted with one more meet voting k than it had (a month that saw
+  none cannot make every one-year vote look strange). A one-year FIX in a
+  CONVENTION cell is reported, not applied. A vote of two years or more is
+  no season-seam artifact and is never held by this.
+
+! AND TWO THINGS NO VOTE CAN MAKE RIGHT, reported, never applied: rows whose
+  own dates already span two seasons (one shift cannot suit both), and a
+  corrected date after today (a meet cannot have been run after it was
+  scraped).
+
+★ ONLY THE YEAR IS CORRECTED. The fix keeps the month and day and moves the
+  year by k: 2025-10-26 -> 2023-10-26. The grades know the season, not the
+  day; the day was never in doubt.
 
 ⚠ WHY IN PLACE, AND NOT AN OVERRIDE TABLE READ AT THE JOIN. The distance
   corrections live in corrections.py -> dist_override (engine/
@@ -77,8 +136,8 @@ Issue: the first server run of engine/level_conflict.py (2026-09-29).
   corrected where it is stored, the way link_tfrrs_rows stamps person_id,
   and made reversible the way that is: every fixed meet is a row of
   meet_date_fix (sport, meet_id, stored and fixed first/last day, the
-  neighbourhood, the vote), and --undo puts a meet back and marks it
-  'reverted' so no later run re-applies it.
+  vote), and --undo puts a meet back and marks it 'reverted' so no later run
+  re-applies it.
   meets.meet_date (cross country) and meets_tf_meta.meet_date (track) are
   moved with the rows, so the meet's own date agrees with its results.
 
@@ -86,7 +145,7 @@ Issue: the first server run of engine/level_conflict.py (2026-09-29).
   inside the stored [first, last] days; once moved they are outside it, so a
   second run moves nothing. A re-scrape that writes the wrong year back is
   found by the next --write: every 'applied' row of meet_date_fix is
-  re-applied on every run, whether or not today's survey still sees the meet
+  re-applied on every run, whether or not today's vote still sees the meet
   (it cannot -- its date is right now).
 
 ! STEP 00, BEFORE 01_season_year. Everything after it reads the season off
@@ -98,10 +157,11 @@ Issue: the first server run of engine/level_conflict.py (2026-09-29).
 """
 import argparse
 import datetime
+import math
 import os
 import sys
 import time
-from collections import defaultdict
+from collections import Counter
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
@@ -113,66 +173,144 @@ from season_year import academicYear, seasonYearSqlInt       # noqa: E402
 
 TABLES = {"XC": "results", "TF": "results_tf"}
 AUDIT = "meet_date_fix"
-K = 200                     # id neighbours per meet (the header says why)
-YEAR = 365.25               # days a wrong year moves a date
-SPREAD_Q = 0.99             # the normal spread: 99 meets in 100 inside it
-_CHUNK = 20000              # meets per numpy block (20k x 200 int64 = 32 MB)
+EXPECTED_FALSE = 1.0        # false FIXes a sport may expect: fewer than one
+CELLS = 24                  # a sport's month-and-direction cells (12 x +-1)
+BAR_Q = 0.01                # the bar: 99 right-year meets in 100 agree this well
 _DAY = "^[0-9]{4}-[0-9]{2}-[0-9]{2}"
-_HS_GRADE = "^(9|10|11|12)$"
+_HS_GRADES = "('9', '10', '11', '12')"
+_MONTHS = ("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec").split()
 
 
 # ------------------------------------------------------------------ #
 #  THE ARITHMETIC -- pure, tested without a database
 # ------------------------------------------------------------------ #
 
-def neighbourDays(days, k=K):
-    """For days (ordinals) sorted by meet id: the median day of the k
-    nearest ids, the meet itself left out. At the ends the window slides
-    inward so every meet still has k neighbours (fewer only when the sport
-    has fewer meets)."""
-    import numpy as np
-    d = np.asarray(days, dtype=np.int64)
-    n = len(d)
-    out = np.full(n, np.nan)
-    if n < 2:
-        return out
-    w = min(int(k), n - 1)
-    half = w // 2
-    offs = np.arange(w + 1)
-    for lo in range(0, n, _CHUNK):
-        i = np.arange(lo, min(n, lo + _CHUNK))
-        start = np.clip(i - half, 0, n - (w + 1))
-        idx = start[:, None] + offs[None, :]
-        # every window holds its own meet exactly once; drop it
-        idx = idx[idx != i[:, None]].reshape(len(i), w)
-        out[lo:lo + len(i)] = np.median(d[idx], axis=1)
-    return out
+def binomTail(n, p, x):
+    """P(Binomial(n, p) >= x), summed in logs so a meet of thousands of
+    voters neither overflows nor takes long: the terms past the mean fall
+    geometrically, and the sum stops when they no longer move it."""
+    if x <= 0:
+        return 1.0
+    if x > n or p <= 0.0:
+        return 0.0
+    if p >= 1.0:
+        return 1.0
+    lp, lq, ln = math.log(p), math.log1p(-p), math.lgamma(n + 1)
+    total = 0.0
+    for i in range(x, n + 1):
+        t = math.exp(ln - math.lgamma(i + 1) - math.lgamma(n - i + 1)
+                     + i * lp + (n - i) * lq)
+        total += t
+        if i > n * p and t <= total * 1e-17:
+            break
+    return min(total, 1.0)
 
 
-def measure(devs):
-    """The shape of |date - neighbourhood| over a sport, and the cut it
-    implies: {'n', 'p50', 'p90', 'p99', 'p999', 'spread', 'cut', 'separable'}."""
-    import numpy as np
-    a = np.abs(np.asarray(devs, dtype=float))
-    a = a[np.isfinite(a)]
-    if not len(a):
-        return {"n": 0, "separable": False}
-    q = {name: float(np.quantile(a, p)) for name, p in
-         (("p50", 0.5), ("p90", 0.9), ("p99", SPREAD_Q), ("p999", 0.999))}
-    spread = q["p99"]
-    return dict(n=int(len(a)), spread=spread, cut=(spread + YEAR) / 2.0,
-                # a normal meet as far out as half a year leaves no room
-                # between "listed early" and "a year off"
-                separable=spread < YEAR / 2.0, **q)
+def majority(n):
+    """The fewest voters that are a strict majority of n."""
+    return n // 2 + 1
 
 
-def yearShift(dev, spread):
-    """Whole years to SUBTRACT from the stored date, or None: only when
-    moving by them lands the date inside the normal spread."""
-    k = int(round(dev / YEAR))
-    if k == 0 or abs(dev - k * YEAR) > spread:
+def noiseRates(tallies):
+    """({d: share}, voters measured): over meets with two or more voters and
+    one clear winner, the share of voters d years off their meet's winner."""
+    off, seen = Counter(), 0
+    for t in tallies:
+        n = sum(t.values())
+        if n < 2:
+            continue
+        best = max(t.values())
+        winners = [k for k, c in t.items() if c == best]
+        if len(winners) != 1:
+            continue                        # no winner to be off from
+        seen += n
+        for k, c in t.items():
+            if k != winners[0]:
+                off[k - winners[0]] += c
+    return ({d: c / seen for d, c in off.items()} if seen else {}), seen
+
+
+def falseFix(n, noise):
+    """The chance that a strict majority of n independent voters err by the
+    same number of years."""
+    return sum(binomTail(n, r, majority(n)) for r in noise.values())
+
+
+def minVoters(hist, noise):
+    """(n_min, expected): the fewest voters at which the sport's meets --
+    hist {voters: meets}, each at its own count -- expect fewer than
+    EXPECTED_FALSE false FIXes between them, and that expectation."""
+    total = 0.0
+    for n in sorted(hist, reverse=True):
+        step = hist[n] * falseFix(n, noise)
+        if total + step >= EXPECTED_FALSE:
+            return n + 1, total
+        total += step
+    return 1, total
+
+
+def measuredBar(tallies, n_min):
+    """The share a wrong-year majority must reach: the BAR_Q quantile of the
+    share backing the stored season, over meets with n_min voters or more
+    whose stored season holds a strict majority -- never below a strict
+    majority itself (None with no such meet: then the floor stands)."""
+    shares = sorted(t.get(0, 0) / n for t in tallies
+                    for n in [sum(t.values())]
+                    if n >= n_min and t.get(0, 0) >= majority(n))
+    return quantile(shares, BAR_Q) if shares else None
+
+
+def vote(tally, n_min, bar=None):
+    """One meet's verdict from its tally {k: voters}: a dict with k (the
+    majority's shift, or None), for_fixed, for_stored, voters, fix, why.
+    bar: the share the majority must also reach (None: a strict majority)."""
+    n = sum(tally.values())
+    for_stored = tally.get(0, 0)
+    out = dict(k=None, for_fixed=0, for_stored=for_stored, voters=n, fix=False)
+    if n == 0:
+        return dict(out, why="no graded athlete with a history: no evidence")
+    k, top = max(tally.items(), key=lambda kv: kv[1])
+    if top < majority(n):
+        return dict(out, why="the grades are split")
+    out.update(k=k, for_fixed=top)
+    if k == 0:
+        return dict(out, why="the grades say the stored year")
+    if n < n_min:
+        return dict(out, why=f"too few graded voters ({n} < {n_min})")
+    if bar is not None and top < bar * n:
+        return dict(out, why=f"a {100 * top / n:.0f}% majority, under a "
+                             f"right-year meet's {100 * bar:.0f}%: a mix, "
+                             f"not one wrong year")
+    if top <= for_stored:                  # a strict majority cannot, but it is the rule
+        return dict(out, why="the stored year holds its own")
+    return dict(out, fix=True, why="the grades agree")
+
+
+def median(xs):
+    xs = sorted(xs)
+    if not xs:
         return None
-    return k
+    h = len(xs) // 2
+    return xs[h] if len(xs) % 2 else (xs[h - 1] + xs[h]) / 2.0
+
+
+def conventions(meets_by_month, one_year):
+    """{(month, k): (count, meets, typical rate)} for the month-and-direction
+    cells whose one-year majorities (one_year {(month, k): count}, k = +-1)
+    are more than a typical month's rate can explain (the header says why)."""
+    total = sum(meets_by_month.values())
+    typical = [m for m, n in meets_by_month.items() if n * 12 >= total]
+    out = {}
+    for k in (-1, 1):
+        rate = median((one_year.get((m, k), 0) + 1) / (meets_by_month[m] + 1)
+                      for m in typical)
+        if rate is None:
+            continue
+        for m, n in meets_by_month.items():
+            x = one_year.get((m, k), 0)
+            if x and binomTail(n, rate, x) < EXPECTED_FALSE / CELLS:
+                out[(m, k)] = (x, n, rate)
+    return out
 
 
 def shiftDay(day, years):
@@ -185,82 +323,84 @@ def shiftDay(day, years):
         return d.replace(year=d.year + years, day=28).isoformat()
 
 
-def survey(meets, k=K):
-    """meets: [(meet_id, first_day, last_day, n_rows)] -> (shape, rows),
-    rows [{meet_id, first, last, n, neighbour, dev, shift, fixed, fixed_last,
-    reason}] for the meets past the cut. shift/fixed are None where the
-    year cannot be corrected, and reason says why."""
-    good = []
-    for mid, first, last, n in meets:
-        try:
-            a = datetime.date.fromisoformat(str(first)[:10])
-            b = datetime.date.fromisoformat(str(last)[:10])
-        except ValueError:
-            continue                            # not a date: nothing to place
-        good.append((int(mid), a, b, int(n)))
-    good.sort()
-    nb = neighbourDays([a.toordinal() for _m, a, _b, _n in good], k)
-    devs = [a.toordinal() - m for (_mid, a, _b, _n), m in zip(good, nb)]
-    shape = measure(devs)
-    out = []
-    if not shape.get("n"):
-        return shape, out
-    for (mid, a, b, n), med, dev in zip(good, nb, devs):
-        if abs(dev) <= shape["cut"]:
-            continue
-        row = dict(meet_id=mid, first=a.isoformat(), last=b.isoformat(), n=n,
-                   neighbour=datetime.date.fromordinal(int(round(med))).isoformat(),
-                   dev=int(round(dev)), shift=None, fixed=None, fixed_last=None,
-                   reason=None)
-        k_years = yearShift(dev, shape["spread"])
-        if not shape["separable"]:
-            row["reason"] = "the sport's spread leaves no cut"
-        elif (b - a).days > shape["spread"]:
-            row["reason"] = "its rows' dates disagree with each other"
-        elif k_years is None:
-            row["reason"] = "no whole number of years brings it home"
-        else:
-            row["shift"] = k_years
-            row["fixed"] = shiftDay(row["first"], -k_years)
-            row["fixed_last"] = shiftDay(row["last"], -k_years)
-        out.append(row)
-    return shape, out
-
-
-def vote(implied, stored_season, fixed_season):
-    """(apply?, reason, for_fixed, for_stored, n) from the seasons the
-    athletes' grades put this meet in."""
-    n = len(implied)
-    for_fixed = sum(1 for s in implied if s == fixed_season)
-    for_stored = sum(1 for s in implied if s == stored_season)
-    if n == 0:
-        return False, "no graded athlete with a history: no evidence", 0, 0, 0
-    if for_fixed * 2 > n and for_fixed > for_stored:
-        return True, "the grades agree", for_fixed, for_stored, n
-    if for_stored >= for_fixed:
-        return (False, "the grades say the stored year (an old season "
-                "uploaded late?)", for_fixed, for_stored, n)
-    return False, "the grades are split", for_fixed, for_stored, n
-
-
 def seasonOf(day):
     return academicYear(datetime.date.fromisoformat(day))
+
+
+def monthOf(day):
+    return int(str(day)[5:7])
+
+
+def quantile(xs, p):
+    """xs sorted; the nearest-rank quantile -- a value some meet has, no
+    interpolation (and no numpy)."""
+    if not xs:
+        return float("nan")
+    return xs[min(len(xs) - 1, max(0, int(math.ceil(p * len(xs))) - 1))]
+
+
+def judge(meets, today=None):
+    """meets {meet_id: {'tally': {k: n}, 'first': day}} for one sport ->
+    (shape, verdicts). Every meet is voted on; verdicts {meet_id: vote dict
+    + 'held' (a guard's reason, or None)} is the whole sport. The guards
+    needing the meet's own rows (its dates, today) run later, in `finish`;
+    the season seam needs only the votes and runs here."""
+    tallies = {m: v["tally"] for m, v in meets.items()}
+    noise, measured = noiseRates(tallies.values())
+    hist = Counter(sum(t.values()) for t in tallies.values())
+    n_min, expected = minVoters(hist, noise)
+    bar = measuredBar(tallies.values(), n_min)
+    verdicts = {m: vote(t, n_min, bar) for m, t in tallies.items()}
+    # the season seam: one-year majorities by stored month
+    by_month, one_year = Counter(), Counter()
+    for m, v in verdicts.items():
+        if v["voters"] < n_min:
+            continue
+        mon = monthOf(meets[m]["first"])
+        by_month[mon] += 1
+        if v["fix"] and abs(v["k"]) == 1:
+            one_year[(mon, v["k"])] += 1
+    conv = conventions(by_month, one_year)
+    for m, v in verdicts.items():
+        v["held"] = None
+        if v["fix"] and (monthOf(meets[m]["first"]), v["k"]) in conv:
+            v["held"] = (f"one-year votes are {_MONTHS[monthOf(meets[m]['first']) - 1]}'s "
+                         f"convention, not a wrong year")
+    enough = [v for v in verdicts.values() if v["voters"] >= n_min]
+    shape = dict(
+        meets=len(meets), voters=sum(hist[n] * n for n in hist),
+        per_meet=sorted(n for n in hist.elements()),
+        noise=noise, measured=measured, n_min=n_min, expected=expected,
+        bar=bar,
+        enough=len(enough),
+        agree=sorted(v["for_stored"] / v["voters"] for v in enough),
+        stored=sum(1 for v in enough if v["k"] == 0),
+        other=sum(1 for v in enough if v["k"] not in (None, 0)),
+        split=sum(1 for v in enough if v["k"] is None),
+        # a majority elsewhere, held back only by the minimum
+        few=sum(1 for v in verdicts.values()
+                if v["k"] not in (None, 0) and v["voters"] < n_min),
+        by_month=dict(by_month), one_year=dict(one_year), conv=conv,
+        today=today or datetime.date.today().isoformat())
+    return shape, verdicts
+
+
+def finish(row, today):
+    """The corrected days, and the guards a vote cannot answer."""
+    row["fixed"] = shiftDay(row["first"], row["k"])
+    row["fixed_last"] = shiftDay(row["last"], row["k"])
+    if row["held"]:
+        return row
+    if seasonOf(row["first"]) != seasonOf(row["last"]):
+        row["held"] = "its rows' dates span two seasons"
+    elif row["fixed_last"] > today:
+        row["held"] = "the corrected date is in the future"
+    return row
 
 
 # ------------------------------------------------------------------ #
 #  THE DATABASE
 # ------------------------------------------------------------------ #
-
-def meetsSql(table):
-    """One row per anet meet: its first and last day and its rows."""
-    return f"""
-        SELECT meet_id, min(substr(date, 1, 10)), max(substr(date, 1, 10)),
-               count(*)
-        FROM   {table}
-        WHERE  source = 'anet' AND meet_id IS NOT NULL
-          AND  date ~ '{_DAY}'
-        GROUP  BY meet_id"""
-
 
 def _hasTable(cur, name):
     cur.execute("SELECT to_regclass(%s)", (name,))
@@ -287,106 +427,229 @@ def _names(cur, sport, ids):
     return dict(cur.fetchall())
 
 
-def votes(cur, sport, meet_ids, exclude):
-    """{meet_id: [season the grades put it in]} -- one vote per graded high
-    schooler at the meet who has other anet rows. exclude: {sport: [meet
-    ids]} whose rows are not evidence (the meets under suspicion)."""
-    if not meet_ids:
-        return {}
-    table = TABLES[sport]
-    cur.execute("DROP TABLE IF EXISTS md_at")
+def _timed(cur, label, sql, params=None):
+    t0 = time.time()
+    cur.execute(sql, params)
+    print(f"[dates]   {label} ({time.time() - t0:.0f}s)", flush=True)
+
+
+def buildVotes(cur, sports=tuple(TABLES)):
+    """{sport: {meet_id: {'tally': {k: voters}, 'first'}}} for every
+    anet meet of `sports` with a voter. Set-based: two temp tables and one
+    grouped join, each timed.
+
+      md_pm   one row per (sport, meet, person) for every graded anet high
+              schooler, with the class year that meet's grade and date imply
+              (a person graded two ways at one meet is no voter there). Both
+              sports always: a runner's track rows vouch for their cross
+              country class and the reverse.
+      md_top  per person, the three classes most of their meets imply, with
+              their counts -- enough to take the mode with any one meet left
+              out: only that meet's own class loses one.
+      tally   md_pm joined to md_top: each voter's class from their OTHER
+              meets (a unique mode, or no vote), minus the class this meet
+              implies = k; counted per (sport, meet, k).
+    """
+    acad = seasonYearSqlInt(None, "date")
+    parts = [f"""
+        SELECT '{sp}'::text AS sport, meet_id, person_id,
+               {acad} + 13 - btrim(grade)::int AS class_of,
+               (substr(date, 1, 4) || substr(date, 6, 2)
+                || substr(date, 9, 2))::int AS day
+        FROM   {tb}
+        WHERE  source = 'anet' AND meet_id IS NOT NULL
+          AND  person_id IS NOT NULL
+          AND  btrim(grade) IN {_HS_GRADES} AND date ~ '{_DAY}'"""
+             for sp, tb in TABLES.items()]
+    # ! THE DAY IS AN INTEGER, YYYYMMDD, and only the first is kept: min()
+    #   over text in the database's collation cost a sixth of this step on
+    #   a 17.6M-row test corpus, and only the meet's month is read from it
+    #   (the meets a fix moves get their real first and last day from all
+    #   their rows, in meetRows).
+    cur.execute("DROP TABLE IF EXISTS md_pm, md_top")
+    _timed(cur, "md_pm: every graded anet high schooler per meet", f"""
+        CREATE TEMP TABLE md_pm AS
+        SELECT sport, meet_id, person_id, min(class_of) AS class_of,
+               min(day) AS d_first
+        FROM   ({' UNION ALL '.join(parts)}) x
+        GROUP  BY sport, meet_id, person_id
+        HAVING min(class_of) = max(class_of)""")
+    _timed(cur, "md_top: each runner's three likeliest classes", """
+        CREATE TEMP TABLE md_top AS
+        SELECT person_id,
+               max(class_of) FILTER (WHERE rk = 1) AS c1,
+               max(n)        FILTER (WHERE rk = 1) AS n1,
+               max(class_of) FILTER (WHERE rk = 2) AS c2,
+               coalesce(max(n) FILTER (WHERE rk = 2), 0) AS n2,
+               coalesce(max(n) FILTER (WHERE rk = 3), 0) AS n3
+        FROM  (SELECT person_id, class_of, n,
+                      row_number() OVER (PARTITION BY person_id
+                                         ORDER BY n DESC, class_of) AS rk
+               FROM  (SELECT person_id, class_of, count(*) AS n
+                      FROM md_pm GROUP BY person_id, class_of) c) r
+        WHERE  rk <= 3
+        GROUP  BY person_id""")
+    cur.execute("ANALYZE md_pm")
+    cur.execute("ANALYZE md_top")
+    # The mode of the person's OTHER meets. Leaving this meet out takes one
+    # from its own class only, so:
+    #   its class is the top one:    top minus one still beats the second,
+    #                                or the second now beats it and the
+    #                                third; a tie is no vote
+    #   its class is the second:     the top wins if it beats the third
+    #   its class is lower:          the top wins if it beats the second
+    # No other meets at all leaves every count at zero: no vote.
+    other = """
+        CASE WHEN m.class_of = t.c1 THEN
+                  CASE WHEN t.n1 - 1 > t.n2 THEN t.c1
+                       WHEN t.n2 > t.n1 - 1 AND t.n2 > t.n3 THEN t.c2 END
+             WHEN m.class_of = t.c2 THEN
+                  CASE WHEN t.n1 > t.n3 THEN t.c1 END
+             ELSE CASE WHEN t.n1 > t.n2 THEN t.c1 END
+        END"""
+    t0 = time.time()
     cur.execute(f"""
-        CREATE TEMP TABLE md_at AS
-        SELECT DISTINCT r.meet_id, r.person_id, btrim(r.grade)::int AS g
-        FROM   {table} r
-        WHERE  r.source = 'anet' AND r.meet_id = ANY(%s)
-          AND  r.person_id IS NOT NULL
-          AND  btrim(r.grade) ~ '{_HS_GRADE}'""", (list(meet_ids),))
-    cur.execute("CREATE INDEX ON md_at (person_id)")
-    cur.execute("ANALYZE md_at")
-    acad = seasonYearSqlInt(None, "o.date")
-    parts, params = [], []
-    for sp, tb in TABLES.items():
-        parts.append(f"""
-            SELECT o.person_id, {acad} + 13 - btrim(o.grade)::int AS class_of
-            FROM   {tb} o
-            JOIN   (SELECT DISTINCT person_id FROM md_at) p
-                   ON p.person_id = o.person_id
-            WHERE  o.source = 'anet' AND btrim(o.grade) ~ '{_HS_GRADE}'
-              AND  o.date ~ '{_DAY}'
-              AND  NOT (o.meet_id = ANY(%s))""")
-        params.append(list(exclude.get(sp, [])))
-    cur.execute("DROP TABLE IF EXISTS md_class")
-    cur.execute(f"""
-        CREATE TEMP TABLE md_class AS
-        SELECT person_id, mode() WITHIN GROUP (ORDER BY class_of) AS class_of
-        FROM ({' UNION ALL '.join(parts)}) x
-        GROUP  BY person_id""", params)
-    cur.execute("""SELECT a.meet_id, c.class_of - 13 + a.g
-                   FROM md_at a JOIN md_class c USING (person_id)""")
-    out = defaultdict(list)
-    for mid, season in cur.fetchall():
-        out[int(mid)].append(int(season))
+        SELECT m.sport, m.meet_id, v.k, count(*), min(m.d_first)
+        FROM   md_pm m
+        JOIN   md_top t USING (person_id)
+        CROSS  JOIN LATERAL (SELECT {other} - m.class_of AS k) v
+        WHERE  v.k IS NOT NULL AND m.sport = ANY(%s)
+        GROUP  BY m.sport, m.meet_id, v.k""", (list(sports),))
+    out = {sp: {} for sp in sports}
+    for sport, mid, k, c, first in cur.fetchall():
+        m = out[sport].setdefault(int(mid), {"tally": {}, "first": first})
+        m["tally"][int(k)] = int(c)
+        m["first"] = min(m["first"], first)
+    for meets in out.values():
+        for m in meets.values():
+            d = m["first"]
+            m["first"] = f"{d // 10000:04d}-{d // 100 % 100:02d}-{d % 100:02d}"
+    print("[dates]   the vote: "
+          + ", ".join(f"{sp} {len(v):,} meets" for sp, v in out.items())
+          + f" ({time.time() - t0:.0f}s)", flush=True)
     return out
 
 
-def examine(cur, sports=tuple(TABLES)):
-    """{sport: (shape, rows)} -- the survey, every candidate voted on and
-    named, and a verdict: row['apply'] with row['why']."""
+def meetRows(cur, sport, ids):
+    """{meet_id: (first, last, n)} over ALL the meet's anet rows -- graded
+    or not, the rows a fix moves -- for the few meets that need them."""
+    if not ids:
+        return {}
+    cur.execute(f"""
+        SELECT meet_id, min(substr(date, 1, 10)), max(substr(date, 1, 10)),
+               count(*)
+        FROM   {TABLES[sport]}
+        WHERE  source = 'anet' AND meet_id = ANY(%s) AND date ~ '{_DAY}'
+        GROUP  BY meet_id""", (list(ids),))
+    return {int(m): (a, b, int(n)) for m, a, b, n in cur.fetchall()}
+
+
+def examine(cur, sports=tuple(TABLES), meet=None):
+    """{sport: (shape, rows)} -- every anet meet voted on; rows are the ones
+    a majority moves (FIX, or held by a guard), plus `meet` if asked for,
+    each with its verdict: row['apply'] with row['why']."""
+    t0 = time.time()
+    print("[dates] the grade vote, both sports' rows:", flush=True)
+    everything = buildVotes(cur, sports)
     found = {}
     for sport in sports:
-        t0 = time.time()
-        cur.execute(meetsSql(TABLES[sport]))
-        shape, rows = survey(cur.fetchall())
+        meets = everything[sport]
+        shape, verdicts = judge(meets)
+        pick = [m for m, v in verdicts.items() if v["fix"]]
+        if meet is not None and int(meet) in verdicts and int(meet) not in pick:
+            pick.append(int(meet))
+        facts = meetRows(cur, sport, pick)
+        names = _names(cur, sport, pick)
+        rows = []
+        for m in pick:
+            v = verdicts[m]
+            first, last, n = facts.get(m, (meets[m]["first"],) * 2 + (0,))
+            r = dict(v, meet_id=m, name=names.get(m) or "", first=first,
+                     last=last, n=n, fixed=None, fixed_last=None)
+            if r["fix"]:
+                finish(r, shape["today"])
+            r["apply"] = bool(r["fix"] and not r["held"])
+            if r["held"]:
+                r["why"] = r["held"]
+            rows.append(r)
+        if meet is not None and int(meet) not in verdicts:
+            shape["missing"] = int(meet)
         found[sport] = (shape, rows)
-        print(f"[dates] {sport}: {shape.get('n', 0):,} anet meets surveyed, "
-              f"{len(rows):,} past the cut ({time.time() - t0:.0f}s)",
-              flush=True)
-    exclude = {sp: [r["meet_id"] for r in rows]
-               for sp, (_s, rows) in found.items()}
-    for sport, (shape, rows) in found.items():
-        fixable = [r["meet_id"] for r in rows if r["fixed"]]
-        by = votes(cur, sport, fixable, exclude)
-        names = _names(cur, sport, [r["meet_id"] for r in rows])
-        for r in rows:
-            r["name"] = names.get(r["meet_id"]) or ""
-            if not r["fixed"]:
-                r.update(apply=False, why=r["reason"], for_fixed=0,
-                         for_stored=0, voters=0)
-                continue
-            ok, why, ff, fs, n = vote(by.get(r["meet_id"], []),
-                                      seasonOf(r["first"]), seasonOf(r["fixed"]))
-            r.update(apply=ok, why=why, for_fixed=ff, for_stored=fs, voters=n)
+    print(f"[dates] voted ({time.time() - t0:.0f}s)", flush=True)
     return found
+
+
+def _pct(x):
+    return f"{100 * x:.0f}%"
 
 
 def printReport(found, show=40, meet=None):
     for sport, (shape, rows) in found.items():
         print(f"\n[dates] {sport}")
-        if not shape.get("n"):
-            print("    no dated anet meets")
+        if not shape.get("meets"):
+            print("    no anet meet with a graded voter")
             continue
-        print(f"    |date - id neighbourhood| over {shape['n']:,} meets: "
-              f"p50 {shape['p50']:.0f}d  p90 {shape['p90']:.0f}d  "
-              f"p99 {shape['p99']:.0f}d (the normal spread)  "
-              f"p99.9 {shape['p999']:.0f}d")
-        print(f"    cut = (spread + {YEAR}) / 2 = {shape['cut']:.0f} days"
-              + ("" if shape["separable"] else
-                 "   ! the spread reaches half a year: REPORT ONLY"))
+        pm = shape["per_meet"]
+        print(f"    {shape['voters']:,} votes over {shape['meets']:,} meets; "
+              f"voters per meet p50 {quantile(pm, .5)}  p90 {quantile(pm, .9)}  "
+              f"p99 {quantile(pm, .99)}")
+        top = sorted(shape["noise"].items(), key=lambda kv: -kv[1])[:6]
+        print(f"    the noise, voters off their meet's winner by d years "
+              f"({shape['measured']:,} voters measured): "
+              + ("  ".join(f"d={d:+d} {100 * r:.2f}%" for d, r in top)
+                 or "none"))
+        print(f"    minimum voters = {shape['n_min']}: the fewest at which the "
+              f"sport's meets expect under {EXPECTED_FALSE:g} false FIX "
+              f"({shape['expected']:.2f} expected over {shape['enough']:,} meets)")
+        ag = shape["agree"]
+        if ag:
+            print(f"    share agreeing with the stored season, meets with "
+                  f">= {shape['n_min']} voters: p1 {_pct(quantile(ag, .01))}  "
+                  f"p5 {_pct(quantile(ag, .05))}  p10 {_pct(quantile(ag, .1))}  "
+                  f"p50 {_pct(quantile(ag, .5))}")
+            print("    the bar = "
+                  + (f"{_pct(shape['bar'])}: p1 of the share backing the stored "
+                     f"season where it holds a majority -- 99 right-year meets "
+                     f"in 100 agree at least this well" if shape["bar"] is not None
+                     else "a strict majority (no meet backs its stored season)"))
+            print(f"    majority for the stored season {shape['stored']:,} | "
+                  f"for another season {shape['other']:,} | split "
+                  f"{shape['split']:,}   (and {shape['few']:,} meets under "
+                  f"{shape['n_min']} voters with a majority for another season)")
+        if shape["by_month"]:
+            print("    one-year majorities by stored month (k=-1 / k=+1 of meets "
+                  f"with >= {shape['n_min']} voters):")
+            for mon in sorted(shape["by_month"]):
+                n = shape["by_month"][mon]
+                lo = shape["one_year"].get((mon, -1), 0)
+                hi = shape["one_year"].get((mon, 1), 0)
+                flag = [f"{k:+d} is a convention (typical {100 * c[2]:.3f}%)"
+                        for k in (-1, 1) for c in [shape["conv"].get((mon, k))]
+                        if c]
+                print(f"      {_MONTHS[mon - 1]}  {lo:>6,} / {hi:>6,}  of {n:>9,}"
+                      + ("   ⚠ " + "; ".join(flag) if flag else ""))
         fix = [r for r in rows if r.get("apply")]
-        print(f"    {len(rows):,} meets past the cut; {len(fix):,} to fix, "
-              f"{sum(r['n'] for r in fix):,} rows")
+        moved = [r for r in rows if r.get("fix")]
+        shares = sorted(r["for_fixed"] / r["voters"] for r in moved)
+        print(f"    {len(moved):,} meets voted into another season past the bar; "
+              f"{len(fix):,} to fix, {sum(r['n'] for r in fix):,} rows; "
+              f"{len(moved) - len(fix):,} held"
+              + (f"; the winners' share p1 {_pct(quantile(shares, .01))}  "
+                 f"p10 {_pct(quantile(shares, .1))}  p50 {_pct(quantile(shares, .5))}"
+                 if shares else ""))
+        if meet is not None and shape.get("missing") == int(meet):
+            print(f"    meet {meet}: no graded voter")
         pick = [r for r in rows if meet is None or r["meet_id"] == int(meet)]
-        pick.sort(key=lambda r: (not r.get("apply"), -r["n"]))
+        pick.sort(key=lambda r: (not r.get("apply"), not r.get("fix"), -r["n"]))
         if not pick:
             continue
-        print(f"    {'meet':>9}  {'name':<34} {'stored':<10}  {'neighbours':<10}  "
+        print(f"    {'meet':>9}  {'name':<34} {'stored':<10}  {'k':>3}  "
               f"{'fixed':<10}  {'rows':>6}  {'grades fix/stored/n':<19}  verdict")
         for r in pick[:show]:
-            g = (f"{r['for_fixed']}/{r['for_stored']}/{r['voters']}"
-                 if r.get("voters") else "-")
+            g = f"{r['for_fixed']}/{r['for_stored']}/{r['voters']}"
+            k = f"{r['k']:+d}" if r["k"] else "-"
             print(f"    {r['meet_id']:>9}  {r['name'][:34]:<34} {r['first']:<10}  "
-                  f"{r['neighbour']:<10}  {r['fixed'] or '-':<10}  {r['n']:>6}  "
+                  f"{k:>3}  {r['fixed'] or '-':<10}  {r['n']:>6}  "
                   f"{g:<19}  {'FIX' if r.get('apply') else 'report'}: {r['why']}")
         if len(pick) > show:
             print(f"    ... and {len(pick) - show:,} more (--show)")
@@ -397,6 +660,9 @@ def printReport(found, show=40, meet=None):
 # ------------------------------------------------------------------ #
 
 def ensureAudit(cur):
+    # ! A table made by the first cut also has neighbour_day (the id
+    #   neighbourhood's median). Nothing writes or reads it now; every
+    #   statement here names its columns, so the old table serves as is.
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS {AUDIT} (
             sport         text        NOT NULL,
@@ -407,7 +673,6 @@ def ensureAudit(cur):
             fixed_first   text        NOT NULL,
             fixed_last    text        NOT NULL,
             years         int         NOT NULL,   -- added to the stored date
-            neighbour_day text,
             voters        int,
             for_fixed     int,
             for_stored    int,
@@ -421,7 +686,7 @@ def ensureAudit(cur):
 
 
 def record(cur, found):
-    """Add this survey's fixes to the audit table. A meet already there
+    """Add this vote's fixes to the audit table. A meet already there
     keeps its row: an 'applied' one is the same fix, a 'reverted' one was
     put back by hand and stays back."""
     ensureAudit(cur)
@@ -432,12 +697,12 @@ def record(cur, found):
                 continue
             cur.execute(f"""
                 INSERT INTO {AUDIT} (sport, meet_id, meet_name, stored_first,
-                    stored_last, fixed_first, fixed_last, years, neighbour_day,
+                    stored_last, fixed_first, fixed_last, years,
                     voters, for_fixed, for_stored, n_rows)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (sport, meet_id) DO NOTHING""",
                 (sport, r["meet_id"], r["name"], r["first"], r["last"],
-                 r["fixed"], r["fixed_last"], -r["shift"], r["neighbour"],
+                 r["fixed"], r["fixed_last"], r["k"],
                  r["voters"], r["for_fixed"], r["for_stored"], r["n"]))
             n += cur.rowcount
     cur.execute(f"SELECT sport, meet_id FROM {AUDIT} WHERE status = 'reverted'")
@@ -533,7 +798,7 @@ def main():
     ap.add_argument("--show", type=int, default=40, help="meets to list per sport")
     ap.add_argument("--meet", type=int, help="list only this meet id")
     ap.add_argument("--write", action="store_true",
-                    help="record this survey's fixes and apply every recorded one")
+                    help="record this vote's fixes and apply every recorded one")
     ap.add_argument("--undo", type=int, metavar="MEET_ID",
                     help="put one fixed meet back (needs --sport)")
     a = ap.parse_args()
@@ -547,7 +812,7 @@ def main():
         with conn.cursor() as cur:
             cur.execute("SET work_mem = '512MB'")
             sports = (a.sport,) if a.sport else tuple(TABLES)
-            found = examine(cur, sports)
+            found = examine(cur, sports, a.meet)
             printReport(found, a.show, a.meet)
             if a.write:
                 record(cur, found)

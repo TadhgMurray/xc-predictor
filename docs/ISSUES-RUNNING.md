@@ -2877,9 +2877,20 @@ tells the two apart.
   (b) "A tie flags both" cost person 6339154 (Kenston HS + RPI) his season;
   a tie is no evidence. And the review's own race was a WRONG DATE: anet
   meet 227716 is a 2023 meet stored as 2025-10-26. `engine/meet_date_fix.py`
-  (step 00_meet_dates) finds anet meets far from their meet-id neighbours'
-  dates, moves the year back when the athletes' grades agree, and logs every
-  fix in `meet_date_fix` (`--undo <meet> --sport XC` reverses one).
+  (step 00_meet_dates) moves a meet's year when its graded high schoolers
+  (their class year from their other rows) vote by a strict majority for
+  another season, and logs every fix in `meet_date_fix` (`--undo <meet>
+  --sport XC` reverses one).
+- **The first cut's detector failed the owner's dry run (2026-09-29).** It
+  read a meet's year off its 200 nearest meet ids: |date - neighbourhood|
+  was XC p50 13d / p90 385d / p99 10,560d, TF p99 15,292d, so every meet was
+  REPORT ONLY. anet ids are not chronological (Sunfair Invitational 1999 is
+  id 244560, among 2024 meets). The grade vote is now the detector, over
+  every anet meet in both sports; the minimum voter count is derived from
+  the measured grade noise (fewer than one false FIX expected per sport),
+  and a one-year vote that is its month's norm (a summer meet graded for the
+  coming year) is held as a season-seam convention. Needs a dry run:
+  `engine/meet_date_fix.py --show 80`.
 - The flag is `result_twin` reason `level_conflict`, a rule of
   `engine/twin_flag.py` (04c, before the pack), so the engine, fill, boards
   and athlete page already exclude it. Rebuilt every run; nothing is moved
