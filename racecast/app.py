@@ -6667,10 +6667,18 @@ def _searchTerms(raw, prefix="t"):
     #   search_last. The move to substring matching made it redundant, and
     #   nobody removed it.
     where, params = [], {}
+    # ★ A QUERY OF SHORT WORDS ONLY IS A PREFIX (owner, 2026-09-29: "part of
+    #   the really slow things in the boards is the search"). A trigram index
+    #   cannot serve a token under three letters, so "ta" scanned all 16M
+    #   rows: 1.5 s on the live site, against 0.3 s for "tad". When no token
+    #   reaches three letters the first one anchors at the start instead,
+    #   which the text_pattern_ops index serves -- and two letters typed are
+    #   the start of a name far more often than the middle of one.
+    short = all(len(t) < 3 for t in tokens)
     for i, tok in enumerate(tokens):
         k = f"{prefix}{i}"
         where.append(f"search_text LIKE %({k})s")
-        params[k] = f"%{tok}%"
+        params[k] = f"{tok}%" if short and i == 0 else f"%{tok}%"
         params[f"{k}_w"] = f"% {tok}%"
         params[f"{k}_s"] = f"{tok}%"
     params[f"{prefix}_first"] = tokens[0] + "%"

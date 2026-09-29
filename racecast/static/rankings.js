@@ -623,6 +623,7 @@ function makeCombo(host) {
   let dirty = false;
   let searchTimer = null;
   let found = [];              // last search results, for searched fields
+  let searchTicket = 0;        // the newest query asked; older answers are dropped
   let listRows = null;         // the state's schools when listed (cfg.listed)
   let listNote = "";           // why there is no list, when there is none
 
@@ -741,13 +742,16 @@ function makeCombo(host) {
   async function runSearch() {
     const kind = cfg.kind || "school";
     const q = input.value.trim();
-    if (q.length < 2) { found = []; renderOptions(); return; }
+    if (q.length < 2) { ++searchTicket; found = []; renderOptions(); return; }
     /* A listed field narrows its own list on every keystroke (renderOptions
        does that); the site search is only asked once two letters are in. */
+    /* a late answer to an older query must not replace a newer one */
+    const ticket = ++searchTicket;
     try {
       const res = await fetch((cfg.endpoint || "/search/api")
         + "?kind=" + kind + "&q=" + encodeURIComponent(q));
       const rows = await res.json();
+      if (ticket !== searchTicket) return;
       /* ! DEDUPED ON THE VALUE, NOT THE LABEL. A school split across two
          real state clusters is indexed twice -- "Tufts (MA)" and
          "Tufts (CT)" -- and both filter to the same bare "Tufts", so
@@ -2307,6 +2311,7 @@ function initFromUrl() {
  *   would be a rank within that window, not within the corpus.
  */
 let findTimer = null;
+let findAbort = null;
 /* Index of the keyboard-highlighted suggestion, -1 for none. Reset whenever
    the list re-renders -- a stale index would point at a row that moved. */
 let findActive = -1;
@@ -2336,9 +2341,19 @@ async function findSuggest() {
   findActive = -1;
   if (q.length < 2) { box.innerHTML = ""; box.classList.add("hidden"); return; }
 
+  /* ★ ONE QUESTION IN FLIGHT, AND ONLY ATHLETES ASKED (owner, 2026-09-29:
+     the board search was part of what made the boards slow). The box asked
+     for every kind and threw all but athletes away, and each keystroke's
+     answer could land after the next one's -- a slow "ta" overwriting
+     "tad". The previous request is cancelled, and a late answer to a query
+     no longer in the box is ignored. */
+  if (findAbort) findAbort.abort();
+  const ctl = findAbort = new AbortController();
   try {
-    const res = await fetch("/search/api?q=" + encodeURIComponent(q));
+    const res = await fetch("/search/api?kind=athlete&limit=8&q=" + encodeURIComponent(q),
+                            { signal: ctl.signal });
     const rows = await res.json();
+    if (ctl !== findAbort || $("find-input").value.trim() !== q) return;
     // Athletes only: a meet or a course has no position on a rankings board.
     const people = (rows || []).filter((r) => /^\/athlete\/\d+$/.test(r.link || ""));
     box.innerHTML = people.slice(0, 8).map((r) =>
@@ -2348,7 +2363,7 @@ async function findSuggest() {
     ).join("");
     box.classList.toggle("hidden", people.length === 0);
   } catch (err) {
-    box.classList.add("hidden");
+    if (err.name !== "AbortError") box.classList.add("hidden");
   }
 }
 
