@@ -105,7 +105,7 @@ def _sql(meets, results, apply):
                g.temperature_2m, g.dew_point_2m, g.relative_humidity_2m,
                g.apparent_temperature, g.precipitation, g.surface_pressure,
                round(g.cloud_cover)::int,
-               g.wind_speed_10m * 3.6, g.wind_direction_10m
+               g.wind_speed_10m, g.wind_direction_10m
         FROM   ({meet_dates}) mm
         JOIN   weather_grid g ON g.cell_lat = mm.cell_lat
                              AND g.cell_lon = mm.cell_lon
@@ -118,15 +118,29 @@ def _sql(meets, results, apply):
                              humidity, apparent_temp_c, precipitation_mm,
                              pressure_hpa, cloud_cover, wind_speed_kmh,
                              wind_dir, fetched_at)
-        SELECT q.*, 'era5-grid' FROM ({select}) q
+        SELECT q.*, '{MARK}' FROM ({select}) q
         ON CONFLICT (meet_id, source, hour) DO NOTHING
     """
+
+
+# ★★ THE GRID'S WIND IS ALREADY km/h (2026-09-29: a race page said "wind
+#    48 mph" for a September morning in Maine). atmost_era5_zarr.
+#    _deriveWindSpeed converts m/s to km/h when it writes weather_grid, and
+#    this multiplied by 3.6 again, so every page's wind read 3.6x too high
+#    (48 mph was ~13). Rows written from here are marked 'era5-grid-v2';
+#    --refresh replaces the old 'era5-grid' ones, which also carry the
+#    pre-sun-fix apparent temperature (ISSUES-2026-08-24 234).
+MARK = "era5-grid-v2"
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true",
                     help="write; without it, counts and samples only")
+    ap.add_argument("--refresh", action="store_true",
+                    help="with --apply: delete every grid-derived row first and "
+                         "write them again, in one transaction (the page keeps "
+                         "the old rows until the new ones commit)")
     args = ap.parse_args()
 
     t0 = time.time()
@@ -134,6 +148,9 @@ def main():
         cur = conn.cursor()
         ensureWeatherTable(conn)
         conn.commit()
+        if args.apply and args.refresh:
+            cur.execute("DELETE FROM weather WHERE fetched_at LIKE 'era5-grid%%'")
+            print(f"  refresh: {cur.rowcount:,} grid-derived rows to be rewritten")
         for label, meets, results in _STREAMS:
             if not args.apply:
                 cur.execute(f"SELECT count(*), count(DISTINCT meet_id) "
@@ -153,11 +170,13 @@ def main():
             t1 = time.time()
             cur.execute(_sql(meets, results, True))
             n = cur.rowcount
-            conn.commit()
+            if not args.refresh:
+                conn.commit()
             print(f"  {label}: wrote {n:,} hourly rows "
                   f"({(time.time() - t1) / 60:.1f} min)")
 
         if args.apply:
+            conn.commit()
             cur.execute("""
                 SELECT count(*), count(DISTINCT (meet_id, source)),
                        min(temp_c), max(temp_c), min(humidity), max(humidity),
