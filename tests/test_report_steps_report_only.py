@@ -184,7 +184,9 @@ class TheEvidenceStepsUseIt(unittest.TestCase):
 
     def test_every_ladder_rung(self):
         src = io.open(_LADDER, encoding="utf-8").read()
-        i = src.index("def runRung")
+        # the command line lives in rungCommand since 2026-09-29 (the
+        # forward split's window flags), runRung only runs it
+        i = src.index("def rungCommand")
         body = src[i:src.index("\ndef ", i + 1)]
         self.assertIn('"--holdout-only"', body)
         self.assertNotIn('"--holdout"', body)

@@ -3,6 +3,10 @@ run_joint.py -- drive joint_solve over the packed cache.
 
     python engine/run_joint.py                      # solve, write, compare
     python engine/run_joint.py --holdout            # + a 10% held-out score
+    python engine/run_joint.py --holdout-only --holdout-kind forward
+                                                    # 2026-09-29: the validation
+                                                    #   season from the past
+                                                    #   (engine/forward_holdout.py)
     python engine/run_joint.py --outer 8 --probes 32
     python engine/run_joint.py --no-curve --no-sport-offset --no-rust
     python engine/run_joint.py --no-robust          # plain least squares
@@ -59,6 +63,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
+import forward_holdout as fh                                    # noqa: E402
 import joint_solve as js                                        # noqa: E402
 import pair_engine as pe                                        # noqa: E402
 
@@ -881,6 +886,9 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
             cols, keep, athlete, n_ath, pool_of_athlete, pool_names,
             split_sport=split_ability)
         js.attachSeasonTie(D, k0, k1, dt, typ, names)
+        # the floor on dt, so a season carried past the training cut
+        # (forward_holdout.carryForward) is timed exactly as the pairs were
+        D.tie_floor = floor
         cross = np.array([n.split(">")[0] != n.split(">")[1] for n in names], dtype=bool)
         n_cross = int(np.bincount(typ, minlength=len(names))[cross].sum()) if names else 0
         print(f"[joint] season tie: {k0.size:,} consecutive-season pairs of one "
@@ -1162,9 +1170,10 @@ def sharedTermKwargs(args):
 #   had 76,010 base ones, so every row it explained would have read a
 #   different course's difficulty had the size check not stopped it.
 #   main() and the explainer now take these from the same function.
-# ! THE HOLDOUT KEEPS ITS OWN CALLS. It builds without --altitude on
-#   purpose (the ladder's base rung), and folding it in here would change
-#   what 08a scores.
+# ! THE HOLDOUT TAKES THESE TOO since 2026-09-29, with ONE exception kept:
+#   the random splits still build without --altitude, as their explicit
+#   argument lists always did, so what 08a scores does not move (see the
+#   note in holdout). The forward split scores exactly this design.
 def designKwargs(args):
     """buildDesign's keyword arguments for the full solve, from parsed (and
     applyImplications'd) run_joint arguments."""
@@ -1464,31 +1473,47 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                             venueOfCell(cols["course_keys"])
                             if _RACE_KEY["by"] == "venue" else None)
     kind = getattr(args, "holdout_kind", "race")
-    te_local = pv.splitFor(kind, idx.size,
-                           race=race_all[idx],
-                           athlete=np.asarray(cols["athlete"])[idx],
-                           cell=np.asarray(cols["course"])[idx],
-                           frac=0.10, seed=1)
-    keep_tr = np.zeros(keep.size, dtype=bool); keep_tr[idx[~te_local]] = True
-    keep_te = np.zeros(keep.size, dtype=bool); keep_te[idx[te_local]] = True
-    D_tr, _, _ = buildDesign(cols, keep_tr, not args.no_sport_offset,
-                             not args.no_curve, not args.no_rust,
-                             dist=not args.no_dist, slope=not args.no_slope,
-                             link=args.link and not args.no_link,
-                             dist_bands=not args.no_dist_bands,
-                             split_ability=args.split_ability,
-                             era_years=args.era_years,
-                             **sharedTermKwargs(args))
-    D_te, _, _ = buildDesign(cols, keep_te, not args.no_sport_offset,
-                             not args.no_curve, not args.no_rust,
-                             dist=not args.no_dist, slope=not args.no_slope,
-                             link=args.link and not args.no_link,
-                             dist_bands=not args.no_dist_bands,
-                             split_ability=args.split_ability,
-                             era_years=args.era_years,
-                             # the held-out rows are predicted, not fitted:
-                             # the tie's pairs live on the training design
-                             **dict(sharedTermKwargs(args), season_tie=False))
+    fwd = None
+    if kind == "forward":
+        # ★ FORWARD IN TIME (forward_holdout): fit on the rows before the
+        #   window, predict every rated row in it, and leave everything on or
+        #   after its end out of both -- the sealed season is refused unless
+        #   --sealed says otherwise
+        fwd = (getattr(args, "_forward", None)          # main() checked it early
+               or fh.forwardWindow(cols, getattr(args, "holdout_from", None),
+                                   getattr(args, "holdout_until", None),
+                                   bool(getattr(args, "sealed", False))))
+        keep_tr, keep_te, keep_x = fh.forwardSplit(fwd["dates"], keep,
+                                                   fwd["from"], fwd["until"])
+        te_local = keep_te[idx]
+        print(f"[forward] {int(keep_tr.sum()):,} training rows, "
+              f"{int(keep_te.sum()):,} held out, {int(keep_x.sum()):,} after "
+              f"the window left out of both")
+        if not keep_tr.any() or not keep_te.any():
+            raise SystemExit("[forward] nothing to fit or nothing to score in "
+                             "this window")
+    else:
+        te_local = pv.splitFor(kind, idx.size,
+                               race=race_all[idx],
+                               athlete=np.asarray(cols["athlete"])[idx],
+                               cell=np.asarray(cols["course"])[idx],
+                               frac=0.10, seed=1)
+        keep_tr = np.zeros(keep.size, dtype=bool); keep_tr[idx[~te_local]] = True
+        keep_te = np.zeros(keep.size, dtype=bool); keep_te[idx[te_local]] = True
+    # ★ THE GO-LIVE'S DESIGN (designKwargs), one call for both kinds.
+    # ⚠ BUT THE RANDOM SPLITS KEEP THEIR OLD BLIND SPOT: they have always
+    #   built without --altitude (the explicit argument lists this replaced
+    #   never passed it), while 08a and every ladder rung pass it -- so the
+    #   'no-altitude' rung has scored the same model as 'base'. Kept, so a
+    #   race-holdout number stays comparable with every one before it
+    #   (2026-09-29); the FORWARD split scores the design as shipped.
+    dkw = designKwargs(args)
+    if fwd is None:
+        dkw["altitude"] = False
+    D_tr, _, _ = buildDesign(cols, keep_tr, **dkw)
+    # the held-out rows are predicted, not fitted: the tie's pairs live on
+    # the training design
+    D_te, _, _ = buildDesign(cols, keep_te, **dict(dkw, season_tie=False))
     t0 = time.time()
     out = js.solveJoint(y_all[keep_tr], design=D_tr, n_probe=0,
                         **solveKwargs(args, athlete_pool, verbose=False))
@@ -1498,17 +1523,51 @@ def holdout(cols, keep, args, athlete_pool, D_full):
               "and band; log-time, negative m = faster the next year):")
         for line in out["season_tie_lines"]:
             print(line)
-    pred, cov = js.predictHeldOut(out, D_tr, D_te, athlete_pool=athlete_pool,
-                                  tilt=not args.no_tilt)
+    _pool_of_raw, _pool_names = poolCodes(cols["athlete_keys"])
+    if fwd is not None:
+        # every held-out season is one the fit never saw: carry the athlete's
+        # latest fitted season across the cut (fh.carryForward), then the
+        # engine's own prediction; a cold start is not in the number
+        out_c, info = fh.carryForward(out, D_tr, D_te, cols, keep_tr, keep_te,
+                                      fwd["dates"], _pool_of_raw, _pool_names,
+                                      split_ability=args.split_ability)
+        pred, _cov = js.predictHeldOut(out_c, D_tr, D_te, athlete_pool=athlete_pool,
+                                       tilt=not args.no_tilt)
+        pred = np.where(info["how"] != fh.HOW_NONE, pred, np.nan)
+        cov = (info["status"] == fh.STATUS_KNOWN) & np.isfinite(pred)
+        # for the forward split, the SOURCE season's training rows: the
+        # season the ability came from is the one the tie would have moved
+        n_tr_season = info["source_rows"]
+        status, train_races = info["status"], info["train_races"]
+        cell_seen = info["cell_seen"]
+        print(f"[forward] held-out athlete-seasons: {info['n_own']:,} fitted in "
+              f"their own season (a cut inside one), {info['n_carried']:,} "
+              f"carried unmoved, {info['n_tied']:,} moved by the season tie, "
+              f"{info['n_uncarried']:,} cold")
+    else:
+        pred, cov = js.predictHeldOut(out, D_tr, D_te, athlete_pool=athlete_pool,
+                                      tilt=not args.no_tilt)
+        # per held-out row: how many TRAINING rows its athlete-season kept --
+        # with the pool, the two axes the 2026-09-29 switches act on (a thin
+        # season is what the season tie moves; the pool is what the HS tilt
+        # equalises)
+        n_tr_season = np.bincount(D_tr.athlete, minlength=D_tr.n_ath)[D_te.athlete]
+        status, train_races = fh.rowStatus(cols, keep_tr, keep_te)
+        cell_seen = (np.bincount(D_tr.cell, minlength=D_tr.n_cell) > 0)[D_te.cell]
     y_te = y_all[keep_te]
     err = y_te[cov] - pred[cov]
-    # per held-out row: how many TRAINING rows its athlete-season kept, and
-    # its pool -- the two axes the 2026-09-29 switches act on (a thin season
-    # is what the season tie moves; the pool is what the HS tilt equalises)
-    n_tr_season = np.bincount(D_tr.athlete, minlength=D_tr.n_ath)[D_te.athlete]
-    _pool_of_raw, _pool_names = poolCodes(cols["athlete_keys"])
     pool_te = np.asarray(_pool_names, dtype=object)[
         _pool_of_raw[np.asarray(cols["athlete"])[keep_te]]]
+    # ★ THE SCORECARD'S UNIT OF HEAD-TO-HEAD, AND ITS BOOTSTRAP CLUSTER: the
+    #   (cell, day) race whatever --race-key says, split by pool and distance
+    #   (fh.pairGroups says why)
+    race_cd = (race_all if _RACE_KEY["by"] != "venue"
+               else raceCodes(cols["course"], cols["days"])[0])[keep_te]
+    sport_te = (np.asarray(cols["sport"])[keep_te].astype(np.int8)
+                if "sport" in cols else np.zeros(int(keep_te.sum()), dtype=np.int8))
+    group_te = fh.pairGroups(race_cd, pool_te,
+                             np.asarray(cols["dist_m"])[keep_te] if "dist_m" in cols
+                             else None)
     # ★ THE HELD-OUT ROWS, PREDICTION BY PREDICTION (2026-09-12), so another
     #   engine can be scored on exactly these rows: the bracket engine
     #   covers 59% of them and the joint model 89%, and two error sds on
@@ -1531,7 +1590,15 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                  sample_seed=np.array([int(args.sample_seed)]),
                  row_space=np.array(["file"]),
                  season_train_rows=n_tr_season.astype(np.int32),
-                 pool=np.asarray(pool_te, dtype=str))
+                 pool=np.asarray(pool_te, dtype=str),
+                 # the scorecard's (forward_holdout; switch_scorecard reads it)
+                 race=race_cd.astype(np.int64), group=group_te,
+                 sport=sport_te, train_races=train_races.astype(np.int32),
+                 cell_seen=np.asarray(cell_seen, dtype=bool),
+                 status=np.asarray(status, dtype=np.int8),
+                 window=np.array([str(fwd["from"]), str(fwd["until"])]
+                                 if fwd else ["", ""]),
+                 sealed=np.array([bool(fwd and fwd["sealed"])]))
         print(f"[joint] held-out predictions -> {dump} ({int(cov.sum()):,} covered "
               f"of {cov.size:,})")
     # ⚠ SAY WHICH RUNG. "error sd 0.044" means nothing without it: holding
@@ -1540,12 +1607,25 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     _what = {"row": "10% of ROWS -- optimistic, the same race is in train",
              "race": "10% of RACES -- a whole new race at a known course",
              "athlete": "10% of ATHLETES -- rating a newcomer",
-             "course": "10% of COURSES -- a course never seen before"}[kind]
+             "course": "10% of COURSES -- a course never seen before",
+             "forward": (f"every rated row in [{fwd['from']}, {fwd['until']}) "
+                         f"from a fit on the rows before it -- a whole "
+                         f"{'SEALED ' if fwd['sealed'] else ''}season forward"
+                         if fwd else "")}[kind]
     print(f"\n[joint] HELD OUT: {_what}")
     print(f"[joint] error sd {err.std():.6f}   covered {cov.mean():.1%}"
           f"   [{time.time() - t0:.0f}s]")
-    sport_te = cols["sport"][keep_te] if "sport" in cols else None
-    if sport_te is not None:
+    # ★ THE SCORECARD, ON EVERY SPLIT (forward_holdout.scoreLines): bias,
+    #   median and p90 |error|, head-to-head per race, by sport, pool,
+    #   training races and new-vs-seen course. A switch is compared on it,
+    #   row for row, by scripts/switch_scorecard.py --holdout.
+    for line in fh.scoreLines({"y": y_te, "pred": pred, "covered": cov,
+                               "group": group_te, "sport": sport_te,
+                               "pool": np.asarray(pool_te, dtype=str),
+                               "train_races": train_races,
+                               "cell_seen": cell_seen, "status": status}):
+        print(line)
+    if "sport" in cols:
         for code, name in ((0, "XC"), (1, "TF")):
             m = cov & (sport_te == code)
             if m.sum() > 1000:
@@ -1615,8 +1695,22 @@ def buildParser():
     #   races scores prediction. `race` is the default because it is what
     #   the site actually does when new results land.
     ap.add_argument("--holdout-kind", default="race",
-                    choices=list(pv_kinds()),
-                    help="what to hold out together (default race)")
+                    choices=list(pv_kinds()) + ["forward"],
+                    help="what to hold out together (default race); "
+                         "'forward' fits on the past and predicts a whole "
+                         "later season (engine/forward_holdout.py)")
+    # ★ THE FORWARD SPLIT'S WINDOW (2026-09-29). Unset, it is the pack's
+    #   validation season (the one before the last complete season), and
+    #   the last complete season is SEALED: refused without --sealed.
+    ap.add_argument("--holdout-from", default=None, metavar="YYYY-MM-DD",
+                    help="forward: fit on rows before this date, score from "
+                         "it (default: the validation season's first day)")
+    ap.add_argument("--holdout-until", default=None, metavar="YYYY-MM-DD",
+                    help="forward: score rows before this date; rows on or "
+                         "after it are left out of the fit and the score")
+    ap.add_argument("--sealed", action="store_true",
+                    help="forward: score the SEALED test season (the last "
+                         "complete one). Once, deliberately")
     # ★★ TIME-VARYING COURSE DIFFICULTY (owner, asked three times). 0 keeps
     #    one difficulty for all time; 2 or 3 splits each course into eras
     #    that width and ties adjacent ones with a random walk. See
@@ -2791,6 +2885,12 @@ def main():
     print(f"[joint] loading {args.pack}")
     cols = pe.loadPack(args.pack)
     cols = sortRowsByAthlete(cols)
+    # ! THE FORWARD WINDOW IS RESOLVED BEFORE ANY DESIGN IS BUILT, so a run
+    #   aimed at the sealed season without --sealed stops in seconds, not
+    #   after the full design (forward_holdout.resolveWindow)
+    if (args.holdout or args.holdout_only) and args.holdout_kind == "forward":
+        args._forward = fh.forwardWindow(cols, args.holdout_from,
+                                         args.holdout_until, args.sealed)
     keep = (cols["course"] >= 0) & (cols["norm"] > 0)
     # ★ THE LADDER RUNS ON A SAMPLE. Each rung is a full solve, and a
     #   comparison between rungs only needs the ORDER to be right, not the

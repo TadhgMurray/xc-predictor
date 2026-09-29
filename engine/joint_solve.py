@@ -2103,6 +2103,25 @@ def seasonTieLines(table, band_edges=SEASON_TIE_BANDS):
     return out
 
 
+# ★ THE WALK AS NUMBERS (2026-09-29), for the forward scorecard: a season
+#   after the training cut has no rows and no pair in the fit, and the only
+#   thing the model knows about it is where the walk puts it from the
+#   person's last fitted season -- c + m * dt for that transition and band.
+#   Rows [transition code, band (-1 = the transition's all-band fit), c, m, s]
+#   for every TIED group; an untied one is absent, and a season crossing it
+#   is not moved (forward_holdout.carryForward).
+# ! NUMBERS, NOT THE TUPLES, for the same reason season_tie_lines is text:
+#   saveState writes arrays and loadState refuses pickles.
+def seasonTieMoments(table, type_names):
+    names = list(type_names)
+    rows = []
+    for name, b, _n_all, _n_full, c, m, s, _how in table:
+        if name in names and np.isfinite(s) and np.isfinite(m):
+            rows.append((names.index(name), -1 if b is None else int(b),
+                         float(c) if np.isfinite(c) else 0.0, float(m), float(s)))
+    return np.array(rows, dtype=np.float64).reshape(-1, 5)
+
+
 def seasonTieApply(theta_a, D, tie_w, tie_mean):
     """The tie's matrix part on the ability block: lambda (a0 - a1) at k0
     and its negative at k1. The mean is on the right-hand side (_Operator.rhs,
@@ -3251,6 +3270,10 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         #   a mixed tuple list and loadState (allow_pickle=False) refuse it
         "season_tie_lines": (None if tie_fit is None else
                              seasonTieLines(tie_fit["table"], tie_fit["band_edges"])),
+        # the same table as numbers, for a season the fit never saw
+        # (run_joint --holdout-kind forward carries an ability across it)
+        "season_tie_moments": (None if tie_fit is None else
+                               seasonTieMoments(tie_fit["table"], D.tie_type_names)),
         # the tilt's scale (TILT_SCALES): per pool the HS factor it read the
         # rating through, and per athlete-season the rating it read
         "tilt_pool_factor": tilt_factor,

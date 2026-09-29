@@ -26,6 +26,13 @@ Run from the PROJECT ROOT. Reads files only; writes nothing.
   non-HS pools). A paired difference with its standard error says whether
   the change is bigger than the noise of the split.
 
+★ AND THE SCORECARD (2026-09-29, engine/forward_holdout.py). A dump written
+  since then carries each row's race, and --holdout adds bias, median and
+  p90 |error| and per-race head-to-head, with the paired change's SE from
+  resampling WHOLE RACES -- the row-iid SE above it is too small by about
+  the square root of a field. The forward split (run_joint --holdout-kind
+  forward; scripts/scorecard.py) is the one to decide on.
+
 ⚠ WHAT THE BOARDS SECTION READS. The solve file's athlete-season rating is
   the ABILITY-based rating (athlete_ratings). The site's season boards read
   athlete_season.mean_rating, the 80th percentile of the season's
@@ -48,6 +55,8 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import forward_holdout as fhm                                   # noqa: E402
+
 SEASON_BUCKETS = ((1, 1), (2, 2), (3, 5), (6, None))    # for reading
 
 
@@ -67,7 +76,7 @@ def pairedLine(label, e_base, e_test):
             f"{'  *' if abs(d.mean()) > 2 * se else ''}")
 
 
-def compareHoldout(base, test):
+def compareHoldout(base, test, n_rep=None):
     """Lines comparing two XCP_HOLDOUT_DUMP files row for row. Pure."""
     out = []
     for key in ("kind", "sample_pct", "sample_seed"):
@@ -82,7 +91,8 @@ def compareHoldout(base, test):
     out.append(f"  {int(cov.sum()):,} held-out rows covered by both "
                f"({common.size:,} in both dumps)")
     out.append(f"  {'':<22}{'rows':>10}  {'base sd':<8}  {'test sd':<8}  "
-               f"{'change':>8}   paired d(err^2) ± se   (* = beyond 2 se)")
+               f"{'change':>8}   paired d(err^2) ± row-iid se   (* = beyond 2 se; "
+               f"the race-bootstrap SCORECARD below is the one to read)")
     out.append(pairedLine("all", e_b, e_t))
     if "season_train_rows" in base:
         n_tr = np.asarray(base["season_train_rows"])[ib][cov]
@@ -100,6 +110,25 @@ def compareHoldout(base, test):
             m = pool == name
             if m.sum() >= 100:
                 out.append(pairedLine(f"  {name}", e_b[m], e_t[m]))
+    # ★ THE SCORECARD (2026-09-29, engine/forward_holdout.py): bias, median
+    #   and p90 |error| and head-to-head per race, on the same rows, the SE by
+    #   resampling WHOLE RACES. The lines above treat rows as independent,
+    #   and rows of one race share its day, field and course, so their SE is
+    #   too small by about the square root of a field; read the stars below.
+    if "group" in base and "group" in test:
+        wb, wt = base.get("window"), test.get("window")
+        if wb is not None and wt is not None and list(map(str, wb)) != list(map(str, wt)):
+            out.append(f"  ⚠ the dumps' windows differ: {list(wb)} against "
+                       f"{list(wt)} -- NOT the same held-out season")
+        n_rows = rb.size
+        al_b = {k: (np.asarray(v)[ib] if np.ndim(v) == 1 and np.size(v) == n_rows else v)
+                for k, v in base.items()}
+        al_t = {k: (np.asarray(v)[it] if np.ndim(v) == 1 and np.size(v) == rt.size else v)
+                for k, v in test.items()}
+        out += fhm.pairedLines(al_b, al_t, n_rep=n_rep)
+    else:
+        out.append("  (no race-bootstrap scorecard: a dump from before "
+                   "2026-09-29 carries no race groups -- rerun its rung)")
     return out
 
 
@@ -212,6 +241,9 @@ def main():
     ap.add_argument("--person", action="append", default=[],
                     help="--boards: print this person's athlete-seasons in "
                          "both files (repeatable), e.g. 29603084")
+    ap.add_argument("--boot", type=int, default=None,
+                    help="--holdout: race-bootstrap resamples (default "
+                         "forward_holdout.bootReps(): the SE to 5%% of itself)")
     a = ap.parse_args()
     if not (a.holdout or a.boards):
         ap.error("--holdout and/or --boards")
@@ -221,7 +253,7 @@ def main():
             base = {k: b[k] for k in b.files}
             test = {k: t[k] for k in t.files}
         print(f"\nHELD OUT: {a.holdout[1]} against {a.holdout[0]}")
-        for line in compareHoldout(base, test):
+        for line in compareHoldout(base, test, n_rep=a.boot):
             print(line)
     if a.boards:
         with np.load(a.boards[0], allow_pickle=False) as b, \

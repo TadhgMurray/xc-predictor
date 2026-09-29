@@ -7,8 +7,16 @@ candidate improvements actually improve anything?
     scripts/ablation_ladder.py --pct 25           # bigger sample, slower
     scripts/ablation_ladder.py --only base,slaney
     scripts/ablation_ladder.py --dry-run          # print the commands
+    scripts/ablation_ladder.py --kind forward     # every rung on the
+                                                  #   validation season
 
 Run from the PROJECT ROOT.
+
+★ --kind forward (2026-09-29) is THE VALIDATION SCORECARD: each rung fits on
+  the seasons before the pack's validation season and predicts all of it
+  (engine/forward_holdout.py), and the table gains its bias, median |error|
+  and per-race head-to-head. The sealed test season is refused unless
+  --sealed. scripts/scorecard.py is the same run for two flag sets.
 
 ★ WHY (2026-09-10). Every rating system in this space that anyone has
   validated has FEWER moving parts than ours and leads with a
@@ -139,7 +147,8 @@ CORE = ("base", "no-importance", "fit-indoor", "no-indoor", "era-2",
         "era-2-loose", "stated-level")
 
 
-def runRung(name, flags, args):
+def rungCommand(flags, args):
+    """The run_joint command line of one rung. Pure."""
     cmd = [args.python, "-u", os.path.join("engine", "run_joint.py"),
            # ! --holdout-only. With plain --holdout every rung scores its
            #   held-out races and THEN solves the full model on the sample
@@ -149,10 +158,24 @@ def runRung(name, flags, args):
            "--holdout-only", "--holdout-kind", args.kind,
            "--sample-pct", str(args.pct), "--sample-seed", str(args.seed),
            "--outer", str(args.outer), "--probes", "0"]
+    # ★ THE FORWARD SPLIT'S WINDOW (2026-09-29), the SAME for every rung: the
+    #   pack's validation season unless one is named, and the sealed season
+    #   only on --sealed (engine/forward_holdout.py)
+    if args.kind == "forward":
+        if getattr(args, "holdout_from", None):
+            cmd += ["--holdout-from", args.holdout_from]
+        if getattr(args, "holdout_until", None):
+            cmd += ["--holdout-until", args.holdout_until]
+        if getattr(args, "sealed", False):
+            cmd += ["--sealed"]
     # ! EVERY RUNG CARRIES ITS OWN COMPLETE FLAGS, including --altitude, so
     #   the LADDER table is the whole truth about what each one ran and a
     #   test can parse it. Nothing is added here.
-    cmd += flags
+    return cmd + list(flags)
+
+
+def runRung(name, flags, args):
+    cmd = rungCommand(flags, args)
     if args.dry_run:
         print("  " + " ".join(cmd))
         return None
@@ -236,8 +259,16 @@ def runRung(name, flags, args):
         mm = re.search(rf"^\s+{code}: ([0-9.]+)", out, re.M)
         if mm:
             rec[code.lower()] = float(mm.group(1))
+    # the scorecard line (engine/forward_holdout.scoreLines), every split
+    ms = re.search(r"\[joint\] scorecard: bias ([-+0-9.na]+)\s+median \|err\| "
+                   r"([0-9.na]+)\s+p90 \|err\| ([0-9.na]+)\s+pairwise ([0-9.na]+)", out)
+    if ms:
+        rec.update(bias=float(ms.group(1)), med=float(ms.group(2)),
+                   p90=float(ms.group(3)), pairwise=float(ms.group(4)))
     print(f"  {name:<18} {rec['sd']:.6f}   covered {rec['covered']:.0%}"
-          f"   [{rec['secs']:.0f}s]")
+          + (f"   median |err| {rec['med']:.5f}  pairwise {rec['pairwise']:.4f}"
+             if "med" in rec else "")
+          + f"   [{rec['secs']:.0f}s]")
     return rec
 
 
@@ -250,7 +281,8 @@ def report(rows, kind):
     print("\n" + "=" * 78)
     print(f"ABLATION LADDER -- held out {kind}s, lower is better")
     print("=" * 78)
-    hdr = f"  {'rung':<18} {'error sd':>10} {'vs base':>10} {'XC':>9} {'TF':>9}"
+    hdr = (f"  {'rung':<18} {'error sd':>10} {'vs base':>10} {'XC':>9} {'TF':>9}"
+           f" {'bias':>9} {'med|e|':>8} {'pairwise':>9}")
     print(hdr)
     print("  " + "-" * (len(hdr) - 2))
     for r in sorted(ok, key=lambda r: r["sd"]):
@@ -258,7 +290,12 @@ def report(rows, kind):
                  else f"{100 * (r['sd'] / base['sd'] - 1):+.2f}%")
         print(f"  {r['name']:<18} {r['sd']:>10.6f} {delta:>10} "
               f"{r.get('xc', float('nan')):>9.5f} "
-              f"{r.get('tf', float('nan')):>9.5f}")
+              f"{r.get('tf', float('nan')):>9.5f} "
+              f"{r.get('bias', float('nan')):>+9.5f} "
+              f"{r.get('med', float('nan')):>8.5f} "
+              f"{r.get('pairwise', float('nan')):>9.4f}")
+    print("  (the SE of a change is by race: scripts/switch_scorecard.py --holdout "
+          "on two rungs' ladder_logs/<rung>_holdout.npz)")
     for r in rows:
         if "sd" not in r:
             print(f"  {r['name']:<18} {'FAILED':>10}   {r.get('error', '')[:40]}")
@@ -297,7 +334,17 @@ def main():
                     help="percent of ATHLETES per rung (default 15)")
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--kind", default="race",
-                    choices=["row", "race", "athlete", "course"])
+                    choices=["row", "race", "athlete", "course", "forward"],
+                    help="what to hold out; 'forward' scores every rung on "
+                         "the validation season from a fit on the seasons "
+                         "before it (engine/forward_holdout.py)")
+    ap.add_argument("--holdout-from", default=None, metavar="YYYY-MM-DD",
+                    help="--kind forward: the window's first day (default "
+                         "the pack's validation season)")
+    ap.add_argument("--holdout-until", default=None, metavar="YYYY-MM-DD",
+                    help="--kind forward: the window's end (exclusive)")
+    ap.add_argument("--sealed", action="store_true",
+                    help="--kind forward: score the SEALED test season. Once")
     ap.add_argument("--outer", type=int, default=5)
     ap.add_argument("--only", help="comma list of rung names")
     ap.add_argument("--all", action="store_true",
@@ -341,7 +388,9 @@ def main():
         os.makedirs(os.path.dirname(args.out), exist_ok=True)
         with open(args.out, "w") as f:
             json.dump({"kind": args.kind, "pct": args.pct,
-                       "seed": args.seed, "rows": rows}, f, indent=2)
+                       "seed": args.seed, "holdout_from": args.holdout_from,
+                       "holdout_until": args.holdout_until,
+                       "sealed": bool(args.sealed), "rows": rows}, f, indent=2)
         print(f"  wrote {args.out}")
     except OSError as exc:
         print(f"  ! could not write {args.out}: {exc}")
