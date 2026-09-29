@@ -268,3 +268,6 @@ engine/data/distance_applied_*.json
 engine/data/distance_applied_*.json.tmp
 engine/data/group_scale.json
 engine/data/group_scale.json.tmp
+
+# measured on the server by indoor_outdoor_check --write-levels
+engine/data/indoor_geometry_levels.json

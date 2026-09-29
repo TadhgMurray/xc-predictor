@@ -44,6 +44,9 @@ CHECKS=(
   "ability-curve-dry|$PY engine/fit_distance_ability.py --dry-run"
   "one-scale|$PY scripts/diag_one_scale.py --all"
   "group-means|$PY scripts/build_group_means.py"
+  # ! writes engine/data/indoor_geometry_levels.json only (no database):
+  #   the measured level per indoor track type, which the holdout below reads
+  "indoor-levels|$PY scripts/indoor_outdoor_check.py --by geometry --write-levels"
 )
 
 # printed, never run: hours each, and each is a comparison to read before a
@@ -51,6 +54,8 @@ CHECKS=(
 LONG_RUNS=(
   "$PY -u scripts/ablation_ladder.py --only base,season-tie,tilt-hs --pct 15 --outer 5   # then switch_scorecard.py --holdout base vs each"
   "$PY engine/fit_distance_ability.py                         # writes distance_ability.pkl (30-60 min)"
+  "$PY scripts/bracket_holdout.py --pct 15 --seed 11 --era-years 2 --window 30 --gauge flat400 --dump /tmp/holdout_pin.npz   # indoor: pin (today)"
+  "$PY scripts/bracket_holdout.py --pct 15 --seed 11 --era-years 2 --window 30 --gauge flat400 --indoor-mode geometry --compare /tmp/holdout_pin.npz   # indoor: by track type"
   "XCP_DISTANCE_BY=ability bash deploy/run_pipeline.sh --from 5 --skip 08a_holdout,08b_ladder   # adopt C; revert with XCP_DISTANCE_BY=pool"
 )
 
