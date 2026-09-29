@@ -91,6 +91,8 @@ _YARD = 0.9144
 # after it, and the NUMBER is the truth while the unit is the typo.
 # (100/220/440 are below the 800m floor and never survive the range gate.)
 _YARD_DISTANCES = frozenset({440, 600, 660, 880, 1000, 1320, 1760})
+# ...and the ones no metric race is ever run at, so a bare number means yards
+_BARE_YARD_ONLY = frozenset({660, 880, 1320, 1760})
 
 # Words meaning "not an individual distance race whose time we can put on a
 # distance scale". Tested BEFORE any number is read, because "110 Meter Hurdles"
@@ -207,7 +209,9 @@ def _readNumber(s):
 def _toMeters(s, n):
     if re.search(r"\bmiles?\b|\bmi\b|mile", s):
         return n * _MILE
-    if re.search(r"\byards?\b|\byds?\b|\d\s*y\b", s):
+    # ! '880yd' IS GLUED (2026-09-29): no word boundary before 'yd', and
+    #   '\d\s*y\b' wants the y last, so it fell through to 880 METRES.
+    if re.search(r"\byards?\b|\byds?\b|\d\s*y\b|\d\s*yds?\b", s):
         # Trust the unit only where a yard race existed. See _YARD_DISTANCES.
         return n * _YARD if int(n) in _YARD_DISTANCES else n
     #  \dkm\b is the GLUED form: '10km' has no boundary either side of the
@@ -217,6 +221,12 @@ def _toMeters(s, n):
     #  worked; the dash was doing the regex's job.
     if re.search(r"\d\s*k\b|\dkm\b|\bkm\b|kilomet", s):
         return n * 1000.0
+    # ★ A BARE 880 IS YARDS. Nobody races 880, 1320 or 1760 METRES; those
+    #   numbers exist only on the imperial schedule, so with no unit at all
+    #   the yard is the only reading. 600 and 1000 are real metric races and
+    #   stay metres.
+    if not re.search(r"meter|metre|\dm\b|\bm\b", s) and int(n) in _BARE_YARD_ONLY:
+        return n * _YARD
     return n                                        # metres, stated or implied
 
 

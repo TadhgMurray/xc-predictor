@@ -2798,3 +2798,17 @@ Also on that page: Bates' seven men finished 60-65 and 69 together (the
 review's "pack workout" reading fits: one team, not the field), and the
 race-day weather reads "wind 48 mph", which is not a plausible September
 morning in Maine -- check the wind unit on the race page.
+
+## 2026-09-29 — the 880y at #1 all-time: the parser is right, the rating is not (NEEDS explain_row)
+
+Jonathon Riley (Brookline, /athlete/7145543), MIAA All State 1997-06-07,
+"880y" 1:52.97 = 159.9, while his 4:05.72 mile the next week = 142.0 and a
+1000 m 2:26.1 = 138.5. distanceFromEventShort('880y') is 804.67 m and the
+solve's distance class rounds it into the 800, so neither the parser nor a
+thin class explains ~18 points. Settle with:
+
+    /srv/venv/bin/python engine/explain_row.py --result 49384026 --sport TF
+
+Fixed on the way (event_parse): '880yd' (glued) and a bare '880' / '1320' /
+'1760' / '660' were read as METRES; they are yards now (600 and 1000 stay
+metric). Lands at the next 05 backfill.
