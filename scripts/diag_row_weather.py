@@ -95,11 +95,16 @@ def rowsTf(cur, ids):
 
 def rowsXc(cur, ids):
     cur.execute("""
-        SELECT r.result_id, r.source, r.meet_id, r.date::date, r.distance,
+        SELECT r.result_id, r.source, r.meet_id, r.date::date,
+               -- ! results carries no distance: the division's (meets), with
+               --   a corrected one winning, as the board build reads it
+               COALESCE(dov.distance, m.distance),
                r.time_seconds, r.normalized_time, r.speed_rating,
                m.gps_lat, m.gps_long, m.course_name
         FROM   results r
-        LEFT JOIN meets m ON m.meet_id = r.meet_id
+        LEFT JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+        LEFT JOIN dist_override dov
+               ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
         WHERE  r.result_id = ANY(%s)
     """, (list(ids),))
     for (rid, src, mid, day, dist, t, nt, rating, lat, lon, course) in cur.fetchall():

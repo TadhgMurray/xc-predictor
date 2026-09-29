@@ -69,5 +69,10 @@ def test_default_boards_have_a_rating_ordered_index():
     for name in ("rr_pool_rating_idx", "rr_pool_sport_rating_idx",
                  "as_pool_mean_idx", "as_pool_sport_mean_idx"):
         assert f'("{name}"' in brr
-    assert '"(pool, mean_rating DESC, person_id)"' in brr
+    # NULLS LAST, as rankings._orderBy writes it, or the index only filters
+    assert '"(pool, mean_rating DESC NULLS LAST, person_id)"' in brr
+    import rankings as _rk
+    f = {"sort": "rating", "dir": "DESC", "scale": "own", "pool": "hs_m"}
+    assert "DESC NULLS LAST" in _rk._orderBy(f, _rk._SORTS_ABILITY, "s.mean_rating DESC",
+                                             "s.person_id")
 

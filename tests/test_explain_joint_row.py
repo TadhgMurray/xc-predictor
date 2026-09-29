@@ -158,3 +158,18 @@ def test_the_base_design_is_refused_with_the_reason():
         B, _ap, _pn = rj.buildDesign(cols, keep, altitude=False)   # the old rebuild
     msg = ej.designMismatch(B, npz, [("era_years", 0, "env")])
     assert msg and "the solve split courses into eras" in msg
+
+
+def test_the_day_term_counts_only_where_the_go_live_applied_it(tmp_path):
+    """NCS 2024 (2026-09-29): the solve's day u was printed as applied to
+    the time although no sport's rating carries it by default."""
+    import numpy as np
+    import explain_joint_row as E
+    assert E.dayModesLive(str(tmp_path), env={}) == {}
+    assert E.dayModesLive(str(tmp_path), env={"XCP_RACE_EFFECT_SPORTS": "XC:fast"}) == {"XC": "fast"}
+    np.savez(tmp_path / "pair_difficulty.npz", race_effect_in_rating=np.array([1]),
+             race_effect_sports=np.array(["XC"]))
+    assert E.dayModesLive(str(tmp_path), env={}) == {"XC": "all"}
+    np.savez(tmp_path / "pair_difficulty.npz", race_effect_in_rating=np.array([0]),
+             race_effect_sports=np.array([], dtype=str))
+    assert E.dayModesLive(str(tmp_path), env={"XCP_RACE_EFFECT_SPORTS": "XC"}) == {}

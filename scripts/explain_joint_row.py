@@ -91,7 +91,39 @@ def sportGainAt(D, j, rating):
     return float(np.interp(rating, xs, ys))
 
 
-def rowTerms(D, npz, j):
+def dayModesLive(npz_dir, env=None):
+    """{'XC': 'all' | 'fast'} -- the sports whose RATINGS carry the race-day
+    term, as the go-live recorded it (pair_difficulty.npz), else as step
+    08_golive would pass it (XCP_RACE_EFFECT_SPORTS); absent = out.
+
+    ★ THE TERM WAS PRINTED AS APPLIED WHEN IT WAS NOT (owner's NCS 2024 row,
+      2026-09-29: "race-day u +0.0691 -> applied to the time +6.0%"). The
+      solve fits the day for every race; the rating carries it only for the
+      sports named (joint_golive.dayModes, default none), so the old line
+      credited a slow day the page never gave."""
+    env = os.environ if env is None else env
+    names = None
+    path = os.path.join(npz_dir, "pair_difficulty.npz")
+    if os.path.exists(path):
+        try:
+            with np.load(path, allow_pickle=False) as z:
+                if "race_effect_sports" in z.files:
+                    on = ("race_effect_in_rating" not in z.files
+                          or int(np.asarray(z["race_effect_in_rating"]).reshape(-1)[0]))
+                    names = [str(x) for x in np.asarray(z["race_effect_sports"]).reshape(-1)] if on else []
+        except (OSError, ValueError):
+            names = None
+    if names is None:
+        names = [x for x in env.get("XCP_RACE_EFFECT_SPORTS", "").split(",") if x.strip()]
+    modes = {}
+    for x in names:
+        name, _, mode = str(x).strip().upper().partition(":")
+        if name in ("XC", "TF"):
+            modes[name] = "fast" if mode == "FAST" else "all"
+    return modes
+
+
+def rowTerms(D, npz, j, day_mode="all"):
     cell = int(D.cell[j])
     ath = int(D.athlete[j])
     delta = float(npz["delta"][cell])
@@ -107,6 +139,8 @@ def rowTerms(D, npz, j):
         h, amp = 1.0, 1.0
     u_full = float(npz["race_effect"][int(D.race[j])])
     u = max(-js.RACE_DAY_CAP, min(js.RACE_DAY_CAP, u_full))   # as the rating applied it (187)
+    # only where the go-live put the day into the rating (dayModesLive)
+    u_in = 0.0 if not day_mode else (min(u, 0.0) if day_mode == "fast" else u)
     dist = 0.0
     if getattr(D, "n_e", 0) and "dist_offset" in npz:
         if "dist_row" not in _alt_cache:
@@ -132,7 +166,8 @@ def rowTerms(D, npz, j):
            "alt": alt, "alt_km": alt_km, "gain": gain,
            "alt_venue_km": float(getattr(D, "alt_venue", D.alt)[j]) if getattr(D, "n_k", 0) else 0.0,
            "alt_home_km": float(getattr(D, "alt_home", np.zeros(D.n))[j]) if getattr(D, "n_k", 0) else 0.0,
-           "effect": h * (delta + u) + dist + alt + gain,   # u tilted too (156)
+           "u_in": u_in, "day_mode": day_mode,
+           "effect": h * (delta + u_in) + dist + alt + gain,   # u tilted too (156)
            "curve": 0.0, "rust": 0.0, "beta": 0.0}
     if D.has_curve and "curve" in npz:
         # the solver's own row basis: full grid, pinned knot at zero, its
@@ -390,6 +425,9 @@ def main():
     args = ap.parse_args()
     if not args.xc and not args.tf:
         sys.exit("give at least one --xc or --tf result id")
+    day_modes = dayModesLive(os.path.dirname(os.path.abspath(args.npz)))
+    print(f"[explain] race-day term in the ratings: "
+          f"{', '.join(f'{k} ({v})' for k, v in day_modes.items()) or 'NO sport (the default since 2026-09-06)'}")
 
     import pair_engine as pe
     import run_joint as rj
@@ -471,12 +509,13 @@ def main():
                   f"({100.0 * np.expm1(np.log(norm / float(nt))):+.1f}%): the solve "
                   "rated the pack's time; rebuild the pack (07) and re-solve (08) "
                   "to rate the database's")
-        t = rowTerms(D, npz, pos[i])
+        t = rowTerms(D, npz, pos[i], day_mode=day_modes.get(sp))
         disp = 100.0 * np.expm1(t["delta_anchored"])
         print(f"   cell {keys[t['cell']]}   delta raw {t['delta']:+.4f}   "
               f"display {disp:+.1f}% (anchored {t['delta_anchored']:+.4f})")
         print(f"   h {t['h']:.3f} at season rating {t['rating_season']:.1f}   "
-              f"race-day u {t['u']:+.4f}"
+              f"race-day u {t['u']:+.4f} "
+              f"({'IN the rating' if t['day_mode'] == 'all' else ('fast days only: ' + format(t['u_in'], '+.4f') + ' in the rating') if t['day_mode'] == 'fast' else 'OUT of the rating, by design'})"
               f"{(' (solve: ' + format(t['u_full'], '+.4f') + ', CAPPED -- a broken sheet, issue 187)') if abs(t['u_full'] - t['u']) > 1e-9 else ''}"
               f"   track distance offset {t['dist']:+.4f}"
               f"{('   altitude ' + format(t['alt'], '+.4f') + ' (credited ' + format(t['alt_km'], '.2f') + ' km: venue ' + format(t['alt_venue_km'], '.2f') + ' km above ' + str(int(js.ALT_FLOOR_M)) + ' m, this athlete lives at ' + format(t['alt_home_km'], '.2f') + ' km, the field acclimatised for the rest)') if t['alt_venue_km'] else ''}"

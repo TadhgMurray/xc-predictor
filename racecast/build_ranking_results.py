@@ -2024,14 +2024,21 @@ _CANONICAL_INDEXES = {
         # athlete pages and "where am I": WHERE person_id = %s
         ("as_person_idx", "(person_id)"),
         # rankings ability boards: WHERE n_races >= .. AND pool/sport/year,
-        #   ORDER BY mean_rating DESC
-        ("as_board_mean_idx", "(pool, sport, year, mean_rating DESC)"),
+        #   ORDER BY mean_rating DESC NULLS LAST, person_id
+        # ★ NULLS LAST, AS THE BOARD ASKS (owner, 2026-09-29: the boards "are
+        #   very slow to load"). rankings._orderBy writes `DESC NULLS LAST`
+        #   and a plain DESC index sorts nulls FIRST, so the order did not
+        #   match: the planner used the index as a filter only and sorted
+        #   all 3.8M hs_m seasons for a page of 50 -- 3.6 s of the default
+        #   board's 3.5-5 s (scripts/explain_board.py --plans on the live
+        #   database). Matching, it reads the first 50 in index order.
+        ("as_board_mean_idx", "(pool, sport, year, mean_rating DESC NULLS LAST, person_id)"),
         # the same two for the athletes board (its ORDER BY is mean_rating
         # DESC, person_id -- the tiebreak rides in the index)
-        ("as_pool_mean_idx", "(pool, mean_rating DESC, person_id)"),
-        ("as_pool_sport_mean_idx", "(pool, sport, mean_rating DESC, person_id)"),
+        ("as_pool_mean_idx", "(pool, mean_rating DESC NULLS LAST, person_id)"),
+        ("as_pool_sport_mean_idx", "(pool, sport, mean_rating DESC NULLS LAST, person_id)"),
         # the same boards sorted on the season best instead
-        ("as_board_best_idx", "(pool, sport, year, best_rating DESC)"),
+        ("as_board_best_idx", "(pool, sport, year, best_rating DESC NULLS LAST)"),
         # school.py roster/years/currentSeason: WHERE school = %s
         #   (+ sport/year equality) -- every school page view
         ("as_school_idx", "(school, sport, year)"),
