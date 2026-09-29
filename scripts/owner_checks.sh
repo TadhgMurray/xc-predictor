@@ -35,7 +35,9 @@ CHECKS=(
 # printed, never run: hours each, and each is a comparison to read before a
 # switch is turned on (see the commit messages of df34f33 and the B+C merge)
 LONG_RUNS=(
-  "$PY -u scripts/ablation_ladder.py --only base,season-tie,tilt-hs --pct 15 --outer 5   # then switch_scorecard.py --holdout base vs each"
+  "$PY scripts/scorecard.py --base production                  # today's model, scored forward (fit before 2024-08, predict 2024-25)"
+  "$PY scripts/scorecard.py --base production --try 'production --season-tie'   # each switch against today, same rows"
+  "$PY scripts/scorecard.py --base production --try 'production --tilt-scale hs'"
   "$PY engine/fit_distance_ability.py --dry-run               # the curve AND its joint fit with the per-pool residual; read the JOINT lines (2026-09-29)"
   "$PY engine/fit_distance_ability.py                         # writes distance_ability.pkl (longer than before: a second CV for the joint fit)"
   "$PY -u scripts/diag_one_scale.py --all                      # A: the label the residual brings back; B: pool / ability / abil+res held out, a verdict per pool"
