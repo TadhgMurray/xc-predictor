@@ -1484,7 +1484,7 @@ def athlete(person_id):
             latest_team = None
             try:
                 cur.execute("""
-                    SELECT school, pool, sport, year FROM athlete_season
+                    SELECT school, pool, sport, year, grade FROM athlete_season
                     WHERE  person_id = %s AND school IS NOT NULL
                       AND  lower(school) NOT LIKE 'unattached%%'
                       AND  lower(school) NOT IN ('unat', 'independent',
@@ -1733,7 +1733,11 @@ def athlete(person_id):
     #   overall grade by currency"). _season_grade(races) over the whole
     #   career answered with the first race that had a grade, which is the
     #   oldest; the season row the header rates carries its own grade.
-    athlete["grade"]  = ((season_rating.get("grade") if season_rating else None)
+    #   And the season is the one the header's TEAM comes from when it is
+    #   newer in the same pool -- see _headerClassSeason (2026-09-29).
+    class_season = _headerClassSeason(season_rating, latest_team)
+    athlete["grade"]  = ((class_season.get("grade") if class_season else None)
+                         or (season_rating.get("grade") if season_rating else None)
                          or _season_grade(races))
     # ★ A COLLEGE CLASS IS THE ACADEMIC YEAR'S HIGHEST ELIGIBILITY (owner,
     #   2026-09-07, Joey Sullivan: "he's actually a senior, but all his
@@ -1741,8 +1745,8 @@ def athlete(person_id):
     #   in his fourth cross country season and third track season is SR-4
     #   in the fall and JR-3 in the spring of one year. The class he is in
     #   is the higher of the two.
-    if season_rating and (season_rating.get("pool") or "").startswith("college"):
-        athlete["grade"] = _classGrade(seasons, season_rating) or athlete["grade"]
+    if class_season and (class_season.get("pool") or "").startswith("college"):
+        athlete["grade"] = _classGrade(seasons, class_season) or athlete["grade"]
     athlete["header_pool"] = (season_rating.get("pool") if season_rating else None)
     athlete["header_state"] = (season_rating.get("state") if season_rating else None)
     # ! NOT athlete["school"] = _season_school(races): `races` is the whole
@@ -2602,24 +2606,51 @@ def group_into_seasons(races):
 
 
 def _classGrade(seasons, season_rating):
-    """The highest eligibility among the header season's academic year:
-    the XC season stored in year Y and the track season labelled Y + 1."""
-    import re as _re
+    """The class for the academic year of `season_rating` (any row with a
+    stored `year` and a `pool`): the XC season stored in year Y and the
+    track season labelled Y + 1, through grade_label.classGrade -- the one
+    rule the school roster applies too."""
     year = season_rating.get("year")
     if year is None:
         return None
-    keys = [(int(year), "XC"), (int(year) + 1, "TF")]
-    best = None
-    for k in keys:
+    grades = []
+    for k in [(int(year), "XC"), (int(year) + 1, "TF")]:
         s = seasons.get(k) or seasons.get((str(k[0]), k[1]))
-        g = (s or {}).get("grade")
-        if not g:
-            continue
-        lab = _grade_label.gradeLabel(g, season_rating.get("pool")) or ""
-        m = _re.search(r"([1-6])$", lab)
-        if m and (best is None or int(m.group(1)) > best[0]):
-            best = (int(m.group(1)), g)
-    return best[1] if best else None
+        grades.append((s or {}).get("grade"))
+    return _grade_label.classGrade(grades, season_rating.get("pool"))
+
+
+def _headerClassSeason(season_rating, latest_team):
+    """Which season row the header's CLASS comes from: the latest season
+    that names a team, when it is in the header season's pool and no older
+    than it; else the header season itself.
+
+    ★ THE CLASS IS THE PERSON'S NOW, NOT THE RATED SEASON'S (outside
+      review, 2026-09-29). The header rating waits for a season three races
+      deep, so for the first weeks of a fall it still quotes last spring --
+      and the grade rode along with it: Harrison Dow read JR-3 up top while
+      his own 2026 XC block and the Amherst roster both said SR-4. The team
+      beside the grade was already the latest season's (owner, 2026-09-14:
+      "the rating and the team are two questions"); the class is the team
+      question, not the rating one.
+
+    ! SAME POOL ONLY. The header spells the grade with the header season's
+      pool, so a high-school senior now running a first college fall keeps
+      his high-school season's grade: an FR-1 spelled in hs_m reads "9".
+    """
+    if not season_rating:
+        return season_rating
+    if not latest_team or latest_team.get("year") is None:
+        return season_rating
+
+    def bare(p):
+        return (p or "").split("|", 1)[0]
+    if bare(latest_team.get("pool")) != bare(season_rating.get("pool")):
+        return season_rating
+    if season_rating.get("year") is not None and \
+            int(latest_team["year"]) < int(season_rating["year"]):
+        return season_rating
+    return latest_team
 
 
 def enrich_seasons(seasons, board_seasons=None):
@@ -5228,13 +5259,6 @@ def school_page(school_name):
             roster = (schoolRoster(cur, school_name, year, sport,
                                    state=state, primary=primary_state)
                       if year else [])
-            # ★ THE ROSTER BY LEVEL (owner, 2026-09-06: "did we ever split
-            #   schools by pool?"). A K-12 school or a college with a club
-            #   side mixed middle schoolers with varsity in one list, and
-            #   the ratings beside them are on different pools' scales.
-            #   One table per level, HS first, only when more than one
-            #   level has anyone; a single-level school reads as before.
-            roster_levels = rosterByLevel(roster)   # replaced below when scoped
             meets  = schoolMeets(cur, school_name, sport, year=picked_stored,
                                  state=state, primary=primary_state)
             # deeper than the old 25: the tables reveal in place now, and
@@ -5254,7 +5278,6 @@ def school_page(school_name):
             return [r for r in rows
                     if levelOf(r.get("pool")) in (None, level)]
         roster, best, top = _here(roster), _here(best), _here(top)
-        roster_levels = []
 
     # HS-equivalent view: rows carry their pool straight from
     # ranking_results / athlete_season, so no lookup is needed.
@@ -5271,6 +5294,17 @@ def school_page(school_name):
     sortByShown(best, "rating")
     sortByShown(top, "best")
     sortByShown(roster, "mean_rating")
+    # ★ THE ROSTER BY POOL (owner, 2026-09-06: "did we ever split schools
+    #   by pool?"; by gender too since 2026-09-29). A K-12 school or a
+    #   college with a club side mixed middle schoolers with varsity in one
+    #   list, and every school mixed its men with its women -- the ratings
+    #   beside them are on different pools' scales. One table per pool,
+    #   ranked on its own; a one-pool school reads as before. AFTER the
+    #   level scoping and the sort, so each group is the page's own rows in
+    #   the page's own order. See rowsByPool.
+    roster_groups = rowsByPool(roster)
+    top_groups    = rowsByPool(top)
+    best_groups   = rowsByPool(best)
 
     # ⚠ SAY WHY THE ROSTER IS MISSING. Years and rosters live in
     #   athlete_season, a rebuilt table that is empty mid-rebuild (and
@@ -5299,28 +5333,64 @@ def school_page(school_name):
                            years=years, year=seasonLabel(sport, year),
                            sport=sport, pools=pools,
                            season_rebuilding=season_rebuilding,
-                           roster=roster, roster_levels=roster_levels,
+                           roster=roster, roster_groups=roster_groups,
                            meets=meets, best=best, top=top,
+                           top_groups=top_groups, best_groups=best_groups,
                            picked=picked)
 
 
 _LEVEL_LABEL = (("hs", "High school"), ("college", "College"),
                 ("ms", "Middle school"), ("elem", "Elementary"), ("pro", "Pro"))
+_GENDER_WORD = {True: {"m": "men", "f": "women"},        # college, pro
+                False: {"m": "boys", "f": "girls"}}      # school pools
 
 
-def rosterByLevel(roster):
-    """[(label, rows)] in level order, or [] when the roster has one level
-    (the template then renders the plain table)."""
+def rowsByPool(rows):
+    """[(label, rows)] one group per POOL -- level, then men before women --
+    or [] when every row is in one pool (the template then renders the plain
+    table). Row order inside a group is kept, so a list sorted before it is
+    grouped stays sorted, and each group's rank restarts at 1.
+
+    ★ ONE RANKED LIST PER POOL, NOT ONE PER LEVEL (outside review,
+      2026-09-29: Katie Greenwald, 109.0 and "top 26.5% of college women",
+      ranked eighth on the Amherst roster between Parker Boyle and Michael
+      Rynne). A rating is a position inside its own pool -- 100 is that
+      pool's average runner -- so college_f 109 against college_m 109.6 is
+      two numbers on two scales, and the rank column made it read as a
+      race. The level split (owner, 2026-09-06: "did we ever split schools
+      by pool?") stopped at the level; the pool has a gender too, and every
+      school has both.
+
+    ! A ROW WITH NO POOL IS KEPT, in a last group headed "Other": dropping
+      it would hide a real athlete to enforce a guess, the level scoping's
+      own rule. (Rare: athlete_season and ranking_results are keyed by
+      pool; schoolTopAthletes dropped it until 2026-09-29.)
+    """
     groups = {}
-    for r in roster or []:
+    for r in rows or []:
         pool = (r.get("pool") or "").split("|")[0]
-        level = pool.split("_")[0] if pool else "hs"
-        groups.setdefault(level, []).append(r)
+        level, _, gender = pool.partition("_")
+        key = (level, gender) if gender in ("m", "f") else ("", "")
+        groups.setdefault(key, []).append(r)
     if len(groups) < 2:
         return []
-    out = [(label, groups[key]) for key, label in _LEVEL_LABEL if key in groups]
-    out += [(key, rows) for key, rows in groups.items()
-            if key not in dict(_LEVEL_LABEL)]
+    levels = {lv for lv, g in groups if g}
+    order = [k for k, _l in _LEVEL_LABEL]
+    keys = sorted(groups, key=lambda k: (k[1] == "",
+                                         order.index(k[0]) if k[0] in order
+                                         else len(order), k[0],
+                                         {"m": 0, "f": 1}.get(k[1], 2)))
+    out = []
+    for level, gender in keys:
+        name = dict(_LEVEL_LABEL).get(level, level)
+        word = _GENDER_WORD[level in ("college", "pro")].get(gender)
+        if not word:
+            label = "Other"
+        elif len(levels) == 1:
+            label = word.capitalize()
+        else:
+            label = f"{name} {word}"
+        out.append((label, groups[(level, gender)]))
     return out
 
 

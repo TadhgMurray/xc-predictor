@@ -225,6 +225,28 @@ def schoolHeader(cur, school):
             "state": None}
 
 
+def _yearClass(row):
+    """A roster row's grade, made the CLASS for its academic year.
+
+    ★ THE ATHLETE HEADER'S RULE, NOT athlete_season's COLUMN (outside
+      review, 2026-09-29). The stored grade is one sport's eligibility, and
+      tfrrs counts eligibility per sport: a senior in his fourth cross
+      country season and third track season is JR-3 on every spring row. The
+      athlete page names the class with grade_label.classGrade over both of
+      the year's seasons (owner, 2026-09-07, Joey Sullivan); the track
+      roster read the column alone, so the two pages named different
+      classes for one athlete in one season. One function now answers both.
+
+    ! THE STORED VALUE, STILL SPELLED BY THE TEMPLATE. classGrade returns
+      one of the year's own stored grades, never a new spelling, so the
+      grade_label filter and cards.py read it exactly as before.
+    """
+    from grade_label import classGrade
+    grades = [row.get("grade")] + list(row.get("year_grades") or [])
+    row["grade"] = classGrade(grades, row.get("pool")) or row.get("grade")
+    return row
+
+
 def schoolRoster(cur, school, year, sport, state=None, primary=None,
                  carry=True):
     """Everyone who raced for this school in one season, best first.
@@ -261,7 +283,16 @@ def schoolRoster(cur, school, year, sport, state=None, primary=None,
                    s.best_rating,
                    s.n_races,
                    s.first_race,
-                   s.last_race
+                   s.last_race,
+                   -- the same academic year's OTHER sport, same pool: a
+                   -- track season and the cross country season it follows
+                   -- share a stored year. See _yearClass below.
+                   ARRAY(SELECT o.grade FROM athlete_season o
+                         WHERE  o.person_id = s.person_id
+                           AND  o.year  = s.year
+                           AND  o.pool  = s.pool
+                           AND  o.sport <> s.sport
+                           AND  o.grade IS NOT NULL) AS year_grades
             FROM   athlete_season s
             LEFT JOIN LATERAL (
                 SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
@@ -279,7 +310,7 @@ def schoolRoster(cur, school, year, sport, state=None, primary=None,
             ORDER  BY s.mean_rating DESC NULLS LAST
         """, {"school": school, "year": yr, "sport": sport, **sfp,
               **(params or {})})
-        return cur.fetchall()
+        return [_yearClass(r) for r in cur.fetchall()]
 
     rows = fetch(year)
     if not carry or year is None:
@@ -470,8 +501,13 @@ def schoolTopAthletes(cur, school, sport, limit=12,
       performance table asks about races, and keeps every one.
     """
     sf, sfp = stateFilterSql("s", state, primary, school)
+    # ⚠ THE OUTER SELECT HAS TO CARRY `pool` OUT (2026-09-29). The inner one
+    #   computed it and this line dropped it, so the table never had an
+    #   HS-equivalent number (no data-hs on the live Amherst page) and could
+    #   not be split by pool -- app.rowsByPool read every row as poolless and
+    #   left men and women in one ranked list.
     cur.execute(f"""
-        SELECT person_id, name, best, seasons, first_year, last_year
+        SELECT person_id, name, best, pool, seasons, first_year, last_year
         FROM (
             SELECT s.person_id,
                    max(COALESCE(a.first_name, '') || ' '

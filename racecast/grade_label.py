@@ -70,3 +70,38 @@ def advanceGrade(grade, years, pool=None):
         n = int(m.group(2)) + years
         return f"{order[min(cls + years, 3)]}-{n}" if n <= 6 else None
     return None
+
+
+def classGrade(grades, pool=None):
+    """The class an athlete is in for ONE academic year, from the stored
+    grades of that year's seasons (its cross country season and its track
+    season), as the stored value the page then spells with gradeLabel.
+
+    ★ A COLLEGE CLASS IS THE ACADEMIC YEAR'S HIGHEST ELIGIBILITY (owner,
+      2026-09-07, Joey Sullivan: "he's actually a senior, but all his races
+      say junior"). tfrrs counts eligibility PER SPORT, so a runner in his
+      fourth cross country season and third track season is SR-4 in the
+      fall and JR-3 in the spring of the same year; the class he is in is
+      the higher of the two. The athlete header and the school roster both
+      ask this function, so the two pages cannot name different classes
+      for one season (outside review, 2026-09-29: Harrison Dow SR-4 on the
+      Amherst page, JR-3 on his own).
+
+    ! A SCHOOL POOL TAKES THE FIRST GRADE AS IT IS. A high-school grade is
+      the same number in both sports, and the eligibility regex below would
+      read "12" as a second-year. Unreadable spellings are skipped, and a
+      year with no readable eligibility at all keeps its first grade rather
+      than going blank.
+    """
+    grades = [g for g in (grades or []) if g is not None and str(g).strip()]
+    if not grades:
+        return None
+    level = (pool or "").split("|")[0].split("_")[0].lower()
+    if level not in ("college", "pro"):
+        return grades[0]
+    best = None
+    for g in grades:
+        m = _ELIG.match(gradeLabel(g, pool) or "")
+        if m and (best is None or int(m.group(2)) > best[0]):
+            best = (int(m.group(2)), g)
+    return best[1] if best else grades[0]

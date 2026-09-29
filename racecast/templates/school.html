@@ -112,10 +112,13 @@
 
 {# The two-gender view-all: a rankings board is pool-scoped, so a mixed
    table links each side separately. #}
+{# ! the words match the pool headings above the tables (2026-09-29): a
+   college page's tables say Men / Women, so its links do too. #}
 {% macro view_all(board) -%}
+    {%- set adult = (pools.M|string).startswith(('college', 'pro')) -%}
     <p class="view-all">View all:
-        <a href="/rankings?board={{ board }}&amp;sport={{ sport }}&amp;pool={{ pools.M }}&amp;school={{ school|urlencode }}">Boys →</a>
-        <a href="/rankings?board={{ board }}&amp;sport={{ sport }}&amp;pool={{ pools.F }}&amp;school={{ school|urlencode }}">Girls →</a>
+        <a href="/rankings?board={{ board }}&amp;sport={{ sport }}&amp;pool={{ pools.M }}&amp;school={{ school|urlencode }}">{{ "Men" if adult else "Boys" }} →</a>
+        <a href="/rankings?board={{ board }}&amp;sport={{ sport }}&amp;pool={{ pools.F }}&amp;school={{ school|urlencode }}">{{ "Women" if adult else "Girls" }} →</a>
     </p>
 {%- endmacro %}
 
@@ -163,9 +166,11 @@
        it is that season's, and the year is the useful label. #}
     <h2>{% if picked %}{{ picked }} roster{% else %}Current roster{% if year %}
         <span class="h2-note">{{ year }}</span>{% endif %}{% endif %}</h2>
-    {# one table per level when the school has more than one (K-12, a
-       college with a club side); the ratings beside each are that pool's #}
-    {% for level_label, rows in (roster_levels if roster_levels else [(None, roster)]) %}
+    {# ★ ONE TABLE PER POOL when the school has more than one: men and
+       women, and each level (K-12, a college with a club side). A rating is
+       a place in its own pool, so one ranked list across pools was a race
+       nobody ran (outside review, 2026-09-29). Each table ranks from 1. #}
+    {% for level_label, rows in (roster_groups if roster_groups else [(None, roster)]) %}
     {% if level_label %}<h3 class="roster-level">{{ level_label }} <span class="h2-note">{{ rows|length }}</span></h3>{% endif %}
     <table class="staged" data-step="20" data-scale-sort="4">
         <thead>
@@ -220,6 +225,11 @@
 {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
         <h2>Best athletes</h2>
     <p class="meta">Best career rating, one row per athlete.</p>
+    {# per pool, as the roster is: a best career rating is a college_f or
+       an hs_m number, never both. `top` is the group's rows in here; the
+       capped note below reads the whole list again. #}
+    {% for group_label, top in (top_groups if top_groups else [(None, top)]) %}
+    {% if group_label %}<h3 class="roster-level">{{ group_label }} <span class="h2-note">{{ top|length }}</span></h3>{% endif %}
     <table class="staged" data-step="20" data-scale-sort="3">
         <thead>
             <tr><th>#</th><th>Athlete</th><th>Best{{ rating_i() }}</th><th>Seasons</th><th>Years</th></tr>
@@ -243,6 +253,7 @@
             {% endif %}
         </tbody>
     </table>
+    {% endfor %}
     {{ capped_note(top, "athletes") }}
     {{ view_all("ability") }}
 {% endif %}
@@ -251,6 +262,8 @@
     <h2>Best performances</h2>
     {# Every race, not one per athlete. If the same runner owns the top four,
        that is the school's history. The table above is the per athlete one. #}
+    {% for group_label, best in (best_groups if best_groups else [(None, best)]) %}
+    {% if group_label %}<h3 class="roster-level">{{ group_label }} <span class="h2-note">{{ best|length }}</span></h3>{% endif %}
     <table class="staged" data-step="20" data-scale-sort="4">
         <thead>
             <tr><th>#</th><th>Athlete</th><th>Grade</th><th>Rating{{ rating_i() }}</th>
@@ -278,6 +291,7 @@
             {% endif %}
         </tbody>
     </table>
+    {% endfor %}
     {{ capped_note(best, "performances") }}
     {{ view_all("performance") }}
 {% endif %}
