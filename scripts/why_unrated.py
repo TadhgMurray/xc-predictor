@@ -162,6 +162,10 @@ def main():
                 B.prepareXcTfrrsDistTemp(conn)
             else:
                 B.prepareTfStateTemp(conn)
+                # ! THE TRACK QUERY JOINS THE SPRINT LIST TOO (the board
+                #   build prepares it beside the state index): without it
+                #   --sport TF died on "tmp_sprint_events does not exist"
+                B.prepareSprintEvents(conn)
         with conn.cursor(
                 cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
             cur.execute(_sqlFor(args.sport, rated=None),
