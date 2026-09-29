@@ -25,7 +25,8 @@ person_collision.py -- a person id that a NEW anet athlete also owns.
 
 ★ THE TEST: the athlete whose anet id IS the person id shares NO name token
   with anyone else under that id (every other anet athlete's name, every
-  tfrrs row's name). Cole Sprout / April Gienger, Ronan McMahon-Staggs /
+  tfrrs row's name) -- not even one within a typo (namesNear) -- and is the
+  NEWCOMER, first racing after the rest of the id had begun. Cole Sprout / April Gienger, Ronan McMahon-Staggs /
   Regan Holmes. One shared token -- a nickname, a married surname, a
   hyphenation -- is no collision. And the native athlete must hold FEWER
   rows than the rest: the newcomer moves nothing, it keeps its own number
@@ -67,29 +68,29 @@ def gatherSql(person=None):
         SELECT r.person_id AS p,
                CASE WHEN r.source = 'anet' THEN r.athlete_id END AS aid,
                CASE WHEN r.source = 'anet' THEN NULL ELSE r.athlete_name END AS name,
-               count(*) AS n
+               count(*) AS n, min(r.date) AS first
         FROM   {t} r
         WHERE  r.person_id IS NOT NULL AND r.person_id < {ANET_TOP}
           AND  NOT (r.source = 'anet' AND r.athlete_id = r.person_id) {only}
         GROUP  BY 1, 2, 3""" for _s, t in TABLES]
     native = [f"""
-        SELECT r.person_id AS p, count(*) AS n FROM {t} r
+        SELECT r.person_id AS p, count(*) AS n, min(r.date) AS first FROM {t} r
         WHERE  r.source = 'anet' AND r.athlete_id = r.person_id
           AND  r.person_id IN (SELECT p FROM pc_other)
         GROUP  BY 1""" for _s, t in TABLES]
     return f"""
         DROP TABLE IF EXISTS pc_other, pc_native, pc_suspect;
         CREATE TEMP TABLE pc_other AS
-            SELECT p, aid, name, sum(n)::bigint AS n
+            SELECT p, aid, name, sum(n)::bigint AS n, min(first) AS first
             FROM ({' UNION ALL '.join(parts)}) x GROUP BY 1, 2, 3;
         CREATE INDEX ON pc_other (p);
         ANALYZE pc_other;
         CREATE TEMP TABLE pc_native AS
-            SELECT p, sum(n)::bigint AS n
+            SELECT p, sum(n)::bigint AS n, min(first) AS first
             FROM ({' UNION ALL '.join(native)}) x GROUP BY 1;
         CREATE TEMP TABLE pc_suspect AS
         WITH other_tok AS (
-            SELECT o.p, sum(o.n) AS n_other,
+            SELECT o.p, sum(o.n) AS n_other, min(o.first) AS first_other,
                    array_agg(DISTINCT tk) FILTER (WHERE tk IS NOT NULL) AS toks,
                    min(o.aid) AS min_aid
             FROM   pc_other o
@@ -108,22 +109,55 @@ def gatherSql(person=None):
             WHERE  btrim(COALESCE(a.first_name, '') || COALESCE(a.last_name, '')) <> ''
             ORDER  BY a.athlete_id)
         SELECT o.p, nt.nm AS native_name, n.n AS n_native, o.n_other,
-               o.toks AS other_tokens, o.min_aid
+               o.toks AS other_tokens, o.min_aid, nt.toks AS native_tokens
         FROM   other_tok o
         JOIN   native_tok nt ON nt.p = o.p
         JOIN   pc_native n ON n.p = o.p
         WHERE  cardinality(nt.toks) > 0 AND cardinality(o.toks) > 0
           AND  NOT (nt.toks && o.toks)
-          AND  n.n < o.n_other;
+          AND  n.n < o.n_other
+          -- the id's own athlete is the NEWCOMER: first raced after the
+          -- rest of the id had begun (anet issued the number later)
+          AND  n.first > o.first_other;
     """
 
 
 def gather(cur, person=None):
     cur.execute("SET LOCAL work_mem = '512MB'")
     cur.execute(gatherSql(person), {"person": person})
-    cur.execute("""SELECT p, native_name, n_native, n_other, other_tokens, min_aid
+    cur.execute("""SELECT p, native_name, n_native, n_other, other_tokens, min_aid,
+                          native_tokens
                    FROM pc_suspect ORDER BY n_other DESC""")
-    return cur.fetchall()
+    return [r[:6] for r in cur.fetchall() if not namesNear(r[6], r[4])]
+
+
+def osa(a, b):
+    """Edit distance counting an adjacent swap as one edit."""
+    la, lb = len(a), len(b)
+    d = [[0] * (lb + 1) for _ in range(la + 1)]
+    for i in range(la + 1):
+        d[i][0] = i
+    for j in range(lb + 1):
+        d[0][j] = j
+    for i in range(1, la + 1):
+        for j in range(1, lb + 1):
+            c = 0 if a[i - 1] == b[j - 1] else 1
+            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + c)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)
+    return d[la][lb]
+
+
+def namesNear(native, others):
+    """★ ONE TYPO IS THE SAME NAME (owner's dry run, 2026-09-29: "Hanna
+    Mosley" against her own college rows as "Hannah Mosely" -- no token in
+    common, one person). Any native token within one edit (a swap counts
+    as one) of any other token, both three letters or more, is a match."""
+    for a in native or ():
+        for b in others or ():
+            if len(a) >= 3 and len(b) >= 3 and osa(a, b) <= 1:
+                return True
+    return False
 
 
 def targets(cur, suspects):

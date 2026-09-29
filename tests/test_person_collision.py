@@ -25,7 +25,9 @@ INSERT INTO athletes VALUES
     (700, 'Sam', 'Lee', 'Elm HS', 700),                    -- a normal link
     (32542417, 'Ronan', 'McMahon-Staggs', 'Washington', 32791413),
     (32791413, 'Regan', 'Holmes', 'Walker-Grant', 32791413),
-    (4000, 'Pat', 'Kim', 'Ash HS', 4000);
+    (4000, 'Pat', 'Kim', 'Ash HS', 4000),
+    (294720, 'Hanna', 'Mosley', 'Oak HS', 294720),        -- a typo, one person
+    (9100, 'Old', 'Timer', 'Elm HS', 9100);                -- older than the rest
 INSERT INTO results VALUES
     (1, 32773608, 12267305, 'anet', NULL, '2024-09-27'),
     (2, 32773608, NULL, 'tfrrs', 'Cole Sprout', '2024-09-27'),
@@ -36,12 +38,25 @@ INSERT INTO results VALUES
     (7, 700, NULL, 'tfrrs', 'Sam Lee', '2022-10-01'),
     (8, 32791413, 32542417, 'anet', NULL, '2024-09-03'),
     (9, 32791413, NULL, 'tfrrs', 'Ronan McMahon-Staggs', '2024-09-03'),
-    (10, 4000, 4000, 'anet', NULL, '2024-10-01');
+    (10, 4000, 4000, 'anet', NULL, '2024-10-01'),
+    (20, 294720, 294720, 'anet', NULL, '2012-10-01'),
+    (21, 294720, NULL, 'tfrrs', 'Hannah Mosely', '2015-10-01'),
+    (22, 294720, NULL, 'tfrrs', 'Hannah Mosely', '2015-11-01'),
+    (30, 9100, 9100, 'anet', NULL, '2010-10-01'),
+    (31, 9100, NULL, 'tfrrs', 'Someone Else', '2015-10-01'),
+    (32, 9100, NULL, 'tfrrs', 'Someone Else', '2015-11-01');
 INSERT INTO results_tf VALUES
     (11, 32773608, 32773608, 'anet', NULL, '2026-07-03'),
     (12, 32791413, 32791413, 'anet', NULL, '2026-03-21'),
     (13, 32542417, 999, 'anet', NULL, '2020-01-01');   -- 32542417 is taken as a person
 """
+
+
+def test_one_typo_is_the_same_name():
+    assert PC.namesNear(["hanna", "mosley"], ["hannah", "mosely"])
+    assert PC.namesNear(["jon"], ["john"])
+    assert not PC.namesNear(["cole", "sprout"], ["april", "gienger"])
+    assert not PC.namesNear(["regan", "holmes"], ["ronan", "mcmahon", "staggs"])
 
 
 def test_tokens_and_sql_shape():
