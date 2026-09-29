@@ -539,6 +539,28 @@ def renderRaceCard(d):
     return out.getvalue()
 
 
+def cardPool(rows):
+    """The pool the school card shows: the one with the most rated athletes,
+    men ('_m') before women on a tie. None when there are no rows."""
+    count = {}
+    for r in rows:
+        count[r.get("pool")] = count.get(r.get("pool"), 0) + 1
+    if not count:
+        return None
+    return max(count, key=lambda p: (count[p], str(p or "").endswith("_m")))
+
+
+def poolWord(pool):
+    """'college_m' -> 'men', 'hs_f' -> 'girls'; '' when unknown."""
+    p = str(pool or "")
+    level, _, g = p.partition("_")
+    if g not in ("m", "f"):
+        return ""
+    if level == "college" or level == "pro":
+        return "men" if g == "m" else "women"
+    return "boys" if g == "m" else "girls"
+
+
 def schoolCardData(cur, school, state=None):
     """The school card: the newest season of either sport, its top seven
     by season rating, the team rating (the top five's mean)."""
@@ -559,6 +581,13 @@ def schoolCardData(cur, school, state=None):
     _, sport, year = best
     rows = schoolRoster(cur, school, year, sport)
     rows = [dict(r) for r in rows if r.get("mean_rating") is not None]
+    # ★ ONE POOL ON THE CARD (2026-09-29, owner: "fix share-card"). The top
+    #   seven used to be taken across men and women, and the team rating
+    #   averaged the two -- numbers on two different scales in one mean.
+    #   The card shows the school's biggest pool that season (men on a
+    #   tie) and says which.
+    pool = cardPool(rows)
+    rows = [r for r in rows if r.get("pool") == pool]
     rows.sort(key=lambda r: -float(r["mean_rating"]))
     top = rows[:7]
     five = [float(r["mean_rating"]) for r in top[:5]]
@@ -570,7 +599,8 @@ def schoolCardData(cur, school, state=None):
     return {"ranks": ranks,
             "crest": crestPath(cur, school, state or teamState(school)),
             "title": schoolLabel(school) if not state else f"{school} ({state})",
-            "sub": f"{label} {'cross country' if sport == 'XC' else 'track'} · top seven by season rating",
+            "sub": (f"{label} {'cross country' if sport == 'XC' else 'track'}"
+                    f"{' · ' + poolWord(pool) if poolWord(pool) else ''} · top seven by season rating"),
             "team": team, "athletes": len(rows),
             "top": [{"name": (r.get("name") or "").strip() or "Unknown",
                      "grade": gradeLabel(r.get("grade"), r.get("pool")) or "",
@@ -700,7 +730,8 @@ def cachedRaceCard(cur, sport, meet_id, div_id, event_id=None):
 
 def cachedSchoolCard(cur, school, state=None):
     import hashlib
-    key = hashlib.sha1(f"{school}|{state or ''}".encode("utf-8")).hexdigest()[:16]
+    # v2 (2026-09-29): one pool per card; a new name so the mixed ones redraw
+    key = hashlib.sha1(f"v2|{school}|{state or ''}".encode("utf-8")).hexdigest()[:16]
     def build():
         d = schoolCardData(cur, school, state)
         return renderSchoolCard(d) if d else None

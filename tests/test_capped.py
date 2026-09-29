@@ -65,7 +65,8 @@ ok(not Capped().truncated, "the default is 'not truncated', never unset")
 # truncated permanently False -- the old silent behaviour, not a crash.
 for mod, n in (("school.py", 3), ("app.py", 1)):
     src = read("racecast", mod)
-    calls = len(re.findall(r"return fetchCapped\(cur, limit\)", src))
+    # both helpers, returned or assigned (fetchCappedPerPool since 2026-09-29)
+    calls = len(re.findall(r"(?:return|rows =) fetchCapped(?:PerPool)?\(cur, limit\)", src))
     plus = len(re.findall(r"limit \+ 1", src))
     ok(calls == n, f"{mod}: expected {n} capped readers, found {calls}")
     ok(plus >= calls,

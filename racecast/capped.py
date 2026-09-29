@@ -53,3 +53,27 @@ def fetchCapped(cur, limit):
     out.truncated = len(rows) > limit
     out.shown = limit
     return out
+
+
+def fetchCappedPerPool(cur, limit, key="pool"):
+    """fetchCapped, with the cap applied PER POOL (2026-09-29, owner: "fix
+    the best thing"). A school's Best tables are one table per pool since
+    the men/women split, and one shared cap of 100 let the faster pool fill
+    it and cut the other short. The query ranks within each pool and keeps
+    `limit + 1` of each (row_number() OVER (PARTITION BY pool)); this keeps
+    `limit` of each, in the order given, and reports truncated when any pool
+    had the extra row."""
+    rows = cur.fetchall()
+    seen, out, truncated = {}, [], False
+    for r in rows:
+        k = r[key] if isinstance(r, dict) or hasattr(r, "keys") else None
+        n = seen.get(k, 0)
+        if n >= limit:
+            truncated = True
+            continue
+        seen[k] = n + 1
+        out.append(r)
+    capped = Capped(out)
+    capped.truncated = truncated
+    capped.shown = limit
+    return capped

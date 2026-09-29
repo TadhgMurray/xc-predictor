@@ -43,7 +43,7 @@ import sys
 sys.path.insert(0, "engine")
 from season_year import seasonYearSqlInt
 from school_identity import stateFilterSql
-from capped import fetchCapped
+from capped import fetchCapped, fetchCappedPerPool
 
 
 # ⚠ THE BUDGET FOR THE RAW-RESULTS HEADER FALLBACK (schoolHeader, below).
@@ -457,7 +457,18 @@ def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
       question, and the roster tables above already answer that one.
     """
     sf, sfp = stateFilterSql("rr", state, primary, school)
+    # ★ THE CAP IS PER POOL (2026-09-29): one table per pool on the page, so
+    #   each pool keeps its own best `limit` (capped.fetchCappedPerPool).
+    #   Ranked first, names joined only for the rows kept.
     cur.execute(f"""
+        WITH ranked AS (
+            SELECT rr.*, row_number() OVER (PARTITION BY rr.pool
+                                            ORDER BY rr.speed_rating DESC) AS rn
+            FROM   ranking_results rr
+            WHERE  rr.school = %(school)s
+              AND  rr.sport  = %(sport)s
+              AND  rr.speed_rating IS NOT NULL
+              {sf})
         SELECT rr.person_id,
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '')  AS name,
@@ -473,7 +484,7 @@ def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
                rr.meet_id,
                rr.div_id,
                rr.event_id
-        FROM   ranking_results rr
+        FROM   ranked rr
         LEFT JOIN LATERAL (
             SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
                    NULLIF(TRIM(x.last_name),  '') AS last_name
@@ -482,14 +493,10 @@ def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
             ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
             LIMIT  1
         ) a ON TRUE
-        WHERE  rr.school = %(school)s
-          AND  rr.sport  = %(sport)s
-          AND  rr.speed_rating IS NOT NULL
-          {sf}
+        WHERE  rr.rn <= %(lim)s
         ORDER  BY rr.speed_rating DESC
-        LIMIT  %(lim)s
     """, {"school": school, "sport": sport, "lim": limit + 1, **sfp})
-    return fetchCapped(cur, limit)
+    return fetchCappedPerPool(cur, limit)
 
 
 def schoolTopAthletes(cur, school, sport, limit=12,
@@ -508,7 +515,9 @@ def schoolTopAthletes(cur, school, sport, limit=12,
     #   left men and women in one ranked list.
     cur.execute(f"""
         SELECT person_id, name, best, pool, seasons, first_year, last_year
-        FROM (
+        FROM (SELECT y.*, row_number() OVER (PARTITION BY y.pool
+                                             ORDER BY y.best DESC) AS rn_pool
+              FROM (
             SELECT s.person_id,
                    max(COALESCE(a.first_name, '') || ' '
                        || COALESCE(a.last_name, ''))  AS name,
@@ -535,8 +544,10 @@ def schoolTopAthletes(cur, school, sport, limit=12,
               AND  s.best_rating IS NOT NULL
               {sf}
             GROUP  BY s.person_id
+              ) y
         ) x
+        -- the cap is per pool, as schoolBest's
+        WHERE  x.rn_pool <= %(lim)s
         ORDER  BY best DESC
-        LIMIT  %(lim)s
     """, {"school": school, "sport": sport, "lim": limit + 1, **sfp})
-    return fetchCapped(cur, limit)
+    return fetchCappedPerPool(cur, limit)

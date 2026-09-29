@@ -271,3 +271,25 @@ def test_a_stray_poolless_row_does_not_change_the_other_headings():
     groups = app.rowsByPool(rows)
     assert [label for label, _ in groups] == ["Men", "Women", "Other"]
     assert [r["person_id"] for r in groups[2][1]] == [99, 98]
+
+
+def test_school_card_takes_one_pool():
+    import cards as C
+    rows = [{"pool": "college_m"}] * 5 + [{"pool": "college_f"}] * 7
+    assert C.cardPool(rows) == "college_f"
+    assert C.cardPool([{"pool": "hs_m"}, {"pool": "hs_f"}]) == "hs_m", "men on a tie"
+    assert C.cardPool([]) is None
+    assert C.poolWord("college_f") == "women" and C.poolWord("hs_m") == "boys"
+    assert C.poolWord(None) == ""
+
+
+def test_best_tables_cap_per_pool():
+    from capped import fetchCappedPerPool
+
+    class Cur:
+        def fetchall(self):
+            return ([{"pool": "college_m", "i": i} for i in range(3)]
+                    + [{"pool": "college_f", "i": i} for i in range(2)])
+    got = fetchCappedPerPool(Cur(), 2)
+    assert [r["pool"] for r in got] == ["college_m", "college_m", "college_f", "college_f"]
+    assert got.truncated
