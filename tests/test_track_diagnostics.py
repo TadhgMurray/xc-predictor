@@ -120,3 +120,24 @@ def test_the_track_diagnostic_blames_the_meets_not_the_tracks(capsys):
     r2 = tv.analyse(cols, npz, era_years=0, min_rows=50, window=21, use_curve=False,
                     sample_pct=50, seed=3)
     assert r2["by_terc"] and r2["across"]["n_tracks"] == 30
+
+
+def test_the_indoor_check_reads_each_kind_of_oval():
+    """Owner, 2026-09-29: "indoor difficulty is too easy generally". One
+    asserted level stands for every oval; --by geometry measures each kind.
+    Planted: three flat 200s a further +1.0% slower than three banked 200s."""
+    cols, npz, level = _track_pack()
+    course = np.asarray(cols["course"])
+    extra = np.where(course < 3, 0.010, 0.0)
+    cols = dict(cols, norm=np.asarray(cols["norm"]) * np.exp(extra))
+    cols["track_length"] = np.array([200.0] * 6 + [400.0] * 30)
+    cols["track_type"] = [""] * 3 + ["Banked"] * 3 + [""] * 30
+    res, groups = ioc.measure(cols, npz, windows=(90,), dists=(1600,),
+                              use_curve=False, by="geometry")
+    assert groups == list(ioc.GEO_CLASSES)
+    n_f, med_f, _t = res[("raw", "flat 200m", 90, "1600")]["pairs"]
+    n_b, med_b, _t = res[("raw", "banked 200m", 90, "1600")]["pairs"]
+    assert n_f > 1000 and n_b > 1000
+    assert abs(med_b - level) < 0.004, med_b
+    assert abs(med_f - (level + 0.010)) < 0.004, med_f
+    assert ("raw", "300m+", 90, "1600") not in res

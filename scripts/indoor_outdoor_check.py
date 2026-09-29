@@ -52,8 +52,32 @@ def _stats(d):
     return d.size, float(np.median(d)), float(t.mean()) if t.size else np.nan
 
 
+# ★ BY THE TRACK, NOT ONLY BY THE RUNNER (owner, 2026-09-29: "I think indoor
+#   difficulty is too easy generally"). One asserted indoor level
+#   (INDOOR_CENTRE, +0.3%) stands for every oval, and ovals are not alike: a
+#   flat 200 has tighter, unbanked turns than a banked 200, and a 300 m or
+#   longer oval runs close to an outdoor track. So the same comparison is
+#   offered grouped by the INDOOR track's geometry, from the pack's
+#   track_length / track_type (speed_ratings.attachCourseGeometry). Unknown
+#   length is its own class here: this is a measurement, and an assumption
+#   would put the answer into the question.
+GEO_CLASSES = ("under 200m", "flat 200m", "banked 200m", "300m+", "unknown")
+
+
+def geometryClass(length, ttype):
+    """One of GEO_CLASSES for an indoor track."""
+    import track_geometry as tg
+    if length is None or not np.isfinite(length):
+        return "unknown"
+    if length >= 290:
+        return "300m+"
+    if length < 190:
+        return "under 200m"
+    return "banked 200m" if tg.isBanked(ttype) else "flat 200m"
+
+
 def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
-            use_curve=True, sample_pct=100.0, seed=11, codes=None):
+            use_curve=True, sample_pct=100.0, seed=11, codes=None, by="pool"):
     """Returns {(pool, window, dist or 'all'): {'transition': (n, median,
     trimmed), 'pairs': (n, median, trimmed)}} plus the same without the
     curve under the key ('raw', ...). codes: bracket.packCodes' whole-pack
@@ -80,6 +104,18 @@ def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
     season = np.asarray(cols["_season"]).astype(np.int64)
     pool_of_raw, pool_names = codes["pool_of_raw"], codes["pool_names"]
     pool = pool_of_raw[ath_raw]
+    # the grouping: the runner's pool, or the INDOOR track's geometry class
+    group, group_names = pool, list(pool_names)
+    if by == "geometry":
+        if "track_length" not in cols:
+            raise SystemExit("[indoor] --by geometry needs a pack with track geometry "
+                             "(07_pack from 2026-09-19 on)")
+        tl = np.asarray(cols["track_length"], dtype=np.float64)
+        tt = list(cols.get("track_type", [""] * tl.size))
+        cls_of_base = np.array([GEO_CLASSES.index(geometryClass(tl[i], tt[i]))
+                                for i in range(tl.size)], dtype=np.int64)
+        group = np.where(course >= 0, cls_of_base[np.maximum(course, 0)], -1)
+        group_names = list(GEO_CLASSES)
     ln = np.log(np.asarray(cols["norm"], dtype=np.float64))
     curve = np.zeros(ln.size)
     if use_curve and npz is not None and "curve" in npz and "doy" in cols:
@@ -124,7 +160,7 @@ def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
             gap_row[has] = np.abs(days[indoor][has] - s_day[has] / n_out[has])
             # one number per athlete-season, then the median over them
             sea_in = season[indoor]
-            p_in = pool[indoor]
+            p_in = group[indoor]
             d_in = dcode[indoor]
             # ---- transition: last indoor vs first outdoor, same distance --
             last_in = rj.groupExtreme(pid[indoor], days[indoor], n_pair)
@@ -141,7 +177,7 @@ def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
             z_first = np.where(cnt > 0, sm / np.maximum(cnt, 1), np.nan)
             trans = np.full(indoor.sum(), np.nan)
             trans[pair_ok] = z[indoor][pair_ok] - z_first[kq[pair_ok]]
-            for p_i, pname in enumerate(pool_names):
+            for p_i, pname in enumerate(group_names):
                 for dsel, dlab in [(None, "all")] + [(d, str(d)) for d in dists]:
                     m = (p_in == p_i) if dsel is None else ((p_in == p_i) & (d_in == round(dsel / 100)))
                     if not m.any():
@@ -160,7 +196,7 @@ def measure(cols, npz, windows=(21, 35, 49), dists=(800, 1600, 3200, 5000),
                         "transition": _stats(trans[mt]),
                         "gap": (float(np.median(per_gap)) if per_gap.size else np.nan,
                                 float(np.median(gap[mt])) if mt.any() else np.nan)}
-    return out, pool_names
+    return out, group_names
 
 
 def report(res, pool_names, windows, dists, min_n=100):
@@ -242,6 +278,9 @@ def main():
     ap.add_argument("--sample-pct", type=float, default=30.0,
                     help="percent of athletes (whole athletes; default 30)")
     ap.add_argument("--seed", type=int, default=11)
+    ap.add_argument("--by", choices=("pool", "geometry"), default="pool",
+                    help="group by the runner's pool, or by the indoor track's "
+                         "geometry (flat/banked 200, 300m+, ...)")
     args = ap.parse_args()
     windows = tuple(int(x) for x in args.windows.split(","))
     dists = tuple(int(x) for x in args.dists.split(","))
@@ -249,8 +288,12 @@ def main():
     if npz is None:
         print(f"(no solve file at {args.npz}: raw log times only)")
     print(f"[indoor] {np.asarray(cols['norm']).size:,} rows loaded", flush=True)
+    if args.by == "geometry":
+        import speed_ratings as sr
+        if "track_length" not in cols:
+            sr.attachCourseGeometry(cols)
     res, pool_names = measure(cols, npz, windows, dists, use_curve=not args.no_curve,
-                              sample_pct=args.sample_pct, seed=args.seed)
+                              sample_pct=args.sample_pct, seed=args.seed, by=args.by)
     report(res, pool_names, windows, dists)
 
 
