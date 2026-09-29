@@ -177,6 +177,18 @@ NATIONAL_TEAMS = frozenset("""
     "cayman islands", "antigua and barbuda", "saint lucia", "st. lucia",
     "st. kitts and nevis", "saint vincent and the grenadines",
 }
+# ★ THE NAMES LEFT OUT ABOVE, FOR ONE CONTEXT ONLY (owner, 2026-09-29, the
+#   all-time high school list: Joao N'Tyamba "Angola IN" from the 1992
+#   Olympics, Vyacheslav Shabunin "Russia OH", Clive Terrelonge "Jamaica CA").
+#   Angola High School is real, and a row with school "Angola" at a Tuesday
+#   dual meet is its runner. At the Olympic Games it is the country:
+#   pro_flag's national-team seed reads these alongside NATIONAL_TEAMS, and
+#   only at senior international championships.
+AMBIGUOUS_NATIONAL_TEAMS = frozenset("""
+    poland norway denmark lebanon jamaica cuba peru mexico panama china
+    scotland wales holland jordan chad russia italy angola grenada greece
+    georgia
+""".split())
 _NT_SUFFIX = re.compile(r"\s*\([a-z .]{2,6}\)\s*$|\s+(national team|nt|team)\s*$", re.I)
 
 

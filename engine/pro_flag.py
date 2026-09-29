@@ -125,6 +125,43 @@ _EXCLUDE = (r"(youth|junior|jr |aau|masters|senior games|little athletics"
 #   real professional.
 _NCAA = r"(ncaa)"
 
+# ★ A COUNTRY AT A SENIOR CHAMPIONSHIP IS A NATIONAL TEAM, ONE RACE IS ENOUGH
+#   (owner, 2026-09-29, "do smthn abt this": Joao N'Tyamba "Angola IN" at the
+#   1992 Olympics, Vyacheslav Shabunin "Russia OH" at the 1996 Olympics,
+#   Clive Terrelonge "Jamaica CA" -- all on the all-time high school list).
+#   An Olympian may run one 800 heat and go home, so _MIN_PRO_RACES cannot
+#   be asked of them; what makes it certain instead is the school string
+#   naming a country AT a meet only national teams enter. Either alone is
+#   not enough: Angola High School is real, and a US junior at the Worlds
+#   races for "USA", which is in neither list. The NCAA veto and the age
+#   floor still apply below.
+_SENIOR_CHAMP = (r"(olympic games|olympiad|world championships|world champs"
+                 r"|world athletics champ|world indoor champ|pan american games"
+                 r"|pan am games|commonwealth games|world cross country champ)")
+_SENIOR_EXCLUDE = (_EXCLUDE[:-1] + r"|u20|u18|u23|under 2|under 1|special olympic"
+                   r"|deaflympic|paralympic|universiade|university|student)")
+_NT_STRIP = r"\s*\([a-z .]{2,6}\)\s*$|\s+(national team|nt|team)\s*$"
+
+
+def nationalTeamNames():
+    """Every lower-case country spelling a national-team row may carry."""
+    from pool_resolve import AMBIGUOUS_NATIONAL_TEAMS, NATIONAL_TEAMS
+    return sorted(NATIONAL_TEAMS | AMBIGUOUS_NATIONAL_TEAMS)
+
+
+def nationalTeamSeedSql(results, meets):
+    """(person_id, yr) of rows at a senior international championship whose
+    school is a country. Parameters: _SENIOR_CHAMP, _SENIOR_EXCLUDE,
+    _NT_STRIP, the name list."""
+    return f"""
+        SELECT DISTINCT r.person_id, {_YR} AS yr
+        FROM {results} r
+        JOIN {meets} m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
+        WHERE m.meet_name ~* %s AND m.meet_name !~* %s
+          AND btrim(regexp_replace(lower(btrim(r.school)), %s, '')) = ANY(%s)
+          AND r.date ~ '^(19|20)[0-9]{{2}}'
+          AND r.person_id IS NOT NULL"""
+
 # ⚠ THE SCHOOL NAME IS NOT A SEED, AND THIS WAS TRIED AND REMOVED.
 #
 #   Jackson Sharp runs for HOKA NAZ Elite and never races a seeded meet, so
@@ -244,6 +281,21 @@ def buildSeed(cur, min_pro_races=_MIN_PRO_RACES):
         GROUP BY person_id, yr
         HAVING count(*) >= {min_pro_races}
     """)
+    # the national-team seed: one race at a senior championship, see above
+    names = nationalTeamNames()
+    n_nt = 0
+    for results, meets in (("results", "meets"), ("results_tf", "meets_tf")):
+        cur.execute(f"""
+            INSERT INTO tmp_pro_season (person_id, yr, pro_races, round)
+            SELECT s.person_id, s.yr, 1, 0
+            FROM ({nationalTeamSeedSql(results, meets)}) s
+            WHERE NOT EXISTS (SELECT 1 FROM tmp_pro_season p
+                              WHERE p.person_id = s.person_id AND p.yr = s.yr)
+        """, (_SENIOR_CHAMP, _SENIOR_EXCLUDE, _NT_STRIP, names))
+        n_nt += cur.rowcount
+    print(f"    national teams at senior championships: {n_nt:,} more "
+          f"athlete-seasons")
+
     cur.execute("""DELETE FROM tmp_pro_season p
                    USING tmp_ncaa_season n
                    WHERE n.person_id = p.person_id AND n.yr = p.yr""")
