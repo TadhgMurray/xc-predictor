@@ -27,7 +27,12 @@
          data-diff="{{ difficulty if difficulty is not none else '' }}"
          data-course="{{ course or '' }}"
          data-lo="{{ lo if lo else '' }}" data-hi="{{ hi if hi else '' }}"
-         data-day="{{ day if day else '' }}">
+         data-day="{{ day if day else '' }}"
+         {#- ★ A CHOSEN GROUP IS A LABEL (owner, 2026-09-29): the times and
+              the HS-equivalent convert on the HS model and the group only
+              rescales the own-scale rating. app._equivOnHs has the numbers.
+              A race page's group is the one it was rated in: no ref. #}
+         data-ref="{{ '' if fixed_pool else 'hs' }}">
     <header class="eqc-head">
         <h2 class="eqc-title">{{ "Track equivalents" if sport == "XC" else "Equivalent times" }}</h2>
         {# ! A RACE PAGE'S GROUP IS THE RACE'S (owner, 2026-09-25: "changing
@@ -99,8 +104,8 @@
         <div class="eqc-pointer" aria-hidden="true"></div>
     </div>
     <p class="eqc-hint">Drag the ruler, use the arrow keys, or type a time.
-        {% if not fixed_pool %}The group matters a little: each converts on its own
-        distance curve and course effect.{% endif %}
+        {% if not fixed_pool %}The group changes only the rating's own scale: the
+        times and the HS-equivalent are the same for every group.{% endif %}
         <span class="eqc-field-key" hidden><i></i> shaded: the times run in this race, fastest to slowest</span></p>
     <p class="eqc-status" hidden></p>
     {% if day and (day > 0.005 or day < -0.005) %}

@@ -797,6 +797,49 @@ def sortByShown(rows, key):
     return rows
 
 
+def bestByShown(rows, limit, key="speed_rating", person="person_id",
+                group="gender", hs_key="hs_rating"):
+    """Result rows -> each person's best, top `limit` per `group`, ranked on
+    the number the page SHOWS: the stamped `hs_key` (stampRowsHs's
+    hs_rating, stampBoardRows' hs_<key>) where there is one, else the own
+    `key`. Returned grouped (in first-seen group order), best first inside
+    each group; ties fall back to the own rating.
+
+    ★ THE COURSE PAGE'S BESTS (owner, 2026-09-29: "should sort by hs
+      equivalent no matter what"). Its query kept every athlete's best per
+      POOL, because a runner seen here in 8th grade and again as a senior
+      has two ratings on two scales, and only the HS number says which is
+      the better run. The per-person pick and the cut both happen here, on
+      that number, so the rank column and the rating column cannot disagree.
+    """
+    def shown(r):
+        v = r.get(hs_key)
+        if v is None:
+            v = r.get(key)
+        return float(v) if v is not None else float("-inf")
+
+    def own(r):
+        v = r.get(key)
+        return float(v) if v is not None else float("-inf")
+
+    best, order = {}, []
+    for r in rows:
+        k = (r.get(group), r.get(person))
+        have = best.get(k)
+        if have is None:
+            best[k] = r
+            if r.get(group) not in order:
+                order.append(r.get(group))
+        elif (shown(r), own(r)) > (shown(have), own(have)):
+            best[k] = r
+    out = []
+    for g in order:
+        mine = [r for (gg, _p), r in best.items() if gg == g]
+        mine.sort(key=lambda r: (-shown(r), -own(r)))
+        out.extend(mine[:limit])
+    return out
+
+
 def seasonFactor(races, label=None, sport=None):
     """The median hs/own ratio over stamped races, optionally filtered to
     one (season label, sport). For scaling season-level MEANS (the header

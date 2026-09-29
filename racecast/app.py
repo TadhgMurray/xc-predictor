@@ -30,7 +30,8 @@ from flask import Flask, render_template, abort, redirect, url_for, make_respons
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
 from pool_view import (fetchPoolRows, stampHsRatings, repFactor,
-                       stampRowsHs, stampBoardRows, sortByShown)
+                       stampRowsHs, stampBoardRows, sortByShown,
+                       bestByShown)
 from teams import (parseFilters as parseTeamFilters, serveBoard,
                    getCoursePerformances as getTeamCoursePerformances)
 from courses import (parseFilters as parseCourseFilters,
@@ -4978,18 +4979,23 @@ def compiled_tf(meet_id):
 # ! ONE DEFINITION, SEVEN QUERIES. The bodies select from `course_rows` and
 #   never name `meets` or `meets_tfrrs` again, so a course page cannot
 #   disagree with itself about which races were held on it.
-def _courseRowsCte():
+def _courseRowsCte(pool_col=None):
     """A CTE named course_rows: every result raced on %(course)s, either feed.
 
     Columns are named so the existing bodies keep working: the results
     columns they already used, plus distance / meet_name / state, which they
     used to take off `m`.
+
+    pool_col: _ratingPoolCol(cur, "results")'s answer, for a caller that
+    needs the pool each rating was computed in (the HS-equivalent ranking).
+    None leaves the CTE exactly as every other caller has always had it.
     """
-    return """
+    pool = f"\n               {pool_col}," if pool_col else ""
+    return f"""
     course_rows AS (
         SELECT r.person_id, r.athlete_id, r.athlete_name, r.result_id,
                r.time_seconds, r.date, r.grade, r.school, r.speed_rating,
-               r.div_id, r.meet_id, r.source,
+               r.div_id, r.meet_id, r.source,{pool}
                m.distance::real AS distance,
                m.meet_name      AS meet_name,
                m.state          AS state
@@ -5002,7 +5008,7 @@ def _courseRowsCte():
         -- inside the jsonb blob (see _blob) rather than a column
         SELECT r.person_id, r.athlete_id, r.athlete_name, r.result_id,
                r.time_seconds, r.date, r.grade, r.school, r.speed_rating,
-               r.div_id, r.meet_id, r.source,
+               r.div_id, r.meet_id, r.source,{pool}
                (mt.division_distances -> r.div_id::text
                    ->> 'distance')::real AS distance,
                mt.meet_name     AS meet_name,
@@ -5043,19 +5049,57 @@ def get_course_header(cur, course_name, dist=None):
 
 def get_course_rating_bests(cur, course_name, dist=None, limit=60):
     """Best speed ratings on this course: best per athlete, top `limit`
-    per gender. dist=None is the overview (all distances, which rating
-    makes comparable; each row carries its own); an int scopes to one.
-    Replaces the old mixed-gender get_course_bests table."""
+    per gender, RANKED ON THE HS-EQUIVALENT. dist=None is the overview (all
+    distances, which rating makes comparable; each row carries its own); an
+    int scopes to one. Replaces the old mixed-gender get_course_bests table.
+    Rows come back stamped with hs_rating and in the order the page shows.
+
+    ★ RANKED ON THE NUMBER THE PAGE SHOWS (owner, 2026-09-29: "should sort
+      by hs equivalent no matter what"). The SQL used to rank on the stored
+      OWN-POOL rating, and the page then drew the HS-equivalent beside it.
+      On Hidden Valley Park that put a Mount Diablo Heat youth-club 12:18.8
+      two-mile -- 139.3 in its own pool, 108.8 on the high-school scale --
+      at #1 above 4828m runners showing 138.5, and a 13:20.1 girl reading
+      122.6 between a 140.4 and a 139.9. Own-pool numbers from different
+      pools are not comparable; that is what the HS view exists to fix, so
+      the order has to come from it.
+
+    ★ AND THE SQL CAN STAY FACTOR-FREE, EXACTLY. The HS factor is ONE
+      NUMBER PER POOL (pool_view header), so inside a pool the HS order IS
+      the own order. The query therefore keeps each athlete's best row PER
+      POOL and the top `limit` PER (gender, pool) by the stored rating --
+      a superset that holds the true HS top `limit`: a row cut from its
+      pool's list has `limit` other athletes above it on the SAME factor.
+      pool_view.bestByShown then picks each athlete's best on the HS number
+      (a senior's 125 beats the same runner's 8th-grade 139 own / 108 HS)
+      and cuts to `limit`.
+
+    ! rating_pool, NOT ranking_results. The partition has to use the pool
+      stampRowsHs prices the row with, and it reads the row's own
+      rating_pool first; ranking_results by result_id would be a probe per
+      course row on a 56M-row table. A row with no rating_pool (pre-go-live)
+      falls into one NULL partition and is priced by the table's mode --
+      the only place the superset is approximate.
+
+    ⚠ THE VIEW TOGGLE DOES NOT RE-RANK THIS LIST, deliberately ("no matter
+      what"): under "Own pool" the numbers swap and the order stays the
+      HS order. No data-scale-sort on the table in course.html.
+    """
     dist_sql = "AND round(r.distance)::int = %(dist)s" if dist else ""
+    pool_col = _ratingPoolCol(cur, "results")
     cur.execute(f"""
-        WITH {_courseRowsCte()},
+        WITH {_courseRowsCte(pool_col)},
         rows AS (
             SELECT r.person_id, r.result_id, r.time_seconds, r.date,
                    r.grade, r.school, r.speed_rating,
+                   NULLIF(split_part(r.rating_pool, '|', 1), '')
+                       AS rating_pool,
                    round(r.distance)::int AS distance,
                    r.meet_id, r.div_id, a.gender, {_name_sql('r')} AS name,
-                   row_number() OVER (PARTITION BY r.person_id
-                                      ORDER BY r.speed_rating DESC) AS pr_rn
+                   row_number() OVER (
+                       PARTITION BY r.person_id,
+                                    NULLIF(split_part(r.rating_pool, '|', 1), '')
+                       ORDER BY r.speed_rating DESC) AS pr_rn
             FROM course_rows r
             {_athlete_lateral('r')}
             WHERE TRUE
@@ -5069,27 +5113,46 @@ def get_course_rating_bests(cur, course_name, dist=None, limit=60):
                                      AND r.distance * {_REC_PACE_HI}
         ),
         ranked AS (
-            SELECT *, row_number() OVER (PARTITION BY gender
+            SELECT *, row_number() OVER (PARTITION BY gender, rating_pool
                                          ORDER BY speed_rating DESC) AS rn
             FROM rows WHERE pr_rn = 1
         )
         SELECT * FROM ranked WHERE rn <= %(limit)s
         ORDER BY gender, speed_rating DESC
     """, {"course": course_name, "dist": dist, "limit": limit})
-    return cur.fetchall()
+    rows = cur.fetchall()
+    stampRowsHs(cur, "XC", rows, distance_key="distance")
+    return bestByShown(rows, limit)
 
 
 def get_course_team_rating_bests(cur, course_name, limit=60):
     """Best team performances by RATING: top-5 average speed rating within
     one race, best race per school, per gender. The overview's twin of the
     time-based team records -- rating is what makes a 3200 squad and an
-    8000 squad comparable on one list."""
+    8000 squad comparable on one list. Rows come back with hs_avg5 stamped
+    and ranked on it.
+
+    ★ SAME FIX AS get_course_rating_bests, ONE TABLE DOWN (owner,
+      2026-09-29: "should sort by hs equivalent no matter what"). Ranked on
+      the own-pool average, Hidden Valley Park's team list opened with
+      Mount Diablo Heat's youth squad at 136.6 above Dublin's 133.4 -- and
+      printed it as a bare number, so the HS view could not even correct
+      the value. Teams are kept per (gender, pool) here and ranked on the
+      HS-equivalent average by pool_view.bestByShown; the template renders
+      the average through rv() like every other rating.
+
+    ! A TEAM'S POOL IS ITS TOP FIVE'S MODAL rating_pool. One school in one
+      race is one population; a squad mixing pools inside its top five is
+      priced by the majority, which is the whole approximation.
+    """
+    pool_col = _ratingPoolCol(cur, "results")
     cur.execute(f"""
-        WITH {_courseRowsCte()},
+        WITH {_courseRowsCte(pool_col)},
         finishers AS (
             SELECT r.meet_id, r.div_id, r.source, r.school, r.speed_rating,
                    r.date, r.meet_name, round(r.distance)::int AS distance,
                    a.gender,
+                   NULLIF(split_part(r.rating_pool, '|', 1), '') AS rating_pool,
                    row_number() OVER (
                        PARTITION BY r.meet_id, r.div_id, r.source, r.school
                        ORDER BY r.speed_rating DESC) AS tn
@@ -5109,25 +5172,30 @@ def get_course_team_rating_bests(cur, course_name, limit=60):
                    min(meet_name) AS meet_name,
                    min(date)      AS date,
                    min(distance)  AS distance,
-                   mode() WITHIN GROUP (ORDER BY gender) AS gender
+                   mode() WITHIN GROUP (ORDER BY gender) AS gender,
+                   mode() WITHIN GROUP (ORDER BY rating_pool)
+                       FILTER (WHERE tn <= 5) AS pool
             FROM finishers
             GROUP BY meet_id, div_id, source, school
             HAVING count(*) >= 5
         ),
         best_per_school AS (
-            SELECT *, row_number() OVER (PARTITION BY school, gender
+            SELECT *, row_number() OVER (PARTITION BY school, gender, pool
                                          ORDER BY avg5 DESC) AS sn
             FROM teams
         ),
         ranked AS (
-            SELECT *, row_number() OVER (PARTITION BY gender
+            SELECT *, row_number() OVER (PARTITION BY gender, pool
                                          ORDER BY avg5 DESC) AS rn
             FROM best_per_school WHERE sn = 1
         )
         SELECT * FROM ranked WHERE rn <= %(limit)s
         ORDER BY gender, avg5 DESC
     """, {"course": course_name, "limit": limit})
-    return cur.fetchall()
+    rows = cur.fetchall()
+    stampBoardRows(rows, rating_keys=("avg5",), sport="XC")
+    return bestByShown(rows, limit, key="avg5", person="school",
+                       hs_key="hs_avg5")
 
 
 def get_course_meets(cur, course_name, dist=None, limit=200):
@@ -6029,11 +6097,15 @@ def buildCourseCtx(cur, course_name, picked):
     meets = get_course_meets(cur, course_name, dist=sel_dist)
 
     # HS-equivalent view: per-row distance on the overview, one
-    # distance when scoped.
+    # distance when scoped. rating_bests arrive already stamped (their
+    # ORDER comes from the stamp); re-stamping them is idempotent -- each
+    # row carries its rating_pool -- and is how the flag is read.
     has_hs_view = stampRowsHs(cur, "XC", rating_bests,
                               distance_key="distance")
     has_hs_view = stampRowsHs(cur, "XC", records,
                               distance=sel_dist) or has_hs_view
+    has_hs_view = stampBoardRows(team_rating, rating_keys=("avg5",),
+                                 sport="XC") or has_hs_view
 
     for row in records + rating_bests:
         row["display_time"] = format_time(row["time_seconds"])
@@ -7152,6 +7224,51 @@ _EQUIV_MAX = 4000
 _EQUIV_POOLS = {p for p, _ in _POOLS}
 
 
+def _equivOnHs(pool):
+    """The pool a SWITCHABLE equivalents card converts on: the picked
+    group's same-gender high-school pool (the scale the HS-equivalent is
+    named for), or the group itself when it has no HS twin.
+
+    ★ WHY THE GROUP STOPPED MOVING THE TIMES (owner, 2026-09-29: "I still
+      don't get why the course conversions putting it to diff pools changes
+      the hs-equivalent rating and the predicted time"). Measured on the
+      live API the same day, 28:34 over Gans Creek's 10000m (difficulty
+      +5.6%), as three groups:
+
+          group      own     x factor  = HS-eq   XC 5K here  track 5K
+          hs_m       156.6   x1.0000   = 156.6   13:12.3     12:47.4
+          college_m  124.3   x1.2063   = 150.0   13:52.2     13:16.1
+          ms_m       169.1   x0.8729   = 147.6   13:52.2     13:36.1
+
+      None of the gap is about the run. It is three per-GROUP terms:
+        1. each group's own time-over-distance curve. 10000 -> 5000 on the
+           same course is x0.4623 for hs_m and x0.4855 for college_m: 5.0%,
+           most of the 4.4% HS-equivalent gap (the HS factor is ONE number
+           per group, calibrated at 5000m -- pool_view header -- so at
+           5000m the three HS-equivalents agree to +-1% and at 10000m they
+           do not). hs_m's curve at 10000m is an extrapolation: high
+           schoolers do not race it.
+        2. the course-difficulty tilt, evaluated at the group's OWN number:
+           the same run is 156.6 / 124.3 / 169.1, so the +5.6% course is
+           credited as 4.6% / 5.2% / 4.4% (the other 0.5% of the gap).
+           Same runner, three scales: an artifact.
+        3. each group's fitted grass-to-track constants (anchor shift,
+           sport gain, event offset): a 0.0% course's 5K to a track 5K is
+           +1.5% hs_m, +0.4% college_m, +2.4% ms_m, so even a 15:00 over a
+           5000m course -- where the curves agree -- read 14:34.7 / 14:22.6
+           / 14:45.1 on the track.
+      So on a card where the group is a choice, the group is a label: the
+      times and the HS-equivalent are converted ONCE, on the HS model, and
+      the group only rescales the own-scale rating (HS / factor).
+
+    ! A RACE PAGE KEEPS ITS OWN GROUP. There the group is the pool the race
+      was RATED in, and the card has to agree with the rating column
+      beneath it; it sends no ref and is unchanged."""
+    bare = (pool or "").split("|", 1)[0]
+    suffix = bare.rsplit("_", 1)[-1]
+    return ("hs_" + suffix) if suffix in ("m", "f") else pool
+
+
 @app.route("/api/equivalence")
 def api_equivalence():
     pool = request.args.get("pool") or "hs_m"
@@ -7171,6 +7288,14 @@ def api_equivalence():
         return jsonify({"error": "target must be 400-10000 m"}), 400
     tdiff = request.args.get("tdifficulty", type=float)
     tcourse = (request.args.get("tcourse") or "").strip() or None
+    # ★ ref=hs: THE GROUP IS A LABEL, NOT A MODEL (owner, 2026-09-29: "I
+    #   still don't get why the course conversions putting it to diff pools
+    #   changes the hs-equivalent rating and the predicted time"). See
+    #   _equivOnHs below; a race page, whose group is the one its results
+    #   were rated in, does not send it.
+    ref = (request.args.get("ref") or "").strip().lower() or None
+    if ref not in (None, "hs"):
+        return jsonify({"error": "ref must be hs"}), 400
     # ★ HOW THIS RACE RAN (raceDayShift): the source times as run that day,
     #   weather and all, rather than on an ordinary day at this course
     day = request.args.get("day", type=float) or 0.0
@@ -7182,7 +7307,7 @@ def api_equivalence():
         return jsonify({"error": "tdifficulty out of range"}), 400
     key = (pool, sport, tsport, round(dist), round(target, 2),
            None if diff is None else round(diff, 4), course,
-           None if tdiff is None else round(tdiff, 4), tcourse)
+           None if tdiff is None else round(tdiff, 4), tcourse, ref)
     def _asRun(body):
         if not day:
             return jsonify(body)
@@ -7193,15 +7318,6 @@ def api_equivalence():
     hit = _EQUIV_CACHE.get(key)
     if hit and time.time() - hit[0] < _EQUIV_TTL:
         return _asRun(hit[1])
-    import conversions as _cv
-    try:
-        pts = _cv.equivalenceLine(pool, dist, target, course_difficulty=diff,
-                                  course=course, source_sport=sport,
-                                  target_sport=tsport, target_difficulty=tdiff,
-                                  target_course=tcourse)
-    except Exception as exc:                          # noqa: BLE001
-        print(f"equivalence: {type(exc).__name__}: {exc}", flush=True)
-        return jsonify({"error": "could not convert"}), 500
     # ★ THE HS-EQUIVALENT FACTOR RIDES ALONG (owner, 2026-09-25: "rating
     #   isn't scaled as hs-equivalent when hs-equivalent is put"). The page's
     #   scale toggle is client-side, so the widget needs the pool's factor to
@@ -7211,9 +7327,25 @@ def api_equivalence():
         hs_factor = repFactor(pool, sport)
     except Exception:                                 # noqa: BLE001
         hs_factor = None
+    conv_pool = _equivOnHs(pool) if ref == "hs" and hs_factor else pool
+    import conversions as _cv
+    try:
+        pts = _cv.equivalenceLine(conv_pool, dist, target,
+                                  course_difficulty=diff,
+                                  course=course, source_sport=sport,
+                                  target_sport=tsport, target_difficulty=tdiff,
+                                  target_course=tcourse)
+    except Exception as exc:                          # noqa: BLE001
+        print(f"equivalence: {type(exc).__name__}: {exc}", flush=True)
+        return jsonify({"error": "could not convert"}), 500
+    if conv_pool != pool:
+        # the points' rating column is the HS model's rating; the picked
+        # group's own number is that over its factor -- the same relation
+        # (own x factor = HS) every other page uses, read backwards
+        pts = [(round(r / hs_factor, 2), tc, tt) for r, tc, tt in pts]
     body = {"pool": pool, "sport": sport, "tsport": tsport, "dist": dist,
             "target": target, "difficulty": diff, "points": pts,
-            "hs_factor": hs_factor}
+            "hs_factor": hs_factor, "converted_as": conv_pool}
     _EQUIV_CACHE[key] = (time.time(), body)
     if len(_EQUIV_CACHE) > _EQUIV_MAX:
         _EQUIV_CACHE.pop(min(_EQUIV_CACHE, key=lambda k: _EQUIV_CACHE[k][0]),

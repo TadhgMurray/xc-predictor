@@ -61,7 +61,8 @@ class EveryCourseQueryReachesBothFeeds(unittest.TestCase):
         for name, body in self.fns.items():
             with self.subTest(fn=name):
                 self.assertNotIn("JOIN meets m ON m.div_id", body)
-                self.assertIn("_courseRowsCte()", body)
+                # "(" not "()": the HS-ranked bests pass the pool column
+                self.assertIn("_courseRowsCte(", body)
 
     def test_none_names_a_meet_table_of_its_own(self):
         """One definition of "raced on this course", not seven."""

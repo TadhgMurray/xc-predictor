@@ -92,6 +92,8 @@
       // for the page's own distance -- another pill is an ordinary day
       day: parseFloat(root.dataset.day) || 0,
       dist0: parseFloat(root.dataset.dist) || null,
+      // "hs" on a card whose group is a choice: see _equivOnHs in app.py
+      ref: root.dataset.ref || "",
       target: 5000, tsport: "TF", tlabel: "5K", tdiff: null, tcourse: "",
       points: [], hs: null, tmin: 0, tmax: 0, cur: null, seq: 0, sc: null
     };
@@ -129,6 +131,13 @@
       return "On a track · " + st.tlabel;
     }
 
+    function groupName() {
+      var o = selPool.options && selPool.options[selPool.selectedIndex];
+      if (o) return o.text;
+      var chip = root.querySelector(".eqc-groupchip");
+      return chip ? chip.textContent.trim() : selPool.value;
+    }
+
     function centre() { return st.tmin + ruler.scrollLeft / st.sc.pxps; }
     function goTo(t) {
       t = Math.max(st.tmin, Math.min(st.tmax, t));
@@ -146,8 +155,17 @@
       tcap.textContent = targetCaption();
       if (r) {
         var hs = hsOn();
-        ratingEl.textContent = (hs ? "HS-equivalent rating " : "Rating ") +
-                               (hs ? r * st.hs : r).toFixed(1);
+        var txt = (hs ? "HS-equivalent rating " : "Rating ") +
+                  (hs ? r * st.hs : r).toFixed(1);
+        // ★ BOTH NUMBERS WHEN THEY DIFFER (owner, 2026-09-29): the rating
+        //   the group reads on its own scale is the one thing a group
+        //   change moves, so say which is which rather than leave one
+        //   number to jump
+        if (st.hs && Math.abs(st.hs - 1) > 0.005) {
+          txt += hs ? " · " + r.toFixed(1) + " on the " + groupName() + " scale"
+                    : " (" + groupName() + ") · HS-equivalent " + (r * st.hs).toFixed(1);
+        }
+        ratingEl.textContent = txt;
       } else {
         ratingEl.textContent = "";
       }
@@ -198,6 +216,7 @@
       if (st.tdiff != null && isFinite(st.tdiff)) q.set("tdifficulty", String(st.tdiff));
       if (st.tcourse) q.set("tcourse", st.tcourse);
       if (st.day && st.dist === st.dist0) q.set("day", String(st.day));
+      if (st.ref) q.set("ref", st.ref);
       var seq = ++st.seq;
       root.classList.add("eqc-loading");
       fetch("/api/equivalence?" + q.toString())
@@ -358,8 +377,8 @@
     // ! KEEP THE TIME ON A GROUP CHANGE (owner, 2026-09-25: "changing the
     //   pool changed the predicted time"). It used to reopen on the new
     //   group's average runner, so the course time itself jumped. The time
-    //   here stays put; only its equivalent may move, and by a little -- each
-    //   group has its own time-over-distance curve.
+    //   here stays put, and since ref=hs (2026-09-29) so do its equivalent
+    //   and the HS-equivalent: only the own-scale rating moves.
     selPool.addEventListener("change", function () { load(st.cur); });
     document.addEventListener("rc-scale-change", function () { show(st.cur); });
     window.addEventListener("resize", function () {

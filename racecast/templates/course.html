@@ -159,7 +159,7 @@
                     <tr{{ hid(loop.index0) }}>
                         <td>{{ loop.index }}</td>
                         <td>{% if t.school|is_team %}{{ crest(t.school, header.state) }}<a href="{{ school_href(t.school, header.state) }}" title="{{ t.school }}">{{ t.school|school_label_in(header.state) }}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
-                        <td>{{ "%.1f"|format(t.avg5) }}</td>
+                        <td>{{ rv(t.avg5, t.hs_avg5) }}</td>
                         <td>{{ t.distance }}m</td>
                         <td><a href="/race/xc/{{ t.meet_id }}/{{ t.div_id }}" title="{{ t.meet_name }}">{{ t.meet_name if t.meet_name else "Meet " ~ t.meet_id }}</a></td>
                         <td class="no-break">{{ t.date|mdy }}</td>

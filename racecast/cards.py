@@ -1194,13 +1194,22 @@ def courseCardData(cur, course_name):
     cur.execute("""SELECT count(*) AS n, mode() WITHIN GROUP (ORDER BY state) AS state
                    FROM meets WHERE course_name = %s""", (course_name,))
     m = cur.fetchone() or {}
+    # ★ ALREADY RANKED ON THE HS-EQUIVALENT, and the card shows that number
+    #   (owner, 2026-09-29: "should sort by hs equivalent no matter what").
+    #   Re-sorting on the own-pool speed_rating put a youth club's 139.3
+    #   own / 108.8 HS two-mile at the top of the course's card.
+    def shown(r):
+        v = r.get("hs_rating")
+        return float(v if v is not None else r.get("speed_rating") or 0)
+    # both genders in one list, as before: merge the per-gender lists
     bests = sorted(get_course_rating_bests(cur, course_name, None, limit=10),
-                   key=lambda r: -(r.get("speed_rating") or 0))
+                   key=lambda r: -shown(r))
     rows = [{"name": (r.get("name") or "Unknown").strip(),
              "school": schoolLabel(r["school"]) if r.get("school") else "",
              "when": str(r.get("date") or "")[:4],
              "time": format_time(r["time_seconds"]) if r.get("time_seconds") is not None else "-",
-             "rating": f"{float(r['speed_rating']):.1f}"} for r in bests[:7]]
+             "rating": f"{float(r['hs_rating'] if r.get('hs_rating') is not None else r['speed_rating']):.1f}"}
+            for r in bests[:7]]
     stats = [("COURSE DIFFICULTY", _pct(diff, "XC") or "-"),
              ("RACES", f"{m.get('n') or 0:,}"),
              ("ATHLETES", f"{header.get('n_athletes') or 0:,}")]
