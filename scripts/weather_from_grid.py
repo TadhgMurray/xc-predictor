@@ -187,13 +187,35 @@ def main():
             print(f"  weather now: {n:,} rows, {m:,} meets; "
                   f"temp {tlo:.0f}..{thi:.0f}C, humidity {hlo:.0f}..{hhi:.0f}%,"
                   f" pressure {plo:.0f}..{phi:.0f}hPa")
+            # ★ THE PRESSURE FLOOR IS AN ALTITUDE, NOT A ROUND NUMBER (owner's
+            #   refresh, 2026-09-29: 676 hPa tripped "< 700" -- that is a meet
+            #   near 3,300 m, not a unit slip). Station pressure falls with
+            #   height; the standard atmosphere puts 4,500 m -- above any
+            #   course anyone races -- at PRESSURE_FLOOR hPa, and sea-level
+            #   pressure has never been recorded above 1,084.
             bad = (tlo is not None and (tlo < -60 or thi > 60)) or \
-                  (plo is not None and (plo < 700 or phi > 1150))
+                  (plo is not None and (plo < PRESSURE_FLOOR or phi > 1090))
+            if plo is not None:
+                cur.execute("""SELECT meet_id, source, pressure_hpa FROM weather
+                               ORDER BY pressure_hpa ASC NULLS LAST LIMIT 1""")
+                lo = cur.fetchone()
+                if lo:
+                    print(f"  lowest pressure: meet {lo[0]} ({lo[1]}) at "
+                          f"{lo[2]:.0f} hPa, about {altitudeOf(lo[2]):,.0f} m")
             if bad:
                 print("  WARNING: ranges look wrong -- units slipped "
                       "somewhere. Check before training on this.")
     print(f"done in {(time.time() - t0) / 60:.1f} min "
           f"({'applied' if args.apply else 'dry run'})")
+
+
+def altitudeOf(hpa):
+    """Standard-atmosphere height (m) of a station pressure."""
+    return 44330.0 * (1.0 - (float(hpa) / 1013.25) ** 0.1903)
+
+
+# 4,500 m in the standard atmosphere: 1013.25 * (1 - 4500/44330)^(1/0.1903)
+PRESSURE_FLOOR = 1013.25 * (1.0 - 4500.0 / 44330.0) ** (1.0 / 0.1903)
 
 
 if __name__ == "__main__":
