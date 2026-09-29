@@ -55,3 +55,34 @@ def test_nothing_is_condemned_in_an_honest_season():
 def test_implied_distance_snaps_to_a_convention():
     assert S.impliedDistance(5000, math.log(0.62)) == 3200
     assert S.impliedDistance(5000, 0.0) == 5000
+
+
+def test_a_field_twice_as_slow_is_condemned_but_a_hard_course_is_not():
+    # 11 is brutal (x1.35): reported only. 13 is a time in the wrong unit (x3).
+    pk, day, race, lnt = season(hard=11)
+    lnt = np.where(race == 13, lnt + math.log(3.0), lnt)
+    s, c = S.ownOtherMeans(pk, day, race, lnt, window=30)
+    has = c > 0
+    stats, fast, slow = S.judge(S.raceMedians(race[has], lnt[has] - s[has] / c[has]))
+    assert 13 in [r for r, *_ in fast]
+    assert 11 not in [r for r, *_ in fast] and 11 in [r for r, *_ in slow]
+
+
+def test_the_year_window_judges_a_race_the_month_cannot():
+    # the season as usual, then one extra race 200 days later whose runners
+    # ran nothing else near it: a 3200 stored as a 5000
+    pk, day, race, lnt = season()
+    rng = np.random.default_rng(9)
+    people = rng.choice(np.unique(pk), 40, replace=False)
+    base = {p: lnt[pk == p].mean() for p in people}
+    extra_race = int(race.max()) + 1
+    pk2 = np.concatenate([pk, people])
+    day2 = np.concatenate([day, np.full(people.size, 260)])
+    race2 = np.concatenate([race, np.full(people.size, extra_race)])
+    lnt2 = np.concatenate([lnt, [base[p] + math.log(0.62) + rng.normal(0, 0.02) for p in people]])
+    s, c = S.ownOtherMeans(pk2, day2, race2, lnt2, window=30)
+    assert c[race2 == extra_race].sum() == 0, "no neighbour inside a month"
+    s2, c2 = S.ownOtherMeans(pk2, day2, race2, lnt2, window=S.WIDE_WINDOW)
+    has = c2 > 0
+    stats, fast, slow = S.judge(S.raceMedians(race2[has], lnt2[has] - s2[has] / c2[has]))
+    assert extra_race in [r for r, *_ in fast]

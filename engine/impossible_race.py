@@ -297,9 +297,18 @@ def ownRaceShift(conn, cur, since, already, race_recs, res_recs, show, explain=(
                 continue
             v = stats["every"].get(r)
             src, m_, d_, date, dist = info[r]
+            if v is None and r in stats.get("wide", {}):
+                n, m, z = stats["wide"][r]
+                c = stats["wide_centre"]
+                print(f"      --race {want} ({src}, {date}): judged on the YEAR window "
+                      f"(none within +-{ors.WINDOW} days): {n} linked runners, "
+                      f"{100 * (_m.exp(m - c) - 1):+.1f}% vs their own races, {z:.1f} sd "
+                      f"(cut {stats['wide_z_cut']:.2f}); stored {(dist or 0):.0f} m, looks like "
+                      f"{ors.impliedDistance(dist, m, c)} m")
+                continue
             if v is None:
                 print(f"      --race {want} ({src}, {date}): fewer than {ors.MIN_LINKED} runners "
-                      f"have another race within +-{ors.WINDOW} days -- the rule cannot judge it")
+                      f"have another race within +-{ors.WIDE_WINDOW} days -- the rule cannot judge it")
                 continue
             n, m, z = v
             print(f"      --race {want} ({src}, {date}): {n} linked runners, "
@@ -326,8 +335,8 @@ def ownRaceShift(conn, cur, since, already, race_recs, res_recs, show, explain=(
               f"{100 * (_m.exp(m - stats['centre']) - 1):+.0f}% vs their own races  "
               f"({z:.1f} sd)  stored {(dist or 0):.0f} m, looks like "
               f"{ors.impliedDistance(dist, m, stats['centre'])} m")
-    print(f"  XC own-races, SLOW side (not condemned -- the course difficulty absorbs "
-          f"these when the race has voters; check the distance by hand):")
+    print(f"  XC own-races, SLOW side under double (not condemned -- the course "
+          f"difficulty absorbs these when the race has voters; check by hand):")
     for rid, n, m, z in slow[:min(show, 15)]:
         src, meet, div, date, dist = info[rid]
         print(f"      /race/xc/{meet}/{div}  {date}  {n} linked  "

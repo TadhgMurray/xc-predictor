@@ -42,6 +42,22 @@ import statistics
 import numpy as np
 
 WINDOW = 30            # days either side, as the bracket engine's window
+# ★ THE WIDE PASS (2026-09-29: Sublimity Road Run, a 3200 stored as a 5000,
+#   "fewer than 2 runners have another race within +-30 days -- the rule
+#   cannot judge it"). A race at the edge of the scraped season has no
+#   neighbours inside a month. Races the narrow pass cannot judge are judged
+#   again against the same runners' races within a year, on a spread
+#   measured with that same year window (a season's improvement widens it,
+#   and the Bonferroni cut is taken on the wider spread, so the pass is
+#   stricter, not looser).
+WIDE_WINDOW = 365
+# ★ THE SLOW SIDE IS CONDEMNED ONLY PAST DOUBLE (2026-09-29). The scan's slow
+#   list had fields 40 to 60 TIMES slower than their own races elsewhere --
+#   a time in the wrong unit, a 3000 stored for an 8k -- which no course and
+#   no weather produces. A field that ran at least twice its own time AND
+#   past the same Bonferroni cut is a wrong race; anything slower than
+#   usual but under double stays with the course difficulty, as before.
+SLOW_CONDEMN = math.log(2.0)
 MIN_LINKED = 2         # a race needs this many runners with another race
 _WELL_LINKED = 10      # races used to measure how much races really vary
 K = 1.06               # the normaliser's distance exponent (propose_distances.K)
@@ -123,6 +139,9 @@ def judge(med):
         every[key] = (n, m, z)
         if z < -z_cut and (vals < centre).sum() >= math.ceil(2 * n / 3):
             fast.append((key, n, m, z))
+        elif (z > z_cut and m - centre >= SLOW_CONDEMN
+              and (vals > centre).sum() >= math.ceil(2 * n / 3)):
+            fast.append((key, n, m, z))          # condemned, like a fast one
         elif z > z_cut:
             slow.append((key, n, m, z))
     fast.sort(key=lambda t: t[3])
@@ -191,4 +210,17 @@ def findXc(conn, since, window=WINDOW):
     gap = lnt[has] - s[has] / c[has]
     stats, fast, slow = judge(raceMedians(race[has], gap))
     stats["rows"] = int(pk.size)
+    # the wide pass, for the races the narrow one could not judge
+    if "every" in stats and window < WIDE_WINDOW:
+        s2, c2 = ownOtherMeans(pk, day, race, lnt, WIDE_WINDOW)
+        has2 = c2 > 0
+        stats2, fast2, slow2 = judge(raceMedians(race[has2], lnt[has2] - s2[has2] / c2[has2]))
+        if "every" in stats2:
+            seen = set(stats["every"])
+            fast += [t for t in fast2 if t[0] not in seen]
+            slow += [t for t in slow2 if t[0] not in seen]
+            fast.sort(key=lambda t: t[3] if t[3] < 0 else -t[3])
+            stats["wide"] = {k: v for k, v in stats2["every"].items() if k not in seen}
+            stats["wide_z_cut"] = stats2["z_cut"]
+            stats["wide_centre"] = stats2["centre"]
     return stats, fast, slow, info
