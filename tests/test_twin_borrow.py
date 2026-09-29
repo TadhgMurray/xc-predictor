@@ -76,8 +76,12 @@ def test_no_twin_meet_changes_nothing(monkeypatch):
 def test_the_compiled_link_survives_an_unknown_gender():
     src = open(os.path.join(_ROOT, "racecast", "templates", "meet.html")).read()
     assert "/compiled/{{ g.distance }}/{{ g.gender|urlencode }}" in src
-    mc = open(os.path.join(_ROOT, "racecast", "meet_compile.py")).read()
-    assert "->> 'div_name') ~* '(women|girls|female)'" in mc
+    # the division's own word decides a compiled row's gender (tfrrs names
+    # every division, "Men's 8k"), ahead of the athlete's (2026-09-29)
+    sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+    import meet_compile
+    sql = meet_compile.rowGenderSql()
+    assert "->> 'div_name'" in sql and sql.index("div_name") < sql.index("a.gender")
 
 
 def test_a_published_team_under_another_spelling_still_gets_its_scorers():

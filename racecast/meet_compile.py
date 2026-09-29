@@ -128,6 +128,45 @@ DISPLACERS = 2
 #  1. COMPILED RESULTS
 # ------------------------------------------------------------------ #
 
+# ★ A ROW'S GENDER HERE IS ITS RACE'S, NOT ITS ATHLETE'S (owner, 2026-09-29,
+#   NCAA DI 2024: "the compiled results [are] not like the actual races at
+#   all and having random extra distances/races"). The grouping read the
+#   athlete first and the division second, so every runner whose person
+#   was wrong or blank left the race he ran: two men under a woman's
+#   profile became a "Girls 10000m", five with no gender a "- 6000m" and
+#   a "- 10000m" -- none of them races anyone ran. The division is the
+#   race, so its word decides; where it has none (anet's "Collegiate",
+#   "Varsity"), the field's own runners vote, with 04d's numbers
+#   (person_gender.FIELD_MIN / FIELD_SHARE); only a division with neither --
+#   a genuinely mixed race -- falls back to the athlete.
+_DIV_LABEL = "COALESCE(m.division, mt.division_distances -> r.div_id::text ->> 'div_name')"
+
+
+def _personGender():
+    """engine/person_gender, imported when first asked for: it pulls in the
+    database module, which a page import should not need."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for sub in ("engine", "scripts"):
+        d = os.path.join(root, sub)
+        if d not in sys.path:
+            sys.path.append(d)
+    import person_gender
+    return person_gender
+
+
+def rowGenderSql(athlete_gender="a.gender"):
+    """SQL for one row's compiled gender, over the joins below (m, mt, r)
+    and the athlete lateral; a window over the row's division."""
+    _pg = _personGender()
+    w = "OVER (PARTITION BY r.source, r.div_id)"
+    fm = f"count(*) FILTER (WHERE {athlete_gender} = 'M') {w}"
+    ff = f"count(*) FILTER (WHERE {athlete_gender} = 'F') {w}"
+    return (f"COALESCE({_pg.labelExpr(_DIV_LABEL)}, "
+            f"CASE WHEN {fm} >= {_pg.FIELD_MIN} AND {fm} >= {_pg.FIELD_SHARE} * {ff} THEN 'M' "
+            f"WHEN {ff} >= {_pg.FIELD_MIN} AND {ff} >= {_pg.FIELD_SHARE} * {fm} THEN 'F' END, "
+            f"{athlete_gender})")
+
+
 def compiledResults(cur, meet_id, source=None):
     """Every division of a meet, merged by (distance, gender).
 
@@ -153,7 +192,7 @@ def compiledResults(cur, meet_id, source=None):
     #   speed_ratings_db._xcQuery already does, and its comment records the
     #   cost of reading the scalar instead: a women's 5000 and a men's 8000 at
     #   one meet sharing one distance.
-    cur.execute("""
+    cur.execute(f"""
         SELECT r.result_id, r.person_id, r.team_id, r.place, r.time_seconds,
                r.grade, r.school, r.speed_rating, r.div_id,
                (round(COALESCE(
@@ -169,19 +208,13 @@ def compiledResults(cur, meet_id, source=None):
                --   none: the whole meet grouped as "?", and the link the meet
                --   page drew -- .../compiled/8000/? -- never reached the
                --   route. tfrrs names every division ("Men's 8k").
-               COALESCE(a.gender,
-                   CASE WHEN (mt.division_distances -> r.div_id::text
-                              ->> 'div_name') ~* '(women|girls|female)'
-                        THEN 'F'
-                        WHEN (mt.division_distances -> r.div_id::text
-                              ->> 'div_name') ~* '(men|boys|male)'
-                        THEN 'M' END)                 AS gender
+               {rowGenderSql()}                          AS gender
         FROM   results r
         LEFT JOIN meets m ON m.meet_id = r.meet_id
                          AND m.div_id  = r.div_id
                          AND m.source  = r.source
         LEFT JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id
-                                AND mt.sport   = 'XC' 
+                                AND mt.sport   = 'XC'
         LEFT JOIN LATERAL (
             SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
                    NULLIF(TRIM(x.last_name),  '') AS last_name,
@@ -200,7 +233,12 @@ def compiledResults(cur, meet_id, source=None):
                  m.distance,
                  (mt.division_distances -> r.div_id::text ->> 'distance')::real
                ) > 0
-        ORDER  BY 9, 11, r.time_seconds       -- distance, gender (computed), time
+        -- ⚠ BY NAME, NOT POSITION (2026-09-29). This read `ORDER BY 9, 11`
+        --   under the comment "distance, gender": column 9 is div_id and 11
+        --   the runner's NAME, so every compiled race was alphabetical --
+        --   NCAA DI 2024's men's 10k opened Abel, Abraham, Adam, Adam -- and
+        --   the compiled places and team points were scored in that order.
+        ORDER  BY distance, gender, r.time_seconds
     """, {"meet": meet_id, "src": source})
 
     groups = {}
@@ -248,7 +286,9 @@ def compiledResults(cur, meet_id, source=None):
     out = []
     for g in groups.values():
         # The compiled place: position in the MERGED list, which is what makes
-        # this different from the division place derived above.
+        # this different from the division place derived above. Sorted here
+        # too, so the order never again rests on a column number.
+        g["results"].sort(key=lambda r: r["time_seconds"])
         for i, r in enumerate(g["results"], start=1):
             r["place"] = i
         g["divisions"] = sorted(g["divisions"])
@@ -283,14 +323,14 @@ def compiledResults(cur, meet_id, source=None):
 #   both fielded five it can count one more team than this does. The index
 #   is a link list; the compiled page itself is still the full compile.
 def compiledIndex(cur, meet_id, source=None):
-    cur.execute("""
+    cur.execute(f"""
         WITH rows AS (
             SELECT r.div_id, r.school, r.person_id,
                    (round(COALESCE(
                        m.distance,
                        (mt.division_distances -> r.div_id::text ->> 'distance')::real
                     ) / 100.0) * 100)::int                AS distance,
-                   a.gender
+                   {rowGenderSql()}                     AS gender
             FROM   results r
             LEFT JOIN meets m ON m.meet_id = r.meet_id
                              AND m.div_id  = r.div_id
