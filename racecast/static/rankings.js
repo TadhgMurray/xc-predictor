@@ -2342,9 +2342,27 @@ async function findSuggest() {
   }
 }
 
+/* ★ A SEARCH CAN BE TAKEN BACK (owner, 2026-09-29: "you can't take back a
+   search on the rankings board"). A jump moved the board to the athlete's
+   page and highlighted them, and emptying the box undid neither -- the
+   reader was stranded on page 40 with a stale highlight. Emptying the box
+   (typing it away, or the field's own clear button) now returns the board
+   to where it was before the jump. */
+let findReturnOffset = null;
+
+function findTakeBack() {
+  if (state.highlight == null && findReturnOffset == null) return;
+  state.highlight = null;
+  state.offset = findReturnOffset == null ? 0 : findReturnOffset;
+  findReturnOffset = null;
+  findStatus("", false);
+  load();
+}
+
 async function jumpTo(personId, label) {
   $("find-results").classList.add("hidden");
   findStatus("Looking\u2026", false);
+  if (findReturnOffset == null) findReturnOffset = state.offset;
 
   const q = buildQuery();
   q.set("person_id", personId);
@@ -2368,6 +2386,12 @@ async function jumpTo(personId, label) {
 
 $("find-input").addEventListener("input", () => {
   clearTimeout(findTimer);
+  if (!$("find-input").value.trim()) {
+    $("find-results").innerHTML = "";
+    $("find-results").classList.add("hidden");
+    findTakeBack();
+    return;
+  }
   // Debounced: a keystroke per request would fire a dozen for one name.
   findTimer = setTimeout(findSuggest, 180);
 });
@@ -2390,8 +2414,15 @@ $("find-input").addEventListener("keydown", (e) => {
     $("find-input").value = pick.dataset.name;
     jumpTo(pick.dataset.pid, pick.dataset.name);
   } else if (e.key === "Escape") {
+    // first Escape closes the suggestions; a second one, with nothing open,
+    // takes the search back
+    const open = !$("find-results").classList.contains("hidden");
     $("find-results").classList.add("hidden");
     findActive = -1;
+    if (!open && state.highlight != null) {
+      $("find-input").value = "";
+      findTakeBack();
+    }
   }
 });
 
@@ -2403,6 +2434,10 @@ $("find-results").addEventListener("mousedown", (e) => {
      textContent would glue them together as "Anders EricksonCarlton-Wrenshall". */
   $("find-input").value = opt.dataset.name;
   jumpTo(opt.dataset.pid, opt.dataset.name);
+});
+
+$("find-input").addEventListener("search", () => {
+  if (!$("find-input").value.trim()) findTakeBack();
 });
 
 $("find-input").addEventListener("blur", () => {

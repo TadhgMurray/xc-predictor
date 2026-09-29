@@ -8635,6 +8635,26 @@ def _seasonYears(cur):
                 out[sp] = int(v)
     except psycopg2.Error:
         cur.connection.rollback()
+    # ★ A SPORT THE META LEFT OUT STILL HAS A SEASON (owner, 2026-09-29: the
+    #   track teams board answered "no current season is known" in the
+    #   September gap, when the home page has no track season to head). The
+    #   squad predictor already finds the newest real season, cached
+    #   (predict._currentSeason); its answer is the STORED year, and the
+    #   label track readers use is stored + 1.
+    for sp in ("XC", "TF"):
+        if sp in out:
+            continue
+        try:
+            from predict import _currentSeason
+            stored = _currentSeason(cur, sp)
+        except Exception:                                 # noqa: BLE001
+            try:
+                cur.connection.rollback()
+            except Exception:                             # noqa: BLE001
+                pass
+            continue
+        if stored:
+            out[sp] = int(stored) + (1 if sp == "TF" else 0)
     return out
 
 
