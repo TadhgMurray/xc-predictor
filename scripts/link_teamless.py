@@ -133,7 +133,7 @@ for _p in (_HERE, _ROOT, os.path.join(_ROOT, "engine")):
 #   differently would each find namesakes the other cannot see.
 from link_freshmen import LOG_DDL, normName                  # noqa: E402
 # the one definition of a college row / a high school row (level_conflict)
-from level_conflict import levelSql                          # noqa: E402
+from level_conflict import levelSql, stageCollegeSchools     # noqa: E402
 
 RULE = "teamless"
 
@@ -486,6 +486,9 @@ def gather(cur, since, person=None):
     Temp tables only; the caller rolls back."""
     counts = {}
     cur.execute("SET LOCAL work_mem = '512MB'")
+    # ! levelSql's college test reads the staged college-school set
+    #   (level_conflict.collegeSql), so it has to exist on this session
+    stageCollegeSchools(cur)
     for t in ("tm_c", "tm_n", "tm_cp", "tm_np"):
         cur.execute(f"DROP TABLE IF EXISTS {t}")
     # 1. anet profiles on their own seed with a recent teamless row
