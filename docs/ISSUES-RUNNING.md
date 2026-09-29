@@ -2929,3 +2929,24 @@ pool_resolve whichever person carries it -- that is 2026-09-06's
 "team_id = 0 is pro, unconditionally" if its team id is 0, or the hometown
 pseudo-team's level if not. A tfrrs-only namesake (no anet profile) is not
 seen by the name search, which reads `athletes`.
+
+## 2026-09-29 — 📋 LOGGED, NOT ACTIONED: St. Mary's Invitational and the next scrape
+
+Owner: "We can go on st mary's soon after fixing the solves just log that and
+the next scrape for now."
+
+**St. Mary's Invite was never scraped.** First find out why, before
+re-scraping: `scripts/find_meet.py` looks a meet up in every meet table and
+says what its queue state means (due / done with 0 results / failed /
+claimed / no meet / never seeded).
+
+    /srv/venv/bin/python scripts/find_meet.py "St. Mary"
+    /srv/venv/bin/python scripts/find_meet.py <anet meet id>             # id from athletic.net/CrossCountry/meet/<ID>
+    /srv/venv/bin/python scripts/find_meet.py <anet meet id> --requeue   # only after reading the reason
+
+**The next scrape** (runbook 2026-09-27), after the solves are fixed:
+
+    /srv/venv/bin/python scripts/queue_meets.py                 # dry run: what it will seed
+    /srv/venv/bin/python scripts/queue_meets.py --source tfrrs
+    NO_VPN=1 ANET_RETRY_FAILED=1 xvfb-run -a scripts/launcher.py        # failures first
+    NO_VPN=1 PER_MEET_DELAY=3,6 xvfb-run -a scripts/launcher.py         # then everything due
