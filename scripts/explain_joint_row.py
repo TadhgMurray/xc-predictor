@@ -29,7 +29,11 @@ the two is told apart from a page that is wrong.
 Reads the pack and the joint npz the live step wrote (2026-09-03: the
 joint solve IS step 08 under XCP_JOINT_LIVE=1). Rebuilding the design costs
 what the solve's setup costs -- minutes and most of the box's memory -- so
-run it on the server, once, with every id you want to see.
+run it on the server, once, with every id you want to see, AFTER sourcing
+the solve's settings (see solveSettings for which ones the file overrides):
+
+    set -a; . /etc/xc-predictor.env; set +a; . deploy/solve_env.sh
+    /srv/venv/bin/python scripts/explain_joint_row.py --tf 49384026
 """
 import argparse
 import os
@@ -156,6 +160,206 @@ def _loadNpz(path):
         return {k: z[k] for k in z.files}
 
 
+# ★★ THE DESIGN IS THE GO-LIVE'S, OR EVERY NUMBER BELOW IS SOMEONE ELSE'S.
+#    rowTerms indexes the solve's arrays by the rebuilt design's cell, race
+#    and athlete ids. Rebuild with different settings and the ids point at
+#    other cells: on 2026-09-29 this script rebuilt WITHOUT the era split
+#    the live solve runs under (deploy/solve_env.sh, XCP_ERA_YEARS=2), got
+#    76,010 base cells against the file's 223,097 (course, era) cells, and
+#    stopped -- the race count matched, so the pack was the right one; the
+#    settings were not.
+#
+# ★ THE FILE FIRST, THE ENVIRONMENT SECOND. The settings are read as
+#   deploy/run_pipeline.sh's step 08_golive turns XCP_* variables into
+#   run_joint flags (_GOLIVE_ENV below), then every setting the solve file
+#   records about itself OVERRIDES that: era_years, split_ability and
+#   sport_offset (run_joint.designRecord), the asserted level (mu_fixed),
+#   the field term (importance_kind), altitude (altitude_coef), the event
+#   bands (dist_bands). The file is the solve; the environment is only what
+#   somebody typed, possibly for a later run. A file older than
+#   designRecord (2026-09-29) lacks split_ability, which is then inferred
+#   from the number of abilities it holds.
+#
+# ⚠ SO SOURCE THE SOLVE'S SETTINGS FIRST for what the file cannot say:
+#       set -a; . /etc/xc-predictor.env; set +a; . deploy/solve_env.sh
+#   Without it a file from before 2026-09-29 whose keys carry '@e' has no
+#   era width anywhere, and the mismatch message says so.
+#
+# ! ONLY THE FLAGS THAT SHAPE THE DESIGN. The bracket swap
+#   (XCP_DIFFICULTY=bracket), the gauge and the window change the NUMBERS in
+#   the file, not its cells, rows or athletes, so they are not needed here.
+_GOLIVE_ENV = (
+    # (variable, run_joint flag, takes a value) -- run_pipeline.sh 08_golive
+    ("XCP_SPORT_LEVEL", "--sport-level", True),
+    ("XCP_IMPORTANCE", "--importance", True),
+    ("XCP_NO_IMPORTANCE", "--no-importance", False),
+    ("XCP_NO_INDOOR", "--no-indoor", False),
+    ("XCP_INDOOR_LEVEL", "--indoor-level", True),
+    ("XCP_ERA_YEARS", "--era-years", True),
+    ("XCP_NO_DIST_TABLE", "--no-dist-table", False),
+    ("XCP_MERGE_SPORTS", "--merge-sports", False),
+    ("XCP_SPLIT_ABILITY", "--split-ability", False),
+)
+
+
+def goLiveArgv(env):
+    """The run_joint argv step 08_golive builds from these XCP_* variables
+    (shell `${X:+...}`: set AND non-empty), design flags only."""
+    argv = []
+    for var, flag, takes in _GOLIVE_ENV:
+        val = env.get(var, "")
+        if val:
+            argv += [flag, val] if takes else [flag]
+    # [ "${XCP_ALTITUDE:-1}" != "0" ] && echo --altitude
+    if (env.get("XCP_ALTITUDE") or "1") != "0":
+        argv.append("--altitude")
+    return argv
+
+
+def _one(npz, key):
+    return np.asarray(npz[key]).reshape(-1)[0]
+
+
+def solveSettings(npz, env, cols=None):
+    """(buildDesign kwargs, [(setting, value, source)]) for the design the
+    solve that wrote `npz` fitted. `cols` (the pack) lets a file without a
+    recorded split_ability have it inferred from its ability count."""
+    import contextlib
+    import io
+    import run_joint as rj
+    argv = goLiveArgv(env)
+    ap = rj.buildParser()
+    with contextlib.redirect_stdout(io.StringIO()):     # applyImplications talks
+        args = rj.applyImplications(ap.parse_args(argv), ap)
+    kw = rj.designKwargs(args)
+    src = {k: "env" for k in kw}
+    notes = []
+
+    def take(name, value, why):
+        if kw[name] != value:
+            notes.append(f"{name}: the solve file says {value!r} ({why}), the "
+                         f"environment says {kw[name]!r} -- using the file")
+        kw[name] = value
+        src[name] = "npz"
+
+    keys = ([str(k) for k in npz["course_keys"]] if "course_keys" in npz else None)
+    if "era_years" in npz:
+        take("era_years", int(_one(npz, "era_years")), "era_years")
+    elif keys is not None and not any("@e" in k for k in keys):
+        take("era_years", 0, "no '@e' cell keys")
+    elif keys is not None and not kw["era_years"]:
+        notes.append("era_years: the solve file's keys carry '@e' (an era "
+                     "split) but it does not record the width and XCP_ERA_YEARS "
+                     "is unset -- source deploy/solve_env.sh")
+    if "split_ability" in npz:
+        take("split_ability", bool(_one(npz, "split_ability")), "split_ability")
+    elif cols is not None and "ability" in npz:
+        import pair_engine as pe
+        n_ab = int(np.asarray(npz["ability"]).size)
+        for split in (False, True):
+            _c, n = pe.athleteSeasonCodes(
+                np.asarray(cols["athlete"]), np.asarray(cols["year"]),
+                np.asarray(cols["sport"]) if split and "sport" in cols else None)
+            if n == n_ab:
+                take("split_ability", split, f"{n_ab:,} abilities")
+                break
+    if "sport_offset" in npz:
+        take("sport_offset", bool(_one(npz, "sport_offset")), "sport_offset")
+    else:
+        take("sport_offset", "beta" in npz, "beta " +
+             ("saved" if "beta" in npz else "absent"))
+    # mu_fixed = [0, -level] (buildDesign)
+    take("sport_level",
+         (-float(np.asarray(npz["mu_fixed"]).reshape(-1)[1])
+          if "mu_fixed" in npz else None),
+         "mu_fixed " + ("saved" if "mu_fixed" in npz else "absent: estimated"))
+    kind = (str(_one(npz, "importance_kind")) if "importance_kind" in npz
+            else None)
+    take("importance", {"field": "field", "share": "season-end"}.get(kind, "none"),
+         f"importance_kind {kind or 'absent'}")
+    take("altitude", "altitude_coef" in npz,
+         "altitude_coef " + ("saved" if "altitude_coef" in npz else "absent"))
+    if "dist_labels" in npz and "dist_bands" in npz:
+        take("dist_bands", bool(np.asarray(npz["dist_bands"]).size),
+             "dist_bands")
+    settings = [(k, kw[k], src[k]) for k in
+                ("era_years", "split_ability", "sport_offset", "sport_level",
+                 "importance", "altitude", "dist_bands", "indoor",
+                 "indoor_level", "dist_table")]
+    return kw, settings, notes
+
+
+def rebuildDesign(cols, npz, env=None, verbose=True):
+    """The go-live's design over `cols` (already sortRowsByAthlete'd), as
+    run_joint.main builds it: (D, keep, pool_names, settings, notes)."""
+    import run_joint as rj
+    env = os.environ if env is None else env
+    kw, settings, notes = solveSettings(npz, env, cols)
+    if verbose:
+        print("[explain] the solve's design settings (npz = read from the "
+              "solve file, env = from XCP_* as step 08_golive passes them):")
+        for name, val, src in settings:
+            print(f"    {name:<14} {val!r:<14} {src}")
+        for n in notes:
+            print(f"[explain] ! {n}")
+    keep = (cols["course"] >= 0) & (cols["norm"] > 0)
+    D, _athlete_pool, pool_names = rj.buildDesign(cols, keep, **kw)
+    D.pool_names = list(pool_names)
+    return D, keep, pool_names, settings, notes
+
+
+def designMismatch(D, npz, settings, notes=()):
+    """None when the solve file's arrays fit design D, else a message
+    naming WHICH setting (or the pack) differs."""
+    got = dict((k, v) for k, v, _s in settings)
+    why = []
+    n_cell = int(np.asarray(npz["delta"]).size)
+    if n_cell != D.n_cell or ("course_keys" in npz and
+                              [str(k) for k in npz["course_keys"]] != list(D.course_keys)):
+        f_keys = ([str(k) for k in npz["course_keys"]] if "course_keys" in npz
+                  else [])
+        f_era = any("@e" in k for k in f_keys)
+        d_era = any("@e" in k for k in D.course_keys)
+        if f_era and not d_era:
+            why.append(f"cells: the solve split courses into eras ('@e' keys, "
+                       f"{n_cell:,} cells) and this rebuild did not "
+                       f"(era_years={got.get('era_years')!r}, {D.n_cell:,} "
+                       f"cells) -- source deploy/solve_env.sh (XCP_ERA_YEARS)")
+        elif d_era and not f_era and f_keys:
+            why.append(f"cells: this rebuild split courses into eras "
+                       f"(era_years={got.get('era_years')!r}) and the solve "
+                       f"did not -- unset XCP_ERA_YEARS")
+        elif f_era and d_era:
+            base = (f", era_base_year {int(_one(npz, 'era_base_year'))}"
+                    if "era_base_year" in npz else "")
+            why.append(f"cells: both split into eras, but {n_cell:,} (file"
+                       f"{base}) against {D.n_cell:,} "
+                       f"(era_years={got.get('era_years')!r}): a different era "
+                       f"width, or the pack gained or lost a course or a year")
+        else:
+            why.append(f"cells: {n_cell:,} in the file against {D.n_cell:,} "
+                       f"base courses: the pack was rebuilt after the solve, "
+                       f"or the other way round")
+    n_race = int(np.asarray(npz["race_effect"]).size)
+    if n_race != D.n_race:
+        why.append(f"races: {n_race:,} in the file against {D.n_race:,}: the "
+                   f"pack changed, or the solve ran with --race-key venue / "
+                   f"--no-race-term")
+    if "ability" in npz and int(np.asarray(npz["ability"]).size) != D.n_ath:
+        why.append(f"athlete-seasons: {int(np.asarray(npz['ability']).size):,} "
+                   f"in the file against {D.n_ath:,} "
+                   f"(split_ability={got.get('split_ability')!r}; "
+                   f"XCP_SPLIT_ABILITY)")
+    if ("dist_offset" in npz and getattr(D, "n_e", 0)
+            and int(np.asarray(npz["dist_offset"]).size) != int(D.n_e)):
+        why.append(f"event offsets: {int(np.asarray(npz['dist_offset']).size):,} "
+                   f"in the file against {int(D.n_e):,} "
+                   f"(dist_bands={got.get('dist_bands')!r})")
+    if not why:
+        return None
+    return "; ".join(why) + "".join(f"\n    ! {n}" for n in notes)
+
+
 def _dbRows(sport, ids):
     from database import getConn
     out = {}
@@ -193,16 +397,14 @@ def main():
     print(f"[explain] loading {args.pack}")
     cols = pe.loadPack(args.pack)
     cols = rj.sortRowsByAthlete(cols)
-    keep = (cols["course"] >= 0) & (cols["norm"] > 0)
-    print("[explain] rebuilding the design (the solve's own row order)")
-    D, _athlete_pool, pool_names = rj.buildDesign(cols, keep, altitude=True)
-    D.pool_names = list(pool_names)
+    # ! THE FILE BEFORE THE DESIGN: the design's settings come from it
     npz = _loadNpz(args.npz)
-    if npz["delta"].size != D.n_cell or npz["race_effect"].size != D.n_race:
-        sys.exit(f"[explain] {args.npz} does not fit this pack "
-                 f"({npz['delta'].size} cells vs {D.n_cell}, "
-                 f"{npz['race_effect'].size} races vs {D.n_race}): the "
-                 f"pack was rebuilt after the solve, or the other way round")
+    print("[explain] rebuilding the design (the solve's own row order and "
+          "settings)")
+    D, keep, pool_names, settings, notes = rebuildDesign(cols, npz)
+    bad = designMismatch(D, npz, settings, notes)
+    if bad:
+        sys.exit(f"[explain] {args.npz} does not fit the rebuilt design: {bad}")
     if getattr(D, "dist_banded", False) and "rating" in npz:
         D.rebandDist(np.asarray(npz["rating"])[D.athlete])   # the solve's bands
     mu = np.asarray(npz["mu"], dtype=np.float64)
@@ -211,7 +413,10 @@ def main():
 
     pos = np.full(keep.size, -1, dtype=np.int64)
     pos[keep] = np.arange(int(keep.sum()))
-    keys = [str(k) for k in cols["course_keys"]]
+    # ! THE DESIGN'S KEYS, NOT THE PACK'S: under an era split t['cell'] is a
+    #   (course, era) id, and the pack's list is the base courses
+    keys = [str(k) for k in (getattr(D, "course_keys", None)
+                             or cols["course_keys"])]
     want = {("XC", i) for i in args.xc} | {("TF", i) for i in args.tf}
     all_ids = np.array(sorted({i for _, i in want}), dtype=np.int64)
     hit = np.flatnonzero(np.isin(cols["result_id"], all_ids))

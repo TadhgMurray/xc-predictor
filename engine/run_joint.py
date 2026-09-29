@@ -1063,6 +1063,54 @@ def sharedTermKwargs(args):
                 dist_table=not args.no_dist_table)
 
 
+# ★ THE GO-LIVE'S DESIGN, AS ONE CALL (2026-09-29). main() used to spell its
+#   buildDesign arguments out inline, so a diagnostic that wanted "the design
+#   the solve fitted" had to copy them -- and scripts/explain_joint_row.py
+#   copied an OLD set: no era split, altitude always on. Under
+#   XCP_ERA_YEARS=2 the solve has 223,097 (course, era) cells and the copy
+#   had 76,010 base ones, so every row it explained would have read a
+#   different course's difficulty had the size check not stopped it.
+#   main() and the explainer now take these from the same function.
+# ! THE HOLDOUT KEEPS ITS OWN CALLS. It builds without --altitude on
+#   purpose (the ladder's base rung), and folding it in here would change
+#   what 08a scores.
+def designKwargs(args):
+    """buildDesign's keyword arguments for the full solve, from parsed (and
+    applyImplications'd) run_joint arguments."""
+    return dict(sport_offset=not args.no_sport_offset,
+                curve=not args.no_curve, rust=not args.no_rust,
+                dist=not args.no_dist, slope=not args.no_slope,
+                link=args.link and not args.no_link, altitude=args.altitude,
+                dist_bands=not args.no_dist_bands,
+                split_ability=args.split_ability,
+                era_years=args.era_years,
+                **sharedTermKwargs(args))
+
+
+# ★ WHAT THE SOLVE FILE SAYS ABOUT ITS OWN DESIGN. Written beside the numbers
+#   so a reader rebuilding the design can take the settings from the file it
+#   is about to index, not from an environment that may have changed since.
+#   era_base_year is the pack's, over ALL rows with a course, which is what
+#   eraCells numbers eras from.
+# ! split_ability IS RECORDED BECAUSE NOTHING ELSE SAYS IT. Every other
+#   setting leaves a trace (the '@e' keys, mu_fixed, beta, altitude_coef);
+#   a split ability only changes how many athlete-seasons there are.
+def designRecord(args, cols, D):
+    rec = {"course_keys": np.array([str(k) for k in
+                                    (getattr(D, "course_keys", None)
+                                     or cols["course_keys"])]),
+           "split_ability": np.array([bool(args.split_ability)]),
+           "sport_offset": np.array([bool(D.sc is not None)])}
+    if args.era_years:
+        # the readers (course_bracket, track_variance, explain_joint_row)
+        # rebuild (course, era) ids from this, not from whatever subset of
+        # rows they hold
+        _c = np.asarray(cols["course"]); _y = np.asarray(cols["year"])
+        rec["era_years"] = np.array([int(args.era_years)])
+        rec["era_base_year"] = np.array([int(_y[_c >= 0].min())])
+    return rec
+
+
 def reportSharedTerms(out, D, pool_names):
     """The asserted level, the meet-importance coefficients and the indoor
     coefficients, for the log."""
@@ -2428,14 +2476,7 @@ def main():
     _ALT_FIT["on"] = bool(args.altitude_fit)
     _NO_RACE_TERM["on"] = bool(args.no_race_term)
     _RACE_KEY["by"] = args.race_key
-    D, athlete_pool, pool_names = buildDesign(
-        cols, keep, not args.no_sport_offset, not args.no_curve,
-        not args.no_rust, dist=not args.no_dist, slope=not args.no_slope,
-        link=args.link and not args.no_link, altitude=args.altitude,
-        dist_bands=not args.no_dist_bands,
-        split_ability=args.split_ability,
-        era_years=args.era_years,
-        **sharedTermKwargs(args))
+    D, athlete_pool, pool_names = buildDesign(cols, keep, **designKwargs(args))
     print(f"[joint] {D.n:,} rows | {D.n_ath:,} athlete-seasons | "
           f"{D.n_cell:,} cells | {D.n_race:,} races | {D.n_group} sport "
           f"groups | {D.n_pool} pools {pool_names}")
@@ -2559,14 +2600,13 @@ def main():
                 race_effect=out["race_effect"], sigma2=out["sigma2"],
                 sigma_u2=out["sigma_u2"], tau2=out["tau2"],
                 rows_per_cell=rows_per_cell,
-                # the design's keys: one per (course, era) cell under --era-years
-                course_keys=np.array([str(k) for k in
-                                      (getattr(D, "course_keys", None)
-                                       or cols["course_keys"])]),
                 ability=out["ability"].astype(np.float32),
                 athlete_pool=athlete_pool.astype(np.int16),
                 n_races=out["n_races"].astype(np.int32),
                 pool_names=np.array(pool_names))
+    # the design's keys (one per (course, era) cell under --era-years), the
+    # era width and base year, split ability: see designRecord
+    save.update(designRecord(args, cols, D))
     save["difficulty_source"] = np.array([str(out.get("difficulty_source") or "joint")])
     if out.get("delta_joint") is not None:
         save["delta_joint"] = out["delta_joint"]
@@ -2601,12 +2641,6 @@ def main():
         save["altitude_floor_m"] = np.array([js.ALT_FLOOR_M])
     if out.get("mu_fixed") is not None:
         save["mu_fixed"] = out["mu_fixed"]
-    if args.era_years:
-        # the readers (course_bracket, track_variance) rebuild (course, era)
-        # ids from this, not from whatever subset of rows they hold
-        _c = np.asarray(cols["course"]); _y = np.asarray(cols["year"])
-        save["era_years"] = np.array([int(args.era_years)])
-        save["era_base_year"] = np.array([int(_y[_c >= 0].min())])
     if out.get("importance") is not None and getattr(D, "n_imp", 0):
         save["importance"] = out["importance"]
         save["importance_labels"] = np.array(getattr(D, "imp_labels", []))

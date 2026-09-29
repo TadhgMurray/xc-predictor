@@ -409,8 +409,15 @@ def main():
                     help="days either side for the same athlete's other races")
     ap.add_argument("--top", type=float, default=0.0,
                     help="also the top fraction of each race's field by rating")
-    ap.add_argument("--era-years", type=int, default=0,
-                    help="the era width the solve used (XCP_ERA_YEARS), if any")
+    # ★ DEFAULT: THE SOLVE FILE'S OWN era_years (2026-09-29). The live solve
+    #   runs with XCP_ERA_YEARS=2 (deploy/solve_env.sh) and records it; a
+    #   default of 0 made every lookup without the flag die on "pass the era
+    #   width the solve used" -- the same trap scripts/explain_joint_row.py
+    #   fell into. An explicit value still wins, and a wrong one is refused
+    #   by bracket.packCodes.
+    ap.add_argument("--era-years", type=int, default=None,
+                    help="the era width the solve used (XCP_ERA_YEARS); "
+                         "default: what the solve file records, else 0")
     ap.add_argument("--any-sport", action="store_true",
                     help="bracket against the athlete's other races in either sport")
     ap.add_argument("--no-curve", action="store_true",
@@ -446,6 +453,11 @@ def main():
     cols, npz = bk.loadInputs(args.pack, args.npz)
     if npz is None:
         sys.exit(f"no solve file at {args.npz}")
+    if args.era_years is None:
+        args.era_years = (int(np.asarray(npz["era_years"]).reshape(-1)[0])
+                          if "era_years" in npz else 0)
+        if args.era_years:
+            print(f"[bracket] era width {args.era_years} years, from the solve file")
     print(f"[bracket] {np.asarray(cols['norm']).size:,} rows loaded; coding the "
           f"corpus once (half a minute)", flush=True)
     res = bracket(cols, npz, match, window=args.window, top=args.top,
