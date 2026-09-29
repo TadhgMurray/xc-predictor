@@ -34,6 +34,8 @@ CHECKS=(
   "brooks-edwards|$PY scripts/why_unrated.py 21572633 --sport TF --replay"
   "ms-zone-lutkenhaus|$PY scripts/why_unrated.py 30245014 --sport XC --replay"
   "ms-zone-vijaykumar|$PY scripts/why_unrated.py 17385087 --sport XC --replay"
+  "ms-zone-pins|$PY scripts/peek_override.py --result 37812888 37812889 37812890 37812894 37812898 37812891 37812892"
+  "brooks-pins|$PY scripts/peek_override.py --sport TF --result 156938747 156938748"
   "ncs-weather|$PY scripts/diag_row_weather.py --xc 59845242 52770927 46185539"
   "ncs-explain|$PY scripts/explain_joint_row.py --xc 59845242 52770927 46185539"
   "outliers-dry|$PY -u engine/rating_outliers.py --dry-run --show 20"

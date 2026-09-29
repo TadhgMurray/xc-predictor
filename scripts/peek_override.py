@@ -6,6 +6,7 @@
 #   python scripts/peek_override.py 268748/1068877
 #   python scripts/peek_override.py 268748/1068877 62885/273791 --sport XC
 #   python scripts/peek_override.py --meet 268748          # every div at a meet
+#   python scripts/peek_override.py --result 37812888 37812891   # per-result pins
 #
 # ★ ALL FIVE TABLES, BECAUSE "IS THERE AN OVERRIDE ON IT" IS FIVE QUESTIONS.
 #   A meet can be wrong in ways a distance cannot fix: the wrong distance, a
@@ -37,13 +38,45 @@ def _tables(sport):
          C._DISTANCE_OVERRIDES_XC if xc else C._DISTANCE_OVERRIDES_TF),
         ("distance DROP",
          C._DISTANCE_DROP_XC if xc else C._DISTANCE_DROP_TF),
-        ("result DROP",
-         C._RESULT_DROP_XC if xc else C._RESULT_DROP_TF),
         ("gender override",
          C._GENDER_OVERRIDES_XC if xc else C._GENDER_OVERRIDES_TF),
-        ("result override",
+    ]
+
+
+# ★ THE RESULT TABLES ARE KEYED BY result_id, NOT (meet, div) (owner's MS
+#   zone meet, 2026-09-29: "nothing" for 200996/806899 while five of its
+#   runners were normalised from ~2,400 m and the rest from 2 miles). The
+#   backfill reads both with row[_ID] (_resolveDistanceGender, the row fn's
+#   step 0), and this file asked them with a (meet, div) tuple -- a key no
+#   entry can have -- so a per-result pin could never be seen here.
+def _resultTables(sport):
+    import corrections as C
+    xc = sport == "XC"
+    return [
+        ("result DROP", C._RESULT_DROP_XC if xc else C._RESULT_DROP_TF),
+        ("result override (distance, gender)",
          C._RESULT_OVERRIDE_XC if xc else C._RESULT_OVERRIDE_TF),
     ]
+
+
+def _results(sport, ids):
+    tables = _resultTables(sport)
+    for rid in ids:
+        print(f"\n  result {rid}  ({sport})")
+        hits = 0
+        for name, table in tables:
+            for k in (rid, str(rid)):
+                try:
+                    hit = k in table
+                except TypeError:
+                    hit = False
+                if hit:
+                    hits += 1
+                    value = table[k] if isinstance(table, dict) else "(listed)"
+                    print(f"    {name:<36} {value}")
+                    break
+        if not hits:
+            print("    nothing. No per-result table mentions this result.")
 
 
 def _parseKey(text):
@@ -82,7 +115,13 @@ def main():
     ap.add_argument("--meet", type=int, action="append",
                     help="every division of this meet that appears anywhere")
     ap.add_argument("--sport", choices=["XC", "TF"], default="XC")
+    ap.add_argument("--result", type=int, nargs="+", default=[],
+                    help="result ids: the per-result drop and pin tables")
     args = ap.parse_args()
+    if args.result:
+        _results(args.sport, args.result)
+        if not args.keys and not args.meet:
+            return 0
 
     tables = _tables(args.sport)
 
