@@ -4,6 +4,7 @@ twin_flag.py -- one physical race stored twice, flagged ONCE, by result_id.
     python engine/twin_flag.py            # report: counts and samples
     python engine/twin_flag.py --write    # (re)build result_twin
     python engine/twin_flag.py --explain TF:dup_race_copy   # one rule's plan, not run
+    XCP_TWIN_SKIP=level_conflict python engine/twin_flag.py --write   # without it
 
 Pipeline step 04c, before the pack. Issues 15 and 94.
 
@@ -37,6 +38,11 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
     dup_converted a track race stored as run and again converted to the
                   neighbouring distance, 2 mile / 3200 (dupConvertedSql).
     xc_placeholder a track race on the XC calendar (xcPlaceholderSql).
+    level_conflict a high school row inside a college athlete's season, or
+                  the reverse: one person_id, one sport, one academic year,
+                  rows that can only be college AND rows that can only be
+                  high school. The minority side is someone else's race
+                  (engine/level_conflict.py says how it is decided).
 
 ! ANET IS ALWAYS THE SURVIVOR of a cross-feed pair, as before: it carries
   athlete_id and grade; tfrrs XC has athlete_id NULL on every row.
@@ -458,6 +464,16 @@ def xcPlaceholderSql(table, sport):
                                AND  meet_id IS NOT NULL)
     """
 
+# ★ NOT A TWIN, AND IN THIS TABLE ANYWAY (the NESCAC review, 2026-09-29:
+#   four college runners each carrying the same 2025 Middlesex League high
+#   school race, and one of them a season 3 points high because of it). A
+#   high school race on a college season is a row that is not this person's,
+#   and "a row that is not this person's" is what every reader already
+#   anti-joins here -- the engine, the pricer, the boards and the athlete
+#   page. A new table would need all four taught a new join, and the one
+#   that was missed would be the leak. LAST, so a row that is also a twin is
+#   filed as a twin.
+import level_conflict as LC                                     # noqa: E402
 
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("dup_same_feed", dupSameFeedSql),
@@ -465,7 +481,18 @@ RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("dup_race_copy", dupRaceCopySql),
          ("dup_same_day", dupSameDaySql),
          ("dup_converted", dupConvertedSql),
-         ("xc_placeholder", xcPlaceholderSql))
+         ("xc_placeholder", xcPlaceholderSql),
+         (LC.REASON, LC.ruleSql))
+
+
+def prepareRule(cur, table, sport, reason, explain=False):
+    """The staging a rule needs before its SELECT can run: the meet pairs of
+    dup_cross_date, the decided rows of level_conflict. Nothing for the
+    rest."""
+    if reason == "dup_cross_date":
+        prepareCrossDate(cur, table, sport)
+    elif reason == LC.REASON:
+        LC.prepare(cur, table, sport, explain=explain)
 
 
 # ★ NO NESTED LOOPS (2026-09-27: run stuck over 24 h in track's
@@ -518,8 +545,7 @@ def explain(conn, which):
     table = TABLES[sport]
     with conn.cursor() as cur:
         _session(conn, cur)
-        if reason == "dup_cross_date":
-            prepareCrossDate(cur, table, sport)
+        prepareRule(cur, table, sport, reason, explain=True)
         cur.execute(f"EXPLAIN {fn(table, sport)}")
         for (line,) in cur.fetchall():
             print(line)
@@ -549,8 +575,7 @@ def build(conn, write=False):
                 cur.execute("SAVEPOINT twin_rule")
                 cur.execute(f"SET statement_timeout = {int(RULE_TIMEOUT * 1000)}")
                 try:
-                    if reason == "dup_cross_date":
-                        prepareCrossDate(cur, table, sport)
+                    prepareRule(cur, table, sport, reason)
                     if write:
                         # earlier reasons win the primary key: a row that is a
                         # cross-feed twin is filed as one, not as a feed dup

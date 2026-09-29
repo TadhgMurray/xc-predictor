@@ -1,8 +1,12 @@
 DROP TABLE IF EXISTS results, results_tf, meets, meets_tf, result_twin;
+-- grade / team_id / team_slug LAST, so every positional INSERT below that
+-- stops at date leaves them NULL (level_conflict reads them)
 CREATE TABLE results (result_id bigint, person_id bigint, source text, meet_id bigint, div_id bigint,
-  canon_meet_id bigint, place int, time_seconds double precision, date text);
+  canon_meet_id bigint, place int, time_seconds double precision, date text,
+  grade text, team_id int, team_slug text);
 CREATE TABLE results_tf (result_id bigint, person_id bigint, source text, meet_id bigint, div_id bigint,
   event_id bigint, canon_meet_id bigint, place int, time_seconds double precision, date text,
+  grade text, team_id int, team_slug text,
   event_short text, is_relay int, is_field int);
 CREATE TABLE meets (meet_id bigint, div_id bigint, meet_name text);
 CREATE TABLE meets_tf (meet_id bigint, div_id bigint, event_id bigint, source text, meet_name text, state text);
@@ -53,7 +57,59 @@ INSERT INTO meets VALUES (11,111,'Mid-Season Mania 1600m Invitational (XC Calend
 INSERT INTO results VALUES (1111, 6101, 'anet', 11, 111, 11, 5, 269.4, '2022-10-05');
 -- dup_converted (TF): 2 miles 9:35.09 and its 3200m conversion 9:31.74, same meet and day;
 -- and a real 1600 + 3200 double the same day, which must stay
-INSERT INTO results_tf VALUES (1801, 9101, 'anet', 18, 181, 5, 18, 3, 575.09, '2025-12-13', '2miles', 0, 0),
-                              (1802, 9101, 'anet', 18, 181, 6, 18, 3, 571.74, '2025-12-13', '3200m', 0, 0),
-                              (1803, 9102, 'anet', 18, 181, 7, 18, 1, 255.36, '2025-12-13', '1600m', 0, 0),
-                              (1804, 9102, 'anet', 18, 181, 6, 18, 2, 554.72, '2025-12-13', '3200m', 0, 0);
+INSERT INTO results_tf VALUES (1801, 9101, 'anet', 18, 181, 5, 18, 3, 575.09, '2025-12-13', NULL, NULL, NULL, '2miles', 0, 0),
+                              (1802, 9101, 'anet', 18, 181, 6, 18, 3, 571.74, '2025-12-13', NULL, NULL, NULL, '3200m', 0, 0),
+                              (1803, 9102, 'anet', 18, 181, 7, 18, 1, 255.36, '2025-12-13', NULL, NULL, NULL, '1600m', 0, 0),
+                              (1804, 9102, 'anet', 18, 181, 6, 18, 2, 554.72, '2025-12-13', NULL, NULL, NULL, '3200m', 0, 0);
+-- LEVEL CONFLICT (the NESCAC review, 2026-09-29) --------------------
+-- meets 80-99 are in no meets table, so no cross-date pairing; no canon
+-- meet, so no cross-feed twin; every (person, feed, time) once, so no copy.
+-- 6001: the review's shape. Four college days (grade FR-1 form or a college
+--       slug), one Middlesex League row on 2025-10-26 -> the high school row.
+--       His own 2023 grade-11 race is another season and stays.
+INSERT INTO results VALUES
+ (9001, 6001, 'tfrrs', 90, 901, NULL, 5, 1500.1, '2025-09-06', 'SO-2', NULL, 'VT_college_m_Middlebury'),
+ (9002, 6001, 'tfrrs', 91, 911, NULL, 7, 1510.2, '2025-09-20', 'SO-2', NULL, NULL),
+ (9003, 6001, 'tfrrs', 92, 921, NULL, 9, 1490.3, '2025-10-18', 'SO',   NULL, 'VT_college_m_Middlebury'),
+ (9004, 6001, 'tfrrs', 93, 931, NULL, 3, 1480.4, '2025-11-01', 'SO-2', NULL, 'VT_college_m_Middlebury'),
+ (9005, 6001, 'anet',  94, 941, NULL, 12, 917.1, '2025-10-26', '12', 5501, NULL),
+ (9006, 6001, 'anet',  95, 951, NULL, 4,  960.0, '2023-10-20', '11', 5502, NULL);
+-- 6002: the reverse -- a high schooler's season with one college row on it
+INSERT INTO results VALUES
+ (9011, 6002, 'anet',  94, 941, NULL, 20, 950.5, '2025-10-26', '12', 5503, NULL),
+ (9012, 6002, 'anet',  96, 961, NULL, 2,  955.0, '2025-09-13', '12', 5503, NULL),
+ (9013, 6002, 'anet',  97, 971, NULL, 1,  940.0, '2025-11-08', '12', 5503, NULL),
+ (9014, 6002, 'tfrrs', 91, 911, NULL, 30, 1600.0, '2025-09-20', 'FR-1', NULL, 'ME_college_m_Bates');
+-- 6003: one race each way, interleaved -> a tie flags both
+INSERT INTO results VALUES
+ (9021, 6003, 'tfrrs', 90, 901, NULL, 40, 1650.0, '2025-09-06', 'JR-3', NULL, NULL),
+ (9022, 6003, 'anet',  94, 941, NULL, 50, 1030.0, '2025-10-26', '10', 5504, NULL);
+-- 6004: one twelfth grader's race in both feeds, '12' and a bare 'SR' -> no conflict
+INSERT INTO results VALUES
+ (9031, 6004, 'anet',  98, 981, NULL, 1, 930.0, '2025-10-04', '12', 5505, NULL),
+ (9032, 6004, 'tfrrs', 99, 991, NULL, 1, 930.0, '2025-10-04', 'SR', NULL, NULL);
+-- 6005: a senior's autumn, then college the NEXT autumn -> two seasons, nothing
+INSERT INTO results VALUES
+ (9041, 6005, 'anet',  95, 952, NULL, 2,  945.0, '2024-10-19', '12', 5506, NULL),
+ (9042, 6005, 'tfrrs', 92, 922, NULL, 11, 1495.0, '2025-10-18', 'FR-1', NULL, NULL);
+-- 6006: grade 12 on anet team 0 ("no team") is not a high school row
+INSERT INTO results VALUES
+ (9051, 6006, 'tfrrs', 90, 902, NULL, 12, 1505.0, '2025-09-06', 'SR-4', NULL, NULL),
+ (9052, 6006, 'anet',  94, 942, NULL, 3,  1800.0, '2025-10-26', '12', 0, NULL);
+-- 7101 (track): a December graduate racing for a college in January -- high
+--       school, then college, never back -> a transition, nothing
+INSERT INTO results_tf VALUES
+ (9101, 7101, 'anet',  81, 811, 1, NULL, 1, 250.0, '2025-12-13', '12', 5601, NULL),
+ (9102, 7101, 'anet',  82, 821, 1, NULL, 1, 251.0, '2025-12-20', '12', 5601, NULL),
+ (9103, 7101, 'tfrrs', 83, 831, 1, NULL, 5, 248.0, '2026-01-17', 'FR-1', NULL, 'MA_college_m_Tufts'),
+ (9104, 7101, 'tfrrs', 84, 841, 1, NULL, 4, 247.0, '2026-02-14', 'FR-1', NULL, 'MA_college_m_Tufts');
+-- 7102 (track): a namesake's April inside a college spring -> the two high
+--       school rows; the 'TBA' row has no season and is left alone
+INSERT INTO results_tf VALUES
+ (9111, 7102, 'tfrrs', 83, 831, 1, NULL, 9, 252.0, '2026-01-17', 'JR-3', NULL, NULL),
+ (9112, 7102, 'tfrrs', 84, 841, 1, NULL, 8, 253.0, '2026-02-14', 'JR-3', NULL, NULL),
+ (9113, 7102, 'tfrrs', 85, 851, 1, NULL, 7, 254.0, '2026-04-11', 'JR-3', NULL, NULL),
+ (9114, 7102, 'tfrrs', 86, 861, 1, NULL, 6, 255.0, '2026-05-02', 'JR-3', NULL, NULL),
+ (9115, 7102, 'anet',  87, 871, 1, NULL, 3, 280.0, '2026-04-18', '11', 5602, NULL),
+ (9116, 7102, 'anet',  88, 881, 1, NULL, 2, 281.0, '2026-04-25', '11', 5602, NULL),
+ (9117, 7102, 'anet',  88, 881, 2, NULL, 1, 11.0,  'TBA',        '11', 5602, NULL);

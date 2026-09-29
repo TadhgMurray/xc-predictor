@@ -37,7 +37,10 @@ high school career on anet.
     - the genders, where both are known, agree;
     - the tfrrs person has NO row before Y and NO anet row at all (it is a
       stranger, not someone already joined to something);
-    - the anet senior has NO tfrrs row (not already joined to a college).
+    - the anet senior has NO tfrrs row (not already joined to a college);
+    - the tfrrs first-year has at least one row that can only be COLLEGE,
+      and the anet senior has NO high school row from Y on (level_conflict.py's
+      two definitions -- see "A SENIOR WHO IS STILL IN HIGH SCHOOL" below).
 
 ! REVERSIBLE, ROW BY ROW. --write logs every moved result -- (sport,
   result_id, from, to) -- in person_link_log before moving it, and --undo
@@ -60,6 +63,11 @@ for _p in (_HERE, _ROOT, os.path.join(_ROOT, "engine")):
         sys.path.insert(0, _p)
 
 from database import getConn                                  # noqa: E402
+# ★ THE LEVEL OF A ROW HAS ONE DEFINITION (engine/level_conflict.py), and the
+#   linker asks it the same question the conflict flag does. Imported, not
+#   spelled here: a linker and a flag that disagree about what a high school
+#   row is would weld exactly the pairs the flag then has to hide.
+from level_conflict import collegeSql, hsSql                  # noqa: E402
 
 RULE = "freshman"
 SENIOR = ("12", "12th", "sr", "sr.", "senior")
@@ -103,6 +111,11 @@ def _step(cur, what, sql, params=None):
 # pair must carry one in its first season: tfrrs also hosts some high school
 # and middle school meets, and the first dry run paired high school seniors
 # with "first-years" at Forest Park Jr High and Darnell Cookman MS.
+# ⚠ AND A GRADE OF "FR" IS NOT ENOUGH ON ITS OWN (2026-09-29). A bare Fr is a
+#   ninth grader in high school and a first-year in college (grade_sanity
+#   2c), and a tfrrs-hosted high school meet writes it for the former. So the
+#   identity must ALSO hold a row that can only be college -- the FR-1
+#   eligibility form or a college team slug (level_conflict.collegeSql).
 FRESHMAN_RE = r"^(fr|freshman|13)"
 
 
@@ -132,19 +145,20 @@ def freshmen(cur, years):
                min(id_system)                                     AS id_system,
                min(date)                                          AS first,
                bool_or(lower(btrim(grade)) ~ %(fr)s)              AS freshman,
+               bool_or({collegeSql('x')})                        AS college,
                mode() WITHIN GROUP (ORDER BY btrim(athlete_name)) AS name,
                mode() WITHIN GROUP (ORDER BY school)              AS school,
                count(*)                                           AS n
         FROM (
             SELECT {key} AS k, person_id, native_id, 'tfrrs'::text AS id_system,
-                   date, grade, athlete_name, school
+                   date, grade, athlete_name, school, source, team_slug
             FROM   results
             WHERE  source = 'tfrrs'
               AND  (person_id IS NOT NULL OR native_id IS NOT NULL)
               AND  date >= %(lo)s AND date < %(hi)s
             UNION ALL
             SELECT {key} AS k, person_id, native_id, id_system,
-                   date, grade, athlete_name, school
+                   date, grade, athlete_name, school, source, team_slug
             FROM   results_tf
             WHERE  source = 'tfrrs'
               AND  (person_id IS NOT NULL OR native_id IS NOT NULL)
@@ -155,7 +169,8 @@ def freshmen(cur, years):
         GROUP  BY k
     """, {"lo": lo, "hi": hi, "fr": FRESHMAN_RE})
     _step(cur, "keeping only college freshmen",
-          "DELETE FROM lf_t WHERE NOT COALESCE(freshman, false)")
+          "DELETE FROM lf_t WHERE NOT (COALESCE(freshman, false) "
+          "AND COALESCE(college, false))")
     cur.execute("CREATE INDEX ON lf_t (person_id)")
     cur.execute("ALTER TABLE lf_t ADD COLUMN y int")
     cur.execute("""UPDATE lf_t SET y = CASE WHEN substring(first, 6, 2) >= '08'
@@ -203,10 +218,23 @@ def freshmen(cur, years):
     return out
 
 
+# ★ A SENIOR WHO IS STILL IN HIGH SCHOOL IS NOT A GRADUATE (the NESCAC
+#   review, 2026-09-29). A senior is keyed on the LAST grade-12 row, and
+#   nothing asked whether the same anet person kept racing high school
+#   afterwards -- a person whose record says 12 in one year and 10 or 11 the
+#   next (a mistyped grade, or two kids of one name on one anet id) became a
+#   "graduate" of the earlier year, and the college first-year of the same
+#   name was welded onto them. The result is the exact shape the review
+#   found: a college season and a high school season in one academic year on
+#   one person_id, the high school race rated on the collegian. A graduate of
+#   class Y-1 has no high school row in Y or after; one who has is not paired.
+#   (A pair refused here stays two people, which is what unlink.py and this
+#   file's header both prefer: a missed merge is cheap, a wrong one is not.)
 def seniors(cur, years):
-    """{y: {person_id: (name, high_school, gender, has_tfrrs)}} -- anet
-    persons with a senior high school row in academic year y - 1. One scan
-    per table for every year."""
+    """{y: {person_id: (name, high_school, gender, has_tfrrs, still_hs)}} --
+    anet persons with a senior high school row in academic year y - 1;
+    still_hs says they raced high school again in year y or later. One scan per
+    table for every year."""
     lo, hi = f"{min(years) - 1}-08-01", f"{max(years)}-08-01"
     cur.execute("DROP TABLE IF EXISTS lf_a")
     _step(cur, "anet senior rows in the seasons before (a scan of both tables)", """
@@ -230,7 +258,7 @@ def seniors(cur, years):
         GROUP  BY person_id
     """, {"lo": lo, "hi": hi, "sr": list(SENIOR)})
     cur.execute("CREATE INDEX ON lf_a (person_id)")
-    _step(cur, "their names, genders and any tfrrs rows (index probes)", """
+    _step(cur, "their names, genders, tfrrs rows, later school rows (index probes)", f"""
         CREATE TEMP TABLE lf_a2 AS
         SELECT a.y, a.person_id,
                (SELECT concat_ws(' ', btrim(x.first_name), btrim(x.last_name))
@@ -243,13 +271,21 @@ def seniors(cur, years):
                EXISTS (SELECT 1 FROM results r WHERE r.person_id = a.person_id
                          AND r.source = 'tfrrs')
                OR EXISTS (SELECT 1 FROM results_tf r WHERE r.person_id = a.person_id
-                         AND r.source = 'tfrrs')           AS has_tfrrs
+                         AND r.source = 'tfrrs')           AS has_tfrrs,
+               -- a high school row in the freshman year or later: not a graduate
+               EXISTS (SELECT 1 FROM results r WHERE r.person_id = a.person_id
+                         AND r.date >= (a.y::text || '-08-01')
+                         AND {hsSql('r')})
+               OR EXISTS (SELECT 1 FROM results_tf r WHERE r.person_id = a.person_id
+                         AND r.date >= (a.y::text || '-08-01')
+                         AND {hsSql('r')})                 AS still_hs
         FROM lf_a a WHERE a.y = ANY(%(ys)s)
     """, {"ys": list(years)})
-    cur.execute("SELECT y, person_id, name, school, gender, has_tfrrs FROM lf_a2")
+    cur.execute("SELECT y, person_id, name, school, gender, has_tfrrs, still_hs "
+                "FROM lf_a2")
     out = {y: {} for y in years}
-    for y, pid, nm, sch, g, ht in cur.fetchall():
-        out[y][pid] = (nm, sch, g, ht)
+    for y, pid, nm, sch, g, ht, still in cur.fetchall():
+        out[y][pid] = (nm, sch, g, ht, bool(still))
     return out
 
 
@@ -260,13 +296,14 @@ def _g(v):
 
 def pairsFor(fresh, senior):
     """[(tfrrs_pid, anet_pid, name, college, high_school)] -- names unique on
-    both sides, genders agreeing where known, the senior not already joined."""
+    both sides, genders agreeing where known, the senior not already joined
+    and not still racing high school in the freshman year."""
     t_by, a_by = defaultdict(list), defaultdict(list)
     for pid, (nm, sch, g, n) in fresh.items():
         k = normName(nm)
         if k:
             t_by[k].append(pid)
-    for pid, (nm, sch, g, ht) in senior.items():
+    for pid, (nm, sch, g, ht, *_still) in senior.items():
         k = normName(nm)
         if k:
             a_by[k].append(pid)       # ! linked seniors count toward ambiguity
@@ -281,6 +318,9 @@ def pairsFor(fresh, senior):
         t, a = ts[0], as_[0]
         if senior[a][3]:
             skipped["senior already on tfrrs"] += 1
+            continue
+        if len(senior[a]) > 4 and senior[a][4]:
+            skipped["senior still in high school"] += 1
             continue
         gt, ga = _g(fresh[t][2]), _g(senior[a][2])
         if gt and ga and gt != ga:

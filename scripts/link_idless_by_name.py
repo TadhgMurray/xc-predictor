@@ -14,6 +14,12 @@
 #
 #   GUARDS
 #     - name must have 2+ tokens (a space) -- kills single-word junk.
+#     - LEVEL (the NESCAC review, 2026-09-29): a row that can only be COLLEGE
+#       never joins a person who raced HIGH SCHOOL in the same academic year.
+#       "Unique in `athletes`" is a statement about anet's registry, and a
+#       college runner anet never had shares a name with a high schooler it
+#       does; the weld then puts a Middlesex League race on a Middlebury
+#       season. engine/level_conflict.py flags what gets through anyway.
 #     - uniqueness computed over `athletes` (the anet identity registry):
 #       a name qualifies only if exactly ONE person_id bears it.
 #     - census prints a COLLISION PROXY: max leftover rows mapping to one
@@ -28,7 +34,10 @@ import argparse
 import sys
 
 sys.path.insert(0, "scripts")
+sys.path.insert(0, "engine")
 from database import getConn, initPool
+# the one definition of a college row and a high school row
+from level_conflict import acadSql, collegeSql, hsSql
 
 
 def _sportConfig(sport):
@@ -94,7 +103,9 @@ def _buildTemps(cur, cfg, maxPer):
                -- title where one names it; NULL where neither does
                CASE WHEN COALESCE(t.event_short, '') ~* '(women|girls|\\yw\\y|female)' THEN 'F'
                     WHEN COALESCE(t.event_short, '') ~* '(\\ymen|boys|\\ym\\y|\\ymale)' THEN 'M'
-                    ELSE NULL END AS gender
+                    ELSE NULL END AS gender,
+               {acadSql('t')}                                AS acad,
+               {collegeSql('t')}                             AS is_college
         FROM {r} t
         WHERE t.source = 'tfrrs'
           AND t.person_id IS NULL
@@ -120,7 +131,14 @@ def _buildTemps(cur, cfg, maxPer):
             JOIN uname_tmp u ON u.nm = r.nm
             -- a contradiction in gender is close to a proof of a bad link
             -- (issue 68); an unknown on either side still matches
-            WHERE r.gender IS NULL OR u.gender IS NULL OR r.gender = u.gender
+            WHERE (r.gender IS NULL OR u.gender IS NULL OR r.gender = u.gender)
+              -- a college row never joins a high schooler of the same
+              -- season: that is two people, whatever the registry says
+              AND NOT (r.is_college AND EXISTS (
+                      SELECT 1 FROM {r} h
+                      WHERE  h.person_id = u.person_id
+                        AND  {hsSql('h')}
+                        AND  {acadSql('h')} = r.acad))
         ),
         bad AS (
             SELECT nm FROM cand GROUP BY nm HAVING count(*) > {maxPer}

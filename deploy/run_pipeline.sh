@@ -486,6 +486,14 @@ step 04_grade_sanity  "$PY" -u engine/grade_sanity.py --write
 step 04b_wheelchair   "$PY" -u engine/wheelchair_flag.py --write
 # issue 94: one physical race stored twice is flagged once, by result_id,
 # and every reader (engine, pricer, boards, page) anti-joins result_twin
+# ★ AND A HIGH SCHOOL RACE ON A COLLEGE SEASON IS FLAGGED HERE TOO (the
+#   NESCAC review, 2026-09-29: four college runners carrying one 2025
+#   Middlesex League high school race, and a published season 3 points high
+#   because of it). Rule 'level_conflict', engine/level_conflict.py. AFTER
+#   04a, because 04a's links are what make the conflicts; BEFORE the pack,
+#   because the pack is what must not see them. `--from 7` keeps the last
+#   full run's flags; `engine/level_conflict.py --write` refreshes just
+#   these ones when a run starts past this step.
 step 04c_twins        "$PY" -u engine/twin_flag.py --write
 # gender by the divisions raced under; a person who raced both ways enough
 # is two athletes to the pack and the boards (issue 164)

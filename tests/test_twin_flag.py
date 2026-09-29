@@ -38,8 +38,10 @@ def test_rules_key_on_the_right_things():
     assert "event_id" not in dup_xc and "div_id, event_id" in dup_tf, "track adds the event"
     assert "min(result_id) AS keep" in dup_xc and "r.result_id <> k.keep" in dup_xc, \
         "the lowest result_id survives, every later copy goes"
-    assert [r for r, _ in TF.RULES][:5] == ["twin_race", "twin_person", "dup_same_feed",
-                                            "dup_cross_date", "dup_race_copy"], \
+    assert [r for r, _ in TF.RULES] == ["twin_race", "twin_person", "dup_same_feed",
+                                        "dup_cross_date", "dup_race_copy",
+                                        "dup_same_day", "dup_converted", "xc_placeholder",
+                                        "level_conflict"], \
         "cross-feed reasons file first; the primary key keeps the first"
 
 
@@ -88,6 +90,10 @@ _EXPECTED = {
     ("TF", "dup_same_day"):   [1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108],
     ("TF", "dup_converted"):  [1802],
     ("TF", "xc_placeholder"): [],
+    # the NESCAC review (2026-09-29): 9005 the review's Middlesex League row,
+    # 9014 a college row on a high schooler, 9021/9022 a tie; 7102's April
+    ("XC", "level_conflict"): [9005, 9014, 9021, 9022],
+    ("TF", "level_conflict"): [9115, 9116],
 }
 
 
@@ -109,8 +115,8 @@ def test_rules_on_fixtures():
                                   "twin_rules.sql"), encoding="utf-8").read())
     for sport, table in TF.TABLES.items():
         for reason, fn in TF.RULES:
-            if reason == "dup_cross_date":
-                TF.prepareCrossDate(cur, table, sport)   # the staged meet pairs (third cut)
+            # the staged meet pairs (third cut), the decided level conflicts
+            TF.prepareRule(cur, table, sport, reason)
             cur.execute(f"SELECT result_id FROM ({fn(table, sport)}) s ORDER BY 1")
             got = [r[0] for r in cur.fetchall()]
             assert got == _EXPECTED[(sport, reason)], (sport, reason, got)
@@ -121,6 +127,7 @@ def test_rules_on_fixtures():
     by = dict(cur.fetchall())
     assert by["twin_race"] == 1 and by["twin_person"] == 1
     assert by["dup_same_feed"] == 2          # 502 and 1602 file here, not as cross-date
+    assert by["level_conflict"] == 6
     conn.rollback()
 
 

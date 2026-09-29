@@ -2840,3 +2840,42 @@ Locker"` now shows the champ key as the cell. Needs 07 (the pack) + 08.
 course_canonical -> (canonical_id, distance), so a Foot Locker row will SHOW
 the park's (now local-only) cell and no day term while its RATING comes from
 the championship cell. The joins need the champ key before they agree.
+## 2026-09-29 — a high school race on four college athletes (FIXED IN CODE, NEEDS 04c)
+
+Outside review: four NESCAC runners in college in autumn 2025 each carried
+the same high school race, the Middlesex League Championship of 2025-10-26
+(5000 m): Jared Rife (Middlebury) 15:17.1 rated 131.2 vs a college median
+107.5; Tyler Johnson (Trinity) 15:44.1 127.3 vs 106.0; Nick Walker (Bates)
+16:28.5 121.5 vs 106.8; Max Bennett (Conn College) 17:08 116.8 vs 96.8. It
+reached the published seasons (Nick Walker's 2025 XC 108.9 vs ~104-106).
+
+**How a person gets both.** anet rows are seeded `person_id = athlete_id` and
+nothing in the pipeline re-points an anet row (only unlink.py, by hand, to
+fresh ids). So an anet high school row sits on a college person when the
+college person IS that anet id: a tfrrs career was welded onto an anet
+person by NAME -- `link_freshmen` (04a pass 2, every run), or by hand
+`link_idless_by_name` / merge_links -- and 04a pass 1 (fan-out by tfrrs id)
+then carries that person to every new row of the tfrrs id, every run. The
+other way it happens is not a link at all: the row is the athlete's own and
+its date is wrong. `engine/level_conflict.py --person <id>` prints each
+row's feed, athlete_id, grade, school and `person_link_log` rule, which
+tells the two apart.
+
+**Now:**
+- `engine/level_conflict.py`: one person, one sport, one academic year with
+  rows that can only be college (tfrrs FR-1..SR-4, or a college team slug)
+  AND rows that can only be high school (numeric 9-12, on a team) is a
+  conflict -- unless every high school day precedes the first college day
+  (a December graduate on a college indoor team). The side with fewer race
+  days is flagged; a tie flags both.
+- The flag is `result_twin` reason `level_conflict`, a rule of
+  `engine/twin_flag.py` (04c, before the pack), so the engine, fill, boards
+  and athlete page already exclude it. Rebuilt every run; nothing is moved
+  or deleted. `level_conflict.py --write` refreshes only these rows for a
+  run that starts past 04c.
+- `link_freshmen`: the first-year must hold a row that can only be college
+  (a bare "Fr" is also a ninth grader at a tfrrs-hosted high school meet),
+  and an anet "senior" who races high school again in the freshman year or
+  later is not a graduate and is not paired.
+- `link_idless_by_name`: a college row never joins a person with a high
+  school row in the same season.
