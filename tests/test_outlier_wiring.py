@@ -48,6 +48,34 @@ class Wiring(unittest.TestCase):
                         sh.index("step 10_rankings_prepare"))
         self.assertLess(sh.index("step 09b_fill"), sh.index("step 09d_outliers"))
 
+    # ★★ BOTH SIDES (owner, 2026-09-29): a 'slow' row counts toward no
+    #    season number. athlete_season is aggregated from the boards' load,
+    #    so the anti-join must not filter on side.
+    def test_the_boards_leave_out_both_sides(self):
+        import build_ranking_results as B
+        self.assertNotIn("side", B._outlierClause(Conn(True), "XC"))
+
+    def test_the_pipeline_passes_only_what_the_module_takes(self):
+        sh = open(os.path.join(_ROOT, "deploy", "run_pipeline.sh")).read()
+        step = sh[sh.index("step 09d_outliers"):sh.index("step 10_rankings_prepare")]
+        self.assertNotIn("--min-spread", step)
+        src = open(os.path.join(_ROOT, "engine", "rating_outliers.py")).read()
+        for flag in ("--write", "--show", "--streams", "--fast-sigma",
+                     "--slow-sigma", "--floor", "--k"):
+            self.assertIn(flag, step)
+            self.assertIn(f'"{flag}"', src)
+
+    def test_the_page_keeps_a_slow_row_greyed_and_uncounted(self):
+        t = open(os.path.join(_ROOT, "racecast", "templates",
+                              "athlete.html")).read()
+        self.assertIn("race.rank_outlier == 'slow'", t)
+        self.assertIn("not counted: far off this athlete's neighbouring "
+                      "races", t)
+        import app as A
+        races = [{"speed_rating": 97.3}, {"speed_rating": 80.4,
+                                          "rank_outlier": "slow"}]
+        self.assertAlmostEqual(A.season_rating(races), 97.3)
+
     def test_predictor_skips_flagged_races(self):
         import predict as P
         P._HAS_OUTLIERS = True

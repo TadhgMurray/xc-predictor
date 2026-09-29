@@ -33,6 +33,9 @@ p  { color: rgb(82, 82, 82); }
    where the numbers appear, not about the numbers, so it must not read as
    an error red or blend in with the record flags. */
 .flag--warn { background: #a05a00; }
+/* A slow rating_outlier (owner, 2026-09-29): the rating stays on the row,
+   greyed, because it counts toward no season number. */
+.rating--uncounted { color: var(--muted, #6b7280); opacity: .7; }
 /* Inside a season <h3>: the badge keeps its own 11px, it just needs air
    between the heading text and the rating that follows it. */
 .season-flag { margin-left: 6px; vertical-align: middle; }

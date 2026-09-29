@@ -991,9 +991,11 @@ _HAS_OUTLIERS = None
 
 def _outlierFilter(cur, sport):
     """The anti-join on rating_outlier (engine/rating_outliers.py): a race
-    far faster than the athlete's own season -- a wrong distance, a merged
-    person -- is left out of the ratings a prediction is served from, as it
-    is left off the boards. Empty until the table exists; asked once."""
+    far off the athlete's neighbouring races is left out of the ratings a
+    prediction is served from, as it is left off the boards. Both sides
+    (2026-09-29): a 'fast' row is a wrong distance or a merged person, a
+    'slow' one a jog or a race run easy -- neither says what they will run
+    next. Empty until the table exists; asked once."""
     global _HAS_OUTLIERS
     if _HAS_OUTLIERS is None:
         try:

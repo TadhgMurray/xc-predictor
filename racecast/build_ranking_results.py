@@ -1159,8 +1159,14 @@ def _outlierClause(conn, sport):
     ★ RANK-ONLY, as that module prescribes: the row keeps its rating and its
       place on the athlete page (marked), and only stops ranking. Dropping
       it from the ratings would change the solve's input and every rating
-      downstream. Only the FAST side is flagged by default -- a wrong
-      distance, a wrong time, a merged person -- never a slow race.
+      downstream.
+    ★★ BOTH SIDES, NO side FILTER, ON PURPOSE (owner, 2026-09-29, Moretta's
+       "easy LR"). A 'fast' row is a wrong distance or a merged person; a
+       'slow' row is a jog or a road race run easy. Neither may count, and
+       athlete_season -- the season number on the boards AND on the athlete
+       page -- is aggregated from this load, so leaving the row out here is
+       what keeps it out of the season rating. The page reads the athlete's
+       races from results, not from here, so the row stays on it, greyed.
     ! EMPTY WHEN THE TABLE IS NOT THERE, so a database before the step runs
       builds exactly as it did.
     """

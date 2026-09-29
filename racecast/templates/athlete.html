@@ -251,7 +251,14 @@
                             {%- endif %}
                         {%- else -%} - {%- endif -%}
                     </td>
+                    {# ★ A SLOW OUTLIER KEEPS ITS ROW AND ITS NUMBER, greyed
+                       (owner, 2026-09-29, Moretta's easy long run): it
+                       counts toward no season number. #}
+                    {% if race.rank_outlier == 'slow' %}
+                    <td class="rating--uncounted" title="not counted: far off this athlete's neighbouring races">{{ rv(race.speed_rating, race.hs_rating) }}</td>
+                    {% else %}
                     <td>{{ rv(race.speed_rating, race.hs_rating) }}</td>
+                    {% endif %}
                     <td>{{ dv(race.difficulty, race.sport, race.day_effect) }}</td>
                     {# Same nine conditions as before -- only the rendering moved
                        into the flag() macro, so each badge now carries its own
@@ -263,7 +270,7 @@
                         {% if race.is_sr %}{{ flag('sr') }}{% endif %}
                         {% if race.is_course_sr and race.sport == 'XC' %}{{ flag('csr') }}{% endif %}
                         {% if race.is_rating_sr %}{{ flag('rsr') }}{% endif %}
-                        {% if race.rank_outlier %}<span class="flag flag--out" tabindex="0" data-title="Not ranked" data-blurb="Far faster than the rest of this athlete's season -- usually a wrong distance, a wrong time, or two people's results under one name. It keeps its rating here but stays off the rankings and out of predictions until it is checked." aria-label="Not ranked: far faster than the rest of this season">not ranked</span>{% endif %}
+                        {% if race.rank_outlier == 'slow' %}<span class="flag flag--out" tabindex="0" data-title="Not counted" data-blurb="Far slower than this athlete's neighbouring races -- a jog, a race run easy, a bad day. It stays here with its rating, but counts toward no season number, ranking or prediction." aria-label="Not counted: far off this athlete's neighbouring races">not counted</span>{% elif race.rank_outlier %}<span class="flag flag--out" tabindex="0" data-title="Not ranked" data-blurb="Far faster than this athlete's neighbouring races -- usually a wrong distance, a wrong time, or two people's results under one name. It keeps its rating here but stays off the rankings and out of predictions until it is checked." aria-label="Not ranked: far faster than this athlete's neighbouring races">not ranked</span>{% endif %}
                         {% if race.season_outlier %}<span class="flag flag--out" tabindex="0" data-title="Left out of season averages" data-blurb="More than twenty points under this season's median: not a run at the right distance on the right day, so it does not count toward the season's numbers." aria-label="Left out of season averages">out</span>{% endif %}
                     </td>
                 </tr>

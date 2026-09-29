@@ -1031,17 +1031,23 @@ step 09c_school_names "$PY" -u scripts/merge_school_names.py --write
 #   their season ... do not rate or rank"; wired 2026-09-26). After the last
 #   rating is written (09b) and before the boards are built from them, which
 #   leave the flagged rows out (build_ranking_results._outlierClause).
-#   Rank-only: no rating changes. The fast side at 8 sigma, the module's own
-#   default; XCP_OUTLIER_SIGMA moves the bar.
-# ! THE SPREAD FLOOR IS 4 POINTS, NOT THE MODULE'S 2 (2026-09-26). A steady
-#   season's MAD is tiny, so at a 2-point floor one real breakout race --
-#   17 points over a flat season median -- read as 8.5 sigma and came off
-#   the boards (owner: "not all best performances show"). At 4, 8 sigma is
-#   32 points faster than the athlete's own median: a wrong distance or a
-#   merged person, not a PR. XCP_OUTLIER_SPREAD moves it.
+#   Rank-only: no rating changes.
+# ★★ NEIGHBOURS, NOT THE SEASON, AND BOTH SIDES (owner, 2026-09-29, Jack
+#    Moretta's "easy LR"). Each race is judged against the athlete's K
+#    nearest rated races in both sports, across season lines; K, the spread
+#    floor and both cuts are MEASURED on the corpus each run and printed in
+#    this step's log. A slow row stays on the athlete page, greyed, and
+#    counts toward no season number (the boards and athlete_season anti-join
+#    it). Overrides, all optional: XCP_OUTLIER_SIGMA (fast cut),
+#    XCP_OUTLIER_SLOW_SIGMA (slow cut), XCP_OUTLIER_FLOOR (spread floor in
+#    points), XCP_OUTLIER_K. The old fixed 4-point floor and 8-sigma bar
+#    are gone: the measured floor is the corpus's own race-to-race spread.
 step 09d_outliers     "$PY" -u engine/rating_outliers.py --write --show 10 \
-                      --fast-sigma "${XCP_OUTLIER_SIGMA:-8}" \
-                      --min-spread "${XCP_OUTLIER_SPREAD:-4}"
+                      --streams "$XCP_STREAMS" \
+                      ${XCP_OUTLIER_SIGMA:+--fast-sigma "$XCP_OUTLIER_SIGMA"} \
+                      ${XCP_OUTLIER_SLOW_SIGMA:+--slow-sigma "$XCP_OUTLIER_SLOW_SIGMA"} \
+                      ${XCP_OUTLIER_FLOOR:+--floor "$XCP_OUTLIER_FLOOR"} \
+                      ${XCP_OUTLIER_K:+--k "$XCP_OUTLIER_K"}
 step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prepare
 # each sport in two halves on a date seam (XCP_RANK_SEAM), four streams
 # into one shadow: the row walk is Python per row and was 52 minutes

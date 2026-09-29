@@ -1693,25 +1693,35 @@ def athlete(person_id):
         race["is_star_course"] = rid in star_course_ids
         race["is_star_rating"] = rid in star_rating_ids
 
-    # ★ A RACE FAR FASTER THAN ITS OWN SEASON (engine/rating_outliers.py,
-    #   owner 2026-09-18/26): kept on the page, marked, and off the boards.
-    #   What makes one -- a wrong distance, a wrong time, a merged person --
-    #   also makes its "PR" a false one, so the record flags come off it.
+    # ★ A RACE FAR OFF ITS NEIGHBOURING RACES (engine/rating_outliers.py,
+    #   owner 2026-09-18/26/29): kept on the page, marked, and off the boards.
+    #   race["rank_outlier"] is the side, 'fast' or 'slow'.
+    #     fast  a wrong distance, a wrong time, a merged person -- what makes
+    #           one also makes its "PR" a false one, so the record flags
+    #           come off it.
+    #     slow  a jog, a road race run easy (Moretta's Bobby Doyle, owner
+    #           2026-09-29: "not real (easy LR)"). The time was really run,
+    #           so its flags stay; its rating is greyed and counts toward no
+    #           season number (the boards and athlete_season anti-join it).
     try:
         ids = {}
         for race in races:
             ids.setdefault(race.get("sport") or "XC", []).append(race["result_id"])
         cur.execute("SELECT to_regclass('public.rating_outlier') AS t")
         if cur.fetchone()["t"] and ids:
-            flagged = set()
+            flagged = {}
             for sp, rids in ids.items():
-                cur.execute("SELECT result_id FROM rating_outlier "
+                cur.execute("SELECT result_id, side FROM rating_outlier "
                             "WHERE sport = %s AND result_id = ANY(%s)",
                             (sp, rids))
-                flagged |= {(sp, r["result_id"]) for r in cur.fetchall()}
+                flagged.update({(sp, r["result_id"]): r["side"] or "fast"
+                                for r in cur.fetchall()})
             for race in races:
-                if (race.get("sport") or "XC", race["result_id"]) in flagged:
-                    race["rank_outlier"] = True
+                side = flagged.get((race.get("sport") or "XC", race["result_id"]))
+                if side is None:
+                    continue
+                race["rank_outlier"] = side
+                if side != "slow":
                     for k in ("is_pr", "is_sr", "is_course_pr", "is_rating_pr",
                               "is_course_sr", "is_rating_sr", "is_star_pr",
                               "is_star_course", "is_star_rating"):
@@ -2831,9 +2841,15 @@ SEASON_OUTLIER_PTS = 20.0        # must match build_ranking_results (test)
 def season_rating(races, key="speed_rating"):
     """Average the per-race speed ratings for one season, ignoring unrated
     races and season outliers. key="hs_rating" averages the HS-equivalent
-    view instead."""
+    view instead.
+
+    ! AND rating_outlier ROWS, EITHER SIDE (2026-09-29). This is the page's
+      fallback when athlete_season has no row for the block; the boards
+      leave both sides out of the number they publish, so the fallback does
+      too."""
     rated = [r[key] for r in races
-             if r.get(key) is not None and not r.get("season_outlier")]
+             if r.get(key) is not None and not r.get("season_outlier")
+             and not r.get("rank_outlier")]
     if not rated:                      # a season with no rated races
         return None                    # -> template shows " - ", not a crash
     return sum(rated) / len(rated)
