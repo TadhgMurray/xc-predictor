@@ -44,8 +44,16 @@ def test_the_swap_lands_on_the_solves_scale_and_the_go_live_publishes_it(capsys)
     delta_joint = out["delta"].copy()
     a_joint = out["ability"].copy()
     rating_joint = out["rating"].copy()
+    # ! MEASURING, NOT ASSERTING: "shrink" and gates reported, not clamped.
+    #   This world plants ovals ~3.5% FASTER than its tracks, and the default
+    #   since 2026-09-20 (owner: "indoor is still way too 'easy'") holds the
+    #   indoor class at +0.3% and clamps every oval to [-0.3%, +2.0%] -- by
+    #   design, so it cannot read them back. The check below is that the
+    #   engine CAN measure what is there; tests/test_bracket_engine.py pins
+    #   the default's own behaviour.
     info = rj.bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
-                                  window=60, top=1.0)
+                                  window=60, top=1.0, indoor_mode="shrink",
+                                  indoor_gate_mode="report")
     text = capsys.readouterr().out
     assert "difficulty = BRACKET ENGINE" in text
     delta_b = out["delta"]
@@ -62,7 +70,8 @@ def test_the_swap_lands_on_the_solves_scale_and_the_go_live_publishes_it(capsys)
     m = votes > 0
     assert np.isfinite(raw[m]).all() and np.isfinite(base).all()
     rebuilt = (raw[m] * votes[m] + be.PRIOR_RACES * base[m]) / (votes[m] + be.PRIOR_RACES)
-    assert np.allclose(rebuilt - pin[m], fit[m], atol=1e-12)
+    level = out["bracket_level_shift"]
+    assert np.allclose(rebuilt - pin[m] + level[m], fit[m], atol=1e-12)
     # the fitted total is the published one to within the iteration's
     # tolerance (the engine returns its damped iterate), plus the level
     scale = out["bracket_scale"]                      # the per-sport course scale (2026-09-15)

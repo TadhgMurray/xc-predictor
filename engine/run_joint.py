@@ -2236,6 +2236,7 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     # rows of (sport code, band lower edge, voters, applied h, implied h, se)
     out["bracket_tilt_bands"] = be.tiltBandArray(f.get("tilt_bands"))
     out["bracket_cell_fit"] = np.asarray(f["D_fit"], dtype=np.float64)
+    out["bracket_level_shift"] = np.asarray(f["level_shift"], dtype=np.float64)
     out["difficulty_source"] = "bracket"
     # the report: what moved
     solved = np.bincount(D.cell, minlength=D.n_cell) > 0
@@ -2615,6 +2616,7 @@ def main():
         import bracket_engine as be
         for k in ("bracket_cell_raw", "bracket_base", "bracket_base_votes",
                   "bracket_pin", "bracket_shift", "bracket_cell_fit",
+                  "bracket_level_shift",
                   "bracket_prior_group", "bracket_scale", "bracket_course_scale",
                   "bracket_tilt_bands"):
             if out.get(k) is not None:

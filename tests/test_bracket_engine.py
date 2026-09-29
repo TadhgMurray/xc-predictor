@@ -54,7 +54,10 @@ def test_the_engine_reads_the_ovals_and_the_meet_mix():
     cols, npz, level = _track_pack()
     with contextlib.redirect_stdout(io.StringIO()):
         f = be.fit(cols, {"rating": npz["rating"]}, window=90, top=0.5, era_years=0,
-                   tilt=False)
+                   tilt=False, indoor_mode="shrink")
+    # ! "shrink": this test MEASURES the ovals. Under the default "pin" (owner,
+    #   2026-09-20: "indoor is still way too 'easy'") the ovals' mean is HELD
+    #   at the asserted centre by design -- see the pin check below.
     D = f["D"]
     ovals = D[:6].mean() - D[6:].mean()
     print(f"  ovals minus outdoor tracks: {ovals:+.4f} (planted {level:+.4f})")
@@ -62,6 +65,13 @@ def test_the_engine_reads_the_ovals_and_the_meet_mix():
     # tracks that host championships read harder, stacked ones easier
     ordinary = D[6:16].mean(); champ = D[16:26].mean(); stacked = D[26:36].mean()
     assert champ > ordinary + 0.004 and stacked < ordinary - 0.001, (ordinary, champ, stacked)
+    # ★ AND THE DEFAULT HOLDS THE CLASS WHERE THE OWNER PUT IT: under "pin"
+    #   the ovals' mean sits on INDOOR_CENTRE, whatever the rows planted.
+    with contextlib.redirect_stdout(io.StringIO()):
+        fp = be.fit(cols, {"rating": npz["rating"]}, window=90, top=0.5, era_years=0,
+                    tilt=False)
+    pinned = fp["D"][:6].mean() - fp["D"][6:].mean()
+    assert abs(pinned - be.INDOOR_CENTRE) < 0.002, pinned
 
 
 def test_the_holdout_split_is_the_runners_and_the_engine_predicts_it():
@@ -278,7 +288,11 @@ def test_a_thin_oval_sits_at_the_indoor_level_not_the_outdoor_one():
     #   assertion, and the gate report is how a wrong assertion gets caught.
     with contextlib.redirect_stdout(io.StringIO()):
         f = be.fit(cols, None, window=21, top=1.0, prior_group=pg,
-                   indoor_centre=0.003)
+                   indoor_centre=0.003, indoor_mode="shrink")
+    # ! "shrink", THE MODE THIS BLOCK DESCRIBES: the centre is a target for a
+    #   thin oval and evidence wins elsewhere. The default "pin" (2026-09-20)
+    #   holds the whole class's mean on the centre instead -- checked in
+    #   test_the_engine_reads_the_ovals_and_the_meet_mix.
     D = f["D"]
     # ! EVIDENCE STILL WINS WHERE THERE IS EVIDENCE. The five well-raced ovals
     #   read their planted +1.5% whatever the centre says -- a target, not a

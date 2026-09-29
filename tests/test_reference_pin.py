@@ -411,13 +411,23 @@ def test_the_gate_report_counts_and_does_not_clamp():
     assert "PUBLISHED ANYWAY" in buf.getvalue()
 
 
-def test_a_pack_without_geometry_says_so_and_still_fits():
+def test_a_pack_without_geometry_stops_unless_told_to_fall_back(monkeypatch):
+    """Owner, 2026-09-20: asking for flat400 and quietly getting outdoor is a
+    different model, so it STOPS (test_a_pack_without_geometry_STOPS reads
+    the source; this runs it). XCP_GAUGE_FALLBACK=1 is the explicit way back
+    to the old behaviour, and then it says so and still fits."""
+    import pytest
     cols, _npz, _level = _track_pack()
+    monkeypatch.delenv("XCP_GAUGE_FALLBACK", raising=False)
+    with contextlib.redirect_stdout(io.StringIO()):
+        with pytest.raises(ValueError, match="REBUILD THE PACK"):
+            be.fit(cols, None, window=60, top=1.0, era_years=0, gauge="flat400")
+    monkeypatch.setenv("XCP_GAUGE_FALLBACK", "1")
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         f = be.fit(cols, None, window=60, top=1.0, era_years=0,
                    gauge="flat400", verbose=True)
-    assert "falling back to gauge=outdoor" in buf.getvalue()
+    assert "DIFFERENT MODEL" in buf.getvalue()
     assert not np.asarray(f["hard_ref"]).any()
     assert np.isfinite(np.asarray(f["D"])).all()
 

@@ -275,6 +275,10 @@ def engineCells(npz, cell_keys, base_key, delta):
     pin = np.asarray(npz["bracket_pin"], dtype=np.float64)
     shift = np.asarray(npz["bracket_shift"], dtype=np.float64)
     fit = np.asarray(npz["bracket_cell_fit"], dtype=np.float64)
+    # the XC / indoor level pins and the indoor clamp per cell (2026-09-29);
+    # fit = era - pin + level_pin. Zeros on a state saved before it existed.
+    level_pin = (np.asarray(npz["bracket_level_shift"], dtype=np.float64)
+                 if "bracket_level_shift" in npz else np.zeros(len(cell_keys)))
     # the per-sport course scale (2026-09-15), 1.0 on a state without it
     scale = (np.asarray(npz["bracket_scale"], dtype=np.float64) if "bracket_scale" in npz
              and np.asarray(npz["bracket_scale"]).size == len(cell_keys) else np.ones(len(cell_keys)))
@@ -299,7 +303,8 @@ def engineCells(npz, cell_keys, base_key, delta):
                     "raw": float(raw[c]), "base": float(base[c]),
                     "base_votes": float(base_votes[c]), "group": names[g] if g < len(names) else "",
                     "prior_group": k_g, "prior_races": prior_races,
-                    "era": float(era), "pin": float(pin[c]), "shift": float(shift[c]),
+                    "era": float(era), "pin": float(pin[c]),
+                    "level_pin": float(level_pin[c]), "shift": float(shift[c]),
                     "fit": float(fit[c]), "scale": float(scale[c]),
                     "level": float(mu[1] if bare.startswith("TF:") else mu[0]),
                     # what the go-live added on top of the engine's arithmetic:

@@ -1482,6 +1482,8 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         # ! THE SPREAD IS UNTOUCHED: additive, so every course keeps its exact
         #   distance from every other. The level is the definition; the spread
         #   stays the falsifiable part (scripts/difficulty_spread.py).
+        # the level pins and the clamp, as ONE per-cell shift for the trace
+        before_level = D_new_.copy()
         if pin_xc:
             xc_ = (cell_pg == PG_XC) & (w_c_ > 0) & ~hard_ref
             if xc_.any():
@@ -1507,7 +1509,8 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                                   D_new_)
         return dict(vote=vote_, D_race=D_r, w_race=w_r, ok_race=ok, num_c=num_c_,
                     w_c=w_c_, w_b=w_b_, g_mean=g_mean_, D_base=D_base_,
-                    D_pre=D_pre, pin=pin, D_new=D_new_)
+                    D_pre=D_pre, pin=pin, D_new=D_new_,
+                    level=D_new_ - before_level)
 
     for it in range(n_iter):
         a_local = levels(D)
@@ -1816,6 +1819,11 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
                 group_mean=g_mean, base_prior_group=base_pg, tilt_bands=tilt_bands,
                 tilt_races=tilt_races, tilt_bands_known=tilt_bands_known,
                 pin=st["pin"], D_fit=st["D_new"],
+                # ★ THE LEVEL PINS AND THE INDOOR CLAMP, PER CELL (2026-09-29).
+                #   D_fit = (raw x votes + prior x history) / (votes + prior)
+                #   - pin + level_shift; without this term the trace could
+                #   not rebuild any cell the XC or indoor level had moved.
+                level_shift=st["level"],
                 place_of_base=place_of_base, n_place=int(n_place),
                 place_radius=float(place_radius or 0.0), prior_place=k_place,
                 own_base_of_cell=own_base_of_cell, history_of_base=history_of_base,
