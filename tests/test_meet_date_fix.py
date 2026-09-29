@@ -89,6 +89,29 @@ def test_the_verdict():
     assert MD.vote({-2: 9, 0: 1}, 3, bar=0.9)["fix"]
 
 
+def test_the_vote_must_speak_for_the_meet():
+    """The owner's dry run (2026-09-29): college meets moved by their two or
+    three high schoolers. The winners must be most of the meet's people."""
+    assert MD.speaksForTheMeet(528, 530), "227716"
+    assert MD.speaksForTheMeet(177, 177), "IHSAA Sectional 251830"
+    assert not MD.speaksForTheMeet(2, 702), "Texas A&M Arturo Barrios 219204"
+    assert not MD.speaksForTheMeet(3, 6) and MD.speaksForTheMeet(4, 6)
+    asked = []
+
+    def athletes_of(ids):
+        asked.extend(ids)
+        return {219204: 702, 227716: 530}
+
+    meets = {219204: {"tally": {-4: 2}, "first": "2022-10-01"},
+             227716: {"tally": {-2: 528, 0: 2}, "first": "2025-10-26"},
+             5: {"tally": {0: 38, 1: 2}, "first": "2025-10-04"}}   # the bar: 95%
+    shape, v = MD.judge(meets, athletes_of, today="2026-09-29")
+    assert sorted(asked) == [219204, 227716], "only the meets the vote would move"
+    assert v[227716]["fix"] and v[227716]["held"] is None and v[227716]["athletes"] == 530
+    assert v[219204]["fix"] and v[219204]["held"] == "2 of 702 athletes: the vote is not the meet's"
+    assert shape["gated"] == 1
+
+
 def test_the_bar_is_what_right_year_meets_achieve():
     tallies = [{0: 15, 1: 1}] * 40 + [{0: 16}] * 59 + [{0: 1}] * 50 + [{-2: 8}]
     assert MD.measuredBar(tallies, 2) == 15 / 16, \
@@ -169,6 +192,7 @@ def _pg():
 FALL = ((9, 9), (9, 23), (10, 7), (10, 21), (11, 4), (11, 11))
 MIDDLESEX, WRONG_BY_ONE, SPLIT, TOO_FEW, SUNFAIR = 227716, 7200, 7000, 7100, 244560
 MIX = 7400
+COLLEGE, MS_SECTIONAL, MS_STATE = 219204, 232000, 232721
 JULY = (7301, 7302, 7303)
 TF_WRONG = 90999
 
@@ -191,6 +215,11 @@ def _load(cur):
       7400         six say 2023, four the stored 2025 -> a 60% majority under
                    the bar a right-year meet reaches (15/16): a mix, stays
       7100         one voter saying two years back -> too few, stays
+      219204       a college meet, 700 athletes, two high schoolers graded as
+                   in 2018 -> 2 of 702 athletes: the gate holds it
+      232721       an MS championship: twelve 6th-8th graders agree with the
+                   stored 2023 (their sectional of 2022 says so); two strays
+                   graded 9 say 2024 -> the meet's own runners outvote them
       244558-60    the Sunfair Invitational of 1999 and its season, uploaded
                    late with ids above every 2025 meet -> the grades agree
                    with the stored 1999, stays
@@ -274,6 +303,23 @@ def _load(cur):
         row(xc, pid(c, i), MIX, "2025-10-11", str(2023 + 13 - c))
     for c in (2026, 2027, 2028, 2029):
         row(xc, pid(c, 1), MIX, "2025-10-11", str(2025 + 13 - c))
+    # a college meet: 700 collegians, two high schoolers graded as in 2018
+    meet(COLLEGE, "2022-10-01", "Texas A&M Arturo Barrios Invitational", ungraded=0)
+    for i in range(700):
+        row(xc, 900000 + i, COLLEGE, "2022-10-01", "SR" if i % 2 else None)
+    for i in (0, 1):
+        row(xc, pid(2019, i), COLLEGE, "2022-10-01", "12")
+    # a middle school meet: its own 6th-8th graders, whose sectional the
+    # year before says 2023 is right, and two strays graded 9 a year early
+    meet(MS_SECTIONAL, "2022-10-15", "Indiana MS Sectional")
+    meet(MS_STATE, "2023-10-28", "Indiana MS Cross Country Championships")
+    for c in (2028, 2029, 2030):
+        for i in range(4):
+            p = 300000 + (c - 2028) * 10 + i
+            row(xc, p, MS_SECTIONAL, "2022-10-15", str(2022 + 13 - c))
+            row(xc, p, MS_STATE, "2023-10-28", str(2023 + 13 - c))
+    for i in (2, 3):
+        row(xc, pid(2028, i), MS_STATE, "2023-10-28", "9")
     # one voter, two years back
     meet(TOO_FEW, "2024-10-19", "Tiny Dual")
     row(xc, pid(2026, 3), TOO_FEW, "2024-10-19", "9")
@@ -319,10 +365,11 @@ def test_the_grade_vote_on_postgres(capsys):
         assert shape["n_min"] == 2, "40 lone voters at the corpus's noise are not enough"
         assert set(shape["noise"]) == {1, 2}, "the typos a year high; the mix's minority"
         assert shape["few"] == 1, "meet 7100, one voter"
-        assert shape["bar"] == 15 / 16, "a background meet with one typo"
+        assert shape["bar"] == 12 / 14, "the MS championship with its two strays"
         assert found["TF"][0]["bar"] == 1.0
         by = {r["meet_id"]: r for r in rows}
-        assert set(by) == {MIDDLESEX, WRONG_BY_ONE, *JULY}
+        assert set(by) == {MIDDLESEX, WRONG_BY_ONE, *JULY, COLLEGE}
+        assert shape["gated"] == 1
 
         # 227716: stored in 2025, its runners' grades say 2023
         m = by[MIDDLESEX]
@@ -331,6 +378,18 @@ def test_the_grade_vote_on_postgres(capsys):
             ("2025-10-26", "2023-10-26", "2023-10-26")
         assert (m["for_fixed"], m["for_stored"], m["voters"]) == (8, 0, 8)
         assert m["n"] == 11, "every anet row moves, graded or not; not the tfrrs one"
+        assert m["athletes"] == 11, "eight voters and three unlinked rows"
+        # a college meet's two high schoolers do not speak for 702 people
+        c = by[COLLEGE]
+        assert c["fix"] and c["k"] == -4 and not c["apply"]
+        assert (c["for_fixed"], c["for_stored"], c["voters"]) == (2, 0, 2)
+        assert c["athletes"] == 702 and c["n"] == 702
+        assert c["why"] == "2 of 702 athletes: the vote is not the meet's"
+        # an MS meet: its own sixth to eighth graders outvote two strays
+        ms = _one(cur, "XC", MS_STATE)
+        assert not ms["apply"] and ms["k"] == 0 and "stored year" in ms["why"]
+        assert (ms["for_fixed"], ms["for_stored"], ms["voters"]) == (12, 12, 14)
+        assert ms["athletes"] == 17
         assert m["name"] == "Middlesex League Championship"
         # a one-year error in October is fixed
         assert by[WRONG_BY_ONE]["apply"] and by[WRONG_BY_ONE]["k"] == -1
@@ -366,6 +425,9 @@ def test_the_grade_vote_on_postgres(capsys):
         out = capsys.readouterr().out
         assert "minimum voters = 2" in out and "Middlesex League Championship" in out
         assert "FIX: the grades agree" in out and "convention" in out
+        assert "report: 2 of 702 athletes" in out and "1 by the gate" in out
+        assert out.index("Middlesex League") < out.index("Summer Series") \
+            < out.index("Arturo Barrios"), "FIX, then other holds, then the gate's"
         MD.printReport(MD.examine(cur, ("XC",), meet=424242), meet=424242)
         assert "meet 424242: no graded voter" in capsys.readouterr().out
     finally:
@@ -390,13 +452,15 @@ def test_record_apply_and_undo_on_postgres():
         assert _dates(cur, SPLIT) == ["2024-10-12"] and _dates(cur, TOO_FEW) == ["2024-10-19"]
         assert _dates(cur, MIX) == ["2025-10-11"]
         assert _dates(cur, JULY[0]) == ["2022-07-15"], "a convention is not moved"
+        assert _dates(cur, COLLEGE) == ["2022-10-01"], "nor a college meet by two strays"
+        assert _dates(cur, MS_STATE) == ["2023-10-28"]
         cur.execute("SELECT meet_date FROM meets WHERE meet_id = %s", (MIDDLESEX,))
         assert cur.fetchone()[0] == "2023-10-26", "the meet's own date moves too"
         cur.execute("SELECT meet_date FROM meets_tf_meta WHERE meet_id = %s", (TF_WRONG,))
         assert cur.fetchone()[0] == "2024-04-18"
-        cur.execute("SELECT years, voters, for_fixed, for_stored, n_rows "
+        cur.execute("SELECT years, voters, for_fixed, for_stored, n_rows, n_athletes "
                     "FROM meet_date_fix WHERE sport = 'XC' AND meet_id = %s", (MIDDLESEX,))
-        assert cur.fetchone() == (-2, 8, 8, 0, 11)
+        assert cur.fetchone() == (-2, 8, 8, 0, 11, 11)
         # idempotent: the vote now agrees with the date, and nothing moves again
         found = MD.examine(cur)
         assert {r["meet_id"] for r in found["XC"][1] if r["apply"]} == set()

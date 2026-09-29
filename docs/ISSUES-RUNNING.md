@@ -2889,8 +2889,17 @@ tells the two apart.
   every anet meet in both sports; the minimum voter count is derived from
   the measured grade noise (fewer than one false FIX expected per sport),
   and a one-year vote that is its month's norm (a summer meet graded for the
-  coming year) is held as a season-seam convention. Needs a dry run:
-  `engine/meet_date_fix.py --show 80`.
+  coming year) is held as a season-seam convention.
+- **The grade vote's dry run (2026-09-29): 227716 FIX k=-2, Sunfair kept,
+  but college and MS meets moved by two or three strays** (Texas A&M
+  Arturo Barrios 219204 2/0/2 over 707 rows, Parkside 22054, Messiah
+  653761 in track; Indiana MS XC Championships 232721, KLAA MS 149615).
+  Two misgraded people are not independent witnesses, so "minimum voters =
+  2" was far too low. Now every numeric grade 1-12 votes (an MS meet's own
+  runners outvote its strays), and the GATE: the winning voters must be a
+  strict majority of the meet's distinct anet athletes (people, not rows).
+  The FIX table shows the athlete count; `meet_date_fix.n_athletes` records
+  it. Needs a dry run: `engine/meet_date_fix.py --show 80`.
 - The flag is `result_twin` reason `level_conflict`, a rule of
   `engine/twin_flag.py` (04c, before the pack), so the engine, fill, boards
   and athlete page already exclude it. Rebuilt every run; nothing is moved
