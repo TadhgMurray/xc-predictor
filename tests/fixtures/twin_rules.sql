@@ -2,7 +2,8 @@ DROP TABLE IF EXISTS results, results_tf, meets, meets_tf, result_twin;
 CREATE TABLE results (result_id bigint, person_id bigint, source text, meet_id bigint, div_id bigint,
   canon_meet_id bigint, place int, time_seconds double precision, date text);
 CREATE TABLE results_tf (result_id bigint, person_id bigint, source text, meet_id bigint, div_id bigint,
-  event_id bigint, canon_meet_id bigint, place int, time_seconds double precision, date text);
+  event_id bigint, canon_meet_id bigint, place int, time_seconds double precision, date text,
+  event_short text, is_relay int, is_field int);
 CREATE TABLE meets (meet_id bigint, div_id bigint, meet_name text);
 CREATE TABLE meets_tf (meet_id bigint, div_id bigint, event_id bigint, source text, meet_name text, state text);
 CREATE TABLE result_twin (sport text NOT NULL, result_id bigint NOT NULL, reason text NOT NULL, PRIMARY KEY (sport, result_id));
@@ -39,3 +40,20 @@ INSERT INTO results_tf VALUES (1501, 9001, 'anet', 13, 131, 1, 13, 1, 60.0, '202
 INSERT INTO results_tf VALUES (1601, 9002, 'anet', 13, 131, 1, 13, 2, 61.0, '2026-05-01'), (1602, 9002, 'anet', 13, 131, 1, 13, 2, 61.0, '2026-05-01');
 -- rows with a bad date must not crash the date parse
 INSERT INTO results_tf VALUES (1701, 9003, 'anet', 13, 131, 1, 13, 3, 62.0, 'TBA');
+
+-- 2026-09-28 rules --------------------------------------------------
+-- dup_same_day (XC): one run under two meet names on one day (Mariner 2021); meet 9 has 3 rows, meet 10 has 1
+INSERT INTO meets VALUES (9,91,'38th P. Wilder Mariner XC Invitational'),(10,101,'38th Mariner-XC-Invitational');
+INSERT INTO results VALUES (901, 6001, 'anet', 9, 91, 9, 23, 1135.1, '2021-10-16'),
+                           (902, 6002, 'anet', 9, 91, 9, 24, 1136.0, '2021-10-16'),
+                           (903, 6003, 'anet', 9, 91, 9, 25, 1137.0, '2021-10-16'),
+                           (1001, 6001, 'anet', 10, 101, 10, 23, 1135.1, '2021-10-16');
+-- xc_placeholder: a track 1600 on the XC calendar
+INSERT INTO meets VALUES (11,111,'Mid-Season Mania 1600m Invitational (XC Calendar Placeholder)');
+INSERT INTO results VALUES (1111, 6101, 'anet', 11, 111, 11, 5, 269.4, '2022-10-05');
+-- dup_converted (TF): 2 miles 9:35.09 and its 3200m conversion 9:31.74, same meet and day;
+-- and a real 1600 + 3200 double the same day, which must stay
+INSERT INTO results_tf VALUES (1801, 9101, 'anet', 18, 181, 5, 18, 3, 575.09, '2025-12-13', '2miles', 0, 0),
+                              (1802, 9101, 'anet', 18, 181, 6, 18, 3, 571.74, '2025-12-13', '3200m', 0, 0),
+                              (1803, 9102, 'anet', 18, 181, 7, 18, 1, 255.36, '2025-12-13', '1600m', 0, 0),
+                              (1804, 9102, 'anet', 18, 181, 6, 18, 2, 554.72, '2025-12-13', '3200m', 0, 0);

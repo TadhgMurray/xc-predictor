@@ -32,6 +32,11 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
     dup_same_feed the later result_id of two rows in ONE feed that agree on
                   person, meet, division (and event, on track), date and
                   time to the tenth. Two rows, one run.
+    dup_same_day  one run under two meet entries on one day whose names
+                  differ (2026-09-28; see dupSameDaySql).
+    dup_converted a track race stored as run and again converted to the
+                  neighbouring distance, 2 mile / 3200 (dupConvertedSql).
+    xc_placeholder a track race on the XC calendar (xcPlaceholderSql).
 
 ! ANET IS ALWAYS THE SURVIVOR of a cross-feed pair, as before: it carries
   athlete_id and grade; tfrrs XC has athlete_id NULL on every row.
@@ -347,10 +352,120 @@ def dupRaceCopySql(table, sport):
     """
 
 
+def dupSameDaySql(table, sport):
+    """One run listed under two meet ENTRIES on one day whose names differ
+    (owner's page, 2026-09-28: "38th Mariner-XC-Invitational" and "38th P.
+    Wilder Mariner XC Invitational", 2021-10-16, 23rd in 18:55.1 in both).
+    dup_cross_date needs the same normalised name, so it never paired them.
+    Same person, feed, date, finishing place and time to the tenth (and
+    event, on the track) under two meet ids: nobody finishes two races on
+    one day in the same place to the tenth. The copy in the SMALLER meet
+    entry goes (the real listing has the whole field); ties to the higher
+    result_id."""
+    ev = ", r.event_id" if sport == "TF" else ""
+    ev_k = ", event_id" if sport == "TF" else ""
+    ev_eq = " AND b.event_id IS NOT DISTINCT FROM a.event_id" if sport == "TF" else ""
+    return f"""
+        WITH keys AS (
+            SELECT person_id, source, date, place{ev_k},
+                   round(time_seconds::numeric, 1) AS rt
+            FROM   {table}
+            WHERE  person_id IS NOT NULL AND place > 0 AND time_seconds IS NOT NULL
+              AND  time_seconds < 100000 AND date IS NOT NULL
+            GROUP  BY person_id, source, date, place{ev_k}, round(time_seconds::numeric, 1)
+            HAVING min(meet_id) <> max(meet_id)),   -- two meet ids, one hash pass
+        cand AS (
+            SELECT r.result_id, r.person_id, r.source, r.date, r.place{ev},
+                   r.meet_id, k.rt
+            FROM   {table} r
+            JOIN   keys k ON k.person_id = r.person_id AND k.source = r.source
+                         AND k.date = r.date AND k.place = r.place
+                         AND k.rt = round(r.time_seconds::numeric, 1)
+                         {'AND k.event_id IS NOT DISTINCT FROM r.event_id' if sport == 'TF' else ''}),
+        size AS (
+            SELECT meet_id, count(*) AS n FROM {table}
+            WHERE  meet_id IN (SELECT DISTINCT meet_id FROM cand)
+            GROUP  BY meet_id)
+        SELECT DISTINCT a.result_id
+        FROM   cand a JOIN size sa ON sa.meet_id = a.meet_id
+        JOIN   cand b ON b.person_id = a.person_id AND b.source = a.source
+                     AND b.date = a.date AND b.place = a.place AND b.rt = a.rt
+                     AND b.meet_id <> a.meet_id{ev_eq}
+        JOIN   size sb ON sb.meet_id = b.meet_id
+        WHERE  sb.n > sa.n OR (sb.n = sa.n AND b.result_id < a.result_id)
+    """
+
+
+# a 2 mile is 3218.69 m against 3200, a mile 1609.34 against 1600: both 1.005838
+CONVERSION = 3218.688 / 3200.0
+CONVERSION_TOL = 0.0012
+
+
+def dupConvertedSql(table, sport):
+    """One track race stored twice, once as run and once CONVERTED to the
+    neighbouring distance (Michael Rynne, JAMBAR Dec 13, 2025: "2miles
+    9:35.09" and "3200m 9:31.74" -- 9:35.09 x 3200/3218.7 = 9:31.6). Same
+    person, feed, meet and date, two different events, and the slower time
+    over the faster by the mile/metric ratio (1.00584, the same for the
+    mile and 1600 as for the 2 mile and 3200) within CONVERSION_TOL. Two
+    real races in one day never sit on that exact ratio. The later-entered
+    row (higher result_id) goes. Track only; relays out."""
+    if sport != "TF":
+        return f"SELECT result_id FROM {table} WHERE false"
+    lo, hi = CONVERSION - CONVERSION_TOL, CONVERSION + CONVERSION_TOL
+    return f"""
+        WITH base AS (
+            SELECT result_id, person_id, source, meet_id, date, event_short,
+                   time_seconds AS t
+            FROM   {table}
+            WHERE  person_id IS NOT NULL AND time_seconds > 200
+              AND  time_seconds < 100000 AND COALESCE(is_relay, 0) = 0
+              AND  COALESCE(is_field, 0) = 0),
+        -- only a (person, meet, day) with two different events can pair:
+        -- one hash pass, and the self-join sees those rows alone
+        keys AS (
+            SELECT person_id, source, meet_id, date FROM base
+            GROUP  BY 1, 2, 3, 4
+            HAVING min(event_short) <> max(event_short)),
+        r AS (
+            SELECT b.* FROM base b
+            JOIN   keys k ON k.person_id = b.person_id AND k.source = b.source
+                         AND k.meet_id = b.meet_id AND k.date = b.date)
+        SELECT DISTINCT CASE WHEN a.result_id > b.result_id THEN a.result_id
+                             ELSE b.result_id END AS result_id
+        FROM   r a
+        JOIN   r b ON b.person_id = a.person_id AND b.source = a.source
+                  AND b.meet_id = a.meet_id AND b.date = a.date
+                  AND b.event_short IS DISTINCT FROM a.event_short
+                  AND b.t > a.t
+                  AND b.t / a.t BETWEEN {lo:.6f} AND {hi:.6f}
+    """
+
+
+def xcPlaceholderSql(table, sport):
+    """A TRACK race put on the cross country calendar (owner's page,
+    2026-09-28: "Mid-Season Mania 1600m Invitational (XC Calendar
+    Placeholder)", a 1600 in the XC season with a course difficulty, and
+    the same race again in track). The meet says what it is in its name;
+    its XC rows are not cross country."""
+    if sport != "XC":
+        return f"SELECT result_id FROM {table} WHERE false"
+    return f"""
+        SELECT r.result_id
+        FROM   {table} r
+        WHERE  r.meet_id IN (SELECT DISTINCT meet_id FROM meets
+                             WHERE  meet_name ILIKE '%%placeholder%%'
+                               AND  meet_id IS NOT NULL)
+    """
+
+
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("dup_same_feed", dupSameFeedSql),
          ("dup_cross_date", dupCrossDateSql),
-         ("dup_race_copy", dupRaceCopySql))
+         ("dup_race_copy", dupRaceCopySql),
+         ("dup_same_day", dupSameDaySql),
+         ("dup_converted", dupConvertedSql),
+         ("xc_placeholder", xcPlaceholderSql))
 
 
 # ★ NO NESTED LOOPS (2026-09-27: run stuck over 24 h in track's

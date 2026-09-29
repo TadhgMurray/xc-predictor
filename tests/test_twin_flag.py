@@ -38,8 +38,8 @@ def test_rules_key_on_the_right_things():
     assert "event_id" not in dup_xc and "div_id, event_id" in dup_tf, "track adds the event"
     assert "min(result_id) AS keep" in dup_xc and "r.result_id <> k.keep" in dup_xc, \
         "the lowest result_id survives, every later copy goes"
-    assert [r for r, _ in TF.RULES] == ["twin_race", "twin_person", "dup_same_feed",
-                                        "dup_cross_date", "dup_race_copy"], \
+    assert [r for r, _ in TF.RULES][:5] == ["twin_race", "twin_person", "dup_same_feed",
+                                            "dup_cross_date", "dup_race_copy"], \
         "cross-feed reasons file first; the primary key keeps the first"
 
 
@@ -81,6 +81,13 @@ _EXPECTED = {
     ("TF", "dup_cross_date"): [1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108,
                                1401, 1402, 1403, 1502, 1602],
     ("TF", "dup_race_copy"):  [1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108],
+    # 2026-09-28
+    ("XC", "dup_same_day"):   [1001],
+    ("XC", "dup_converted"):  [],
+    ("XC", "xc_placeholder"): [1111],
+    ("TF", "dup_same_day"):   [1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108],
+    ("TF", "dup_converted"):  [1802],
+    ("TF", "xc_placeholder"): [],
 }
 
 
