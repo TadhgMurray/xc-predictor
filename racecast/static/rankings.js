@@ -1651,9 +1651,23 @@ document.addEventListener("click", (e) => {
   load();
 });
 
+/* ★ A LOAD ASKED FOR MID-FLIGHT IS KEPT, NOT DROPPED (owner, 2026-09-29:
+   "when you first load into some rankings page all the things show as
+   undefined! Like in team rankings"). The page's first fetch is the ability
+   board; click Teams before it lands and the tab sets state.board, calls
+   load(), and the busy guard swallowed that call. The ability rows then
+   landed and renderBoard drew them with the TEAMS renderer -- rank, points
+   and n_athletes are not on an athlete row -- and nothing fetched the teams
+   board until Apply. Now the call is remembered and run when the first one
+   finishes, and a response for a board that is no longer showing is never
+   drawn. */
+let _reloadWanted = false;
+
 async function load() {
-  if (state.busy) return;
+  if (state.busy) { _reloadWanted = true; return; }
   state.busy = true;
+  _reloadWanted = false;
+  const boardAsked = state.board;
   $("apply").disabled = true;
   /* Loud, not a grey word. A rankings query can take a second or two, and a
      faint "Loading..." where a table used to be reads as an empty result --
@@ -1685,6 +1699,8 @@ async function load() {
                    : "/api/rankings";
     const res = await fetch(endpoint + "?" + query.toString());
     const data = await res.json();
+    // the board changed while this was in flight: the queued load draws it
+    if (state.board !== boardAsked) return;
 
     // A 400 carries {"error": "..."}. SHOW IT. An empty table on a bad filter
     // is indistinguishable from an empty table on a valid one.
@@ -1781,6 +1797,10 @@ async function load() {
   } finally {
     state.busy = false;
     $("apply").disabled = false;
+    if (_reloadWanted || state.board !== boardAsked) {
+      _reloadWanted = false;
+      load();
+    }
   }
 }
 
