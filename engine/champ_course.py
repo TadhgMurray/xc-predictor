@@ -117,3 +117,19 @@ def displayName(venue_part):
         return None
     slug = v[len(PREFIX):]
     return DISPLAY.get(slug, slug)
+
+
+def displaySql(name_expr):
+    """A SELECT expression: the published course name's championship part
+    ('Foot Locker Nationals', ...) for the meet-name expression, or NULL --
+    the site's key into course_difficulties ('XC:' || this), in courseKey()'s
+    order. For the pages, which find a row's difficulty by the meet, not by
+    the engine's key (2026-09-29)."""
+    whens = []
+    for slug, rx, name in CHAMP_COURSES:
+        if rx is None:
+            whens.append(f"WHEN {name_expr} !~* '{NOT_FINAL}' THEN '{name}'")
+        else:
+            whens.append(f"WHEN {name_expr} ~* '{rx}' THEN '{name}'")
+    return (f"CASE WHEN {name_expr} ~* '{SPONSOR}' AND {name_expr} ~* '{CHAMP_WORD}' "
+            f"THEN CASE {' '.join(whens)} END END")

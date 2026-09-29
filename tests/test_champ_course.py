@@ -170,3 +170,13 @@ def test_its_own_cell_reads_the_final_not_the_park():
     assert d_shared < 0.035, d_shared                   # the final diluted
     assert d_final > 0.07, d_final                      # its own course
     assert abs(d_park - 0.02) < 0.01, d_park            # the park is the park
+
+
+def test_pages_read_the_championship_cell_first():
+    import champ_course as C
+    sql = C.displaySql("x.n")
+    assert "'Foot Locker Nationals'" in sql and "%" not in sql and "{" not in sql
+    app_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "racecast", "app.py")).read()
+    assert app_src.count("{_champ_join('r')}") == 2          # athlete rows + race header
+    assert app_src.count("COALESCE(cdc.difficulty, cd.difficulty)") == 2

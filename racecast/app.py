@@ -175,6 +175,22 @@ def _xc_course_sql(r="r"):
     return "COALESCE(m.course_name, mt.venue_name)"
 
 
+def _champ_join(r="r"):
+    """★ A CHAMPIONSHIP ON ITS OWN COURSE (2026-09-29). The engine keys the
+    Foot Locker finals and regionals by the championship, not the park
+    (engine/champ_course.py), and publishes them as 'XC:Foot Locker
+    Nationals' etc. with no canonical id. The pages find a difficulty
+    through the park's canonical id, so without this a Foot Locker row
+    would show the park's local-meet number beside a rating priced on the
+    championship's. `cdc` is that cell; readers take it before `cd`."""
+    from champ_course import displaySql
+    name = displaySql("COALESCE(m.meet_name, mt.meet_name)")
+    return (f"LEFT JOIN course_difficulties cdc\n"
+            f"               ON cdc.course_name = 'XC:' || ({name})\n"
+            f"              AND cdc.distance_m = "
+            f"(round({_xc_distance_sql(r)} / 100.0) * 100)::int")
+
+
 def _xc_distance_sql(r="r"):
     """Race distance -- the corrected one first, then either scraped source.
 
@@ -2109,7 +2125,7 @@ def get_races(cur, person_id):
                      AND abs(dov.distance::real
                              - COALESCE(m.distance, {_blob('r')}::real)) >= 1
                     THEN NULL
-                    ELSE cd.difficulty END   AS difficulty,
+                    ELSE COALESCE(cdc.difficulty, cd.difficulty) END   AS difficulty,
                {day_col}                     AS day_effect,
                {rp_xc},
                0                             AS is_field,
@@ -2168,6 +2184,7 @@ def get_races(cur, person_id):
                ON cd.canonical_id = cc.canonical_id
               AND cd.distance_m   =
                   (round({_xc_distance_sql('r')} / 100.0) * 100)::int
+        {_champ_join('r')}
         {day_join_xc}
         WHERE r.person_id = %(pid)s
           AND r.time_seconds IS NOT NULL
@@ -3018,7 +3035,7 @@ def get_race_header(cur, meet_id, div_id, source=None):
                r.meet_id                                     AS meet_id,
                r.div_id                                      AS div_id,
                r.source                                      AS source,
-               cd.difficulty                                 AS difficulty,
+               COALESCE(cdc.difficulty, cd.difficulty)       AS difficulty,
                cc.canonical_id                               AS canonical_id,
                cd.distance_m                                 AS cell_distance_m,
                -- FILTER because the lateral no longer restricts gender to M/F
@@ -3050,6 +3067,7 @@ def get_race_header(cur, meet_id, div_id, source=None):
                ON cd.canonical_id = cc.canonical_id
               AND cd.distance_m   =
                   (round({_xc_distance_sql('r')} / 100.0) * 100)::int
+        {_champ_join('r')}
         ORDER BY (COALESCE(m.meet_name, mt.venue_name) IS NOT NULL) DESC, r.source
         LIMIT 1
     """, {"meet": meet_id, "div": div_id, "divtext": str(div_id), "src": source})
