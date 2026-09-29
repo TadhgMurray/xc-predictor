@@ -121,3 +121,19 @@ def test_the_course_card_sends_ref_and_the_race_card_does_not():
     js = open(os.path.join(_ROOT, "racecast", "static", "equiv-line.js")).read()
     assert 'if (st.ref) q.set("ref", st.ref);' in js
     assert "ref: root.dataset.ref" in js
+
+
+def test_the_card_converts_on_the_model_that_raced_the_distance():
+    """Owner, 2026-09-29: an HS curve at 10k is a guess ("might just really
+    penalize where the curve is short"). Each pool's curve says where its
+    data is; the first same-gender pool, HS first, whose span holds the
+    distance converts."""
+    spans = A._curveSpans()
+    if "hs_m|XC" not in spans or "college_m|XC" not in spans:
+        pytest.skip("no fitted distance curves in this checkout")
+    assert A._equivOnHs("college_m", 5000, "XC") == "hs_m"
+    assert A._equivOnHs("hs_m", 10000, "XC") == "college_m"
+    assert A._equivOnHs("hs_m", 8000, "XC") == "college_m"
+    lo, hi = spans["hs_m|XC"]
+    assert lo <= 4000 <= hi and A._equivOnHs("ms_m", 4000, "XC") == "hs_m"
+    assert A._equivOnHs("hs_f", 5000, "XC") == "hs_f"

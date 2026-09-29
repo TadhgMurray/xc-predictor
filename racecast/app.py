@@ -1,5 +1,6 @@
 import math
 import os
+from functools import lru_cache
 import sys
 import re
 import time          # _reportThrottled
@@ -7224,7 +7225,7 @@ _EQUIV_MAX = 4000
 _EQUIV_POOLS = {p for p, _ in _POOLS}
 
 
-def _equivOnHs(pool):
+def _equivOnHs(pool, dist=None, sport="XC"):
     """The pool a SWITCHABLE equivalents card converts on: the picked
     group's same-gender high-school pool (the scale the HS-equivalent is
     named for), or the group itself when it has no HS twin.
@@ -7263,10 +7264,43 @@ def _equivOnHs(pool):
 
     ! A RACE PAGE KEEPS ITS OWN GROUP. There the group is the pool the race
       was RATED in, and the card has to agree with the rating column
-      beneath it; it sends no ref and is unchanged."""
+      beneath it; it sends no ref and is unchanged.
+
+    ★ AND NOT ALWAYS THE HS MODEL: THE ONE THAT HAS RACED THE DISTANCE
+      (owner, same day: "might just really penalize where the curve is
+      short"). hs_m's time-over-distance curve is fitted on 2.8k-5k; at a
+      10k it is an extrapolation, and every group's number would inherit
+      the guess. Each pool's curve records the span its data covers
+      (distance_spline.pkl, `span`), so the card converts on the first
+      same-gender pool -- high school, then college, middle, elementary --
+      whose span holds the distance, and falls back to high school only
+      when none does. The HS-equivalent then comes through that pool's
+      own factor, as every other HS view gets it."""
     bare = (pool or "").split("|", 1)[0]
     suffix = bare.rsplit("_", 1)[-1]
-    return ("hs_" + suffix) if suffix in ("m", "f") else pool
+    if suffix not in ("m", "f"):
+        return pool
+    if dist:
+        for level in ("hs", "college", "ms", "elem"):
+            span = _curveSpans().get(f"{level}_{suffix}|{sport}")
+            if span and span[0] * 0.99 <= float(dist) <= span[1] * 1.01:
+                return f"{level}_{suffix}"
+    return "hs_" + suffix
+
+
+@lru_cache(maxsize=1)
+def _curveSpans():
+    """{'hs_m|XC': (lo, hi)}: the distances each pool's curve was fitted on."""
+    import pickle
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "engine", "data", "distance_spline.pkl")
+    try:
+        with open(path, "rb") as f:
+            pools = (pickle.load(f) or {}).get("pools") or {}
+    except Exception:                                 # noqa: BLE001
+        return {}
+    return {k: tuple(v["span"]) for k, v in pools.items()
+            if isinstance(v, dict) and v.get("span")}
 
 
 @app.route("/api/equivalence")
@@ -7327,7 +7361,14 @@ def api_equivalence():
         hs_factor = repFactor(pool, sport)
     except Exception:                                 # noqa: BLE001
         hs_factor = None
-    conv_pool = _equivOnHs(pool) if ref == "hs" and hs_factor else pool
+    conv_pool = _equivOnHs(pool, dist, sport) if ref == "hs" and hs_factor else pool
+    ref_factor = 1.0
+    if conv_pool != pool:
+        try:
+            from pool_view import repFactor as _rf
+            ref_factor = _rf(conv_pool, sport) or 1.0
+        except Exception:                             # noqa: BLE001
+            ref_factor = 1.0
     import conversions as _cv
     try:
         pts = _cv.equivalenceLine(conv_pool, dist, target,
@@ -7342,7 +7383,7 @@ def api_equivalence():
         # the points' rating column is the HS model's rating; the picked
         # group's own number is that over its factor -- the same relation
         # (own x factor = HS) every other page uses, read backwards
-        pts = [(round(r / hs_factor, 2), tc, tt) for r, tc, tt in pts]
+        pts = [(round(r * ref_factor / hs_factor, 2), tc, tt) for r, tc, tt in pts]
     body = {"pool": pool, "sport": sport, "tsport": tsport, "dist": dist,
             "target": target, "difficulty": diff, "points": pts,
             "hs_factor": hs_factor, "converted_as": conv_pool}
