@@ -3095,17 +3095,6 @@ def raceExtras(cur, meet_id, div_id, source):
         cur.execute("SELECT 1 FROM dist_drop WHERE sport = 'XC' "
                     "AND meet_id = %s AND div_id = %s", (meet_id, div_id))
         out["withheld"] = cur.fetchone() is not None
-        # ⚠ dist_drop IS KEYED (meet, div) WITH NO SOURCE, and the anet and
-        #   tfrrs id spaces collide (owner, 2026-09-29: the NCAA DI 2025
-        #   men's 10k, tfrrs meet 27301 div 1, said "Ratings withheld" over
-        #   a column of ratings). A tfrrs division is called withheld only
-        #   when none of its rows carries a rating -- the page never says
-        #   one thing over a table showing the other.
-        if out["withheld"] and source and source != "anet":
-            cur.execute("SELECT 1 FROM results WHERE meet_id = %s AND div_id = %s "
-                        "AND source = %s AND speed_rating IS NOT NULL LIMIT 1",
-                        (meet_id, div_id, source))
-            out["withheld"] = cur.fetchone() is None
     if reg["w"] and source:
         cur.execute("""
             SELECT temp_c, wind_speed_kmh, humidity,
@@ -3537,6 +3526,15 @@ def race_xc(meet_id, div_id):
             published = publishedScores(cur, meet_id)
             extras = (raceExtras(cur, meet_id, div_id, header.get("source"))
                       if header else {"withheld": False, "weather": None})
+            # ★ WITHHELD MEANS NO RATINGS ON THE PAGE (owner, 2026-09-29, the
+            #   NCAA DI 2025 men's 10k: "Ratings withheld" over a column of
+            #   150s). The drop is on this feed's division; _borrowTwins then
+            #   filled every row from the OTHER feed's copy of the same race,
+            #   which the drop does not name. The distance is doubted for the
+            #   race, not for a feed, so nothing borrowed survives it.
+            if extras.get("withheld"):
+                for r in results:
+                    r["speed_rating"] = None
             # HS-equivalent view: one race, one distance; pools per row.
             has_hs_view = (stampRowsHs(cur, "XC", results,
                                        distance=header.get("distance"))
