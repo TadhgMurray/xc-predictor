@@ -7304,7 +7304,12 @@ def _equivOnHs(pool, dist=None, sport="XC"):
     suffix = bare.rsplit("_", 1)[-1]
     if suffix not in ("m", "f"):
         return pool
-    if dist:
+    # ★ BY ABILITY THERE IS NO SPAN TO SHOP FOR (XCP_DISTANCE_BY=ability,
+    #   2026-09-29): every same-gender pool converts on one curve family
+    #   fitted on every pool's pairs, so the high-school twin is simply the
+    #   scale the HS-equivalent is named for.
+    import normalize_distance as _nd
+    if dist and not _nd.abilityMode():
         for level in ("hs", "college", "ms", "elem"):
             span = _curveSpans().get(f"{level}_{suffix}|{sport}")
             if span and span[0] * 0.99 <= float(dist) <= span[1] * 1.01:
@@ -7416,6 +7421,50 @@ def api_equivalence():
         _EQUIV_CACHE.pop(min(_EQUIV_CACHE, key=lambda k: _EQUIV_CACHE[k][0]),
                          None)
     return _asRun(body)
+
+
+# ★ A RATING'S 5K (owner, 2026-09-29: "For the ratings, should we attach 5K
+#   times to them?"): conversions.fiveKForRating, the equivalence line's own
+#   algebra at one point. ?rating=150&pool=hs_m for a rating on that pool's
+#   scale; &scale=hs reads the rating as an HS-equivalent (the pool then
+#   only names the gender). Cached like the line: it moves only when a
+#   pipeline rewrites the means.
+_RATING5K_CACHE = {}
+
+
+@app.route("/api/rating_5k")
+def api_rating_5k():
+    pool = request.args.get("pool") or "hs_m"
+    rating = request.args.get("rating", type=float)
+    scale = (request.args.get("scale") or "").strip().lower() or None
+    if pool not in _EQUIV_POOLS:
+        return jsonify({"error": "unknown pool"}), 400
+    if rating is None or not 20.0 <= rating <= 250.0:
+        return jsonify({"error": "rating must be 20-250"}), 400
+    if scale not in (None, "hs", "own"):
+        return jsonify({"error": "scale must be hs or own"}), 400
+    if scale == "hs":
+        suffix = pool.rsplit("_", 1)[-1]
+        if suffix not in ("m", "f"):
+            return jsonify({"error": "an HS-equivalent needs a gendered pool"}), 400
+        pool = "hs_" + suffix
+    key = (pool, round(rating, 1))
+    hit = _RATING5K_CACHE.get(key)
+    if hit and time.time() - hit[0] < _EQUIV_TTL:
+        return jsonify(hit[1])
+    import conversions as _cv
+    try:
+        body = _cv.fiveKForRating(rating, pool)
+    except Exception as exc:                          # noqa: BLE001
+        print(f"rating_5k: {type(exc).__name__}: {exc}", flush=True)
+        return jsonify({"error": "could not convert"}), 500
+    if body is None:
+        return jsonify({"error": "no scale for that pool"}), 404
+    _RATING5K_CACHE[key] = (time.time(), body)
+    if len(_RATING5K_CACHE) > _EQUIV_MAX:
+        _RATING5K_CACHE.pop(min(_RATING5K_CACHE, key=lambda k: _RATING5K_CACHE[k][0]),
+                            None)
+    return jsonify(body)
 
 
 @app.route("/api/course_search")

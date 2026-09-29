@@ -83,11 +83,20 @@ def _mtimeOr0(path) -> float:
 # Arguments: none.
 # Output:    a small dict (all plain values -> trivially picklable/comparable).
 def _cacheStamp() -> dict:
-    return {
+    stamp = {
         "schema":        _SCHEMA_VERSION,
         "geometry_mtime": _mtimeOr0(_GEOMETRY_FILE),
         "distance_mtime": _mtimeOr0(_DISTANCE_FILE),
     }
+    # ★ BY ABILITY THE STREAM NORMALISES WITH ANOTHER ARTIFACT (2026-09-29,
+    #   XCP_DISTANCE_BY=ability), so that one stamps the cache too. Added only
+    #   in that mode: the pool mode's stamp is byte-for-byte what it was, and
+    #   its caches stay valid.
+    import normalize_distance as _nd
+    if _nd.abilityMode():
+        stamp["distance_by"] = "ability"
+        stamp["ability_mtime"] = _mtimeOr0(_nd._ABILITY_FILE)
+    return stamp
 
 
 # _cachePath

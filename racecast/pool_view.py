@@ -294,6 +294,13 @@ def _poolConstant(pool, sport):
       different scales (about 300 against 1300); a median over both is a
       number on neither scale. hsFactor takes the ratio inside each sport
       and combines the ratios, which are scale-free."""
+    # ★ UNDER ONE SCALE C IS THE ENGINE'S OWN MEAN (XCP_ONE_SCALE=1; see
+    #   _oneScale): read, not sampled, and never written to the sidecar --
+    #   the sidecar keeps the sampled constants for the switch's OFF side.
+    if _oneScale() and not _REFRESHING[0]:
+        m = _engineMean(pool)
+        if m:
+            return m
     key = (pool, sport)
     if key in _CONST_CACHE:
         return _CONST_CACHE[key]
@@ -414,6 +421,45 @@ def _poolConstant(pool, sport):
 # the representative distance per sport: where aggregate numbers (season
 # means, board rows) and the per-pool factor are priced
 _REP_DIST = {"XC": 5000.0, "TF": 1600.0}
+
+
+# ★ ONE ABILITY SCALE: C IS THE ENGINE'S OWN POOL MEAN (owner,
+#   2026-09-29, approved behind a switch: "try to be safe and test it").
+#   XCP_ONE_SCALE=1 prices a pool against the same-gender high-school pool
+#   with the pool means the go-live WROTE (engine_scale.pool_mean) instead of
+#   a median recovered from 1,500 sampled rows at the sport's default
+#   venue:
+#
+#       own rating  = 100 * pm(pool) / adjusted
+#       HS rating   = 100 * pm(hs_g) / adjusted = own * pm(hs_g) / pm(pool)
+#
+#   exact, not ~1% (the sample's venue mix is gone). With the distance
+#   curve by ability (XCP_DISTANCE_BY=ability) every pool's normalized_time
+#   is the same 5000 m equivalent, the F ratio below is 1 at every distance,
+#   and the HS-equivalent of a run is 100 * pm(hs_g) / adjusted whatever
+#   label the run wears -- the own-pool rating is the display, HS / factor.
+#   By pool the F ratio still converts the anchors, so the switch is also
+#   safe on its own. It lives in _poolConstant, so hsFactor's formula --
+#   C(hs)/C(pool) x F(pool)/F(hs), one ratio per sport -- is untouched.
+# ! A POOL THE GO-LIVE DID NOT SCALE (no engine_scale row) takes the
+#   sampled constant, as before; the switch never removes a factor.
+_REFRESHING = [False]
+
+
+def _oneScale():
+    import os
+    return os.environ.get("XCP_ONE_SCALE", "0").strip() == "1"
+
+
+def _engineMean(pool):
+    """engine_scale.pool_mean for a pool (one number per pool: the go-live
+    writes the same mean on its XC and TF rows), or None."""
+    try:
+        import conversions
+        sc = conversions.engineScale(pool, "XC") or conversions.engineScale(pool, "TF")
+    except Exception:                    # noqa: BLE001 -- a view, not a page
+        return None
+    return float(sc[0]) if sc and sc[0] and sc[0] > 0 else None
 
 
 def hsFactor(pool, sport, distance_m):
@@ -669,6 +715,17 @@ def refreshConstants(pools, sports=("XC", "TF")):
     _FACTOR_CACHE.clear()
     _NONE_UNTIL.clear()
     out = []
+    # ! THE SIDECAR HOLDS THE SAMPLED CONSTANTS WHATEVER XCP_ONE_SCALE SAYS:
+    #   it is the switch's OFF side, and a refresh under the switch must not
+    #   write it empty (_poolConstant answers from engine_scale otherwise)
+    _REFRESHING[0] = True
+    try:
+        return _refreshAll(pools, sports, old, out)
+    finally:
+        _REFRESHING[0] = False
+
+
+def _refreshAll(pools, sports, old, out):
     for pool in pools:
         for sport in sports:
             key = (pool, sport)
@@ -680,6 +737,41 @@ def refreshConstants(pools, sports=("XC", "TF")):
             out.append((pool, sport, old.get(key), _CONST_CACHE.get(key), kept))
     _saveConstFile()
     return out
+
+
+# ★ A REFERENCE GROUP IS A POINT ON THE SCALE (owner, 2026-09-29: "this
+#   runner is x% better than the avg collegiate, or the avg DI runner").
+#   scripts/build_group_means.py writes group_scale: per pool, and per
+#   college division / conference / state inside one, the rating of the
+#   group's mean-time runner on the own-pool scale (own_ref) and on the HS
+#   one (hs_ref). A page divides:
+#       x% better than the group = hs_rating / hs_ref - 1
+#                                = own_rating / own_ref - 1  (same pool)
+#   None when the table or the group does not exist; the page then says
+#   nothing rather than guess.
+_GROUP = {"at": 0.0, "map": {}}
+_GROUP_TTL = 3600.0
+
+
+def groupReference(pool, kind="pool", group=None):
+    """(hs_ref, own_ref, n_seasons) for a reference group, or None."""
+    import time as _time
+    if _time.time() - _GROUP["at"] > _GROUP_TTL:
+        out = {}
+        try:
+            with getConn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT kind, pool, grp, hs_ref, own_ref, n_seasons "
+                            "FROM group_scale")
+                for k, p, g, hs, own, n in cur.fetchall():
+                    out[(k, p, g)] = (None if hs is None else float(hs),
+                                      float(own), int(n))
+        except Exception:                # noqa: BLE001 -- a view, not a page
+            out = {}
+        _GROUP["map"] = out
+        # an empty answer is asked again in a minute, as engineScale does
+        _GROUP["at"] = _time.time() if out else _time.time() - _GROUP_TTL + 60.0
+    bare = (pool or "").split("|", 1)[0]
+    return _GROUP["map"].get((kind, bare, bare if kind == "pool" else group))
 
 
 def repFactor(pool, sport):

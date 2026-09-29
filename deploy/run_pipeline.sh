@@ -561,6 +561,15 @@ fi
 # ! THE BACKFILL RUNS AFTER grade_sanity, NOT BEFORE -- it resolves pools from
 #   grade_fix, and a disagreement writes normalized_time on the wrong SCALE
 #   (measured at a 64% rating error, frozen into the row).
+# ★ XCP_DISTANCE_BY=ability (2026-09-29, default OFF) normalises every row
+#   with the curve by ability (engine/data/distance_ability.pkl, fitted by
+#   engine/fit_distance_ability.py) onto 5000 m, whatever its pool. The
+#   backfill records the mode it wrote (engine/data/distance_applied_*.json)
+#   and every later step and the site read that record, so the switch is
+#   set on the run that CHANGES it -- `--from 5` or earlier, both sports in
+#   full -- and XCP_DISTANCE_BY=pool the same way reverts it. The backfill
+#   refuses a partial (--only-changed) write in a new mode, and refuses
+#   'ability' without its artifact. Restart the site afterwards.
 if [ "$SKIP_BACKFILL" -eq 1 ]; then
   echo "  05_backfill skipped (--skip-backfill)"
 else

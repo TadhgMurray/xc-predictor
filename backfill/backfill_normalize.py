@@ -3568,6 +3568,59 @@ def recordAppliedWeather(sport):
               f"next refit assumes the current artifact was applied")
 
 
+def recordAppliedDistance(sport):
+    """★ THE DISTANCE MODE THE ROWS CARRY, WRITTEN DOWN (2026-09-29). Every
+    reader of normalized_time -- the pack, the boards' pace bands, the
+    conversions, the model's anchor shift -- has to read it on the anchor it
+    was written on, and XCP_DISTANCE_BY=ability moves college men from
+    8000 m to 5000 m. So a full --apply records the mode beside the weather
+    record, and normalize_distance reads the record when no switch is set
+    (see its _resolveDistanceMode)."""
+    import json
+    from datetime import datetime
+    import normalize_distance as _nd
+    mode = "ability" if _nd.abilityMode() else "pool"
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    path = _os.path.join(root, "engine", "data", f"distance_applied_{sport}.json")
+    body = {"distance_by": mode, "sport": sport,
+            "written": datetime.now().isoformat(timespec="seconds")}
+    if mode == "ability":
+        body["fitted"] = (_nd._ABILITY or {}).get("fitted")
+    try:
+        with open(path + ".tmp", "w") as f:
+            json.dump(body, f)
+        _os.replace(path + ".tmp", path)
+        print(f"  distance: recorded that the {sport} rows are normalised by "
+              f"{mode.upper()} -> {path}")
+    except OSError as exc:
+        print(f"  ⚠ distance: could not record the mode ({exc}); readers keep "
+              f"the previous record, or 'pool' without one")
+
+
+def distanceModeGuard(sports, apply, only_changed, limit):
+    """None, or why this run must not write. Two refusals, both about a
+    table ending up with rows on two anchors:
+      1. XCP_DISTANCE_BY=ability without its artifact (normalize_distance
+         would fall back to the pool curves and we would record a lie);
+      2. a PARTIAL write (--only-changed, --limit) in a mode other than the
+         one the rows already carry."""
+    import normalize_distance as _nd
+    prob = _nd.abilityModeProblem()
+    if prob:
+        return prob
+    if not apply:
+        return None
+    mode = "ability" if _nd.abilityMode() else "pool"
+    rec = _nd.appliedDistanceModes()
+    for sp in sports:
+        was = rec.get(sp, "pool")
+        if (only_changed or limit) and was != mode:
+            return (f"a partial {sp} write (--only-changed/--limit) in distance "
+                    f"mode '{mode}' over rows written as '{was}' would leave "
+                    f"the table on two anchors; run the full backfill")
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(description="Backfill normalized_time (XC, TF, or both).")
     # `both` runs XC then TF in one invocation. They touch DIFFERENT tables
@@ -3605,6 +3658,15 @@ def main():
         args.write_mode = "update"
     initPool()
     sports = ["XC", "TF"] if args.sport == "both" else [args.sport]
+    # ★ THE DISTANCE MODE, SAID AND CHECKED BEFORE A ROW IS READ (2026-09-29)
+    import normalize_distance as _nd
+    print(f"  distance curve: "
+          f"{'ABILITY (one scale, 5000 m)' if _nd.abilityMode() else 'POOL'}"
+          f" [{_nd.DISTANCE_BY_SOURCE}]")
+    why = distanceModeGuard(sports, args.apply, args.only_changed, args.limit)
+    if why:
+        print(f"  REFUSING: {why}")
+        raise SystemExit(2)
 
     totals = {}
     for sport in sports:
@@ -3614,6 +3676,7 @@ def main():
                                      args.profile, args.write_mode)
         if args.apply and not args.limit and not args.only_changed:
             recordAppliedWeather(sport)
+            recordAppliedDistance(sport)
 
     if len(sports) > 1:
         print("\n" + "=" * 70)

@@ -213,6 +213,112 @@ for _sp, _art in list(_WEATHER.items()):
 # clean no-op and pooling behaves exactly as it did before this change.
 _SCHOOL_LEVELS = (_loadPickle(_SCHOOL_FILE, "School levels") or {}).get("levels")
 
+
+# ★ THE DISTANCE CURVE BY ABILITY, BEHIND A SWITCH (owner, 2026-09-29,
+#   approved: "try to be safe and test it"). XCP_DISTANCE_BY=ability
+#   normalises every row with ONE curve family per (gender, sport), its
+#   shape a function of the runner's own speed (engine/distance_ability.py,
+#   fitted by engine/fit_distance_ability.py into distance_ability.pkl),
+#   and every pool onto 5000 m. The pool label then cannot move a row's
+#   normalized_time: 28:34 over 10 km is one 5K equivalent whether the
+#   runner is filed hs_m, college_m or ms_m, where the pool curves made it
+#   three (x0.4623 / x0.4855 for hs_m / college_m -- the 5% of the
+#   equivalents card's 6% spread).
+#
+# ⚠ THE MODE IS A FACT ABOUT THE ROWS, SO IT IS RECORDED WITH THEM. A
+#   normalized_time written by one mode and read by the other is on the
+#   wrong anchor (college men 8000 m against 5000 m: every band, every
+#   conversion off by the anchor). So a full backfill --apply records the
+#   mode it wrote (engine/data/distance_applied_<SPORT>.json, beside the
+#   weather record), and a process that is not told otherwise READS that:
+#       XCP_DISTANCE_BY set   -> that mode (the backfill that is changing it)
+#       else the record       -> the mode the rows carry (the site, the solve)
+#       else                  -> 'pool', exactly as before this change
+#   Reverting is the same switch the other way:
+#       XCP_DISTANCE_BY=pool bash deploy/run_pipeline.sh --from 5
+#   A missing artifact under 'ability' is a loud no-op here (the site must
+#   not die over it) and a refusal in the backfill (see abilityModeProblem).
+_ABILITY_FILE = os.path.join(_DATA_DIR, "distance_ability.pkl")
+DISTANCE_MODES = ("pool", "ability")
+
+
+def appliedDistanceModes():
+    """{'XC': 'ability', 'TF': 'pool'}: what the last full backfill of each
+    sport wrote. Empty when neither has recorded one."""
+    import json
+    out = {}
+    for sp in ("XC", "TF"):
+        path = os.path.join(_DATA_DIR, f"distance_applied_{sp}.json")
+        try:
+            with open(path) as f:
+                m = (json.load(f) or {}).get("distance_by")
+            if m in DISTANCE_MODES:
+                out[sp] = m
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def _resolveDistanceMode():
+    env = os.environ.get("XCP_DISTANCE_BY", "").strip().lower()
+    rec = appliedDistanceModes()
+    if env:
+        if env not in DISTANCE_MODES:
+            print(f"[normalize_distance] ⚠ XCP_DISTANCE_BY={env!r} is not one of "
+                  f"{DISTANCE_MODES}; using 'pool'")
+            return "pool", "env (invalid)"
+        other = {sp: m for sp, m in rec.items() if m != env}
+        if other:
+            print(f"[normalize_distance] ⚠ XCP_DISTANCE_BY={env} but the rows were "
+                  f"written as {other} (distance_applied_*.json). Only the "
+                  f"backfill that is changing them should run like this.")
+        return env, "env"
+    modes = set(rec.values())
+    if len(modes) == 1:
+        return modes.pop(), "recorded"
+    if len(modes) > 1:
+        print(f"[normalize_distance] ⚠ the two sports' rows were written in "
+              f"different distance modes {rec}; reading as 'pool'. Re-run the "
+              f"backfill of both sports in one mode.")
+        return "pool", "mixed"
+    return "pool", "default"
+
+
+DISTANCE_BY, DISTANCE_BY_SOURCE = _resolveDistanceMode()
+_ABILITY = None
+if DISTANCE_BY == "ability":
+    _ABILITY = _loadPickle(_ABILITY_FILE, "Distance-by-ability curves")
+    if _ABILITY is not None and _ABILITY.get("kind") != "distance_ability":
+        print("[normalize_distance] ⚠ distance_ability.pkl is not a "
+              "distance_ability artifact; ignored")
+        _ABILITY = None
+    if _ABILITY is None:
+        print("[normalize_distance] ⚠⚠ XCP_DISTANCE_BY=ability but no usable "
+              "distance_ability.pkl: the POOL curves are in use. Fit it: "
+              "engine/fit_distance_ability.py")
+print(f"[normalize_distance] distance curve by "
+      f"{'ABILITY' if _ABILITY is not None else 'POOL'} ({DISTANCE_BY_SOURCE})")
+
+
+def abilityMode():
+    """True when rows are normalised by the ability family (and onto 5000 m)."""
+    return _ABILITY is not None
+
+
+def abilityModeProblem():
+    """None, or why a writer asked for 'ability' cannot honour it. The
+    backfill refuses to write on a problem rather than record a mode it
+    did not apply."""
+    if DISTANCE_BY == "ability" and _ABILITY is None:
+        return ("XCP_DISTANCE_BY=ability but engine/data/distance_ability.pkl "
+                "is missing or unusable -- run engine/fit_distance_ability.py")
+    return None
+
+
+def _abilityFamily(pool, sport):
+    import distance_ability as _da
+    return _da.family(_ABILITY, pool, sport)
+
 from functools import lru_cache
 
 # _factorKey
@@ -250,6 +356,20 @@ def _factorKey(distance_meters, pool, season, track_length, track_type,
 @lru_cache(maxsize=100_000)
 def _normalizationFactorCached(distance_meters, pool, season, track_length,
                                track_type, sport, event_short):
+    # ★ BY ABILITY THE DISTANCE LEG DEPENDS ON THE TIME, so a time-free
+    #   factor can only be the family's REFERENCE runner's (the typical
+    #   high schooler of that gender). normalizeTime and factorForNorm use
+    #   the exact per-time leg; this answers the callers that carry no time
+    #   (pool_view's representative factor -- equal for every same-gender
+    #   pool, which is the point -- and the distance tables).
+    if _ABILITY is not None:
+        fam = _abilityFamily(pool, sport)
+        if fam is not None:
+            import distance_ability as _da
+            return (_da.factorAtReference(fam, distance_meters)
+                    * _otherFactorCached(distance_meters, pool, season,
+                                         track_length, track_type, sport,
+                                         event_short))
     # 1. DISTANCE multiplier (spline or exponent) — evaluated at a probe time
     #    of 1.0, so the returned value IS the multiplier.
     if _SPLINES is not None:
@@ -269,6 +389,98 @@ def _normalizationFactorCached(distance_meters, pool, season, track_length,
                        f"{_genderFromPool(pool)}")
     factor = _applyEra(factor, season, era_key)
     return factor
+
+
+# _otherFactorCached
+# Purpose:   geometry x era alone -- the chain after the distance leg, on a
+#            probe of 1.0 exactly as _normalizationFactorCached builds it.
+#            Only the ability path uses it: there the distance leg depends
+#            on the time and is applied per row. The pool path keeps its
+#            one cached product, untouched, so its numbers do not move by
+#            a rounding.
+@lru_cache(maxsize=100_000)
+def _otherFactorCached(distance_meters, pool, season, track_length,
+                       track_type, sport, event_short):
+    factor = _applyGeometry(1.0, distance_meters, track_length, track_type)
+    era_key = None
+    if sport is not None:
+        band = classifyEraBand(sport, event_short, distance_meters)
+        if band is not None:
+            era_key = (f"{str(sport).strip().upper()}|{band}|"
+                       f"{_genderFromPool(pool)}")
+    return _applyEra(factor, season, era_key)
+
+
+# _abilityPQ
+# Purpose:   (P, Q, log ref, a_lo, a_hi) of a row's family at one distance,
+#            cached: g(x; A) = P + A Q, so the per-row work is one division
+#            (distance_ability's closed form, inlined for the backfill's
+#            hundred million rows). None when the artifact has no family.
+@lru_cache(maxsize=100_000)
+def _abilityPQ(distance_meters, pool, sport):
+    fam = _abilityFamily(pool, sport)
+    if fam is None:
+        return None
+    import distance_ability as _da
+    p, q = _da._pq(fam, math.log(float(distance_meters) / _da.TARGET_M))
+    return (p, q, math.log(fam["ref_5k"]), fam["a_lo"], fam["a_hi"])
+
+
+def _abilityDistanceFactor(time_seconds, distance_meters, pool, sport):
+    """T5 / t for this raw time: the runner's own ability, read off the time
+    (distance_ability.forwardLog, inlined on the cached P and Q)."""
+    pq = _abilityPQ(distance_meters, pool, sport)
+    if pq is None:
+        return None
+    p, q, lref, a_lo, a_hi = pq
+    den = 1.0 + q
+    lt = math.log(time_seconds)
+    a = (lt - lref - p) / den if den > 1e-6 else 0.0
+    a = a_lo if a < a_lo else a_hi if a > a_hi else a
+    return math.exp(-p - a * q)
+
+
+# factorForTime
+# Purpose:   the multiplier normalizeTime applies to THIS raw time (distance
+#            x geometry x era; weather is per race and excluded, as the
+#            cached factor excludes it), unrounded. By pool it is the cached,
+#            time-free factor; by ability it is this runner's.
+def factorForTime(time_seconds, distance_meters, pool, season=None,
+                  track_length=None, track_type=None, sport=None,
+                  event_short=None):
+    dm, pool_k, season_k, tl, tt, sport_k, ev = _factorKey(
+        distance_meters, pool, season, track_length, track_type,
+        sport, event_short)
+    if _ABILITY is not None and time_seconds and time_seconds > 0:
+        dist = _abilityDistanceFactor(float(time_seconds), dm, pool_k, sport_k)
+        if dist is not None:
+            return dist * _otherFactorCached(dm, pool_k, season_k, tl, tt,
+                                             sport_k, ev)
+    return _normalizationFactorCached(dm, pool_k, season_k, tl, tt, sport_k, ev)
+
+
+# factorForNorm
+# Purpose:   the multiplier normalizeTime applied (distance x geometry x
+#            era, weather excluded), recovered from the NORMALIZED side --
+#            what an inverse needs: time = norm / factor. By pool it is the
+#            cached factor, time-free. By ability the distance leg depends
+#            on the runner, and the 5K equivalent names the runner exactly
+#            (distance_ability.factorForNorm), so the round trip closes.
+# Arguments: norm -- the normalized time with the weather put back (the
+#            forward divided it out after this factor); the rest as
+#            normalizeTime.
+def factorForNorm(norm, distance_meters, pool, season=None, track_length=None,
+                  track_type=None, sport=None, event_short=None):
+    dm, pool_k, season_k, tl, tt, sport_k, ev = _factorKey(
+        distance_meters, pool, season, track_length, track_type,
+        sport, event_short)
+    if _ABILITY is not None and norm:
+        fam = _abilityFamily(pool_k, sport_k)
+        if fam is not None:
+            import distance_ability as _da
+            other = _otherFactorCached(dm, pool_k, season_k, tl, tt, sport_k, ev)
+            return other * _da.factorForNorm(fam, float(norm) / other, dm)
+    return _normalizationFactorCached(dm, pool_k, season_k, tl, tt, sport_k, ev)
 
 
 # ------------------------------------------------------------------ #
@@ -946,8 +1158,16 @@ def normalizeTime(time_seconds, distance_meters, pool,
     dm, pool_k, season_k, tl, tt, sport_k, ev = _factorKey(
         distance_meters, pool, season, track_length, track_type,
         sport, event_short)
-    factor = _normalizationFactorCached(dm, pool_k, season_k, tl, tt,
-                                        sport_k, ev)
+    factor = None
+    if _ABILITY is not None:
+        # by ability: the distance leg is this runner's, read off this time
+        dist = _abilityDistanceFactor(float(time_seconds), dm, pool_k, sport_k)
+        if dist is not None:
+            factor = dist * _otherFactorCached(dm, pool_k, season_k, tl, tt,
+                                               sport_k, ev)
+    if factor is None:
+        factor = _normalizationFactorCached(dm, pool_k, season_k, tl, tt,
+                                            sport_k, ev)
 
     normalized = time_seconds * factor
     # WEATHER: the last link, applied per-race outside the cache. distance_meters
@@ -1066,6 +1286,12 @@ _SHIFT_CACHE = {}
 
 
 def anchorShift(pool, sport=None, to_m=COMMON_ANCHOR_M):
+    # ★ BY ABILITY EVERY POOL IS ALREADY ON 5000 m (targetFor), and a move to
+    #   another distance would have to name a runner -- the shift is a
+    #   pool-anchor fact, and there is no pool anchor left to undo.
+    if _ABILITY is not None:
+        return 1.0 if abs(float(to_m) - COMMON_ANCHOR_M) < 1e-6 else \
+            _abilityAnchorShift(pool, sport, to_m)
     if not pool or not _SPLINES or _SPLINES.get("kind") != "distance_potential":
         return 1.0
     key = (pool, sport, float(to_m))
@@ -1085,8 +1311,22 @@ def anchorShift(pool, sport=None, to_m=COMMON_ANCHOR_M):
     return got
 
 
+def _abilityAnchorShift(pool, sport, to_m):
+    """By ability, 5000 m -> to_m for the family's reference runner (a
+    caller that asks for another anchor carries no runner)."""
+    fam = _abilityFamily(pool, sport)
+    if fam is None:
+        return 1.0
+    import distance_ability as _da
+    return _da.factorAtReference(fam, COMMON_ANCHOR_M) / _da.factorAtReference(fam, to_m)
+
+
 def targetFor(pool, sport=None):
     """The anchor for a pool -- the distance its normalized_time is expressed at.
+
+    ★ BY ABILITY (XCP_DISTANCE_BY=ability) IT IS 5000 m FOR EVERY POOL: one
+      scale, and the reason the bands, the model's shift and the boards all
+      follow without a change of their own.
 
     ! THE FULL KEY IS TRIED FIRST -- NO LONGER, AND THE SPORT IS NOW IGNORED
       WHEN THE BARE POOL HAS AN ANCHOR. It used to prefer 'hs_m|TF' over
@@ -1121,6 +1361,8 @@ def targetFor(pool, sport=None):
     #   no-op rather than raising -- this one raised AttributeError, so a
     #   caller reasoning about SCALE crashed on a machine that simply had not
     #   built the splines yet. The documented fallback is the global target.
+    if _ABILITY is not None:
+        return float(_ABILITY.get("target", COMMON_ANCHOR_M))
     targets = (_SPLINES or {}).get("pool_targets", {})
     base = (pool or "").split("|")[0]
     if base in targets:

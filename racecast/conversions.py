@@ -36,6 +36,7 @@ from normalize_distance import (
     _applyWeather,
     poolFor,
 )
+import normalize_distance as _nd
 
 # DB access, same pattern as the rest of the app.
 import sys
@@ -909,9 +910,20 @@ def source_to_normalized(source):
 # ===================================================================== #
 
 def _forward_factor(distance_meters, pool, season, track_length,
-                    track_type, sport, event_short):
+                    track_type, sport, event_short, norm=None):
     """The distance*geometry*era multiplier for a context, via the engine's
-       cached factor function (already evaluated at probe time 1.0)."""
+       cached factor function (already evaluated at probe time 1.0).
+
+    ★ BY ABILITY (XCP_DISTANCE_BY=ability, 2026-09-29) THE MULTIPLIER
+      DEPENDS ON THE RUNNER, so an inverse passes the normalized time it is
+      inverting (`norm`, weather put back) and gets THAT runner's factor --
+      normalize_distance.factorForNorm, the exact inverse of the forward.
+      Without `norm` it is the reference runner's, the same for every
+      same-gender pool (pool_view's F ratio is then 1, as one scale says).
+      By pool, `norm` changes nothing."""
+    if norm is not None:
+        return _nd.factorForNorm(norm, distance_meters, pool, season,
+                                 track_length, track_type, sport, event_short)
     return _normalizationFactorCached(distance_meters, pool, season,
                                       track_length, track_type,
                                       sport, event_short)
@@ -942,15 +954,19 @@ def normalized_to_time(norm, context):
     """
     if norm is None:
         return None
+    wmult = _weather_mult(context.get("weather"), context.get("course"),
+                          context.get("sport"), context["distance"])
+    # ! THE WEATHER IS PUT BACK BEFORE THE RUNNER IS NAMED: the forward
+    #   divided it out after the distance factor, so the factor's own input
+    #   was norm * wmult. Only the ability mode reads it (see _forward_factor)
     factor = _forward_factor(
         context["distance"], context["pool"], context.get("season"),
         context.get("track_length"), context.get("track_type"),
-        context.get("sport"), context.get("event_short"))
+        context.get("sport"), context.get("event_short"),
+        norm=(norm * wmult) if _nd.abilityMode() else None)
     if not factor:
         return None
 
-    wmult = _weather_mult(context.get("weather"), context.get("course"),
-                          context.get("sport"), context["distance"])
     # A target with no stated venue: for track the average outdoor track
     # (difficulty 0.0, the display zero); for XC the sport's median race.
     # See venueEffect.
@@ -1122,6 +1138,56 @@ def equivalenceLine(pool, course_distance, target_distance,
         last = (int(r), round(tc, 2), round(tt, 2))
         out.append(last)
     return out
+
+
+# ★ A RATING IS A 5K TIME (owner, 2026-09-29: "For the ratings, should we
+#   attach 5K times to them?"). A rating is 100 * pool_mean / adjusted, so it
+#   maps one-to-one onto a venue-neutral normalized time, 100 * pool_mean /
+#   rating (on the pool's anchor: 5000 m for high school today, and for
+#   every pool by ability), and that onto a clock on an average cross
+#   country course and on
+#   a typical outdoor track through the same normalized_to_time every other
+#   conversion uses -- so "HS-equivalent 150 = 14:xx on the track" is the
+#   conversions page's own answer, not a second model.
+#
+# ! THE POOL NAMES THE SCALE THE RATING IS ON. An HS-equivalent is on the
+#   same-gender high-school pool's scale (pool_view's header), so pass
+#   'hs_m' / 'hs_f' for one -- fiveKForHsRating does. An own-pool rating
+#   passes its own pool. Under one scale (XCP_ONE_SCALE=1 with
+#   XCP_DISTANCE_BY=ability) the two agree: own x factor = HS, and both name
+#   one 5K.
+FIVE_K_M = 5000.0
+
+
+def fiveKForRating(rating, pool, distance=FIVE_K_M):
+    """{'rating', 'pool', 'norm', 'xc', 'track'} for a rating on `pool`'s
+    scale: seconds at `distance` on an average XC course and on a typical
+    outdoor track (no venue named on either side). 'norm' is the
+    normalized time on the pool's anchor. None when the pool has no mean."""
+    try:
+        r = float(rating)
+    except (TypeError, ValueError):
+        return None
+    if not r or r <= 0:
+        return None
+    out = {"rating": r, "pool": _bare(pool), "distance": float(distance)}
+    for sport, key in (("XC", "xc"), ("TF", "track")):
+        norm = _norm_from_rating(r, pool, 0.0, sport)
+        t = normalized_to_time(norm, {"distance": float(distance),
+                                      "pool": pool, "sport": sport})
+        out[key] = round(t, 2) if t else None
+        if sport == "XC":
+            out["norm"] = None if norm is None else round(norm, 2)
+    return out if (out["xc"] or out["track"]) else None
+
+
+def fiveKForHsRating(rating, gender, distance=FIVE_K_M):
+    """fiveKForRating for an HS-equivalent: the same-gender HS pool's scale.
+    gender: 'm' / 'f' (or 'M' / 'F')."""
+    g = str(gender or "").strip().lower()[:1]
+    if g not in ("m", "f"):
+        return None
+    return fiveKForRating(rating, "hs_" + g, distance)
 
 
 def convert_spread(source, xc_targets, tf_targets):

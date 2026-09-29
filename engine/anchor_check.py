@@ -70,6 +70,7 @@ sys.path.insert(0, "scripts")
 sys.path.insert(0, "engine")
 
 from normalize_distance import normalizeTime, targetFor
+import normalize_distance as _nd
 # ★ THE SAME RESOLVER THE BACKFILL USES. ranking_results.distance is only
 #   populated for cross country -- 400,000 of 400,000 track rows came back
 #   with none, which is why this reported nothing at all on TF. Track keeps
@@ -127,6 +128,17 @@ _FACTOR = {}
 
 
 def _expected(t, d, pool, sport):
+    # ★ BY ABILITY (XCP_DISTANCE_BY=ability, 2026-09-29) THE FACTOR IS THE
+    #   RUNNER'S, so a real time is checked with its own (one closed-form
+    #   division; no per-metre cache can hold it). Inside a gender the pool
+    #   no longer moves a row at all -- the check can only find a GENDER
+    #   seam then, which is exactly what is left to find.
+    # ! A PROBE IS NOT A RUNNER. anchor_repair asks _expected(1.0, ...) for
+    #   a bare factor; a "time" faster than PACE_FLOOR (0.12 s/m, faster
+    #   than any human over any distance) is that probe, and gets the
+    #   family's reference runner -- the one factor that names no one.
+    if _nd.abilityMode() and t >= _nd.PACE_FLOOR * d:
+        return t * _nd.factorForTime(t, d, pool, sport=sport)
     key = (round(d), pool, sport)
     factor = _FACTOR.get(key)
     if factor is None:
@@ -146,6 +158,9 @@ def _expected(t, d, pool, sport):
 #   WITHOUT filling the slot; this is that, and _expected is built on it so
 #   the two cannot drift.
 def _factorOf(d, pool, sport):
+    # by ability: the reference runner's factor (see _expected)
+    if _nd.abilityMode():
+        return _nd.factorForTime(None, d, pool, sport=sport)
     # 1000 seconds, then divided back out: normalizeTime rounds its RESULT to
     # two decimals, so asking with a large t keeps the factor accurate to
     # eight digits instead of five.

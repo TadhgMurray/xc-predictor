@@ -261,3 +261,10 @@ racecast/static/mock/
 .pipeline.lock
 engine/data/weather_applied_*.pkl
 engine/data/weather_applied_*.pkl.tmp
+# ★ THE DISTANCE MODE THE SERVER'S ROWS CARRY (2026-09-29): a fact about one
+#   database, written by its backfill. Committed, a `git pull` would switch
+#   another box's readers onto an anchor its rows were not written on.
+engine/data/distance_applied_*.json
+engine/data/distance_applied_*.json.tmp
+engine/data/group_scale.json
+engine/data/group_scale.json.tmp
