@@ -2863,11 +2863,23 @@ tells the two apart.
 
 **Now:**
 - `engine/level_conflict.py`: one person, one sport, one academic year with
-  rows that can only be college (tfrrs FR-1..SR-4, or a college team slug)
-  AND rows that can only be high school (numeric 9-12, on a team) is a
-  conflict -- unless every high school day precedes the first college day
-  (a December graduate on a college indoor team). The side with fewer race
-  days is flagged; a tie flags both.
+  rows that can only be college (a tfrrs college team slug, or -- slugless
+  -- FR-1..SR-6 at a known college: college_directory or a college slug on
+  the same school string, vetoed by any high school slug on it) AND rows
+  that can only be high school (numeric 9-12, on a team) is a conflict --
+  unless every high school day precedes the first college day (a December
+  graduate on a college indoor team). The side with fewer race days is
+  flagged; a tie flags nothing and is reported.
+- **First server run (2026-09-29), two corrections.** (a) The grade form
+  alone was read as college, but tfrrs-hosted high school meets print it too
+  (Winnisquam 'SR-4', Westminster Academy 'SO-2', The Benjamin School
+  'JR-3'), so high schoolers lost races; it now needs the school or slug.
+  (b) "A tie flags both" cost person 6339154 (Kenston HS + RPI) his season;
+  a tie is no evidence. And the review's own race was a WRONG DATE: anet
+  meet 227716 is a 2023 meet stored as 2025-10-26. `engine/meet_date_fix.py`
+  (step 00_meet_dates) finds anet meets far from their meet-id neighbours'
+  dates, moves the year back when the athletes' grades agree, and logs every
+  fix in `meet_date_fix` (`--undo <meet> --sport XC` reverses one).
 - The flag is `result_twin` reason `level_conflict`, a rule of
   `engine/twin_flag.py` (04c, before the pack), so the engine, fill, boards
   and athlete page already exclude it. Rebuilt every run; nothing is moved

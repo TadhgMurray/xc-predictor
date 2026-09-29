@@ -1,16 +1,21 @@
-DROP TABLE IF EXISTS results, results_tf, meets, meets_tf, result_twin;
--- grade / team_id / team_slug LAST, so every positional INSERT below that
--- stops at date leaves them NULL (level_conflict reads them)
+DROP TABLE IF EXISTS results, results_tf, meets, meets_tf, result_twin, college_directory;
+-- grade / team_id / team_slug / school LAST, so every positional INSERT below
+-- that stops at date leaves them NULL (level_conflict reads them)
 CREATE TABLE results (result_id bigint, person_id bigint, source text, meet_id bigint, div_id bigint,
   canon_meet_id bigint, place int, time_seconds double precision, date text,
-  grade text, team_id int, team_slug text);
+  grade text, team_id int, team_slug text, school text);
 CREATE TABLE results_tf (result_id bigint, person_id bigint, source text, meet_id bigint, div_id bigint,
   event_id bigint, canon_meet_id bigint, place int, time_seconds double precision, date text,
   grade text, team_id int, team_slug text,
-  event_short text, is_relay int, is_field int);
+  event_short text, is_relay int, is_field int, school text);
 CREATE TABLE meets (meet_id bigint, div_id bigint, meet_name text);
 CREATE TABLE meets_tf (meet_id bigint, div_id bigint, event_id bigint, source text, meet_name text, state text);
 CREATE TABLE result_twin (sport text NOT NULL, result_id bigint NOT NULL, reason text NOT NULL, PRIMARY KEY (sport, result_id));
+-- build_college_directory's table: level_conflict's known colleges
+CREATE TABLE college_directory (name_norm text, name text, state text, division text, source text);
+INSERT INTO college_directory VALUES ('middlebury', 'Middlebury College', 'VT', 'D3', 'wikipedia'),
+  ('williams', 'Williams College', 'MA', 'D3', 'wikipedia'),
+  ('hamilton', 'Hamilton College', 'NY', 'D3', 'wikipedia');
 
 -- XC ------------------------------------------------------------
 -- meet 1 (div 11): 8 runners; meet 2 (div 21): the SAME race listed again 10 days later (race copy, later loses)
@@ -64,26 +69,33 @@ INSERT INTO results_tf VALUES (1801, 9101, 'anet', 18, 181, 5, 18, 3, 575.09, '2
 -- LEVEL CONFLICT (the NESCAC review, 2026-09-29) --------------------
 -- meets 80-99 are in no meets table, so no cross-date pairing; no canon
 -- meet, so no cross-feed twin; every (person, feed, time) once, so no copy.
--- 6001: the review's shape. Four college days (grade FR-1 form or a college
---       slug), one Middlesex League row on 2025-10-26 -> the high school row.
---       His own 2023 grade-11 race is another season and stays.
+-- A tfrrs row is college by its college SLUG, or -- slugless -- by the
+-- FR-1 form AT A KNOWN COLLEGE (college_directory above); never by the form
+-- alone (the server run, 2026-09-29: tfrrs-hosted high school meets).
+-- 6001: the review's shape. Four college days (a college slug, or SO-2 at
+--       Middlebury, which the directory knows), one Middlesex League row on
+--       2025-10-26 -> the high school row. His own 2023 grade-11 race is
+--       another season and stays.
 INSERT INTO results VALUES
- (9001, 6001, 'tfrrs', 90, 901, NULL, 5, 1500.1, '2025-09-06', 'SO-2', NULL, 'VT_college_m_Middlebury'),
- (9002, 6001, 'tfrrs', 91, 911, NULL, 7, 1510.2, '2025-09-20', 'SO-2', NULL, NULL),
- (9003, 6001, 'tfrrs', 92, 921, NULL, 9, 1490.3, '2025-10-18', 'SO',   NULL, 'VT_college_m_Middlebury'),
- (9004, 6001, 'tfrrs', 93, 931, NULL, 3, 1480.4, '2025-11-01', 'SO-2', NULL, 'VT_college_m_Middlebury'),
- (9005, 6001, 'anet',  94, 941, NULL, 12, 917.1, '2025-10-26', '12', 5501, NULL),
- (9006, 6001, 'anet',  95, 951, NULL, 4,  960.0, '2023-10-20', '11', 5502, NULL);
+ (9001, 6001, 'tfrrs', 90, 901, NULL, 5, 1500.1, '2025-09-06', 'SO-2', NULL, 'VT_college_m_Middlebury', 'Middlebury'),
+ (9002, 6001, 'tfrrs', 91, 911, NULL, 7, 1510.2, '2025-09-20', 'SO-2', NULL, NULL, 'Middlebury'),
+ (9003, 6001, 'tfrrs', 92, 921, NULL, 9, 1490.3, '2025-10-18', 'SO',   NULL, 'VT_college_m_Middlebury', 'Middlebury'),
+ (9004, 6001, 'tfrrs', 93, 931, NULL, 3, 1480.4, '2025-11-01', 'SO-2', NULL, 'VT_college_m_Middlebury', 'Middlebury'),
+ (9005, 6001, 'anet',  94, 941, NULL, 12, 917.1, '2025-10-26', '12', 5501, NULL, 'Winchester'),
+ (9006, 6001, 'anet',  95, 951, NULL, 4,  960.0, '2023-10-20', '11', 5502, NULL, 'Winchester');
 -- 6002: the reverse -- a high schooler's season with one college row on it
 INSERT INTO results VALUES
  (9011, 6002, 'anet',  94, 941, NULL, 20, 950.5, '2025-10-26', '12', 5503, NULL),
  (9012, 6002, 'anet',  96, 961, NULL, 2,  955.0, '2025-09-13', '12', 5503, NULL),
  (9013, 6002, 'anet',  97, 971, NULL, 1,  940.0, '2025-11-08', '12', 5503, NULL),
  (9014, 6002, 'tfrrs', 91, 911, NULL, 30, 1600.0, '2025-09-20', 'FR-1', NULL, 'ME_college_m_Bates');
--- 6003: one race each way, interleaved -> a tie flags both
+-- 6003: one race each way, interleaved -- person 6339154's shape (a Kenston
+--       HS race and an RPI race) -> a TIE, and a tie flags NOTHING (it is no
+--       evidence which side is foreign; the first cut flagged both and cost
+--       a real athlete his season). level_conflict reports it instead.
 INSERT INTO results VALUES
- (9021, 6003, 'tfrrs', 90, 901, NULL, 40, 1650.0, '2025-09-06', 'JR-3', NULL, NULL),
- (9022, 6003, 'anet',  94, 941, NULL, 50, 1030.0, '2025-10-26', '10', 5504, NULL);
+ (9021, 6003, 'tfrrs', 90, 901, NULL, 40, 1650.0, '2025-09-06', 'JR-3', NULL, 'NY_college_m_RPI', 'RPI'),
+ (9022, 6003, 'anet',  94, 941, NULL, 50, 1030.0, '2025-10-26', '10', 5504, NULL, 'Kenston');
 -- 6004: one twelfth grader's race in both feeds, '12' and a bare 'SR' -> no conflict
 INSERT INTO results VALUES
  (9031, 6004, 'anet',  98, 981, NULL, 1, 930.0, '2025-10-04', '12', 5505, NULL),
@@ -91,11 +103,28 @@ INSERT INTO results VALUES
 -- 6005: a senior's autumn, then college the NEXT autumn -> two seasons, nothing
 INSERT INTO results VALUES
  (9041, 6005, 'anet',  95, 952, NULL, 2,  945.0, '2024-10-19', '12', 5506, NULL),
- (9042, 6005, 'tfrrs', 92, 922, NULL, 11, 1495.0, '2025-10-18', 'FR-1', NULL, NULL);
+ (9042, 6005, 'tfrrs', 92, 922, NULL, 11, 1495.0, '2025-10-18', 'FR-1', NULL, 'VT_college_m_Middlebury');
 -- 6006: grade 12 on anet team 0 ("no team") is not a high school row
 INSERT INTO results VALUES
- (9051, 6006, 'tfrrs', 90, 902, NULL, 12, 1505.0, '2025-09-06', 'SR-4', NULL, NULL),
+ (9051, 6006, 'tfrrs', 90, 902, NULL, 12, 1505.0, '2025-09-06', 'SR-4', NULL, 'VT_college_m_Middlebury'),
  (9052, 6006, 'anet',  94, 942, NULL, 3,  1800.0, '2025-10-26', '12', 0, NULL);
+-- 6007: persons 14178814/14178817's shape -- a high schooler's own races at a
+--       tfrrs-hosted high school meet, printed 'SR-4', no slug, school
+--       "Winnisquam" (no college of that name) -> not college, nothing. The
+--       first cut read the form as college, tied, and flagged both.
+INSERT INTO results VALUES
+ (9061, 6007, 'tfrrs', 85, 851, NULL, 6, 1010.0, '2025-09-27', 'SR-4', NULL, NULL, 'Winnisquam'),
+ (9062, 6007, 'anet',  86, 861, NULL, 4, 1000.0, '2025-10-11', '12', 5507, NULL, 'Winnisquam');
+-- 6008: the directory's collision -- a high school with a college's name.
+--       'Hamilton' is Hamilton College to the directory, but tfrrs put the
+--       same string on a HIGH SCHOOL slug (9074), and that vetoes it: the
+--       slugless SR-4 row 9073 is not college, and two anet days do not
+--       outvote it.
+INSERT INTO results VALUES
+ (9071, 6008, 'anet',  87, 871, NULL, 2, 990.0,  '2025-09-13', '12', 5508, NULL, 'Hamilton'),
+ (9072, 6008, 'anet',  88, 881, NULL, 3, 995.0,  '2025-10-11', '12', 5508, NULL, 'Hamilton'),
+ (9073, 6008, 'tfrrs', 89, 891, NULL, 5, 1001.0, '2025-09-27', 'SR-4', NULL, NULL, 'Hamilton'),
+ (9074, 6008, 'tfrrs', 80, 801, NULL, 7, 1002.0, '2025-10-04', 'SR-4', NULL, 'NY_hs_m_Hamilton', 'Hamilton');
 -- 7101 (track): a December graduate racing for a college in January -- high
 --       school, then college, never back -> a transition, nothing
 INSERT INTO results_tf VALUES
@@ -104,7 +133,9 @@ INSERT INTO results_tf VALUES
  (9103, 7101, 'tfrrs', 83, 831, 1, NULL, 5, 248.0, '2026-01-17', 'FR-1', NULL, 'MA_college_m_Tufts'),
  (9104, 7101, 'tfrrs', 84, 841, 1, NULL, 4, 247.0, '2026-02-14', 'FR-1', NULL, 'MA_college_m_Tufts');
 -- 7102 (track): a namesake's April inside a college spring -> the two high
---       school rows; the 'TBA' row has no season and is left alone
+--       school rows; the 'TBA' row has no season and is left alone. The
+--       college rows carry no slug: they are college because Williams is a
+--       known college (the directory path, school set below)
 INSERT INTO results_tf VALUES
  (9111, 7102, 'tfrrs', 83, 831, 1, NULL, 9, 252.0, '2026-01-17', 'JR-3', NULL, NULL),
  (9112, 7102, 'tfrrs', 84, 841, 1, NULL, 8, 253.0, '2026-02-14', 'JR-3', NULL, NULL),
@@ -113,3 +144,4 @@ INSERT INTO results_tf VALUES
  (9115, 7102, 'anet',  87, 871, 1, NULL, 3, 280.0, '2026-04-18', '11', 5602, NULL),
  (9116, 7102, 'anet',  88, 881, 1, NULL, 2, 281.0, '2026-04-25', '11', 5602, NULL),
  (9117, 7102, 'anet',  88, 881, 2, NULL, 1, 11.0,  'TBA',        '11', 5602, NULL);
+UPDATE results_tf SET school = 'Williams' WHERE result_id BETWEEN 9111 AND 9114;

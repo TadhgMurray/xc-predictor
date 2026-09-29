@@ -451,6 +451,19 @@ bgwait() {
 
 # ---- verdicts ------------------------------------------------------- #
 # ! unlink.py IS NOT HERE ON PURPOSE -- it is the one non-idempotent step.
+# ★ AN anet MEET UNDER THE WRONG YEAR IS PUT BACK FIRST (2026-09-29). Meet
+#   227716, a 2023 Middlesex League race stored as 2025-10-26, put four
+#   runners' own high school race on their college seasons. Every step after
+#   this one reads the season off results.date, so the date is corrected in
+#   place before any of them runs: the meet's id neighbours say which year it
+#   is, the athletes' grades must agree, and every fix is a row of
+#   meet_date_fix (`engine/meet_date_fix.py --undo <meet> --sport XC` puts
+#   one back). Idempotent: a second run moves nothing; a re-scrape that
+#   writes the wrong year back is moved again. NOT on the always-run list: a
+#   --from run keeps the verdicts steps 01-04 made on the old dates, and a
+#   date moved under them would split the pack from them.
+#   `engine/meet_date_fix.py` alone is the dry-run report.
+step 00_meet_dates    "$PY" -u engine/meet_date_fix.py --write --show 20
 step 01_season_year   "$PY" -u engine/season_year.py
 # ★ WHERE EVERY ATHLETE'S ROWS ARE, BEFORE ANYTHING MOVES THEM (2026-09-26).
 #   Twins, tfrrs links and mints all change person ids, and the old id's page

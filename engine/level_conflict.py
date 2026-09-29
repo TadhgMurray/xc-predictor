@@ -24,6 +24,14 @@ past 04c. Issue: the NESCAC review, 2026-09-29.
 
   and it reached the published season: Nick Walker's 2025 XC season read
   108.9 against ~104-106 from his college races alone.
+  ⚠ AND THAT RACE WAS NOT FROM 2025 (the first server run, 2026-09-29). anet
+    meet 227716 sits among 2023 meet ids, and its rows' native ids are
+    2023-era: it is the four runners' OWN 2023 high school race, stored
+    under the wrong year. The fix for those four is the DATE, and it is
+    engine/meet_date_fix.py (step 00_meet_dates, before any season is
+    read). With the date right, their seasons hold no conflict and this rule
+    leaves them alone; it stays for the conflicts a weld makes, which a
+    correct date does not cure.
 
 ★ THE RULE (the review's): NEVER A HIGH SCHOOL RESULT ON A PERSON WHOSE LEVEL
   ON THAT DATE IS COLLEGE, AND THE REVERSE. One person, one sport, one
@@ -33,14 +41,25 @@ past 04c. Issue: the NESCAC review, 2026-09-29.
 
 ! WHAT COUNTS AS EACH LEVEL -- DEFINITE EVIDENCE ONLY, because a wrong flag
   hides a real race:
-    college  a tfrrs row whose grade is the class+ELIGIBILITY form (FR-1 ..
-             SR-4: the digit is NCAA eligibility and a high school has none,
-             grade_sanity section 1.6), or whose tfrrs team slug says college
-             ('CT_college_f_Conn_College').
+    college  a tfrrs row whose team slug says college
+             ('CT_college_f_Conn_College'), or -- on a row scraped before the
+             slug was kept -- the class+ELIGIBILITY grade form (FR-1 .. SR-6)
+             AT A KNOWN COLLEGE (collegeSchools below).
     hs       a NUMERIC grade 9-12 -- "high school grades are NUMBERS, college
              classes are NAMES" (normalize_distance.GRADE_TO_LEVEL, owner) --
              on a row with a team (anet team 0 is "no team", pool_resolve) and
              no college or club tfrrs slug.
+  ⚠ THE GRADE FORM ALONE WAS NOT EVIDENCE, AND THE FIRST SERVER RUN SHOWED IT
+    (owner's --sport XC --show 40, 2026-09-29). The first cut read FR-1 ..
+    SR-4 as college by itself ("the digit is NCAA eligibility and a high
+    school has none"). But tfrrs HOSTS high school meets and writes the same
+    form for them: persons 14178814 / 14178817 (Winnisquam Regional HS,
+    tfrrs 'SR-4', school "Winnisquam"), 12216908 (Westminster Academy,
+    'SO-2'), 13978036 / 13978038 (The Benjamin School, 'JR-3') -- high
+    schoolers whose own tfrrs rows were read as a college season, tied
+    against their anet rows, and lost a race each. The form says which
+    SOFTWARE printed the results, not which level ran them. So it now counts
+    only with a college signal of its own: the slug, or the school.
   A bare Fr/So/Jr/Sr is NEITHER: it is 9-12 in high school and 13-16 in
   college (grade_sanity 2c). Diego Eseverri's twelfth grade reads '12' on anet
   and 'SR' on tfrrs, the same race twice; that is one person and one level,
@@ -61,8 +80,13 @@ past 04c. Issue: the NESCAC review, 2026-09-29.
   reverse (a college namesake welded onto a real high schooler). DAYS, not
   rows: a race stored by both feeds is one race and must not vote twice
   (grade_sanity's lesson, Diego Eseverri again).
-  ! A TIE FLAGS BOTH. One race each way is no evidence about which is the
-    guest, and a row we cannot place does not belong on a board.
+  ! A TIE FLAGS NOTHING, AND IS REPORTED (owner, 2026-09-29, reading the
+    first server run). The first cut flagged both sides of a tie -- "a row we
+    cannot place does not belong on a board" -- and that deleted a real
+    athlete's season: person 6339154, one Kenston HS race and one RPI race,
+    lost both. A tie is not evidence about which side is foreign, and a flag
+    must be evidence. The tied seasons are counted and printed (TIE in the
+    samples) so the link that made them can be looked at and undone by hand.
 
 ⚠ WHY A FLAG AND NOT A MOVE. Detaching the rows to their own person_id is
   the better end state and the worse step:
@@ -120,12 +144,120 @@ _DATE_OK = "{a}.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'"
 #   same question ("is this row college / high school?") before they weld,
 #   and they call these rather than spelling their own.
 
+# the temp table stageCollegeSchools leaves: the tfrrs school strings that are
+# known colleges. collegeSql reads it, so every session that asks the question
+# stages it first (prepare, link_freshmen.freshmen, link_idless_by_name).
+COLLEGE_SCHOOLS = "lc_college_school"
+# ★ -[1-6], NOT -[1-4] (2026-09-29): tfrrs writes redshirt and fifth-year
+#   rows as SO-3, JR-4, SR-5, SR-6, and with [1-4] an NCAA DI fifth-year such
+#   as Dylan Schubert (Furman, SR-5) read as not-college. grade_sanity and
+#   speed_ratings_db were widened the same day.
+_ELIGIBILITY = "'^(FR|SO|JR|SR)-[1-6]$'"
+
+
+def _slugLevelSql(a):
+    """The level a tfrrs team slug names ('CT_college_f_Conn_College' ->
+    'college'), '' when the row has no slug -- pool_resolve.teamLevelFromSlug
+    in SQL."""
+    return f"COALESCE(split_part(lower({a}.team_slug), '_', 2), '')"
+
+
 def collegeSql(a="r"):
-    """A row that can only be a college athlete's: tfrrs, with the
-    class+eligibility grade or a college team slug."""
-    return (f"({a}.source = 'tfrrs' AND ("
-            f"upper(btrim({a}.grade)) ~ '^(FR|SO|JR|SR)-[1-4]$' "
-            f"OR split_part(lower({a}.team_slug), '_', 2) = 'college'))")
+    """A row that can only be a college athlete's: tfrrs, AND a college
+    signal of its own -- the team slug says college, or (a row with no slug)
+    the eligibility grade form at a school stageCollegeSchools knows as a
+    college. The grade form alone is a tfrrs-hosted high school meet as often
+    as a college one (the header says who it cost). Never NULL: a row with
+    no grade or no school is simply not college."""
+    slug = _slugLevelSql(a)
+    return (f"COALESCE(({a}.source = 'tfrrs' AND ("
+            f"{slug} = 'college' "
+            f"OR ({slug} = '' "
+            f"AND upper(btrim({a}.grade)) ~ {_ELIGIBILITY} "
+            f"AND {a}.school IN (SELECT school FROM {COLLEGE_SCHOOLS})))), false)")
+
+
+# ★ WHICH tfrrs SCHOOL STRINGS ARE COLLEGES -- TWO WITNESSES AND ONE VETO.
+#   A slug is tfrrs's own word for a team's level, but only rows scraped
+#   since database._migrateResultsAddTeamSlug carry one; the old rows have
+#   the display string alone. So a string is a college when
+#     - college_directory knows it (build_college_directory.lookup: every
+#       NCAA and NAIA institution, the feeds' short forms, a name several
+#       colleges share settled only by a state -- unsettled is a miss), or
+#     - tfrrs itself put that string on a row with a COLLEGE slug,
+#   and NOT when tfrrs ever put it on a row with a HIGH SCHOOL or MIDDLE
+#   SCHOOL slug. The veto is the collision guard: the directory matches
+#   names, and a high school called Hamilton or Trinity has a college's
+#   name. tfrrs calling a team with that exact string a high school is the
+#   one fact that settles it, so the string is not evidence of college for
+#   any row. (Kenston, Winnisquam, Westminster Academy, The Benjamin School:
+#   no college of those names, so no witness, so no college.)
+# ⚠ THE COST, STATED. A junior college is in none of the four lists, so a
+#   JUCO runner's slugless rows are not college here; a college the feeds
+#   spell in a way the directory cannot place is not either. Both are
+#   conflicts missed -- a flag not raised -- which is the side to err on.
+def collegeSchools(evidence, known):
+    """{school strings that are colleges} from
+    evidence: [(school, has_college_slug, has_school_slug)] and
+    known(school) -> bool, the directory's answer."""
+    out = set()
+    for school, slug_college, slug_school in evidence:
+        if not school or slug_school:
+            continue
+        if slug_college or known(school):
+            out.add(school)
+    return out
+
+
+def stageCollegeSchools(cur, tables=("results", "results_tf"), reuse=True):
+    """Leave temp table lc_college_school (school) on this session: one scan
+    of each table's tfrrs rows, the directory asked once per distinct string.
+    reuse: keep one already staged on this session (twin_flag asks per
+    sport on one connection; the answer does not change between them)."""
+    if reuse:
+        cur.execute("SELECT to_regclass('pg_temp.' || %s)", (COLLEGE_SCHOOLS,))
+        if cur.fetchone()[0] is not None:
+            return None
+    cur.execute(f"DROP TABLE IF EXISTS {COLLEGE_SCHOOLS}")
+    slug = _slugLevelSql("t")
+    parts = [f"""
+        SELECT t.school, {slug} AS lvl FROM {tb} t
+        WHERE  t.source = 'tfrrs' AND NULLIF(btrim(t.school), '') IS NOT NULL
+          AND  ({slug} IN ('college', 'hs', 'ms')
+                OR ({slug} = '' AND upper(btrim(t.grade)) ~ {_ELIGIBILITY}))"""
+             for tb in tables]
+    cur.execute(f"""
+        SELECT school, bool_or(lvl = 'college'), bool_or(lvl IN ('hs', 'ms'))
+        FROM ({' UNION ALL '.join(parts)}) x
+        GROUP  BY school""")
+    evidence = cur.fetchall()
+    known = _directory(cur)
+    schools = collegeSchools(evidence, known)
+    cur.execute(f"CREATE TEMP TABLE {COLLEGE_SCHOOLS} (school text PRIMARY KEY)")
+    if schools:
+        cur.execute(f"INSERT INTO {COLLEGE_SCHOOLS} SELECT unnest(%s::text[])",
+                    (sorted(schools),))
+    cur.execute(f"ANALYZE {COLLEGE_SCHOOLS}")
+    vetoed = sum(1 for _s, _c, h in evidence if h)
+    print(f"  [level] {len(schools):,} tfrrs school strings are colleges "
+          f"({vetoed:,} carry a high school slug and never are)", flush=True)
+    return schools
+
+
+def _directory(cur):
+    """known(school) -> bool from college_directory; always False (and said)
+    when the table is absent -- then only a college slug makes a college."""
+    try:
+        from build_college_directory import loadDirectory, lookup
+    except ImportError:                     # pragma: no cover -- a bare checkout
+        loadDirectory = None
+    entries = loadDirectory(cur, "name") if loadDirectory else {}
+    if not entries:
+        print("  [level] ! college_directory absent or empty "
+              "(scripts/build_college_directory.py --write): only a college "
+              "team slug makes a tfrrs row college", flush=True)
+        return lambda school: False
+    return lambda school: lookup(entries, school) is not None
 
 
 def hsSql(a="r"):
@@ -225,26 +357,36 @@ def conflictedCells(rows):
 
 
 def guests(side):
-    """The level(s) to flag in one conflicted cell: the one with fewer race
-    DAYS, or both on a tie."""
+    """The level to flag in one conflicted cell: the one with fewer race
+    DAYS; () on a tie -- a tie is no evidence which side is foreign."""
     n_col = len({d for _, d in side[COLLEGE]})
     n_hs = len({d for _, d in side[HS]})
     if n_hs < n_col:
         return (HS,)
     if n_col < n_hs:
         return (COLLEGE,)
-    return (COLLEGE, HS)
+    return ()
+
+
+def judge(rows):
+    """(flags, ties): flags {result_id: (person_id, acad, level flagged)},
+    every row of the minority side of every conflicted cell; ties
+    [(person_id, acad)], the conflicted cells left alone for want of a
+    majority."""
+    flags, ties = {}, []
+    for (pid, ay), side in conflictedCells(rows).items():
+        lose = guests(side)
+        if not lose:
+            ties.append((pid, ay))
+        for lv in lose:
+            for rid, _day in side[lv]:
+                flags[rid] = (pid, ay, lv)
+    return flags, sorted(ties)
 
 
 def decide(rows):
-    """{result_id: (person_id, acad, level flagged)} -- every row of the
-    minority side of every conflicted cell."""
-    flags = {}
-    for (pid, ay), side in conflictedCells(rows).items():
-        for lv in guests(side):
-            for rid, _day in side[lv]:
-                flags[rid] = (pid, ay, lv)
-    return flags
+    """{result_id: (person_id, acad, level flagged)} -- judge()'s flags."""
+    return judge(rows)[0]
 
 
 # ------------------------------------------------------------------ #
@@ -257,8 +399,10 @@ def prepare(cur, table, sport, explain=False):
     staging step of its 'level_conflict' rule, the way prepareCrossDate
     stages dup_cross_date."""
     t0 = time.time()
-    for tmp in ("lc_col", "lc_cell", "lc_rows", "tw_level_conflict"):
+    for tmp in ("lc_col", "lc_cell", "lc_rows", "lc_tie", "tw_level_conflict"):
         cur.execute(f"DROP TABLE IF EXISTS {tmp}")
+    # the school half of collegeSql, once per session (both sports' rows)
+    stageCollegeSchools(cur)
     stages = stagedSql(table)
     cur.execute("SHOW enable_nestloop")
     nestloop = cur.fetchone()[0]
@@ -283,20 +427,27 @@ def prepare(cur, table, sport, explain=False):
             cur.execute("CREATE INDEX ON lc_cell (person_id)")
             cur.execute("ANALYZE lc_cell")
     cur.execute("SELECT result_id, person_id, acad, day, level FROM lc_rows")
-    flags = decide(cur.fetchall())
+    flags, ties = judge(cur.fetchall())
     cur.execute("CREATE TEMP TABLE tw_level_conflict (result_id bigint PRIMARY KEY)")
     if flags:
         cur.execute("INSERT INTO tw_level_conflict "
                     "SELECT unnest(%s::bigint[]) ON CONFLICT DO NOTHING",
                     (sorted(flags),))
     cur.execute("ANALYZE tw_level_conflict")
+    # the ties, kept for the report: nothing is flagged for them
+    cur.execute("CREATE TEMP TABLE lc_tie (person_id bigint, acad int)")
+    if ties:
+        cur.execute("INSERT INTO lc_tie SELECT unnest(%s::bigint[]), "
+                    "unnest(%s::int[])",
+                    ([p for p, _a in ties], [a for _p, a in ties]))
     persons = {p for p, _a, _l in flags.values()}
     by = defaultdict(int)
     for _p, _a, lv in flags.values():
         by[lv] += 1
     print(f"  [{sport}] level_conflict: {len(persons):,} persons, "
           f"{by[HS]:,} high school rows on college seasons, "
-          f"{by[COLLEGE]:,} college rows on high school seasons "
+          f"{by[COLLEGE]:,} college rows on high school seasons; "
+          f"{len(ties):,} tied seasons left alone "
           f"({time.time() - t0:.0f}s)", flush=True)
     return flags
 
@@ -320,9 +471,16 @@ def _samples(cur, table, sport, flags, limit, person=None):
     identity came from -- the evidence needed to undo the link that made it."""
     cur.execute("SELECT person_id, acad FROM lc_cell")
     cells = cur.fetchall()
-    pids = sorted({p for p, _a, _l in flags.values()}) if person is None \
-        else [int(person)]
-    pids = pids[:limit]
+    cur.execute("SELECT person_id, acad FROM lc_tie")
+    tied = set(cur.fetchall())
+    # the flagged persons first, then the ties -- a tie flags nothing and is
+    # printed so the link behind it can be judged by eye
+    if person is None:
+        flagged = sorted({p for p, _a, _l in flags.values()})
+        pids = flagged[:limit] + sorted({p for p, _a in tied}
+                                        - set(flagged))[:limit]
+    else:
+        pids = [int(person)]
     if not pids:
         return
     has_log = _hasTable(cur, "person_link_log")
@@ -348,7 +506,8 @@ def _samples(cur, table, sport, flags, limit, person=None):
         if pid != last:
             print(f"\n    person {pid}")
             last = pid
-        mark = "FLAG" if rid in flags else "    "
+        mark = ("FLAG" if rid in flags
+                else "TIE " if (pid, ay) in tied and lv else "    ")
         tt = f"{t:8.1f}" if t is not None else "      --"
         print(f"      {mark} {str(date)[:10]} {src:<6} {str(lv or '-'):<7} "
               f"g={str(grade or '-'):<5} {str(school or '')[:28]:<28} "

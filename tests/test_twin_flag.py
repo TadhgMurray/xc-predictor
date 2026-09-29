@@ -91,8 +91,13 @@ _EXPECTED = {
     ("TF", "dup_converted"):  [1802],
     ("TF", "xc_placeholder"): [],
     # the NESCAC review (2026-09-29): 9005 the review's Middlesex League row,
-    # 9014 a college row on a high schooler, 9021/9022 a tie; 7102's April
-    ("XC", "level_conflict"): [9005, 9014, 9021, 9022],
+    # 9014 a college row on a high schooler; 7102's April.
+    # ! 9021/9022, a tie, were flagged here until the first server run showed
+    #   what "a tie flags both" costs (person 6339154, Kenston HS + RPI, lost
+    #   his season): a tie is no evidence, so it flags nothing now. Nor do
+    #   6007 (a tfrrs-hosted high school meet's 'SR-4', Winnisquam) and 6008
+    #   (a high school with a college's name, vetoed by its own hs slug).
+    ("XC", "level_conflict"): [9005, 9014],
     ("TF", "level_conflict"): [9115, 9116],
 }
 
@@ -127,7 +132,7 @@ def test_rules_on_fixtures():
     by = dict(cur.fetchall())
     assert by["twin_race"] == 1 and by["twin_person"] == 1
     assert by["dup_same_feed"] == 2          # 502 and 1602 file here, not as cross-date
-    assert by["level_conflict"] == 6
+    assert by["level_conflict"] == 4          # 9005, 9014, 9115, 9116; no tie
     conn.rollback()
 
 

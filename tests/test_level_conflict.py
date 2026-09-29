@@ -54,9 +54,13 @@ def test_the_reverse_flags_the_college_row_on_a_high_schooler():
     assert set(LC.decide(rows)) == {24}
 
 
-def test_a_tie_is_no_evidence_so_both_go():
+def test_a_tie_is_no_evidence_so_nothing_goes_and_it_is_reported():
+    """Person 6339154 (the first server run, 2026-09-29): one Kenston HS race,
+    one RPI race. "A tie flags both" deleted a real athlete's season."""
     rows = season(3, 2025, (31, "2025-09-06", C), (32, "2025-10-26", H))
-    assert set(LC.decide(rows)) == {31, 32}
+    assert LC.decide(rows) == {}
+    flags, ties = LC.judge(rows)
+    assert flags == {} and ties == [(3, 2025)]
 
 
 def test_a_race_in_both_feeds_votes_once():
@@ -103,29 +107,71 @@ def test_rows_without_a_level_or_a_season_do_not_vote():
     rows = season(11, 2025, (111, "2025-09-06", C), (112, "2025-10-26", H),
                   (113, "2025-10-01", None), (114, "2025-10-02", None))
     rows.append((115, 11, None, "2025-10-03", H))
-    assert set(LC.decide(rows)) == {111, 112}
+    # 115 has no season, so it does not turn the tie into a high school win
+    assert LC.judge(rows) == ({}, [(11, 2025)])
 
 
 def test_guests_counts_distinct_days():
     side = {C: [(1, "2025-09-06"), (2, "2025-09-06"), (3, "2025-09-20")],
             H: [(4, "2025-10-26")]}
     assert LC.guests(side) == (H,)
-    assert LC.guests({C: [(1, "d1")], H: [(2, "d2")]}) == (C, H)
+    assert LC.guests({C: [(1, "d1")], H: [(2, "d2")]}) == (), "a tie flags nothing"
 
 
 # ---- the SQL that says what a row is ------------------------------------ #
 
-def test_college_needs_tfrrs_and_the_eligibility_form_or_a_college_slug():
+def test_college_needs_tfrrs_and_a_college_signal_not_the_grade_form_alone():
+    """The first server run (2026-09-29): Winnisquam Regional HS 'SR-4',
+    Westminster Academy 'SO-2', The Benjamin School 'JR-3' -- tfrrs-hosted
+    high school meets print the eligibility form too."""
     sql = LC.collegeSql("r")
     assert "r.source = 'tfrrs'" in sql
-    assert "'^(FR|SO|JR|SR)-[1-4]$'" in sql, "FR-1..SR-4, grade_sanity 1.6"
-    assert "split_part(lower(r.team_slug), '_', 2) = 'college'" in sql
+    slug = "COALESCE(split_part(lower(r.team_slug), '_', 2), '')"
+    assert f"{slug} = 'college' OR" in sql, "the slug alone is enough"
+    # the form counts only on a slugless row AT A KNOWN COLLEGE
+    form = sql.split(" OR ", 1)[1]
+    assert f"{slug} = ''" in form
+    assert "'^(FR|SO|JR|SR)-[1-6]$'" in form, "redshirts and fifth years too"
+    assert f"r.school IN (SELECT school FROM {LC.COLLEGE_SCHOOLS})" in form
+    assert form.count(" AND ") >= 2, "slugless AND form AND school, all three"
     # the bare word is ambiguous (9-12 or 13-16) and must NOT count
-    rx = re.compile(r"^(FR|SO|JR|SR)-[1-4]$")
-    for g in ("FR-1", "SO-2", "JR-3", "SR-4"):
+    rx = re.compile(r"^(FR|SO|JR|SR)-[1-6]$")
+    # SO-3 / JR-4 a redshirt, SR-5 / SR-6 a fifth or sixth year (Dylan
+    # Schubert, Furman, SR-5)
+    for g in ("FR-1", "SO-2", "JR-3", "SR-4", "SO-3", "JR-4", "SR-5", "SR-6"):
         assert rx.match(g)
-    for g in ("SR", "Fr", "12", "FR-5", "13-14"):
+    for g in ("SR", "Fr", "12", "SR-7", "FR-0", "13-14"):
         assert not rx.match(g), g
+
+
+def test_a_school_is_a_college_by_a_witness_and_never_with_a_high_school_slug():
+    known = {"Middlebury", "Hamilton", "Trinity (Conn.)"}.__contains__
+    evidence = [
+        ("Middlebury", False, False),       # the directory knows it
+        ("Conn College", True, False),      # tfrrs put a college slug on it
+        ("Winnisquam", False, False),       # nobody says college
+        ("Westminster Academy", False, False),
+        ("The Benjamin School", False, False),
+        ("Hamilton", False, True),          # a college's name, a high school's slug
+        ("Trinity (Conn.)", True, True),    # any high school slug vetoes
+        (None, True, False), ("", True, False),
+    ]
+    assert LC.collegeSchools(evidence, known) == {"Middlebury", "Conn College"}
+
+
+def test_the_directory_does_not_know_the_servers_high_schools():
+    """The directory's own lookup, on a directory of the colleges those names
+    come closest to: exact, then the feed's short form, then every token."""
+    import build_college_directory as B
+    entries = {B.normName(n): [(st, n)] for n, st in (
+        ("Westminster College", "PA"), ("Westminster College", "MO"),
+        ("Benjamin Franklin Institute of Technology", "MA"),
+        ("Bates College", "ME"), ("Rensselaer Polytechnic Institute", "NY"),
+        ("Middlebury College", "VT"))}
+    for hs in ("Winnisquam", "Westminster Academy", "The Benjamin School", "Kenston"):
+        assert B.lookup(entries, hs) is None, hs
+    for college in ("Bates", "Middlebury", "RPI"):
+        assert B.lookup(entries, college) is not None, college
 
 
 def test_high_school_needs_a_numeric_grade_and_a_team():
@@ -230,8 +276,15 @@ def test_refresh_replaces_only_its_own_reason():
     cur.execute("INSERT INTO result_twin VALUES ('XC', 701, 'twin_race'), "
                 "('XC', 9005, 'twin_race'), ('XC', 1, 'level_conflict')")
     got = {s: LC.prepare(cur, t, s) for s, t in LC.TABLES.items()}
-    assert sorted(got["XC"]) == [9005, 9014, 9021, 9022]
+    assert sorted(got["XC"]) == [9005, 9014], "the 6003 tie flags nothing"
     assert sorted(got["TF"]) == [9115, 9116]
+    cur.execute("SELECT school FROM lc_college_school ORDER BY 1")
+    assert [r[0] for r in cur.fetchall()] == ["Middlebury", "RPI", "Williams"], \
+        "Hamilton is vetoed by its hs slug; Winnisquam has no witness"
+    # the ties are kept for the report (the last prepare was TF's: none)
+    LC.prepare(cur, "results", "XC")
+    cur.execute("SELECT person_id, acad FROM lc_tie")
+    assert cur.fetchall() == [(6003, 2025)]
     stub = type(sys)("twin_flag")
     stub.ensureTable = lambda c: None
     saved = sys.modules.get("twin_flag")
@@ -249,8 +302,7 @@ def test_refresh_replaces_only_its_own_reason():
         ("TF", 9115, "level_conflict"), ("TF", 9116, "level_conflict"),
         ("XC", 701, "twin_race"),
         ("XC", 9005, "twin_race"),              # an earlier reason keeps its row
-        ("XC", 9014, "level_conflict"), ("XC", 9021, "level_conflict"),
-        ("XC", 9022, "level_conflict")], "the stale id 1 is gone"
+        ("XC", 9014, "level_conflict")], "the stale id 1 is gone"
     cur.execute("DROP TABLE result_twin")
     conn.commit()
 

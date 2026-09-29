@@ -67,7 +67,7 @@ from database import getConn                                  # noqa: E402
 #   linker asks it the same question the conflict flag does. Imported, not
 #   spelled here: a linker and a flag that disagree about what a high school
 #   row is would weld exactly the pairs the flag then has to hide.
-from level_conflict import collegeSql, hsSql                  # noqa: E402
+from level_conflict import collegeSql, hsSql, stageCollegeSchools  # noqa: E402
 
 RULE = "freshman"
 SENIOR = ("12", "12th", "sr", "sr.", "senior")
@@ -114,8 +114,10 @@ def _step(cur, what, sql, params=None):
 # ⚠ AND A GRADE OF "FR" IS NOT ENOUGH ON ITS OWN (2026-09-29). A bare Fr is a
 #   ninth grader in high school and a first-year in college (grade_sanity
 #   2c), and a tfrrs-hosted high school meet writes it for the former. So the
-#   identity must ALSO hold a row that can only be college -- the FR-1
-#   eligibility form or a college team slug (level_conflict.collegeSql).
+#   identity must ALSO hold a row that can only be college -- a college team
+#   slug, or the FR-1 eligibility form at a known college
+#   (level_conflict.collegeSql; the form alone is a tfrrs-hosted high school
+#   meet as often as not, the server run of 2026-09-29).
 FRESHMAN_RE = r"^(fr|freshman|13)"
 
 
@@ -135,6 +137,9 @@ def freshmen(cur, years):
     cur.execute("SET LOCAL work_mem = '512MB'")
     cur.execute("DROP TABLE IF EXISTS lf_t")
     cur.execute("DROP TABLE IF EXISTS lf_early")
+    # collegeSql reads the known-college school strings off this session
+    # (a slugless FR-1 counts only at a known college, level_conflict)
+    stageCollegeSchools(cur)
     key = ("CASE WHEN person_id IS NOT NULL THEN 'p:' || person_id "
            "ELSE 'n:' || COALESCE(id_system, 'tfrrs') || ':' || native_id END")
     _step(cur, "tfrrs rows in those seasons (a scan of both result tables)", f"""

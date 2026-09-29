@@ -37,7 +37,7 @@ sys.path.insert(0, "scripts")
 sys.path.insert(0, "engine")
 from database import getConn, initPool
 # the one definition of a college row and a high school row
-from level_conflict import acadSql, collegeSql, hsSql
+from level_conflict import acadSql, collegeSql, hsSql, stageCollegeSchools
 
 
 def _sportConfig(sport):
@@ -96,6 +96,8 @@ def _buildTemps(cur, cfg, maxPer):
 
     # Remaining id-less tfrrs finishers.
     cur.execute("DROP TABLE IF EXISTS rem_tmp")
+    # the known-college school strings collegeSql reads (level_conflict)
+    stageCollegeSchools(cur)
     cur.execute(f"""
         CREATE TEMP TABLE rem_tmp AS
         SELECT t.result_id, {tnorm} AS nm,
