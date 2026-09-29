@@ -935,6 +935,46 @@ def _loadMatchedTwinKeys(cur, table):
     return {(pid, cmid) for pid, cmid in cur}
 
 
+# _loadDroppedTwins
+# Purpose : a division drop reaches the OTHER feed's copy of the same race.
+# ★ WHY (owner, 2026-09-29: "a drop or fix on one doesn't reach the other").
+#   A _DISTANCE_DROP names one feed's (meet, div). The same race's copy in the
+#   other feed -- same person, same canon_meet_id -- carried on, rated on the
+#   very label the drop had just called unfixable: the NCAA DI 2025 men's
+#   10k's tfrrs division was dropped and its anet copy published 150s.
+# ! ONLY WHEN THE COPY CARRIES THE SAME LABEL. A copy whose own distance
+#   differs is independent evidence about the race (the anet-copy-borrows-
+#   the-tfrrs-distance path below is exactly that), so it is left alone.
+# Output  : {(person_id, canon_meet_id): dropped division's label in metres}.
+def _loadDroppedTwins(cur, table, sport, meet_distances, tfrrs_blob):
+    drops = _DISTANCE_DROP_BY_SPORT.get(sport) or set()
+    if sport != "XC" or not drops:
+        return {}
+    from psycopg2.extras import execute_values
+    cur.execute("CREATE TEMP TABLE IF NOT EXISTS tmp_drop_keys "
+                "(meet_id bigint, div_id bigint)")
+    cur.execute("TRUNCATE tmp_drop_keys")
+    execute_values(cur, "INSERT INTO tmp_drop_keys VALUES %s", list(drops),
+                   page_size=10000)
+    cur.execute(f"""
+        SELECT DISTINCT r.person_id, r.canon_meet_id, r.meet_id, r.div_id, r.source
+        FROM   tmp_drop_keys k
+        JOIN   {table} r ON r.meet_id = k.meet_id AND r.div_id = k.div_id
+        WHERE  r.person_id IS NOT NULL AND r.canon_meet_id IS NOT NULL
+    """)
+    out = {}
+    for pid, cmid, meet_id, div_id, src in cur.fetchall():
+        if src == "tfrrs":
+            info = tfrrs_blob.get((meet_id, div_id)) or {}
+            label = info.get("distance")
+        else:
+            label = meet_distances.get(div_id)
+        if label:
+            out[(pid, cmid)] = float(label)
+    cur.execute("DROP TABLE tmp_drop_keys")
+    return out
+
+
 # _loadCanonTfrrsDistances
 # Purpose : for each canon-linked meet, the realistic tfrrs distance PER GENDER,
 #           so a corrupt ANET distance borrows its correct twin -- NOT one modal
@@ -1785,7 +1825,7 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
                tfrrs_distances,
                matched_twins, canon_distances, wx_idx,
                wheel_divs=frozenset(), wheel_persons=frozenset(),
-               wheel_athletes=frozenset()):
+               wheel_athletes=frozenset(), dropped_twins=None):
     # PER-SPORT selection happens HERE, once, in the closure's constant pool --
     # the per-row checks below stay bare set/dict membership tests, so the
     # sport fix costs the hot loop nothing.
@@ -1857,6 +1897,13 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
                 distance = borrowed
         if distance is None:
             return row[_ID], None, _SkipReason.NO_DISTANCE, None
+        # 2-twin) THE OTHER FEED'S COPY OF THIS RACE SITS IN A DROPPED
+        #    DIVISION ON THE SAME LABEL: the drop's verdict is this row's too
+        #    (_loadDroppedTwins).
+        if dropped_twins and row[_PERSON] is not None and row[_CANON] is not None:
+            dl = dropped_twins.get((row[_PERSON], row[_CANON]))
+            if dl is not None and abs(float(distance) - dl) <= 0.01 * dl:
+                return row[_ID], None, _SkipReason.NO_DISTANCE, None
 
         # 2a) INSANE DISTANCE — a resolved distance outside the race band is
         #     corruption (the *1609.344 monsters + the ~1,685 other over-ceiling
@@ -3123,13 +3170,17 @@ def _buildLookups(read_conn, cfg):
         # WEATHER index: heavy (aggregates weather_grid), built ONLY when the
         # per-sport artifact exists; otherwise weather stays a clean no-op.
         wx_idx = WeatherIndex.build(cur, cfg.sport) if _weatherEnabled(cfg.sport) else None
+        dropped_twins = _loadDroppedTwins(cur, cfg.table, cfg.sport,
+                                          meet_distances, tfrrs_distances)
     print(f"  lookups: {len(genders):,} genders, "
           f"{len(season_levels[0]) + len(season_levels[1]):,} season levels, "
           f"{len(season_levels[2]):,} grade verdicts, "
           f"{len(meet_distances):,} anet XC distances, "
           f"{len(tfrrs_distances):,} tfrrs XC distances, "
           f"{len(matched_twins):,} canon twins, "
-          f"{len(canon_distances):,} canon distances  (date rides the row)")
+          f"{len(canon_distances):,} canon distances  (date rides the row); "
+          f"{len(dropped_twins):,} runners' races whose other-feed copy sits in "
+          f"a dropped division")
     if wx_idx is not None:
         print(f"  weather: index built ({len(wx_idx._wx):,} cell-days) -- "
               f"ACTIVE for {cfg.sport}")
@@ -3143,7 +3194,7 @@ def _buildLookups(read_conn, cfg):
     return (geom_idx, genders, season_levels, meet_distances,
             tfrrs_distances,
             matched_twins, canon_distances, wx_idx, wheel_divs,
-            wheel_persons, wheel_athletes)
+            wheel_persons, wheel_athletes, dropped_twins)
 
 
 # _accumulate
@@ -3225,13 +3276,14 @@ def _runBackfill(read_conn, write_conn, cfg, apply, limit):
 
     (geom_idx, genders, season_levels, meet_distances, tfrrs_distances,
      matched_twins, canon_distances, wx_idx,
-     wheel_divs, wheel_persons, wheel_athletes) = _buildLookups(
+     wheel_divs, wheel_persons, wheel_athletes, dropped_twins) = _buildLookups(
         read_conn, cfg)
     row_fn = _makeRowFn(cfg, geom_idx, genders, season_levels,
                         meet_distances, tfrrs_distances, matched_twins,
                         canon_distances, wx_idx, wheel_divs=wheel_divs,
                         wheel_persons=wheel_persons,
-                        wheel_athletes=wheel_athletes)
+                        wheel_athletes=wheel_athletes,
+                        dropped_twins=dropped_twins)
 
     # ⚠⚠ END THE LOOKUP TRANSACTION BEFORE THE STREAM OPENS (2026-09-24). The
     #    lookups ran on read_conn, and psycopg2 keeps one transaction open until

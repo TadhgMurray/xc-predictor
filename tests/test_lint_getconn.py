@@ -34,7 +34,8 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Listed rather than fixed: touching it would imply it runs.
 _DEAD = {"backfill/backfill_normalize_tf.py"}
 
-_SKIP_DIRS = {".git", "__pycache__", "node_modules", "venv", ".venv"}
+_SKIP_DIRS = {".git", "__pycache__", "node_modules", "venv", ".venv",
+              ".claude"}   # agent worktrees: copies of this tree, not code
 
 _ASSIGN = re.compile(r"^\s*(\w+)\s*=\s*getConn\(\)")
 _CURSOR = re.compile(r"\.cursor\(\)")
