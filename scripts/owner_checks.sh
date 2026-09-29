@@ -32,6 +32,8 @@ CHECKS=(
   "why-unrated-kitchen|$PY scripts/why_unrated.py 29332123 --sport TF"
   "brooks-salcido|$PY scripts/why_unrated.py 19068584 --sport TF --replay"
   "brooks-edwards|$PY scripts/why_unrated.py 21572633 --sport TF --replay"
+  "ms-zone-lutkenhaus|$PY scripts/why_unrated.py 30245014 --sport XC --replay"
+  "ms-zone-vijaykumar|$PY scripts/why_unrated.py 17385087 --sport XC --replay"
   "ncs-weather|$PY scripts/diag_row_weather.py --xc 59845242 52770927 46185539"
   "ncs-explain|$PY scripts/explain_joint_row.py --xc 59845242 52770927 46185539"
   "outliers-dry|$PY -u engine/rating_outliers.py --dry-run --show 20"
@@ -39,6 +41,17 @@ CHECKS=(
   "board-plan|$PY scripts/explain_board.py 'board=ability&pool=hs_m&sport=both&scope=usa&scale=hs&limit=50&offset=0&sort=rating' --plans"
   "sport-gap|$PY scripts/diag_sport_gap_ability.py"
   "amnesty-dry|$PY scripts/amnesty_division_drops.py"
+  "ability-curve-dry|$PY engine/fit_distance_ability.py --dry-run"
+  "one-scale|$PY scripts/diag_one_scale.py --all"
+  "group-means|$PY scripts/build_group_means.py"
+)
+
+# printed, never run: hours each, and each is a comparison to read before a
+# switch is turned on (see the commit messages of df34f33 and the B+C merge)
+LONG_RUNS=(
+  "$PY -u scripts/ablation_ladder.py --only base,season-tie,tilt-hs --pct 15 --outer 5   # then switch_scorecard.py --holdout base vs each"
+  "$PY engine/fit_distance_ability.py                         # writes distance_ability.pkl (30-60 min)"
+  "XCP_DISTANCE_BY=ability bash deploy/run_pipeline.sh --from 5 --skip 08a_holdout,08b_ladder   # adopt C; revert with XCP_DISTANCE_BY=pool"
 )
 
 # printed, never run: each needs the owner's yes after reading the checks
@@ -87,4 +100,6 @@ echo; echo "================ summary ================"
 for s in "${summary[@]}"; do echo "  $s"; done
 echo; echo "================ writes waiting on you (NOT run) ================"
 for w in "${PENDING_WRITES[@]}"; do echo "  $w"; done
+echo; echo "================ long runs (NOT run; hours each) ================"
+for w in "${LONG_RUNS[@]}"; do echo "  $w"; done
 echo; echo "[checks] full output: $LOG"
