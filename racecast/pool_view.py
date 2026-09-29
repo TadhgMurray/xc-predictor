@@ -725,13 +725,16 @@ def stampRowsHs(cur, sport, rows, distance=None, distance_key=None,
 
     has_alt = False
     for row in rows:
+        # the pool the rating was computed in, when the row carries it
+        # (issue 171); else the boards' pool by result id; else the mode
+        pool = row.get("rating_pool") or pools.get(row.get("result_id")) or modal
+        # the pool the page spells the row's grade in (grade_label): an
+        # unrated row still has a grade, and "Senior" in an HS race reads 12
+        row.setdefault("label_pool", pool)
         rating = row.get(rating_key)
         if rating is None:
             row["hs_rating"] = None
             continue
-        # the pool the rating was computed in, when the row carries it
-        # (issue 171); else the boards' pool by result id; else the mode
-        pool = row.get("rating_pool") or pools.get(row.get("result_id")) or modal
         d = distance
         if d is None and distance_key is not None:
             d = row.get(distance_key)

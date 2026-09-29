@@ -127,7 +127,7 @@
                         {{ row.name if row.name else "Unknown" }}
                     {% endif %}
                 </td>
-                <td>{{ row.grade if row.grade else " - " }}</td>
+                <td>{{ row.grade|grade_label(row.rating_pool or row.label_pool) if row.grade else " - " }}</td>
                 <td>{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}<a href="{{ school_href(row.school, header.state) }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label }}{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %} - {% endif %}</td>
                 <td>{{ "%d:%04.1f"|format(row.time_seconds // 60, row.time_seconds % 60) }}</td>
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>

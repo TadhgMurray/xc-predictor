@@ -55,7 +55,7 @@
                     {% else %}{{ r.name if r.name else "Unknown" }}{% endif %}</td>
                 <td class="no-break">{{ r.display_mark }}</td>
                 {% if sec.kind == "running" %}<td>{{ rv(r.speed_rating, r.hs_speed_rating) }}</td>{% endif %}
-                <td>{{ r.grade if r.grade else " - " }}</td>
+                <td>{{ r.grade|grade_label(r.pool) if r.grade else " - " }}</td>
                 {% if with_course %}
                 <td>{% if r.course_name %}<a href="/course/{{ r.course_name|urlencode }}" title="{{ r.course_name }}">{{ r.course_name }}</a>{% else %} - {% endif %}</td>
                 {% endif %}

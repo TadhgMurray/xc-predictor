@@ -7,11 +7,18 @@ database keeps whatever the feed said.
 """
 import re
 
-_WORD_HS = {"fr": "9", "so": "10", "jr": "11", "sr": "12",
-            "freshman": "9", "sophomore": "10", "junior": "11", "senior": "12"}
-_WORD_COLLEGE = {"fr": "FR-1", "so": "SO-2", "jr": "JR-3", "sr": "SR-4",
-                 "freshman": "FR-1", "sophomore": "SO-2", "junior": "JR-3",
-                 "senior": "SR-4"}
+# ★ EVERY SPELLING THE FEEDS WRITE (owner, 2026-09-29: "it'll say senior for
+#   somebody rated in hs instead of 12"). The class words come in full, short
+#   and plural forms, and a school grade as an ordinal ("12th"). One table,
+#   mirrored by rankings.js's gradeLabel -- tests/test_grade_label.py holds
+#   the two to the same answers.
+_CLASS = {"fr": 0, "fresh": 0, "freshman": 0, "freshmen": 0,
+          "so": 1, "soph": 1, "sophomore": 1, "sophomores": 1,
+          "jr": 2, "junior": 2, "juniors": 2,
+          "sr": 3, "senior": 3, "seniors": 3}
+_WORD_HS = {w: str(9 + i) for w, i in _CLASS.items()}
+_WORD_COLLEGE = {w: ("FR-1", "SO-2", "JR-3", "SR-4")[i] for w, i in _CLASS.items()}
+_ORDINAL = re.compile(r"^0*(\d{1,2})(st|nd|rd|th)?\.?$", re.I)
 _NUM_COLLEGE = {"13": "FR-1", "14": "SO-2", "15": "JR-3", "16": "SR-4"}
 _ELIG = re.compile(r"^(FR|SO|JR|SR)-?([1-6])$", re.I)
 
@@ -31,17 +38,19 @@ def gradeLabel(grade, pool=None):
     if m:
         return f"{m.group(1).upper()}-{m.group(2)}" if college or level == "" \
             else _WORD_HS.get(m.group(1).lower(), g)
-    low = g.lower().rstrip(".")
+    low = g.lower().rstrip(".").strip()
+    om = _ORDINAL.match(g)
+    num = str(int(om.group(1))) if om else None
     if college:
         if low in _WORD_COLLEGE:
             return _WORD_COLLEGE[low]
-        if g.isdigit():
-            return _NUM_COLLEGE.get(g, g)
+        if num is not None:
+            return _NUM_COLLEGE.get(num, num)
         return g
     if low in _WORD_HS:
         return _WORD_HS[low]
-    if g.isdigit():
-        return str(int(g))
+    if num is not None:
+        return num
     return g
 
 

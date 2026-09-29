@@ -1126,8 +1126,16 @@ function renderHead(board) {
 /* One spelling for a grade (racecast/grade_label.py, mirrored): a school
    pool reads the number 5-12, a college pool the eligibility spelling
    FR-1..SR-4. The database keeps what the feed said. */
-const _WORD_HS = {fr: "9", so: "10", jr: "11", sr: "12"};
-const _WORD_COL = {fr: "FR-1", so: "SO-2", jr: "JR-3", sr: "SR-4"};
+/* ★ EVERY SPELLING THE FEEDS WRITE (owner, 2026-09-29: "senior" shown for a
+   high schooler instead of 12). The same table as racecast/grade_label.py;
+   tests/test_grade_label.py holds the two to the same answers. */
+const _CLASS = {fr: 0, fresh: 0, freshman: 0, freshmen: 0,
+                so: 1, soph: 1, sophomore: 1, sophomores: 1,
+                jr: 2, junior: 2, juniors: 2,
+                sr: 3, senior: 3, seniors: 3};
+const _WORD_HS = Object.fromEntries(Object.entries(_CLASS).map(([w, i]) => [w, String(9 + i)]));
+const _WORD_COL = Object.fromEntries(Object.entries(_CLASS).map(
+  ([w, i]) => [w, ["FR-1", "SO-2", "JR-3", "SR-4"][i]]));
 const _NUM_COL = {"13": "FR-1", "14": "SO-2", "15": "JR-3", "16": "SR-4"};
 function poolNow() {
   const el = document.getElementById("pool");
@@ -1141,14 +1149,16 @@ function gradeLabel(grade, pool) {
   const college = level === "college" || level === "pro";
   const m = /^(FR|SO|JR|SR)-?([1-6])$/i.exec(g);
   if (m) return (college || level === "") ? `${m[1].toUpperCase()}-${m[2]}` : (_WORD_HS[m[1].toLowerCase()] || g);
-  const low = g.toLowerCase().replace(/\.$/, "");
+  const low = g.toLowerCase().replace(/\.$/, "").trim();
+  const om = /^0*(\d{1,2})(st|nd|rd|th)?\.?$/i.exec(g);
+  const num = om ? String(parseInt(om[1], 10)) : null;
   if (college) {
     if (_WORD_COL[low]) return _WORD_COL[low];
-    if (/^\d+$/.test(g)) return _NUM_COL[g] || g;
+    if (num !== null) return _NUM_COL[num] || num;
     return g;
   }
   if (_WORD_HS[low]) return _WORD_HS[low];
-  if (/^\d+$/.test(g)) return String(parseInt(g, 10));
+  if (num !== null) return num;
   return g;
 }
 

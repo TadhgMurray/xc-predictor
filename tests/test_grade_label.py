@@ -31,3 +31,45 @@ def test_the_boards_mirror_it():
     js = open(os.path.join(ROOT, "racecast", "static", "rankings.js"), encoding="utf-8").read()
     assert "function gradeLabel(grade, pool)" in js
     assert js.count("gradeLabel(r.grade, r.pool || poolNow())") == 3
+
+
+# ★ EVERY SPELLING THE FEEDS WRITE (owner, 2026-09-29: "it'll say senior for
+#   somebody rated in hs instead of 12"). Full, short, plural and ordinal
+#   spellings, in every pool kind, answered the same by the page and the boards.
+_CASES = [(g, p) for g in ("Senior", "senior", "SENIORS", "Sophomore", "Soph.", "Junior",
+                           "Freshman", "Freshmen", "Fresh", "12th", "9th", "11TH", "1st",
+                           "08", "7th", "14", "16th", "SR-4", "Jr-3", "fr1", "So.",
+                           "Unknown", "17-18", "19+", "0", "")
+          for p in ("hs_m", "ms_f", "college_m", "pro_f", None)]
+
+
+def test_class_words_and_ordinals_read_as_the_pool_s_spelling():
+    assert gradeLabel("Senior", "hs_m") == "12" and gradeLabel("seniors", "hs_f") == "12"
+    assert gradeLabel("Sophomore", "hs_m") == "10" and gradeLabel("Freshman", "hs_f") == "9"
+    assert gradeLabel("12th", "hs_m") == "12" and gradeLabel("8th", "ms_m") == "8"
+    assert gradeLabel("Senior", "college_m") == "SR-4" and gradeLabel("Junior", "college_f") == "JR-3"
+    assert gradeLabel("Sophomore", "college_m") == "SO-2" and gradeLabel("14th", "college_m") == "SO-2"
+    assert gradeLabel("Senior", None) == "12"      # a bare word is anet's
+    assert gradeLabel("17-18", "hs_m") == "17-18"  # an age band is not a grade
+
+
+def test_the_js_mirror_gives_the_same_answers():
+    import json
+    import re
+    import shutil
+    import subprocess
+    import pytest
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("no node")
+    js = open(os.path.join(ROOT, "racecast", "static", "rankings.js"), encoding="utf-8").read()
+    start = js.index("const _CLASS = {")
+    fn = re.search(r"function gradeLabel\(grade, pool\) \{.*?\n\}\n", js[start:], re.S)
+    src = js[start:start + fn.end()]
+    prog = src + "\nconsole.log(JSON.stringify(%s.map(([g, p]) => gradeLabel(g, p))));" \
+        % json.dumps(_CASES)
+    out = subprocess.run([node, "-e", prog], capture_output=True, text=True, check=True)
+    got = json.loads(out.stdout)
+    want = [gradeLabel(g, p) for g, p in _CASES]
+    bad = [(c, w, j) for c, w, j in zip(_CASES, want, got) if w != j]
+    assert not bad, bad

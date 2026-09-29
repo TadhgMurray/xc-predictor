@@ -198,7 +198,7 @@
                         <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
-                        <td>{{ r.grade if r.grade else " - " }}</td>
+                        <td>{{ r.grade|grade_label(r.rating_pool or r.label_pool) if r.grade else " - " }}</td>
                         <td>{% if r.school and r.school|is_team %}{{ crest(r.school, header.state) }}<a href="{{ school_href(r.school, header.state) }}" title="{{ r.school }}">{{ r.school|school_label_in(header.state) }}</a>{% elif r.school %}{{ r.school|school_label_in(header.state) }}{% else %} - {% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a></td>
                     </tr>
@@ -265,7 +265,7 @@
                         <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td class="no-break">{{ r.display_time }}</td>
-                        <td>{{ r.grade if r.grade else " - " }}</td>
+                        <td>{{ r.grade|grade_label(r.rating_pool or r.label_pool) if r.grade else " - " }}</td>
                         <td>{% if r.school and r.school|is_team %}{{ crest(r.school, header.state) }}<a href="{{ school_href(r.school, header.state) }}" title="{{ r.school }}">{{ r.school|school_label_in(header.state) }}</a>{% elif r.school %}{{ r.school|school_label_in(header.state) }}{% else %} - {% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a></td>
                     </tr>
