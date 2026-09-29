@@ -6,6 +6,8 @@ run_joint.py -- drive joint_solve over the packed cache.
     python engine/run_joint.py --outer 8 --probes 32
     python engine/run_joint.py --no-curve --no-sport-offset --no-rust
     python engine/run_joint.py --no-robust          # plain least squares
+    python engine/run_joint.py --season-tie         # 2026-09-29, off by default:
+    python engine/run_joint.py --tilt-scale hs      #   js.SEASON_TIE_BANDS, js.TILT_SCALES
 
 ★ NON-DESTRUCTIVE BY CONSTRUCTION. Writes engine/data/joint_difficulty.npz and
   touches NOTHING else -- not results.speed_rating, not course_difficulties,
@@ -492,6 +494,74 @@ def seasonLinks(athlete_raw, year, athlete, n_ath):
     return k0, k1, 1.0 / dt
 
 
+# ★ THE SEASON TIE'S PAIRS (js.SEASON_TIE_BANDS; owner, 2026-09-29). By
+#   PERSON, not by athlete key. The pack keys an athlete as (person, pool),
+#   so seasonLinks above can only tie seasons inside one pool -- and the
+#   thin season that started this is exactly the one a pool change makes:
+#   the first college autumn after a spring of high-school track. Here every
+#   athlete-season of one person is put in date order and each is tied to
+#   the next, whatever the pools; the TRANSITION (earlier pool > later pool)
+#   is what the walk's mean and width are fitted per, so hs_m>college_m
+#   carries its own change of units and level and is never averaged with
+#   hs_m>hs_m.
+#
+# ! TIME IS THE SEASONS' MEAN RACE DATES, not the year label. The engine's
+#   season is the CALENDAR year (speed_ratings, "ACADEMIC YEAR, NOT CALENDAR
+#   YEAR"), so a person's spring hs_m track and autumn college_m XC are two
+#   seasons of ONE year, half a year apart; under --split-ability a year's
+#   TF and XC are two seasons too, and the sport pair joins the transition.
+# ! AND FLOORED AT A SEASON'S OWN LENGTH. Two fragments of one season (the
+#   same months, two pool labels) have mean dates days apart, and a walk
+#   that short would weld them. The floor is the median spread (sd of the
+#   race dates) of the athlete-seasons with POOL_MEAN_MIN_RACES races:
+#   closer than that, two seasons' centres are not distinguishable times.
+def seasonTiePairs(cols, keep, athlete, n_ath, pool_of_athlete, pool_names,
+                   split_sport=False):
+    """(k0, k1, dt_years, transition code, transition names, dt floor):
+    consecutive athlete-seasons of one person, in date order."""
+    athlete = np.asarray(athlete, dtype=np.int64)
+    raw_row = np.asarray(cols["athlete"])[keep].astype(np.int64)
+    days = np.asarray(cols["days"])[keep].astype(np.float64)
+    # person per raw athlete code: the key's first field
+    keys = cols["athlete_keys"]
+    if isinstance(keys, np.ndarray) and keys.ndim == 2:      # the pack's shape
+        _pid = keys[:, 0].astype(str)
+    else:
+        _pid = np.array([str(k[0]) if (k is not None and len(k) > 0) else ""
+                         for k in keys])
+    _, person_of_raw = np.unique(_pid, return_inverse=True)
+    n_row = np.bincount(athlete, minlength=n_ath).astype(np.float64)
+    has = n_row > 0
+    t_mean = -np.bincount(athlete, weights=days, minlength=n_ath) / np.maximum(n_row, 1)
+    t_sq = np.bincount(athlete, weights=days * days, minlength=n_ath) / np.maximum(n_row, 1)
+    t_sd = np.sqrt(np.maximum(t_sq - t_mean ** 2, 0.0))
+    person = np.full(n_ath, -1, dtype=np.int64)
+    person[athlete] = person_of_raw[raw_row]
+    pool = np.full(n_ath, -1, dtype=np.int64)
+    pool[athlete] = np.asarray(pool_of_athlete)[raw_row]
+    # one small code per season: its pool (and, split, its sport)
+    labels = [str(n) for n in pool_names] + ["?"]
+    code = np.where(pool >= 0, pool, len(pool_names))
+    if split_sport and "sport" in cols:
+        sp = np.zeros(n_ath, dtype=np.int64)
+        sp[athlete] = (np.asarray(cols["sport"])[keep] != 0).astype(np.int64)
+        code = code * 2 + sp
+        labels = [f"{p}:{s}" for p in labels for s in ("XC", "TF")]
+    idx = np.flatnonzero(has & (person >= 0))
+    order = idx[np.lexsort((t_mean[idx], person[idx]))]
+    same = person[order][1:] == person[order][:-1]
+    k0 = order[:-1][same]
+    k1 = order[1:][same]
+    full = has & (n_row >= js.POOL_MEAN_MIN_RACES)
+    floor = float(np.median(t_sd[full])) / 365.25 if full.any() else 0.0
+    dt = np.maximum((t_mean[k1] - t_mean[k0]) / 365.25, max(floor, 1e-3))
+    n_code = len(labels)
+    uniq, typ = np.unique(code[k0] * n_code + code[k1], return_inverse=True)
+    names = [f"{labels[u // n_code]}>{labels[u % n_code]}" for u in uniq]
+    return (k0.astype(np.int64), k1.astype(np.int64), dt,
+            typ.reshape(-1).astype(np.int64), names, floor)
+
+
 def venueAltitude(cols, keep, floor_m=js.ALT_FLOOR_M):
     """Per row, km of the cell's venue elevation above the floor (issue
     172), from venue_elevation keyed by the cell key's venue part; 0 where
@@ -623,7 +693,8 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                 sizes=None, dist=True, slope=True, link=True, altitude=False,
                 dist_bands=True, split_ability=False, era_years=0,
                 sport_level=None, importance="field", indoor=True,
-                dist_table=True, indoor_level=js.IND_LEVEL_DEFAULT):
+                dist_table=True, indoor_level=js.IND_LEVEL_DEFAULT,
+                season_tie=False):
     """A Design over the rows in `keep`, plus the per-athlete-season pool
     codes and names. `sizes` (from a full design) keeps a subset aligned.
     The distance classes ride on the Design as `dist_labels` / `dist_refs`.
@@ -803,6 +874,22 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                      else dist_labels)
     D.dist_refs = dist_refs
     D.alt_known, D.alt_cells = alt_known, alt_cells
+    # the season tie (js.SEASON_TIE_BANDS): its pairs ride on the design,
+    # its walk is fitted inside the solve
+    if season_tie and "days" in cols:
+        k0, k1, dt, typ, names, floor = seasonTiePairs(
+            cols, keep, athlete, n_ath, pool_of_athlete, pool_names,
+            split_sport=split_ability)
+        js.attachSeasonTie(D, k0, k1, dt, typ, names)
+        cross = np.array([n.split(">")[0] != n.split(">")[1] for n in names], dtype=bool)
+        n_cross = int(np.bincount(typ, minlength=len(names))[cross].sum()) if names else 0
+        print(f"[joint] season tie: {k0.size:,} consecutive-season pairs of one "
+              f"person ({n_cross:,} across a pool{' or sport' if split_ability else ''} "
+              f"change), {len(names)} transitions; elapsed time between the "
+              f"seasons' mean race dates, floored at {365.25 * floor:.0f} days "
+              f"(the median spread of a full season's race dates)")
+    elif season_tie:
+        print("[joint] season tie: the pack has no race dates ('days') -- untied")
     return D, athlete_pool, pool_names
 
 
@@ -1056,11 +1143,15 @@ def reportFieldByBand(out, D, y):
 def sharedTermKwargs(args):
     """The 2026-09-11 terms, for EVERY buildDesign call site: a holdout
     scored on a design without them would score a different model."""
+    # ★ AND THE SEASON TIE (2026-09-29): its pairs are part of the design, so
+    #   the held-out solve has to carry them or it scores the untied model.
+    #   getattr, because other scripts build their namespaces without it.
     return dict(sport_level=args.sport_level,
                 importance=("none" if args.no_importance else args.importance),
                 indoor=not args.no_indoor,
                 indoor_level=args.indoor_level,
-                dist_table=not args.no_dist_table)
+                dist_table=not args.no_dist_table,
+                season_tie=bool(getattr(args, "season_tie", False)))
 
 
 # ★ THE GO-LIVE'S DESIGN, AS ONE CALL (2026-09-29). main() used to spell its
@@ -1100,7 +1191,10 @@ def designRecord(args, cols, D):
                                     (getattr(D, "course_keys", None)
                                      or cols["course_keys"])]),
            "split_ability": np.array([bool(args.split_ability)]),
-           "sport_offset": np.array([bool(D.sc is not None)])}
+           "sport_offset": np.array([bool(D.sc is not None)]),
+           # the 2026-09-29 switches (both off by default)
+           "season_tie": np.array([bool(getattr(D, "n_tie", 0))]),
+           "tilt_scale": np.array([str(getattr(args, "tilt_scale", "own"))])}
     if args.era_years:
         # the readers (course_bracket, track_variance, explain_joint_row)
         # rebuild (course, era) ids from this, not from whatever subset of
@@ -1196,7 +1290,161 @@ def solveKwargs(args, athlete_pool, verbose):
         ability_weight=args.ability_weight,
         top_frac=args.top_frac,
         nested_var=not args.diag_var,
+        season_tie_sd=getattr(args, "season_tie_sd", None),
+        # set by main() once the pool names are known (tiltScaleInputs);
+        # None is the own-pool tilt, the shipped behaviour
+        tilt_scale=getattr(args, "_tilt_scale_inputs", None),
     )
+
+
+# ★ WHAT THE ENGINE NEEDS TO READ A RATING ON THE HS SCALE (js.TILT_SCALES).
+#   pool_view.hsFactor is C(hs)/C(pool) x F(d, pool)/F(d, hs), one number per
+#   pool: the geometric mean of the two sports' ratios at REP_DIST (XC 5000,
+#   TF 1600). The C ratio comes from the solve's own ratings as it runs
+#   (js.tiltPoolFactors); this supplies the rest -- each pool's same-gender
+#   HS twin and the F ratio -- from normalize_distance's factor function, the
+#   one pool_view reaches through conversions._forward_factor. No database.
+# ! A pool without a gender suffix, without its HS twin in the pack, or
+#   whose factor cannot be evaluated gets f_ratio NaN and KEEPS ITS OWN
+#   SCALE, and the log says which -- pool_view's None, not a 1.0 guess.
+_TILT_REP_DIST = {"XC": 5000.0, "TF": 1600.0}      # pool_view._REP_DIST
+
+
+def tiltScaleInputs(pool_names, factor_fn=None, verbose=True):
+    """{hs_of_pool, f_ratio, names} for js.solveJoint(tilt_scale=...).
+    factor_fn(distance_m, pool, sport) -> the normaliser's multiplier;
+    default normalize_distance._normalizationFactorCached."""
+    names = [str(n).split("|", 1)[0] for n in pool_names]
+    if factor_fn is None:
+        import normalize_distance as nd
+
+        def factor_fn(d, pool, sport):
+            return nd._normalizationFactorCached(d, pool, None, None, None,
+                                                 sport, None)
+    index = {n: i for i, n in enumerate(names)}
+    hs_of = np.full(len(names), -1, dtype=np.int64)
+    fr = np.full(len(names), np.nan)
+    why = {}
+    for p, name in enumerate(names):
+        suffix = name.rsplit("_", 1)[-1]
+        twin = f"hs_{suffix}"
+        if suffix not in ("m", "f"):
+            why[name] = "no gender suffix"
+            continue
+        if twin not in index:
+            why[name] = f"{twin} is not in the pack"
+            continue
+        hs_of[p] = index[twin]
+        if name == twin:
+            fr[p] = 1.0
+            continue
+        ratios = []
+        for sp, d in _TILT_REP_DIST.items():
+            try:
+                f_own, f_hs = factor_fn(d, name, sp), factor_fn(d, twin, sp)
+            except Exception as exc:                          # noqa: BLE001
+                why[name] = f"{sp} factor raised {type(exc).__name__}"
+                continue
+            if f_own and f_hs and f_own > 0 and f_hs > 0:
+                ratios.append(float(f_own) / float(f_hs))
+        if ratios:
+            fr[p] = float(np.exp(np.mean(np.log(ratios))))
+        else:
+            why.setdefault(name, "no distance factor")
+    if verbose:
+        print("[joint] tilt scale HS: each pool's rating is read on its HS "
+              "twin's scale, C(hs)/C(pool) from the solve's ratings x the "
+              "distance factors' ratio: "
+              + ", ".join(f"{n} F x{fr[i]:.4f}" for i, n in enumerate(names)
+                          if np.isfinite(fr[i]) and n != f"hs_{n.rsplit('_', 1)[-1]}")
+              + ("; OWN SCALE: " + ", ".join(f"{n} ({w})" for n, w in why.items())
+                 if why else ""))
+    return {"hs_of_pool": hs_of, "f_ratio": fr, "names": names}
+
+
+HOLDOUT_SEASON_BUCKETS = ((1, 1), (2, 2), (3, 5), (6, None))   # for reading
+
+
+# ★ WHAT THE TIE MOVED, EVERY RUN THAT CARRIES IT. At the solution the rows'
+#   pull on an ability and the tie's balance: den_i (a_i - mean_i) =
+#   -tie_gradient_i, so the season sits tie_gradient_i / den_i away from
+#   where its own rows alone (against the same courses) would put it. That
+#   is the move, exactly, and by season size it is the owner's test: a full
+#   season barely moves, a two-race season moves toward its neighbours.
+def seasonTieMoves(a, D, w, tie_w, tie_mean):
+    """Per athlete-season, the tie's displacement in log-time (positive =
+    the tie made it slower), 0 for untied seasons."""
+    a = np.asarray(a, dtype=np.float64)
+    g = js.seasonTieApply(a, D, tie_w, tie_mean)
+    lm = tie_w * tie_mean
+    g = g + (np.bincount(D.tie_k0, weights=lm, minlength=D.n_ath)
+             - np.bincount(D.tie_k1, weights=lm, minlength=D.n_ath))
+    den = np.bincount(D.athlete, weights=np.asarray(w, dtype=np.float64),
+                      minlength=D.n_ath)
+    return np.where(den > 0, -g / np.maximum(den, 1e-12), 0.0)
+
+
+def reportSeasonTie(out, D):
+    if out.get("tie_w") is None or not getattr(D, "n_tie", 0):
+        return
+    for line in (out.get("season_tie_lines") or []):
+        print(line)
+    a = out.get("ability_raw", out["ability"])
+    mv = seasonTieMoves(a, D, out["weights"], np.asarray(out["tie_w"]),
+                        np.asarray(out["tie_mean"]))
+    tied = np.zeros(D.n_ath, dtype=bool)
+    tied[D.tie_k0[np.asarray(out["tie_w"]) > 0]] = True
+    tied[D.tie_k1[np.asarray(out["tie_w"]) > 0]] = True
+    n = np.asarray(out["n_races"])
+    print("[joint] season tie: how far it moved each tied season from its own "
+          "rows (log-time %, about rating points at 100; + = slower):")
+    print(f"    {'races':>7}{'seasons':>12}{'median |move|':>15}{'p90 |move|':>12}"
+          f"{'mean move':>11}")
+    for lo, hi in ((1, 1), (2, 2), (3, 5), (6, 9), (10, None)):
+        m = tied & (n >= lo) & (True if hi is None else n <= hi)
+        if not m.any():
+            continue
+        lab = f"{lo}" if lo == hi else (f"{lo}+" if hi is None else f"{lo}-{hi}")
+        x = 100 * mv[m]
+        print(f"    {lab:>7}{int(m.sum()):>12,}{np.median(np.abs(x)):>14.2f}%"
+              f"{np.percentile(np.abs(x), 90):>11.2f}%{x.mean():>+10.3f}%")
+
+
+def reportTiltScale(out, pool_names):
+    """The HS factors the tilt read each pool through (--tilt-scale hs), to
+    set beside the site's (scripts/diag_hs_factor.py): the same formula, the
+    solve's pool means against the published rows' medians."""
+    fac = out.get("tilt_pool_factor")
+    if fac is None:
+        return
+    print("[joint] tilt read on the HS scale; per-pool factor own -> HS "
+          "(the site's pool_view.hsFactor, on the solve's own pool means): "
+          + ", ".join(f"{n} x{float(f):.4f}" for n, f in zip(pool_names, fac)))
+
+
+def holdoutBreakdown(err, season_rows, pool, min_rows=200):
+    """Lines: the held-out error sd and mean by the athlete-season's
+    training rows and by pool. Pure; a bucket under min_rows is skipped."""
+    err = np.asarray(err, dtype=np.float64)
+    season_rows = np.asarray(season_rows)
+    pool = np.asarray(pool, dtype=object)
+    out = ["        by the athlete-season's TRAINING rows (what the season tie "
+           "acts on):"]
+    for lo, hi in HOLDOUT_SEASON_BUCKETS:
+        m = (season_rows >= lo) & (True if hi is None else season_rows <= hi)
+        if int(m.sum()) < min_rows:
+            continue
+        lab = f"{lo}" if lo == hi else (f"{lo}+" if hi is None else f"{lo}-{hi}")
+        out.append(f"          {lab:>5} rows: sd {err[m].std():.6f}  mean "
+                   f"{err[m].mean():+.5f}  ({int(m.sum()):,} held-out rows)")
+    out.append("        by pool (what the HS tilt acts on):")
+    for name in sorted(set(pool.tolist())):
+        m = pool == name
+        if int(m.sum()) < min_rows:
+            continue
+        out.append(f"          {str(name):>10}: sd {err[m].std():.6f}  mean "
+                   f"{err[m].mean():+.5f}  ({int(m.sum()):,})")
+    return out
 
 
 def holdout(cols, keep, args, athlete_pool, D_full):
@@ -1231,14 +1479,29 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                              dist_bands=not args.no_dist_bands,
                              split_ability=args.split_ability,
                              era_years=args.era_years,
-                             **sharedTermKwargs(args))
+                             # the held-out rows are predicted, not fitted:
+                             # the tie's pairs live on the training design
+                             **dict(sharedTermKwargs(args), season_tie=False))
     t0 = time.time()
     out = js.solveJoint(y_all[keep_tr], design=D_tr, n_probe=0,
                         **solveKwargs(args, athlete_pool, verbose=False))
+    # the walk the held-out solve fitted, so the rung's log says what it tied
+    if out.get("season_tie_lines"):
+        print("[joint] season tie on the training rows (walk per transition "
+              "and band; log-time, negative m = faster the next year):")
+        for line in out["season_tie_lines"]:
+            print(line)
     pred, cov = js.predictHeldOut(out, D_tr, D_te, athlete_pool=athlete_pool,
                                   tilt=not args.no_tilt)
     y_te = y_all[keep_te]
     err = y_te[cov] - pred[cov]
+    # per held-out row: how many TRAINING rows its athlete-season kept, and
+    # its pool -- the two axes the 2026-09-29 switches act on (a thin season
+    # is what the season tie moves; the pool is what the HS tilt equalises)
+    n_tr_season = np.bincount(D_tr.athlete, minlength=D_tr.n_ath)[D_te.athlete]
+    _pool_of_raw, _pool_names = poolCodes(cols["athlete_keys"])
+    pool_te = np.asarray(_pool_names, dtype=object)[
+        _pool_of_raw[np.asarray(cols["athlete"])[keep_te]]]
     # ★ THE HELD-OUT ROWS, PREDICTION BY PREDICTION (2026-09-12), so another
     #   engine can be scored on exactly these rows: the bracket engine
     #   covers 59% of them and the joint model 89%, and two error sds on
@@ -1259,7 +1522,9 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                  covered=cov.astype(bool), y=y_te.astype(np.float64),
                  kind=np.array([kind]), sample_pct=np.array([float(args.sample_pct)]),
                  sample_seed=np.array([int(args.sample_seed)]),
-                 row_space=np.array(["file"]))
+                 row_space=np.array(["file"]),
+                 season_train_rows=n_tr_season.astype(np.int32),
+                 pool=np.asarray(pool_te, dtype=str))
         print(f"[joint] held-out predictions -> {dump} ({int(cov.sum()):,} covered "
               f"of {cov.size:,})")
     # ⚠ SAY WHICH RUNG. "error sd 0.044" means nothing without it: holding
@@ -1279,6 +1544,14 @@ def holdout(cols, keep, args, athlete_pool, D_full):
             if m.sum() > 1000:
                 e = y_te[m] - pred[m]
                 print(f"        {name}: {e.std():.6f}  ({int(m.sum()):,} rows)")
+    # ★ WHERE A SWITCH ACTS, NOT ONLY THE HEADLINE. The season tie moves thin
+    #   seasons and should leave full ones alone; the HS tilt moves the
+    #   non-HS pools. One sd over every row hides both, so the same score by
+    #   the athlete-season's TRAINING rows and by pool. The bucket edges are
+    #   for reading only. scripts/switch_scorecard.py --holdout compares two
+    #   rungs' dumps row for row on the rows both covered.
+    for line in holdoutBreakdown(err, n_tr_season[cov], pool_te[cov]):
+        print(line)
     # ⚠ THE COMPARISON IS ONLY LEGAL ON THE ROW RUNG. pair_all's 0.044325
     #   was a ROW split -- the same race was in train, so its race-day
     #   effect was already fitted and the score is an INTERPOLATION. A race
@@ -1421,6 +1694,31 @@ def buildParser():
                     help="the consecutive-season link (issue 154); off by "
                          "default, see the note above")
     ap.add_argument("--no-link", action="store_true", help=argparse.SUPPRESS)
+    # ★ THE SEASON TIE (owner, 2026-09-29: "try to be safe and test it"). OFF
+    #   by default; see js.SEASON_TIE_BANDS for what it is and why it is not
+    #   the link above. Score it before it ships: the ladder's 'season-tie'
+    #   rung against 'base', then scripts/switch_scorecard.py on two
+    #   full solves.
+    ap.add_argument("--season-tie", action="store_true",
+                    help="tie consecutive athlete-seasons of one person by a "
+                         "random walk whose mean change and width per "
+                         "transition (pool > pool, rating band) are fitted on "
+                         "the untied first pass (js.seasonTieFit). Off by "
+                         "default")
+    ap.add_argument("--season-tie-sd", type=float, default=None, metavar="SD",
+                    help="STATE the walk's sd per sqrt(year) for every "
+                         "transition instead of fitting it (the mean is still "
+                         "fitted); for pricing the fit, not for go-live")
+    # ★ THE TILT ON ONE SCALE (owner, 2026-09-29). 'own' is the shipped tilt;
+    #   'hs' reads it at the HS-equivalent rating (js.TILT_SCALES). The
+    #   pipeline passes XCP_TILT_SCALE here and the site reads the same
+    #   variable (racecast/tilt.py), so set it in /etc/xc-predictor.env,
+    #   where both see it -- a board tilted one way and converted the other
+    #   is two scales again.
+    ap.add_argument("--tilt-scale", choices=js.TILT_SCALES, default="own",
+                    help="the rating the course tilt reads: own (the athlete's "
+                         "own pool's scale, default) or hs (the HS-equivalent: "
+                         "own x the pool's HS factor)")
     ap.add_argument("--no-sport-offset", action="store_true")
     # ★ THE MEASURED XC/TF GAP (owner, 2026-09-09: "mainly the fact that most
     #   of the best seasons of all time are tf"). scripts/measure_sport_gap.py
@@ -2193,8 +2491,14 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     w = np.asarray(out["weights"], dtype=np.float64)
     resid = z - h * (D_b[D.cell] + u_row)                  # what is left for the ability
     den = np.bincount(D.athlete, weights=w, minlength=D.n_ath)
-    a_new = np.where(den > 0, np.bincount(D.athlete, weights=w * resid, minlength=D.n_ath)
-                     / np.maximum(den, 1e-12), b["a"])
+    # ! UNDER THE SEASON TIE THE ABILITY BLOCK HAS A PENALTY (2026-09-29), so
+    #   "the solve's own weighted mean" is no longer the solve's ability: a
+    #   plain mean here would publish the untied abilities under the bracket
+    #   courses and the switch would never reach a board. tiedAbilities is
+    #   the same block with the tie in it, and exactly the mean without one.
+    a_new = js.tiedAbilities(den, np.bincount(D.athlete, weights=w * resid,
+                                              minlength=D.n_ath),
+                             D, out.get("tie_w"), out.get("tie_mean"), b["a"])
     gauge = np.asarray(out["ability"], dtype=np.float64) - b["a"]   # the curve's gauge shift
     delta_joint = np.asarray(out["delta"], dtype=np.float64).copy()
     a_joint = b["a"].copy()
@@ -2491,8 +2795,11 @@ def main():
           f"endurance slope {'ON' if D.n_g else 'off'}, "
           f"season link {'ON' if getattr(D, 'has_link', False) else 'off'}, "
           f"altitude {'ON' if getattr(D, 'n_k', 0) else 'off'}, "
-          f"tilt {'off' if args.no_tilt else 'ON (own ability)'}, "
+          f"tilt {'off' if args.no_tilt else 'ON (' + ('HS-equivalent' if args.tilt_scale == 'hs' else 'own') + ' ability)'}, "
+          f"season tie {'ON' if getattr(D, 'n_tie', 0) else 'off'}, "
           f"robust {'off' if args.no_robust else 'ON'}")
+    if args.tilt_scale == "hs" and not args.no_tilt:
+        args._tilt_scale_inputs = tiltScaleInputs(pool_names)
 
     if args.holdout or args.holdout_only:
         holdout(cols, keep, args, athlete_pool, D)
@@ -2593,6 +2900,8 @@ def main():
     for _name, _fn in (("level and curve", lambda: reportLevelAndCurve(out, D, pool_names, old_gap)),
                        ("shared terms", lambda: reportSharedTerms(out, D, pool_names)),
                        ("tilt by band", lambda: reportTiltByBand(out, D, y)),
+                       ("season tie", lambda: reportSeasonTie(out, D)),
+                       ("tilt scale", lambda: reportTiltScale(out, pool_names)),
                        ("field by band", lambda: reportFieldByBand(out, D, y))):
         guardedReport(_name, _fn)
 
@@ -2628,6 +2937,12 @@ def main():
         save["bracket_race_sat"] = np.array([float(be.RACE_SAT)])
     if out.get("rating") is not None:
         save["rating"] = out["rating"].astype(np.float32)
+    # the 2026-09-29 switches, so a reader (bracket_engine, the scorecard)
+    # knows what this file's ratings and tilt were made with
+    if out.get("tilt_pool_factor") is not None:
+        save["tilt_pool_factor"] = np.asarray(out["tilt_pool_factor"], dtype=np.float64)
+    if out.get("tie_w") is not None:
+        save["season_tie_lines"] = np.array(list(out.get("season_tie_lines") or []))
     if out.get("beta") is not None:
         save["beta"] = out["beta"].astype(np.float32)
     if "curve_anchored" in out:

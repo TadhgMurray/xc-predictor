@@ -825,6 +825,19 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   # ★ XCP_TRACK_LEVEL_BY_POOL=0 leaves the college-only and high-school-only
   #   tracks at the level the linkage gave them; default 1 recentres each host
   #   population's outdoor tracks to the same zero (run_joint.trackPopulationShift).
+  # ★ THE TWO 2026-09-29 SWITCHES (owner: "try to be safe and test it"),
+  #   both OFF unless set, both carried by 08a so the holdout scores the
+  #   model that ships:
+  #   XCP_SEASON_TIE=1   ties consecutive athlete-seasons of one person by a
+  #                      random walk fitted per transition (joint_solve.
+  #                      SEASON_TIE_BANDS); a two-race season leans on its
+  #                      neighbours, a full one barely moves.
+  #   XCP_TILT_SCALE=hs  the course tilt reads the HS-equivalent rating
+  #                      (joint_solve.TILT_SCALES). The site reads the same
+  #                      variable (racecast/tilt.py, conversions._tilt), so
+  #                      set it in /etc/xc-predictor.env and restart the site.
+  #   Score them first: scripts/ablation_ladder.py --only base,season-tie,
+  #   tilt-hs, then scripts/switch_scorecard.py on the rungs' dumps.
   # ★ XCP_DIFFICULTY=bracket publishes the bracket engine's course numbers
   #   (run_joint.bracketDifficulties): the solve still fits everything
   #   else, the courses come from the owner's method, the abilities are
@@ -867,6 +880,8 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_SPLIT_ABILITY:+--split-ability} \
       ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"} \
       ${XCP_WINTER_GAIN_BANDS:+--winter-gain-bands "$XCP_WINTER_GAIN_BANDS"} \
+      ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
+      $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) \
       $([ "${XCP_ALTITUDE:-1}" != "0" ] && echo --altitude)
   # ★★ THE SCOREBOARD, EVERY RUN (2026-09-10). Until now nothing in this
   #    pipeline produced a number that said whether a change helped, so
@@ -900,7 +915,9 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
       ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
       ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
-      ${XCP_NO_DIST_TABLE:+--no-dist-table} || true
+      ${XCP_NO_DIST_TABLE:+--no-dist-table} \
+      ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
+      $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
   # ! A RUNG IS A SOLVE (2026-09-12: "08b takes over 6 hours ... gets
   #   stuck"). Each rung solves XCP_LADDER_PCT of the athletes, the era
   #   rungs on three times the cells, and until today nothing was printed

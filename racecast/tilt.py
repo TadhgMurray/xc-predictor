@@ -54,24 +54,57 @@ TILT_K = -0.031
 #   They only stop a garbage rating from inverting the sign of a course.
 H_MIN, H_MAX = 0.60, 1.50
 
+# ★★ THE SCALE THE TILT READS (owner, 2026-09-29; the engine's
+#    joint_solve.TILT_SCALES). 'own' reads the rating on the athlete's own
+#    pool's scale -- the shipped tilt. 'hs' reads the HS-equivalent, own x
+#    the pool's HS factor (pool_view.repFactor), so the same run at the same
+#    course is charged alike whether it is labelled hs_m, college_m or ms_m.
+#    The engine takes the switch from run_joint --tilt-scale, which the
+#    pipeline fills from XCP_TILT_SCALE; this reads the same variable, so it
+#    belongs in /etc/xc-predictor.env where the site and the pipeline both
+#    see it. A pool with no HS factor keeps its own scale, as in the engine.
+TILT_SCALES = ("own", "hs")
 
-def h(rating, k=TILT_K):
+
+def tiltScale():
+    """'own' or 'hs', from XCP_TILT_SCALE; anything else is 'own'."""
+    import os
+    v = (os.environ.get("XCP_TILT_SCALE") or "own").strip().lower()
+    return v if v in TILT_SCALES else "own"
+
+
+def scaleRating(rating, pool=None):
+    """The rating the tilt reads: the rating itself, or under
+    XCP_TILT_SCALE=hs its HS-equivalent when the pool has a factor."""
+    if rating is None or pool is None or tiltScale() != "hs":
+        return rating
+    try:
+        from pool_view import repFactor
+        f = repFactor(pool, None)
+    except Exception:                    # noqa: BLE001 -- a view, not a page
+        f = None
+    return float(rating) * f if f else rating
+
+
+def h(rating, k=TILT_K, pool=None):
     """
     How much of a course's difficulty this athlete actually feels.
 
-    Arguments: rating -- the athlete's speed rating, 100-centred.
+    Arguments: rating -- the athlete's speed rating, 100-centred;
+               pool   -- the pool it is rated in, read only under
+                         XCP_TILT_SCALE=hs (scaleRating).
     Output:    a multiplier on delta, clamped to [H_MIN, H_MAX].
     """
     if rating is None:
         return 1.0
     try:
-        v = 1.0 + k * (float(rating) - 100.0) / 10.0
+        v = 1.0 + k * (float(scaleRating(rating, pool)) - 100.0) / 10.0
     except (TypeError, ValueError):
         return 1.0
     return max(H_MIN, min(H_MAX, v))
 
 
-def difficultyFor(difficulty, rating, k=TILT_K):
+def difficultyFor(difficulty, rating, k=TILT_K, pool=None):
     """
     Course difficulty as THIS athlete experiences it.
 
@@ -83,10 +116,10 @@ def difficultyFor(difficulty, rating, k=TILT_K):
     """
     if difficulty is None:
         return None
-    return float(difficulty) * h(rating, k)
+    return float(difficulty) * h(rating, k, pool)
 
 
-def ratingFor(rating, difficulty, k=TILT_K):
+def ratingFor(rating, difficulty, k=TILT_K, pool=None):
     """
     ★ THE ONE A RACE PAGE WANTS. The rating this performance is worth once the
       course is charged at the athlete's own level.
@@ -109,12 +142,12 @@ def ratingFor(rating, difficulty, k=TILT_K):
     denom = 1.0 + d
     if abs(denom) < 1e-9:
         return rating
-    return float(rating) * (1.0 + d * h(rating, k)) / denom
+    return float(rating) * (1.0 + d * h(rating, k, pool)) / denom
 
 
-def shift(rating, difficulty, k=TILT_K):
+def shift(rating, difficulty, k=TILT_K, pool=None):
     """How many rating points the tilt moves this performance. Signed."""
-    out = ratingFor(rating, difficulty, k)
+    out = ratingFor(rating, difficulty, k, pool)
     return None if out is None or rating is None else out - float(rating)
 
 

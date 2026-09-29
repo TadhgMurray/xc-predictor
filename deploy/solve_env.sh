@@ -231,4 +231,10 @@ XCP_BRACKET_XC_LEVEL XCP_BRACKET_XC_LEVEL_MODE \
 XCP_WINTER_GAIN XCP_WINTER_GAIN_BANDS \
 XCP_SPORT_LEVEL_POOLS XCP_BRACKET_PRIOR XCP_BRACKET_PLACE_RADIUS \
 XCP_BRACKET_PLACE_PRIOR XCP_BRACKET_SIBLING_TOL XCP_BRACKET_WINDOW XCP_COURSE_SCALE \
-XCP_FROM_STATE XCP_PROBES XCP_RACE_EFFECT_SPORTS"
+XCP_FROM_STATE XCP_PROBES XCP_RACE_EFFECT_SPORTS \
+XCP_SEASON_TIE XCP_TILT_SCALE"
+# ★ THE TWO 2026-09-29 SWITCHES ARE LISTED, NOT SET (owner: "try to be safe
+#   and test it"). Both stay OFF until the ladder's season-tie / tilt-hs
+#   rungs and scripts/switch_scorecard.py say they help; listed so every run
+#   records whether they were on. XCP_TILT_SCALE is read by the site too, so
+#   it goes in /etc/xc-predictor.env, not here.

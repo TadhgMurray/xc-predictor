@@ -968,9 +968,17 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     else:
         h = np.ones(n)
         if tilt and rating is not None:
-            r_clip = np.clip(np.nan_to_num(rating, nan=100.0), js.TILT_RATING_LO,
-                             js.TILT_RATING_HI)
-            h = 1.0 + js.TILT_K * (r_clip - 100.0) / 10.0
+            # ★ THE SCALE THE SOLVE'S TILT READ (js.TILT_SCALES, 2026-09-29):
+            #   a file solved under --tilt-scale hs carries its per-pool HS
+            #   factors, and the engine's tilt must read the same rating or
+            #   the diagnostics score a tilt the solve never used
+            fac = None
+            if (npz is not None and "tilt_pool_factor" in npz
+                    and "athlete_pool" in npz
+                    and np.asarray(npz["athlete_pool"]).size == n_season):
+                fac = np.asarray(npz["tilt_pool_factor"], dtype=np.float64)[
+                    np.asarray(npz["athlete_pool"], dtype=np.int64)][season]
+            h = js.tiltRows(rating, fac)
     valid = (course >= 0) & np.isfinite(z)
     ref = valid & train
     # the voters: the top fraction of each race's TRAINING field

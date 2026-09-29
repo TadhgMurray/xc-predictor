@@ -118,6 +118,15 @@ LADDER = [
      "the XC/TF level ASSERTED at the stated grass cost instead of "
      "estimated. Sport is season, so a held-out RACE cannot score the level "
      "itself -- read this rung for what the free curve does to the rest"),
+
+    # ---- the 2026-09-29 switches (owner: "try to be safe and test it") -- #
+    ("season-tie", ["--altitude", "--season-tie"],
+     "consecutive athlete-seasons of one person tied by a random walk "
+     "fitted per transition: a thin season leans on its neighbours. Read "
+     "the 1- and 2-row lines of the rung's log, not only the headline"),
+    ("tilt-hs", ["--altitude", "--tilt-scale", "hs"],
+     "the course tilt reads the HS-equivalent rating instead of the own-"
+     "pool one. Read the by-pool lines of the rung's log"),
 ]
 
 

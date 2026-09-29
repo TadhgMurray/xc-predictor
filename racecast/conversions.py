@@ -214,7 +214,15 @@ def engineScale(pool, sport):
         or m.get((_bare(pool), "TF"))
 
 
-def _tilt(rating):
+def _tilt(rating, pool=None):
+    # ★ ON THE SCALE THE ENGINE'S TILT READ (2026-09-29): under
+    #   XCP_TILT_SCALE=hs the HS-equivalent (tilt.scaleRating), so a time
+    #   converted here is charged the course the stored rating was
+    try:
+        from tilt import scaleRating
+        rating = scaleRating(rating, pool)
+    except Exception:                                    # noqa: BLE001
+        pass
     r = min(max(float(rating), _TILT_LO), _TILT_HI)
     return 1.0 + _TILT_K * (r - 100.0) / 10.0
 
@@ -315,7 +323,7 @@ def venueEffect(pool, sport, rating, chosen_difficulty, distance_meters):
     if chosen_difficulty is None:
         base = med
     else:
-        base = _tilt(rating) * (math.log1p(float(chosen_difficulty)) + shift)
+        base = _tilt(rating, pool) * (math.log1p(float(chosen_difficulty)) + shift)
     return (base + distance_offset(pool, sport, distance_meters, rating=rating)
             + sport_gain(pool, sport, rating))
 

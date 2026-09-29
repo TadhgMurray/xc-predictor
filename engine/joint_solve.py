@@ -432,6 +432,80 @@ SLOPE_RIDGE = 2.0
 #   year-to-year change toward zero, which is why it must stay weak.
 LINK_WEIGHT = 0.8
 
+# ★★ THE SEASON TIE (owner, 2026-09-29: "try to be safe and test it"; OFF
+#    unless run_joint --season-tie / XCP_SEASON_TIE=1). An ability is fitted
+#    per athlete-season with no prior of its own, so a two-race season rests
+#    on its two races. Jack Moretta (29603084): 2026 XC is two races and read
+#    88.9, beside a 2025 XC near 103 and a spring-2026 track at 102-105.
+#
+#    The tie is a RANDOM WALK between consecutive athlete-seasons of the same
+#    PERSON, exactly the shape of the course eras' walk (ERA_DRIFT_SD: "a
+#    random walk's variance grows with elapsed time"):
+#
+#        a[next] - a[prev]  ~  N( c_g + m_g * dt,  s_g^2 * dt )
+#
+#    dt the years between the two seasons' mean race dates, g the TRANSITION
+#    (earlier pool > later pool: hs_m>hs_m, hs_m>college_m, ms_f>hs_f ...) and
+#    the rating band of the pair. Inside one pool c_g = 0: a walk with drift.
+#    A change of pool is a STEP c_g (the new pool's units and level) plus the
+#    new pool's own yearly m (see _selfRate). In row units the penalty is
+#    sigma2 / (s_g^2 * dt), which is the era walk's pen_era with the drift sd
+#    per transition instead of one stated number.
+#
+#  ! NOT THE 2026-09-04 LINK (LINK_WEIGHT above), and the difference is the
+#    point. That link was ZERO-MEAN: the population improves ~5% a year, so
+#    it pulled every thin young season toward LAST year, the day looked fast
+#    and Woodbridge lost 7%. Here the mean m_g is the measured improvement of
+#    that transition in that band, so a season sitting where its neighbours
+#    and the expected improvement put it feels no pull at all; and the width
+#    s_g is measured too, so the tie is exactly as loose as real year-to-year
+#    change is wide.
+#
+#  ★ BOTH ARE FITTED, ONCE, ON THE UNTIED FIRST PASS (seasonTieFit). From the
+#    pairs where BOTH seasons have POOL_MEAN_MIN_RACES races (the solve's own
+#    "a season that counts"): m_g the median change per year (c_g the median
+#    step at a change of pool), s_g^2 the robust
+#    (MAD) variance of the per-sqrt-year deviations LESS the two abilities'
+#    own sampling variance (sigma2 / information, which is what a measured
+#    change carries on top of the real one). A transition or band with fewer
+#    than SPORT_GAIN_MIN_ATHLETES such pairs borrows its transition's all-band
+#    fit; a transition with fewer is not tied at all, and neither is one whose
+#    measured spread is no wider than the noise (the data cannot size the
+#    walk there, and a zero-width walk would weld two seasons together).
+#    Bands are SPORT_GAIN_BANDS on the pair's mean rating, symmetric in the
+#    two seasons so regression to the mean does not bias m_g.
+#
+#  ★ WHAT MOVES. A season with n races and one neighbour moves by
+#    lambda / (n + lambda) of its deviation from where the neighbour and the
+#    fitted mean put it, lambda = sigma2 / (s_g^2 dt + sigma2 / n_neighbour):
+#    about one race's worth when the walk's sd is near the row sigma. Measured
+#    on tests/test_joint_season_tie.py's world (sigma and walk sd both 0.03,
+#    m -3%/yr): eight-race seasons moved a median 0.23% against their own se
+#    of 0.97%, the population's mean yearly change stayed -3.1%/-3.2%, and
+#    the two-race Jack-shaped season moved a fifth of its 5.5% error.
+#    run_joint.reportSeasonTie prints the same table by races every run.
+#
+#  ⚠ WHAT IT DOES NOT MOVE. The boards' season number (athlete_season.
+#    mean_rating) is the 80th percentile of the season's PER-RESULT ratings
+#    (build_ranking_results._ATHLETE_SEASON_SQL), and a per-result rating is
+#    the race's time against the course -- no ability in it but the tilt's.
+#    The tie moves the solve's ability: athlete_ratings, the tilt, the field
+#    term, the courses through better abilities, and the held-out score.
+SEASON_TIE_BANDS = SPORT_GAIN_BANDS
+SEASON_TIE_MIN_PAIRS = SPORT_GAIN_MIN_ATHLETES
+
+# ★★ THE TILT ON ONE SCALE (owner, 2026-09-29; OFF unless run_joint
+#    --tilt-scale hs / XCP_TILT_SCALE=hs). h = 1 + TILT_K (rating - 100) / 10
+#    reads the rating on the athlete's OWN pool's scale, and one run of one
+#    race reads 156.6 as hs_m, 124.3 as college_m and 169.1 as ms_m -- so the
+#    same course was credited 4.6% / 5.2% / 4.4% by LABEL (app.py's
+#    equivalents note). Under 'hs' the tilt reads the HS-equivalent rating,
+#    own rating x the pool's HS factor, the site's pool_view.hsFactor formula
+#    evaluated on the solve's OWN pool means (tiltPoolFactors): TILT_K was
+#    measured over a corpus that is mostly high school, so the HS scale is
+#    the one the slope is on.
+TILT_SCALES = ("own", "hs")
+
 # ★ THE ALTITUDE TERM (issue 172, 2026-09-04; OFF unless run_joint
 #   --altitude). One coefficient per sport group times the row's venue
 #   elevation above ALT_FLOOR_M, in km. In the ROW model, not the cell's
@@ -1309,8 +1383,14 @@ class _Operator:
                  ridge_slope=0.0, link_weight=0.0,
                  alt_prior_mean=ALT_PRIOR_MEAN, alt_prior_pen=ALT_PRIOR_PEN_FIXED,
                  pen_era=0.0, imp_prior_pen=None, ind_prior_pen=None,
-                 pen_walk=0.0):
+                 pen_walk=0.0, tie_w=None, tie_mean=None):
         self.D, self.w, self.h, self.amp = D, w, h, amp
+        # the season tie (SEASON_TIE_BANDS): per pair, lambda in row units
+        # (sigma2 / (s^2 dt)) and the mean change c + m dt; None = untied
+        self.tie_w = (None if tie_w is None or not getattr(D, "n_tie", 0)
+                      else np.asarray(tie_w, dtype=np.float64))
+        self.tie_mean = (None if self.tie_w is None
+                         else np.asarray(tie_mean, dtype=np.float64))
         # the importance and indoor terms' priors, in row units: a few
         # dozen pseudo-rows toward the stated mean, nothing against the
         # millions of rows that carry each coefficient (IMP_PRIOR_PEN)
@@ -1482,6 +1562,8 @@ class _Operator:
                                           minlength=D.n_ath)
                               - np.bincount(D.link_k1, weights=d,
                                             minlength=D.n_ath))
+        if self.tie_w is not None:
+            out[:D.n_ath] += seasonTieApply(b["a"], D, self.tie_w, self.tie_mean)
         return out
 
 
@@ -1499,6 +1581,12 @@ class _Operator:
             out[D.o_ind:D.n_total] += self.ind_prior_pen * IND_PRIOR_MEAN
         if D.n_e and getattr(D, "e_mean", None) is not None:
             out[D.o_e:D.o_g] += self.pen_dist * D.e_mean
+        # the tie's mean: 0.5 lambda (a1 - a0 - mean)^2 puts +lambda mean on
+        # the later season and -lambda mean on the earlier one
+        if self.tie_w is not None:
+            lm = self.tie_w * self.tie_mean
+            out[:D.n_ath] += (np.bincount(D.tie_k1, weights=lm, minlength=D.n_ath)
+                              - np.bincount(D.tie_k0, weights=lm, minlength=D.n_ath))
         return out
 
     def diag(self):
@@ -1554,6 +1642,10 @@ class _Operator:
             out[:D.n_ath] += self.link_weight * (
                 np.bincount(D.link_k0, weights=D.link_w, minlength=D.n_ath)
                 + np.bincount(D.link_k1, weights=D.link_w, minlength=D.n_ath))
+        if self.tie_w is not None:
+            out[:D.n_ath] += (np.bincount(D.tie_k0, weights=self.tie_w, minlength=D.n_ath)
+                              + np.bincount(D.tie_k1, weights=self.tie_w,
+                                            minlength=D.n_ath))
         return out
 
 
@@ -1793,6 +1885,252 @@ def ratingsFromAbility(a, athlete_pool, n_races, n_pool,
     fallback = float(np.nanmean(mean)) if np.isfinite(mean).any() else 1.0
     pm = np.where(np.isfinite(pm), pm, fallback)
     return 100.0 * pm / ability
+
+
+# ------------------------------------------------------------------ #
+# THE TILT ON THE HS SCALE (TILT_SCALES)
+# ------------------------------------------------------------------ #
+
+# ★ THE SITE'S FORMULA, ON THE SOLVE'S OWN NUMBERS. pool_view.hsFactor is
+#   C(hs)/C(pool) x F(d, pool)/F(d, hs): the two pools' mean abilities, each
+#   in its own normalised units, and the distance normaliser's ratio that
+#   converts the units (ms 3200, hs 5000, college men 8000, women 6000).
+#   Here C is the pool mean the solve's ratings hang on, READ BACK OFF THE
+#   RATINGS (rating * exp(a) / 100 is that pool's mean for every one of its
+#   athlete-seasons), so it is whatever ratingsFromAbility anchors to and
+#   needs no second copy of it. The F ratio is the caller's (run_joint.
+#   tiltScaleInputs, from normalize_distance, the function pool_view reaches
+#   through conversions._forward_factor). No rail of its own: the tilt's
+#   TILT_RATING_LO/HI already bound what any factor can do to h.
+# ! A POOL WITH NO HS TWIN (unknown gender) OR NO F RATIO KEEPS ITS OWN
+#   SCALE -- factor 1.0, the same "leave it on its own scale" pool_view's
+#   None means, never a guess.
+def tiltPoolFactors(rating, a, athlete_pool, n_pool, hs_of_pool, f_ratio):
+    """Per pool, the multiplier from its own rating scale onto its same-
+    gender HS pool's. hs_of_pool: per pool the HS twin's code, -1 for none;
+    f_ratio: per pool F(d, pool)/F(d, hs), NaN when unknown."""
+    rating = np.asarray(rating, dtype=np.float64)
+    a = np.asarray(a, dtype=np.float64)
+    pool = np.asarray(athlete_pool, dtype=np.int64)
+    with np.errstate(over="ignore", invalid="ignore"):
+        pm = rating * np.exp(a - float(np.nanmean(a))) / 100.0
+    ok = np.isfinite(pm) & (pm > 0)
+    tot = np.bincount(pool[ok], weights=pm[ok], minlength=n_pool)
+    cnt = np.bincount(pool[ok], minlength=n_pool)
+    pm_pool = np.where(cnt > 0, tot / np.maximum(cnt, 1), np.nan)
+    hs = np.asarray(hs_of_pool, dtype=np.int64)
+    fr = np.asarray(f_ratio, dtype=np.float64)
+    fac = np.ones(n_pool)
+    for p in range(min(n_pool, hs.size)):
+        q = int(hs[p])
+        if q < 0 or q >= n_pool:
+            continue
+        v = pm_pool[q] / pm_pool[p] * fr[p]
+        if np.isfinite(v) and v > 0:
+            fac[p] = v
+    return fac
+
+
+def tiltRows(r_row, factor_row=None):
+    """h per row from the rating the tilt reads: the own-scale rating, times
+    the pool's HS factor under TILT_SCALES 'hs'."""
+    r = np.asarray(r_row, dtype=np.float64)
+    if factor_row is not None:
+        r = r * np.asarray(factor_row, dtype=np.float64)
+    r_clip = np.clip(np.nan_to_num(r, nan=100.0), TILT_RATING_LO, TILT_RATING_HI)
+    return 1.0 + TILT_K * (r_clip - 100.0) / 10.0
+
+
+# ------------------------------------------------------------------ #
+# THE SEASON TIE (SEASON_TIE_BANDS)
+# ------------------------------------------------------------------ #
+
+def _mad2(z):
+    """Robust variance: (1.4826 * MAD)^2, the normal-consistent scale."""
+    if z.size == 0:
+        return np.nan
+    return float((1.4826 * np.median(np.abs(z - np.median(z)))) ** 2)
+
+
+def _tieMoments(delta, dt, vsum, rate=None):
+    """(c, m, s2) for one group. The mean change is c + m * dt:
+      rate None -- a walk with drift inside one pool: c = 0, m the median
+                   change per year;
+      rate given -- a change of pool (or sport): m = that rate, the ordinary
+                   yearly change of the pool moved into, and c the median
+                   STEP left over (the new pool's units and level).
+    s2 is the robust (MAD) variance of the per-sqrt-year deviation less the
+    mean sampling variance per year; NaN when no wider than the noise."""
+    if rate is None:
+        c, m = 0.0, float(np.median(delta / dt))
+    else:
+        m = float(rate)
+        c = float(np.median(delta - m * dt))
+    z = (delta - c - m * dt) / np.sqrt(dt)
+    s2 = _mad2(z) - float(np.mean(vsum / dt))
+    return c, m, (s2 if np.isfinite(s2) and s2 > 0 else np.nan)
+
+
+# ★ A CHANGE OF POOL IS A STEP, NOT A FASTER WALK. hs_m>college_m moves the
+#   ability into another pool's normalised units (an 8k against a 5k) and
+#   level once, at the change; the years around it are ordinary years. Read
+#   as a rate, a step taken over a two-year gap looked half the size of one
+#   taken over six months and the walk's width absorbed the difference (on
+#   the synthetic pack: m +20%/yr, sd 17% for a planted +42% step with no
+#   spread at all). So a label-changing transition's mean is c + r * dt,
+#   r the fitted yearly change of the pool moved INTO (its own a>a
+#   transition; the pool left if that one is not fitted; else 0) and c the
+#   median step. Inside one pool c is 0 and the walk is the era prior's.
+def _selfRate(name, fitted):
+    """The yearly rate a transition 'a>b' borrows: b>b's, else a>a's."""
+    a, _, b = name.partition(">")
+    for key in (f"{b}>{b}", f"{a}>{a}"):
+        if key in fitted:
+            return fitted[key]
+    return 0.0
+
+
+def seasonTieFit(a, v, rating, n_races, k0, k1, dt, typ, type_names,
+                 sd=None, min_races=None, min_pairs=SEASON_TIE_MIN_PAIRS,
+                 bands=SEASON_TIE_BANDS):
+    """Fit the season tie's walk per (transition, band) and return, per pair,
+    the mean change (c + m * dt) and the inverse variance 1 / (s^2 * dt) (0
+    where the pair is not tied), plus the table for the log.
+
+    a, v: per athlete-season ability and its sampling variance (untied);
+    rating: per athlete-season (for the band; None = one band); k0 -> k1
+    consecutive seasons of one person, dt years apart, typ the transition
+    ('pool>pool', see _tieMoments for the two kinds). sd: a stated walk sd
+    for every group (the mean still fitted); None fits it."""
+    min_races = POOL_MEAN_MIN_RACES if min_races is None else min_races
+    k0 = np.asarray(k0, dtype=np.int64); k1 = np.asarray(k1, dtype=np.int64)
+    dt = np.asarray(dt, dtype=np.float64)
+    typ = np.asarray(typ, dtype=np.int64)
+    a = np.asarray(a, dtype=np.float64); v = np.asarray(v, dtype=np.float64)
+    n_races = np.asarray(n_races)
+    n_pair = k0.size
+    nb = len(bands) + 1
+    if rating is not None:
+        r = np.asarray(rating, dtype=np.float64)
+        band = np.digitize(np.nan_to_num(0.5 * (r[k0] + r[k1]), nan=100.0), bands)
+    else:
+        band = np.zeros(n_pair, dtype=np.int64)
+        nb = 1
+    delta = a[k1] - a[k0]
+    vsum = v[k0] + v[k1]
+    full = ((n_races[k0] >= min_races) & (n_races[k1] >= min_races)
+            & np.isfinite(delta) & np.isfinite(vsum))
+    mean = np.zeros(n_pair)
+    inv = np.zeros(n_pair)
+    table = []
+    names = list(type_names)
+    same = [n.partition(">")[0] == n.partition(">")[2] for n in names]
+    rates = {}                                   # 'a>a' -> fitted yearly m
+    # inside-one-pool transitions first: the rates the changes borrow
+    for t in sorted(range(len(names)), key=lambda t: not same[t]):
+        in_t = typ == t
+        ft = in_t & full
+        n_all, n_full = int(in_t.sum()), int(ft.sum())
+        rate = None if same[t] else _selfRate(names[t], rates)
+        if n_full < min_pairs:
+            if n_all:
+                table.append((names[t], None, n_all, n_full, np.nan, np.nan, np.nan,
+                              "untied: too few full pairs"))
+            continue
+        c_t, m_t, s2_t = _tieMoments(delta[ft], dt[ft], vsum[ft], rate)
+        if same[t]:
+            rates[names[t]] = m_t
+        if sd is not None:
+            s2_t = float(sd) ** 2
+        if not np.isfinite(s2_t):
+            table.append((names[t], None, n_all, n_full, c_t, m_t, np.nan,
+                          "untied: spread within the noise"))
+            continue
+        table.append((names[t], None, n_all, n_full, c_t, m_t, np.sqrt(s2_t), "fitted"))
+        for bb in range(nb):
+            in_b = in_t & (band == bb)
+            if not in_b.any():
+                continue
+            fb = in_b & full
+            c_b, m_b, s2_b, how = c_t, m_t, s2_t, "the transition's"
+            if int(fb.sum()) >= min_pairs:
+                c_b, m_b, s2_b = _tieMoments(delta[fb], dt[fb], vsum[fb], rate)
+                if sd is not None:
+                    s2_b = float(sd) ** 2
+                how = "fitted"
+                if not np.isfinite(s2_b):
+                    s2_b, how = s2_t, "fitted mean, the transition's sd"
+            mean[in_b] = c_b + m_b * dt[in_b]
+            inv[in_b] = 1.0 / (s2_b * dt[in_b])
+            if nb > 1:
+                table.append((names[t], bb, int(in_b.sum()), int(fb.sum()),
+                              c_b, m_b, np.sqrt(s2_b), how))
+    return {"mean": mean, "inv_var": inv, "table": table,
+            "band_edges": tuple(bands) if nb > 1 else ()}
+
+
+def attachSeasonTie(D, k0, k1, dt, typ, type_names):
+    """Put the tie's pairs on a Design (run_joint.seasonTiePairs builds
+    them): consecutive athlete-seasons k0 -> k1 of one person, dt years
+    apart, transition typ into type_names. An empty set leaves D untied."""
+    k0 = np.asarray(k0, dtype=np.int64)
+    D.n_tie = int(k0.size)
+    D.tie_k0 = k0
+    D.tie_k1 = np.asarray(k1, dtype=np.int64)
+    D.tie_dt = np.asarray(dt, dtype=np.float64)
+    D.tie_type = np.asarray(typ, dtype=np.int64)
+    D.tie_type_names = list(type_names)
+    return D
+
+
+def seasonTieLines(table, band_edges=SEASON_TIE_BANDS):
+    """The fit, for the log: per transition and band, pairs, full pairs, the
+    step at a change of pool, the change per year (negative = faster:
+    log-time) and the walk sd."""
+    edges = list(band_edges)
+    labels = ([f"<{edges[0]:g}"] + [f"{lo:g}-{hi:g}" for lo, hi in zip(edges, edges[1:])]
+              + [f"{edges[-1]:g}+"]) if edges else ["all"]
+    out = [f"    {'transition':<22}{'band':>9}{'pairs':>11}{'full':>10}"
+           f"{'step':>9}{'m /yr':>9}{'sd /vyr':>9}  how"]
+
+    def pct(x, sign=True):
+        return (f"{100 * x:+.2f}%" if sign else f"{100 * x:.2f}%") if np.isfinite(x) else "-"
+    for name, b, n_all, n_full, c, m, s, how in table:
+        lab = "all" if b is None else labels[b]
+        cs = pct(c) if name.partition(">")[0] != name.partition(">")[2] else ""
+        out.append(f"    {name:<22}{lab:>9}{n_all:>11,}{n_full:>10,}{cs:>9}"
+                   f"{pct(m):>9}{pct(s, False):>9}  {how}")
+    return out
+
+
+def seasonTieApply(theta_a, D, tie_w, tie_mean):
+    """The tie's matrix part on the ability block: lambda (a0 - a1) at k0
+    and its negative at k1. The mean is on the right-hand side (_Operator.rhs,
+    tiedAbilities)."""
+    d = tie_w * (theta_a[D.tie_k0] - theta_a[D.tie_k1])
+    return (np.bincount(D.tie_k0, weights=d, minlength=D.n_ath)
+            - np.bincount(D.tie_k1, weights=d, minlength=D.n_ath))
+
+
+def tiedAbilities(den, num, D, tie_w, tie_mean, x0):
+    """The ability block alone, courses held: minimise
+    sum_rows w (resid - a)^2 + sum_pairs lambda (a1 - a0 - mean)^2, i.e.
+    (diag(den) + L) a = num + r. Without a tie it is num / den, the solve's
+    own weighted mean -- which is what run_joint.bracketDifficulties used
+    to compute, and would have thrown the tie away."""
+    den = np.asarray(den, dtype=np.float64)
+    num = np.asarray(num, dtype=np.float64)
+    if tie_w is None or not getattr(D, "n_tie", 0):
+        return np.where(den > 0, num / np.maximum(den, 1e-12), x0)
+    rhs = num.copy()
+    lm = tie_w * tie_mean
+    rhs -= np.bincount(D.tie_k0, weights=lm, minlength=D.n_ath)
+    rhs += np.bincount(D.tie_k1, weights=lm, minlength=D.n_ath)
+    diag = (den + np.bincount(D.tie_k0, weights=tie_w, minlength=D.n_ath)
+            + np.bincount(D.tie_k1, weights=tie_w, minlength=D.n_ath))
+    mv = lambda x: den * x + seasonTieApply(x, D, tie_w, tie_mean)   # noqa: E731
+    x, _it = conjugateGradient(rhs, mv, diag, x0=np.asarray(x0, dtype=np.float64))
+    return x
 
 
 def raceFront(r_row, race, n_race, k=FIELD_TOP_K):
@@ -2545,7 +2883,13 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                dist_cal=True, sport_gap_delta=0.0,
                merge_sports=False, centre_curve=False,
                identified_priors=True, sigma_u_floor="default",
-               ability_weight=False, top_frac=0.0, nested_var=True):
+               ability_weight=False, top_frac=0.0, nested_var=True,
+               season_tie_sd=None, tilt_scale=None):
+    # season_tie_sd: with a design carrying the season tie (attachSeasonTie),
+    #   a STATED walk sd for every transition; None fits it (seasonTieFit).
+    # tilt_scale: None reads the tilt at the own-pool rating; a dict
+    #   {hs_of_pool, f_ratio} (run_joint.tiltScaleInputs) reads it at the
+    #   HS-equivalent rating (TILT_SCALES).
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -2626,6 +2970,10 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         lam_gap = float(curve_gap) * rows_per_pool.astype(np.float64)
     theta = None
     rating = None
+    # the season tie: fitted on the first (untied) pass, live from the next
+    tie_inv = tie_mean = tie_fit = tie_w_solved = None
+    has_tie = bool(getattr(D, "n_tie", 0))
+    tilt_factor = None                   # per pool, under tilt_scale
 
     for outer in range(n_outer):
         pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
@@ -2642,7 +2990,12 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                        alt_prior_pen=alt_prior_pen, pen_era=pen_era,
                        imp_prior_pen=sigma2 / IMP_PRIOR_SD ** 2,
                        ind_prior_pen=sigma2 / IND_PRIOR_SD ** 2,
-                       pen_walk=pen_walk)
+                       pen_walk=pen_walk,
+                       tie_w=None if tie_inv is None else sigma2 * tie_inv,
+                       tie_mean=tie_mean)
+        # the tie this pass SOLVES with (sigma2 moves after the solve), so
+        # the published ability and the published tie agree exactly
+        tie_w_solved = op.tie_w
         diag = op.diag()
         # the asserted level comes off y, tilted like the estimated one
         # the asserted level(s) come off y, tilted like the estimated ones
@@ -2739,8 +3092,16 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                                         n_pool_r)
             r_row = rating[D.athlete]
             if tilt:
-                r_clip = np.clip(r_row, TILT_RATING_LO, TILT_RATING_HI)
-                h = 1.0 + TILT_K * (r_clip - 100.0) / 10.0
+                # ★ THE SCALE THE TILT READS (TILT_SCALES). None is the
+                #   own-pool rating, exactly the old line; under 'hs' each
+                #   pool's rating is carried onto its HS twin's scale first
+                fac_row = None
+                if tilt_scale is not None:
+                    tilt_factor = tiltPoolFactors(
+                        rating, b["a"], athlete_pool, n_pool_r,
+                        tilt_scale["hs_of_pool"], tilt_scale["f_ratio"])
+                    fac_row = tilt_factor[athlete_pool][D.athlete]
+                h = tiltRows(r_row, fac_row)
             if D.has_curve:
                 amp = amplitudeFromRating(r_row)
             D.rebandDist(r_row)                    # the event offsets' bands
@@ -2756,6 +3117,29 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                     r_row, D.race, D.n_race, D.imp_idx, D.imp_mask, D.n_imp)
         elif tilt and pool_mean_row is not None:
             h = tiltFromAbility(b["a"][D.athlete], np.asarray(pool_mean_row))
+
+        # --- the season tie, fitted once on this untied pass ----------- #
+        # ! ON THE FIRST PASS ONLY, AND THAT IS WHAT MAKES IT A MEASUREMENT.
+        #   Once tied, the abilities are shrunk toward each other and their
+        #   year-to-year spread would size the walk from its own output. v is
+        #   this pass's sampling variance of each ability: sigma2 over its
+        #   information, the diagonal this pass solved with.
+        if has_tie and tie_inv is None and outer < n_outer - 1:
+            v_ath = sigma2 / np.maximum(diag[:D.n_ath], 1e-12)
+            tie_fit = seasonTieFit(b["a"], v_ath, rating, n_races,
+                                   D.tie_k0, D.tie_k1, D.tie_dt, D.tie_type,
+                                   D.tie_type_names, sd=season_tie_sd)
+            tie_inv, tie_mean = tie_fit["inv_var"], tie_fit["mean"]
+            if verbose:
+                how = ("walk sd STATED at %g" % season_tie_sd if season_tie_sd
+                       else "walk fitted")
+                print(f"[joint] season tie: {int((tie_inv > 0).sum()):,} of "
+                      f"{D.n_tie:,} consecutive-season pairs tied from the next "
+                      f"pass ({how}, on pairs with {POOL_MEAN_MIN_RACES}+ races "
+                      f"both sides; log-time, negative m = faster the next "
+                      f"year):", flush=True)
+                for line in seasonTieLines(tie_fit["table"], tie_fit["band_edges"]):
+                    print(line, flush=True)
 
         if verbose:
             extra = ""
@@ -2803,7 +3187,9 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                    alt_prior_pen=alt_prior_pen, pen_era=pen_era,
                    imp_prior_pen=sigma2 / IMP_PRIOR_SD ** 2,
                    ind_prior_pen=sigma2 / IND_PRIOR_SD ** 2,
-                   pen_walk=pen_walk)
+                   pen_walk=pen_walk,
+                   tie_w=None if tie_inv is None else sigma2 * tie_inv,
+                   tie_mean=tie_mean)
     diag_final = op.diag()
     nested_d, nested_u = (nestedPosteriorVar(
         D, w, h, op.pen_cell, pen_race, sigma2,
@@ -2857,6 +3243,19 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         "rating": rating, "n_races": n_races,
         "n_downweighted": int((w < 0.999).sum()),
         "theta": theta,
+        # the season tie as the last pass carried it (None = untied): per
+        # pair lambda in row units and the mean change, and the fit's table
+        "tie_w": tie_w_solved,
+        "tie_mean": tie_mean,
+        # ! LINES OF TEXT, NOT THE TUPLES: run_joint.saveState would pickle
+        #   a mixed tuple list and loadState (allow_pickle=False) refuse it
+        "season_tie_lines": (None if tie_fit is None else
+                             seasonTieLines(tie_fit["table"], tie_fit["band_edges"])),
+        # the tilt's scale (TILT_SCALES): per pool the HS factor it read the
+        # rating through, and per athlete-season the rating it read
+        "tilt_pool_factor": tilt_factor,
+        "tilt_rating": (None if tilt_factor is None or rating is None
+                        else rating * tilt_factor[athlete_pool]),
     }
     if D.has_curve:
         c = b["c"].reshape(D.n_pool, D.n_knot)
@@ -2937,8 +3336,10 @@ def predictHeldOut(out, D_train, D_test, athlete_pool=None, tilt=True):
     if out.get("rating") is not None:
         r_row = out["rating"][D_test.athlete]
         if tilt:
-            r_clip = np.clip(r_row, TILT_RATING_LO, TILT_RATING_HI)
-            h = 1.0 + TILT_K * (r_clip - 100.0) / 10.0
+            # the rating the fit's tilt read: the HS-equivalent under
+            # TILT_SCALES 'hs', else the own-pool rating as before
+            r_t = out.get("tilt_rating")
+            h = tiltRows(r_row if r_t is None else np.asarray(r_t)[D_test.athlete])
         if D_test.has_curve:
             amp = amplitudeFromRating(r_row)
     u = np.where(r_cnt > 0, b["u"], 0.0)
