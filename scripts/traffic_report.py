@@ -25,6 +25,7 @@ import re
 import socket
 import subprocess
 import sys
+import time
 from datetime import datetime
 
 LINE = re.compile(r'^(\S+) \S+ \S+ \[([^\]]+)\] "(\S+) (\S+)[^"]*" (\d{3}) \S+ '
@@ -94,6 +95,38 @@ def rdns(ip, cache={}):
     return cache[ip]
 
 
+def asnOf(ips):
+    """{ip: (asn, owner)} for many addresses in ONE query to Team Cymru's
+    public IP-to-ASN service (whois.cymru.com, port 43, bulk mode) -- the
+    "Source ASN" breakdown Cloudflare's free plan does not show. On any
+    failure (no outbound port 43, a timeout) it returns {} and the report
+    falls back to reverse DNS."""
+    ips = list(ips)
+    if not ips:
+        return {}
+    try:
+        with socket.create_connection(("whois.cymru.com", 43), timeout=15) as sock:
+            sock.sendall(("begin\nverbose\n" + "\n".join(ips) + "\nend\n").encode())
+            buf, deadline = b"", time.time() + 60
+            while time.time() < deadline:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+    except OSError as exc:
+        print(f"   (ASN lookup unavailable: {exc}; networks come from reverse DNS)")
+        return {}
+    out = {}
+    if not buf:
+        print("   (ASN lookup returned nothing; networks come from reverse DNS)")
+    for ln in buf.decode(errors="replace").splitlines():
+        parts = [x.strip() for x in ln.split("|")]
+        # AS | IP | BGP Prefix | CC | Registry | Allocated | AS Name
+        if len(parts) >= 7 and parts[0].isdigit():
+            out[parts[1]] = (int(parts[0]), parts[6])
+    return out
+
+
 def pct(a, b):
     return f"{100.0 * a / b:5.1f}%" if b else "   - "
 
@@ -104,6 +137,8 @@ def main():
     ap.add_argument("--log", default="/var/log/nginx/access.log")
     ap.add_argument("--lines", type=int, default=200_000)
     ap.add_argument("--top", type=int, default=15)
+    ap.add_argument("--asn-ips", type=int, default=2000,
+                    help="how many of the busiest addresses to look up (one bulk query)")
     a = ap.parse_args()
     if not os.path.exists(a.log):
         sys.exit(f"no log at {a.log} (pass --log)")
@@ -167,15 +202,26 @@ def main():
               + ("   <- FAKE: not the engine's network" if fake else ""))
         print(f"              {secs}")
 
-    # --- 4. by network (reverse-DNS domain) over the busiest addresses ------ #
+    # --- 4. by network: the SOURCE ASN, for the busiest addresses ----------- #
+    busiest = by_ip.most_common(a.asn_ips)
+    covered = sum(c for _ip, c in busiest)
+    asn = asnOf(ip for ip, _c in busiest)
     nets = collections.Counter()
-    for ip, c in by_ip.most_common(300):
-        host = rdns(ip)
-        dom = ".".join(host.split(".")[-2:]) if host != "-" else "(no reverse DNS)"
-        nets[dom] += c
-    print("\n4. NETWORKS, from the 300 busiest addresses' reverse DNS")
+    if asn:
+        for ip, c in busiest:
+            num, name = asn.get(ip, (0, "(unknown)"))
+            nets[f"AS{num}  {name}"] += c
+        print(f"\n4. SOURCE ASN (the network that owns the address), over the "
+              f"{len(busiest):,} busiest addresses = {pct(covered, n)} of requests")
+    else:
+        for ip, c in busiest[:300]:
+            host = rdns(ip)
+            nets[".".join(host.split(".")[-2:]) if host != "-" else "(no reverse DNS)"] += c
+        print("\n4. NETWORKS, from the 300 busiest addresses' reverse DNS")
     for d, c in nets.most_common(a.top):
-        print(f"   {c:>10,}  {pct(c, n)}  {d}")
+        print(f"   {c:>10,}  {pct(c, n)}  {d[:90]}")
+    if asn:
+        print("   the numbers go straight into a WAF rule: (ip.src.asnum in {...})")
 
     # --- 5. by section ----------------------------------------------------- #
     secs = collections.Counter(section(r[2]) for r in rows)
