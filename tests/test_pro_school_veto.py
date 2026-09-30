@@ -73,10 +73,13 @@ def test_a_hand_listed_season_stays_professional():
     track spring before it is a school season."""
     kw = dict(person_id=LUTKENHAUS, school="Northwest")
     assert _pool(is_pro=True, **kw) == "pro_m|TF"
-    assert _pool(is_pro=True, sport="XC", **kw) == "pro_m|XC"
+    # owner, 2026-09-30: pro "in 2026" -- track from the 2026 label (stored
+    # 2025), cross country from fall 2026 (stored 2026)
+    assert _pool(is_pro=True, sport="XC", season=AY + 1, **kw) == "pro_m|XC"
     assert _pool(is_pro=True, season=AY - 1, **kw) == "hs_m|TF"
     assert pr.isProPerson(LUTKENHAUS, "TF", AY) \
-        and pr.isProPerson(LUTKENHAUS, "XC", AY)
+        and pr.isProPerson(LUTKENHAUS, "XC", AY + 1)
+    assert not pr.isProPerson(LUTKENHAUS, "XC", AY)          # fall 2025: school
     assert not pr.isProPerson(LUTKENHAUS, "TF", AY - 1)
     assert not pr.isProPerson(LUTKENHAUS, "XC", AY - 1)
 

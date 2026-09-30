@@ -458,14 +458,16 @@ _PRO_SEASONS = {
     30052170: (2026, None, None),
     27196114: (2023, None, None),
 
-    30245014: ((2025, None, "XC"), (2026, None, "TF")),
-    # Cooper Lutkenhaus (owner, 2026-09-30: "genuinely turned pro at 16").
-    # Professional from the 2025-26 season on -- the 2025 XC label and the
-    # 2026 track label, which season_year stores as the SAME year 2025 --
-    # and a Texas high schooler before it: his junior track spring (label
-    # 2025) stays a school season. Listed because the school veto
+    30245014: ((2026, None, "XC"), (2026, None, "TF")),
+    # Cooper Lutkenhaus (owner, 2026-09-30: "he did turn pro. in 2026").
+    # Professional from the first season that falls in 2026: the 2026 track
+    # label (the 2025-26 academic year's track, indoor and outdoor) and the
+    # 2026 XC label (fall 2026). His fall 2025 XC and everything before are
+    # a Texas high schooler's. Listed because the school veto
     # (schoolSeasonVetoesPro) refuses INFERRED professional seasons, and a
     # feed that still writes his grade at Northwest must not undo a fact.
+    # ! IF HE SIGNED AFTER HIS SPRING 2026 SCHOOL SEASON, the track spec is
+    #   (2027, None, "TF"): the 2026 label holds that whole spring.
     # ! TWO SPECS, ONE PER SPORT: a season spans the year seam differently
     #   in each sport's label, so one (first, last, None) cannot say it.
 }
