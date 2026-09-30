@@ -35,7 +35,8 @@ import re
 from functools import lru_cache
 
 from normalize_distance import (poolFor, seasonVerdictFor,
-                                firstCollegeSeason, academicYearOfDate)
+                                firstCollegeSeason, academicYearOfDate,
+                                isSchoolGrade, isCollegeClass)
 
 # ===================================================================== #
 #  THE PROFESSIONAL ABILITY STANDARD
@@ -456,6 +457,17 @@ _PRO_SEASONS = {
     32606806: (2025, None, None),
     30052170: (2026, None, None),
     27196114: (2023, None, None),
+
+    30245014: ((2025, None, "XC"), (2026, None, "TF")),
+    # Cooper Lutkenhaus (owner, 2026-09-30: "genuinely turned pro at 16").
+    # Professional from the 2025-26 season on -- the 2025 XC label and the
+    # 2026 track label, which season_year stores as the SAME year 2025 --
+    # and a Texas high schooler before it: his junior track spring (label
+    # 2025) stays a school season. Listed because the school veto
+    # (schoolSeasonVetoesPro) refuses INFERRED professional seasons, and a
+    # feed that still writes his grade at Northwest must not undo a fact.
+    # ! TWO SPECS, ONE PER SPORT: a season spans the year seam differently
+    #   in each sport's label, so one (first, last, None) cannot say it.
 }
 
 
@@ -481,6 +493,12 @@ def isProPerson(person_id, sport=None, season=None):
     spec = _PRO_SEASONS.get(int(person_id))
     if spec is None:
         return False
+    # one (first, last, sport) spec, or a tuple of them (one per sport)
+    specs = spec if isinstance(spec[0], tuple) else (spec,)
+    return any(_inSpan(s, sport, season) for s in specs)
+
+
+def _inSpan(spec, sport, season):
     first, last, only_sport = spec
     if only_sport and sport and sport.split("|")[0] != only_sport:
         return False
@@ -502,6 +520,76 @@ def isProTeam(school):
       "puma" and is.
     """
     return _normSchool(school) in _PRO_TEAMS
+
+
+# ================================================================== #
+#  A SCHOOL SEASON IS NOT A PROFESSIONAL SEASON BECAUSE OF THE FIELDS
+# ================================================================== #
+#
+# ⚠ THE FAULT (owner, 2026-09-30, https://racecast.co/athlete/30178075).
+#   Jackson Spencer, Herriman UT, grade 12 in academic year 2025. His
+#   junior year read 133-143 in hs_m (a 4:02.56 mile rated 143.0); every
+#   senior row read 113-120 -- pro_m's yardstick, where the same 4:02 would
+#   be ~146 on the high school one. Read from the code and his rows (no
+#   server run yet), pro_flag made the season professional twice over. Its
+#   Diamond League SEED counted each track result once per event of the
+#   division (a JOIN on meets_tf, a row per event), so his two rows at the
+#   Prefontaine Classic -- the Bowerman Mile and its 1500 split -- cleared
+#   _MIN_PRO_RACES alone. And its field traversal had more: the Bowerman
+#   Mile and the HOKA Festival of Miles (a mile and its split each) were
+#   fields of confirmed professionals, and so was his World Cross Country
+#   race -- the U20 race, whose foreign juniors the national-team seed had
+#   flagged, because _SENIOR_EXCLUDE read the meet NAME only. The ability
+#   gate cannot help: a 3:57 mile clears 14:00, and the gate only demotes.
+#   Nothing in that evidence can see that he was a high school senior on a
+#   high school team all year.
+#
+# ★ THE RULE (owner, 2026-09-30, mirroring the 2026-09-29 college veto): a
+#   season whose rows carry a SCHOOL grade -- a number 1-12, grade_sanity's
+#   when it has a verdict, else the row's own; class words and age bands do
+#   not count -- at a SCHOOL team is vetoed from INFERRED professional
+#   status, the way NCAA eligibility already vetoes it in pro_flag. School
+#   eligibility, like NCAA eligibility, is evidence the athlete is not a
+#   professional. Inferred means: pro_flag's field traversal and its
+#   national-team seed (pro_athlete_season, arriving as is_pro), a season
+#   verdict of 'pro' from the fields raced, and an unattached row's race
+#   ceiling of 'pro'.
+#
+# ! THE HAND LIST STILL DECIDES. _PRO_SEASONS is a person's word, not an
+#   inference: Cooper Lutkenhaus turned professional at 16 and his seasons
+#   from then on are professional whatever grade a feed still writes.
+#
+# ! AND THE OWNER'S TEAM RULES ARE NOT INFERENCE ABOUT THE ATHLETE. No team
+#   at all (team_id 0), a team build_team_pool adjudicated professional, a
+#   hand-listed squad, a club with professionals raced for all season --
+#   none of those is a SCHOOL team, so none of them is vetoed here.
+#
+# ⚠ ONLY A TEAM THE FEED NAMES A SCHOOL (team_level hs/ms/elem, from anet's
+#   level or the tfrrs slug) -- never a school NAME. An elite squad's feed
+#   writes a year count where a grade goes ("its grade 6 is a sixth year,
+#   and it advances every season like a grade does", 2026-09-14), so a
+#   grade on a team nobody has levelled is not school eligibility, and a
+#   caller that passes no team_level gets exactly the old answer. pro_flag
+#   applies the same definition at the source, season-wide; this is the
+#   backstop per row, so a pro_athlete_season written before the rule
+#   cannot leak it.
+def schoolSeasonVetoesPro(grade, team_level, fixed_grade=None,
+                          grade_untrusted=False, no_team=False,
+                          team_pro=False, school=None, person_id=None,
+                          sport=None, season=None):
+    """True when this row is school evidence that vetoes an INFERRED
+    professional season: a school grade 1-12 (grade_sanity's for the season
+    when it has spoken, else the row's; not a college class word) on a team
+    the feed levels as a school, and the person-season is not hand-listed."""
+    if no_team or team_pro or team_level not in _SCHOOL_LEVELS:
+        return False
+    season_grade = fixed_grade if (fixed_grade is not None or grade_untrusted) \
+        else grade
+    if not isSchoolGrade(season_grade) or isCollegeClass(grade):
+        return False
+    if isProTeam(school):
+        return False
+    return not isProPerson(person_id, sport, season)
 
 
 # ★ THE TEAM'S LEVEL, FROM THE FEEDS (the pooling redo, 2026-09-14). anet
@@ -747,6 +835,32 @@ def resolvePool(grade, gender, source, school, sport,
         else grade
     season_level = seasonVerdictFor(season_level, season_grade, season_ay,
                                     first_ay, raw_grade=grade)
+
+    # ★ AND A PROFESSIONAL VERDICT ON A SCHOOL SEASON DOES NOT STAND EITHER
+    #   (owner, 2026-09-30; the rule, its cases and its limits are above
+    #   schoolSeasonVetoesPro). The inferred routes are refused here, where
+    #   they arrive: pro_flag's is_pro and a season verdict of 'pro' from the
+    #   fields. Every other route to is_pro below is a team rule or the hand
+    #   list, and the test itself excludes their rows.
+    school_season = schoolSeasonVetoesPro(
+        grade, team_level, fixed_grade=fixed_grade,
+        grade_untrusted=grade_untrusted, no_team=no_team, team_pro=team_pro,
+        school=school, person_id=person_id, sport=sport, season=season_ay)
+    if school_season:
+        is_pro = False
+        if season_level == "pro":
+            season_level = None           # refused, not replaced: the grade
+                                          # decides, as with no verdict
+    # ! THE SAME SCREEN ON AN UNATTACHED ROW'S 'pro' CEILING, and by the same
+    #   evidence as Kitchen's college one below: grade_sanity's corroborated
+    #   grade for the season, never the raw grade a scraper copies forward.
+    #   A school senior who races the Bowerman Mile unattached is a school
+    #   senior in a professional field.
+    if no_team and fixed_grade is not None \
+            and _levelFromVerdict(race_top_level) == "pro" \
+            and isSchoolGrade(fixed_grade) and not isCollegeClass(grade) \
+            and not isProPerson(person_id, sport, season_ay):
+        no_team = False
 
     # ! NO TEAM, NO SCHOOL. Before every other rule and ungated: see
     #   UNATTACHED_TEAM_ID for why it is not the club path.

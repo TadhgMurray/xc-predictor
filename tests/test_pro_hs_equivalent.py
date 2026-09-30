@@ -43,6 +43,10 @@ import os
 import unittest
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# hsFactor asks normalize_distance which scale a pool is rated on
+import sys                                                     # noqa: E402
+if os.path.join(_ROOT, "engine") not in sys.path:
+    sys.path.insert(0, os.path.join(_ROOT, "engine"))
 
 
 def read(rel):
@@ -188,58 +192,57 @@ class ThePoolConstantCanActuallyBeSampled(unittest.TestCase):
         self.assertIn("SET LOCAL statement_timeout", self.src[i:i + 400])
 
 
-class AProPoolUsesItsOwnMeasurement(unittest.TestCase):
-    """⚠⚠ THE REGRESSION THE OWNER SAW. A pro pool that HAS constants must be
-    priced by them -- never by college's number, which converts a rating the
-    pro row does not carry."""
+class AProPoolIsPricedOnTheScaleItIsRatedOn(unittest.TestCase):
+    """★★ 2026-09-30, AND IT REVERSES WHAT THIS CLASS USED TO PIN.
 
-    def test_a_measured_pro_factor_above_two_is_kept(self):
-        """★ THE CASE THE OLD RAIL THREW AWAY. x2.4 is a plausible pro-to-HS
-        gap; the 0.5-2.0 rail rejected it, and the 2026-09-20 fallback then
-        handed back college's x1.25."""
+    It pinned "a pro pool that HAS constants must be priced by them -- never
+    by college's number". That was right on 2026-09-21, when a pro row's
+    rating was 100 x pm(college) over a normalized time left on pro's own
+    5000 m anchor -- a number on no scale, which college's factor made
+    worse. Since 2026-09-25 the engine moves a pro row onto the college
+    anchor before dividing it into the college mean (speed_ratings.
+    _scalePool = normalize_distance.ratedScalePool), so a pro rating IS a
+    college-scale number and college's factor is exact. The measured pro
+    constant -- rating x the STORED normalized_time, which is not the one
+    the rating divided -- is what read x1.83 on Jackson Spencer's rows
+    (tests/test_pro_hs_factor_scale.py holds his numbers)."""
+
+    def test_a_measured_pro_constant_is_not_used(self):
         f, ns = _hsFactor({"pro_m": 2.4, "college_m": 1.25})
-        got = f("pro_m", "TF", 1600.0)
-        self.assertAlmostEqual(got, 2.4, places=6)
-        self.assertNotAlmostEqual(got, 1.25, places=3)
-        self.assertIn("measured", ns["_FACTOR_WHY"]["pro_m"])
+        self.assertAlmostEqual(f("pro_m", "TF", 1600.0), 1.25, places=6)
+        self.assertIn("college_m", ns["_FACTOR_WHY"]["pro_m"])
 
-    def test_college_is_never_substituted_for_a_measured_pro_pool(self):
-        """⚠ EVEN WHEN THE MEASUREMENT IS MAD. Past the pro rail the row stays
-        on its OWN scale -- a visibly unconverted number, not an invisibly
-        wrong one. 'Rather than doing nothing' was the owner's complaint about
-        the alternative."""
-        f, ns = _hsFactor({"pro_m": 9.0, "college_m": 1.25})
-        self.assertIsNone(f("pro_m", "TF", 1600.0))
-        self.assertIn("sanity rail", ns["_FACTOR_WHY"]["pro_m"])
+    def test_a_mad_pro_measurement_cannot_move_it_either(self):
+        f, _ns = _hsFactor({"pro_m": 9.0, "college_m": 1.25})
+        self.assertAlmostEqual(f("pro_m", "TF", 1600.0), 1.25, places=6)
 
-    def test_the_pro_rail_is_wider_than_the_general_one(self):
+    def test_there_is_one_rail_now(self):
+        """The pro-only 3.0 ceiling guarded the measurement; with no
+        measurement a pro pool meets college's rail, as college does."""
         f, ns = _hsFactor({"pro_m": 2.4, "college_m": 2.4})
-        self.assertGreater(ns["_PRO_FACTOR_HI"], ns["_FACTOR_HI"])
-        # and the general rail still binds a non-pro pool at the same number
+        self.assertNotIn("_PRO_FACTOR_HI", ns)
         self.assertIsNone(f("college_m", "TF", 1600.0))
-        self.assertAlmostEqual(f("pro_m", "TF", 1600.0), 2.4, places=6)
+        self.assertIsNone(f("pro_m", "TF", 1600.0))
 
-    def test_the_fallback_survives_for_a_pro_pool_with_no_constants(self):
+    def test_a_pro_pool_with_no_constants_is_still_priced(self):
         """★ THE 2026-09-08 CASE, UNCHANGED (Graham Blanks' 29:41 reading 96.4
-        beside college rows at 146): pro_m cannot be sampled at all, so there
-        is no measurement to be wrong about and college is the nearest scale
-        that exists."""
+        beside college rows at 146): now the rule rather than a fallback."""
         f, ns = _hsFactor({"pro_m": None, "college_m": 1.25})
         self.assertAlmostEqual(f("pro_m", "TF", 1600.0), 1.25, places=6)
-        self.assertIn("fallback", ns["_FACTOR_WHY"]["pro_m"])
 
-    def test_it_falls_back_to_the_same_gender_college_pool(self):
+    def test_it_takes_the_same_gender_college_pool(self):
         """★ SAME GENDER, ALWAYS -- the module's own rule. A pro_f row must
         not be scaled through college_m."""
         f, ns = _hsFactor({"pro_f": None, "college_f": 1.3, "college_m": 2.0})
         self.assertAlmostEqual(f("pro_f", "TF", 1600.0), 1.3, places=6)
 
-    def test_the_fallback_cannot_recurse_forever(self):
-        """! college_* does not start with pro_, so the one recursive call
-        terminates. Asserted because a future 'college rides on X' would make
-        it a loop."""
-        self.assertFalse("college_m".startswith("pro_"))
-        self.assertFalse("college_f".startswith("pro_"))
+    def test_the_redirect_cannot_recurse_forever(self):
+        """! ratedScalePool maps a college pool to itself, so the one
+        recursive call terminates."""
+        import normalize_distance as nd
+        for p in ("college_m", "college_f", "hs_m", "ms_f"):
+            self.assertEqual(nd.ratedScalePool(p), p)
+        self.assertEqual(nd.ratedScalePool("pro_m"), "college_m")
 
     def test_an_hs_pool_is_still_exactly_one(self):
         f, _ns = _hsFactor({})

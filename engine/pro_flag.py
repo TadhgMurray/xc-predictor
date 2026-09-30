@@ -44,6 +44,10 @@ SEED then PROPAGATE
                race; its finishers are pros from that year on. Repeat to a fixed
                point. This reaches athletes who never ran a seeded meet but who
                race against people who did.
+    VETO       a season with an NCAA race, or (2026-09-30) a school grade at a
+               school team, is never professional by inference -- seeded or
+               propagated -- and so never a confirmed pro in another field.
+               Eligibility is the evidence; see buildSchoolSeasons.
 
 ★ THE SEASON IS THE ACADEMIC YEAR, FROM season_year.py.
 
@@ -149,18 +153,214 @@ def nationalTeamNames():
     return sorted(NATIONAL_TEAMS | AMBIGUOUS_NATIONAL_TEAMS)
 
 
-def nationalTeamSeedSql(results, meets):
+def nationalTeamSeedSql(results, meets, label_cols=()):
     """(person_id, yr) of rows at a senior international championship whose
-    school is a country. Parameters: _SENIOR_CHAMP, _SENIOR_EXCLUDE,
-    _NT_STRIP, the name list."""
+    school is a country. Parameters: nationalTeamSeedParams(label_cols) --
+    _SENIOR_CHAMP, _SENIOR_EXCLUDE (once for the meet name, once per label
+    column), _NT_STRIP, the name list."""
+    labels = "".join(f"\n          AND COALESCE(m.{c}, '') !~* %s"
+                     for c in label_cols)
     return f"""
         SELECT DISTINCT r.person_id, {_YR} AS yr
         FROM {results} r
         JOIN {meets} m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
-        WHERE m.meet_name ~* %s AND m.meet_name !~* %s
+        WHERE m.meet_name ~* %s AND m.meet_name !~* %s{labels}
           AND btrim(regexp_replace(lower(btrim(r.school)), %s, '')) = ANY(%s)
           AND r.date ~ '^(19|20)[0-9]{{2}}'
           AND r.person_id IS NOT NULL"""
+
+
+def nationalTeamSeedParams(label_cols=()):
+    """The positional parameters nationalTeamSeedSql(..., label_cols) takes."""
+    return ((_SENIOR_CHAMP, _SENIOR_EXCLUDE)
+            + (_SENIOR_EXCLUDE,) * len(label_cols)
+            + (_NT_STRIP, nationalTeamNames()))
+
+
+# ★ A SENIOR CHAMPIONSHIP'S JUNIOR RACE IS NOT A SENIOR RACE (2026-09-30).
+#   _SENIOR_EXCLUDE read the meet NAME only, and the World Cross Country
+#   Championships is one meet with a U20 race in it: Jackson Spencer, a
+#   Herriman senior, ran its U20 8000 m on 2026-01-10, and every foreign
+#   junior in that field -- "Kenya", "Ethiopia", "Uganda" -- took the
+#   one-race national-team seed. A field of seeded "professionals" then
+#   counted toward _FIELD_FRAC for everybody in it.
+#
+# ! THE DIVISION SAYS IT WHERE THE FEED KEEPS ONE: meets.division (anet
+#   cross country), meets_tf.division and meets_tf.event_short (track). The
+#   same exclusion pattern the meet name already answers to, so "U20 Men",
+#   "Junior Women" and "U18 1500m" all fall out. Probed, never assumed: a
+#   database without the column seeds exactly as before.
+def seniorLabelColumns(cur, meets):
+    """The label columns `meets` carries that can name a junior race."""
+    return tuple(c for c in ("division", "event_short")
+                 if hasColumn(cur, meets, c))
+
+
+# ================================================================== #
+#  SCHOOL ELIGIBILITY IS A VETO, LIKE NCAA ELIGIBILITY
+# ================================================================== #
+#
+# ★ OWNER, 2026-09-30 (Jackson Spencer, 30178075; the rule and its limits
+#   are pool_resolve.schoolSeasonVetoesPro's, which is this same test per
+#   row): a season whose rows carry a SCHOOL grade at a SCHOOL team is not
+#   a professional season by inference. The NCAA veto above already reads
+#   eligibility as evidence ("racing an NCAA meet in a season PROVES that
+#   season was not professional"); racing for your high school does too.
+#
+# ★ AT THE SOURCE, SEASON-WIDE. pool_resolve can only see one row, so an
+#   unattached Bowerman Mile in the same season as forty Herriman rows is
+#   one row it cannot judge. Here every row of the season is in view, and a
+#   vetoed season never enters tmp_pro_season -- so it is not a "confirmed
+#   pro" in anybody else's field fraction either. Spencer at the Festival
+#   of Miles was one of the pros that made its field professional.
+#
+# THE SEASON'S GRADE, exactly as season_level.refuseCollegeBeforeCollege
+#   reads it for the college veto (and through the same seasonIsSchool): the
+#   grade_fix grade when the season has a grade_fix row -- a LEVEL verdict
+#   (stale_grade, no_grades) has none, and nothing is vetoed -- else more
+#   school grades than college class words among the school-team rows.
+#
+# A SCHOOL TEAM, exactly as the engine levels a row's team: anet's level for
+#   the team id (speed_ratings_db.loadTeamLevels), else the tfrrs slug; and
+#   not team_id 0 (no team), not a team build_team_pool calls professional,
+#   not a hand-listed squad. A team nobody has levelled is not a school --
+#   an elite squad's feed writes year counts where grades go.
+#
+# ! THE HAND LIST STANDS. A season pool_resolve._PRO_SEASONS names is taken
+#   back out of the veto, in either sport, so a Lutkenhaus still counts as
+#   the professional he is in every field he runs.
+_SCHOOL_TEAM_LEVELS = ("hs", "ms", "elem")
+
+
+def _loadTeams():
+    """({anet team_id: level}, {professional team_id}) from the loaders the
+    engine uses. Empty on a database without them: no veto from team ids,
+    which is the old behaviour, said out loud."""
+    try:
+        from speed_ratings_db import loadTeamLevels, loadProTeams
+        levels = loadTeamLevels()[0]
+        pro_teams = loadProTeams()[0]
+    except Exception as exc:                                # noqa: BLE001
+        print(f"    ⚠ team levels unavailable ({type(exc).__name__}: {exc}) "
+              f"-- only tfrrs slugs can name a school team")
+        return {}, set()
+    return levels, pro_teams
+
+
+def _schoolTeamSql(cur, results):
+    """(joins, predicate) naming a row at a school team in `results`."""
+    from pool_resolve import _PRO_TEAMS
+    has_team = hasColumn(cur, results, "team_id")
+    has_slug = hasColumn(cur, results, "team_slug")
+    slug = ("(split_part(r.team_slug, '_', 3) <> '' AND "
+            "lower(split_part(r.team_slug, '_', 2)) IN ('hs', 'ms'))"
+            if has_slug else "FALSE")
+    if has_team:
+        joins = """
+            LEFT JOIN tmp_team_level tl ON tl.team_id = r.team_id
+            LEFT JOIN tmp_pro_team pt ON pt.team_id = r.team_id"""
+        level = f"""CASE WHEN r.team_id = 0 THEN FALSE
+                         WHEN pt.team_id IS NOT NULL THEN FALSE
+                         WHEN tl.team_id IS NOT NULL THEN tl.school
+                         ELSE COALESCE({slug}, FALSE) END"""
+    else:
+        joins, level = "", f"COALESCE({slug}, FALSE)"
+    # pool_resolve._normSchool, in SQL: casefold, punctuation out, one space
+    norm = ("btrim(regexp_replace(regexp_replace(lower(COALESCE(r.school, '')),"
+            " '[^a-z0-9 ]+', '', 'g'), '\\s+', ' ', 'g'))")
+    names = ", ".join("'" + n.replace("'", "''") + "'" for n in sorted(_PRO_TEAMS))
+    return joins, f"({level}) AND {norm} NOT IN ({names})"
+
+
+def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
+    """tmp_school_season (person_id, yr): the athlete-seasons the school veto
+    removes from inference. See the block above; seasonIsSchool is the rule.
+
+    team_levels / pro_teams default to the engine's loaders; the tests hand
+    them in."""
+    from psycopg2.extras import execute_values
+    from pool_resolve import _PRO_SEASONS, isProPerson
+    from season_level import _gradeKinds
+
+    if team_levels is None or pro_teams is None:
+        got_levels, got_pro = _loadTeams()
+        team_levels = got_levels if team_levels is None else team_levels
+        pro_teams = got_pro if pro_teams is None else pro_teams
+    _gradeKinds(cur)
+    cur.execute("DROP TABLE IF EXISTS tmp_team_level")
+    cur.execute("CREATE TEMP TABLE tmp_team_level "
+                "(team_id bigint PRIMARY KEY, school boolean NOT NULL)")
+    rows = [(int(t), lv in _SCHOOL_TEAM_LEVELS)
+            for t, lv in (team_levels or {}).items() if lv]
+    if rows:
+        execute_values(cur, "INSERT INTO tmp_team_level VALUES %s", rows,
+                       page_size=10000)
+    cur.execute("DROP TABLE IF EXISTS tmp_pro_team")
+    cur.execute("CREATE TEMP TABLE tmp_pro_team (team_id bigint PRIMARY KEY)")
+    if pro_teams:
+        execute_values(cur, "INSERT INTO tmp_pro_team VALUES %s",
+                       [(int(t),) for t in pro_teams], page_size=10000)
+
+    cur.execute("DROP TABLE IF EXISTS tmp_school_rows")
+    cur.execute("""CREATE TEMP TABLE tmp_school_rows
+                   (person_id bigint, yr int, n_school int, n_class int)""")
+    for results in ("results", "results_tf"):
+        joins, school_team = _schoolTeamSql(cur, results)
+        cur.execute(f"""
+            INSERT INTO tmp_school_rows
+            SELECT r.person_id, {_YR},
+                   count(*) FILTER (WHERE gk.school),
+                   count(*) FILTER (WHERE NOT gk.school)
+            FROM {results} r
+            {joins}
+            LEFT JOIN tmp_grade_kind gk ON gk.g = r.grade
+            WHERE r.person_id IS NOT NULL
+              AND r.date ~ '^(19|20)[0-9]{{2}}'
+              AND {school_team}
+            GROUP BY 1, 2""")
+
+    cur.execute("SELECT to_regclass('grade_fix')")
+    if cur.fetchone()[0] is not None:
+        join = """LEFT JOIN grade_fix gf ON gf.person_id = s.person_id
+                                        AND gf.season = s.yr"""
+        # season_level.refuseCollegeBeforeCollege's test, and seasonIsSchool's
+        school = """CASE WHEN gf.person_id IS NOT NULL
+                         THEN COALESCE(gf.grade IN (SELECT g FROM tmp_grade_kind
+                                                    WHERE school), FALSE)
+                              AND s.n_class <= s.n_school
+                         ELSE s.n_school > s.n_class END"""
+    else:
+        join, school = "", "s.n_school > s.n_class"
+    cur.execute("DROP TABLE IF EXISTS tmp_school_season")
+    cur.execute(f"""
+        CREATE TEMP TABLE tmp_school_season AS
+        SELECT DISTINCT s.person_id, s.yr
+        FROM (SELECT person_id, yr, sum(n_school) AS n_school,
+                     sum(n_class) AS n_class
+              FROM tmp_school_rows GROUP BY 1, 2) s
+        {join}
+        WHERE {school}""")
+
+    # the hand list stands: its seasons are professional in either sport
+    hand = sorted(_PRO_SEASONS)
+    if hand:
+        cur.execute("SELECT person_id, yr FROM tmp_school_season "
+                    "WHERE person_id = ANY(%s)", (hand,))
+        keep = [(p, y) for p, y in cur.fetchall()
+                if isProPerson(p, "XC", y) or isProPerson(p, "TF", y)]
+        for p, y in keep:
+            cur.execute("DELETE FROM tmp_school_season "
+                        "WHERE person_id = %s AND yr = %s", (p, y))
+        if keep:
+            print(f"    school veto: {len(keep):,} hand-listed "
+                  f"professional seasons kept professional")
+    cur.execute("CREATE INDEX ON tmp_school_season (person_id, yr)")
+    cur.execute("ANALYZE tmp_school_season")
+    cur.execute("SELECT count(*) FROM tmp_school_season")
+    n = cur.fetchone()[0]
+    print(f"    school veto: {n:,} athlete-seasons carry a school grade "
+          f"at a school team")
+    return n
 
 # ⚠ THE SCHOOL NAME IS NOT A SEED, AND THIS WAS TRIED AND REMOVED.
 #
@@ -231,25 +431,38 @@ def raceGrain(cur, table):
 # CHUNK 2 -- SEED
 # ------------------------------------------------------------------ #
 
-def buildSeed(cur, min_pro_races=_MIN_PRO_RACES):
+def buildSeed(cur, min_pro_races=_MIN_PRO_RACES, team_levels=None,
+              pro_teams=None):
     """
     Athlete-SEASONS with enough races at unambiguously professional meets.
 
-    Output: rows into tmp_pro_season (person_id, yr, pro_races, round).
+    Output: rows into tmp_pro_season (person_id, yr, pro_races, round), and
+    the two veto sets propagate reads: tmp_ncaa_season, tmp_school_season.
 
     One row per (person, year): a professional season is evidence about THAT
     season only. See the module docstring for why an absorbing flag was wrong.
+
+    team_levels / pro_teams: see buildSchoolSeasons.
     """
     cur.execute("DROP TABLE IF EXISTS tmp_pro_race")
     cur.execute("CREATE TEMP TABLE tmp_pro_race (person_id bigint, yr int)")
 
+    # ⚠ ONE ROW PER RESULT, NOT PER EVENT OF ITS DIVISION (2026-09-30). This
+    #   was a JOIN on (meet_id, div_id), and meets_tf holds a row per (div,
+    #   EVENT) -- so a track result was counted once for every event in its
+    #   division, and one Diamond League race cleared _MIN_PRO_RACES alone.
+    #   Jackson Spencer's Bowerman Mile (and its 1500 split) at the
+    #   Prefontaine Classic seeded his high school senior season that way.
+    #   meets (cross country) is one row per division, so it never
+    #   multiplied; EXISTS reads both the same.
     for results, meets in (("results", "meets"), ("results_tf", "meets_tf")):
         cur.execute(f"""
             INSERT INTO tmp_pro_race (person_id, yr)
             SELECT r.person_id, {_YR}
             FROM {results} r
-            JOIN {meets} m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
-            WHERE m.meet_name ~* %s AND m.meet_name !~* %s
+            WHERE EXISTS (SELECT 1 FROM {meets} m
+                          WHERE m.meet_id = r.meet_id AND m.div_id = r.div_id
+                            AND m.meet_name ~* %s AND m.meet_name !~* %s)
               AND r.date ~ '^(19|20)[0-9]{{2}}'
               AND r.person_id IS NOT NULL
         """, (_INCLUDE, _EXCLUDE))
@@ -281,17 +494,18 @@ def buildSeed(cur, min_pro_races=_MIN_PRO_RACES):
         GROUP BY person_id, yr
         HAVING count(*) >= {min_pro_races}
     """)
-    # the national-team seed: one race at a senior championship, see above
-    names = nationalTeamNames()
+    # the national-team seed: one race at a senior championship, see above --
+    # and not its junior races, which the division names (seniorLabelColumns)
     n_nt = 0
     for results, meets in (("results", "meets"), ("results_tf", "meets_tf")):
+        labels = seniorLabelColumns(cur, meets)
         cur.execute(f"""
             INSERT INTO tmp_pro_season (person_id, yr, pro_races, round)
             SELECT s.person_id, s.yr, 1, 0
-            FROM ({nationalTeamSeedSql(results, meets)}) s
+            FROM ({nationalTeamSeedSql(results, meets, labels)}) s
             WHERE NOT EXISTS (SELECT 1 FROM tmp_pro_season p
                               WHERE p.person_id = s.person_id AND p.yr = s.yr)
-        """, (_SENIOR_CHAMP, _SENIOR_EXCLUDE, _NT_STRIP, names))
+        """, nationalTeamSeedParams(labels))
         n_nt += cur.rowcount
     print(f"    national teams at senior championships: {n_nt:,} more "
           f"athlete-seasons")
@@ -300,6 +514,15 @@ def buildSeed(cur, min_pro_races=_MIN_PRO_RACES):
                    USING tmp_ncaa_season n
                    WHERE n.person_id = p.person_id AND n.yr = p.yr""")
     print(f"    NCAA veto removed {cur.rowcount:,} seeded athlete-seasons")
+
+    # ★ AND SCHOOL ELIGIBILITY, THE SAME WAY (owner, 2026-09-30): see
+    #   buildSchoolSeasons. Before propagation, so a schoolboy is never a
+    #   confirmed professional in another race's field.
+    buildSchoolSeasons(cur, team_levels=team_levels, pro_teams=pro_teams)
+    cur.execute("""DELETE FROM tmp_pro_season p
+                   USING tmp_school_season s
+                   WHERE s.person_id = p.person_id AND s.yr = p.yr""")
+    print(f"    school veto removed {cur.rowcount:,} seeded athlete-seasons")
 
     # The age floor. See _MIN_PRO_LEVEL: a name list will always leak, and
     # this removes the whole class rather than the pattern that caused it.
@@ -485,11 +708,17 @@ def propagate(cur, grains, rounds=_MAX_ROUNDS, frac=_FIELD_FRAC,
                                           AND q.yr = m2.yr
                 LEFT JOIN tmp_ncaa_season nc ON nc.person_id = m2.person_id
                                             AND nc.yr = m2.yr
+                LEFT JOIN tmp_school_season sc ON sc.person_id = m2.person_id
+                                              AND sc.yr = m2.yr
                 -- ★ THE VETO MUST APPLY DURING PROPAGATION, not only after.
                 --   A flagged collegian counts toward field composition, so
                 --   leaving them in would let NCAA finals tip past the
                 --   threshold and flag the whole field.
+                -- ★ AND THE SCHOOL VETO THE SAME WAY (2026-09-30): a school
+                --   senior at the Festival of Miles is a non-professional
+                --   in its field, never a confirmed one.
                 WHERE q.person_id IS NULL AND nc.person_id IS NULL
+                  AND sc.person_id IS NULL
                   AND m2.person_id IS NOT NULL
                 GROUP BY m2.person_id, m2.yr
                 -- ★ SAME EVIDENCE BAR AS THE SEED. Without this, propagation

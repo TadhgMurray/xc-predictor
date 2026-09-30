@@ -91,7 +91,8 @@ from database import getConn
 _FACTOR_CACHE = {}
 
 # pool -> one line on WHERE that pool's factor came from: its own measurement,
-# the college fallback, or the reason there is none. Diagnostic only; the page
+# the scale it is rated on (a pro pool: its college twin), or the reason
+# there is none. Diagnostic only; the page
 # never reads it. It exists because the 2026-09-20 pro bug was invisible from
 # the factor table alone -- pro_m printed a perfectly ordinary x1.1 and there
 # was no way to see it was college_m's number wearing pro's name.
@@ -103,21 +104,12 @@ _FACTOR_WHY = {}
 #   XC spline) or a broken artifact -- refuse it and show own-scale.
 _FACTOR_LO, _FACTOR_HI = 0.5, 2.0
 
-# ⚠⚠ AND THE PRO POOL GETS ITS OWN CEILING, BECAUSE THE RAIL ABOVE WAS SIZED
-#    ON THE WRONG GAP (2026-09-21). "10-30%" is measured against college and
-#    middle school; the pro-to-HS gap is the largest in the corpus and a
-#    MEASURED pro factor can legitimately sit near 2. Capping it at 2.0 did
-#    not just hide the toggle -- on 2026-09-20 it routed pro through the
-#    college fallback below, which multiplied a pro rating by the
-#    COLLEGE-to-HS number. That is not a conversion of anything: it left the
-#    row on no scale at all, higher than it started, which is the owner's
-#    "hs-equivalent for pros fucks it up rather than doing nothing ... it
-#    makes pros have even higher speed rating".
-#
-#    So the rail is widened for pro instead of being worked around. 3.0 is
-#    still a rail: a pro median reading 300 on the high-school scale is a
-#    broken artifact, not a talent gap.
-_PRO_FACTOR_HI = 3.0
+# ⚠⚠ THE PRO POOL HAD ITS OWN CEILING HERE (_PRO_FACTOR_HI = 3.0, added
+#    2026-09-21 so a measured pro factor near 2 could pass) AND IT IS GONE
+#    WITH THE MEASUREMENT IT GUARDED (2026-09-30). A pro pool is no longer
+#    measured at all: its rows are rated on its college twin's scale, so its
+#    factor IS that pool's and the college rail is the right one. See the
+#    note in hsFactor.
 
 # A factor within half a percent of 1.0 moves nothing a reader can see;
 # a page whose factors are all inside this band hides the toggle.
@@ -210,6 +202,13 @@ _CONST_SQL = {
 # ! split_part, BECAUSE THE GO-LIVE ONCE WROTE A SPORT SUFFIX. conversions
 #   records that rating_pool used to carry "pool|SPORT" and now carries the
 #   bare pool; matching the bare prefix reads both.
+#
+# ⚠⚠ AND hsFactor NO LONGER ASKS FOR A PRO CONSTANT (2026-09-30). A pro row's
+#    stored normalized_time is not the one its rating divided (the engine
+#    moves it onto the college anchor in memory; see hsFactor), so this
+#    sample recovers no constant of any scale for a pro pool. It stays for
+#    what it does right -- the retry for every other pool -- and _diag still
+#    prints the pro number it reads, so the disagreement stays visible.
 _STAMPED_CONST_SQL = {
     "XC": """
         SELECT r.speed_rating, r.normalized_time
@@ -488,6 +487,46 @@ def hsFactor(pool, sport, distance_m):
     key = pool
     if key in _FACTOR_CACHE:
         return _FACTOR_CACHE[key]
+    # ★★ A POOL IS PRICED ON THE SCALE ITS ROWS ARE RATED ON, AND FOR A PRO
+    #    POOL THAT IS ITS COLLEGE TWIN'S (2026-09-30, Jackson Spencer's page:
+    #    one pro row x1.83 -- a 3:57 mile at 219.8 on the high school scale,
+    #    where his own 4:02.56 as a junior read 143.0 -- beside rows at x1.00
+    #    and season headers at ~x1.10).
+    #
+    #    The engine rates a pro row as 100 * pm(college_g) / adjusted, with
+    #    the row moved onto the college anchor first:
+    #    pair_write_results._proScaleMap (the MEAN, 2026-09-08) and
+    #    speed_ratings._scalePool = normalize_distance.ratedScalePool (the
+    #    ANCHOR, 2026-09-25). So a pro rating is a college-scale number
+    #    exactly, and its HS multiplier is C(hs)/C(college) x
+    #    F(college)/F(hs) -- college_g's factor, nothing to measure.
+    #
+    # ⚠ WHAT WAS MEASURED INSTEAD, AND WHY IT READ 1.83. The pro constant was
+    #   recovered from pro rows as rating * results.normalized_time. But the
+    #   stored normalized_time is not the one the rating divided: the backfill
+    #   writes a row on the pool normPoolFor gives it (hs 5000 m for a
+    #   Spencer; it knows nothing of pro_flag), and the engine's move onto
+    #   the college anchor happens in memory and is never written back. So
+    #   the "constant" was the college mean times each sampled row's
+    #   stored-to-college anchor ratio -- a number on no scale, moving with
+    #   whichever rows the LIMIT reached -- and F(d, 'pro_m') priced pro's
+    #   own 5000 m anchor, which no pro row sits on. Its recorded values
+    #   were x0.7491 (2026-09-25) and x1.747 (C(hs_m) 1292.3 against a
+    #   C(pro_m) of 739.5, 2026-09-22); the data put the factor at about
+    #   x1.22 (143.0 x 242.56 s / 237.34 s = 146.1 for his 3:57.34, rated
+    #   120.0), which is college_m's.
+    #
+    # ! THE SAME RULE, NOT A COPY: ratedScalePool is the function the engine
+    #   and the backfill's census call. The college "fallback" that used to
+    #   sit below for a pro pool with no constants is this rule, always.
+    from normalize_distance import ratedScalePool
+    scale = ratedScalePool(pool)
+    if scale != pool:
+        factor = hsFactor(scale, sport, distance_m)
+        _FACTOR_CACHE[key] = factor
+        _FACTOR_WHY[key] = (f"rated on {scale}'s scale: its factor "
+                            f"({_FACTOR_WHY.get(scale, 'unmeasured')})")
+        return factor
     why = None
     factor = None
     # ★ ONE RATIO PER SPORT, THEN THE GEOMETRIC MEAN. Each sport's
@@ -541,7 +580,7 @@ def hsFactor(pool, sport, distance_m):
         if by_ability:
             f_own = f_hs = 1.0
         ratios.append((float(c_hs) / float(c_own)) * (float(f_own) / float(f_hs)))
-    hi = _PRO_FACTOR_HI if pool.startswith("pro_") else _FACTOR_HI
+    hi = _FACTOR_HI
     if not ratios:
         why = f"no sport with both constants and factors ({pool} and hs_{suffix})"
     else:
@@ -551,39 +590,10 @@ def hsFactor(pool, sport, distance_m):
                    f"{_FACTOR_LO}-{hi} sanity rail "
                    f"(ratios {', '.join(f'{r:.3f}' for r in ratios)})")
             factor = None
-    # ★ A PRO POOL RIDES ON THE COLLEGE FACTOR (2026-09-08, Graham
-    #   Blanks' page: a 29:41 10k at the World XC trials read 96.4
-    #   beside college rows at 146, because pro_m has too few rated
-    #   rows for a constant of its own and the rating stayed on the
-    #   pro scale). The college pool of the same gender is the nearest
-    #   scale with a factor; wrong by the pro-college gap, which is
-    #   small, rather than wrong by the whole conversion.
-    #
-    # ⚠⚠ AND IT IS GATED ON `not ratios` AGAIN, DELIBERATELY (2026-09-21). On
-    #    2026-09-20 I widened this to fire whenever `factor is None`, so a pro
-    #    pool that HAD been measured but missed the 0.5-2.0 rail got college's
-    #    multiplier instead of its own. That was the wrong repair for a real
-    #    problem: the rail was mis-sized for pro, and the fix for a mis-sized
-    #    rail is _PRO_FACTOR_HI above, not a substituted number. Substituting
-    #    college's factor takes a rating measured against the pro pool's mean
-    #    and multiplies it by the college-to-HS gap -- arithmetic with no
-    #    meaning, which is why the owner saw pro ratings go UP instead of
-    #    converting.
-    #
-    #    The fallback survives only for the case it was written for: pro_m has
-    #    no constants AT ALL (too few rated rows to sample), so there is
-    #    nothing to be wrong about and college is the nearest scale that
-    #    exists. When a pro pool does have constants, its own measurement wins
-    #    -- and if that measurement is mad enough to miss even a 3.0 rail, the
-    #    row stays on its own scale and says why on the console, because a
-    #    visibly unconverted number beats an invisibly wrong one.
-    if factor is None and not ratios and pool.startswith("pro_"):
-        college = hsFactor("college_" + suffix, sport, distance_m)
-        if college:
-            _FACTOR_CACHE[key] = college
-            _FACTOR_WHY[key] = (f"college_{suffix} fallback (x{college:.4f}) "
-                                f"-- {pool} has no constants of its own")
-            return college
+    # ! THE PRO -> COLLEGE FALLBACK THAT STOOD HERE (2026-09-08, Graham
+    #   Blanks' 29:41 at 96.4 beside college rows at 146; gated on `not
+    #   ratios` again 2026-09-21) IS THE RULE AT THE TOP NOW, for every pro
+    #   pool, measured or not. A pro pool never reaches this line.
     # ! FAILURES ARE LOUD. A factor that cannot be built hides the toggle
     #   with no other symptom, so say why ONCE on the server console.
     if why is not None and key not in _FAILED:
@@ -647,7 +657,8 @@ def stampHsRatings(pool_rows, races):
                pure-HS career returns False and the template hides the
                switch.
 
-    ★ EXACT MATCH FIRST, SEASON FALLBACK SECOND. ranking_results drops
+    ★ THE ROW'S rating_pool FIRST, ranking_results' EXACT MATCH SECOND,
+      SEASON FALLBACK THIRD -- the order stampRowsHs reads. ranking_results drops
       unresolved/untrusted seasons that the engine still rated and the page
       still shows; those races take the athlete's modal pool for the same
       (sport, academic year), so a career does not render half-scaled just
@@ -671,14 +682,19 @@ def stampHsRatings(pool_rows, races):
     has_alt = False
     for race in races:
         sport = race.get("sport")
-        pool = exact.get((sport, race.get("result_id")))
+        # ★ THE ROW'S OWN POOL FIRST (2026-09-30). The go-live writes
+        #   rating_pool on every rated row, boards or not, in the same UPDATE
+        #   as speed_rating -- it is the scale THAT number is on, by
+        #   construction. ranking_results is a later step's copy, and after a
+        #   failed step 10 it is the previous solve's: Jackson Spencer's
+        #   senior rows were rated in pro_m and priced x1.0000 as hs_m, beside
+        #   the rows ranking_results had never held (World XC, the Bowerman
+        #   Mile) at the pro factor, and the season header's median came out
+        #   between the two. It was second since issue 308 (2026-09-08), when
+        #   it was added for the pro rows no board carries.
+        pool = race.get("rating_pool") or None
         if pool is None:
-            # ★ THE ROW'S OWN POOL NEXT (issue 308, 2026-09-08): the go-live
-            #   writes rating_pool on every rated row, boards or not. A pro
-            #   row is on no board, so ranking_results had no pool for it,
-            #   the season poll had no rows either, and a 29:41 10k stayed
-            #   on the pro scale beside college rows on the HS one.
-            pool = race.get("rating_pool") or None
+            pool = exact.get((sport, race.get("result_id")))
         if pool is None:
             try:
                 academic = (int(race.get("season_label"))

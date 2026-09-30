@@ -167,6 +167,32 @@ def rowGenderSql(athlete_gender="a.gender"):
             f"{athlete_gender})")
 
 
+# ★ THE POOL THE RATING WAS COMPUTED IN RIDES ON THE ROW (2026-09-30).
+#   pool_view.stampRowsHs reads the row's own rating_pool first -- written by
+#   the go-live beside speed_rating -- and ranking_results only when it is
+#   absent; a board table a failed step 10 left behind prices a row on the
+#   pool its season USED to be in. The column arrives with the go-live
+#   (issue 171), so it is probed, never assumed: app._ratingPoolCol's rule,
+#   restated because this module cannot import the app.
+_RATING_POOL = {}
+
+
+def _ratingPoolSql(cur):
+    have = _RATING_POOL.get("results")
+    if have is None:
+        try:
+            cur.execute("""SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'results'
+                             AND column_name = 'rating_pool'""")
+            have = cur.fetchone() is not None
+        except Exception:                                # noqa: BLE001
+            cur.connection.rollback()
+            have = False
+        if have:
+            _RATING_POOL["results"] = True    # a "no" is asked again
+    return "r.rating_pool" if have else "NULL::text AS rating_pool"
+
+
 def compiledResults(cur, meet_id, source=None):
     """Every division of a meet, merged by (distance, gender).
 
@@ -195,6 +221,7 @@ def compiledResults(cur, meet_id, source=None):
     cur.execute(f"""
         SELECT r.result_id, r.person_id, r.team_id, r.place, r.time_seconds,
                r.grade, r.school, r.speed_rating, r.div_id,
+               {_ratingPoolSql(cur)},
                (round(COALESCE(
                    m.distance,
                    (mt.division_distances -> r.div_id::text ->> 'distance')::real
@@ -261,6 +288,7 @@ def compiledResults(cur, meet_id, source=None):
             "time_seconds": float(row["time_seconds"]),
             "speed_rating": (round(float(row["speed_rating"]), 1)
                              if row["speed_rating"] is not None else None),
+            "rating_pool": row.get("rating_pool"),
             # ⚠ NOT row["place"]. That column is not the finishing position
             #   within the division -- race.html has never trusted it, it
             #   renders Place from `loop.index` over the ordered results. Using

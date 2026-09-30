@@ -4648,6 +4648,9 @@ def get_tf_meet_scoring_rows(cur, meet_id, source=None):
                r.grade,
                r.school,
                r.speed_rating,
+               -- ★ THE POOL THE RATING WAS COMPUTED IN (2026-09-30), the
+               --   first source stampRowsHs reads; see pool_view.
+               {_ratingPoolCol(cur, 'results_tf')},
                r.score,
                r.date,
                -- The meets_tf name when it has one; else the RESULT's own
@@ -6232,6 +6235,7 @@ def get_tf_venue_bests(cur, location_id, is_indoor, limit=25):
         )
         SELECT r.result_id, r.person_id, r.time_seconds, r.mark, r.is_field,
                r.date, r.grade, r.school, r.speed_rating, r.event_short,
+               {_ratingPoolCol(cur, 'results_tf')},
                vm.meet_id, vm.div_id, vm.event_id, vm.meet_name,
                {_name_sql('r')} AS name
         FROM   venue_meets vm
