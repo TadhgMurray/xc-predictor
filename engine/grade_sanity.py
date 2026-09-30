@@ -351,6 +351,10 @@ MIN_SEASONS_FOR_PROGRESSION = 3
 from season_year import seasonYearSqlInt
 
 _ACAD = seasonYearSqlInt(None, "date")
+# ! QUALIFIED, for a query that joins another table with a `date` column
+#   (owner's run, 2026-09-29: rule 7's XC query joins `meets`, and a bare
+#   `date` there is ambiguous -- 04_grade_sanity died after 2h 17m on it)
+_ACAD_R = seasonYearSqlInt(None, "r.date")
 
 # ================================================================== #
 #  AGE BANDS -- issue #47, wired.
@@ -1472,7 +1476,7 @@ def _eliteRowsSql(sport):
         joins = ""
         table, extra = "results_tf", "AND COALESCE(r.is_relay, 0) = 0"
     return f"""
-        SELECT r.person_id, {_ACAD} AS acad, gradeLevel(normGrade(r.grade)) AS lvl,
+        SELECT r.person_id, {_ACAD_R} AS acad, gradeLevel(normGrade(r.grade)) AS lvl,
                g.gender, rl.top_level,
                r.time_seconds::float8 * power(5000.0 / d.dist, {ELITE_K}) AS t5k,
                lower(btrim(COALESCE(r.school, ''))) AS school
