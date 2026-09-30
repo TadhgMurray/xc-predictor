@@ -3093,3 +3093,29 @@ dates and person ids, and before `--from 3`; neither is in run_pipeline.sh):
     /srv/venv/bin/python engine/college_flag.py --write
     /srv/venv/bin/python engine/season_level.py --write
     XCP_WEATHER_FIT=1 bash deploy/run_pipeline.sh --from 3
+
+---
+
+## 2026-09-30 -- results_tf block 491889 damaged; the pipeline now checks every page first
+
+**What happened.** Run 20260929 failed 14 steps on `DataCorrupted` (invalid
+page in block 491889 of results_tf); the backup's pg_dump failed on the same
+page. The server's RAM has no error correction and the kernel logged
+machine-check errors on Sep 22 and 25 (the NVMe reports 0 media errors), the
+likely cause of this and the earlier corruption. Hardware ticket to the host
+recommended; ECC on the next server.
+
+**Repair (the recipe that worked).** `scripts/lost_rows.py --block 491889`
+read the lost rows' keys back from the indexes BEFORE any reindex: 38 tfrrs
+rows, none on a board, from 38 meets, re-queued (scraped = 0). Then
+`SET zero_damaged_pages = on; VACUUM FULL results_tf` (208 s; a plain VACUUM
+only zeroes the page in memory and never writes it). amcheck after: 0
+problems, 192,380,710 rows.
+
+**Now automatic.** Step `00_integrity` (`scripts/integrity_check.py`) runs
+first on every pipeline run, `--from` included: amcheck `verify_heapam` over
+every page of every table, one 1 GB segment per statement. A page too broken
+for amcheck to read is found by splitting the range down to the one block.
+Any damage stops the run before another step reads it, emails the owner, and
+prints the lost_rows and VACUUM FULL commands for each damaged block. The
+daily backup's pg_dump reads every page too and already emails on failure.

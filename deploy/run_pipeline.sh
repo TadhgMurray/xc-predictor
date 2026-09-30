@@ -209,7 +209,8 @@ summarise() {
 #   XCP_LINK_TFRRS=0 turns it off; every stamp is logged in person_link_log
 #   and `scripts/link_tfrrs_rows.py --undo fanout|freshman|mint` reverses it.
 # ★ 04a2_link_teamless TOO, for the same reason: it moves ids (2026-09-29).
-_ALWAYS="01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
+# ★ 00_integrity TOO: a damaged page is damaged whichever step reads it first.
+_ALWAYS="00_integrity 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
 step() {
   name="$1"; shift
@@ -224,7 +225,7 @@ step() {
     # ⚠ AND SAY WHAT IT COSTS. --skip is explicit, so it is honoured -- but
     #   the one step whose omission is invisible until the boards are wrong
     #   does not get to go quietly.
-    if [ "$always" -eq 1 ]; then
+    if [ "$name" = 04b_wheelchair ]; then
       echo "  ⚠⚠ $name IS ON THE --skip LIST. wheelchair_person will not be" \
            "rebuilt, so chair athletes who arrived since it was last built" \
            "will be rated and ranked. run_checklist cannot catch this: it" \
@@ -464,6 +465,22 @@ bgwait() {
 #   --from run keeps the verdicts steps 01-04 made on the old dates, and a
 #   date moved under them would split the pack from them.
 #   `engine/meet_date_fix.py` alone is the dry-run report.
+# ★ EVERY PAGE READS CLEAN, BEFORE ANYTHING READS IT (owner, 2026-09-30:
+#   "THis is the 2nd time I've had data get messed up on this server").
+#   Block 491889 of results_tf went bad and fifteen steps failed on
+#   DataCorrupted four hours into a run. The server's RAM has no error
+#   correction, so it can happen again: amcheck reads every page of every
+#   table once (read-only; the site keeps serving), and a damaged one STOPS
+#   the run here, with the table, the block and the repair commands. On
+#   every --from. The daily backup's pg_dump is the other reader of every
+#   page, and it emails on failure.
+step 00_integrity     "$PY" -u scripts/integrity_check.py
+if failed 00_integrity; then
+  echo "" | tee -a "$SUMMARY"
+  echo "FATAL: 00_integrity found damaged pages (or could not check). Nothing" | tee -a "$SUMMARY"
+  echo "       else ran. The repair is in $LOGDIR/00_integrity.log." | tee -a "$SUMMARY"
+  summarise 1
+fi
 step 00_meet_dates    "$PY" -u engine/meet_date_fix.py --write --show 20
 step 01_season_year   "$PY" -u engine/season_year.py
 # ★ WHERE EVERY ATHLETE'S ROWS ARE, BEFORE ANYTHING MOVES THEM (2026-09-26).
