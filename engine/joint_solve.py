@@ -2883,6 +2883,59 @@ def groupOfRace(D):
     return out
 
 
+def raceEffectLeaveOneOut(out, D, y):
+    """Per row, the race-day effect estimated WITHOUT that row: what the
+    rating applies when the day term is in it.
+
+    ★ NOBODY MOVES THEIR OWN DAY (owner, 2026-10-01: "it seems too easy to
+      game"). u_j is the precision-weighted mean of the race's residuals,
+      so each runner's own time pulls on the day term they are then
+      credited with: on a 12-runner race one runner jogging is a twelfth of
+      the day. Given everything else the solve fitted, u_j is
+
+          u_j = sum_i c_i r_i / P_j,   c_i = w_i h_i,
+          P_j = sum_i w_i h_i^2 + sigma2 / sigma_u2[group]
+
+      with r_i the row's residual before its race's u. Dropping row i is
+      exact algebra on those sums: (num_j - c_i r_i) / (P_j - w_i h_i^2).
+      The row gets the solve's own u_j moved by that difference, so a row
+      with no pull on its day gets u_j unchanged.
+
+    ! THE PRIOR STAYS IN P_j. A race of one runner leaves only the prior:
+      its day is 0 (the weather, already off y in the normalisation), never
+      the runner's own residual.
+
+    Returns (u_row_loo, info) or (None, reason) when the state lacks what
+    the algebra needs (a --from-state file from an older run)."""
+    need = ("theta", "weights", "h", "amp", "sigma2", "sigma_u2")
+    if any(out.get(k) is None for k in need) or D.n_race == 0:
+        return None, "solve state lacks " + ", ".join(k for k in need if out.get(k) is None)
+    b = D.unpack(out["theta"])
+    u = np.asarray(b["u"], dtype=np.float64)
+    if u.size != D.n_race:
+        return None, "no race-day term in this solve"
+    h = np.asarray(out["h"], dtype=np.float64)
+    h = np.full(D.n, float(h)) if h.ndim == 0 else h
+    w = np.asarray(out["weights"], dtype=np.float64)
+    pred = rowPrediction(b, D, h, out["amp"]) + D.fixedOffset(h)
+    r = np.asarray(y, dtype=np.float64) - pred + h * u[D.race]
+    s_u2 = np.asarray(out["sigma_u2"], dtype=np.float64)
+    if s_u2.ndim == 0:
+        s_u2 = np.full(int(D.group_of_cell.max()) + 1, float(s_u2))
+    pen = float(out["sigma2"]) / np.maximum(s_u2[groupOfRace(D)], 1e-12)
+    c = w * h
+    num = np.bincount(D.race, weights=c * r, minlength=D.n_race)
+    P = np.bincount(D.race, weights=w * h * h, minlength=D.n_race) + pen
+    u_ref = num / P
+    u_loo = (num[D.race] - c * r) / (P[D.race] - w * h * h)
+    u_row = u[D.race] + (u_loo - u_ref[D.race])
+    own = np.abs(u_row - u[D.race])
+    info = {"max_conditional_gap": float(np.max(np.abs(u_ref - u))),
+            "own_pull_median": float(np.median(own)),
+            "own_pull_p99": float(np.percentile(own, 99))}
+    return u_row, info
+
+
 def cellOfRace(D):
     """The cell each race belongs to (races nest inside cells)."""
     out = np.zeros(D.n_race, dtype=np.int64)

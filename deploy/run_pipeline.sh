@@ -868,6 +868,24 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   # ★ XCP_RACE_EFFECT_SPORTS (2026-09-28): unset = the race-day term is in
   #   no rating (2026-09-06). 'XC:fast' puts a FAST XC day into the rating
   #   and leaves slow days out (joint_golive.dayModes says why).
+  # ★ THE RACE-DAY TRIAL (owner, 2026-10-01: "throw race day on, then we
+  #   can decide if this is final methodology"). Three switches, all off
+  #   unless set:
+  #     XCP_RACE_KEY=venue          one day effect per VENUE and day, every
+  #                                 race there (varsity, JV, boys, girls, every
+  #                                 distance), so one tactical race cannot move
+  #                                 it. Changes the solve; 08a and the
+  #                                 scorecard fit it too.
+  #     XCP_RACE_EFFECT_SPORTS=XC   the day in XC ratings (track stays out)
+  #     XCP_RACE_EFFECT_OWN         leave-out (default): each runner gets the
+  #                                 day as the REST of the field ran it, so no
+  #                                 one's own time moves their own day
+  #                                 (js.raceEffectLeaveOneOut); 'in' = as fitted
+  #   The day is the residual AFTER measured weather (the normalisation takes
+  #   the weather off first), shrunk toward zero, so it starts from the
+  #   weather. The go-live prints "day-term consistency": whether crediting
+  #   the day makes an athlete's races agree with each other (lower scatter)
+  #   or not. Set XCP_RACE_DAY_SPORTS=XC for the site too (the hover's words).
   # ★ XCP_TRACK_LEVEL_BY_POOL=0 leaves the college-only and high-school-only
   #   tracks at the level the linkage gave them; default 1 recentres each host
   #   population's outdoor tracks to the same zero (run_joint.trackPopulationShift).
@@ -910,6 +928,8 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_BRACKET_PLACE_VENUE:+--bracket-place-venue "$XCP_BRACKET_PLACE_VENUE"} \
       ${XCP_COURSE_SCALE:+--course-scale "$XCP_COURSE_SCALE"} \
       ${XCP_RACE_EFFECT_SPORTS:+--race-effect-sports "$XCP_RACE_EFFECT_SPORTS"} \
+      ${XCP_RACE_EFFECT_OWN:+--race-effect-own "$XCP_RACE_EFFECT_OWN"} \
+      ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
       ${XCP_SPORT_LEVEL_POOLS:+--sport-level-pools "$XCP_SPORT_LEVEL_POOLS"} \
       ${XCP_FROM_STATE:+--from-state "$XCP_FROM_STATE"} \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
@@ -964,6 +984,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
       ${XCP_NO_DIST_TABLE:+--no-dist-table} \
       ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
+      ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
       $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
   # ! A RUNG IS A SOLVE (2026-09-12: "08b takes over 6 hours ... gets
   #   stuck"). Each rung solves XCP_LADDER_PCT of the athletes, the era

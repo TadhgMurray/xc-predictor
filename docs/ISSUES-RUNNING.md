@@ -3146,3 +3146,30 @@ each run called it missing and built another under a fresh `_f` name.
 Fixed: a partial index counts when the spec is partial and matches, and the
 step drops the `_f` copies of an index it finds OK (DROP INDEX
 CONCURRENTLY). The next run's 11b removes the 18 copies.
+
+## 2026-10-01 -- the race-day trial, built (switches, all off by default)
+
+Owner: "I'd like to do the race day effect but it seems too easy to game"
+-> build it as a switch, see it live, then decide whether it is the final
+methodology. What exists now:
+
+- **The day is what's left after the weather.** The normalisation takes
+  measured weather off every time first, so the solve's day term is the
+  remainder, shrunk toward zero: it starts from the weather and moves only
+  as far as the field agrees.
+- **`XCP_RACE_KEY=venue`**: one day per venue and day across every race
+  there (varsity, JV, boys, girls, every distance), so one tactical race
+  cannot move it. Changes the solve; 08a and `scripts/scorecard.py` fit it
+  too.
+- **`XCP_RACE_EFFECT_SPORTS=XC`**: the day in XC ratings; track stays out.
+- **`XCP_RACE_EFFECT_OWN=leave-out`** (the default whenever the day is in a
+  rating): each runner is credited the day as the rest of the field ran it
+  (`engine/joint_solve.py: raceEffectLeaveOneOut`), so nobody's own time
+  moves their own day. Exact algebra, checked against dropping the row
+  (tests/test_race_day_trial.py). A one-runner race gets the prior only.
+- **The go-live judges it**: "day-term consistency" prints how much an
+  athlete-season's races scatter about their own mean with the day out,
+  in (leave-self-out), and in (the race's own u). Lower with the day in =
+  real day effects; higher = noise, leave it out.
+- **Site**: set `XCP_RACE_DAY_SPORTS=XC` in /etc/xc-predictor.env when the
+  ratings carry it, so the difficulty hover says so.

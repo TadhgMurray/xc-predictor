@@ -66,6 +66,68 @@ def dayModes(race_effect_sports):
     return modes
 
 
+def _scatter(z, group, mask, min_rows=3):
+    """(sd, robust sd, rows) of z about its group's mean, over groups with
+    at least min_rows rows in mask."""
+    g = np.asarray(group)[mask]
+    v = np.asarray(z, dtype=np.float64)[mask]
+    if v.size == 0:
+        return np.nan, np.nan, 0
+    _, inv, cnt = np.unique(g, return_inverse=True, return_counts=True)
+    keep = cnt[inv] >= min_rows
+    if not keep.any():
+        return np.nan, np.nan, 0
+    mean = np.bincount(inv, weights=v, minlength=cnt.size) / cnt
+    dev = (v - mean[inv])[keep]
+    return (float(np.sqrt(np.mean(dev * dev))),
+            float(1.4826 * np.median(np.abs(dev - np.median(dev)))), int(keep.sum()))
+
+
+def dayConsistencyReport(y, eff_pre, out, D, u_row, u_applied, day_on,
+                         fast_only, sport):
+    """Does crediting the day make an athlete's races agree with each other?
+
+    ★ THE IN-RUN TEST OF THE DAY TERM (owner, 2026-10-01: "then we can
+      decide if this is final methodology"). A held-out race cannot score
+      it -- an unseen race has no fitted day -- but the per-result ratings
+      can: an athlete-season's races should scatter LESS about their own
+      mean once real day effects are credited, and MORE if the term is
+      noise. The leave-self-out day is the honest one (the row's own
+      residual is not in it); the race's own u is printed beside it to show
+      how much a day built partly from the row itself flatters the test.
+    Read-only: prints, writes nothing."""
+    try:
+        h = np.asarray(out["h"], dtype=np.float64)
+        z_off = y - eff_pre
+        own = np.clip(u_row, -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
+        own = np.where(fast_only, np.minimum(own, 0.0), own)
+        z_on = z_off - np.where(day_on, h * u_applied, 0.0)
+        z_own = z_off - np.where(day_on, h * own, 0.0)
+        for code, name in ((0, "XC"), (1, "TF")):
+            m = day_on & (sport == code)
+            if not m.any():
+                continue
+            rows = []
+            for label, z in (("day out", z_off), ("day in, leave-self-out", z_on),
+                             ("day in, own race u", z_own)):
+                sd, rsd, n = _scatter(z, D.athlete, m)
+                rows.append((label, sd, rsd, n))
+            base_sd, base_r = rows[0][1], rows[0][2]
+            print(f"[joint/live] day-term consistency, {name}: scatter of an "
+                  f"athlete-season's races about its own mean ({rows[0][3]:,} rows, "
+                  f"athlete-seasons with 3+ races)")
+            for label, sd, rsd, _n in rows:
+                print(f"    {label:<24} sd {100 * sd:.3f}%  robust {100 * rsd:.3f}%  "
+                      f"({100 * (sd / base_sd - 1):+.1f}% / {100 * (rsd / base_r - 1):+.1f}%)")
+            verdict = ("LOWER: the day term makes the races agree"
+                       if rows[1][2] < base_r else
+                       "HIGHER: the day term adds noise -- leave it out")
+            print(f"    leave-self-out robust scatter {verdict}")
+    except Exception as exc:                                      # noqa: BLE001
+        print(f"[joint/live] day-term consistency not computed "
+              f"({type(exc).__name__}: {exc})")
+
+
 def _dayWord(mode):
     return {"all": "IN", "fast": "FAST DAYS ONLY IN"}.get(mode, "OUT OF")
 
@@ -126,13 +188,21 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
             day_on |= sport == code
             if mode == "fast":
                 fast_only |= sport == code
+    eff_pre_day = eff.copy()
     if day_on.any():
         # tilted like the course (issue 156): the solve fitted h * u --
         # and CLIPPED for the rating (issue 187): a day beyond the cap is
         # a broken result sheet, not a credit
-        u_cl = np.clip(u_row, -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
+        # ★ LEAVE-SELF-OUT when run_joint computed it (--race-effect-own):
+        #   the row's day as the rest of its race ran it
+        u_app = out.get("race_effect_row")
+        if u_app is None or np.asarray(u_app).size != u_row.size:
+            u_app = u_row
+        u_cl = np.clip(u_app, -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
         u_cl = np.where(fast_only, np.minimum(u_cl, 0.0), u_cl)
         eff = eff + np.where(day_on, out["h"] * u_cl, 0.0)
+        dayConsistencyReport(np.log(norm), eff_pre_day, out, D, u_row, u_cl,
+                             day_on, fast_only, sport)
     eff_venue = eff.copy()           # the venue's share, for engine_scale (177)
     # ★ THE TRACK DISTANCE OFFSET IS IN THE RATING (issue 148): it corrects
     #   the normalisation the row arrived with, exactly as the cell corrects

@@ -76,6 +76,9 @@ PRODUCTION_ENV = (
     ("XCP_WINTER_GAIN", "--winter-gain", True),
     ("XCP_WINTER_GAIN_BANDS", "--winter-gain-bands", True),
     ("XCP_TILT_SCALE", "--tilt-scale", True),
+    # one day effect per VENUE and day instead of per (venue, distance)
+    # and day: a different solve, so the scorecard must fit it
+    ("XCP_RACE_KEY", "--race-key", True),
 )
 # what 08_golive passes that does not change the joint fit: the bracket
 # engine, the gauge, the publishing, the solve's warm start
@@ -88,6 +91,7 @@ PUBLISH_ONLY = {
     "XCP_BRACKET_XC_LEVEL", "XCP_BRACKET_XC_LEVEL_MODE",
     "XCP_BRACKET_PLACE_PRIOR", "XCP_BRACKET_PLACE_VENUE", "XCP_COURSE_SCALE",
     "XCP_RACE_EFFECT_SPORTS", "XCP_SPORT_LEVEL_POOLS", "XCP_FROM_STATE",
+    "XCP_RACE_EFFECT_OWN",
 }
 
 

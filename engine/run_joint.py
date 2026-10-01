@@ -2133,6 +2133,13 @@ def buildParser():
                          "--write-levels)")
     ap.add_argument("--no-race-effect", action="store_true",
                     help="leave the race-day effect out of per-result ratings")
+    ap.add_argument("--race-effect-own", default="leave-out",
+                    choices=("leave-out", "in"),
+                    help="when --race-effect-sports puts the day in a rating: "
+                         "'leave-out' (default) credits each runner the day "
+                         "as the REST of the field ran it, so nobody's own "
+                         "time moves their own day; 'in' the race's u as "
+                         "fitted (js.raceEffectLeaveOneOut)")
     ap.add_argument("--race-effect-sports", default="",
                     help="the sports whose per-result ratings carry the "
                          "race-day term (comma list; default NONE, owner "
@@ -3122,6 +3129,21 @@ def main():
         # packed, which with a cached pack is not today
         from datetime import date as _date
         pack_date = _date.fromtimestamp(os.path.getmtime(args.pack))
+        # ★ EACH RUNNER'S DAY WITHOUT THEMSELVES (owner, 2026-10-01): when
+        #   the day term reaches a rating, the rating gets the day as the
+        #   rest of the field ran it (js.raceEffectLeaveOneOut)
+        if args.race_effect_sports.strip() and args.race_effect_own == "leave-out":
+            u_loo, info = js.raceEffectLeaveOneOut(out, D, y)
+            if u_loo is None:
+                print(f"[joint/live] race-day term: leave-self-out NOT applied "
+                      f"({info}); ratings carry the race's own day")
+            else:
+                out["race_effect_row"] = u_loo
+                print(f"[joint/live] race-day term: each rating carries its day "
+                      f"without its own row -- the runner's own pull, median "
+                      f"{100 * info['own_pull_median']:.3f}%, p99 "
+                      f"{100 * info['own_pull_p99']:.2f}% (conditional check "
+                      f"{info['max_conditional_gap']:.1e})")
         live = jg.buildLive(out, D, cols, keep, collapse=args.collapse,
                             anchor=args.anchor,
                             use_race_effect=not args.no_race_effect,
