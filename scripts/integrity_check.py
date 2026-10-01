@@ -31,7 +31,14 @@ IF IT FAILS -- the recipe that worked on 2026-09-30 (docs/ISSUES-RUNNING.md):
   2. rewrite the table without the damaged page (locks the table):
        runuser -u postgres -- psql -d xc_predictor -c \\
            "SET zero_damaged_pages = on; VACUUM FULL <table>"
-  3. this script again: 0 problems.
+  3. a plain VACUUM (ANALYZE) of the same table -- the site keeps serving:
+       runuser -u postgres -- psql -d xc_predictor -c "VACUUM (ANALYZE) <table>"
+     ! NOT OPTIONAL (2026-10-01). VACUUM FULL leaves the rewritten table
+       with an empty visibility map, and every query that would have
+       answered from an index alone visits the table row by row instead:
+       pipeline step 01a ran 3 hours and never finished, twice. One plain
+       VACUUM rebuilds the map, ANALYZE the planner's statistics.
+  4. this script again: 0 problems.
 """
 import argparse
 import os
@@ -171,7 +178,11 @@ def main():
         for t in bad:
             print(f"       runuser -u postgres -- psql -d xc_predictor -c"
                   f" \"SET zero_damaged_pages = on; VACUUM FULL {t}\"")
-        print("  3. this script again, then the pipeline.")
+        print("  3. then a plain vacuum of each, or later steps crawl (the site keeps serving):")
+        for t in bad:
+            print(f"       runuser -u postgres -- psql -d xc_predictor -c"
+                  f" \"VACUUM (ANALYZE) {t}\"")
+        print("  4. this script again, then the pipeline.")
         sys.exit(1)
     print(f"\n[integrity] ✓ every page of {len(tables)} tables reads clean ({el:.0f}s)")
 

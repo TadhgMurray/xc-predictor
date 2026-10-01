@@ -3119,3 +3119,30 @@ for amcheck to read is found by splitting the range down to the one block.
 Any damage stops the run before another step reads it, emails the owner, and
 prints the lost_rows and VACUUM FULL commands for each damaged block. The
 daily backup's pg_dump reads every page too and already emails on failure.
+
+## 2026-10-01 -- after the repair: step 01a ran 3 h; and 18 duplicate team indexes
+
+**01a_person_probe never finished, twice** (the run of 2026-09-30 20:49 and
+the rerun after the host's hardware test). Not a lock: the query was
+working. `VACUUM FULL results_tf` (the corruption repair) leaves the table
+with an empty visibility map, so the GROUP BY person_id that used to be
+answered from the index visited the table row by row. Fix:
+`VACUUM (ANALYZE) results_tf; VACUUM (ANALYZE) results`. Now step 3 of the
+repair recipe in `scripts/integrity_check.py` (its docstring and its
+failure output).
+
+**00_integrity measured: 80 s** for every page of the 360 GB database.
+
+**The host's hardware test (2026-10-01) found nothing.** The MCE records of
+Sep 22 and 25 are both on CPU 1 with no unit named (IPID 0, "bank
+reserved"). If another MCE appears in `journalctl -k`, or 00_integrity
+finds damage again, reply on the same ticket and ask for a chassis swap.
+
+**Duplicate indexes.** `results` had 10 copies of `idx_results_team`
+(`_f`, `_f_f`, ... 243 MB each) and `results_tf` 8 (1 GB each).
+`scripts/add_page_indexes.py` (step 11b) rejected every partial index as
+unusable, including the partial index its own team_id entry asks for, so
+each run called it missing and built another under a fresh `_f` name.
+Fixed: a partial index counts when the spec is partial and matches, and the
+step drops the `_f` copies of an index it finds OK (DROP INDEX
+CONCURRENTLY). The next run's 11b removes the 18 copies.

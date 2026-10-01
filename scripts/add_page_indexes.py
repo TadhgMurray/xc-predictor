@@ -14,6 +14,7 @@ Usage:  python scripts/add_page_indexes.py            # report + build
         python scripts/add_page_indexes.py --check    # report only
 """
 
+import re
 import sys
 
 sys.path.insert(0, "scripts")
@@ -235,6 +236,7 @@ def main():
         cur = conn.cursor()
         todo = []
         drop_first = []
+        drop_dupes = []
         for table, col, name, spec in WANTED:
             # ⚠ VALIDITY, NOT JUST EXISTENCE. A failed CREATE INDEX
             #   CONCURRENTLY leaves an INVALID index behind: pg_indexes
@@ -287,15 +289,37 @@ def main():
                     return (("using gin" in want) == ("using gin" in have)
                             and ("gin_trgm_ops" in want)
                             == ("gin_trgm_ops" in have))
+                if want_partial:
+                    # Postgres re-parenthesises the predicate it stores
+                    def bare(x):
+                        return re.sub(r"[()\s]", "", norm(x))
+                    return bare(idxdef) == bare(spec)
                 return norm(idxdef) == norm(spec)
 
+            # ⚠ UNLESS THE SPEC IS ITSELF PARTIAL (2026-10-01). The team_id
+            #   entry asks for `(team_id) WHERE ...`, and the rule above
+            #   rejected the very index it had built -- so every run called
+            #   it missing, took a fresh name with one more "_f", and built
+            #   ANOTHER copy: 10 on results, 8 on results_tf (~10 GB, and
+            #   every write maintaining all of them). A partial index is
+            #   usable when it is the partial index asked for.
+            want_partial = bool(spec) and " where " in spec.lower()
             usable = [r for r in rows
-                      if r[1] and " where " not in r[2].lower()
+                      if r[1] and (want_partial or " where " not in r[2].lower())
                       and fits(r[2])]
             partial = [r for r in rows if r[1] and " where " in r[2].lower()]
             invalid = [r for r in rows if not r[1]]
+            # the wanted name first, so a copy is never the one kept
+            usable.sort(key=lambda r: (r[0] != name, len(r[0]), r[0]))
             if usable:
                 print(f"OK    {table}({col}): {usable[0][2][:110]}")
+                # the copies the old rule built: same definition, the
+                # wanted name with "_f" appended one or more times
+                keep = usable[0][0]
+                for r in usable[1:]:
+                    if r[0] != keep and re.fullmatch(re.escape(name) + r"(_f)+", r[0]):
+                        print(f"DUP   {r[0]} is a copy of {keep} -- will drop")
+                        drop_dupes.append(r[0])
                 continue
             if partial:
                 print(f"PART  {table}({col}): only a PARTIAL index exists "
@@ -314,8 +338,8 @@ def main():
                 name += "_f"
             todo.append((table, name, spec or f"({col})"))
 
-        if check_only or not todo:
-            print("nothing to build" if not todo else "(check only)")
+        if check_only or not (todo or drop_dupes):
+            print("nothing to build" if not (todo or drop_dupes) else "(check only)")
             return
 
         # CONCURRENTLY cannot run inside a transaction block
@@ -323,6 +347,9 @@ def main():
         old = conn.autocommit
         conn.autocommit = True
         try:
+            for dup in drop_dupes:
+                print(f"dropping duplicate index {dup}...")
+                cur.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {dup}")
             for bad in drop_first:
                 print(f"dropping invalid index {bad}...")
                 cur.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {bad}")
