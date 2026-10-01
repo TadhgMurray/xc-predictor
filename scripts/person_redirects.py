@@ -27,7 +27,9 @@ so a page that exists is never redirected.
 The athlete page follows person_redirect, up to five hops, before it 404s.
 """
 import argparse
+import os
 import sys
+import time
 
 sys.path.insert(0, "scripts")
 from database import getConn                                   # noqa: E402
@@ -96,13 +98,34 @@ def _exists(cur, name):
     return cur.fetchone()[0] is not None
 
 
+# ★ ONE STRAIGHT READ OF EACH TABLE, AND A LIMIT (2026-10-01). After the
+#   corruption repair rewrote results_tf (VACUUM FULL), the planner walked
+#   this GROUP BY through the person_id index -- a random heap read per
+#   row, 192M of them -- and the step ran 3 hours, then 8, without
+#   finishing. A sequential scan with a hash aggregate reads each table
+#   once, in minutes, whatever the statistics say, so the index paths are
+#   switched off for this transaction only. The limit makes a bad night a
+#   failed step instead of a stalled pipeline: 01a failing changes no
+#   rating, and the previous snapshot stays (the swap is one transaction).
+PROBE_TIMEOUT_MIN = int(os.environ.get("XCP_PROBE_TIMEOUT_MIN") or 30)
+PLAN = f"""
+SET LOCAL enable_indexscan = off;
+SET LOCAL enable_indexonlyscan = off;
+SET LOCAL enable_bitmapscan = off;
+SET LOCAL statement_timeout = '{PROBE_TIMEOUT_MIN}min';
+"""
+
+
 def snapshot():
+    t0 = time.time()
     with getConn() as conn, conn.cursor() as cur:
+        cur.execute(PLAN)
         cur.execute(SNAPSHOT)
         cur.execute("SELECT count(*), count(DISTINCT person_id) FROM person_probe")
         n, p = cur.fetchone()
         conn.commit()
-    print(f"person_probe: {n:,} probe rows for {p:,} people")
+    print(f"person_probe: {n:,} probe rows for {p:,} people "
+          f"({time.time() - t0:.0f}s)")
 
 
 def resolve(dry):

@@ -3173,3 +3173,11 @@ methodology. What exists now:
   real day effects; higher = noise, leave it out.
 - **Site**: set `XCP_RACE_DAY_SPORTS=XC` in /etc/xc-predictor.env when the
   ratings carry it, so the difficulty hover says so.
+
+**01a again, 8 hours (2026-10-01 15:22 -> 23:23).** Still stalled after the
+reboot. The GROUP BY person_id was being walked through the person index
+(a random heap read per row) on the rewritten table. `scripts/
+person_redirects.py --snapshot` now switches the index paths off for its
+own transaction (one sequential read per table, a hash aggregate) and stops
+at `XCP_PROBE_TIMEOUT_MIN` (30): a stalled 01a is now a failed step that
+keeps the previous snapshot, not a stalled pipeline.
