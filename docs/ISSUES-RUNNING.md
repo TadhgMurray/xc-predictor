@@ -3367,3 +3367,20 @@ Fixed: run_pipeline.sh sources solve_env.sh after the env file and prints the
 key settings at the top of every run; a command-line value still wins. Re-run
 from 7 to republish with the production model (and pack the venue-gated
 Foot Locker cells).
+
+**Unknown names, part 2 (2026-10-02; owner: "I can promise you athletic net has the names").**
+- **Track relays were most of the track count.** A relay row is a team: the
+  saver stores it with no athlete id and no person on purpose, and
+  unknown_names counted every one as "no_person". Relays are ~6% of a
+  meet's rows, about the whole 6.4%. The race page also showed every squad
+  as "Unknown" (get_tf_race_results never read is_relay). Now a relay row
+  shows the team and its runners (meet_extras.relay_legs_json, names from
+  the blob or `athletes`, linked); unknown_names leaves relays out and
+  prints their count on its own line. Test: tests/test_relay_legs.py.
+- **The rest is fixed by a re-scrape.** scripts/requeue_blank_athletes.py
+  now finds every anet meet with a nameless non-relay row by the site's own
+  test (no name in `athletes` by person or athlete id, none on the row), not
+  only all-blank athletes rows; --apply marks them unscraped and adds the
+  ones missing from meet_queue. The savers fill a blank athletes row or
+  insert a missing one, and the results upsert fills a missing athlete_id /
+  person_id (COALESCE: a dedup's person is kept). Dry run by default.

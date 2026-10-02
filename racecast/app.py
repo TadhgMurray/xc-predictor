@@ -4181,7 +4181,8 @@ def get_tf_race_results(cur, meet_id, div_id, event_id, source=None):
                r.date,
                {_name_sql('r')} AS athlete_name,
                a.gender         AS gender,
-               r.wind           AS wind
+               r.wind           AS wind,
+               COALESCE(r.is_relay, 0) AS is_relay
         FROM results_tf r
         {_athlete_lateral('r')}
         WHERE r.meet_id  = %(meet)s
@@ -4393,6 +4394,12 @@ def race_tf(meet_id, event_id, div_id):
             results = [dict(r) for r in results]
             _borrowTwins(cur, results, "results_tf", meet_id, race_src,
                          name_key="athlete_name")
+            # a relay row is a team: its runners, not "Unknown"
+            if any(r.get("is_relay") for r in results):
+                relay_legs = _tf_relay_legs(cur, meet_id)
+                for r in results:
+                    if r.get("is_relay"):
+                        r["relay_legs"] = relay_legs.get(r["result_id"]) or []
             # HS-equivalent view: the event's distance; pools per row.
             has_hs_view = (stampRowsHs(cur, "TF", results,
                                        distance=header.get("distance_meters"))
@@ -4811,6 +4818,69 @@ def _tf_relay_leg_genders(cur, meet_id):
         m, f = gs.count("M"), gs.count("F")
         if m != f:
             out[rid] = "M" if m > f else "F"
+    return out
+
+
+def _tf_relay_legs(cur, meet_id):
+    """{result_id: [{"person_id", "name"}, ...]} -- each relay squad's
+    runners, in leg order, from meet_extras.relay_legs_json.
+
+    ★ WHY (owner, 2026-10-02: "unknown athletes are a really big issue").
+      A relay row is a TEAM: the saver stores it with no athlete id (the
+      feed's AthleteID on it is a pseudo-athlete), so the race page named
+      every squad "Unknown". The runners are in the meet's relayLegs blob
+      by athlete id; their names come from the blob when it carries them,
+      else from `athletes`."""
+    blob = _tf_meet_extras(cur, meet_id, "relay_legs_json")
+    if not isinstance(blob, list):
+        return {}
+    legs = {}
+    for e in blob:
+        if not isinstance(e, dict):
+            continue
+        rid = _pick(e, "IDResult", "ResultID", "ResultId", "result_id",
+                    "IDRelayResult", "RelayResultID")
+        aid = _pick(e, "AthleteID", "AthleteId", "athlete_id", "IDAthlete")
+        if rid is None or aid is None:
+            continue
+        nm = " ".join(str(x).strip() for x in
+                      (_pick(e, "FirstName", "firstName"),
+                       _pick(e, "LastName", "lastName")) if x and str(x).strip())
+        nm = nm or str(_pick(e, "Name", "AthleteName", "name") or "").strip()
+        leg = _pick(e, "Leg", "LegNum", "leg", "Order", "SortOrder")
+        try:
+            legs.setdefault(int(rid), []).append(
+                {"athlete_id": int(aid), "name": nm or None,
+                 "leg": int(leg) if leg is not None else None})
+        except (TypeError, ValueError):
+            continue
+    if not legs:
+        return {}
+    ids = sorted({x["athlete_id"] for v in legs.values() for x in v})
+    known = {}
+    try:
+        cur.execute("""
+            SELECT DISTINCT ON (athlete_id) athlete_id,
+                   COALESCE(person_id, athlete_id) AS person_id,
+                   NULLIF(btrim(concat_ws(' ', first_name, last_name)), '') AS name
+            FROM   athletes
+            WHERE  athlete_id = ANY(%(ids)s)
+            ORDER  BY athlete_id,
+                      (NULLIF(btrim(concat_ws(' ', first_name, last_name)), '') IS NULL)
+        """, {"ids": ids})
+        for rec in cur.fetchall():
+            rec = rec if isinstance(rec, dict) else dict(
+                zip(("athlete_id", "person_id", "name"), rec))
+            known[rec["athlete_id"]] = rec
+    except Exception:                    # noqa: BLE001
+        cur.connection.rollback()
+    out = {}
+    for rid, xs in legs.items():
+        xs.sort(key=lambda x: (x["leg"] is None, x["leg"] or 0))
+        out[rid] = [{"person_id": (known.get(x["athlete_id"]) or {}).get("person_id")
+                                  or x["athlete_id"],
+                     "name": x["name"] or (known.get(x["athlete_id"]) or {}).get("name")}
+                    for x in xs]
     return out
 
 

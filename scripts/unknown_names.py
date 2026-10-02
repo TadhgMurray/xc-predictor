@@ -29,6 +29,13 @@ unknown_names.py -- how many results show "Unknown", and why. Read-only.
     blank_athlete   an athletes row exists for the person, every name blank
                     (the scraper's FK placeholder, never filled)
     no_athlete      no athletes row at all for the person
+
+! TRACK RELAYS ARE NOT COUNTED (2026-10-02). A relay row is a team: the
+  saver stores it with no athlete id and no person, on purpose, so every one
+  of them read as "no_person" here -- relays are roughly 6% of a meet's rows,
+  which is about the whole 6.4% this first reported for track. They are
+  counted on their own line; the race page names the squad and its runners
+  (relayLegs).
 """
 import argparse
 import os
@@ -94,7 +101,12 @@ def main():
                 LEFT JOIN un_any   y ON y.id = r.person_id
                 WHERE  n.id IS NULL
                   AND  NULLIF(btrim(r.athlete_name), '') IS NULL
+                  {"AND COALESCE(r.is_relay, 0) = 0" if sport == "TF" else ""}
             """)
+            if sport == "TF":
+                cur.execute("SELECT count(*) FROM results_tf WHERE COALESCE(is_relay, 0) = 1")
+                print(f"\n  (TF relay rows, a team not a person, not counted below: "
+                      f"{cur.fetchone()[0]:,})")
             cur.execute(f"SELECT count(*) FROM {table}")
             total = cur.fetchone()[0]
             cur.execute(f"SELECT count(*), count(DISTINCT person_id) FROM un_rows_{sport}")

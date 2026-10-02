@@ -5328,3 +5328,7 @@ input.eqc-big:focus { outline: none; border-bottom-color: var(--eqc-accent); }
  *   only JavaScript knows.
  * ===================================================================== */
 
+
+/* track race page: a relay row is a team -- the squad, its runners under it */
+.relay-team { font-weight: 600; }
+.relay-legs { display: block; font-size: 0.8rem; color: var(--muted, #666); }

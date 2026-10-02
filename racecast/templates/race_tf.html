@@ -94,7 +94,13 @@
             <tr id="r{{ row.result_id }}"{% if hl_school and row.school == hl_school %} class="hl-school"{% endif %}>
                 <td>{{ row.sec_place }}</td>
                 <td>
-                    {% if row.person_id %}
+                    {% if row.is_relay %}
+                        {# a relay row is a team: the squad, then its runners #}
+                        <span class="relay-team">{{ row.school|school_label_for('college' if college else none, header.state) if row.school else "Relay" }}</span>
+                        {% set legs = row.relay_legs|selectattr("name")|list if row.relay_legs else [] %}
+                        {% if legs %}<span class="relay-legs">{% for leg in legs %}<a href="/athlete/{{ leg.person_id }}">{{ leg.name }}</a>{{ ", " if not loop.last }}{% endfor %}</span>
+                        {% elif row.athlete_name and row.athlete_name != "Unknown" %}<span class="relay-legs">{{ row.athlete_name }}</span>{% endif %}
+                    {% elif row.person_id %}
                         <a href="/athlete/{{ row.person_id }}">{{ row.athlete_name if row.athlete_name else "Unknown" }}</a>
                     {% else %}
                         {{ row.athlete_name if row.athlete_name else "Unknown" }}
