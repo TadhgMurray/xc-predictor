@@ -180,3 +180,13 @@ def test_pages_read_the_championship_cell_first():
                                 "racecast", "app.py")).read()
     assert app_src.count("{_champ_join('r')}") == 2          # athlete rows + race header
     assert app_src.count("COALESCE(cdc.difficulty, cd.difficulty)") == 2
+
+
+def test_ern_region_names_find_their_regional():
+    # 2026-10-02: "Footlocker Western Regional" matched no region and fell
+    # back to the park's own cell
+    import champ_course as c
+    assert c.courseKey("Footlocker Western Regional") == "champ:footlocker-west"
+    assert c.courseKey("Foot Locker Southern Regional") == "champ:footlocker-south"
+    assert c.courseKey("Foot Locker Midwestern Regional Championships") == "champ:footlocker-midwest"
+    assert c.courseKey("Foot Locker Northeastern Regional") == "champ:footlocker-northeast"

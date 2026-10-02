@@ -3313,3 +3313,24 @@ Found, not fixed:
   model's numbers 8:59 needs the venue ignored; the drop since 09-26 is
   more than weather (several changes landed in the 10-01 run) -- the SQL
   checks in the reply compare old and new rows.
+
+**Mt. SAC / hilly CA / Foot Locker difficulty (read-only investigation, 2026-10-02).**
+Live: Mt. San Antonio College 4715m +8.2%, 4828m +6.1%, 5000m +4.6%, 3218m
++8.3%; Foot Locker Nationals +6.7%, West +6.4%; Glendoveer (NXN) +10.1%;
+Crystal Springs +5.8%, Toro Park +5.5%. (`/course/Mt SAC` is a different,
+one-meet course; the real one is `/course/Mt. San Antonio College`.) The
+race-day hover is positive on 21 of 25 of the owner's CA rows: the solve
+keeps booking those days slower than the course number beside them.
+Ranked causes: (1) the published number is the latest 2-year era, which
+can be one race day leaning 2/3 on the course's mixed history (era prior =
+2 races; small time trials weigh ~0.67 against the Invitational's ~1.0);
+(2) CA is weakly tied to the rest of the country and the bracket solve
+starts every course at 0, so a region moves only through runners who race
+elsewhere ("keeps its sum where it started") -- check convergence (max 60
+iterations); (3) a runner's level includes their other races on the SAME
+course (Mt. SAC raced up to 3x in 30 days); (4) Foot Locker: champ keys
+have no venue prior, latest era is two days, Brooks regionals are not
+recognised as Foot Locker, and "Western/Southern" names fell out of the
+regionals (fixed: champ_course "-ern"); (5) weather normals missing a
+fortnight fall back to a flat baseline (minor). Ruled out: meet importance
+(off), course scale (uniform), tilt.

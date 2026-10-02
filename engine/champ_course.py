@@ -63,10 +63,13 @@ CHAMP_WORD = "(champ|national|regional|final)"
 # (slug, the region's regex -- tested on top of SPONSOR and CHAMP_WORD --
 #  and the name a course page shows). Order matters: first match wins.
 CHAMP_COURSES = (
-    ("footlocker-northeast", "north ?-?east", "Foot Locker Northeast Regional"),
-    ("footlocker-south", "(^|[^a-z])south([^a-z]|$)", "Foot Locker South Regional"),
-    ("footlocker-midwest", "mid ?-?west", "Foot Locker Midwest Regional"),
-    ("footlocker-west", "(^|[^a-z])west([^a-z]|$)", "Foot Locker West Regional"),
+    # ★ "-ern" TOO (2026-10-02): "Footlocker Western Regional" matched no
+    #   region (west followed by a letter), so it was left at the park's own
+    #   5000m cell instead of the West Regional's
+    ("footlocker-northeast", "north ?-?east(ern)?", "Foot Locker Northeast Regional"),
+    ("footlocker-south", "(^|[^a-z])south(ern)?([^a-z]|$)", "Foot Locker South Regional"),
+    ("footlocker-midwest", "mid ?-?west(ern)?", "Foot Locker Midwest Regional"),
+    ("footlocker-west", "(^|[^a-z])west(ern)?([^a-z]|$)", "Foot Locker West Regional"),
     # ! the final LAST, and never a name that says regional: a regional
     #   whose name lost its region is left at its venue, not folded in here
     ("footlocker-final", None, "Foot Locker Nationals"),
