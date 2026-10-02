@@ -1,60 +1,70 @@
-/* layout.js -- the phone layout (<= 700px), on every page with the topbar.
+/* layout.js -- phones: one width for the whole page, opened zoomed out.
  *
- * ★ THE PAGE FITS THE SCREEN; A WIDE TABLE SCROLLS IN ITS OWN BOX (owner,
- *   2026-10-02, after the browser review). Until now the page grew to the
- *   widest table (style.css, "every table is the same width", 2026-09-06),
- *   so on a 390px phone every heading and paragraph ran off the right edge
- *   ("National High School Boys Cr..."). Each table is now wrapped in a
- *   .tscroll box as wide as the page: every table is still the same width as
- *   every other (the page's) and still never squeezed (min-width:
- *   max-content), and it scrolls sideways inside that box instead of the
- *   whole page doing so. The CSS half is in style.css under the same date.
+ * ★ THE OWNER'S PHONE (2026-10-02): "make the phone start as zoomed out as
+ *   possible and make every element on the page have the same width. Like
+ *   on the home page making the mural the same width as the tables."
  *
- * ★ THE ATHLETE SIDEBAR, FOLDED, AT THE TOP. Beside the results it sat
- *   ~1,200px to the right on a phone, reachable only by scrolling the page
- *   sideways. Above them, folded as "Bests & PRs", it is the first thing a
- *   runner looks for and costs one line until opened. Desktop is untouched.
+ *   The 2026-09-06 phone pass already makes the page as wide as its widest
+ *   table (no table scrolls inside itself, nothing is squeezed). What it
+ *   left was a ragged page -- tables 984px wide, the mural, headings and
+ *   paragraphs at the screen's 390 -- opened at 100% on a corner of it.
+ *   This measures the page's natural width W and zooms the page to
+ *   screen / W: laid out W wide, every block (mural, header, headings,
+ *   cards, the 100%-wide tables) is the same W, and the whole width is on
+ *   the screen. Pinch to read.
+ *
+ * ! CSS zoom ON THE ROOT, NOT THE VIEWPORT TAG. Zooming out through
+ *   <meta name=viewport> widens the layout viewport past 700px in Chrome, so
+ *   the phone stylesheet stops applying and the page reflows as a desktop
+ *   one. CSS zoom leaves the viewport (and every media query) at the phone's
+ *   width and only scales the page.
+ * ! RE-MEASURED when the page changes (boards and predictions draw their
+ *   tables after load) and on rotation.
  */
 (function () {
   "use strict";
-  if (!window.matchMedia || !window.matchMedia("(max-width: 700px)").matches) return;
+  var root = document.documentElement;
+  var busy = false, timer = null;
 
-  function wrapTables(root) {
-    var tables = (root || document).querySelectorAll("body table");
-    for (var i = 0; i < tables.length; i++) {
-      var t = tables[i], p = t.parentElement;
-      if (!p || t.closest(".tscroll, .topbar, header, nav, .chart-slot")) continue;
-      var w = document.createElement("div");
-      w.className = "tscroll";
-      p.insertBefore(w, t);
-      w.appendChild(t);
+  function isPhone() {
+    return !!(window.matchMedia && window.matchMedia("(max-width: 700px)").matches);
+  }
+
+  function fit() {
+    if (busy) return;
+    busy = true;
+    try {
+      root.style.zoom = "";
+      if (!isPhone()) return;
+      var screen = root.clientWidth || window.innerWidth;
+      var w = Math.ceil(root.scrollWidth);
+      if (w <= screen + 2) return;
+      // laid out W wide, a grid or a mural can widen a little: settle first
+      for (var i = 0; i < 4; i++) {
+        root.style.zoom = String(screen / w);
+        var w2 = Math.ceil(root.scrollWidth);
+        if (w2 <= w + 1) break;
+        w = w2;
+      }
+    } finally {
+      busy = false;
     }
   }
 
-  function foldSidebar() {
-    var layout = document.querySelector(".page-layout");
-    var side = layout && layout.querySelector(":scope > .sidebar");
-    if (!side || side.closest(".side-fold")) return;
-    var d = document.createElement("details");
-    d.className = "side-fold";
-    var s = document.createElement("summary");
-    s.textContent = "Bests & PRs";
-    d.appendChild(s);
-    layout.insertBefore(d, layout.firstElementChild);
-    d.appendChild(side);
+  function soon() {
+    clearTimeout(timer);
+    timer = setTimeout(fit, 150);
   }
 
-  function run() {
-    wrapTables(document);
-    foldSidebar();
-    // tables drawn later (rankings boards, predictions, compare) get the same
-    var seen = window.MutationObserver && new MutationObserver(function (muts) {
-      for (var i = 0; i < muts.length; i++) {
-        if (muts[i].addedNodes.length) { wrapTables(document); return; }
-      }
-    });
-    if (seen) seen.observe(document.body, {childList: true, subtree: true});
+  function start() {
+    fit();
+    window.addEventListener("load", fit);
+    window.addEventListener("orientationchange", function () { setTimeout(fit, 250); });
+    if (window.MutationObserver) {
+      new MutationObserver(function () { if (!busy) soon(); })
+        .observe(document.body, {childList: true, subtree: true});
+    }
   }
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", run);
-  else run();
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
+  else start();
 })();

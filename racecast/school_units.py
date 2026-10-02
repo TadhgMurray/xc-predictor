@@ -307,7 +307,7 @@ def applyUnitFilters(cur, f, args):
 
 
 def unitsForPerson(cur, person_id, sport="XC", long=False, fallback=None,
-                   borrow=None):
+                   borrow=None, year=None, pool=None):
     """The header chips from the athlete's OWN latest-season rows in
     ranking_results (owner, 2026-09-06: "the top one needs to always
     follow the bottom one"). Each unit column's mode over that season;
@@ -325,13 +325,24 @@ def unitsForPerson(cur, person_id, sport="XC", long=False, fallback=None,
         if not use or "is_college" not in have and not any(c in have for c in cols[1:]):
             return fallback or []
         modes = ", ".join(f'mode() WITHIN GROUP (ORDER BY "{c}") AS "{c}"' for c in use)
-        cur.execute(f"""
-            SELECT {modes}
-            FROM   ranking_results
-            WHERE  person_id = %s AND sport = %s
-              AND  year = (SELECT max(year) FROM ranking_results
-                           WHERE person_id = %s AND sport = %s)
-        """, (person_id, sport, person_id, sport))
+        # ★ year/pool GIVEN = THE TEAM SEASON'S ROWS (2026-10-02): the
+        #   chips beside a team are that team's season's units, not the
+        #   latest cross country year's.
+        if year is not None:
+            cur.execute(f"""
+                SELECT {modes}
+                FROM   ranking_results
+                WHERE  person_id = %s AND sport = %s AND year = %s
+                  {"AND pool = %s" if pool else ""}
+            """, (person_id, sport, year) + ((pool,) if pool else ()))
+        else:
+            cur.execute(f"""
+                SELECT {modes}
+                FROM   ranking_results
+                WHERE  person_id = %s AND sport = %s
+                  AND  year = (SELECT max(year) FROM ranking_results
+                               WHERE person_id = %s AND sport = %s)
+            """, (person_id, sport, person_id, sport))
         row = cur.fetchone()
     except Exception:                                # noqa: BLE001
         cur.connection.rollback()

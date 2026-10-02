@@ -3276,3 +3276,40 @@ Found, not fixed:
   new school is the false-positive shape -- read before any unlink.
 - Desktop home is ~38px wider than a 1366 window (live before these
   changes); not chased yet.
+
+## 2026-10-02 (evening) -- owner's notes after the review
+
+- **Phone, second take** (owner: "start as zoomed out as possible and make
+  every element the same width"): layout.js measures the page's natural
+  width W (the 2026-09-06 phone pass: page as wide as its widest table) and
+  sets CSS zoom = screen / W on the root. Every block is laid out W wide
+  (mural, header, headings, tables), the whole width is on screen, pinch to
+  read. CSS zoom, not the viewport tag: zooming the viewport widened the
+  layout viewport past 700px in Chrome and dropped the phone stylesheet.
+  The athlete sidebar stays on the right. The earlier "tables scroll in
+  their own box" take is gone.
+- **Athletes/Coaches switch**: one bordered switch on all 16 page types
+  checked, both sizes (the stray-brace fix); the lit side is the edition.
+- **Trey Caldwell (29406443)**: header read "Arkansas (AR) · 12 · CA D2 NCS
+  D2 Tri-Valley EBAL". The class only followed the newest team season in
+  the same pool, and the chips always read the latest XC year. Now the
+  class follows the newest team season in any pool, spelled in that
+  season's pool (grade_pool: FR-1); the chips come from the team season's
+  rows (unitsForPerson year/pool); the school label/crest/link use the team
+  season's level and state; "Recruiting: where you'd fit" shows for a
+  high-school team only. Share cards: chips from the card's own season.
+- **Unknown names, measured** (scripts/unknown_names.py on the server): XC
+  316,498 rows nameless, 262,760 of them the 2026 season (anet placeholder
+  athletes never named: the current XC scrape); TF 12,377,037 rows (6.4%) --
+  12.17M anet rows with no person AND no named athlete, often whole meets
+  (255955: 20,717 of 21,206). Cause not yet known; scripts/name_probe.py
+  splits one meet's nameless rows (relay/field/event, scrape day, athlete_id,
+  athletes row blank or missing).
+- **Owner's 3200 (Arcadia 2025-04-12, 9:01.1, result 258164858)**: rated
+  133.8 (136.6 on 2026-09-26). The "9:07" is the race page's equivalents
+  card: it applies the venue (-1.1%, a fast track) and no weather; track
+  race pages pass no weather. The weather grid reads 24C over 9am-8pm but
+  the race ran ~8pm at ~18C, and the day term is -1.1% (fast). On the
+  model's numbers 8:59 needs the venue ignored; the drop since 09-26 is
+  more than weather (several changes landed in the 10-01 run) -- the SQL
+  checks in the reply compare old and new rows.

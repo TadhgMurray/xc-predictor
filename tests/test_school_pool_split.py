@@ -249,13 +249,17 @@ def test_the_track_roster_and_the_header_agree_on_a_split_eligibility():
     assert header == row["grade"] == "SR-4"
 
 
-def test_the_header_keeps_its_own_season_across_a_pool_change():
+def test_the_class_follows_the_team_across_a_pool_change():
     # Michael Rynne: header rated on 2026 track at Iona (hs_m); his newest
-    # team season is Amherst college. An FR-1 spelled in hs_m would read 9.
+    # team season is Amherst college. 2026-10-02 (Trey Caldwell, "Arkansas ·
+    # 12"): the class is the team season's, spelled in ITS pool, so the
+    # header reads FR-1 beside Amherst -- not 12, and not an FR-1 read as 9.
     season_rating = {"year": 2025, "sport": "TF", "pool": "hs_m", "grade": "12"}
     latest_team = {"year": 2026, "sport": "XC", "pool": "college_m",
                    "grade": "FR-1"}
-    assert app._headerClassSeason(season_rating, latest_team) is season_rating
+    cls = app._headerClassSeason(season_rating, latest_team)
+    assert cls is latest_team
+    assert gradeLabel(cls["grade"], cls["pool"]) == "FR-1"
 
 
 def test_an_older_team_season_does_not_turn_the_class_back():

@@ -1503,7 +1503,7 @@ def athlete(person_id):
             latest_team = None
             try:
                 cur.execute("""
-                    SELECT school, pool, sport, year, grade FROM athlete_season
+                    SELECT school, pool, sport, year, grade, state FROM athlete_season
                     WHERE  person_id = %s AND school IS NOT NULL
                       AND  lower(school) NOT LIKE 'unattached%%'
                       AND  lower(school) NOT IN ('unat', 'independent',
@@ -1562,7 +1562,17 @@ def athlete(person_id):
             # ★ THE ROWS WIN (owner, 2026-09-06): the chips come from the
             #   athlete's own latest season, which is what the boards rank
             #   and filter; the school-name lookup is only the fallback.
-            units = unitsForPerson(cur, person_id, fallback=units, borrow=_borrow)
+            # ★ AND THE CHIPS ARE THE TEAM SEASON'S (2026-10-02, Trey Caldwell:
+            #   Arkansas beside De La Salle's "CA D2 · NCS D2 · EBAL"). The
+            #   chips read the latest XC year, whatever the team now is; a
+            #   freshman in his first college spring, a transfer, a track-only
+            #   season all kept the last cross country school's units.
+            units = unitsForPerson(
+                cur, person_id, fallback=units, borrow=_borrow,
+                **({"sport": latest_team["sport"], "year": latest_team["year"],
+                    "pool": latest_team.get("pool")}
+                   if latest_team and latest_team.get("sport") and
+                   latest_team.get("year") is not None else {}))
 
             # The season rank line under the stat strip -- see buildRankLine.
             rank_line = (buildRankLine(cur, person_id, season_rating)
@@ -1778,6 +1788,18 @@ def athlete(person_id):
         athlete["grade"] = _classGrade(seasons, class_season) or athlete["grade"]
     athlete["header_pool"] = (season_rating.get("pool") if season_rating else None)
     athlete["header_state"] = (season_rating.get("state") if season_rating else None)
+    # ★ THE CLASS AND THE TEAM ARE SPELLED IN THEIR OWN LEVEL (2026-10-02).
+    #   The rating stays the header season's (header_pool, for the percentile
+    #   and the scale); the grade is spelled in the pool of the season it
+    #   came from (an FR-1 reads FR-1, not "9"), and the school's label,
+    #   crest and link use the team season's level and state, so a college
+    #   team is never linked as ?level=hs.
+    athlete["grade_pool"] = ((class_season.get("pool") if class_season else None)
+                             or athlete["header_pool"])
+    athlete["team_pool"] = ((latest_team.get("pool") if latest_team else None)
+                            or athlete["header_pool"])
+    athlete["team_state"] = ((latest_team.get("state") if latest_team else None)
+                             or athlete["header_state"])
     # ! NOT athlete["school"] = _season_school(races): `races` is the whole
     #   career, so this line headed Liam Lucas "Loyola Blakefield" (31 high
     #   school rows) over his Tufts season, whatever the header row said.
@@ -1908,6 +1930,8 @@ def athlete(person_id):
         athlete["pro_header"] = True
         athlete["header_pool"] = _pblk.get("pool")
         athlete["header_state"] = None
+        athlete["grade_pool"] = athlete["team_pool"] = _pblk.get("pool")
+        athlete["team_state"] = None
         if _pblk.get("school"):
             athlete["school"] = _pblk["school"]
         rank_line = None
@@ -2671,19 +2695,20 @@ def _headerClassSeason(season_rating, latest_team):
       "the rating and the team are two questions"); the class is the team
       question, not the rating one.
 
-    ! SAME POOL ONLY. The header spells the grade with the header season's
-      pool, so a high-school senior now running a first college fall keeps
-      his high-school season's grade: an FR-1 spelled in hs_m reads "9".
+    ! ANY POOL (2026-10-02): the page spells the class in the pool of the
+      season it came from (athlete["grade_pool"]), so a college freshman's
+      FR-1 is no longer read through the high-school season's pool.
     """
     if not season_rating:
         return season_rating
     if not latest_team or latest_team.get("year") is None:
         return season_rating
 
-    def bare(p):
-        return (p or "").split("|", 1)[0]
-    if bare(latest_team.get("pool")) != bare(season_rating.get("pool")):
-        return season_rating
+    # ★ ANY POOL NOW (2026-10-02, Trey Caldwell: "Arkansas · 12"). The
+    #   same-pool rule kept a college freshman's high-school grade beside his
+    #   college team, because the grade was spelled in the header season's
+    #   pool. The page now spells it in this season's own pool (grade_pool),
+    #   so the newest team season answers the class whatever its level.
     if season_rating.get("year") is not None and \
             int(latest_team["year"]) < int(season_rating["year"]):
         return season_rating

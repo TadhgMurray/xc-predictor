@@ -112,7 +112,10 @@ def athleteCardData(cur, person_id):
         home = homeStateOf(cur, person_id)
         fb = unitsFor(cur, school, home) if school else []
         br = unitsFor(cur, school, home, collapse=False) if school else []
-        units = unitsForPerson(cur, person_id, fallback=fb, borrow=br)
+        # the card's school is its season's: the chips are that season's too
+        units = unitsForPerson(cur, person_id, fallback=fb, borrow=br,
+                               **({"sport": season["sport"], "year": season["year"],
+                                   "pool": season.get("pool")} if season else {}))
     except Exception:                                 # noqa: BLE001
         cur.connection.rollback()
     ranks = []
