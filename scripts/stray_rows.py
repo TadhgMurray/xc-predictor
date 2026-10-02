@@ -75,30 +75,51 @@ STAGES = [
                r.school, r.speed_rating, r.meet_id, r.pool
         FROM   ranking_results r
         WHERE  r.person_id IN (SELECT DISTINCT person_id FROM sr_away)
-          AND  r.state IS NOT NULL AND r.speed_rating IS NOT NULL"""),
+          AND  r.state IS NOT NULL AND r.speed_rating IS NOT NULL;
+        CREATE INDEX ON sr_rows (person_id, state);
+        ANALYZE sr_rows"""),
+    # ! EVERY LOOKUP A TABLE WITH AN INDEX (2026-10-02: "hanging after the
+    #   print"). The first staged version kept the home schools as a CTE and
+    #   probed it from a correlated subquery per row -- quadratic in the
+    #   candidates. Each piece is materialised and indexed here.
+    ("home schools", """
+        CREATE TEMP TABLE sr_hs AS
+        SELECT DISTINCT r.person_id, r.school
+        FROM   sr_rows r JOIN sr_home h ON h.person_id = r.person_id AND r.state = h.home
+        WHERE  r.school IS NOT NULL;
+        CREATE INDEX ON sr_hs (person_id, school);
+        CREATE TEMP TABLE sr_hs_list AS
+        SELECT person_id, string_agg(school, ' / ' ORDER BY school) AS home_school
+        FROM sr_hs GROUP BY 1;
+        CREATE INDEX ON sr_hs_list (person_id);
+        ANALYZE sr_hs; ANALYZE sr_hs_list"""),
+    ("the away rows", """
+        CREATE TEMP TABLE sr_cand AS
+        SELECT r.*, a.n_away
+        FROM   sr_rows r JOIN sr_away a ON a.person_id = r.person_id AND a.state = r.state
+        WHERE  NOT EXISTS (SELECT 1 FROM sr_hs hs
+                           WHERE hs.person_id = r.person_id AND hs.school = r.school);
+        CREATE INDEX ON sr_cand (person_id, sport, year);
+        ANALYZE sr_cand"""),
+    ("season medians", """
+        CREATE TEMP TABLE sr_med AS
+        SELECT r.person_id, r.sport, r.year,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY r.speed_rating) AS med,
+               count(*) AS n_season
+        FROM   sr_rows r
+        WHERE  (r.person_id, r.sport, r.year) IN (SELECT person_id, sport, year FROM sr_cand)
+        GROUP  BY 1, 2, 3;
+        CREATE INDEX ON sr_med (person_id, sport, year);
+        ANALYZE sr_med"""),
 ]
 FINAL = """
-WITH home_schools AS (
-    SELECT DISTINCT r.person_id, r.school
-    FROM sr_rows r JOIN sr_home h ON h.person_id = r.person_id AND r.state = h.home
-),
-season_med AS (
-    SELECT person_id, sport, year,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med,
-           count(*) AS n_season
-    FROM sr_rows GROUP BY 1, 2, 3
-)
-SELECT r.person_id, r.result_id, r.sport, r.race_date, r.state, r.school,
-       r.meet_id, r.pool, r.speed_rating, m.med, m.n_season,
-       h.home, h.n_home, h.n_all, a.n_away,
-       (SELECT string_agg(DISTINCT hs.school, ' / ') FROM home_schools hs
-        WHERE hs.person_id = r.person_id) AS home_school
-FROM sr_rows r
-JOIN sr_away a    ON a.person_id = r.person_id AND a.state = r.state
-JOIN sr_home h    ON h.person_id = r.person_id
-JOIN season_med m ON m.person_id = r.person_id AND m.sport = r.sport AND m.year = r.year
-WHERE NOT EXISTS (SELECT 1 FROM home_schools hs
-                  WHERE hs.person_id = r.person_id AND hs.school = r.school)
+SELECT c.person_id, c.result_id, c.sport, c.race_date, c.state, c.school,
+       c.meet_id, c.pool, c.speed_rating, m.med, m.n_season,
+       h.home, h.n_home, h.n_all, c.n_away, l.home_school
+FROM   sr_cand c
+JOIN   sr_home h ON h.person_id = c.person_id
+JOIN   sr_med m  ON m.person_id = c.person_id AND m.sport = c.sport AND m.year = c.year
+LEFT JOIN sr_hs_list l ON l.person_id = c.person_id
 """
 
 
@@ -122,8 +143,10 @@ def main():
             t1 = time.time()
             cur.execute(sql.format(person=person), args)
             print(f"[stray] {label}: {time.time() - t1:.0f}s", flush=True)
-        cur.execute("SELECT count(DISTINCT person_id) FROM sr_away")
-        print(f"[stray] {cur.fetchone()[0]:,} athletes have a lone out-of-state row", flush=True)
+            if label == "lone away states":
+                cur.execute("SELECT count(DISTINCT person_id) FROM sr_away")
+                print(f"[stray]   {cur.fetchone()[0]:,} athletes have a lone out-of-state row",
+                      flush=True)
         cur.execute(FINAL)
         rows = cur.fetchall()
         names = {}
