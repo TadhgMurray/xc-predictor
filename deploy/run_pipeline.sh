@@ -97,6 +97,27 @@ else
   echo "WARNING: $ENV_FILE missing -- DB credentials must be in the environment" >&2
 fi
 
+# ★★ THE MODEL'S SETTINGS, LOADED HERE, EVERY RUN (2026-10-02). They live in
+#    deploy/solve_env.sh (XCP_DIFFICULTY=bracket, the sport level, 2-year
+#    eras, altitude, the indoor level, the gauge, the 30-day window ...), and
+#    only scripts/overnight_fit_pool_solve.sh sourced it. The run of
+#    2026-10-01 was started as `bash deploy/run_pipeline.sh --from 7` and
+#    published WITHOUT them: the joint model's course numbers instead of the
+#    bracket engine's (0 [bracket] lines in its 08_golive log against 70 the
+#    run before), and every other default -- Mt. SAC 5000 +9.6% -> +4.6%,
+#    the owner's track ratings down. solve_env.sh only fills what is unset
+#    (`: "${VAR:=value}"`), so a value given on the command line still wins.
+SOLVE_ENV="$ROOT/deploy/solve_env.sh"
+if [ -f "$SOLVE_ENV" ]; then
+  . "$SOLVE_ENV"
+  echo "  model settings from $SOLVE_ENV: difficulty=${XCP_DIFFICULTY:-?} era_years=${XCP_ERA_YEARS:-?}" \
+       "sport_level=${XCP_SPORT_LEVEL:-?} altitude=${XCP_ALTITUDE:-?} window=${XCP_BRACKET_WINDOW:-?}" \
+       "gauge=${XCP_GAUGE:-?}"
+else
+  echo "FATAL: $SOLVE_ENV is missing -- the model's settings would silently fall to defaults" >&2
+  exit 1
+fi
+
 CORR="$ROOT/engine/corrections.py"
 if [ ! -f "$CORR" ]; then
   echo "FATAL: $CORR is missing. It is NOT in git and does not crash anything" >&2

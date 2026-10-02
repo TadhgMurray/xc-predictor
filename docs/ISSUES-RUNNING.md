@@ -3349,3 +3349,21 @@ fortnight fall back to a flat baseline (minor). Ruled out: meet importance
   share ~100% -- they are NOT islands; the island mechanism does not explain
   Foot Locker. Mt. SAC and Glendoveer are keyed by canonical id, so the name
   search missed them (rerun with the ids from --list).
+
+## 2026-10-02 -- ROOT CAUSE: the 10-01 run published without the model's settings
+
+`deploy/run_pipeline.sh` never sourced `deploy/solve_env.sh`; only
+`scripts/overnight_fit_pool_solve.sh` did. The run of 2026-10-01 was started
+as `bash deploy/run_pipeline.sh --from 7 ...` (the recipe given in this
+session) and ran with defaults: its 08_golive log has 0 `[bracket]` lines
+(70+ in the 09-28 and 09-29 runs), i.e. the JOINT model's course numbers
+were published instead of the bracket engine's, with the default era length,
+no XCP_SPORT_LEVEL_POOLS, no gauge, the default importance, and so on. That is
+the owner's list: Mt. SAC 5000 +9.6% (09-28) -> +4.6%, Foot Locker "not right
+again", hilly CA courses low, track ratings down. The 09-28/29 runs also
+showed the bracket solve stopping at its 60-pass cap (max change 0.0025, ~100k
+cells still moving) -- a second, smaller question.
+Fixed: run_pipeline.sh sources solve_env.sh after the env file and prints the
+key settings at the top of every run; a command-line value still wins. Re-run
+from 7 to republish with the production model (and pack the venue-gated
+Foot Locker cells).
