@@ -241,7 +241,8 @@ def _load_athletes(conn):
         #   else the school's primary state, else the home state.
         st = _stateFor(identity, school, row.get("home_state"), colleges=colleges)
         if school and st:
-            school = f"{school} ({st})"
+            from school_identity import withState
+            school = withState(school, st)
         parts  = name.split()
         last   = parts[-1].lower() if parts else ""
         # search_text = name + school (+ state) so "carcamo northgate"

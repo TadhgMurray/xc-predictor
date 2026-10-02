@@ -93,7 +93,7 @@ def schoolLabel(school):
     if not school:
         return school
     st = _LABELS["map"].get(school)
-    return f"{school} ({st})" if st else school
+    return withState(school, st)
 
 
 # a same-named school in the context's own state needs at least this share
@@ -154,6 +154,19 @@ def splitsByState(school):
                if share >= CONTEXT_MIN_SHARE) > 1
 
 
+def withState(school, state):
+    """'Xavier' + 'NY' -> 'Xavier (NY)'; 'Xavier (NY)' + 'NY' -> unchanged.
+
+    ★ NO DOUBLE SUFFIX (2026-10-02, NXN 2024's team scores read "Xavier (NY)
+      (NY)"). Some team names arrive with their state already in them, and
+      every label site appended it again. Every "(ST)" the site writes goes
+      through here."""
+    if not school or not state:
+        return school
+    tail = f"({str(state).strip()})".lower()
+    return school if str(school).rstrip().lower().endswith(tail) else f"{school} ({state})"
+
+
 def schoolLabelIn(school, state, trusted=False):
     """'Kingston' on a Missouri race -> 'Kingston (MO)', not the biggest
     Kingston's '(WA)' (owner, 2026-09-06: the Steelville race page
@@ -165,7 +178,7 @@ def schoolLabelIn(school, state, trusted=False):
     if not school:
         return school
     st = contextState(school, state, trusted)
-    return f"{school} ({st})" if st else school
+    return withState(school, st)
 
 
 def _collegeState(school):
@@ -234,7 +247,7 @@ def schoolLabelFor(school, pool, state=None):
     if not school:
         return school
     st = teamState(school, pool, state)
-    return f"{school} ({st})" if st else school
+    return withState(school, st)
 
 
 def schoolHref(school, state=None, pool=None, sport=None, trusted=False):

@@ -595,10 +595,10 @@ def schoolCardData(cur, school, state=None):
     label = year + 1 if sport == "TF" else year
     from grade_label import gradeLabel
     ranks = teamRanks(cur, school, state, sport, year, top[0]["pool"] if top else None)
-    from school_identity import teamState
+    from school_identity import teamState, withState
     return {"ranks": ranks,
             "crest": crestPath(cur, school, state or teamState(school)),
-            "title": schoolLabel(school) if not state else f"{school} ({state})",
+            "title": schoolLabel(school) if not state else withState(school, state),
             "sub": (f"{label} {'cross country' if sport == 'XC' else 'track'}"
                     f"{' · ' + poolWord(pool) if poolWord(pool) else ''} · top seven by season rating"),
             "team": team, "athletes": len(rows),

@@ -87,7 +87,7 @@
         No team had five finishers, so nothing can be scored.
         {% if scores.incomplete %}
             Finishers per team:
-            {% for i in scores.incomplete %}{{ i.school }}{% if i.state %} ({{ i.state }}){% endif %} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}.
+            {% for i in scores.incomplete %}{{ i.school|with_state(i.state) }} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}.
         {% endif %}
     </p>
 {% else %}
@@ -114,7 +114,7 @@
                 {# identity-split teams carry their OWN state (two Jesuits =
                    two schools); only unsplit ones fall back to the global
                    label filter #}
-                <td>{% if t.school|is_team %}{{ crest(t.school, t.state) }}<a href="{{ school_href(t.school, t.state or header.state) }}">{% if t.state %}{{ t.school }} ({{ t.state }}){% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
+                <td>{% if t.school|is_team %}{{ crest(t.school, t.state) }}<a href="{{ school_href(t.school, t.state or header.state) }}">{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
                 <td>{{ t.points if t.points is not none else " - " }}</td>
                 {# 6 and 7 are greyed: they do not score, but they DO
                    displace, and hiding them makes a deep team look like a
@@ -144,7 +144,7 @@
             Computed: five scorers, two displacers, incomplete teams removed.
             {% if scores.incomplete %}
                 Not scored, fewer than five finishers:
-                {% for i in scores.incomplete %}{{ i.school }}{% if i.state %} ({{ i.state }}){% endif %} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}.
+                {% for i in scores.incomplete %}{{ i.school|with_state(i.state) }} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}.
             {% endif %}
         {% endif %}
     </p>

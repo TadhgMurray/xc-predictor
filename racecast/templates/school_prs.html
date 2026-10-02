@@ -106,7 +106,7 @@
     {% set others = state_chips|rejectattr("state", "equalto", data.state)|list %}
     {% if others %}
     <p class="meta">Different schools share this name -
-        {% for c in others %}{{ crest(school, c.state) }}<a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}&amp;state={{ c.state }}">{{ school }} ({{ c.state }})</a>{% if not loop.last %} · {% endif %}{% endfor %}
+        {% for c in others %}{{ crest(school, c.state) }}<a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}&amp;state={{ c.state }}">{{ school|with_state(c.state) }}</a>{% if not loop.last %} · {% endif %}{% endfor %}
     </p>
     {% endif %}
     {% endif %}

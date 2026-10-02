@@ -3197,3 +3197,34 @@ keeps the previous snapshot, not a stalled pipeline.
 - *01a* hit its 30-minute limit even reading straight through (2 workers,
   512 MB under quiet mode, spilling). It now gets half the cores and 2 GB
   for its one transaction.
+
+## 2026-10-02 -- site review in a browser (desktop 1366 + phone 390)
+
+Fixed (this commit):
+- **Phone race/course pages laid out 15,000-17,800px wide.** The track-
+  equivalents ruler's scale (a strip thousands of px long that scrolls inside
+  .eqc-ruler) was counted by the page's `min-width: min-content` rule, so the
+  header, results and every paragraph stretched across it. The wrapper now has
+  no intrinsic width; the ruler still scrolls (17,785 -> 685px on a 1993 NCAA
+  D2 race; the rest is the results table, the owner's scroll-sideways rule).
+- **Desktop Athletes/Coaches switch broken on every page** (stacked, the
+  black tab over "Coaches", no border): a stray `}` in style.css made the
+  next rule's selector invalid, so `.topbar .viewswitch` was dropped.
+  tests/test_css_braces.py now fails on any stray brace.
+- **"Xavier (NY) (NY)"** in NXN 2024's team scores: names that already carry
+  their state got it appended again. school_identity.withState appends once;
+  every label site uses it.
+
+Found, not fixed:
+- **Jackson Spencer (30178075)**: Sep 11 2021 "Tallmadge Middle School
+  Madness Meet" (Ohio, 2172m 12:08.3) is on his page -- he is Herriman, UT.
+  A different Jackson Spencer's row; it is the 73 dip on his chart.
+- **Phone: text cut off at the right edge** on boards, race, school, search,
+  meets, home, athlete pages: the page is as wide as its widest table (the
+  2026-09-06 equal-width rule), so headings and paragraphs run off screen.
+  Mocked alternative (tables scroll inside their own box, all one width;
+  page fits the screen) -- owner's decision.
+- **Phone: athlete sidebar (all-time and season bests) is off-screen** to the
+  right of the main column (~x=1200), unreachable unless one scrolls sideways.
+- **Owner's NCS 2024** (Nov 23, Hayward, 16:14.1, 123.7 vs 128-131 either
+  side): the mud day, uncredited -- the race-day trial's test case.

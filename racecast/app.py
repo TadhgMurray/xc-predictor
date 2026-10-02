@@ -255,6 +255,7 @@ app.template_filter("grade_label")(_grade_label.gradeLabel)
 # the same label in a known context: a race or a meet in one state
 app.template_filter("school_label_in")(school_identity.schoolLabelIn)
 app.template_filter("school_label_for")(school_identity.schoolLabelFor)
+app.template_filter("with_state")(school_identity.withState)
 
 # the crest beside a school's name, everywhere one is named (305). Both
 # live in school_logo so they can be tested without importing the app.
