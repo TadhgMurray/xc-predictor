@@ -62,7 +62,7 @@
    served whichever athlete's title it crawled, so "Name 9:01" landed on
    the right meet and the wrong person. The variant is followed, not
    indexed; the athlete page carries the name and is the target. #}
-{% if request.args.get('r') %}<meta name="robots" content="noindex,follow">{% endif %}
+{% if request.args.get('r') or meta_noindex %}<meta name="robots" content="noindex,follow">{% endif %}
 <meta property="og:url" content="{{ site_origin ~ (meta_path | default(request.path)) }}">
 <meta property="og:image" content="{{ meta_image if meta_image else url_for('static', filename='og-image.png', _external=True) }}">
 {# Declared dimensions let a scraper lay out the card before the image

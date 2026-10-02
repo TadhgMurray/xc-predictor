@@ -3228,3 +3228,24 @@ Found, not fixed:
   right of the main column (~x=1200), unreachable unless one scrolls sideways.
 - **Owner's NCS 2024** (Nov 23, Hayward, 16:14.1, 123.7 vs 128-131 either
   side): the mud day, uncredited -- the race-day trial's test case.
+
+## 2026-10-02 -- unknown athletes, track weather
+
+- **Unknown athletes.** Race pages: 111 of 147 runners "Unknown" on 1993 NCAA
+  D2 (meet 277780), 50 of 435 on a 2026 Texas invitational. Every such row
+  has a person id; no name exists anywhere the site looks (athletes first/
+  last on the person's rows, or results.athlete_name). Their athlete pages
+  were titled "None – Adams State (CO)" and indexable: now "Unnamed athlete",
+  noindex until a name arrives. `scripts/unknown_names.py` (read-only) counts
+  them by sport, source, season and cause (no_person / blank_athlete -- the
+  scraper's FK placeholder never filled / no_athlete) and lists the meets
+  with the most, whole-meet vs partial. Fix by cause once it has run.
+- **Weather may not be applied at all.** The weather artifacts in git
+  (engine/data/weather_correction_{XC,TF}.pkl) carry the OLD apparent-
+  temperature reference (55); normalize_distance refuses them ("NOT
+  applied"). Unless the server refit them, neither sport is weather-corrected
+  -- which is the under-credited rain races. `scripts/weather_card.py` prints
+  what the artifact in force does per distance (heat, wind, rain, mud) and
+  whether the corpus was normalised with it. Fix: the refit
+  (XCP_WEATHER_FIT=1, step 04f) and the backfill after it -- the pending
+  `--from 3` run.

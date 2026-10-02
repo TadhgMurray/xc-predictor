@@ -1951,6 +1951,13 @@ def athlete(person_id):
             photo = _accounts.photoFor(cur, person_id)
     athlete["person_id"] = person_id
     athlete["photo"] = photo
+    # ★ NO NAME ANYWHERE IS NOT A NAME CALLED "None" (2026-10-02). These pages
+    #   were titled "None – Adams State (CO)" and indexed that way. Shown as
+    #   an unnamed athlete and kept out of search until a name arrives
+    #   (scripts/unknown_names.py counts them and says why).
+    if not (athlete.get("name") or "").strip() or athlete.get("name") == "None":
+        athlete["name"] = "Unnamed athlete"
+        athlete["unnamed"] = True
 
     return render_template("athlete.html",
                            athlete=athlete,

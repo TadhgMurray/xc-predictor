@@ -26,6 +26,7 @@
                       "url": site_origin ~ "/athlete/" ~ athlete.person_id,
                       "affiliation": ({"@type": "Organization",
                                        "name": athlete.school|school_label} if athlete.school else none)} %}
+    {% set meta_noindex = athlete.unnamed %}
     {% set meta_image = site_origin ~ "/card/athlete/" ~ athlete.person_id ~ ".png" %}
     {% set meta_image_alt = athlete.name ~ " on Racecast: speed rating, best race and ranks" %}
     {% include "_meta.html" %}
