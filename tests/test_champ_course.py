@@ -112,8 +112,11 @@ def test_the_pack_keys_the_championship_before_the_venue():
     i = xc.index(champ)
     assert i < xc.index("cc.canonical_id::text,") < xc.index("'name:' || btrim(")
     # looked up per name; the in-line rule only for a name the table lacks
-    assert champ.startswith("CASE WHEN mc.name IS NOT NULL THEN mc.champ ELSE ")
-    assert cc.sql("COALESCE(m.meet_name, mt.meet_name, '')") in champ
+    inner = ("CASE WHEN mc.name IS NOT NULL THEN mc.champ ELSE "
+             + cc.sql("COALESCE(m.meet_name, mt.meet_name, '')") + " END")
+    # ...and only where the race was run on that championship's course
+    # (the venue gate, 2026-10-02)
+    assert champ == cc.venueSql(inner, "COALESCE(m.course_name, mt.venue_name, '')")
     for sport in ("XC", "TF"):
         assert cc.sql("name") + " AS champ" in sdb._packMeetClassSql(sport)
     # and it publishes under its own name, with no canonical id
@@ -190,3 +193,48 @@ def test_ern_region_names_find_their_regional():
     assert c.courseKey("Foot Locker Southern Regional") == "champ:footlocker-south"
     assert c.courseKey("Foot Locker Midwestern Regional Championships") == "champ:footlocker-midwest"
     assert c.courseKey("Foot Locker Northeastern Regional") == "champ:footlocker-northeast"
+
+
+VENUE_CASES = [
+    # (meet name, course name, the cell)
+    ("Foot Locker West Regionals", "Mt. San Antonio College", "champ:footlocker-west"),
+    ("Foot Locker West Regionals", "Mt. San Antonio College (rain course)", "champ:footlocker-west"),
+    ("Footlocker Western Regional", "Foot Locker (Western Regional)", "champ:footlocker-west"),
+    ("1995 Footlocker West Regional Championships (Seeded)", "Woodward Park", None),
+    ("Brooks West XC Championships", "Mt. San Antonio College", "champ:footlocker-west"),
+    ("Brooks West XC Championships", "Hilmer Lodge Stadium", "champ:footlocker-west"),
+    ("Brooks Midwest XC Championships", "Dannehl XC Course, Univ. of Wisconsin Parkside", "champ:footlocker-midwest"),
+    ("Brooks South XC Championships", "McAlpine Creek Park", "champ:footlocker-south"),
+    ("Foot Locker Northeast Regional", "Van Cortlandt Park", "champ:footlocker-northeast"),
+    ("Foot Locker Northeast Regional XC Championships", "Franklin Park", "champ:footlocker-northeast-franklin"),
+    ("Brooks Northeast XC Championships", "Franklin Park", "champ:footlocker-northeast-franklin"),
+    ("Brooks XC National Championships", "Morley Field Sports Complex", "champ:footlocker-final"),
+    ("Foot Locker Nationals", "Shades of Green", None),
+    ("Brooks Pre-National Invitational 2005", "Laverne Gibson Course", None),
+    ("Mt. SAC Invitational", "Mt. San Antonio College", None),
+]
+
+
+def test_the_venue_gate_keeps_one_course_per_cell():
+    for name, course, want in VENUE_CASES:
+        assert cc.courseKey(name, course) == want, (name, course, cc.courseKey(name, course), want)
+    # without a course the name rule alone, as before
+    assert cc.courseKey("Foot Locker Nationals") == "champ:footlocker-final"
+    assert cc.displayName("champ:footlocker-northeast-franklin").endswith("(Franklin Park)")
+
+
+def test_the_venue_sql_is_the_python_rule():
+    import psycopg2
+    try:
+        conn = psycopg2.connect(host="/tmp/pgtest", port=54329, user="postgres", dbname="postgres",
+                                connect_timeout=3)
+    except Exception:                                             # noqa: BLE001
+        import pytest
+        pytest.skip("no scratch postgres")
+    cur = conn.cursor()
+    for name, course, want in VENUE_CASES:
+        cur.execute(f"SELECT {cc.venueSql(cc.sql('%(n)s'), '%(c)s')}".replace("'%(n)s'", "%(n)s")
+                    .replace("'%(c)s'", "%(c)s"), {"n": name, "c": course})
+        got = cur.fetchone()[0]
+        assert got == want, (name, course, got, want)
+    conn.close()

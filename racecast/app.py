@@ -186,7 +186,8 @@ def _champ_join(r="r"):
     would show the park's local-meet number beside a rating priced on the
     championship's. `cdc` is that cell; readers take it before `cd`."""
     from champ_course import displaySql
-    name = displaySql("COALESCE(m.meet_name, mt.meet_name)")
+    name = displaySql("COALESCE(m.meet_name, mt.meet_name)",
+                      "COALESCE(m.course_name, mt.venue_name, '')")
     return (f"LEFT JOIN course_difficulties cdc\n"
             f"               ON cdc.course_name = 'XC:' || ({name})\n"
             f"              AND cdc.distance_m = "

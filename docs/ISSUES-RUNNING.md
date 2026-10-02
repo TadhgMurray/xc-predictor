@@ -3334,3 +3334,18 @@ recognised as Foot Locker, and "Western/Southern" names fell out of the
 regionals (fixed: champ_course "-ern"); (5) weather normals missing a
 fortnight fall back to a flat baseline (minor). Ruled out: meet importance
 (off), course scale (uniform), tilt.
+- **Brooks = Foot Locker where the course is the same** (owner, 2026-10-02).
+  The server's meet list: Brooks West at Mt. SAC (and Hilmer Lodge), Midwest
+  at UW-Parkside, South at McAlpine, Northeast at Franklin Park, the final at
+  Morley Field -- Foot Locker's venues. It also showed Foot Locker's own cells
+  mixing courses: the West at Woodward Park 1993-97, the Northeast at Van
+  Cortlandt and later Franklin Park, one "Nationals" at Shades of Green.
+  champ_course now gates every cell by venue (VENUES): a race at another
+  venue keeps its own venue's key, the Northeast splits into Van Cortlandt
+  and Franklin Park, and Brooks XC/cross-country meets join (not "Brooks
+  Pre-National Invitational"). Engine (speed_ratings_db._champKeySql) and
+  site (app._champ_join) use the same gate. Takes effect at the next pack.
+- **diag_course_island** on the Foot Locker cells: outside share 98-100%, own
+  share ~100% -- they are NOT islands; the island mechanism does not explain
+  Foot Locker. Mt. SAC and Glendoveer are keyed by canonical id, so the name
+  search missed them (rerun with the ids from --list).

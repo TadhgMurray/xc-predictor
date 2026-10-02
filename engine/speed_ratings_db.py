@@ -590,8 +590,11 @@ def _champKeySql(name_expr: str = "COALESCE(m.meet_name, mt.meet_name, '')") -> 
     """The champ venue key for a row: the per-name table's answer when the
     name is in it, the in-line rule only for a name it has not seen -- so the
     regexes do not run per row (see ensurePackMeetClass)."""
-    return (f"CASE WHEN mc.name IS NOT NULL THEN mc.champ "
-            f"ELSE {_champ.sql(name_expr)} END")
+    key = (f"CASE WHEN mc.name IS NOT NULL THEN mc.champ "
+           f"ELSE {_champ.sql(name_expr)} END")
+    # ★ AND THE VENUE (2026-10-02): the name's championship only where its
+    #   own course is -- champ_course.VENUES
+    return _champ.venueSql(key, "COALESCE(m.course_name, mt.venue_name, '')")
 
 
 def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
