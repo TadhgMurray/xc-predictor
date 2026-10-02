@@ -2216,6 +2216,27 @@ def indexDefs(conn, like):
         seen.add(key)
         defs.append((n, ddl))
 
+    # ★ A CANONICAL INDEX REDEFINED KEEPS ITS NAME, AND THE NEW DEFINITION
+    #   WINS (2026-10-02). as_board_mean_idx and its two siblings gained
+    #   NULLS LAST on 2026-09-29. The live table still carried them under the
+    #   same names WITHOUT it, so the old definition came through the
+    #   catalogue and the new one through the canonical list: two indexes,
+    #   one shadow name. The second was skipped by IF NOT EXISTS (the 0.0s
+    #   lines -- possibly the NEW one) or, built at the same moment, failed
+    #   step 10 on pg_class_relname_nsp_index. The catalogue's copy of a
+    #   canonical name whose columns changed is dropped here.
+    canon = dict(_CANONICAL_INDEXES.get(like, []))
+    strip = re.compile(r"^(?:" + re.escape(like) + r"(?:_new)*_)?")
+    kept = []
+    for n, ddl in defs:
+        base = strip.sub("", n)
+        if base in canon and _indexSig(ddl) != _indexSig(canon[base]):
+            print(f"    {n}: redefined in the canonical list -- built with "
+                  f"the new columns {canon[base]}")
+            continue
+        kept.append((n, ddl))
+    defs = kept
+
     # Compare on the column list, not the name: the same index built by an
     # earlier run carries an auto-generated name, and adding ours beside it
     # would build the same tree twice.

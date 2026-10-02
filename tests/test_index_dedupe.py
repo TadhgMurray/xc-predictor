@@ -35,3 +35,25 @@ def test_duplicates_are_built_once(monkeypatch):
             ("rr_name", "CREATE INDEX rr_name ON public.rr USING btree (name)")]
     names = [n for n, _ in B.indexDefs(Conn(rows), "rr")]
     assert names == ["rr_result_idx", "rr_pkey", "rr_name_trgm", "rr_name"]
+
+
+def test_redefined_canonical_index_is_built_once_with_new_columns(monkeypatch):
+    # 2026-10-02: the live table kept as_board_mean_idx WITHOUT NULLS LAST
+    # under the canonical name; old and new both reached the shadow under one
+    # name and step 10 failed on pg_class_relname_nsp_index
+    import build_ranking_results as B
+    monkeypatch.setattr(B, "_CANONICAL_INDEXES", {"athlete_season": [
+        ("as_person_idx", "(person_id)"),
+        ("as_board_mean_idx", "(pool, sport, year, mean_rating DESC NULLS LAST, person_id)")]})
+    rows = [("athlete_season_as_board_mean_idx",
+             "CREATE INDEX athlete_season_as_board_mean_idx ON public.athlete_season "
+             "USING btree (pool, sport, year, mean_rating DESC, person_id)"),
+            ("athlete_season_as_person_idx",
+             "CREATE INDEX athlete_season_as_person_idx ON public.athlete_season "
+             "USING btree (person_id)")]
+    defs = B.indexDefs(Conn(rows), "athlete_season")
+    boards = [d for n, d in defs if n.endswith("as_board_mean_idx")]
+    assert len(boards) == 1 and "NULLS LAST" in boards[0]
+    # an unchanged canonical index is kept from the catalogue, not doubled
+    assert [n for n, _ in defs].count("athlete_season_as_person_idx") == 1
+    assert len(defs) == 2

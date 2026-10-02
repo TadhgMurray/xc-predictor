@@ -107,11 +107,20 @@ def _exists(cur, name):
 #   switched off for this transaction only. The limit makes a bad night a
 #   failed step instead of a stalled pipeline: 01a failing changes no
 #   rating, and the previous snapshot stays (the swap is one transaction).
+# ★ AND THE WHOLE MACHINE FOR ITS ONE QUERY (2026-10-02). Read straight
+#   through it still hit the 30-minute limit: the pipeline's quiet mode
+#   allows 2 parallel workers and 512 MB per sort, so a GROUP BY over ~10M
+#   people spilled to disk on two cores. For this one transaction it gets
+#   half the cores and 2 GB each; nothing else of the pipeline is running
+#   at step 01a.
 PROBE_TIMEOUT_MIN = int(os.environ.get("XCP_PROBE_TIMEOUT_MIN") or 30)
+PROBE_WORKERS = max(2, (os.cpu_count() or 4) // 2)
 PLAN = f"""
 SET LOCAL enable_indexscan = off;
 SET LOCAL enable_indexonlyscan = off;
 SET LOCAL enable_bitmapscan = off;
+SET LOCAL max_parallel_workers_per_gather = {PROBE_WORKERS};
+SET LOCAL work_mem = '2GB';
 SET LOCAL statement_timeout = '{PROBE_TIMEOUT_MIN}min';
 """
 

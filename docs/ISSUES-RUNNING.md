@@ -3181,3 +3181,19 @@ person_redirects.py --snapshot` now switches the index paths off for its
 own transaction (one sequential read per table, a hash aggregate) and stops
 at `XCP_PROBE_TIMEOUT_MIN` (30): a stalled 01a is now a failed step that
 keeps the previous snapshot, not a stalled pipeline.
+
+**Run 20261001_232626 (7h 39m): FAILED 01a, 10_rankings_finish, 10a.**
+- *10_rankings_finish*: `as_board_mean_idx`, `as_pool_mean_idx` and
+  `as_pool_sport_mean_idx` were redefined with NULLS LAST on 2026-09-29;
+  the live athlete_season still had the old definitions under the same
+  names, so indexDefs listed old (catalogue) and new (canonical) under one
+  shadow name. One was skipped by IF NOT EXISTS, and two built at the same
+  moment failed on pg_class_relname_nsp_index. Fixed in indexDefs: a
+  canonical name whose columns changed drops the catalogue's copy
+  (tests/test_index_dedupe.py). The boards did not swap; the site kept the
+  previous run's boards.
+- *10a_board_sanity* (25 hard findings) read those previous boards; re-read
+  after the rerun.
+- *01a* hit its 30-minute limit even reading straight through (2 workers,
+  512 MB under quiet mode, spilling). It now gets half the cores and 2 GB
+  for its one transaction.
