@@ -3249,3 +3249,30 @@ Found, not fixed:
   whether the corpus was normalised with it. Fix: the refit
   (XCP_WEATHER_FIT=1, step 04f) and the backfill after it -- the pending
   `--from 3` run.
+
+## 2026-10-02 (later) -- weather read on the server; phone layout; stray rows
+
+- **Weather IS loaded on the server** (refit artifacts; scripts/weather_card.py):
+  XC heat 95F +5.3% @5k; TF heat 95F +0.6% @1500, +6.9% @10k, none below 59F;
+  wind +0.35%/5 m/s; TF rain ~0. **Mud is small**: soil 0.5 -> +1.85% @5k, and
+  the per-course sensitivity s_c is capped at 1. The card's "DIFFERENT
+  artifact" line was a bug in the card (the applied record is
+  {"artifact": ...}); fixed, it now says which, or that the ratings carry none.
+- **Owner: no track race-day term** ("race day terms might downplay fields
+  where comp is good so people run better ... a bigger one in TF").
+- **Mud ceiling** (`XCP_MUD_SENS=eb` at the next weather refit): the course
+  sensitivity's prior spread is measured (method of moments) instead of
+  0.25, and the cap at 1 goes (the floor at 0 stays). Default unchanged;
+  every refit now prints how many courses the cap cuts and to what.
+- **Phone layout** (owner: "do as you need"): the page fits the screen and a
+  wide table scrolls inside its own box (racecast/static/layout.js + the
+  2026-10-02 block at the end of style.css). This REVERSES the 2026-09-06
+  phone pass ("NO TABLE SCROLLS INSIDE ITSELF ... the PAGE scrolls
+  sideways"). One-line revert: remove the layout.js include from
+  _topbar.html. The athlete sidebar folds to the top as "Bests & PRs".
+- **Stray rows** (`scripts/stray_rows.py`, read-only, owner: "be careful"):
+  a row from a school AND state the athlete never otherwise runs for
+  (Spencer's Tallmadge, OH row). A real move with one or two races at the
+  new school is the false-positive shape -- read before any unlink.
+- Desktop home is ~38px wider than a 1366 window (live before these
+  changes); not chased yet.

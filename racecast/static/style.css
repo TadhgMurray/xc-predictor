@@ -5317,3 +5317,38 @@ input.eqc-big:focus { outline: none; border-bottom-color: var(--eqc-accent); }
 .relay-card .meta { margin: 0.2rem 0 0; font-size: 0.8rem; }
 @media (max-width: 480px) { .relay-grid { grid-template-columns: 1fr; } }
 .eqc .eqc-day { font-size: 0.8rem; color: #6b7280; margin: 0.4rem 0 0; }
+
+
+/* ===================================================================== *
+ * ★ THE PHONE LAYOUT (owner, 2026-10-02): THE PAGE FITS THE SCREEN.
+ *   Supersedes the 2026-09-06 rule above that let .page-wide/.main-col grow
+ *   to their widest table: that kept tables one width by making the PAGE
+ *   that width, and every heading and paragraph ran off a 390px screen.
+ *   layout.js wraps each table in .tscroll, a box as wide as the page that
+ *   scrolls sideways; the table inside is at least that wide (one width for
+ *   every table) and never narrower than its content (never squeezed).
+ *   The athlete sidebar moves to the top, folded (.side-fold, layout.js).
+ *   Specificity is raised over athlete-charts.css, which loads after this
+ *   file and sets .main-col:has(.season) { min-width: min-content }.
+ * ===================================================================== */
+@media (max-width: 700px) {
+  .page-wide, .page-layout > .main-col, .page-layout > .main-col:has(.season),
+  .rankings, .board-pair, .board-pair-grid, .board-side, .pool-block { min-width: 0; }
+  .board-pair-grid { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* no intrinsic width of its own (the ruler's trick, .eqc-ruler-wrap), so a
+     grid or flex column around it cannot grow to the table either */
+  div.tscroll { overflow-x: auto; -webkit-overflow-scrolling: touch;
+                width: 0; min-width: 100%; contain: inline-size; }
+  div.tscroll > table { display: table; width: 100%; min-width: max-content; overflow: visible; }
+  .page-layout { flex-direction: column; overflow-x: visible; }
+  .page-layout > .main-col { width: 100%; max-width: 100%; flex: none; }
+  .side-fold { margin: 0 0 0.8rem; align-self: stretch; width: 100%; }
+  .side-fold > summary { cursor: pointer; list-style: none; padding: 0.5rem 0.7rem;
+    font-weight: 600; font-size: 0.9rem; color: #374151; background: #f3f4f6;
+    border: 1px solid #e5e7eb; border-radius: 4px; }
+  .side-fold > summary::-webkit-details-marker { display: none; }
+  .side-fold > summary::after { content: " \2304"; float: right; }
+  .side-fold[open] > summary::after { content: " \2303"; }
+  .side-fold > .sidebar { width: auto; flex: none; max-width: none; margin-top: 0.6rem; }
+  .eqc-field-key { flex-wrap: wrap; white-space: normal; }
+}

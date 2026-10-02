@@ -734,6 +734,16 @@ def fitCourseSoil(cols, coef, yd, Xd, layout):
     # to ~0 and let noisy courses escape to the clip ceiling.
     sigma2 = float(np.var(yd - full_pred))           # race-to-race residual noise
     tau2 = 0.25                                       # prior: s_c ~ N(1, 0.5^2)
+    v = den > 0
+    # ★ THE SPREAD OF TRUE SENSITIVITIES, MEASURED (2026-10-02). tau2 = 0.25 is
+    #   a stated prior. Method of moments: the raw slopes' spread about 1 is
+    #   the true spread PLUS each course's own sampling noise (sigma2 / den),
+    #   so tau2 = var(s_raw) - mean(sigma2 / den), over courses with mud
+    #   history. Printed every fit; used under XCP_MUD_SENS=eb.
+    tau2_mm = float(np.mean((s_raw[v] - 1.0) ** 2) - np.mean(sigma2 / den[v])) if v.any() else 0.0
+    mode = (os.environ.get("XCP_MUD_SENS") or "capped").strip().lower()
+    if mode == "eb" and tau2_mm > 0:
+        tau2 = tau2_mm
     K = sigma2 / tau2
     w = den / (den + K)                              # signal-to-noise weight
     # Clip to [0, 1], NOT [0, 2]. The diagnostic showed per-course slopes with
@@ -741,15 +751,32 @@ def fitCourseSoil(cols, coef, yd, Xd, layout):
     # (needs many wet AND dry runnings most courses lack). But "does this course
     # respond to mud at ALL" is reliably detectable at the LOW end (blacktop/firm
     # read a clean ~0). So a course may MUTE the global mud curve, not amplify it.
-    s_c = np.clip(w * s_raw + (1.0 - w) * 1.0, 0.0, 1.0)
+    #
+    # ★ XCP_MUD_SENS=eb LIFTS THE CEILING (owner, 2026-10-02: muddy races
+    #   under-credited; 9,294 of 17,667 courses read 1.00). The shrinkage
+    #   above IS the noise control: a course with little wet history is held
+    #   near 1 by its weight w, and only one with a lot can move. Capping the
+    #   shrunk value at 1 as well says no course is ever muddier than the
+    #   average, which biases every genuinely soft course down. Under 'eb' the
+    #   floor stays (a course cannot get FASTER in mud) and the ceiling goes;
+    #   tau2 is the measured one. Default 'capped' is the shipped behaviour.
+    shrunk = w * s_raw + (1.0 - w) * 1.0
+    s_c = np.clip(shrunk, 0.0, None if mode == "eb" else 1.0)
+    above = v & (shrunk > 1.0)
+    print(f"[soil-diag] mode {mode}: tau2 used {tau2:.4g} (stated 0.25, measured "
+          f"{tau2_mm:.4g})  |  {int(above.sum()):,} courses' shrunk sensitivity is "
+          f"above 1 (median {np.median(shrunk[above]) if above.any() else float('nan'):.2f}, "
+          f"p95 {np.quantile(shrunk[above], .95) if above.any() else float('nan'):.2f}) -- "
+          + ("kept" if mode == "eb" else "CUT to 1 (XCP_MUD_SENS=eb keeps them)"))
+    print(f"[soil-diag] of the courses at 1.00: {int(((s_c >= 0.999) & ~v).sum()):,} have no "
+          f"mud history (the prior), {int(((s_c >= 0.999) & v).sum()):,} have some")
     # DIAGNOSTIC: is it shrinking, or slamming to the rails? These numbers say which.
-    v = den > 0
     print(f"[soil-diag] sigma2={sigma2:.4g}  K={K:.4g}  |  den p50={np.median(den[v]):.4g} "
           f"p95={np.quantile(den[v], .95):.4g}  |  w p50={np.median(w[v]):.2f} "
           f"p95={np.quantile(w[v], .95):.2f}")
     print(f"[soil-diag] s_raw p05/p50/p95 = {np.quantile(s_raw[v], .05):+.2f} / "
           f"{np.median(s_raw[v]):+.2f} / {np.quantile(s_raw[v], .95):+.2f}  |  s_c: "
-          f"{int((s_c <= 0.001).sum())} at floor, {int((s_c >= 0.999).sum())} at ceiling(1.0), "
+          f"{int((s_c <= 0.001).sum())} at floor, {int((s_c >= 0.999).sum())} at or above 1.0, "
           f"{v.sum()} varying")
     return {str(labels[i]): {"s": float(s_c[i]), "n": int(n_c[i]),
                              "mv": float(den[i])}     # mud-variation, for the readout filter

@@ -18,6 +18,7 @@ sport and distance. Read-only; reads the artifact, not the database.
   normalised with (weather_applied_<sport>.pkl).
 """
 import argparse
+import math
 import os
 import pickle
 import sys
@@ -41,6 +42,42 @@ def _load(path):
         return None
 
 
+def _tables(art, sport, fw):
+    dists = DISTS[sport]
+    tsp = art["splines"].get("apparent_temp")
+    if tsp is not None:
+        opt = tsp.get("optimum")
+        print(f"    heat (apparent temperature, peak for TF), against {tsp['ref']:.0f}C"
+              + (f"; nothing below {opt:.0f}C ({opt * 9 / 5 + 32:.0f}F) counts" if opt is not None else ""))
+        print("        " + "".join(f"{int(d):>9}m" for d in dists))
+        for tf in TEMPS_F:
+            tc = (tf - 32) * 5 / 9
+            x = max(tc, opt) if opt is not None else tc
+            ref = max(tsp["ref"], opt) if opt is not None else tsp["ref"]
+            cells = "".join(f"{fw._curveDistPct(tsp, x, d) - fw._curveDistPct(tsp, ref, d):>+9.2f}%"
+                            for d in dists)
+            print(f"      {tf:>3}F {cells}")
+    ssp = art["splines"].get("soil")
+    if ssp is not None and sport == "XC":
+        print("    mud (soil moisture, x the course's own sensitivity s_c, 1 = average course)")
+        for sv in (0.2, 0.3, 0.4, 0.5):
+            cells = "".join(f"{fw._curveDistPct(ssp, sv, d):>+9.2f}%" for d in dists)
+            print(f"      {sv:.2f} {cells}")
+        sm = art.get("soil_sensitivity") or {}
+        if sm:
+            s = sorted(v.get("s", 1.0) for v in sm.values())
+            print(f"      s_c over {len(s):,} courses: median {s[len(s) // 2]:.2f}, "
+                  f"{sum(1 for v in s if v >= 0.999):,} at the cap of 1")
+    betas, dist_betas = art.get("betas", {}), art.get("dist_betas", {})
+    dist_ref = art.get("dist_ref", 5000.0)
+    for f in art.get("linear_features", ()):
+        step = fw._STEP.get(f, 1.0)
+        cells = "".join(
+            f"{(math.exp((betas[f] + dist_betas.get(f, 0.0) * (d / dist_ref - 1)) * step) - 1) * 100:>+9.2f}%"
+            for d in dists)
+        print(f"    {fw._UNIT.get(f, f):<22}{cells}")
+
+
 def card(sport):
     import fit_weather_correction as fw
     path = os.path.join(_ROOT, fw.ARTIFACT_TMPL.format(sport=sport))
@@ -49,48 +86,29 @@ def card(sport):
     if art is None:
         print("  NO ARTIFACT: this sport is not weather-corrected at all")
         return
-    applied = _load(os.path.join(_ROOT, "engine", "data", f"weather_applied_{sport}.pkl"))
-    if applied is None:
+    rec = _load(os.path.join(_ROOT, "engine", "data", f"weather_applied_{sport}.pkl"))
+    # backfill_normalize.recordAppliedWeather writes {"artifact": art-or-None}
+    known = rec is not None and "artifact" in rec
+    applied = rec.get("artifact") if known else None
+    same = (applied is not None and applied.get("betas") == art.get("betas")
+            and applied.get("splines") == art.get("splines"))
+    if not known:
         print("  (no record of which artifact the corpus was normalised with)")
-    else:
-        same = (applied.get("betas") == art.get("betas")
-                and applied.get("splines") == art.get("splines"))
-        print("  the corpus was normalised with THIS artifact" if same else
-              "  ⚠ the corpus was normalised with a DIFFERENT artifact: the "
-              "ratings carry that one until the backfill re-runs")
-    dists = DISTS[sport]
-    tsp = art["splines"].get("apparent_temp")
-    if tsp is not None:
-        opt = tsp.get("optimum")
-        print(f"  heat (apparent temperature, peak for TF), against {tsp['ref']:.0f}C"
-              + (f"; nothing below {opt:.0f}C ({opt * 9 / 5 + 32:.0f}F) counts" if opt is not None else ""))
-        print("      " + "".join(f"{int(d):>9}m" for d in dists))
-        for tf in TEMPS_F:
-            tc = (tf - 32) * 5 / 9
-            x = max(tc, opt) if opt is not None else tc
-            ref = max(tsp["ref"], opt) if opt is not None else tsp["ref"]
-            cells = "".join(f"{fw._curveDistPct(tsp, x, d) - fw._curveDistPct(tsp, ref, d):>+9.2f}%"
-                            for d in dists)
-            print(f"    {tf:>3}F {cells}")
-    ssp = art["splines"].get("soil")
-    if ssp is not None and sport == "XC":
-        print("  mud (soil moisture, x the course's own sensitivity s_c in [0, 1])")
-        for sv in (0.2, 0.3, 0.4, 0.5):
-            cells = "".join(f"{fw._curveDistPct(ssp, sv, d):>+9.2f}%" for d in dists)
-            print(f"    {sv:.2f} {cells}")
-        sm = art.get("soil_sensitivity") or {}
-        if sm:
-            s = sorted(v.get("s", 1.0) for v in sm.values())
-            print(f"    s_c over {len(s):,} courses: median {s[len(s) // 2]:.2f}, "
-                  f"{sum(1 for v in s if v >= 0.999):,} at the cap of 1")
-    betas, dist_betas = art.get("betas", {}), art.get("dist_betas", {})
-    dist_ref = art.get("dist_ref", 5000.0)
-    for f in art.get("linear_features", ()):
-        step = fw._STEP.get(f, 1.0)
-        cells = "".join(
-            f"{(pow(2.718281828, (betas[f] + dist_betas.get(f, 0.0) * (d / dist_ref - 1)) * step) - 1) * 100:>+9.2f}%"
-            for d in dists)
-        print(f"  {fw._UNIT.get(f, f):<22}{cells}")
+    elif applied is None:
+        print("  ⚠⚠ THE RATINGS CARRY NO WEATHER CORRECTION: the last full backfill "
+              "ran with the correction off or refused. The tables below apply only "
+              "after the next backfill.")
+    elif same:
+        print("  the corpus was normalised with THIS artifact")
+    print("  ON DISK (what the next backfill applies):")
+    _tables(art, sport, fw)
+    if applied is not None and not same:
+        print("  ⚠ IN THE RATINGS NOW (the artifact the corpus was normalised with; "
+              "differs from the one on disk until the backfill re-runs):")
+        try:
+            _tables(applied, sport, fw)
+        except Exception as exc:                                  # noqa: BLE001
+            print(f"    (cannot read it: {type(exc).__name__}: {exc})")
     print(f"  venue normals: {len(art.get('venue_norms') or {}):,} "
           f"(a venue's usual weather is in its course difficulty; this corrects "
           f"the day's departure from it)")

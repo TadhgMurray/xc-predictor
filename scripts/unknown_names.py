@@ -40,7 +40,10 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 from database import getConn                                   # noqa: E402
 
-SEASON = "(EXTRACT(YEAR FROM r.date)::int - CASE WHEN EXTRACT(MONTH FROM r.date) < 8 THEN 1 ELSE 0 END)"
+# results.date is TEXT ('YYYY-MM-DD'); read it as text so one malformed date
+# cannot fail the whole report
+SEASON = ("(CASE WHEN r.date ~ '^[0-9]{4}-[0-9]{2}' THEN left(r.date, 4)::int"
+          " - CASE WHEN substr(r.date, 6, 2)::int < 8 THEN 1 ELSE 0 END END)")
 
 
 def main():
