@@ -40,47 +40,64 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 from database import getConn                                   # noqa: E402
 
-SQL = """
-WITH rr AS (
-    SELECT result_id, person_id, sport, race_date, year, state, school,
-           speed_rating, meet_id, pool
-    FROM   ranking_results
-    WHERE  person_id IS NOT NULL AND state IS NOT NULL AND speed_rating IS NOT NULL
-      {person}
-),
-per_state AS (
-    SELECT person_id, state, count(*) AS n
-    FROM rr GROUP BY 1, 2
-),
-home AS (
-    SELECT DISTINCT ON (person_id) person_id, state AS home, n AS n_home,
-           sum(n) OVER (PARTITION BY person_id) AS n_all
-    FROM per_state ORDER BY person_id, n DESC, state
-),
-home_schools AS (
+# ★ IN STAGES (2026-10-02, owner: "stray_rows is taking too long"). The
+#   first version computed a season median for every athlete in
+#   ranking_results before filtering. One aggregate pass finds the few
+#   athletes with a lone out-of-state row; everything after reads only their
+#   rows, through the person index.
+STAGES = [
+    ("rows per athlete and state", """
+        CREATE TEMP TABLE sr_state AS
+        SELECT person_id, state, count(*) AS n
+        FROM   ranking_results
+        WHERE  person_id IS NOT NULL AND state IS NOT NULL AND speed_rating IS NOT NULL
+               {person}
+        GROUP  BY 1, 2"""),
+    ("each athlete's home state", """
+        CREATE TEMP TABLE sr_home AS
+        SELECT person_id, home, n_home, n_all FROM (
+            SELECT person_id, state AS home, n AS n_home,
+                   sum(n) OVER (PARTITION BY person_id) AS n_all,
+                   count(*) OVER (PARTITION BY person_id) AS n_states,
+                   row_number() OVER (PARTITION BY person_id ORDER BY n DESC, state) AS rk
+            FROM sr_state) x
+        WHERE rk = 1 AND n_states > 1 AND n_home >= %(min_home)s AND n_home * 2 > n_all"""),
+    ("lone away states", """
+        CREATE TEMP TABLE sr_away AS
+        SELECT s.person_id, s.state, s.n AS n_away
+        FROM   sr_state s JOIN sr_home h USING (person_id)
+        WHERE  s.state <> h.home AND s.n <= %(max_away)s;
+        CREATE INDEX ON sr_away (person_id);
+        ANALYZE sr_away"""),
+    ("those athletes' rows", """
+        CREATE TEMP TABLE sr_rows AS
+        SELECT r.result_id, r.person_id, r.sport, r.race_date, r.year, r.state,
+               r.school, r.speed_rating, r.meet_id, r.pool
+        FROM   ranking_results r
+        WHERE  r.person_id IN (SELECT DISTINCT person_id FROM sr_away)
+          AND  r.state IS NOT NULL AND r.speed_rating IS NOT NULL"""),
+]
+FINAL = """
+WITH home_schools AS (
     SELECT DISTINCT r.person_id, r.school
-    FROM rr r JOIN home h ON h.person_id = r.person_id AND r.state = h.home
+    FROM sr_rows r JOIN sr_home h ON h.person_id = r.person_id AND r.state = h.home
 ),
 season_med AS (
     SELECT person_id, sport, year,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating) AS med,
            count(*) AS n_season
-    FROM rr GROUP BY 1, 2, 3
+    FROM sr_rows GROUP BY 1, 2, 3
 )
 SELECT r.person_id, r.result_id, r.sport, r.race_date, r.state, r.school,
        r.meet_id, r.pool, r.speed_rating, m.med, m.n_season,
-       h.home, h.n_home, h.n_all, ps.n AS n_away,
+       h.home, h.n_home, h.n_all, a.n_away,
        (SELECT string_agg(DISTINCT hs.school, ' / ') FROM home_schools hs
         WHERE hs.person_id = r.person_id) AS home_school
-FROM rr r
-JOIN home h       ON h.person_id = r.person_id
-JOIN per_state ps ON ps.person_id = r.person_id AND ps.state = r.state
+FROM sr_rows r
+JOIN sr_away a    ON a.person_id = r.person_id AND a.state = r.state
+JOIN sr_home h    ON h.person_id = r.person_id
 JOIN season_med m ON m.person_id = r.person_id AND m.sport = r.sport AND m.year = r.year
-WHERE r.state <> h.home
-  AND h.n_home >= %(min_home)s
-  AND h.n_home * 2 > h.n_all
-  AND ps.n <= %(max_away)s
-  AND NOT EXISTS (SELECT 1 FROM home_schools hs
+WHERE NOT EXISTS (SELECT 1 FROM home_schools hs
                   WHERE hs.person_id = r.person_id AND hs.school = r.school)
 """
 
@@ -100,8 +117,14 @@ def main():
         cur = conn.cursor()
         cur.execute("SET statement_timeout = 0")
         cur.execute("SET work_mem = '1GB'")
-        cur.execute(SQL.format(person=person),
-                    {"min_home": a.min_home, "max_away": a.max_away, "pid": a.person})
+        args = {"min_home": a.min_home, "max_away": a.max_away, "pid": a.person}
+        for label, sql in STAGES:
+            t1 = time.time()
+            cur.execute(sql.format(person=person), args)
+            print(f"[stray] {label}: {time.time() - t1:.0f}s", flush=True)
+        cur.execute("SELECT count(DISTINCT person_id) FROM sr_away")
+        print(f"[stray] {cur.fetchone()[0]:,} athletes have a lone out-of-state row", flush=True)
+        cur.execute(FINAL)
         rows = cur.fetchall()
         names = {}
         if rows:
