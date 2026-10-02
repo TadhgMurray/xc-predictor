@@ -993,7 +993,9 @@ def _createCoreTables(cursor):
             --   -- could not know it was wanted, and the audit rightly
             --   reported the INSERT writing a column the database lacked.
             --   Declared here, it is created and back-added automatically.
-            status          TEXT
+            status          TEXT,
+            -- ★ THE FEED'S NAME ON THE ROW (2026-10-02): see _feedName
+            athlete_name    TEXT
         )
     """)
 
@@ -1098,7 +1100,9 @@ def _createTFTables(cursor):
             speed_rating    REAL DEFAULT NULL,
             -- ★ THE SAME COLUMN, FOR TRACK. saveResultsTFBulk names it in
             --   its INSERT; see the note on results.status above.
-            status          TEXT
+            status          TEXT,
+            -- ★ THE FEED'S NAME ON THE ROW (2026-10-02): see _feedName
+            athlete_name    TEXT
         )
     """)
 
@@ -1987,6 +1991,32 @@ def saveMeetTFMeta(conn, meet_info: dict):
 #           conn: connection from the pool.
 #           athletes: list of athlete dicts (same format as saveAthlete).
 # Output: None.
+# _feedName
+# ★ THE NAME THE FEED PRINTED, KEPT ON THE RESULT ROW (owner, 2026-10-02:
+#   "I can promise you athletic net has the names"). A result's name lived
+#   only in `athletes`, written under the result's AthleteID -- so a row the
+#   feed did not tie to a registered athlete (no AthleteID: 2.6M track rows,
+#   whole invitationals) had its name thrown away at save time and showed
+#   "Unknown" forever, while athletic.net's own page shows it. The race page
+#   already reads results.athlete_name after `athletes`, as it does for
+#   tfrrs. A relay's FirstName is its runners joined by <BR>; they are kept
+#   as "A, B, C, D" (the race page lists them under the team).
+# ! ONLY A FILL: the savers' upserts keep a name already on the row.
+_BR_RE = re.compile(r"<\s*br\s*/?\s*>", re.I)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _feedName(result: dict, is_relay=False):
+    first = str(result.get("FirstName") or "")
+    last = str(result.get("LastName") or "")
+    if is_relay:
+        legs = [_TAG_RE.sub("", x).strip() for x in _BR_RE.split(first + " " + last)]
+        legs = [" ".join(x.split()) for x in legs if x.strip()]
+        return _clean(", ".join(legs)) or None
+    name = " ".join((_TAG_RE.sub("", first) + " " + _TAG_RE.sub("", last)).split())
+    return _clean(name) or None
+
+
 def saveAthletesBulk(conn, athletes: list):
 
     if not athletes:
@@ -2156,6 +2186,7 @@ def saveResultsBulk(conn, results: list):
             "anet",    # id_system
             resultData.get("AthleteID"),   # person_id: seeded = athlete_id AT INSERT
             _statusOf(resultData),         # the letters behind a sentinel time (issue 59)
+            _feedName(resultData),         # the feed's name, on the row (see _feedName)
         ))
     
     # Insert every athlete this batch references, under the SAME school the
@@ -2225,11 +2256,13 @@ def saveResultsBulk(conn, results: list):
                 time_seconds, grade, date, school, school_source, scraped_at,
                 place, score, exhibition, official, team_id,
                 is_pr, is_sr, has_splits, video_count, age_grade,
-                source, id_system, person_id, status
+                source, id_system, person_id, status, athlete_name
             )
             VALUES %s
             ON CONFLICT (result_id) DO UPDATE SET
             athlete_id    = EXCLUDED.athlete_id,
+            athlete_name  = COALESCE(NULLIF(btrim(results.athlete_name), ''),
+                                     EXCLUDED.athlete_name),
             status        = COALESCE(EXCLUDED.status, results.status),
             -- fill person_id only if missing; NEVER overwrite one dedup wrote
             person_id     = COALESCE(results.person_id, EXCLUDED.person_id),
@@ -2369,6 +2402,7 @@ def saveResultsTFBulk(conn, results: list):
             "anet",    # id_system
             None if is_relay else result.get("AthleteID"),   # person_id: seed at insert; relays have no person
             status,
+            _feedName(result, is_relay),     # the feed's name, on the row (see _feedName)
         )
 
 
@@ -2391,10 +2425,12 @@ def saveResultsTFBulk(conn, results: list):
                             exhibition, official, wind, place, score, round,
                             heat, has_splits, is_field, mark, team_id,
                             event_type_id, video_count, age_grade, pr, sr,
-                            source, id_system, person_id, status)
+                            source, id_system, person_id, status, athlete_name)
         VALUES %s
         ON CONFLICT (result_id) DO UPDATE SET
             athlete_id    = EXCLUDED.athlete_id,
+            athlete_name  = COALESCE(NULLIF(btrim(results_tf.athlete_name), ''),
+                                     EXCLUDED.athlete_name),
             -- fill person_id only if missing; NEVER overwrite one dedup wrote
             person_id     = COALESCE(results_tf.person_id, EXCLUDED.person_id),
             time_seconds  = EXCLUDED.time_seconds,

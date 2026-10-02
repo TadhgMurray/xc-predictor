@@ -3384,3 +3384,19 @@ Foot Locker cells).
   ones missing from meet_queue. The savers fill a blank athletes row or
   insert a missing one, and the results upsert fills a missing athlete_id /
   person_id (COALESCE: a dedup's person is kept). Dry run by default.
+- **Server numbers after the relay split (2026-10-02):** TF relays 12,142,934
+  rows (not unknown). Real nameless: XC 316,498 (anet blank_athlete
+  286,712 -- 262,760 in 2026, the pre-09-25 XC saver; no_athlete 28,871);
+  TF 2,839,160 (1.48%): anet no_person 2,631,608, no_athlete 180,126,
+  blank_athlete 6,650. requeue dry run: 93,523 meets, 3.13M rows.
+- **The track no_person rows: the name was thrown away at save time.** A
+  result the feed does not tie to a registered athlete has no AthleteID,
+  so no athletes row is written, and the result row never carried the
+  name -- athletic.net's page shows it, we stored nothing. Both savers now
+  keep the feed's name on the row (results.athlete_name /
+  results_tf.athlete_name, fill-only on conflict; a relay keeps its runners
+  "A, B, C, D"), which the race and athlete pages already read. A re-scrape
+  of those meets therefore repairs them; before this change it could not.
+  Test: tests/test_feed_name.py. requeue_blank_athletes.py gains --sport.
+- Dates to look at some day: seasons 2221/2222 (525 rows) and single
+  pre-1950 track meets carry impossible or doubtful dates.

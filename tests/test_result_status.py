@@ -162,7 +162,7 @@ class EveryFeedCapturesIt(unittest.TestCase):
         body = db[i:db.index("# _cleanJson", i)]
         self.assertIn('_ensureResultsStatus(conn, "results_tf")', body)
         self.assertIn("status = _statusOf(result)", body)
-        self.assertIn("source, id_system, person_id, status)", body)
+        self.assertIn("source, id_system, person_id, status, athlete_name)", body)
 
     def test_the_field_event_mark_is_left_alone(self):
         """_statusOf returns None for a real mark, so an NH is recorded as a

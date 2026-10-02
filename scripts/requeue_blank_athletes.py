@@ -26,8 +26,11 @@ and put them back on the scrape queue so a re-scrape fills the names in.
   person. The test here is the site's own -- a row is nameless when neither
   `athletes` (by person or athlete id) nor the row's athlete_name has a
   name -- and a re-scrape repairs every kind: the athletes write fills or
-  inserts the name, and the results upsert fills a missing athlete_id and
-  person_id (COALESCE: a person dedup wrote is never replaced).
+  inserts the name, the results upsert fills a missing athlete_id and
+  person_id (COALESCE: a person dedup wrote is never replaced), and the
+  feed's own name is now kept on the result row (database._feedName) -- the
+  only fix for a row the feed never tied to a registered athlete (2.6M
+  track rows with no person: their names were dropped at save time).
 
 ! TRACK RELAYS ARE LEFT OUT: a relay row is a team, stored with no athlete
   on purpose; re-scraping cannot give it a name. The race page names the
@@ -58,6 +61,8 @@ def main():
                     help="only meets from this academic season on")
     ap.add_argument("--min-rows", type=int, default=1,
                     help="only meets with at least this many nameless rows")
+    ap.add_argument("--sport", choices=("XC", "TF"), default=None,
+                    help="one sport only (e.g. --sport XC --since 2026 first)")
     ap.add_argument("--apply", action="store_true")
     a = ap.parse_args()
     since = f"{a.since}-08-01" if a.since else "0000"
@@ -95,9 +100,10 @@ def main():
                       AND  COALESCE(r.is_relay, 0) = 0
                       AND  n.id IS NULL AND NULLIF(btrim(r.athlete_name), '') IS NULL
                 ) x
+                WHERE  %(sport)s::text IS NULL OR sport = %(sport)s
                 GROUP  BY 1, 2
                 HAVING count(*) >= %(min_rows)s
-            """, {"since": since, "min_rows": a.min_rows})
+            """, {"since": since, "min_rows": a.min_rows, "sport": a.sport})
             cur.execute("""
                 SELECT m.sport, m.season, count(*), sum(m.nameless),
                        count(*) FILTER (WHERE q.meet_id IS NULL)
