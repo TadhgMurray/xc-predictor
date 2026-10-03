@@ -68,22 +68,19 @@
     for (var i = 0; i < boxes.length; i++) { fit(boxes[i]); hint.call(boxes[i]); }
   }
 
-  /* one-line rows unless wrapping makes the table fit the screen, or
-     nearly halves its width (the rule is in style.css). Decided once per box, while it is visible: a hidden
+  /* one-line rows unless wrapping makes the table fit the screen (the rule
+     is in style.css). Decided once per box, while it is visible: a hidden
      board measures 0 and is decided when it is shown. */
   function fit(w) {
     if (w.dataset.fit || !w.clientWidth) return;
     var t = w.firstElementChild;
     if (!t) return;
     w.classList.remove("tw-wrap");
-    var one = t.offsetWidth;
-    if (one > w.clientWidth + 1) {
+    if (t.offsetWidth > w.clientWidth + 1) {
       w.classList.add("tw-wrap");
-      var wrapped = t.offsetWidth;
-      // wrapped: kept when it fits, or when it at least saves the reader
-      // most of the scrolling (an athlete's season: 1,250px -> 650px);
-      // a squeeze that saves a little is not worth three-line names
-      if (wrapped > w.clientWidth + 1 && wrapped > one * 0.6) w.classList.remove("tw-wrap");
+      // wrapped is kept only when it fits: squeezed and STILL scrolling is
+      // three-line names for nothing
+      if (t.offsetWidth > w.clientWidth + 1) w.classList.remove("tw-wrap");
     }
     w.dataset.fit = "1";
   }

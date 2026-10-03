@@ -5367,10 +5367,10 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   /* ★ THE WHOLE TABLE ON THE SCREEN WHEN IT CAN BE; WHOLE ROWS WHEN IT
      CANNOT. A row is one line (the owner's rule since 2026-09-06: no wrap,
      no ellipsis) -- unless letting cells wrap between words makes the
-     table fit the screen, in which case it wraps and nothing scrolls, or
-     nearly halves it (layout.js measures both and sets .tw-wrap). A table
-     that cannot fit either way is not squeezed for little: it keeps
-     one-line rows and scrolls in its box. Words never break. */
+     table fit the screen, in which case it wraps and nothing scrolls
+     (layout.js measures both and sets .tw-wrap). A table that cannot fit
+     either way is not squeezed for nothing: it keeps one-line rows and
+     scrolls in its box. Words never break. */
   div.tscroll > table th, div.tscroll > table td, div.tscroll > table td *,
   .season div.tscroll > table th, .season div.tscroll > table td,
   .season div.tscroll > table td.meet-cell .meet-course {
@@ -5384,6 +5384,19 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .season div.tscroll.tw-wrap > table td.meet-cell .meet-course { white-space: normal; }
   div.tscroll.tw-wrap > table td:first-child, div.tscroll.tw-wrap > table td .no-break,
   .season div.tscroll.tw-wrap > table td:first-child { white-space: nowrap; }
+
+  /* an athlete's seasons are the exception, built for it: eight columns
+     never fit a phone, and one-line rows ran 1,250px wide. The meet (and
+     its course), the place and the flags wrap inside a sensible width;
+     date, event, result, rating and difficulty stay whole. ~650px. */
+  .season div.tscroll > table td.meet-cell, .season div.tscroll > table td.meet-cell *,
+  .season div.tscroll > table td.meet-cell .meet-course,
+  .season div.tscroll > table td.place-cell, .season div.tscroll > table td.flags {
+    white-space: normal; }
+  .season div.tscroll > table td.meet-cell { min-width: 9.5rem; }
+  .season div.tscroll > table td.flags { min-width: 6.5rem; }
+  .season div.tscroll > table td.place-cell { min-width: 4.5rem; }
+  .season div.tscroll > table td .no-break { white-space: nowrap; }
 
   /* a box that scrolls says so: its right edge fades while there is more
      to the right (layout.js sets .has-more) */
@@ -5414,6 +5427,9 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .topbar { padding-left: 12px; padding-right: 12px; }
   .rankings { padding-left: 0; padding-right: 0; }
   .board-grid { box-sizing: border-box; }
+
+  /* the chosen meet on a prediction: the whole name, wrapped, not "Re..." */
+  .predict2 .mc-name { white-space: normal; overflow: visible; text-overflow: clip; }
 
   /* the athlete sidebar, folded at the top (layout.js) */
   .side-fold { margin: 0 0 0.4rem; align-self: stretch; width: 100%; }
