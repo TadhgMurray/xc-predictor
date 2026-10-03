@@ -2669,6 +2669,12 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     # the band table as numbers, for the acceptance check (board_sanity):
     # rows of (sport code, band lower edge, voters, applied h, implied h, se)
     out["bracket_tilt_bands"] = be.tiltBandArray(f.get("tilt_bands"))
+    # ★ AND ON THE WELL-KNOWN COURSES ONLY (2026-10-03): the scale is fitted
+    #   on courses with WELL_KNOWN_RACES+ races (courseScaleFromRaces), so
+    #   that is the table the acceptance check must hold it to -- on every
+    #   course, the prior's in-sample signature on thin courses reads
+    #   implied/applied 1.10-1.16 by construction and failed the run
+    out["bracket_tilt_bands_known"] = be.tiltBandArray(f.get("tilt_bands_known"))
     out["bracket_cell_fit"] = np.asarray(f["D_fit"], dtype=np.float64)
     out["bracket_level_shift"] = np.asarray(f["level_shift"], dtype=np.float64)
     out["difficulty_source"] = "bracket"
@@ -3064,7 +3070,7 @@ def main():
                   "bracket_pin", "bracket_shift", "bracket_cell_fit",
                   "bracket_level_shift",
                   "bracket_prior_group", "bracket_scale", "bracket_course_scale",
-                  "bracket_tilt_bands"):
+                  "bracket_tilt_bands", "bracket_tilt_bands_known"):
             if out.get(k) is not None:
                 save[k] = np.asarray(out[k], dtype=np.float64)
         if out.get("bracket_place") is not None:

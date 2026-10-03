@@ -271,3 +271,5 @@ engine/data/group_scale.json.tmp
 
 # measured on the server by indoor_outdoor_check --write-levels
 engine/data/indoor_geometry_levels.json
+# the conversion cards' cross-sport calibration, refit by pipeline step 10a2
+engine/data/conv_calibration.json

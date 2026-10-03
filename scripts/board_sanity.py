@@ -367,9 +367,25 @@ def main():
     print("\n== the course scale and the tilt held? (implied/applied per band, after the scale) ==")
     if args.npz and os.path.exists(args.npz):
         import numpy as np
+        # ★ THE WELL-KNOWN COURSES' TABLE WHEN THE SOLVE WROTE IT (2026-10-03).
+        #   The course scale is fitted on courses with 4+ races, where the
+        #   bracket prior barely reaches (bracket_engine.courseScaleFromRaces);
+        #   the all-course table carries the prior's in-sample signature on
+        #   thin courses (implied/applied 1.26 on one-race courses) and read
+        #   1.08-1.16 in every XC band on 2026-10-02 -- a HARD failure of the
+        #   scale against a reading the engine deliberately does not fit on.
+        #   The all-course table is still the fallback for older solve files.
         with np.load(args.npz, allow_pickle=False) as npz:
-            bands = npz["bracket_tilt_bands"] if "bracket_tilt_bands" in npz else None
-            scale = npz["bracket_course_scale"] if "bracket_course_scale" in npz else None
+            known = (npz["bracket_tilt_bands_known"]
+                     if "bracket_tilt_bands_known" in npz.files else None)
+            bands = (known if known is not None and known.size
+                     else npz["bracket_tilt_bands"] if "bracket_tilt_bands" in npz.files else None)
+            scale = npz["bracket_course_scale"] if "bracket_course_scale" in npz.files else None
+        if known is not None and known.size:
+            print("  (courses with 4+ races: the table the scale is fitted on)")
+        elif bands is not None and bands.size:
+            print("  (every course: an older solve file without the well-known table; "
+                  "thin courses read high by the prior's own shrinkage)")
         if bands is None or bands.size == 0:
             print("  (the solve file carries no band table: a go-live before 2026-09-15)")
         else:

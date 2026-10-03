@@ -3426,3 +3426,28 @@ Foot Locker cells).
   improvement cancels), per-athlete medians, split by pool, XC distance,
   track event and XC quartile. A uniform gap is the cross-sport level; one
   that moves with XC distance is the distance curve.
+- **conversion_check on the server (2026-10-03), 2.53M pairs on 633,702
+  athletes since 2010.** Bracketed gap (track - XC rating; - = the card's
+  track time is too FAST): hs_m -1.81 pts (-1.60%), hs_f -0.94%, college_m
+  -0.67%, college_f -0.61%. By event (college): 800 +2.0%, 1500 0, 3000
+  -1.4%, 5000 -1.7%, 10000 -2.2%; hs_m 5000->3200 -2.05%, college_m
+  8000->3000 -1.37%. By XC quartile the gap grew with ability (hs_m -0.2% to
+  -2.1%), partly an artifact of sorting on XC (fixed: now the mean of both).
+  The 800's + is largely WHO runs it (lower-rated XC runners), which the
+  calibration's ability term absorbs.
+- **The cards now carry the measured cross-sport leg**
+  (racecast/conv_calibration.py; pipeline step 10a2 refits
+  engine/data/conv_calibration.json from each run's boards). Per pool:
+  ln(track/XC rating) = cell(XC distance, track event) + tilt(ability
+  quartile), median polish, each cell shrunk to the pool level by its
+  standard error against the cells' own spread. Applied in equivalenceLine
+  and convert_spread, XC->track by exp(-gap), back by exp(+gap). Measured on
+  the published ratings, so it reads zero if the ratings come to agree.
+- **10a_board_sanity's 8 HARD findings.** (1) The 5 XC tilt bands at
+  implied/applied 1.08-1.16 checked the ALL-course table; the scale is fitted
+  on courses with 4+ races (courseScaleFromRaces, 2026-09-28) because thin
+  courses carry the prior's shrinkage signature. run_joint now saves
+  bracket_tilt_bands_known and the check reads it. (2) The sport level per
+  level not held (hs read -0.0036 vs target -0.0092, ms -0.0061 vs -0.0191,
+  elem -0.0127 vs -0.0186): real; the go-live's "winter gain per band"
+  table says whether it is held in the solve's own sample (requested).

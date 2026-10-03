@@ -34,7 +34,10 @@ the same athlete actually runs? READ-ONLY.
 
   Split by cross country distance (does an 8k convert differently from a
   6k? that is the distance curve), by track event (the event offsets), and
-  by ability quartile of the XC rating (the gain's tilt). A uniform gap is
+  by ability quartile (the mean of the two ratings: sorting on XC alone
+  would read the top quartile's XC luck as a track shortfall).
+  --write fits the calibration the conversion cards apply
+  (racecast/conv_calibration.py) and writes engine/data/conv_calibration.json. A uniform gap is
   the cross-sport level; a gap that moves with distance is the curve.
 """
 import argparse
@@ -47,9 +50,11 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 from database import getConn                                   # noqa: E402
 
-XC_BANDS = (3000, 4000, 5000, 6000, 8000, 10000)
-TF_BANDS = (800, 1500, 1600, 3000, 3200, 5000, 10000)
-POOLS = ("hs_m", "hs_f", "college_m", "college_f")
+sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "racecast"))
+import conv_calibration as CC                                   # noqa: E402
+
+XC_BANDS, TF_BANDS = CC.XC_BANDS, CC.TF_BANDS
+POOLS = ("hs_m", "hs_f", "college_m", "college_f", "ms_m", "ms_f")
 
 
 def _bandSql(col, bands, tol):
@@ -67,6 +72,11 @@ def main():
     ap.add_argument("--meet", default=None,
                     help="only athletes who ran a fall XC meet whose name matches (SQL LIKE)")
     ap.add_argument("--min", type=int, default=30, help="hide cells with fewer athletes")
+    ap.add_argument("--write", nargs="?", const=CC.PATH, default=None,
+                    help="also fit the cross-sport calibration the conversion cards "
+                         f"apply and write it (default {os.path.relpath(CC.PATH)}); "
+                         "pipeline step 10e")
+    ap.add_argument("--quiet", action="store_true", help="no tables (with --write)")
     a = ap.parse_args()
     pools = (a.pool,) if a.pool else POOLS
     t0 = time.time()
@@ -88,8 +98,8 @@ def main():
                    CASE WHEN sport = 'XC' AND {mo} >= 8 THEN 'fall'
                         WHEN sport = 'TF' AND {mo} <= 7 AND NOT {indoor} THEN 'spring'
                         WHEN sport = 'TF' AND {mo} <= 7 THEN 'winter' END AS half,
-                   CASE WHEN sport = 'XC' THEN {_bandSql('distance', XC_BANDS, 0.04)}
-                        ELSE {_bandSql('distance', TF_BANDS, 0.015)} END AS band,
+                   CASE WHEN sport = 'XC' THEN {_bandSql('distance', XC_BANDS, CC.XC_TOL)}
+                        ELSE {_bandSql('distance', TF_BANDS, CC.TF_TOL)} END AS band,
                    speed_rating, meet_id, sport
             FROM   ranking_results
             WHERE  speed_rating IS NOT NULL AND person_id IS NOT NULL
@@ -148,6 +158,36 @@ def main():
                       f"{bf:>+15.2f}{af:>+14.2f}{xm:>11.1f}")
             print()
 
+        if a.write:
+            import datetime
+            import json
+            fitted = {}
+            for pool in pools:
+                cur.execute("SELECT xc_band, tf_band, xc, tf FROM cc_pair WHERE pool = %s",
+                            (pool,))
+                rows = cur.fetchall()
+                if not rows:
+                    continue
+                cols = list(zip(*rows))
+                fit = CC.fitPool(*cols)
+                if fit:
+                    fitted[pool] = fit
+                    print(f"[conv] fit {pool:<10} {fit['n']:>9,} pairs  level "
+                          f"{100 * fit['level']:+.2f}%  tilt by quartile "
+                          + " ".join(f"{100 * t:+.2f}%@{m:.0f}" for m, t in fit["tilt"]))
+            if a.meet:
+                print("[conv] --meet: a subset; not written")
+            else:
+                tmp = a.write + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump({"made": datetime.datetime.now().isoformat(timespec="seconds"),
+                               "since": a.since, "pools": fitted}, f, indent=1)
+                os.replace(tmp, a.write)
+                print(f"[conv] wrote {a.write} ({len(fitted)} pools)")
+            if a.quiet:
+                conn.rollback()
+                print(f"[conv] done in {time.time() - t0:.0f}s")
+                return
         table("'all'", "all")
         table("xc_band", "XC distance")
         table("tf_band", "track event")
@@ -155,9 +195,13 @@ def main():
         cur.execute("""
             ALTER TABLE cc_pair ADD COLUMN q int;
             UPDATE cc_pair p SET q = s.q FROM (
-                SELECT ctid, ntile(4) OVER (PARTITION BY pool ORDER BY xc) AS q FROM cc_pair) s
+                -- ! BY THE MEAN OF BOTH SPORTS, NOT BY XC: sorting on XC puts
+                --   the athletes with XC luck in the top quartile, and their
+                --   luck then reads as a track shortfall that is not there
+                SELECT ctid, ntile(4) OVER (PARTITION BY pool ORDER BY xc + tf) AS q
+                FROM cc_pair) s
             WHERE p.ctid = s.ctid""")
-        table("q", "XC quartile")
+        table("q", "ability quartile")
         conn.rollback()
     print(f"[conv] read-only; done in {time.time() - t0:.0f}s")
 
