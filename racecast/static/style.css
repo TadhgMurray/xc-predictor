@@ -5319,15 +5319,117 @@ input.eqc-big:focus { outline: none; border-bottom-color: var(--eqc-accent); }
 .eqc .eqc-day { font-size: 0.8rem; color: #6b7280; margin: 0.4rem 0 0; }
 
 /* ===================================================================== *
- * ★ THE PHONE LAYOUT, SECOND TAKE (owner, 2026-10-02): "make the phone
- *   start as zoomed out as possible and make every element on the page have
- *   the same width". The 2026-09-06 phone pass stands (a table is its full
- *   width; the page is as wide as its widest table); layout.js then makes
- *   every block on the page that same width and opens the page zoomed out
- *   to show all of it. Nothing here: the work is the measured width, which
- *   only JavaScript knows.
+ * ★ THE PHONE LAYOUT, THIRD TAKE (owner, 2026-10-03: "mobile UI is kind of
+ *   fucked, lots of text/tables overlapping"). Replaces the second take's
+ *   zoomed page (CSS zoom on <html>, 2026-10-02 evening): why it overlapped
+ *   is written up in layout.js. The page is the screen's width and every
+ *   block on it is that one width -- the owner's "every element the same
+ *   width" kept, without the zoom. A table wider than the screen scrolls
+ *   sideways in its own box (layout.js wraps each one in div.tscroll);
+ *   one narrower is stretched to the box, so every table is one width.
+ *   The phone type is a step smaller -- "start zoomed out", done with the
+ *   font instead of the page -- so most tables fit and do not scroll.
+ *   Last in the file and raised in specificity where an earlier phone rule
+ *   (the 2026-09-06 pass, athlete-charts.css) would otherwise win.
  * ===================================================================== */
+/* ! NO TEXT AUTOSIZING. iOS enlarges text it judges too small for the
+     screen, one block at a time; the enlarged text then overruns fixed
+     columns and its neighbours. The phone type here is already sized for
+     the phone. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media (max-width: 700px) {
+  /* "zoomed out": rem is 14px, not 16, so every rem-sized thing (nearly the
+     whole sheet) is 7/8 the size; body text follows */
+  html { font-size: 14px; }
+  body { font-size: 0.95rem; }
 
+  /* the page never scrolls sideways: undo the 2026-09-06 rule that grew
+     the page to its widest table */
+  .page-wide, .main-col, .page-layout > .main-col, .page-layout > .main-col:has(.season),
+  .rankings, .board-pair, .board-pair-grid, .board-side, .pool-block { min-width: 0; }
+  .board-pair-grid { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .page-layout { flex-direction: column; overflow-x: visible; gap: 0.8rem; }
+  .page-layout > .main-col { width: 100%; max-width: 100%; flex: none; }
+  .section-split { flex-direction: column; }
+  .section-split > .section-main, .section-split > .chart-col { width: 100%; flex: none; position: static; }
+
+  /* every table: a box the page's width; the table at least that wide,
+     wider (and the box scrolls) only when its columns need it. The box has
+     no width of its own to give its parent (width 0, min-width 100%: the
+     .eqc-ruler-wrap trick), so a flex or grid column around it cannot grow
+     to the table and push the page wide again. */
+  div.tscroll { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+                width: 0; min-width: 100%; max-width: 100%; }
+  div.tscroll > table, .main-col div.tscroll > table, .season div.tscroll > table {
+    display: table; width: 100%; min-width: 100%; overflow: visible;
+    table-layout: auto; font-size: 0.9rem; }
+  div.tscroll > table th, div.tscroll > table td { padding-left: 0.45rem; padding-right: 0.45rem; }
+  /* ★ THE WHOLE TABLE ON THE SCREEN WHEN IT CAN BE; WHOLE ROWS WHEN IT
+     CANNOT. A row is one line (the owner's rule since 2026-09-06: no wrap,
+     no ellipsis) -- unless letting cells wrap between words makes the
+     table fit the screen, in which case it wraps and nothing scrolls, or
+     nearly halves it (layout.js measures both and sets .tw-wrap). A table
+     that cannot fit either way is not squeezed for little: it keeps
+     one-line rows and scrolls in its box. Words never break. */
+  div.tscroll > table th, div.tscroll > table td, div.tscroll > table td *,
+  .season div.tscroll > table th, .season div.tscroll > table td,
+  .season div.tscroll > table td.meet-cell .meet-course {
+    white-space: nowrap; text-overflow: clip; overflow: visible; max-width: none;
+    overflow-wrap: normal; width: auto; }
+  /* wrapping, a cell breaks between words, but the pieces the templates
+     mark .no-break ("48th", "· 3rd on team") and the first column (a
+     date, a place) stay whole */
+  div.tscroll.tw-wrap > table th, div.tscroll.tw-wrap > table td, div.tscroll.tw-wrap > table td *,
+  .season div.tscroll.tw-wrap > table th, .season div.tscroll.tw-wrap > table td,
+  .season div.tscroll.tw-wrap > table td.meet-cell .meet-course { white-space: normal; }
+  div.tscroll.tw-wrap > table td:first-child, div.tscroll.tw-wrap > table td .no-break,
+  .season div.tscroll.tw-wrap > table td:first-child { white-space: nowrap; }
+
+  /* a box that scrolls says so: its right edge fades while there is more
+     to the right (layout.js sets .has-more) */
+  div.tscroll.has-more { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.6rem), rgba(0,0,0,0.25));
+                         mask-image: linear-gradient(to right, #000 calc(100% - 1.6rem), rgba(0,0,0,0.25)); }
+
+  /* the home boards (a grid, not a table) the same way: names and schools
+     wrap between words, no ellipsis; rank and rating on one line */
+  :root { --cols: 1.9rem minmax(0, 1fr) minmax(0, 1.15fr) 3.7rem minmax(3.8rem, 0.8fr); }
+  .board-grid .cell, .board-grid .head, .board-grid .c-school, .board-grid .c-detail {
+    white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word;
+    padding: 0.35rem 0.4rem; }
+  .board-grid .c-rank, .board-grid .c-rating, .board-grid .head-center { white-space: nowrap; padding-left: 0.2rem; padding-right: 0.2rem; }
+  .board-grid { width: 100%; min-width: 0; font-size: 0.9rem; }
+
+  /* ★ ONE WIDTH (owner, 2026-10-02: "make every element on the page have
+     the same width. Like on the home page making the mural the same width
+     as the tables"). One gutter, 12px, on every page: the body's own 8px
+     margin goes, each top-level block (the page's <main>, or an athlete
+     page's header pieces) is inset 12px instead of its own 0 to 1.5rem,
+     and the blocks inside run edge to edge of that. The mural, the
+     headings, the cards and the tables then share one left and one right
+     edge. The topbar keeps its full-width rule line, its contents on the
+     same 12px. */
+  body:not(.auth-body) { margin: 0; }
+  body:not(.auth-body) > :not(.topbar):not(script):not(iframe):not(style):not(link) {
+    padding-left: 12px; padding-right: 12px; box-sizing: border-box; max-width: 100%; }
+  .topbar { padding-left: 12px; padding-right: 12px; }
+  .rankings { padding-left: 0; padding-right: 0; }
+  .board-grid { box-sizing: border-box; }
+
+  /* the athlete sidebar, folded at the top (layout.js) */
+  .side-fold { margin: 0 0 0.4rem; align-self: stretch; width: 100%; }
+  .side-fold > summary { cursor: pointer; list-style: none; padding: 0.55rem 0.75rem;
+    font-weight: 600; font-size: 0.95rem; color: #374151; background: #f3f4f6;
+    border: 1px solid #e5e7eb; border-radius: 6px; }
+  .side-fold > summary::-webkit-details-marker { display: none; }
+  .side-fold > summary::after { content: "\25BE"; float: right; color: #6b7280; }
+  .side-fold[open] > summary::after { content: "\25B4"; }
+  .side-fold > .sidebar { width: auto; flex: none; max-width: none; margin-top: 0.6rem; }
+
+  /* nothing the reader types is under 16px: iOS zooms the page in on any
+     smaller field it focuses, and leaves it zoomed */
+  input[type="text"], input[type="search"], input[type="email"], input[type="number"],
+  input:not([type]), select, textarea { font-size: 16px; }
+}
 
 /* track race page: a relay row is a team -- the squad, its runners under it */
 .relay-team { font-weight: 600; }
