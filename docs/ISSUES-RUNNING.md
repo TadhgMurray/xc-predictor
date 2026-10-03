@@ -3400,3 +3400,29 @@ Foot Locker cells).
   Test: tests/test_feed_name.py. requeue_blank_athletes.py gains --sport.
 - Dates to look at some day: seasons 2221/2222 (525 rows) and single
   pre-1950 track meets carry impossible or doubtful dates.
+
+## 2026-10-03 — race-day term in cross country; conversion check
+
+- **Run 20261002_221401** (6h 46m, bracket settings applied): FAILED
+  10a_board_sanity only (log requested).
+- **The race-day term is ON for cross country** (owner: "let's add in
+  race-day term for xc"; none for track, 2026-10-02). solve_env.sh sets
+  XCP_RACE_KEY=venue, XCP_RACE_EFFECT_SPORTS=XC, XCP_RACE_EFFECT_OWN=
+  leave-out (each runner's day is how the REST of the field ran; one day per
+  venue and date). One run without it: `XCP_RACE_EFFECT_SPORTS= bash
+  deploy/run_pipeline.sh ...`. The go-live prints "day-term consistency"
+  (does crediting the day make an athlete's races agree: LOWER scatter).
+- **The hover reads what was published.** app.RACE_DAY_SPORTS read its own
+  env var, a second setting that had drifted from the solve once already;
+  it now reads race_effect_sports from engine/data/pair_difficulty.npz (the
+  go-live writes it), re-read when the file changes; XCP_RACE_DAY_SPORTS
+  still overrides. tests/test_race_day_wording.py rewritten for it (it was
+  failing: it forbade the pipeline from passing the switch at all).
+- **XC -> track conversions** (owner: "a 25:30 8k at Keene State is not a
+  9:28 3200m"; "maybe tf slightly overrated"). The card is right exactly
+  when a dual-sport runner's XC and track ratings agree, so
+  scripts/conversion_check.py measures that on the runners who did both:
+  fall XC against the springs before and after (averaged, so a year's
+  improvement cancels), per-athlete medians, split by pool, XC distance,
+  track event and XC quartile. A uniform gap is the cross-sport level; one
+  that moves with XC distance is the distance curve.

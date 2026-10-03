@@ -152,6 +152,24 @@
 #   scripts/bracket_holdout.py --gauge flat400 --day-noise reference
 #   before it decides anything.
 : "${XCP_DAY_NOISE:=fitted}"
+
+# ★ THE RACE-DAY TERM IN CROSS COUNTRY RATINGS (owner, 2026-10-03: "let's
+#   add in race-day term for xc"; 2026-10-02: none for track -- "race day
+#   terms might downplay fields where comp is good so ppl run better ...
+#   a bigger one in tf"). The three trial switches of 2026-10-01
+#   (run_pipeline.sh, "THE RACE-DAY TRIAL"):
+#     venue      one day per venue and day, every race there, so one
+#                tactical race cannot move it
+#     XC         the day reaches cross country ratings; track stays out
+#     leave-out  each runner gets the day as the REST of the field ran it:
+#                no one's own time moves their own day
+#   The day is what is left AFTER the measured weather, shrunk toward zero.
+#   The site's hover reads what the go-live published (pair_difficulty.npz),
+#   so it follows this without a second setting. To price it, one run
+#   without: XCP_RACE_EFFECT_SPORTS= bash deploy/run_pipeline.sh ...
+: "${XCP_RACE_KEY:=venue}"
+: "${XCP_RACE_EFFECT_SPORTS=XC}"
+: "${XCP_RACE_EFFECT_OWN:=leave-out}"
 # ★ MEASURED, NOT CHOSEN. run_joint's default is 21 days. Swept on the SAME
 #   held-out rows -- the only fair comparison, since a wider window also
 #   changes coverage -- against a 21-day baseline, 571,290 rows covered by all:
@@ -228,7 +246,7 @@ export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
        XCP_BRACKET_XC_LEVEL XCP_BRACKET_XC_LEVEL_MODE \
        XCP_BRACKET_INDOOR_GATES XCP_BRACKET_INDOOR_LEVELS \
        XCP_IMPORTANCE XCP_TEAM_POOL XCP_DB_QUIET XCP_SPORT_LEVEL_POOLS \
-       XCP_BRACKET_WINDOW
+       XCP_BRACKET_WINDOW XCP_RACE_KEY XCP_RACE_EFFECT_SPORTS XCP_RACE_EFFECT_OWN
 
 # Anything else already in the environment is left alone, so a one-off
 #   XCP_PROBES=16 bash scripts/overnight_fit_pool_solve.sh

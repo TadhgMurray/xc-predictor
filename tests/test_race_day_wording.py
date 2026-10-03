@@ -46,35 +46,52 @@ RJ = _src("engine", "run_joint.py")
 TPL = _src("racecast", "templates", "_explain.html")
 
 
-# ---- 1. the two defaults agree ---------------------------------------- #
-engine_default = re.search(
-    r'ap\.add_argument\("--race-effect-sports",\s*default="([^"]*)"',
-    RJ).group(1)
-site_default = re.search(
-    r'os\.environ\.get\("XCP_RACE_DAY_SPORTS",\s*"([^"]*)"\)', APP).group(1)
+# ---- 1. the page reads what the go-live PUBLISHED ---------------------- #
+# ★ (owner, 2026-10-03: "let's add in race-day term for xc"). The two
+#   settings are one now: the go-live writes race_effect_sports into
+#   pair_difficulty.npz and app.RACE_DAY_SPORTS reads it back, so the hover
+#   cannot claim a tilt the published ratings do not carry.
+GL = _src("engine", "joint_golive.py")
+ok("race_effect_sports=np.array(" in GL,
+   "the go-live must write race_effect_sports into the npz")
+ok('_RaceDaySports()' in APP and '"race_effect_sports"' in APP,
+   "the site must read the published race_effect_sports")
+
+sys.path.insert(0, os.path.join(ROOT, "racecast"))
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+try:
+    import tempfile
+    import numpy as np
+    src = APP[APP.index("def _sportNames"):APP.index("RACE_DAY_SPORTS = _RaceDaySports()")]
+    ns = {"os": os, "_PAIR_NPZ": ""}
+    exec(src, ns)
+    os.environ.pop("XCP_RACE_DAY_SPORTS", None)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "pair_difficulty.npz")
+        rds = ns["_RaceDaySports"](path)
+        ok("XC" not in rds, "no file: no sport carries the day")
+        np.savez(path, race_effect_sports=np.array(["XC"]))
+        ok("XC" in rds and "TF" not in rds, "the published XC is read")
+        os.utime(path, (1, 1))
+        np.savez(path, race_effect_sports=np.array([]))
+        os.utime(path, (2, 2))
+        ok("XC" not in rds, "a new publish without the term is re-read")
+        np.savez(path, race_effect_sports=np.array(["XC:fast"]))
+        os.utime(path, (3, 3))
+        ok("XC" in rds, "'XC:fast' is the XC sport")
+except ImportError:
+    pass
 
 
-def _split(v):
-    return tuple(x.strip().upper() for x in v.split(",") if x.strip())
-
-
-ok(_split(engine_default) == _split(site_default),
-   f"the engine rates with --race-effect-sports={engine_default!r} but the "
-   f"page describes XCP_RACE_DAY_SPORTS={site_default!r}. The hover would "
-   f"claim a tilt the rating does not carry (or hide one it does).")
-
-# and today that means: neither sport
-ok(_split(site_default) == (),
-   f"expected no sport to carry the day, got {_split(site_default)} -- if "
-   f"the engine really is being run with --race-effect-sports now, update "
-   f"this test deliberately rather than letting the two drift again")
-
-
-# ---- 2. the pipeline does not quietly turn it back on ------------------ #
+# ---- 2. the pipeline passes the switch only from the solve settings ---- #
 PIPE = _src("deploy", "run_pipeline.sh")
-ok("--race-effect-sports" not in PIPE,
-   "run_pipeline must not pass --race-effect-sports without this test and "
-   "XCP_RACE_DAY_SPORTS moving with it")
+ok('${XCP_RACE_EFFECT_SPORTS:+--race-effect-sports "$XCP_RACE_EFFECT_SPORTS"}' in PIPE,
+   "run_pipeline passes --race-effect-sports from XCP_RACE_EFFECT_SPORTS only")
+ENV = _src("deploy", "solve_env.sh")
+ok(': "${XCP_RACE_EFFECT_SPORTS=XC}"' in ENV,
+   "the solve settings put the day in cross country only (track stays out); "
+   "an explicit empty value turns it off for a run")
 
 
 # ---- 3. the two branches say the right thing --------------------------- #

@@ -330,9 +330,59 @@ app.template_filter("diffpct")(difficulty_view.diffPct)
 #   Empty now, matching run_joint's own default, and pinned to it by
 #   tests/test_race_day_wording.py. If the engine is ever run WITH
 #   --race-effect-sports, set XCP_RACE_DAY_SPORTS to the same list.
-RACE_DAY_SPORTS = tuple(
-    x.strip().upper() for x in os.environ.get("XCP_RACE_DAY_SPORTS", "").split(",")
-    if x.strip())
+#
+# ★ READ FROM WHAT THE GO-LIVE PUBLISHED (owner, 2026-10-03: "let's add in
+#   race-day term for xc"). Two settings -- the solve's and the site's --
+#   had already drifted once. The go-live writes the sports whose ratings
+#   carry the day into engine/data/pair_difficulty.npz (race_effect_sports,
+#   empty when the term is out), so the hover now says what the published
+#   ratings did. XCP_RACE_DAY_SPORTS, when set, still overrides (a site
+#   showing a database another machine solved). Re-read when the file
+#   changes, so a new publish needs no restart.
+_PAIR_NPZ = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "engine", "data", "pair_difficulty.npz")
+
+
+def _sportNames(values):
+    # 'XC:fast' -> 'XC' (joint_golive.dayModes)
+    return tuple(sorted({str(x).strip().upper().partition(":")[0]
+                         for x in values if str(x).strip()}))
+
+
+class _RaceDaySports:
+    def __init__(self, path=_PAIR_NPZ):
+        self.path, self._mtime, self._val = path, None, ()
+
+    def _get(self):
+        env = os.environ.get("XCP_RACE_DAY_SPORTS", "")
+        if env.strip():
+            return _sportNames(env.split(","))
+        try:
+            mt = os.path.getmtime(self.path)
+        except OSError:
+            return ()
+        if mt != self._mtime:
+            try:
+                import numpy as _np
+                with _np.load(self.path, allow_pickle=False) as z:
+                    self._val = (_sportNames(z["race_effect_sports"].tolist())
+                                 if "race_effect_sports" in z.files else ())
+            except Exception:                    # noqa: BLE001 -- unreadable: say none
+                self._val = ()
+            self._mtime = mt
+        return self._val
+
+    def __contains__(self, sport):
+        return str(sport).upper() in self._get()
+
+    def __iter__(self):
+        return iter(self._get())
+
+    def __repr__(self):
+        return repr(self._get())
+
+
+RACE_DAY_SPORTS = _RaceDaySports()
 app.jinja_env.globals["RACE_DAY_SPORTS"] = RACE_DAY_SPORTS
 
 
