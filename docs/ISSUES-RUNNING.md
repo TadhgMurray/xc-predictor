@@ -3451,3 +3451,15 @@ Foot Locker cells).
   level not held (hs read -0.0036 vs target -0.0092, ms -0.0061 vs -0.0191,
   elem -0.0127 vs -0.0186): real; the go-live's "winter gain per band"
   table says whether it is held in the solve's own sample (requested).
+- **The card correction is OUT again (owner: "I said the 9:28 is too slow
+  and you just said it's too fast. Isn't the issue with the gap not the card
+  but the engine itself?").** Right on both. The bracket averaged the spring
+  before and after, which assumes the summer and winter gains are equal; the
+  data cannot separate the level from the two gains (before = level -
+  summer, after = level + winter). If the winter/track season carries more
+  of the year's gain, track SHOULD rate above XC and the card's track time
+  is too slow, as the owner reads it. The engine already states that level
+  (XCP_SPORT_LEVEL_POOLS, hs 0.92% track over XC) and the published boards
+  do not hold it (hs reads 0.36%, ms 0.61% of 1.91%, elem 1.27% of 1.86%,
+  college 0.17% of 0.37%): the engine is where the fix goes. conversion_check
+  stays as a description of the two legs.
