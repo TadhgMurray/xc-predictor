@@ -11,8 +11,8 @@
 {% include "_meta.html" %}
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
-</head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
+</head>
 <body>
 {% include "_topbar.html" %}
 <main class="page account-page" data-role="{{ account.role }}">
@@ -34,7 +34,10 @@
           {% else %}<svg viewBox="0 0 24 24" width="44" height="44" aria-hidden="true"><path fill="currentColor" d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0 2c-4 0-8 2-8 5v2h16v-2c0-3-4-5-8-5z"/></svg>{% endif %}
           <span class="acct-avatar-cta">{{ "Change" if photo else "Add photo" }}</span>
         </label>
-        <input id="acct-photo-file" type="file" name="photo" accept="image/*" hidden>
+        {# ! THE THREE TYPES PILLOW READS HERE, not image/*: a picker told
+             exactly these converts a HEIC photo to JPEG rather than handing
+             over a file the server would refuse #}
+        <input id="acct-photo-file" type="file" name="photo" accept="image/jpeg,image/png,image/webp" hidden>
       </form>
       <div class="acct-profile-fields">
         <h2>Your picture and name</h2>
@@ -44,7 +47,7 @@
         {% endif %}
         <form method="post" action="/account/name" class="acct-row">
           <input type="hidden" name="csrf" value="{{ csrf }}">
-          <input type="text" name="name" value="{{ account.name or '' }}" maxlength="{{ name_max }}" placeholder="Display name" autocomplete="name">
+          <input type="text" name="name" value="{{ account.name or '' }}" maxlength="{{ name_max }}" placeholder="Display name" autocomplete="name" aria-label="Display name">
           <button type="submit" class="go quiet">Save name</button>
         </form>
       </div>
@@ -135,17 +138,23 @@
     </form>
   </section>
 
+  {# the exits, apart from each other: signing out is routine, deleting is
+     not, and the two sat in one box a thumb's width apart (2026-10-03) #}
   <section class="acct-block acct-exits">
     <h2>Sessions</h2>
+    <p class="meta">"Everywhere" signs out every phone and computer this account is signed in on.</p>
     <div class="acct-row">
       <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="go quiet">Sign out</button></form>
       <form method="post" action="/account/logout-all"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="go quiet">Sign out everywhere</button></form>
     </div>
+  </section>
+
+  <section class="acct-block acct-danger">
     <h2>Delete this account</h2>
     <p class="meta">Removes the account, its picture, its sessions and its links. Results on the site are the public record and stay.</p>
     <form method="post" action="/account/delete" class="acct-row">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="text" name="confirm" placeholder="type DELETE" size="12" autocomplete="off">
+      <input type="text" name="confirm" placeholder="type DELETE" size="12" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Type DELETE to confirm">
       <button type="submit" class="go danger">Delete account</button>
     </form>
   </section>

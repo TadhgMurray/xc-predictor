@@ -352,13 +352,39 @@ def homeAltitude(alt_row, known_row, athlete, n_ath):
     return home
 
 
+def _bandMedian(key, val, n_key):
+    """median of val per integer key in [0, n_key); NaN for an empty key."""
+    out = np.full(n_key, np.nan)
+    if key.size == 0:
+        return out
+    order = np.lexsort((val, key))
+    k, v = key[order], val[order]
+    starts = np.flatnonzero(np.r_[True, k[1:] != k[:-1]])
+    ends = np.r_[starts[1:], k.size]
+    lo = (starts + ends - 1) // 2
+    hi = (starts + ends) // 2
+    out[k[starts]] = 0.5 * (v[lo] + v[hi])
+    return out
+
+
 def sportGainShift(log_adj, sport, athlete, rating_ath, pool_ath, n_pool,
                    gains, anchors=SPORT_GAIN_ANCHORS,
-                   min_athletes=SPORT_GAIN_MIN_ATHLETES):
+                   min_athletes=SPORT_GAIN_MIN_ATHLETES, iters=8):
     """Per (pool, band): the realised dual-sport gap in log adjusted time
     (track minus XC, negative = track rates higher), the athletes behind
     it, and the shift that turns it into -gains[band]. Returns
-    (shift[n_pool, n_band], gap[n_pool, n_band], n[n_pool, n_band])."""
+    (shift[n_pool, n_band], gap[n_pool, n_band], n[n_pool, n_band]).
+
+    ★ THE MEDIAN, AS APPLIED (owner, 2026-10-03: "track should be greater
+      than xc on avg"). The go-live set each band's MEAN gap to the target
+      in one pass and applied the shift interpolated by rating between the
+      anchors; the boards (board_sanity's level check, every page) read the
+      MEDIAN athlete. Per-athlete gaps are skewed and the shifts steep
+      (hs_m +0.3% / +3.1% / +4.6% across the bands on 2026-10-02), so the
+      published level came out well short: hs read 0.36% track over XC
+      against the stated 0.92%, ms 0.61% of 1.91%. Now the band's median
+      gap is measured AFTER the interpolated shift, and the shift corrected
+      until it reads -gain -- the stated level is the level published."""
     gains = np.asarray(gains, dtype=np.float64)
     nb = len(anchors)
     # ★ ONE GAIN PER BAND, OR ONE PER (POOL, BAND) (2026-09-15: the sport
@@ -383,16 +409,30 @@ def sportGainShift(log_adj, sport, athlete, rating_ath, pool_ath, n_pool,
     band = np.digitize(np.nan_to_num(rating_ath, nan=100.0), SPORT_GAIN_BANDS)
     key = np.clip(pool_ath, 0, None) * nb + band
     n = np.bincount(key[both], minlength=n_pool * nb).reshape(n_pool, nb)
-    tot = np.bincount(key[both], weights=gap_ath[both],
-                      minlength=n_pool * nb).reshape(n_pool, nb)
-    gap = np.where(n > 0, tot / np.maximum(n, 1), np.nan)
-    shift = np.where((n >= min_athletes) & np.isfinite(gains), gap + gains, 0.0)
-    # a band too thin to measure borrows its pool's nearest measured band
-    for p in range(n_pool):
-        have = n[p] >= min_athletes
-        if have.any() and not have.all():
-            shift[p, ~have] = np.interp(np.asarray(anchors)[~have],
-                                        np.asarray(anchors)[have], shift[p, have])
+    gap = _bandMedian(key[both], gap_ath[both], n_pool * nb).reshape(n_pool, nb)
+    measured = (n >= min_athletes) & np.isfinite(gains)
+    shift = np.zeros((n_pool, nb))
+
+    def _borrow(sh):
+        # a band too thin to measure borrows its pool's nearest measured band
+        for p in range(n_pool):
+            have = n[p] >= min_athletes
+            if have.any() and not have.all():
+                sh[p, ~have] = np.interp(np.asarray(anchors)[~have],
+                                         np.asarray(anchors)[have], sh[p, have])
+        return sh
+
+    r_both = np.nan_to_num(rating_ath[both], nan=100.0)
+    p_both = pool_ath[both]
+    for _ in range(max(1, int(iters))):
+        # each athlete's track rows move by the row shift at their rating,
+        # so their gap moves by exactly that
+        applied = sportGainRow(r_both, p_both, shift, anchors)
+        now = _bandMedian(key[both], gap_ath[both] - applied, n_pool * nb).reshape(n_pool, nb)
+        step = np.where(measured, now + gains, 0.0)
+        shift = _borrow(shift + np.nan_to_num(step))
+        if np.nanmax(np.abs(np.where(measured, step, 0.0)), initial=0.0) < 1e-5:
+            break
     return shift, gap, n
 
 

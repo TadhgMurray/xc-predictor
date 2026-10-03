@@ -52,6 +52,7 @@ import os
 import re
 import secrets
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -69,6 +70,7 @@ STATE_MINUTES = 10           # the Google round trip
 LINKS_PER_EMAIL_HOUR = 5
 LINKS_PER_IP_HOUR = 30
 TOUCH_SECONDS = 3600         # how often a session row records a visit
+MAIL_WAIT_SECONDS = 8        # the longest a person watches "Email me a link" spin (below)
 ROLES = ("athlete", "coach", "neither")
 CLAIM_KINDS = ("athlete", "coach_team", "coach_self")
 LEVELS = ("hs", "college", "ms", "club")
@@ -405,13 +407,21 @@ def linksRecently(cur, email, ip):
 
 
 def requestLink(cur, email, ip, next_path, age_ok):
-    """Create a login token and mail it. 'sent', 'rate' (too many this
-    hour) or 'nomail' (no provider configured: the link is printed to the
-    server log, where only the owner reads it)."""
+    """Create a login token. (status, url): ('rate', None) for too many
+    this hour, ('nomail', None) when no provider is configured (the link is
+    printed to the server log, where only the owner reads it), else
+    ('send', url) -- the caller COMMITS, then hands the url to deliverLink.
+
+    ★ THE MAIL GOES OUT AFTER THE COMMIT, NOT INSIDE IT (owner, 2026-10-03:
+      "the sign in page can hang"). The send used to sit inside this
+      transaction: a slow mail provider held a pooled connection and an
+      open transaction for as long as it took, and the token row was not
+      even visible until the mail call returned, so a link opened quickly
+      could miss its own token."""
     by_email, by_ip = linksRecently(cur, email, ip)
     if by_email >= LINKS_PER_EMAIL_HOUR or by_ip >= LINKS_PER_IP_HOUR:
         logEvent(cur, "link_rate_limited", email=email)
-        return "rate"
+        return "rate", None
     raw, h = newToken()
     cur.execute("""INSERT INTO login_token (token_hash, kind, email, next_path, age_ok, ip, expires_at)
                    VALUES (%s, 'email', %s, %s, %s, %s, now() + make_interval(mins => %s))""",
@@ -420,13 +430,51 @@ def requestLink(cur, email, ip, next_path, age_ok):
     if not mailEnabled():
         print(f"[accounts] no mail provider configured; login link for {email}: {url}", flush=True)
         logEvent(cur, "link_unsent", email=email)
-        return "nomail"
+        return "nomail", None
+    return "send", url
+
+
+def sendMailWithin(to, subject, text, seconds=MAIL_WAIT_SECONDS):
+    """sendMail, but the request waits at most `seconds`: 'sent', 'failed',
+    or 'slow' (still going; it may yet arrive).
+
+    ★ A HARD CEILING ON THE WAIT (2026-10-03). urllib's timeout is per
+      socket operation, not per call: the DNS lookup has none at all, and a
+      host with a broken IPv6 route waits the full timeout on each address
+      before it tries IPv4. Each of those is a person staring at a spinning
+      button, and past gunicorn's 60s the worker is killed and the person
+      gets a 502. The send runs in a thread; past the ceiling the page
+      answers ("it may take a minute") and the thread finishes or fails on
+      its own, logging either way."""
+    box = {}
+
+    def run():
+        box["ok"] = sendMail(to, subject, text)
+        if "late" in box:
+            print(f"[accounts] slow mail to {to} finished late: {'sent' if box['ok'] else 'FAILED'}", flush=True)
+
+    th = threading.Thread(target=run, name="xcp-login-mail", daemon=True)
+    th.start()
+    th.join(seconds)
+    if th.is_alive():
+        box["late"] = True
+        print(f"[accounts] mail to {to} still sending after {seconds}s; answered the page", flush=True)
+        return "slow"
+    return "sent" if box.get("ok") else "failed"
+
+
+def deliverLink(email, url):
+    """Mail the link (after requestLink's commit) and record how it went in
+    a transaction of its own. 'sent', 'failed' or 'slow'."""
     subject, text = loginMail(url)
-    if not sendMail(email, subject, text):
-        logEvent(cur, "link_failed", email=email)
-        return "failed"
-    logEvent(cur, "link_sent", email=email)
-    return "sent"
+    status = sendMailWithin(email, subject, text)
+    try:
+        with _db() as (conn, cur):
+            logEvent(cur, {"sent": "link_sent", "failed": "link_failed"}.get(status, "link_slow"), email=email)
+            conn.commit()
+    except Exception as exc:                            # noqa: BLE001
+        print(f"[accounts] link event not logged ({type(exc).__name__}: {exc})", flush=True)
+    return status
 
 
 def consumeToken(cur, raw, kind="email"):
@@ -784,13 +832,16 @@ def login_post():
             if not email:
                 return _loginPage(error="That does not look like an email address.",
                                   email=request.form.get("email", "")), 400
-            status = requestLink(cur, email, clientIp(), next_path, age_ok)
+            status, url = requestLink(cur, email, clientIp(), next_path, age_ok)
             conn.commit()
     except AccountsError as exc:
         return _loginPage(error=str(exc)), 400
     if status == "rate":
         return _loginPage(error="Too many sign-in links for that address this hour. Try later."), 429
-    return _loginPage("sent", email=email, unsent=(status if status in ("nomail", "failed") else ""))
+    if status == "send":
+        # ! outside the database block: the token is committed, no connection is held
+        status = deliverLink(email, url)
+    return _loginPage("sent", email=email, unsent=(status if status in ("nomail", "failed", "slow") else ""))
 
 
 @bp.route("/login/t/<token>")

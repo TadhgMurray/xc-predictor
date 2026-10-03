@@ -3463,3 +3463,29 @@ Foot Locker cells).
   do not hold it (hs reads 0.36%, ms 0.61% of 1.91%, elem 1.27% of 1.86%,
   college 0.17% of 0.37%): the engine is where the fix goes. conversion_check
   stays as a description of the two legs.
+- **WHERE THE TRACK LEVEL LEAKED (the go-live's own table, 2026-10-02 run).**
+  The shift hit each band's MEAN gap in one pass, applied interpolated by
+  rating; the boards read the MEDIAN athlete. Pre-shift gaps were steep
+  (hs_m +0.3% / +3.1% / +4.6% shift by band, hs_f up to +7.5%: the solve
+  itself has hs track 2-7% under XC, more at the top). js.sportGainShift
+  now iterates until each band's median gap, after the interpolated shift,
+  reads -gain. Expected on the next run: hs/ms/elem/college track ratings
+  up toward the stated level (hs about +0.5%, ms about +1.3%), and the
+  10a level check passing. tests/test_sport_gain.py: median held as applied,
+  and a skewed-gap case.
+- **Phone layout, third take (owner had "zoomed out, same width"):** the CSS
+  zoom rendered 3-4px text (zoom 0.25 on athlete pages) and is the likely
+  cause of the overlapping text on iOS (Safari's text autosizing enlarges
+  zoomed-small blocks unevenly). Now: one 12px gutter on every page, phone
+  type a step smaller, tables in their own page-width box (wrap if that
+  fits, else scroll inside with a fade), the athlete sidebar folds to "Bests
+  & PRs". Checked at 390px in Chromium and WebKit on 21 page types: no page
+  scroll, no overlapping or clipped text. Desktop unchanged.
+- **Sign-in "hang":** the mail send ran inside the DB transaction with
+  per-socket timeouts only (DNS unbounded, IPv6 fallback 10s per address,
+  gunicorn kills at 60s). The token commits first; the send waits at most
+  8s in a thread ("may take a minute" past that); the button shows "Sending
+  your link..." and ignores a second tap. Account page: stray empty picker
+  boxes ([hidden] lost to display:flex), 16px fields (no iOS zoom), photos
+  shrunk on the phone before upload (nginx's 1MB default refuses phone
+  photos), Sign out / Delete separated.

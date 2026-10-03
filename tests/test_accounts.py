@@ -190,3 +190,46 @@ def test_the_picture_is_wired():
     acct = read("racecast", "templates", "account.html")
     assert 'enctype="multipart/form-data"' in acct and 'action="/account/name"' in acct and "<h1>Settings</h1>" in acct
     assert "racecast/static/photos/" in read(".gitignore")
+
+
+def test_the_mail_never_holds_the_page_or_the_transaction(monkeypatch):
+    """(owner, 2026-10-03: "the sign in page can hang"). The send waits at
+    most MAIL_WAIT_SECONDS and happens after the token is committed, never
+    inside requestLink's transaction."""
+    import time
+    calls = []
+
+    def slow(to, subject, text):
+        time.sleep(1.0)
+        calls.append(to)
+        return True
+    monkeypatch.setattr(AC, "sendMail", slow)
+    t = time.time()
+    assert AC.sendMailWithin("a@b.co", "s", "t", seconds=0.1) == "slow"
+    assert time.time() - t < 0.6                               # answered, not waited out
+    monkeypatch.setattr(AC, "sendMail", lambda *a: True)
+    assert AC.sendMailWithin("a@b.co", "s", "t", seconds=2) == "sent"
+    monkeypatch.setattr(AC, "sendMail", lambda *a: False)
+    assert AC.sendMailWithin("a@b.co", "s", "t", seconds=2) == "failed"
+
+    class Cur:
+        def __init__(self):
+            self.sql = []
+
+        def execute(self, sql, args=None):
+            self.sql.append(sql)
+
+        def fetchone(self):
+            return {"n": 0}
+    monkeypatch.setenv("XCP_MAIL_PROVIDER", "resend")
+    monkeypatch.setenv("XCP_MAIL_KEY", "k")
+    monkeypatch.setattr(AC, "sendMail", lambda *a: pytest.fail("mailed inside the transaction"))
+    app = flask.Flask(__name__)
+    with app.test_request_context("/login", method="POST"):
+        cur = Cur()
+        status, url = AC.requestLink(cur, "kid@example.com", "1.2.3.4", "/account", True)
+    assert status == "send" and url.startswith(AC.siteOrigin() + "/login/t/")
+    assert any("INSERT INTO login_token" in q for q in cur.sql)
+    src = read("racecast", "accounts.py")
+    assert "status = deliverLink(email, url)" in src
+    assert 'unsent == "slow"' in read("racecast", "templates", "login.html")

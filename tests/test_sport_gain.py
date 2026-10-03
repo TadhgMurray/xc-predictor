@@ -54,14 +54,14 @@ def test_shift_makes_each_band_read_the_stated_gain():
     shift, gap, n = js.sportGainShift(log_adj, sport, ath, rating, pool, 2, gains)
     assert (n >= 100).all(), n
     assert np.allclose(gap, 0.007, atol=0.004), gap           # what it read
-    assert np.allclose(shift, gap + np.array(gains)[None, :]), shift
-    # apply it as the go-live does: the band means land on -gain exactly
-    # when banded at the anchors (the interpolation only smooths between)
+    # ★ apply it as the go-live does (interpolated by rating): each band's
+    #   MEDIAN gap now lands on -gain, as the boards read it (2026-10-03:
+    #   the one-pass mean left hs 0.56% short of its stated level)
     row_shift = js.sportGainRow(rating[ath], pool[ath], shift)
     after = log_adj - np.where(sport == 1, row_shift, 0.0)
     gap2, _n = _gapByBand(after, sport, ath, rating, pool)
     for b, g in enumerate(gains):
-        assert np.allclose(gap2[:, b], -g, atol=0.006), (b, gap2[:, b])
+        assert np.allclose(gap2[:, b], -g, atol=2e-4), (b, gap2[:, b])
     # and it is continuous: a 119.9 and a 120.1 get shifts a hair apart
     r = np.array([119.9, 120.1])
     s2 = js.sportGainRow(r, np.zeros(2, dtype=int), shift)
@@ -122,3 +122,27 @@ def test_conversions_interpolate_the_offset_between_bands():
     assert abs(a - b) < 2e-5, "no step at the band edge"
     # a class with only the middle band still answers by band
     assert cv.distance_offset("hs_m", "TF", 800, rating=125) == 0.004
+
+
+def test_a_skewed_gap_is_held_on_the_median():
+    """The board reads the median athlete; a long tail of bad track days
+    must not leave the median short of the stated gain."""
+    rng = np.random.default_rng(3)
+    n_ath = 3000
+    rating = rng.uniform(90, 135, n_ath)
+    pool = np.zeros(n_ath, dtype=int)
+    rows = []
+    for i in range(n_ath):
+        tail = rng.exponential(0.03) if rng.random() < 0.3 else 0.0
+        rows.append((i, 0, 0.0))
+        rows.append((i, 1, 0.01 + 0.04 * (rating[i] - 90) / 45 + tail))
+    ath = np.array([r[0] for r in rows])
+    sport = np.array([r[1] for r in rows])
+    log_adj = np.array([r[2] for r in rows])
+    gains = (0.0092, 0.0092, 0.0092)
+    shift, _gap, _n = js.sportGainShift(log_adj, sport, ath, rating, pool, 1, gains)
+    after = log_adj - np.where(sport == 1, js.sportGainRow(rating[ath], pool[ath], shift), 0.0)
+    gap_ath = after[sport == 1] - after[sport == 0]
+    band = np.digitize(rating, js.SPORT_GAIN_BANDS)
+    for b in range(3):
+        assert abs(np.median(gap_ath[band == b]) + 0.0092) < 2e-4
