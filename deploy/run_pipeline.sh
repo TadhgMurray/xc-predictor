@@ -1153,13 +1153,6 @@ step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finis
 #   over the pool's own top seasons, the XC/TF gap. A hard finding FAILS
 #   the step (no "|| true"): a wrong board is not a board.
 step 10a_board_sanity "$PY" -u scripts/board_sanity.py --top "${XCP_SANITY_TOP:-60}"
-# ★ THE CROSS-SPORT LEG OF THE CONVERSION CARDS (owner, 2026-10-03: "a 25:30
-#   8k at Keene State is not a 9:28 3200m"), measured on this run's boards:
-#   dual-sport runners' track rating against their XC rating, fall against
-#   the springs either side, by pool, XC distance, track event and ability.
-#   Writes engine/data/conv_calibration.json; the site re-reads it. Reads
-#   ranking_results, so after 10_rankings_finish.
-step 10a2_conv_cal    "$PY" -u scripts/conversion_check.py --write --quiet
 # ! BEFORE 10b, BECAUSE 10b READS IT. school_team_link says which anet
 #   college TEAM each tfrrs school string is, learned from athletes who
 #   appear in both feeds -- the join that needs no spelling. It is what

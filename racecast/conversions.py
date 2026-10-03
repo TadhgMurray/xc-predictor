@@ -1125,12 +1125,6 @@ def equivalenceLine(pool, course_distance, target_distance,
                "sport": target_sport, "course": target_course}
     if target_difficulty is not None:
         tgt_ctx["difficulty"] = float(target_difficulty)
-    # ★ THE CROSS-SPORT LEG, AS DUAL-SPORT RUNNERS ACTUALLY RAN IT (owner,
-    #   2026-10-03: "a 25:30 8k at Keene State is not a 9:28 3200m"):
-    #   conv_calibration's measured gap between the same runners' XC and
-    #   track ratings, by pool, XC distance, track event and ability. 1.0
-    #   within a sport, and for a pool never measured.
-    import conv_calibration as _cc
     last = None
     for r in sorted(ratings, reverse=True):          # fastest first
         norm = _norm_from_rating(float(r), pool, 0.0, source_sport)
@@ -1140,8 +1134,6 @@ def equivalenceLine(pool, course_distance, target_distance,
         tt = normalized_to_time(norm, tgt_ctx)
         if not tc or not tt or tc <= 0 or tt <= 0:
             continue
-        tt *= _cc.timeFactor(pool, source_sport, course_distance, target_sport,
-                             target_distance, rating=float(r))
         if last is not None and (tc <= last[1] or tt <= last[2]):
             continue
         last = (int(r), round(tc, 2), round(tt, 2))
@@ -1239,20 +1231,12 @@ def convert_spread(source, xc_targets, tf_targets):
         except Exception:                           # noqa: BLE001
             hs_factor = None
 
-    import conv_calibration as _cc
-
     def _cells(targets, sport):
         out = []
         for t in targets:
             ctx = dict(t)
             ctx["sport"] = sport
             time = normalized_to_time(norm, ctx)
-            # the cross-sport leg as dual-sport runners ran it (see
-            # equivalenceLine); needs the source's sport and distance
-            if time and source.get("sport") and source.get("distance"):
-                time *= _cc.timeFactor(pool, str(source["sport"]).upper(),
-                                       source["distance"], sport,
-                                       t.get("distance"), rating=base_rating)
             out.append({
                 "label": t.get("label"),
                 "time":  round(time, 2) if time else None,
