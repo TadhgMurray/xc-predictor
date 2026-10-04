@@ -69,6 +69,10 @@ LOG_METRICS = [
      r"\[bracket\] field depth \(XC\): a race's reading moves ([-+0-9.]+)%", None),
     ("bracket_last_change", "course solve: last max change", "08_golive.log",
      r"\[bracket\] iteration \d+: max change ([0-9.]+)", "low"),
+    ("tf_temp_max", "track weather explained, temp = daily max (%)", "04f_weather_fit_tf.log",
+     r"as the max over [^:]*: weather explains ([0-9.]+)%", None),
+    ("tf_temp_avg", "track weather explained, temp = 9am-8pm mean (%)", "04f_weather_fit_tf.log",
+     r"as the avg over [^:]*: weather explains ([0-9.]+)%", None),
 ]
 
 # ★ THE CASES THE OWNER CAUGHT. (key, label, SQL returning one number, better)

@@ -3592,3 +3592,17 @@ Foot Locker cells).
 - **scripts/run_report.py (pipeline 17c), the one scorecard per run:** fair
   tests, health, and the owner's sentinel cases, against the last run
   (engine/data/run_history.jsonl, <log dir>/REPORT.txt). 16b_lacctic feeds it.
+- **13:19 vs 13:55 FOUND: the track heat credit uses the day's peak.**
+  diag_row_weather: WashU 2026-03-26 grid apparent max 35C over 9am-8pm (33C
+  at 3pm; 22-23C by 9-10pm, when the 10k ran) -> multiplier 0.9343, +7.03%,
+  about 9.1 points at 130. NCAA 2026-05-23 had no grid rows -> no-op. The
+  scorecard sentinel reads the gap at 8.74 points. TF's apparent_temp was
+  switched from the window mean to the max on 2026-09-06 (a 3pm race read
+  cool); neither is right for every race without start times. The TF weather
+  fit now queries both on the same rows and keeps the one that explains more
+  of the same meet's year-to-year slowdown ("[temp]" lines);
+  XCP_TF_TEMP_AGG=max|avg forces. Needs XCP_WEATHER_FIT=1 and a run from 4
+  (the backfill re-applies the correction).
+- Baseline scorecard (20261004_010841): owner 3200 139.02; Hammerand 10k gap
+  8.74; Mt. SAC 4715 11.11%, 4828 6.17% (gap 4.93; owner 1-2); Glendoveer
+  9.54% (runners read ~6.4 on the board scale); day scatter 2.835%; sanity 1.

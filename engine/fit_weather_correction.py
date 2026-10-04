@@ -1042,7 +1042,27 @@ def main():
     global RACE_LOCAL_HOURS, LINEAR_FEATURES, WX_AGG
     RACE_LOCAL_HOURS = RACE_LOCAL_HOURS_BY_SPORT[args.sport]
     LINEAR_FEATURES = LINEAR_FEATURES_BY_SPORT[args.sport]
-    WX_AGG = WX_AGG_BY_SPORT[args.sport]
+    WX_AGG = dict(WX_AGG_BY_SPORT[args.sport])
+    # ★ TRACK'S TEMPERATURE SUMMARY IS MEASURED, NOT CHOSEN (owner, 2026-10-04:
+    #   Hammerand's WashU 10k, 29:20, got +7.03% for a 33C 3pm peak while the
+    #   race ran at night in about 22C; his 29:27 at NCAA got nothing -- an
+    #   8.7-point gap for 0.4% of time). Without start times neither summary
+    #   is right for every race: the 9am-8pm mean understated a 3pm race in
+    #   heat (why it became the max on 2026-09-06), the max credits evening
+    #   races with afternoon heat. Both are queried on the same rows and the
+    #   one that explains more of the same meet's year-to-year slowdowns
+    #   (lower residual sum of squares after the athlete-season and meet
+    #   effects) is fitted and saved. XCP_TF_TEMP_AGG=max|avg forces one.
+    tf_compare = args.sport == "TF"
+    forced = os.environ.get("XCP_TF_TEMP_AGG", "").strip().lower()
+    if tf_compare and forced in ("max", "avg"):
+        WX_AGG["apparent_temp"] = f"{forced}(apparent_temperature)"
+        tf_compare = False
+    if tf_compare:
+        global QUERIED_FEATURES
+        WX_AGG["apparent_temp_max"] = "max(apparent_temperature)"
+        WX_AGG["apparent_temp_avg"] = "avg(apparent_temperature)"
+        QUERIED_FEATURES = tuple(WX_AGG.keys())
     print(f"[config] {args.sport}: window {RACE_LOCAL_HOURS} local, "
           f"linear features {LINEAR_FEATURES}, "
           f"temperature {WX_AGG['apparent_temp']}")
@@ -1055,7 +1075,31 @@ def main():
     print(f"[load] {cols['nt'].size:,} races joined to weather.", flush=True)
     t0 = _time.time()
     art, src = appliedArtifact(args.sport)
+    if tf_compare:
+        # the undo must read the temperature the APPLIED correction read
+        import normalize_distance as _nd
+        applied = _nd.weatherTempAgg(art) if art is not None else "max(apparent_temperature)"
+        cols = dict(cols)
+        cols["apparent_temp"] = cols["apparent_temp_" + applied.split("(", 1)[0]]
     cols = undoAppliedWeather(cols, args.sport, art, src)
+    if tf_compare:
+        rss = {}
+        for cand in ("max", "avg"):
+            c_ = dict(cols)
+            c_["apparent_temp"] = cols["apparent_temp_" + cand]
+            *_r, yd_c, Xd_c, _lay = fitWeather(c_)
+            coef_c, *_ = np.linalg.lstsq(Xd_c, yd_c, rcond=None)
+            res = yd_c - Xd_c @ coef_c
+            rss[cand] = (float(res @ res), float(yd_c @ yd_c), int(yd_c.size))
+        best = min(rss, key=lambda k: rss[k][0])
+        for cand, (r, tot, n_) in rss.items():
+            print(f"[temp] TF temperature as the {cand} over {RACE_LOCAL_HOURS}: weather explains "
+                  f"{100 * (1 - r / tot):.3f}% of the within-meet variance (rss {r:.4f}, "
+                  f"{n_:,} rows){'   <- used' if cand == best else ''}", flush=True)
+        WX_AGG["apparent_temp"] = f"{best}(apparent_temperature)"
+        cols["apparent_temp"] = cols["apparent_temp_" + best]
+        for k in ("apparent_temp_max", "apparent_temp_avg"):
+            WX_AGG.pop(k, None)
     print(f"[time] undo {_time.time() - t0:.0f}s", flush=True)
     t0 = _time.time()
     betas, splines, dist_betas, coef, n_used, counts, yd, Xd, layout = fitWeather(cols)
