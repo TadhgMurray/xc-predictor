@@ -3489,3 +3489,28 @@ Foot Locker cells).
   boxes ([hidden] lost to display:flex), 16px fields (no iOS zoom), photos
   shrunk on the phone before upload (nginx's 1MB default refuses phone
   photos), Sign out / Delete separated.
+
+## 2026-10-04 — the cross-sport holdout
+
+- **Owner: "we holdout certain things to test the actual solve, but we also
+  don't holdout things like the conversions or what you think someone will
+  run xc vs track".** The race/athlete/course splits leave every held-out
+  athlete's other sport in the fit, so the cross-sport level, the track gain
+  and the conversions were never scored on unseen races. New
+  --holdout-kind sport: the TRACK season of 10% of dual-sport
+  athlete-seasons held out whole and predicted from their cross country
+  alone (sport-xc: the reverse). The log adds "cross-sport BIAS" by pool x
+  distance and by rating quartile (+ = ran slower than predicted). Pipeline
+  step 08a_sport_holdout (same settings as 08a). tests/test_sport_holdout.py
+  (split, table, end to end: bias -0.0013 on an unbiased synthetic world).
+- **Correction to my 10-03 reply:** raising the track level (the median fix)
+  makes the card's XC->track times SLOWER, not faster -- the card converts
+  at equal rating, and a higher track rating for the same time means a given
+  XC rating maps to a slower track time. The owner's two asks pull against
+  each other on one rating scale: "track rates above XC" puts the fall-to-
+  spring improvement in the rating, "25:30 should convert faster than 9:28"
+  puts it in the card. The cross-sport holdout says which the data supports
+  (what runners actually ran next spring), and the card can then be defined
+  as that prediction.
+- nginx client_max_body_size: declined by the owner; phones shrink photos
+  before upload instead.

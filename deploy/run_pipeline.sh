@@ -1007,6 +1007,28 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
       ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
       $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
+  # ★ THE CROSS-SPORT HOLDOUT (owner, 2026-10-04: "we holdout certain things
+  #   to test the actual solve, but we also don't holdout things like the
+  #   conversions or what you think someone will run xc vs track"). The
+  #   track season of 10% of dual-sport athlete-seasons is held out whole
+  #   and predicted from their cross country alone; the log's "cross-sport
+  #   BIAS" table is the conversion's error by pool, event and ability, on
+  #   races the model never saw. Same settings as 08a; skipped with 08a.
+  #   XCP_SPORT_HOLDOUT=sport-xc asks the reverse (XC from track).
+  step 08a_sport_holdout "$PY" -u engine/run_joint.py --holdout-only \
+      --holdout-kind "${XCP_SPORT_HOLDOUT:-sport}" --sample-pct "${XCP_HOLDOUT_PCT:-25}" \
+      --outer "${XCP_OUTER:-5}" --probes 0 --altitude \
+      ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
+      ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \
+      ${XCP_NO_IMPORTANCE:+--no-importance} \
+      ${XCP_NO_INDOOR:+--no-indoor} \
+      ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
+      ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
+      ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
+      ${XCP_NO_DIST_TABLE:+--no-dist-table} \
+      ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
+      ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
+      $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
   # ! A RUNG IS A SOLVE (2026-09-12: "08b takes over 6 hours ... gets
   #   stuck"). Each rung solves XCP_LADDER_PCT of the athletes, the era
   #   rungs on three times the cells, and until today nothing was printed

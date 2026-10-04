@@ -1463,6 +1463,47 @@ def holdoutBreakdown(err, season_rows, pool, min_rows=200):
     return out
 
 
+CROSS_SPORT_DISTANCES = (800, 1500, 1600, 3000, 3200, 4000, 5000, 6000, 8000, 10000)
+
+
+def crossSportBreakdown(err, pool, dist, rating=None, athlete=None, min_rows=200):
+    """Lines for the cross-sport holdout: the BIAS (mean and median of
+    held-out log time minus prediction; + = they ran SLOWER than the model
+    said from their other sport) by pool x distance, and by the athlete's
+    rating quartile within pool. This is the number a conversion card gets
+    wrong or right. Pure."""
+    err = np.asarray(err, dtype=np.float64)
+    pool = np.asarray(pool, dtype=object)
+    dist = np.asarray(dist, dtype=np.float64)
+    std = np.asarray(CROSS_SPORT_DISTANCES, dtype=np.float64)
+    near = std[np.abs(dist[:, None] - std[None, :]).argmin(axis=1)] if dist.size else dist
+    ok_d = np.abs(dist - near) <= near * 0.04
+    out = ["        cross-sport BIAS (+ = ran SLOWER than predicted from the other "
+           "sport), % of time:",
+           f"          {'pool':<11}{'distance':>9}{'rows':>10}{'mean':>8}{'median':>8}"]
+    for name in sorted(set(pool.tolist())):
+        for d in std:
+            m = (pool == name) & ok_d & (near == d)
+            if int(m.sum()) < min_rows:
+                continue
+            out.append(f"          {str(name):<11}{int(d):>9}{int(m.sum()):>10,}"
+                       f"{100 * err[m].mean():>+7.2f}%{100 * np.median(err[m]):>+7.2f}%")
+    if rating is not None and athlete is not None:
+        r = np.asarray(rating, dtype=np.float64)[np.asarray(athlete)]
+        out.append("          by the athlete's rating quartile within the pool "
+                   "(median bias):")
+        for name in sorted(set(pool.tolist())):
+            m = (pool == name) & np.isfinite(r)
+            if int(m.sum()) < 4 * min_rows:
+                continue
+            q = np.quantile(r[m], [0.25, 0.5, 0.75])
+            band = np.digitize(r[m], q)
+            cells = "  ".join(f"Q{b + 1} {100 * np.median(err[m][band == b]):+.2f}%"
+                              f"@{np.median(r[m][band == b]):.0f}" for b in range(4))
+            out.append(f"          {str(name):<11}{cells}")
+    return out
+
+
 def holdout(cols, keep, args, athlete_pool, D_full):
     import pair_validate as pv
     y_all = np.log(cols["norm"])
@@ -1493,11 +1534,20 @@ def holdout(cols, keep, args, athlete_pool, D_full):
             raise SystemExit("[forward] nothing to fit or nothing to score in "
                              "this window")
     else:
+        _season = _sport = None
+        if kind in ("sport", "sport-xc"):
+            # one code per athlete and academic year: fall XC and the next
+            # spring's track share it (pe.athleteSeasonCodes without sport)
+            if "sport" not in cols:
+                raise SystemExit("[joint] --holdout-kind sport needs a merged pack")
+            _season, _ = pe.athleteSeasonCodes(np.asarray(cols["athlete"])[idx],
+                                               np.asarray(cols["year"])[idx])
+            _sport = np.asarray(cols["sport"])[idx]
         te_local = pv.splitFor(kind, idx.size,
                                race=race_all[idx],
                                athlete=np.asarray(cols["athlete"])[idx],
                                cell=np.asarray(cols["course"])[idx],
-                               frac=0.10, seed=1)
+                               frac=0.10, seed=1, season=_season, sport=_sport)
         keep_tr = np.zeros(keep.size, dtype=bool); keep_tr[idx[~te_local]] = True
         keep_te = np.zeros(keep.size, dtype=bool); keep_te[idx[te_local]] = True
     # ★ THE GO-LIVE'S DESIGN (designKwargs), one call for both kinds.
@@ -1608,6 +1658,11 @@ def holdout(cols, keep, args, athlete_pool, D_full):
              "race": "10% of RACES -- a whole new race at a known course",
              "athlete": "10% of ATHLETES -- rating a newcomer",
              "course": "10% of COURSES -- a course never seen before",
+             "sport": "the TRACK season of 10% of dual-sport athlete-seasons, "
+                      "predicted from their cross country alone -- the "
+                      "conversion, on races never seen",
+             "sport-xc": "the CROSS COUNTRY season of 10% of dual-sport "
+                         "athlete-seasons, predicted from their track alone",
              "forward": (f"every rated row in [{fwd['from']}, {fwd['until']}) "
                          f"from a fit on the rows before it -- a whole "
                          f"{'SEALED ' if fwd['sealed'] else ''}season forward"
@@ -1639,6 +1694,11 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     #   rungs' dumps row for row on the rows both covered.
     for line in holdoutBreakdown(err, n_tr_season[cov], pool_te[cov]):
         print(line)
+    if kind in ("sport", "sport-xc") and "dist_m" in cols:
+        for line in crossSportBreakdown(err, pool_te[cov],
+                                        np.asarray(cols["dist_m"])[keep_te][cov],
+                                        out.get("rating"), D_te.athlete[cov]):
+            print(line)
     # ⚠ THE COMPARISON IS ONLY LEGAL ON THE ROW RUNG. pair_all's 0.044325
     #   was a ROW split -- the same race was in train, so its race-day
     #   effect was already fitted and the score is an INTERPOLATION. A race

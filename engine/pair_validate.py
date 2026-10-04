@@ -120,14 +120,42 @@ def splitByGroup(group, frac=0.10, seed=1):
 
 
 # The ladder, by name, so callers and logs agree on what a number means.
-HOLDOUT_KINDS = ("row", "race", "athlete", "course")
+HOLDOUT_KINDS = ("row", "race", "athlete", "course", "sport", "sport-xc")
+
+
+def splitBySport(season, sport, frac=0.10, seed=1, predict=1):
+    """★ THE CROSS-SPORT QUESTION (owner, 2026-10-04: "we holdout certain
+    things to test the actual solve, but we also don't holdout things like
+    the conversions or what you think someone will run xc vs track"). Of the
+    athlete-seasons that raced BOTH sports, `frac` are picked and every row
+    of ONE sport is held out (predict=1: their track season, 0: their cross
+    country) -- their other sport stays in training, so each held-out row is
+    predicted from the athlete's other sport alone: the conversion, scored on
+    races the model never saw. `season` is the athlete-season code per row
+    (one code for fall XC and the next spring's track), `sport` 0/1."""
+    season = np.asarray(season)
+    sport = np.asarray(sport).astype(np.int64) != 0
+    n = int(season.max()) + 1 if season.size else 0
+    has_tf = np.bincount(season[sport], minlength=n) > 0
+    has_xc = np.bincount(season[~sport], minlength=n) > 0
+    both = np.flatnonzero(has_tf & has_xc)
+    rng = np.random.default_rng(seed)
+    picked = np.zeros(n, dtype=bool)
+    picked[both[rng.random(both.size) < frac]] = True
+    want = sport if predict == 1 else ~sport
+    return picked[season] & want
 
 
 def splitFor(kind, n_rows, race=None, athlete=None, cell=None,
-             frac=0.10, seed=1):
+             frac=0.10, seed=1, season=None, sport=None):
     """One entry point for the ladder. Returns a boolean row mask."""
     if kind == "row":
         return splitByRow(n_rows, frac=frac, seed=seed)
+    if kind in ("sport", "sport-xc"):
+        if season is None or sport is None:
+            raise ValueError(f"holdout kind {kind!r} needs the season and sport arrays")
+        return splitBySport(season, sport, frac=frac, seed=seed,
+                            predict=1 if kind == "sport" else 0)
     src = {"race": race, "athlete": athlete, "course": cell}
     if kind not in src:
         raise ValueError(f"unknown holdout kind {kind!r}; "
