@@ -70,7 +70,10 @@ def fetch(path, sleep):
 
 
 def norm_name(s):
-    return re.sub(r"[^a-z]", "", (s or "").lower())
+    """The name's words, sorted: TFRRS rows say "Hammerand, Isaiah" and
+    LACCTiC "Isaiah Hammerand" (2026-10-04: 0 of 867 matched on the
+    letters in order)."""
+    return " ".join(sorted(re.findall(r"[a-z]+", (s or "").lower())))
 
 
 def mmss(sec):
@@ -146,6 +149,9 @@ def compare_race(lac_id, ours, sleep, default_pool):
         rn = x.get("runner") or {}
         cand = by_name.get(norm_name(f"{rn.get('firstname', '')} {rn.get('lastname', '')}"), [])
         hit = [r for r in cand if r[3] and abs(float(r[3]) - float(x["time"])) <= 1.0]
+        if not hit:
+            # a nickname or an accent: the one row at that exact time
+            hit = [r for r in rows if r[3] and abs(float(r[3]) - float(x["time"])) <= 0.05]
         if len(hit) != 1 or hit[0][4] is None:
             continue
         r = hit[0]
