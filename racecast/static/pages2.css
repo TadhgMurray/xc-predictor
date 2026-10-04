@@ -1,0 +1,105 @@
+/* =======================================================================
+ * pages2.css -- /projections and /breakouts (owner, 2026-10-04).
+ *
+ * ★ ITS OWN FILE, LINKED ONLY FROM THOSE TWO TEMPLATES. style.css is the
+ *   site's one sheet and is being reworked in parallel; everything here is
+ *   scoped under .p2-page so nothing leaks onto another page, and it leans
+ *   on style.css's tokens (--ink, --muted, --line, --accent, --zebra) rather
+ *   than declaring a second palette -- the "two greys" problem style.css's
+ *   own token block was written to end.
+ * ======================================================================= */
+
+.p2-page h1 { font-size: 1.9rem; line-height: 1.2; margin: 0.2rem 0 0.4rem; }
+.p2-page .p2-sub { color: var(--muted, #6b7280); font-weight: 600; font-size: 0.75em; }
+.p2-page .p2-lead { font-size: 0.98rem; color: #374151; max-width: 46rem; line-height: 1.55; }
+.p2-page .p2-crumbs { font-size: 0.85rem; margin: 0 0 0.3rem; color: var(--muted, #6b7280); }
+.p2-page .p2-muted { color: var(--muted, #6b7280); font-weight: 400; }
+.p2-page .p2-meta { font-size: 0.86rem; color: #374151; line-height: 1.7; margin: 0.6rem 0 0.4rem; }
+.p2-page .p2-note { color: #374151; font-size: 0.92rem; }
+.p2-page .p2-foot { color: var(--muted, #6b7280); font-size: 0.82rem; margin: 0.4rem 0 0; }
+.p2-page .p2-h2 { font-size: 1.12rem; margin: 1.8rem 0 0.55rem; }
+.p2-page .p2-h3 { font-size: 0.98rem; margin: 1.1rem 0 0.4rem; }
+
+/* ---- the state picker ---------------------------------------------- */
+.p2-page .p2-states { list-style: none; padding: 0; margin: 1.2rem 0 0;
+                      columns: 4 11rem; column-gap: 1.5rem;
+                      font-size: 0.95rem; line-height: 2; }
+.p2-page .p2-states li { break-inside: avoid; }
+
+/* ---- the division list ---------------------------------------------- */
+.p2-page .p2-divs { display: grid; gap: 0.5rem; margin-top: 1rem;
+                    grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); }
+.p2-page .p2-div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.3rem 0.7rem;
+                   border: 1px solid var(--line, #e5e7eb); padding: 0.65rem 0.8rem; background: #fff; }
+.p2-page .p2-div-name { font-weight: 700; color: var(--ink, #111418); }
+.p2-page .p2-div-n { color: var(--muted, #6b7280); font-size: 0.82rem; }
+.p2-page .p2-div-go { margin-left: auto; display: inline-flex; gap: 0.4rem; }
+.p2-page .p2-div-go a { font-size: 0.86rem; font-weight: 600; text-decoration: none;
+                        border: 1px solid var(--line-2, #cbd0d6); padding: 0.15rem 0.6rem; }
+.p2-page .p2-div-go a:hover { background: var(--hover, #f3f6fa); }
+.p2-page .p2-div-all { background: var(--zebra, #fafbfc); }
+
+/* ---- toggles and chips ---------------------------------------------- */
+.p2-page .p2-toggles { display: flex; flex-wrap: wrap; align-items: center;
+                       gap: 0.5rem 0.9rem; margin: 0.7rem 0 0.2rem; }
+.p2-page .p2-seg { display: inline-flex; border: 1px solid var(--line-2, #cbd0d6); }
+.p2-page .p2-seg a { padding: 0.28rem 0.75rem; font-size: 0.86rem; text-decoration: none;
+                     color: #374151; font-weight: 600; }
+.p2-page .p2-seg a + a { border-left: 1px solid var(--line-2, #cbd0d6); }
+.p2-page .p2-seg a.is-on { background: var(--ink, #111418); color: #fff; }
+.p2-page .p2-chips { display: inline-flex; flex-wrap: wrap; gap: 0.3rem; }
+.p2-page .p2-chips a { padding: 0.2rem 0.6rem; font-size: 0.84rem; text-decoration: none;
+                       border: 1px solid var(--line, #e5e7eb); color: #374151; white-space: nowrap; }
+.p2-page .p2-chips a:hover { border-color: var(--line-2, #cbd0d6); background: var(--hover, #f3f6fa); }
+.p2-page .p2-chips a.is-on { border-color: var(--accent, #14477d); color: var(--accent, #14477d);
+                             font-weight: 700; }
+.p2-page .p2-state-form { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.86rem; }
+.p2-page .p2-state-form select { font: inherit; padding: 0.22rem 0.4rem;
+                                 border: 1px solid var(--line-2, #cbd0d6); background: #fff; }
+
+/* ---- banner and flags ------------------------------------------------ */
+.p2-page .p2-banner { background: #fef3c7; color: #78350f; border: 1px solid #f5d98a;
+                      padding: 0.6rem 0.8rem; font-size: 0.9rem; line-height: 1.5; margin: 0.8rem 0; }
+.p2-page .p2-thin { display: inline-block; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.03em;
+                    text-transform: uppercase; color: #92400e; background: #fef3c7;
+                    border: 1px solid #f5d98a; padding: 0 0.3rem; line-height: 1.45;
+                    vertical-align: 0.1em; white-space: nowrap; }
+.p2-page .p2-check { display: inline-block; font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+                     color: #b91c1c; border: 1px solid #f3b4b4; background: #fff5f5;
+                     padding: 0 0.3rem; line-height: 1.45; vertical-align: 0.1em; }
+.p2-page .p2-badge { display: inline-block; font-size: 0.66rem; font-weight: 700; color: var(--gold, #a97a12);
+                     border: 1px solid currentColor; padding: 0 0.25rem; line-height: 1.4; vertical-align: 0.1em; }
+.p2-page .p2-up { color: #166534; font-weight: 700; }
+
+/* ---- tables ---------------------------------------------------------- */
+.p2-page .p2-tbl { width: 100%; margin-top: 0.3rem; }
+.p2-page .p2-tbl th, .p2-page .p2-tbl td { text-align: left; vertical-align: top; padding: 0.45rem 0.6rem; }
+.p2-page .p2-tbl .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.p2-page .p2-tbl td:first-child { color: var(--muted, #6b7280); width: 2.2rem; }
+.p2-page .p2-pts { font-weight: 700; color: var(--ink, #111418); }
+.p2-page .p2-team { min-width: 10rem; }
+.p2-page .p2-row-sub { display: block; font-size: 0.78rem; color: var(--muted, #6b7280); margin-top: 0.05rem; }
+.p2-page .p2-narrow { display: none; }
+.p2-page .p2-scorers summary { cursor: pointer; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.p2-page .p2-scorers summary::marker { color: var(--muted, #6b7280); }
+.p2-page .p2-lineup { margin: 0.4rem 0 0.2rem; padding-left: 1.3rem; font-size: 0.84rem; line-height: 1.55; }
+
+/* ---- how it works ---------------------------------------------------- */
+.p2-page .p2-how { margin-top: 2.2rem; border-top: 1px solid var(--line, #e5e7eb); padding-top: 0.4rem;
+                   font-size: 0.9rem; color: #374151; line-height: 1.55; max-width: 50rem; }
+.p2-page .p2-how ul { padding-left: 1.2rem; margin: 0.3rem 0; }
+.p2-page .p2-how li { margin: 0.3rem 0; }
+
+/* ---- phones: the site's 16px gutter, and the secondary columns fold into
+ *      the row's sub-line rather than pushing the table past the screen ---- */
+@media (max-width: 640px) {
+  .p2-page.page-wide { padding: 1rem 16px 2.5rem; }
+  .p2-page h1 { font-size: 1.45rem; }
+  .p2-page .p2-wide { display: none; }
+  .p2-page .p2-narrow { display: inline; }
+  .p2-page .p2-tbl th, .p2-page .p2-tbl td { padding: 0.4rem 0.4rem; }
+  .p2-page .p2-tbl td:first-child { width: 1.6rem; }
+  .p2-page .p2-team { min-width: 0; }
+  .p2-page .p2-states { columns: 2; }
+  .p2-page .p2-toggles { gap: 0.45rem; }
+}

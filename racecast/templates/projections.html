@@ -1,0 +1,231 @@
+{# =====================================================================
+  projections.html -- "Who wins state?" (projections.py, owner 2026-10-04)
+
+  Three views on one template, because they are one page at three depths:
+    index        pick a state
+    state        pick a division (boys / girls on each)
+    projection   the projected championship: teams, then individuals
+
+  ★ THE CAVEATS ARE ON THE PAGE, NOT IN A TOOLTIP. Who qualifies is not
+    modelled, early-season ratings rest on a race or two, and nobody here
+    knows who is hurt. A projection that does not say so in plain sight is
+    a claim the site cannot back.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('pages2.css') }}">
+{% if mode == "projection" %}
+  {% set meta_title = "Who wins " ~ division_label ~ "? " ~ state_name ~ " " ~ gender_words ~ " XC state projection" %}
+  {% set meta_description = "Projected " ~ state_name ~ " high school " ~ gender_words|lower ~ " cross country state championship ("
+       ~ division_label ~ "): team scores and individual places from this season's speed ratings, with every athlete's race count." %}
+  {% set meta_path = "/projections/" ~ state|lower ~ "/" ~ division_slug ~ ("?g=girls" if gender == "girls" else "") %}
+  {% set meta_crumbs = [("Projections", "/projections"), (state_name, "/projections/" ~ state|lower), (division_label, none)] %}
+{% elif mode == "state" %}
+  {% set meta_title = state_name ~ " cross country state championship projections" %}
+  {% set meta_description = "Who wins state? Projected " ~ state_name ~ " high school cross country state championships, by division, boys and girls, from this season's speed ratings." %}
+  {% set meta_crumbs = [("Projections", "/projections"), (state_name, none)] %}
+{% else %}
+  {% set meta_title = "Who wins state? Cross country state meet projections" %}
+  {% set meta_description = "Projected high school cross country state championships for every state and division: team scores and individual places from this season's speed ratings." %}
+  {% set meta_crumbs = [("Projections", none)] %}
+{% endif %}
+{% include "_meta.html" %}
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+<main class="page-wide p2-page proj-page">
+
+{% if mode == "index" %}
+  <h1>Who wins state?</h1>
+  <p class="p2-lead">
+    Every state's high school cross country championship, projected from this
+    season's speed ratings: team scores with five scorers and two displacers,
+    and the individual race. Pick a state, then a division.
+  </p>
+  <ul class="p2-states">
+    {% for code, name in states %}
+    <li><a href="/projections/{{ code|lower }}">{{ name }}</a></li>
+    {% endfor %}
+  </ul>
+
+{% elif mode == "state" %}
+  <p class="p2-crumbs"><a href="/projections">All states</a></p>
+  <h1>Who wins state in {{ state_name }}?</h1>
+  <p class="p2-lead">
+    The {{ state_name }} high school cross country championship, projected
+    division by division from this season's speed ratings.
+  </p>
+  <div class="p2-divs">
+    {% for d in divisions %}
+    <div class="p2-div">
+      <span class="p2-div-name">{{ d.label }}</span>
+      <span class="p2-div-n">{{ d.n_schools }} schools</span>
+      <span class="p2-div-go">
+        <a href="/projections/{{ state|lower }}/{{ d.slug }}">Boys</a>
+        <a href="/projections/{{ state|lower }}/{{ d.slug }}?g=girls">Girls</a>
+      </span>
+    </div>
+    {% endfor %}
+    <div class="p2-div p2-div-all">
+      <span class="p2-div-name">Whole state, every division</span>
+      <span class="p2-div-n">{{ "a meet of champions" if divisions else "no divisions on record" }}</span>
+      <span class="p2-div-go">
+        <a href="/projections/{{ state|lower }}/all">Boys</a>
+        <a href="/projections/{{ state|lower }}/all?g=girls">Girls</a>
+      </span>
+    </div>
+  </div>
+  {% if not divisions %}
+  <p class="p2-note">No state divisions or classes are on record for {{ state_name }}
+    yet: they are read off the championship meets each school ran, and a state
+    whose meets name no division has none here. The whole-state projection still works.</p>
+  {% endif %}
+
+{% else %}
+  {% set p = proj %}
+  <p class="p2-crumbs"><a href="/projections">All states</a> &rsaquo;
+     <a href="/projections/{{ state|lower }}">{{ state_name }}</a></p>
+  <div class="hdr-row">
+    <h1>Who wins {{ division_label }}? <span class="p2-sub">{{ gender_words }}</span></h1>
+    {% with share_title="Who wins " ~ division_label ~ " " ~ gender_words ~ "? on Racecast",
+            share_url=site_origin ~ "/projections/" ~ state|lower ~ "/" ~ division_slug ~ ("?g=girls" if gender == "girls" else "") %}{% include "_share.html" %}{% endwith %}
+  </div>
+
+  <nav class="p2-toggles" aria-label="Projection options">
+    <span class="p2-seg" role="group" aria-label="Gender">
+      <a href="/projections/{{ state|lower }}/{{ division_slug }}" class="{{ 'is-on' if gender == 'boys' }}">Boys</a>
+      <a href="/projections/{{ state|lower }}/{{ division_slug }}?g=girls" class="{{ 'is-on' if gender == 'girls' }}">Girls</a>
+    </span>
+    <span class="p2-chips" role="group" aria-label="Division">
+      {% for d in divisions %}
+      <a href="/projections/{{ state|lower }}/{{ d.slug }}{{ '?g=girls' if gender == 'girls' }}"
+         class="{{ 'is-on' if d.slug == division_slug }}">{{ d.label|replace(state ~ ' ', '') }}</a>
+      {% endfor %}
+      <a href="/projections/{{ state|lower }}/all{{ '?g=girls' if gender == 'girls' }}"
+         class="{{ 'is-on' if division_slug == 'all' }}">All</a>
+    </span>
+  </nav>
+
+  <p class="p2-meta">
+    {{ p.year }} season ratings{% if p.as_of %}, newest race {{ p.as_of|mdy }}{% endif %}
+    &middot; {{ p.n_field }} athletes in the field
+    &middot; {% if p.course %}at <a href="/course/{{ p.course.course_name|urlencode }}">{{ p.course.course_name }}</a>{% if p.distance %}, {{ "%.0f"|format(p.distance) }} m{% endif %}
+      <span class="p2-muted">(the state meet's usual course, {{ p.course.editions }} past editions)</span>
+    {% else %}on a neutral course <span class="p2-muted">(no regular state-meet venue on record)</span>{% endif %}
+    &middot; <span class="p2-muted">computed {{ p.computed_at|ago_words }}</span>
+  </p>
+
+  {% if p.n_field and p.thin_share >= 0.35 %}
+  <div class="p2-banner" role="note">
+    <strong>Early season.</strong> {{ (100 * p.thin_share)|round|int }}% of this field has raced
+    {{ thin_races }} rated race{{ "s" if thin_races != 1 }} or fewer this season, so these ratings rest on
+    very little. They are used as they stand, flagged <span class="p2-thin">thin</span>, and will move as
+    the season fills in.
+  </div>
+  {% endif %}
+
+  {% if not p.n_field %}
+  <p class="p2-note">No rated {{ gender_words|lower }} in {{ division_label }} have raced yet this season.
+     The projection appears with the first rated meet.</p>
+  {% else %}
+
+  <h2 class="p2-h2">Team scores</h2>
+  {% if p.teams %}
+  <table class="p2-tbl p2-teams">
+    <thead><tr>
+      <th class="num">#</th><th>Team</th><th class="num">Pts</th>
+      <th>Scorers <span class="p2-muted">(6, 7)</span></th>
+      <th class="num p2-wide" title="Mean season rating of the five scorers">Top 5</th>
+    </tr></thead>
+    <tbody>
+    {% for t in p.teams %}
+      <tr>
+        <td class="num">{{ loop.index }}</td>
+        <td class="p2-team">{% if t.team|is_team %}{{ crest(t.team, t.state, pool='hs') }}<a href="{{ school_href(t.team, t.state, pool='hs') }}">{{ t.team|school_label_for('hs', t.state) }}</a>{% else %}{{ t.team }}{% endif %}
+          {% if t.thin %}<span class="p2-thin" title="{{ t.thin }} of the five scorers on {{ thin_races }} or fewer rated races">{{ t.thin }} thin</span>{% endif %}
+        </td>
+        <td class="num p2-pts">{{ t.score }}</td>
+        <td class="p2-scorers">
+          <details>
+            <summary>{{ t.scorer_places|join('-') }}{% if t.displacer_places %} <span class="p2-muted">({{ t.displacer_places|join(', ') }})</span>{% endif %}</summary>
+            <ol class="p2-lineup">
+              {% for ru in t.runners %}
+              <li><a href="/athlete/{{ ru.person_id }}">{{ ru.name }}</a>
+                <span class="p2-muted">{{ ru.grade|grade_label('hs') if ru.grade }} &middot; {{ "%.1f"|format(ru.rating) if ru.rating is not none }} &middot; {{ ru.n_races }} race{{ "s" if ru.n_races != 1 }}</span>{% if ru.thin %} <span class="p2-thin">thin</span>{% endif %}
+                <span class="p2-muted">&middot; finishes {{ ru.place }}{% if ru.score_place and ru.score_place != ru.place %}, scores {{ ru.score_place }}{% elif not ru.score_place %}, past the seventh{% endif %}</span></li>
+              {% endfor %}
+            </ol>
+          </details>
+        </td>
+        <td class="num p2-wide">{{ "%.1f"|format(t.top5) if t.top5 is not none }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if p.incomplete %}<p class="p2-foot">{{ p.incomplete }} more school{{ "s" if p.incomplete != 1 }} with fewer than five rated runners score no team points; their runners still race as individuals.</p>{% endif %}
+  {% else %}
+  <p class="p2-note">No school has five rated runners yet, so no team can score.</p>
+  {% endif %}
+
+  <h2 class="p2-h2">Individual race</h2>
+  <table class="p2-tbl p2-ind">
+    <thead><tr>
+      <th class="num">#</th><th>Athlete</th><th>School</th>
+      <th class="p2-wide">Grade</th>
+      <th class="num">Rating</th><th class="num">Races</th>
+      {% if p.individuals and p.individuals[0].est_seconds %}<th class="num p2-wide" title="The season rating as a time at the state course">Est. time</th>{% endif %}
+    </tr></thead>
+    <tbody>
+    {% for r in p.individuals %}
+      <tr>
+        <td class="num">{{ r.place }}</td>
+        <td><a href="/athlete/{{ r.person_id }}">{{ r.name }}</a></td>
+        <td>{% if r.school %}{{ crest(r.school, r.school_state, pool='hs') }}<a href="{{ school_href(r.school, r.school_state, pool='hs') }}">{{ r.school|school_label_for('hs', r.school_state) }}</a>{% else %}<span class="p2-muted">unattached</span>{% endif %}</td>
+        <td class="p2-wide">{{ r.grade|grade_label('hs') if r.grade else "" }}</td>
+        <td class="num">{{ "%.1f"|format(r.rating) }}</td>
+        <td class="num">{{ r.n_races }}{% if r.thin %} <span class="p2-thin" title="{{ r.n_races }} rated race{{ 's' if r.n_races != 1 }} this season">thin</span>{% endif %}</td>
+        {% if p.individuals[0].est_seconds %}<td class="num p2-wide">{{ r.est_seconds|proj_time }}</td>{% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <section class="p2-how">
+    <h2 class="p2-h2">How this is projected</h2>
+    <ul>
+      <li><strong>The field</strong> is every {{ state_name }} school's best {{ per_school }}
+        {{ gender_words|lower }} by this season's speed rating{% if division %}, for the schools on record in {{ division_label }}{% endif %},
+        plus any runner without a team.</li>
+      <li><strong>The order</strong> is the season rating exactly as the rankings show it: each
+        athlete's 80th-percentile race this season. Nothing is added for last year, for grade or for
+        improvement. An athlete with one race is rated on that race and marked
+        <span class="p2-thin">thin</span> at {{ thin_races }} races or fewer; the race count is on every row.</li>
+      <li><strong>Team scores</strong> use the same scoring as Predictions: five scorers and two
+        displacers, seven entered per team. Runners without a team, and schools with fewer than five,
+        race as individuals and take no points.</li>
+      <li><strong>Estimated times</strong> put each rating on the state meet's usual course and distance.
+        The order was decided on the rating, not the time.</li>
+    </ul>
+    <h3 class="p2-h3">What it does not know</h3>
+    <ul>
+      <li><strong>Who qualifies.</strong> Sectionals, regionals and districts decide who reaches a
+        state meet, and that is not modelled here. Every school is in this field, so scores run higher than
+        at a real state meet; the order of the teams is the projection.</li>
+      <li><strong>Injuries, rest and lineups.</strong> A team's best seven on paper is not always the
+        seven who start.</li>
+      <li><strong>Divisions</strong> come from the championship meets each school has run. A school
+        that changed division this year may appear under its old one.</li>
+    </ul>
+  </section>
+{% endif %}
+</main>
+<script src="{{ static_v('share.js') }}"></script>
+</body>
+</html>
