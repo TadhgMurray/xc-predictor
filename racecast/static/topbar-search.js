@@ -177,3 +177,20 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', whoami);
   else whoami();
 })();
+
+/* ★ THE TOPBAR'S "MORE" MENU CLOSES LIKE A MENU (ui pass, 2026-10-04). It is
+   a <details>, so it opens and works with no script at all; this only shuts
+   it on a click anywhere else, or Escape, instead of leaving it hanging
+   open over the page. */
+(function () {
+  function shut(except) {
+    var open = document.querySelectorAll('.topnav-more[open]');
+    for (var i = 0; i < open.length; i++) if (open[i] !== except) open[i].removeAttribute('open');
+  }
+  document.addEventListener('click', function (e) {
+    shut(e.target.closest ? e.target.closest('.topnav-more') : null);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') shut(null);
+  });
+})();

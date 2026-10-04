@@ -66,6 +66,28 @@ def test_unit_kind_narrows_the_exists():
     assert params["kind"] == "section"
 
 
+def test_a_state_browse_takes_the_newest_candidates(monkeypatch):
+    """(ui pass, 2026-10-04: /meets?sport=TF&state=CA took 9.9 s). A state
+    browse scans the newest 2x-the-cap meets by id; a season, a date range or
+    no state keeps the old wide scan, so old and tfrrs meets stay findable."""
+    class Cur:
+        def execute(self, sql, params=None):
+            self.sql, self.params = sql, params
+
+        def fetchall(self):
+            return []
+    monkeypatch.setitem(mf._MEET_UNIT, "checked", True)
+    monkeypatch.setitem(mf._MEET_UNIT, "present", False)
+    cur = Cur()
+    mf.filteredMeets(cur, mf.parseFilters({"sport": "TF", "state": "CA"}))
+    assert "ORDER  BY m.meet_id DESC" in cur.sql and cur.params["scan"] == mf.MAX_MEETS * 2
+    for args in ({"sport": "TF", "state": "CA", "year": "2015"},
+                 {"sport": "XC", "state": "CA", "from": "2010-09-01"},
+                 {"sport": "XC", "q": "invit"}):
+        mf.filteredMeets(cur, mf.parseFilters(args))
+        assert "ORDER  BY m.meet_id" not in cur.sql and cur.params["scan"] == mf.MAX_MEETS * 8, args
+
+
 def test_events_group_by_event_prelims_first():
     from tf_points import eventSortKey
     names = ["Men's 3000 Meters", "Men's 200 Meters Finals", "Men's 200 Meters Preliminaries",

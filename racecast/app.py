@@ -4,6 +4,7 @@ from functools import lru_cache
 import sys
 import re
 import time          # _reportThrottled
+import threading     # _searchCached
 import json
 import urllib.parse
 
@@ -6766,6 +6767,40 @@ def api_units():
     return jsonify([{"kind": kind, "label": v, "value": v} for v in rows])
 
 
+# ★ SEARCH ANSWERS ARE KEPT FOR TEN MINUTES, PER WORKER (ui pass,
+#   2026-10-04; owner: "fix ... any hangs"). Measured on the live site, the
+#   dropdown's first two letters cost 1.0-2.6 s ("jo" 2.59 s, "ja" 1.01 s)
+#   and the results page for "john" 1.9 s: a two-letter prefix matches
+#   hundreds of thousands of rows and the ranking has to sort all of them,
+#   and every visitor typing a name starting "jo" paid it again, because
+#   /search is no-store and never reaches the edge cache. The answer only
+#   changes when search_index is rebuilt (a pipeline go-live, hours apart),
+#   so the same question within ten minutes gets the same rows from memory.
+#   Bounded: past SEARCH_CACHE_MAX entries the oldest half goes.
+# ! NOTHING PER-PERSON IS IN THESE ANSWERS -- the same rows for everyone --
+#   which is what makes a shared memo safe here and nowhere near accounts.
+SEARCH_CACHE_TTL = 600
+SEARCH_CACHE_MAX = 3000
+_SEARCH_CACHE = {}
+_SEARCH_CACHE_LOCK = threading.Lock()
+
+
+def _searchCached(key, compute):
+    """compute() once per key per SEARCH_CACHE_TTL. A failure is not kept."""
+    now = time.time()
+    with _SEARCH_CACHE_LOCK:
+        hit = _SEARCH_CACHE.get(key)
+    if hit is not None and now - hit[0] < SEARCH_CACHE_TTL:
+        return hit[1]
+    value = compute()
+    with _SEARCH_CACHE_LOCK:
+        if len(_SEARCH_CACHE) >= SEARCH_CACHE_MAX:
+            for k in sorted(_SEARCH_CACHE, key=lambda k: _SEARCH_CACHE[k][0])[:SEARCH_CACHE_MAX // 2]:
+                _SEARCH_CACHE.pop(k, None)
+        _SEARCH_CACHE[key] = (now, value)
+    return value
+
+
 @app.route("/search/api")
 def search_api():
     """The typeahead endpoint. Used by the topbar and by every picker.
@@ -6805,14 +6840,24 @@ def search_api():
     raw = (request.args.get("q") or "").strip().lower()
     if len(raw) < 2:
         return jsonify([])
-
-    terms = _searchTerms(raw)
-    if terms is None:
-        return jsonify([])
-    where, params, word_score = terms
-
     kind = (request.args.get("kind") or "").strip()
     limit = min(int(request.args.get("limit") or 10), 40)
+    rows = _searchCached(("api", raw, kind, limit),
+                         lambda: _searchApiRows(raw, kind, limit))
+    resp = jsonify(rows)
+    # ★ AND THE BROWSER KEEPS IT FIVE MINUTES: backspacing over a letter
+    #   asks the same question again. private -- never the edge, for the
+    #   free-text reason _PRIVATE_PREFIXES gives.
+    resp.headers["Cache-Control"] = "private, max-age=300"
+    return resp
+
+
+def _searchApiRows(raw, kind, limit):
+    """The dropdown's rows for a typed query (search_api, uncached)."""
+    terms = _searchTerms(raw)
+    if terms is None:
+        return []
+    where, params, word_score = terms
     params["lim"] = limit
     if kind:
         where.append("kind = %(kind)s")
@@ -6878,7 +6923,7 @@ def search_api():
     for _r in rows:
         _r["value"] = search_index.bareSchool(_r.get("label"))
 
-    return jsonify(rows)
+    return [dict(_r) for _r in rows]
 
 
 def _searchTerms(raw, prefix="t"):
@@ -7223,7 +7268,11 @@ def search_page():
     year   = request.args.get("year")            # optional year filter
     offset = int(request.args.get("offset") or 0)
 
-    results, counts, years = _run_search(q, kind, year, offset)
+    # the same ten-minute memo as the dropdown (_searchCached): the tab
+    # counts and the year list are two more scans on top of the page itself
+    results, counts, years = _searchCached(
+        ("page", q.lower(), kind, year or "", offset),
+        lambda: _run_search(q, kind, year, offset))
 
     # Load More sends ?offset=N and wants JSON, not a full page
     if request.args.get("format") == "json":

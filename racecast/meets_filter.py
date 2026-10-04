@@ -241,6 +241,7 @@ _BROWSE_SQL = """
           {q_clause}
           {unit_clause}
         GROUP  BY m.meet_id
+        {pick_order}
         LIMIT  %(scan)s
     )
     SELECT p.meet_id, p.meet_name, p.course_name, p.state,
@@ -513,11 +514,35 @@ def filteredMeets(cur, f):
     #   bare state filter matches tens of thousands. Set well above MAX_MEETS
     #   because the outer ORDER BY date needs more candidates than it keeps.
     params["scan"] = MAX_MEETS * 8
+    # ★ NEWEST CANDIDATES FIRST, AND FEWER OF THEM (ui pass, 2026-10-04;
+    #   owner: "fix ... any hangs"). /meets?sport=TF&state=CA took 9.9 s on
+    #   the live site, ?q=invit 2.4 s, ?level=college 2.3 s. The time is the
+    #   LATERAL count, once per candidate: 3,200 candidates, each counting
+    #   every result row of its meet. And the 3,200 were not even the right
+    #   ones -- a GROUP BY with a LIMIT and no ORDER keeps whichever groups
+    #   the planner happens to emit first, so a big state's page showed the
+    #   newest 400 of an ARBITRARY 3,200 rather than its newest meets.
+    #   anet numbers meets as they are created, so meet_id descending is
+    #   newest first to within a few weeks; 2x the row cap is ample for the
+    #   outer ORDER BY date to choose the newest 400 from, and the LATERAL
+    #   runs a quarter as often.
+    # ! ONLY WITH A STATE, AND ONLY WHEN NO SEASON OR DATE RANGE IS ASKED.
+    #   A state keeps the candidates anet's (tfrrs rows carry no state), and
+    #   anet's ids are the ones that run with time; tfrrs numbers its meets in
+    #   a lower range of its own, so a newest-id cut over both would push
+    #   every college meet out of a name or level search. A season or date
+    #   range can want old meets, which a newest-first cut would leave out
+    #   entirely. Those views keep the wide scan exactly as before.
+    pick_order = ""
+    if (f["state"] and f["year"] is None
+            and not f.get("from") and not f.get("to")):
+        pick_order = "ORDER  BY m.meet_id DESC"
+        params["scan"] = MAX_MEETS * 2
 
     unit_clause, unit_cols = unitSql(f, "m", params, units_present)
     # the columns read the picked meet, the clause narrows the scan
     sql = _BROWSE_SQL.format(meets_table=meets_table, table=table,
-                             course_pick=course_pick,
+                             course_pick=course_pick, pick_order=pick_order,
                              state_clause=state_clause, q_clause=q_clause,
                              year_clause=year_clause,
                              unit_clause=unit_clause,

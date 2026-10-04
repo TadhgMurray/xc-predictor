@@ -34,3 +34,44 @@ def test_the_board_find_box_asks_for_athletes_and_drops_stale_answers():
     js = open(os.path.join(ROOT, "racecast", "static", "rankings.js"), encoding="utf-8").read()
     assert "/search/api?kind=athlete&limit=8&q=" in js
     assert "findAbort.abort()" in js and "ticket !== searchTicket" in js
+
+
+def test_the_same_question_is_answered_from_memory(monkeypatch):
+    """(ui pass, 2026-10-04: "jo" took 2.6 s on every keystroke that made
+    it). One query per key per SEARCH_CACHE_TTL; the browser may keep the
+    dropdown's answer, the edge may not."""
+    import contextlib
+    calls = []
+
+    class Cur:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, sql, params=None):
+            calls.append(sql)
+
+        def fetchall(self):
+            return [{"kind": "athlete", "label": "Jo Smith", "sublabel": "", "link": "/athlete/1"}]
+
+    class Conn:
+        def cursor(self, **kw):
+            return Cur()
+
+    @contextlib.contextmanager
+    def fake():
+        yield Conn()
+    monkeypatch.setattr(A, "getConn", fake)
+    monkeypatch.setattr(A, "_SEARCH_CACHE", {})
+    c = A.app.test_client()
+    r = c.get("/search/api?q=jo")
+    assert r.get_json()[0]["label"] == "Jo Smith" and len(calls) == 1
+    assert c.get("/search/api?q=jo").get_json() == r.get_json() and len(calls) == 1
+    assert r.headers["Cache-Control"] == "private, max-age=300"
+    c.get("/search/api?q=jo&kind=meet")
+    assert len(calls) == 2                              # a different question asks again
+    monkeypatch.setattr(A, "SEARCH_CACHE_TTL", -1)
+    c.get("/search/api?q=jo")
+    assert len(calls) == 3                              # and a stale answer is not served

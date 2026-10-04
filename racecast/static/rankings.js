@@ -1558,6 +1558,39 @@ function syncUrl(query) {
    without refetching -- same rows, different displayed numbers. */
 let _lastBoard = null;
 
+/* ★ ON A PHONE THE NUMBER THE BOARD RANKS SITS NEXT TO THE NAME (ui pass,
+   2026-10-04). The ability board is nine columns, 758px wide; on a 390px
+   screen the scroll box showed #, Athlete and School and the Rating -- the
+   one number the board is sorted on -- sat 200px off the right edge. On a
+   narrow screen that column moves to just after the athlete, so rank, name
+   and rating read without a swipe; everything else is still there, one
+   swipe away. A move of cells already drawn, nothing else: the header
+   keeps its sort keys and the desktop order is untouched. */
+const PHONE_LEAD = { ability: "rating", performance: "rating", pr: "time" };
+
+function leadColumnUp(host) {
+  if (!window.matchMedia || !window.matchMedia("(max-width: 700px)").matches) return;
+  const key = PHONE_LEAD[state.board];
+  const table = host && host.querySelector("table.rk");
+  if (!key || !table) return;
+  const ths = Array.from(table.querySelectorAll("thead th"));
+  const from = ths.findIndex((th) => th.dataset.key === key);
+  const to = ths.findIndex((th) => th.dataset.key === "name") + 1;
+  if (from < 0 || to <= 0 || from <= to) return;
+  table.querySelectorAll("tr").forEach((tr) => {
+    const cells = tr.children;
+    // ! only rows laid out like the header: a note row spanning columns stays put
+    if (cells.length !== ths.length) return;
+    tr.insertBefore(cells[from], cells[to]);
+  });
+}
+
+/* Draw a board into #results, then the phone order above. */
+function paintBoard(rows, data) {
+  $("results").innerHTML = renderBoard(rows, data);
+  leadColumnUp($("results"));
+}
+
 function renderBoard(rows, data) {
   return state.board === "ability"    ? renderAbility(rows)
        : state.board === "pr"         ? renderPr(rows)
@@ -1596,7 +1629,7 @@ document.addEventListener("rc-scale-change", () => {
     load();
     return;
   }
-  $("results").innerHTML = renderBoard(_lastBoard.rows, _lastBoard.data);
+  paintBoard(_lastBoard.rows, _lastBoard.data);
 });
 
 /* ★ AN EMPTY BOARD SAYS WHICH FILTER EMPTIED IT, AND UNDOES IT (owner,
@@ -1779,7 +1812,7 @@ async function load() {
       /* ! THE BOARD IS PART OF THE MEMO. Rows alone cannot say which
            renderer they belong to, and renderBoard asks state.board. */
       _lastBoard = { board: state.board, rows, data };
-      $("results").innerHTML = renderBoard(rows, data);
+      paintBoard(rows, data);
       $("pager").classList.remove("hidden");
     }
 

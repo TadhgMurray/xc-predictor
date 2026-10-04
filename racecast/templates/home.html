@@ -128,8 +128,11 @@
                                Outdoor State Championship" a three-line
                                cell; the time is the number, the meet is
                                the caption. #}
-                            {% set _parts = (r.detail or '').split(' · ', 1) %}
-                            <div class="cell c-detail" title="{{ r.detail }}">
+                            {# ! "1 race", not "1 races": panels.py writes it right now, and
+                               this mends the boards already stored until their next build #}
+                            {% set _detail = '1 race' if r.detail == '1 races' else (r.detail or '') %}
+                            {% set _parts = _detail.split(' · ', 1) %}
+                            <div class="cell c-detail" title="{{ _detail }}">
                                 {% if board_type == 'performance' and r.link %}
                                     <a href="{{ r.link }}"><span class="d-main">{{ _parts[0] or ' - ' }}</span>{% if _parts|length > 1 %}<span class="d-meet">{{ _parts[1] }}</span>{% endif %}</a>
                                 {% else %}<span class="d-main">{{ _parts[0] or ' - ' }}</span>{% if _parts|length > 1 %}<span class="d-meet">{{ _parts[1] }}</span>{% endif %}{% endif %}
