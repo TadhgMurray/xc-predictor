@@ -49,6 +49,8 @@
         <a href="/conversions" class="{{ 'is-here' if here.startswith('/conversions') }}">Conversions</a>
         <a href="/recruiting" class="{{ 'is-here' if here.startswith('/recruit') }}">Recruiting</a>
         <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') }}">Predictions</a>
+        <a href="/projections" class="{{ 'is-here' if here.startswith('/projections') }}">State meets</a>
+        <a href="/breakouts" class="{{ 'is-here' if here.startswith('/breakouts') }}">Breakouts</a>
         <a href="{{ url_for('about_page') }}" class="{{ 'is-here' if here.startswith('/about') }}">About</a>
         {% endif %}
         {# Muted, and last. The topbar is the only element on EVERY page, so
