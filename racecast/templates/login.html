@@ -19,7 +19,10 @@
 
   <div class="auth-card">
   {% if mode == "sent" %}
-    <h1>Check your email</h1>
+    {# ! THE HEADING TELLS THE TRUTH TOO (owner, 2026-10-04: "I don't think
+       the non-google sign in actually works"): "Check your email" above
+       "no link went out" read as a success with small print. #}
+    <h1>{% if unsent in ("failed", "nomail") %}No email was sent{% else %}Check your email{% endif %}</h1>
     {% if unsent == "failed" %}
     <p class="auth-lead">The mail service refused the message, so no link went out. The reason is in the server log; try again in a minute.</p>
     {% elif unsent == "slow" %}
@@ -33,9 +36,22 @@
     {% endif %}
 
   {% elif mode == "continue" %}
-    <h1>Almost there</h1>
+    <h1>{% if via_google %}One last step{% else %}Almost there{% endif %}</h1>
+    {% if via_google %}
+    <p class="auth-lead">Google confirmed your email. Racecast accounts are for people 13 or older, so confirm that once and you are in.</p>
+    {% elif need_age %}
+    <p class="auth-lead">One more click. Racecast accounts are for people 13 or older; confirm that once and you are in.</p>
+    {% else %}
     <p class="auth-lead">One more click. The link is single use, so it waits for you rather than for whatever scanned your email.</p>
-    <form method="post" action="/login/t/{{ token }}" id="auth-form">
+    {% endif %}
+    {% if error %}<p class="auth-error">{{ error }}</p>{% endif %}
+    <form method="post" action="/login/t/{{ token }}" id="auth-form" class="auth-form">
+      {% if need_age %}
+      {# ★ THE AGE QUESTION LIVES HERE NOW: the one control above the one
+         button, asked only before a first account (see accounts.login_post) #}
+      <label class="auth-age"><input type="checkbox" name="age_ok" id="age_ok" required>
+        <span><strong>I am 13 or older</strong><small>Asked once, before a new account is made.</small></span></label>
+      {% endif %}
       <button type="submit" class="auth-btn auth-primary" data-busy="Signing you in…">Continue to Racecast</button>
     </form>
 
@@ -46,24 +62,38 @@
 
   {% else %}
     <h1>Sign in</h1>
-    <p class="auth-lead">No password to remember. We email you a link{% if google %}, or you continue with Google{% endif %}.</p>
+    {% if google or mail %}
+    <p class="auth-lead">No password to remember. {% if google and mail %}Continue with Google, or we email you a link.{% elif google %}Continue with your Google account.{% else %}We email you a link.{% endif %}</p>
+    {% else %}
+    <p class="auth-lead">Sign-in is not switched on yet. Everything on Racecast is open without an account.</p>
+    {% endif %}
     {% if error %}<p class="auth-error">{{ error }}</p>{% endif %}
+    {% if google or mail %}
+    {# ★ GOOGLE FIRST AND NOTHING TO TICK BEFORE IT (owner, 2026-10-04: the
+       13+ box had to be ticked before "Sign in with Google" would do
+       anything, which was not obvious). The age question is asked on the
+       continue step of a first sign-in instead; see accounts.login_post.
+       ! THE EMAIL HALF ONLY WHEN MAIL IS SET UP: without a provider it took
+         an address, said "Check your email", and sent nothing. #}
     <form method="post" action="/login" class="auth-form" id="auth-form">
       <input type="hidden" name="next" value="{{ next }}">
-      <label class="auth-label" for="email">Email</label>
-      <input id="email" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" required maxlength="254" value="{{ email or '' }}" placeholder="you@school.edu" class="auth-input">
-      <label class="auth-check"><input type="checkbox" name="age_ok" id="age_ok" required><span>I am 13 or older</span></label>
-      {% if turnstile %}<div class="cf-turnstile" data-sitekey="{{ turnstile }}"></div>{% endif %}
-      <button type="submit" class="auth-btn auth-primary" data-busy="Sending your link…">Email me a sign-in link</button>
       {% if google %}
-      <div class="auth-or"><span>or</span></div>
       <button type="submit" name="provider" value="google" formnovalidate class="auth-btn auth-google" data-busy="Opening Google…">
         <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.5l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.3l7.8 6.1C12.3 13.5 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.4 28.6c-.5-1.5-.8-3-.8-4.6s.3-3.1.8-4.6l-7.8-6.1C.9 16.6 0 20.2 0 24s.9 7.4 2.6 10.7l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.9 2.3-8.4 2.3-6.3 0-11.7-4-13.6-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
         <span>Continue with Google</span>
       </button>
       {% endif %}
+      {% if google and mail %}<div class="auth-or"><span>or</span></div>{% endif %}
+      {% if mail %}
+      <label class="auth-label" for="email">Email</label>
+      <input id="email" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" required maxlength="254" value="{{ email or '' }}" placeholder="you@school.edu" class="auth-input">
+      {% if turnstile %}<div class="cf-turnstile" data-sitekey="{{ turnstile }}"></div>{% endif %}
+      <button type="submit" class="auth-btn auth-primary" data-busy="Sending your link…">Email me a sign-in link</button>
+      {% endif %}
     </form>
-    <p class="auth-small">An account links your athlete page, lets you represent a team, and places you on the recruiting boards. Your email is for signing in and nothing else until you ask. Accounts are for people 13 or older; you can delete yours any time.</p>
+    {% if google and not mail %}<p class="auth-note">Email sign-in links are switched off for now, so Google is the way in.</p>{% endif %}
+    <p class="auth-small">An account links your athlete page, lets you represent a team, and places you on the recruiting boards. Your email is for signing in and nothing else until you ask. Accounts are for people 13 or older (you confirm it once, on your first sign-in); you can delete yours any time.</p>
+    {% endif %}
   {% endif %}
   </div>
 
@@ -76,9 +106,9 @@
    your link..." and a second submit is ignored.
    ! NOT `disabled`: a disabled submit button drops out of the form data,
      and the Google button's provider=google would go with it.
-   ! GOOGLE SKIPS THE EMAIL CHECK (formnovalidate) BUT NOT THE AGE BOX: the
-     server refuses an unticked box anyway; asking here saves the round
-     trip and the page reload. #}
+   ! GOOGLE SKIPS THE EMAIL CHECK (formnovalidate). The age box is no longer
+     on this form (2026-10-04); where it is now, the continue step, it is
+     `required`, so the browser stops an unticked submit before this runs. #}
 <script>
 (function () {
   var f = document.getElementById("auth-form");
@@ -86,12 +116,6 @@
   var sent = false;
   f.addEventListener("submit", function (e) {
     var b = e.submitter || f.querySelector("button[type=submit]");
-    var age = document.getElementById("age_ok");
-    if (b && b.value === "google" && age && !age.checked) {
-      e.preventDefault();
-      age.reportValidity && age.reportValidity();
-      return;
-    }
     if (sent) { e.preventDefault(); return; }
     sent = true;
     if (b && b.dataset.busy) {

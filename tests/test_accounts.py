@@ -233,3 +233,99 @@ def test_the_mail_never_holds_the_page_or_the_transaction(monkeypatch):
     src = read("racecast", "accounts.py")
     assert "status = deliverLink(email, url)" in src
     assert 'unsent == "slow"' in read("racecast", "templates", "login.html")
+
+
+def _flowApp(monkeypatch, tokens, ages, made):
+    """A Flask app with the accounts blueprint over in-memory stand-ins for
+    the token, account and session tables."""
+    app = flask.Flask(__name__, template_folder=os.path.join(ROOT, "racecast", "templates"))
+    app.jinja_env.globals["static_v"] = lambda f: "/static/" + f
+    app.jinja_env.globals["site_origin"] = "https://racecast.co"
+    app.register_blueprint(AC.bp)
+
+    class Conn:
+        def commit(self):
+            pass
+
+    @contextlib.contextmanager
+    def fakeDb():
+        yield Conn(), None
+    monkeypatch.setattr(AC, "_db", fakeDb)
+    monkeypatch.setattr(AC, "currentSession", lambda: None)
+
+    def peek(cur, raw, kind="email"):
+        row = tokens.get(raw)
+        return dict(row) if row and not row.get("used") else None
+
+    def consume(cur, raw, kind="email"):
+        row = peek(cur, raw, kind)
+        if row:
+            tokens[raw]["used"] = True
+        return row
+    monkeypatch.setattr(AC, "peekToken", peek)
+    monkeypatch.setattr(AC, "consumeToken", consume)
+    monkeypatch.setattr(AC, "accountAgeOk", lambda cur, email, sub=None: ages.get(email, False))
+
+    def make(cur, email, age_ok=False, google_sub=None, name=None):
+        made.append((email, age_ok))
+        return {"id": 1, "email": email}
+    monkeypatch.setattr(AC, "findOrCreateAccount", make)
+    monkeypatch.setattr(AC, "openSession", lambda cur, aid: "sid")
+
+    def step(cur, email, next_path):
+        tokens["step"] = {"email": email, "next_path": next_path, "age_ok": False}
+        return "step"
+    monkeypatch.setattr(AC, "ageStepToken", step)
+    return app
+
+
+ORIGIN = {"Origin": "http://localhost"}
+
+
+def test_the_age_question_is_asked_once_on_the_continue_step(monkeypatch):
+    """(owner, 2026-10-04: the 13+ box had to be ticked before the Google
+    button did anything). The first form has no box; a first sign-in is
+    asked on the continue step, before any account exists, and the token
+    survives an unticked tap."""
+    tokens = {"new": {"email": "kid@x.co", "next_path": "/account", "age_ok": False},
+              "back": {"email": "old@x.co", "next_path": "/", "age_ok": False}}
+    ages, made = {"old@x.co": True}, []
+    monkeypatch.setenv("XCP_GOOGLE_CLIENT_ID", "id")
+    monkeypatch.setenv("XCP_GOOGLE_CLIENT_SECRET", "s")
+    monkeypatch.delenv("XCP_MAIL_PROVIDER", raising=False)
+    c = _flowApp(monkeypatch, tokens, ages, made).test_client()
+
+    form = c.get("/login").get_data(as_text=True)
+    assert 'name="age_ok"' not in form and "Continue with Google" in form
+    assert 'name="email"' not in form and "switched off" in form        # no mail provider: no email box
+
+    page = c.get("/login/t/new").get_data(as_text=True)
+    assert 'name="age_ok"' in page and "required" in page
+    assert 'name="age_ok"' not in c.get("/login/t/back").get_data(as_text=True)   # answered before
+    assert c.get("/login/t/nope").status_code == 410
+
+    r = c.post("/login/t/new", headers=ORIGIN)
+    assert r.status_code == 400 and not made and not tokens["new"].get("used")
+    r = c.post("/login/t/new", data={"age_ok": "on"}, headers=ORIGIN)
+    assert r.status_code == 302 and made == [("kid@x.co", True)] and tokens["new"]["used"]
+    r = c.post("/login/t/back", headers=ORIGIN)
+    assert r.status_code == 302 and made[-1] == ("old@x.co", False)    # account already 13+
+
+    monkeypatch.setattr(AC, "googleFinish", lambda cur, code, state: ("g@x.co", "sub", "G", "/account", False))
+    page = c.get("/auth/google/callback?code=c&state=s").get_data(as_text=True)
+    assert "One last step" in page and 'action="/login/t/step"' in page and len(made) == 2
+    r = c.post("/login/t/step", data={"age_ok": "on"}, headers=ORIGIN)
+    assert r.status_code == 302 and made[-1] == ("g@x.co", True)
+
+
+def test_no_mail_provider_means_no_pretend_email(monkeypatch):
+    """(owner, 2026-10-04: "I don't think the non-google sign in actually
+    works"). Without a provider the email post is refused up front instead
+    of showing "Check your email" for a link that never leaves the log."""
+    monkeypatch.delenv("XCP_MAIL_PROVIDER", raising=False)
+    monkeypatch.delenv("XCP_GOOGLE_CLIENT_ID", raising=False)
+    c = _flowApp(monkeypatch, {}, {}, []).test_client()
+    r = c.post("/login", data={"email": "a@b.co"}, headers=ORIGIN)
+    body = r.get_data(as_text=True)
+    assert r.status_code == 503 and "switched off" in body and "Check your email" not in body
+    assert "Sign-in is not switched on yet" in c.get("/login").get_data(as_text=True)

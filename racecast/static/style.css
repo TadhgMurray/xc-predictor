@@ -4755,6 +4755,16 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 .auth-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .auth-check { display: flex; align-items: center; gap: 0.55rem; font-size: 0.9rem; color: #374151; }
 .auth-check input { width: 1rem; height: 1rem; margin: 0; }
+/* ★ THE AGE QUESTION, ON THE CONTINUE STEP (owner, 2026-10-04: the 13+ box
+     was easy to miss before the Google button). A whole-row tap target with
+     a box big enough for a thumb, directly above the one button it gates. */
+.auth-age { display: flex; align-items: flex-start; gap: 0.7rem; padding: 0.8rem 0.9rem; border: 1px solid var(--line-2);
+  border-radius: 8px; background: #f7f8fa; cursor: pointer; color: var(--ink); }
+.auth-age:has(input:checked) { border-color: var(--ink); background: #fff; }
+.auth-age input { width: 1.25rem; height: 1.25rem; margin: 0.05rem 0 0; flex: none; accent-color: var(--ink); }
+.auth-age strong { display: block; font-size: 0.95rem; }
+.auth-age small { display: block; margin-top: 0.15rem; font-size: 0.78rem; color: var(--muted); }
+.auth-note { margin: 0.8rem 0 0; font-size: 0.82rem; color: #374151; }
 .auth-btn { display: flex; align-items: center; justify-content: center; gap: 0.6rem; width: 100%; padding: 0.75rem 1rem; border-radius: 8px;
   font: inherit; font-size: 0.95rem; font-weight: 650; cursor: pointer; text-decoration: none; box-sizing: border-box; }
 .auth-primary { background: var(--ink); color: #fff; border: 0; }

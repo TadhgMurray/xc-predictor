@@ -36,8 +36,10 @@
 #   topbar asks /api/me and swaps its own link. The only routes that read
 #   the session are these, and app.py lists them as private (no-store).
 #
-# ! AGE. Accounts are for people 13 or older (owner, 2026-09-15); the
-#   login form asks once and the attestation is stored on the account.
+# ! AGE. Accounts are for people 13 or older (owner, 2026-09-15); a first
+#   sign-in asks once, on the continue step just before the account is made
+#   (moved off the first form 2026-10-04, see login_post), and the
+#   attestation is stored on the account.
 #
 # Env (all optional; a feature is off until its variables are set):
 #   XCP_MAIL_PROVIDER=resend|postmark  XCP_MAIL_KEY=...  XCP_MAIL_FROM="Racecast <login@racecast.co>"
@@ -477,6 +479,38 @@ def deliverLink(email, url):
     return status
 
 
+def peekToken(cur, raw, kind="email"):
+    """The token's row WITHOUT spending it, or None (unknown, used,
+    expired). The continue page reads it to know whether to ask the age
+    question; only consumeToken marks a token used."""
+    cur.execute("""SELECT email, next_path, age_ok FROM login_token
+                   WHERE token_hash = %s AND kind = %s AND used_at IS NULL AND expires_at > now()""",
+                (hashToken(raw), kind))
+    return _one(cur)
+
+
+def accountAgeOk(cur, email, google_sub=None):
+    """True when a live account for this email (or Google subject) has
+    already attested 13+. Such a person is never asked again."""
+    cur.execute("""SELECT 1 AS x FROM account
+                   WHERE deleted_at IS NULL AND age_ok
+                     AND (email = %s OR (%s::text IS NOT NULL AND google_sub = %s))
+                   LIMIT 1""", (email, google_sub, google_sub))
+    return bool(_one(cur))
+
+
+def ageStepToken(cur, email, next_path):
+    """A single-use email-kind token for a Google sign-in that still owes
+    the age answer: the Google round trip proved the address, so the token
+    is as good as a mailed link, and the continue page spends it once the
+    box is ticked. Returns the raw token."""
+    raw, h = newToken()
+    cur.execute("""INSERT INTO login_token (token_hash, kind, email, next_path, age_ok, ip, expires_at)
+                   VALUES (%s, 'email', %s, %s, false, %s, now() + make_interval(mins => %s))""",
+                (h, email, next_path, clientIp(), TOKEN_MINUTES))
+    return raw
+
+
 def consumeToken(cur, raw, kind="email"):
     """The token's row, marked used, or None (unknown, used, expired)."""
     cur.execute("""UPDATE login_token SET used_at = now()
@@ -810,13 +844,31 @@ def login_page():
 
 @bp.route("/login", methods=["POST"])
 def login_post():
+    """★ THE AGE QUESTION MOVED OFF THIS FORM (owner, 2026-10-04: "you have
+      to tick the 13+ box before clicking Sign in with Google, which is not
+      obvious"). The box sat between the email field and the buttons, and
+      Google refused to start until it was ticked, so a tap on the obvious
+      button did nothing visible but a small browser bubble. The answer is
+      still given BEFORE any account exists -- on the continue step both
+      routes already pass through (the mailed link's "Continue" page, and
+      the same page after Google for a first sign-in) -- and a person whose
+      account already said 13+ is never asked again. The legal intent
+      (accounts are for people 13 or older, attested and stored) is kept
+      whole: findOrCreateAccount still never creates an account without it.
+    ! A ticked age_ok from an old cached copy of this form is still honoured,
+      so it skips the question rather than asking twice."""
     if not sameOrigin():
         return _loginPage(error="That request did not come from this site."), 400
     next_path = safeNext(request.form.get("next"))
     age_ok = request.form.get("age_ok") == "on"
-    if not age_ok:
-        return _loginPage(error="Accounts are for people 13 or older; tick the box to continue.",
-                          email=request.form.get("email", "")), 400
+    if request.form.get("provider") != "google" and not mailEnabled():
+        # ! SAY SO BEFORE PRETENDING TO SEND (owner, 2026-10-04: "I don't
+        #   think the non-google sign in actually works"). With no mail
+        #   provider the old path made a token, printed it to the server log
+        #   and showed a "Check your email" page that nothing would follow.
+        return _loginPage(error="Email sign-in links are switched off on Racecast right now."
+                                + (" Use Continue with Google." if googleEnabled() else ""),
+                          email=request.form.get("email", "")), 503
     if not turnstileOk(request.form.get("cf-turnstile-response")):
         return _loginPage(error="The spam check did not pass. Try again.",
                           email=request.form.get("email", "")), 400
@@ -844,23 +896,53 @@ def login_post():
     return _loginPage("sent", email=email, unsent=(status if status in ("nomail", "failed", "slow") else ""))
 
 
+def _needsAge(cur, row, google_sub=None):
+    """Does this sign-in still owe the 13+ answer? Not when the token
+    carries it, and not when the account already gave it."""
+    return not row.get("age_ok") and not accountAgeOk(cur, row["email"], google_sub)
+
+
 @bp.route("/login/t/<token>")
 def login_continue(token):
     """The landing page is a button, so a mail scanner that fetches the
-    link cannot spend the token."""
-    return _loginPage("continue", token=token)
+    link cannot spend the token. The token is only READ here (peekToken),
+    to show the age box when this is a first sign-in and to say "expired"
+    up front instead of after the click."""
+    need_age = False
+    try:
+        with _db() as (conn, cur):
+            row = peekToken(cur, token)
+            if row is None:
+                conn.commit()
+                return _loginPage("expired"), 410
+            need_age = _needsAge(cur, row)
+            conn.commit()
+    except Exception as exc:                            # noqa: BLE001 -- the POST decides
+        print(f"[accounts] continue page could not read the token ({type(exc).__name__}: {exc})", flush=True)
+        need_age = True
+    return _loginPage("continue", token=token, need_age=need_age)
 
 
 @bp.route("/login/t/<token>", methods=["POST"])
 def login_consume(token):
     if not sameOrigin():
         return _loginPage("expired"), 400
+    form_age = request.form.get("age_ok") == "on"
     with _db() as (conn, cur):
-        row = consumeToken(cur, token)
+        row = peekToken(cur, token)
         if row is None:
             conn.commit()
             return _loginPage("expired"), 410
-        account = findOrCreateAccount(cur, row["email"], age_ok=row["age_ok"])
+        if not form_age and _needsAge(cur, row):
+            # ! THE TOKEN IS NOT SPENT: the person ticks the box and taps again
+            conn.commit()
+            return _loginPage("continue", token=token, need_age=True,
+                              error="Tick the box to confirm you are 13 or older."), 400
+        row = consumeToken(cur, token)
+        if row is None:                                 # spent by a second tab in between
+            conn.commit()
+            return _loginPage("expired"), 410
+        account = findOrCreateAccount(cur, row["email"], age_ok=row["age_ok"] or form_age)
         resp = _finishLogin(cur, account, row["next_path"])
         conn.commit()
     return resp
@@ -873,6 +955,16 @@ def google_callback():
     try:
         with _db() as (conn, cur):
             email, sub, name, next_path, age_ok = googleFinish(cur, request.args["code"], request.args["state"])
+            if not age_ok and not accountAgeOk(cur, email, sub):
+                # ★ A FIRST GOOGLE SIGN-IN ASKS THE AGE QUESTION HERE, after
+                #   Google and before any account exists (see login_post).
+                #   The Google subject and name are not carried over: the
+                #   account is keyed by the verified email, and the next
+                #   Google sign-in fills google_sub and the name in
+                #   (findOrCreateAccount only ever adds them).
+                raw = ageStepToken(cur, email, next_path)
+                conn.commit()
+                return _loginPage("continue", token=raw, need_age=True, via_google=True)
             account = findOrCreateAccount(cur, email, age_ok=age_ok, google_sub=sub, name=name)
             resp = _finishLogin(cur, account, next_path)
             conn.commit()
@@ -1099,7 +1191,8 @@ def main(argv):
     sys.path.insert(0, "scripts")
     sys.path.insert(0, "racecast")
     if "--check" in argv:
-        print(f"  mail:      {'on (' + _env('XCP_MAIL_PROVIDER') + ')' if mailEnabled() else 'OFF (links go to the server log)'}")
+        print(f"  mail:      {'on (' + _env('XCP_MAIL_PROVIDER') + ')' if mailEnabled() else 'OFF (/login shows Google only; set XCP_MAIL_PROVIDER + XCP_MAIL_KEY)'}")
+        print(f"  mail from: {_env('XCP_MAIL_FROM', 'Racecast <login@racecast.co>')} (the domain must be verified with the provider)")
         print(f"  google:    {'on' if googleEnabled() else 'off'}")
         print(f"  turnstile: {'on' if turnstileSitekey() else 'off'}")
         print(f"  admins:    {sorted(adminEmails()) or 'none'}")
