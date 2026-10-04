@@ -69,6 +69,27 @@ RACE_SAT = 5.0
 PRIOR_GROUP = 1.0
 PRIOR_RACES = 2.0
 
+# ★ A DEEP FIELD READS A COURSE AS EASY (owner, 2026-10-04: "mt sac +6.2 is
+#   way too easy. it's only abt 1-2% easier than the 4715"). course_bracket
+#   on Mt. SAC: the giant Invitational races (field depth ~103) read the
+#   4828 at +6.4..+7.3% on the board scale, the two elite sweepstakes races
+#   (depth 110-118) at -1.9..-0.1% -- the same pattern on the 4715 (elite
+#   races 1.5-2.5% easier than the bulk). A race weighs n/(n+RACE_SAT), so
+#   each of those races counts about one: two elite races pulled the 4828
+#   to +2.9% while its runners, by the thousand, read it near +6.5%. Deep
+#   fields run faster against their own other races (competition, peaking),
+#   which is the same thing the owner said about race-day terms.
+#   So the reading's dependence on field depth is MEASURED -- one slope per
+#   sport, from deep and shallow races at the SAME course (within-course
+#   regression, so no course's level enters it) -- and each race's reading
+#   is moved to the depth its course's typical runner races in (the
+#   voter-weighted mean depth of the course's races). A course with only
+#   one kind of field is unchanged; Mt. SAC is read at the Invitational's
+#   field, not at the sweepstakes'. XCP_BRACKET_FIELD=off restores the
+#   unadjusted reading.
+FIELD_ADJUST = os.environ.get("XCP_BRACKET_FIELD", "on").strip().lower() != "off"
+
+
 # ★ THE PRIOR IS PER GROUP, AND IT IS THE RATIO OF TWO VARIANCES (owner,
 #   2026-09-13: "TF difficulty weirder now, I think too much just variance.
 #   Maybe we should shrink variance for outdoor courses and let indoor keep
@@ -1035,6 +1056,37 @@ def _geometryReport(geo, D, w_c, pre_clamp, cell_pg, hard_ref, clamped, verbose)
     return rep
 
 
+def fieldAdjust(D_r, w_r, ok, x, x_ref, base, sport, report=None):
+    """Each race's reading moved from its own field depth to its course's
+    typical one: D_r - b_s * (x - x_ref), with b_s per sport the weighted
+    within-course slope of reading on depth (deviations from each course's
+    own weighted means, so no course's level enters it). Races without a
+    depth are left as they are. Pure; report gets {sport: (slope, races)}."""
+    D_r = np.asarray(D_r, dtype=np.float64)
+    use = ok & np.isfinite(x) & np.isfinite(x_ref) & (w_r > 0)
+    out = D_r.copy()
+    for sp in (0, 1):
+        m = use & (sport == sp)
+        if m.sum() < 50:
+            continue
+        b = base[m]
+        w = w_r[m]
+        nb = int(b.max()) + 1
+        sw = np.bincount(b, weights=w, minlength=nb)
+        mx = np.bincount(b, weights=w * x[m], minlength=nb) / np.maximum(sw, 1e-12)
+        my = np.bincount(b, weights=w * D_r[m], minlength=nb) / np.maximum(sw, 1e-12)
+        dx = x[m] - mx[b]
+        dy = D_r[m] - my[b]
+        sxx = float(np.sum(w * dx * dx))
+        if sxx <= 0:
+            continue
+        slope = float(np.sum(w * dx * dy) / sxx)
+        out[m] = D_r[m] - slope * (x[m] - x_ref[m])
+        if report is not None:
+            report[sp] = (slope, int(m.sum()))
+    return out
+
+
 def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
         n_iter=60, damping=0.5, prior_races=PRIOR_RACES, prior_group=PRIOR_FIT,
         race_sat=RACE_SAT, min_voters=3, tilt=True, use_curve=True, tol=1e-5,
@@ -1188,6 +1240,21 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
     race_cell = np.zeros(n_race, dtype=np.int64)
     race_cell[race[valid]] = cell[valid]
     a_local = np.full(n, np.nan)
+    # the field depth of every race (its runners' mean rating) and the depth
+    # each course's typical runner races in (FIELD_ADJUST)
+    field_x = field_ref = None
+    if FIELD_ADJUST and rating is not None:
+        okr = valid & np.isfinite(rating)
+        cnt_f = np.bincount(race[okr], minlength=n_race)
+        field_x = np.where(cnt_f > 0, np.bincount(race[okr], weights=rating[okr],
+                                                  minlength=n_race)
+                           / np.maximum(cnt_f, 1), np.nan)
+        rb = base_of_cell[race_cell]
+        wv = np.where(np.isfinite(field_x), votes_race, 0.0)
+        num_x = np.bincount(rb, weights=wv * np.nan_to_num(field_x), minlength=n_base)
+        den_x = np.bincount(rb, weights=wv, minlength=n_base)
+        field_ref = np.where(den_x > 0, num_x / np.maximum(den_x, 1e-12), np.nan)[rb]
+    field_report = {}
     # ! THE LEVEL IS PINNED PER SPORT AND ERA, AS mu AND tau PIN IT IN THE
     #   JOINT SOLVE. Every difficulty of an era up by c and every athlete's
     #   level in those years down by c is invisible to the rows (references
@@ -1552,6 +1619,9 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
             D_r = np.where(ok, num / np.maximum(cnt, 1), 0.0)
         # a race's weight saturates in its voters: one reading, many witnesses
         w_r = np.where(ok, cnt / (cnt + race_sat), 0.0)
+        if field_x is not None:
+            D_r = fieldAdjust(D_r, w_r, ok, field_x, field_ref,
+                              base_of_cell[race_cell], cell_sport[race_cell], field_report)
         # the course's history, shrunk toward ITS GROUP's average course by
         # the group's prior (in races); then each era cell pulled toward that
         num_c_ = np.bincount(race_cell, weights=w_r * D_r, minlength=n_cell)
@@ -1834,6 +1904,15 @@ def fit(cols, npz=None, train=None, window=21, top=0.5, era_years=0,
               f"its group's average course by (in races):", flush=True)
         for ln in prior_lines:
             print("        " + ln, flush=True)
+        if field_x is None:
+            print(f"[bracket] field depth: not adjusted "
+                  f"({'XCP_BRACKET_FIELD=off' if not FIELD_ADJUST else 'no ratings'})", flush=True)
+        for sp, (slope, nr) in sorted(field_report.items()):
+            print(f"[bracket] field depth ({'XC' if sp == 0 else 'TF'}): a race's reading "
+                  f"moves {100 * slope:+.3f}% per rating point of field depth, measured "
+                  f"within courses over {nr:,} races; every reading is taken at its "
+                  f"course's typical field (- = a deeper field reads the course easier)",
+                  flush=True)
         # ★ THE ATHLETE SIDE, SAID OUT LOUD EITHER WAY. Silence here was the
         #   whole problem: the course priors have been printed since they
         #   existed and the athlete level had no line at all, so "how much

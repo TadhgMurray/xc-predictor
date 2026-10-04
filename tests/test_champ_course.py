@@ -182,7 +182,9 @@ def test_pages_read_the_championship_cell_first():
     app_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "racecast", "app.py")).read()
     assert app_src.count("{_champ_join('r')}") == 2          # athlete rows + race header
-    assert app_src.count("COALESCE(cdc.difficulty, cd.difficulty)") == 2
+    # the championship cell first; the athlete rows put the race's own era
+    # number between it and the venue's (2026-10-04)
+    assert app_src.count("COALESCE(cdc.difficulty,") == 2
 
 
 def test_ern_region_names_find_their_regional():

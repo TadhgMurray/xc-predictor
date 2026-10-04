@@ -3564,3 +3564,17 @@ Foot Locker cells).
 - Mt. SAC: owner reads 4828 (+6.2%) as only 1-2% easier than 4715 (+11.1%),
   so 4715 is likely overrated. Canyon MS 3379m (+16.7%): owner says it is
   that hard.
+- **Mt. SAC 4828 "way too easy": deep fields read a course as easy.**
+  course_bracket: the giant Invitational races (depth ~103) read the 4828 at
+  +6.4..+7.3% on the board scale, the elite sweepstakes races (depth
+  110-118) at -1.9..-0.1%; the 4715 shows the same split (elite 1.5-2.5%
+  easier). A race weighs n/(n+5), so two elite races pulled the 4828 to
+  +2.9% against its runners' ~+6.5% (owner: 1-2% easier than the 4715).
+  bracket_engine.fieldAdjust now measures the reading's slope on field
+  depth per sport within courses and reads every race at its course's
+  typical (voter-weighted) field; printed as "[bracket] field depth" each
+  run; XCP_BRACKET_FIELD=off restores it. tests/test_field_adjust.py.
+- lacctic_compare gains the fair tests: ORDER (each runner's ability from
+  their OTHER races that season, scored on the finishing order -- the race's
+  own course and day cancel) and XC -> TRACK 5000 (each system's XC number
+  against the actual 5000 times).
