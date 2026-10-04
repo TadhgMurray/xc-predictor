@@ -39,6 +39,7 @@ joint_golive.py -- turn a joint fit into the tables the site reads.
   data/sport_gap_bbar.json, and nothing downstream should apply a tilt.
 """
 
+import math
 import os
 
 import numpy as np
@@ -486,9 +487,17 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
         race_days[D.race] = days_all
         race_n = np.bincount(D.race, minlength=D.n_race)
         seen_r = np.flatnonzero(race_n > 0)
+        # ★ AND THE COURSE NUMBER OF THAT RACE'S OWN ERA (owner, 2026-10-04:
+        #   every year of a venue showed one difficulty -- Newhall +7.6% on
+        #   2021-2024, Mt. SAC +11.1% on 2021-2023). course_difficulties
+        #   publishes each venue's LATEST era under its bare key, while every
+        #   row's rating used its own era's cell; the page now shows the
+        #   number the rating actually used.
         day_rows = (keys, race_cell[seen_r], race_days[seen_r],
                     out["race_effect"][seen_r].astype(np.float32),
-                    race_n[seen_r], pack_date)
+                    race_n[seen_r], pack_date,
+                    np.where(solved[race_cell[seen_r]],
+                             difficulty[race_cell[seen_r]], np.nan).astype(np.float32))
     scale_rows = []
     # ★ THE SHIFT IS THE ANCHOR THAT WAS APPLIED (2026-09-11, issue #21).
     #   This was the results-weighted mean over BOTH sports while the
@@ -591,7 +600,8 @@ _DAY_DDL = """
         distance_m    integer,
         race_date     date    NOT NULL,
         day_effect    real    NOT NULL,
-        n_rows        integer NOT NULL
+        n_rows        integer NOT NULL,
+        course_effect real
     )
 """
 
@@ -603,23 +613,27 @@ def writeRaceDays(day_rows):
     from database import getConn
     from speed_ratings_db import (_splitVenueKey, _escape, _copyInto,
                                   loadCanonicalNames)
-    keys, cell, days, u, n, pack_date = day_rows
+    keys, cell, days, u, n, pack_date = day_rows[:6]
+    # the race's own era's course number (older callers pass six fields)
+    course = day_rows[6] if len(day_rows) > 6 else np.full(len(cell), np.nan)
     pack_date = pack_date or date.today()
     names = loadCanonicalNames()
     split = {}
     rows = []
-    for c, d, uu, nn in zip(cell.tolist(), days.tolist(), u.tolist(), n.tolist()):
+    for c, d, uu, nn, ce in zip(cell.tolist(), days.tolist(), u.tolist(), n.tolist(),
+                                np.asarray(course, dtype=np.float64).tolist()):
         if c not in split:
             split[c] = _splitVenueKey(keys[c], names)
         name, cid, dist = split[c]
         rows.append((_escape(name), cid, dist, (pack_date - timedelta(days=int(d))).isoformat(),
-                     round(float(uu), 5), int(nn)))
+                     round(float(uu), 5), int(nn),
+                     None if not math.isfinite(ce) else round(float(ce), 5)))
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS race_day_effect_new")
         cur.execute(_DAY_DDL.replace("race_day_effect", "race_day_effect_new"))
         total = _copyInto(cur, "race_day_effect_new",
                           ("course_name", "canonical_id", "distance_m",
-                           "race_date", "day_effect", "n_rows"), rows)
+                           "race_date", "day_effect", "n_rows", "course_effect"), rows)
         cur.execute("CREATE INDEX ON race_day_effect_new (canonical_id, distance_m, race_date)")
         cur.execute("CREATE INDEX ON race_day_effect_new (course_name, race_date)")
         # the page reads race_day_effect: short-lock swap with retries

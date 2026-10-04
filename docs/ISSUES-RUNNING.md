@@ -3528,3 +3528,20 @@ Foot Locker cells).
   (matched by TFRRS meet id, name and time): level, within-race agreement,
   per-runner consistency over the races both have (the fair test without
   pre-race ratings), and track-minus-XC for the same runner-seasons.
+- **Every year of a venue showed one difficulty (owner's page, 2026-10-04):**
+  Newhall +7.6% on 2021-2024, Mt. SAC 4715m +11.1% on 2021-2023, Hayward
+  +4.8% every year. course_difficulties publishes each venue's LATEST era
+  under the bare key; each row's rating used its own era's cell. The go-live
+  now writes the race's own era's course number into race_day_effect
+  (course_effect), and the athlete page and race-page headers show it
+  (falling back to the venue number before the next go-live; championship
+  cells keep theirs). Takes effect on the next run's 08_golive.
+- Glendoveer (XC:22331:d5000, NXN only): course_bracket's model-free reading
+  on the board scale averages about +6.4% vs published +5.5..+6.7%; 2023-25
+  read +7.3/+7.3/+8.1 vs +6.65/+6.65/+5.99. Not overinflated; if anything
+  slightly low lately. No mixed-pool fields at that cell.
+- LACCTiC vs ours on 3 D3 races (839 runners): within-race agreement 0.4-0.9%;
+  level ours 2.3-3.1% faster as track-5K; gap grows down the field (Q1 -1.4
+  .. Q4 -3.4%); track minus XC over 52 runner-seasons ours +0.26% vs theirs
+  -1.38%. Consistency 1.35% vs 0.97% is not a fair test: LACCTiC fits each
+  race's difficulty on that race (per-race, unshrunk), ours shrinks the day.

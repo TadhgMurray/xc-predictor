@@ -2116,6 +2116,31 @@ def _hasRaceDayEffect(cur):
     return _RACE_DAY["present"]
 
 
+_RACE_DAY_COURSE = {}
+
+
+def _raceDayCourseSql(cur):
+    """'rde.course_effect' once the go-live has written it (2026-10-04), else
+    NULL: the race's OWN era's course number, which the rating used --
+    course_difficulties holds only each venue's latest era."""
+    if "v" not in _RACE_DAY_COURSE:
+        try:
+            cur.execute("""SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'race_day_effect'
+                             AND column_name = 'course_effect'""")
+            _RACE_DAY_COURSE["v"] = cur.fetchone() is not None
+        except Exception:                            # noqa: BLE001
+            cur.connection.rollback()
+            _RACE_DAY_COURSE["v"] = False
+        if not _RACE_DAY_COURSE["v"]:
+            # re-asked after the next publish: drop the cached "no" in 5 min
+            _RACE_DAY_COURSE["until"] = time.time() + 300
+    elif not _RACE_DAY_COURSE["v"] and time.time() > _RACE_DAY_COURSE.get("until", 0):
+        _RACE_DAY_COURSE.pop("v", None)
+        return _raceDayCourseSql(cur)
+    return "rde.course_effect" if _RACE_DAY_COURSE["v"] else "NULL::real"
+
+
 def _hasResultsStatus(cur, table="results"):
     """Does `table` carry `status` yet (issue 59)? The scrapers add it on
     their first save after deploy; until then the page reads NULL.
@@ -2163,6 +2188,7 @@ def get_races(cur, person_id):
     #   page 500ed the moment the table existed, 2026-09-06).
     if _hasRaceDayEffect(cur):
         day_col = "rde.day_effect"
+        era_col = _raceDayCourseSql(cur)
         day_join_xc = ("""LEFT JOIN race_day_effect rde
                ON rde.canonical_id = cc.canonical_id
               AND rde.distance_m   = cd.distance_m
@@ -2172,6 +2198,7 @@ def get_races(cur, person_id):
               AND rde.race_date::text = r.date""")
     else:
         day_col, day_join_xc, day_join_tf = "NULL::real", "", ""
+        era_col = "NULL::real"
     cur.execute(f"""
         -- ================= XC half: results + meets =================
         SELECT r.date,
@@ -2220,7 +2247,7 @@ def get_races(cur, person_id):
                      AND abs(dov.distance::real
                              - COALESCE(m.distance, {_blob('r')}::real)) >= 1
                     THEN NULL
-                    ELSE COALESCE(cdc.difficulty, cd.difficulty) END   AS difficulty,
+                    ELSE COALESCE(cdc.difficulty, {era_col}, cd.difficulty) END   AS difficulty,
                {day_col}                     AS day_effect,
                {rp_xc},
                0                             AS is_field,
@@ -2309,7 +2336,7 @@ def get_races(cur, person_id):
                r.grade                       AS grade,
                r.school                      AS school,
                r.speed_rating                AS speed_rating,
-               cd.difficulty                 AS difficulty,
+               COALESCE({era_col}, cd.difficulty) AS difficulty,
                {day_col}                     AS day_effect,
                {rp_tf},
                COALESCE(r.is_field, 0)       AS is_field,
@@ -3138,6 +3165,7 @@ def get_race_header(cur, meet_id, div_id, source=None):
                r.div_id                                      AS div_id,
                r.source                                      AS source,
                COALESCE(cdc.difficulty, cd.difficulty)       AS difficulty,
+               (cdc.difficulty IS NOT NULL)                  AS champ_cell,
                cc.canonical_id                               AS canonical_id,
                cd.distance_m                                 AS cell_distance_m,
                -- FILTER because the lateral no longer restricts gender to M/F
@@ -3567,15 +3595,34 @@ def stampRatingFlags(cur, sport, rows, race_date):
 def raceDayEffect(cur, sport, header, race_date):
     """The solve's race-day term for this race (the hover on the
     difficulty), or None: no table yet, no date, or the cell was not in
-    the solve."""
+    the solve.
+
+    ★ AND THE RACE'S OWN ERA'S COURSE NUMBER INTO header["difficulty"]
+      (2026-10-04): course_difficulties holds each venue's latest era, but
+      this race's rating used its own era's cell -- an old race read
+      today's number. A championship cell keeps its own (not era-keyed by
+      venue)."""
+    row = _raceDayRow(cur, sport, header, race_date)
+    if not row:
+        return None
+    if (row.get("course_effect") is not None and header is not None
+            and not header.get("champ_cell")):
+        header["difficulty"] = row["course_effect"]
+    return row.get("day_effect")
+
+
+def _raceDayRow(cur, sport, header, race_date):
+    """race_day_effect's row for this race as a dict (day_effect, and
+    course_effect once written), or None."""
     if not header or not race_date:
         return None
+    ce = _raceDayCourseSql(cur).replace("rde.", "")
     try:
         if sport == "XC":
             if header.get("canonical_id") is None or header.get("cell_distance_m") is None:
                 return None
-            cur.execute("""
-                SELECT day_effect FROM race_day_effect
+            cur.execute(f"""
+                SELECT day_effect, {ce} AS course_effect FROM race_day_effect
                 WHERE canonical_id = %(cid)s AND distance_m = %(dm)s
                   AND race_date::text = %(day)s::text
                 ORDER BY n_rows DESC LIMIT 1
@@ -3586,8 +3633,8 @@ def raceDayEffect(cur, sport, header, race_date):
                 return None
             key = (f"TF:loc:{header['location_id']}:"
                    f"{'in' if header.get('is_indoor') == 1 else 'out'}")
-            cur.execute("""
-                SELECT day_effect FROM race_day_effect
+            cur.execute(f"""
+                SELECT day_effect, {ce} AS course_effect FROM race_day_effect
                 WHERE course_name = %(key)s AND race_date::text = %(day)s::text
                 ORDER BY n_rows DESC LIMIT 1
             """, {"key": key, "day": race_date})
@@ -3597,7 +3644,8 @@ def raceDayEffect(cur, sport, header, race_date):
         return None
     if not row:
         return None
-    return row["day_effect"] if isinstance(row, dict) else row[0]
+    return (dict(row) if isinstance(row, dict)
+            else {"day_effect": row[0], "course_effect": row[1]})
 
 
 @app.route("/race/xc/<int:meet_id>/<int:div_id>")
