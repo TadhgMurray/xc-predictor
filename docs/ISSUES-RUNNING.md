@@ -3517,3 +3517,14 @@ Foot Locker cells).
   page now shrinks photos on the phone first, so this is the backstop. In the
   site's server { } block: `client_max_body_size 10m;` then
   `nginx -t && systemctl reload nginx`.
+- **LACCTiC comparison (owner: "lacctic just seems more authoritative").**
+  LACCTiC (college only) states every result as a track-5K equivalent
+  (modern_tic = ln s) through a public API (api.lacctic.com/api_ranking/
+  race_page/<id>/, runner_page/<id>/). The owner's "25:30 8k at Keene State"
+  is their own race (KSC Invitational 2026-10-03, 25:35.4, 15th): LACCTiC
+  course +0.36%, 15:23.0 track-5K, i.e. about 9:32-9:35 for 3200 -- our
+  card's 9:28 is, if anything, the faster of the two. scripts/
+  lacctic_compare.py lays the two systems side by side on the same races
+  (matched by TFRRS meet id, name and time): level, within-race agreement,
+  per-runner consistency over the races both have (the fair test without
+  pre-race ratings), and track-minus-XC for the same runner-seasons.
