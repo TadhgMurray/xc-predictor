@@ -301,3 +301,68 @@ def test_the_route_is_registered_and_signed():
     body = src[src.index("def api_explain"):]
     body = body[:body.index("\n@app.route")]
     assert "no-store" in body and "500" not in body
+
+
+# ------------------------------------------------------------------ #
+#  the route, through Flask, on the fake cursor
+# ------------------------------------------------------------------ #
+
+class _Conn:
+    def __init__(self, cur):
+        self.cur = cur
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def cursor(self, cursor_factory=None):
+        cur = self.cur
+
+        class _Ctx:
+            def __enter__(self_inner):
+                return cur
+
+            def __exit__(self_inner, *a):
+                return False
+        return _Ctx()
+
+
+def test_the_route_answers_and_caches(monkeypatch):
+    import pytest
+    app = pytest.importorskip("app")
+    calls = []
+    hours = _day([(h, 22.0 + (11.0 if h == 15 else 0.0)) for h in range(24)])
+
+    def fake_conn():
+        calls.append(1)
+        return _Conn(Cur(_washu(), hours, None))
+    monkeypatch.setattr(app, "getConn", fake_conn)
+    app._EXPLAIN_CACHE.clear()
+    c = app.app.test_client()
+    r = c.get("/api/explain/tf/-277459367")             # tfrrs ids are negative
+    assert r.status_code == 200, r.data
+    body = r.get_json()
+    assert body["ok"] and body["race"]["time"] == "29:20.48"
+    assert {s["key"] for s in body["steps"]} >= {"distance", "weather", "course", "day"}
+    n = len(calls)
+    assert c.get("/api/explain/tf/-277459367").status_code == 200
+    assert len(calls) == n                               # served from the cache
+    assert c.get("/api/explain/road/1").status_code == 400
+
+
+def test_the_route_never_500s(monkeypatch):
+    import pytest
+    app = pytest.importorskip("app")
+
+    def broken():
+        raise RuntimeError("database is down")
+    monkeypatch.setattr(app, "getConn", broken)
+    app._EXPLAIN_CACHE.clear()
+    r = app.app.test_client().get("/api/explain/xc/5")
+    assert r.status_code == 200 and r.get_json()["ok"] is False
+    assert r.headers["Cache-Control"] == "no-store"
+    monkeypatch.setattr(app, "getConn", lambda: _Conn(Cur(None)))
+    r = app.app.test_client().get("/api/explain/xc/6")
+    assert r.status_code == 404 and r.headers["Cache-Control"] == "no-store"
