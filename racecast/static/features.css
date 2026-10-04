@@ -148,7 +148,54 @@
 .rx-strip text { fill: var(--muted, #6b7280); font-size: 8px; }
 .rx-legend { display: block; color: var(--muted, #6b7280); font-size: 0.7rem; }
 
+/* ---- course page: year by year (_course_history.html) ------------------ */
+.cdh-eras { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.6rem; margin: 0.2rem 0 0.4rem; }
+.cdh-k {
+    color: var(--muted, #6b7280);
+    font-size: 0.75rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+}
+.cdh-era {
+    padding: 0.1rem 0.5rem;
+    border: 1px solid var(--line, #e5e7eb);
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.cdh-era b { margin-left: 0.2rem; }
+.cdh-lead { max-width: 60rem; font-size: 0.85rem; }
+.cdh-wrap { overflow-x: auto; }
+.cdh-table { font-variant-numeric: tabular-nums; }
+.cdh-table td, .cdh-table th { white-space: nowrap; }
+.cdh-slow { color: #b45309; }
+.cdh-fast { color: #1d4ed8; }
+.cdh-barh { min-width: 12rem; }
+.cdh-barc { display: flex; align-items: center; gap: 0.5rem; }
+.cdh-bar {
+    position: relative;
+    flex: 1 1 8rem;
+    max-width: 14rem;
+    height: 0.6rem;
+    border-radius: 3px;
+    background: var(--zebra, #fafbfc);
+    box-shadow: inset 0 0 0 1px var(--line, #e5e7eb);
+    overflow: hidden;
+}
+.cdh-fill { position: absolute; left: 0; top: 0; bottom: 0; background: #6b8fb8; border-radius: 3px; }
+.cdh-fill.neg { background: #9ca3af; }
+.cdh-val { min-width: 3.4rem; text-align: right; }
+.cdh-days { margin: 0.6rem 0 0.4rem; }
+.cdh-days summary { cursor: pointer; color: var(--link, #14477d); font-weight: 600; padding: 0.3rem 0; }
+
 @media (max-width: 700px) {
+    /* ! THE COUNTS GO, THE PERCENTAGES STAY: on a phone the season table
+         fits the screen without scrolling sideways (2026-10-04) */
+    .cdh-opt { display: none; }
+    .cdh-table td.cdh-meet { white-space: normal; min-width: 8rem; }
+    .cdh-barh { min-width: 0; }
+    .cdh-bar { flex: 1 1 3rem; }
+    .cdh-val { min-width: 3rem; }
     .rx-pop { font-size: 0.9rem; }
     .rx-text { font-size: 0.84rem; }
     .rx-row { grid-template-columns: 1fr 4.6rem 4.2rem; }

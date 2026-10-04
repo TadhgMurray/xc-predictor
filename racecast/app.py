@@ -6389,8 +6389,45 @@ def course(course_name):
                         oldest = min(_COURSE_CACHE,
                                      key=lambda k: _COURSE_CACHE[k][0])
                         _COURSE_CACHE.pop(oldest, None)
+            history = _courseHistory(cur, course_name, ctx)
 
-    return render_template("course.html", **ctx)
+    return render_template("course.html", course_history=history, **ctx)
+
+
+# ★ YEAR BY YEAR (owner, 2026-10-04: "every year of a venue showed one
+#   difficulty -- Newhall +7.6% on 2021-2024"): the course's difficulty in
+#   each era and every race day's term, from race_day_effect, beside the
+#   precomputed board rather than inside it (build_course_boards is
+#   untouched). course_history.py holds the arithmetic. A failure is no
+#   section, never a broken course page.
+_COURSE_HIST = {}
+
+
+def _courseHistory(cur, course_name, ctx):
+    try:
+        dist = (ctx or {}).get("sel_dist") or (ctx or {}).get("primary_dist")
+        if not dist or not _hasRaceDayEffect(cur):
+            return None
+        key = (course_name, int(dist))
+        hit = _COURSE_HIST.get(key)
+        if hit and time.time() - hit[0] < _COURSE_TTL:
+            return hit[1]
+        import course_history as _ch
+        import explain_rating as _ex
+        rows = _ch.fetchHistory(cur, course_name, dist, _raceDayCourseSql(cur))
+        out = _ch.summarize(rows, ctx.get("meets"), int(dist),
+                            _ex.dayModes().get("XC"))
+        _COURSE_HIST[key] = (time.time(), out)
+        if len(_COURSE_HIST) > 4 * _COURSE_MAX:
+            _COURSE_HIST.pop(min(_COURSE_HIST, key=lambda k: _COURSE_HIST[k][0]), None)
+        return out
+    except Exception as exc:                              # noqa: BLE001
+        try:
+            cur.connection.rollback()
+        except Exception:                                 # noqa: BLE001
+            pass
+        print(f"course history: {course_name}: {type(exc).__name__}: {exc}", flush=True)
+        return None
 
 
 # ===================================================================== #

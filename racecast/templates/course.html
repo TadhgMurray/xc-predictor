@@ -280,6 +280,8 @@
     </div>
 {% endif %}
 
+    {% include "_course_history.html" %}
+
     <h2>Meets held here
         <span class="dist-note">{{ (sel_dist ~ "m") if sel_dist else "all distances" }}</span></h2>
     {% if meets %}
