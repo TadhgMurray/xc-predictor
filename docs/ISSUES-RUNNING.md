@@ -3512,5 +3512,8 @@ Foot Locker cells).
   puts it in the card. The cross-sport holdout says which the data supports
   (what runners actually ran next spring), and the card can then be defined
   as that prediction.
-- nginx client_max_body_size: declined by the owner; phones shrink photos
-  before upload instead.
+- **TODO (owner wants it, later): nginx client_max_body_size.** nginx's
+  default refuses uploads over 1 MB (a phone photo is 3-12 MB); the account
+  page now shrinks photos on the phone first, so this is the backstop. In the
+  site's server { } block: `client_max_body_size 10m;` then
+  `nginx -t && systemctl reload nginx`.
