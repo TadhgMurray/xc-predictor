@@ -6389,8 +6389,45 @@ def course(course_name):
                         oldest = min(_COURSE_CACHE,
                                      key=lambda k: _COURSE_CACHE[k][0])
                         _COURSE_CACHE.pop(oldest, None)
+            history = _courseHistory(cur, course_name, ctx)
 
-    return render_template("course.html", **ctx)
+    return render_template("course.html", course_history=history, **ctx)
+
+
+# ★ YEAR BY YEAR (owner, 2026-10-04: "every year of a venue showed one
+#   difficulty -- Newhall +7.6% on 2021-2024"): the course's difficulty in
+#   each era and every race day's term, from race_day_effect, beside the
+#   precomputed board rather than inside it (build_course_boards is
+#   untouched). course_history.py holds the arithmetic. A failure is no
+#   section, never a broken course page.
+_COURSE_HIST = {}
+
+
+def _courseHistory(cur, course_name, ctx):
+    try:
+        dist = (ctx or {}).get("sel_dist") or (ctx or {}).get("primary_dist")
+        if not dist or not _hasRaceDayEffect(cur):
+            return None
+        key = (course_name, int(dist))
+        hit = _COURSE_HIST.get(key)
+        if hit and time.time() - hit[0] < _COURSE_TTL:
+            return hit[1]
+        import course_history as _ch
+        import explain_rating as _ex
+        rows = _ch.fetchHistory(cur, course_name, dist, _raceDayCourseSql(cur))
+        out = _ch.summarize(rows, ctx.get("meets"), int(dist),
+                            _ex.dayModes().get("XC"))
+        _COURSE_HIST[key] = (time.time(), out)
+        if len(_COURSE_HIST) > 4 * _COURSE_MAX:
+            _COURSE_HIST.pop(min(_COURSE_HIST, key=lambda k: _COURSE_HIST[k][0]), None)
+        return out
+    except Exception as exc:                              # noqa: BLE001
+        try:
+            cur.connection.rollback()
+        except Exception:                                 # noqa: BLE001
+            pass
+        print(f"course history: {course_name}: {type(exc).__name__}: {exc}", flush=True)
+        return None
 
 
 # ===================================================================== #
@@ -7670,6 +7707,72 @@ def api_rating_5k():
     if len(_RATING5K_CACHE) > _EQUIV_MAX:
         _RATING5K_CACHE.pop(min(_RATING5K_CACHE, key=lambda k: _RATING5K_CACHE[k][0]),
                             None)
+    return jsonify(body)
+
+
+# ★ "HOW WAS THIS RATED?" (owner, 2026-10-04: Hammerand's WashU 10k, 29:20.48,
+#   rated 126.3 on a +7.03% heat credit for a race that ran at night, beside
+#   his 29:27 at NCAA at 117.6 -- "nobody could see why from the site"). One
+#   result taken apart into the terms the engine applied: distance, era,
+#   track geometry, weather (with the grid's numbers), course in the race's
+#   own era, race day (and whether that sport's ratings carry it), event
+#   offset, track gain, and whatever is left. All the arithmetic is in
+#   explain_rating.py; static/rating-explain.js draws it on the athlete and
+#   race pages when a rating is clicked.
+# ! NEVER A 500: a missing piece is a step that says "not available", and a
+#   failure of the whole lookup is ok:false with no-store, so an error is
+#   neither shown as a crash nor held at the edge.
+_EXPLAIN_TTL = float(os.environ.get("XCP_EXPLAIN_TTL", "1800"))
+_EXPLAIN_CACHE = {}
+
+
+def _explainFrag(cur, sport):
+    """app.py's own SQL fragments, so the explanation resolves the same
+    cell, distance and pool column the athlete page does."""
+    try:
+        champ = _champ_join("r")
+    except Exception:                                     # noqa: BLE001
+        champ = "LEFT JOIN (SELECT NULL::real AS difficulty) cdc ON FALSE"
+    return {"tfrrs_join": _tfrrs_join("r"), "dov_join": _dist_override_join("r"),
+            "champ_join": champ, "xc_course": _xc_course_sql("r"),
+            "xc_distance": _xc_distance_sql("r"), "blob": _blob("r"),
+            "rating_pool": _ratingPoolCol(cur, "results" if sport == "XC"
+                                          else "results_tf")}
+
+
+@app.route("/api/explain/<sport>/<int(signed=True):result_id>")
+def api_explain(sport, result_id):
+    import explain_rating as _ex
+    sport = (sport or "").strip().upper()
+    if sport not in ("XC", "TF"):
+        return jsonify({"ok": False, "error": "sport must be xc or tf"}), 400
+    cache = _EXPLAIN_CACHE.get("c")
+    if cache is None:
+        cache = _EXPLAIN_CACHE["c"] = _ex.TtlCache(ttl=_EXPLAIN_TTL)
+    key = (sport, result_id)
+    body = cache.get(key)
+    if body is None:
+        try:
+            with getConn() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    has_day = _hasRaceDayEffect(cur)
+                    ce = (_raceDayCourseSql(cur).replace("rde.", "")
+                          if has_day else "NULL::real")
+                    body = _ex.explainResult(cur, sport, result_id,
+                                             _explainFrag(cur, sport),
+                                             ce_col=ce, has_day_table=has_day)
+        except Exception as exc:                          # noqa: BLE001
+            print(f"explain: {sport} {result_id}: {type(exc).__name__}: {exc}",
+                  flush=True)
+            resp = jsonify({"ok": False, "error": "the breakdown is not available "
+                                                  "right now"})
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        if body is None:
+            resp = jsonify({"ok": False, "error": "no such result"})
+            resp.headers["Cache-Control"] = "no-store"
+            return resp, 404
+        cache.put(key, body)
     return jsonify(body)
 
 

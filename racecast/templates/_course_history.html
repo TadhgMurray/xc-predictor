@@ -1,0 +1,85 @@
+{# =====================================================================
+   _course_history.html -- "Year by year" on the course page.
+
+   course_history comes from course_history.summarize (app.course): every
+   race day the solve saw at this course and distance, by season, with the
+   course's difficulty in each era. Nothing renders when there is none.
+
+   ★ WHY (owner, 2026-10-04: "every year of a venue showed one difficulty --
+     Newhall +7.6% on 2021-2024, Mt. SAC +11.1% on 2021-2023"). The engine
+     fits each venue per era and keeps a term for every race day; the page
+     showed one number. Bars are drawn against the largest season so the
+     shape reads at a glance; the numbers carry the meaning.
+   ===================================================================== #}
+{% set ch = course_history %}
+{% if ch and ch.seasons %}
+<section class="cdh" aria-labelledby="cdh-title">
+    <h2 id="cdh-title">Year by year
+        <span class="dist-note">{{ ch.dist }}m · how the course ran each season</span></h2>
+
+    {% if ch.eras|length > 1 %}
+    <p class="cdh-eras">
+        <span class="cdh-k">Difficulty by era</span>
+        {% for e in ch.eras|reverse %}
+        <span class="cdh-era">{{ e.first }}{% if e.last != e.first %}–{{ e.last }}{% endif %}
+            <b>{{ e.course|diffpct("XC") }}</b></span>
+        {% endfor %}
+    </p>
+    {% endif %}
+
+    <p class="meta cdh-lead">
+        <b>Course</b> is the difficulty the ratings used that season{% if not ch.has_course %} (per-era numbers arrive with the next ratings publish){% endif %}.
+        <b>Field ran</b> is how the rated runners ran against their own ratings that day
+        (weather, ground, a course laid out long or short) --
+        {% if ch.day_mode == 'all' %}cross country ratings carry it.
+        {% elif ch.day_mode == 'fast' %}cross country ratings carry a fast day only.
+        {% else %}shown for context; ratings carry the course only.{% endif %}
+        <b>Together</b> is how hard the course played, against an average track.
+    </p>
+
+    <div class="cdh-wrap">
+    <table class="cdh-table">
+        <thead><tr><th>Season</th><th class="cdh-opt">Race days</th><th class="cdh-opt">Rated</th>
+            <th>Course</th><th>Field ran</th><th class="cdh-barh">Together</th></tr></thead>
+        <tbody>
+        {% for s in ch.seasons %}
+            <tr>
+                <td>{{ s.season }}</td>
+                <td class="cdh-opt">{{ s.days }}</td>
+                <td class="cdh-opt">{{ "{:,}".format(s.runners) }}</td>
+                <td>{{ s.course|diffpct("XC") if s.course is not none else " - " }}</td>
+                <td class="{{ 'cdh-slow' if s.day and s.day > 0.0005 else ('cdh-fast' if s.day and s.day < -0.0005 else '') }}">{{ s.day|daypct if s.day is not none else " - " }}</td>
+                <td class="cdh-barc">
+                    {% if s.together is not none %}
+                    {% set w = (100.0 * (s.together|abs) / ch.scale)|round(1) %}
+                    <span class="cdh-bar"><span class="cdh-fill {{ 'neg' if s.together < 0 }}" style="width: {{ [w, 100]|min }}%"></span></span>
+                    <span class="cdh-val">{{ s.together|diffpct("XC") }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+
+    <details class="cdh-days">
+        <summary>Every race day ({{ ch.days|length }})</summary>
+        <div class="cdh-wrap">
+        <table class="cdh-table">
+            <thead><tr><th>Date</th><th>Meet</th><th class="cdh-opt">Rated</th><th>Field ran</th><th>Together</th></tr></thead>
+            <tbody>
+            {% for d in ch.days %}
+                <tr>
+                    <td class="no-break">{{ d.date|mdy }}</td>
+                    <td class="cdh-meet">{% if d.meet_id %}<a href="/meet/xc/{{ d.meet_id }}" title="{{ d.meet }}">{{ d.meet or "Meet" }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+                    <td class="cdh-opt">{{ d.n }}</td>
+                    <td class="{{ 'cdh-slow' if d.day > 0.0005 else ('cdh-fast' if d.day < -0.0005 else '') }}">{{ d.day|daypct }}{% if d.capped %} <span class="muted" title="beyond the 10% cap: the result sheet, not the day, is suspect">capped</span>{% endif %}</td>
+                    <td>{{ d.together|diffpct("XC") if d.together is not none else " - " }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </details>
+</section>
+{% endif %}
