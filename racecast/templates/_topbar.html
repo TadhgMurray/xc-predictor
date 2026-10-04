@@ -35,28 +35,46 @@
         <a href="/coaches" class="{{ 'is-on' if coach_view }}"
            {% if coach_view %}aria-current="true"{% endif %}>Coaches</a>
     </div>
+    {# ★ A "MORE" MENU (ui pass, 2026-10-04). With State meets and Breakouts
+       the athlete bar measured ~1,530px of content, and below that width the
+       search box and Sign in were pushed off the right edge (the wrap rule
+       starts at 1200px). About and Report an issue -- reference, not
+       sections -- live in More at every width. Conversions is inline where
+       there is room for it (1440px and up, and on a phone, where the bar
+       wraps anyway) and in More between, so 1280 and 1440 both fit on one
+       line. A <details>, so it opens with no script; topbar-search.js only
+       closes it on a click elsewhere or Escape. #}
+    {% set conv_here = here.startswith('/conversions') %}
     <nav class="topnav">
         {% if coach_view %}
         <a href="/coaches/recruits" class="{{ 'is-here' if here.startswith('/coaches/recruits') }}">Find recruits</a>
         <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') }}">Rankings</a>
         <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
         <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') }}">Predictions</a>
-        <a href="{{ url_for('about_page') }}" class="{{ 'is-here' if here.startswith('/about') }}">About</a>
         {% else %}
         <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') }}">Rankings</a>
         <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
-
-        <a href="/conversions" class="{{ 'is-here' if here.startswith('/conversions') }}">Conversions</a>
+        <a href="/conversions" class="nav-roomy {{ 'is-here' if conv_here }}">Conversions</a>
         <a href="/recruiting" class="{{ 'is-here' if here.startswith('/recruit') }}">Recruiting</a>
         <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') }}">Predictions</a>
         <a href="/projections" class="{{ 'is-here' if here.startswith('/projections') }}">State meets</a>
         <a href="/breakouts" class="{{ 'is-here' if here.startswith('/breakouts') }}">Breakouts</a>
-        <a href="{{ url_for('about_page') }}" class="{{ 'is-here' if here.startswith('/about') }}">About</a>
         {% endif %}
-        {# Muted, and last. The topbar is the only element on EVERY page, so
-           it is the only place a report link gets site-wide reach -- but it
-           is not a destination, so it should not compete with the sections. #}
-        <a href="{{ url_for('report_page') }}">Report an issue</a>
+        {% set more_here = here.startswith('/about') or here.startswith('/report') %}
+        <details class="topnav-more">
+            <summary class="{{ 'is-here' if more_here }}{{ ' conv-here' if conv_here }}">More</summary>
+            <div class="topnav-menu">
+                {% if not coach_view %}
+                <a href="/conversions" class="nav-tight {{ 'is-here' if conv_here }}">Conversions</a>
+                {% endif %}
+                <a href="{{ url_for('about_page') }}" class="{{ 'is-here' if here.startswith('/about') }}">About</a>
+                {# Muted, and last. The topbar is the only element on EVERY page,
+                   so it is the only place a report link gets site-wide reach --
+                   but it is not a destination, so it should not compete with
+                   the sections. #}
+                <a href="{{ url_for('report_page') }}" class="{{ 'is-here' if here.startswith('/report') }}">Report an issue</a>
+            </div>
+        </details>
     </nav>
 
     <div class="search-wrap">

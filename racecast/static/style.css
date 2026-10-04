@@ -4969,6 +4969,58 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
     .topbar .viewswitch a { padding: 0.34rem 0.55rem; }
 }
 
+/* ★ THE "MORE" MENU AND THE ONE-LINE BAR (ui pass, 2026-10-04). With State
+     meets and Breakouts the athlete bar wanted ~1,530px; from 1201 to ~1520
+     nothing wrapped, so search and Sign in left the window and the page
+     scrolled sideways. About and Report live in More (_topbar.html);
+     Conversions is inline at 1440 and up (and on a phone, where the bar
+     wraps) and in More between; the gaps tighten a step. Fits on one line
+     at 1280 and 1440. */
+.topnav-more { position: relative; }
+.topnav-more > summary { list-style: none; cursor: pointer; color: #374151; white-space: nowrap; user-select: none; }
+.topnav-more > summary::-webkit-details-marker { display: none; }
+.topnav-more > summary::after { content: ""; display: inline-block; width: 0.38em; height: 0.38em; margin-left: 0.35em;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: translateY(-0.2em) rotate(45deg); }
+.topnav-more[open] > summary::after { transform: translateY(0.05em) rotate(-135deg); }
+.topnav-more > summary:hover { color: var(--ink); }
+.topnav-more > summary.is-here { color: var(--ink); font-weight: 650; box-shadow: inset 0 -2px 0 var(--accent); }
+.topnav-menu { position: absolute; right: 0; top: calc(100% + 0.5rem); z-index: 80; min-width: 11rem;
+  display: flex; flex-direction: column; padding: 0.35rem 0; background: #fff;
+  border: 1px solid #e5e7eb; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+.topnav .topnav-menu a { padding: 0.45rem 0.9rem; white-space: nowrap; }
+.topnav .topnav-menu a:hover { background: #f3f4f6; }
+.topnav .topnav-menu a.is-here { box-shadow: inset 2px 0 0 var(--accent); }
+.topnav .topnav-menu a.nav-tight { display: none; }
+@media (min-width: 1201px) {
+  .topbar { column-gap: 1.1rem; }
+  .topbar .topnav { column-gap: 0.95rem; }
+  .topbar .search-wrap { min-width: 6.5rem; }   /* 1201-1240: yields rather than spills */
+}
+/* between phone and laptop the bar is two rows: the mark, the switch and
+   Sign in on the first, the sections and search on the second -- Sign in
+   no longer drops onto a third row by itself (it did at 900px) */
+@media (min-width: 701px) and (max-width: 1200px) {
+  .topbar .topbar-account { order: 2; margin-left: auto; }
+  .topbar { row-gap: 0.3rem; }
+  .topbar::after { content: ""; order: 3; flex-basis: 100%; height: 0; }   /* the row break */
+  .topbar .topnav { order: 4; }
+  .topbar .search-wrap { order: 5; }
+}
+@media (min-width: 701px) and (max-width: 1439px) {
+  .topnav a.nav-roomy { display: none; }
+  .topnav .topnav-menu a.nav-tight { display: block; }
+  .topnav-more > summary.conv-here { color: var(--ink); font-weight: 650; box-shadow: inset 0 -2px 0 var(--accent); }
+}
+/* on a phone the links wrap, so More can land anywhere on its row: the menu
+   hangs from the right edge of the whole link block instead of from More,
+   and cannot run off either side of the screen */
+@media (max-width: 700px) {
+  .topbar .topnav { position: relative; }
+  .topnav-more { position: static; }
+  .topnav-menu { top: calc(100% + 0.3rem); right: 0; }
+}
+
 /* ---- /coaches ------------------------------------------------------- */
 
 .coach-home .coach-mine,
