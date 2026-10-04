@@ -65,24 +65,95 @@
   }
   function hintAll() {
     var boxes = document.querySelectorAll("div.tscroll");
-    for (var i = 0; i < boxes.length; i++) { fit(boxes[i]); hint.call(boxes[i]); }
+    fitAll(boxes);
+    for (var i = 0; i < boxes.length; i++) hint.call(boxes[i]);
   }
 
   /* one-line rows unless wrapping makes the table fit the screen (the rule
      is in style.css). Decided once per box, while it is visible: a hidden
-     board measures 0 and is decided when it is shown. */
-  function fit(w) {
-    if (w.dataset.fit || !w.clientWidth) return;
-    var t = w.firstElementChild;
-    if (!t) return;
-    w.classList.remove("tw-wrap");
-    if (t.offsetWidth > w.clientWidth + 1) {
-      w.classList.add("tw-wrap");
-      // wrapped is kept only when it fits: squeezed and STILL scrolling is
-      // three-line names for nothing
-      if (t.offsetWidth > w.clientWidth + 1) w.classList.remove("tw-wrap");
+     board measures 0 and is decided when it is shown.
+
+     ★ MEASURED ON A COPY, ALL BOXES AT ONCE (ui pass, 2026-10-04; owner:
+       "fix ... any hangs"). The old fit toggled .tw-wrap on the real table
+       and read its width, then toggled it back when wrapping did not fit:
+       two restyles and two layouts of the whole table, per table, one
+       after another. On a 900-row track race that was a 4.5-second freeze
+       on an emulated phone (7.2 s of main thread in all, against 2.3 s
+       with this file switched off), and 1.2 s on a long athlete page.
+       Now: every box's one-line width is read in one pass; the wrapped
+       width is read off a hidden copy of the table -- its head and first
+       SAMPLE_ROWS rows, laid out in a box of the same width and the same
+       classes beside the real one, so the same CSS applies -- all copies
+       in a second pass; and the real table is restyled at most once, only
+       when wrapping is chosen.
+     ! A copy of the first rows can miss a long name further down. The cost
+       of that miss is a wrapped table that still scrolls a little, which is
+       what a table that does not fit does anyway. */
+  var SAMPLE_ROWS = 120;
+
+  function copyOf(t) {
+    var c = t.cloneNode(false), budget = SAMPLE_ROWS;
+    for (var k = t.firstElementChild; k; k = k.nextElementSibling) {
+      if (k.tagName !== "TBODY") { c.appendChild(k.cloneNode(true)); continue; }
+      var b = k.cloneNode(false);
+      for (var r = k.firstElementChild; r && budget > 0; r = r.nextElementSibling, budget--) {
+        b.appendChild(r.cloneNode(true));
+      }
+      c.appendChild(b);
     }
-    w.dataset.fit = "1";
+    return c;
+  }
+
+  function probe(w, wrapped) {
+    var p = document.createElement("div");
+    p.className = w.className;
+    p.classList.remove("has-more");
+    p.classList.toggle("tw-wrap", wrapped);
+    p.setAttribute("aria-hidden", "true");
+    p.style.cssText = "position:absolute;left:0;top:0;visibility:hidden;pointer-events:none;" +
+                      "min-width:0;max-width:none;width:" + w._fitW + "px";
+    p.appendChild(copyOf(w.firstElementChild));
+    w.parentNode.insertBefore(p, w.nextSibling);
+    return p;
+  }
+
+  function fitAll(boxes) {
+    var todo = [], i, w;
+    for (i = 0; i < boxes.length; i++) {
+      w = boxes[i];
+      if (!w.dataset.fit && w.firstElementChild && w.clientWidth) todo.push(w);
+    }
+    // read: every box's width, and its table's one-line width when it is
+    // showing one-line rows now (one layout for all of them)
+    for (i = 0; i < todo.length; i++) {
+      w = todo[i];
+      w._fitW = w.clientWidth;
+      w._one = w.classList.contains("tw-wrap") ? null : w.firstElementChild.offsetWidth;
+    }
+    // write: the copies, only where one-line rows do not already fit
+    for (i = 0; i < todo.length; i++) {
+      w = todo[i];
+      if (w._one !== null && w._one <= w._fitW + 1) continue;
+      w._pWrap = probe(w, true);
+      if (w._one === null) w._pOne = probe(w, false);
+    }
+    // read: the copies' widths (one more layout, of the copies only)
+    for (i = 0; i < todo.length; i++) {
+      w = todo[i];
+      if (w._pOne) w._one = w._pOne.firstElementChild.offsetWidth;
+      if (w._pWrap) w._wrap = w._pWrap.firstElementChild.offsetWidth;
+    }
+    // write: drop the copies, and decide. Wrapped is kept only when it fits:
+    // squeezed and STILL scrolling is three-line names for nothing.
+    for (i = 0; i < todo.length; i++) {
+      w = todo[i];
+      if (w._pOne) w._pOne.parentNode.removeChild(w._pOne);
+      if (w._pWrap) w._pWrap.parentNode.removeChild(w._pWrap);
+      var wrap = w._one > w._fitW + 1 && w._wrap !== undefined && w._wrap <= w._fitW + 1;
+      w.classList.toggle("tw-wrap", wrap);
+      w.dataset.fit = "1";
+      w._pOne = w._pWrap = w._one = w._wrap = w._fitW = undefined;
+    }
   }
   var lastW = window.innerWidth;
   function refit() {
