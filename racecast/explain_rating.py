@@ -186,8 +186,8 @@ def aggregateWeather(rows, hours, temp_agg="avg(apparent_temperature)"):
     snow = None if depth is None else depth + (sum(fall) if fall else 0.0)
     peak_hour = None
     if temps:
-        peak_hour = max((r for r in win if _num(r.get("apparent_temperature")) is not None),
-                        key=lambda r: _num(r["apparent_temperature"]))["local_hour"]
+        peak_hour = int(max((r for r in win if _num(r.get("apparent_temperature")) is not None),
+                            key=lambda r: _num(r["apparent_temperature"]))["local_hour"])
     wx = {"apparent_temp": used, "wind": wind, "precip": precip,
           "soil": soil, "snow": snow}
     def r2(v, n=2):
@@ -387,17 +387,14 @@ def buildChain(t):
                       "text": "Not available: the race's distance or pool is unknown."})
 
     run = base_log                        # running log rating
-    acc = 0.0                             # credits so far (for 'other' w/o pm)
 
     def add(key, label, x, text, available=True, **extra):
-        nonlocal run, acc
+        nonlocal run
         pts = None
         if x is not None and run is not None:
             before = math.exp(run)
             run += x
             pts = math.exp(run) - before
-        if x is not None:
-            acc += x
         st = {"key": key, "label": label, "available": available,
               "pct": None if x is None else round(pctOf(x), 2),
               "pts": None if pts is None else round(pts, 2), "text": text}
@@ -412,10 +409,11 @@ def buildChain(t):
         x = -era
         season = t.get("season")
         if abs(x) < _TINY:
-            txt = f"No era adjustment for {season}."
+            txt = (f"No era adjustment for {season}." if season
+                   else "No era adjustment (no race date).")
         elif x < 0:
             txt = (f"Times ran faster across the board in {season} than in the "
-                   f"reference era (shoes, depth), so this one counts {_a(x, 2)} less.")
+                   f"reference era, so this one counts {_a(x, 2)} less.")
         else:
             txt = (f"Times ran slower across the board in {season} than in the "
                    f"reference era, so this one counts {_a(x, 2)} more.")
