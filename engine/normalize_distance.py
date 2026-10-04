@@ -1944,7 +1944,9 @@ _EVENT_NUM_RE  = re.compile(r"(\d+(?:\.\d+)?)")
 # a digit then optional 'm' then 'h' at a word end: "110mh", "300h", "60mh".
 _HURDLE_RE     = re.compile(r"\dm?h\b")
 # a digit then 'k'/'km' at a word end: "5k", "8k" (XC-style shorthands).
-_KILO_RE       = re.compile(r"\d\s*(?:k|km)\b")
+# ! "10-km" AND "10 kilometers" TOO (2026-10-04: WashU's "10-km" parsed
+#   as 10 metres; the race page, the era band and the distance fit all read it)
+_KILO_RE       = re.compile(r"\d\s*-?\s*(?:k|km|kilomet(?:er|re)s?)\b")
 # a digit then a yards unit at a word end: "600y", "440yd".
 _YARDS_RE      = re.compile(r"\d\s*(?:y|yd|yds|yards)\b")
 
@@ -1982,6 +1984,9 @@ def parseEventShort(event_short) -> dict:
     else:
         kind = "flat"
 
+    # ! A THOUSANDS SEPARATOR IS NOT THE END OF THE NUMBER: "Men's 10,000
+    #   Meters" read as 10 m (2026-10-04)
+    s = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", s)
     m = _EVENT_NUM_RE.search(s)
     if m is None:                              # named-but-numberless oddity
         return {"meters": None, "kind": kind}

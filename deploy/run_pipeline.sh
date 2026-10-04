@@ -1258,6 +1258,17 @@ step 17_checklist     "$PY" -u scripts/run_checklist.py
 # the status page's slow counts (tfrrs identity, rated rows, blank
 # athletes), recounted after the run so /account/status is current
 step 17b_status       "$PY" -u scripts/print_status.py
+# ★ THE RUN'S SCORECARD (owner, 2026-10-04: "so many moving parts how can
+#   we capture it all?"): the fair tests, the health lines and the owner's
+#   sentinel cases, this run against the last; appended to
+#   engine/data/run_history.jsonl and written to $LOGDIR/REPORT.txt. 16b
+#   feeds it the LACCTiC fair tests (college; public API, about 150
+#   requests a second apart; XCP_LACCTIC=0 skips, XCP_LACCTIC_RACES picks).
+if [ "${XCP_LACCTIC:-1}" != "0" ]; then
+  step 16b_lacctic      "$PY" -u scripts/lacctic_compare.py \
+      --race "${XCP_LACCTIC_RACES:-12194,12158,11632}" --runners 150 || true
+fi
+step 17c_report       "$PY" -u scripts/run_report.py --log-dir "$LOGDIR" || true
 
 # ---- the gentle vacuum, last ----------------------------------------- #
 # the boards tables are built with autovacuum off (createShadow); this is

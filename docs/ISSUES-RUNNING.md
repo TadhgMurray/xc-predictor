@@ -3578,3 +3578,17 @@ Foot Locker cells).
   their OTHER races that season, scored on the finishing order -- the race's
   own course and day cancel) and XC -> TRACK 5000 (each system's XC number
   against the actual 5000 times).
+- **LACCTiC fair tests (current ratings, before the field/day fixes):**
+  ORDER ours 82.0% vs theirs 84.5% (9,432 pairs, 3 races); XC -> actual 5000
+  spread ours 2.52% vs theirs 1.95% (bias -0.94 vs +1.07, 125 runner-seasons);
+  track minus XC ours +1.60% vs theirs -1.08%. LACCTiC is measurably better
+  on both fair tests; these two numbers are the target.
+- **13:19 vs 13:55 is in the normalisation:** WashU 29:20.48 normalised to
+  1304.17, NCAA 29:27.04 to 1401.07 -- 7% for 0.4% of time, before the
+  engine. diag_track_conversion could not split it (no meet distance); it
+  now parses the event name. AND THAT PARSER WAS WRONG: parseEventShort read
+  "10-km" and "Men's 10,000 Meters" as 10 metres (race-page headers, the era
+  band, the distance-exponent fit). Fixed; tests/test_event_parse_km.py.
+- **scripts/run_report.py (pipeline 17c), the one scorecard per run:** fair
+  tests, health, and the owner's sentinel cases, against the last run
+  (engine/data/run_history.jsonl, <log dir>/REPORT.txt). 16b_lacctic feeds it.

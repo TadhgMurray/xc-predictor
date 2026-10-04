@@ -131,6 +131,13 @@ def main():
             print(f"\nresult {rid}  {date}  {meet}  {ev}  {fmt(t)}  "
                   f"(person {pid}, pool {pool}, venue {cell})")
             print(f"  stored rating {rating}   normalized_time {norm}")
+            if not dist and ev:
+                # ! THE EVENT NAME WHEN THE MEET HAS NO DISTANCE ("10-km" at
+                #   WashU, 2026-10-04): the parser the backfill normalised with
+                from normalize_distance import parseEventShort
+                dist = (parseEventShort(ev) or {}).get("meters")
+                if dist:
+                    print(f"  (distance from the event name: {dist} m)")
             if not (t and norm and pool and dist):
                 print("  (missing time, norm, pool or distance -- nothing to take apart)")
                 continue
