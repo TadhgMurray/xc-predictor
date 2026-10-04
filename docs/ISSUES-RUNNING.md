@@ -3639,3 +3639,31 @@ Owner approved: "nightly light update" (the newest meet on the site was Sep
 - Not in the nightly: grade_sanity, gender verdicts (04d), the course and
   meet pages, panels. A brand-new athlete's grade/level verdict waits for the
   full run (the row is pooled on its own grade until then).
+
+## 2026-10-04 — ✅ site batch: sign-in, layout, speed, explainer, state meets, breakouts
+
+Merged from three agents (80a638b); restart the site to take effect.
+
+- **Sign-in:** email links never worked on the live site -- no XCP_MAIL_PROVIDER
+  / XCP_MAIL_KEY, so every link went only to the server log. /login now
+  shows Google only until mail is set up. The 13+ box no longer blocks the
+  Google button: it is asked on a "One last step" page before any account
+  exists (accounts already 13+ are never asked).
+  **To turn email on:** verify racecast.co in Resend (DNS records in
+  Cloudflare), then in /etc/xc-predictor.env: XCP_MAIL_PROVIDER=resend,
+  XCP_MAIL_KEY=re_..., XCP_MAIL_FROM="Racecast <login@racecast.co>"; restart;
+  `racecast/accounts.py --check` and `--send-test you@...`.
+- **Layout:** desktop sideways scroll (hidden tooltips), phone filters,
+  phone rankings Rating column off-screen, topbar "More" menu (fits
+  1201-1600 px on one line), phone freeze on 900-row races (layout.js 7.8 s
+  -> 4.4 s busy at 4x CPU slowdown).
+- **Speed:** search answers cached 10 min per worker; /meets with a state
+  reads the newest 800 meets instead of an arbitrary 3,200. Re-time
+  `/meets?sport=TF&state=CA&zz=1` after deploy (was 9.9 s).
+- **New:** "How was this rated?" (click any rating; /api/explain/<sport>/<id>),
+  course "Year by year", /projections (who wins state), /breakouts.
+  Check after deploy: `curl -s http://127.0.0.1:8000/api/explain/tf/277459367`
+  -- the "other" step should be ~1% or less.
+- **Open (data):** top HS Boys boards show "Unknown" names (ranks 2, 4, 8 on
+  the ability board) -- the requeue_blank_athletes --apply + scrape is the
+  fix; the nightly scrape now drains that queue.
