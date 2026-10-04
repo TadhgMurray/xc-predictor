@@ -97,8 +97,10 @@ SENTINELS = [
      "SELECT 100 * ((SELECT difficulty FROM course_difficulties WHERE canonical_id = 13433"
      " AND distance_m = 4700 LIMIT 1) - (SELECT difficulty FROM course_difficulties"
      " WHERE canonical_id = 13433 AND distance_m = 4800 LIMIT 1))", None),
-    # Glendoveer (NXN): runners' own read about +6.4% (2026-10-04)
-    ("glendoveer", "Glendoveer 5000m difficulty (%; runners read ~6.4)",
+    # Glendoveer (NXN): course_bracket's model-free reading sat at or a little
+    #   above the board in 2023-25 (2026-10-04); this is the site's number --
+    #   the diagnostic's own scale differs, so compare runs, not the two
+    ("glendoveer", "Glendoveer 5000m difficulty (%)",
      "SELECT 100 * difficulty FROM course_difficulties WHERE canonical_id = 22331 "
      "AND distance_m = 5000 LIMIT 1", None),
 ]
