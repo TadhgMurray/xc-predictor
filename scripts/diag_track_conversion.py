@@ -29,6 +29,7 @@ diag_track_conversion.py -- why a track race converts to a different time.
 import argparse
 import math
 import os
+import re
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -68,14 +69,21 @@ def main():
             ids = [a.result]
         else:
             first, _, last = a.name.strip().partition(" ")
+            # ! BOTH FEEDS (2026-10-04: "no such result" for a college runner):
+            #   an anet row names its athlete in `athletes`; a tfrrs row carries
+            #   "Last, First" in athlete_name and its person in person_id. The
+            #   name's words are compared in any order.
+            words = sorted(w for w in re.findall(r"[a-z]+", a.name.lower()))
             cur.execute("""
-                SELECT r.result_id FROM results_tf r
-                JOIN   athletes x ON x.athlete_id = r.athlete_id
-                WHERE  lower(btrim(x.first_name)) = lower(%s)
-                  AND  lower(btrim(x.last_name))  = lower(%s)
-                  AND  r.date = %s
+                SELECT DISTINCT r.result_id FROM results_tf r
+                LEFT JOIN athletes x ON x.athlete_id = COALESCE(r.person_id, r.athlete_id)
+                WHERE  r.date = %s
                   AND  (%s::text IS NULL OR r.event_short ILIKE '%%' || %s || '%%')
-            """, (first, last.strip(), a.date, a.event, a.event))
+                  AND  (array(SELECT w FROM unnest(regexp_split_to_array(lower(
+                            COALESCE(NULLIF(btrim(concat_ws(' ', x.first_name, x.last_name)), ''),
+                                     r.athlete_name, '')), '[^a-z]+')) AS w
+                              WHERE w <> '' ORDER BY 1) = %s::text[])
+            """, (a.date, a.event, a.event, words))
             ids = [r[0] for r in cur.fetchall()]
         if not ids:
             print("no such result")

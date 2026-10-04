@@ -180,7 +180,8 @@ def compare_race(lac_id, ours, sleep, default_pool):
         f = ours.five(r[4], p)
         if f is None or x.get("modern_tic") is None:
             continue
-        matched.append({"lac_runner": rn.get("id"), "person": r[1], "time": float(x["time"]),
+        matched.append({"lac_runner": rn.get("id"), "race": lac_id, "person": r[1],
+                        "time": float(x["time"]),
                         "place": x.get("place"), "name": f"{rn.get('firstname')} {rn.get('lastname')}",
                         "ours": f, "theirs": float(x["modern_tic"]),
                         "ability": rn.get("ability"), "rating": r[4], "pool": p})
@@ -216,17 +217,19 @@ def compare_race(lac_id, ours, sleep, default_pool):
     return matched
 
 
-def runner_check(lac_id, person, ours, sleep):
-    """Per-race 5K equivalents of one runner in both systems, matched by date
-    and time; returns {season: {'XC': [(o, t)], 'TF': [(o, t)]}}."""
+def runner_perfs(lac_id, person, ours, sleep):
+    """One runner's races in both systems, matched by date and time: a list
+    of {season, sport, race, date, time, section, o, t} with o / t our and
+    LACCTiC's ln track-5K equivalents."""
     d = fetch(f"runner_page/{lac_id}/", sleep)
     rows = ours.person_rows(person)
-    out = {}
+    out = []
     for sr in d.get("season_ratings") or []:
         season = (sr.get("season") or {}).get("year")
         for sport, key in (("XC", "season_xc_performances"), ("TF", "season_track_performances")):
             for perf in sr.get(key) or []:
-                date = perf.get("date") or (perf.get("race") or {}).get("date")
+                race = perf.get("race") or {}
+                date = perf.get("date") or race.get("date")
                 t = perf.get("time")
                 tic = perf.get("modern_tic")
                 if not date or not t or tic is None:
@@ -239,8 +242,26 @@ def runner_check(lac_id, person, ours, sleep):
                 f = ours.five(hit[0][3], pool)
                 if f is None:
                     continue
-                out.setdefault(season, {"XC": [], "TF": []})[sport].append((f, float(tic)))
+                out.append({"season": season, "sport": sport, "race": race.get("id"),
+                            "date": str(date)[:10], "time": float(t),
+                            "section": str(race.get("section") or ""), "o": f, "t": float(tic)})
     return out
+
+
+def pairwise(rows):
+    """Share of pairs a system orders right: rows of (place, ours, theirs)
+    abilities (ln 5K, lower = faster). Returns (ours, theirs, pairs)."""
+    good_o = good_t = n = 0
+    for i in range(len(rows)):
+        for k in range(i + 1, len(rows)):
+            (pi, oi, ti), (pk, ok_, tk) = rows[i], rows[k]
+            if pi == pk:
+                continue
+            first_i = pi < pk
+            n += 1
+            good_o += (oi < ok_) == first_i
+            good_t += (ti < tk) == first_i
+    return (good_o / n if n else float("nan"), good_t / n if n else float("nan"), n)
 
 
 def main():
@@ -248,7 +269,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--race", default="", help="LACCTiC race ids, comma separated")
     ap.add_argument("--runner", default="", help="LACCTiC runner ids: compare their races")
-    ap.add_argument("--runners", type=int, default=40,
+    ap.add_argument("--runners", type=int, default=150,
                     help="runners sampled from the races for the consistency and "
                          "cross-sport checks")
     ap.add_argument("--pool", default=None, help="our pool if the rows carry none")
@@ -289,32 +310,85 @@ def main():
             conn.rollback()
             return
         print(f"\n== per runner, over the races BOTH systems have ({len(pairs)} runners)")
-        dev_o, dev_t, cross_o, cross_t = [], [], [], []
-        for lr, pid in pairs.items():
-            by_season = runner_check(lr, pid, ours, a.sleep)
-            for season, sp in by_season.items():
-                xc = sp["XC"]
+        perfs = {lr: runner_perfs(lr, pid, ours, a.sleep) for lr, pid in pairs.items()}
+        dev_o, dev_t, cross_o, cross_t, trk_o, trk_t = [], [], [], [], [], []
+        for lr, ps in perfs.items():
+            seasons = sorted({p_["season"] for p_ in ps})
+            for season in seasons:
+                xc = [p_ for p_ in ps if p_["season"] == season and p_["sport"] == "XC"]
+                tf = [p_ for p_ in ps if p_["season"] == season and p_["sport"] == "TF"]
                 if len(xc) >= 3:
-                    mo = statistics.median(o for o, _ in xc)
-                    mt = statistics.median(t for _, t in xc)
-                    dev_o += [o - mo for o, _ in xc]
-                    dev_t += [t - mt for _, t in xc]
-                if sp["XC"] and sp["TF"]:
-                    cross_o.append(statistics.median(o for o, _ in sp["TF"])
-                                   - statistics.median(o for o, _ in sp["XC"]))
-                    cross_t.append(statistics.median(t for _, t in sp["TF"])
-                                   - statistics.median(t for _, t in sp["XC"]))
+                    mo = statistics.median(p_["o"] for p_ in xc)
+                    mt = statistics.median(p_["t"] for p_ in xc)
+                    dev_o += [p_["o"] - mo for p_ in xc]
+                    dev_t += [p_["t"] - mt for p_ in xc]
+                if xc and tf:
+                    cross_o.append(statistics.median(p_["o"] for p_ in tf)
+                                   - statistics.median(p_["o"] for p_ in xc))
+                    cross_t.append(statistics.median(p_["t"] for p_ in tf)
+                                   - statistics.median(p_["t"] for p_ in xc))
+                # the conversion against the clock: each system's XC number for
+                # the season against the runner's ACTUAL track 5000 times
+                t5 = [math.log(p_["time"]) for p_ in tf if "5000" in p_["section"]
+                      or "5,000" in p_["section"]]
+                if xc and t5:
+                    act = statistics.median(t5)
+                    trk_o.append(statistics.median(p_["o"] for p_ in xc) - act)
+                    trk_t.append(statistics.median(p_["t"] for p_ in xc) - act)
             if lr in lac_runners:
-                for season, sp in sorted(by_season.items()):
-                    for sport in ("XC", "TF"):
-                        for o, t in sp[sport]:
-                            print(f"     {season} {sport}  ours {mmss(math.exp(o))}  "
-                                  f"theirs {mmss(math.exp(t))}  ({pct(o - t)})")
+                for p_ in sorted(ps, key=lambda z: z["date"]):
+                    print(f"     {p_['date']} {p_['sport']}  ours {mmss(math.exp(p_['o']))}  "
+                          f"theirs {mmss(math.exp(p_['t']))}  ({pct(p_['o'] - p_['t'])})")
+        # ★ THE FAIR TEST (owner, 2026-10-04: "are they more right / how to
+        #   tell"). In each compared race, every sampled runner's ability from
+        #   their OTHER cross country races that season (median, this race left
+        #   out) in each system, then: of every pair of runners, which system
+        #   called the finishing order right? The race's own course and day
+        #   cancel within a race, so this scores only how each system read the
+        #   runners' other races -- its course and day corrections -- on a
+        #   result neither used for these abilities.
+        order_rows, races_used = [], 0
+        for rid in races:
+            in_race = []
+            for m_ in matched:
+                if m_.get("race") != rid or m_["lac_runner"] not in perfs or not m_.get("place"):
+                    continue
+                ps = perfs[m_["lac_runner"]]
+                here = [p_ for p_ in ps if p_["race"] == rid]
+                if not here:
+                    continue
+                season = here[0]["season"]
+                other = [p_ for p_ in ps if p_["season"] == season and p_["sport"] == "XC"
+                         and p_["race"] != rid]
+                if not other:
+                    continue
+                in_race.append((m_["place"], statistics.median(p_["o"] for p_ in other),
+                                statistics.median(p_["t"] for p_ in other)))
+            if len(in_race) >= 5:
+                races_used += 1
+                order_rows.append(pairwise(in_race))
+        if order_rows:
+            n_pairs = sum(n for _, _, n in order_rows)
+            go = sum(o * n for o, _, n in order_rows) / max(n_pairs, 1)
+            gt = sum(t * n for _, t, n in order_rows) / max(n_pairs, 1)
+            print(f"   ORDER (the fair test)  finishing order called right from each "
+                  f"runner's OTHER races, {n_pairs:,} pairs in {races_used} races:")
+            print(f"     ours {100 * go:.1f}%   theirs {100 * gt:.1f}%   (higher = better; "
+                  f"--runners 150+ for a firmer number)")
+        if trk_o:
+            print(f"   XC -> TRACK 5000 (the conversion against the clock), "
+                  f"{len(trk_o)} runner-seasons: XC number minus the actual 5000 time")
+            print(f"     ours  bias {pct(statistics.median(trk_o))}  spread "
+                  f"{100 * robust_sd(trk_o):.2f}%")
+            print(f"     theirs bias {pct(statistics.median(trk_t))}  spread "
+                  f"{100 * robust_sd(trk_t):.2f}%   (- = XC converts FASTER than they ran; "
+                  f"lower spread = the better converter; the season pairs spring track "
+                  f"with the fall after, so both carry the same improvement)")
         if dev_o:
             print(f"   CONSISTENCY  a runner's XC races about their own season median, "
                   f"robust sd over {len(dev_o)} races:")
             print(f"     ours {100 * robust_sd(dev_o):.2f}%   theirs {100 * robust_sd(dev_t):.2f}%"
-                  f"   (lower = the course and day corrections agree with the runner)")
+                  f"   (not a fair test: LACCTiC fits each race's difficulty on that race)")
         if cross_o:
             print(f"   CROSS-SPORT  track minus XC, median over {len(cross_o)} runner-seasons "
                   f"(- = track reads FASTER than their XC):")
