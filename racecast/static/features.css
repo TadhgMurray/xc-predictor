@@ -1,0 +1,155 @@
+/* features.css -- styles for the feature additions of 2026-10-04, kept out of
+ * style.css so layout work there and feature work here do not collide.
+ *
+ *   .rx-*   "How was this rated?" (rating-explain.js): the rating number as a
+ *           button, the popover beside it on desktop, the sheet on a phone.
+ *   .cdh-*  the course page's difficulty by era (course.html).
+ *
+ * Colours are style.css's :root tokens (--ink, --muted, --line, --accent),
+ * with the same fallbacks, so the two files read as one palette.
+ */
+
+/* ---- the rating as a button ------------------------------------------- */
+/* ! A DOTTED UNDERLINE, NOT A GLYPH PER ROW. An (i) on every row of a
+     200-runner race page is 200 extra marks and a wider column on a phone;
+     the dotted rule is the site's existing "there is more here" cue (the
+     .dv-day hover) and costs no width. */
+.rx-hot {
+    cursor: pointer;
+    text-decoration: underline dotted;
+    text-decoration-color: var(--line-2, #cbd0d6);
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+    border-radius: 3px;
+}
+.rx-hot:hover { text-decoration-color: var(--accent, #14477d); color: var(--accent, #14477d); }
+.rx-hot:focus-visible { outline: 2px solid var(--accent, #14477d); outline-offset: 2px; }
+
+/* ---- the panel ---------------------------------------------------------- */
+.rx-pop {
+    position: fixed;
+    z-index: 1000;
+    box-sizing: border-box;
+    max-height: min(72vh, 640px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: #fff;
+    color: var(--ink, #111418);
+    border: 1px solid var(--line-2, #cbd0d6);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(17, 20, 24, 0.16), 0 2px 6px rgba(17, 20, 24, 0.08);
+    font-size: 0.875rem;
+    line-height: 1.4;
+    text-align: left;
+    white-space: normal;
+}
+.rx-pop[hidden], .rx-backdrop[hidden] { display: none; }
+
+/* phone: a sheet from the bottom, the page dimmed behind it */
+.rx-pop.rx-sheet {
+    left: 0; right: 0; bottom: 0; top: auto;
+    width: auto !important;
+    max-height: 82vh;
+    border-radius: 14px 14px 0 0;
+    border-bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.rx-backdrop {
+    position: fixed; inset: 0; z-index: 999;
+    background: rgba(17, 20, 24, 0.32);
+}
+
+.rx-head {
+    position: sticky; top: 0; z-index: 1;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem;
+    padding: 0.75rem 0.9rem 0.6rem;
+    background: #fff;
+    border-bottom: 1px solid var(--line, #e5e7eb);
+}
+.rx-title { font-weight: 700; font-size: 0.95rem; }
+.rx-sub { color: var(--muted, #6b7280); font-size: 0.8rem; margin-top: 0.1rem; }
+.rx-close {
+    flex: none;
+    width: 2rem; height: 2rem;
+    margin: -0.3rem -0.4rem 0 0;
+    border: 0; border-radius: 50%;
+    background: none;
+    color: var(--muted, #6b7280);
+    font-size: 1.4rem; line-height: 1;
+    cursor: pointer;
+}
+.rx-close:hover, .rx-close:focus-visible { background: var(--hover, #f3f6fa); color: var(--ink, #111418); }
+
+.rx-body { padding: 0.65rem 0.9rem 0.8rem; }
+.rx-loading, .rx-na { color: var(--muted, #6b7280); margin: 0.4rem 0; }
+
+.rx-start { display: flex; gap: 0.6rem; align-items: flex-start; margin-bottom: 0.35rem; }
+.rx-chip {
+    flex: none;
+    padding: 0.1rem 0.45rem;
+    border-radius: 6px;
+    background: var(--hover, #f3f6fa);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.rx-text { margin: 0.15rem 0 0; color: #374151; font-size: 0.8rem; }
+
+.rx-steps { list-style: none; margin: 0; padding: 0; }
+.rx-step { padding: 0.45rem 0; border-top: 1px solid var(--line, #e5e7eb); }
+.rx-row {
+    display: grid;
+    grid-template-columns: 1fr 4.2rem 4rem;
+    align-items: baseline;
+    gap: 0.4rem;
+}
+.rx-label { font-weight: 600; }
+.rx-tag {
+    margin-left: 0.25rem;
+    padding: 0 0.3rem;
+    border: 1px solid var(--line-2, #cbd0d6);
+    border-radius: 4px;
+    color: var(--muted, #6b7280);
+    font-size: 0.68rem; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.03em;
+    vertical-align: 1px;
+}
+.rx-pct, .rx-pts { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rx-pct { font-weight: 600; }
+.rx-pts { color: var(--muted, #6b7280); font-size: 0.8rem; }
+.rx-pts:not(:empty)::after { content: " pts"; font-size: 0.7rem; }
+.rx-step.is-up .rx-pct { color: #15803d; }
+.rx-step.is-down .rx-pct { color: #b91c1c; }
+.rx-step.is-flat .rx-pct, .rx-muted { color: var(--muted, #6b7280); font-weight: 500; }
+.rx-step.is-na .rx-label { color: var(--muted, #6b7280); }
+.rx-step.is-na .rx-text { color: var(--muted, #6b7280); }
+
+.rx-total {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-top: 0.1rem; padding: 0.55rem 0 0.2rem;
+    border-top: 2px solid var(--ink, #111418);
+    font-weight: 700;
+}
+.rx-final { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.rx-note {
+    margin: 0.5rem 0 0; padding: 0.4rem 0.55rem;
+    background: var(--zebra, #fafbfc);
+    border-left: 3px solid var(--line-2, #cbd0d6);
+    color: #374151; font-size: 0.78rem;
+}
+.rx-foot { margin: 0.6rem 0 0; color: var(--muted, #6b7280); font-size: 0.72rem; }
+
+/* the weather strip: 24 hourly bars */
+.rx-stripwrap { margin-top: 0.35rem; }
+.rx-strip { display: block; width: 100%; max-width: 300px; height: auto; }
+.rx-strip .rx-win { fill: rgba(20, 71, 125, 0.07); }
+.rx-strip .rx-bar { fill: #cbd0d6; }
+.rx-strip .rx-bar.in { fill: #6b8fb8; }
+.rx-strip .rx-bar.peak { fill: #c2410c; }
+.rx-strip text { fill: var(--muted, #6b7280); font-size: 8px; }
+.rx-legend { display: block; color: var(--muted, #6b7280); font-size: 0.7rem; }
+
+@media (max-width: 700px) {
+    .rx-pop { font-size: 0.9rem; }
+    .rx-text { font-size: 0.84rem; }
+    .rx-row { grid-template-columns: 1fr 4.6rem 4.2rem; }
+}

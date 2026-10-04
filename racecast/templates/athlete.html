@@ -256,9 +256,9 @@
                        (owner, 2026-09-29, Moretta's easy long run): it
                        counts toward no season number. #}
                     {% if race.rank_outlier == 'slow' %}
-                    <td class="rating--uncounted" title="not counted: far off this athlete's neighbouring races">{{ rv(race.speed_rating, race.hs_rating) }}</td>
+                    <td data-rx="{{ race.sport|lower }}:{{ race.result_id }}" class="rating--uncounted" title="not counted: far off this athlete's neighbouring races">{{ rv(race.speed_rating, race.hs_rating) }}</td>
                     {% else %}
-                    <td>{{ rv(race.speed_rating, race.hs_rating) }}</td>
+                    <td data-rx="{{ race.sport|lower }}:{{ race.result_id }}">{{ rv(race.speed_rating, race.hs_rating) }}</td>
                     {% endif %}
                     <td>{{ dv(race.difficulty, race.sport, race.day_effect) }}</td>
                     {# Same nine conditions as before -- only the rendering moved
