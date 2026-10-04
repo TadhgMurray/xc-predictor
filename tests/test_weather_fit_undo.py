@@ -71,4 +71,4 @@ def test_athlete_is_keyed_per_season():
 def test_backfill_records_the_applied_artifact():
     src = open(os.path.join(_ROOT, "backfill", "backfill_normalize.py")).read()
     assert "recordAppliedWeather(sport)" in src
-    assert "if args.apply and not args.limit and not args.only_changed:" in src
+    assert "if args.apply and not args.limit and not args.only_changed and not args.new_only:" in src

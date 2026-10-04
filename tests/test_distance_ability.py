@@ -399,11 +399,12 @@ def test_the_backfill_records_and_checks_the_mode():
     src = open(os.path.join(_ROOT, "backfill", "backfill_normalize.py"),
                encoding="utf-8").read()
     main = src[src.index("def main():"):]
-    assert "distanceModeGuard(sports, args.apply, args.only_changed, args.limit)" in main
+    assert "distanceModeGuard(sports, args.apply, args.only_changed or args.new_only," in main
     assert "recordAppliedDistance(sport)" in main
     # recorded only after a FULL write, beside the weather record
     i = main.index("recordAppliedDistance(sport)")
-    assert "if args.apply and not args.limit and not args.only_changed:" in main[i - 200:i]
+    assert ("if args.apply and not args.limit and not args.only_changed and not args.new_only:"
+            in main[i - 200:i])
 
 
 def test_the_mode_follows_the_rows(monkeypatch, tmp_path):

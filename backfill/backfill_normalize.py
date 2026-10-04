@@ -1240,6 +1240,15 @@ def _loadTfrrsBlobDistances(cur):
 #   is still rated -- #47 removes a false claim about level, it does not
 #   discard a race.
 _ONLY_CHANGED = {"on": False}
+# ★ ONLY ROWS NOBODY HAS NORMALISED YET (2026-10-04, --new-only): the
+#   nightly light update (deploy/nightly_update.sh) prices what the night's
+#   scrape brought in without the four-hour pipeline. A freshly scraped row
+#   has normalized_time NULL; so does a row the backfill skipped on purpose
+#   (a DNF, a wheelchair division), which is merely re-skipped. Bounded to
+#   this season and the last -- a scrape's new rows are recent, and the
+#   bound keeps the long tail of deliberately-NULL history out of a
+#   nightly pass. The full pipeline still rewrites everything.
+_NEW_ONLY = {"on": False, "since": None}
 
 
 def _streamSQL(cfg, age_band=False, rating_pool=False):
@@ -1278,6 +1287,9 @@ def _streamSQL(cfg, age_band=False, rating_pool=False):
     #   --write-mode update: the staging set is a sliver of the table.
     only = (f"\n        JOIN person_gender_changed pgc ON pgc.person_id = r.person_id"
             if _ONLY_CHANGED["on"] else "")
+    if _NEW_ONLY["on"]:
+        only += (f"\n        WHERE r.normalized_time IS NULL"
+                 f"\n          AND r.date >= '{_NEW_ONLY['since']}'")
     # ! THE RATED POOL ONLY WHERE THE COLUMN EXISTS -- the go-live adds it,
     #   and a database that has never packed has none. Literal NULL keeps
     #   the column shape either way, the same trick as event_id above.
@@ -3743,6 +3755,14 @@ def recordAppliedDistance(sport):
               f"the previous record, or 'pool' without one")
 
 
+def newOnlySince(today=None):
+    """The first day of LAST season (August 1st): --new-only's bound."""
+    from datetime import date as _date
+    today = today or _date.today()
+    season = today.year if today.month >= 8 else today.year - 1
+    return f"{season - 1}-08-01"
+
+
 def distanceModeGuard(sports, apply, only_changed, limit):
     """None, or why this run must not write. Two refusals, both about a
     table ending up with rows on two anchors:
@@ -3786,6 +3806,10 @@ def main():
     ap.add_argument("--only-changed", action="store_true",
                     help="only rows of people in person_gender_changed (04d's "
                          "list of moved verdicts); implies --write-mode update")
+    ap.add_argument("--new-only", action="store_true",
+                    help="only rows with no normalized_time yet, from last "
+                         "season on (the nightly light update); implies "
+                         "--write-mode update")
     ap.add_argument("--limit", type=int, default=0,
                     help="stop after N rows PER SPORT (0 = whole table). Use a "
                          "small value to sanity-check the `skipped` count in "
@@ -3811,6 +3835,10 @@ def main():
     if args.only_changed:
         _ONLY_CHANGED["on"] = True
         args.write_mode = "update"
+    if args.new_only:
+        _NEW_ONLY.update(on=True, since=newOnlySince())
+        args.write_mode = "update"
+        print(f"  --new-only: rows with no normalized_time, dated {_NEW_ONLY['since']} on")
     initPool()
     sports = ["XC", "TF"] if args.sport == "both" else [args.sport]
     # ★ THE DISTANCE MODE, SAID AND CHECKED BEFORE A ROW IS READ (2026-09-29)
@@ -3820,7 +3848,8 @@ def main():
           f" [{_nd.DISTANCE_BY_SOURCE}]"
           + (f", per-pool residual {'ON' if _nd.residualMode() else 'OFF'}"
              f" [{_nd.DISTANCE_RESIDUAL_SOURCE}]" if _nd.abilityMode() else ""))
-    why = distanceModeGuard(sports, args.apply, args.only_changed, args.limit)
+    why = distanceModeGuard(sports, args.apply, args.only_changed or args.new_only,
+                            args.limit)
     if why:
         print(f"  REFUSING: {why}")
         raise SystemExit(2)
@@ -3831,7 +3860,7 @@ def main():
             print()
         totals[sport] = _runOneSport(sport, args.apply, args.limit,
                                      args.profile, args.write_mode)
-        if args.apply and not args.limit and not args.only_changed:
+        if args.apply and not args.limit and not args.only_changed and not args.new_only:
             recordAppliedWeather(sport)
             recordAppliedDistance(sport)
 

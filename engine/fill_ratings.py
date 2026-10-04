@@ -177,7 +177,202 @@ def _rowPool(row, sport):
                        merge=True)
 
 
-def fillSport(conn, sport, dry_run=False):
+# ★ PRICED AT ITS COURSE (--venue, 2026-10-04: the nightly light update).
+#   K_pool / nt carries the pool's MEDIAN course, which is right for a row the
+#   solve threw out (its number only has to look absurd) and wrong for a
+#   new, ordinary race: a September meet at a hard course would read several
+#   points slow until the next full run. With --venue a row is priced the way
+#   the site's own conversions price a time (racecast/conversions.py: the
+#   validated inverse of the go-live):
+#       rating = 100 * pool_mean / adjusted,   adjusted = nt / exp(effect)
+#       effect = tilt(rating) * (ln(1 + course) + shift) + event offset
+#                + winter gain                   (conversions.venueEffect)
+#   solved as a fixed point in the rating, at the course's published (latest
+#   era) difficulty -- or, with no fitted course, the pool's median race,
+#   which is what K_pool / nt already was.
+#   ! NO RACE-DAY TERM: a new race has no solved day yet; it reads as a
+#     typical day until the next full pipeline run re-rates everything.
+#     `--check N` measures exactly that gap on rows the solve did rate.
+_VENUE_ROWS = {
+    "XC": """SELECT DISTINCT source, meet_id, div_id FROM results r
+             WHERE {where}""",
+    "TF": """SELECT DISTINCT meet_id, div_id, COALESCE(event_id, -1) AS event_id
+             FROM results_tf r WHERE {where}""",
+}
+_UNRATED = "r.speed_rating IS NULL AND r.normalized_time > 0"
+
+
+def _xcVenueSql(rows_sql):
+    from champ_course import displaySql
+    name = displaySql("COALESCE(m.meet_name, mt.meet_name)",
+                      "COALESCE(m.course_name, mt.venue_name, '')")
+    # the race page's own joins (racecast/app.py get_race_header): the park's
+    # canonical cell, or a championship's own ('XC:' || name), which wins
+    return f"""
+        SELECT x.source, x.meet_id, x.div_id, cc.canonical_id,
+               'XC:' || ({name}) AS champ_key
+        FROM   ({rows_sql}) x
+        LEFT JOIN meets m
+               ON m.meet_id = x.meet_id AND m.div_id = x.div_id AND m.source = x.source
+        LEFT JOIN meets_tfrrs mt
+               ON x.source = 'tfrrs' AND mt.meet_id = x.meet_id AND mt.sport = 'XC'
+        LEFT JOIN course_canonical cc
+               ON cc.course_name = COALESCE(m.course_name, mt.venue_name)
+              AND round(cc.gps_lat::numeric,  5)
+                = round(COALESCE(m.gps_lat,  mt.gps_lat)::numeric,  5)
+              AND round(cc.gps_long::numeric, 5)
+                = round(COALESCE(m.gps_long, mt.gps_long)::numeric, 5)
+    """
+
+
+def venueMap(conn, sport, rows_sql=None):
+    """{race key: course key} for the races holding rows `where` picks, and
+    {course key: difficulty}. XC race key (source, meet, div) -> (canonical
+    id, championship key); TF race key (meet, div, event) -> the location
+    key 'TF:loc:<id>:<in|out>'."""
+    rows_sql = rows_sql or _VENUE_ROWS[sport].format(where=_UNRATED)
+    races, cells = {}, {}
+    with conn.cursor() as cur:
+        if sport == "XC":
+            cur.execute(_xcVenueSql(rows_sql))
+            for src, meet, div, cid, champ in cur.fetchall():
+                races[(src, meet, div)] = (cid, champ)
+            cur.execute("""SELECT canonical_id, distance_m, course_name, difficulty
+                           FROM course_difficulties
+                           WHERE difficulty IS NOT NULL
+                             AND (canonical_id IS NOT NULL OR course_name LIKE 'XC:%%')""")
+            for cid, dm, cname, d in cur.fetchall():
+                if cid is not None and dm is not None:
+                    cells[(int(cid), int(dm))] = float(d)
+                if cname and cname.startswith("XC:") and dm is not None:
+                    cells[(cname, int(dm))] = float(d)
+        else:
+            cur.execute(f"""
+                SELECT DISTINCT ON (x.meet_id, x.div_id, x.event_id)
+                       x.meet_id, x.div_id, x.event_id,
+                       'TF:loc:' || m.location_id || ':'
+                       || CASE WHEN COALESCE(m.is_indoor, 0) = 1 THEN 'in' ELSE 'out' END
+                FROM   ({rows_sql}) x
+                JOIN   meets_tf m
+                       ON m.meet_id = x.meet_id AND m.div_id = x.div_id
+                      AND m.event_id = x.event_id
+                WHERE  m.location_id IS NOT NULL AND m.location_id <> 0""")
+            for meet, div, ev, key in cur.fetchall():
+                races[(meet, div, ev)] = key
+            cur.execute("""SELECT course_name, difficulty FROM course_difficulties
+                           WHERE course_name LIKE 'TF:loc:%%' AND difficulty IS NOT NULL""")
+            cells = {k: float(d) for k, d in cur.fetchall()}
+    conn.commit()
+    return races, cells
+
+
+def rowDifficulty(row, sport, races, cells):
+    """The published difficulty of the course this row was run on, or None."""
+    if sport == "XC":
+        hit = races.get((row.source, row.meet_id, row.div_id))
+        if not hit or not row.distance:
+            return None
+        dm = int(round(float(row.distance) / 100.0)) * 100
+        cid, champ = hit
+        if champ and (champ, dm) in cells:
+            return cells[(champ, dm)]
+        return cells.get((int(cid), dm)) if cid is not None else None
+    key = races.get((row.meet_id, row.div_id, row.event_id))
+    return cells.get(key) if key else None
+
+
+def rowDistance(row, sport):
+    if row.distance:
+        return float(row.distance)
+    if sport == "TF" and getattr(row, "event_short", None):
+        from event_parse import distanceFromEventShort
+        m, _gender = distanceFromEventShort(row.event_short)
+        return float(m) if m else None
+    return None
+
+
+def venueRating(nt, pool, sport, difficulty, distance, effect=None, scale=None):
+    """100 * pool_mean / adjusted at the rating it implies (the fixed point
+    of racecast/conversions._norm_from_time, from a stored nt), or None
+    when the go-live left no engine_scale for the pool."""
+    import math
+    if effect is None or scale is None:
+        import conversions as _cv
+        effect = effect or _cv.venueEffect
+        scale = scale or _cv.engineScale
+    sc = scale(pool, sport)
+    if sc is None or not nt or nt <= 0:
+        return None
+    pm = sc[0]
+    ln_nt = math.log(nt)
+    x = ln_nt
+    for _ in range(80):
+        eff = effect(pool, sport, 100.0 * pm / math.exp(x), difficulty, distance)
+        if eff is None:
+            return None
+        x_new = ln_nt - eff
+        if abs(x_new - x) < 1e-10:
+            x = x_new
+            break
+        x = 0.5 * (x + x_new)
+    eff = effect(pool, sport, 100.0 * pm / math.exp(x), difficulty, distance)
+    return 100.0 * pm / (nt / math.exp(eff))
+
+
+def checkVenue(conn, sport, n):
+    """Re-price n solved rows of the newest season with --venue's formula and
+    compare with the rating the solve wrote. The gap is the race-day term
+    plus anything the formula misses; its median should sit near zero."""
+    import statistics
+    with conn.cursor() as cur:
+        cur.execute("SELECT max(year) FROM ranking_results WHERE sport = %s", (sport,))
+        year = cur.fetchone()[0]
+    conn.commit()
+    if year is None:
+        print(f"  {sport}: no ranking_results rows to check against")
+        return
+    table = _TABLE[sport]
+    sample = (f"FROM ranking_results k JOIN {table} r ON r.result_id = k.result_id "
+              f"WHERE k.sport = '{sport}' AND k.year = {int(year)} "
+              f"AND mod(k.result_id, 97) = 0")
+    races, cells = venueMap(conn, sport, (
+        f"SELECT DISTINCT r.source, r.meet_id, r.div_id {sample}" if sport == "XC" else
+        f"SELECT DISTINCT r.meet_id, r.div_id, COALESCE(r.event_id, -1) AS event_id {sample}"))
+    extra = ", r.event_short, COALESCE(r.event_id, -1) AS event_id" if sport == "TF" else ""
+    dist = ("COALESCE(dov.distance, m.distance)" if sport == "XC" else "dov.distance")
+    join_m = ("LEFT JOIN meets m ON m.meet_id = r.meet_id AND m.div_id = r.div_id "
+              "AND m.source = r.source" if sport == "XC" else "")
+    with conn.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
+        cur.execute(f"""
+            SELECT r.result_id, r.source, r.meet_id, r.div_id, r.normalized_time,
+                   r.speed_rating, k.pool, {dist} AS distance{extra}
+            FROM   ranking_results k
+            JOIN   {table} r ON r.result_id = k.result_id
+            LEFT JOIN dist_override dov ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
+            {join_m}
+            WHERE  k.sport = %s AND k.year = %s AND mod(k.result_id, 97) = 0
+              AND  r.speed_rating > 0 AND r.normalized_time > 0
+            LIMIT  %s""", (sport, year, n))
+        rows = cur.fetchall()
+    conn.commit()
+    gaps, with_cell = [], 0
+    for row in rows:
+        d = rowDifficulty(row, sport, races, cells)
+        with_cell += d is not None
+        v = venueRating(float(row.normalized_time), row.pool, sport, d, rowDistance(row, sport))
+        if v is not None:
+            gaps.append(v - float(row.speed_rating))
+    if not gaps:
+        print(f"  {sport}: nothing priced (no engine_scale?)")
+        return
+    gaps.sort()
+    q = lambda f: gaps[min(len(gaps) - 1, int(f * len(gaps)))]          # noqa: E731
+    print(f"  {sport} {year}: {len(gaps):,} solved rows re-priced ({with_cell:,} on a "
+          f"fitted course): venue price - solve's rating  median {statistics.median(gaps):+.2f}"
+          f"  middle half {q(0.25):+.2f} .. {q(0.75):+.2f}  5-95% {q(0.05):+.2f} .. {q(0.95):+.2f} points")
+
+
+def fillSport(conn, sport, dry_run=False, venue=False):
     t0 = time.time()
     k_by_pool = poolConstants(conn, sport)
     if not k_by_pool:
@@ -187,8 +382,14 @@ def fillSport(conn, sport, dry_run=False):
     print(f"  {sport}: {len(k_by_pool)} pool constants recovered "
           "(median speed_rating * normalized_time per pool)")
 
-    census = {"filled": 0, "no_pool": 0, "no_constant": 0, "bad_nt": 0}
+    census = {"filled": 0, "no_pool": 0, "no_constant": 0, "bad_nt": 0,
+              "at_course": 0}
     samples = []
+    races = cells = None
+    if venue:
+        races, cells = venueMap(conn, sport)
+        print(f"  {sport}: --venue: {len(races):,} races with unrated rows, "
+              f"{len(cells):,} fitted courses")
 
     # ! COMMIT BEFORE THE WRITER RUNS. poolConstants left this connection
     #   in a transaction holding ACCESS SHARE on results; the writer, on a
@@ -224,7 +425,15 @@ def fillSport(conn, sport, dry_run=False):
                 if k is None:
                     census["no_constant"] += 1
                     continue
-                rating = round(k / float(nt), 2)
+                rating = None
+                if venue:
+                    d = rowDifficulty(row, sport, races, cells)
+                    rating = venueRating(float(nt), pool, sport, d,
+                                         rowDistance(row, sport))
+                    census["at_course"] += rating is not None and d is not None
+                if rating is None:
+                    rating = k / float(nt)
+                rating = round(rating, 2)
                 census["filled"] += 1
                 if len(samples) < 5:
                     samples.append((row.result_id, pool, float(nt), rating))
@@ -248,6 +457,8 @@ def fillSport(conn, sport, dry_run=False):
           f"{census['no_constant']:,} pool never on a board, "
           f"{census['bad_nt']:,} no normalized time   "
           f"({(time.time() - t0) / 60:.1f} min)")
+    if venue:
+        print(f"  {sport}: {census['at_course']:,} priced at their own course")
     for rid, pool, nt, rating in samples:
         print(f"    sample: result {rid}  {pool:<12} nt {nt:7.1f}s "
               f"-> {rating:.1f}")
@@ -259,9 +470,20 @@ def main():
                     help="count and sample; write nothing")
     ap.add_argument("--sport", choices=("XC", "TF"),
                     help="one sport only (default both)")
+    ap.add_argument("--venue", action="store_true",
+                    help="price each row at its own course (the nightly light "
+                         "update); default: the pool constant")
+    ap.add_argument("--check", type=int, default=0, metavar="N",
+                    help="re-price N solved rows per sport with --venue's "
+                         "formula and compare with the solve; writes nothing")
     args = ap.parse_args()
 
     sports = (args.sport,) if args.sport else ("XC", "TF")
+    if args.check:
+        with getConn() as conn:
+            for sport in sports:
+                checkVenue(conn, sport, args.check)
+        return
     with getConn() as conn:
         # ★ THE INVARIANT, ENFORCED EVERY RUN (2026-08-27): no normalized
         #   time => no rating. The backfill's merge NULLs nt for skipped
@@ -296,7 +518,7 @@ def main():
             # query fails on a missing temp table.
             B.prepareSprintEvents(conn)
         for sport in sports:
-            fillSport(conn, sport, dry_run=args.dry_run)
+            fillSport(conn, sport, dry_run=args.dry_run, venue=args.venue)
     print("fill_ratings done.")
 
 
