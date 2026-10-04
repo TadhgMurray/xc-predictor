@@ -127,12 +127,19 @@ def test_missing_pieces_say_so_and_never_raise():
     assert "no rating" in " ".join(ex.buildChain({"sport": "TF"})["notes"])
 
 
-def test_a_stale_weather_term_is_flagged():
+def test_a_stale_weather_term_is_its_own_step():
+    # a refit gives the evening +1%, the row still carries +7.03%
     body = ex.buildChain(_terms(w_live=math.log(1.01)))
-    w = next(s for s in body["steps"] if s["key"] == "weather")
-    assert w["pct"] == 7.03                    # the row's own, which the rating used
-    assert w["detail"]["model_pct"] == 1.0
-    assert "latest weather refit" in w["text"]
+    by = {s["key"]: s for s in body["steps"]}
+    assert by["weather"]["pct"] == 1.0                    # today's model names it
+    assert by["weather"]["detail"]["stored_pct"] == 7.03
+    assert abs(by["refit"]["pct"] - 100 * (1.0703 / 1.01 - 1)) < 0.01
+    assert "next backfill" in by["refit"]["text"]
+    # and the steps still land on the stored rating
+    run = body["start_rating"] + sum(s["pts"] for s in body["steps"] if s.get("pts"))
+    assert abs(run - 126.3) < 0.02
+    # the same to rounding: no refit step
+    assert "refit" not in {s["key"] for s in ex.buildChain(_terms())["steps"]}
 
 
 def test_the_cache_expires():

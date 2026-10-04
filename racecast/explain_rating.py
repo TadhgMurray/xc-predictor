@@ -441,21 +441,36 @@ def buildChain(t):
     # --- weather ------------------------------------------------------ #
     wd = dict(t.get("w_detail") or {})
     w_stored, w_live = t.get("w_stored"), t.get("w_live")
-    w = w_stored if w_stored is not None else w_live
     wd["model_pct"] = None if w_live is None else round(pctOf(w_live), 2)
     wd["stored_pct"] = None if w_stored is None else round(pctOf(w_stored), 2)
+    # ★ TODAY'S MODEL NAMES THE WEATHER; THE ROW'S OWN NUMBER NAMES THE
+    #   RATING. When the two differ the stored time was normalised before a
+    #   refit (of the weather or of the distance curve -- the arithmetic
+    #   cannot tell which), and the gap is its own step, "since normalised",
+    #   rather than heat that was never measured: the WashU 10k's +7.03%
+    #   would otherwise keep reading as weather after a refit that gives
+    #   the evening +1%. The rating still carries it until the next backfill.
+    drift = None
+    if w_live is not None:
+        w = w_live
+        if w_stored is not None and abs(w_stored - w_live) > 0.0015:
+            drift = w_stored - w_live
+        elif w_stored is not None:
+            w = w_stored                    # the same, to rounding: the row's
+    else:
+        w = w_stored
     if w is None:
         add("weather", "Weather", None,
             "Not available" + (f": {wd['why']}." if wd.get("why") else "."),
             available=False, detail=wd)
     else:
-        txt = _weatherText(w, wd, sport)
-        if (w_stored is not None and w_live is not None
-                and abs(w_stored - w_live) > 0.0015):
-            txt += (f" (The stored time carries {_p(w_stored, 2)}; today's weather "
-                    f"model gives {_p(w_live, 2)} -- the row was normalised before "
-                    f"the latest weather refit and moves at the next backfill.)")
-        add("weather", "Weather", w, txt, detail=wd)
+        add("weather", "Weather", w, _weatherText(w, wd, sport), detail=wd)
+    if drift is not None:
+        add("refit", "Since normalised", drift,
+            f"This result's stored time was normalised before the latest refit "
+            f"of the weather or distance model: it still carries "
+            f"{_p(w_stored, 2)} where today's model gives {_p(w_live, 2)}. "
+            f"The difference stays in the rating until the next backfill.")
 
     # --- course --------------------------------------------------------- #
     d = t.get("difficulty")
