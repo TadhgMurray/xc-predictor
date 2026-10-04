@@ -115,10 +115,31 @@ class Ours:
         return self._five[key]
 
     def race(self, meet_id):
+        """The TFRRS meet's rows, each with the RATED row of the same result.
+
+        ! THE RATING MAY SIT ON THE OTHER FEED'S COPY (2026-10-04: 0 of 867
+          matched). A race both feeds carry is rated once -- the twin rules
+          keep one copy -- so a tfrrs row's own speed_rating can be NULL while
+          the same person's athletic.net row of that day carries it. The
+          rating comes from the person's rated row on the same date within a
+          second of the same time, whichever feed it is."""
+        tp = "t.rating_pool" if self.pool_col == "rating_pool" else "NULL::text"
+        rp = "r.rating_pool" if self.pool_col == "rating_pool" else "NULL::text"
         self.cur.execute(f"""
-            SELECT result_id, person_id, athlete_name, time_seconds, speed_rating,
-                   {self.pool_col}, date
-            FROM results WHERE meet_id = %s AND source = 'tfrrs'""", (meet_id,))
+            SELECT t.result_id, t.person_id, t.athlete_name, t.time_seconds,
+                   COALESCE(t.speed_rating, o.speed_rating),
+                   CASE WHEN t.speed_rating IS NOT NULL THEN {tp} ELSE o.pool END,
+                   t.date
+            FROM results t
+            LEFT JOIN LATERAL (
+                SELECT r.speed_rating, {rp} AS pool
+                FROM results r
+                WHERE r.person_id = t.person_id AND r.date = t.date
+                  AND r.speed_rating IS NOT NULL
+                  AND abs(r.time_seconds - t.time_seconds) <= 1.0
+                ORDER BY abs(r.time_seconds - t.time_seconds) LIMIT 1) o
+              ON t.speed_rating IS NULL AND t.person_id IS NOT NULL
+            WHERE t.meet_id = %s AND t.source = 'tfrrs'""", (meet_id,))
         return self.cur.fetchall()
 
     def person_rows(self, pid):
@@ -165,6 +186,9 @@ def compare_race(lac_id, ours, sleep, default_pool):
                         "ability": rn.get("ability"), "rating": r[4], "pool": p})
     diff = [m_["ours"] - m_["theirs"] for m_ in matched]
     print(f"\n== {d.get('meet_name')} ({d.get('date')}) | {str(d.get('section'))[:48]}")
+    rated = sum(1 for r in rows if r[4] is not None)
+    print(f"   our rows: {len(rows)}, {rated} with a rating (own or the twin's), e.g. "
+          f"{[(r[2], r[3]) for r in rows[:2]]}")
     print(f"   LACCTiC course {pct(d.get('course_difficulty') or 0)}; TFRRS meet {meet}; "
           f"{len(matched)} of {len(d.get('xc_results') or [])} runners matched to ours "
           f"({len(rows)} of our rows)")
