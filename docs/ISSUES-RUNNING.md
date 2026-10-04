@@ -3545,3 +3545,22 @@ Foot Locker cells).
   .. Q4 -3.4%); track minus XC over 52 runner-seasons ours +0.26% vs theirs
   -1.38%. Consistency 1.35% vs 0.97% is not a fair test: LACCTiC fits each
   race's difficulty on that race (per-race, unshrunk), ours shrinks the day.
+- **The day terms were never refitted after the bracket swap (owner: "race
+  day tilt being the same for every race and not being put into course
+  difficulty").** bracketDifficulties replaced the joint's course numbers
+  and refitted the abilities, but kept the joint's u -- fitted against
+  courses nobody publishes -- so where the engines disagree about a course
+  the gap went into no term. u is now re-taken against the published
+  courses (the solve's own shrinkage, alternating with the abilities),
+  leave-self-out in the same frame, and the go-live prints "courses whose
+  days lean one way" (|mean u / se| >= 3, 5+ races): the courses the
+  runners say are mis-set. tests/test_day_lean.py; test_bracket_golive
+  checks abilities against the refitted u.
+- **Track weather looks like the culprit behind 13:19 vs 13:55** (Hammerand,
+  WashU 10k 2026-03-26, 29:20.5 = 126.3 vs NCAA D3 10k 29:27.0 = 117.6, both
+  tracks 0.0%, track day term off). The TF heat term uses the day's PEAK
+  apparent temperature; big-meet distance races are often at night (the
+  owner's Arcadia 3200: grid 24C, race ~18C). Pending diag_track_conversion.
+- Mt. SAC: owner reads 4828 (+6.2%) as only 1-2% easier than 4715 (+11.1%),
+  so 4715 is likely overrated. Canyon MS 3379m (+16.7%): owner says it is
+  that hard.

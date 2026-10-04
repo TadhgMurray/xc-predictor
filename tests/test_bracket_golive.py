@@ -129,7 +129,11 @@ def test_the_swap_lands_on_the_solves_scale_and_the_go_live_publishes_it(capsys)
     h = np.asarray(out["h"], dtype=np.float64)
     if h.ndim == 0 or h.size != D.n:
         h = np.full(D.n, float(np.mean(h)))
-    u_row = b["u"][D.race]
+    # ★ against the day terms REFITTED on the new courses (2026-10-04), not
+    #   the joint's: out["race_effect"] is the solve's own shrunk estimate
+    #   re-taken against the published courses
+    u_row = out["race_effect"][D.race]
+    assert out.get("race_effect_joint") is not None
     resid = y - h * (delta_b[D.cell] + u_row)
     w = out["weights"]
     a_check = (np.bincount(D.athlete, weights=w * resid, minlength=D.n_ath)

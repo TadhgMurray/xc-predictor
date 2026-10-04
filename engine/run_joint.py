@@ -2481,6 +2481,36 @@ def trackPopulationShift(D_b, cell_keys, cell_row, level_row, meet_class_row=Non
     return shift, rows
 
 
+def dayLeanReport(u, D, cell_keys, min_races=5, top=15):
+    """Lines: the courses whose race days all lean one way -- the mean day
+    term over a course's races, with its standard error from the days'
+    own spread. A course read as harder or easier than its runners run it
+    shows here as days that are all slow or all fast. Pure."""
+    u = np.asarray(u, dtype=np.float64)
+    race_cell = js.cellOfRace(D)
+    n_r = np.bincount(D.race, minlength=D.n_race) > 0
+    rc = race_cell[n_r]
+    uu = u[n_r]
+    cnt = np.bincount(rc, minlength=D.n_cell)
+    s1 = np.bincount(rc, weights=uu, minlength=D.n_cell)
+    s2 = np.bincount(rc, weights=uu * uu, minlength=D.n_cell)
+    ok = cnt >= min_races
+    if not ok.any():
+        return []
+    mean = np.where(ok, s1 / np.maximum(cnt, 1), 0.0)
+    var = np.where(ok, s2 / np.maximum(cnt, 1) - mean ** 2, 0.0)
+    se = np.sqrt(np.maximum(var, 0.0) / np.maximum(cnt - 1, 1))
+    t = np.where(ok & (se > 0), mean / np.maximum(se, 1e-12), 0.0)
+    lean = np.flatnonzero(ok & (np.abs(t) >= 3.0))
+    out = [f"[joint] courses whose days lean one way ({len(lean):,} of "
+           f"{int(ok.sum()):,} courses with {min_races}+ races at |mean/se| >= 3; "
+           f"+ = runners run them SLOWER than the course number says):"]
+    for i in lean[np.argsort(-np.abs(mean[lean]))][:top]:
+        out.append(f"        {str(cell_keys[i]):<34} {int(cnt[i]):>4} races  mean day "
+                   f"{100 * mean[i]:+.2f}%  (se {100 * se[i]:.2f}%)")
+    return out
+
+
 def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         window=21.0, top=0.5, verbose=True, prior_group="fit",
                         track_level_by_pool=True, place_radius=None, prior_place=None,
@@ -2689,6 +2719,51 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     a_new = js.tiedAbilities(den, np.bincount(D.athlete, weights=w * resid,
                                               minlength=D.n_ath),
                              D, out.get("tie_w"), out.get("tie_mean"), b["a"])
+    # ★ THE DAY TERMS, REFITTED AGAINST THE COURSES THAT PUBLISH (owner,
+    #   2026-10-04: "I wonder if some of the courses are having their race
+    #   day tilt being the same for every race and not being put into course
+    #   difficulty"). u was fitted by the joint solve against ITS course
+    #   numbers and kept unchanged when the bracket engine replaced them, so
+    #   wherever the two engines disagree about a course the gap went into no
+    #   term at all -- straight into the ratings -- while the day terms
+    #   described days at a course number nobody publishes. Now u is the
+    #   solve's own shrunk estimate (u_j = sum c_i r_i / P_j, the prior from
+    #   the solve's sigma2 and sigma_u2) re-taken against the published
+    #   courses, alternating with the abilities. dayLeanReport prints the
+    #   courses whose days all lean one way: a course number the runners
+    #   disagree with.
+    pen = None
+    if b["u"].size == D.n_race and out.get("sigma_u2") is not None:
+        s_u2 = np.asarray(out["sigma_u2"], dtype=np.float64)
+        if s_u2.ndim == 0:
+            s_u2 = np.full(int(D.group_of_cell.max()) + 1, float(s_u2))
+        pen = float(out["sigma2"]) / np.maximum(s_u2[js.groupOfRace(D)], 1e-12)
+        c = w * h
+        P = np.bincount(D.race, weights=w * h * h, minlength=D.n_race) + pen
+        u_new = np.asarray(b["u"], dtype=np.float64).copy()
+        for _ in range(4):
+            r_pre = z - a_new[D.athlete] - h * D_b[D.cell]
+            u_new = np.bincount(D.race, weights=c * r_pre, minlength=D.n_race) / P
+            resid = z - h * (D_b[D.cell] + u_new[D.race])
+            a_new = js.tiedAbilities(den, np.bincount(D.athlete, weights=w * resid,
+                                                      minlength=D.n_ath),
+                                     D, out.get("tie_w"), out.get("tie_mean"), b["a"])
+        # each runner's day without themselves, in the same frame: u_new is
+        # the day the abilities were taken against; the row moves it by the
+        # exact drop-one difference (as js.raceEffectLeaveOneOut does)
+        r_pre = z - a_new[D.athlete] - h * D_b[D.cell]
+        num = np.bincount(D.race, weights=c * r_pre, minlength=D.n_race)
+        u_ref = num / P
+        u_loo = (num[D.race] - c * r_pre) / (P[D.race] - w * h * h)
+        out["race_effect_row_bracket"] = u_new[D.race] + (u_loo - u_ref[D.race])
+        moved = np.abs(u_new - np.asarray(b["u"], dtype=np.float64))
+        print(f"[joint] bracket: day terms refitted against the published courses "
+              f"-- median move {100 * float(np.median(moved)):.2f}%, p95 "
+              f"{100 * float(np.percentile(moved, 95)):.2f}%", flush=True)
+        out["race_effect_joint"] = np.asarray(b["u"], dtype=np.float64).copy()
+        out["race_effect"] = u_new
+        for line in dayLeanReport(u_new, D, cell_keys):
+            print(line, flush=True)
     gauge = np.asarray(out["ability"], dtype=np.float64) - b["a"]   # the curve's gauge shift
     delta_joint = np.asarray(out["delta"], dtype=np.float64).copy()
     a_joint = b["a"].copy()
@@ -3198,7 +3273,13 @@ def main():
         # ★ EACH RUNNER'S DAY WITHOUT THEMSELVES (owner, 2026-10-01): when
         #   the day term reaches a rating, the rating gets the day as the
         #   rest of the field ran it (js.raceEffectLeaveOneOut)
-        if args.race_effect_sports.strip() and args.race_effect_own == "leave-out":
+        if (args.race_effect_sports.strip() and args.race_effect_own == "leave-out"
+                and out.get("race_effect_row_bracket") is not None):
+            # refitted against the published courses (bracketDifficulties)
+            out["race_effect_row"] = out["race_effect_row_bracket"]
+            print("[joint/live] race-day term: each rating carries its day "
+                  "without its own row, refitted against the published courses")
+        elif args.race_effect_sports.strip() and args.race_effect_own == "leave-out":
             u_loo, info = js.raceEffectLeaveOneOut(out, D, y)
             if u_loo is None:
                 print(f"[joint/live] race-day term: leave-self-out NOT applied "
