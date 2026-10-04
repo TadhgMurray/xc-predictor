@@ -36,6 +36,8 @@ const ctx = {
   esc: (x) => String(x),
   PAGE_SIZE: 50,
   renderBoard: (rows) => { drawn.push({ board: ctx.state.board, rows: rows[0].kind }); return "t"; },
+  // load() draws through paintBoard (renderBoard, then the phone column order)
+  paintBoard: (rows, data) => { ctx.$("results").innerHTML = ctx.renderBoard(rows, data); },
   fetch: (url) => new Promise((resolve) => pending.push({ url, resolve })),
   _lastBoard: null,
 };

@@ -465,6 +465,10 @@ td.no-break { white-space: nowrap; }
     min-width: 9rem;
 }
 .meets-page .meet-filters input.narrow { min-width: 5.5rem; }
+/* ! ONE HEIGHT FOR EVERY BOX (ui pass, 2026-10-04): a text input and a
+     <select> with the same padding came out 4px apart, so the labels over
+     School and Meet name rode higher than the ones over Sport and State. */
+.meets-page .meet-filters input, .meets-page .meet-filters select { height: 2.3rem; box-sizing: border-box; line-height: 1.25; }
 .meets-page .meet-filters button {
     padding: 0.45rem 1.1rem;
     border: 1px solid #1f2937;
@@ -1750,6 +1754,15 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     opacity: 1;
     visibility: visible;
 }
+/* ★ A CLOSED BUBBLE TAKES NO ROOM (ui pass, 2026-10-04: the home page
+     scrolled sideways on a 1366px laptop). visibility: hidden still lays
+     the 250px bubble out, so the ⓘ in the right-hand board's Rating header
+     pushed the page 38px wider than the window, and every flag near the
+     right edge of a phone's scrolling table box gave that box more width
+     to scroll into than its columns. Out of the layout until it opens;
+     the 0.12s fade-in was the price, and nobody could see it anyway. */
+.flag:not(:hover):not(:focus)::after,
+.flag:not(:hover):not(:focus)::before { display: none; }
 
 @media (max-width: 900px) {
     /* Flags sit in the LAST table column. On a wide screen the bubble opens
@@ -1981,6 +1994,10 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
 }
 .rankings-page .find-results.hidden { display: none; }
+/* ! AN EMPTY LIST DRAWS NOTHING (ui pass, 2026-10-04). The box starts with
+     no .hidden and no rows, so its border and shadow showed as a grey bar
+     under the find box on every board until something was typed. */
+.rankings-page .find-results:empty { display: none; }
 .rankings-page .find-opt {
     display: block;
     width: 100%;
@@ -2019,7 +2036,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 }
 
 /* ---- find an athlete ------------------------------------------------- */
-.rankings-page .findme { margin: 0 0 1rem; }
+.rankings-page .findme { margin: 0.9rem 0 1rem; }   /* not glued to the league row above */
 .rankings-page .findme label {
     display: block;
     font-size: 0.85rem;
@@ -5361,6 +5378,20 @@ input.eqc-big:focus { outline: none; border-bottom-color: var(--eqc-accent); }
 @media (max-width: 480px) { .relay-grid { grid-template-columns: 1fr; } }
 .eqc .eqc-day { font-size: 0.8rem; color: #6b7280; margin: 0.4rem 0 0; }
 
+/* ★ FULL-WIDTH PAGES LINE UP WITH THE TOPBAR (ui pass, 2026-10-04). The
+     rankings board, the search results and the athlete page run the whole
+     window, and their blocks sat on the body's own 8px margin -- the page
+     heading 24px left of the logo above it, the Share button and the
+     sidebar hard against the window's right edge. The topbar's contents
+     are inset 1.5rem; so are these now. The centred pages (.page-wide,
+     .page) already carry that 1.5rem and are untouched; the phone layout
+     below sets its own 12px gutter. */
+@media (min-width: 701px) {
+  body > .rankings-page, body > .search-page,
+  body:has(> .ath-head) > :not(.topbar):not(script):not(style):not(link):not(iframe) {
+    padding-left: 1.5rem; padding-right: 1.5rem; box-sizing: border-box; }
+}
+
 /* ===================================================================== *
  * ★ THE PHONE LAYOUT, THIRD TAKE (owner, 2026-10-03: "mobile UI is kind of
  *   fucked, lots of text/tables overlapping"). Replaces the second take's
@@ -5488,6 +5519,31 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .side-fold > summary::after { content: "\25BE"; float: right; color: #6b7280; }
   .side-fold[open] > summary::after { content: "\25B4"; }
   .side-fold > .sidebar { width: auto; flex: none; max-width: none; margin-top: 0.6rem; }
+
+  /* ★ FILTER BOXES, ONE WIDTH AND ONE LOOK (ui pass, 2026-10-04; owner:
+       "elements of different widths on phone"). The meets filters were a
+       wrapping row of boxes sized by their own min-widths -- 345, 345, 510,
+       300, 510, 420, 420 and 220px wide on a 390px screen, every right edge
+       somewhere else. They sit on a two-column grid now: the pickers in
+       pairs, the typed-in boxes and the league row across both. On the
+       rankings board the native selects (16px, the phone's grey fill) and
+       the combo buttons (12.6px, white) beside them read as two different
+       toolbars; they share size, type and fill now, and the find box runs
+       the full width like the filter panel above it. */
+  .meets-page .meet-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 0.6rem; padding: 0.75rem; }
+  .meets-page .meet-filters .field { min-width: 0; }
+  .meets-page .meet-filters input, .meets-page .meet-filters select,
+  .meets-page .meet-filters input.narrow { min-width: 0; width: 100%; box-sizing: border-box; }
+  .meets-page .meet-filters .field:has(#mf-school), .meets-page .meet-filters .field:has(#mf-state),
+  .meets-page .meet-filters .field:has(#mf-q), .meets-page .meet-filters details.meet-units { grid-column: 1 / -1; }
+  .meets-page .meet-filters details.meet-units .unit-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+  .meets-page .meet-filters .field:has(button) { justify-content: flex-end; }
+  .meets-page .meet-filters button { width: 100%; padding-top: 0.5rem; padding-bottom: 0.5rem; }
+  .rankings-page .field select { background-color: #fff; color: #111; }
+  .rankings-page .field select, .rankings-page .field input, .rankings-page .combo-btn { border-radius: 4px; }
+  .rankings-page .combo-btn { font-size: 16px; }
+  .rankings-page .find-wrap { max-width: none; }
+  .rankings-page .find-wrap input { font-size: 16px; }
 
   /* ! NOTHING THE READER TYPES IN IS UNDER 16px. iOS zooms the page in on
        any smaller field it focuses and leaves it zoomed -- tap a filter or

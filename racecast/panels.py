@@ -1245,7 +1245,8 @@ def _collectAthletes(conn, sport, season_year, buckets, stats):
                 #   back empty. The performance board carries the same cast at
                 #   line ~899 for the same reason.
                 "season_year": str(row["yr"]),
-                "detail":      f"{n} races",
+                # one race is "1 race", not "1 races" (ui pass, 2026-10-04)
+                "detail":      f"{n} race{'' if n == 1 else 's'}",
                 "link":        f"/athlete/{row['person_id']}",
                 "name_link":   f"/athlete/{row['person_id']}",  # same; detail isn't a link
             }
