@@ -3606,3 +3606,36 @@ Foot Locker cells).
 - Baseline scorecard (20261004_010841): owner 3200 139.02; Hammerand 10k gap
   8.74; Mt. SAC 4715 11.11%, 4828 6.17% (gap 4.93; owner 1-2); Glendoveer
   9.54% (runners read ~6.4 on the board scale); day scatter 2.835%; sanity 1.
+
+## 2026-10-04 — ⏳ the nightly light update (deploy/nightly_update.sh)
+
+Owner approved: "nightly light update" (the newest meet on the site was Sep
+17; data moved only when the full pipeline ran by hand).
+
+- **What runs nightly** (01:17 Pacific, `sudo bash deploy/install_nightly_timer.sh`):
+  scrape anet + tfrrs at once (NO_VPN, xvfb; at most XCP_NIGHTLY_SCRAPE_MIN =
+  180 min, a quiet "NOTHING IS DUE" night is not a failure) -> the pipeline's
+  own link/flag steps (00 dates, 01a snapshot, 02b venues, 03b age bands,
+  04a/04a2 links, 04b chairs, 04c twins, 06 tfrrs names, 06b canonical
+  --incremental) -> `backfill_normalize --new-only` -> `fill_ratings --venue`
+  -> boards (10 prepare / 4 streams / finish), 10g rank lines, 11 teams,
+  13c0 redirects, 13c search. Same lock as the pipeline: a full run that
+  night means the update skips (exit 0). Failures mail the admins.
+- **`backfill_normalize --new-only`:** rows with no normalized_time, dated
+  from the start of last season; update mode; never records a full write.
+- **`fill_ratings --venue`:** the old fill priced every row at the pool's
+  MEDIAN course (K / nt) -- fine for rows the solve rejected, wrong for a new
+  ordinary race (a September meet at a hard course reads points slow). With
+  --venue a row is priced like the site's conversions price a time:
+  100 pm / adjusted at the course's published (latest-era) difficulty, tilt,
+  event offset and winter gain, as a fixed point in the rating; no fitted
+  course -> the median race, as before. Only the nightly passes --venue.
+- **What a nightly number lacks:** no race-day term (a new race reads as a
+  typical day), no weather until the grid reaches it, last full run's course
+  numbers and levels. The next full pipeline re-rates everything.
+- **Measure it:** `engine/fill_ratings.py --check 3000` re-prices solved rows
+  of the newest season with the nightly formula; the median gap should sit
+  near 0 and the spread is roughly the day term. Not yet run on the box.
+- Not in the nightly: grade_sanity, gender verdicts (04d), the course and
+  meet pages, panels. A brand-new athlete's grade/level verdict waits for the
+  full run (the row is pooled on its own grade until then).

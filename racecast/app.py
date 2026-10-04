@@ -8192,6 +8192,12 @@ def _loadShare(share_id, count=False):
     return (row[0], row[1]) if row else (None, None)
 
 
+# ★ "WHO WINS STATE?" AND "BREAKOUTS THIS WEEK" (owner, 2026-10-04): their
+#   own blueprint, see pages2.py.
+import pages2 as _pages2                                       # noqa: E402
+app.register_blueprint(_pages2.bp)
+
+
 @app.route("/predictions")
 def predictions_page():
     # a shared prediction link carries the request (?meet_id=..., the old

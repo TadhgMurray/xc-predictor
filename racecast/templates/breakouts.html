@@ -1,0 +1,169 @@
+{# =====================================================================
+  breakouts.html -- "Breakouts this week" (breakouts.py, owner 2026-10-04)
+
+  Two lists from the same window of race dates:
+    rating jumps   a result well above the athlete's own usual this season
+    new PRs        a faster time at a standard distance than ever before
+
+  ★ THE DEFINITIONS ARE PRINTED UNDER THE LISTS. "Breakout" means whatever
+    the page says it means, so the page has to say it.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('pages2.css') }}">
+{% set sport_words = "cross country" if sport == "XC" else "track" %}
+{% set where = state_name if state else "the country" %}
+{% set plevel = level.split('-')[0] %}
+{% set meta_title = "Breakouts this week: " ~ level_words ~ " " ~ sport_words ~ (" in " ~ state_name if state else "") %}
+{% set meta_description = "The biggest rating jumps and new PRs in " ~ level_words ~ " " ~ sport_words
+     ~ " from the latest meets in " ~ where ~ ", measured against each athlete's own season." %}
+{% set meta_crumbs = [("Breakouts", none)] %}
+{% include "_meta.html" %}
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+
+{% macro qs(lv=level, st=state, sp=sport, dy=days) -%}
+/breakouts?level={{ lv }}{% if st %}&state={{ st }}{% endif %}&sport={{ sp|lower }}{% if dy != 7 %}&days={{ dy }}{% endif %}
+{%- endmacro %}
+
+<main class="page-wide p2-page brk-page">
+  <div class="hdr-row">
+    <h1>Breakouts this week</h1>
+    {% with share_title="Breakouts this week on Racecast", share_url=site_origin ~ qs() %}{% include "_share.html" %}{% endwith %}
+  </div>
+  <p class="p2-lead">
+    Who ran well above their own usual, and who set a new PR, at the newest
+    {{ sport_words }} meets{{ " in " ~ state_name if state }}.
+  </p>
+
+  <nav class="p2-toggles" aria-label="Breakout options">
+    <span class="p2-chips" role="group" aria-label="Level">
+      {% for slug, (pool, words) in levels.items() %}
+      <a href="{{ qs(lv=slug) }}" class="{{ 'is-on' if slug == level }}">{{ words }}</a>
+      {% endfor %}
+    </span>
+    <span class="p2-seg" role="group" aria-label="Sport">
+      <a href="{{ qs(sp='XC') }}" class="{{ 'is-on' if sport == 'XC' }}">XC</a>
+      <a href="{{ qs(sp='TF') }}" class="{{ 'is-on' if sport == 'TF' }}">Track</a>
+    </span>
+    <span class="p2-seg" role="group" aria-label="Window">
+      {% for d in window_choices %}
+      <a href="{{ qs(dy=d) }}" class="{{ 'is-on' if d == days }}">{{ d }} days</a>
+      {% endfor %}
+    </span>
+    <form class="p2-state-form" method="get" action="/breakouts">
+      <input type="hidden" name="level" value="{{ level }}">
+      <input type="hidden" name="sport" value="{{ sport|lower }}">
+      {% if days != 7 %}<input type="hidden" name="days" value="{{ days }}">{% endif %}
+      <label for="brk-state" class="p2-muted">State</label>
+      <select id="brk-state" name="state" onchange="this.form.submit()">
+        <option value="">All states</option>
+        {% for code, name in states %}<option value="{{ code }}"{% if code == state %} selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select>
+      <noscript><button type="submit">Go</button></noscript>
+    </form>
+  </nav>
+
+  <p class="p2-meta">
+    {% if data.anchor %}
+      {{ level_words }} {{ sport_words }}, races {{ data.window_lo|mdy }} to {{ data.anchor|mdy }}
+      <span class="p2-muted">(the {{ days }} days up to the newest race on file)</span>
+    {% else %}
+      No rated {{ level_words }} {{ sport_words }} races on file for the {{ data.year }} season yet.
+    {% endif %}
+    &middot; <span class="p2-muted">computed {{ data.computed_at|ago_words }}</span>
+  </p>
+
+  {% if data.error %}
+  <div class="p2-banner" role="note">This list could not be computed just now ({{ data.error }}). It will be tried again in a few minutes.</div>
+  {% endif %}
+
+  <h2 class="p2-h2">Biggest rating jumps</h2>
+  {% if breakouts %}
+  <table class="p2-tbl p2-brk">
+    <thead><tr>
+      <th class="num">#</th><th>Athlete</th><th class="p2-wide">School</th><th>Race</th>
+      <th class="num">Rating</th><th class="num" title="Points above the median of their earlier races this season">Jump</th>
+      <th class="num p2-wide" title="Median of their earlier rated races this season (how many)">Usual</th>
+    </tr></thead>
+    <tbody>
+    {% for r in breakouts %}
+      <tr>
+        <td class="num">{{ loop.index }}</td>
+        <td><a href="/athlete/{{ r.person_id }}">{{ r.name }}</a>
+          <span class="p2-row-sub">{{ r.grade|grade_label(plevel) if r.grade }}{% if r.school %}<span class="p2-narrow"> &middot; {{ r.school }}</span>{% endif %}</span></td>
+        <td class="p2-wide">{% if r.school and r.school|is_team %}{{ crest(r.school, r.state, pool=plevel) }}<a href="{{ school_href(r.school, r.state, pool=plevel) }}">{{ r.school|school_label_for(plevel, r.state) }}</a>{% elif r.school %}{{ r.school }}{% endif %}</td>
+        <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}
+          <span class="p2-row-sub">{{ r.race_date|mdy }}{% if r.time_seconds %} &middot; {{ r.time_seconds|proj_time }}{% endif %}{% if r.distance %} &middot; {{ "%.0f"|format(r.distance) }} m{% endif %}</span></td>
+        <td class="num">{{ "%.1f"|format(r.speed_rating) }}</td>
+        <td class="num p2-up">+{{ "%.1f"|format(r.jump) }}
+          {% if r.beat_best %}<span class="p2-badge" title="Above every earlier race this season (previous best {{ '%.1f'|format(r.prev_best) }})">SB</span>{% endif %}
+          {% if r.check %}<span class="p2-check" title="A jump this large is often a mislabelled distance or a merged athlete; check the race">check</span>{% endif %}</td>
+        <td class="num p2-wide">{{ "%.1f"|format(r.base) }} <span class="p2-muted">({{ r.n_prior }})</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% elif not data.error %}
+  <p class="p2-note">No {{ level_words }} result in this window beat the athlete's own median by
+    {{ "%.0f"|format(min_jump) }} point or more{{ " in " ~ state_name if state }} (among athletes with {{ min_prior }}+ earlier rated races this season).</p>
+  {% endif %}
+
+  <h2 class="p2-h2">New PRs at standard distances</h2>
+  {% if data.pr_error %}
+  <p class="p2-note">The PR list could not be computed just now ({{ data.pr_error }}); it will be tried again in a few minutes.</p>
+  {% elif prs %}
+  <table class="p2-tbl p2-prs">
+    <thead><tr>
+      <th class="num">#</th><th>Athlete</th><th class="p2-wide">School</th><th>Race</th>
+      <th class="num">Distance</th><th class="num">New PR</th>
+      <th class="num" title="How much faster than the previous best at this distance">Faster</th>
+    </tr></thead>
+    <tbody>
+    {% for r in prs %}
+      <tr>
+        <td class="num">{{ loop.index }}</td>
+        <td><a href="/athlete/{{ r.person_id }}">{{ r.name }}</a>
+          <span class="p2-row-sub">{{ r.grade|grade_label(plevel) if r.grade }}{% if r.school %}<span class="p2-narrow"> &middot; {{ r.school }}</span>{% endif %}</span></td>
+        <td class="p2-wide">{% if r.school and r.school|is_team %}{{ crest(r.school, r.state, pool=plevel) }}<a href="{{ school_href(r.school, r.state, pool=plevel) }}">{{ r.school|school_label_for(plevel, r.state) }}</a>{% elif r.school %}{{ r.school }}{% endif %}</td>
+        <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}
+          <span class="p2-row-sub">{{ r.race_date|mdy }}</span></td>
+        <td class="num">{{ "%.0f"|format(r.std) }} m</td>
+        <td class="num">{{ r.time_seconds|proj_time }} <span class="p2-row-sub">was {{ r.prev_best|proj_time }}</span></td>
+        <td class="num p2-up">{{ "%.1f"|format(100 * r.gain) }}%
+          {% if r.check %}<span class="p2-check" title="More than {{ (100 * check_gain)|int }}% under the old PR: often a short course or a mislabelled distance">check</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% elif data.anchor %}
+  <p class="p2-note">No new PRs over an earlier time at a standard distance in this window{{ " in " ~ state_name if state }}.</p>
+  {% endif %}
+
+  <section class="p2-how">
+    <h2 class="p2-h2">What counts</h2>
+    <ul>
+      <li><strong>A rating jump</strong> is a race whose speed rating beats the <em>median</em> of that
+        athlete's earlier rated races this season (same level, same sport). Only athletes with
+        {{ min_prior }} or more earlier races qualify, so a season opener is never a breakout. Ranked by
+        points above that median. <span class="p2-badge">SB</span> marks a race above every earlier one this season.</li>
+      <li><strong>A new PR</strong> is a time at a standard distance faster than every earlier time by that
+        athlete at that distance, in any season. A first race at a distance is a PR on the results page,
+        but it is not listed here. Ranked by how much faster, as a share of the old PR.
+        In cross country a PR is course-bound, so a fast course can make one.</li>
+      <li><strong>The week</strong> is the {{ days }} days up to the newest race date on file for this level,
+        so a quiet Monday still shows the weekend. Races flagged as outliers by the ratings are left
+        out; a jump of {{ check_jump|int }}+ points is marked <span class="p2-check">check</span>
+        because that size is often a mislabelled distance.</li>
+    </ul>
+  </section>
+</main>
+<script src="{{ static_v('share.js') }}"></script>
+</body>
+</html>
