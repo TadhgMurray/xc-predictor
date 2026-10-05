@@ -54,13 +54,13 @@
         <a href="/coaches/recruits" class="{{ 'is-here' if here.startswith('/coaches/recruits') }}">Find recruits</a>
         <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') or here.startswith('/breakouts') }}">Rankings</a>
         <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
-        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') or here.startswith('/projections') }}">Predictions</a>
+        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') or here.startswith('/projections') or here.startswith('/what-it-takes') }}">Predictions</a>
         {% else %}
         <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') or here.startswith('/breakouts') }}">Rankings</a>
         <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
         <a href="/conversions" class="nav-roomy {{ 'is-here' if conv_here }}">Conversions</a>
         <a href="/recruiting" class="{{ 'is-here' if here.startswith('/recruit') }}">Recruiting</a>
-        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') or here.startswith('/projections') }}">Predictions</a>
+        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') or here.startswith('/projections') or here.startswith('/what-it-takes') }}">Predictions</a>
         {% endif %}
         {% set more_here = here.startswith('/about') or here.startswith('/report') %}
         <details class="topnav-more">
