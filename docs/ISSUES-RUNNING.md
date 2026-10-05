@@ -3687,7 +3687,15 @@ Next, cheap first (no write, minutes):
 
     /srv/venv/bin/python engine/fit_weather_correction.py --sport TF --refresh --measure-only 2>&1 | grep -E "\[temp\]|\[load\]"
 
-then, if the avg wins, the re-run that applies it (from 4 again, or from 4f
+**RESULT (2026-10-05, from the cache):** weather explains 1.163% of the
+within-meet variance with the daily max, 1.167% with the 9am-8pm mean
+(rss 19414.49 vs 19413.69 over 20,340,911 rows) -- a tie in aggregate; the
+mean is chosen. On a tie the mean is the safer reading: it removes the
+worst misfire (an evening race on a hot day, WashU +7.03%) at the cost of
+some credit for a genuinely hot afternoon race. Note: the 04f corpus query
+took 8,414 s (2.3 h, ~2,400 rows/s) of the run's 17h44m -- a speed item;
+never pass --refresh unless the weather grid or the rows changed.
+Then, the re-run that applies it (from 4 again, or from 4f
 if the step plan allows). **Ask first: why 17h44m?** Paste
 `logs/20261004_125010/SUMMARY.txt` (per-step times) before another run.
 
