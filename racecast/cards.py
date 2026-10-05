@@ -21,6 +21,7 @@ import time
 
 CARD_W, CARD_H = 1200, 630
 CARD_TTL = 6 * 3600
+ATHLETE_CARD_V = 2          # see cachedAthleteCard
 # ! NOT UNDER static/: the site runs as a user that cannot write the repo
 #   (PermissionError on the first card, 2026-09-07). A world-writable
 #   temp location, overridable; the route serves the file itself.
@@ -59,20 +60,154 @@ def _fit(draw, text, bold, size, max_w, min_size=28):
     return f, text
 
 
-def athleteCardData(cur, person_id):
-    """The card's fields from the same rows the page header reads, or
-    None when the athlete does not exist."""
-    from school_identity import schoolLabelFor, _collegeState
-    from grade_label import gradeLabel
-    from school_units import unitsForPerson, unitsFor, homeStateOf
+UNNAMED = "Unnamed athlete"       # the page's own words (app.athlete, 2026-10-02)
+
+
+def _row(r):
+    return dict(r) if r is not None and not isinstance(r, dict) else r
+
+
+def _cardName(cur, person_id):
+    """{"name", "school"} the way the athlete page finds them, or None when
+    the page itself would 404.
+
+    ⚠ THE CARD 404'd WHERE THE PAGE DID NOT (audit, 2026-10-05: Duncan
+    Hamilton, /athlete/1007045840, a 200 page whose og:image was a 404, so
+    every share of it unfurled with no picture). The card asked `athletes`
+    alone; a tfrrs-only person has no row there, and the page has named
+    them from their own result rows since 2026-09-25. Same fallback here,
+    in the same order, and "None" or nothing reads as the page's "Unnamed
+    athlete" -- not "Unknown", and never a 404 for a page that exists."""
     cur.execute("""SELECT NULLIF(TRIM(concat_ws(' ', first_name, last_name)), '') AS name,
                           school FROM athletes WHERE person_id = %s
-                   ORDER BY (COALESCE(TRIM(first_name), '') <> '') DESC LIMIT 1""",
-                (person_id,))
-    a = cur.fetchone()
+                   ORDER BY (COALESCE(TRIM(first_name), '') <> ''
+                          OR COALESCE(TRIM(last_name),  '') <> '') DESC,
+                            (gender IN ('M', 'F')) DESC
+                   LIMIT 1""", (person_id,))
+    a = _row(cur.fetchone())
+    if a is None or not a.get("name"):
+        cur.execute("""SELECT NULLIF(btrim(athlete_name), '') AS name, school
+                       FROM   (SELECT athlete_name, school, date FROM results
+                               WHERE person_id = %(p)s AND athlete_name IS NOT NULL
+                               UNION ALL
+                               SELECT athlete_name, school, date FROM results_tf
+                               WHERE person_id = %(p)s AND athlete_name IS NOT NULL) x
+                       WHERE  NULLIF(btrim(athlete_name), '') IS NOT NULL
+                       ORDER  BY date DESC LIMIT 1""", {"p": person_id})
+        row = _row(cur.fetchone())
+        if row is None and a is None:
+            return None
+        if row is not None:
+            a = dict(a or {})
+            a["name"] = row["name"]
+            a["school"] = a.get("school") or row["school"]
+    name = (a.get("name") or "").strip()
+    a["unnamed"] = not name or name == "None"
+    a["name"] = UNNAMED if a["unnamed"] else name
+    return a
+
+
+def _hsEquivalent(value, pool, sport):
+    """`value` on the HS-equivalent scale -- the scale the page shows by
+    default (issue #50) -- through the same per-pool factor the header uses
+    (pool_view.repFactor). A pool with no HS twin keeps its own number,
+    which is what the page shows in that case too."""
+    if value is None:
+        return None
+    try:
+        from pool_view import repFactor
+        f = repFactor(pool, sport)
+    except Exception:                                 # noqa: BLE001
+        f = None
+    return float(value) * f if f else float(value)
+
+
+def _careerCounts(cur, person_id):
+    """(races, seasons, blocks, school) as the page's stat strip counts
+    them: every deduped race of any event, seasons as distinct labels, each
+    (label, sport) block's grade for the college class rule, and the rows'
+    majority school (the page's last resort for its team). None when the
+    race list cannot be read; the caller keeps its board-table counts.
+
+    ! THE PAGE'S HEAVIEST QUERY, paid once per card: the PNG is kept on
+      disk for CARD_TTL and at the edge after that, so this runs a few times
+      a day per shared athlete, against one run per page view."""
+    try:
+        from app import get_races, dedupe_races, season_label, _season_grade, _season_school
+        races = dedupe_races(get_races(cur, person_id))
+        blocks = {}
+        for r in races:
+            r["season_label"] = season_label(r["sport"], r["date"])
+            blocks.setdefault((r["season_label"], r["sport"]), []).append(r)
+        labels = {lab for lab, _sp in blocks}
+        return (len(races), len(labels),
+                {k: {"grade": _season_grade(v)} for k, v in blocks.items()},
+                _season_school(races))
+    except Exception as exc:                          # noqa: BLE001
+        print(f"card: race counts for {person_id} failed ({type(exc).__name__}: {exc})",
+              flush=True)
+        try:
+            cur.connection.rollback()
+        except Exception:                             # noqa: BLE001
+            pass
+        return None
+
+
+def _latestTeam(cur, person_id):
+    """The latest season that names a team -- the page's TEAM question
+    (app.athlete, owner 2026-09-14), the same SQL -- with a college
+    season's school moved to the one carrying a college division, as the
+    page does. None when no season names one."""
+    from school_identity import _collegeState
+    try:
+        cur.execute("""
+            SELECT school, pool, sport, year, grade, state FROM athlete_season
+            WHERE  person_id = %s AND school IS NOT NULL
+              AND  lower(school) NOT LIKE 'unattached%%'
+              AND  lower(school) NOT IN ('unat', 'independent',
+                                         'individual', 'no team',
+                                         'none', 'n/a', '')
+            ORDER  BY last_race DESC NULLS LAST, year DESC, n_races DESC
+            LIMIT  1""", (person_id,))
+        t = _row(cur.fetchone())
+        if t and t.get("school") and (t.get("pool") or "").startswith("college") \
+                and not _collegeState(t["school"]):
+            cur.execute("""SELECT school, count(*) AS n FROM ranking_results
+                           WHERE person_id = %s AND pool = %s AND sport = %s AND year = %s
+                             AND division IS NOT NULL AND school IS NOT NULL
+                           GROUP BY school ORDER BY n DESC LIMIT 1""",
+                        (person_id, t["pool"], t["sport"], t["year"]))
+            c = _row(cur.fetchone())
+            if c and c.get("school"):
+                t["school"] = c["school"]
+        return t if t and t.get("school") else None
+    except Exception:                                 # noqa: BLE001
+        cur.connection.rollback()
+        return None
+
+
+def athleteCardData(cur, person_id):
+    """The card's fields from the same rows the page header reads, or
+    None when the athlete does not exist.
+
+    ⚠ AUDITED AGAINST THE LIVE HEADER (2026-10-05) and brought back into
+    line with it. Four ways the card said what the page did not:
+      - the rating and best race were the OWN-POOL numbers while the page
+        opens on the HS-equivalent view (Tim Ross: card 117.3, header
+        141.1); both now go through the header's per-pool factor;
+      - the team was the rated season's, the class the rated season's,
+        where the page has taken both from the latest team season since
+        2026-09-14 and 2026-09-29 (Brandon Neifert: card "7", page "8");
+      - races and seasons counted athlete_season rows (rated, board-
+        eligible races; one season per sport) where the strip counts every
+        deduped race and distinct season labels (card 23 / 11, page 26 / 10);
+      - a page named from its result rows had a 404 card (_cardName)."""
+    from school_identity import schoolLabelFor
+    from grade_label import gradeLabel
+    from school_units import unitsForPerson, unitsFor, homeStateOf
+    a = _cardName(cur, person_id)
     if a is None:
         return None
-    a = dict(a) if not isinstance(a, dict) else a
     # ! THE SAME ORDER BY THE ATHLETE PAGE USES, INCLUDING THE RATED-FIRST
     #   KEY (app.py, 2026-09-21). The card quotes a rating, so an unrated
     #   sprint season must not be the season it quotes; keeping the two
@@ -82,28 +217,47 @@ def athleteCardData(cur, person_id):
                    ORDER BY (mean_rating IS NOT NULL) DESC,
                             (n_races >= 3) DESC, last_race DESC NULLS LAST,
                             year DESC, n_races DESC LIMIT 1""", (person_id,))
-    season = cur.fetchone()
-    season = dict(season) if season is not None and not isinstance(season, dict) else season
-    school = (season or {}).get("school") or a.get("school")
-    if season and (season.get("pool") or "").startswith("college") \
-            and not _collegeState(season.get("school")):
-        cur.execute("""SELECT school, count(*) AS n FROM ranking_results
-                       WHERE person_id = %s AND pool = %s AND sport = %s AND year = %s
-                         AND division IS NOT NULL AND school IS NOT NULL
-                       GROUP BY school ORDER BY n DESC LIMIT 1""",
-                    (person_id, season["pool"], season["sport"], season["year"]))
-        c = cur.fetchone()
-        if c:
-            school = c["school"] if isinstance(c, dict) else c[0]
-    cur.execute("""SELECT max(best_rating) AS best, count(*) AS seasons, sum(n_races) AS races
-                   FROM athlete_season WHERE person_id = %s""", (person_id,))
-    agg = cur.fetchone()
-    agg = dict(agg) if agg is not None and not isinstance(agg, dict) else (agg or {})
-    cur.execute("""SELECT sport FROM athlete_season WHERE person_id = %s
-                   ORDER BY best_rating DESC NULLS LAST LIMIT 1""", (person_id,))
-    bs = cur.fetchone()
-    best_sport = (bs["sport"] if isinstance(bs, dict) else bs[0]) if bs else ""
+    season = _row(cur.fetchone())
     pool = (season or {}).get("pool")
+    fallback_rating = None
+    if season is None:
+        # the page's fallback, for a career athlete_season never holds (every
+        # pro-pooled athlete): the engine's own row, on its own pool's factor
+        try:
+            cur.execute("""SELECT speed_rating, pool FROM athlete_ratings
+                           WHERE athlete_id = %s
+                           ORDER BY n_races DESC NULLS LAST, pool LIMIT 1""", (person_id,))
+            ar = _row(cur.fetchone())
+            if ar and ar.get("speed_rating") is not None:
+                p = ar.get("pool")
+                fallback_rating = _hsEquivalent(
+                    ar["speed_rating"], p, p.split("|", 1)[1] if p and "|" in p else None)
+        except Exception:                             # noqa: BLE001
+            cur.connection.rollback()
+    # the team and the class: the page's rules, in the page's order
+    latest = _latestTeam(cur, person_id)
+    school = (latest or {}).get("school") or a.get("school")
+    if latest and season and (season.get("pool"), season.get("sport"), season.get("year")) == (
+            latest.get("pool"), latest.get("sport"), latest.get("year")):
+        season["school"] = school              # the rank line's Team scope reads it
+    team_pool = (latest or {}).get("pool") or pool
+    team_state = (latest or {}).get("state") or (season or {}).get("state")
+    counts = _careerCounts(cur, person_id)
+    if not school and counts:
+        school = counts[3]                     # the page's last resort, the rows' majority
+    from app import _headerClassSeason, _classGrade
+    cls = _headerClassSeason(season, latest)
+    grade = (cls or {}).get("grade") or (season or {}).get("grade")
+    grade_pool = (cls or {}).get("pool") or pool
+    if cls and (cls.get("pool") or "").startswith("college") and counts:
+        grade = _classGrade(counts[2], cls) or grade
+    cur.execute("""SELECT count(*) AS seasons, sum(n_races) AS races
+                   FROM athlete_season WHERE person_id = %s""", (person_id,))
+    agg = _row(cur.fetchone()) or {}
+    cur.execute("""SELECT best_rating, sport, pool FROM athlete_season
+                   WHERE person_id = %s AND best_rating IS NOT NULL
+                   ORDER BY best_rating DESC LIMIT 1""", (person_id,))
+    bs = _row(cur.fetchone()) or {}
     label_year = None
     if season:
         label_year = season["year"] + 1 if season["sport"] == "TF" else season["year"]
@@ -112,10 +266,12 @@ def athleteCardData(cur, person_id):
         home = homeStateOf(cur, person_id)
         fb = unitsFor(cur, school, home) if school else []
         br = unitsFor(cur, school, home, collapse=False) if school else []
-        # the card's school is its season's: the chips are that season's too
+        # the team season's chips, as the page reads them
         units = unitsForPerson(cur, person_id, fallback=fb, borrow=br,
-                               **({"sport": season["sport"], "year": season["year"],
-                                   "pool": season.get("pool")} if season else {}))
+                               **({"sport": latest["sport"], "year": latest["year"],
+                                   "pool": latest.get("pool")}
+                                  if latest and latest.get("sport")
+                                  and latest.get("year") is not None else {}))
     except Exception:                                 # noqa: BLE001
         cur.connection.rollback()
     ranks = []
@@ -128,19 +284,21 @@ def athleteCardData(cur, person_id):
         cur.connection.rollback()
     from school_identity import teamState
     return {
-        "name": a.get("name") or "Unknown",
-        "school": schoolLabelFor(school, pool, (season or {}).get("state")) if school else "",
-        # their team's crest (305), a badge on the corner of the photo slot
-        "crest": crestPath(cur, school, teamState(school, pool,
-                                                  (season or {}).get("state"))),
-        "grade": gradeLabel((season or {}).get("grade"), pool) or "",
+        "name": a["name"],
+        "unnamed": a["unnamed"],
+        "school": schoolLabelFor(school, team_pool, team_state) if school else "",
+        # their team's crest (305), beside the name
+        "crest": crestPath(cur, school, teamState(school, team_pool, team_state)),
+        "grade": gradeLabel(grade, grade_pool) or "",
         "units": [u["label"] for u in units][:4],   # kept for a later use; not drawn
-        "rating": (season or {}).get("mean_rating"),
+        # ★ ON THE SCALE THE PAGE OPENS ON (HS-equivalent, issue #50)
+        "rating": (_hsEquivalent(season.get("mean_rating"), pool, season.get("sport"))
+                   if season else fallback_rating),
         "season": (f"{label_year} {season['sport']} season" if season else ""),
-        "best": agg.get("best"),
-        "best_sport": best_sport,
-        "races": agg.get("races") or 0,
-        "seasons": agg.get("seasons") or 0,
+        "best": _hsEquivalent(bs.get("best_rating"), bs.get("pool"), bs.get("sport")),
+        "best_sport": bs.get("sport") or "",
+        "races": counts[0] if counts else (agg.get("races") or 0),
+        "seasons": counts[1] if counts else (agg.get("seasons") or 0),
         "ranks": ranks[:9],
     }
 
@@ -244,6 +402,34 @@ def crestPath(cur, school, state=None):
         return None
 
 
+def _nameLines(draw, name, room):
+    """(font, lines) for the athlete's name in `room` pixels: one line at
+    the largest size from 76 down to 40, as before; else two lines, broken
+    at a space, at 44 to 36 -- the room the name has above the team line.
+
+    ⚠ A LONG NAME WAS CUT MID-SURNAME (audit, 2026-10-05): at the 40 px
+      floor the slot beside a crest holds about 25 characters, and the
+      owner's no-ellipsis cut made "Maximiliano Alessandro Hernandez-
+      Villanueva" read "... Herna". The meet card already wraps its title
+      before it cuts (_frame, "cutting Invitational to Invitati is not
+      allowed"); the name is held to the same rule. Only a name that will
+      not go on two lines is cut, at the last size tried."""
+    f = None
+    for size in range(76, 39, -4):
+        f = _font(True, size)
+        if draw.textlength(name, font=f) <= room:
+            return f, [name]
+    words = name.split()
+    for size in (44, 40, 36):
+        f = _font(True, size)
+        for i in range(len(words) - 1, 0, -1):
+            a, b = " ".join(words[:i]), " ".join(words[i:])
+            if draw.textlength(a, font=f) <= room and draw.textlength(b, font=f) <= room:
+                return f, [a, b]
+    f, cut = _fit(draw, name, True, 40, room, 40)
+    return f, [cut]
+
+
 def renderAthleteCard(d, photo_path=None):
     """The PNG bytes for one athlete's card. `photo_path`: a picture for
     the slot when accounts exist (283); until then the slot carries the
@@ -276,7 +462,8 @@ def renderAthleteCard(d, photo_path=None):
     if not placed:
         slot = Image.new("RGB", (PHOTO, PHOTO), DARK_SLOT)
         sd = ImageDraw.Draw(slot)
-        ini = _initials(d["name"])
+        # an unnamed athlete's initials would be "UA", a person who is not there
+        ini = "?" if d.get("unnamed") else _initials(d["name"])
         fi = _font(True, 110)
         w = sd.textlength(ini, font=fi)
         sd.text(((PHOTO - w) / 2, PHOTO / 2 - 72), ini, font=fi, fill="#6b6b66")
@@ -309,10 +496,14 @@ def renderAthleteCard(d, photo_path=None):
     TEXT_W = CARD_W - M - tx
     NAME_CREST = 72
     room = TEXT_W - 40 - ((NAME_CREST + 24) if d.get("crest") else 0)
-    f, name = _fit(dr, d["name"], True, 76, room, 40)
-    dr.text((tx, M + 76), name, font=f, fill="#ffffff")
+    f, lines = _nameLines(dr, d["name"], room)
+    name = "\n".join(lines)
+    ny = M + (76 if len(lines) == 1 else 66)    # two lines start higher, clear of the team line
+    dr.multiline_text((tx, ny), name, font=f, fill="#ffffff",
+                      spacing=int(f.size * 0.12))
     if d.get("crest"):
-        _l, _t, _r, _b = dr.textbbox((tx, M + 76), name, font=f)
+        _l, _t, _r, _b = dr.multiline_textbbox((tx, ny), name, font=f,
+                                               spacing=int(f.size * 0.12))
         _crest(img, d["crest"], _r + 24, (_t + _b) / 2 - NAME_CREST / 2,
                size=NAME_CREST, radius=14)
     sub = " · ".join(x for x in [d["school"], d["grade"]] if x)
@@ -321,9 +512,14 @@ def renderAthleteCard(d, photo_path=None):
 
     # the three numbers, the rating in gold
     y = M + 224
-    cols = [("RATING", f"{d['rating']:.1f}" if d["rating"] is not None else "-", d["season"]),
-            ("BEST RACE", f"{d['best']:.1f}" if d["best"] is not None else "-", d["best_sport"]),
-            ("RACES", f"{d['races']:,}", f"{d['seasons']} seasons")]
+    # ! NO BEST RACE, NO CELL (2026-10-05): the header drops "Best race" for
+    #   a career with no rated race (a thrower, a sprinter); the card drew a
+    #   dash over the sport's name instead
+    cols = [("RATING", f"{d['rating']:.1f}" if d["rating"] is not None else "-", d["season"])]
+    if d.get("best") is not None:
+        cols.append(("BEST RACE", f"{d['best']:.1f}", d["best_sport"]))
+    cols.append(("RACES", f"{d['races']:,}",
+                 f"{d['seasons']} season" + ("" if d["seasons"] == 1 else "s")))
     x = tx
     for i, (lab, val, note) in enumerate(cols):
         dr.text((x, y), lab, font=_font(False, 20), fill=DARK_MUTED)
@@ -343,7 +539,12 @@ def cachedAthleteCard(cur, person_id):
     """The card's PNG path, drawn now if missing or older than CARD_TTL;
     None when the athlete does not exist."""
     os.makedirs(CARD_DIR, exist_ok=True)
-    path = os.path.join(CARD_DIR, f"athlete-{int(person_id)}.png")
+    # ! THE FILE NAME CARRIES THE CARD'S VERSION (2026-10-05): the HS-scale
+    #   fix changed what a card says, and a file drawn before the deploy would
+    #   otherwise be served for up to CARD_TTL. Bump ATHLETE_CARD_V with
+    #   any change to the card's content; athlete.html puts it in the
+    #   og:image URL too, so the edge and the chat apps' own caches refetch.
+    path = os.path.join(CARD_DIR, f"athlete-v{ATHLETE_CARD_V}-{int(person_id)}.png")
     try:
         if time.time() - os.path.getmtime(path) < CARD_TTL:
             return path
@@ -353,7 +554,9 @@ def cachedAthleteCard(cur, person_id):
     if data is None:
         return None
     png = renderAthleteCard(data)
-    tmp = path + ".tmp"
+    # one temp file per worker: two workers drawing the same cold card
+    # shared one ".tmp" and could rename the other's half-written file
+    tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "wb") as fh:
         fh.write(png)
     os.replace(tmp, path)

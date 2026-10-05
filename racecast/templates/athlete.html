@@ -27,7 +27,9 @@
                       "affiliation": ({"@type": "Organization",
                                        "name": athlete.school|school_label} if athlete.school else none)} %}
     {% set meta_noindex = athlete.unnamed %}
-    {% set meta_image = site_origin ~ "/card/athlete/" ~ athlete.person_id ~ ".png" %}
+    {# ?v= is cards.ATHLETE_CARD_V: a new card is a new URL, so Cloudflare and
+       the chat apps (which keep a preview per URL for days) fetch it again. #}
+    {% set meta_image = site_origin ~ "/card/athlete/" ~ athlete.person_id ~ ".png?v=2" %}
     {% set meta_image_alt = athlete.name ~ " on Racecast: speed rating, best race and ranks" %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">

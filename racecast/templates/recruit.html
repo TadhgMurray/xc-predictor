@@ -10,7 +10,7 @@
 {% set meta_title = p.name ~ " · Recruiting Profile" %}
 {% set meta_description = p.name ~ ((" (" ~ p.school_label ~ ")") if p.school_label else "") ~ ": season by season speed ratings, year-over-year gain, graduation year and where their rating would rank in each college division." %}
 {% set meta_crumbs = [("Recruiting", "/recruiting"), (p.name, none)] %}
-{% set meta_image = site_origin ~ "/card/athlete/" ~ p.person_id ~ ".png" %}
+{% set meta_image = site_origin ~ "/card/athlete/" ~ p.person_id ~ ".png?v=2" %}
 {% set meta_image_alt = p.name ~ " on Racecast" %}
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
