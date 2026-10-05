@@ -33,7 +33,7 @@ RATED = {1: 960.0, 2: 995.0, 3: 1000.0, 4: 1010.0}
 @pytest.fixture
 def stubbed(monkeypatch):
     monkeypatch.setattr(P, "_predictTimes",
-                        lambda cur, ids, target: [dict(m) for m in MODEL])
+                        lambda cur, ids, target, spec=None: [dict(m) for m in MODEL])
     monkeypatch.setattr(P, "_targetSpec", lambda cur, target: {"date": "2024-11-23"})
     monkeypatch.setattr(P, "_ratingTimes", lambda cur, ids, spec, cut: {
         pid: {"seconds": s, "lo": s * 0.97, "hi": s * 1.03, "sigma_pct": 3.0,

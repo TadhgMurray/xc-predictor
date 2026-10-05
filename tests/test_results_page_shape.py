@@ -179,7 +179,8 @@ def test_the_crest_is_stamped_by_the_server_never_guessed():
     assert "crestUrl" in fn, fn
     assert "pool_key" in fn, fn
     # every surface the browser draws
-    for caller in ("predictTeam", "meetField", "schoolSquad"):
+    # (schoolSquad is schoolSquads with one school since 2026-10-05)
+    for caller in ("predictTeam", "meetField", "schoolSquads"):
         j = pred.index(f"def {caller}(")
         body = pred[j:pred.index("\ndef ", j + 10)]
         assert "_stampCrests" in body, caller

@@ -203,6 +203,16 @@ def test_the_squad_endpoint_takes_it_and_validates_it():
 def test_the_page_sends_the_level_with_every_squad_fetch():
     js = re.sub(r"/\*.*?\*/", "",
                 read("racecast", "static", "predictions.js"), flags=re.S)
-    # both of them: "add from squad" and "add the whole squad"
-    assert js.count('set("levels"') == 2, js.count('set("levels"')
-    assert js.count("state.field && state.field.levels") == 2
+    # ★ ONE PLACE BUILDS EVERY SQUAD QUERY NOW (2026-10-05), and the level
+    #   comes off the RACE the squad is for (squadCtx), not off the focused
+    #   one: state.field answered for whichever block had focus, and a fetch
+    #   made from the overall Squads toggle went out with no level at all --
+    #   the grade-5 Amherst (WI) runner on a NESCAC card.
+    assert js.count('set("levels"') == 1, js.count('set("levels"')
+    assert "state.field && state.field.levels" not in js
+    assert "function squadParams(ctx)" in js
+    # every squad request, single or batched, goes through squadParams
+    assert js.count("squadParams(ctx)") >= 3, js.count("squadParams(ctx)")
+    assert js.count('"/api/predict/squad') == 2      # squad? and squads
+    # and the meet rides along, so the server can fall back to its level
+    assert 'q.set("meet_id", state.meet.id)' in js

@@ -434,7 +434,13 @@ def stateChips(cur, school, include=None):
       the bar that named it, so the page exists AND is reachable from the
       other namesake. Nothing widens for a school nobody asked about, so an
       ordinary page's chips are unchanged."""
-    clusters = schoolClusters(cur, school)
+    return chipsFrom(schoolClusters(cur, school), include)
+
+
+def chipsFrom(clusters, include=None):
+    """stateChips' rule on clusters already in hand (biggest first) -- so a
+    caller holding many schools' clusters from one query applies the same
+    bars as the school page, not a second spelling of them."""
     primary = clusters[0]["state"] if clusters else None
     real = [c for c in clusters
             if c["n"] >= MIN_ATHLETES and float(c["share"]) >= MIN_SHARE]
@@ -445,6 +451,60 @@ def stateChips(cur, school, include=None):
         if any(c["state"] == include for c in wider):
             real = wider
     return (real if len(real) >= 2 else []), primary
+
+
+def clustersMany(cur, schools):
+    """{school: clusters as schoolClusters returns them} for many schools in
+    one query; a school with no rows is absent. Mid-rebuild (no table) it
+    asks schoolClusters per school, which computes them live."""
+    schools = sorted({s for s in schools if s})
+    if not schools:
+        return {}
+    if not _tableExists(cur, "school_identity"):
+        return {s: schoolClusters(cur, s) for s in schools}
+    cur.execute("""
+        SELECT school, state, n_athletes AS n, share, is_primary
+        FROM   school_identity
+        WHERE  school = ANY(%(schools)s)
+        ORDER  BY school, n_athletes DESC
+    """, {"schools": schools})
+    out = {}
+    for r in cur.fetchall():
+        row = (r if isinstance(r, dict) else
+               {"school": r[0], "state": r[1], "n": r[2], "share": r[3],
+                "is_primary": r[4]})
+        out.setdefault(row["school"], []).append(
+            {"state": row["state"], "n": row["n"], "share": row["share"],
+             "is_primary": row["is_primary"]})
+    return out
+
+
+def assignedStates(cur, pairs):
+    """{(school, person_id): state} -- where the identity puts each athlete
+    for that school name: the school's own assignment (school_athlete_state)
+    first, else their home state. A pair neither table knows is ABSENT, not
+    guessed: stateFilterSql's last resort, the primary chip, is a guess the
+    caller may not want to act on."""
+    pairs = {(s, int(p)) for s, p in pairs if s and p}
+    if not pairs:
+        return {}
+    out = {}
+    if _LABELS.get("athlete_state") or _tableExists(cur, "school_athlete_state"):
+        cur.execute("""
+            SELECT school, person_id, state FROM school_athlete_state
+            WHERE  school = ANY(%(s)s) AND person_id = ANY(%(p)s)
+        """, {"s": sorted({s for s, _p in pairs}),
+              "p": sorted({p for _s, p in pairs})})
+        for r in cur.fetchall():
+            sc, pid, st = ((r["school"], r["person_id"], r["state"])
+                           if isinstance(r, dict) else tuple(r))
+            if (sc, pid) in pairs and st:
+                out[(sc, pid)] = st
+    home = homeStates(cur, [p for s, p in pairs if (s, p) not in out])
+    for s, p in pairs:
+        if (s, p) not in out and home.get(p):
+            out[(s, p)] = home[p]
+    return out
 
 
 def stateFilterSql(alias, state, primary, school=None):

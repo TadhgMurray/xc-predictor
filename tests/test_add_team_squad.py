@@ -35,7 +35,12 @@ def body(name):
     return PY[i:PY.index("\ndef ", i + 1)]
 
 
-sq = body("schoolSquad")
+# ! schoolSquad IS schoolSquads WITH ONE SCHOOL (2026-10-05): the page's
+#   Everyone batches a race's squads, and one implementation answers both,
+#   so the checks below read the two together.
+sq = body("schoolSquad") + body("schoolSquads")
+ok("return schoolSquads(" in body("schoolSquad"),
+   "schoolSquad delegates to the batched one rather than keeping a copy")
 
 # 1. It delegates rather than re-querying.
 ok("_currentSquads(" in sq,

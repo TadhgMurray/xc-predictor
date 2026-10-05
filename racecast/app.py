@@ -250,6 +250,38 @@ school_identity.loadLabels(getConn)
 #   Restart after the scraper runs to pick up new crests, exactly as the
 #   labels want a restart after a pipeline.
 school_logo.loadCrests(getConn)
+
+
+# ★ THE PREDICTION MODEL, LOADED WHEN THE WORKER STARTS (owner, 2026-10-05:
+#   "speed up the predictions... They're pretty slow"). Measured that day on
+#   the live site: one athlete's prediction took 4.39 s on a cold worker and
+#   0.34 s on a warm one -- torch, the checkpoint, feature_extraction and the
+#   conversion tables all load on the first Predict a worker serves, and
+#   there are eight workers. predict.warm() says why a thread and not
+#   gunicorn --preload.
+#
+# ! ONLY UNDER GUNICORN BY DEFAULT. The tests, the scripts and the dev
+#   server import this module too, and none of them wants torch loaded
+#   behind its back. XCP_PREWARM=1 forces it on anywhere, =0 off everywhere.
+# ! NOT WITH --preload: the thread would run in the master and not survive
+#   the fork. deploy/server_setup.sh starts gunicorn without it.
+def _prewarmPredict():
+    t0 = time.time()
+    try:
+        import predict as _predict
+        done = _predict.warm()
+        print(f"[predict] warm in {time.time() - t0:.1f}s: "
+              f"{', '.join(done) or 'nothing'}", file=sys.stderr, flush=True)
+    except Exception:                                   # noqa: BLE001
+        app.logger.exception("predict warm-up failed")
+
+
+_PREWARM = (os.environ.get("XCP_PREWARM") or "").strip()
+if _PREWARM == "1" or (_PREWARM != "0" and "gunicorn" in os.path.basename(
+        (sys.argv or [""])[0])):
+    threading.Thread(target=_prewarmPredict, name="predict-warm",
+                     daemon=True).start()
+
 app.template_filter("school_label")(school_identity.schoolLabel)
 # one spelling for a grade, by the row's pool (owner, 2026-09-06)
 import grade_label as _grade_label
@@ -8656,20 +8688,41 @@ def api_predict_squad():
     and "add one more runner to a team" (show the rest). Works without the
     model -- it is a database question.
     """
-    from predict import schoolSquad
-
     school = (request.args.get("school") or "").strip()
     if not school:
         return jsonify({"error": "school is required."}), 400
-    sport = (request.args.get("sport") or "XC").strip().upper()
+    parsed, err = _squadParams(request.args)
+    if err:
+        return jsonify({"error": err}), 400
+    state = (request.args.get("state") or "").strip().upper()[:2] or None
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            out = _squadsServed(cur, [(school, state)], parsed)[0]
+    return jsonify(out)
+
+
+# How long a worker holds a school's squad (2026-10-05). The squad is a
+# function of athlete_season and the results tables, which move when a
+# pipeline run goes live or a scrape lands -- hours apart -- and
+# _raceEntrants already holds its half for ten minutes for the same reason.
+# Five minutes means a page visit's repeated asks (the field, each card, the
+# Everyone toggle, Best 7) are one query, and a fresh result shows soon.
+_SQUAD_TTL_S = 300
+# a championship's teams, with room; each one is a few rows of SQL
+_SQUADS_MAX = 120
+
+
+def _squadParams(args):
+    """({sport, gender, levels, levels_given, meet_id, div_id}, error)."""
+    sport = (args.get("sport") or "XC").strip().upper()
     if sport not in ("XC", "TF"):
-        return jsonify({"error": "sport must be XC or TF."}), 400
+        return None, "sport must be XC or TF."
 
     # ★ ONE SIDE OF THE SCHOOL (owner, 2026-09-01). A school has a boys team
     #   and a girls team; unfiltered, "add from squad" on a boys race offered
     #   both. Absent or unrecognised means unfiltered, which is right for a
     #   genuinely mixed field.
-    gender = (request.args.get("gender") or "").strip().upper() or None
+    gender = (args.get("gender") or "").strip().upper() or None
     if gender not in ("M", "F"):
         gender = None
 
@@ -8680,29 +8733,126 @@ def api_predict_squad():
     #   page sends back the levels meetField read off the race, so adding a
     #   squad narrows exactly the way the field it is being added to did.
     _LEVELS = {"hs", "ms", "college", "elem", "pro"}
-    levels = {v for v in (request.args.get("levels") or "").lower().split(",")
+    levels = {v for v in (args.get("levels") or "").lower().split(",")
               if v in _LEVELS} or None
 
-    # ⚠ THE LABEL IS NOT THE NAME, AND A CALLER MAY SEND EITHER. /search/api
-    #   indexes a school as "DeWitt (MI)" while athlete_season.school stores
-    #   the bare "DeWitt", so a picker that sent the label got an empty squad
-    #   and reported a real school as "no one has raced this season". The
-    #   client sends .value now; this is the belt to that pair of braces, and
-    #   it covers a cached page still sending the old string.
-    #
-    # ! EXACT FIRST, BARE ONLY AS A FALLBACK. Stripping unconditionally would
-    #   rename a school genuinely stored with a parenthesised suffix. A name
-    #   that resolves is never second-guessed.
-    with getConn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            out = schoolSquad(cur, school, sport, gender=gender,
-                              levels=levels)
-            if not out.get("runners"):
-                bare = search_index.bareSchool(school)
-                if bare and bare != school:
-                    out = schoolSquad(cur, bare, sport, gender=gender,
-                                      levels=levels)
-    return jsonify(out)
+    # ★ AND WHEN THE PAGE SENT NO LEVEL, THE MEET'S (owner, 2026-10-05:
+    #   "adding the entire roster of Amherst should not add this guy" -- a
+    #   grade-5 runner from Amherst (WI) on a NESCAC prediction). The page
+    #   read the level off the focused race, and a request made while the
+    #   focus was elsewhere (the overall Squads toggle, the all-races block)
+    #   went out with none -- and no level is no filter. A request that names
+    #   its meet is narrowed to that meet's level, as meetField narrows the
+    #   field itself.
+    # ! `levels=` SENT EMPTY IS AN ANSWER: the field said it is a mixed race,
+    #   so nothing is narrowed and nothing is re-derived.
+    meet = (args.get("meet_id") or "").strip()
+    div = (args.get("div_id") or "").strip()
+    return {"sport": sport, "gender": gender, "levels": levels,
+            "levels_given": "levels" in args,
+            "meet_id": int(meet) if meet.isdigit() else None,
+            "div_id": int(div) if div.isdigit() else None}, None
+
+
+def _squadsServed(cur, wanted, p):
+    """[schoolSquad's dict] for [(school, state)], from this worker's cache
+    where it can and from ONE batched computation for the rest."""
+    import predict
+    import ttlcache
+    sport, gender, levels = p["sport"], p["gender"], p["levels"]
+    meet_state = None
+    if p["meet_id"]:
+        if not p["levels_given"]:
+            levels = predict.meetLevels(cur, p["meet_id"], p["div_id"], sport)
+        # ★ THE MEET'S STATE NAMES THE NAMESAKE WHEN THE PAGE DID NOT: an
+        #   "Amherst" added to a Massachusetts race is the Massachusetts one.
+        #   _keepIdentity only acts on it where that state is a real cluster
+        #   of the name, so a CT meet does not move an MA school anywhere.
+        meet_state = predict._meetState(cur, p["meet_id"], sport)
+    season = predict._currentSeason(cur, sport)
+    wanted = [(sch, (st or meet_state or None)) for sch, st in wanted]
+    lv_key = tuple(sorted(levels)) if levels else None
+
+    def key(sch, st):
+        return ("predict-squad", sch, sport, gender, lv_key, st, season)
+
+    out = [ttlcache.peek(key(sch, st)) for sch, st in wanted]
+    miss = [i for i, v in enumerate(out) if v is None]
+    if miss:
+        got = predict.schoolSquads(cur, [wanted[i] for i in miss], sport,
+                                   season, gender=gender, levels=levels)
+        for i, g in zip(miss, got):
+            sch, st = wanted[i]
+            # ⚠ THE LABEL IS NOT THE NAME, AND A CALLER MAY SEND EITHER.
+            #   /search/api indexes a school as "DeWitt (MI)" while
+            #   athlete_season.school stores the bare "DeWitt", so a picker
+            #   that sent the label got an empty squad and reported a real
+            #   school as "no one has raced this season". The client sends
+            #   .value now; this is the belt to that pair of braces, and it
+            #   covers a cached page still sending the old string.
+            #
+            # ! EXACT FIRST, BARE ONLY AS A FALLBACK. Stripping
+            #   unconditionally would rename a school genuinely stored with a
+            #   parenthesised suffix. A name that resolves is never
+            #   second-guessed.
+            if not g.get("runners"):
+                bare = search_index.bareSchool(sch)
+                if bare and bare != sch:
+                    g = predict.schoolSquad(cur, bare, sport, season,
+                                            gender=gender, levels=levels,
+                                            state=st)
+            out[i] = g
+            # ! FILED ONLY ONCE COMPUTED: a failure above raises out of
+            #   the route and nothing is cached (the ttlcache rule)
+            ttlcache.get(key(sch, st), lambda g=g: g, ttl=_SQUAD_TTL_S)
+    return out
+
+
+# ★ MANY SQUADS, ONE REQUEST (owner, 2026-10-05: "speed up the predictions
+#   and the loading of the squads. They're pretty slow"). Squads: Everyone
+#   used to send one /api/predict/squad per team on the page -- every team
+#   of every race at a championship -- and each was a round trip through
+#   the edge, a pooled connection and five queries, queued behind eight
+#   sync workers. This answers a whole race's teams with one batched set of
+#   queries; the page chunks a very large field into a few of these.
+#
+# ! GET OR POST, LIKE THE PREDICT ROUTES: forty school names fit a URL, a
+#   hundred may not (sendQuery on the page decides).
+@app.route("/api/predict/squads", methods=["GET", "POST"])
+def api_predict_squads():
+    """{"squads": [schoolSquad's dict, ...]} in the order of `teams`, a JSON
+    list of school names or [school, state] pairs; same sport/gender/levels/
+    meet_id/div_id as /api/predict/squad."""
+    args = request.values
+    parsed, err = _squadParams(args)
+    if err:
+        return jsonify({"error": err}), 400
+    try:
+        teams = json.loads(args.get("teams") or "[]")
+    except ValueError:
+        return jsonify({"error": "teams must be JSON."}), 400
+    if not isinstance(teams, list) or len(teams) > _SQUADS_MAX:
+        return jsonify({"error": f"teams is a list of at most {_SQUADS_MAX}."}), 400
+    wanted = []
+    for t in teams:
+        if isinstance(t, str):
+            t = [t, None]
+        if (not isinstance(t, list) or len(t) != 2
+                or not isinstance(t[0], str) or not t[0].strip()
+                or not (t[1] is None or isinstance(t[1], str))):
+            return jsonify({"error": "teams entries are a school or "
+                                     "[school, state]."}), 400
+        wanted.append((t[0].strip(), (t[1] or "").strip().upper()[:2] or None))
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                out = _squadsServed(cur, wanted, parsed)
+    except Exception:                                # noqa: BLE001
+        # see /api/predict/individual: a JSON route answers in JSON
+        app.logger.exception("/api/predict/squads failed")
+        return jsonify({"error": "The squads could not be loaded. This has "
+                                 "been logged."}), 500
+    return jsonify({"squads": out})
 
 
 @app.route("/api/predict/athletes")

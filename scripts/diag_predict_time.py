@@ -228,8 +228,26 @@ def main():
             got = sum(1 for p in preds if p and p.get("seconds") is not None)
             print(f"     -> {got}/{len(preds)} predicted")
 
+            # ★ AND WHAT THE PAGE ADDS ON TOP (2026-10-05). The route serves
+            #   _servedTimes, not _predictTimes -- the rating guard's own
+            #   queries ride on every request -- and the page always asks
+            #   for the spread (sim=1), which until today was a Python loop
+            #   per draw and most of a big meet's request.
+            with Stage("_ratingTimes (the served basis)"):
+                rated = P._ratingTimes(cur, ids, spec,
+                                       P._asDate(spec.get("date")))
+            print(f"     -> {len(rated)} served from their ratings")
+
             with Stage("_score"):
-                P._score(field, preds)
+                _teams, finishers = P._score(field, preds)
+
+            with Stage("race_sim.simulate (sim=1)"):
+                import race_sim
+                race_sim.simulate(field, preds)
+
+            with Stage("_decorate + crests"):
+                P._decorate(finishers, a.sport)
+                P._stampCrests(finishers, "school", "school_state")
 
     print()
     total = sum(dt for lab, dt in Stage.rows
