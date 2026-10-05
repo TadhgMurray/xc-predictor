@@ -658,13 +658,38 @@ def _hsPool(gender):
     return "hs_f" if (gender or "m") == "f" else "hs_m"
 
 
-def timesFor(rating, gender):
-    """{'5k': sec, '1600': sec, '3200': sec} for a HS-scale rating, each
-    at the sport's typical venue; a value the conversion cannot give is
+def subjectEvents(subject):
+    """The events a school's thresholds are quoted in (owner, 2026-10-05:
+    "should prolly be based on athlete"): the reader's own -- the events
+    they have a PR in, or the event they typed -- in EVENTS order; the
+    default 5K / 1600 / 3200 when there is no reader or nothing usable."""
+    keys = []
+    if subject and subject.get("kind") == "athlete":
+        keys = [p["key"] for p in (subject.get("prs") or []) if p.get("key") in EVENTS]
+    elif subject and subject.get("event") in EVENTS:
+        keys = [subject["event"]] + [k for k, _, _ in THRESHOLD_EVENTS]
+    order = list(EVENTS)
+    keys = sorted(set(keys), key=order.index)
+    if not keys:
+        return list(THRESHOLD_EVENTS)
+    return [(k, EVENTS[k][0], EVENTS[k][1]) for k in keys]
+
+
+def eventLabel(key):
+    """The column head for an event key: '5K XC', '1600', '2 mile' ..."""
+    from_prs = {k: lab for k, lab, *_ in PR_EVENTS}
+    return from_prs.get(key) or EVENTS.get(key, (None, None, key))[2]
+
+
+def timesFor(rating, gender, events=None):
+    """{event key: sec} for a HS-scale rating, each at the sport's typical
+    venue -- by default THRESHOLD_EVENTS (5K / 1600 / 3200), or the
+    (key, metres, sport) list given; a value the conversion cannot give is
     None. Memoised at half a point, ten minutes."""
+    events = tuple(events or THRESHOLD_EVENTS)
     if rating is None:
-        return {k: None for k, _, _ in THRESHOLD_EVENTS}
-    key = (round(float(rating) * 2.0) / 2.0, _hsPool(gender))
+        return {k: None for k, _, _ in events}
+    key = (round(float(rating) * 2.0) / 2.0, _hsPool(gender), events)
     with _times_lock:
         if _time.time() - _TIMES["at"] > CACHE_TTL:
             _TIMES["map"].clear()
@@ -675,7 +700,7 @@ def timesFor(rating, gender):
     out = {}
     try:
         from conversions import _norm_from_rating, normalized_to_time
-        for ev, dist, sport in THRESHOLD_EVENTS:
+        for ev, dist, sport in events:
             norm = _norm_from_rating(key[0], key[1], sport=sport)
             t = normalized_to_time(norm, {"distance": dist, "pool": key[1], "sport": sport}) \
                 if norm else None
@@ -683,7 +708,7 @@ def timesFor(rating, gender):
     except Exception as exc:                            # noqa: BLE001
         print(f"recruiting: timesFor({rating}, {gender}) failed ({type(exc).__name__}: {exc})",
               flush=True)
-        out = {k: None for k, _, _ in THRESHOLD_EVENTS}
+        out = {k: None for k, _, _ in events}
     with _times_lock:
         _TIMES["map"][key] = out
     return out

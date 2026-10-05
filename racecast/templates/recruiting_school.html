@@ -56,23 +56,24 @@
   <p class="r-tier r-tier-{{ b.tier.key }}"><strong>{{ b.tier.label }}</strong>: your {{ "%.1f"|format(b.rating) }} is {{ b.tier.blurb }}{% if b.tier.gap %}; {{ "%.1f"|format(b.tier.gap) }} points to {{ b.tier.next_label|lower }}{% endif %}.</p>
   {% endif %}
 
-  <table class="recruit-tbl r-dist">
-    <thead><tr><th></th><th class="num">Rating</th><th class="num">5K XC</th><th class="num">1600</th><th class="num">3200</th></tr></thead>
+  {# the reader's own events when one is named (recruiting.subjectEvents) #}
+  <div class="r-scroll"><table class="recruit-tbl r-dist">
+    <thead><tr><th></th><th class="num">Rating</th>{% for k, lab in event_cols %}<th class="num">{{ lab }}</th>{% endfor %}</tr></thead>
     <tbody>
     {% for key, name in [("max", "Fastest recruit"), ("p75", "Top quarter" ~ (" (scholarship range)" if scholarship else "")), ("median", "Typical recruit"), ("p25", "Recruit range starts"), ("min", "Slowest recruit (walk-on range)")] %}
       <tr>
         <td>{{ name }}</td>
         <td class="num">{{ "%.1f"|format(s[key]) if s[key] is not none else " - " }}</td>
-        <td class="num">{{ fmt_time(s.times[key]["5k"]) or " - " }}</td>
-        <td class="num">{{ fmt_time(s.times[key]["1600"]) or " - " }}</td>
-        <td class="num">{{ fmt_time(s.times[key]["3200"]) or " - " }}</td>
+        {% for k, lab in event_cols %}<td class="num">{{ fmt_time(s.times[key][k]) or " - " }}</td>{% endfor %}
       </tr>
     {% endfor %}
     </tbody>
-  </table>
-  {% if s.times.median["5k"] and s.times.p25["5k"] and s.times.min["5k"] %}
-  <p class="meta">To be a typical {{ school }} recruit you run about <strong>{{ fmt_time(s.times.median["5k"]) }}</strong> for 5K in cross country{% if s.times.median["3200"] %} or <strong>{{ fmt_time(s.times.median["3200"]) }}</strong> for 3200{% endif %};
-     the door opens around {{ fmt_time(s.times.p25["5k"]) }}{% if s.times.p25["3200"] %} / {{ fmt_time(s.times.p25["3200"]) }}{% endif %}, and a walk-on has run at least {{ fmt_time(s.times.min["5k"]) }}.</p>
+  </table></div>
+  {% set e1 = event_cols[0] if event_cols else none %}
+  {% set e2 = event_cols[1] if event_cols|length > 1 else none %}
+  {% if e1 and s.times.median[e1[0]] and s.times.p25[e1[0]] and s.times.min[e1[0]] %}
+  <p class="meta">To be a typical {{ school }} recruit you run about <strong>{{ fmt_time(s.times.median[e1[0]]) }}</strong> for {{ e1[1] }}{% if e2 and s.times.median[e2[0]] %} or <strong>{{ fmt_time(s.times.median[e2[0]]) }}</strong> for {{ e2[1] }}{% endif %};
+     the door opens around {{ fmt_time(s.times.p25[e1[0]]) }}{% if e2 and s.times.p25[e2[0]] %} / {{ fmt_time(s.times.p25[e2[0]]) }}{% endif %}, and a walk-on has run at least {{ fmt_time(s.times.min[e1[0]]) }}.</p>
   {% endif %}
 
   <div class="r-scroll"><table class="recruit-tbl r-list">

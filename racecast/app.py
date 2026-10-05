@@ -9778,6 +9778,16 @@ def recruiting_school_page(school_name):
             other = "f" if gender == "m" else "m"
             has_other = any(R.schoolRecruits(cur, school_name, state, other, sp)[0]
                             for sp in R.SPORTS)
+    # ★ THE THRESHOLDS IN THE READER'S OWN EVENTS (owner, 2026-10-05): the
+    #   events the athlete has a PR in, or the one they typed; 5K / 1600 /
+    #   3200 when nobody is named.
+    events = R.subjectEvents(subject)
+    if events != list(R.THRESHOLD_EVENTS):
+        for b in blocks:
+            s_ = b["summary"]
+            s_["times"] = {k: R.timesFor(s_.get(k), gender, events)
+                           for k in ("min", "p25", "median", "p75", "max")}
+    event_cols = [(k, R.eventLabel(k)) for k, _d, _s in events]
     if not blocks and not has_other:
         abort(404)
     for b in blocks:
@@ -9787,6 +9797,7 @@ def recruiting_school_page(school_name):
     return render_template("recruiting_school.html", school=school_name, state=state,
                            gender=gender, has_other=has_other, blocks=blocks, units=units,
                            subject=subject, subject_error=serr, fmt_time=R.fmtTime,
+                           event_cols=event_cols,
                            scholarship=R.scholarshipDivision(
                                (blocks[0]["summary"].get("division") if blocks else None)))
 
