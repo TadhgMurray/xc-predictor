@@ -258,11 +258,14 @@ def client(fixtures, monkeypatch):
     monkeypatch.setattr(A, "getConn", lambda: _Conn())
     calls = {"levels": 0}
 
-    def meetLevels(cur, meet_id, div_id, sport):
+    def meetLevels(cur, meet_id, div_id, sport, source=None):
         calls["levels"] += 1
         return {"college"}
     monkeypatch.setattr(P, "meetLevels", meetLevels)
-    monkeypatch.setattr(P, "_meetState", lambda cur, meet_id, sport: "MA")
+    monkeypatch.setattr(P, "_meetState",
+                        lambda cur, meet_id, sport, source=None: "MA")
+    # which meet of the id (2026-10-05): this fake connection has no tables
+    monkeypatch.setattr(A, "_predictSource", lambda *a, **k: ("anet", 0))
     yield A.app.test_client(), calls
     ttlcache.clear()
 

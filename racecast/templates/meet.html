@@ -50,7 +50,8 @@
         {% if meet_date %} · {{ meet_date }}{% endif %}
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
-    <p><a class="meet-link" href="/predictions?meet_id={{ header.meet_id }}&amp;sport=XC">Predict this meet →</a></p>
+    {# ?alt= when this id holds two meets: predict THIS one (2026-10-05) #}
+    <p><a class="meet-link" href="/predictions?meet_id={{ header.meet_id }}&amp;sport=XC{% if other_sources %}&amp;alt={{ alt_idx }}{% endif %}">Predict this meet →</a></p>
 
     {% if other_sources %}
     {# Two source id spaces overlap: this id holds two DIFFERENT real-world

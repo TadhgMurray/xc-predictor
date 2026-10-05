@@ -476,19 +476,27 @@ async function restoreFromQuery(p, names) {
   const divIds = (p.get("div_ids") || "").split(",").filter(Boolean);
   const div = (p.get("div_id") || "").trim();
   const pids = (p.get("person_id") || "").split(",").filter(Boolean);
+  /* ★ WHICH MEET OF THE ID (owner, 2026-10-05): a shared prediction of the
+     D3 championships has to reopen the D3 championships, not the 2009 New
+     Jersey meet that shares its number. Opaque, like the meet page's. */
+  const alt = /^\d+$/.test(p.get("alt") || "") ? p.get("alt") : "";
+  const first = divIds[0] || div;
 
   showWhen(p.get("mode") === "rerun_exact" ? "asran" : "thisyear");
   showWho(pids.length ? "individual" : "team");
 
   let name = "", date = null;
   try {
-    const res = await fetch("/api/predict/races?" + new URLSearchParams({ meet_id: id, sport: sport.toUpperCase() }));
+    const rq = new URLSearchParams({ meet_id: id, sport: sport.toUpperCase() });
+    if (alt) rq.set("alt", alt);
+    if (first) rq.set("div_id", first);
+    const res = await fetch("/api/predict/races?" + rq.toString());
     const data = await res.json();
     name = data.meet_name || "";
     date = data.date || null;
   } catch (err) { /* the meet still opens, unnamed */ }
-  const first = divIds[0] || div;
-  await chooseMeet({ link: first ? `/race/${sport}/${id}/${first}` : `/meet/${sport}/${id}`,
+  const tail = alt ? `?alt=${alt}` : "";
+  await chooseMeet({ link: (first ? `/race/${sport}/${id}/${first}` : `/meet/${sport}/${id}`) + tail,
                      label: name || `Meet ${id}`, sub: date || "" });
 
   // the races, as one group: a single division, or several scored as one
@@ -578,7 +586,13 @@ function restoreState() {
   }
   const linked = url.get("meet_id");
   const savedId = saved && saved.meet ? String(saved.meet.id || "") : "";
-  if (!saved || !saved.meet || (linked && linked !== savedId)) {
+  /* ! AND THE SAME ID'S OTHER MEET IS A DIFFERENT MEET (2026-10-05): a
+       "Predict this" link carrying ?alt= names it, and a session saved on the
+       other one must not answer for it. */
+  const savedAlt = saved && saved.meet ? String(saved.meet.alt || 0) : "0";
+  const linkedAlt = String(Number(url.get("alt")) || 0);
+  if (!saved || !saved.meet || (linked && linked !== savedId)
+      || (linked && url.has("alt") && linkedAlt !== savedAlt)) {
     if (linked) restoreFromQuery(url, {});
     return;
   }
@@ -964,14 +978,22 @@ function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
  *   re-running a whole meet.
  */
 function parseMeetLink(link) {
+  /* ★ AND WHICH MEET OF THE ID (owner, 2026-10-05: the 2025 D3
+     championships read "ran 2009-10-13 · Warinanco Park"). The anet and
+     tfrrs ids collide, so one meet_id can be two real meets; the search
+     results and the meet pages tell them apart with an opaque ?alt=N, and
+     the link was being parsed for its path alone. Kept as a number, null
+     for the bare link (the biggest of them, as on the meet page). */
+  const am = /[?&]alt=(\d+)/.exec(link || "");
+  const alt = am ? Number(am[1]) : null;
   const race = /^\/race\/(xc|tf)\/(\d+)\/(\d+)(?:\/(\d+))?/.exec(link || "");
   if (race) {
     return { sport: race[1].toUpperCase(), id: race[2],
-             div: race[1] === "tf" ? (race[4] || race[3]) : race[3] };
+             div: race[1] === "tf" ? (race[4] || race[3]) : race[3], alt: alt };
   }
   const meet = /^\/meet\/(xc|tf)\/(\d+)/.exec(link || "");
   if (meet) {
-    return { sport: meet[1].toUpperCase(), id: meet[2], div: null };
+    return { sport: meet[1].toUpperCase(), id: meet[2], div: null, alt: alt };
   }
   return null;
 }
@@ -1138,12 +1160,12 @@ function renderChosenMeet(bare) {
   $("meet-chosen").innerHTML =
     `<div class="mc-main">
        <a class="mc-name"
-          href="/meet/${state.meet.sport.toLowerCase()}/${esc(state.meet.id)}"
+          href="/meet/${state.meet.sport.toLowerCase()}/${esc(state.meet.id)}${state.meet.alt ? `?alt=${esc(state.meet.alt)}` : ""}"
           >${esc(bare)}</a>
        ${state.meet.year ? `<span class="mc-year">${esc(state.meet.year)}</span>` : ""}
      </div>
      <div class="mc-sub">
-       ${state.meet.date ? `ran ${esc(state.meet.date)} \u00b7 ` : ""}
+       <span id="mc-date">${state.meet.date ? `ran ${esc(state.meet.date)} \u00b7 ` : ""}</span>
        ${esc(state.meet.sport === "XC" ? "Cross Country" : "Track & Field")}
        <span id="mc-course"></span>
      </div>
@@ -1185,8 +1207,22 @@ async function loadRaces() {
   try {
     const q = new URLSearchParams({ meet_id: state.meet.id,
                                     sport: state.meet.sport });
+    /* ★ ONE MEET'S RACES (owner, 2026-10-05): the D3 championships listed a
+       2009 New Jersey meet's "Varsity" races beside its own, because the id
+       is shared. The division rides along so an old link without ?alt= still
+       lands on the meet that HAS that race (the meet page's own rule). */
+    if (state.meet.alt) q.set("alt", state.meet.alt);
+    if (state.meet.div) q.set("div_id", state.meet.div);
     const res = await fetch("/api/predict/races?" + q.toString());
     const data = await res.json();
+    /* ! THE SERVER'S INDEX IS THE ONE KEPT: every later request (the field,
+         the squads, the prediction, the share link) names the same meet. */
+    if (typeof data.alt === "number") {
+      state.meet.alt = data.alt || null;
+      const nm = document.querySelector("#meet-chosen .mc-name");
+      if (nm) nm.setAttribute("href", `/meet/${state.meet.sport.toLowerCase()}/`
+        + `${state.meet.id}${state.meet.alt ? `?alt=${state.meet.alt}` : ""}`);
+    }
     /* ★ THE MEET'S REAL DATE (owner, 2026-09-01). state.meet.date was scraped
        out of the search SUBLABEL with a regex, so a meet whose sublabel
        carried no ISO date had no date at all and the re-run date fell back to
@@ -1196,6 +1232,11 @@ async function loadRaces() {
     if (data.date) {
       state.meet.date = data.date;
       defaultDate();          // re-propose, now that we know when it ran
+      /* ★ AND SAY IT: the "ran" line was drawn from whatever the picker or
+         a saved session knew, and a session saved on the colliding meet
+         kept showing that meet's date (2026-10-05). */
+      const md = $("mc-date");
+      if (md) md.textContent = `ran ${data.date} \u00b7 `;
     }
     /* ★ NAME THE COURSE RATHER THAN DESCRIBING IT (owner, 2026-09-01).
        "the meet's own course" tells you nothing you did not already know;
@@ -1518,6 +1559,8 @@ async function fetchField(div) {
   // Omitted, not sent empty: URLSearchParams turns null into the STRING
   // "null", which the server would try to parse as a division id.
   if (div) q.set("div_id", div);
+  // ★ which meet of the id (2026-10-05): see parseMeetLink
+  if (state.meet.alt) q.set("alt", state.meet.alt);
   try {
     const res = await fetch("/api/predict/field?" + q.toString());
     const data = await readJson(res);
@@ -1918,6 +1961,12 @@ function buildQuery(div) {
     meet_id: state.meet.id,
     sport: state.meet.sport,
   });
+  /* ★ WHICH MEET OF THE ID (owner, 2026-10-05). Every prediction, the
+     weather, the lineup search and the share link are built here, so the
+     one meet the picker chose is named once for all of them; the server
+     reads the date, the course, the field and "as it ran"'s season off it.
+     Absent is the biggest meet of the id, as on the meet page. */
+  if (state.meet.alt) q.set("alt", state.meet.alt);
   if (group.length === 1) q.set("div_id", group[0]);
   /* ★ SEVERAL DIVISIONS AS ONE RACE (issues #86, #89). A group of one sends
      div_id and is the ordinary single-division request; a group of several
@@ -3412,8 +3461,11 @@ function squadStateOf(ctx, school) {
 function squadKey(school, ctx, st) {
   // the meet too: with no level or state the server falls back to the
   // meet's, so the same school is a different answer at another meet
+  // ! AND WHICH MEET OF THE ID: "as it ran" reads that meet's season
+  //   (2026-10-05), so the other meet's squad is another answer
   return [school, state.meet ? state.meet.sport : "",
-          state.meet ? state.meet.id : "", ctx.div ?? "", ctx.gender,
+          state.meet ? state.meet.id : "",
+          state.meet ? (state.meet.alt || 0) : "", ctx.div ?? "", ctx.gender,
           ctx.levels ? ctx.levels.join(",") : "?", st || "",
           state.when || ""].join("\u0000");
 }
@@ -3430,6 +3482,10 @@ function squadParams(ctx) {
        field saying "mixed race", and the server must not re-derive it. */
   if (ctx.levels) q.set("levels", ctx.levels.join(","));
   if (state.meet && state.meet.id) q.set("meet_id", state.meet.id);
+  /* ★ AND WHICH MEET OF THE ID (owner, 2026-10-05: Squads: Everyone on the
+     2025 D3 championships filled Tufts' card with its 2009 roster -- the
+     season of a New Jersey meet that shares the id). */
+  if (state.meet && state.meet.alt) q.set("alt", state.meet.alt);
   /* ★ AS IT RAN, THAT SEASON'S SQUAD (owner, 2026-10-05: "as it ran
      includes new freshmen"). Everyone used to add every CURRENT runner. */
   if (state.when === "asran") q.set("when", "asran");

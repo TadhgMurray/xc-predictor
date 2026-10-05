@@ -6331,28 +6331,55 @@ def card_venue_tf(location_id, indoor):
                       lambda cur: cards.cachedVenueCard(cur, location_id, indoor == "in"))
 
 
-def predictMeetName(cur, meet_id, sport, div_id=None):
+def predictMeetName(cur, meet_id, sport, div_id=None, source=None):
     """The meet's name, division, course and date for a prediction's
-    title: what the page's chosen-meet block shows, in one row."""
+    title: what the page's chosen-meet block shows, in one row.
+
+    ★ OF THE MEET `source` NAMES (owner, 2026-10-05). The anet and tfrrs ids
+      collide; by meet_id alone the 2025 D3 championships' title, course and
+      date came off a 2009 New Jersey meet. A tfrrs meet's own row is in
+      meets_tfrrs (XC always; TF when meets_tf has none). None reads the old
+      way, every row with the id."""
     out = {}
+    div = int(div_id) if str(div_id or "").isdigit() else None
     if sport == "TF":
         cur.execute("""SELECT meet_name, division FROM meets_tf
                        WHERE meet_id = %(m)s AND (%(d)s::int IS NULL OR div_id = %(d)s)
+                         AND (%(src)s::text IS NULL OR source = %(src)s)
                        ORDER BY (div_id = %(d)s) DESC NULLS LAST LIMIT 1""",
-                    {"m": meet_id, "d": int(div_id) if str(div_id or "").isdigit() else None})
+                    {"m": meet_id, "d": div, "src": source})
         row = cur.fetchone() or {}
         out = {"meet_name": row.get("meet_name"), "division": row.get("division") if div_id else None}
-        cur.execute("SELECT min(date) AS d FROM results_tf WHERE meet_id = %s", (meet_id,))
+        if not out["meet_name"] and source == "tfrrs":
+            out["meet_name"] = _tfrrsMeetMeta(cur, meet_id).get("meet_name")
+        cur.execute("SELECT min(date) AS d FROM results_tf WHERE meet_id = %s "
+                    "AND (%s::text IS NULL OR source = %s)",
+                    (meet_id, source, source))
+    elif source == "tfrrs":
+        cur.execute("""SELECT meet_name, venue_name,
+                              division_distances -> %(dt)s::text ->> 'div_name' AS division
+                       FROM meets_tfrrs
+                       WHERE meet_id = %(m)s AND sport = 'XC' LIMIT 1""",
+                    {"m": meet_id, "dt": str(div) if div is not None else None})
+        row = cur.fetchone() or {}
+        out = {"meet_name": row.get("meet_name") or row.get("venue_name"),
+               "course": row.get("venue_name"),
+               "division": row.get("division") if div_id else None}
+        cur.execute("SELECT min(date) AS d FROM results WHERE meet_id = %s "
+                    "AND source = 'tfrrs'", (meet_id,))
     else:
         cur.execute("""SELECT meet_name, division, course_name FROM meets
                        WHERE meet_id = %(m)s AND (%(d)s::int IS NULL OR div_id = %(d)s)
+                         AND (%(src)s::text IS NULL OR source = %(src)s)
                        ORDER BY (div_id = %(d)s) DESC NULLS LAST,
                                 (course_name IS NOT NULL) DESC LIMIT 1""",
-                    {"m": meet_id, "d": int(div_id) if str(div_id or "").isdigit() else None})
+                    {"m": meet_id, "d": div, "src": source})
         row = cur.fetchone() or {}
         out = {"meet_name": row.get("meet_name"), "course": row.get("course_name"),
                "division": row.get("division") if div_id else None}
-        cur.execute("SELECT min(date) AS d FROM results WHERE meet_id = %s", (meet_id,))
+        cur.execute("SELECT min(date) AS d FROM results WHERE meet_id = %s "
+                    "AND (%s::text IS NULL OR source = %s)",
+                    (meet_id, source, source))
     d = cur.fetchone() or {}
     out["date"] = d.get("d")
     return out
@@ -8758,6 +8785,55 @@ def api_predict_status():
     return jsonify(modelStatus())
 
 
+# ★ ONE MEET PER PREDICTION, CHOSEN THE WAY THE MEET PAGE CHOOSES IT (owner,
+#   2026-10-05: the "NCAA Division III Cross Country Championships 2025" read
+#   "ran 2009-10-13 · Cross Country · Warinanco Park", and its race list put
+#   "Varsity · Boys · 5000m (22)" beside "Men's Race - 8000 Meters (291)").
+#   The anet and tfrrs id spaces collide -- 15,096 XC meet_ids, and track
+#   ids too -- so one number is two real meets. The meet and race pages have
+#   long picked ONE (meet_sources / pick_source, the opaque ?alt=N, the
+#   ?r=<result_id> pin); the predictions page read every meet by meet_id
+#   alone, so its race list merged the two meets, its date was the 2009
+#   one, "as it ran" read the 2009 season, and Squads: Everyone filled
+#   Tufts' card with its 2009 roster.
+#
+# ! THE SAME HELPERS, NOT A SECOND RULE. _xc_meet_sources / _tf_meet_sources
+#   answer "which meet is this" for the pages; answering it again here is
+#   how the two would drift. No ?alt= is the biggest source -- pick_source's
+#   default, and what a bare /meet/xc/<id> link opens.
+# ! AND NO FEED NAME ON THE WIRE. The page sends ?alt=N, the index the
+#   search results and the meet page's own links already carry; the source
+#   it resolves to stays on the server.
+# ⚠ A MEET WITH NO RESULTS HAS NO SOURCES TO COUNT, and resolves to None --
+#   the unnarrowed reading every predict.py lookup keeps for None, which is
+#   the old behaviour for the one case that never had a collision to see.
+def _predictSource(cur, meet_id, sport, alt=None, div_id=None):
+    """(source, alt_idx) for the meet a prediction reads, by the meet page's
+    rule (_xc_meet_sources / _tf_meet_sources); (None, 0) without one."""
+    if not meet_id:
+        return None, 0
+    args = {"alt": alt}
+    if (sport or "XC").upper() == "TF":
+        src, idx, _others = _tf_meet_sources(cur, int(meet_id), args)
+    else:
+        div = int(div_id) if str(div_id or "").isdigit() else None
+        src, idx, _others = _xc_meet_sources(cur, int(meet_id), args,
+                                             div_id=div)
+    return src, idx
+
+
+def _withSource(cur, target):
+    """Resolve target["alt"] to target["source"] once, in place; returns
+    target. Every predict.py lookup of the meet reads target["source"]."""
+    if target.get("meet_id") and "source" not in target:
+        div = target.get("div_id") or next(
+            iter(target.get("div_ids") or []), None)
+        target["source"], target["alt"] = _predictSource(
+            cur, target["meet_id"], target.get("sport"), target.get("alt"),
+            div)
+    return target
+
+
 # How big a hand-sent field may be. A championship is ~400 runners across
 # ~80 teams; these are generous ceilings that still stop a request asking
 # the model to predict the entire corpus.
@@ -8784,6 +8860,11 @@ def _target(args):
         t["meet_id"] = int(raw)
         t["div_id"] = args.get("div_id")
         t["sport"] = args.get("sport") or "XC"
+        # ★ WHICH OF THE MEETS THAT SHARE THIS ID (owner, 2026-10-05): the
+        #   opaque ?alt=N the meet page uses. Resolved to a source by
+        #   _withSource once a cursor exists; validated there by pick_source,
+        #   which clamps anything out of range to a real index.
+        t["alt"] = (args.get("alt") or "").strip() or None
         # none | normal | forecast | both (default) | all -- see predict._weatherVariants
         # ⚠ none, NOT both, AND IT IS MEASURED (2026-09-17). Feeding the
         #   venue's climatological normal made every prediction 5.44% faster,
@@ -8942,8 +9023,12 @@ def api_predict_field():
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # ★ THE ONE MEET (2026-10-05): see _predictSource
+            src, alt_idx = _predictSource(cur, int(meet), sport,
+                                          request.args.get("alt"), div)
             out = meetField(cur, int(meet), int(div) if div.isdigit() else None,
-                            sport, when=when)
+                            sport, when=when, source=src)
+    out["alt"] = alt_idx
     return jsonify(out)
 
 
@@ -8962,8 +9047,16 @@ def api_predict_races():
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # ★ ONE MEET'S RACES, NOT TWO MEETS' (owner, 2026-10-05: the D3
+            #   championships listed a 2009 New Jersey meet's two "Varsity"
+            #   races beside its own). Resolved by the meet page's rule; the
+            #   index goes back to the page so every later request names the
+            #   same meet, even when a pin or the division moved it.
+            src, alt_idx = _predictSource(cur, int(meet), sport,
+                                          request.args.get("alt"),
+                                          request.args.get("div_id"))
             if sport == "XC":
-                rows = get_meet_divisions(cur, int(meet))
+                rows = get_meet_divisions(cur, int(meet), source=src)
                 races = [{"div_id": r["div_id"],
                           "label": r.get("division") or f"Race {r['div_id']}",
                           "distance": r.get("distance"),
@@ -8976,10 +9069,12 @@ def api_predict_races():
                     FROM   results_tf r
                     LEFT JOIN meets_tf m ON m.meet_id = r.meet_id
                                         AND m.div_id  = r.div_id
+                                        AND m.source  = r.source
                     WHERE  r.meet_id = %(meet)s
+                      AND  (%(src)s::text IS NULL OR r.source = %(src)s)
                     GROUP  BY r.div_id, m.division
                     ORDER  BY m.division NULLS LAST, r.div_id
-                """, {"meet": int(meet)})
+                """, {"meet": int(meet), "src": src})
                 races = [{"div_id": r["div_id"],
                           "label": r.get("division") or f"Division {r['div_id']}",
                           "distance": None, "gender": None,
@@ -8992,26 +9087,41 @@ def api_predict_races():
             # ! min(date) BECAUSE A MEET CAN SPAN DAYS. The first day is the
             #   one a re-run should be pinned to; the alternative is a
             #   two-day meet proposing its own second day.
+            # ! OF THIS SOURCE'S RESULTS (2026-10-05): over every result with
+            #   the id it was the colliding 2009 meet's date.
             table = "results" if sport == "XC" else "results_tf"
             cur.execute(f"SELECT min(date) AS d FROM {table} "
-                        f"WHERE meet_id = %(meet)s", {"meet": int(meet)})
+                        f"WHERE meet_id = %(meet)s "
+                        f"  AND (%(src)s::text IS NULL OR source = %(src)s)",
+                        {"meet": int(meet), "src": src})
             row = cur.fetchone()
             meet_date = (row or {}).get("d") or None
 
             # ★ THE COURSE IT ACTUALLY RAN ON, so the override box can NAME
             #   what it defaults to instead of describing it.
+            # ! THIS MEET'S: `meets` is anet's, and a tfrrs meet's venue is in
+            #   meets_tfrrs (the meet page's _xc_course_sql reads the same).
+            #   By meet_id alone the D3 championships ran at Warinanco Park.
             meet_course = None
             if sport == "XC":
-                cur.execute("SELECT m.course_name FROM meets m "
-                            "WHERE m.meet_id = %(meet)s "
-                            "  AND m.course_name IS NOT NULL LIMIT 1",
-                            {"meet": int(meet)})
+                if src == "tfrrs":
+                    cur.execute("SELECT mt.venue_name AS course_name "
+                                "FROM meets_tfrrs mt "
+                                "WHERE mt.meet_id = %(meet)s AND mt.sport = 'XC' "
+                                "  AND mt.venue_name IS NOT NULL LIMIT 1",
+                                {"meet": int(meet)})
+                else:
+                    cur.execute("SELECT m.course_name FROM meets m "
+                                "WHERE m.meet_id = %(meet)s "
+                                "  AND (%(src)s::text IS NULL OR m.source = %(src)s) "
+                                "  AND m.course_name IS NOT NULL LIMIT 1",
+                                {"meet": int(meet), "src": src})
                 crow = cur.fetchone()
                 meet_course = (crow or {}).get("course_name") or None
 
-            meta = predictMeetName(cur, int(meet), sport)
+            meta = predictMeetName(cur, int(meet), sport, source=src)
     return jsonify({"races": races, "date": meet_date, "course": meet_course,
-                    "meet_name": meta.get("meet_name")})
+                    "meet_name": meta.get("meet_name"), "alt": alt_idx})
 
 
 @app.route("/api/predict/squad")
@@ -9089,7 +9199,9 @@ def _squadParams(args):
             "as_ran": as_ran,
             "levels_given": "levels" in args,
             "meet_id": int(meet) if meet.isdigit() else None,
-            "div_id": int(div) if div.isdigit() else None}, None
+            "div_id": int(div) if div.isdigit() else None,
+            # ★ WHICH MEET OF THE ID (2026-10-05): _squadsServed resolves it
+            "alt": (args.get("alt") or "").strip() or None}, None
 
 
 def _squadsServed(cur, wanted, p):
@@ -9099,16 +9211,24 @@ def _squadsServed(cur, wanted, p):
     import ttlcache
     sport, gender, levels = p["sport"], p["gender"], p["levels"]
     meet_state = None
+    # ★ THE ONE MEET THE PAGE CHOSE (owner, 2026-10-05: "as it ran"'s Squads:
+    #   Everyone filled Tufts' card with its 2009 roster, the season of a
+    #   New Jersey meet that shares the D3 championships' id). The level,
+    #   gender, state and season below are all read off it.
+    src = None
     if p["meet_id"]:
+        src, _alt = _predictSource(cur, p["meet_id"], sport, p.get("alt"),
+                                   p["div_id"])
         if not p["levels_given"]:
-            levels = predict.meetLevels(cur, p["meet_id"], p["div_id"], sport)
+            levels = predict.meetLevels(cur, p["meet_id"], p["div_id"], sport,
+                                        source=src)
         # ★ AND THE RACE'S GENDER WHEN THE PAGE SENT NONE (owner, 2026-10-05:
         #   a whole roster added to a men's race brought the women's team).
         #   Only from a named division -- a meet as a whole is both sides.
         if not gender and p["div_id"]:
             try:
                 ids = [r["person_id"] for r in predict._exactField(
-                    cur, p["meet_id"], p["div_id"], sport)]
+                    cur, p["meet_id"], p["div_id"], sport, source=src)]
                 gender = predict._fieldGender(cur, ids, sport) or None
             except Exception:                            # noqa: BLE001
                 cur.connection.rollback()
@@ -9116,9 +9236,10 @@ def _squadsServed(cur, wanted, p):
         #   "Amherst" added to a Massachusetts race is the Massachusetts one.
         #   _keepIdentity only acts on it where that state is a real cluster
         #   of the name, so a CT meet does not move an MA school anywhere.
-        meet_state = predict._meetState(cur, p["meet_id"], sport)
+        meet_state = predict._meetState(cur, p["meet_id"], sport, source=src)
     as_ran = bool(p.get("as_ran") and p["meet_id"])
-    season = ((predict.meetSeason(cur, p["meet_id"], sport) if as_ran else None)
+    season = ((predict.meetSeason(cur, p["meet_id"], sport, source=src)
+               if as_ran else None)
               or predict._currentSeason(cur, sport))
     wanted = [(sch, (st or meet_state or None)) for sch, st in wanted]
     lv_key = tuple(sorted(levels)) if levels else None
@@ -9353,7 +9474,8 @@ def api_predict_weather():
     try:
         with getConn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                spec = _targetSpec(cur, target)
+                # the venue and date of the one meet (_predictSource)
+                spec = _targetSpec(cur, _withSource(cur, target))
                 hour = fc.raceHour(spec.get("sport"))
                 lat, lon, day = spec.get("gps_lat"), spec.get("gps_long"), spec.get("date")
                 normal = fc.normalAt(cur, lat, lon, day, hour)
@@ -9408,6 +9530,7 @@ def api_predict_individual():
     try:
         with getConn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                _withSource(cur, target)      # the one meet: _predictSource
                 results = [predictIndividual(cur, int(i), target) for i in ids]
                 # A single athlete returns the bare object, so nothing that
                 # already reads this endpoint has to change.
@@ -9488,6 +9611,7 @@ def api_predict_team():
         with getConn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 with _predict._stage("total"):
+                    _withSource(cur, target)  # the one meet: _predictSource
                     out = predictTeam(cur, schools, target, head_to_head=h2h,
                                       remove=remove, add=add, sim=sim,
                                       draws=draws, team_rho=rho)
@@ -9571,6 +9695,7 @@ def api_predict_lineup():
     try:
         with getConn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                _withSource(cur, target)      # the one meet: _predictSource
                 out = predictTeamLineup(cur, schools, target, team,
                                         remove=remove, add=add, k=k,
                                         draws=draws, objective=objective)

@@ -66,8 +66,10 @@
     <p><a class="meet-link" href="/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}">View full meet →</a>
        {# ★ THE WAY INTO PREDICTIONS FROM THE RACE ITSELF (sweep, 2026-09-26):
           it was reachable only from the topbar. The predict page reads
-          meet_id / div_id / sport and opens this race's field. #}
-       <a class="meet-link" href="/predictions?meet_id={{ header.meet_id }}&amp;div_id={{ header.div_id }}&amp;sport=XC">Predict this race →</a></p>
+          meet_id / div_id / sport and opens this race's field.
+          ★ AND ?alt=, WHEN THIS ID HOLDS TWO MEETS (owner, 2026-10-05): the
+          prediction is of THIS meet, not of the other one sharing its id. #}
+       <a class="meet-link" href="/predictions?meet_id={{ header.meet_id }}&amp;div_id={{ header.div_id }}&amp;sport=XC{% if other_sources %}&amp;alt={{ alt_idx }}{% endif %}">Predict this race →</a></p>
 
     {% if header.distance %}
     {{ equiv_line(equiv_pool, header.distance, header.difficulty, header.course_name,

@@ -59,7 +59,7 @@ def _install(monkey_originals, monkey_squads, last_seen=None, gender=None):
     saved = (predict._exactField, predict._currentSquads,
              predict._currentSeason, predict._lastKnownRatings,
              predict._fieldGender, predict._fieldLevels)
-    predict._exactField = lambda cur, m, d, s: monkey_originals
+    predict._exactField = lambda cur, m, d, s, source=None: monkey_originals
     predict._currentSquads = lambda cur, schools, s, y, gender=None,         levels=None, states=None, isolated=False: {k: v for k, v in monkey_squads.items() if k in schools}
     predict._currentSeason = lambda cur, s: 2026
     predict._lastKnownRatings = lambda cur, ids, sport: last_seen or {}

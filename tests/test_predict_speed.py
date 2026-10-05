@@ -98,7 +98,7 @@ def test_the_meets_field_is_read_once_per_prediction(monkeypatch):
              "name": f"R{i}", "grade": "11", "pool": "hs_m", "rating": 100.0}
             for i in range(1, 11)]
 
-    def exactField(cur, meet_id, div, sport):
+    def exactField(cur, meet_id, div, sport, source=None):
         calls.append((meet_id, div, sport))
         return [dict(r) for r in rows]
 
@@ -110,7 +110,7 @@ def test_the_meets_field_is_read_once_per_prediction(monkeypatch):
 
     monkeypatch.setattr(P, "_exactField", exactField)
     monkeypatch.setattr(P, "_teamStates", teamStates)
-    monkeypatch.setattr(P, "_meetState", lambda *a: None)
+    monkeypatch.setattr(P, "_meetState", lambda *a, **k: None)
     monkeypatch.setattr(P, "_stateOf", lambda s: None)
     out = P._teamRosters(None, [], {"mode": "rerun_exact", "meet_id": 5,
                                     "div_id": "9", "sport": "XC"})

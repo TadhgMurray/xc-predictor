@@ -1341,12 +1341,16 @@ def cachedMeetTfCard(cur, meet_id, src=None, kind="teams"):
 def predictionCardData(cur, args):
     """A team prediction from the same request the page sends to
     /api/predict/team: the predicted scores and the predicted top five."""
-    from app import _target, predictMeetName
+    from app import _target, _withSource, predictMeetName
     from predict import predictTeam
     from school_identity import schoolLabel
     target, err = _target(args)
     if err or not target.get("meet_id"):
         return None
+    # ★ THE ONE MEET THE SHARED REQUEST NAMED (?alt=, owner 2026-10-05): the
+    #   card is the page's prediction, of the same meet, not of whichever
+    #   meet shares its id (app._predictSource)
+    _withSource(cur, target)
     remove = {s for s in (args.get("remove") or "").split(",") if s}
     add = {s for s in (args.get("add") or "").split(",") if s}
     out = predictTeam(cur, [], target, remove=remove, add=add)
@@ -1366,7 +1370,8 @@ def predictionCardData(cur, args):
                  "time": _clock(r.get("seconds"))} for r in runners[:5]]
     if not teams and not athletes:
         return None
-    meta = predictMeetName(cur, target["meet_id"], target.get("sport") or "XC", target.get("div_id"))
+    meta = predictMeetName(cur, target["meet_id"], target.get("sport") or "XC", target.get("div_id"),
+                           source=target.get("source"))
     when = target.get("date") or meta.get("date")
     bits = ["Predicted", meta.get("division") or "",
             target.get("course") or meta.get("course") or "", _when(when) if when else ""]

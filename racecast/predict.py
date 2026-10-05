@@ -921,10 +921,14 @@ def _predictTimes(cur, person_ids, target, spec=None):
             if venue is None:
                 venue = fx.venueIndex(target_row, vocab)
         batch.append((slot, seq, ctxs_by, venue, _targetClock(hist, spec)))
+        # ! AND THIS MEET'S SOURCE (owner, 2026-10-05): the same meet_id in
+        #   the other feed is another race -- see _targetSpec
+        src = spec.get("source")
         if target.get("mode") in ("rerun", "rerun_exact"):
             # ! OFF THE FULL HISTORY. The result on the day is exactly what
             #   the cut removed, and it is what this line is looking for.
-            orig = [r for r in full if r.get("meet_id") == spec.get("meet_id")]
+            orig = [r for r in full if r.get("meet_id") == spec.get("meet_id")
+                    and (not src or r.get("source") in (None, src))]
             if orig:
                 # ★ THE RAW TIME THEY RAN, NOT ITS NORMALIZED FORM. The
                 #   corpus row carries both, and the prediction beside it is
@@ -1645,6 +1649,95 @@ def _normScale():
     return (_artifacts or {}).get("norm_scale", "pool")
 
 
+# The target spec of a tfrrs XC meet (see _targetSpec): its own row in
+# meets_tfrrs, columns named as the anet branch names them.
+# ! THE DISTANCE IS THE DIVISION'S, from the blob; with no division named, the
+#   first division that carries one -- the anet branch's LIMIT 1 does the same.
+# ⚠ THE KEY IS CAST TO TEXT. `jsonb -> NULL` is ambiguous between the
+#   jsonb -> text and jsonb -> int operators, and a str() key is what the blob
+#   is keyed by (app._blob: an int key silently finds nothing).
+_TFRRS_XC_SPEC_SQL = """
+    SELECT mt.venue_name AS course_name,
+           d.dist AS distance_meters,
+           mt.gps_lat, mt.gps_long,
+           NULL::real AS altitude_meters,
+           cc.canonical_id,
+           COALESCE(cd.difficulty, 0.0) AS course_difficulty,
+           COALESCE((SELECT min(r.date) FROM results r
+                     WHERE r.meet_id = mt.meet_id AND r.source = 'tfrrs'),
+                    substr(mt.date::text, 1, 10)) AS date
+    FROM meets_tfrrs mt
+    CROSS JOIN LATERAL (
+        SELECT COALESCE(
+            (mt.division_distances -> %(divtext)s::text ->> 'distance')::real,
+            (SELECT (e.value ->> 'distance')::real
+             FROM   jsonb_each(CASE WHEN jsonb_typeof(mt.division_distances)
+                                         = 'object'
+                                    THEN mt.division_distances END) e
+             WHERE  %(divtext)s::text IS NULL
+               AND  e.value ->> 'distance' IS NOT NULL
+             ORDER  BY e.key LIMIT 1)) AS dist
+    ) d
+    LEFT JOIN course_canonical cc
+           ON cc.course_name = mt.venue_name
+          AND round(cc.gps_lat::numeric, 5) = round(mt.gps_lat::numeric, 5)
+          AND round(cc.gps_long::numeric, 5) = round(mt.gps_long::numeric, 5)
+    LEFT JOIN course_difficulties cd
+           ON cd.canonical_id = cc.canonical_id
+          AND cd.distance_m = (round(d.dist / 100.0) * 100)::int
+    WHERE mt.meet_id = %(meet)s AND mt.sport = 'XC'
+    LIMIT 1
+"""
+
+
+def _meetDate(cur, meet_id, sport, source=None):
+    """The date a meet was run: its earliest result's, else its scheduled
+    date -- of the meet `source` names when two share the id. None if
+    neither exists.
+
+    ★ ONE SOURCE, ONE MEET (owner, 2026-10-05). min(date) over every result
+      with this meet_id was the 2009 running for the 2025 D3 championships,
+      because a 2009 New Jersey meet shares its number; "as it ran" then read
+      the 2009 season and Squads: Everyone filled Tufts' card with its 2009
+      roster. Every branch below is narrowed to the one source.
+    ! THE SCHEDULED DATE IS PER FEED TOO: `meets` and meets_tf_meta are
+      anet's rows, meets_tfrrs is tfrrs's. A source of None reads them all,
+      the old unnarrowed answer."""
+    if not meet_id:
+        return None
+    if (sport or "XC").upper() == "XC":
+        cur.execute("""
+            SELECT COALESCE(
+                (SELECT min(date) FROM results
+                 WHERE meet_id = %(m)s
+                   AND (%(src)s::text IS NULL OR source = %(src)s)),
+                (SELECT substr(min(meet_date)::text, 1, 10) FROM meets
+                 WHERE meet_id = %(m)s
+                   AND (%(src)s::text IS NULL OR source = %(src)s)),
+                (SELECT substr(min(date)::text, 1, 10) FROM meets_tfrrs
+                 WHERE meet_id = %(m)s AND sport = 'XC'
+                   AND COALESCE(%(src)s::text, 'tfrrs') = 'tfrrs')) AS d""",
+                    {"m": int(meet_id), "src": source})
+    else:
+        cur.execute("""
+            SELECT COALESCE(
+                (SELECT min(date) FROM results_tf
+                 WHERE meet_id = %(m)s
+                   AND (%(src)s::text IS NULL OR source = %(src)s)),
+                (SELECT substr(min(meet_date)::text, 1, 10) FROM meets_tf_meta
+                 WHERE meet_id = %(m)s
+                   AND COALESCE(%(src)s::text, 'anet') = 'anet'),
+                (SELECT substr(min(date)::text, 1, 10) FROM meets_tfrrs
+                 WHERE meet_id = %(m)s AND sport = 'TF'
+                   AND COALESCE(%(src)s::text, 'tfrrs') = 'tfrrs')) AS d""",
+                    {"m": int(meet_id), "src": source})
+    row = cur.fetchone()
+    if not row:
+        return None
+    d = row.get("d") if isinstance(row, dict) else row[0]
+    return str(d)[:10] if d else None
+
+
 def _targetSpec(cur, target):
     """The target race's own features, resolved once for the whole
     field: date, distance, venue identity, difficulty, geography.
@@ -1654,21 +1747,43 @@ def _targetSpec(cur, target):
     """
     mode = target.get("mode")
     sport = (target.get("sport") or "XC").upper()
+    # ★ WHICH OF THE TWO MEETS THAT SHARE THIS NUMBER (owner, 2026-10-05:
+    #   the 2025 NCAA D3 championships read "ran 2009-10-13 · Warinanco
+    #   Park"). The anet and tfrrs id spaces collide -- 15,096 XC meet_ids
+    #   name two different real meets -- and every query here read a meet by
+    #   meet_id ALONE, so the D3 championships took the course, distance and
+    #   date of a 2009 New Jersey high-school meet that happens to share its
+    #   id. The route resolves the source once (app._predictSource, the meet
+    #   page's own rule) and every lookup below is narrowed to it.
+    # ! None MEANS UNNARROWED, the old reading, for a caller that names no
+    #   source (a script, a meet with no results to count yet).
+    src = target.get("source") or None
     spec = {"sport": sport, "is_xc": sport == "XC",
-            "meet_id": target.get("meet_id")}
+            "meet_id": target.get("meet_id"), "source": src}
 
     if mode in ("meet", "rerun", "rerun_exact"):
         meet_id = int(target["meet_id"])
         div = target.get("div_id")
         div = int(div) if div and str(div).isdigit() else None
-        if sport == "XC":
+        if sport == "XC" and src == "tfrrs":
+            # ⚠ `meets` IS THE ANET TABLE; a tfrrs XC meet has no row there,
+            #   and the row that IS there under this id is the OTHER meet.
+            #   meets_tfrrs is the tfrrs meet's own row -- venue, gps, date,
+            #   and the per-division distance in its jsonb blob -- read the
+            #   way feature_extraction's corpus row reads it, so the target
+            #   is described in the same terms the model trained on.
+            cur.execute(_TFRRS_XC_SPEC_SQL,
+                        {"meet": meet_id,
+                         "divtext": str(div) if div is not None else None})
+        elif sport == "XC":
             cur.execute("""
                 SELECT m.course_name, m.distance AS distance_meters,
                        m.gps_lat, m.gps_long, m.altitude_meters,
                        cc.canonical_id,
                        COALESCE(cd.difficulty, 0.0) AS course_difficulty,
                        COALESCE((SELECT min(r.date) FROM results r
-                                 WHERE r.meet_id = m.meet_id),
+                                 WHERE r.meet_id = m.meet_id
+                                   AND r.source = m.source),
                                 substr(m.meet_date::text, 1, 10)) AS date
                 FROM meets m
                 LEFT JOIN course_canonical cc
@@ -1683,8 +1798,9 @@ def _targetSpec(cur, target):
                           (round(m.distance / 100.0) * 100)::int
                 WHERE m.meet_id = %(meet)s
                   AND (%(div)s::bigint IS NULL OR m.div_id = %(div)s)
+                  AND (%(src)s::text IS NULL OR m.source = %(src)s)
                 LIMIT 1
-            """, {"meet": meet_id, "div": div})
+            """, {"meet": meet_id, "div": div, "src": src})
         else:
             cur.execute("""
                 SELECT NULL AS course_name, m.distance_meters,
@@ -1693,19 +1809,29 @@ def _targetSpec(cur, target):
                        NULL AS canonical_id, 0.0 AS course_difficulty,
                        m.location_id, m.is_indoor,
                        COALESCE((SELECT min(r.date) FROM results_tf r
-                                 WHERE r.meet_id = m.meet_id),
+                                 WHERE r.meet_id = m.meet_id
+                                   AND r.source = m.source),
+                                -- meets_tf_meta is anet's own meet row
                                 (SELECT substr(t.meet_date::text, 1, 10)
                                  FROM meets_tf_meta t
-                                 WHERE t.meet_id = m.meet_id LIMIT 1)) AS date
+                                 WHERE t.meet_id = m.meet_id
+                                   AND m.source = 'anet' LIMIT 1)) AS date
                 FROM meets_tf m
                 WHERE m.meet_id = %(meet)s
                   AND (%(div)s::bigint IS NULL OR m.div_id = %(div)s)
+                  AND (%(src)s::text IS NULL OR m.source = %(src)s)
                   AND m.distance_meters IS NOT NULL
                 LIMIT 1
-            """, {"meet": meet_id, "div": div})
+            """, {"meet": meet_id, "div": div, "src": src})
         row = cur.fetchone()
         if row:
             spec.update(dict(row))
+        # ★ AND THE DATE OF THAT MEET WHEN ITS ROW HAD NONE -- a tfrrs track
+        #   meet whose events never landed in meets_tf, a tfrrs meet with no
+        #   meets_tfrrs row -- read off the same source's results and meet
+        #   rows, never the other meet's (_meetDate).
+        if not spec.get("date") and src:
+            spec["date"] = _meetDate(cur, meet_id, sport, src)
 
         # ★ A DIFFERENT COURSE, THE SAME MEET (owner, 2026-09-01). Applied
         #   AFTER the meet's own row, so the meet supplies everything --
@@ -1909,8 +2035,13 @@ def countsBySchool(originals):
 
 
 def meetField(cur, meet_id, div_id, sport, season_year=None,
-              when="thisyear"):
+              when="thisyear", source=None):
     """The field for a re-run, grouped by school -- and WHEN decides who.
+
+    ★ `source` IS WHICH MEET (owner, 2026-10-05). The anet and tfrrs ids
+      collide, and a field read by meet_id alone was two meets' fields at
+      once: the D3 championships listed a 2009 New Jersey meet's "Varsity"
+      races and runners beside its own. None reads both, the old way.
 
     ★ asran: EXACTLY the people who raced it. No season gate, nobody
       dropped -- "as it actually ran" means that field, graduated
@@ -1941,9 +2072,9 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
 
     if when == "asran":
         by_school = {}
-        exact = _exactField(cur, meet_id, div_id, sport)
+        exact = _exactField(cur, meet_id, div_id, sport, source=source)
         states = _teamStates(cur, [dict(r) for r in exact],
-                             _meetState(cur, meet_id, sport))
+                             _meetState(cur, meet_id, sport, source=source))
         for r in exact:
             school = r["school"] or "Unattached"
             team = by_school.setdefault(school, {"school": school,
@@ -1967,7 +2098,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         _stampCrests(teams, "school", "state")
         return {"season_year": season_year, "when": when, "teams": teams}
 
-    originals = _exactField(cur, meet_id, div_id, sport)
+    originals = _exactField(cur, meet_id, div_id, sport, source=source)
     at_meet = sorted({r["school"] for r in originals if r.get("school")})
     # ★ THE RACE'S OWN GENDER, from the people who ran it. None means the
     #   field really is mixed -- "All races" at a meet with both -- and then
@@ -1979,7 +2110,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     levels = _fieldLevels(cur, _lineupIds(originals), sport, season_year)
     # the school as the people who ran this meet for it wore it
     states = _teamStates(cur, [dict(r) for r in originals],
-                         _meetState(cur, meet_id, sport))
+                         _meetState(cur, meet_id, sport, source=source))
     # ★ AND THAT NAMESAKE'S SQUAD, NOT EVERY SCHOOL OF THE NAME (owner,
     #   2026-10-05: "We really need to separate schools by pool"). See
     #   _keepIdentity: the state the meet's own runners resolve to picks
@@ -2156,8 +2287,8 @@ def _fieldLevels(cur, person_ids, sport, season_year=None):
 # Purpose:   the level of a meet's race, the way meetField reads it -- for a
 #            squad request that named its meet but no level (2026-10-05).
 # Output:    {"college"} etc., or None for a mixed race (no narrowing).
-def meetLevels(cur, meet_id, div_id, sport):
-    originals = _exactField(cur, int(meet_id), div_id, sport)
+def meetLevels(cur, meet_id, div_id, sport, source=None):
+    originals = _exactField(cur, int(meet_id), div_id, sport, source=source)
     return _fieldLevels(cur, _lineupIds(originals), sport,
                         _currentSeason(cur, sport)) or None
 
@@ -2545,16 +2676,32 @@ def _teamStates(cur, rows, meet_state=None):
     return out
 
 
-def _meetState(cur, meet_id, sport):
-    """The state a meet was held in, or None."""
+def _meetState(cur, meet_id, sport, source=None):
+    """The state a meet was held in, or None -- the meet `source` names.
+
+    ⚠ NOT THE OTHER MEET'S STATE (owner, 2026-10-05). By meet_id alone the
+      2025 D3 championships were held in New Jersey -- the state of the 2009
+      high-school meet that shares the id -- and that state is what picks
+      which namesake of a school a team is (_keepIdentity). `meets` and
+      meets_tf carry the source; a tfrrs XC meet's state is in meets_tfrrs,
+      and so is a tfrrs track meet's when meets_tf has no row for it."""
     if not meet_id:
         return None
     table = "meets" if sport == "XC" else "meets_tf"
     try:
-        cur.execute(f"SELECT state FROM {table} WHERE meet_id = %s "
-                    f"AND NULLIF(btrim(state), '') IS NOT NULL LIMIT 1",
-                    (int(meet_id),))
-        got = cur.fetchone()
+        got = None
+        if not (sport == "XC" and source == "tfrrs"):
+            cur.execute(f"SELECT state FROM {table} WHERE meet_id = %s "
+                        f"AND (%s::text IS NULL OR source = %s) "
+                        f"AND NULLIF(btrim(state), '') IS NOT NULL LIMIT 1",
+                        (int(meet_id), source, source))
+            got = cur.fetchone()
+        if not got and source == "tfrrs":
+            cur.execute("SELECT state FROM meets_tfrrs WHERE meet_id = %s "
+                        "AND sport = %s "
+                        "AND NULLIF(btrim(state), '') IS NOT NULL LIMIT 1",
+                        (int(meet_id), "XC" if sport == "XC" else "TF"))
+            got = cur.fetchone()
     except Exception:                                   # noqa: BLE001
         _rollback(cur)
         return None
@@ -2590,6 +2737,9 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     sport = (target.get("sport") or "XC").upper()
     div = target.get("div_id")
     div = int(div) if div and str(div).isdigit() else None
+    # ★ THE ONE MEET THE ROUTE RESOLVED (owner, 2026-10-05): every read of
+    #   the meet below is narrowed to it -- see _targetSpec
+    src = target.get("source") or None
 
     entries = []
 
@@ -2636,7 +2786,8 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
         # ★ AS IT RAN: the grade and rating they had at that race, for
         #   everyone who ran it (a hand-added runner keeps the lookup above)
         if mode == "rerun_exact" and target.get("meet_id"):
-            for e in _exactField(cur, int(target["meet_id"]), div, sport):
+            for e in _exactField(cur, int(target["meet_id"]), div, sport,
+                                 source=src):
                 k = known.setdefault(e["person_id"], {})
                 k.update({kk: e.get(kk) for kk in
                           ("grade", "pool", "rating", "hs_rating")})
@@ -2653,7 +2804,8 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                             "entered": entered.get(school),
                             "school_state": None})
         states = _teamStates(cur, [dict(e) for e in entries],
-                             _meetState(cur, target.get("meet_id"), sport))
+                             _meetState(cur, target.get("meet_id"), sport,
+                                        source=src))
         for e in entries:
             e["school_state"] = (states.get(e["school"])
                                  or _stateOf(e["school"]))
@@ -2668,7 +2820,8 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     if target.get("meet_id") and len(div_ids) > 1:
         entries = _combinedRoster(cur, target, div_ids, sport, mode)
     elif target.get("meet_id"):
-        originals = _exactField(cur, int(target["meet_id"]), div, sport)
+        originals = _exactField(cur, int(target["meet_id"]), div, sport,
+                                source=src)
         if mode == "rerun_exact":
             # The exact field IS the entry list, so counting it is counting
             # who entered -- no stamp needed, and _score falls back to it.
@@ -2690,7 +2843,7 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                                     states=_teamStates(
                                         cur, [dict(r) for r in originals],
                                         _meetState(cur, target["meet_id"],
-                                                   sport)))
+                                                   sport, source=src)))
             # ★ SAME PER-SCHOOL CAP AS meetField. These two must agree or the
             #   page shows one lineup and the model scores another.
             at_meet_counts = countsBySchool(originals)
@@ -2731,12 +2884,14 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
         #   stamps a state onto them.
         try:
             exact = (originals if originals is not None else
-                     _exactField(cur, int(target["meet_id"]), div, sport))
+                     _exactField(cur, int(target["meet_id"]), div, sport,
+                                 source=src))
             evidence += [dict(r) for r in exact]
         except Exception:                               # noqa: BLE001
             _rollback(cur)
     states = _teamStates(cur, evidence,
-                         _meetState(cur, target.get("meet_id"), sport))
+                         _meetState(cur, target.get("meet_id"), sport,
+                                    source=src))
     for e in entries:
         e["school_state"] = states.get(e.get("school")) or _stateOf(e.get("school"))
     return entries
@@ -2768,7 +2923,9 @@ def _combinedRoster(cur, target, div_ids, sport, mode):
         one["div_id"] = d
         one.pop("div_ids", None)
         rows = _teamRosters(cur, None, one)
-        labels[d] = _divisionLabel(cur, target.get("meet_id"), d, sport) or str(d)
+        labels[d] = (_divisionLabel(cur, target.get("meet_id"), d, sport,
+                                    source=target.get("source"))
+                     or str(d))
         # ★ WHERE EACH RUNNER CAME FROM, ALWAYS (owner, 2026-09-01: "need to
         #   check coalesce actually works... which div does it end up showing
         #   in?"). Coalescing is invisible in the result -- the squad simply
@@ -2848,14 +3005,23 @@ def _combinedRoster(cur, target, div_ids, sport, mode):
 
 
 # The division's own name, for the "(Varsity)" suffix. Falls back to the id.
-def _divisionLabel(cur, meet_id, div_id, sport):
+def _divisionLabel(cur, meet_id, div_id, sport, source=None):
     if not meet_id or not div_id:
         return None
-    table, col = ("meets", "division") if sport == "XC" else ("meets_tf",
-                                                              "division")
-    cur.execute(f"SELECT {col} AS d FROM {table} "
-                f"WHERE meet_id = %(m)s AND div_id = %(v)s LIMIT 1",
-                {"m": int(meet_id), "v": int(div_id)})
+    # ! THE DIVISION OF THE MEET `source` NAMES (2026-10-05): the same
+    #   (meet_id, div_id) can be a division of the colliding meet. A tfrrs XC
+    #   division's name is in meets_tfrrs' blob, as the meet page reads it.
+    if sport == "XC" and source == "tfrrs":
+        cur.execute("SELECT mt.division_distances -> %(v)s::text ->> 'div_name' AS d "
+                    "FROM meets_tfrrs mt "
+                    "WHERE mt.meet_id = %(m)s AND mt.sport = 'XC' LIMIT 1",
+                    {"m": int(meet_id), "v": str(div_id)})
+    else:
+        table = "meets" if sport == "XC" else "meets_tf"
+        cur.execute(f"SELECT division AS d FROM {table} "
+                    f"WHERE meet_id = %(m)s AND div_id = %(v)s "
+                    f"AND (%(src)s::text IS NULL OR source = %(src)s) LIMIT 1",
+                    {"m": int(meet_id), "v": int(div_id), "src": source})
     row = cur.fetchone()
     return ((row or {}).get("d") or "").strip() or None
 
@@ -2913,7 +3079,7 @@ _NAME_LATERAL = """
 """
 
 
-def _exactField(cur, meet_id, div_id, sport):
+def _exactField(cur, meet_id, div_id, sport, source=None):
     """Everyone who actually ran a meet: person, name, school -- and the
     grade and rating THEY HAD THEN.
 
@@ -2924,6 +3090,12 @@ def _exactField(cur, meet_id, div_id, sport):
       (athlete_season, the number the boards showed that year), in that
       season's pool. A 2024 championship re-run lists its seniors as seniors
       and its freshmen at their freshman rating, not at what they became.
+
+    ★ AND THE MEET `source` NAMES, NOT EVERY MEET WITH THE NUMBER (owner,
+      2026-10-05). The anet and tfrrs ids collide; by meet_id alone the 2025
+      D3 championships' field included the runners of a 2009 New Jersey
+      high-school meet, whose levels, gender and state then fed every filter
+      built on this. None reads both, the old way.
     """
     from season_year import seasonYearSqlInt
     table = "results" if sport == "XC" else "results_tf"
@@ -2946,9 +3118,10 @@ def _exactField(cur, meet_id, div_id, sport):
             LIMIT  1
         ) s ON TRUE
         WHERE  r.meet_id = %(meet)s {div_clause}
+          AND  (%(src)s::text IS NULL OR r.source = %(src)s)
           AND  r.person_id IS NOT NULL
         ORDER  BY r.person_id
-    """, {"meet": meet_id, "div": div_id, "sport": sport})
+    """, {"meet": meet_id, "div": div_id, "sport": sport, "src": source})
     out = []
     for r in cur.fetchall():
         out.append({"person_id": r["person_id"], "school": r["school"],
@@ -3514,22 +3687,17 @@ def _bestFirst(rows, sport):
         key=lambda r: -((r["rating"] or 0) * factors[r["pool"]]))
 
 
-def meetSeason(cur, meet_id, sport):
+def meetSeason(cur, meet_id, sport, source=None):
     """The academic season a meet was run in (its earliest result's date,
-    else its scheduled date), or None."""
+    else its scheduled date), or None -- of the meet `source` names when the
+    anet and tfrrs ids collide (_meetDate).
+
+    ★ AS IT RAN READS THIS (owner, 2026-10-05). Squads: Everyone is that
+      season's whole roster for the team, so the season has to be the right
+      meet's: the 2025 D3 championships read 2009 off a colliding New Jersey
+      meet and put Tufts' 2009 roster on the card."""
     from season_year import seasonYearFromIso
-    if (sport or "XC").upper() == "XC":
-        cur.execute("""SELECT COALESCE((SELECT min(date) FROM results WHERE meet_id = %(m)s),
-                                       (SELECT substr(min(meet_date)::text, 1, 10)
-                                        FROM meets WHERE meet_id = %(m)s)) AS d""",
-                    {"m": int(meet_id)})
-    else:
-        cur.execute("""SELECT COALESCE((SELECT min(date) FROM results_tf WHERE meet_id = %(m)s),
-                                       (SELECT substr(min(meet_date)::text, 1, 10)
-                                        FROM meets_tf_meta WHERE meet_id = %(m)s)) AS d""",
-                    {"m": int(meet_id)})
-    row = cur.fetchone()
-    d = (row["d"] if isinstance(row, dict) else row[0]) if row else None
+    d = _meetDate(cur, meet_id, sport, source)
     return seasonYearFromIso((sport or "XC").upper(), str(d)[:10]) if d else None
 
 

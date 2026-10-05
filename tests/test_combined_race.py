@@ -29,7 +29,7 @@ def _install(per_div, labels, gender="M"):
              predict._fieldGender)
     predict._teamRosters = lambda cur, schools, one, *a, **k: [
         dict(e) for e in per_div[one["div_id"]]]
-    predict._divisionLabel = lambda cur, m, d, s: labels.get(d)
+    predict._divisionLabel = lambda cur, m, d, s, source=None: labels.get(d)
     predict._fieldGender = lambda cur, ids, sport: gender
 
     def undo():
@@ -159,7 +159,7 @@ def test_coalesce_never_merges_across_genders():
     saved = (predict._teamRosters, predict._divisionLabel,
              predict._fieldGender)
     predict._teamRosters = fake_rosters
-    predict._divisionLabel = lambda cur, m, d, s: {10: "D2", 11: "D3"}[d]
+    predict._divisionLabel = lambda cur, m, d, s, source=None: {10: "D2", 11: "D3"}[d]
     predict._fieldGender = lambda cur, ids, sport: "M" if 1 in ids else "F"
     try:
         out = predict._combinedRoster(
@@ -199,7 +199,7 @@ def test_coalesce_still_merges_within_one_gender():
     saved = (predict._teamRosters, predict._divisionLabel,
              predict._fieldGender)
     predict._teamRosters = fake_rosters
-    predict._divisionLabel = lambda cur, m, d, s: {10: "D2", 11: "D3"}[d]
+    predict._divisionLabel = lambda cur, m, d, s, source=None: {10: "D2", 11: "D3"}[d]
     predict._fieldGender = lambda cur, ids, sport: "M"
     try:
         out = predict._combinedRoster(

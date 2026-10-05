@@ -127,7 +127,7 @@ def test_as_it_ran_carries_the_grade_and_rating_they_raced_with(monkeypatch):
     monkeypatch.setattr(P, "_stampCrests", lambda *a, **k: None)
     monkeypatch.setattr(P, "_stateOf", lambda s: None)
     monkeypatch.setattr(P, "_teamStates", lambda cur, rows, *a: {})
-    monkeypatch.setattr(P, "_meetState", lambda *a: None)
+    monkeypatch.setattr(P, "_meetState", lambda *a, **k: None)
     rows = [{"person_id": 5, "school": "Campolindo", "grade": "9",
              "name": "Cody De la Cruz", "row_name": None,
              "mean_rating": 118.44, "pool": "hs_m", "season": 2024}]
