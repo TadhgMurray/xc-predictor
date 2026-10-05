@@ -8782,6 +8782,16 @@ def _squadsServed(cur, wanted, p):
     if p["meet_id"]:
         if not p["levels_given"]:
             levels = predict.meetLevels(cur, p["meet_id"], p["div_id"], sport)
+        # ★ AND THE RACE'S GENDER WHEN THE PAGE SENT NONE (owner, 2026-10-05:
+        #   a whole roster added to a men's race brought the women's team).
+        #   Only from a named division -- a meet as a whole is both sides.
+        if not gender and p["div_id"]:
+            try:
+                ids = [r["person_id"] for r in predict._exactField(
+                    cur, p["meet_id"], p["div_id"], sport)]
+                gender = predict._fieldGender(cur, ids, sport) or None
+            except Exception:                            # noqa: BLE001
+                cur.connection.rollback()
         # ★ THE MEET'S STATE NAMES THE NAMESAKE WHEN THE PAGE DID NOT: an
         #   "Amherst" added to a Massachusetts race is the Massachusetts one.
         #   _keepIdentity only acts on it where that state is a real cluster

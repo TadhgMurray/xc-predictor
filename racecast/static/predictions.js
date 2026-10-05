@@ -1217,6 +1217,9 @@ async function loadRaces() {
       }
     }
     const races = (data.races || []);
+    /* each race's own gender, for the squad requests made from its block
+       (squadCtx): the field's gender is blank for a mixed or all-races view */
+    for (const r of races) _divGender.set(String(r.div_id), r.gender || "");
     if (races.length < 2) {
       if (races.length === 1) state.meet.div = String(races[0].div_id);
       return;
@@ -3383,10 +3386,18 @@ function renderSquadBoxes() {
      That is how a fifth grader landed on a college card. Every caller now
      names its race, and the meet rides along so the server can fall back
      to that meet's level if the page has none (api_predict_squads). */
+/* ★ THE RACE'S OWN GENDER WHEN THE FIELD HAS NONE (owner, 2026-10-05: "if
+   you add an entire roster to a mens race it adds the womens team too").
+   A field read for several races, or a mixed one, carries no single gender,
+   and an empty gender is no filter: the whole roster was both teams. The
+   race list says which side each race is. */
+const _divGender = new Map();
+
 function squadCtx(div) {
   const d = div === undefined ? (state.meet ? state.meet.div : null) : div;
   const f = editsFor(d).field || {};
-  return { div: d, gender: f.gender || "", levels: f.levels || null,
+  const g = f.gender || (d != null ? _divGender.get(String(d)) : "") || "";
+  return { div: d, gender: g, levels: f.levels || null,
            teams: f.teams || [] };
 }
 
