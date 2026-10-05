@@ -35,7 +35,11 @@
         <a href="/coaches" class="{{ 'is-on' if coach_view }}"
            {% if coach_view %}aria-current="true"{% endif %}>Coaches</a>
     </div>
-    {# ★ A "MORE" MENU (ui pass, 2026-10-04). With State meets and Breakouts
+    {# ★ NO TABS OF THEIR OWN FOR STATE MEETS AND BREAKOUTS (owner,
+       2026-10-05): Breakouts is a board, reached from Rankings' board tabs;
+       State meets is a prediction, reached from Predictions. Each page
+       lights its parent's tab.
+       ★ A "MORE" MENU (ui pass, 2026-10-04). With State meets and Breakouts
        the athlete bar measured ~1,530px of content, and below that width the
        search box and Sign in were pushed off the right edge (the wrap rule
        starts at 1200px). About and Report an issue -- reference, not
@@ -48,17 +52,15 @@
     <nav class="topnav">
         {% if coach_view %}
         <a href="/coaches/recruits" class="{{ 'is-here' if here.startswith('/coaches/recruits') }}">Find recruits</a>
-        <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') }}">Rankings</a>
+        <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') or here.startswith('/breakouts') }}">Rankings</a>
         <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
-        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') }}">Predictions</a>
+        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') or here.startswith('/projections') }}">Predictions</a>
         {% else %}
-        <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') }}">Rankings</a>
+        <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') or here.startswith('/breakouts') }}">Rankings</a>
         <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
         <a href="/conversions" class="nav-roomy {{ 'is-here' if conv_here }}">Conversions</a>
         <a href="/recruiting" class="{{ 'is-here' if here.startswith('/recruit') }}">Recruiting</a>
-        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') }}">Predictions</a>
-        <a href="/projections" class="{{ 'is-here' if here.startswith('/projections') }}">State meets</a>
-        <a href="/breakouts" class="{{ 'is-here' if here.startswith('/breakouts') }}">Breakouts</a>
+        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') or here.startswith('/projections') }}">Predictions</a>
         {% endif %}
         {% set more_here = here.startswith('/about') or here.startswith('/report') %}
         <details class="topnav-more">

@@ -21,7 +21,7 @@
 {% set meta_title = "Breakouts this week: " ~ level_words ~ " " ~ sport_words ~ (" in " ~ state_name if state else "") %}
 {% set meta_description = "The biggest rating jumps and new PRs in " ~ level_words ~ " " ~ sport_words
      ~ " from the latest meets in " ~ where ~ ", measured against each athlete's own season." %}
-{% set meta_crumbs = [("Breakouts", none)] %}
+{% set meta_crumbs = [("Rankings", "/rankings"), ("Breakouts", none)] %}
 {% include "_meta.html" %}
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
@@ -37,6 +37,16 @@
    else [('state_div', 'State division / class'), ('section', 'Section'), ('section_div', 'Section division'), ('area', 'Area'), ('league', 'League')] %}
 
 <main class="page-wide p2-page brk-page">
+  {# Breakouts is one of the Rankings boards (owner, 2026-10-05): the same tab
+     strip, the others linking back to /rankings on that board #}
+  <div class="board-strip" role="navigation" aria-label="Rankings boards">
+    <a href="/rankings?board=ability">Ability</a>
+    <a href="/rankings?board=performance">Performances</a>
+    <a href="/rankings?board=pr">Best times/marks</a>
+    <a href="/rankings?board=teams">Teams</a>
+    <a href="/rankings?board=courses">Courses</a>
+    <a class="is-on" href="/breakouts" aria-current="page">Breakouts</a>
+  </div>
   <div class="hdr-row">
     <h1>Breakouts</h1>
     {% with share_title="Breakouts this week on Racecast", share_url=site_origin ~ qs() %}{% include "_share.html" %}{% endwith %}

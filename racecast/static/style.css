@@ -5008,11 +5008,8 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
   .topbar .topnav { order: 4; }
   .topbar .search-wrap { order: 5; }
 }
-@media (min-width: 701px) and (max-width: 1439px) {
-  .topnav a.nav-roomy { display: none; }
-  .topnav .topnav-menu a.nav-tight { display: block; }
-  .topnav-more > summary.conv-here { color: var(--ink); font-weight: 650; box-shadow: inset 0 -2px 0 var(--accent); }
-}
+/* (Conversions used to fold into More from 701 to 1439px; with State meets
+   and Breakouts off the bar (2026-10-05) it fits inline at every width.) */
 /* on a phone the links wrap, so More can land anywhere on its row: the menu
    hangs from the right edge of the whole link block instead of from More,
    and cannot run off either side of the screen */
@@ -5665,3 +5662,11 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 td.vs-level { font-variant-numeric: tabular-nums; }
 td.vs-level.is-above { color: #1a7f37; font-weight: 600; }
 td.vs-level.is-under { color: var(--muted); }
+/* a board tab that is its own page (Breakouts on /rankings) */
+.rankings-page a.tab-link { text-decoration: none; color: inherit; display: inline-flex; align-items: center; }
+.predict-views { margin: .2rem 0 1rem; }
+/* Breakouts' copy of the Rankings board tabs (.rankings-page .tab's look) */
+.board-strip { display: flex; flex-wrap: wrap; gap: .25rem; margin: 0 0 1rem; }
+.board-strip a { padding: .5rem 1.125rem; border: 1px solid var(--line, #e5e7eb); background: #fff;
+                 border-radius: 6px; font-size: .875rem; font-weight: 500; color: inherit; text-decoration: none; }
+.board-strip a.is-on { background: var(--accent, #14477d); border-color: var(--accent, #14477d); color: #fff; }
