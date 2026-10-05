@@ -4055,3 +4055,16 @@ before the fix keeps its saved cards until the mode is flipped once or the
 meet is re-picked.
 Also 5b14bc6: a whole roster added to a men's race brought the women's
 team (no gender on an all-races/mixed field); falls back to the race's own.
+
+## 2026-10-05 — ⏳ predictions read a meet by id alone (anet/tfrrs ids collide)
+
+Owner: "NCAA Division III Cross Country Championships 2025 ... ran
+2009-10-13 · Warinanco Park", races "Varsity Boys 5000m (22)" and "Varsity
+Girls 5000m (8)" beside the D3 8K/6K. The tfrrs D3 meet and a 2009 anet NJ
+high-school meet share one meet_id (15,096 XC ids collide; track too). The
+meet and race pages split them (?alt= / ?r= pins, app.meet_sources /
+pick_source); the predictions page never did: the race list merged both,
+the date was the 2009 one, and "as it ran" read the 2009 season -- the
+Tufts card of long-gone runners. Owner's rule kept: as it ran + Everyone =
+that season's whole roster (seniors included). In progress: one source per
+meet, carried through every /api/predict/* call and the page.
