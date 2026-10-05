@@ -2190,10 +2190,18 @@ def get_races(cur, person_id):
     if _hasRaceDayEffect(cur):
         day_col = "rde.day_effect"
         era_col = _raceDayCourseSql(cur)
+        # ★ A CHAMPIONSHIP'S DAY BY ITS OWN NAME (2026-10-05): the go-live
+        #   writes a championship cell's days under 'XC:<name>' with no
+        #   canonical id, so the id join found none and those races had no
+        #   race-day hover. `cdc` is the page's championship cell.
         day_join_xc = ("""LEFT JOIN race_day_effect rde
-               ON rde.canonical_id = cc.canonical_id
-              AND rde.distance_m   = cd.distance_m
-              AND rde.race_date::text = r.date""")
+               ON rde.race_date::text = r.date
+              AND ((cdc.course_name IS NOT NULL
+                    AND rde.course_name = cdc.course_name
+                    AND rde.distance_m  = cdc.distance_m)
+                OR (cdc.course_name IS NULL
+                    AND rde.canonical_id = cc.canonical_id
+                    AND rde.distance_m   = cd.distance_m))""")
         day_join_tf = ("""LEFT JOIN race_day_effect rde
                ON rde.course_name = cd.course_name
               AND rde.race_date::text = r.date""")
@@ -3167,6 +3175,8 @@ def get_race_header(cur, meet_id, div_id, source=None):
                r.source                                      AS source,
                COALESCE(cdc.difficulty, cd.difficulty)       AS difficulty,
                (cdc.difficulty IS NOT NULL)                  AS champ_cell,
+               cdc.course_name                               AS champ_key,
+               cdc.distance_m                                AS champ_distance_m,
                cc.canonical_id                               AS canonical_id,
                cd.distance_m                                 AS cell_distance_m,
                -- FILTER because the lateral no longer restricts gender to M/F
@@ -3619,7 +3629,16 @@ def _raceDayRow(cur, sport, header, race_date):
         return None
     ce = _raceDayCourseSql(cur).replace("rde.", "")
     try:
-        if sport == "XC":
+        if sport == "XC" and header.get("champ_key"):
+            # a championship's own cell: its days are under its name
+            cur.execute(f"""
+                SELECT day_effect, {ce} AS course_effect FROM race_day_effect
+                WHERE course_name = %(key)s AND distance_m = %(dm)s
+                  AND race_date::text = %(day)s::text
+                ORDER BY n_rows DESC LIMIT 1
+            """, {"key": header["champ_key"], "dm": header.get("champ_distance_m"),
+                  "day": race_date})
+        elif sport == "XC":
             if header.get("canonical_id") is None or header.get("cell_distance_m") is None:
                 return None
             cur.execute(f"""

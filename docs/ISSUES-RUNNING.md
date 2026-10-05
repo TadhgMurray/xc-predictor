@@ -3788,3 +3788,19 @@ soil moisture, a leftover that rises with rain is the part the correction
 misses, and its slope is the size of the fix. Track has no race-day term in
 its ratings (owner's rule), so track rain rests on the correction alone; the
 diagnostic still reads the solve's track day terms if published. ⏳ Run it.
+
+## 2026-10-05 — ✅⏳ race-day hover missing on some athlete-page difficulties
+
+Owner: "why do some race difficulties on athlete pages not have the dropdown".
+The hover appears only when race_day_effect has the race. Two causes:
+1. **Venue race key (default since 2026-10-04):** a race is a venue on a day
+   across every distance; joint_golive kept ONE cell per race, so only one
+   distance of each venue-day got a row (the boys' 5000 had the hover, the
+   girls' 4000 the same day none, and its era course number fell back to the
+   latest era). Now one row per (race, distance cell) -- joint_golive.racePairs,
+   tests/test_race_day_rows.py. ⏳ Takes effect with the next 08_golive.
+2. **Championship courses** (Foot Locker etc.) are written under 'XC:<name>'
+   with no canonical id; the athlete and race pages joined by id only. Both
+   now join a championship's days by its own name. ✅ on restart.
+Still no hover, correctly: races not in the solve (a corrected-distance
+division, a race with no rated rows) and courses with no fitted cell.

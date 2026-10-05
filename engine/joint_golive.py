@@ -133,6 +133,17 @@ def _dayWord(mode):
     return {"all": "IN", "fast": "FAST DAYS ONLY IN"}.get(mode, "OUT OF")
 
 
+def racePairs(race, cell, n_cells):
+    """Every (race, cell) that has rows: (race ids, cell ids, the first row of
+    each pair, rows per pair). A venue race spans one cell per distance."""
+    race = np.asarray(race, dtype=np.int64)
+    cell = np.asarray(cell, dtype=np.int64)
+    n_cells = max(int(n_cells), int(cell.max()) + 1 if cell.size else 1)
+    uniq, first, n = np.unique(race * n_cells + cell, return_index=True,
+                               return_counts=True)
+    return uniq // n_cells, uniq % n_cells, first, n
+
+
 def buildLive(out, D, cols, keep, collapse="best", anchor="career",
               use_race_effect=True, gain_bands=None, pack_date=None,
               race_effect_sports=(), gain_levels=None):
@@ -481,23 +492,26 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     day_rows = None
     if "days" in cols:
         days_all = np.asarray(cols["days"][keep])
-        race_cell = np.zeros(D.n_race, dtype=np.int64)
-        race_cell[D.race] = D.cell
-        race_days = np.zeros(D.n_race, dtype=np.int64)
-        race_days[D.race] = days_all
-        race_n = np.bincount(D.race, minlength=D.n_race)
-        seen_r = np.flatnonzero(race_n > 0)
+        # ★ ONE ROW PER (RACE, CELL), NOT PER RACE (owner, 2026-10-05: "why do
+        #   some race difficulties on athlete pages not have the dropdown").
+        #   Under --race-key venue (the default since 2026-10-04) a race is a
+        #   venue on a day across every distance run there, and this kept ONE
+        #   cell per race (the last row's): the boys' 5000 got the day's row,
+        #   the girls' 4000 the same day got none -- no race-day hover, and
+        #   the era course number fell back to the latest era. Each distance
+        #   raced that day now gets its own row carrying the day's term.
+        pair_race, pair_cell, first, pair_n = racePairs(D.race, D.cell, len(keys))
         # ★ AND THE COURSE NUMBER OF THAT RACE'S OWN ERA (owner, 2026-10-04:
         #   every year of a venue showed one difficulty -- Newhall +7.6% on
         #   2021-2024, Mt. SAC +11.1% on 2021-2023). course_difficulties
         #   publishes each venue's LATEST era under its bare key, while every
         #   row's rating used its own era's cell; the page now shows the
         #   number the rating actually used.
-        day_rows = (keys, race_cell[seen_r], race_days[seen_r],
-                    out["race_effect"][seen_r].astype(np.float32),
-                    race_n[seen_r], pack_date,
-                    np.where(solved[race_cell[seen_r]],
-                             difficulty[race_cell[seen_r]], np.nan).astype(np.float32))
+        day_rows = (keys, pair_cell, days_all[first],
+                    out["race_effect"][pair_race].astype(np.float32),
+                    pair_n, pack_date,
+                    np.where(solved[pair_cell],
+                             difficulty[pair_cell], np.nan).astype(np.float32))
     scale_rows = []
     # ★ THE SHIFT IS THE ANCHOR THAT WAS APPLIED (2026-09-11, issue #21).
     #   This was the results-weighted mean over BOTH sports while the
