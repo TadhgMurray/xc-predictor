@@ -777,6 +777,8 @@ function applyScale() {
  *   cost of crossing over early is nothing at all.
  */
 const URL_LIMIT = 1800;
+/* How many races' predictions are in flight at once (predict()). */
+const PREDICT_PARALLEL = 4;
 
 function sendQuery(path, q) {
   const qs = q.toString();
@@ -2031,10 +2033,26 @@ async function predict() {
   state.lastTargets = targets;
   state.lastResults = [];
   try {
+    /* ★ THE RACES ARE ASKED TOGETHER, NOT IN TURN (owner, 2026-10-05:
+         "speed up the predictions... They're pretty slow"). Each race is
+         its own request, and they do not depend on each other -- but they
+         were awaited one after another, so four races at a championship
+         took the four requests' times ADDED UP. At most PREDICT_PARALLEL
+         go at once (the site has eight workers and other readers), and the
+         answers are rendered in race order exactly as before, the first
+         failure in that order reported as before. */
+    const answers = await mapLimit(targets, PREDICT_PARALLEL, async (div) => {
+      try {
+        const res = await sendQuery(path, buildQuery(div));
+        return { res: res, data: await readJson(res) };
+      } catch (err) {
+        return { err: err };
+      }
+    });
     const parts = [];
     for (const [idx, div] of targets.entries()) {
-      const res = await sendQuery(path, buildQuery(div));
-      const data = await readJson(res);
+      if (answers[idx].err) throw answers[idx].err;
+      const { res, data } = answers[idx];
       if (!res.ok) { setStatus(data.error || res.statusText, true); return; }
 
       // available:false is the expected answer until the model is trained,
@@ -2617,7 +2635,7 @@ async function bestSeven(btn) {
   out.innerHTML = `<p class="meta">Looking at ${esc(label)}'s squad…</p>`;
   try {
     if (state.when !== "asran") {
-      const squad = await loadSquad(school, card.e.field?.gender);
+      const squad = await loadSquad(school, card.div);
       for (const r of squad.runners || []) {
         if (r.person_id != null && !pool.has(String(r.person_id)))
           pool.set(String(r.person_id), r);
@@ -2804,15 +2822,10 @@ bindPicker($("squad-input"), $("squad-results"), "school", renderSimple,
            async (d) => {
   const school = d.school || d.label;
   if (!school) return;
-  const p = new URLSearchParams({ school: school, sport: state.meet.sport });
-  const g = state.field && state.field.gender;
-  if (g) p.set("gender", g);
-  const lv = (state.field && state.field.levels) || [];
-  if (lv.length) p.set("levels", lv.join(","));   // see loadSquad
   setStatus(`Adding ${school}\u2026`, false);
   try {
-    const res = await fetch("/api/predict/squad?" + p.toString());
-    const data = await res.json();
+    // the same cached, race-shaped squad the team side reads (loadSquad)
+    const data = await loadSquad(school, undefined, pickState(d));
     const runners = (data.runners || []).filter((r) => r.person_id != null);
     if (!runners.length) {
       setStatus(data.error || `${school} has no current squad to add.`, true);
@@ -3004,8 +3017,18 @@ function bindSchoolPicker(sec, div) {
              "school", renderSchoolsFor(div), (d) => {
     const school = d.school || d.label;
     if (teamInDiv(div, school)) { removeTeam(div, school); return; }
-    addTeam(school, div);
+    addTeam(school, div, pickState(d));
   });
+}
+
+/* ★ THE NAMESAKE A SCHOOL PICK MEANT (2026-10-05). /search/api lists
+   "Amherst (MA)" and "Amherst (WI)" as two rows with one value, "Amherst";
+   the state is in the row's link (/school/Amherst?state=WI) and its label.
+   Without it the squad came back as every Amherst at once. */
+function pickState(d) {
+  const m = /[?&]state=([A-Za-z]{2})\b/.exec((d && d.link) || "")
+         || /\(([A-Z]{2})\)\s*$/.exec((d && d.label) || "");
+  return m ? m[1].toUpperCase() : "";
 }
 
 /*
@@ -3121,7 +3144,7 @@ $("t-course").addEventListener("input", () => {
  *   squad puts a real card in the grid, with the same seven-and-edit
  *   behaviour as every other team.
  */
-async function addTeam(school, div) {
+async function addTeam(school, div, st) {
   /* ! THE TARGET RACE IS HELD, NOT READ BACK. There is an await in the
        middle of this, and state.meet.div can move under it (another block
        clicked, the mode flipped). Taking the edit record once means the
@@ -3138,7 +3161,7 @@ async function addTeam(school, div) {
   }
   setStatus(`Loading ${school}\u2026`, false);
   try {
-    const squad = await loadSquad(school, e.field.gender);
+    const squad = await loadSquad(school, target, st);
     if (!squad.runners.length) {
       /* ⚠ "HAS NOT RACED THIS SEASON" WAS A FALSE EXPLANATION OF A TRUE
            RESULT. A boys race filters the squad to boys, so an all-girls
@@ -3153,6 +3176,9 @@ async function addTeam(school, div) {
     }
     e.field.teams.push({
       school: school,
+      // ! WHICH NAMESAKE WAS PICKED (2026-10-05), so this card's later squad
+      //   asks -- "add from squad", Everyone, Best 7 -- ask for the same one
+      state: st || null,
       // ! AND ITS CREST, or a team added by hand is the one card on the page
       //   without one. schoolSquad stamps it from the same cache meetField
       //   uses.
@@ -3231,8 +3257,10 @@ function addRunner(school, pid, name, rating, div, hs) {
    of the school not yet on the card. Returns how many joined; the ids
    are remembered on the race so the checkbox can take them out again. */
 async function addWholeSquad(school, div) {
-  const ed = editsFor(div === undefined ? state.meet.div : div);
-  const squad = await loadSquad(school, ed.field?.gender);
+  const race = div === undefined ? state.meet.div : div;
+  const ed = editsFor(race);
+  // the squad of THIS race's namesake, at this race's level (squadCtx)
+  const squad = await loadSquad(school, race);
   const team = (ed.field?.teams || []).find((t) => t.school === school);
   const have = new Set((team?.runners || []).map((r) => String(r.person_id)));
   ed.wholeAdded = ed.wholeAdded || new Set();
@@ -3253,18 +3281,19 @@ async function addWholeSquad(school, div) {
      the roster view"): addRunner opens the card it edits, which is right
      for one runner and wrong for thirty teams at once, so the open set
      is put back afterwards. And every squad is fetched AT ONCE, not one
-     after another: thirty sequential round trips was the slowness. */
+     after another: thirty sequential round trips was the slowness.
+   ★ AND IN A FEW BATCHED REQUESTS, NOT ONE PER TEAM (2026-10-05):
+     loadSquads asks /api/predict/squads for each race's whole team list,
+     with that race's own gender, level and each card's state. */
 async function wholeSquadsFor(divs) {
   let n = 0, teams = 0;
   const jobs = [];
   for (const div of divs) {
     const ed = editsFor(div);
-    const wasOpen = new Set(ed.open);
-    for (const t of (ed.field?.teams || [])) {
-      teams += 1;
-      jobs.push(loadSquad(t.school, ed.field?.gender).catch(() => null));
-    }
-    ed._wasOpen = wasOpen;
+    ed._wasOpen = new Set(ed.open);
+    const schools = (ed.field?.teams || []).map((t) => t.school);
+    teams += schools.length;
+    jobs.push(loadSquads(schools, div).catch(() => null));
   }
   await Promise.all(jobs);            // the cache is warm; the adds are instant
   for (const div of divs) {
@@ -3331,29 +3360,147 @@ function renderSquadBoxes() {
   el.innerHTML = squadButtons(all, asran);
 }
 
-async function loadSquad(school, gender) {
-  /* ! THE GENDER IS PART OF THE CACHE KEY. A school has a boys team and a
-       girls team; keying on the name alone would serve one race's squad to
-       the other. It is PASSED IN rather than read off state.field, which
-       answers for the focused block and not necessarily the one being
-       added to. */
-  const g = gender || state.field?.gender || "";
-  const key = `${school}\u0000${g}`;
-  if (squadCache.has(key)) return squadCache.get(key);
-  const q = new URLSearchParams({ school: school, sport: state.meet.sport });
-  if (g) q.set("gender", g);
+/* ★ WHICH SQUAD, SPELLED ONCE (owner, 2026-10-05: "adding the entire roster
+     of Amherst should not add this guy" -- a grade-5 runner from Amherst
+     (WI) on an Amherst College / NESCAC prediction). A school NAME is not a
+     school: Amherst is a college, a Massachusetts high school and a
+     Wisconsin one. Three things pick the one meant, and all three come off
+     the RACE the squad is being added to:
+       gender -- a school has a boys team and a girls team;
+       levels -- the level meetField read off that race (college, hs, ms);
+       state  -- the namesake: the card's own state, the one the field
+                 resolved from the people who actually ran it.
+   ⚠ THE LEVEL USED TO COME OFF state.field, THE FOCUSED RACE. A request made
+     while the focus was elsewhere -- the overall Squads toggle, the
+     all-races block -- went out with no level, and no level is no filter.
+     That is how a fifth grader landed on a college card. Every caller now
+     names its race, and the meet rides along so the server can fall back
+     to that meet's level if the page has none (api_predict_squads). */
+function squadCtx(div) {
+  const d = div === undefined ? (state.meet ? state.meet.div : null) : div;
+  const f = editsFor(d).field || {};
+  return { div: d, gender: f.gender || "", levels: f.levels || null,
+           teams: f.teams || [] };
+}
+
+function squadStateOf(ctx, school) {
+  const t = (ctx.teams || []).find((x) => x.school === school);
+  return (t && t.state) || "";
+}
+
+/* The cache key and the query are built from the same parts, so a squad
+   fetched for one race is never served to a race that differs in any of
+   them. */
+function squadKey(school, ctx, st) {
+  // the meet too: with no level or state the server falls back to the
+  // meet's, so the same school is a different answer at another meet
+  return [school, state.meet ? state.meet.sport : "",
+          state.meet ? state.meet.id : "", ctx.div ?? "", ctx.gender,
+          ctx.levels ? ctx.levels.join(",") : "?", st || ""].join("\u0000");
+}
+
+function squadParams(ctx) {
+  const q = new URLSearchParams({ sport: state.meet.sport });
+  if (ctx.gender) q.set("gender", ctx.gender);
   /* ★ AND THE LEVEL (owner, 2026-09-16: "add entire roster... adds ppl not
      at that school just at a school with same name"). athlete_season keys
      on the BARE name, so Amherst is the college and the regional high
      school at once -- and "the whole squad" took both. meetField reads the
-     level off the race; this narrows the add to the same one. */
-  const lv = (state.field && state.field.levels) || [];
-  if (lv.length) q.set("levels", lv.join(","));
-  const res = await fetch("/api/predict/squad?" + q.toString());
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || res.statusText);
-  squadCache.set(key, data);
-  return data;
+     level off the race; this narrows the add to the same one.
+     ! SENT EVEN WHEN EMPTY once the field is known: an empty list is the
+       field saying "mixed race", and the server must not re-derive it. */
+  if (ctx.levels) q.set("levels", ctx.levels.join(","));
+  if (state.meet && state.meet.id) q.set("meet_id", state.meet.id);
+  if (ctx.div != null && !Array.isArray(ctx.div)) q.set("div_id", ctx.div);
+  return q;
+}
+
+/* ★ THE CACHE HOLDS THE PROMISE, NOT THE ANSWER (2026-10-05). Two cards
+     asking for one school while the first fetch is still out used to send
+     two requests; now the second waits on the first. A failure is dropped
+     from the cache so the next ask tries again. */
+async function loadSquad(school, div, pickedState) {
+  const ctx = squadCtx(div);
+  const st = pickedState || squadStateOf(ctx, school);
+  const key = squadKey(school, ctx, st);
+  if (!squadCache.has(key)) {
+    const q = squadParams(ctx);
+    q.set("school", school);
+    if (st) q.set("state", st);
+    const job = fetch("/api/predict/squad?" + q.toString())
+      .then(async (res) => {
+        const data = await readJson(res);
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        return data;
+      });
+    squadCache.set(key, job);
+    job.catch(() => { if (squadCache.get(key) === job) squadCache.delete(key); });
+  }
+  return squadCache.get(key);
+}
+
+/* ★ EVERY SQUAD OF A RACE IN A FEW REQUESTS, NOT ONE PER TEAM (owner,
+     2026-10-05: "speed up the predictions and the loading of the squads.
+     They're pretty slow"). Squads: Everyone sent one /api/predict/squad per
+     team -- every team of every race at a championship -- and each waited
+     its turn behind eight server workers. /api/predict/squads answers a
+     list in one batched set of queries; a big race is cut into chunks of
+     SQUAD_CHUNK, at most SQUAD_PARALLEL in flight. Whatever is already
+     cached (or on its way) is not asked again. */
+const SQUAD_CHUNK = 40;
+const SQUAD_PARALLEL = 4;
+
+async function loadSquads(schools, div) {
+  const ctx = squadCtx(div);
+  const todo = [];
+  for (const school of new Set(schools)) {
+    const st = squadStateOf(ctx, school);
+    if (!squadCache.has(squadKey(school, ctx, st))) todo.push([school, st]);
+  }
+  const chunks = [];
+  for (let i = 0; i < todo.length; i += SQUAD_CHUNK)
+    chunks.push(todo.slice(i, i + SQUAD_CHUNK));
+  const settle = new Map();            // key -> [resolve, reject]
+  for (const [school, st] of todo) {
+    const key = squadKey(school, ctx, st);
+    const job = new Promise((ok, bad) => settle.set(key, [ok, bad]));
+    squadCache.set(key, job);
+    job.catch(() => { if (squadCache.get(key) === job) squadCache.delete(key); });
+  }
+  await mapLimit(chunks, SQUAD_PARALLEL, async (chunk) => {
+    try {
+      const q = squadParams(ctx);
+      q.set("teams", JSON.stringify(chunk.map(([s, st]) => [s, st || null])));
+      const res = await sendQuery("/api/predict/squads", q);
+      const data = await readJson(res);
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      chunk.forEach(([school, st], i) => {
+        const got = (data.squads || [])[i];
+        const [ok, bad] = settle.get(squadKey(school, ctx, st));
+        if (got) ok(got); else bad(new Error("No squad came back."));
+      });
+    } catch (err) {
+      for (const [school, st] of chunk) settle.get(squadKey(school, ctx, st))[1](err);
+    }
+  });
+  return Promise.all([...new Set(schools)].map((s) =>
+    loadSquad(s, div).catch(() => null)));
+}
+
+/* Run `fn` over `items` with at most `limit` running at once; the results
+   come back in the order of `items`. */
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) },
+                               worker));
+  return out;
 }
 
 document.querySelectorAll(".card[data-when]").forEach((btn) => {
@@ -3552,7 +3699,7 @@ document.addEventListener("click", (e) => {
     }
     list.classList.remove("hidden");
     list.innerHTML = `<div class="squad-loading">Loading\u2026</div>`;
-    loadSquad(school).then((squad) => {
+    loadSquad(school, cardDiv).then((squad) => {
       const team = (state.field?.teams || []).find((t) => t.school === school);
       const have = new Set((team?.runners || []).map((r) => String(r.person_id)));
       const rest = squad.runners.filter((r) => !have.has(String(r.person_id)));

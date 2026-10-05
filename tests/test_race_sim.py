@@ -171,6 +171,147 @@ def test_nothing_to_score_is_none_not_a_crash():
 
 
 # ------------------------------------------------------------------ #
+#  THE FAST PATH IS THE SAME NUMBERS (2026-10-05)
+# ------------------------------------------------------------------ #
+#
+# ★ simulate() USED TO SCORE ONE DRAW AT A TIME, 2,000 Python passes per
+#   Predict, and on a 400-runner field that was most of the request (owner,
+#   2026-10-05: "speed up the predictions... They're pretty slow"). It now
+#   scores every draw at once (_scoreDraws). The page prints these numbers,
+#   so "about the same" is not good enough: below is the old loop, verbatim,
+#   and the two must agree bit for bit -- every team row, every h2h cell,
+#   every runner's places.
+
+def _oldSimulate(field, preds, draws=R.DRAWS, seed=0, team_rho=0.0, z=1.0):
+    """race_sim.simulate as it was before 2026-10-05, kept as the reference."""
+    prep = R.prepare(field, preds, z)
+    if prep is None:
+        return None
+    names = prep["names"]
+    n_teams = len(names)
+    if not n_teams:
+        return None
+    rng = np.random.default_rng(seed)
+    times = R._draw(rng, prep["mu"], prep["sigma"], prep["team"], n_teams,
+                    team_rho, draws)
+    scores = np.full((draws, n_teams), np.nan)
+    places = np.zeros((draws, prep["mu"].shape[0]), dtype=np.int64)
+    for d in range(draws):
+        s, _sp = R.scoreDraw(times[d], prep["team"], prep["full"],
+                             prep["cap"], n_teams)
+        scores[d] = s
+        places[d] = np.argsort(np.argsort(times[d], kind="stable"),
+                               kind="stable") + 1
+    scored = ~np.isnan(scores)
+    filled = np.where(scored, scores, np.inf)
+    best = filled.min(axis=1)
+    any_scored = np.isfinite(best)
+    wins = (filled == best[:, None]) & any_scored[:, None]
+    n_tied = wins.sum(axis=1)
+    win_credit = np.where(n_tied[:, None] > 0,
+                          wins / np.maximum(n_tied, 1)[:, None], 0.0)
+    rank = np.argsort(np.argsort(filled, axis=1, kind="stable"),
+                      axis=1, kind="stable") + 1
+    teams = {}
+    for i, name in enumerate(names):
+        col = scores[:, i]
+        ok = ~np.isnan(col)
+        teams[name] = {
+            "p_win": float(win_credit[:, i].sum() / max(draws, 1)),
+            "p_top3": float(((rank[:, i] <= 3) & ok).sum() / max(draws, 1)),
+            "score_mean": float(np.nanmean(col)) if ok.any() else None,
+            "score_sd": float(np.nanstd(col)) if ok.any() else None,
+            "score_p10": float(np.nanpercentile(col, 10)) if ok.any() else None,
+            "score_p50": float(np.nanpercentile(col, 50)) if ok.any() else None,
+            "score_p90": float(np.nanpercentile(col, 90)) if ok.any() else None,
+            "p_incomplete": float((~ok).sum() / max(draws, 1)),
+        }
+    h2h = {}
+    for i, a in enumerate(names):
+        for j, b in enumerate(names):
+            if i == j:
+                continue
+            both = (~np.isnan(scores[:, i])) & (~np.isnan(scores[:, j]))
+            if not both.any():
+                h2h[(a, b)] = None
+                continue
+            beat = (scores[both, i] < scores[both, j]).sum()
+            tie = (scores[both, i] == scores[both, j]).sum()
+            h2h[(a, b)] = float((beat + 0.5 * tie) / both.sum())
+    runners = []
+    for k, pid in enumerate(prep["person"]):
+        col = places[:, k]
+        runners.append({"person_id": pid, "school": prep["runner_team"][k],
+                        "place_mean": float(col.mean()),
+                        "place_p10": float(np.percentile(col, 10)),
+                        "place_p90": float(np.percentile(col, 90))})
+    return {"teams": teams, "h2h": h2h, "runners": runners, "draws": draws}
+
+
+def _messyField(rng):
+    """Teams of every shape the rules treat differently: full, short, capped
+    by what they entered, over-entered, plus unattached runners -- and ties,
+    because integer seconds with a tiny band collide."""
+    spec = []
+    for t in range(int(rng.integers(2, 9))):
+        per = int(rng.integers(1, 11))
+        entered = rng.choice([None, per, max(1, per - 3), 7, 1])
+        for _j in range(per):
+            spec.append((f"T{t}", None if entered is None else int(entered),
+                         float(rng.integers(900, 1000))))
+    for _u in range(int(rng.integers(0, 5))):
+        spec.append(("Unattached", None, float(rng.integers(900, 1000))))
+    field, preds = _field(spec)
+    for p in preds:
+        if rng.random() < 0.5:
+            p["sigma_pct"] = float(rng.choice([0.0, 0.5, 2.0, 7.0, 40.0]))
+    return field, preds
+
+
+def test_the_vectorised_simulation_is_the_old_one_bit_for_bit():
+    rng = np.random.default_rng(20261005)
+    for trial in range(40):
+        field, preds = _messyField(rng)
+        draws = int(rng.choice([1, 7, 200, 600]))
+        rho = float(rng.choice([0.0, 0.3]))
+        new = R.simulate(field, preds, draws=draws, seed=trial, team_rho=rho)
+        old = _oldSimulate(field, preds, draws=draws, seed=trial, team_rho=rho)
+        assert new == old, trial
+
+
+def test_the_chunk_boundary_changes_nothing(monkeypatch):
+    """The draws are scored in chunks to bound a worker's memory; a chunk
+    edge in the middle of the draws must not show."""
+    rng = np.random.default_rng(5)
+    field, preds = _messyField(rng)
+    whole = R.simulate(field, preds, draws=333, seed=3)
+    monkeypatch.setattr(R, "_CHUNK_CELLS", 17)
+    assert R.simulate(field, preds, draws=333, seed=3) == whole
+    assert _oldSimulate(field, preds, draws=333, seed=3) == whole
+
+
+def test_every_draw_scores_as_scoreDraw_scores_it():
+    rng = np.random.default_rng(11)
+    for _trial in range(30):
+        field, preds = _messyField(rng)
+        prep = R.prepare(field, preds)
+        if prep is None or not prep["names"]:
+            continue
+        n_teams = len(prep["names"])
+        times = R._draw(rng, prep["mu"], prep["sigma"], prep["team"],
+                        n_teams, 0.0, 50)
+        scores, places = R._scoreDraws(times, prep["team"], prep["full"],
+                                       prep["cap"], n_teams)
+        for d in range(times.shape[0]):
+            want, _sp = R.scoreDraw(times[d], prep["team"], prep["full"],
+                                    prep["cap"], n_teams)
+            assert np.array_equal(scores[d], want, equal_nan=True)
+            assert np.array_equal(
+                places[d], np.argsort(np.argsort(times[d], kind="stable"),
+                                      kind="stable") + 1)
+
+
+# ------------------------------------------------------------------ #
 #  THE LINEUP
 # ------------------------------------------------------------------ #
 

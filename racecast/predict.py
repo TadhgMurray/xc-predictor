@@ -62,6 +62,12 @@ TEAM_DISPLACERS = 2
 _model = None
 _artifacts = None
 _load_error = None
+# ! ONE LOAD PER PROCESS EVEN WHEN TWO THREADS ASK (2026-10-05). warm()
+#   loads the model on a background thread at worker start, and a request
+#   arriving in that second would otherwise start a second torch.load of
+#   the same file beside it -- twice the memory and twice the wait.
+import threading as _threading
+_LOAD_LOCK = _threading.Lock()
 
 
 def _fx():
@@ -96,7 +102,14 @@ def _loadModel():
     global _model, _artifacts, _load_error
     if _model is not None or _load_error is not None:
         return _model
+    with _LOAD_LOCK:
+        if _model is not None or _load_error is not None:
+            return _model
+        return _loadModelLocked()
 
+
+def _loadModelLocked():
+    global _model, _artifacts, _load_error
     stats_path = os.path.join(MODEL_DATA, "target_stats.pkl")
     enc_path = os.path.join(MODEL_DATA, "encoders.pkl")
     vocab_path = os.path.join(MODEL_DATA, "venue_vocab.pkl")
@@ -178,6 +191,79 @@ def modelStatus():
     if _loadModel() is not None:
         return {"available": True, "reason": None}
     return {"available": False, "reason": _load_error}
+
+
+# Purpose:   pay a worker's first-prediction costs when the worker starts,
+#            not on the first reader to press Predict (owner, 2026-10-05:
+#            "speed up the predictions... They're pretty slow").
+#
+# ★ THE FIRST PREDICTION ON A WORKER WAS TEN TIMES THE SECOND. Measured on
+#   the live site the same day: one athlete, 4.39 s cold and 0.34 s warm.
+#   Everything lazy lands on that first request -- `import torch`, the
+#   checkpoint and its three pickles, feature_extraction (which parses
+#   corrections.py at import), the conversion tables, race_sim -- and there
+#   are EIGHT gunicorn workers, each with its own copy, so after every
+#   restart eight readers in a row could each be the one who waits.
+#
+# ! A BACKGROUND THREAD, NOT --preload. Preloading imports the app in the
+#   master and forks it, and the master's import opens the connection pool
+#   (scripts/database.py) -- eight children sharing one set of Postgres
+#   sockets is a corruption, not a speed-up. A thread per worker after the
+#   fork costs nothing a reader waits on: a request that arrives first just
+#   meets _LOAD_LOCK and the import lock and is no slower than it was.
+#
+# ! EVERY STEP IS OPTIONAL. A step that fails is logged and skipped; the
+#   request path still loads whatever it needs exactly as before, so the
+#   worst a broken warm-up can do is nothing.
+#
+# ⚠ THE MEMORY WAS ALREADY BEING SPENT. A worker that has served one
+#   prediction holds the model for the rest of its life; this only moves
+#   the moment it happens to before anyone is waiting.
+def warm():
+    """Load the model and the modules inference touches. Returns the names
+    of the steps that ran, for the log."""
+    import logging
+    log = logging.getLogger(__name__)
+    done = []
+
+    def step(name, fn):
+        try:
+            if fn() is False:          # ran, and had nothing to load
+                return
+            done.append(name)
+        except Exception:                               # noqa: BLE001
+            log.exception("predict warm-up step %s failed", name)
+
+    # untrained or unreadable is not an error here; modelStatus says why
+    step("model", lambda: _loadModel() is not None)
+    step("features", _fx)
+    step("forecast", _fc)
+    step("race_sim", lambda: __import__("race_sim"))
+
+    def conversionTables():
+        # The tables a served time is converted through (engine_scale,
+        # sport_gain, the distance offsets, the pool means) load on first
+        # use per process; one conversion per common pool fills them.
+        import conversions
+        year = datetime.date.today().year
+        for pool, dist in (("hs_m", 5000.0), ("hs_f", 5000.0),
+                           ("college_m", 8000.0), ("college_f", 6000.0),
+                           ("ms_m", 3200.0), ("ms_f", 3200.0)):
+            norm = conversions._norm_from_rating(100.0, pool, 0.0, "XC")
+            if norm:
+                _raceSeconds(norm, {"distance": dist, "pool": pool,
+                                    "sport": "XC", "season": year,
+                                    "difficulty": None})
+    step("conversions", conversionTables)
+
+    def boardScale():
+        from pool_view import stampBoardRows
+        stampBoardRows([{"rating": 100.0, "pool": p}
+                        for p in ("hs_m", "hs_f", "college_m", "college_f",
+                                  "ms_m", "ms_f")],
+                       rating_keys=("rating",), sport="XC")
+    step("board_scale", boardScale)
+    return done
 
 
 # ------------------------------------------------------------------ #
@@ -685,8 +771,9 @@ def _score(field, preds):
 #  THE PARTS THAT NEED THE TRAINED MODEL
 # ------------------------------------------------------------------ #
 
-def _predictTimes(cur, person_ids, target):
-    """[{seconds, ...}] -- one per person_id, in order.
+def _predictTimes(cur, person_ids, target, spec=None):
+    """[{seconds, ...}] -- one per person_id, in order. `spec` is the
+    target's _targetSpec when the caller already resolved it.
 
     ★ THE SWAP POINT, NOW SWAPPED. Builds the same feature vectors
       feature_extraction.py writes -- the corpus row SQL filtered to
@@ -715,7 +802,8 @@ def _predictTimes(cur, person_ids, target):
     encoders, vocab = art["encoders"], art["vocab"]
 
     by_person = _historyRows(cur, person_ids)
-    spec = _targetSpec(cur, target)
+    if spec is None:
+        spec = _targetSpec(cur, target)
 
     # ★ THE WEATHER THE RACE WOULD BE RUN IN (owner, 2026-09-06). The
     #   context vector carries the target's weather, so each variant is
@@ -954,11 +1042,25 @@ def _servedTimes(cur, person_ids, target):
     """_predictTimes, checked against the athletes' own ratings -- what every
     page entry point serves. See the note above."""
     basis = _predictBasis()
-    preds = _predictTimes(cur, person_ids, target)
+    # ★ THE TARGET IS RESOLVED ONCE (2026-10-05). _predictTimes and the
+    #   rating guard below each ran _targetSpec for themselves -- the meet
+    #   row, its canonical course, its difficulty, and a min(date) over the
+    #   meet's results -- for the same target in the same request. It is a
+    #   pure function of the target and the database, so the second answer
+    #   was always the first one again.
+    # ! A FAILURE STILL LANDS WHERE IT DID: _predictTimes resolves it itself
+    #   when this could not, and raises from there as it always has.
+    try:
+        spec = _targetSpec(cur, target)
+    except Exception:                                   # noqa: BLE001
+        _rollback(cur)
+        spec = None
+    preds = _predictTimes(cur, person_ids, target, spec=spec)
     if basis == "model":
         return preds
     try:
-        spec = _targetSpec(cur, target)
+        if spec is None:
+            spec = _targetSpec(cur, target)
         cut = _asDate(spec.get("date"))
         _hb = _asDate(target.get("history_before"))
         if _hb is not None and (cut is None or _hb < cut):
@@ -1793,17 +1895,21 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     #   and a high school often enough that "everyone at Amherst" is two
     #   different teams. See _fieldLevels.
     levels = _fieldLevels(cur, _lineupIds(originals), sport, season_year)
+    # the school as the people who ran this meet for it wore it
+    states = _teamStates(cur, [dict(r) for r in originals],
+                         _meetState(cur, meet_id, sport))
+    # ★ AND THAT NAMESAKE'S SQUAD, NOT EVERY SCHOOL OF THE NAME (owner,
+    #   2026-10-05: "We really need to separate schools by pool"). See
+    #   _keepIdentity: the state the meet's own runners resolve to picks
+    #   which Amherst this is, on top of the level above.
     squads = _currentSquads(cur, at_meet, sport, season_year, gender=gender,
-                            levels=levels)
+                            levels=levels, states=states)
     current_ids = {e["person_id"] for sq in squads.values() for e in sq}
     # ★ THE CAP IS PER SCHOOL, from what it brought to the original running.
     #   Everyone past the cap goes to `dropped`, not out of the field, so a
     #   school that really is fielding seven this year can be corrected by
     #   hand on the page.
     at_meet_counts = countsBySchool(originals)
-    # the school as the people who ran this meet for it wore it
-    states = _teamStates(cur, [dict(r) for r in originals],
-                         _meetState(cur, meet_id, sport))
     by_school = {}
     for school in at_meet:
         sq = squads.get(school, [])
@@ -1965,6 +2071,15 @@ def _fieldLevels(cur, person_ids, sport, season_year=None):
     return {lvl for lvl, n in rows if n / total >= _LEVEL_MIN_SHARE}
 
 
+# Purpose:   the level of a meet's race, the way meetField reads it -- for a
+#            squad request that named its meet but no level (2026-10-05).
+# Output:    {"college"} etc., or None for a mixed race (no narrowing).
+def meetLevels(cur, meet_id, div_id, sport):
+    originals = _exactField(cur, int(meet_id), div_id, sport)
+    return _fieldLevels(cur, _lineupIds(originals), sport,
+                        _currentSeason(cur, sport)) or None
+
+
 # Purpose:   the ids whose level decides the field's, i.e. the LINEUP.
 # ★ THE TOP SEVEN PER SCHOOL, NOT EVERY NAME ON THE ENTRY LIST (owner,
 #   2026-09-16: "the 60% shoild be for current top 7 me thinks, and it
@@ -2058,8 +2173,9 @@ def _lastKnownRatings(cur, person_ids, sport):
 
 
 def schoolSquad(cur, school, sport, season_year=None, limit=40,
-                gender=None, levels=None):
-    """Everyone racing for a school now, best first.
+                gender=None, levels=None, state=None):
+    """Everyone racing for a school now, best first. `state` names which
+    namesake of a contested name (see _keepIdentity); None for the name.
 
     ★ TWO JOBS, ONE ANSWER. Adding a team that was not at the meet needs its
       seven; adding one more runner to a team already there needs the rest of
@@ -2083,44 +2199,100 @@ def schoolSquad(cur, school, sport, season_year=None, limit=40,
       second implementation of "who runs here now" is a second answer, and
       this is what the second answer cost.
     """
+    return schoolSquads(cur, [(school, state)], sport, season_year,
+                        limit=limit, gender=gender, levels=levels)[0]
+
+
+# Purpose:   many schools' squads in one pass -- what schoolSquad answers for
+#            each, in the order asked (owner, 2026-10-05: "speed up the
+#            predictions and the loading of the squads").
+# Input:     wanted -- [(school, state or None)], duplicates allowed.
+# Output:    [schoolSquad's dict] aligned with `wanted`.
+#
+# ★ "EVERYONE" WAS ONE REQUEST PER TEAM. The page's Squads: Everyone fetched
+#   /api/predict/squad once for every team on every race -- 30 to 80 at a
+#   championship, each its own round trip, its own pooled connection and
+#   its own five queries, queued behind eight sync workers. _currentSquads
+#   was always written for a list of schools (meetField hands it the whole
+#   meet); the per-school calls were just never batched.
+#
+# ! THE SAME ANSWER AS ONE AT A TIME. `isolated` makes the one cross-school
+#   step (the results-table freshmen dedupe) per school, the empty-squad
+#   probe is batched the same way, and schoolSquad itself is now this with
+#   one school -- so there is one implementation, not a fast one and a
+#   right one.
+# ! A NAME ASKED UNDER TWO STATES is two rounds: _currentSquads keys on the
+#   name, and Amherst (MA) and Amherst (WI) are not one squad.
+def schoolSquads(cur, wanted, sport, season_year=None, limit=40,
+                 gender=None, levels=None):
     if season_year is None:
         season_year = _currentSeason(cur, sport)
+    wanted = [(sch, (st or None)) for sch, st in wanted]
+    rounds = []                               # [{school: state}]
+    for sch, st in wanted:
+        if not sch:
+            continue
+        for rnd in rounds:
+            if sch not in rnd or rnd[sch] == st:
+                rnd[sch] = st
+                break
+        else:
+            rounds.append({sch: st})
 
-    squads = _currentSquads(cur, [school], sport, season_year, gender=gender,
-                            levels=levels)
-    runners = squads.get(school, [])
+    got = {}                                  # (school, state) -> dict
+    for rnd in rounds:
+        schools = sorted(rnd)
+        states = {s: st for s, st in rnd.items() if st}
+        squads = _currentSquads(cur, schools, sport, season_year,
+                                gender=gender, levels=levels,
+                                states=states, isolated=True)
 
-    # ★ SAY WHICH EMPTY THIS IS (owner, 2026-09-01: "No one from Carondelet
-    #   has raced this season"). Carondelet is an all-girls school and the
-    #   race was a boys race, so the gendered lookup is CORRECT to find
-    #   nobody -- and "has not raced this season" is a false explanation of a
-    #   true result. The school is racing; it is just not racing here.
-    #
-    # ! ONE EXTRA QUERY, ONLY ON THE EMPTY PATH, so the common case pays
-    #   nothing. If the school has a squad on the other side, the page can
-    #   say so instead of implying the data is missing.
-    other = 0
-    if not runners and gender:
-        other = len(_currentSquads(cur, [school], sport, season_year,
-                                   levels=levels).get(school, []))
+        # ★ SAY WHICH EMPTY THIS IS (owner, 2026-09-01: "No one from
+        #   Carondelet has raced this season"). Carondelet is an all-girls
+        #   school and the race was a boys race, so the gendered lookup is
+        #   CORRECT to find nobody -- and "has not raced this season" is a
+        #   false explanation of a true result. The school is racing; it is
+        #   just not racing here.
+        #
+        # ! ONLY ON THE EMPTY PATH, so the common case pays nothing. If the
+        #   school has a squad on the other side, the page can say so
+        #   instead of implying the data is missing.
+        empty = [s for s in schools if not squads.get(s)]
+        others = {}
+        if empty and gender:
+            others = _currentSquads(cur, empty, sport, season_year,
+                                    levels=levels,
+                                    states={s: states[s] for s in empty
+                                            if s in states},
+                                    isolated=True)
 
-    # ! THE ADDED TEAM'S CARD GETS A CREST TOO, or a school added by hand is
-    #   the one card on the page without one. The squad's own pool picks
-    #   which school of the name it is.
-    crest = _stampCrests([{"school": school, "state": _stateOf(school),
-                           "pool": next((r.get("pool") for r in runners
-                                         if r.get("pool")), None)}],
-                         "school", "state")[0].get("crest")
-
-    return {"school": school, "season_year": season_year,
-            "gender": gender, "crest": crest,
-            # How many the school HAS, on the side this race is not. 0 means
-            # the school really has nobody racing, either side.
-            "other_gender": other,
-            # `school` rides on each entry from _currentSquads; the page keys
-            # off the top-level one, so it is dropped rather than sent twice.
-            "runners": [{k: v for k, v in r.items() if k != "school"}
-                        for r in runners[:limit]]}
+        for sch in schools:
+            runners = squads.get(sch, [])
+            # ! THE ADDED TEAM'S CARD GETS A CREST TOO, or a school added by
+            #   hand is the one card on the page without one. The squad's own
+            #   pool picks which school of the name it is, and the state
+            #   asked for which namesake.
+            crest = _stampCrests(
+                [{"school": sch, "state": rnd[sch] or _stateOf(sch),
+                  "pool": next((r.get("pool") for r in runners
+                                if r.get("pool")), None)}],
+                "school", "state")[0].get("crest")
+            got[(sch, rnd[sch])] = {
+                "school": sch, "season_year": season_year,
+                "gender": gender, "crest": crest,
+                # How many the school HAS, on the side this race is not. 0
+                # means the school really has nobody racing, either side.
+                "other_gender": (len(others.get(sch, []))
+                                 if sch in empty and gender else 0),
+                # `school` rides on each entry from _currentSquads; the page
+                # keys off the top-level one, so it is dropped rather than
+                # sent twice.
+                "runners": [{k: v for k, v in r.items() if k != "school"}
+                            for r in runners[:limit]]}
+    return [got.get((sch, st)) or {"school": sch, "season_year": season_year,
+                                   "gender": gender, "crest": None,
+                                   "other_gender": 0, "runners": []}
+            for sch, st in wanted]
 
 
 # ⚠ CACHED, AND THAT IS NOT AN OPTIMISATION -- IT IS THE FIX FOR A
@@ -2410,6 +2582,7 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     #   field. Nothing about the per-division build changes -- this is a
     #   union, not a different way of choosing runners.
     div_ids = [d for d in (target.get("div_ids") or []) if d]
+    originals = None
     if target.get("meet_id") and len(div_ids) > 1:
         entries = _combinedRoster(cur, target, div_ids, sport, mode)
     elif target.get("meet_id"):
@@ -2425,11 +2598,17 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
             #   lineup and the model scores another.
             ids = [r["person_id"] for r in originals]
             year = _currentSeason(cur, sport)
+            # ! THE SAME NAMESAKE meetField NARROWS TO (_keepIdentity), from
+            #   the same evidence: the meet's own runners and its state.
             squads = _currentSquads(cur, at_meet, sport, year,
                                     gender=_fieldGender(cur, ids, sport),
                                     levels=_fieldLevels(
                                         cur, _lineupIds(originals), sport,
-                                        year))
+                                        year),
+                                    states=_teamStates(
+                                        cur, [dict(r) for r in originals],
+                                        _meetState(cur, target["meet_id"],
+                                                   sport)))
             # ★ SAME PER-SCHOOL CAP AS meetField. These two must agree or the
             #   page shows one lineup and the model scores another.
             at_meet_counts = countsBySchool(originals)
@@ -2463,9 +2642,15 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     # meet's own field first when there is a meet (it is who was there)
     evidence = list(entries)
     if target.get("meet_id"):
+        # ! THE FIELD ALREADY READ ABOVE, WHEN THERE IS ONE (2026-10-05).
+        #   The same meet and division were queried twice per prediction --
+        #   a DISTINCT ON with two laterals per runner -- for the same rows.
+        #   Copied as the second query's rows were, and before anything below
+        #   stamps a state onto them.
         try:
-            evidence += [dict(r) for r in _exactField(
-                cur, int(target["meet_id"]), div, sport)]
+            exact = (originals if originals is not None else
+                     _exactField(cur, int(target["meet_id"]), div, sport))
+            evidence += [dict(r) for r in exact]
         except Exception:                               # noqa: BLE001
             _rollback(cur)
     states = _teamStates(cur, evidence,
@@ -2736,8 +2921,14 @@ from roster import TERMINAL_KEYS as _TERMINAL_KEYS
 
 
 def _currentSquads(cur, schools, sport, season_year, gender=None,
-                   levels=None):
+                   levels=None, states=None, isolated=False):
     """{school: [runners best-first]} for this season.
+
+    states   -- {school: "MA"}: keep only that namesake of a contested name
+                (see _keepIdentity). Absent or empty: no state narrowing.
+    isolated -- answer for each school exactly as a call naming that school
+                ALONE would (schoolSquads batches the page's squads through
+                this; see the merge below).
 
     ★ A NEW SEASON STARTS EMPTY, SO LAST YEAR'S ROSTER CARRIES FORWARD
       MINUS THE GRADUATING CLASS. In August the current season has no
@@ -2855,7 +3046,13 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
         _rollback(cur)
         fresh = {}
     for sch, rows in fresh.items():
-        have = {r["person_id"] for rr in squads.values() for r in rr}
+        # ! ISOLATED: ONLY THIS SCHOOL'S OWN SQUAD IS "ALREADY ON A SQUAD".
+        #   For a meet field the dedupe runs across every school in it, and
+        #   that is right there; a batch of independent squads must give
+        #   each school the answer schoolSquad gives it on its own, or one
+        #   request of thirty and thirty requests of one disagree.
+        have = ({r["person_id"] for r in squads.get(sch, [])} if isolated
+                else {r["person_id"] for rr in squads.values() for r in rr})
         # ! AND NOT A SECOND COPY OF SOMEONE ALREADY ON THE SQUAD. A runner
         #   whose tfrrs rows are not yet linked to their anet person is two
         #   person_ids; the squad above found one, this would add the other.
@@ -2868,7 +3065,73 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
             merged = sorted(squads.get(sch, []) + add,
                             key=lambda r: -(r.get("rating") or 0))
             squads[sch] = _bestFirst(merged, sport)
+    if states:
+        _keepIdentity(cur, squads, states)
     return squads
+
+
+# Purpose:   one namesake of a contested school name, not all of them
+#            (owner, 2026-10-05: "We really need to separate schools by pool
+#            because adding the entire roster of Amherst should not add this
+#            guy" -- a grade-5 runner from Amherst (WI), on an Amherst
+#            College / NESCAC prediction).
+# Input:     squads {school: [entries]}, states {school: wanted state}.
+# Output:    None; squads narrowed in place.
+#
+# ★ A NAME IS NOT A SCHOOL, AND THE LEVEL IS ONLY HALF OF IT. athlete_season
+#   keys on the bare string, so "Amherst" is Amherst College, Amherst
+#   Regional (MA) AND Amherst (WI). The level filter (_fieldLevels) splits
+#   the college from the schools; it cannot split Amherst Regional's high
+#   schoolers from Amherst (WI)'s, which are both hs_m. The state does --
+#   the same identity the school page's state chips narrow by
+#   (school_identity.stateChips / stateFilterSql).
+#
+# ! ONLY WHERE THE NAME IS CONTESTED, by the school page's own bars
+#   (chipsFrom). A one-state school is never narrowed: a runner whose home
+#   state is elsewhere still runs for it.
+# ! AN UNKNOWN ASSIGNMENT STAYS. stateFilterSql's last resort is the primary
+#   chip -- for Amherst that is Wisconsin, which would send every new
+#   Amherst College freshman with no home state yet to the wrong school. A
+#   runner is dropped only on evidence that they belong to another namesake.
+# ⚠ AND NEVER A COLLEGE RUNNER. A college's runners come from everywhere,
+#   so their home state is their high school's (the 2026-09-29 rule in
+#   meet_compile.splitCollisionTeams: "a runner's home or high school state
+#   says nothing about which" college). The level filter is what separates
+#   a college from a namesake school.
+def _keepIdentity(cur, squads, states):
+    want = {sch: str(st).upper() for sch, st in (states or {}).items()
+            if sch in squads and st}
+    if not want:
+        return
+
+    def judged(e):
+        lvl = ((e.get("pool") or "").split("|")[0].split("_")[0]
+               or _levelOfGrade(e.get("grade")))
+        return lvl != "college"
+
+    try:
+        import school_identity as si
+        clusters = si.clustersMany(cur, list(want))
+        contested = {}
+        for sch, st in want.items():
+            chips, _primary = si.chipsFrom(clusters.get(sch) or [], st)
+            if any(c["state"] == st for c in chips):
+                contested[sch] = st
+        if not contested:
+            return
+        pairs = [(sch, e["person_id"]) for sch in contested
+                 for e in squads[sch] if e.get("person_id") and judged(e)]
+        where = si.assignedStates(cur, pairs)
+    except Exception:                                   # noqa: BLE001
+        # identity tables mid-rebuild: the name alone, as before
+        import logging
+        logging.getLogger(__name__).exception("squad identity lookup failed")
+        _rollback(cur)
+        return
+    for sch, st in contested.items():
+        squads[sch] = [e for e in squads[sch]
+                       if not judged(e)
+                       or where.get((sch, e.get("person_id")), st) == st]
 
 
 # Purpose:   {school: [entries]} of everyone with a result for the school in

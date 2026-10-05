@@ -71,6 +71,15 @@ def get(key, compute, ttl=_DEFAULT_TTL, now=time.time, ttl_of=None):
         keep = ttl_of(value) if ttl_of else ttl
         with _guard:
             if len(_store) >= _MAX_KEYS:
+                # ! THE EXPIRED GO FIRST (2026-10-05). The predictions page's
+                #   squads live here too now, five minutes each and many per
+                #   visit; "oldest first" alone would throw out a six-hour
+                #   /projections page computed this morning to make room
+                #   for them, while their own dead entries sat there.
+                t = now()
+                for k in [k for k, v in _store.items() if t - v[0] > v[2]]:
+                    _store.pop(k, None)
+            if len(_store) >= _MAX_KEYS:
                 # drop the oldest tenth; cheaper than an LRU and the keys are
                 # all the same size of problem
                 for k, _v in sorted(_store.items(),
@@ -78,6 +87,17 @@ def get(key, compute, ttl=_DEFAULT_TTL, now=time.time, ttl_of=None):
                     _store.pop(k, None)
             _store[key] = (stamp, value, keep)
         return value, stamp
+
+
+def peek(key, now=time.time):
+    """The cached value for `key` while it is fresh, else None -- never
+    computes. For a caller that batches its misses (the predictions page's
+    squads, 2026-10-05): it asks which keys are held, computes the rest in
+    one go, and files each with get(key, lambda: value)."""
+    hit = _store.get(key)
+    if hit and now() - hit[0] <= hit[2]:
+        return hit[1]
+    return None
 
 
 def clear():

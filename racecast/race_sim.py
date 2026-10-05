@@ -178,6 +178,92 @@ def scoreDraw(times, team, full, cap, n_teams):
     return scores, out
 
 
+# Purpose:   scoreDraw for EVERY draw at once -- the same rules, the same
+#            numbers, without a Python loop per draw (owner, 2026-10-05:
+#            "speed up the predictions... They're pretty slow").
+# Output:    (scores [draws, n_teams], places [draws, n]) -- scores exactly
+#            as scoreDraw returns them row by row, places the 1-based finish
+#            position simulate used to get from argsort(argsort(times)).
+#
+# ★ THIS WAS MOST OF A BIG MEET'S PREDICTION. simulate() called scoreDraw
+#   2,000 times, and scoreDraw walks every runner in a Python loop and every
+#   team in another. Measured here on a synthetic 420-runner, 50-team field:
+#   1.50 s for the simulation alone, 2.90 s at 80 teams -- against 2.15 s
+#   and 6.41 s for the whole /api/predict/team request on the live site's
+#   biggest meet. The page asks for the spread on every Predict, so every
+#   big race paid it.
+#
+# ★ EXACT, NOT CLOSE. Every step is integer bookkeeping on the same drawn
+#   times, so the vectorised form is the same numbers, not an approximation
+#   of them:
+#     * the finish order is the same stable argsort, row by row;
+#     * `within` (how many teammates finished ahead) is a stable sort by team
+#       inside each row, which keeps finish order within a team -- the count
+#       scoreDraw's `seen` array kept;
+#     * a team's ELIGIBLE runners are a prefix of its finish order (full and
+#       cap are per team, within only grows), so its first TEAM_SCORERS
+#       scoring places are exactly the eligible ones with within < 5;
+#     * argsort of a permutation is its inverse, so the place is written
+#       straight through `order` instead of sorted twice.
+#   tests/test_race_sim.py runs both on random fields and asserts equality,
+#   bit for bit; scoreDraw stays as the readable statement of the rules.
+#
+# ! CHUNKED BY DRAWS so a 3,000-runner field (MAX_FIELD_RUNNERS) does not
+#   hold a dozen [2000 x 3000] int64 arrays at once in a web worker.
+_CHUNK_CELLS = 1_500_000
+
+
+def _scoreDraws(times, team, full, cap, n_teams):
+    n_draws, n = times.shape
+    scores = np.full((n_draws, n_teams), np.nan)
+    places = np.zeros((n_draws, n), dtype=np.int64)
+    if not n:
+        return scores, places
+    step = max(1, _CHUNK_CELLS // max(n, 1))
+    pos = np.arange(n, dtype=np.int64)
+    # an unattached runner (-1) counts in its own bucket, as seen[-1] did;
+    # a small integer type lets the stable sort below be a radix sort
+    small = np.int16 if n_teams < np.iinfo(np.int16).max else np.int64
+    slot_of = np.where(team >= 0, team, n_teams).astype(small)
+    # how many places each team may take: `cap` when it is full, none when
+    # it is not, and none for the unattached bucket -- the three conditions
+    # of scoreDraw's `eligible`, folded into one number per team
+    limit = np.append(np.where(full, cap, 0), 0).astype(np.int64)
+    for lo in range(0, n_draws, step):
+        hi = min(n_draws, lo + step)
+        rows = hi - lo
+        order = np.argsort(times[lo:hi], axis=1, kind="stable")
+        t_ord = team[order]
+        slot = slot_of[order]
+        by_team = np.argsort(slot, axis=1, kind="stable")
+        st = np.take_along_axis(slot, by_team, axis=1)
+        start = np.ones(st.shape, dtype=bool)
+        start[:, 1:] = st[:, 1:] != st[:, :-1]
+        first = np.maximum.accumulate(np.where(start, pos[None, :], 0), axis=1)
+        within = np.empty((rows, n), dtype=np.int64)
+        np.put_along_axis(within, by_team, pos[None, :] - first, axis=1)
+
+        eligible = within < limit[slot]
+        place = np.cumsum(eligible, axis=1)
+        score_place = np.where(eligible, place, 0)
+        scorer = eligible & (within < TEAM_SCORERS)
+
+        if n_teams:
+            cell = (np.arange(rows, dtype=np.int64)[:, None] * n_teams
+                    + np.where(t_ord >= 0, t_ord, 0))
+            n_elig = np.bincount(cell[eligible], minlength=rows * n_teams)
+            sums = np.bincount(cell[scorer],
+                               weights=score_place[scorer].astype(np.float64),
+                               minlength=rows * n_teams)
+            n_elig = n_elig.reshape(rows, n_teams)
+            sums = sums.reshape(rows, n_teams)
+            scores[lo:hi] = np.where(full[None, :] & (n_elig >= TEAM_SCORERS),
+                                     sums, np.nan)
+        np.put_along_axis(places[lo:hi], order,
+                          np.broadcast_to(pos + 1, (rows, n)), axis=1)
+    return scores, places
+
+
 def _draw(rng, mu, sigma, team, n_teams, team_rho, draws):
     """[draws, n] log-normal times. `team_rho` shares that fraction of each
     athlete's variance with their teammates, so a squad has good and bad
@@ -216,14 +302,9 @@ def simulate(field, preds, draws=DRAWS, seed=0, team_rho=0.0, z=1.0):
     times = _draw(rng, prep["mu"], prep["sigma"], prep["team"], n_teams,
                   team_rho, draws)
 
-    scores = np.full((draws, n_teams), np.nan)
-    places = np.zeros((draws, prep["mu"].shape[0]), dtype=np.int64)
-    for d in range(draws):
-        s, _sp = scoreDraw(times[d], prep["team"], prep["full"], prep["cap"],
-                           n_teams)
-        scores[d] = s
-        places[d] = np.argsort(np.argsort(times[d], kind="stable"),
-                               kind="stable") + 1
+    # every draw scored at once -- see _scoreDraws; scoreDraw is the rule
+    scores, places = _scoreDraws(times, prep["team"], prep["full"],
+                                 prep["cap"], n_teams)
 
     scored = ~np.isnan(scores)
     # ! THE WINNER IS THE LOWEST SCORE AMONG TEAMS THAT SCORED IN THAT DRAW,
@@ -255,26 +336,40 @@ def simulate(field, preds, draws=DRAWS, seed=0, team_rho=0.0, z=1.0):
             "p_incomplete": float((~ok).sum() / max(draws, 1)),
         }
 
+    # ★ ONE TEAM AGAINST ALL THE OTHERS PER STEP, not one pair at a time
+    #   (2026-10-05). 80 teams is 6,320 ordered pairs, each of which used to
+    #   build two masks over every draw. The counts are the same integers --
+    #   a NaN compares False either way, and `both` excludes it -- and the
+    #   probability is the same expression on them.
     h2h = {}
+    ok = ~np.isnan(scores)
     for i, a in enumerate(names):
+        both = ok[:, i:i + 1] & ok
+        n_both = both.sum(axis=0)
+        mine = scores[:, i:i + 1]
+        beat = ((mine < scores) & both).sum(axis=0)
+        tie = ((mine == scores) & both).sum(axis=0)
         for j, b in enumerate(names):
             if i == j:
                 continue
-            both = (~np.isnan(scores[:, i])) & (~np.isnan(scores[:, j]))
-            if not both.any():
+            if not n_both[j]:
                 h2h[(a, b)] = None
                 continue
-            beat = (scores[both, i] < scores[both, j]).sum()
-            tie = (scores[both, i] == scores[both, j]).sum()
-            h2h[(a, b)] = float((beat + 0.5 * tie) / both.sum())
+            h2h[(a, b)] = float((beat[j] + 0.5 * tie[j]) / n_both[j])
 
+    # ! ALONG THE DRAW AXIS IN ONE CALL, not one call per runner: the same
+    #   sort-and-interpolate per column, and a mean of integer places is
+    #   exact in any summation order (the test compares them to the old
+    #   per-column loop, bit for bit).
+    p_mean = places.mean(axis=0)
+    p10 = np.percentile(places, 10, axis=0)
+    p90 = np.percentile(places, 90, axis=0)
     runners = []
     for k, pid in enumerate(prep["person"]):
-        col = places[:, k]
         runners.append({"person_id": pid, "school": prep["runner_team"][k],
-                        "place_mean": float(col.mean()),
-                        "place_p10": float(np.percentile(col, 10)),
-                        "place_p90": float(np.percentile(col, 90))})
+                        "place_mean": float(p_mean[k]),
+                        "place_p10": float(p10[k]),
+                        "place_p90": float(p90[k])})
     return {"teams": teams, "h2h": h2h, "runners": runners, "draws": draws}
 
 
