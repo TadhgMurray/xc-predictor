@@ -136,6 +136,7 @@ def raceXcColumns(origin):
             ("Time", lambda r: r.get("display_time") or fmtTime(r.get("time_seconds"))),
             ("Rating", lambda r: _num(r.get("speed_rating"))),
             ("Rating (HS equivalent)", lambda r: _num(r.get("hs_rating"))),
+            ("Vs season level (%)", lambda r: _num(r.get("vs_level"))),
             ("Team score place", lambda r: r.get("score_place")),
             ("Athlete URL", lambda r: athleteUrl(origin, r.get("person_id")))]
 
@@ -156,6 +157,7 @@ def raceTfColumns(origin):
             ("Wind", lambda r: r.get("wind")),
             ("Rating", lambda r: _num(r.get("speed_rating"))),
             ("Rating (HS equivalent)", lambda r: _num(r.get("hs_rating"))),
+            ("Vs season level (%)", lambda r: _num(r.get("vs_level"))),
             ("Points", lambda r: r.get("points") or None),
             ("Athlete URL", lambda r: None if r.get("is_relay")
              else athleteUrl(origin, r.get("person_id")))]

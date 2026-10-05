@@ -1,0 +1,26 @@
+{# ===================================================================== #}
+{#  _above_level.html -- "Ran above their level" (above_level.py).        #}
+{#  box(above, name_key): who beat their season level by more than a      #}
+{#  normal day's swing. cell(row): the row's gap, for the results table.  #}
+{# ===================================================================== #}
+{% macro box(above, name_key="name") %}
+{% if above and above.surprises %}
+<section class="above-box">
+  <h2>Ran above their level</h2>
+  <p class="meta">Beat their season rating (from their other races this
+    season) by more than a normal day's swing - {{ "%.1f"|format(above.sigma) }}%
+    for these runners.</p>
+  <ul>
+  {% for r in above.surprises %}
+    <li><a href="#r{{ r.result_id }}">{{ r[name_key] or "Unknown" }}</a>{% if r.school %}
+      <span class="muted">{{ r.school }}</span>{% endif %}
+      <strong>+{{ "%.1f"|format(r.vs_level) }}%</strong></li>
+  {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endmacro %}
+
+{% macro head(above) %}{% if above %}<th title="This race against the runner's season rating from their other races this season">vs level</th>{% endif %}{% endmacro %}
+
+{% macro cell(above, row) %}{% if above %}<td class="no-break vs-level{{ ' is-above' if row.above_level }}{{ ' is-under' if row.vs_level is not none and row.vs_level is defined and row.vs_level < 0 }}">{% if row.vs_level is defined and row.vs_level is not none %}{{ "%+.1f"|format(row.vs_level) }}%{% endif %}</td>{% endif %}{% endmacro %}

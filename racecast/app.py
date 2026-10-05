@@ -3781,6 +3781,7 @@ def race_xc(meet_id, div_id):
 
     # ?school= highlights this school's rows (from the meet page)
     hl_school = (request.args.get("school") or "").strip() or None
+    above = None                      # "ran above their level", stamped below
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # ★ WHICH MEET, when two share the id: the same ?alt= the meet
@@ -3819,6 +3820,10 @@ def race_xc(meet_id, div_id):
                                  header.get("distance"),
                                  results[0].get("date"))
                 stampRatingFlags(cur, "XC", results, results[0].get("date"))
+                # "ran above their level" (above_level.py)
+                from above_level import stampAboveLevel
+                above = stampAboveLevel(cur, "XC", results,
+                                        results[0].get("date"), header.get("distance"))
             day_effect = raceDayEffect(cur, "XC", header,
                                        results[0].get("date") if results else None)
 
@@ -3937,6 +3942,7 @@ def race_xc(meet_id, div_id):
             "-".join(str(x) for x in (header.get("meet_name"), header.get("division"),
                                       race_date) if x) + ".csv")
     return render_template("race.html", hl_school=hl_school,
+                           above=above,
                            has_hs_view=has_hs_view,
                            equiv_pool=equiv_pool, equiv_lo=equiv_lo,
                            equiv_hi=equiv_hi, equiv_day=equiv_day,
@@ -4590,6 +4596,7 @@ def race_tf(meet_id, event_id, div_id):
 
     # ?school= highlights this school's rows (from the meet page)
     hl_school = (request.args.get("school") or "").strip() or None
+    above = None                      # "ran above their level", stamped below
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # ★ RESOLVE THE SOURCE FIRST. The anet and tfrrs id spaces
@@ -4646,6 +4653,10 @@ def race_tf(meet_id, event_id, div_id):
                 stampRecordFlags(cur, "TF", results, dist,
                                  results[0].get("date"))
                 stampRatingFlags(cur, "TF", results, results[0].get("date"))
+                # "ran above their level" (above_level.py)
+                from above_level import stampAboveLevel
+                above = stampAboveLevel(cur, "TF", results,
+                                        results[0].get("date"), dist)
             day_effect = raceDayEffect(cur, "TF", header,
                                        results[0].get("date") if results else None)
             # Points come from scoring the WHOLE meet, not this page's rows:
@@ -4714,6 +4725,7 @@ def race_tf(meet_id, event_id, div_id):
             "-".join(str(x) for x in (header.get("meet_name"), header.get("event_short"),
                                       header.get("division"), race_date) if x) + ".csv")
     return render_template("race_tf.html", hl_school=hl_school,
+                           above=above,
                            has_hs_view=has_hs_view,
                            equiv_dist=equiv_dist, equiv_pool=equiv_pool,
                            equiv_lo=equiv_lo, equiv_hi=equiv_hi,

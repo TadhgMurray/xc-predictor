@@ -4129,3 +4129,18 @@ except where noted.
   line.
 - **Already existed,** so the agents were redirected to audit instead:
   athlete share cards (cards.py, issue 281) and head-to-head /compare.
+
+## 2026-10-05 — ✅ race pages: "Ran above their level"
+
+Owner liked the idea (above_level.py; race.html and race_tf.html).
+- **The column:** each rated row gets a "vs level" column, its rating
+  against the athlete's season rating from their other races that season
+  in the same pool. That rating is the site's own statistic, the 80th
+  percentile after the 20-point outlier rule. The other feed's copy of the
+  same race (same day and distance) is not counted as another race.
+- **Units:** the gap is in %, so it reads the same on the HS-equivalent
+  scale.
+- **The box:** "Ran above their level" lists the runners who beat their
+  level by more than sigma, the pooled within-season swing of these same
+  runners, measured on the page. It is not a chosen threshold.
+- **CSV:** the race CSVs carry the column too.
