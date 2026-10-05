@@ -16,6 +16,7 @@ import above_level as AL                                       # noqa: E402
 
 
 class _Cur:
+    # the query is a lateral over the runner ids; the fake answers it whole
     def __init__(self, season):
         self.season, self.rows, self.args = season, [], None
 
@@ -90,3 +91,54 @@ class AboveLevel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+try:
+    import flask                                               # noqa: F401
+    _HAVE_FLASK = True
+except ImportError:
+    _HAVE_FLASK = False
+
+
+@unittest.skipUnless(_HAVE_FLASK, "flask not installed")
+class AboveLevelApi(unittest.TestCase):
+    """The race page posts its rows after load; the answer is per result id."""
+    def setUp(self):
+        os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+        sys.path.insert(0, _ROOT)
+        import app as A
+        self.A = A
+        self.saved = (A._inMaintenance, A.getConn)
+        A._inMaintenance = lambda: False
+        season = [_s(1, 100, "2025-09-06"), _s(1, 100, "2025-09-13"), _s(1, 110, "2025-10-04")]
+
+        class _C(_Cur):
+            def __enter__(s): return s
+            def __exit__(s, *a): return False
+
+        class _Conn:
+            def __enter__(s): return s
+            def __exit__(s, *a): return False
+            def cursor(s, **k): return _C(season)
+            def rollback(s): pass
+        A.getConn = lambda *a, **k: _Conn()
+        self.c = A.app.test_client()
+
+    def tearDown(self):
+        self.A._inMaintenance, self.A.getConn = self.saved
+
+    def test_levels_by_result_id(self):
+        r = self.c.post("/api/above-level", json={
+            "sport": "XC", "date": "2025-10-04", "distance": 5000,
+            "rows": [{"rid": "77", "pid": 1, "rating": 110, "pool": "hs_m"},
+                     {"rid": "x", "pid": "bad"}]})
+        d = r.get_json()
+        self.assertEqual(r.status_code, 200)
+        self.assertAlmostEqual(d["levels"]["77"], 10.0)
+
+    def test_bad_sport_is_400(self):
+        self.assertEqual(self.c.post("/api/above-level", json={"sport": "XX"}).status_code, 400)
+
+    def test_empty_is_empty(self):
+        d = self.c.post("/api/above-level", json={"sport": "XC", "rows": []}).get_json()
+        self.assertEqual(d["levels"], {})

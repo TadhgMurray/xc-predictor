@@ -63,12 +63,19 @@ def stampAboveLevel(cur, sport, rows, race_date, distance):
     try:
         yr = seasonYearFromIso(sport, str(race_date)[:10])
         cur.execute("SAVEPOINT above_level")
+        # ★ ONE INDEX PROBE PER RUNNER. `person_id = ANY(...)` leaves the
+        #   planner free to read the board index for the whole season and
+        #   filter; the lateral pins it to the person index, a few dozen
+        #   rows each.
         cur.execute("""
-            SELECT person_id, pool, speed_rating, race_date::text AS day, distance
-            FROM   ranking_results
-            WHERE  person_id = ANY(%(pids)s) AND sport = %(sport)s AND year = %(yr)s
-              AND  speed_rating IS NOT NULL
-        """, {"pids": [r["person_id"] for r in rated], "sport": sport, "yr": yr})
+            SELECT r.person_id, r.pool, r.speed_rating, r.race_date::text AS day, r.distance
+            FROM   unnest(%(pids)s::bigint[]) AS p(pid)
+            CROSS  JOIN LATERAL (
+                   SELECT person_id, pool, speed_rating, race_date, distance
+                   FROM   ranking_results
+                   WHERE  person_id = p.pid AND sport = %(sport)s AND year = %(yr)s
+                     AND  speed_rating IS NOT NULL) r
+        """, {"pids": sorted({int(r["person_id"]) for r in rated}), "sport": sport, "yr": yr})
         season = cur.fetchall()
         cur.execute("RELEASE SAVEPOINT above_level")
     except Exception as exc:                     # noqa: BLE001 -- UndefinedTable et al.

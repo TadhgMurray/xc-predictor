@@ -162,7 +162,7 @@
     </div>
     {% endif %}
     {% import "_above_level.html" as al %}
-    {{ al.box(above, "name") }}
+    {{ al.box(above_spec) }}
     {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
     <table>
         <thead>
@@ -173,7 +173,7 @@
                 <th>School</th>
                 <th>Time</th>
                 <th>Rating{{ rating_i() }}</th>
-                {{ al.head(above) }}
+                {{ al.head(above_spec) }}
                 {# Rank among runners who can score or displace: complete
                    teams' first seven only. The gap between Place and Points
                    is the unattached, the incomplete teams, and the 8th men. #}
@@ -182,7 +182,7 @@
         </thead>
         <tbody>
             {% for row in results %}
-            <tr id="r{{ row.result_id }}"{% if hl_school and row.school == hl_school %} class="hl-school"{% endif %}>
+            <tr id="r{{ row.result_id }}"{{ al.attrs(above_spec, row) }}{% if hl_school and row.school == hl_school %} class="hl-school"{% endif %}>
 
                 <td>{{ loop.index }}</td>
                 <td>
@@ -196,7 +196,7 @@
                 <td>{% set sst = row.school_state or header.state %}{% set sok = row.school_state is defined and row.school_state %}{% if row.school and row.school|is_team %}{{ crest(row.school, sst, trusted=sok) }}<a href="{{ school_href(row.school, sst, trusted=sok) }}">{{ row.school|school_label_in(sst, sok) }}</a>{% elif row.school %}{{ row.school|school_label_in(sst, sok) }}{% else %} - {% endif %}{% if row.school and row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}</td>
                 <td class="no-break">{{ row.display_time }}{{ recflag(row) }}</td>
                 <td class="no-break" data-rx="xc:{{ row.result_id }}">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</td>
-                {{ al.cell(above, row) }}
+                {{ al.cell(above_spec, row) }}
                 <td>{{ row.score_place if row.score_place else " - " }}</td>
             </tr>
             {% endfor %}

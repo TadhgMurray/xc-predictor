@@ -71,7 +71,7 @@
     {% set has_pts = results | selectattr("points") | list | length > 0 %}
 
 {% import "_above_level.html" as al %}
-{{ al.box(above, "athlete_name") }}
+{{ al.box(above_spec) }}
 {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
         <table>
         <thead>
@@ -83,18 +83,18 @@
                 <th>Result</th>
                 {% if has_wind %}<th>Wind</th>{% endif %}
                 <th>Rating{{ rating_i() }}</th>
-                {{ al.head(above) }}
+                {{ al.head(above_spec) }}
                 {% if has_pts %}<th>Points</th>{% endif %}
             </tr>
         </thead>
         <tbody>
-            {% set n_cols = 6 + (1 if has_wind else 0) + (1 if has_pts else 0) + (1 if above else 0) %}
+            {% set n_cols = 6 + (1 if has_wind else 0) + (1 if has_pts else 0) + (1 if above_spec else 0) %}
             {% for sec in sections %}
             {% if sec.label %}
             <tr class="heat-row"><td colspan="{{ n_cols }}">{{ sec.label }}</td></tr>
             {% endif %}
             {% for row in sec.rows %}
-            <tr id="r{{ row.result_id }}"{% if hl_school and row.school == hl_school %} class="hl-school"{% endif %}>
+            <tr id="r{{ row.result_id }}"{{ al.attrs(above_spec, row) }}{% if hl_school and row.school == hl_school %} class="hl-school"{% endif %}>
                 <td>{{ row.sec_place }}</td>
                 <td>
                     {% if row.is_relay %}
@@ -114,7 +114,7 @@
                 <td class="no-break">{{ row.display_result }}{{ recflag(row) }}</td>
                 {% if has_wind %}<td>{{ "%+.1f"|format(row.wind) if row.wind is not none else " - " }}</td>{% endif %}
                 <td class="no-break" data-rx="tf:{{ row.result_id }}">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</td>
-                {{ al.cell(above, row) }}
+                {{ al.cell(above_spec, row) }}
                 {% if has_pts %}{% if row.points %}<td class="pts">{{ row.points }}</td>{% else %}<td></td>{% endif %}{% endif %}
             </tr>
             {% endfor %}

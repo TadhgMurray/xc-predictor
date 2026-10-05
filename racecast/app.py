@@ -3665,6 +3665,66 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
 #   keyed on a distance band, because a 5k time and an 8k time are not
 #   comparable. A rating IS comparable across distances and courses -- that
 #   is what it is for -- so the band would only throw away evidence.
+def _aboveSpec(sport, rows, distance):
+    """What the race page's "vs level" fetch needs (above_level.py, filled
+    after load by above-level.js): None when no row is rated."""
+    if not rows or not any(r.get("speed_rating") and r.get("person_id") for r in rows):
+        return None
+    return {"sport": sport, "date": str(rows[0].get("date") or "")[:10],
+            "distance": float(distance) if distance else None}
+
+
+def _csvAboveLevel(sport, rows, distance):
+    """The race CSV's "vs season level" column: the download is not the page
+    load, so it is computed here, on the rows themselves."""
+    from above_level import stampAboveLevel
+    if not rows:
+        return
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                stampAboveLevel(cur, sport, rows, rows[0].get("date"), distance)
+                conn.rollback()
+    except Exception as exc:                                    # noqa: BLE001
+        print(f"csv above level: {type(exc).__name__}: {exc}", flush=True)
+
+
+# ★ "VS LEVEL" AFTER THE PAGE, NOT DURING IT (owner, 2026-10-05: "the vs
+#   level made race page much slower"). The race page renders as before
+#   and posts its rows here; above-level.js fills the column and the box.
+#   POST because a 300-runner field is too long for a URL (the 8 KB line).
+_ABOVE_MAX_ROWS = 5000          # well past any real field; a guard, not a rule
+
+
+@app.route("/api/above-level", methods=["POST"])
+def api_above_level():
+    from above_level import stampAboveLevel
+    body = request.get_json(silent=True) or {}
+    sport = (body.get("sport") or "").upper()
+    if sport not in ("XC", "TF"):
+        return jsonify({"error": "sport must be XC or TF"}), 400
+    rows = []
+    for r in (body.get("rows") or [])[:_ABOVE_MAX_ROWS]:
+        try:
+            rows.append({"result_id": str(r["rid"]), "person_id": int(r["pid"]),
+                         "speed_rating": float(r["rating"]),
+                         "rating_pool": str(r.get("pool") or "")})
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not rows:
+        return jsonify({"levels": {}, "surprises": [], "sigma": None})
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            out = stampAboveLevel(cur, sport, rows, body.get("date"), body.get("distance"))
+            conn.rollback()
+    if not out:
+        return jsonify({"levels": {}, "surprises": [], "sigma": None})
+    return jsonify({"sigma": out["sigma"],
+                    "levels": {r["result_id"]: round(r["vs_level"], 2)
+                               for r in rows if r.get("vs_level") is not None},
+                    "surprises": [r["result_id"] for r in out["surprises"]]})
+
+
 def stampRatingFlags(cur, sport, rows, race_date):
     """Stamp rating_pr / rating_sr, the rating twin of stampRecordFlags.
 
@@ -3781,7 +3841,6 @@ def race_xc(meet_id, div_id):
 
     # ?school= highlights this school's rows (from the meet page)
     hl_school = (request.args.get("school") or "").strip() or None
-    above = None                      # "ran above their level", stamped below
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # ★ WHICH MEET, when two share the id: the same ?alt= the meet
@@ -3820,10 +3879,6 @@ def race_xc(meet_id, div_id):
                                  header.get("distance"),
                                  results[0].get("date"))
                 stampRatingFlags(cur, "XC", results, results[0].get("date"))
-                # "ran above their level" (above_level.py)
-                from above_level import stampAboveLevel
-                above = stampAboveLevel(cur, "XC", results,
-                                        results[0].get("date"), header.get("distance"))
             day_effect = raceDayEffect(cur, "XC", header,
                                        results[0].get("date") if results else None)
 
@@ -3937,12 +3992,13 @@ def race_xc(meet_id, div_id):
 
     import csv_export as _csv
     if _csv.wantsCsv(request.args):
+        _csvAboveLevel("XC", results, header.get("distance") if header else None)
         return _csv.csvResponse(
             _csv.toCsv(results, _csv.raceXcColumns(SITE_ORIGIN)),
             "-".join(str(x) for x in (header.get("meet_name"), header.get("division"),
                                       race_date) if x) + ".csv")
     return render_template("race.html", hl_school=hl_school,
-                           above=above,
+                           above_spec=_aboveSpec("XC", results, header.get("distance") if header else None),
                            has_hs_view=has_hs_view,
                            equiv_pool=equiv_pool, equiv_lo=equiv_lo,
                            equiv_hi=equiv_hi, equiv_day=equiv_day,
@@ -4596,7 +4652,6 @@ def race_tf(meet_id, event_id, div_id):
 
     # ?school= highlights this school's rows (from the meet page)
     hl_school = (request.args.get("school") or "").strip() or None
-    above = None                      # "ran above their level", stamped below
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # ★ RESOLVE THE SOURCE FIRST. The anet and tfrrs id spaces
@@ -4653,10 +4708,6 @@ def race_tf(meet_id, event_id, div_id):
                 stampRecordFlags(cur, "TF", results, dist,
                                  results[0].get("date"))
                 stampRatingFlags(cur, "TF", results, results[0].get("date"))
-                # "ran above their level" (above_level.py)
-                from above_level import stampAboveLevel
-                above = stampAboveLevel(cur, "TF", results,
-                                        results[0].get("date"), dist)
             day_effect = raceDayEffect(cur, "TF", header,
                                        results[0].get("date") if results else None)
             # Points come from scoring the WHOLE meet, not this page's rows:
@@ -4720,12 +4771,13 @@ def race_tf(meet_id, event_id, div_id):
 
     import csv_export as _csv
     if _csv.wantsCsv(request.args):
+        _csvAboveLevel("TF", results, equiv_dist or (header or {}).get("distance_meters"))
         return _csv.csvResponse(
             _csv.toCsv(_csv.flattenTfSections(sections), _csv.raceTfColumns(SITE_ORIGIN)),
             "-".join(str(x) for x in (header.get("meet_name"), header.get("event_short"),
                                       header.get("division"), race_date) if x) + ".csv")
     return render_template("race_tf.html", hl_school=hl_school,
-                           above=above,
+                           above_spec=_aboveSpec("TF", results, equiv_dist or (header or {}).get("distance_meters")),
                            has_hs_view=has_hs_view,
                            equiv_dist=equiv_dist, equiv_pool=equiv_pool,
                            equiv_lo=equiv_lo, equiv_hi=equiv_hi,
