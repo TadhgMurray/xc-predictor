@@ -5628,6 +5628,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .csv-link { margin: .8rem 0 0; font-size: .85rem; }
 .pager .csv-link { margin: 0 0 0 auto; }
 .pager .csv-link.hidden { display: none; }
+.pager .csv-link a { margin: 0 .15rem; }
 
 /* /meets "Coming up" (weekend.py) */
 .coming-up { margin-bottom: 1.5rem; }

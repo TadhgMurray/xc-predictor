@@ -75,8 +75,8 @@ class CsvExport(unittest.TestCase):
         self.assertEqual(out[2][-1], "")          # a relay links no single athlete
 
 
-@unittest.skipUnless(_HAVE, "flask not installed")
-class RankingsCsvRoute(unittest.TestCase):
+class _RankingsStub(unittest.TestCase):
+    """The rankings route with the database stubbed out; no tests of its own."""
     def setUp(self):
         import app as A
         self.A = A
@@ -108,6 +108,10 @@ class RankingsCsvRoute(unittest.TestCase):
         import school_units
         school_units.applyUnitFilters = self._units
 
+
+
+@unittest.skipUnless(_HAVE, "flask not installed")
+class RankingsCsvRoute(_RankingsStub):
     def test_csv_is_an_attachment_of_the_same_rows(self):
         r = self.c.get("/api/rankings?board=ability&sport=XC&pool=hs_m&format=csv")
         self.assertEqual(r.status_code, 200)
@@ -128,3 +132,42 @@ class RankingsCsvRoute(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(_HAVE, "flask not installed")
+class RankingsCsvWholeBoard(_RankingsStub):
+    """&all=1: the whole board under the filters, refused past the ceiling."""
+    def setUp(self):
+        super().setUp()
+        self.saved_count = self.A.countRows
+        self.seen = {}
+
+        def board(cur, f):
+            self.seen.update(limit=f["limit"], offset=f["offset"])
+            return [{"name": f"R{i}", "rating": 100.0 - i, "person_id": i, "pool": "hs_m",
+                     "sport": "XC"} for i in range(f["limit"])]
+        self.A.getAbilityRankings = board
+
+    def tearDown(self):
+        self.A.countRows = self.saved_count
+        super().tearDown()
+
+    def test_whole_board_is_one_query_of_the_counted_length(self):
+        self.A.countRows = lambda cur, f: 3
+        r = self.c.get("/api/rankings?board=ability&sport=XC&pool=hs_m&offset=50&format=csv&all=1")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.seen, {"limit": 3, "offset": 0})
+        self.assertEqual(len(_read(r.data.decode("utf-8"))), 4)
+        self.assertIn("-all.csv", r.headers["Content-Disposition"])
+
+    def test_too_long_is_refused_with_the_reason(self):
+        import csv_export as C
+        self.A.countRows = lambda cur, f: C.CSV_ALL_MAX + 1
+        r = self.c.get("/api/rankings?board=ability&sport=XC&pool=hs_m&format=csv&all=1")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn(b"Narrow it", r.data)
+
+    def test_uncountable_is_refused(self):
+        self.A.countRows = lambda cur, f: None
+        r = self.c.get("/api/rankings?board=ability&sport=XC&pool=hs_m&format=csv&all=1")
+        self.assertEqual(r.status_code, 400)

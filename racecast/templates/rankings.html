@@ -550,7 +550,9 @@
     <span class="page-note" id="pageNote"></span>
     {# this page of the board as a spreadsheet (csv_export.py); rankings.js
        sets the href to the query just served, rating boards only #}
-    <a class="csv-link hidden" id="csv" rel="nofollow" download>Download CSV</a>
+    <span class="csv-link hidden" id="csv-wrap">Download CSV:
+      <a id="csv" rel="nofollow" download>this page</a> ·
+      <a id="csv-all" rel="nofollow">whole board</a></span>
   </div>
 
   {# the state ranking pages (landing.py): plain links, so a crawler and a

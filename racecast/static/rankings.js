@@ -1839,8 +1839,15 @@ async function load() {
     /* Download CSV: this page of the board, as served (csv_export.py).
        Only /api/rankings writes one, so the three rating boards. */
     const csvOk = endpoint === "/api/rankings" && rows.length > 0;
-    $("csv").classList.toggle("hidden", !csvOk);
-    if (csvOk) $("csv").href = endpoint + "?" + query.toString() + "&format=csv";
+    $("csv-wrap").classList.toggle("hidden", !csvOk);
+    if (csvOk) {
+      $("csv").href = endpoint + "?" + query.toString() + "&format=csv";
+      /* the whole board: same filters, no page (csv_export.CSV_ALL_MAX) */
+      const all = new URLSearchParams(query);
+      all.delete("offset"); all.delete("limit");
+      all.set("format", "csv"); all.set("all", "1");
+      $("csv-all").href = endpoint + "?" + all.toString();
+    }
 
   } catch (err) {
     $("results").innerHTML =

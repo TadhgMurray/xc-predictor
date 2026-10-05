@@ -6,10 +6,10 @@
     /race/tf/... The route builds its rows exactly as for the page, then
     hands them here instead of to the template.
 
-★ THE TABLE AS SHOWN, NOT MORE. Same filters, same page of a board (its
-  limit and offset), same HS-equivalent stamp. A CSV is a convenience for
-  what a reader can already see; it is not a bulk feed, and it adds no
-  row the page would not draw.
+★ THE TABLE AS SHOWN. Same filters, same page of a board (its limit and
+  offset), same HS-equivalent stamp -- or, with &all=1 on the rankings
+  API, the whole board under those filters up to CSV_ALL_MAX rows (owner,
+  2026-10-05).
 
 ★ A LINK BACK IN EVERY ROW. The athlete's Racecast URL, so a spreadsheet
   pasted into a team doc still leads to the page.
@@ -23,6 +23,14 @@ import io
 import re
 
 from flask import Response
+
+
+# ★ THE WHOLE-BOARD CEILING IS MEMORY, NOT POLICY. A board query returns
+#   every row at once into the web worker (a few KB a row once stamped);
+#   fifty thousand is a state's season or a division's history, and keeps
+#   one download to tens of MB inside a worker that also serves pages. A
+#   national all-time board is refused with the reason, not truncated.
+CSV_ALL_MAX = 50_000
 
 
 def fmtTime(sec):

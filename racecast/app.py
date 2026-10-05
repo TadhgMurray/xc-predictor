@@ -8270,6 +8270,27 @@ def api_rankings():
             uerr = applyUnitFilters(cur, f, request.args)
             if uerr:
                 return jsonify({"error": uerr}), 400
+            # ★ ?format=csv&all=1: THE WHOLE BOARD (owner, 2026-10-05: "we
+            #   can't give entire board?"). Counted first with the pager's
+            #   own count; then one query with the limit set to that count.
+            #   The guard is the worker's memory -- the board query holds
+            #   every row at once -- so a board past CSV_ALL_MAX (or too
+            #   wide to count in time) is refused with what to narrow.
+            import csv_export as _csv
+            if _csv.wantsCsv(request.args) and (request.args.get("all") or "") == "1":
+                try:
+                    n_all = countRows(cur, f)
+                except Exception:                       # noqa: BLE001
+                    conn.rollback()
+                    n_all = None
+                if n_all is None or n_all > _csv.CSV_ALL_MAX:
+                    return app.response_class(
+                        "This board is too long to download whole"
+                        + (f" ({n_all:,} rows; the limit is {_csv.CSV_ALL_MAX:,})"
+                           if n_all is not None else "")
+                        + ". Narrow it by state, season or division, or download"
+                          " a page at a time.\n", status=400, mimetype="text/plain")
+                f["limit"], f["offset"] = max(int(n_all), 1), 0
             # ★ ?count=1: only the length of the board, for the pager's Last
             #   button (owner, 2026-09-02). A count is a scan, so it is a
             #   separate request rather than a field on every load.
@@ -8332,7 +8353,8 @@ def api_rankings():
             _csv.toCsv(rows, _csv.rankingColumns(f["board"], SITE_ORIGIN, f.get("offset") or 0)),
             "racecast-" + "-".join(str(x) for x in (
                 f.get("sport"), f.get("pool"), f.get("state"), f.get("year"), f["board"],
-                (f.get("offset") or 0) // max(f.get("limit") or 1, 1) + 1) if x) + ".csv")
+                "all" if (request.args.get("all") or "") == "1"
+                else (f.get("offset") or 0) // max(f.get("limit") or 1, 1) + 1) if x) + ".csv")
 
     return jsonify({"filters": f, "count": len(rows),
                     # ! national_bias IS ABOUT THE RATING SCALE, so it does not
