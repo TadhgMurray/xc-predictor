@@ -66,6 +66,9 @@ engine/data/backfill_wx_*.pkl.*.tmp
 # Solver state and per-run artifacts. packed_XC_TF.npz is deleted by hand
 # before every run in the documented pipeline; that alone disqualifies it.
 engine/data/packed_XC_TF.npz
+# per-run records the server writes (scripts/run_report.py, 08b's skip stamp)
+engine/data/run_history.jsonl
+engine/data/ladder_stamp
 engine/data/pair_ratings.npz
 engine/data/pair_validated.npz
 engine/data/pair_difficulty.npz

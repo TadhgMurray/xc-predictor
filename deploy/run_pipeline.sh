@@ -172,6 +172,22 @@ echo "  logs -> $LOGDIR"
 FAILED=""
 T_START=$(date +%s)
 
+# _stampTo <file> -- copy stdin to stdout unchanged, and to <file> with the
+# wall-clock time in front of every line.
+# ★ WHY (2026-10-05, owner: "speed up first"): 08_golive took 2.6 h of a
+#   17h44m run and its log could not say which part -- a handful of its
+#   lines carry a duration, the rest none. With every line stamped, the
+#   gap between two lines IS the time that part took, for every step, with
+#   no change to any Python. Only the log file carries the stamp; nothing
+#   parses these logs by line start (notify_owner tails them, run_report
+#   searches them).
+_stampTo() {
+  while IFS= read -r line || [ -n "$line" ]; do
+    printf '%s\n' "$line"
+    printf '%(%H:%M:%S)T %s\n' -1 "$line" >> "$1"
+  done
+}
+
 # step <name> <command...>
 skipped() {                      # is step $1 on the --skip list?
   case "$SKIP" in *",$1,"*) return 0 ;; *) return 1 ;; esac
@@ -265,7 +281,8 @@ step() {
   t0=$(date +%s)
   # ! -u SO PYTHON DOES NOT BUFFER. Without it a four-hour step shows nothing
   #   until it finishes, and you cannot tell a slow step from a hung one.
-  if $NICE "$@" 2>&1 | tee "$LOGDIR/$name.log"; then rc=0; else rc=1; fi
+  : > "$LOGDIR/$name.log"
+  if $NICE "$@" 2>&1 | _stampTo "$LOGDIR/$name.log"; then rc=0; else rc=1; fi
   el=$(( $(date +%s) - t0 ))
   if [ "$rc" -ne 0 ]; then
     echo "  $name FAILED after ${el}s" | tee -a "$SUMMARY"
@@ -286,10 +303,11 @@ step() {
 _live() (
   set -o pipefail
   nm="$1"; log="$2"; shift 2
+  : > "$log"
   if [ "${XCP_LIVE:-1}" = "0" ]; then
-    "$@" > "$log" 2>&1
+    "$@" 2>&1 | _stampTo "$log" > /dev/null
   else
-    "$@" 2>&1 | tee "$log" | sed -u "s/^/  [$nm] /"
+    "$@" 2>&1 | _stampTo "$log" | sed -u "s/^/  [$nm] /"
   fi
 )
 
@@ -1037,11 +1055,44 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   a heartbeat in this log, and kills a rung past XCP_RUNG_TIMEOUT
   #   seconds (default 7200). XCP_LADDER_ALL=1 runs every rung;
   #   XCP_LADDER_ONLY=base,no-importance runs a named subset.
-  step 08b_ladder       "$PY" -u scripts/ablation_ladder.py \
-      --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" \
-      --rung-timeout "${XCP_RUNG_TIMEOUT:-7200}" \
-      ${XCP_LADDER_ALL:+--all} \
-      ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} || true
+  # ★★ ONLY WHEN THE MODEL CHANGED (2026-10-05: 18,193 s of run
+  #    20261004_125010's 17h44m). The ladder answers "does switch X help?"
+  #    and the answer moves when the engine's code or settings move, not
+  #    when a week of races arrives. Its stamp is a hash of engine/*.py,
+  #    deploy/solve_env.sh, the ladder itself and the XCP_ settings it is
+  #    run with (the model's, not the database's or the box's); an
+  #    unchanged stamp skips it, saying so. XCP_LADDER=1
+  #    forces it, XCP_LADDER=0 skips it.
+  LADDER_STAMP_FILE="$ROOT/engine/data/ladder_stamp"
+  LADDER_STAMP=$( { cat "$ROOT"/engine/*.py "$ROOT/deploy/solve_env.sh" \
+                        "$ROOT/scripts/ablation_ladder.py"
+                    # the model's settings only, not the box's plumbing
+                    env | grep '^XCP_' | grep -vE '^XCP_(DB_|MAIL|ADMIN|NICE|THREADS|LIVE|LADDER|WEATHER_FIT|STREAMS|COURSE_SHARDS|ENV|PYTHON|INDEXNOW|LACCTIC)' | sort; } \
+                  | sha1sum | cut -c1-16)
+  LADDER_RUN=1
+  case "${XCP_LADDER:-auto}" in
+    0) LADDER_RUN=0; LADDER_WHY="XCP_LADDER=0" ;;
+    1) LADDER_WHY="XCP_LADDER=1" ;;
+    *) if [ "$(cat "$LADDER_STAMP_FILE" 2>/dev/null)" = "$LADDER_STAMP" ]; then
+         LADDER_RUN=0; LADDER_WHY="engine, settings and ladder unchanged since its last run"
+       else
+         LADDER_WHY="the model changed since its last run"
+       fi ;;
+  esac
+  if [ "$LADDER_RUN" -eq 1 ]; then
+    echo "  08b_ladder runs: $LADDER_WHY"
+    step 08b_ladder       "$PY" -u scripts/ablation_ladder.py \
+        --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" \
+        --rung-timeout "${XCP_RUNG_TIMEOUT:-7200}" \
+        ${XCP_LADDER_ALL:+--all} \
+        ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} || true
+    case " $FAILED " in
+      *" 08b_ladder "*) ;;
+      *) [ "$DRY" -eq 1 ] || [ -n "${XCP_LADDER_ONLY:-}" ] || echo "$LADDER_STAMP" > "$LADDER_STAMP_FILE" ;;
+    esac
+  else
+    echo "  08b_ladder skipped ($LADDER_WHY; XCP_LADDER=1 forces it)" | tee -a "$SUMMARY"
+  fi
   # ★ THE SECOND ENGINE AND THE PACK DIAGNOSTICS, ONE PROCESS (2026-09-12).
   #   scripts/diagnose.py loads the pack and the solve file once and runs
   #   the bracket engine on the ladder's athlete sample and race split (so

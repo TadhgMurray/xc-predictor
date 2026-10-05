@@ -124,36 +124,35 @@ CACHE_DIR = "engine/data"
 # CHUNK 1 — SQL (per sport).
 # ------------------------------------------------------------------ #
 
-def _weatherCte(need=None):
-    """The race-window weather per (cell, day).
+# ★★ STAGED, NOT ONE STATEMENT (2026-10-05, run 20261004_125010: the TF
+#    corpus took 8,414 s -- 20.3M rows at ~2,400 a second, the first row
+#    after 0 s). A CTE referenced twice is materialised with no statistics,
+#    and the planner joined the results to it with a fast-start plan that
+#    re-scanned it per row. The meets (with their grid cell precomputed)
+#    and the race-window weather now land in TEMP TABLES, indexed and
+#    ANALYZEd, and the stream is one pass of plain equality joins over
+#    tables the planner can count. Statements are separated by STAGE; the
+#    last one is the stream. The cache key hashes all of them.
+STAGE = "\n-- @@stage@@\n"
 
-    ★ ONLY THE CELL-DAYS A RACE USES (2026-09-28, owner: "this is taking too
-      long"). Grouped over the whole of weather_grid this aggregated every
-      cell of the continent for every day of the year before the join threw
-      nearly all of it away. With `need` (a CTE of cell_lat, cell_lon, date)
-      the grid is read through its (cell_lat, cell_lon, date) index for the
-      days a race was run there, and nothing else."""
+
+def _weatherDaySql(need_table):
+    """CREATE the race-window weather per (cell, day) for the cell-days in
+    `need_table` (cell_lat, cell_lon, date) as TEMP TABLE wx_day."""
     lo, hi = RACE_LOCAL_HOURS
-    aggs = ",\n                   ".join(f"{expr} AS {name}"
-                                          for name, expr in WX_AGG.items())
-    # local hour = UTC hour + offset, offset = round(signed_lon / 15). Keep the
-    # stored UTC hours that fall in the venue's LOCAL morning -- so a 9am race is
-    # scored on 9am weather everywhere, not a fixed UTC block (dawn out west).
+    aggs = ",\n               ".join(f"{expr} AS {name}" for name, expr in WX_AGG.items())
     signed = "(CASE WHEN g.cell_lon > 180 THEN g.cell_lon - 360 ELSE g.cell_lon END)"
     offset = f"round({signed} / 15.0)::int"
     local_hour = f"mod(mod(g.hour + {offset}, 24) + 24, 24)"
-    join = (f"JOIN {need} n ON n.cell_lat = g.cell_lat AND n.cell_lon = g.cell_lon "
-            f"AND n.date = g.date" if need else "")
     return f"""
-        wx AS MATERIALIZED (
-            SELECT g.cell_lat, g.cell_lon, g.date,
-                   {aggs}
-            FROM   weather_grid g
-            {join}
-            WHERE  {local_hour} BETWEEN {lo} AND {hi}
-            GROUP  BY g.cell_lat, g.cell_lon, g.date
-        )
-    """
+        CREATE TEMP TABLE wx_day AS
+        SELECT g.cell_lat::float8 AS cell_lat, g.cell_lon::float8 AS cell_lon, g.date,
+               {aggs}
+        FROM   weather_grid g
+        JOIN   {need_table} n ON n.cell_lat = g.cell_lat AND n.cell_lon = g.cell_lon
+                             AND n.date = g.date
+        WHERE  {local_hour} BETWEEN {lo} AND {hi}
+        GROUP  BY 1, 2, 3"""
 
 
 # _snapSql: float8 snap matching the backfill (real columns -> hash join, not
@@ -182,29 +181,35 @@ def _eventKey(venue_col, date_col):
 
 
 def xcQuery():
-    clat, clon = _snapSql("mv.gps_lat", "mv.gps_long")
+    clat, clon = _snapSql("m.gps_lat", "m.gps_long")
     event = _eventKey("mv.course_name", "r.date::date")
-    return f"""
-        WITH meet_venues AS (
-            -- collapse meets (keyed on div_id, many rows per meet) to one row per
-            -- meet_id, or the results join fans out ~5x per division.
-            SELECT DISTINCT ON (meet_id)
-                   meet_id, course_name, gps_lat, gps_long,
-                   COALESCE(distance, 5000.0)::float8 AS dist
-            FROM   meets
-            WHERE  meet_id IS NOT NULL AND course_name IS NOT NULL
-              AND  gps_lat IS NOT NULL AND gps_long IS NOT NULL
-            ORDER  BY meet_id
-        ),
-        need AS MATERIALIZED (
-            SELECT DISTINCT {clat} AS cell_lat, {clon} AS cell_lon, rd.d AS date
-            FROM   (SELECT DISTINCT r.meet_id, r.date::date AS d
-                    FROM   results r
-                    WHERE  r.source = 'anet' AND r.normalized_time IS NOT NULL
-                      AND  r.date ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}$') rd
-            JOIN   meet_venues mv ON mv.meet_id = rd.meet_id
-        ),
-        {_weatherCte("need")}
+    return STAGE.join([
+        # one row per meet (meets is keyed on div_id: ~5 rows a meet), with
+        # its grid cell computed once
+        f"""
+        CREATE TEMP TABLE wx_meta AS
+        SELECT DISTINCT ON (meet_id)
+               meet_id, course_name,
+               COALESCE(distance, 5000.0)::float8 AS dist,
+               {clat} AS cell_lat, {clon} AS cell_lon
+        FROM   meets m
+        WHERE  meet_id IS NOT NULL AND course_name IS NOT NULL
+          AND  gps_lat IS NOT NULL AND gps_long IS NOT NULL
+        ORDER  BY meet_id""",
+        "CREATE UNIQUE INDEX ON wx_meta (meet_id)",
+        "ANALYZE wx_meta",
+        """
+        CREATE TEMP TABLE wx_need AS
+        SELECT DISTINCT mv.cell_lat, mv.cell_lon, rd.d AS date
+        FROM   (SELECT DISTINCT r.meet_id, r.date::date AS d
+                FROM   results r
+                WHERE  r.source = 'anet' AND r.normalized_time IS NOT NULL
+                  AND  r.date ~ '^\\d{4}-\\d{2}-\\d{2}$') rd
+        JOIN   wx_meta mv ON mv.meet_id = rd.meet_id""",
+        "ANALYZE wx_need",
+        _weatherDaySql("wx_need"),
+        "ANALYZE wx_day",
+        f"""
         SELECT COALESCE(r.person_id, r.athlete_id) AS ath,
                mv.course_name                      AS course,
                {event}                             AS event,
@@ -213,14 +218,14 @@ def xcQuery():
                mv.dist                             AS dist,
                {_wxSelect()}
         FROM   results r
-        JOIN   meet_venues mv ON mv.meet_id = r.meet_id
-        JOIN   wx ON wx.cell_lat = {clat} AND wx.cell_lon = {clon}
-                 AND wx.date = r.date::date
+        JOIN   wx_meta mv ON mv.meet_id = r.meet_id
+        JOIN   wx_day wx ON wx.cell_lat = mv.cell_lat AND wx.cell_lon = mv.cell_lon
+                        AND wx.date = r.date::date
         WHERE  r.source = 'anet'
           AND  r.normalized_time IS NOT NULL
           AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL
           AND  r.date ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}$'
-    """
+    """])
 
 
 # ★ BOTH TRACK FEEDS (2026-09-06). anet's meets carry their coordinates
@@ -255,31 +260,37 @@ def tfQuery():
     clat, clon = _snapSql("mm.gps_lat", "mm.gps_long")
     venue = ("'TF:loc:' || mm.location_id || "
              "CASE WHEN mm.is_indoor = 1 THEN ':in' ELSE ':out' END")
-    event = _eventKey(venue, "mm.d")
-    return f"""
-        WITH {_TF_META.strip()},
-        need AS MATERIALIZED (
-            SELECT DISTINCT {clat} AS cell_lat, {clon} AS cell_lon, mm.d AS date
-            FROM   tfmeta mm
-            WHERE  mm.is_indoor = 0 AND mm.location_id IS NOT NULL
-        ),
-        {_weatherCte("need")}
+    return STAGE.join([
+        # outdoor meets with a venue, both feeds, cell and venue key computed once
+        f"""
+        CREATE TEMP TABLE wx_meta AS
+        WITH {_TF_META.strip()}
+        SELECT mm.meet_id, mm.source, mm.d,
+               {venue} AS course,
+               {clat} AS cell_lat, {clon} AS cell_lon
+        FROM   tfmeta mm
+        WHERE  mm.is_indoor = 0 AND mm.location_id IS NOT NULL""",
+        "CREATE INDEX ON wx_meta (meet_id, source)",
+        "ANALYZE wx_meta",
+        "CREATE TEMP TABLE wx_need AS SELECT DISTINCT cell_lat, cell_lon, d AS date FROM wx_meta",
+        "ANALYZE wx_need",
+        _weatherDaySql("wx_need"),
+        "ANALYZE wx_day",
+        f"""
         SELECT COALESCE(r.person_id, r.athlete_id) AS ath,
-               {venue}                             AS course,
-               {event}                             AS event,
+               mm.course                           AS course,
+               {_eventKey("mm.course", "mm.d")}    AS event,
                mm.d                                AS date,
                r.normalized_time                   AS nt,
                r.event_short                       AS dist,
                {_wxSelect()}
         FROM   results_tf r
-        JOIN   tfmeta mm ON mm.meet_id = r.meet_id AND mm.source = r.source
-        JOIN   wx ON wx.cell_lat = {clat} AND wx.cell_lon = {clon}
-                 AND wx.date = mm.d
-        WHERE  mm.is_indoor = 0
-          AND  mm.location_id IS NOT NULL
-          AND  r.normalized_time IS NOT NULL
+        JOIN   wx_meta mm ON mm.meet_id = r.meet_id AND mm.source = r.source
+        JOIN   wx_day wx ON wx.cell_lat = mm.cell_lat AND wx.cell_lon = mm.cell_lon
+                        AND wx.date = mm.d
+        WHERE  r.normalized_time IS NOT NULL
           AND  COALESCE(r.person_id, r.athlete_id) IS NOT NULL
-    """
+    """])
 
 
 # ------------------------------------------------------------------ #
@@ -362,6 +373,15 @@ def loadRaces(conn, sql, sport, limit=None):
         for stmt in ("SET cursor_tuple_fraction = 1.0", "SET work_mem = '1GB'",
                      "SET max_parallel_workers_per_gather = 4"):
             c.execute(stmt)
+        *stages, sql = sql.split(STAGE)
+        for stmt in stages:
+            ts = _time.time()
+            c.execute(stmt)
+            if stmt.lstrip().upper().startswith("CREATE TEMP TABLE"):
+                name = stmt.split("TABLE", 1)[1].split()[0]
+                c.execute(f"SELECT count(*) FROM {name}")
+                print(f"[load] {name}: {c.fetchone()[0]:,} rows ({_time.time() - ts:.0f}s)",
+                      flush=True)
     # ★ COLUMNS A BATCH AT A TIME (2026-09-28): zip(*batch) transposes in C;
     #   the old per-row, per-column append was 25M x 11 Python calls.
     with conn.cursor(name="weather_stream") as cur:
