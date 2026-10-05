@@ -67,6 +67,8 @@ LOG_METRICS = [
      r"courses whose days lean one way \(([\d,]+) of", "low"),
     ("field_slope_xc", "field-depth slope, XC (% per point)", "08_golive.log",
      r"\[bracket\] field depth \(XC\): a race's reading moves ([-+0-9.]+)%", None),
+    ("day_centre_xc", "season level moved out of XC day terms (%)", "08_golive.log",
+     r"day terms centred per \(sport, season\) .*?XC ([-+0-9.]+)%", None),
     ("bracket_last_change", "course solve: last max change", "08_golive.log",
      r"\[bracket\] iteration \d+: max change ([0-9.]+)", "low"),
     ("tf_temp_max", "track weather explained, temp = daily max (%)", "04f_weather_fit_tf.log",
