@@ -3755,3 +3755,36 @@ if the step plan allows). **Ask first: why 17h44m?** Paste
 7. Meet calendar: queued future meets with course difficulty, last year's times.
 8. Next year's team: seniors removed, returners projected.
 Deferred: upcoming-meet previews (no entry lists).
+
+## 2026-10-05 — pipeline speed (e6b82dc) and rain
+
+From run 20261004_125010's summary.log (17h44m): 08b_ladder 18,193 s, 08_golive
+9,408 s, 04f 8,767 s (8,414 s of it the corpus query), 07_pack 3,502 s,
+08a_holdout + 08a_sport_holdout 5,686 s, 10_rankings 4,550 s, 04c_twins 2,379 s.
+
+- ✅ **04f corpus query staged** into analysed temp tables (same rows, both
+  sports, checked against the old query). ⏳ Re-time on the box -- the next
+  fit is a cache miss (new query text).
+- ✅ **08b_ladder runs only when the model changed** (hash of engine/*.py,
+  solve_env.sh, the ladder and the model's XCP_ settings; engine/data/ladder_stamp).
+  XCP_LADDER=1 forces, 0 skips.
+- ✅ **Every step log line is time-stamped**, so the next run shows where
+  08_golive's 2.6 h, 07_pack's hour and 04c's 40 minutes go. Profile those
+  from the next run's logs.
+- 💤 08a_holdout and 08a_sport_holdout could run side by side (memory?).
+
+**TF temperature: per-race choice, asked and declined.** Picking, per race,
+whichever temperature reading explains that race best uses the race's own
+slowness to choose its correction: any slow race (a weak field, a wrong
+distance, a headwind) would take the hotter reading and be credited for heat
+it never ran in. Only a start time can say which reading a race deserves,
+and the feeds have none. The 9am-8pm mean stays (a tie in aggregate, the
+smaller worst case).
+
+**Rain, "not doing enough" (owner).** New `scripts/diag_rain.py`
+(read-only): the published race-day term is what is LEFT after the weather
+correction; binned by window rain, rain in the 24 h before the window, and
+soil moisture, a leftover that rises with rain is the part the correction
+misses, and its slope is the size of the fix. Track has no race-day term in
+its ratings (owner's rule), so track rain rests on the correction alone; the
+diagnostic still reads the solve's track day terms if published. ⏳ Run it.
