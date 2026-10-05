@@ -226,14 +226,24 @@ def teamState(school, pool=None, state=None):
     if not school:
         return state
     p = (pool or "").lower()
-    if p.startswith("college") or p.startswith("pro"):
+    college = p.startswith("college") or p.startswith("pro")
+    if college:
         st = _collegeState(school)
         if st:
             return st
     if state:
         clusters = _LABELS.get("clusters") or {}
         share = (clusters.get(school) or {}).get(state)
-        if share is not None and share >= CONTEXT_MIN_SHARE:
+        # ★ A SCHOOL-LEVEL ROW'S OWN STATE STANDS IF THE NAME HAS A SCHOOL
+        #   THERE AT ALL (owner, 2026-10-05: a grade-5 runner from Amherst,
+        #   Wisconsin labelled "Amherst (MA)" and filed with Amherst MA).
+        #   The 3% bar is for a COLLEGE's travel state; a high school,
+        #   middle or elementary season is raced at home, and a cluster in
+        #   that state -- counted from athletes' home states, which an away
+        #   meet does not create -- is a real school of that name, however
+        #   small beside the name's biggest one.
+        if share is not None and (share >= CONTEXT_MIN_SHARE
+                                  or (not college and share > 0)):
             return state
     return _LABELS["map"].get(school) or state
 

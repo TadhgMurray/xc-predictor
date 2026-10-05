@@ -872,13 +872,29 @@ def _loadUnits(conn):
                              for c in _UNIT_COLS)
             # votes DESC so the bare-school fallback keeps the best-attested
             # row, and the (school, state) key keeps the exact one.
-            cur.execute(f"SELECT school, state, {cols} FROM school_unit "
+            # ★★ KEYED BY LEVEL TOO (owner, 2026-10-05: an unnamed grade-5
+            #    runner from Amherst, Wisconsin read "NCAA DIII · Mideast ·
+            #    NESCAC" and joined Amherst College's roster on the
+            #    predictions page). A name is shared across levels -- Amherst
+            #    College, Amherst Regional HS, Amherst (WI), Amherst (NE) --
+            #    so a school row and a college row never answer for each
+            #    other. See _unitsOf for the lookup order per level.
+            lvl = ("COALESCE(is_college, false)" if "is_college" in have
+                   else "NULL::boolean")
+            cur.execute(f"SELECT school, state, {lvl}, {cols} FROM school_unit "
                         f"ORDER BY votes ASC")
+            hs_states = {}
             for row in cur:
-                school, state, vals = row[0], row[1], tuple(row[2:])
-                _UNITS["by_school"][school] = vals
+                school, state, college, vals = row[0], row[1], row[2], tuple(row[3:])
+                college = None if college is None else bool(college)
+                _UNITS["by_school"][(school, college)] = vals
                 if state:
-                    _UNITS["by_key"][(school, state)] = vals
+                    _UNITS["by_key"][(school, state, college)] = vals
+                    if college is not True:
+                        hs_states.setdefault(school, set()).add(state)
+            # a school (not college) name held in exactly ONE state: the only
+            # school names the bare-name fallback may answer for
+            _UNITS["hs_unique"] = {k for k, v in hs_states.items() if len(v) == 1}
             # ★ A COLLEGE IS LOOKED UP BY ITS CAMPUS STATE (owner, 2026-09-07:
             #   "aren't they already separated by state?"). They are, in
             #   school_unit; a row's state is where the RACE was, so
@@ -899,17 +915,43 @@ def _loadUnits(conn):
             pass
 
 
-def _unitsOf(school, state):
-    """The nine unit values for a row, or nine Nones."""
+def _isCollegePool(pool):
+    return bool(pool) and str(pool).split("|")[0].startswith("college")
+
+
+def _unitsOf(school, state, pool=None):
+    """The unit values for a row, or Nones.
+
+    COLLEGE ROW: the campus state (the directory), then the race's state,
+      then the best-attested college of that name -- a college races out of
+      state, and its units are the program's.
+    SCHOOL ROW: the school in the race's state, else the name alone ONLY
+      when one state holds a school of that name. A high school's league,
+      section and division are its state's; a shared name in another state
+      is another school (owner, 2026-10-05, Amherst WI read as Amherst
+      College; 2026-09-13, Amherst NE, the season-table half of this).
+    A school_unit with no is_college column keys every row under None,
+    which both levels fall back to -- the old, level-blind behaviour."""
+    none = (None,) * len(_UNIT_COLS)
     if not school:
-        return (None,) * len(_UNIT_COLS)
-    campus = _campusState(school)
-    got = _UNITS["by_key"].get((school, campus)) if campus else None
+        return none
+    college = _isCollegePool(pool)
+    by_key, by_school = _UNITS["by_key"], _UNITS["by_school"]
+
+    def key(st):
+        if not st:
+            return None
+        got = by_key.get((school, st, college))
+        return got if got is not None else by_key.get((school, st, None))
+
+    got = key(_campusState(school)) if college else None
     if got is None:
-        got = _UNITS["by_key"].get((school, state))
+        got = key(state)
+    if got is None and (college or school in _UNITS.get("hs_unique", ())):
+        got = by_school.get((school, college))
     if got is None:
-        got = _UNITS["by_school"].get(school)
-    return got if got is not None else (None,) * len(_UNIT_COLS)
+        got = by_school.get((school, None))
+    return got if got is not None else none
 
 
 def _tfDistance(event_short):
@@ -1549,7 +1591,7 @@ def prepareRow(row, sport):
                     row.date, season, row.state, school, row.grade,
                     row.meet_id, row.div_id, row.canon_meet_id,
                     None, None, row.event_id,
-                    *_unitsOf(school, row.state),
+                    *_unitsOf(school, row.state, pool),
                     key, float(metres))
         # ★ A TIMED NON-FLAT EVENT: hurdles or the steeple, metres from the
         #   name, kind stamped so the 100 m board never lists the 100 m
@@ -1561,7 +1603,7 @@ def prepareRow(row, sport):
                     row.date, season, row.state, school, row.grade,
                     row.meet_id, row.div_id, row.canon_meet_id,
                     row.time_seconds, kind_d, row.event_id,
-                    *_unitsOf(school, row.state),
+                    *_unitsOf(school, row.state, pool),
                     kind, None)
         if distance is None \
                 or not (0 < float(distance) < _SPRINT_MAX_DISTANCE):
@@ -1571,7 +1613,7 @@ def prepareRow(row, sport):
                 row.date, season, row.state, school, row.grade,
                 row.meet_id, row.div_id, row.canon_meet_id,
                 row.time_seconds, distance, row.event_id,
-                *_unitsOf(school, row.state),
+                *_unitsOf(school, row.state, pool),
                 None, None)
 
 
@@ -1637,7 +1679,7 @@ def prepareRow(row, sport):
             #   positional, so these two orderings are one fact written
             #   twice -- _UNIT_COLS is the copy that _COLUMNS quotes, so a
             #   unit added there flows to both.
-            *_unitsOf(school, row.state),
+            *_unitsOf(school, row.state, pool),
             # a rated row is a flat race with no mark
             None, None)
 
@@ -3019,7 +3061,9 @@ def _stampSeasonUnits(conn, season_table):
                         UPDATE {season_table} s SET {sets}
                         FROM tmp_campus c
                         JOIN (SELECT DISTINCT ON (school, state) school, state, {collist}
-                              FROM school_unit ORDER BY school, state, votes DESC) u
+                              FROM school_unit
+                              {"WHERE is_college" if "is_college" in have else ""}
+                              ORDER BY school, state, votes DESC) u
                           ON u.school = c.school AND u.state = c.state
                         WHERE s.school = c.school
                           AND s.pool LIKE 'college%%'
@@ -3035,28 +3079,39 @@ def _stampSeasonUnits(conn, season_table):
             #   the campus pass is gated on a college pool, and the exact
             #   (school, state) pass runs for everyone -- the IS NULL guard
             #   is already what stops it overwriting a campus answer.
+            # ★★ EVERY PASS MATCHES THE LEVEL (owner, 2026-10-05: an Amherst,
+            #    Wisconsin grade-5 season read NCAA DIII / NESCAC). A school
+            #    season takes a school's units and a college season a
+            #    college's, even under one (name, state) -- Amherst, MA is
+            #    both. Same rule as _unitsOf, which stamps the result rows.
+            lvl_u = ("COALESCE(is_college, false)" if "is_college" in have
+                     else "NULL::boolean")
+            lvl_s = "(s.pool LIKE 'college%%')"
+            lvl_ok = f"(u.lvl IS NULL OR u.lvl = {lvl_s})"
             # then the exact (school, state) for the rest
             cur.execute(f"""
                 UPDATE {season_table} s SET {sets}
-                FROM (SELECT DISTINCT ON (school, state) school, state, {collist}
-                      FROM school_unit ORDER BY school, state, votes DESC) u
-                WHERE u.school = s.school AND u.state = s.state
-                  AND s."{cols[0]}" IS NULL
-            """) if n0 else cur.execute(f"""
-                UPDATE {season_table} s SET {sets}
-                FROM (SELECT DISTINCT ON (school, state) school, state, {collist}
-                      FROM school_unit ORDER BY school, state, votes DESC) u
-                WHERE u.school = s.school AND u.state = s.state
+                FROM (SELECT DISTINCT ON (school, state, {lvl_u}) school, state,
+                             {lvl_u} AS lvl, {collist}
+                      FROM school_unit ORDER BY school, state, {lvl_u}, votes DESC) u
+                WHERE u.school = s.school AND u.state = s.state AND {lvl_ok}
+                  {'AND s."' + cols[0] + '" IS NULL' if n0 else ''}
             """)
             n1 = cur.rowcount
-            # then the best-attested row of the name for the rest
+            # then the best-attested row of the name for the rest: a college
+            # by its name anywhere; a school only when ONE state holds a
+            # school of that name (a high school's units are its state's)
             cur.execute(f"""
                 UPDATE {season_table} s SET {sets}
-                FROM (SELECT DISTINCT ON (school) school, {", ".join(f'"{c}"' for c in cols)}
-                      FROM school_unit ORDER BY school, votes DESC) u
-                WHERE u.school = s.school AND s."{cols[0]}" IS NULL
+                FROM (SELECT DISTINCT ON (school, {lvl_u}) school, {lvl_u} AS lvl,
+                             {", ".join(f'"{c}"' for c in cols)}
+                      FROM school_unit ORDER BY school, {lvl_u}, votes DESC) u
+                WHERE u.school = s.school AND s."{cols[0]}" IS NULL AND {lvl_ok}
                   AND NOT EXISTS (SELECT 1 FROM school_unit x
                                   WHERE x.school = s.school AND x.state = s.state)
+                  AND ({lvl_s} OR (SELECT count(DISTINCT x.state) FROM school_unit x
+                                    WHERE x.school = s.school
+                                      AND NOT COALESCE({'x.is_college' if 'is_college' in have else 'false'}, false)) = 1)
             """)
             n2 = cur.rowcount
             conn.commit()

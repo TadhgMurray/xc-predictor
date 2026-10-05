@@ -3837,3 +3837,27 @@ Also seen in the same journal, not yet chased:
   connection on the way out (SELECT 1), and the retry succeeded, so the
   backend died MID-request and the first error was swallowed somewhere.
   The Postgres log says what ended it (terminate, OOM, restart).
+
+## 2026-10-05 — ✅⏳ a shared school name lent one level's identity to another
+
+Owner: an unnamed grade-5 runner (athlete 33083078, Amherst WI, elementary
+pool) read "Amherst (WI) · 5 · NCAA DIII · Mideast · NESCAC", his season
+"Amherst (MA)", and he joined Amherst College's roster on the predictions
+page. Three lookups, each keyed on the school NAME without the level:
+1. **Result-row units (build_ranking_results._unitsOf):** the college
+   directory's campus state was tried for EVERY row, so any "Amherst"
+   became (Amherst, MA) = the college. Now by level: a college row takes
+   its campus state, then the race state, then the best-attested college
+   of the name; a school row takes the school in its state, and the bare
+   name only when one state holds a school of that name.
+2. **Season-row units (_stampSeasonUnits):** the campus pass could take a
+   high school's row (Amherst MA is both), and the last pass took the
+   best-attested row of the name at any level. Every pass now matches the
+   level; school seasons fall back by name only when the name is unique.
+3. **Season label / team key (school_identity.teamState):** Wisconsin
+   holds under 3% of the name's athletes, so the label fell to the
+   primary (MA). For a school-level pool the season's own state stands
+   when the name has any cluster there; the 3% bar stays for colleges.
+tests/test_school_level_units.py. 1+2 take effect at the next
+10_rankings build; 3 on restart. The predictions roster half is with the
+predictions speed work (squad selection by school identity and level).
