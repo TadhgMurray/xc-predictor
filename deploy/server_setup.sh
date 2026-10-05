@@ -139,7 +139,11 @@ EnvironmentFile=/etc/xc-predictor.env
 #   dies with it instead of living on as an orphan (2026-09-07).
 Environment=XCP_DB_APP=site XCP_DB_MIN_CONN=1 XCP_DB_MAX_CONN=6
 Environment=XCP_DB_LOCK_TIMEOUT_MS=5000 XCP_DB_STATEMENT_TIMEOUT_MS=55000
-ExecStart=/srv/venv/bin/gunicorn -w 8 --timeout 60 \
+# ★ --limit-request-line 8190 (2026-10-05: "Request Line is too large (7962 >
+#   4094)" in the journal). nginx passes request lines up to its 8 KB
+#   header buffer; gunicorn's own default stopped at 4 KB, so a long
+#   filter URL got a bare 400 from the middle of the stack.
+ExecStart=/srv/venv/bin/gunicorn -w 8 --timeout 60 --limit-request-line 8190 \
     --pythonpath /srv/xc-predictor/racecast,/srv/xc-predictor/scripts,/srv/xc-predictor/engine \
     -b 127.0.0.1:8000 app:app
 Restart=always

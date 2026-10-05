@@ -3822,3 +3822,18 @@ Also seen in the same journal, not yet chased:
   pages, repeatedly -- the equivalents line gets a None somewhere.
 - `db blip on GET /athlete/...: InterfaceError: connection already closed`
   (retried) -- pooled connections dropped, likely while the pipeline ran.
+- ✅ `equiv time failed (TypeError ... NoneType)`: an athlete whose every
+  season is unrated (a sprinter or thrower -- both logged pages were track
+  athletes) still gets a header season, and its rating is None; the "5K
+  equivalent" line converted None. Now left out without a log line.
+- ✅ `Request Line is too large (7962 > 4094)`: gunicorn's default 4 KB
+  limit sat under nginx's 8 KB buffer. deploy/server_setup.sh now starts
+  gunicorn with --limit-request-line 8190; apply on the box with
+  `sed -i 's/--timeout 60 \\/--timeout 60 --limit-request-line 8190 \\/'
+  /etc/systemd/system/xc-predictor.service && systemctl daemon-reload &&
+  systemctl restart xc-predictor`. Which page builds an 8 KB GET is still
+  unknown (nginx access log at 15:27:16).
+- 🔎 `db blip ... connection already closed`: the pool probes every
+  connection on the way out (SELECT 1), and the retry succeeded, so the
+  backend died MID-request and the first error was swallowed somewhere.
+  The Postgres log says what ended it (terminate, OOM, restart).

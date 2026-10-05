@@ -1447,6 +1447,11 @@ def _personRedirect(cur, person_id):
         return None
 
 
+
+class _NoRatedSeason(Exception):
+    """The header season has no rating: the equivalent line is left out
+    (an expected state, not an error -- see the athlete page)."""
+
 @app.route("/athlete/<int:person_id>")
 def athlete(person_id):
     with getConn() as conn:                # reuse the engine's connection
@@ -1873,6 +1878,14 @@ def athlete(person_id):
         athlete["pool_words"] = poolWords(season_rating["pool"])
         athlete["rank_floor"] = floorLabel(season_rating["year"])
         try:
+            # ! A SEASON WITH NO RATING HAS NO EQUIVALENT (2026-10-05: "equiv
+            #   time failed (TypeError: float() ... NoneType)" in the journal,
+            #   on track athletes). An athlete whose every season is a
+            #   sprinter's or a thrower's still has a header season -- the
+            #   ORDER BY above only PREFERS a rated one -- and its rating is
+            #   None. No number, no line; not an error.
+            if athlete.get("rating") is None:
+                raise _NoRatedSeason()
             # ★ THROUGH THE SAME INVERSE THE CONVERSIONS PAGE USES
             #   (2026-09-11). 100 * pool_mean / rating is the ADJUSTED time
             #   at a zero-effect venue, not a time anyone runs; the page put
@@ -1893,8 +1906,9 @@ def athlete(person_id):
                                      if abs(_dist / 1000.0 - round(_dist / 1000.0)) < 1e-6
                                      else f"{int(round(_dist))}m")
         except Exception as exc:         # noqa: BLE001 -- a phrase, not a page
-            print(f"athlete: equiv time failed ({type(exc).__name__}: {exc})",
-                  flush=True)
+            if not isinstance(exc, _NoRatedSeason):
+                print(f"athlete: equiv time failed ({type(exc).__name__}: {exc})",
+                      flush=True)
             athlete["equiv_time"] = None
             athlete["equiv_dist"] = None
         nation = next((e for e in (rank_line or [])
