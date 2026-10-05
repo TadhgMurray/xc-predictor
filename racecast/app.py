@@ -1889,19 +1889,29 @@ def athlete(person_id):
     #           2026-09-29: "not real (easy LR)"). The time was really run,
     #           so its flags stay; its rating is greyed and counts toward no
     #           season number (the boards and athlete_season anti-join it).
+    # ! ITS OWN CONNECTION (2026-10-05). This block sits after the route's
+    #   `with getConn()` has closed, and used that block's cursor -- every
+    #   query raised, the except swallowed it, and no athlete page ever
+    #   showed an outlier mark. The rollback in that except then ran on a
+    #   connection already handed back to the pool.
     try:
         ids = {}
         for race in races:
             ids.setdefault(race.get("sport") or "XC", []).append(race["result_id"])
-        cur.execute("SELECT to_regclass('public.rating_outlier') AS t")
-        if cur.fetchone()["t"] and ids:
-            flagged = {}
-            for sp, rids in ids.items():
-                cur.execute("SELECT result_id, side FROM rating_outlier "
-                            "WHERE sport = %s AND result_id = ANY(%s)",
-                            (sp, rids))
-                flagged.update({(sp, r["result_id"]): r["side"] or "fast"
-                                for r in cur.fetchall()})
+        flagged = {}
+        if ids:
+            with getConn() as _oconn:
+                with _oconn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as _ocur:
+                    _ocur.execute("SELECT to_regclass('public.rating_outlier') AS t")
+                    if _ocur.fetchone()["t"]:
+                        for sp, rids in ids.items():
+                            _ocur.execute("SELECT result_id, side FROM rating_outlier "
+                                          "WHERE sport = %s AND result_id = ANY(%s)",
+                                          (sp, rids))
+                            flagged.update({(sp, r["result_id"]): r["side"] or "fast"
+                                            for r in _ocur.fetchall()})
+                    _oconn.rollback()
+        if flagged:
             for race in races:
                 side = flagged.get((race.get("sport") or "XC", race["result_id"]))
                 if side is None:
@@ -1912,8 +1922,9 @@ def athlete(person_id):
                               "is_course_sr", "is_rating_sr", "is_star_pr",
                               "is_star_course", "is_star_rating"):
                         race[k] = False
-    except Exception:                                # noqa: BLE001
-        conn.rollback()
+    except Exception as exc:                         # noqa: BLE001
+        print(f"athlete {person_id}: outlier marks skipped: "
+              f"{type(exc).__name__}: {exc}", flush=True)
 
     # 5. group/enrich/sort
     seasons = group_into_seasons(races)
@@ -1923,16 +1934,23 @@ def athlete(person_id):
     #   agreed. Keyed the way the blocks are, (label, sport): the season
     #   table's year is the academic season and a track block's label is
     #   that plus one.
+    # ! ITS OWN CONNECTION, like the outlier block above: the route's
+    #   cursor is closed by here, so this read failed silently and every
+    #   season block fell back to the page's own average.
     board_seasons = {}
     try:
-        cur.execute("""SELECT sport, year, mean_rating FROM athlete_season
-                       WHERE person_id = %s AND mean_rating IS NOT NULL
-                       ORDER BY n_races DESC""", (person_id,))
-        for r in cur.fetchall():
-            label = int(r["year"]) + (1 if r["sport"] == "TF" else 0)
-            board_seasons.setdefault((label, r["sport"]), float(r["mean_rating"]))
-    except Exception:                                # noqa: BLE001
-        conn.rollback()
+        with getConn() as _bconn:
+            with _bconn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as _bcur:
+                _bcur.execute("""SELECT sport, year, mean_rating FROM athlete_season
+                                 WHERE person_id = %s AND mean_rating IS NOT NULL
+                                 ORDER BY n_races DESC""", (person_id,))
+                for r in _bcur.fetchall():
+                    label = int(r["year"]) + (1 if r["sport"] == "TF" else 0)
+                    board_seasons.setdefault((label, r["sport"]), float(r["mean_rating"]))
+                _bconn.rollback()
+    except Exception as exc:                         # noqa: BLE001
+        print(f"athlete {person_id}: board seasons skipped: "
+              f"{type(exc).__name__}: {exc}", flush=True)
     seasons = enrich_seasons(seasons, board_seasons)
     # a split person (issue 164): seasons of both genders on one page, so
     # each season block says which
