@@ -4056,7 +4056,7 @@ meet is re-picked.
 Also 5b14bc6: a whole roster added to a men's race brought the women's
 team (no gender on an all-races/mixed field); falls back to the race's own.
 
-## 2026-10-05 — ⏳ predictions read a meet by id alone (anet/tfrrs ids collide)
+## 2026-10-05 — ✅ predictions read a meet by id alone (anet/tfrrs ids collide)
 
 Owner: "NCAA Division III Cross Country Championships 2025 ... ran
 2009-10-13 · Warinanco Park", races "Varsity Boys 5000m (22)" and "Varsity
@@ -4144,3 +4144,8 @@ Owner liked the idea (above_level.py; race.html and race_tf.html).
   level by more than sigma, the pooled within-season swing of these same
   runners, measured on the page. It is not a chosen threshold.
 - **CSV:** the race CSVs carry the column too.
+
+**Update (16dee83): fixed.** The predictions page picks one meet per id the way the meet page does
+(`?alt=`, biggest source by default) and every predict call carries it: race list, date, course,
+field, state, season ("as it ran" now loads the right year's roster), labels, share cards, and the
+"Predict this" links from meet and race pages. With no source given, old paths read as before.
