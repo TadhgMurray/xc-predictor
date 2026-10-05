@@ -3975,3 +3975,69 @@ tests/test_predict_asran_and_grades.py.
   go-live. Also TWO canonical ids for one park (3851 and 16451), like
   Woodward Park's three: a course_canonical merge to do.
 - Model: owner, "leave in stasis" until the engine is fixed.
+
+## 2026-10-05 (evening) — 📌 PICK UP HERE, UPDATED (supersedes the list above)
+
+### 1. Next on the box, in order
+1. `git pull && sudo systemctl restart xc-predictor` (site fixes below).
+2. gunicorn 8 KB request lines: `sed -i 's/--timeout 60/--timeout 60
+   --limit-request-line 8190/' /etc/systemd/system/xc-predictor.service &&
+   systemctl daemon-reload && systemctl restart xc-predictor`.
+3. **The run:** `XCP_LADDER=0 tmux new -s run 'bash deploy/run_pipeline.sh --from 5'`
+   -- carries the TF weather (9am-8pm mean, fitted and saved), the day-term
+   centring, one race-day row per distance, and units by level. No `git
+   pull` while it runs. After: REPORT.txt, the `day terms centred` line of
+   08_golive.log, and the time-stamped 08_golive/07_pack/04c logs.
+4. After the run, check: race-day dropdowns (UCSB Gaucho 2024-08-31 on
+   /athlete/29603086, Harkness 8000s on /athlete/29603084), Mt. SAC gap,
+   Hammerand gap, owner's 3200 (139.02 -> 136.20 last run: why?).
+
+### 2. Waiting on the box (not run yet)
+- St. Mary's (anet XC meet 273503): `scripts/find_meet.py 273503` + the
+  meet_queue rows 273495-273511; no `--requeue` until the reason is read.
+- Explain check: `curl -s http://127.0.0.1:8000/api/explain/tf/277459367`
+  ("other" <= ~1%).
+- Nightly: `engine/fill_ratings.py --check 3000`, one hand run, then
+  `sudo bash deploy/install_nightly_timer.sh`.
+- Names: `scripts/requeue_blank_athletes.py --apply`.
+- Dropped DB connections: `grep -iE "terminat|FATAL|killed|out of memory"
+  /var/log/postgresql/postgresql-16-main.log | tail -20`.
+- Re-time `/meets?sport=TF&state=CA&zz=1` (was 9.9 s).
+
+### 3. Engine and data, open
+- ⏳ Day terms carried the era (XC -3.24%, TF +1.40%) -> centred per (sport,
+  season); judge by the next REPORT (cross-sport bias, LACCTiC XC -> 5000).
+- LACCTiC, last run: order 84.1 vs 84.5; XC -> 5000 spread 2.02 vs 1.95
+  (was 82.0 / 2.52) -- nearly level.
+- Mt. SAC 4715 - 4828 = 5.00% (owner: 1-2%).
+- Hammerand 10k gap 8.51 points -- the TF weather change lands this run.
+- Duplicate course ids: Woodward Park (3), Harkness (3851, 16451).
+- 525 rows dated 2221/2222.
+- Early season: XCP_SEASON_TIE off; "1 race" marker; projected view.
+- Model: college 8K times ~20% fast. **In stasis** until the engine is
+  fixed (owner); the page serves ratings, the model only the unrated.
+- Pipeline speed still to do: 08_golive 2.6 h, 07_pack 1 h, 04c 40 min
+  (profile from the stamped logs); 08a holdouts side by side.
+- Site: which page builds an ~8 KB GET; athlete-page "XC | TF" looks like
+  a toggle.
+
+### 4. Owner setup, whenever
+- Admin emails (XCP_ADMIN_EMAILS); mail via Resend (XCP_MAIL_PROVIDER /
+  KEY / FROM) -- also turns on failure emails and email sign-in; nginx
+  client_max_body_size 10m.
+
+### 5. Features
+- Approved, not started: follow athletes/teams + weekly email (needs mail);
+  accuracy section on About.
+- Ideas, not approved: what it takes (state cuts), shareable cards,
+  head-to-head, projected trajectory, records, training paces, meet
+  calendar, next year's team. Deferred: meet previews (no entries).
+
+### Done today (2026-10-05), for the record
+TF weather fit crash + max-vs-avg (avg chosen); 04f query staged; ladder
+only on model change; stamped logs; diag_rain (rain is credited);
+predictions: upcoming-meet date, 10x faster (sim vectorised, squads
+batched, model only for the unrated), freshmen not placed on unsure model
+times, HS-scale results, "as it ran" squads, grades aged; squads and units
+by school identity and level (Amherst); race-day rows per distance and
+championship joins; equivalent-time error; gunicorn request line.
