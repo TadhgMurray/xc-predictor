@@ -9697,7 +9697,13 @@ def about_page():
     except Exception as exc:
         app.logger.warning("about: meta unavailable (%s)", exc)
 
-    return render_template("about.html", meta=meta)
+    from accuracy import loadAccuracy
+    try:
+        accuracy = loadAccuracy()
+    except Exception as exc:                                    # noqa: BLE001
+        app.logger.warning("about: accuracy unavailable (%s)", exc)
+        accuracy = None
+    return render_template("about.html", meta=meta, accuracy=accuracy)
 
 
 # ------------------------------------------------------------------ #

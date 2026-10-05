@@ -83,6 +83,37 @@
     </li>
   </ol>
 
+  {% if accuracy %}
+  <h2 id="accuracy">How accurate is it</h2>
+  <p>
+    Every rebuild is scored on results it was not allowed to see. These are
+    the latest run's numbers{% if accuracy.as_of %}
+    ({{ accuracy.as_of.strftime('%b %-d, %Y') }}){% endif %}.
+  </p>
+  <dl class="acc-tests">
+    {% for t in accuracy.tests %}
+      <dt>{{ t.label }} <strong>{{ t.value }}</strong></dt>
+      <dd>{{ t.text }}</dd>
+    {% endfor %}
+  </dl>
+  {% if accuracy.history | length > 1 %}
+  <details class="acc-history">
+    <summary>Every run</summary>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Run</th>{% for l in accuracy.labels %}<th>{{ l }}</th>{% endfor %}</tr></thead>
+      <tbody>
+      {% for r in accuracy.history %}
+        <tr><td>{{ r.date.strftime('%Y-%m-%d') if r.date else '' }}</td>
+          {% for v in r['values'] %}<td>{{ v or '-' }}</td>{% endfor %}</tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </details>
+  {% endif %}
+  {% endif %}
+
   <h2>Where it is still wrong</h2>
 
   <h3>One race is not a season</h3>

@@ -5611,3 +5611,17 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* track race page: a relay row is a team -- the squad, its runners under it */
 .relay-team { font-weight: 600; }
 .relay-legs { display: block; font-size: 0.8rem; color: var(--muted, #666); }
+
+/* ---- About: "How accurate is it" (accuracy.py) ------------------------- */
+.acc-tests { margin: .5rem 0 1rem; }
+.acc-tests dt { font-weight: 600; margin-top: .75rem; }
+.acc-tests dt strong { margin-left: .4rem; color: var(--accent); font-variant-numeric: tabular-nums; }
+.acc-tests dd { margin: .2rem 0 0; color: var(--muted); max-width: 46rem; }
+.acc-history summary { cursor: pointer; color: var(--link); }
+.acc-history .table-scroll { overflow-x: auto; }
+.acc-history table { border-collapse: collapse; font-size: .9rem; margin-top: .5rem;
+                     font-variant-numeric: tabular-nums; }
+.acc-history th, .acc-history td { padding: .3rem .6rem; border-bottom: 1px solid var(--line);
+                                   text-align: right; }
+.acc-history th:first-child, .acc-history td:first-child { text-align: left; white-space: nowrap; }
+.acc-history th { font-weight: 600; font-size: .8rem; color: var(--muted); }
