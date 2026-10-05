@@ -61,9 +61,11 @@ def test_the_target_is_resolved_once_and_shared(counted):
     assert counted["rating_spec"][0][0] == SPEC
     assert str(counted["rating_spec"][0][1]) == "2026-10-25"
     # and the served numbers are what they were: the rating where there is
-    # one, the model's time beside it, the model elsewhere
-    assert out[0]["seconds"] == 950.0 and out[0]["model_seconds"] == 1000.0
-    assert out[1]["seconds"] == 1001.0 and "basis" not in out[1]
+    # one, the model elsewhere. Since 2026-10-05 (the model only for who
+    # needs it) the model is asked for the unrated runner alone, so the
+    # rated one carries no model time beside it.
+    assert out[0]["seconds"] == 950.0 and "model_seconds" not in out[0]
+    assert out[1]["seconds"] == 1000.0 and "basis" not in out[1]
 
 
 def test_a_target_that_cannot_resolve_still_fails_where_it_did(monkeypatch):

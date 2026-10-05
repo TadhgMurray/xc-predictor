@@ -3886,3 +3886,27 @@ Owner: "speed up the predictions and the loading of the squads". Merged
 Check after restart: `journalctl -u xc-predictor | grep "\[predict\] warm"`;
 re-time /api/predict/team?meet_id=277556&sport=XC&mode=meet;
 `scripts/diag_predict_time.py --meet 277556 --sport XC`.
+
+## 2026-10-05 — ✅ predictions: freshmen at 20:25 for a college 8K; HS scale; model only where needed
+
+Owner's D3 prediction: fifteen freshmen at the top (20:25-21:55 for an 8K,
+bands of +-10%), "lol". They had no rated race before the target date (a
+new college profile; a meet re-run before their first race), so they kept
+the MODEL's own time, and the model's college 8K times run ~20% fast
+(Tucker Presnell: model 19:58, rating 25:15) -- the rating guard had always
+hidden it. Now a runner with no rating keeps the model's time only when its
+band is within _GUARD_MAX_SIGMA (8%, the guard's own "not a prediction"
+bar); otherwise listed, unscored, with the reason.
+🔎 OPEN: why the model's college 8K times are ~20% fast (its output scale vs
+the race distance for college pools) -- serve-side it no longer shows.
+
+"Those speed ratings should be HS equivalent": the scale toggle defaults
+to HS-equivalent, but the predicted results, the dual and the best seven
+were injected without the repaint, so they always showed own-pool numbers.
+They repaint now.
+
+"Still not fast enough": with the simulation vectorised a 195-runner meet
+still took 2.3-2.9 s with sim=0. Under the default basis (rating) every
+rated runner is served their rating's time, and the model ran for the whole
+field to fill a hover. It now runs only for runners with no rating (basis
+"guard" still runs it for all). Re-time /api/predict/team?meet_id=277556.

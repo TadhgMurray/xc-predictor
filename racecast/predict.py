@@ -1055,9 +1055,8 @@ def _servedTimes(cur, person_ids, target):
     except Exception:                                   # noqa: BLE001
         _rollback(cur)
         spec = None
-    preds = _predictTimes(cur, person_ids, target, spec=spec)
     if basis == "model":
-        return preds
+        return _predictTimes(cur, person_ids, target, spec=spec)
     try:
         if spec is None:
             spec = _targetSpec(cur, target)
@@ -1069,12 +1068,48 @@ def _servedTimes(cur, person_ids, target):
     except Exception:                                   # noqa: BLE001
         import logging
         logging.getLogger(__name__).exception("rating guard failed")
-        return preds
+        return _predictTimes(cur, person_ids, target, spec=spec)
+    # ★★ THE MODEL ONLY FOR WHO NEEDS IT (owner, 2026-10-05: "still not fast
+    #    enough"). Under the default basis ("rating") every rated runner is
+    #    served their rating's time, and the model's number for them only
+    #    fills the page's "the model said ..." hover -- yet the model's
+    #    history queries, weather variants and forward pass ran for the
+    #    whole field (195 runners: ~2-3 s with the simulation off). It now
+    #    runs for the runners with no rating, the only ones it can serve.
+    #    "guard" still needs it for everyone: it keeps the model when the
+    #    two agree.
+    if basis == "rating":
+        need = [pid for pid in person_ids if pid not in rated]
+        got = (dict(zip(need, _predictTimes(cur, need, target, spec=spec)))
+               if need else {})
+        preds = [dict(rated[pid]) if pid in rated else got.get(pid, {
+                     "seconds": None, "reason": "No rated races in the corpus."})
+                 for pid in person_ids]
+    else:
+        preds = _predictTimes(cur, person_ids, target, spec=spec)
     for pid, entry in zip(person_ids, preds):
         r = rated.get(pid)
-        if r is None:
-            continue
+        if basis == "rating" and r is not None:
+            continue                   # served from the rating, model never run
         secs, sig = entry.get("seconds"), entry.get("sigma_pct")
+        if r is None:
+            # ★ NO RATING TO CHECK IT AGAINST, AND TOO UNSURE TO STAND ALONE
+            #   (owner, 2026-10-05: fifteen freshmen at the top of a D3 field
+            #   at 20:25-21:55 for an 8K -- "lol"). A runner with no rated
+            #   race before the target date (a freshman whose college profile
+            #   is new, a past meet re-run before their first race) kept the
+            #   model's own time, and the model's college 8K times run ~20%
+            #   fast (Tucker Presnell: model 19:58, his rating 25:15). The
+            #   guard's own bar decides: a band wider than _GUARD_MAX_SIGMA
+            #   "is not a prediction", so such a runner is listed, unscored,
+            #   with the reason -- never placed on a model guess.
+            if (secs and (sig is None or float(sig) / 100.0 > _GUARD_MAX_SIGMA)):
+                entry["model_seconds"] = secs
+                entry["seconds"] = None
+                entry["lo"] = entry["hi"] = None
+                entry["reason"] = ("No rated race before this date, and the "
+                                   "model alone is too unsure to place them.")
+            continue
         keep = (basis == "guard" and secs and entry.get("is_race_time")
                 and sig is not None and float(sig) / 100.0 <= _GUARD_MAX_SIGMA
                 and abs(math.log(float(secs) / r["seconds"])) <= _GUARD_MAX_GAP)

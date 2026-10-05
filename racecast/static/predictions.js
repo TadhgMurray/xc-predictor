@@ -2078,6 +2078,11 @@ async function predict() {
          prediction card drawn from the same request. */
     const share = state.who === "team" ? shareBox(buildQuery(targets[0])) : "";
     $("output").innerHTML = share + parts.join("");
+    /* ! THE RESULTS ARE AN INJECTION TOO (owner, 2026-10-05: "those speed
+         ratings should be hs equivalent!"). The rosters repainted after every
+         fetch; the predicted results, the dual and the best seven never did,
+         so their ratings stayed own-pool whatever the scale said. */
+    applyScale();
     if (share) saveShare(buildQuery(targets[0]));
   } catch (err) {
     /* ! A REAL NETWORK FAILURE AND A BAD RESPONSE READ DIFFERENTLY. fetch
@@ -2574,6 +2579,7 @@ async function headToHead(btn) {
       return;
     }
     out.innerHTML = dualPanel(data, picked, names);
+    applyScale();
   } catch (err) {
     out.innerHTML = `<p class="meta">${esc(err.message || "That did not work.")}</p>`;
   } finally {
@@ -2679,6 +2685,7 @@ async function bestSeven(btn) {
       .map((r) => String(r.person_id))
       .filter((id) => !card.e.removed.has(id)));
     out.innerHTML = lineupPanel(data, label, onCard, nowSim, objective, idx);
+    applyScale();
   } catch (err) {
     out.innerHTML = `<p class="meta">${esc(err.message || "That did not work.")}</p>`;
   } finally {
