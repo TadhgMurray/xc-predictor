@@ -78,3 +78,14 @@ def test_a_finished_seasons_grade_is_aged_on_the_sent_field():
     cur = _Cur([{"person_id": 5, "school": "X", "grade": "11", "pool": "hs_m",
                  "rating": 110.0, "name": "A Runner"}])
     assert P._athleteEntries(cur, [5], "XC", NOW)[0]["grade"] == "11"
+
+
+def test_switching_when_rereads_every_race():
+    """! loadField only fetches races with no field yet; switching between
+    "as it ran" and "this year" must clear the edits first, or the other
+    mode's cards (and its Everyone additions) carry over (2026-10-05)."""
+    js = open(os.path.join(_ROOT, "racecast", "static", "predictions.js"),
+              encoding="utf-8").read()
+    i = js.index("The WHEN decides WHO")
+    handler = js[i:i + 1500]
+    assert handler.index("resetEdits()") < handler.index("loadField()")

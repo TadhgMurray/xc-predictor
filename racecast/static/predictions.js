@@ -3536,7 +3536,18 @@ document.querySelectorAll(".card[data-when]").forEach((btn) => {
     // The WHEN decides WHO: "as it ran" is the original field, "this
     // year" is the current squads -- so flipping it reloads the field
     // (and clears the edits, which described the other population).
-    if (changed && state.meet) loadField();
+    /* ! IT DID NEITHER (owner, 2026-10-05: "As it ran vs run it this year
+         doesn't actually change roster, so one being wrong can mess up the
+         other"). loadField only fetches races with NO field yet, and every
+         race already had the other mode's -- so the cards, the hand edits
+         and the Everyone additions (that season's whole roster, graduates
+         and all) carried straight over. The edits are cleared first, so
+         every race is read again for the mode now chosen. */
+    if (changed && state.meet) {
+      resetEdits();
+      $("output").innerHTML = "";
+      loadField().then(() => { renderSquadBoxes(); saveState(); });
+    }
   });
 });
 

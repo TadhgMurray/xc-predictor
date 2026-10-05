@@ -4041,3 +4041,17 @@ batched, model only for the unrated), freshmen not placed on unsure model
 times, HS-scale results, "as it ran" squads, grades aged; squads and units
 by school identity and level (Amherst); race-day rows per distance and
 championship joins; equivalent-time error; gunicorn request line.
+
+## 2026-10-05 — ✅ predictions: "as it ran" and "this year" showed one roster
+
+Owner (a Tufts card of 37 in "run it this year", most of them graduates):
+"As it ran vs run it this year doesn't actually change roster, so one being
+wrong can mess up the other." Flipping WHEN called loadField, which only
+fetches races with NO field -- every race had the other mode's -- so the
+field, the hand edits and the Everyone additions (an old season's whole
+roster under "as it ran") carried straight over. The flip now clears the
+edits and re-reads every race for the mode chosen. A page restored from
+before the fix keeps its saved cards until the mode is flipped once or the
+meet is re-picked.
+Also 5b14bc6: a whole roster added to a men's race brought the women's
+team (no gender on an all-races/mixed field); falls back to the race's own.
