@@ -238,6 +238,16 @@ def main():
                                        P._asDate(spec.get("date")))
             print(f"     -> {len(rated)} served from their ratings")
 
+            # ★ THE PATH THE PAGE NOW TAKES (2026-10-05): under the rating
+            #   basis the model runs only for the runners with no rating, so
+            #   the history lookup above (the whole field) is no longer what
+            #   a request pays. This is.
+            with Stage("_servedTimes (what the page runs)"):
+                served = P._servedTimes(cur, ids, target)
+            unrated = [pid for pid in ids if pid not in rated]
+            print(f"     -> model asked for {len(unrated)} unrated of {len(ids)}; "
+                  f"{sum(1 for p in served if p.get('seconds') is not None)} placed")
+
             with Stage("_score"):
                 _teams, finishers = P._score(field, preds)
 
@@ -250,9 +260,11 @@ def main():
                 P._stampCrests(finishers, "school", "school_state")
 
     print()
-    total = sum(dt for lab, dt in Stage.rows
-                if not lab.startswith("_predictTimes"))
-    print(f"  the stages above sum to {total:.1f} s; gunicorn kills at 60")
+    # the page's request: everything but the whole-field model stages,
+    # which _servedTimes now replaces
+    skip = ("_predictTimes", "_historyRows", "_ratingTimes", "_weatherVariants")
+    total = sum(dt for lab, dt in Stage.rows if not lab.startswith(skip))
+    print(f"  a page request now costs about {total:.1f} s (gunicorn kills at 60)")
     worst = max(Stage.rows, key=lambda r: r[1])
     print(f"  slowest single stage: {worst[0]} at {worst[1]:.1f} s")
 
