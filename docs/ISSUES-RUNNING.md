@@ -3910,3 +3910,26 @@ still took 2.3-2.9 s with sim=0. Under the default basis (rating) every
 rated runner is served their rating's time, and the model ran for the whole
 field to fill a hover. It now runs only for runners with no rating (basis
 "guard" still runs it for all). Re-time /api/predict/team?meet_id=277556.
+
+## 2026-10-05 — ✅ predictions: "as it ran" freshmen; stale grades; what is predicting
+
+- **As it ran included this year's freshmen.** Squads: Everyone added every
+  CURRENT runner: _currentSquads turns a past season into this one (grades
+  aged, graduates out, returners carried, and this academic year's race
+  entrants added from results). A new as_ran mode reads the meet's own
+  season (predict.meetSeason) and that season's racers only; the page sends
+  when=asran with every squad request.
+- **Grades not aged ("predicting a race this year from last year keeps the
+  same grades").** The page sends its field, and _athleteEntries filled the
+  grades from _currentSeason -- the boards' season, which between seasons is
+  the finished one (track reads 2025 all autumn). Now aged to the academic
+  year, the clock _currentSquads uses. As it ran keeps the as-raced grade
+  (_exactField overrides).
+- **Is the model predicting?** Barely. The served basis has been "rating"
+  since 2026-09-25: each runner's recent ratings (recency-weighted, a fall
+  dropped) turned into a time at the target course and distance, band from
+  their own race-to-race spread. The model serves only runners with no
+  rating, and since today only when its band is within 8%. Its own college
+  8K times run ~20% fast (OPEN). XCP_PREDICT_BASIS=guard serves the model
+  where it agrees with the rating within 8%; =model is the raw network.
+tests/test_predict_asran_and_grades.py.

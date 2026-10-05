@@ -3403,7 +3403,8 @@ function squadKey(school, ctx, st) {
   // meet's, so the same school is a different answer at another meet
   return [school, state.meet ? state.meet.sport : "",
           state.meet ? state.meet.id : "", ctx.div ?? "", ctx.gender,
-          ctx.levels ? ctx.levels.join(",") : "?", st || ""].join("\u0000");
+          ctx.levels ? ctx.levels.join(",") : "?", st || "",
+          state.when || ""].join("\u0000");
 }
 
 function squadParams(ctx) {
@@ -3418,6 +3419,9 @@ function squadParams(ctx) {
        field saying "mixed race", and the server must not re-derive it. */
   if (ctx.levels) q.set("levels", ctx.levels.join(","));
   if (state.meet && state.meet.id) q.set("meet_id", state.meet.id);
+  /* ★ AS IT RAN, THAT SEASON'S SQUAD (owner, 2026-10-05: "as it ran
+     includes new freshmen"). Everyone used to add every CURRENT runner. */
+  if (state.when === "asran") q.set("when", "asran");
   if (ctx.div != null && !Array.isArray(ctx.div)) q.set("div_id", ctx.div);
   return q;
 }

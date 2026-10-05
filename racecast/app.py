@@ -8762,7 +8762,11 @@ def _squadParams(args):
     #   so nothing is narrowed and nothing is re-derived.
     meet = (args.get("meet_id") or "").strip()
     div = (args.get("div_id") or "").strip()
+    # ★ AS IT RAN: the squad of the meet's own season, not this one's
+    #   (owner, 2026-10-05: "as it ran includes new freshmen")
+    as_ran = (args.get("when") or "").strip().lower() == "asran"
     return {"sport": sport, "gender": gender, "levels": levels,
+            "as_ran": as_ran,
             "levels_given": "levels" in args,
             "meet_id": int(meet) if meet.isdigit() else None,
             "div_id": int(div) if div.isdigit() else None}, None
@@ -8783,18 +8787,21 @@ def _squadsServed(cur, wanted, p):
         #   _keepIdentity only acts on it where that state is a real cluster
         #   of the name, so a CT meet does not move an MA school anywhere.
         meet_state = predict._meetState(cur, p["meet_id"], sport)
-    season = predict._currentSeason(cur, sport)
+    as_ran = bool(p.get("as_ran") and p["meet_id"])
+    season = ((predict.meetSeason(cur, p["meet_id"], sport) if as_ran else None)
+              or predict._currentSeason(cur, sport))
     wanted = [(sch, (st or meet_state or None)) for sch, st in wanted]
     lv_key = tuple(sorted(levels)) if levels else None
 
     def key(sch, st):
-        return ("predict-squad", sch, sport, gender, lv_key, st, season)
+        return ("predict-squad", sch, sport, gender, lv_key, st, season, as_ran)
 
     out = [ttlcache.peek(key(sch, st)) for sch, st in wanted]
     miss = [i for i, v in enumerate(out) if v is None]
     if miss:
         got = predict.schoolSquads(cur, [wanted[i] for i in miss], sport,
-                                   season, gender=gender, levels=levels)
+                                   season, gender=gender, levels=levels,
+                                   as_ran=as_ran)
         for i, g in zip(miss, got):
             sch, st = wanted[i]
             # ⚠ THE LABEL IS NOT THE NAME, AND A CALLER MAY SEND EITHER.

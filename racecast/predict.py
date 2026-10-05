@@ -2259,7 +2259,7 @@ def schoolSquad(cur, school, sport, season_year=None, limit=40,
 # ! A NAME ASKED UNDER TWO STATES is two rounds: _currentSquads keys on the
 #   name, and Amherst (MA) and Amherst (WI) are not one squad.
 def schoolSquads(cur, wanted, sport, season_year=None, limit=40,
-                 gender=None, levels=None):
+                 gender=None, levels=None, as_ran=False):
     if season_year is None:
         season_year = _currentSeason(cur, sport)
     wanted = [(sch, (st or None)) for sch, st in wanted]
@@ -2280,7 +2280,7 @@ def schoolSquads(cur, wanted, sport, season_year=None, limit=40,
         states = {s: st for s, st in rnd.items() if st}
         squads = _currentSquads(cur, schools, sport, season_year,
                                 gender=gender, levels=levels,
-                                states=states, isolated=True)
+                                states=states, isolated=True, as_ran=as_ran)
 
         # ★ SAY WHICH EMPTY THIS IS (owner, 2026-09-01: "No one from
         #   Carondelet has raced this season"). Carondelet is an all-girls
@@ -2299,7 +2299,7 @@ def schoolSquads(cur, wanted, sport, season_year=None, limit=40,
                                     levels=levels,
                                     states={s: states[s] for s in empty
                                             if s in states},
-                                    isolated=True)
+                                    isolated=True, as_ran=as_ran)
 
         for sch in schools:
             runners = squads.get(sch, [])
@@ -2956,7 +2956,7 @@ from roster import TERMINAL_KEYS as _TERMINAL_KEYS
 
 
 def _currentSquads(cur, schools, sport, season_year, gender=None,
-                   levels=None, states=None, isolated=False):
+                   levels=None, states=None, isolated=False, as_ran=False):
     """{school: [runners best-first]} for this season.
 
     states   -- {school: "MA"}: keep only that namesake of a contested name
@@ -2998,6 +2998,15 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
     #   rather than silently papering over.
     from season_year import academicYear
     now = academicYear(datetime.date.today())
+    # ★ AS IT RAN: THAT SEASON'S SQUAD, AS IT WAS (owner, 2026-10-05: "as it
+    #   ran includes new freshmen for some reason"). Everything below makes a
+    #   PAST season into this one -- grades aged, graduates out, last year's
+    #   returners carried, this year's entrants added -- which is "this
+    #   year" and exactly wrong for a race re-run as it ran: Squads:
+    #   Everyone put this autumn's freshmen on a 2025 card. as_ran reads the
+    #   meet's own season and that season's racers, nothing aged or added.
+    if as_ran:
+        now = season_year
     stale = season_year < now
 
     squads = _squadsForYear(cur, schools, sport, season_year,
@@ -3029,7 +3038,7 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
     #   second season on top of it would age nobody out correctly (see the
     #   one-year note above).
     from roster import carryingSchools
-    carrying = ([] if stale
+    carrying = ([] if stale or as_ran
                 else sorted(carryingSchools(cur, schools, sport, season_year)))
     if carrying:
         prev = _squadsForYear(cur, carrying, sport, season_year - 1,
@@ -3458,6 +3467,25 @@ def _bestFirst(rows, sport):
         key=lambda r: -((r["rating"] or 0) * factors[r["pool"]]))
 
 
+def meetSeason(cur, meet_id, sport):
+    """The academic season a meet was run in (its earliest result's date,
+    else its scheduled date), or None."""
+    from season_year import seasonYearFromIso
+    if (sport or "XC").upper() == "XC":
+        cur.execute("""SELECT COALESCE((SELECT min(date) FROM results WHERE meet_id = %(m)s),
+                                       (SELECT substr(min(meet_date)::text, 1, 10)
+                                        FROM meets WHERE meet_id = %(m)s)) AS d""",
+                    {"m": int(meet_id)})
+    else:
+        cur.execute("""SELECT COALESCE((SELECT min(date) FROM results_tf WHERE meet_id = %(m)s),
+                                       (SELECT substr(min(meet_date)::text, 1, 10)
+                                        FROM meets_tf_meta WHERE meet_id = %(m)s)) AS d""",
+                    {"m": int(meet_id)})
+    row = cur.fetchone()
+    d = (row["d"] if isinstance(row, dict) else row[0]) if row else None
+    return seasonYearFromIso((sport or "XC").upper(), str(d)[:10]) if d else None
+
+
 def _athleteEntries(cur, person_ids, sport, season_year):
     """name + school for hand-added athletes: this season's row first,
     the athletes table for anyone without one.
@@ -3471,6 +3499,17 @@ def _athleteEntries(cur, person_ids, sport, season_year):
     ids = sorted(person_ids)
     if not ids:
         return []
+    # ★★ A YEAR OLDER WHEN THE SEASON READ IS A FINISHED ONE (owner,
+    #    2026-10-05: "predicting a race this year from last year keeps the
+    #    same grades"). season_year is _currentSeason -- the season the BOARDS
+    #    show, which between seasons is still the last one (track reads 2025
+    #    all autumn). _currentSquads ages a stale season's grades; this path,
+    #    which fills in the field the page sends, did not, so a 2025 junior
+    #    was predicted as a junior in 2026. Every grade here is aged to the
+    #    academic year we are in, the same clock _currentSquads uses.
+    from season_year import academicYear
+    from grade_label import advanceGrade
+    now_year = academicYear(datetime.date.today())
     out, seen = [], set()
     if season_year is not None:
         cur.execute(f"""
@@ -3487,8 +3526,11 @@ def _athleteEntries(cur, person_ids, sport, season_year):
             if r["person_id"] in seen:
                 continue
             seen.add(r["person_id"])
+            age = max(0, now_year - int(season_year))
             out.append({"person_id": r["person_id"], "school": r["school"],
-                        "grade": r["grade"], "pool": r["pool"],
+                        "grade": ((advanceGrade(r["grade"], age, r["pool"])
+                                   or r["grade"]) if age else r["grade"]),
+                        "pool": r["pool"],
                         # ⚠ ROUNDED, LIKE EVERY OTHER RATING ON THE SITE
                         #   (owner, 2026-09-16: "the ratings are off even for
                         #   real athletes"). mean_rating is a REAL, so the
@@ -3508,7 +3550,6 @@ def _athleteEntries(cur, person_ids, sport, season_year):
     #   haven't run yet"). With no row this season they fell through to the
     #   athletes table, which has no grade, rating or pool.
     if rest and season_year is not None:
-        from grade_label import advanceGrade
         cur.execute(f"""
             SELECT DISTINCT ON (s.person_id)
                    s.person_id, s.school, s.grade, s.pool, s.year,
@@ -3524,7 +3565,8 @@ def _athleteEntries(cur, person_ids, sport, season_year):
             seen.add(r["person_id"])
             out.append({"person_id": r["person_id"], "school": r["school"],
                         "grade": advanceGrade(r["grade"],
-                                              season_year - int(r["year"]),
+                                              max(season_year, now_year)
+                                              - int(r["year"]),
                                               r["pool"]),
                         "pool": r["pool"],
                         "rating": (round(float(r["rating"]), 1)
