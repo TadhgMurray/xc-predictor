@@ -72,8 +72,20 @@
        different page would hide that the filters are just a narrowing of the
        list you were already reading. #}
     {% set filtering = filters and filters.active %}
-    <h1>{{ "Meets" if filtering else "Recent meets" }}</h1>
-    {% if filtering %}
+    {# ★ RESULTS | UPCOMING (owner, 2026-10-05: past and future "on same
+       page" was not obvious). Two views of /meets, ?view=upcoming. #}
+    <h1>{{ "Meets" if filtering else ("Upcoming meets" if upcoming else "Recent meets") }}</h1>
+    {% if not filtering %}
+    <div class="seg meets-view">
+      <a class="seg-btn{{ ' is-on' if not upcoming }}" href="/meets?sport={{ sport }}">Results</a>
+      <a class="seg-btn{{ ' is-on' if upcoming }}" href="/meets?view=upcoming&amp;sport={{ sport }}">Upcoming</a>
+    </div>
+    {% endif %}
+    {% if upcoming %}
+    <p class="meta">Meets posted for the next seven days, biggest first. No entries
+       are posted yet, so a prediction builds the field from the teams that race
+       the course now.</p>
+    {% elif filtering %}
     <p class="meta">
        {{ "{:,}".format(n_meets) }} meet{{ "" if n_meets == 1 else "s" }}
        {{ filter_text }}, newest first.
@@ -92,7 +104,7 @@
           {# The sport keeps whatever filter is applied -- switching sport is
              not a reason to lose the school you came here to look at. #}
           <a class="seg-btn{{ ' is-on' if s == sport }}"
-             href="/meets?sport={{ s }}{% if filters %}{% if filters.state %}&amp;state={{ filters.state }}{% endif %}{% if filters.school %}&amp;school={{ filters.school|urlencode }}{% endif %}{% if filters.q %}&amp;q={{ filters.q|urlencode }}{% endif %}{% if filters.year_label is not none %}&amp;year={{ filters.year_label }}{% endif %}{% endif %}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
+             href="/meets?sport={{ s }}{% if upcoming %}&amp;view=upcoming{% endif %}{% if filters %}{% if filters.state %}&amp;state={{ filters.state }}{% endif %}{% if filters.school %}&amp;school={{ filters.school|urlencode }}{% endif %}{% if filters.q %}&amp;q={{ filters.q|urlencode }}{% endif %}{% if filters.year_label is not none %}&amp;year={{ filters.year_label }}{% endif %}{% endif %}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
         {% endfor %}
     </div>
 
@@ -101,6 +113,7 @@
        and back-button-able for free. The rankings page needs JS because its
        combos are multi-select against a live index; these are four single
        values and would gain nothing from it. #}
+    {% if not upcoming %}
     <form class="meet-filters" method="get" action="/meets">
         <div class="field">
             <label for="mf-sport">Sport</label>
@@ -236,16 +249,18 @@
       });
     })();
     </script>
+    {% endif %}
 
     {# ★ COMING UP (weekend.py): the meets the feeds have posted for the next
        seven days, this sport, biggest first, each a link into predictions.
        The recent list only, never a filtered or course view. #}
-    {% if coming and not filtering %}
+    {% if upcoming and not coming %}
+    <p class="meta">No {{ "cross country" if sport == "XC" else "track" }} meet has been
+       posted for the next seven days yet.</p>
+    {% endif %}
+    {% if upcoming and coming %}
     <section class="coming-up" id="coming-up">
-      <h2 class="month-head">Coming up</h2>
-      <p class="meta">Posted for the next seven days. No entries are posted
-         yet, so a prediction builds the field from the teams that race the
-         course now.
+      <p class="meta">
          <label class="cu-state">State
            <select id="cu-state"><option value="">All</option>
              {% for st in states %}<option>{{ st }}</option>{% endfor %}
@@ -303,6 +318,7 @@
     </script>
     {% endif %}
 
+    {% if not upcoming %}
     {% if not months %}
       {% if filtering %}
     <p class="meta">No {{ sport }} meet matches {{ filter_text }}. The school
@@ -346,6 +362,7 @@
         </tbody>
     </table>
     {% endfor %}
+    {% endif %}{# not upcoming #}
 {% endif %}
 
 </main>

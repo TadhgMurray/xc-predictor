@@ -991,13 +991,19 @@ def meets_page():
             months.append(current)
         current[1].append(m)
 
-    from weekend import comingUpCached
-    coming = [{**d, "meets": [m for m in d["meets"] if m["sport"] == sport]}
-              for d in comingUpCached(getConn)]
-    coming = [d for d in coming if d["meets"]]
-    return render_template("meets.html", sport=sport, months=months,
+    # ★ ?view=upcoming: the meets posted for the coming week (weekend.py),
+    #   its own view of the page rather than a block on top of the results
+    upcoming = (request.args.get("view") or "").lower() == "upcoming"
+    coming = []
+    if upcoming:
+        from weekend import comingUpCached
+        coming = [{**d, "meets": [m for m in d["meets"] if m["sport"] == sport]}
+                  for d in comingUpCached(getConn)]
+        coming = [d for d in coming if d["meets"]]
+    return render_template("meets.html", sport=sport, months=[] if upcoming else months,
                            filters=f, states=US_STATES, kinds=kinds, unit_kinds=UNIT_KINDS,
-                           min_results=RECENT_MIN_RESULTS, coming=coming)
+                           min_results=RECENT_MIN_RESULTS, coming=coming,
+                           upcoming=upcoming)
 
 
 @app.route("/api/meet-units")

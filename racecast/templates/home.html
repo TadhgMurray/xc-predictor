@@ -344,7 +344,7 @@
             <div class="recent-block" data-sport="{{ sport }}">
                 <h2 class="rank-heading">Latest results</h2>
                 <p class="rank-sub">The newest meets on the books.{% if coming_n and coming_n.get(sport) %}
-                    <a href="/meets?sport={{ sport }}#coming-up">{{ "{:,}".format(coming_n[sport]) }} coming up this week →</a>{% endif %}</p>
+                    <a href="/meets?view=upcoming&amp;sport={{ sport }}">{{ "{:,}".format(coming_n[sport]) }} coming up this week →</a>{% endif %}</p>
                 {# 15 rows; the full precomputed year lives at /meets. #}
                 <table class="recent-table">
                     <thead>
