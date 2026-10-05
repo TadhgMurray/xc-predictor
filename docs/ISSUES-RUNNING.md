@@ -3861,3 +3861,28 @@ page. Three lookups, each keyed on the school NAME without the level:
 tests/test_school_level_units.py. 1+2 take effect at the next
 10_rankings build; 3 on restart. The predictions roster half is with the
 predictions speed work (squad selection by school identity and level).
+
+## 2026-10-05 — ✅ predictions and squads faster; squads by school identity
+
+Owner: "speed up the predictions and the loading of the squads". Merged
+1f0f257 (c1cbd80, 49d1110):
+- **The win/score simulation** (sim=1, always asked) scored 2,000 draws one
+  at a time: 1.5 s on 420 runners, 2.9 s on 660 (live meet 277556: 2.2-6.4 s).
+  Vectorised over draws: 0.26-0.35 s and 0.74 s; identical numbers
+  (old loop kept in tests/test_race_sim.py, compared on 40 random fields).
+- **Predict sent races one after another** -> in parallel, four at a time.
+- **"Squads: Everyone" was one request per team per race** (30-80+ behind 8
+  workers) -> /api/predict/squads, up to 120 schools a call, chunks of 40,
+  four at once; in-flight requests shared; squads cached 5 min per worker.
+- **Cold start** (4.4 s first prediction per worker) -> each worker warms
+  the model in a background thread at boot (XCP_PREWARM=0 turns it off).
+- **Amherst on the NESCAC roster:** the squad request took the level from
+  whichever race had focus and from "Everyone" sent none, so no filter.
+  Every squad request now carries its race's gender and level, the card's
+  state and the meet; with no level the server uses the meet's; a name
+  shared by several schools narrows to the requested state's school
+  (college runners are never dropped by state -- their home state is their
+  high school's). tests/test_squad_identity.py.
+Check after restart: `journalctl -u xc-predictor | grep "\[predict\] warm"`;
+re-time /api/predict/team?meet_id=277556&sport=XC&mode=meet;
+`scripts/diag_predict_time.py --meet 277556 --sport XC`.
