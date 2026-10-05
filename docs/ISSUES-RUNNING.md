@@ -3667,3 +3667,83 @@ Merged from three agents (80a638b); restart the site to take effect.
 - **Open (data):** top HS Boys boards show "Unknown" names (ranks 2, 4, 8 on
   the ability board) -- the requeue_blank_athletes --apply + scrape is the
   fix; the nightly scrape now drains that queue.
+
+## 2026-10-05 — 📌 PICK UP HERE: everything open, in one place
+
+Run 20261004_125010 (`XCP_WEATHER_FIT=1 ... --from 4`) finished in **17h 44m**
+with **04f_weather_fit_tf FAILED**. Owner: "I haven't done any of 1-6 bcs
+this just finished. Please log them all so we can come back to it."
+
+### A. The 04f failure — ✅ fixed, ⏳ needs a re-run
+KeyError 'apparent_temp_max': my 2026-10-04 max-vs-avg comparison (61af379)
+added two load-only columns to QUERIED_FEATURES and never took them out;
+fitWeather's _featureCounts looks every queried feature up in REFERENCE.
+The TF fit died before printing a `[temp]` line, so **the run published
+with the previous TF weather correction** -- Hammerand's WashU heat credit
+is unchanged. Fixed (restore the list right after the load);
+tests/test_weather_tf_compare.py runs main() end to end on synthetic rows
+and reproduces the KeyError on the old code.
+Next, cheap first (no write, minutes):
+
+    /srv/venv/bin/python engine/fit_weather_correction.py --sport TF --refresh --measure-only 2>&1 | grep -E "\[temp\]|\[load\]"
+
+then, if the avg wins, the re-run that applies it (from 4 again, or from 4f
+if the step plan allows). **Ask first: why 17h44m?** Paste
+`logs/20261004_125010/SUMMARY.txt` (per-step times) before another run.
+
+### B. Server commands not yet run (after `git pull` + restart)
+1. **St. Mary's Invitational, anet XC meet 273503** (athletic.net/CrossCountry/meet/273503):
+   `scripts/find_meet.py 273503`; the queue rows 273495-273511
+   (`SELECT meet_id, sport, scraped FROM meet_queue WHERE source='anet'
+   AND meet_id BETWEEN 273495 AND 273511`) and `max(meet_id)` of anet
+   results -- never seeded, scraped too early (done, 0 results), failed,
+   or "no meet". No `--requeue` until the reason is read.
+2. **Explain check:** `curl -s http://127.0.0.1:8000/api/explain/tf/277459367`
+   -- the "other" step should be <= ~1%.
+3. **Nightly:** `engine/fill_ratings.py --check 3000` (median gap ~0), one
+   hand run (`tmux new -s nightly 'bash deploy/nightly_update.sh'`, send
+   logs/nightly_*/SUMMARY.txt), then `sudo bash deploy/install_nightly_timer.sh`.
+4. **Re-time** `/meets?sport=TF&state=CA&zz=1` (was 9.9 s); look at
+   /projections, /breakouts, a course page's "Year by year".
+5. **Names:** `scripts/requeue_blank_athletes.py --apply` (ranks 2, 4, 8 on
+   the HS Boys ability board read "Unknown"); the nightly scrape drains it.
+6. **Run report** for 20261004_125010: `scripts/run_report.py` (17c ran; paste
+   the table) -- the first run with field depth + day refit + race-day XC.
+
+### C. Owner setup, whenever
+- Admin emails: `XCP_ADMIN_EMAILS=a@gmail.com,b@gmail.com`, restart,
+  `racecast/accounts.py --check`.
+- Mail (email sign-in, failure notices -- "[notify] no mail provider" on
+  this run): verify racecast.co in Resend (DNS in Cloudflare);
+  XCP_MAIL_PROVIDER=resend, XCP_MAIL_KEY, XCP_MAIL_FROM="Racecast
+  <login@racecast.co>"; restart; `accounts.py --send-test you@...`.
+- nginx `client_max_body_size 10m` (wanted, later).
+
+### D. Engine and data, open
+- LACCTiC beats us on both fair tests (order 84.5 vs 82.0; XC -> 5000 spread
+  1.95 vs 2.52). The scorecard tracks them every run.
+- Mt. SAC 4715 vs 4828 gap 4.93% (owner: 1-2%) -- re-read after this run.
+- Hammerand 10k 13:19 vs 13:55 (8.7 points) -- the TF weather peak; see A.
+- Bracket course solve not converged at 60 iterations.
+- Woodward Park split across 3 canonical ids; 525 rows dated 2221/2222.
+- Early season: XCP_SEASON_TIE (season leans on the last + measured
+  improvement) is off; turn on if the ladder's season-tie rung wins. Plus a
+  "1 race" marker on boards and a projected early-season view.
+- Athlete page "Cross Country | Track & Field" looks like a toggle but jumps.
+
+### E. Features — approved, not started
+- Follow athletes/teams + weekly email (needs mail, C).
+- Accuracy section on About (from engine/data/run_history.jsonl).
+
+### F. Feature ideas — not yet approved (recommended order)
+1. "What it takes": per state/division the rating (and time at your course
+   and the state course) that made state / finals / podium; "2.1 points
+   off last year's cut" on athlete pages.
+2. Shareable athlete cards: link-preview image + downloadable card.
+3. Head-to-head: record in shared races, side-by-side compare.
+4. Projected trajectory: what past runners at this grade and rating ran later.
+5. School and course records: all-time top 10 by event.
+6. Training paces from the athlete's own races (athlete_paces / critical speed).
+7. Meet calendar: queued future meets with course difficulty, last year's times.
+8. Next year's team: seniors removed, returners projected.
+Deferred: upcoming-meet previews (no entry lists).

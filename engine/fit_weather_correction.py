@@ -1071,6 +1071,15 @@ def main():
     if cols["nt"].size == 0:
         print("[load] no rows matched -- check the weather join / filters.")
         return
+    if tf_compare:
+        # ! THE TWO CANDIDATES ARE LOAD-ONLY COLUMNS. Every reader after the
+        #   load (the undo, _featureCounts, _collinearity) walks
+        #   QUERIED_FEATURES and looks each up in REFERENCE, which has no
+        #   entry for them: left in, the first fit raised KeyError
+        #   'apparent_temp_max' (04f_weather_fit_tf, run 20261004_125010).
+        #   The columns stay in `cols` for the comparison below.
+        QUERIED_FEATURES = tuple(k for k in WX_AGG
+                                 if k not in ("apparent_temp_max", "apparent_temp_avg"))
     import time as _time
     print(f"[load] {cols['nt'].size:,} races joined to weather.", flush=True)
     t0 = _time.time()
