@@ -3804,3 +3804,21 @@ The hover appears only when race_day_effect has the race. Two causes:
    now join a championship's days by its own name. ✅ on restart.
 Still no hover, correctly: races not in the solve (a corrected-distance
 division, a race with no rated rows) and courses with no fitted cell.
+
+## 2026-10-05 — ✅ predictions: team prediction of an upcoming meet errored
+
+errors.log: `/api/predict/team failed ... _parseDate ... strptime() argument 1
+must be str, not None`. The target date came only from the meet's earliest
+RESULT (`min(r.date)`), so a meet not yet run -- the one you predict -- had
+none. Now: earliest result, else the meet's own scheduled date
+(meets.meet_date / meets_tf_meta.meet_date), else the page's date, else
+today. tests/test_predict_upcoming_date.py. Restart to take effect.
+
+Also seen in the same journal, not yet chased:
+- gunicorn `Request Line is too large (7962 > 4094)` from 127.0.0.1 at
+  15:27:16 -- some page built a ~8 KB GET; the predictions page posts past
+  1,800 chars, so it is another one. Find it by the access log at that time.
+- `athlete: equiv time failed (TypeError: float() ... NoneType)` on athlete
+  pages, repeatedly -- the equivalents line gets a None somewhere.
+- `db blip on GET /athlete/...: InterfaceError: connection already closed`
+  (retried) -- pooled connections dropped, likely while the pipeline ran.

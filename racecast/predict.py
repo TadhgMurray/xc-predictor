@@ -1483,8 +1483,9 @@ def _targetSpec(cur, target):
                        m.gps_lat, m.gps_long, m.altitude_meters,
                        cc.canonical_id,
                        COALESCE(cd.difficulty, 0.0) AS course_difficulty,
-                       (SELECT min(r.date) FROM results r
-                        WHERE r.meet_id = m.meet_id) AS date
+                       COALESCE((SELECT min(r.date) FROM results r
+                                 WHERE r.meet_id = m.meet_id),
+                                substr(m.meet_date::text, 1, 10)) AS date
                 FROM meets m
                 LEFT JOIN course_canonical cc
                        ON cc.course_name = m.course_name
@@ -1507,8 +1508,11 @@ def _targetSpec(cur, target):
                        NULL AS altitude_meters,
                        NULL AS canonical_id, 0.0 AS course_difficulty,
                        m.location_id, m.is_indoor,
-                       (SELECT min(r.date) FROM results_tf r
-                        WHERE r.meet_id = m.meet_id) AS date
+                       COALESCE((SELECT min(r.date) FROM results_tf r
+                                 WHERE r.meet_id = m.meet_id),
+                                (SELECT substr(t.meet_date::text, 1, 10)
+                                 FROM meets_tf_meta t
+                                 WHERE t.meet_id = m.meet_id LIMIT 1)) AS date
                 FROM meets_tf m
                 WHERE m.meet_id = %(meet)s
                   AND (%(div)s::bigint IS NULL OR m.div_id = %(div)s)
@@ -1535,6 +1539,16 @@ def _targetSpec(cur, target):
         # rerun_exact keeps the original date: "as it ran" is the
         # honest backtest. rerun takes the page's editable date (same
         # month and day this year by default); a bare year still shifts.
+        # ★ A MEET WITH NO RESULTS YET HAS A DATE TOO (2026-10-05: every
+        #   team prediction of an upcoming meet raised "strptime() argument 1
+        #   must be str, not None"). The date used to come only from the
+        #   meet's earliest RESULT, which a meet not yet run does not have --
+        #   the case the page exists for. The meet's own scheduled date is
+        #   the fallback (above), then the page's date, then today.
+        if not spec.get("date"):
+            import datetime as _dt
+            spec["date"] = target.get("date") or _dt.date.today().isoformat()
+        spec["date"] = str(spec["date"])[:10]
         if mode == "rerun" and spec.get("date"):
             if target.get("date"):
                 spec["date"] = target["date"]
