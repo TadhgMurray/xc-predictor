@@ -4068,3 +4068,21 @@ the date was the 2009 one, and "as it ran" read the 2009 season -- the
 Tufts card of long-gone runners. Owner's rule kept: as it ran + Everyone =
 that season's whole roster (seniors included). In progress: one source per
 meet, carried through every /api/predict/* call and the page.
+
+## 2026-10-05 — ⏳ some schools' sections / states / divisions are wrong
+
+Owner: "remember to log some sections/states and stuff are off so we'll need
+to fix." Some schools have wrong unit assignments (state, section,
+section_div, state_div). These feed every HS board and rank line
+(rankings.HS_UNITS, build_season_ranks, cards' unit lines). Now that
+"What it takes" reads section and state qualifying marks from them, it
+inherits the errors too. That page guards itself by showing cell sizes and
+skipping thin cells, but that is not a fix. Same family as the 2026-09-17
+"sections/divisions redo" item.
+
+To do:
+- Measure it. Find schools whose section or state disagrees with where they
+  race (their section/state championship meets), and schools whose unit
+  differs across seasons with no realignment.
+- Fix at the source (the unit assignment), then rebuild the boards.
+- Owner to give known-wrong examples when seen.
