@@ -4173,3 +4173,35 @@ The live site was screenshotted page by page at 1280 and 390 px. What differs fr
 
 The plan: one small set of shared parts (header, tabs, chips, filter bar, primary/secondary
 button, date format, labels), applied page by page after the owner picks the variants.
+
+## 2026-10-05 — 🔎 race day vs a peaking field (NESCAC 2021); dropdowns still missing on some
+
+**Race day.** Owner: NESCAC 2021 at Wickham Park had rain and 85% humidity, a day term of +2.7%
+slow, and nearly the whole field 3-8% above its season level. Why isn't the day term higher?
+- **Hypothesis.** The solve reads a day against each runner's season ability, one number for the
+  whole season. A championship field is peaking, so a slow day and a fast field cancel and the
+  term records the net. If so, it is an ENGINE gap: the ability model has no within-season trend,
+  so day terms under-credit bad championship days, and season-opener days, run by unfit fields,
+  read slow.
+- **The test.** `scripts/diag_day_terms.py --season-trend` gives the runner-weighted day term by
+  week of season. A line that falls through the season means form is leaking into the day term.
+- **The fix, if it leaks:** a within-season form term in the solve (per pool, by week), so the day
+  term carries only the day.
+
+**Era.** Owner: does day/era association mean the era term isn't doing enough? The day terms'
+per-season means (-2.7 / -3.2% XC before 03e87af) are year-level shifts the era curve left
+behind. Centring now moves them into abilities. Run REPORT's `day_centre_xc` per season against
+the era curve: shifts that trend with year mean the era curve is mis-shaped.
+
+**Dropdowns.** The owner's page has 6 of 75 XC races with no race-day dropdown: Gaucho
+Invitational 2024, Roughrider 2023, De La Salle Nike Invitational 2021-23, and the Cal scrimmage.
+`scripts/diag_day_terms.py --person 29603086` names, for each, the race_day_effect rows at that
+venue: a different distance cell, a different date, or none at all.
+
+## 2026-10-05 — 📌 team widget: kept, but it's poor right now
+
+Owner: keep `/embed/school/<name>` but it's "ass rn". To do before anyone is pointed at it:
+- a real design (it reads like a debug table);
+- choose what a team site actually wants (season results? the next meet? top 7 with times, not
+  ratings?);
+- a preview on the school page that shows what it looks like.
