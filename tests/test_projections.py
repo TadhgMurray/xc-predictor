@@ -170,3 +170,15 @@ def test_fmt_time():
     assert P.fmtTime(None) == ""
     assert P.fmtTime(942.4) == "15:42"
     assert P.fmtTime(3723) == "1:02:03"
+
+
+def test_course_distance_is_the_newest_editions():
+    """CA at Woodward over 6437 m (owner, 2026-10-05): decades of editions
+    at an old distance must not outvote what the meet runs now."""
+    old = [{"course_name": "Woodward Park", "distance": 6437, "division": "Boys D1",
+            "meet_id": m} for m in range(100, 130)]
+    new = [{"course_name": "Woodward Park", "distance": 5000, "division": "Boys D1",
+            "meet_id": 500}]
+    got = P.pickCourse(old + new, "boys")
+    assert got["distance"] == 5000
+    assert got["editions"] == 31

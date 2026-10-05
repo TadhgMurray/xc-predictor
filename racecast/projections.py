@@ -203,7 +203,17 @@ def pickCourse(rows, gender):
     mine = [r for r in slot["rows"]
             if rx_mine.search(r.get("division") or "")
             and not rx_other.search(r.get("division") or "")]
-    dist = mode(mine) or mode(slot["rows"])
+    # ★ THE NEWEST EDITION'S DISTANCE, NOT THE MODE OF EVERY EDITION (owner,
+    #   2026-10-05: CA projected at Woodward Park over 6437 m). A course is a
+    #   habit, a distance is a rule that changes: the mode over decades of
+    #   editions -- and over whatever else the state tag caught -- can be a
+    #   distance the meet no longer runs. The newest edition (highest meet id,
+    #   the same "newest" the venue tie-break uses) says what it runs now;
+    #   the old mode is only the fallback when that edition has no distance.
+    newest = max((r.get("meet_id") or 0) for r in slot["rows"])
+    latest_mine = [r for r in mine if (r.get("meet_id") or 0) == newest]
+    latest_all = [r for r in slot["rows"] if (r.get("meet_id") or 0) == newest]
+    dist = mode(latest_mine) or mode(latest_all) or mode(mine) or mode(slot["rows"])
     return {"course_name": course, "distance": dist,
             "editions": len(slot["meets"])}
 
