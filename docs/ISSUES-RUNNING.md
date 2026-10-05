@@ -4086,3 +4086,46 @@ To do:
   differs across seasons with no realignment.
 - Fix at the source (the unit assignment), then rebuild the boards.
 - Owner to give known-wrong examples when seen.
+
+## 2026-10-05 — ✅ new features: install, accuracy, CSV, coming up, team widget, runners like you
+
+Owner approved the list ("sure to all"). Each is live after a pull and restart,
+except where noted.
+- **Install to home screen.** /manifest.webmanifest plus icons drawn from
+  favicon.svg (scripts/make_app_icons.py), and the apple-touch tags in
+  _meta.html. No service worker, so nothing stale can get stuck on phones.
+- **About → How accurate is it** (accuracy.py). run_report's fair tests in
+  plain words, newest run first. Only our own numbers.
+- **Download CSV** (csv_export.py). ?format=csv on /api/rankings (the board
+  page as shown), /school/<n>/prs, /race/xc and /race/tf. Each row links back
+  to the athlete, and formula cells are neutralised.
+- **Coming up on /meets** (weekend.py). Meets the feeds have posted for the
+  next 7 days (meets.meet_date, meets_tf_meta, meets_tfrrs), biggest first by
+  races posted, with a state filter. Each links to the predictions page's
+  "This year" mode. No entries are posted, so there is no field. A home-page
+  block is not built yet.
+- **Nightly now rebuilds panels** (13_panels_xc/tf). "Latest results" and
+  /meets were only rebuilt by full runs, so meets scraped by the nightly had a
+  page but appeared on no list.
+- **Team widget** /embed/school/<name> (?sport, ?state, ?level, ?theme=dark).
+  It shows each pool's top 7 who have raced this season, team board ranks and
+  the 3 newest meets. It is the only frameable path (CSP frame-ancestors *).
+  The school page has a "Put this team on your website" snippet.
+- **Runners like you** (build_comps.py → season_comps, step 10f3; comps.py;
+  shown on /recruit/<id>#like, linked from HS athlete pages).
+  - **Who matches:** past runners at the same grade, rated within the
+    combined standard error of the two seasons (sigma/sqrt(n), sigma measured
+    per pool). When both runners have a season before, their gains must also
+    match within the combined error.
+  - **What it shows:** the matches' next-season and senior-season spread,
+    and their college share and divisions, counting only futures that have
+    already happened. The model's one-year projection (recruit_projection)
+    sits beside the matches' next season as a check on the model.
+  - ⏳ **Server:** run `racecast/build_comps.py` once, or the section stays
+    empty until the next full run.
+- **Goal times:** /conversions already turns a rating or a time at one course
+  into times everywhere. The missing piece (the gap to the next qualifying
+  mark, as times at your own courses) went into the "What it takes" athlete
+  line.
+- **Already existed,** so the agents were redirected to audit instead:
+  athlete share cards (cards.py, issue 281) and head-to-head /compare.

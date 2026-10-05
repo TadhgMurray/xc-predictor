@@ -160,6 +160,9 @@
     </div>
     {% endif %}
 {% endfor %}
+{% if data.sections %}
+    <p class="csv-link"><a href="{{ csv_href() }}" rel="nofollow" download>Download CSV</a></p>
+{% endif %}
 
 </main>
 <script src="{{ static_v('staged.js') }}"></script>

@@ -69,6 +69,71 @@
   <p class="meta">No college board to place this rating on yet.</p>
   {% endif %}
   {% endfor %}
+  {# ★ RUNNERS LIKE YOU (comps.py): the high-schoolers who were here before,
+     same grade, a rating and a gain the data cannot tell apart from this
+     one, and what happened to them. #}
+  <div id="like"></div>
+  {% for c in p.comps %}
+  {% set sj = c.subject %}
+  {% set sport_word = "cross country" if sj.sport == "XC" else "track" %}
+  <h2 id="like-{{ sj.sport|lower }}">Runners like {{ p.name.split(' ')[0] }}: {{ sport_word }}</h2>
+  <p class="meta">
+    {{ "{:,}".format(c.n) }} past {{ sj.class_word }}
+    rated within {{ "%.1f"|format(c.se) }} of {{ "%.1f"|format(sj.rating) }}
+    (the margin of {{ sj.n_races }} races in {{ sj.label }}){% if c.gain is not none %},
+    and whose gain from the season before matched {{ "%+.1f"|format(c.gain) }}{% endif %}.
+  </p>
+  {% if c.n == 0 %}
+  <p class="meta">No one in the data has been here at this grade before - which says something too.</p>
+  {% else %}
+  <div class="comps-wrap"><table class="recruit-tbl comps-tbl">
+    <thead><tr><th></th><th class="num">Runners</th><th class="num">Middle half</th><th class="num">Median</th></tr></thead>
+    <tbody>
+    {% if c.next %}
+      <tr><td>Next season</td><td class="num">{{ c.next.n }} of {{ c.next_pool }}</td>
+          <td class="num">{{ "%.1f"|format(c.next.p25) }} – {{ "%.1f"|format(c.next.p75) }}</td>
+          <td class="num">{{ "%.1f"|format(c.next.median) }}</td></tr>
+    {% endif %}
+    {% if c.model %}
+      <tr class="comps-model"><td>The model's projection</td><td></td>
+          <td class="num">{% if c.model.p25 is defined %}{{ "%.1f"|format(c.model.p25) }} – {{ "%.1f"|format(c.model.p75) }}{% endif %}</td>
+          <td class="num">{{ "%.1f"|format(c.model.proj_rating) }}</td></tr>
+    {% endif %}
+    {% if c.senior %}
+      <tr><td>Senior season</td><td class="num">{{ c.senior.n }} of {{ c.senior_pool }}</td>
+          <td class="num">{{ "%.1f"|format(c.senior.p25) }} – {{ "%.1f"|format(c.senior.p75) }}</td>
+          <td class="num">{{ "%.1f"|format(c.senior.median) }}</td></tr>
+    {% endif %}
+    </tbody>
+  </table></div>
+  <p class="meta">"Of" counts the runners whose season had happened; the
+    rest stopped racing {{ sport_word }} or left the data.
+    {% if c.model %}The model's projection is a fit, the rows around it are
+    what happened - where they disagree, the model is the one to doubt.{% endif %}</p>
+  {% if c.college %}
+  <p>{{ c.college.ran }} of {{ c.college.n }} ({{ "%.0f"|format(100 * c.college.ran / c.college.n) }}%)
+     ran {{ sport_word }} in college{% if c.college.divisions %}:
+     {% for d, n in c.college.divisions %}{{ d }} {{ n }}{{ ", " if not loop.last }}{% endfor %}{% endif %}.</p>
+  {% endif %}
+  {% if c.examples %}
+  <h3>Closest matches</h3>
+  <div class="comps-wrap"><table class="recruit-tbl comps-tbl">
+    <thead><tr><th>Athlete</th><th>Then</th><th class="num">Rating</th>
+      {% if sj.grade < 12 %}<th class="num">Senior year</th>{% endif %}<th>College</th></tr></thead>
+    <tbody>
+    {% for e in c.examples %}
+      <tr><td><a href="/athlete/{{ e.person_id }}">{{ e.name or "Unknown" }}</a>
+              {% if e.school %}<span class="comps-sch">{{ e.school }}</span>{% endif %}</td>
+          <td class="no-break">{{ e.grade_label }} {{ e.label }}</td>
+          <td class="num">{{ "%.1f"|format(e.rating) }}</td>
+          {% if sj.grade < 12 %}<td class="num">{{ "%.1f"|format(e.senior_rating) if e.senior_rating is not none else " - " }}</td>{% endif %}
+          <td>{{ e.college or " - " }}{% if e.college_division %} <span class="comps-sch">{{ e.college_division }}</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+  {% endif %}
+  {% endfor %}
 </main>
 <script src="{{ static_v('share.js') }}"></script>
 </body>

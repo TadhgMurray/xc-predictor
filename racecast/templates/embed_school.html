@@ -1,0 +1,83 @@
+{# ===================================================================== #}
+{#  embed_school.html -- the team widget (app.embed_school), framed on a   #}
+{#  school's own site. Standalone: no topbar, no site CSS, every link     #}
+{#  opens Racecast in a new tab. ?theme=dark for a dark site; otherwise   #}
+{#  it follows the reader's system setting.                               #}
+{# ===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{ school }} - Racecast</title>
+<base target="_blank">
+<style>
+  :root { --ink:#111418; --muted:#6b7280; --line:#e5e7eb; --link:#14477d; --bg:#ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --ink:#e8eaed; --muted:#9aa0a6; --line:#2f3337; --link:#8ab4f8; --bg:#16181b; }
+  }
+  :root[data-theme="dark"] { --ink:#e8eaed; --muted:#9aa0a6; --line:#2f3337; --link:#8ab4f8; --bg:#16181b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px; background: var(--bg); color: var(--ink);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .hd { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .hd img { width: 32px; height: 32px; object-fit: contain; }
+  .hd .nm { font-weight: 700; font-size: 16px; }
+  .hd .sub { color: var(--muted); font-size: 12px; }
+  h2 { font-size: 13px; margin: 12px 0 4px; display: flex; justify-content: space-between;
+       gap: 8px; flex-wrap: wrap; }
+  h2 .rk { font-weight: 400; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  td { padding: 3px 4px; border-bottom: 1px solid var(--line); }
+  td.n { width: 1.5em; color: var(--muted); }
+  td.a { width: 100%; }
+  td.r { text-align: right; white-space: nowrap; }
+  td.g { color: var(--muted); white-space: nowrap; }
+  .meets td.d { color: var(--muted); white-space: nowrap; width: 5.5em; }
+  .ft { margin-top: 10px; font-size: 12px; color: var(--muted); display: flex;
+        justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body{% if theme in ('dark', 'light') %} data-theme="{{ theme }}"{% endif %}>
+<script>{% if theme in ('dark', 'light') %}document.documentElement.dataset.theme = "{{ theme }}";{% endif %}</script>
+<div class="hd">
+  {{ crest(school, state, px=64, size=32) }}
+  <div>
+    <div class="nm"><a href="{{ page_url }}">{{ school }}</a>{% if state %} <span class="sub">{{ state }}</span>{% endif %}</div>
+    <div class="sub">{{ "Cross country" if sport == "XC" else "Track & field" }}{% if season %} · {{ season }} season{% endif %}</div>
+  </div>
+</div>
+
+{% for sq in squads %}
+<h2><span>{{ sq.label }}</span>
+  {% if sq.ranks %}<span class="rk">{% for scope, rank in sq.ranks %}#{{ rank }} in {{ scope }}{{ " · " if not loop.last }}{% endfor %}</span>{% endif %}</h2>
+<table>
+  {% for r in sq.rows %}
+  <tr><td class="n">{{ loop.index }}</td>
+      <td class="a"><a href="{{ site_origin }}/athlete/{{ r.person_id }}">{{ r.name.strip() if r.name and r.name.strip() else "Unknown" }}</a></td>
+      <td class="g">{{ r.grade|grade_label(r.pool) if r.grade else "" }}</td>
+      <td class="r">{% if r.mean_rating is not none %}{{ "%.1f"|format(r.mean_rating) }}{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">No one has raced this season yet.</p>
+{% endfor %}
+
+{% if meets %}
+<h2><span>Latest meets</span></h2>
+<table class="meets">
+  {% for m in meets %}
+  <tr><td class="d">{{ m.date|mdy }}</td>
+      <td><a href="{{ site_origin }}/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}?school={{ school|urlencode }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<div class="ft"><span>Season ratings · 100 = an average runner in the group</span>
+  <a href="{{ page_url }}">Full team on Racecast →</a></div>
+</body>
+</html>

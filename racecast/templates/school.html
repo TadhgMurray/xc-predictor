@@ -359,6 +359,20 @@
 {# Staged reveal -- shared with the home page's Latest results table. #}
 <script src="{{ static_v('staged.js') }}"></script>
 
+    {# ★ THE TEAM WIDGET (app.embed_school): the snippet a coach pastes into
+       the team's own site. The query keeps this page's school identity. #}
+    {% set embed_src = site_origin ~ "/embed/school/" ~ (school|urlencode) ~ "?sport=" ~ sport
+       ~ (("&state=" ~ state) if state else "")
+       ~ (("&level=" ~ level) if (level_chips and level) else "") %}
+    <details class="embed-box">
+      <summary>Put this team on your website</summary>
+      <p class="meta">Paste this where the widget should go. It shows the
+        current top seven, the team's ranks and the latest meets, and updates
+        itself. Add <code>&amp;theme=dark</code> to the address for a dark site.</p>
+      <textarea readonly rows="3" onclick="this.select()">&lt;iframe src="{{ embed_src }}" width="100%" height="520" style="border:0;max-width:420px" loading="lazy" title="{{ school }} on Racecast"&gt;&lt;/iframe&gt;</textarea>
+      <p class="meta"><a href="{{ embed_src }}" target="_blank" rel="nofollow">Preview</a></p>
+    </details>
+
     <div class="page-report">Something wrong on this page?
         <a href="/report?about={{ request.full_path.rstrip('?')|urlencode }}">Report it →</a></div>
 </main>

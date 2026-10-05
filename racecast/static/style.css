@@ -5625,3 +5625,30 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
                                    text-align: right; }
 .acc-history th:first-child, .acc-history td:first-child { text-align: left; white-space: nowrap; }
 .acc-history th { font-weight: 600; font-size: .8rem; color: var(--muted); }
+
+/* "Download CSV" under a results table (csv_export.py) */
+.csv-link { margin: .8rem 0 0; font-size: .85rem; }
+.pager .csv-link { margin: 0 0 0 auto; }
+.pager .csv-link.hidden { display: none; }
+
+/* /meets "Coming up" (weekend.py) */
+.coming-up { margin-bottom: 1.5rem; }
+.coming-up .cu-day { font-size: .95rem; margin: 1rem 0 .3rem; }
+.coming-up .cu-state { margin-left: .6rem; white-space: nowrap; }
+.coming-up .cu-table td:nth-child(n+3) { white-space: nowrap; }
+.coming-up .cu-all { margin-top: .4rem; font: inherit; font-size: .85rem; background: none;
+                     border: 1px solid var(--line-2); border-radius: 5px; padding: .25rem .6rem;
+                     cursor: pointer; color: var(--link); }
+.coming-up [hidden] { display: none; }
+
+/* school page: "Put this team on your website" (embed_school) */
+.embed-box { margin-top: 1.6rem; }
+.embed-box summary { cursor: pointer; color: var(--link); }
+.embed-box textarea { width: 100%; max-width: 46rem; font: .8rem ui-monospace, Consolas, monospace;
+                      padding: .5rem; border: 1px solid var(--line-2); border-radius: 5px; resize: vertical; }
+
+/* recruit page: Runners like you (comps.py) */
+.comps-wrap { overflow-x: auto; }
+.comps-tbl td.num, .comps-tbl th.num { white-space: nowrap; }
+.comps-tbl .comps-sch { display: block; font-size: .8rem; color: var(--muted); }
+.comps-tbl .comps-model td { color: var(--muted); font-style: italic; }

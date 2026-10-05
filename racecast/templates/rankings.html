@@ -545,6 +545,9 @@
        (?count=1) and jumps. #}
     <button id="last" title="Jump to the last page">Last &raquo;</button>
     <span class="page-note" id="pageNote"></span>
+    {# this page of the board as a spreadsheet (csv_export.py); rankings.js
+       sets the href to the query just served, rating boards only #}
+    <a class="csv-link hidden" id="csv" rel="nofollow" download>Download CSV</a>
   </div>
 
   {# the state ranking pages (landing.py): plain links, so a crawler and a

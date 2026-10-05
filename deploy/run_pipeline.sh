@@ -1251,6 +1251,11 @@ step 10e_meet_units   "$PY" -u racecast/build_meet_units.py
 # recruiting (282): each college's recruits from athlete_season, on the
 # HS scale; reads school_identity (10b) and school_unit (10d)
 step 10f_recruits     "$PY" -u racecast/build_recruiting.py
+# "Runners like you" (comps.py): every HS season with its next season,
+# senior season and college attached; reads college_recruit (10f). In line,
+# not bgstep: it holds a transaction, and 11b's concurrent index builds wait
+# on every older one.
+step 10f3_comps       "$PY" -u racecast/build_comps.py
 # who the MODEL thinks has room left (the coach's "underrated" sort). Needs a
 # trained model; without one it says so and exits clean, and the search falls
 # back to the rating sort while the table is absent.

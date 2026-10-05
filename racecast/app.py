@@ -515,6 +515,17 @@ def staticExists(filename):
 app.jinja_env.globals["static_exists"] = staticExists
 
 
+def csvHref():
+    """This page's own URL as a CSV (csv_export.py): every query argument
+    kept -- ?alt= picks the meet, ?year= the season -- plus format=csv."""
+    from urllib.parse import urlencode
+    args = [(k, v) for k, v in request.args.items(multi=True) if k != "format"]
+    return request.path + "?" + urlencode(args + [("format", "csv")])
+
+
+app.jinja_env.globals["csv_href"] = csvHref
+
+
 # ★★ THE PATHS THAT MUST NOT BE CACHED OR CRAWLED, in ONE place (2026-09-11).
 #    robots.txt and the edge-cache header need the same list, and two copies
 #    drift: a route added to one and missed in the other is either a crawled
@@ -579,7 +590,11 @@ def _headers(resp):
     else:
         resp.headers.setdefault("Cache-Control", "no-store")
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
-    resp.headers.setdefault("X-Frame-Options", "DENY")
+    if request.path.startswith("/embed/"):
+        # the team widget is MEANT to be framed (embed_school)
+        resp.headers["Content-Security-Policy"] = "frame-ancestors *"
+    else:
+        resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     resp.headers.setdefault("Permissions-Policy",
                             "camera=(), microphone=(), geolocation=()")
@@ -862,7 +877,15 @@ def home():
     # to XC if the meta row is somehow missing.
     default_sport = meta.get("default_sport") or "XC"
 
+    # "Coming up" (weekend.py): just the count per sport, a link into /meets
+    from weekend import comingUpCached
+    coming_n = {}
+    for d in comingUpCached(getConn):
+        for m in d["meets"]:
+            coming_n[m["sport"]] = coming_n.get(m["sport"], 0) + 1
+
     return render_template("home.html",
+                           coming_n=coming_n,
                            has_hs_view=has_hs_view,
                            panels=panels,
                            meta=meta,
@@ -968,9 +991,13 @@ def meets_page():
             months.append(current)
         current[1].append(m)
 
+    from weekend import comingUpCached
+    coming = [{**d, "meets": [m for m in d["meets"] if m["sport"] == sport]}
+              for d in comingUpCached(getConn)]
+    coming = [d for d in coming if d["meets"]]
     return render_template("meets.html", sport=sport, months=months,
                            filters=f, states=US_STATES, kinds=kinds, unit_kinds=UNIT_KINDS,
-                           min_results=RECENT_MIN_RESULTS)
+                           min_results=RECENT_MIN_RESULTS, coming=coming)
 
 
 @app.route("/api/meet-units")
@@ -3903,6 +3930,12 @@ def race_xc(meet_id, div_id):
                               header.get("difficulty"), header.get("course_name"))
                  if header and header.get("distance") else 0.0)
 
+    import csv_export as _csv
+    if _csv.wantsCsv(request.args):
+        return _csv.csvResponse(
+            _csv.toCsv(results, _csv.raceXcColumns(SITE_ORIGIN)),
+            "-".join(str(x) for x in (header.get("meet_name"), header.get("division"),
+                                      race_date) if x) + ".csv")
     return render_template("race.html", hl_school=hl_school,
                            has_hs_view=has_hs_view,
                            equiv_pool=equiv_pool, equiv_lo=equiv_lo,
@@ -4674,6 +4707,12 @@ def race_tf(meet_id, event_id, div_id):
     equiv_lo = min((float(r["time_seconds"]) for r in _run), default=None)
     equiv_hi = max((float(r["time_seconds"]) for r in _run), default=None)
 
+    import csv_export as _csv
+    if _csv.wantsCsv(request.args):
+        return _csv.csvResponse(
+            _csv.toCsv(_csv.flattenTfSections(sections), _csv.raceTfColumns(SITE_ORIGIN)),
+            "-".join(str(x) for x in (header.get("meet_name"), header.get("event_short"),
+                                      header.get("division"), race_date) if x) + ".csv")
     return render_template("race_tf.html", hl_school=hl_school,
                            has_hs_view=has_hs_view,
                            equiv_dist=equiv_dist, equiv_pool=equiv_pool,
@@ -5810,6 +5849,107 @@ def rowsByPool(rows):
     return out
 
 
+# ------------------------------------------------------------------ #
+#  TEAM WIDGET -- the block a coach pastes into the team's own site
+# ------------------------------------------------------------------ #
+
+# ★ OWNER, 2026-10-05: "team widget for school websites". One small page,
+#   framed by other sites, built from the school page's own queries so the
+#   two cannot disagree: the current roster's top seven per pool (the
+#   scoring squad), the team's place on its stored boards, the three newest
+#   meets, and a link back.
+# ! THE ONLY FRAMEABLE PAGES. _headers sends X-Frame-Options: DENY on
+#   everything else; /embed/ alone drops it and says frame-ancestors *.
+#   Nothing here reads a session, so a framed page cannot act as anyone.
+_EMBED_TOP_N = 7                 # a cross country team scores five, runs seven
+
+
+def _poolWords(pool):
+    level, _, gender = (pool or "").split("|")[0].partition("_")
+    word = _GENDER_WORD[level in ("college", "pro")].get(gender)
+    return (f"{dict(_LEVEL_LABEL).get(level, level)} {word}" if word else "Other")
+
+
+def _poolOrder(pool):
+    """rowsByPool's order: level (high school first), then men before women."""
+    level, _, gender = (pool or "").split("|")[0].partition("_")
+    order = [k for k, _l in _LEVEL_LABEL]
+    return (gender not in ("m", "f"), order.index(level) if level in order else len(order),
+            {"m": 0, "f": 1}.get(gender, 2))
+
+
+@app.route("/embed/school/<path:school_name>")
+def embed_school(school_name):
+    from school import schoolHeader, schoolRoster, schoolMeets, currentSeason, seasonLabel
+    from school_identity import stateChips, levelChips, levelOf
+    from panels import isTeamName
+    if not isTeamName(school_name):
+        abort(404)
+    sport = (request.args.get("sport") or "XC").strip().upper()
+    if sport not in ("XC", "TF"):
+        sport = "XC"
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            header = schoolHeader(cur, school_name)
+            if header is None:
+                abort(404)
+            state = (request.args.get("state") or "").strip().upper() or None
+            chips, primary_state = stateChips(cur, school_name, include=state)
+            if state and not any(c["state"] == state for c in chips):
+                state = None
+            state = state or primary_state or school_identity.primaryState(school_name)
+            lchips = levelChips(cur, school_name, state)
+            level = (request.args.get("level") or "").strip().lower() or None
+            if level and not any(c["level"] == level for c in lchips):
+                level = None
+            if lchips and not level:
+                level = lchips[0]["level"]
+            year = currentSeason(cur, school_name, sport)
+            roster = (schoolRoster(cur, school_name, year, sport,
+                                   state=state, primary=primary_state) if year else [])
+            meets = schoolMeets(cur, school_name, sport, limit=3,
+                                state=state, primary=primary_state)
+            ranks = []
+            if year:
+                try:
+                    cur.execute("SAVEPOINT emb")
+                    cur.execute("""
+                        SELECT scope, pool, rank FROM team_season
+                        WHERE  span = 'season' AND school = %s AND state = %s
+                          AND  sport = %s AND year = %s
+                        ORDER  BY pool, scope = 'usa' DESC""",
+                                (school_name, state, sport, year))
+                    ranks = cur.fetchall()
+                    cur.execute("RELEASE SAVEPOINT emb")
+                except psycopg2.Error:
+                    cur.execute("ROLLBACK TO SAVEPOINT emb")
+            conn.rollback()
+    if level:
+        roster = [r for r in roster if levelOf(r.get("pool")) in (None, level)]
+    stampBoardRows(roster, rating_keys=("mean_rating", "best_rating"), sport=sport)
+    sortByShown(roster, "mean_rating")
+    groups = {}
+    for r in roster:
+        if r.get("carried"):
+            continue                  # last season's numbers: not this squad yet
+        groups.setdefault((r.get("pool") or "").split("|")[0], []).append(r)
+    rank_by = {}
+    for r in ranks:
+        rank_by.setdefault(r["pool"].split("|")[0], []).append(
+            ("the nation" if r["scope"] == "usa" else r["scope"], r["rank"]))
+    squads = [{"label": _poolWords(pool), "rows": rows[:_EMBED_TOP_N],
+               "ranks": rank_by.get(pool, [])}
+              for pool, rows in sorted(groups.items(), key=lambda kv: _poolOrder(kv[0]))]
+    page = (f"/school/{urllib.parse.quote(school_name, safe='/')}?sport={sport}"
+            + (f"&state={state}" if state else "") + (f"&level={level}" if level else ""))
+    resp = make_response(render_template(
+        "embed_school.html", school=school_name, state=state, sport=sport,
+        season=seasonLabel(sport, year) if year else None, squads=squads,
+        meets=meets, page_url=SITE_ORIGIN + page,
+        theme=(request.args.get("theme") or "").lower()))
+    return resp
+
+
 @app.route("/school/<path:school_name>/prs")
 def school_prs_page(school_name):
     """School PRs: best mark per athlete, one section per distance/event.
@@ -5876,6 +6016,11 @@ def school_prs_page(school_name):
     #   all" on a track season lands on the season before.
     from school import storedYear as _storedYear
     board_year = _storedYear(sport, data.get("year")) if data.get("year") else None
+    import csv_export as _csv
+    if _csv.wantsCsv(request.args):
+        return _csv.csvResponse(
+            _csv.toCsv(_csv.flattenSchoolPrs(data["sections"]), _csv.schoolPrColumns(SITE_ORIGIN)),
+            "-".join(str(x) for x in (school_name, state, sport, "prs", year, course) if x) + ".csv")
     return render_template("school_prs.html", school=school_name,
                            sport=sport, data=data, state_chips=chips,
                            board_year=board_year,
@@ -8071,6 +8216,14 @@ def api_rankings():
     # the VENUE's, and a travel state would fetch the wrong school's crest
     stampCrests(rows, state_key="school_state")
 
+    import csv_export as _csv
+    if _csv.wantsCsv(request.args):
+        return _csv.csvResponse(
+            _csv.toCsv(rows, _csv.rankingColumns(f["board"], SITE_ORIGIN, f.get("offset") or 0)),
+            "racecast-" + "-".join(str(x) for x in (
+                f.get("sport"), f.get("pool"), f.get("state"), f.get("year"), f["board"],
+                (f.get("offset") or 0) // max(f.get("limit") or 1, 1) + 1) if x) + ".csv")
+
     return jsonify({"filters": f, "count": len(rows),
                     # ! national_bias IS ABOUT THE RATING SCALE, so it does not
                     #   apply to a board of raw times. The per-state offset is
@@ -9547,6 +9700,18 @@ def recruit_profile(person_id):
             prof = R.recruitProfile(cur, person_id)
             if prof is None:
                 abort(404)
+            # "Runners like you" per sport (comps.py): who was here before
+            # and how it went; None where there is no season or no table
+            from comps import runnersLikeYou
+            prof["comps"] = [c for c in (runnersLikeYou(cur, person_id, sp)
+                                         for sp in R.SPORTS) if c]
+    from comps import CLASS_WORD, CLASS_SHORT
+    for c in prof["comps"]:
+        for e in c["examples"]:
+            e["grade_label"] = CLASS_SHORT.get(e["grade"], "")
+            e["label"] = R.labelYear(e["year"], e["sport"])
+        c["subject"]["label"] = R.labelYear(c["subject"]["year"], c["subject"]["sport"])
+        c["subject"]["class_word"] = CLASS_WORD.get(c["subject"]["grade"], "runners")
     for s in prof["seasons"]:
         s["grade_label"] = _grade_label.gradeLabel(s.get("grade"), s.get("pool")) if s.get("grade") else ""
     return render_template("recruit.html", p=prof)

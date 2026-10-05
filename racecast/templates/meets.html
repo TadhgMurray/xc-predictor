@@ -237,6 +237,72 @@
     })();
     </script>
 
+    {# ★ COMING UP (weekend.py): the meets the feeds have posted for the next
+       seven days, this sport, biggest first, each a link into predictions.
+       The recent list only, never a filtered or course view. #}
+    {% if coming and not filtering %}
+    <section class="coming-up" id="coming-up">
+      <h2 class="month-head">Coming up</h2>
+      <p class="meta">Posted for the next seven days. No entries are posted
+         yet, so a prediction builds the field from the teams that race the
+         course now.
+         <label class="cu-state">State
+           <select id="cu-state"><option value="">All</option>
+             {% for st in states %}<option>{{ st }}</option>{% endfor %}
+           </select></label></p>
+      {% for d in coming %}
+      <h3 class="cu-day">{{ d.label }}</h3>
+      <table class="cu-table">
+        <tbody>
+        {% for m in d.meets %}
+          <tr data-state="{{ m.state or '' }}"{% if loop.index > 15 %} class="cu-more" hidden{% endif %}>
+            <td>{{ m.name }}</td>
+            <td>{{ m.venue or " - " }}</td>
+            <td>{{ m.state or " - " }}</td>
+            <td>{{ m.level }}</td>
+            <td class="no-break">{{ m.n_races }} race{{ "" if m.n_races == 1 else "s" }}</td>
+            <td><a href="{{ m.predict_href }}">Predict</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if d.meets | length > 15 %}
+      <button type="button" class="cu-all" data-n="{{ d.meets | length }}">Show all {{ d.meets | length }}</button>
+      {% endif %}
+      {% endfor %}
+    </section>
+    <script>
+    // Coming up: "Show all" per day, and a state filter that shows every
+    // meet in that state (no cap -- one state's week is short).
+    (function () {
+      var box = document.getElementById("coming-up");
+      if (!box) return;
+      var sel = document.getElementById("cu-state");
+      function apply() {
+        var st = sel.value;
+        box.querySelectorAll(".cu-table").forEach(function (t) {
+          var open = t.dataset.open === "1", n = 0;
+          t.querySelectorAll("tr").forEach(function (tr) {
+            var ok = !st || tr.dataset.state === st;
+            if (ok) n++;
+            tr.hidden = !ok || (!st && !open && tr.classList.contains("cu-more"));
+          });
+          var day = t.previousElementSibling, btn = t.nextElementSibling;
+          if (day) day.hidden = n === 0;
+          t.hidden = n === 0;
+          if (btn && btn.classList.contains("cu-all")) btn.hidden = !!st || open;
+        });
+      }
+      box.addEventListener("click", function (e) {
+        if (!e.target.classList.contains("cu-all")) return;
+        e.target.previousElementSibling.dataset.open = "1";
+        apply();
+      });
+      sel.addEventListener("change", apply);
+    })();
+    </script>
+    {% endif %}
+
     {% if not months %}
       {% if filtering %}
     <p class="meta">No {{ sport }} meet matches {{ filter_text }}. The school

@@ -173,6 +173,20 @@ if step 05_normalize_new "$PY" -u backfill/backfill_normalize.py --sport both --
         && step 11_teams "$PY" -u racecast/build_team_season.py
       step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
       step 13c_search_index "$PY" -u racecast/search_index.py
+      # ★ THE HOME PAGE AND /meets READ panels.py's tables (homepage_recent:
+      #   "Latest results"), so without this a meet scraped tonight had a
+      #   page but was on no list until the next full run. Both sports side
+      #   by side, as the pipeline runs them; each writes only its own.
+      if [ "$DRY" -eq 1 ]; then
+        echo "  13_panels_{xc,tf} : racecast/panels.py --sport XC | TF"
+      else
+        ( step 13_panels_xc "$PY" -u racecast/panels.py --sport XC ) &
+        pp1=$!
+        ( step 13_panels_tf "$PY" -u racecast/panels.py --sport TF ) &
+        pp2=$!
+        wait "$pp1" || FAILED="$FAILED 13_panels_xc"
+        wait "$pp2" || FAILED="$FAILED 13_panels_tf"
+      fi
     fi
   fi
 fi

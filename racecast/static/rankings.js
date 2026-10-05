@@ -1836,6 +1836,11 @@ async function load() {
       || !["ability", "performance", "pr"].includes(state.board);
     $("pageLabel").textContent =
       `${state.offset + 1}\u2013${state.offset + rows.length}`;
+    /* Download CSV: this page of the board, as served (csv_export.py).
+       Only /api/rankings writes one, so the three rating boards. */
+    const csvOk = endpoint === "/api/rankings" && rows.length > 0;
+    $("csv").classList.toggle("hidden", !csvOk);
+    if (csvOk) $("csv").href = endpoint + "?" + query.toString() + "&format=csv";
 
   } catch (err) {
     $("results").innerHTML =
