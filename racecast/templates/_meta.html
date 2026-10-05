@@ -85,6 +85,12 @@
    alone -- the wordmark is wide and short, so at 16px it would be eight
    illegible smudges. #}
 <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
+{# Home-screen install (app.web_manifest): Android reads the manifest, iOS
+   reads the apple-touch tags -- it ignores the manifest's icons. #}
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="{{ static_v('icons/apple-touch-icon.png') }}">
+<meta name="apple-mobile-web-app-title" content="Racecast">
+<meta name="theme-color" content="#ffffff">
 
 {# ---- Structured data: what shapes the RESULT ITSELF ----------------- #}
 {# The og:* tags above control the CARD that chat apps draw. They do almost

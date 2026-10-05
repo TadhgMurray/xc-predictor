@@ -616,6 +616,36 @@ def robots_txt():
     return app.response_class(body, mimetype="text/plain")
 
 
+# ★ INSTALLABLE, NOTHING MORE (owner, 2026-10-05: "add to home screen").
+#   A manifest + icons is what makes Chrome's menu offer "Install app" and
+#   gives iOS's Add to Home Screen our name and icon (the apple-touch tags
+#   ride in _meta.html). Served from the root so its scope is the whole
+#   site; icons are drawn by scripts/make_app_icons.py from favicon.svg.
+# ! NO SERVICE WORKER. Offline caching is the only thing one would buy here,
+#   and a wrong one keeps serving stale boards from people's phones with no
+#   way to reach in and fix it. Installability does not need one.
+@app.route("/manifest.webmanifest")
+def web_manifest():
+    icon = lambda name, size, purpose="any": {          # noqa: E731
+        "src": staticV(f"icons/{name}"), "sizes": f"{size}x{size}",
+        "type": "image/png", "purpose": purpose}
+    body = {
+        "name": "Racecast",
+        "short_name": "Racecast",
+        "description": "Every cross country and track result on one comparable scale.",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#ffffff",
+        "icons": [icon("icon-192.png", 192), icon("icon-512.png", 512),
+                  icon("icon-maskable-512.png", 512, "maskable")],
+    }
+    resp = app.response_class(json.dumps(body), mimetype="application/manifest+json")
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
 # ★ GOOGLE SITE VERIFICATION, THE HTML-FILE METHOD. Search Console hands
 #   the owner a file named google<token>.html and expects it at the root.
 #   Only the tokens listed here are served: answering ANY token would let
@@ -675,7 +705,9 @@ def sitemap_index():
 #   debris. See engine/maintenance.py.
 from maintenance import isMaintenance as _inMaintenance
 
-_CRAWL_FILES = ("/robots.txt", "/sitemap.xml")
+# the manifest too: it reads no database, and a 503 on it during a swap is a
+# failed install for whoever taps "Add to Home Screen" then
+_CRAWL_FILES = ("/robots.txt", "/sitemap.xml", "/manifest.webmanifest")
 
 
 @app.before_request
