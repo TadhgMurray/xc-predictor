@@ -117,3 +117,40 @@
 .p2-page .p2-units summary { cursor: pointer; color: var(--link, #14477d); padding: .35rem 0; }
 .p2-page .p2-unit-row { display: flex; flex-wrap: wrap; gap: .5rem .8rem; margin-top: .3rem; }
 .p2-page .p2-unit-row input { min-width: 9rem !important; }
+
+/* ---- What it takes (/what-it-takes, cuts.py, owner 2026-10-05) --------
+ * ★ THE SAME SHEET, NOT A THIRD ONE: it is the same family of page as the
+ *   projections (picker, chips, tables, the how-it-works foot), so it reads
+ *   the same tokens and only adds the mark cards. Scoped .wit-page.
+ * ----------------------------------------------------------------------- */
+.wit-page .scale-toggle { margin: 0.2rem 0 0.4rem; }
+.wit-page .wit-cards { display: grid; gap: 0.7rem; margin-top: 0.4rem;
+                       grid-template-columns: repeat(auto-fill, minmax(16.5rem, 1fr)); }
+.wit-page .wit-card { border: 1px solid var(--line, #e5e7eb); background: #fff; padding: 0.75rem 0.9rem 0.6rem; }
+.wit-page .wit-card-h { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+                        color: var(--muted, #6b7280); margin: 0 0 0.2rem; }
+.wit-page .wit-big { font-size: 2rem; font-weight: 800; color: var(--ink, #111418);
+                     font-variant-numeric: tabular-nums; line-height: 1.15; }
+.wit-page .wit-big-yr { font-size: 0.85rem; font-weight: 600; color: var(--muted, #6b7280); }
+.wit-page .wit-what { font-size: 0.84rem; color: #374151; margin: 0.15rem 0 0.45rem; line-height: 1.4; }
+.wit-page .wit-times { display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; font-size: 0.9rem; margin: 0 0 0.35rem;
+                       font-variant-numeric: tabular-nums; }
+.wit-page .wit-day { font-size: 0.84rem; color: #374151; margin: 0 0 0.35rem; }
+.wit-page .wit-seasons { display: flex; flex-wrap: wrap; gap: 0.15rem 0.8rem; font-size: 0.86rem; margin: 0.45rem 0 0.2rem;
+                         padding-top: 0.45rem; border-top: 1px solid var(--line, #e5e7eb);
+                         font-variant-numeric: tabular-nums; }
+.wit-page .wit-yr { white-space: nowrap; }
+.wit-page .wit-sample { font-size: 0.78rem; color: var(--muted, #6b7280); margin: 0.1rem 0 0; line-height: 1.5; }
+.wit-page .wit-trend { font-weight: 700; color: #374151; font-variant-numeric: tabular-nums; }
+.wit-page .wit-flag { color: #92400e; }
+.wit-page .wit-sec-tbl .wit-yr { margin-right: 0.6rem; }
+/* the first column here is a name, not a rank number (.p2-tbl mutes and
+   narrows a rank) */
+.wit-page .p2-tbl td:first-child { color: var(--ink, #111418); width: auto; }
+.wit-page .wit-others { margin-top: 1.4rem; font-size: 0.9rem; }
+.wit-page .wit-others summary { cursor: pointer; font-weight: 600; color: #374151; }
+@media (max-width: 640px) {
+  .wit-page .wit-cards { grid-template-columns: 1fr; }
+  .wit-page .wit-big { font-size: 1.7rem; }
+  .wit-page .p2-state-form { width: 100%; }
+}

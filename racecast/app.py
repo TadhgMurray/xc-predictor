@@ -1747,6 +1747,11 @@ def athlete(person_id):
             # The season rank line under the stat strip -- see buildRankLine.
             rank_line = (buildRankLine(cur, person_id, season_rating)
                          if season_rating else None)
+            # ★ "WHAT IT TAKES" (2026-10-05): this season's rating against
+            #   last season's state marks, one line. cuts.athleteLine never
+            #   raises and never waits on a cold state (it warms the cache in
+            #   the background and shows nothing this once).
+            wit_line = _cuts.athleteLine(cur, person_id)
 
             # ⚠ THE FALLBACK IS THE OLD TABLE, and it still earns its keep:
             #   athlete_season is built from ranking_results, which is
@@ -2167,6 +2172,7 @@ def athlete(person_id):
                            gender_mixed=gender_mixed,
                            units=units,
                            rank_line=rank_line,
+                           wit_line=wit_line,
                            training=training,
                            xc_seasons=xc_seasons,
                            tf_seasons=tf_seasons,
@@ -8635,6 +8641,9 @@ def _loadShare(share_id, count=False):
 #   own blueprint, see pages2.py.
 import pages2 as _pages2                                       # noqa: E402
 app.register_blueprint(_pages2.bp)
+# ★ "WHAT IT TAKES" (owner, 2026-10-05): its own blueprint too, see cuts.py.
+import cuts as _cuts                                           # noqa: E402
+app.register_blueprint(_cuts.bp)
 
 
 @app.route("/predictions")

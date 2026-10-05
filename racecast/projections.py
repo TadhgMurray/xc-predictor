@@ -219,10 +219,15 @@ def pickCourse(rows, gender):
 
 
 def _courseRows(cur, state):
+    # ! ON (meet_id, source), NOT meet_id ALONE (2026-10-05): anet and tfrrs
+    #   ids collide, and meet_unit carries the source of the meet it filed.
+    #   On meet_id alone a tfrrs state final could pull in whatever anet meet
+    #   shares its number -- and its course would vote for "the state course".
     cur.execute("""
         SELECT m.course_name, m.distance, m.division, m.meet_id, m.meet_name
         FROM   meet_unit u
         JOIN   meets m ON m.meet_id = u.meet_id
+                      AND m.source IS NOT DISTINCT FROM u.source
         WHERE  u.sport = 'XC' AND u.kind = 'state' AND u.unit = %(st)s
           AND  m.course_name IS NOT NULL AND m.course_name <> ''
     """, {"st": state})

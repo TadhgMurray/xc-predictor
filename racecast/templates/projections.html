@@ -124,6 +124,7 @@
       <span class="p2-muted">(the state meet's usual course, {{ p.course.editions }} past editions)</span>
     {% else %}on a neutral course <span class="p2-muted">(no regular state-meet venue on record)</span>{% endif %}
     &middot; <span class="p2-muted">computed {{ p.computed_at|ago_words }}</span>
+    &middot; <a href="/what-it-takes/{{ state|lower }}{{ '/' ~ division_slug if division else '' }}{{ '?g=girls' if gender == 'girls' and division }}">What it took in past seasons</a>
   </p>
 
   {% if p.n_field and p.thin_share >= 0.35 %}
