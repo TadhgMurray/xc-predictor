@@ -2481,6 +2481,33 @@ def trackPopulationShift(D_b, cell_keys, cell_row, level_row, meet_class_row=Non
     return shift, rows
 
 
+def centreDaysBySeason(u, D, season_row, sport_row):
+    """(u centred, the shift taken out per row): each (sport, season)'s
+    runner-weighted mean day term removed. Pure.
+
+    ★ A SEASON IS NOT A DAY (owner, 2026-10-05, Newhall's own history: the
+      field "ran" +0.6% in 2002, -0.1% in 2010, -1.4% in 2018, -3.4% in 2023,
+      -4.8% in 2025, beside a course number that barely moved). The day term
+      is how one day ran against its course's normal; a shift shared by every
+      race of a season is the season's level -- the population getting
+      faster, the shoes -- and in u it was read as a run of fast days. XC
+      ratings carry u and track ratings do not, so a 2025 XC race lost ~3-5%
+      against track (published means: XC -3.24%, TF +1.40%, runner-weighted),
+      which is the direction of every XC -> track conversion complaint. The
+      shift belongs to the abilities; the caller moves it there."""
+    u = np.asarray(u, dtype=np.float64)
+    key_row = (np.asarray(season_row, dtype=np.int64) * 2
+               + np.asarray(sport_row, dtype=np.int64))
+    keys, inv = np.unique(key_row, return_inverse=True)
+    row_u = u[D.race]
+    mean_g = (np.bincount(inv, weights=row_u, minlength=keys.size)
+              / np.maximum(np.bincount(inv, minlength=keys.size), 1))
+    shift_row = mean_g[inv]
+    shift_race = np.zeros(D.n_race)
+    shift_race[D.race] = shift_row               # one season per race: a race is one day
+    return u - shift_race, shift_row
+
+
 def dayLeanReport(u, D, cell_keys, min_races=5, top=15):
     """Lines: the courses whose race days all lean one way -- the mean day
     term over a course's races, with its standard error from the days'
@@ -2756,6 +2783,30 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         u_ref = num / P
         u_loo = (num[D.race] - c * r_pre) / (P[D.race] - w * h * h)
         out["race_effect_row_bracket"] = u_new[D.race] + (u_loo - u_ref[D.race])
+        # ★ THE SEASON'S LEVEL OUT OF THE DAYS, INTO THE ABILITIES (see
+        #   centreDaysBySeason). Every fitted value stays where it was --
+        #   h*shift leaves the day and the same amount, row-weighted, joins
+        #   the ability -- only the split between "the athlete" and "the day"
+        #   changes, and with it what the ratings carry. XCP_DAY_CENTRE=0
+        #   publishes the uncentred terms (the 2026-10-04 behaviour).
+        if os.environ.get("XCP_DAY_CENTRE", "1") != "0":
+            season_row = np.asarray(cols["year"])[keep]
+            sport_row = np.array([1 if str(cell_keys[c]).startswith("TF:") else 0
+                                  for c in range(len(cell_keys))],
+                                 dtype=np.int64)[D.cell]
+            u_new, shift_row = centreDaysBySeason(u_new, D, season_row, sport_row)
+            out["race_effect_row_bracket"] = out["race_effect_row_bracket"] - shift_row
+            a_new = a_new + (np.bincount(D.athlete, weights=w * h * shift_row,
+                                         minlength=D.n_ath) / np.maximum(den, 1e-12))
+            xc = sport_row == 0
+            print(f"[joint] bracket: day terms centred per (sport, season) -- the "
+                  f"seasons' level moved to the abilities: XC "
+                  f"{100 * float(np.average(shift_row[xc])) if xc.any() else 0.0:+.2f}%, "
+                  f"TF {100 * float(np.average(shift_row[~xc])) if (~xc).any() else 0.0:+.2f}% "
+                  f"(row-weighted); per season, XC: "
+                  + ", ".join(f"{int(yy)} {100 * float(shift_row[xc & (season_row == yy)].mean()):+.1f}%"
+                              for yy in sorted(set(season_row[xc].tolist()))[-6:]),
+                  flush=True)
         moved = np.abs(u_new - np.asarray(b["u"], dtype=np.float64))
         print(f"[joint] bracket: day terms refitted against the published courses "
               f"-- median move {100 * float(np.median(moved)):.2f}%, p95 "

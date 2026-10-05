@@ -3953,3 +3953,25 @@ tests/test_predict_asran_and_grades.py.
   of race_effect_joint vs race_effect. If so, centre u per sport (runner-
   weighted) after the refit and let the scorecard's cross-sport and LACCTiC
   lines judge it.
+- **ANSWERED (2026-10-05, owner's server output):** published means XC
+  -2.74% (runner-weighted -3.24%), TF +1.11% (+1.40%); the 2026-10-04 refit
+  moved the terms a median 1.30% (p95 4.71%), so it widened a trend that
+  was already there. Newhall's "Year by year" shows what it is: the field
+  "ran" +0.6% (2002), -0.1% (2010), -1.4% (2018), -3.4% (2023), -4.8% (2025)
+  beside a course number of +2.9..+4.3% -- the ERA (a faster population,
+  the shoes), read as fast days. XC ratings carry u, so recent XC ratings
+  lost ~3-5% against track. Also why 19,435 courses "lean one way".
+  ✅ FIX (engine/run_joint.centreDaysBySeason): after the refit the day
+  terms are centred per (sport, season), runner-weighted, and the shift
+  moves into those athletes' abilities -- the fitted values are unchanged,
+  only the split between athlete and day. XCP_DAY_CENTRE=0 turns it off.
+  ⏳ Takes effect at the next 08_golive. Expect: recent XC ratings up a few
+  points against track; the scorecard's cross-sport bias and the LACCTiC
+  XC -> 5000 bias/spread to move; "courses whose days lean" to collapse;
+  the race-day dropdowns to read near 0 on ordinary days.
+- **Harkness Memorial State Park:** race_day_effect held only the 6000 (the
+  women's race) for 2025-10-18 and 2025-11-01 -- the one-cell-per-venue-day
+  bug fixed today (racePairs); the men's 8000 rows arrive with the next
+  go-live. Also TWO canonical ids for one park (3851 and 16451), like
+  Woodward Park's three: a course_canonical merge to do.
+- Model: owner, "leave in stasis" until the engine is fixed.
