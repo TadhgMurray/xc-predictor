@@ -7687,9 +7687,9 @@ _TF_DEFAULT_DISTANCES = [
 
 # Pools offered in the source selector (bare pools -- sport is separate).
 _POOLS = [
-    ("hs_m", "HS Boys"), ("hs_f", "HS Girls"),
-    ("college_m", "College Men"), ("college_f", "College Women"),
-    ("ms_m", "MS Boys"), ("ms_f", "MS Girls"),
+    ("hs_m", "HS boys"), ("hs_f", "HS girls"),
+    ("college_m", "College men"), ("college_f", "College women"),
+    ("ms_m", "MS boys"), ("ms_f", "MS girls"),
 ]
 
 

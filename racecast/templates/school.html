@@ -197,7 +197,7 @@
                     if r.carried and r.carried_year %}<span class="r-year">&thinsp;'{{ "%02d"|format(r.carried_year % 100) }}</span>{% endif %}</td>
                 <td>{% if r.best_rating is not none %}{{ rv(r.best_rating, r.hs_best_rating) }}{% endif %}</td>
                 <td>{{ r.n_races }}</td>
-                <td>{{ r.last_race if r.last_race else "" }}</td>
+                <td>{{ r.last_race|mdy if r.last_race else "" }}</td>
             </tr>
             {% endfor %}
             {% if rows|length > 15 %}
@@ -277,9 +277,9 @@
                 <td>{{ b.grade|grade_label(b.pool) if b.grade else "" }}</td>
                 <td>{{ rv(b.rating, b.hs_rating) }}</td>
                 <td>{{ b.year }}</td>
-                <td>{% if sport == 'XC' %}<a href="/race/xc/{{ b.meet_id }}/{{ b.div_id }}">{{ b.race_date }}</a>
-                    {% elif b.event_id %}<a href="/race/tf/{{ b.meet_id }}/{{ b.event_id }}/{{ b.div_id }}">{{ b.race_date }}</a>
-                    {% else %}{{ b.race_date }}{% endif %}</td>
+                <td>{% if sport == 'XC' %}<a href="/race/xc/{{ b.meet_id }}/{{ b.div_id }}">{{ b.race_date|mdy }}</a>
+                    {% elif b.event_id %}<a href="/race/tf/{{ b.meet_id }}/{{ b.event_id }}/{{ b.div_id }}">{{ b.race_date|mdy }}</a>
+                    {% else %}{{ b.race_date|mdy }}{% endif %}</td>
             </tr>
             {% endfor %}
             {% if best|length > 15 %}

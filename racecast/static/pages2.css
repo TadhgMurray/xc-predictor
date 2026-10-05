@@ -154,3 +154,12 @@
   .wit-page .wit-big { font-size: 1.7rem; }
   .wit-page .p2-state-form { width: 100%; }
 }
+
+/* ---- the site's TAB and CHIP looks (style.css "ONE LOOK" block) -------- */
+.p2-page .p2-seg { display: inline-flex; gap: 0.25rem; border: 0; overflow: visible; }
+.p2-page .p2-seg a { padding: 0.4rem 0.95rem; border: 1px solid var(--line, #e5e7eb); border-radius: 6px;
+  background: #fff; font-size: 0.86rem; font-weight: 500; color: var(--ink, #111418); }
+.p2-page .p2-seg a + a { border-left: 1px solid var(--line, #e5e7eb); }
+.p2-page .p2-seg a.is-on { background: var(--accent, #14477d); border-color: var(--accent, #14477d); color: #fff; }
+.p2-page .p2-chips a { border-radius: 999px; }
+.p2-page .p2-chips a.is-on { background: #eef3f9; font-weight: 600; }

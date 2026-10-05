@@ -61,9 +61,9 @@
                 {% endif %}
                 <td class="no-break">
                     {% if sec.kind == "running" and sport == 'XC' %}
-                    <a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.race_date }}</a>
+                    <a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.race_date|mdy }}</a>
                     {% elif sec.kind == "running" %}
-                    {% if r.event_id %}<a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}">{{ r.race_date }}</a>{% else %}{{ r.race_date }}{% endif %}
+                    {% if r.event_id %}<a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}">{{ r.race_date|mdy }}</a>{% else %}{{ r.race_date|mdy }}{% endif %}
                     {% else %}
                     <a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a>
                     {% endif %}

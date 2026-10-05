@@ -4205,3 +4205,23 @@ Owner: keep `/embed/school/<name>` but it's "ass rn". To do before anyone is poi
 - choose what a team site actually wants (season results? the next meet? top 7 with times, not
   ratings?);
 - a preview on the school page that shows what it looks like.
+
+**Update: owner picked A-D, and the first pass is in.**
+- **A, tabs and chips.** Two looks site-wide, in CSS only (the "ONE LOOK" block in
+  style.css/pages2.css). Every page keeps its markup and scripts.
+  - Tabs, for switching what the page shows: the Rankings board tab.
+  - Chips, for narrowing what's shown: small outlined pills.
+  - The coaches page's Boys/Girls now shows which one is selected.
+- **B, width.** Breakouts and the state ranking pages run full width like /rankings;
+  everything else keeps the centred 1080.
+- **C, dates.** "Oct 4, 2025" on the meet, race, course, school roster, school PRs, venue
+  and compiled pages (the `mdy` filter).
+- **D, labels.** "HS boys / HS girls / College men / College women / MS boys / MS girls"
+  on the home snapshot, rankings, conversions and the equivalence line.
+- **Still to do:**
+  - one page-header pattern;
+  - one filter-bar layout (meets now has the Rankings card ground; recruiting and coaches
+    still lay theirs out inline);
+  - the help icons ("i" vs "?");
+  - athlete race tables on phones (sideways scroll);
+  - the broken crest icon.

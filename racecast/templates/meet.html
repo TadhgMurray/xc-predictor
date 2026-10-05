@@ -47,7 +47,7 @@
         {% if header.course_name %}
             <a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a>
         {% else %} - {% endif %}
-        {% if meet_date %} · {{ meet_date }}{% endif %}
+        {% if meet_date %} · {{ meet_date|mdy }}{% endif %}
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
     {# ?alt= when this id holds two meets: predict THIS one (2026-10-05) #}

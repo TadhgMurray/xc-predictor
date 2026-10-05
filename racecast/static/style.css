@@ -5671,3 +5671,57 @@ td.vs-level.is-under { color: var(--muted); }
 .board-strip a { padding: .5rem 1.125rem; border: 1px solid var(--line, #e5e7eb); background: #fff;
                  border-radius: 6px; font-size: .875rem; font-weight: 500; color: inherit; text-decoration: none; }
 .board-strip a.is-on { background: var(--accent, #14477d); border-color: var(--accent, #14477d); color: #fff; }
+
+/* ======================================================================= *
+ *  ONE LOOK FOR TABS, ONE FOR CHIPS (owner, 2026-10-05 UI pass)
+ *
+ *  The audit found seven toggle styles doing two jobs. Two looks now:
+ *    TAB   switches what the page shows (a board, a view, a sport): the
+ *          Rankings board tab -- boxed, navy when on.
+ *    CHIP  narrows what is shown (a level, a window, a distance, a year):
+ *          a small outlined pill, navy outline + navy text when on.
+ *  CSS only, by design: every page keeps its markup and its script, these
+ *  rules re-skin the classes each page already uses. Selectors repeat each
+ *  page's own scoping so they win on order, not on !important.
+ * ======================================================================= */
+
+/* ---- TAB --------------------------------------------------------------- */
+.seg-btn, .toggle-group button, .sport-toggle a, .board-strip a {
+  padding: 0.5rem 1.125rem; border: 1px solid var(--line, #e5e7eb); background: #fff;
+  border-radius: 6px; font: inherit; font-size: 0.875rem; font-weight: 500;
+  color: var(--ink, #111418); text-decoration: none; cursor: pointer;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--line, #e5e7eb); }
+.seg-btn:first-child, .seg-btn:last-child { border-radius: 6px; }
+.seg, .toggle-group, .sport-toggle, .board-strip { display: inline-flex; flex-wrap: wrap; gap: 0.25rem;
+  border: 0; overflow: visible; }
+.sport-toggle a { border-right: 1px solid var(--line, #e5e7eb); }
+.seg-btn.is-on, .toggle-group button.is-active, .board-strip a.is-on {
+  background: var(--accent, #14477d); border-color: var(--accent, #14477d); color: #fff;
+}
+.seg-btn:hover:not(.is-on), .toggle-group button:hover:not(.is-active),
+.sport-toggle a:hover, .board-strip a:hover:not(.is-on) { background: var(--hover, #f3f6fa); }
+
+/* ---- CHIP -------------------------------------------------------------- */
+.pool-chips .chip, .rc-seg-btn, .recruit-athlete .rc-seg-btn, .yb {
+  padding: 0.25rem 0.75rem; border: 1px solid var(--line-2, #cbd0d6); background: #fff;
+  border-radius: 999px; font: inherit; font-size: 0.84rem; font-weight: 500;
+  color: #374151; text-decoration: none; cursor: pointer;
+}
+.pool-chips .chip.is-on, .rc-seg-btn.is-on, .recruit-athlete .rc-seg-btn.is-on, .yb.is-on {
+  background: #eef3f9; border-color: var(--accent, #14477d); color: var(--accent, #14477d);
+  font-weight: 600;
+}
+
+/* ---- the primary button: navy, wherever a form submits ----------------- */
+.meets-page .meet-filters button, .rc-btn.rc-btn-quiet {
+  background: var(--accent, #14477d); border: 1px solid var(--accent, #14477d); color: #fff;
+}
+.meets-page .meet-filters button:hover, .rc-btn.rc-btn-quiet:hover { background: #0f3963; }
+.sport-toggle a:last-child { border-right: 1px solid var(--line, #e5e7eb); }
+/* one filter card: the Rankings card's ground and border on /meets too */
+.meets-page .meet-filters { background: #fff; border: 1px solid var(--line, #e5e7eb); border-radius: 8px; }
+/* ★ BOARDS RUN FULL WIDTH, LIKE /rankings (owner, 2026-10-05: B). Breakouts
+   is a Rankings board and the state ranking pages are boards; everything
+   else keeps .page-wide's centred 1080. */
+.page-wide.brk-page, .page-wide.landing-page { max-width: none; padding-left: 2rem; padding-right: 2rem; }

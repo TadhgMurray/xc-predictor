@@ -51,7 +51,7 @@
                     <td>{% if r.school|is_team %}<a href="{{ school_href(r.school, none) }}">{{ r.school|school_label }}</a>{% else %}{{ r.school }}{% endif %}</td>
                     <td class="no-break">{{ r.display_time }}</td>
                     <td><a href="/meet/tf/{{ r.meet_id }}">{{ r.meet_name }}</a></td>
-                    <td class="no-break">{{ r.date }}</td>
+                    <td class="no-break">{{ r.date|mdy }}</td>
                 </tr>
                 {% endfor %}
                 </tbody>
@@ -71,7 +71,7 @@
             {% for m in venue_meets %}
             <tr>
                 <td><a href="/meet/tf/{{ m.meet_id }}">{{ m.meet_name }}</a></td>
-                <td>{{ m.last_date }}</td>
+                <td>{{ m.last_date|mdy }}</td>
                 <td>{{ "{:,}".format(m.n_results) }}</td>
             </tr>
             {% endfor %}

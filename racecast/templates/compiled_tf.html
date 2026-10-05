@@ -31,7 +31,7 @@
     <h1>{{ header.meet_name }}</h1>
     <p class="meta">
         {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }}
-        {% if meet_date %} · {{ meet_date }}{% endif %}
+        {% if meet_date %} · {{ meet_date|mdy }}{% endif %}
         {% if header.state %} · {{ header.state }}{% endif %}
         · Compiled results
     </p>

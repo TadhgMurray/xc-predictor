@@ -43,7 +43,7 @@
         {{ "Boys" if header.gender == 'M' else "Girls" if header.gender == 'F' else " - " }} ·
         {{ header.division if header.division else " - " }} ·
         {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }} ·
-        {{ race_date if race_date else " - " }}
+        {{ race_date|mdy if race_date else " - " }}
         {% if header.state %} · {{ header.state }}{% endif %}
     </p>
     <p class="meta">

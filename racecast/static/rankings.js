@@ -1095,9 +1095,9 @@ function fmtTime(sec) {
 }
 
 const POOL_LABEL = {
-  hs_m: "HS Boys", hs_f: "HS Girls",
-  ms_m: "MS Boys", ms_f: "MS Girls",
-  college_m: "College Men", college_f: "College Women",
+  hs_m: "HS boys", hs_f: "HS girls",
+  ms_m: "MS boys", ms_f: "MS girls",
+  college_m: "College men", college_f: "College women",
   elem_m: "Elem Boys", elem_f: "Elem Girls"
 };
 
