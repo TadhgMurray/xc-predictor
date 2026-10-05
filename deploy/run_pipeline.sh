@@ -1286,6 +1286,8 @@ step 12b_finish       "$PY" -u racecast/build_course_boards.py --finish
 # process on run12); each writes only its own sport's panels
 steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC" \
        13_panels_tf "$PY -u racecast/panels.py --sport TF"
+# Breakouts, precomputed: reads ranking_results and the panels' newest dates
+step 13f_breakouts    "$PY" -u racecast/build_breakouts.py
 step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 # ★ THE SEARCH INDEX, REBUILT EVERY RUN (issue 140). It was never in the
 #   pipeline, so new athletes and meets stayed unsearchable until someone

@@ -28,13 +28,17 @@
 <body>
 {% include "_topbar.html" %}
 
+{# the page's own URL with one thing changed; search and unit filters ride along #}
 {% macro qs(lv=level, st=state, sp=sport, dy=days) -%}
-/breakouts?level={{ lv }}{% if st %}&state={{ st }}{% endif %}&sport={{ sp|lower }}{% if dy != 7 %}&days={{ dy }}{% endif %}
+/breakouts?level={{ lv }}{% if st %}&state={{ st }}{% endif %}&sport={{ sp|lower }}{% if dy != 7 %}&days={{ dy }}{% endif %}{% if q %}&q={{ q|urlencode }}{% endif %}{% for k, vals in units.items() %}&{{ k }}={{ vals|join(',')|urlencode }}{% endfor %}
 {%- endmacro %}
+{% set college = level.startswith('college') %}
+{% set unit_fields = [('division', 'Division'), ('region', 'Region'), ('conference', 'Conference')] if college
+   else [('state_div', 'State division / class'), ('section', 'Section'), ('section_div', 'Section division'), ('area', 'Area'), ('league', 'League')] %}
 
 <main class="page-wide p2-page brk-page">
   <div class="hdr-row">
-    <h1>Breakouts this week</h1>
+    <h1>Breakouts</h1>
     {% with share_title="Breakouts this week on Racecast", share_url=site_origin ~ qs() %}{% include "_share.html" %}{% endwith %}
   </div>
   <p class="p2-lead">
@@ -67,8 +71,39 @@
         {% for code, name in states %}<option value="{{ code }}"{% if code == state %} selected{% endif %}>{{ name }}</option>{% endfor %}
       </select>
       <noscript><button type="submit">Go</button></noscript>
+      {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+      {% for k, vals in units.items() %}<input type="hidden" name="{{ k }}" value="{{ vals|join(',') }}">{% endfor %}
     </form>
   </nav>
+
+  {# ★ SEARCH AND THE BOARDS' UNIT FILTERS (owner, 2026-10-05). Same argument
+     names as /rankings, comma-separated like its boxes; both read the
+     precomputed table (build_breakouts.py). #}
+  <form class="p2-filters" method="get" action="/breakouts">
+    <input type="hidden" name="level" value="{{ level }}">
+    <input type="hidden" name="sport" value="{{ sport|lower }}">
+    {% if days != 7 %}<input type="hidden" name="days" value="{{ days }}">{% endif %}
+    {% if state %}<input type="hidden" name="state" value="{{ state }}">{% endif %}
+    <label class="p2-search"><span class="p2-muted">Search</span>
+      <input type="search" name="q" value="{{ q }}" maxlength="60" placeholder="Athlete, school or meet"></label>
+    <details class="p2-units"{% if units %} open{% endif %}>
+      <summary>League &amp; division filters{% if units %} <span class="p2-muted">({{ units|length }} on)</span>{% endif %}</summary>
+      <div class="p2-unit-row">
+      {% for key, label in unit_fields %}
+        <label><span class="p2-muted">{{ label }}</span>
+          <input type="text" name="{{ key }}" value="{{ (units.get(key) or [])|join(',') }}"
+                 list="dl-{{ key }}" data-unit="{{ key }}" autocomplete="off"></label>
+        <datalist id="dl-{{ key }}"></datalist>
+      {% endfor %}
+      </div>
+    </details>
+    <button type="submit">Apply</button>
+    {% if q or units %}<a class="p2-muted" href="/breakouts?level={{ level }}&sport={{ sport|lower }}{% if state %}&state={{ state }}{% endif %}{% if days != 7 %}&days={{ days }}{% endif %}">Clear</a>{% endif %}
+  </form>
+  {% if live and (q or units) %}
+  <div class="p2-banner" role="note">Search and league filters need this server's
+    nightly Breakouts build; until it has run, the lists below are unfiltered.</div>
+  {% endif %}
 
   <p class="p2-meta">
     {% if data.anchor %}
@@ -103,8 +138,12 @@
           <span class="p2-row-sub">{{ r.race_date|mdy }}{% if r.time_seconds %} &middot; {{ r.time_seconds|proj_time }}{% endif %}{% if r.distance %} &middot; {{ "%.0f"|format(r.distance) }} m{% endif %}</span></td>
         <td class="num">{{ "%.1f"|format(r.speed_rating) }}</td>
         <td class="num p2-up">+{{ "%.1f"|format(r.jump) }}
-          {% if r.beat_best %}<span class="p2-badge" title="Above every earlier race this season (previous best {{ '%.1f'|format(r.prev_best) }})">SB</span>{% endif %}
-          {% if r.check %}<span class="p2-check" title="A jump this large is often a mislabelled distance or a merged athlete; check the race">check</span>{% endif %}</td>
+          {% if r.beat_best %}<span class="flag flag--rsr" tabindex="0" data-title="Season Best rating"
+            data-blurb="Above every earlier race this season (previous best {{ '%.1f'|format(r.prev_best) }})."
+            aria-label="Season best rating">SB</span>{% endif %}
+          {% if r.check %}<span class="flag flag--warn" tabindex="0" data-title="Worth checking"
+            data-blurb="A jump of {{ check_jump|int }}+ points is usually a mislabelled distance or two athletes merged into one. Open the race before trusting it."
+            aria-label="Worth checking: a jump this large is usually a data error">?</span>{% endif %}</td>
         <td class="num p2-wide">{{ "%.1f"|format(r.base) }} <span class="p2-muted">({{ r.n_prior }})</span></td>
       </tr>
     {% endfor %}
@@ -137,7 +176,9 @@
         <td class="num">{{ "%.0f"|format(r.std) }} m</td>
         <td class="num">{{ r.time_seconds|proj_time }} <span class="p2-row-sub">was {{ r.prev_best|proj_time }}</span></td>
         <td class="num p2-up">{{ "%.1f"|format(100 * r.gain) }}%
-          {% if r.check %}<span class="p2-check" title="More than {{ (100 * check_gain)|int }}% under the old PR: often a short course or a mislabelled distance">check</span>{% endif %}</td>
+          {% if r.check %}<span class="flag flag--warn" tabindex="0" data-title="Worth checking"
+            data-blurb="More than {{ (100 * check_gain)|int }}% faster than the old PR is usually a short course or a mislabelled distance. Open the race before trusting it."
+            aria-label="Worth checking: a PR this large is usually a data error">?</span>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -152,18 +193,40 @@
       <li><strong>A rating jump</strong> is a race whose speed rating beats the <em>median</em> of that
         athlete's earlier rated races this season (same level, same sport). Only athletes with
         {{ min_prior }} or more earlier races qualify, so a season opener is never a breakout. Ranked by
-        points above that median. <span class="p2-badge">SB</span> marks a race above every earlier one this season.</li>
+        points above that median. <span class="flag flag--rsr">SB</span> marks a race above every earlier one this season.</li>
       <li><strong>A new PR</strong> is a time at a standard distance faster than every earlier time by that
         athlete at that distance, in any season. A first race at a distance is a PR on the results page,
         but it is not listed here. Ranked by how much faster, as a share of the old PR.
         In cross country a PR is course-bound, so a fast course can make one.</li>
-      <li><strong>The week</strong> is the {{ days }} days up to the newest race date on file for this level,
+      <li><strong>The window</strong> is the {{ days }} days up to the newest race date on file for this level,
         so a quiet Monday still shows the weekend. Races flagged as outliers by the ratings are left
-        out; a jump of {{ check_jump|int }}+ points is marked <span class="p2-check">check</span>
-        because that size is often a mislabelled distance.</li>
+        out; a jump of {{ check_jump|int }}+ points, or a PR over {{ (100 * check_gain)|int }}% faster, is marked
+        <span class="flag flag--warn">?</span> ("worth checking") because that size is usually a mislabelled
+        distance or two athletes merged into one, not a real race.</li>
     </ul>
   </section>
 </main>
 <script src="{{ static_v('share.js') }}"></script>
+<script>
+// unit boxes: suggestions from /api/units (the rankings pickers' source)
+document.querySelectorAll("input[data-unit]").forEach(function (inp) {
+  var dl = document.getElementById("dl-" + inp.dataset.unit), t;
+  inp.addEventListener("input", function () {
+    clearTimeout(t);
+    var q = inp.value.split(",").pop().trim();
+    t = setTimeout(function () {
+      fetch("/api/units?kind=" + inp.dataset.unit + "&q=" + encodeURIComponent(q))
+        .then(function (r) { return r.json(); })
+        .then(function (rows) {
+          dl.innerHTML = "";
+          (rows || []).slice(0, 30).forEach(function (o) {
+            var opt = document.createElement("option");
+            opt.value = o.value; dl.appendChild(opt);
+          });
+        }).catch(function () {});
+    }, 200);
+  });
+});
+</script>
 </body>
 </html>

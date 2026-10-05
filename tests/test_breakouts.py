@@ -125,3 +125,16 @@ def test_ttlcache_holds_recomputes_and_never_caches_a_failure():
     clock[0] += 6
     assert ttlcache.get("half", lambda: {"err": False}, now=now)[0] == {"err": False}
     ttlcache.clear()
+
+
+def test_unit_args_use_the_boards_spelling():
+    """Breakouts reads the same unit arguments /rankings does (2026-10-05)."""
+    class A(dict):
+        def get(self, k, d=None):
+            return dict.get(self, k, d)
+    got = B.unitArgs(A(section="ncs, sjs", league="EBAL", q="x"))
+    assert got == {"section": ["NCS", "SJS"], "league": ["EBAL"]}
+
+
+def test_windows_include_a_month():
+    assert 30 in B.WINDOW_CHOICES and max(B.WINDOW_CHOICES) == 30

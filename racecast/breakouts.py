@@ -61,7 +61,7 @@ LEVELS = {
 SPORTS = {"xc": "XC", "tf": "TF"}
 
 WINDOW_DAYS = 7
-WINDOW_CHOICES = (7, 14)
+WINDOW_CHOICES = (7, 14, 30)     # build_breakouts scores the longest
 MIN_PRIOR = 2          # earlier rated races this season, for a breakout
 MIN_JUMP = 1.0         # points over the median; less is noise
 CHECK_JUMP = 20.0      # build_ranking_results._SEASON_OUTLIER_PTS, the fast side
@@ -561,3 +561,100 @@ def compute(cur, sport, level, days):
         ("breakouts", sport, level, days), run, ttl=_TTL,
         ttl_of=lambda v: _TTL if not (v["error"] or v["pr_error"]) else 300.0)
     return dict(val, computed_at=stamp)
+
+
+
+# ------------------------------------------------------------------ #
+#  the precomputed table (build_breakouts.py), when it is there
+# ------------------------------------------------------------------ #
+
+# ★ THE PAGE'S FILTERS ARE THE BOARDS' FILTERS. Same argument names as
+#   /rankings (rankings.UNIT_COLUMNS: state_div also matches class), read off
+#   the row's own unit columns the way rankings._whereClauses reads them.
+SEARCH_MAX = 60
+
+
+def unitArgs(args):
+    """{"league": ["EBAL"], ...} from the query string, rankings' spelling."""
+    from rankings import UNIT_COLUMNS, _UPPER_UNITS
+    out = {}
+    for k in UNIT_COLUMNS:
+        vals = [v.strip() for v in (args.get(k) or "").split(",") if v.strip()]
+        if vals:
+            out[k] = [v.upper() for v in vals] if k in _UPPER_UNITS else vals
+    return out
+
+
+def fromTable(cur, sport, level, days, state=None, units=None, q=None):
+    """{"anchor", "window_lo", "year", "built_at", "breakouts", "prs"} from
+    breakout_rows, or None when the table (or this level) is not built."""
+    from rankings import UNIT_COLUMNS
+    try:
+        cur.execute("SAVEPOINT bo")
+        cur.execute("""SELECT anchor, year, built_at FROM breakout_meta
+                       WHERE sport = %s AND level = %s""", (sport, level))
+        meta = cur.fetchone()
+        if not meta:
+            cur.execute("RELEASE SAVEPOINT bo")
+            return None
+        anchor, year, built = _row(meta, "anchor", "year", "built_at")
+        out = {"sport": sport, "level": level, "year": year, "days": days,
+               "anchor": anchor.isoformat() if anchor else None,
+               "built_at": built, "breakouts": [], "prs": [],
+               "computed_at": built.timestamp() if built else None,
+               "error": None, "pr_error": None}
+        if not anchor:
+            cur.execute("RELEASE SAVEPOINT bo")
+            return out
+        lo = anchor - datetime.timedelta(days=days - 1)
+        out["window_lo"] = lo.isoformat()
+        where = ["sport = %(sport)s", "level = %(level)s", "kind = %(kind)s",
+                 "race_date BETWEEN %(lo)s AND %(anchor)s"]
+        p = {"sport": sport, "level": level, "lo": lo, "anchor": anchor}
+        if state:
+            where.append("state = %(state)s")
+            p["state"] = state
+        for k, vals in (units or {}).items():
+            cur.execute("""SELECT column_name FROM information_schema.columns
+                           WHERE table_name = 'breakout_rows'""")
+            have = {r[0] if isinstance(r, (tuple, list)) else r["column_name"]
+                    for r in cur.fetchall()}
+            cols = [c for c in UNIT_COLUMNS[k] if c in have]
+            if not cols:
+                where.append("FALSE")
+                continue
+            p[f"u_{k}"] = vals
+            where.append("(" + " OR ".join(f'"{c}" = ANY(%(u_{k})s)' for c in cols) + ")")
+        if q:
+            p["q"] = "%" + q.replace("%", "").replace("_", "")[:SEARCH_MAX] + "%"
+            where.append("(name ILIKE %(q)s OR school ILIKE %(q)s OR meet_name ILIKE %(q)s)")
+        for kind, key, n in (("jump", "jump", NATIONAL_N if not state else STATE_N),
+                             ("pr", "gain", NATIONAL_N if not state else STATE_N)):
+            p["kind"] = kind
+            # one row per athlete -- their biggest -- then the biggest first
+            cur.execute(f"""
+                SELECT * FROM (
+                    SELECT DISTINCT ON (person_id) *
+                    FROM   breakout_rows
+                    WHERE  {" AND ".join(where)}
+                    ORDER  BY person_id, {key} DESC, result_id) t
+                ORDER BY {key} DESC, person_id
+                LIMIT {int(n)}""", p)
+            cols = [d[0] for d in cur.description]
+            rows = []
+            for r in cur.fetchall():
+                d = dict(zip(cols, r)) if isinstance(r, (tuple, list)) else dict(r)
+                d["race_date"] = d["race_date"].isoformat() if d.get("race_date") else None
+                for k2 in ("speed_rating", "time_seconds", "distance", "base",
+                           "prev_best", "jump", "gain", "std"):
+                    if d.get(k2) is not None:
+                        d[k2] = float(d[k2])
+                d["race_href"] = raceHref(sport, d)
+                rows.append(d)
+            out["breakouts" if kind == "jump" else "prs"] = rows
+        cur.execute("RELEASE SAVEPOINT bo")
+        return out
+    except Exception as exc:                            # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT bo")
+        print(f"breakouts table: {type(exc).__name__}: {exc}", flush=True)
+        return None

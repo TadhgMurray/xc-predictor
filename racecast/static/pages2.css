@@ -103,3 +103,17 @@
   .p2-page .p2-states { columns: 2; }
   .p2-page .p2-toggles { gap: 0.45rem; }
 }
+
+/* Breakouts: search + league/division filters (owner, 2026-10-05) */
+.p2-page .p2-filters { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .5rem .9rem;
+                       margin: .2rem 0 .8rem; font-size: .88rem; }
+.p2-page .p2-filters label { display: inline-flex; flex-direction: column; gap: .15rem; }
+.p2-page .p2-filters input[type=search], .p2-page .p2-filters input[type=text] {
+  font: inherit; padding: .3rem .5rem; border: 1px solid var(--line-2, #cbd0d6); border-radius: 5px;
+  min-width: 12rem; }
+.p2-page .p2-filters button { font: inherit; padding: .3rem .8rem; border: 1px solid var(--accent, #14477d);
+  background: var(--accent, #14477d); color: #fff; border-radius: 5px; cursor: pointer; align-self: flex-end; }
+.p2-page .p2-filters > a { align-self: flex-end; padding-bottom: .35rem; }
+.p2-page .p2-units summary { cursor: pointer; color: var(--link, #14477d); padding: .35rem 0; }
+.p2-page .p2-unit-row { display: flex; flex-wrap: wrap; gap: .5rem .8rem; margin-top: .3rem; }
+.p2-page .p2-unit-row input { min-width: 9rem !important; }

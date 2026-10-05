@@ -187,6 +187,9 @@ if step 05_normalize_new "$PY" -u backfill/backfill_normalize.py --sport both --
         wait "$pp1" || FAILED="$FAILED 13_panels_xc"
         wait "$pp2" || FAILED="$FAILED 13_panels_tf"
       fi
+      # Breakouts, precomputed (build_breakouts.py): reads the boards and
+      # homepage_recent's newest dates, so after both
+      step 13f_breakouts "$PY" -u racecast/build_breakouts.py
     fi
   fi
 fi

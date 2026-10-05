@@ -134,18 +134,31 @@ def breakouts_page():
         days = B.WINDOW_DAYS
     if days not in B.WINDOW_CHOICES:
         days = B.WINDOW_DAYS
+    units = B.unitArgs(request.args)
+    q = (request.args.get("q") or "").strip()[:B.SEARCH_MAX] or None
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             latest = B.latestDates(cur)
             sport_arg = (request.args.get("sport") or "").strip().lower()
             sport = B.SPORTS.get(sport_arg) or B.defaultSport(latest)
-            data = B.compute(cur, sport, level, days)
+            # ★ THE PRECOMPUTED TABLE FIRST (build_breakouts.py): every
+            #   filter is a read. The live compute is the fallback for a
+            #   server that has not built it yet -- it knows no units or
+            #   search, and says so.
+            data = B.fromTable(cur, sport, level, days, st, units, q)
+            live = data is None
+            if live:
+                data = B.compute(cur, sport, level, min(days, 14))
+                breakouts = B.pickRows(data["breakouts"], "jump", st)
+                prs = B.pickRows(data["prs"], "gain", st)
+            else:
+                breakouts, prs = data["breakouts"], data["prs"]
     return render_template(
         "breakouts.html", data=data, level=level,
         level_words=B.LEVELS[level][1], levels=B.LEVELS,
         sport=sport, state=st, state_name=names.get(st or "", ""),
         states=states, days=days, window_choices=B.WINDOW_CHOICES,
-        breakouts=B.pickRows(data["breakouts"], "jump", st),
-        prs=B.pickRows(data["prs"], "gain", st),
+        units=units, q=q or "", live=live,
+        breakouts=breakouts, prs=prs,
         min_prior=B.MIN_PRIOR, min_jump=B.MIN_JUMP, check_jump=B.CHECK_JUMP,
         check_gain=B.CHECK_GAIN)
