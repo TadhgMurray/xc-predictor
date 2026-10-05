@@ -303,6 +303,41 @@ def predictIndividual(cur, person_id, target):
 #  TEAM
 # ------------------------------------------------------------------ #
 
+# ★ WHERE A PREDICTION'S TIME GOES, ON THE LIVE SITE (owner, 2026-10-05:
+#   "predict itself is a little slow" -- 0.9-1.7 s live against 0.45 s in
+#   diag_predict_time). Each stage of a request is timed into a per-thread
+#   list the route turns into a Server-Timing header, so the live split can
+#   be read with curl -D - from anywhere, without a shell on the box.
+import threading as _threading
+_STAGES = _threading.local()
+
+
+def stagesStart():
+    _STAGES.rows = []
+
+
+def stagesRows():
+    return list(getattr(_STAGES, "rows", None) or [])
+
+
+class _stage:
+    """with _stage("name"): ... -- adds (name, ms) when a request is timing."""
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        import time
+        self.t = time.perf_counter()
+        return self
+
+    def __exit__(self, *exc):
+        import time
+        rows = getattr(_STAGES, "rows", None)
+        if rows is not None:
+            rows.append((self.name, 1000.0 * (time.perf_counter() - self.t)))
+        return False
+
+
 def predictTeam(cur, schools, target, head_to_head=False,
                 remove=None, add=None, sim=False, draws=None, team_rho=0.0):
     """Team scores at a target race.
@@ -318,19 +353,23 @@ def predictTeam(cur, schools, target, head_to_head=False,
       whom" means. Both are offered because both get asked; the default is the
       real meet.
     """
-    status = modelStatus()
+    with _stage("status"):
+        status = modelStatus()
     if not status["available"]:
         return status
 
     # The meet's own field, plus whatever the page edited. `schools` is only
     # used when there is no meet to read a field from.
-    roster = _teamRosters(cur, schools, target, remove or set(), add or set())
+    with _stage("roster"):
+        roster = _teamRosters(cur, schools, target, remove or set(), add or set())
     if not roster:
         return {"available": False,
                 "reason": "No athletes found for those teams."}
 
-    field = roster if head_to_head else _fullField(cur, roster, target)
-    preds = _servedTimes(cur, [r["person_id"] for r in field], target)
+    with _stage("field"):
+        field = roster if head_to_head else _fullField(cur, roster, target)
+    with _stage("times"):
+        preds = _servedTimes(cur, [r["person_id"] for r in field], target)
 
     # ★ A COALESCED SQUAD ENTERS SEVEN (issue #86). Two divisions merged under
     #   one name bring fourteen, and all fourteen would take places -- pushing
@@ -339,7 +378,8 @@ def predictTeam(cur, schools, target, head_to_head=False,
     if target.get("coalesce") and len(target.get("div_ids") or []) > 1:
         field, preds = _capCoalesced(field, preds)
 
-    teams, finishers = _score(field, preds)
+    with _stage("score"):
+        teams, finishers = _score(field, preds)
 
     # ★ THE PAGE RENDERS WHAT A RESULTS PAGE RENDERS, so the row carries what
     #   race.html's row carries: the school's resolved link and label, the
@@ -351,12 +391,15 @@ def predictTeam(cur, schools, target, head_to_head=False,
     #   into "Sr" in a high school pool and "SO-2" in a college one. Both are
     #   rules with one correct spelling; a JS twin of either is a second
     #   spelling waiting to drift.
-    _decorate(finishers, (target.get("sport") or "XC").upper())
+    with _stage("decorate"):
+        _decorate(finishers, (target.get("sport") or "XC").upper())
     # ! THE TEAM'S POOL COMES OFF ITS RUNNERS, and off `finishers` rather
     #   than off t["runners"] -- the team's own runner rows carry only what
     #   the scorers table needs (id, name, place, time), while the finish
     #   order carries the pool. The crest for Amherst depends on which
     #   Amherst, so the team row needs one.
+    _t_links = _stage("links")
+    _t_links.__enter__()
     pool_of = {}
     for r in finishers:
         if r.get("school") and r.get("pool"):
@@ -366,14 +409,16 @@ def predictTeam(cur, schools, target, head_to_head=False,
         t["pool"] = pool_of.get(t.get("team"))
     _stampCrests(teams, "team", "state")
     _stampCrests(finishers, "school", "school_state")
+    _t_links.__exit__(None, None, None)
 
     out = {"available": True,
            "mode": "head_to_head" if head_to_head else "meet",
            "teams": teams,
            "runners": finishers}
     if sim:
-        out["sim"] = _stampSim(field, preds, teams, finishers,
-                               draws=draws, team_rho=team_rho)
+        with _stage("sim"):
+            out["sim"] = _stampSim(field, preds, teams, finishers,
+                                   draws=draws, team_rho=team_rho)
     return out
 
 
@@ -1064,7 +1109,8 @@ def _servedTimes(cur, person_ids, target):
         _hb = _asDate(target.get("history_before"))
         if _hb is not None and (cut is None or _hb < cut):
             cut = _hb
-        rated = _ratingTimes(cur, person_ids, spec, cut)
+        with _stage("ratings"):
+            rated = _ratingTimes(cur, person_ids, spec, cut)
     except Exception:                                   # noqa: BLE001
         import logging
         logging.getLogger(__name__).exception("rating guard failed")
@@ -1080,8 +1126,9 @@ def _servedTimes(cur, person_ids, target):
     #    two agree.
     if basis == "rating":
         need = [pid for pid in person_ids if pid not in rated]
-        got = (dict(zip(need, _predictTimes(cur, need, target, spec=spec)))
-               if need else {})
+        with _stage(f"model-{len(need)}"):
+            got = (dict(zip(need, _predictTimes(cur, need, target, spec=spec)))
+                   if need else {})
         preds = [dict(rated[pid]) if pid in rated else got.get(pid, {
                      "seconds": None, "reason": "No rated races in the corpus."})
                  for pid in person_ids]

@@ -9152,12 +9152,15 @@ def api_predict_team():
         rho = 0.0
     rho = max(0.0, min(rho, 0.95))
 
+    import predict as _predict
+    _predict.stagesStart()
     try:
         with getConn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                out = predictTeam(cur, schools, target, head_to_head=h2h,
-                                  remove=remove, add=add, sim=sim,
-                                  draws=draws, team_rho=rho)
+                with _predict._stage("total"):
+                    out = predictTeam(cur, schools, target, head_to_head=h2h,
+                                      remove=remove, add=add, sim=sim,
+                                      draws=draws, team_rho=rho)
     except NotImplementedError:
         return jsonify({"available": False,
                         "reason": "The prediction model is not wired up yet."})
@@ -9167,7 +9170,12 @@ def api_predict_team():
         app.logger.exception("/api/predict/team failed")
         return jsonify({"error": "The prediction failed. This has been "
                                  "logged."}), 500
-    return jsonify(out)
+    resp = jsonify(out)
+    # ★ THE LIVE SPLIT, READABLE WITH curl -D - (2026-10-05): see
+    #   predict._stage. Names and milliseconds only -- nothing about the data.
+    resp.headers["Server-Timing"] = ", ".join(
+        f"{n};dur={ms:.0f}" for n, ms in _predict.stagesRows())
+    return resp
 
 
 # ! THE SQUAD SIZES COME FROM predict.py, which owns the scoring rules; a

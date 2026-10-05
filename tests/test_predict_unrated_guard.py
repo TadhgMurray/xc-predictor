@@ -66,3 +66,15 @@ def test_guard_basis_still_runs_the_model_for_everyone(monkeypatch):
     out = predict._servedTimes(None, [1, 2], {"mode": "meet"})
     assert asked == [[1, 2]]
     assert out[0]["basis"] == "model"
+
+
+def test_stages_are_timed_only_when_a_request_asks():
+    predict._STAGES.rows = None
+    with predict._stage("x"):
+        pass
+    assert predict.stagesRows() == []
+    predict.stagesStart()
+    with predict._stage("roster"):
+        pass
+    rows = predict.stagesRows()
+    assert [n for n, _ms in rows] == ["roster"] and rows[0][1] >= 0
