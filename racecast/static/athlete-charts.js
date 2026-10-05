@@ -607,8 +607,12 @@ function drawCompareChart(host, series, opts) {
                     (p.sp ? ` - ${p.sp}` : "") +
                     (p.meet ? ` - ${p.meet}` : "") +
                     (p.result ? ` (${p.result})` : "");
+      /* ! AN INLINE STYLE, NOT A fill= ATTRIBUTE (2026-10-05). CSS beats a
+           presentation attribute, and `.chart-slot .dot` sets the athlete
+           chart's white fill and blue ring -- so every dot on this chart,
+           B's included, wore A's blue. The line already did it this way. */
       parts.push(`<circle class="dot" cx="${cx}" cy="${cy}" ` +
-                 `r="${dotR}" fill="${s.colour}"/>`);
+                 `r="${dotR}" style="stroke:${s.colour}"/>`);
       parts.push(
         `<circle class="hit" cx="${cx}" cy="${cy}" ` +
         `r="${hitR.toFixed(1)}" data-label="${esc(label)}"/>`

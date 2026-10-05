@@ -3721,6 +3721,7 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 .h2h-meet td.win, .h2h-seasons td.win, .h2h-bests td.win { font-weight: 700; }
 td.margin-a { color: #14477d; font-weight: 600; }
 td.margin-b { color: #b45309; font-weight: 600; }
+.h2h-course { font-size: 0.78rem; color: var(--muted, #6b7280); }
 .h2h-chart { border: 1px solid var(--line-2, #e2e4e8); border-radius: 8px;
              padding: 0.8rem; margin: 0.6rem 0 1.4rem; }
 .h2h-legend { font-size: 0.8rem; color: var(--muted, #6b7280);

@@ -6,19 +6,38 @@ thin, the SQL lives here, every value is bound.
 
 ★ A MEETING IS THE SAME RACE, NOT THE SAME MEET. Two athletes at one meet
   in different divisions ran different fields on different terms; the
-  head-to-head record only counts rows sharing (sport, meet_id, div_id,
-  event_id). ranking_results is the source on purpose: it holds exactly
-  the rated rows the site's every other number is built from, so the
-  record cannot disagree with the pages it links to.
+  head-to-head record only counts rows sharing (sport, source, meet_id,
+  div_id) -- and on track the event and the round as well.
+
+⚠ THE MEETINGS READ results / results_tf, NOT ranking_results (2026-10-05).
+  ranking_results has no `source` column, and a meet_id is not a meet: the
+  anet and tfrrs id spaces collide (15,096 XC ids, and track's small div
+  and event ids collide more easily still). It also holds only rows the
+  BOARDS rank -- no professional race, no corrected-distance division -- so
+  two athletes who met at a pro meet "had never been in the same race". The
+  base tables carry the source, the round and every finish; result_twin
+  hides the same run stored twice, exactly as the athlete page does.
 
 ★ AND THE CROSS-FEED DEDUP THE PERFORMANCE BOARD ALREADY TAUGHT. Both
   sources can carry the same physical race, tied by canon_meet_id; both
   athletes duplicate together, so one race becomes two identical meeting
-  rows. Deduped on (sport, canon key, both times rounded), same posture
-  as getPerformanceRankings.
+  rows. Deduped on (sport, canon key, both times rounded), anet's copy
+  first because it is the one with the names.
 """
 
 import datetime
+
+try:                                    # scripts/ is on the site's path
+    from result_status import isSentinelTime
+except ImportError:                     # standalone use: no sentinel rule
+    def isSentinelTime(_t):
+        return False
+
+try:                                    # the athlete page's event labels
+    from athlete_bests import _tfEvent
+except ImportError:
+    def _tfEvent(event):
+        return None, str(event)
 
 # One name row per person: the panels ath-temp rule, inlined for one id.
 _NAME_SQL = """
@@ -51,52 +70,129 @@ _LATEST_ROW_SQL = """
     LIMIT  1
 """
 
-# The meeting self-join, per sport. Meet names ride along per sport's own
-# meets table; a lateral per row is fine at head-to-head row counts.
+# The meeting self-join, per sport, on the base tables (see the header).
+# Both sides come in through the person_id indexes; the names, course and
+# distance are a lateral per MEETING, which is a few dozen rows at most.
+#
+# ! EVERY LOOKUP IS SCOPED BY SOURCE. The old reads named a tfrrs race after
+#   the colliding anet meet (meets_tf by meet_id alone) or not at all ("Meet
+#   25571" for Cowboy Jamboree: `meets` is anet's table, and a tfrrs XC
+#   meet's name is in meets_tfrrs). Same lookups as the athlete page's.
+# ! NO PERCENT SIGN IN THESE STRINGS, COMMENTS INCLUDED: psycopg2 reads one
+#   as a placeholder (app.py get_races, 2026-09-03).
+_TWIN_SQL = ("AND NOT EXISTS (SELECT 1 FROM result_twin x WHERE x.sport = "
+             "'{sport}' AND x.result_id = {alias}.result_id)")
+
 _MEETINGS_SQL = {
     "XC": """
-        SELECT ra.meet_id, ra.div_id,
-               to_char(ra.race_date, 'YYYY-MM-DD') AS date,
-               round(ra.distance)::int  AS distance,
-               ra.time_seconds AS t_a,  rb.time_seconds AS t_b,
-               ra.result_id    AS rid_a, rb.result_id   AS rid_b,
-               ra.canon_meet_id,
-               (SELECT min(mm.meet_name) FROM meets mm
-                 WHERE mm.meet_id = ra.meet_id
-                   AND mm.div_id  = ra.div_id) AS meet_name
-        FROM   ranking_results ra
-        JOIN   ranking_results rb
-               ON  rb.sport    = 'XC'
-               AND rb.meet_id  = ra.meet_id
-               AND rb.div_id   = ra.div_id
-               AND rb.person_id = %(b)s
-        WHERE  ra.sport = 'XC'
-          AND  ra.person_id = %(a)s
-          AND  ra.time_seconds > 0 AND rb.time_seconds > 0
-        ORDER  BY ra.race_date DESC
+        WITH pair AS (
+            SELECT a.meet_id, a.div_id, a.source, a.canon_meet_id,
+                   left(a.date, 10)  AS date,
+                   a.time_seconds    AS t_a,  b.time_seconds AS t_b,
+                   a.result_id       AS rid_a, b.result_id   AS rid_b
+            FROM   results a
+            JOIN   results b
+                   ON  b.person_id = %(b)s
+                   AND b.meet_id   = a.meet_id
+                   AND b.div_id    = a.div_id
+                   AND b.source    = a.source
+            WHERE  a.person_id = %(a)s
+              AND  a.time_seconds > 0 AND b.time_seconds > 0
+              {twin_a} {twin_b}
+        )
+        SELECT p.*, NULL::bigint AS event_id, NULL::text AS event_short,
+               NULL::text AS round,
+               COALESCE(NULLIF(btrim(m.meet_name), ''), mt.meet_name,
+                        m.course_name, mt.venue_name)        AS meet_name,
+               COALESCE(m.course_name, mt.venue_name)        AS course,
+               COALESCE(dov.distance::real, m.distance,
+                        (mt.division_distances -> p.div_id::text
+                                               ->> 'distance')::real) AS distance
+        FROM   pair p
+        LEFT JOIN LATERAL (
+            SELECT m.meet_name, m.course_name, m.distance
+            FROM   meets m
+            WHERE  m.meet_id = p.meet_id AND m.div_id = p.div_id
+              AND  m.source  = p.source
+            LIMIT  1) m ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT mt.meet_name, mt.venue_name, mt.division_distances
+            FROM   meets_tfrrs mt
+            WHERE  p.source = 'tfrrs' AND mt.meet_id = p.meet_id
+              AND  mt.sport = 'XC'
+            LIMIT  1) mt ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT dov.distance FROM dist_override dov
+            WHERE  dov.meet_id = p.meet_id AND dov.div_id = p.div_id
+            LIMIT  1) dov ON TRUE
+        ORDER  BY p.date DESC, (p.source = 'anet') DESC
     """,
+    # ★ THE ROUND IS PART OF THE RACE (EBAL Championship 2022, Murray v
+    #   Caldwell: both in the 1600 prelim AND final made FOUR meetings, every
+    #   prelim crossed with every final). And a tfrrs row with no event_id
+    #   matches on its event name instead: COALESCE(event_id, 0) made every
+    #   id-less event at a meet "the same race" as every other.
     "TF": """
-        SELECT ra.meet_id, ra.div_id,
-               to_char(ra.race_date, 'YYYY-MM-DD') AS date,
-               round(ra.distance)::int  AS distance,
-               ra.time_seconds AS t_a,  rb.time_seconds AS t_b,
-               ra.result_id    AS rid_a, rb.result_id   AS rid_b,
-               ra.canon_meet_id,
-               (SELECT min(mt.meet_name) FROM meets_tf mt
-                 WHERE mt.meet_id = ra.meet_id) AS meet_name
-        FROM   ranking_results ra
-        JOIN   ranking_results rb
-               ON  rb.sport    = 'TF'
-               AND rb.meet_id  = ra.meet_id
-               AND rb.div_id   = ra.div_id
-               AND COALESCE(rb.event_id, 0) = COALESCE(ra.event_id, 0)
-               AND rb.person_id = %(b)s
-        WHERE  ra.sport = 'TF'
-          AND  ra.person_id = %(a)s
-          AND  ra.time_seconds > 0 AND rb.time_seconds > 0
-        ORDER  BY ra.race_date DESC
+        WITH pair AS (
+            SELECT a.meet_id, a.div_id, a.source, a.canon_meet_id,
+                   a.event_id, a.event_short,
+                   NULLIF(btrim(a.round), '') AS round,
+                   left(a.date, 10)  AS date,
+                   a.time_seconds    AS t_a,  b.time_seconds AS t_b,
+                   a.result_id       AS rid_a, b.result_id   AS rid_b
+            FROM   results_tf a
+            JOIN   results_tf b
+                   ON  b.person_id = %(b)s
+                   AND b.meet_id   = a.meet_id
+                   AND b.source    = a.source
+                   AND b.div_id IS NOT DISTINCT FROM a.div_id
+                   AND (b.event_id = a.event_id
+                        OR (a.event_id IS NULL AND b.event_id IS NULL
+                            AND b.event_short = a.event_short))
+                   AND NULLIF(btrim(b.round), '')
+                       IS NOT DISTINCT FROM NULLIF(btrim(a.round), '')
+            WHERE  a.person_id = %(a)s
+              AND  a.time_seconds > 0 AND b.time_seconds > 0
+              AND  COALESCE(a.is_field, 0) = 0 AND COALESCE(b.is_field, 0) = 0
+              AND  COALESCE(a.is_relay, 0) = 0 AND COALESCE(b.is_relay, 0) = 0
+              {twin_a} {twin_b}
+        )
+        SELECT p.*, NULL::text AS course, NULL::real AS distance,
+               COALESCE(NULLIF(btrim(m.meet_name), ''), mt.meet_name) AS meet_name
+        FROM   pair p
+        LEFT JOIN LATERAL (
+            SELECT m.meet_name FROM meets_tf m
+            WHERE  m.meet_id = p.meet_id AND m.source = p.source
+            LIMIT  1) m ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT mt.meet_name FROM meets_tfrrs mt
+            WHERE  p.source = 'tfrrs' AND mt.meet_id = p.meet_id
+              AND  mt.sport = 'TF'
+            LIMIT  1) mt ON TRUE
+        ORDER  BY p.date DESC, (p.source = 'anet') DESC
     """,
 }
+
+
+def meetingsSql(sport, twins=True):
+    """The meeting query for one sport, with the twin anti-join on both
+    sides when result_twin exists (absent, nothing is hidden -- the athlete
+    page's own posture, app._hasResultTwin)."""
+    fill = {"twin_a": "", "twin_b": ""}
+    if twins:
+        fill = {"twin_a": _TWIN_SQL.format(sport=sport, alias="a"),
+                "twin_b": _TWIN_SQL.format(sport=sport, alias="b")}
+    return _MEETINGS_SQL[sport].format(**fill)
+
+
+def _hasTwinTable(cur):
+    try:
+        cur.execute("SELECT to_regclass('result_twin') IS NOT NULL AS ok")
+        row = cur.fetchone()
+        return bool(row["ok"] if isinstance(row, dict) else row[0])
+    except Exception:                                # noqa: BLE001
+        cur.connection.rollback()
+        return False
 
 _BESTS_SQL = """
     SELECT sport, round(distance)::int AS dist,
@@ -186,11 +282,14 @@ def athleteCard(cur, pid):
                     ((row or {}).get("first_name"),
                      (row or {}).get("last_name")) if p) or f"Athlete {pid}"
 
-    current = None
+    current = rated = None
     if seasons:
         # The season the reader means by "now": the one raced most recently.
+        # It names the team, the grade and the state, as the athlete page's
+        # latest_team does.
         current = max(seasons, key=lambda s: (s.get("last_race") or
                                               datetime.date.min))
+        rated = headerSeason(seasons)
     best = max((float(s["best_rating"]) for s in seasons
                 if s.get("best_rating") is not None), default=None)
 
@@ -215,16 +314,38 @@ def athleteCard(cur, pid):
         #   the college directory first for a college pool.
         "state": (current or {}).get("state"),
         "pool": (current or {}).get("pool"),
-        "season_label": (f"{displayYear(current['sport'], current['year'])} "
-                         f"{current['sport']}") if current else None,
-        "season_sport": current["sport"] if current else None,
-        "season_rating": (float(current["mean_rating"])
-                          if current and current.get("mean_rating") is not None
+        # ★ THE RATING IS THE ATHLETE PAGE'S HEADER SEASON, NOT "NOW"
+        #   (2026-10-05). The newest season can be two races deep: Trey
+        #   Caldwell's card read "2026 TF 111.6, 2 races" while his own page
+        #   heads with 2025 TF at 135.5, the boards' three-race rule. Two
+        #   pages quoting two ratings for one athlete is a defect whichever
+        #   is right; headerSeason is that page's ORDER BY. Its pool rides
+        #   in season_pool, because the HS stamp must use the RATING's pool,
+        #   not the team season's.
+        "season_label": (f"{displayYear(rated['sport'], rated['year'])} "
+                         f"{rated['sport']}") if rated else None,
+        "season_sport": rated["sport"] if rated else None,
+        "season_pool": rated.get("pool") if rated else None,
+        "season_rating": (float(rated["mean_rating"])
+                          if rated and rated.get("mean_rating") is not None
                           else None),
-        "season_races": int(current["n_races"]) if current else 0,
+        "season_races": int(rated["n_races"]) if rated else 0,
         "best_rating": best,
         "seasons": seasons,
     }
+
+
+def headerSeason(seasons):
+    """The season the athlete page's header rates (app.athlete): a rated
+    season first, then one with three races or more, then the latest raced.
+    _SEASONS_SQL only returns rated seasons, so the first key is implicit."""
+    if not seasons:
+        return None
+    return min(seasons, key=lambda s: (
+        0 if int(s.get("n_races") or 0) >= 3 else 1,
+        -(s.get("last_race") or datetime.date.min).toordinal(),
+        -int(s.get("year") or 0),
+        -int(s.get("n_races") or 0)))
 
 
 def meetings(cur, a, b):
@@ -232,22 +353,34 @@ def meetings(cur, a, b):
     across feeds. Times and margin are precomputed; the template only
     prints."""
     rows, seen = [], set()
+    twins = _hasTwinTable(cur)
     for sport in ("XC", "TF"):
-        cur.execute(_MEETINGS_SQL[sport], {"a": a, "b": b})
+        cur.execute(meetingsSql(sport, twins), {"a": a, "b": b})
         for r in cur.fetchall():
+            t_a, t_b = float(r["t_a"]), float(r["t_b"])
+            # a non-finish sentinel is not a time (issue 59): no meeting
+            if isSentinelTime(t_a) or isSentinelTime(t_b):
+                continue
+            event = eventLabel(sport, r)
+            # ! NO EVENT IN THE KEY: the two feeds' copies of one race can
+            #   resolve different distances (or none) and spell the round
+            #   differently; the pair of times already says which race.
             key = (sport,
-                   r["canon_meet_id"] or (r["meet_id"], r["div_id"]),
-                   round(float(r["t_a"]), 1), round(float(r["t_b"]), 1))
+                   r["canon_meet_id"] or (r["source"], r["meet_id"],
+                                          r["div_id"]),
+                   round(t_a, 1), round(t_b, 1))
             if key in seen:
                 continue
             seen.add(key)
-            t_a, t_b = float(r["t_a"]), float(r["t_b"])
             rows.append({
                 "sport": sport,
                 "date": r["date"],
                 "meet_id": r["meet_id"], "div_id": r["div_id"],
-                "meet_name": r["meet_name"] or f"Meet {r['meet_id']}",
-                "distance": r["distance"],
+                "meet_name": r["meet_name"] or "Race results",
+                "course": (r["course"] if r.get("course")
+                           and r["course"] != r["meet_name"] else None),
+                "event": event,
+                "href": raceHref(sport, r),
                 "time_a": fmtTime(t_a), "time_b": fmtTime(t_b),
                 # winner: 'a' | 'b' | None on a dead heat at the stored
                 # precision. margin always positive, labelled by the template.
@@ -256,6 +389,33 @@ def meetings(cur, a, b):
             })
     rows.sort(key=lambda r: r["date"], reverse=True)
     return rows
+
+
+def eventLabel(sport, r):
+    """'5000m' for an XC race; for track the athlete page's own event label
+    ('1600m', 'Mile') plus the round when the feed sent one."""
+    if sport == "XC":
+        d = r.get("distance")
+        return f"{int(round(float(d)))}m" if d else None
+    label = _tfEvent(r["event_short"])[1] if r.get("event_short") else None
+    rnd = r.get("round")
+    return " ".join(p for p in (label, rnd) if p) or None
+
+
+def raceHref(sport, r):
+    """The race page link the athlete page would draw for A's row.
+
+    ⚠ TRACK IS THREE PARTS, /race/tf/<meet>/<event>/<div>; this page built
+      two and every track meeting 404ed. ?r= pins the page to the row's own
+      feed, since the id spaces collide; with no event or division (tfrrs
+      rows can lack both) the meet page is where the row lives."""
+    rid = r["rid_a"]
+    if sport == "XC" and r.get("div_id") is not None:
+        return f"/race/xc/{r['meet_id']}/{r['div_id']}?r={rid}"
+    if (sport == "TF" and r.get("event_id") is not None
+            and r.get("div_id") is not None):
+        return f"/race/tf/{r['meet_id']}/{r['event_id']}/{r['div_id']}?r={rid}"
+    return f"/meet/{sport.lower()}/{r['meet_id']}?r={rid}"
 
 
 def record(mtgs):

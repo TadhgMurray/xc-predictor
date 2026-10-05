@@ -1033,25 +1033,41 @@ def compare_page():
 
     a = request.args.get("a", type=int)
     b = request.args.get("b", type=int)
-    ctx = {"card_a": None, "card_b": None, "same": bool(a and a == b)}
+    ctx = {"card_a": None, "card_b": None, "same": bool(a and a == b),
+           "missing": []}
 
     # Arriving from an athlete page carries one id: prefill that picker so
     # the reader only has to find the rival.
-    if bool(a) != bool(b):
+    # ★ AND AN ID THAT IS NOT AN ATHLETE (2026-10-05). A merged-away id is a
+    #   301 to the survivor, as /athlete/<id> already is -- the search index
+    #   still offered Tadhg Murray's merged 13642378, and picking it gave a
+    #   blank page. An id that is nowhere keeps the other side prefilled and
+    #   says which id it was, instead of the bare picker.
+    if (a or b) and not ctx["same"]:
         with getConn() as conn:
             with conn.cursor(
                     cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                if a:
-                    ctx["card_a"] = athleteCard(cur, a)
-                else:
-                    ctx["card_b"] = athleteCard(cur, b)
+                ids, moved = {"a": a, "b": b}, False
+                for side, pid in list(ids.items()):
+                    if not pid:
+                        continue
+                    card = athleteCard(cur, pid)
+                    if card is None:
+                        new = _personRedirect(cur, pid)
+                        if new:
+                            ids[side], moved = new, True
+                        else:
+                            ctx["missing"].append(pid)
+                    ctx["card_" + side] = card
+                if moved:
+                    return redirect("/compare?" + "&".join(
+                        f"{k}={v}" for k, v in ids.items() if v), code=301)
 
-    if a and b and a != b:
+    if a and b and a != b and ctx["card_a"] and ctx["card_b"]:
         with getConn() as conn:
             with conn.cursor(
                     cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                card_a = athleteCard(cur, a)
-                card_b = athleteCard(cur, b)
+                card_a, card_b = ctx["card_a"], ctx["card_b"]
                 if card_a and card_b:
                     # ! DEFAULT BEFORE STAMPING. rv() treats a missing key as
                     #   "has an alternate" (Undefined is not None in Jinja),
@@ -1085,7 +1101,7 @@ def compare_page():
                     for card in (card_a, card_b):
                         if card["season_rating"] is not None:
                             cell = {"rating": card["season_rating"],
-                                    "pool": card["pool"],
+                                    "pool": card["season_pool"],
                                     "sport": card["season_sport"]}
                             head_cells.append((card, cell))
                     has_hs = stampBoardRows([c for _p, c in head_cells],

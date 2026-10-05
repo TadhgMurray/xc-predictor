@@ -62,6 +62,9 @@
 {% if same %}
     <p class="meta">That is the same athlete twice. Pick two different people.</p>
 {% endif %}
+{% for pid in missing %}
+    <p class="meta">There is no athlete with id {{ pid }}. Search for them by name.</p>
+{% endfor %}
 
 {% if card_a and card_b %}
     {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
@@ -109,7 +112,7 @@
     <h2>Meetings <span class="dist-note">same race, head to head</span></h2>
     {% if meetings %}
     <table class="staged h2h-meet" data-step="20">
-        <thead><tr><th>Date</th><th>Meet</th><th>Distance</th>
+        <thead><tr><th>Date</th><th>Meet</th><th>Event</th>
             <th><span class="h2h-dot dot-a"></span>{{ card_a.short }}</th>
             <th><span class="h2h-dot dot-b"></span>{{ card_b.short }}</th>
             <th>Margin</th></tr></thead>
@@ -117,8 +120,11 @@
             {% for m in meetings %}
             <tr{{ hid(loop.index0) }}>
                 <td class="no-break">{{ m.date|mdy }}</td>
-                <td><a href="/race/{{ 'xc' if m.sport == 'XC' else 'tf' }}/{{ m.meet_id }}/{{ m.div_id }}" title="{{ m.meet_name }}">{{ m.meet_name }}</a></td>
-                <td>{{ m.distance }}m{{ " · TF" if m.sport == "TF" }}</td>
+                {# the href is built in compare.raceHref: track is three
+                   parts, and ?r= pins the row's own feed #}
+                <td><a href="{{ m.href }}" title="{{ m.meet_name }}">{{ m.meet_name }}</a>
+                    {%- if m.course %}<div class="h2h-course">{{ m.course }}</div>{% endif %}</td>
+                <td>{{ m.event or " - " }}{{ " · TF" if m.sport == "TF" }}</td>
                 <td{{ ' class="win"'|safe if m.winner == "a" }}>{{ m.time_a }}</td>
                 <td{{ ' class="win"'|safe if m.winner == "b" }}>{{ m.time_b }}</td>
                 {% if m.winner == "a" %}<td class="margin-a">+{{ "%.1f"|format(m.margin) }}s {{ card_a.short }}</td>
