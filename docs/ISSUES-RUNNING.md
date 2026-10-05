@@ -3933,3 +3933,23 @@ field to fill a hover. It now runs only for runners with no rating (basis
   8K times run ~20% fast (OPEN). XCP_PREDICT_BASIS=guard serves the model
   where it agrees with the rating within 8%; =model is the raw network.
 tests/test_predict_asran_and_grades.py.
+
+## 2026-10-05 — 🔎 rain is credited; the published day terms are NOT centred
+
+`scripts/diag_rain.py` (2026-10-05, 158,896 XC and 290,934 TF race days):
+- **Rain is not under-credited on average.** The leftover day term (what
+  the weather correction leaves) is flat across window rain (XC +0.028%/mm;
+  8 mm+ days +0.35% vs dry), rain the night before (+0.018%/mm) and soil
+  (+0.017%/0.1). TF flat. "Rain not doing enough" needs a named race.
+- **But every bin sits at the same offset: XC median -2.87% (weighted
+  -3.2%), TF +1.0% (+1.5%).** A constant across all days is not a day: it is
+  a level gap between the bracket's course numbers and the solve, parked in
+  u. XC ratings carry u (XCP_RACE_EFFECT_SPORTS=XC), TF's do not, so the
+  constant moves XC against track inside each pool -- the direction of the
+  owner's conversion complaints and of the cross-sport holdout (track minus
+  XC +1.60%, LACCTiC -1.08%).
+  ⏳ FIRST: did the 2026-10-04 refit (691cd9a) create it? The 08_golive log's
+  "[joint] bracket: day terms refitted ... median move" line, and the mean
+  of race_effect_joint vs race_effect. If so, centre u per sport (runner-
+  weighted) after the refit and let the scorecard's cross-sport and LACCTiC
+  lines judge it.
