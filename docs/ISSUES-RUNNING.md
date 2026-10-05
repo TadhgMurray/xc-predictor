@@ -4149,3 +4149,27 @@ Owner liked the idea (above_level.py; race.html and race_tf.html).
 (`?alt=`, biggest source by default) and every predict call carries it: race list, date, course,
 field, state, season ("as it ran" now loads the right year's roster), labels, share cards, and the
 "Predict this" links from meet and race pages. With no source given, old paths read as before.
+
+## 2026-10-05 — 🔎 UI audit: the patchwork, catalogued (decisions pending)
+
+The live site was screenshotted page by page at 1280 and 390 px. What differs from page to page:
+1. **Toggles and tabs: 7 styles.**
+   - Rankings: boxed tabs with a navy fill.
+   - Home: black-filled squares plus outlined chips.
+   - Recruiting: black rounded pills.
+   - Coaches: outlined pills, with no selected state shown (a bug).
+   - Athlete: white segmented control, plus a dark rating-scale segment.
+   - Course: tiny black chips, plus blue pills.
+   - Meets: a black segmented control.
+2. **Filter bars: 5 styles.** Rankings is a grey card with uppercase labels and a blue Apply button. Meets is a beige card with a black Filter button. Recruiting has bare selects and a white Apply button. Coaches has inline labels and a blue Search button. Breakouts has inline label/select pairs.
+3. **Page width: 3 widths.** Rankings and athlete pages are full width. Meet, course, recruiting, predictions and the landing pages are centred at about 1080 px. Breakouts and projections use page-wide.
+4. **Page header: 4 variants.** Title plus share button, a lead line in one of three sizes, and a link floating top right on some pages.
+5. **Dates: 2 formats.** "2025-09-02" on the meet, course and school roster pages; "Dec 6, 2025" on athlete pages and Breakouts.
+6. **Level and gender words.** HS Boys / High School (M) / Boys / Men / boy / HS boys.
+7. **Help icons: 2.** An "i" circle and a "?" circle.
+8. **Phone.** The athlete page's race tables push the page sideways (no scroll box).
+9. **Crests.** A broken-image icon shows where a school has no crest (landing and rankings boards).
+10. **Data, not UI:** "Unknown" names on rosters and boards (unnamed freshmen; the names requeue).
+
+The plan: one small set of shared parts (header, tabs, chips, filter bar, primary/secondary
+button, date format, labels), applied page by page after the owner picks the variants.
