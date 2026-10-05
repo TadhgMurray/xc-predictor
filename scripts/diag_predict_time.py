@@ -260,13 +260,19 @@ def main():
                 P._stampCrests(finishers, "school", "school_state")
 
     print()
-    # the page's request: everything but the whole-field model stages,
-    # which _servedTimes now replaces
-    skip = ("_predictTimes", "_historyRows", "_ratingTimes", "_weatherVariants")
-    total = sum(dt for lab, dt in Stage.rows if not lab.startswith(skip))
-    print(f"  a page request now costs about {total:.1f} s (gunicorn kills at 60)")
-    worst = max(Stage.rows, key=lambda r: r[1])
-    print(f"  slowest single stage: {worst[0]} at {worst[1]:.1f} s")
+    # ★ A PAGE REQUEST, AND ONLY THAT (2026-10-05: this line said 2.6 s while
+    #   the request was ~0.5 s). Left out: the model load (each worker warms
+    #   it at boot), the roster's own sub-steps (already inside
+    #   _teamRosters), and the whole-field model stages that _servedTimes
+    #   replaced. What is summed is what the route runs, in order.
+    page = ("_teamRosters", "_fullField", "_servedTimes", "_score",
+            "race_sim.simulate", "_decorate")
+    rows = [(lab, dt) for lab, dt in Stage.rows if lab.startswith(page)]
+    total = sum(dt for _lab, dt in rows)
+    print(f"  a page request costs about {total:.2f} s (gunicorn kills at 60)")
+    if rows:
+        worst = max(rows, key=lambda r: r[1])
+        print(f"  slowest step of it: {worst[0].strip()} at {worst[1]:.2f} s")
 
 
 if __name__ == "__main__":
