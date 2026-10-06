@@ -32,6 +32,12 @@ INSERT INTO results SELECT 600+g, 4000+g, 'anet', 6, 61, 6, g, 800+g, '2025-09-1
 INSERT INTO results SELECT 650+g, 4000+g, 'anet', 6, 62, 6, g, 790+g, '2025-09-10' FROM generate_series(1,6) g;
 -- cross-feed twins at canon meet 1: tfrrs rows with same place+time (twin_race) and one by person (twin_person)
 INSERT INTO results VALUES (701, NULL, 'tfrrs', 71, 711, 1, 1, 903.14, '2025-10-01'), (702, 1002, 'tfrrs', 71, 711, 1, 99, 1234.0, '2025-10-01');
+-- one race under two names, no canon link (the UVU pair, 2026-10-06): the
+-- tfrrs copy at whole seconds goes; a same-day tfrrs row 14 s off stays
+INSERT INTO results VALUES (7201, 5101, 'anet', 73, 731, NULL, 1, 801.4, '2026-09-04'),
+  (721, 5101, 'tfrrs', 72, 721, NULL, 1, 801.0, '2026-09-04'),
+  (7202, 5102, 'anet', 74, 741, NULL, 3, 815.0, '2026-09-05'),
+  (722, 5102, 'tfrrs', 75, 751, NULL, 3, 801.0, '2026-09-05');
 -- a lone row that pairs with nothing
 INSERT INTO results VALUES (801, 5001, 'anet', 8, 81, 8, 1, 999.9, '2025-10-20');
 

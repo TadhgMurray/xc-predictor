@@ -30,6 +30,9 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
                   across divisions, a time alone repeats across people.
     twin_person   the old rule, kept so the table is complete: a tfrrs row
                   whose person has an anet row at the same canon meet.
+    twin_same_day a tfrrs XC row whose person has an anet XC row the same
+                  day within a second: one race under two names with no
+                  canon link (2026-10-06, the UVU pair).
     dup_same_feed the later result_id of two rows in ONE feed that agree on
                   person, meet, division (and event, on track), date and
                   time to the tenth. Two rows, one run.
@@ -117,6 +120,42 @@ def twinPersonSql(table, sport):
                        WHERE a.source = 'anet'
                          AND a.person_id = t.person_id
                          AND a.canon_meet_id = t.canon_meet_id)
+    """
+
+
+def twinSameDaySql(table, sport):
+    """A tfrrs XC row whose person has an anet XC row on the SAME DAY at the
+    same time, to the coarser feed's precision (owner, 2026-10-06: "same
+    day, same time, same race in XC"). "Utah Valley Invitational" (anet,
+    13:21.4) and "2026 UVU Collegiate XC Invite" (tfrrs, 13:21), Sep 4
+    2026: one race, two names, no canon_meet_id between them, so neither
+    canon-keyed rule saw it, and both copies were on the page with PR flags.
+
+    ! "SAME TIME" IS UNDER ONE SECOND. tfrrs posts XC to the whole second
+      (rounded or cut, the gap is under 1 s); anet to the tenth. Nobody
+      runs two cross country races in one day within a second of each
+      other. XC ONLY: on the track one person runs several events a day,
+      and a 1600 and a 3200 can't be told apart by the day alone.
+    ! ANET SURVIVES, as in every cross-feed rule."""
+    if sport != "XC":
+        return f"SELECT result_id FROM {table} WHERE false"
+    return f"""
+        WITH t AS (
+            SELECT result_id, person_id, substr(date, 1, 10) AS d, time_seconds AS ts
+            FROM   {table}
+            WHERE  source = 'tfrrs' AND person_id IS NOT NULL
+              AND  time_seconds > 0 AND time_seconds < 100000
+              AND  date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'),
+        a AS (
+            SELECT DISTINCT r.person_id, substr(r.date, 1, 10) AS d, r.time_seconds AS ts
+            FROM   {table} r
+            JOIN   (SELECT DISTINCT person_id FROM t) p ON p.person_id = r.person_id
+            WHERE  r.source = 'anet'
+              AND  r.time_seconds > 0 AND r.time_seconds < 100000
+              AND  r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}')
+        SELECT DISTINCT t.result_id
+        FROM   t JOIN a ON a.person_id = t.person_id AND a.d = t.d
+        WHERE  abs(a.ts - t.ts) < 1.0
     """
 
 
@@ -476,6 +515,7 @@ def xcPlaceholderSql(table, sport):
 import level_conflict as LC                                     # noqa: E402
 
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
+         ("twin_same_day", twinSameDaySql),
          ("dup_same_feed", dupSameFeedSql),
          ("dup_cross_date", dupCrossDateSql),
          ("dup_race_copy", dupRaceCopySql),

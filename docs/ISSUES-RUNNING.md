@@ -4281,6 +4281,14 @@ venue: a different distance cell, a different date, or none at all.
   in course_difficulties, so the header's (canonical, 6000) join is empty. Check with
   `scripts/diag_race_difficulty.py "<race url>"`, which prints the chain and the step that
   came up empty.
+- **✅ FIXED (same day): twin_same_day.** A new rule in engine/twin_flag.py (step 04c, nightly
+  and full pipeline) flags a tfrrs XC row whose person has an anet XC row on the same day within
+  1 s. tfrrs posts whole seconds; anet keeps the copy. XC only: on the track one person runs
+  several events a day. On the fixtures it also caught 9032 (one race in both feeds). Tests:
+  tests/test_twin_flag.py, on a real Postgres.
+- **By state tab.** The state ranking pages (/rankings/<sport>/<pool>[/<state>]) are now a tab on
+  Rankings, Breakouts and the state pages themselves, for the pool and sport in view. "State
+  meets" as a Predictions tab: owner wants to talk about it first.
 - **🔎 Same race twice on an athlete page.** On Sep 4 2026, "Utah Valley Invitational" (anet,
   13:21.4, 146.6, +3.0%) and "2026 UVU Collegiate XC Invite" (tfrrs, 13:21, 148.2, difficulty
   -) are the same race at Scera Park, and both carry PR/CR flags. The cross-feed twin was not

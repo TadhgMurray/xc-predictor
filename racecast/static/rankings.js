@@ -1877,7 +1877,8 @@ function syncBoard(board) {
   state.offset = 0;
   $("rankings").dataset.board = board;
 
-  document.querySelectorAll(".tab").forEach((tab) => {
+  // .tab-link tabs (Breakouts, By state) are pages of their own
+  document.querySelectorAll(".tab:not(.tab-link)").forEach((tab) => {
     tab.setAttribute("aria-selected", String(tab.dataset.board === board));
   });
 
@@ -1996,9 +1997,33 @@ function setBoard(board) {
  *  WIRING
  * ------------------------------------------------------------------ */
 
-document.querySelectorAll(".tab").forEach((tab) => {
+document.querySelectorAll(".tab:not(.tab-link)").forEach((tab) => {
   tab.addEventListener("click", () => setBoard(tab.dataset.board));
 });
+
+/* ★ BY STATE OPENS THE STATE PAGES FOR THE POOL AND SPORT IN VIEW (owner,
+   2026-10-06: "add by state"). /rankings/<sport>/<pool> lists every
+   state; its slugs are landing.py's. "Both" sports and the PR board's
+   "All pools" have no state page, so they fall back to XC / HS boys. */
+(function () {
+  const a = document.getElementById("by-state-tab");
+  const pool = $("pool"), sport = $("sport");
+  if (!a || !pool || !sport) return;
+  const SLUG = {hs_m: "hs-boys", hs_f: "hs-girls", college_m: "college-men",
+                college_f: "college-women", ms_m: "ms-boys", ms_f: "ms-girls"};
+  function sync() {
+    const sp = sport.value === "TF" ? "tf" : "xc";
+    a.href = `/rankings/${sp}/${SLUG[pool.value] || "hs-boys"}`;
+  }
+  pool.addEventListener("change", sync);
+  sport.addEventListener("change", sync);
+  // the URL restore below sets the selects without a change event, so the
+  // href is also brought up to date the moment the tab is used
+  a.addEventListener("click", sync);
+  a.addEventListener("mouseenter", sync);
+  a.addEventListener("focus", sync);
+  sync();
+})();
 
 /* ONE listener on the container, not one per header -- the table is replaced
    wholesale on every load, so per-header listeners would have to be rebound

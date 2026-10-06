@@ -10096,7 +10096,7 @@ def rankings_landing(sport, pool, state=None):
         path=L.landingPath(sport, pool, state),
         national_path=L.landingPath(sport, pool),
         sport=sport, sport_words=L.SPORT_WORDS[sport],
-        pool=pool, pool_words=pool_words,
+        pool=pool, pool_words=pool_words, pool_key=pool_key,
         pool_level="college" if pool_key.startswith("college") else "hs",
         state=state, state_name=L.STATE_NAMES.get(state or "", ""),
         year=year, rows=rows,
