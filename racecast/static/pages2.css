@@ -51,7 +51,7 @@
 .p2-page .p2-chips a { padding: 0.2rem 0.6rem; font-size: 0.84rem; text-decoration: none;
                        border: 1px solid var(--line, #e5e7eb); color: #374151; white-space: nowrap; }
 .p2-page .p2-chips a:hover { border-color: var(--line-2, #cbd0d6); background: var(--hover, #f3f6fa); }
-.p2-page .p2-chips a.is-on { border-color: var(--accent, #14477d); color: var(--accent, #14477d);
+.p2-page .p2-chips a.is-on { border-color: var(--sel, #111418); color: var(--sel, #111418);
                              font-weight: 700; }
 .p2-page .p2-state-form { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.86rem; }
 .p2-page .p2-state-form select { font: inherit; padding: 0.22rem 0.4rem;
@@ -111,8 +111,8 @@
 .p2-page .p2-filters input[type=search], .p2-page .p2-filters input[type=text] {
   font: inherit; padding: .3rem .5rem; border: 1px solid var(--line-2, #cbd0d6); border-radius: 5px;
   min-width: 12rem; }
-.p2-page .p2-filters button { font: inherit; padding: .3rem .8rem; border: 1px solid var(--accent, #14477d);
-  background: var(--accent, #14477d); color: #fff; border-radius: 5px; cursor: pointer; align-self: flex-end; }
+.p2-page .p2-filters button { font: inherit; padding: .3rem .8rem; border: 1px solid var(--sel, #111418);
+  background: var(--sel, #111418); color: #fff; border-radius: 5px; cursor: pointer; align-self: flex-end; }
 .p2-page .p2-filters > a { align-self: flex-end; padding-bottom: .35rem; }
 .p2-page .p2-units summary { cursor: pointer; color: var(--link, #14477d); padding: .35rem 0; }
 .p2-page .p2-unit-row { display: flex; flex-wrap: wrap; gap: .5rem .8rem; margin-top: .3rem; }
@@ -160,6 +160,6 @@
 .p2-page .p2-seg a { padding: 0.4rem 0.95rem; border: 1px solid var(--line, #e5e7eb); border-radius: 6px;
   background: #fff; font-size: 0.86rem; font-weight: 500; color: var(--ink, #111418); }
 .p2-page .p2-seg a + a { border-left: 1px solid var(--line, #e5e7eb); }
-.p2-page .p2-seg a.is-on { background: var(--accent, #14477d); border-color: var(--accent, #14477d); color: #fff; }
+.p2-page .p2-seg a.is-on { background: var(--sel, #111418); border-color: var(--sel, #111418); color: #fff; }
 .p2-page .p2-chips a { border-radius: 999px; }
-.p2-page .p2-chips a.is-on { background: #eef3f9; font-weight: 600; }
+.p2-page .p2-chips a.is-on { background: var(--sel-bg, #f1f2f4); font-weight: 600; }

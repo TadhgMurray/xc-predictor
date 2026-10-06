@@ -4188,6 +4188,26 @@ slow, and nearly the whole field 3-8% above its season level. Why isn't the day 
 - **The fix, if it leaks:** a within-season form term in the solve (per pool, by week), so the day
   term carries only the day.
 
+**Measured (2026-10-06, owner ran --season-trend): it leaks.** Day terms run about +2-3% slow in
+weeks 0-2 and about -1% fast by weeks 10-13. The pooled slope over weeks 0-12 is -0.291% per week,
+-3.49% by week 12. The same shape holds every season from about 2004 to 2025.
+- **Correction to the hypothesis above.** The solve does HAVE a within-season term: joint_solve's
+  form curve, one piecewise-linear curve per pool over the academic year, with 13 knots at 30 days
+  each, smooth 1.0 and a gap weight of 100. The bracket refit subtracts it before refitting u. So
+  the curve is fitted too flat or constrained away from the drift, not missing.
+- **Candidate causes:**
+  - smoothing stiffness;
+  - 30-day knots, too coarse for a 12-week season;
+  - amp(a) scaling;
+  - the gap penalty;
+  - the season-ability tie absorbing the mean.
+- **Next.** The `[joint] curve:` lines from the latest run's 08 solve log show the fitted curve
+  per pool. Compare its Aug-Nov drop with the 3.5% left in the day terms.
+- **Dropdowns, re-run.** Only 2 of 30 races on 29603086 still lack a day row:
+  - Foot Locker West 2024-12-07: a champ-cell row exists under 'XC:Foot Locker West Regional',
+    so the page's name join is what misses;
+  - the Mid-Season Mania 1600m placeholder: nothing to show.
+
 **Era.** Owner: does day/era association mean the era term isn't doing enough? The day terms'
 per-season means (-2.7 / -3.2% XC before 03e87af) are year-level shifts the era curve left
 behind. Centring now moves them into abilities. Run REPORT's `day_centre_xc` per season against

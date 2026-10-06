@@ -962,7 +962,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
      Tailwind's default blue-700, and a palette lifted from a framework's
      defaults is a large part of what makes a page look generated. The
      buttons now sit in the same navy family as the links. */
-  --rk-accent:  #14477d;
+  --rk-accent:  var(--sel, #111418);   /* selected tab / go button: black (owner, 2026-10-06) */
   --rk-warn-bg: #fef3c7;
   --rk-warn-fg: #78350f;
   --rk-error:   #b91c1c;
@@ -3224,7 +3224,13 @@ tr.more-row td { padding: 0; }
   --muted:  #6b7280;
   --line:   #e5e7eb;
   --line-2: #cbd0d6;
-  --accent: #14477d;   /* the same navy as --link; see --rk-accent */
+  --accent: #14477d;   /* the same navy as --link */
+  /* ★ SELECTED CONTROLS ARE BLACK, LINKS STAY NAVY (owner, 2026-10-06:
+     "I prefer the black over the blue"). An "on" tab, chip or primary
+     button reads as state, a navy word reads as a link; one colour for
+     both blurred them. */
+  --sel:    #111418;
+  --sel-bg: #f1f2f4;   /* a selected chip's ground */
   --zebra:  #fafbfc;
   --hover:  #f3f6fa;
   --gold:   #a97a12;
@@ -4638,8 +4644,8 @@ li > .school-mark, p > .school-mark { margin-right: 0.35rem; }
 .recruit-athlete .rc-input-xs { width: 3rem; text-align: center; padding: 0.35rem 0.4rem; }
 .recruit-athlete .rc-time { width: 6rem; font-variant-numeric: tabular-nums; }
 .recruit-athlete .rc-btn { padding: 0.55rem 1.1rem; border: 0; border-radius: 6px; font: inherit; font-weight: 650; font-size: 0.9rem;
-  background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap; }
-.recruit-athlete .rc-btn:hover { filter: brightness(1.08); }
+  background: var(--sel); color: #fff; cursor: pointer; white-space: nowrap; }
+.recruit-athlete .rc-btn:hover { background: #2b2f36; }
 .recruit-athlete .rc-btn-quiet { background: #fff; color: var(--ink); border: 1px solid var(--line-2); font-weight: 600; }
 .recruit-athlete .rc-link { background: none; border: 0; padding: 0; font: inherit; color: var(--link); text-decoration: underline; cursor: pointer; }
 
@@ -4899,7 +4905,7 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 .recruit-coach .rc-classes { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
 .recruit-coach .rc-chip { padding: 0.35rem 0.7rem; border: 1px solid var(--line-2); border-radius: 999px; background: #fff; font: inherit;
   font-size: 0.82rem; font-weight: 600; color: #374151; cursor: pointer; }
-.recruit-coach .rc-chip.is-on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.recruit-coach .rc-chip.is-on { background: var(--sel); color: #fff; border-color: var(--sel); }
 .recruit-coach .rc-filters { align-items: center; }
 .recruit-coach .rc-filters .rc-group { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; color: #374151; }
 .recruit-coach .rc-input-sm { width: 4.6rem; }
@@ -5670,16 +5676,16 @@ td.vs-level.is-under { color: var(--muted); }
 .board-strip { display: flex; flex-wrap: wrap; gap: .25rem; margin: 0 0 1rem; }
 .board-strip a { padding: .5rem 1.125rem; border: 1px solid var(--line, #e5e7eb); background: #fff;
                  border-radius: 6px; font-size: .875rem; font-weight: 500; color: inherit; text-decoration: none; }
-.board-strip a.is-on { background: var(--accent, #14477d); border-color: var(--accent, #14477d); color: #fff; }
+.board-strip a.is-on { background: var(--sel, #111418); border-color: var(--sel, #111418); color: #fff; }
 
 /* ======================================================================= *
  *  ONE LOOK FOR TABS, ONE FOR CHIPS (owner, 2026-10-05 UI pass)
  *
  *  The audit found seven toggle styles doing two jobs. Two looks now:
  *    TAB   switches what the page shows (a board, a view, a sport): the
- *          Rankings board tab -- boxed, navy when on.
+ *          Rankings board tab -- boxed, black when on.
  *    CHIP  narrows what is shown (a level, a window, a distance, a year):
- *          a small outlined pill, navy outline + navy text when on.
+ *          a small outlined pill, black outline + black text when on.
  *  CSS only, by design: every page keeps its markup and its script, these
  *  rules re-skin the classes each page already uses. Selectors repeat each
  *  page's own scoping so they win on order, not on !important.
@@ -5697,7 +5703,7 @@ td.vs-level.is-under { color: var(--muted); }
   border: 0; overflow: visible; }
 .sport-toggle a { border-right: 1px solid var(--line, #e5e7eb); }
 .seg-btn.is-on, .toggle-group button.is-active, .board-strip a.is-on {
-  background: var(--accent, #14477d); border-color: var(--accent, #14477d); color: #fff;
+  background: var(--sel, #111418); border-color: var(--sel, #111418); color: #fff;
 }
 .seg-btn:hover:not(.is-on), .toggle-group button:hover:not(.is-active),
 .sport-toggle a:hover, .board-strip a:hover:not(.is-on) { background: var(--hover, #f3f6fa); }
@@ -5709,15 +5715,15 @@ td.vs-level.is-under { color: var(--muted); }
   color: #374151; text-decoration: none; cursor: pointer;
 }
 .pool-chips .chip.is-on, .rc-seg-btn.is-on, .recruit-athlete .rc-seg-btn.is-on, .yb.is-on {
-  background: #eef3f9; border-color: var(--accent, #14477d); color: var(--accent, #14477d);
+  background: var(--sel-bg, #f1f2f4); border-color: var(--sel, #111418); color: var(--sel, #111418);
   font-weight: 600;
 }
 
-/* ---- the primary button: navy, wherever a form submits ----------------- */
+/* ---- the primary button: black, wherever a form submits ----------------- */
 .meets-page .meet-filters button, .rc-btn.rc-btn-quiet {
-  background: var(--accent, #14477d); border: 1px solid var(--accent, #14477d); color: #fff;
+  background: var(--sel, #111418); border: 1px solid var(--sel, #111418); color: #fff;
 }
-.meets-page .meet-filters button:hover, .rc-btn.rc-btn-quiet:hover { background: #0f3963; }
+.meets-page .meet-filters button:hover, .rc-btn.rc-btn-quiet:hover { background: #2b2f36; }
 .sport-toggle a:last-child { border-right: 1px solid var(--line, #e5e7eb); }
 /* one filter card: the Rankings card's ground and border on /meets too */
 .meets-page .meet-filters { background: #fff; border: 1px solid var(--line, #e5e7eb); border-radius: 8px; }
