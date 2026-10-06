@@ -148,11 +148,25 @@ CURVE_KNOT_DAYS = 30.0
 CURVE_N_KNOTS = 13
 ACADEMIC_YEAR_START_DOY = 213          # 1 August
 
-# Smoothness, as a multiple of a pool's rows-per-knot: at 1.0 a unit of
-# curvature (second difference) costs as much as one knot's worth of rows
-# carrying a unit residual. Not tunable by held-out error -- the winter step
-# barely moves predictions -- so it is a stated prior, printed in the log.
-CURVE_SMOOTH = 1.0
+# Smoothness. A number is the old stated prior: a multiple of a pool's
+# rows-per-knot, at 1.0 a unit of curvature (second difference) costs as
+# much as one knot's worth of rows carrying a unit residual.
+# ★ "fit" (the default since 2026-10-06): the curvature is a prior like
+#   every other one here, sigma2 / curve_sd^2, and curve_sd is ESTIMATED
+#   each outer pass from the fitted curve, the way tau and sigma_u are.
+# ! WHY THE NUMBER WAS WRONG (owner's run 20261005_172914, issue log
+#   2026-10-06). The curve's only competitor for a date-level shift is each
+#   race's day term u, whose prior is per RACE (sigma2 / sigma_u^2, about
+#   5). The rows-scaled penalty priced a bend at a knot's worth of ROWS --
+#   a curvature sd of about 5e-5 log-time for hs_m -- so every pool's curve
+#   came out a straight line and every bend (steep early in the fall,
+#   flatter later) went into the day terms: XC day terms drifted -0.30% a
+#   week through the season on 202,164 race-days, every year. On the
+#   same footing as u, a bend the races agree on is cheaper in the curve
+#   than spread over thousands of u's, and the curve takes it.
+CURVE_SMOOTH = "fit"
+# the first pass's curvature variance: weak, the same start as sigma_u2's
+CURVE_SD2_START = 0.01
 # The knot pinned at zero in every pool's curve (index 2 = academic day 60,
 # 1 October). The reported curve is re-anchored to its row-weighted mean.
 CURVE_REF_KNOT = 2
@@ -1345,6 +1359,23 @@ def _curvePenaltyApply(c_free, D, lam):
     out[:, 1:-1] -= 2.0 * z
     out[:, 2:] += z
     return out.reshape(-1)[D.free_grid]
+
+
+def curveCurvatureVar(c_full, D, var_free, rows_per_pool, prev):
+    """Per pool, the curve's curvature variance: mean over the interior
+    knots of (second difference)^2 plus its sampling variance (the same
+    shrinkage correction tau2 and sigma_u2 carry; the diagonal, so the
+    knots' covariance is ignored). A pool with no rows keeps `prev`."""
+    k = D.n_knot
+    c = np.asarray(c_full, dtype=np.float64).reshape(D.n_pool, k)
+    v = np.zeros(D.n_pool * k)
+    v[D.free_grid] = var_free
+    v = v.reshape(D.n_pool, k)
+    d2 = c[:, :-2] - 2.0 * c[:, 1:-1] + c[:, 2:]
+    d2v = v[:, :-2] + 4.0 * v[:, 1:-1] + v[:, 2:]
+    est = np.mean(d2 ** 2 + d2v, axis=1)
+    out = np.where(np.asarray(rows_per_pool) > 0, est, prev)
+    return np.maximum(out, 1e-12)
 
 
 def _curvePenaltyDiag(D, lam):
@@ -3072,10 +3103,18 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     h = np.ones(n)
     amp = np.ones(n)
     lam = np.zeros(max(D.n_pool, 1))
+    curve_fit = isinstance(curve_smooth, str)
+    if curve_fit and curve_smooth != "fit":
+        raise ValueError(f"curve_smooth: a number or 'fit', not {curve_smooth!r}")
+    curve_sd2 = None
     if D.has_curve:
         rows_per_pool = np.bincount(D.pool_row, minlength=D.n_pool)
-        lam = curve_smooth * rows_per_pool / float(D.n_knot)
-        lam = np.maximum(lam, 1.0)
+        if curve_fit:
+            curve_sd2 = np.full(D.n_pool, CURVE_SD2_START)
+            lam = sigma2 / curve_sd2
+        else:
+            lam = float(curve_smooth) * rows_per_pool / float(D.n_knot)
+            lam = np.maximum(lam, 1.0)
     lam_gap = None
     gap_target = -float(winter_gain or 0.0)
     if D.has_curve and curve_gap and curve_gap > 0:
@@ -3177,6 +3216,18 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                 # more shrinkage toward the sport's level than the data ask
                 if tau_max and g in tau_max and tau_max[g]:
                     tau2[g] = min(tau2[g], float(tau_max[g]) ** 2)
+
+        # the curve's curvature prior, estimated like tau2 and sigma_u2
+        if curve_sd2 is not None:
+            curve_sd2 = curveCurvatureVar(
+                b["c"], D, sigma2 / np.maximum(diag[D.o_c:D.o_r], 1e-12),
+                rows_per_pool, curve_sd2)
+            lam = sigma2 / curve_sd2
+            if verbose and outer == n_outer - 1:
+                print("[joint] curve curvature sd per pool (fitted, log-time "
+                      "per knot^2): " + ", ".join(
+                          f"{p}:{np.sqrt(v):.5f}" for p, v in enumerate(curve_sd2)),
+                      flush=True)
 
         # ⚠ THE COLLAPSE ALARM, on the last pass. A sport whose course
         #   prior has fallen to nothing still converges and still writes a
@@ -3423,6 +3474,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         out["curve_anchored"] = c - mean_p[:, None]
         out["curve_knot_days"] = np.arange(D.n_knot) * D.knot_days
         out["curve_lambda"] = lam
+        out["curve_sd"] = None if curve_sd2 is None else np.sqrt(curve_sd2)
         out["curve_gap_weight"] = float(curve_gap or 0.0)
         out["winter_gain"] = float(winter_gain or 0.0)
         out["curve_window_gap"] = curveWindowGaps(

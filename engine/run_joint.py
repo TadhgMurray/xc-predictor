@@ -1764,6 +1764,10 @@ def holdout(cols, keep, args, athlete_pool, D_full):
 #   changes the solve configuration -- a rung that silently parses back to
 #   the baseline is a control group masquerading as a treatment, which is
 #   exactly what `--tau-max ,` used to be.
+def _curveSmooth(v):
+    return "fit" if str(v).strip().lower() == "fit" else float(v)
+
+
 def buildParser():
     # ! IMPORTED HERE, LIKE EVERY OTHER USE OF IT IN THIS FILE. bracket_engine
     #   is not a module-level import (it pulls numpy work nothing else needs),
@@ -1782,10 +1786,15 @@ def buildParser():
                          "For comparing configurations, not for go-live")
     ap.add_argument("--sample-seed", type=int, default=11)
     ap.add_argument("--probes", type=int, default=16)
-    ap.add_argument("--curve-smooth", type=float, default=js.CURVE_SMOOTH,
-                    help="second-difference weight on the year curve, as a "
-                         "multiple of rows-per-knot (a prior, not tunable "
-                         "by held-out error)")
+    # XCP_CURVE_SMOOTH=1 puts every run_joint step (the go-live and the
+    # holdouts alike) back on the old stated weight, for an A/B run
+    ap.add_argument("--curve-smooth", type=_curveSmooth,
+                    default=_curveSmooth(os.environ.get("XCP_CURVE_SMOOTH",
+                                                        js.CURVE_SMOOTH)),
+                    help="'fit' (default): the year curve's curvature sd is "
+                         "estimated each pass, like tau and sigma_u; a number "
+                         "is the old stated weight, a multiple of rows-per-knot "
+                         "(env XCP_CURVE_SMOOTH)")
     # ★ WHICH RUNG OF THE LADDER. See pair_validate.splitFor -- holding out
     #   rows scores interpolation (the same race is in train), holding out
     #   races scores prediction. `race` is the default because it is what
@@ -3152,7 +3161,7 @@ def main():
     print(f"[joint] blocks: sport offset {'ON' if D.n_beta else 'off'}, "
           f"year curve {'ON' if D.n_c else 'off'} "
           f"({D.n_knot} knots x {D.knot_days:g} days, smooth "
-          f"{args.curve_smooth:g}, window gap weight {args.curve_gap:g}, "
+          f"{args.curve_smooth if isinstance(args.curve_smooth, str) else format(args.curve_smooth, 'g')}, window gap weight {args.curve_gap:g}, "
           f"stated winter gain {args.winter_gain:g}), "
           f"rust {'ON' if D.n_r else 'off'}, "
           f"track distance offsets {f'ON ({D.n_e} classes' + (', by rating band)' if D.dist_banded else ')') if D.n_e else 'off'}, "

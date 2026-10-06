@@ -4228,6 +4228,31 @@ weeks 0-2 and about -1% fast by weeks 10-13. The pooled slope over weeks 0-12 is
     the weather rows' seasons, plus the weather rows by season. That settles which it is.
   - The straight-line curve is a fact of the code either way. Whether it costs anything is now
     the open question.
+- **--heat, second run: the drift is real; the heat split is not possible yet.**
+  - Within season, on EVERY day row, the slope is -0.302%/week over 202,164 race-days.
+  - The weather rows are 2,417 race-days of 2026 plus a handful of older ones: the weather
+    grid only reaches this season. So the heat split must wait for historical weather.
+- **FIX (2026-10-06): the curvature prior is fitted.** `CURVE_SMOOTH = "fit"` (joint_solve)
+  prices the curvature at sigma2 / curve_sd^2 per pool, with curve_sd estimated each outer pass
+  (curveCurvatureVar: the mean squared second difference plus its sampling variance).
+  - The log prints `[joint] curve curvature sd per pool`.
+  - `XCP_CURVE_SMOOTH=1` (or `--curve-smooth 1`) restores the old weight for an A/B run.
+  - **Synthetic test** (tests/test_curve_bends.py): a season that gains 4.25% to 1 Oct and then
+    flattens. The old weight fits a straight line and leaves a 1.2% hump in the day terms;
+    "fit" recovers the bend (3.8%) with the day terms flat to 0.3%.
+  - **Learned on the way:** the curve is scaled per runner by amp(rating). A world that
+    generates an unscaled curve misleads the fit, because amp is what identifies the curve
+    within a race.
+  - **Two tests are pinned to the old weight, with notes:**
+    - test_joint_year.test_full_recovery: a fitted-level config the pipeline doesn't run; its
+      error sits on the 0.01 line either way.
+    - test_joint_kernels: arithmetic equivalence; differences of 2e-8, inside CG_TOL.
+  - **To check after the next run:**
+    - the curve table bends;
+    - `diag_day_terms.py --season-trend` slope falls toward 0;
+    - the holdout sd and its by-rating rows;
+    - Nov->Mar per pool (it moves the XC-TF relation);
+    - 08's CG iterations (a weaker prior can mean slower convergence).
 - **Also seen in that log:** in the tilt table, the <70 band has applied h 1.112 against an
   implied 0.528, and 70-80 has 1.074 against 0.388. Look at this when the curve is redone.
 - **Dropdowns, re-run.** Only 2 of 30 races on 29603086 still lack a day row:
@@ -4257,6 +4282,8 @@ venue: a different distance cell, a different date, or none at all.
 - **Rating scale switch.** It is now a black TAB like the others. The search tabs, the predict
   view buttons, the quick race chips and the unit buttons now use the same black (--sel).
 - **Tables stay square.** That was the owner's pick on 2026-09-13; controls are rounded.
+- **Tabs are JOINED** (owner: "I prefer the buttons being together"). One bar per group, with
+  outer corners rounded. On phones a bar scrolls sideways. Chips stay separate pills.
 
 ## 2026-10-05 — 📌 team widget: kept, but it's poor right now
 

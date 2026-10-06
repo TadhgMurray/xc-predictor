@@ -170,7 +170,14 @@ def test_full_recovery():
     generates smooth across the winter. This is the pure-recovery check;
     the default split is test_window_balance_pins_the_level."""
     y, D, truth, raw = world(indoor=True)
-    out = fit(y, D, truth, curve_gap=0.0)
+    # ! curve_smooth=1.0: this is the split the STATED smoothness prior makes
+    #   with the level fitted and the window pin off (a configuration the
+    #   pipeline does not run: it asserts the level). Under the fitted
+    #   curvature prior (2026-10-06) the same world reads curve corr
+    #   0.992/0.996 (was 0.989/0.994) and max knot error 0.0097/0.0100 (was
+    #   0.0096/0.0086) -- the error sits on this test's 0.01 line, so the
+    #   fitted prior's recovery is tested in test_curve_bends.py instead.
+    out = fit(y, D, truth, curve_gap=0.0, curve_smooth=1.0)
 
 
     # the difficulty, level included, centred

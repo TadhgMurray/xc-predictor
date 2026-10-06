@@ -131,8 +131,13 @@ def test_a_whole_solve_is_the_same_either_way(monkeypatch):
 
     def solve(flag):
         monkeypatch.setenv("XCP_JOINT_KERNELS", flag)
+        # ! curve_smooth=1.0, the old stated weight: this checks the two
+        #   kernels do the same ARITHMETIC. Under the fitted curvature prior
+        #   (the default since 2026-10-06) the weakly-pinned curve direction
+        #   amplifies float reordering to ~2e-8 in theta -- inside CG_TOL,
+        #   not a kernel difference.
         return js.solveJoint(ys, design=D, athlete_pool=truth["pool_of_ath"],
-                             n_outer=3, tilt=True, n_probe=0)
+                             n_outer=3, tilt=True, n_probe=0, curve_smooth=1.0)
     on, off = solve("1"), solve("0")
     assert getattr(D, "_kern_edges", None) is not None     # the kernel ran
     for key in ("theta", "ability", "d", "delta", "race_effect", "mu",
