@@ -1755,6 +1755,7 @@ async function load() {
       $("results").innerHTML =
         `<div class="status error">${esc(data.error || res.statusText)}</div>`;
       $("pager").classList.add("hidden");
+      $("csv-wrap").classList.add("hidden");   // under the pager now, so hide it with it
       return;
     }
 
@@ -1853,6 +1854,7 @@ async function load() {
     $("results").innerHTML =
       `<div class="status error">Request failed: ${esc(err.message)}</div>`;
     $("pager").classList.add("hidden");
+    $("csv-wrap").classList.add("hidden");
   } finally {
     state.busy = false;
     $("apply").disabled = false;

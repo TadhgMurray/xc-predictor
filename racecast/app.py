@@ -10150,6 +10150,22 @@ def rankings_landing(sport, pool, state=None):
             except (psycopg2.Error, ValueError):
                 conn.rollback()
                 year = None
+            # ★ NEVER ALL-TIME BY ACCIDENT (owner, 2026-10-06: the national
+            #   track page listed Hobbs Kessler and Cooper Teare beside this
+            #   year's seniors). homepage_meta had no season_year_TF, so
+            #   year was None and landingRows read every season at once.
+            #   The newest rated season of the sport stands in, labelled
+            #   the way the meta labels it (track: stored year + 1).
+            if year is None:
+                try:
+                    cur.execute("SELECT max(year) AS y FROM athlete_season "
+                                "WHERE sport = %s AND mean_rating IS NOT NULL",
+                                (L.SPORTS[sport],))
+                    _y = (cur.fetchone() or {}).get("y")
+                    if _y is not None:
+                        year = int(_y) + (1 if L.SPORTS[sport] == "TF" else 0)
+                except psycopg2.Error:
+                    conn.rollback()
             try:
                 rows, _f = L.landingRows(cur, sport, pool, state, year)
                 if rows is None:

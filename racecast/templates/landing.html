@@ -43,13 +43,37 @@
     <a href="{{ board_url }}">full board</a> to filter by grade, school, league or division.
   </p>
 
-  {# the sibling pages first: they are the crawl path through the set #}
-  <p class="landing-nav">
-    <strong>{{ sport_words }}:</strong>
-    {% for slug, words, href in pool_links %}{% if slug == pool %}<span class="is-on">{{ words }}</span>{% else %}<a href="{{ href }}">{{ words }}</a>{% endif %}{{ " · " if not loop.last }}{% endfor %}
-    <br>
-    <strong>Sport:</strong> <a href="{{ other_sport_href }}">{{ other_sport_words }}</a>
-  </p>
+  {# ★ ONE FILTER CARD, THE SITE'S CONTROLS (owner, 2026-10-06: "idk abt
+     this new ui"). Sport as the joined tabs, the pool as chips, the state
+     as a picker that opens its page -- in place of two lines of underlined
+     links, with the fifty states only at the very bottom. Every control is
+     a plain link or a select over real URLs, so crawlers still walk the
+     set (the full state list stays at the foot of the page too). #}
+  <div class="landing-filters" role="navigation" aria-label="Which ranking">
+    <div class="lf-field">
+      <span class="lf-label">Sport</span>
+      <div class="seg">
+        {% if sport == "xc" %}
+        <a class="seg-btn is-on" href="{{ path }}">Cross Country</a><a class="seg-btn" href="{{ other_sport_href }}">Track &amp; Field</a>
+        {% else %}
+        <a class="seg-btn" href="{{ other_sport_href }}">Cross Country</a><a class="seg-btn is-on" href="{{ path }}">Track &amp; Field</a>
+        {% endif %}
+      </div>
+    </div>
+    <div class="lf-field">
+      <span class="lf-label">Pool</span>
+      <div class="pool-chips">
+        {% for slug, words, href in pool_links %}<a class="chip{{ ' is-on' if slug == pool }}" href="{{ href }}">{{ words|replace("High School", "HS")|replace("Middle School", "MS") }}</a>{% endfor %}
+      </div>
+    </div>
+    <div class="lf-field">
+      <label class="lf-label" for="lf-state">State</label>
+      <select id="lf-state" onchange="if (this.value) location.href = this.value">
+        <option value="{{ national_path }}"{{ ' selected' if not state }}>All states (national)</option>
+        {% for code, name, href in state_links %}<option value="{{ href }}"{{ ' selected' if code == state }}>{{ name }}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
 
   {% if rows %}
   <table class="landing-tbl">

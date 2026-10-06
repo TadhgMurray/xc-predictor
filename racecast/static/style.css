@@ -5631,10 +5631,11 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .acc-history th { font-weight: 600; font-size: .8rem; color: var(--muted); }
 
 /* "Download CSV" under a results table (csv_export.py) */
-.csv-link { margin: .8rem 0 0; font-size: .85rem; }
-.pager .csv-link { margin: 0 0 0 auto; }
-.pager .csv-link.hidden { display: none; }
-.pager .csv-link a { margin: 0 .15rem; }
+.csv-link { margin: .8rem 0 0; font-size: .85rem; color: var(--muted, #6b7280); }
+.csv-link.hidden { display: none; }
+.csv-link a { margin: 0 .15rem; }
+/* the pager spans the board it pages (owner, 2026-10-06) */
+.rankings-page .pager { width: 100%; box-sizing: border-box; flex-wrap: wrap; }
 
 /* /meets "Coming up" (weekend.py) */
 .coming-up { margin-bottom: 1.5rem; }
@@ -5780,3 +5781,16 @@ td.vs-level.is-under { color: var(--muted); }
   }
   .rankings-page .tabs > .tab, .board-strip > a, .seg > .seg-btn { flex: 0 0 auto; white-space: nowrap; }
 }
+
+/* ---- the state ranking pages' filter card (landing.html, 2026-10-06) ---- */
+.landing-page .landing-filters { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0.9rem 1.4rem;
+  margin: 1rem 0 0.6rem; padding: 0.85rem 1rem; background: #fff;
+  border: 1px solid var(--line, #e5e7eb); border-radius: 8px; }
+.landing-page .lf-field { display: flex; flex-direction: column; gap: 0.3rem; }
+.landing-page .lf-label { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted, #6b7280); }
+.landing-page .landing-filters .pool-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.landing-page .landing-filters .chip { text-decoration: none; }
+.landing-page .landing-filters select { font: inherit; font-size: 0.9rem; height: 2.3rem; min-width: 12rem;
+  padding: 0.3rem 0.5rem; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+.landing-page .landing-filters .seg-btn { text-decoration: none; }

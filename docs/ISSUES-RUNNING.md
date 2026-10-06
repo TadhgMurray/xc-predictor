@@ -4270,6 +4270,35 @@ Invitational 2024, Roughrider 2023, De La Salle Nike Invitational 2021-23, and t
 `scripts/diag_day_terms.py --person 29603086` names, for each, the race_day_effect rows at that
 venue: a different distance cell, a different date, or none at all.
 
+## 2026-10-06 — Rankings: CSV under the pager; "Unknown" names; out-of-state athletes; state pages
+
+The owner's two URLs: /rankings?board=ability&pool=hs_m&sport=TF&state=CA&year=2024 and
+/rankings/tf/hs-boys.
+- **CSV.** It sat inside the pager row and squeezed it. It now has its own line under the
+  pager, the pager spans the board, and the CSV line hides on an error.
+- **✅ "Unknown" at the top.** These are people split off by unlink/person_collision (ids from
+  2e9), who have no athletes row. rankings.nameLateral now falls back to the name on their result
+  rows (results, then results_tf), as the athlete page does. This applies to every board and to
+  breakouts, comps and accounts.
+- **✅ Out-of-state athletes on a state's board.** athlete_season.state was mode(result state),
+  i.e. where the meets were. Tanner Chada (Gazelle Sports Elite, MI) ranked 3rd in CA and Brady
+  Keller (Leduc T&F, Alberta) 10th. build_ranking_results._homeStates moves a season to its
+  school's primary state ONLY when the race state is none of that school's school_identity
+  clusters ("Jesuit" CA/LA/OR keeps CA). Unattached seasons are untouched. It takes effect at the
+  next 10_rankings_finish (nightly or full).
+- **✅ The national track page was all-time.** homepage_meta leaves season_year_TF blank in the
+  autumn gap by design, and the landing route then passed year=None. It now falls back to the
+  newest rated season, labelled the meta's way.
+- **State pages UI.** One filter card: sport as joined tabs, pool as chips, state as a picker.
+  This replaces two lines of underlined links; the full state list stays at the foot for crawlers.
+- **🔎 Still on those boards (not fixed):**
+  - pro or club groups' athletes graded 12 in HS boys (ZAP Endurance, Railroad Athletics,
+    Tracksmith);
+  - "Jamaica (CA)", a national team, with grade "-";
+  - club names as the school (Newbury Park Athletic Club, Brentwood Track Club,
+    Performance Elite).
+  These are pool/grade and school-identity questions for the level and school rules.
+
 ## 2026-10-06 — State meets UI; track same-day twins; upcoming predictions had no field; pipeline slow at 04
 
 - **State meets UI.** Owner: "update the ui for the state meets predictions".

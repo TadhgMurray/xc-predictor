@@ -340,15 +340,31 @@ CANDIDATE_FACTOR = 40
 #
 # The gender test is in the SORT, not the WHERE: filtering would discard a
 # named-but-genderless row entirely, throwing away the name to save a gender.
+# ★ AND THE NAME ON THE RESULT ROWS WHEN `athletes` HAS NONE (owner,
+#   2026-10-06: "Unknown" heading the CA and national track boards). A
+#   person split off by engine/unlink.py or person_collision.py gets a
+#   fresh id from SPLIT_BASE (2e9) up, and no athletes row comes with it --
+#   but every one of their result rows still carries athlete_name, which is
+#   what the athlete page already falls back to (app._exactField's
+#   row_name). Only consulted when the athletes lookup is empty; one
+#   indexed probe per row of a 50-row page.
 _NAME_LATERAL = """
     LEFT JOIN LATERAL (
-        SELECT NULLIF(TRIM(concat_ws(' ', a.first_name, a.last_name)), '') AS name
-        FROM   athletes a
-        WHERE  a.athlete_id = {alias}.person_id
-        ORDER  BY (COALESCE(TRIM(a.first_name), '') <> ''
-                OR COALESCE(TRIM(a.last_name),  '') <> '') DESC,
-                  (a.gender IN ('M', 'F')) DESC
-        LIMIT  1
+        SELECT COALESCE(
+                 (SELECT NULLIF(TRIM(concat_ws(' ', a.first_name, a.last_name)), '')
+                  FROM   athletes a
+                  WHERE  a.athlete_id = {alias}.person_id
+                  ORDER  BY (COALESCE(TRIM(a.first_name), '') <> ''
+                          OR COALESCE(TRIM(a.last_name),  '') <> '') DESC,
+                            (a.gender IN ('M', 'F')) DESC
+                  LIMIT  1),
+                 (SELECT NULLIF(TRIM(x.athlete_name), '') FROM results x
+                  WHERE  x.person_id = {alias}.person_id
+                    AND  NULLIF(TRIM(x.athlete_name), '') IS NOT NULL LIMIT 1),
+                 (SELECT NULLIF(TRIM(x.athlete_name), '') FROM results_tf x
+                  WHERE  x.person_id = {alias}.person_id
+                    AND  NULLIF(TRIM(x.athlete_name), '') IS NOT NULL LIMIT 1)
+               ) AS name
     ) a ON TRUE
 """
 

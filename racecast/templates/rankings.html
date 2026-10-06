@@ -551,12 +551,14 @@
        (?count=1) and jumps. #}
     <button id="last" title="Jump to the last page">Last &raquo;</button>
     <span class="page-note" id="pageNote"></span>
-    {# this page of the board as a spreadsheet (csv_export.py); rankings.js
-       sets the href to the query just served, rating boards only #}
-    <span class="csv-link hidden" id="csv-wrap">Download CSV:
-      <a id="csv" rel="nofollow" download>this page</a> ·
-      <a id="csv-all" rel="nofollow">whole board</a></span>
   </div>
+  {# this page of the board as a spreadsheet (csv_export.py); rankings.js
+     sets the href to the query just served, rating boards only.
+     ! ITS OWN LINE UNDER THE PAGER (owner, 2026-10-06: the CSV links made
+       the pager narrower; "csv should be lower"). #}
+  <p class="csv-link hidden" id="csv-wrap">Download CSV:
+    <a id="csv" rel="nofollow" download>this page</a> ·
+    <a id="csv-all" rel="nofollow">whole board</a></p>
 
   {# the state ranking pages (landing.py): plain links, so a crawler and a
      person both have a path into them from here #}

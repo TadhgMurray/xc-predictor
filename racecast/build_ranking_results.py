@@ -3001,6 +3001,7 @@ def refreshAthleteSeason(conn):
         n, n_unrated = cur.fetchone()[:2]
     conn.commit()
 
+    _homeStates(conn, _LOAD_SEASON)
     _stampSeasonUnits(conn, _LOAD_SEASON)
     analyze(conn, _LOAD_SEASON)
     pct = (100.0 * n_unrated / n) if n else 0.0
@@ -3012,6 +3013,45 @@ def refreshAthleteSeason(conn):
     #   12.9M-row table with no index on it at all.
     setLogged(conn, _LOAD_SEASON)
     buildIndexes(conn, _LOAD_SEASON, "athlete_season")
+
+
+def _homeStates(conn, season_table):
+    """A season's state is its SCHOOL's state, where the school says so.
+
+    ★ WHY (owner, 2026-10-06, the CA 2024 track board): the season's state
+      was mode(result state), and a result's state is where the MEET was.
+      Tanner Chada of Gazelle Sports Elite (MI) raced three times in
+      California and was ranked third in California; Brady Keller of Leduc
+      Track and Field (Alberta) was tenth. Big invitationals (Arcadia, Mt.
+      SAC) put out-of-state runners on every host state's board.
+    ! ONLY WHERE THE RACE STATE IS NOT ONE OF THE SCHOOL'S OWN. school_identity
+      holds every (school, state) cluster -- "Jesuit" is CA and LA and OR --
+      so a season whose race state is among its school's clusters keeps it;
+      only a state the school has never been seen in moves to the school's
+      primary state. Unattached and blank schools keep the race state.
+    ! school_identity is built after this step (10b), so this reads the
+      previous run's; absent on a first build, the step is a no-op."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('school_identity')")
+        if cur.fetchone()[0] is None:
+            print("    home states: no school_identity yet, race states kept")
+            return 0
+        t0 = time.time()
+        cur.execute(f"""
+            UPDATE {season_table} s
+            SET    state = si.state
+            FROM   school_identity si
+            WHERE  si.school = s.school AND si.is_primary
+              AND  s.school IS NOT NULL
+              AND  lower(s.school) NOT LIKE 'unattached%%'
+              AND  s.state IS DISTINCT FROM si.state
+              AND  NOT EXISTS (SELECT 1 FROM school_identity x
+                               WHERE x.school = s.school AND x.state = s.state)""")
+        n = cur.rowcount
+    conn.commit()
+    print(f"    [{time.time() - t0:7.1f}s] home states: {n:,} seasons moved from the "
+          f"meets' state to their school's")
+    return n
 
 
 def _stampSeasonUnits(conn, season_table):
