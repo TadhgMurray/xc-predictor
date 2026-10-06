@@ -60,7 +60,8 @@ def test_rule8_on_postgres():
     conn = psycopg2.connect(dsn)
     cur = conn.cursor()
     cur.execute("""
-        DROP TABLE IF EXISTS results, results_tf, race_top_level;
+        DROP TABLE IF EXISTS results, results_tf, race_top_level, athlete_season;
+        CREATE TABLE athlete_season (person_id bigint, sport text, year int, pool text);
         CREATE TABLE results (person_id bigint, date text, school text,
                               meet_id bigint, div_id bigint, source text);
         CREATE TABLE results_tf (LIKE results);
@@ -79,6 +80,11 @@ def test_rule8_on_postgres():
         # 4: unattached + club at elite meets -> kept (unattached counts against)
         (4, "2025-04-18", "Unattached", 10, 1, "anet"),
         (4, "2025-05-10", "Gazelle Sports Elite", 11, 1, "anet"),
+        # 5: a ZAP "12" with no history -- its club reads adult because the
+        #    last build pooled the club's other athletes pro (6, 7)
+        (5, "2025-04-18", "ZAP Endurance", 10, 1, "anet"),
+        (6, "2025-04-18", "ZAP Endurance", 10, 1, "anet"),
+        (7, "2025-04-18", "ZAP Endurance", 11, 1, "anet"),
     ]
     cur.executemany("INSERT INTO results_tf VALUES (%s,%s,%s,%s,%s,%s)", rows)
     for meet, lvl in ((10, "college"), (11, "pro"), (12, "college"), (13, "hs")):
@@ -86,7 +92,10 @@ def test_rule8_on_postgres():
                     f"FROM (SELECT %s::bigint meet_id, 1::bigint div_id, 'anet'::text source) x",
                     (lvl, meet))
     ay = 2024                       # the academic year of a 2025 spring
-    hs = {(1, ay): 12, (1, 2014): 9, (2, ay): 12, (3, ay): 12, (4, ay): 12}
+    cur.executemany("INSERT INTO athlete_season VALUES (%s, 'TF', %s, %s)",
+                    [(5, ay, "hs_m"), (6, ay, "pro_m"), (7, ay, "pro_m")])
+    hs = {(1, ay): 12, (1, 2014): 9, (2, ay): 12, (3, ay): 12, (4, ay): 12,
+          (5, ay): 12}
     got = GS.adultClubSeasons(cur, hs, college_start={})
     conn.rollback()
-    assert got == {(1, ay): "gazelle sports elite"}, got
+    assert got == {(1, ay): "gazelle sports elite", (5, ay): "zap endurance"}, got

@@ -172,7 +172,17 @@ def team(cur, name, limit):
         print(f"  {pid:>11}  college from {cs or '-':<5} club years {show}")
     if total:
         print(f"  -> {after}/{total} club seasons after college began "
-              f"({100 * after / total:.0f}%; rule 8 calls a club adult above 50%)")
+              f"({100 * after / total:.0f}%)")
+    # rule 8's second measure: the club seasons the last build pooled pro or
+    # college (athlete_season, the academic year by the stored year)
+    cur.execute("""
+        SELECT count(*) FILTER (WHERE pool ~ '^(pro|college)_'), count(*)
+        FROM   athlete_season WHERE person_id = ANY(%s)""", (pids,))
+    a, n = cur.fetchone()
+    if n:
+        print(f"  -> {a}/{n} of these athletes' seasons pooled pro or college "
+              f"({100 * a / n:.0f}%); rule 8 calls a club adult when either share "
+              f"is above 50%")
 
 
 def main():

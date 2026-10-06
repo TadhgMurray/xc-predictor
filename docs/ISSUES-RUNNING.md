@@ -4309,7 +4309,12 @@ The owner's two URLs: /rankings?board=ability&pool=hs_m&sport=TF&state=CA&year=2
     - every team that season is club-shaped (unattached or blank count against);
     - every race's ceiling is college or pro (no high schoolers on top);
     - either the club is adult (over half its athletes' club seasons come after their college
-      began), or the athlete's own earlier HS grade puts graduation before this season.
+      began, OR over half were pooled pro/college by the last build), or the athlete's own
+      earlier HS grade puts graduation before this season.
+    - The --team run measured "after college" alone at 23% for ZAP Endurance (most pros carry no
+      FR-1..SR-4 row), 0% for Gazelle Sports Elite (a store club with youth age groups) and 0% for
+      Brentwood TC. Hence the pooled share as a second measure; Tanner is caught by graduation
+      either way.
     Owner: "jackson spencer running one race at worlds doesn't mean he's not in hs", so a season
     with a school row, or with any race that had high schoolers on top, is never moved. The step
     prints the count and 12 examples. `diag_board_people.py --team "<exact name>"` shows a

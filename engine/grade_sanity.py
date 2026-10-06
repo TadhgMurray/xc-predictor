@@ -1609,9 +1609,9 @@ def eliteFieldSeasons(cur):
 #        ceiling (race_top_level) is college or pro -- a real senior runs
 #        league, section and state races;
 #     3. AND EITHER the club is an adult club -- a majority of its athletes'
-#        club seasons come after that athlete's college began -- OR the
-#        athlete's own earlier high school grade puts graduation before
-#        this season.
+#        club seasons come after that athlete's college began, OR a majority
+#        were pooled pro or college by the last build -- OR the athlete's own
+#        earlier high school grade puts graduation before this season.
 # ! A VERDICT, NOT A DELETION: the season pools pro (method 'adult_club'),
 #   the rows stay rated and on the athlete's page.
 CLUB_NAME_RE = (r"\m(club|tc|ac|xtc|elite|striders|endurance|athletics|"
@@ -1650,8 +1650,16 @@ def adultClubSeasons(cur, hs_grade, college_start):
     club_seasons = {}
     for pid, ay, club in cur.fetchall():
         club_seasons.setdefault((int(pid), int(ay)), set()).add(club)
-    # the clubs' adult share: of each club's (athlete, season)s, how many
-    # come after that athlete's college began
+    # the clubs' adult share, two ways, either enough:
+    #   (a) of each club's (athlete, season)s, how many come after that
+    #       athlete's college began;
+    #   (b) how many the last build pooled pro or college (athlete_season).
+    # ! (b) BECAUSE (a) ALONE MISSED ZAP ENDURANCE (owner's diag_board_people
+    #   --team, 2026-10-06: 23%). Most pros carry no FR-1..SR-4 row in the
+    #   corpus, so "after college" cannot see them -- but their seasons are
+    #   already pooled pro by the no-grade and club rules. The candidates'
+    #   own (high school) seasons are in the count and pull it DOWN, so a
+    #   club reads adult only when its other athletes outnumber them.
     members = {}
     for (pid, ay), clubs in club_seasons.items():
         cs = college_start.get(pid)
@@ -1660,6 +1668,17 @@ def adultClubSeasons(cur, hs_grade, college_start):
             m[1] += 1
             m[0] += int(cs is not None and ay >= cs)
     adult = {c for c, (a, n) in members.items() if n and a / n > ADULT_CLUB_SHARE}
+    cur.execute("SELECT to_regclass('athlete_season')")
+    if cur.fetchone()[0] is not None:
+        cur.execute(f"""
+            SELECT c.club,
+                   count(DISTINCT (c.person_id, c.acad))
+                       FILTER (WHERE s.pool ~ '^(pro|college)_')      AS adult,
+                   count(DISTINCT (c.person_id, c.acad))              AS n
+            FROM   (SELECT DISTINCT person_id, acad, club FROM tmp_club_rows) c
+            JOIN   athlete_season s ON s.person_id = c.person_id AND s.year = c.acad
+            GROUP  BY 1""")
+        adult |= {c for c, a, n in cur.fetchall() if n and a / n > ADULT_CLUB_SHARE}
     # the candidates: high school verdicts in a season with a club row
     cand = [k for k in hs_grade if k in club_seasons]
     if not cand:
