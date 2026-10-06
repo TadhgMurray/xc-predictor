@@ -6,6 +6,7 @@ diag_day_terms.py -- two questions about the race-day term. READ-ONLY.
     /srv/venv/bin/python scripts/diag_day_terms.py --season-trend          # all XC
     /srv/venv/bin/python scripts/diag_day_terms.py --season-trend --year 2021
     /srv/venv/bin/python scripts/diag_day_terms.py --person 29603086       # missing dropdowns
+    /srv/venv/bin/python scripts/diag_day_terms.py --heat                  # form or August heat?
 
 1. DOES PEAKING LEAK INTO THE DAY TERM? (owner, 2026-10-05: NESCAC 2021,
    rain and 85% humidity, day +2.7% slow while nearly the whole field ran
@@ -20,6 +21,15 @@ diag_day_terms.py -- two questions about the race-day term. READ-ONLY.
    clean of form and the NESCAC gap is the runners; a falling line says the
    ability model needs a within-season trend before the day term can be
    trusted at championships.
+
+   --heat splits that drift (owner ran it 2026-10-06: -0.29%/week). Early
+   season is August and September, which are HOT, so part of "slow early" can
+   be weather rather than unfit runners -- and the weather correction is off
+   while its artifact is stale, so heat is inside the day term. It fits, on
+   the races that have an hour-9 weather row, the day term against the week
+   alone and then against the week plus apparent temperature (linear and
+   squared, within season). The week slope that SURVIVES the temperature is
+   form; the part that goes away was heat.
 
 2. WHY A RACE HAS NO RACE-DAY DROPDOWN. The athlete page joins
    race_day_effect on (race_date = results.date, canonical_id, distance_m),
@@ -139,15 +149,86 @@ def seasonTrend(cur, year=None):
               f"({12 * slope:+.2f}% from the first week to week 12)")
 
 
+# the race page's clock (app._XC_RACE_HOUR): the hour the model's weather reads
+_HOUR = 9
+
+
+def heat(cur):
+    """The week-of-season slope with and without apparent temperature."""
+    import numpy as np
+    cur.execute("""
+        WITH d AS (
+            SELECT extract(year FROM race_date)::int AS season, race_date,
+                   canonical_id, distance_m, day_effect, n_rows
+            FROM race_day_effect
+            WHERE course_name NOT LIKE 'TF:%%' AND canonical_id IS NOT NULL
+              AND extract(month FROM race_date) BETWEEN 8 AND 12),
+        s AS (SELECT season, min(race_date) AS first FROM d GROUP BY season),
+        x AS (
+            SELECT DISTINCT ON (d.canonical_id, d.distance_m, d.race_date)
+                   d.season, ((d.race_date - s.first) / 7)::int AS week,
+                   d.day_effect, d.n_rows, wx.apparent_temp_c
+            FROM d JOIN s USING (season)
+            JOIN course_canonical cc ON cc.canonical_id = d.canonical_id
+            JOIN meets m ON m.course_name = cc.course_name
+                 AND round(m.gps_lat::numeric, 5) = round(cc.gps_lat::numeric, 5)
+                 AND round(m.gps_long::numeric, 5) = round(cc.gps_long::numeric, 5)
+                 AND m.meet_date = d.race_date::text
+                 AND (round(m.distance / 100.0) * 100)::int = d.distance_m
+            JOIN weather wx ON wx.meet_id = m.meet_id AND wx.source = m.source
+                 AND wx.hour = %s
+            WHERE wx.apparent_temp_c IS NOT NULL
+            ORDER BY d.canonical_id, d.distance_m, d.race_date)
+        SELECT season, week, 100 * day_effect, n_rows, apparent_temp_c
+        FROM x WHERE week <= 12""", (_HOUR,))
+    rows = cur.fetchall()
+    if not rows:
+        print("\n== heat: no XC day row joins to an hour-%d weather row" % _HOUR)
+        return
+    a = np.array(rows, dtype=float)
+    season, week, u, n, t = a.T
+    # within season: subtract each season's runner-weighted mean (the day
+    # terms are centred per season already; the covariates are not)
+    def within(v):
+        out = v.copy()
+        for k in np.unique(season):
+            m = season == k
+            out[m] = v[m] - np.average(v[m], weights=n[m])
+        return out
+    def slopes(cols):
+        X = np.column_stack([within(c) for c in cols])
+        sw = np.sqrt(n)
+        beta, *_ = np.linalg.lstsq(X * sw[:, None], within(u) * sw, rcond=None)
+        return beta
+    b_w = slopes([week])[0]
+    b = slopes([week, t, t ** 2])
+    tm = np.average(t, weights=n)
+    dt = b[1] + 2 * b[2] * tm               # %/deg C at the mean temperature
+    print(f"\n== heat: {len(rows):,} XC race-days with weather at hour {_HOUR}, "
+          f"{int(n.sum()):,} runners, weeks 0-12")
+    print("   apparent temp (C) by week, runner-weighted: " + "  ".join(
+        f"w{w}:{np.average(t[week == w], weights=n[week == w]):.0f}"
+        for w in range(13) if (week == w).any()))
+    print(f"   week slope, week alone:          {b_w:+.3f}% per week "
+          f"({12 * b_w:+.2f}% to week 12)")
+    print(f"   week slope, temperature held:    {b[0]:+.3f}% per week "
+          f"({12 * b[0]:+.2f}% to week 12)  <- form")
+    print(f"   temperature, at the mean {tm:.0f} C: {dt:+.3f}% per deg C "
+          f"(+ = hotter is slower)")
+    print(f"   share of the drift that was heat: "
+          f"{(1 - b[0] / b_w) if b_w else float('nan'):.0%}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--person", type=int)
     ap.add_argument("--season-trend", action="store_true")
     ap.add_argument("--year", type=int)
+    ap.add_argument("--heat", action="store_true")
     a = ap.parse_args()
-    if not (a.person or a.season_trend):
-        ap.error("give --person and/or --season-trend")
+    if not (a.person or a.season_trend or a.heat):
+        ap.error("give --person, --season-trend and/or --heat")
     with getConn() as conn:
         cur = conn.cursor()
         cur.execute("SET statement_timeout = 0")
@@ -155,6 +236,8 @@ def main():
             person(cur, a.person)
         if a.season_trend:
             seasonTrend(cur, a.year)
+        if a.heat:
+            heat(cur)
         conn.rollback()
 
 

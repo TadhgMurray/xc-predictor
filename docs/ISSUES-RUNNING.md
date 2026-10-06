@@ -4203,6 +4203,24 @@ weeks 0-2 and about -1% fast by weeks 10-13. The pooled slope over weeks 0-12 is
   - the season-ability tie absorbing the mean.
 - **Next.** The `[joint] curve:` lines from the latest run's 08 solve log show the fitted curve
   per pool. Compare its Aug-Nov drop with the 3.5% left in the day terms.
+- **The curve table (run 20261005_172914) is a STRAIGHT LINE in every pool.** For example, hs_m
+  falls 0.012 every 30 days from August to July, with second differences of 0.001 or less.
+  - **Cause, in the code.** joint_solve sets the curvature penalty at
+    `lam = CURVE_SMOOTH * rows_per_pool / n_knot`, with an unscaled data term. As a prior that
+    is a curvature sd of sqrt(sigma2 / lam), about 5e-5 log-time for hs_m. In effect, no bend.
+  - **Why the day terms soak it up.** The curve's only competitor for a date-level shift is
+    each race's u, and u's prior is per RACE (sigma2 / sigma_u^2, about 5). So a bend costs
+    about a knot's worth of ROWS, while the same shift in the u's costs about a knot's worth of
+    races times 5. The straight part is free and the curve takes it; every bend (steep in the
+    fall, flatter later) goes into the day terms. That is the measured drift.
+  - **Not all of it need be form.** August and September are hot, and the weather correction is
+    a no-op while its artifact is stale, so heat sits in u too. `diag_day_terms.py --heat` splits
+    the week slope into form and temperature before the engine changes.
+  - **Fix, once the split is known:** a curvature prior on the same footing as the others,
+    `sigma2 / curve_sd^2`, with curve_sd estimated each outer pass the way tau and sigma_u are.
+    Heat goes to the weather refit (XCP_WEATHER_FIT=1), not the curve.
+- **Also seen in that log:** in the tilt table, the <70 band has applied h 1.112 against an
+  implied 0.528, and 70-80 has 1.074 against 0.388. Look at this when the curve is redone.
 - **Dropdowns, re-run.** Only 2 of 30 races on 29603086 still lack a day row:
   - Foot Locker West 2024-12-07: a champ-cell row exists under 'XC:Foot Locker West Regional',
     so the page's name join is what misses;
