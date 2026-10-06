@@ -151,3 +151,14 @@ INSERT INTO results_tf VALUES
  (9116, 7102, 'anet',  88, 881, 1, NULL, 2, 281.0, '2026-04-25', '11', 5602, NULL),
  (9117, 7102, 'anet',  88, 881, 2, NULL, 1, 11.0,  'TBA',        '11', 5602, NULL);
 UPDATE results_tf SET school = 'Williams' WHERE result_id BETWEEN 9111 AND 9114;
+
+-- twin_same_day on the track (2026-10-06): 1901 the tfrrs copy of an anet
+-- 1500 (same person, day, time to the hundredth) goes; 1902 is a heat
+-- 0.03 s off the anet final and stays; 1903 a relay leg, never
+INSERT INTO results_tf (result_id, person_id, source, meet_id, div_id, event_id, canon_meet_id, place, time_seconds, date, is_relay, is_field) VALUES
+  (19001, 9901, 'anet',  91, 911, 1, NULL, 2, 245.31, '2026-04-11', 0, 0),
+  (1901,  9901, 'tfrrs', 92, 921, 1, NULL, 2, 245.31, '2026-04-11', 0, 0),
+  (19002, 9902, 'anet',  91, 911, 2, NULL, 1, 11.02, '2026-04-11', 0, 0),
+  (1902,  9902, 'tfrrs', 92, 921, 2, NULL, 1, 11.05, '2026-04-11', 0, 0),
+  (19003, 9903, 'anet',  91, 911, 3, NULL, 1, 50.10, '2026-04-11', 1, 0),
+  (1903,  9903, 'tfrrs', 92, 921, 3, NULL, 1, 50.10, '2026-04-11', 1, 0);

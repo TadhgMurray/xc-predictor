@@ -78,7 +78,7 @@ _EXPECTED = {
     # 2026-10-06: the UVU pair; 722 is 14 s off its person's anet race.
     # 9032 is level_conflict's "one race in both feeds" (6004), a twin.
     ("XC", "twin_same_day"):  [721, 9032],
-    ("TF", "twin_same_day"):  [],
+    ("TF", "twin_same_day"):  [1901],
     ("XC", "dup_same_feed"):  [502],
     ("XC", "dup_cross_date"): [401, 402, 502],
     ("XC", "dup_race_copy"):  [201, 202, 203, 204, 205, 206, 207, 208],
@@ -136,7 +136,7 @@ def test_rules_on_fixtures():
     cur.execute("SELECT reason, count(*) FROM result_twin GROUP BY 1 ORDER BY 1")
     by = dict(cur.fetchall())
     assert by["twin_race"] == 1 and by["twin_person"] == 1
-    assert by["twin_same_day"] == 2
+    assert by["twin_same_day"] == 3          # 721, 9032 (XC); 1901 (TF)
     assert by["dup_same_feed"] == 2          # 502 and 1602 file here, not as cross-date
     assert by["level_conflict"] == 4          # 9005, 9014, 9115, 9116; no tie
     conn.rollback()
