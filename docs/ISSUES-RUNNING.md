@@ -4304,8 +4304,19 @@ The owner's two URLs: /rankings?board=ability&pool=hs_m&sport=TF&state=CA&year=2
   - **✅ Brady Keller** (Lacombe HS, Alberta) under "Leduc Track and Field", and Leo Young under
     "Newbury Park Athletic Club": a school-age season's label now prefers a non-club name when the
     season has one (_CLUB_NAME_RE in build_ranking_results). Club-only seasons keep the club.
-  - **🔎 Tanner Chada** (Gazelle Sports Elite, MI): a tfrrs "Freshman" in 2015 and "12" in 2025.
-    With only two seasons the progression rule needs a third, so it is left; noted.
+  - **✅ Tanner Chada** (Gazelle Sports Elite, MI): grade_sanity RULE 8, the adult club's "12".
+    A high-school-graded season pools pro (method adult_club) only when ALL of these hold:
+    - every team that season is club-shaped (unattached or blank count against);
+    - every race's ceiling is college or pro (no high schoolers on top);
+    - either the club is adult (over half its athletes' club seasons come after their college
+      began), or the athlete's own earlier HS grade puts graduation before this season.
+    Owner: "jackson spencer running one race at worlds doesn't mean he's not in hs", so a season
+    with a school row, or with any race that had high schoolers on top, is never moved. The step
+    prints the count and 12 examples. `diag_board_people.py --team "<exact name>"` shows a
+    club's adult share. Tests: tests/test_adult_club.py, Postgres half included.
+  - **National teams:** the pro_flag seed only fires on a COUNTRY name at a SENIOR
+    championship, excluding U20/U18/U23. "USA" is on neither list, so a US junior at Worlds is
+    untouched.
   - Clive Terrelonge ("Jamaica"): the 2026-09-29 national-team seed covers it, and the national
     page now shows the current season.
 - **🔎 Still on those boards (not fixed):**

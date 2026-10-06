@@ -131,6 +131,50 @@ def person(cur, pid, tables):
                 print(f"  person_link_log: {n} rows moved from {frm} by '{rule}'")
 
 
+def team(cur, name, limit):
+    """grade_sanity rule 8's question about one club: how many of its
+    athletes' club seasons come after their college began?"""
+    cur.execute("""
+        SELECT person_id, substr(date, 1, 4) AS yr, grade
+        FROM   (SELECT person_id, date, grade FROM results WHERE school = %s
+                UNION ALL
+                SELECT person_id, date, grade FROM results_tf WHERE school = %s) r
+        WHERE  person_id IS NOT NULL
+        LIMIT  20000""", (name, name))
+    # ! THE EXACT SPELLING, so the school index answers it (a lower() would
+    #   scan both tables); give each spelling as its own --team value.
+    seasons = {}
+    for pid, yr, gr in cur.fetchall():
+        seasons.setdefault(int(pid), {}).setdefault(yr, set()).add(str(gr))
+    pids = sorted(seasons)[:limit] if limit else sorted(seasons)
+    print(f"\n==== team {name!r}: {len(seasons):,} athletes "
+          f"(showing {len(pids)})", flush=True)
+    if not pids:
+        return
+    cur.execute("""
+        SELECT person_id,
+               min(substr(date, 1, 4)::int
+                   - (substring(upper(TRIM(grade)) FROM '-([1-6])$')::int - 1))
+        FROM   (SELECT person_id, date, grade FROM results WHERE person_id = ANY(%s)
+                UNION ALL
+                SELECT person_id, date, grade FROM results_tf WHERE person_id = ANY(%s)) r
+        WHERE  upper(TRIM(grade)) ~ '^(FR|SO|JR|SR)-[1-6]$' AND date ~ '^(19|20)'
+        GROUP  BY 1""", (pids, pids))
+    start = {int(p): int(y) for p, y in cur.fetchall()}
+    after = total = 0
+    for pid in pids:
+        yrs = seasons[pid]
+        cs = start.get(pid)
+        n_after = sum(1 for y in yrs if cs is not None and int(y) > cs)
+        after += n_after
+        total += len(yrs)
+        show = ", ".join(f"{y}:{'/'.join(sorted(g))}" for y, g in sorted(yrs.items()))
+        print(f"  {pid:>11}  college from {cs or '-':<5} club years {show}")
+    if total:
+        print(f"  -> {after}/{total} club seasons after college began "
+              f"({100 * after / total:.0f}%; rule 8 calls a club adult above 50%)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -139,6 +183,8 @@ def main():
     ap.add_argument("--top", type=int, default=40)
     ap.add_argument("--person", nargs="*", type=int, default=[])
     ap.add_argument("--name", nargs="*", default=[])
+    ap.add_argument("--team", nargs="*", default=[],
+                    help="club names: is it an adult club (rule 8)?")
     a = ap.parse_args()
     with getConn() as conn:
         cur = conn.cursor()
@@ -150,12 +196,14 @@ def main():
             cur.execute("""SELECT column_name FROM information_schema.columns
                            WHERE table_name = %s AND column_name = 'team_id'""", (t,))
             tables[t] = {"team_id": cur.fetchone() is not None}
+        for t in a.team:
+            team(cur, t, a.top)
         pids = list(a.person) + byName(cur, a.name)
         if a.board:
             sport, pool, year = a.board
             pids += boardPeople(cur, sport.upper(), pool, int(year), a.top, a.state)
-        if not pids:
-            ap.error("give --board, --person or --name")
+        if not pids and not a.team:
+            ap.error("give --board, --person, --name or --team")
         seen = set()
         for pid in pids:
             if pid in seen:
