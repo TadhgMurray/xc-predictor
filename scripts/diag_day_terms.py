@@ -217,6 +217,44 @@ def heat(cur):
           f"(+ = hotter is slower)")
     print(f"   share of the drift that was heat: "
           f"{(1 - b[0] / b_w) if b_w else float('nan'):.0%}")
+    # ⚠ THE WEATHER ROWS ARE A SUBSET (owner's run, 2026-10-06: 2,532
+    #   race-days, slope +0.04%/week, against -0.29%/week from
+    #   --season-trend on every day row). So the same within-season week
+    #   slope on EVERY day row, all seasons and then only the seasons the
+    #   weather rows come from: if those disagree with the line above, the
+    #   subset is not the corpus and the heat split says nothing about it.
+    cur.execute("""
+        WITH d AS (
+            SELECT extract(year FROM race_date)::int AS season, race_date,
+                   day_effect, n_rows
+            FROM race_day_effect
+            WHERE course_name NOT LIKE 'TF:%%'
+              AND extract(month FROM race_date) BETWEEN 8 AND 12),
+        s AS (SELECT season, min(race_date) AS first FROM d GROUP BY season)
+        SELECT d.season, ((d.race_date - s.first) / 7)::int AS week,
+               100 * d.day_effect, d.n_rows
+        FROM d JOIN s USING (season)
+        WHERE (d.race_date - s.first) / 7 <= 12""")
+    allr = np.array(cur.fetchall(), dtype=float)
+    if allr.size:
+        a_season, a_week, a_u, a_n = allr.T
+        def slope(mask):
+            ss, ww, uu, nn = a_season[mask], a_week[mask], a_u[mask], a_n[mask]
+            wd, ud = ww.copy(), uu.copy()
+            for k in np.unique(ss):
+                m = ss == k
+                wd[m] -= np.average(ww[m], weights=nn[m])
+                ud[m] -= np.average(uu[m], weights=nn[m])
+            return float(np.sum(nn * wd * ud) / np.sum(nn * wd * wd))
+        same = np.isin(a_season, np.unique(season))
+        print(f"   every day row, all seasons:      {slope(a_n > 0):+.3f}% per week "
+              f"({int((a_n > 0).sum()):,} race-days)")
+        print(f"   every day row, the weather rows' seasons "
+              f"({int(np.unique(season).min())}-{int(np.unique(season).max())}): "
+              f"{slope(same):+.3f}% per week ({int(same.sum()):,} race-days)")
+    yrs, cnt = np.unique(season, return_counts=True)
+    print("   weather rows by season: " + "  ".join(
+        f"{int(y)}:{c}" for y, c in zip(yrs, cnt)))
 
 
 def main():

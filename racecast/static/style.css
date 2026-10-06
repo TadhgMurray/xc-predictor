@@ -5707,6 +5707,19 @@ td.vs-level.is-under { color: var(--muted); }
 }
 .seg-btn:hover:not(.is-on), .toggle-group button:hover:not(.is-active),
 .sport-toggle a:hover, .board-strip a:hover:not(.is-on) { background: var(--hover, #f3f6fa); }
+/* the Rating scale switch (_scale.html) is a TAB too: it changes every
+   number on the page (owner, 2026-10-06: "make the rating scale black the
+   same as the others"). Its label stays beside it. */
+.scale-toggle { gap: 0.25rem; }
+.scale-toggle button, .scale-toggle button:first-of-type, .scale-toggle button:last-of-type {
+  padding: 0.4rem 0.95rem; border: 1px solid var(--line, #e5e7eb); border-radius: 6px;
+  background: #fff; font-weight: 500; color: var(--ink, #111418);
+}
+.scale-toggle button.is-active, .search-tab.is-active, .predict2 .vbtn.is-on,
+.predict2 .race-chip.quick.is-on, .unit-btn.is-on {
+  background: var(--sel, #111418); border-color: var(--sel, #111418); color: #fff;
+}
+.scale-toggle button:hover:not(.is-active) { background: var(--hover, #f3f6fa); }
 
 /* ---- CHIP -------------------------------------------------------------- */
 .pool-chips .chip, .rc-seg-btn, .recruit-athlete .rc-seg-btn, .yb {

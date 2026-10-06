@@ -4219,6 +4219,15 @@ weeks 0-2 and about -1% fast by weeks 10-13. The pooled slope over weeks 0-12 is
   - **Fix, once the split is known:** a curvature prior on the same footing as the others,
     `sigma2 / curve_sd^2`, with curve_sd estimated each outer pass the way tau and sigma_u are.
     Heat goes to the weather refit (XCP_WEATHER_FIT=1), not the curve.
+- **--heat result (owner, 2026-10-06): no drift on the weather subset.**
+  - 2,532 race-days have an hour-9 weather row. On those, the week slope is +0.042%/week, and
+    +0.040% with temperature held. Temperature has no effect (-0.001%/degree C).
+  - That contradicts --season-trend's -0.29%/week. So either the drift lives outside the weather
+    subset, or the two measures differ: --season-trend pools without demeaning by season.
+  - --heat now also prints the within-season slope on EVERY day row, for all seasons and for
+    the weather rows' seasons, plus the weather rows by season. That settles which it is.
+  - The straight-line curve is a fact of the code either way. Whether it costs anything is now
+    the open question.
 - **Also seen in that log:** in the tilt table, the <70 band has applied h 1.112 against an
   implied 0.528, and 70-80 has 1.074 against 0.388. Look at this when the curve is redone.
 - **Dropdowns, re-run.** Only 2 of 30 races on 29603086 still lack a day row:
@@ -4235,6 +4244,19 @@ the era curve: shifts that trend with year mean the era curve is mis-shaped.
 Invitational 2024, Roughrider 2023, De La Salle Nike Invitational 2021-23, and the Cal scrimmage.
 `scripts/diag_day_terms.py --person 29603086` names, for each, the race_day_effect rows at that
 venue: a different distance cell, a different date, or none at all.
+
+## 2026-10-06 — accuracy at the extremes; rating-scale switch black
+
+- **Accuracy by ability.** Owner: "I wonder if our accuracy changes as ability goes to
+  extremes." The held-out scorecard (08a_holdout, 08a_sport_holdout) now prints error sd and
+  bias by the athlete's own-pool rating, on the tilt report's bands. It has two columns:
+  - all rows;
+  - athlete-seasons with 6+ training rows, where regression to the mean is small.
+  A mean that runs + at one end and - at the other is the model mis-scaling that end. Read it
+  next to the tilt table: <70 applied h 1.11 vs implied 0.53.
+- **Rating scale switch.** It is now a black TAB like the others. The search tabs, the predict
+  view buttons, the quick race chips and the unit buttons now use the same black (--sel).
+- **Tables stay square.** That was the owner's pick on 2026-09-13; controls are rounded.
 
 ## 2026-10-05 — 📌 team widget: kept, but it's poor right now
 

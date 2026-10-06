@@ -1438,9 +1438,10 @@ def reportTiltScale(out, pool_names):
           + ", ".join(f"{n} x{float(f):.4f}" for n, f in zip(pool_names, fac)))
 
 
-def holdoutBreakdown(err, season_rows, pool, min_rows=200):
+def holdoutBreakdown(err, season_rows, pool, min_rows=200, rating=None):
     """Lines: the held-out error sd and mean by the athlete-season's
-    training rows and by pool. Pure; a bucket under min_rows is skipped."""
+    training rows, by pool and, given each row's rating, by rating band.
+    Pure; a bucket under min_rows is skipped."""
     err = np.asarray(err, dtype=np.float64)
     season_rows = np.asarray(season_rows)
     pool = np.asarray(pool, dtype=object)
@@ -1460,6 +1461,37 @@ def holdoutBreakdown(err, season_rows, pool, min_rows=200):
             continue
         out.append(f"          {str(name):>10}: sd {err[m].std():.6f}  mean "
                    f"{err[m].mean():+.5f}  ({int(m.sum()):,})")
+    # ★ IS IT AS GOOD AT THE EXTREMES? (owner, 2026-10-06: "I wonder if our
+    #   accuracy changes as ability goes to extremes.") The same score by
+    #   the athlete's own-pool rating, on the tilt report's bands. A mean
+    #   that runs + at one end and - at the other is the model mis-scaling
+    #   that end (the tilt table's applied-vs-implied h says where).
+    # ! THE BAND IS THE TRAINING RATING, so regression to the mean is in
+    #   it: a rating from one or two races is partly luck, and its held-out
+    #   row drifts back -- top bands read +, bottom bands -, with no model
+    #   fault. The second column keeps athlete-seasons in the top
+    #   training-rows bucket, where that luck is small; a slope that
+    #   survives there is the model's.
+    if rating is not None:
+        r = np.asarray(rating, dtype=np.float64)
+        lo_full = HOLDOUT_SEASON_BUCKETS[-1][0]
+        full = season_rows >= lo_full
+        edges = (-np.inf,) + tuple(TILT_REPORT_BANDS) + (np.inf,)
+        out.append(f"        by the athlete's rating (own pool; + = ran slower "
+                   f"than predicted)      all rows  |  {lo_full}+ training rows:")
+        for a, b in zip(edges[:-1], edges[1:]):
+            m = np.isfinite(r) & (r >= a) & (r < b)
+            if int(m.sum()) < min_rows:
+                continue
+            lab = (f"<{b:.0f}" if not np.isfinite(a) else
+                   f">={a:.0f}" if not np.isfinite(b) else f"{a:.0f}-{b:.0f}")
+            line = (f"          {lab:>7}: sd {err[m].std():.6f}  mean "
+                    f"{err[m].mean():+.5f}  ({int(m.sum()):,})")
+            mf = m & full
+            if int(mf.sum()) >= min_rows:
+                line += (f"  |  sd {err[mf].std():.6f}  mean "
+                         f"{err[mf].mean():+.5f}  ({int(mf.sum()):,})")
+            out.append(line)
     return out
 
 
@@ -1692,7 +1724,11 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     #   the athlete-season's TRAINING rows and by pool. The bucket edges are
     #   for reading only. scripts/switch_scorecard.py --holdout compares two
     #   rungs' dumps row for row on the rows both covered.
-    for line in holdoutBreakdown(err, n_tr_season[cov], pool_te[cov]):
+    _r = out.get("rating")
+    for line in holdoutBreakdown(
+            err, n_tr_season[cov], pool_te[cov],
+            rating=(None if _r is None
+                    else np.asarray(_r, dtype=np.float64)[D_te.athlete[cov]])):
         print(line)
     if kind in ("sport", "sport-xc") and "dist_m" in cols:
         for line in crossSportBreakdown(err, pool_te[cov],
