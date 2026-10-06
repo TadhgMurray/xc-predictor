@@ -4288,6 +4288,16 @@ venue: a different distance cell, a different date, or none at all.
   doesn't have, so the Upcoming list's Predict links open an empty page. The scraper doesn't fetch
   entries. In progress: races and date from the meet's own rows; the field from the previous
   edition's teams with this season's squads, said on the page.
+- **✅ FIXED: 04_grade_sanity rule 7, track half.** pg_stat_activity: one CREATE TEMP TABLE tmp_elite
+  running 5h57m, no lock wait. The statement joined every results_tf row to race_top_level on an
+  md5 key before an unestimable SQL-function grade filter. Now one pass stages the elementary and
+  middle school rows (tmp_elite_src, ANALYZEd), and the joins run on that with nested loops off.
+  The rows were checked identical to the old statement on a scratch database (XC 694, TF 456).
+  Restart from 04.
+- **📌 Link meets across years** (owner: "maybe we should have some way to link meets across
+  years"). Upcoming predictions need a meet's previous edition, and so would "this meet, year by
+  year". A meet_series table (normalised name + venue + source, built in the pipeline) would give
+  every reader one answer.
 - **🔎 Pipeline 20261006_024705 is still at 04_grade_sanity after ~9 h.** It printed rule 7's XC
   bars, so it is in the track half of eliteFieldSeasons. On 2026-10-05 the whole run reached 08
   in 2h17m, and grade_sanity hasn't changed since 2026-09-30, so something is waiting (a lock?)

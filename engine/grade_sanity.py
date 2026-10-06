@@ -160,6 +160,7 @@ THE SPEC, IN ONE PLACE
 
 import os
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
@@ -1458,7 +1459,9 @@ ELITE_QUANTILE = 0.0001
 ELITE_K = 1.06
 
 
-def _eliteRowsSql(sport):
+def _eliteRowsSql(sport, src=None):
+    """The elite-field rows of one sport. `src` is the table the rows come
+    from: eliteFieldSeasons passes its staged subset (tmp_elite_src)."""
     from level_graph import _raceKeyExpr
     if sport == "XC":
         dist = """COALESCE(dov.distance, m.distance,
@@ -1469,12 +1472,12 @@ def _eliteRowsSql(sport):
                                           AND mt.sport = 'XC'
                    LEFT JOIN dist_override dov ON dov.meet_id = r.meet_id
                                               AND dov.div_id = r.div_id"""
-        table, extra = "results", ""
+        table, extra = src or "results", ""
     else:
         from speed_ratings_db import _eventMetersSql
         dist = f"({_eventMetersSql('r')})::float8"
         joins = ""
-        table, extra = "results_tf", "AND COALESCE(r.is_relay, 0) = 0"
+        table, extra = src or "results_tf", "AND COALESCE(r.is_relay, 0) = 0"
     return f"""
         SELECT r.person_id, {_ACAD_R} AS acad, gradeLevel(normGrade(r.grade)) AS lvl,
                g.gender, rl.top_level,
@@ -1514,9 +1517,34 @@ def eliteFieldSeasons(cur):
         CREATE INDEX ON tmp_elite_gender (id);
         ANALYZE tmp_elite_gender;""")
     out = set()
+    # ★ STAGE THE FEW ROWS FIRST, THEN JOIN, AND NO NESTED LOOPS (run
+    #   20261006_024705: the track half of this sat SIX HOURS in one CREATE
+    #   TABLE, no lock wait, where the whole of 00-07 took 2h17m the day
+    #   before). The one statement joined every results_tf row to
+    #   race_top_level on an md5 expression before the grade filter -- a
+    #   SQL function the planner cannot estimate -- so a plan flip to a
+    #   nested loop is rows x races. The elementary/middle-school rows are a
+    #   small slice: one sequential pass picks them into tmp_elite_src, it is
+    #   ANALYZEd, and the joins run on that with nested loops off (the
+    #   twin_flag rules' SESSION, for the same reason).
+    cur.execute("SET enable_nestloop = off")
     for sport in ("XC", "TF"):
+        table = "results" if sport == "XC" else "results_tf"
+        relay = "AND COALESCE(r.is_relay, 0) = 0" if sport == "TF" else ""
+        t0 = time.time()
         cur.execute(f"""
-            CREATE TEMP TABLE tmp_elite AS {_eliteRowsSql(sport)};
+            DROP TABLE IF EXISTS tmp_elite_src;
+            CREATE TEMP TABLE tmp_elite_src AS
+                SELECT r.* FROM {table} r
+                WHERE  r.person_id IS NOT NULL AND r.date IS NOT NULL
+                  AND  r.time_seconds > 0 {relay}
+                  AND  gradeLevel(normGrade(r.grade)) IN ('elem', 'ms');
+            ANALYZE tmp_elite_src;
+            SELECT count(*) FROM tmp_elite_src;""")
+        print(f"    [7] {sport}: {cur.fetchone()[0]:,} elementary/middle-school rows staged "
+              f"({time.time() - t0:.0f}s)", flush=True)
+        cur.execute(f"""
+            CREATE TEMP TABLE tmp_elite AS {_eliteRowsSql(sport, src="tmp_elite_src")};
             SELECT lvl, gender,
                    percentile_cont({float(ELITE_QUANTILE)!r}) WITHIN GROUP (ORDER BY t5k)
             FROM   tmp_elite WHERE top_level = lvl GROUP BY 1, 2""")
@@ -1532,11 +1560,12 @@ def eliteFieldSeasons(cur):
                 continue
             out.add((int(pid), int(ay)))
             n_rows += 1
-        cur.execute("DROP TABLE tmp_elite")
+        cur.execute("DROP TABLE tmp_elite; DROP TABLE tmp_elite_src")
         print(f"    [7] {sport}: bars " + ", ".join(
             f"{lvl}_{g} {int(b // 60)}:{b % 60:04.1f}" for (lvl, g), b in sorted(bars.items()))
               + f" (5 km equivalent); {n_rows:,} rows under them in college/pro races")
     cur.execute("DROP TABLE IF EXISTS tmp_elite_gender")
+    cur.execute("RESET enable_nestloop")
     return out
 
 
