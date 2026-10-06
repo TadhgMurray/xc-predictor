@@ -10164,18 +10164,19 @@ def rankings_landing(sport, pool, state=None):
             #   predict's own "a season, not a typo" floor.
             if year is None:
                 try:
+                    import datetime as _dt
                     from predict import SEASON_MIN_RESULTS
-                    cur.execute("SELECT DISTINCT year FROM athlete_season "
-                                "WHERE sport = %s ORDER BY year DESC LIMIT 6",
-                                (L.SPORTS[sport],))
-                    for _r in cur.fetchall():
+                    from season_year import academicYear
+                    # newest first, one bounded probe per year (no scan)
+                    for _y in range(academicYear(_dt.date.today()),
+                                    academicYear(_dt.date.today()) - 6, -1):
                         cur.execute("""SELECT count(*) AS n FROM (
                                            SELECT 1 FROM athlete_season
                                            WHERE sport = %s AND year = %s AND n_races >= 3
                                              AND mean_rating IS NOT NULL LIMIT %s) x""",
-                                    (L.SPORTS[sport], _r["year"], SEASON_MIN_RESULTS))
+                                    (L.SPORTS[sport], _y, SEASON_MIN_RESULTS))
                         if int(cur.fetchone()["n"]) >= SEASON_MIN_RESULTS:
-                            year = int(_r["year"]) + (1 if L.SPORTS[sport] == "TF" else 0)
+                            year = _y + (1 if L.SPORTS[sport] == "TF" else 0)
                             break
                 except psycopg2.Error:
                     conn.rollback()
