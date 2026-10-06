@@ -5638,8 +5638,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 /* /meets "Coming up" (weekend.py) */
 .coming-up { margin-bottom: 1.5rem; }
-.coming-up .cu-day { font-size: .95rem; margin: 1rem 0 .3rem; }
-.coming-up .cu-state { margin-left: .6rem; white-space: nowrap; }
+/* the day heads are the Results view's month heads (.month-head) */
 .coming-up .cu-table td:nth-child(n+3) { white-space: nowrap; }
 .coming-up .cu-all { margin-top: .4rem; font: inherit; font-size: .85rem; background: none;
                      border: 1px solid var(--line-2); border-radius: 5px; padding: .25rem .6rem;

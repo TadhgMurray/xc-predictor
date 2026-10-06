@@ -260,22 +260,41 @@
     {% endif %}
     {% if upcoming and coming %}
     <section class="coming-up" id="coming-up">
-      <p class="meta">
-         <label class="cu-state">State
-           <select id="cu-state"><option value="">All</option>
-             {% for st in states %}<option>{{ st }}</option>{% endfor %}
-           </select></label></p>
+      {# ★ THE RESULTS VIEW'S FILTER CARD (owner, 2026-10-06: the state
+         filter here "looks very out of place"). Same .meet-filters card, the
+         same label-over-select fields; it filters the list in place, so no
+         button. #}
+      <div class="meet-filters cu-filters" role="search">
+        <div class="field">
+          <label for="cu-state">State</label>
+          <select id="cu-state"><option value="">All states</option>
+            {% for st in states %}<option>{{ st }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="cu-level">Level</label>
+          <select id="cu-level">
+            <option value="">Any level</option>
+            <option value="HS">High school</option>
+            <option value="College">College</option>
+          </select>
+        </div>
+      </div>
       {% for d in coming %}
-      <h3 class="cu-day">{{ d.label }}</h3>
+      <h2 class="month-head cu-day">{{ d.label }}</h2>
       <table class="cu-table">
+        <thead>
+          <tr><th>Meet</th><th>{{ "Course" if sport == 'XC' else "Setting" }}</th>
+              <th>State</th><th>Level</th><th>Races</th><th></th></tr>
+        </thead>
         <tbody>
         {% for m in d.meets %}
-          <tr data-state="{{ m.state or '' }}"{% if loop.index > 15 %} class="cu-more" hidden{% endif %}>
+          <tr data-state="{{ m.state or '' }}" data-level="{{ m.level }}"{% if loop.index > 15 %} class="cu-more" hidden{% endif %}>
             <td>{{ m.name }}</td>
             <td>{{ m.venue or " - " }}</td>
             <td>{{ m.state or " - " }}</td>
-            <td>{{ m.level }}</td>
-            <td class="no-break">{{ m.n_races }} race{{ "" if m.n_races == 1 else "s" }}</td>
+            <td>{{ m.level or " - " }}</td>
+            <td>{{ m.n_races }}</td>
             <td><a href="{{ m.predict_href }}">Predict</a></td>
           </tr>
         {% endfor %}
@@ -293,19 +312,22 @@
       var box = document.getElementById("coming-up");
       if (!box) return;
       var sel = document.getElementById("cu-state");
+      var lvl = document.getElementById("cu-level");
       function apply() {
-        var st = sel.value;
+        var st = sel.value, lv = lvl.value, narrowed = !!(st || lv);
         box.querySelectorAll(".cu-table").forEach(function (t) {
           var open = t.dataset.open === "1", n = 0;
-          t.querySelectorAll("tr").forEach(function (tr) {
-            var ok = !st || tr.dataset.state === st;
+          t.querySelectorAll("tbody tr").forEach(function (tr) {
+            // "HS & college" is both
+            var ok = (!st || tr.dataset.state === st)
+                  && (!lv || tr.dataset.level.indexOf(lv === "HS" ? "HS" : "ollege") >= 0);
             if (ok) n++;
-            tr.hidden = !ok || (!st && !open && tr.classList.contains("cu-more"));
+            tr.hidden = !ok || (!narrowed && !open && tr.classList.contains("cu-more"));
           });
           var day = t.previousElementSibling, btn = t.nextElementSibling;
           if (day) day.hidden = n === 0;
           t.hidden = n === 0;
-          if (btn && btn.classList.contains("cu-all")) btn.hidden = !!st || open;
+          if (btn && btn.classList.contains("cu-all")) btn.hidden = narrowed || open || n === 0;
         });
       }
       box.addEventListener("click", function (e) {
@@ -314,6 +336,7 @@
         apply();
       });
       sel.addEventListener("change", apply);
+      lvl.addEventListener("change", apply);
     })();
     </script>
     {% endif %}

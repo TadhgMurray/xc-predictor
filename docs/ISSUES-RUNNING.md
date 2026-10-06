@@ -4270,6 +4270,22 @@ Invitational 2024, Roughrider 2023, De La Salle Nike Invitational 2021-23, and t
 `scripts/diag_day_terms.py --person 29603086` names, for each, the race_day_effect rows at that
 venue: a different distance cell, a different date, or none at all.
 
+## 2026-10-06 — Upcoming filter normalised; a race with no difficulty; a cross-feed twin
+
+- **/meets Upcoming.** The state filter was a bare select in a sentence ("out of place"). It is
+  now the Results view's filter card (.meet-filters), with State and a new Level field (HS &
+  college matches both). The day heads are the Results view's month heads, and the tables have
+  the same header row.
+- **🔎 Panorama Farms 6000m, Sep 11 2026, "Course difficulty: -" with ratings (143.0).** The
+  venue's own page shows +5.5% at 5000m and lists a 6000m tab. Likely there is no 6000 m cell
+  in course_difficulties, so the header's (canonical, 6000) join is empty. Check with
+  `scripts/diag_race_difficulty.py "<race url>"`, which prints the chain and the step that
+  came up empty.
+- **🔎 Same race twice on an athlete page.** On Sep 4 2026, "Utah Valley Invitational" (anet,
+  13:21.4, 146.6, +3.0%) and "2026 UVU Collegiate XC Invite" (tfrrs, 13:21, 148.2, difficulty
+  -) are the same race at Scera Park, and both carry PR/CR flags. The cross-feed twin was not
+  joined (canon_meet_id), and the tfrrs copy is rated without a difficulty.
+
 ## 2026-10-06 — accuracy at the extremes; rating-scale switch black
 
 - **Accuracy by ability.** Owner: "I wonder if our accuracy changes as ability goes to
