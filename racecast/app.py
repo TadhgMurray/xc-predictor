@@ -10156,14 +10156,27 @@ def rankings_landing(sport, pool, state=None):
             #   year was None and landingRows read every season at once.
             #   The newest rated season of the sport stands in, labelled
             #   the way the meta labels it (track: stored year + 1).
+            # ! THE NEWEST SEASON WITH A BOARD IN IT, not the newest year
+            #   (2026-10-06: max(year) picked the track season that opened
+            #   with a few October all-comers, and the national page read
+            #   "Unattached (TX)", one race each). A season counts once it
+            #   has SEASON_MIN_RESULTS athletes with the board's 3 races --
+            #   predict's own "a season, not a typo" floor.
             if year is None:
                 try:
-                    cur.execute("SELECT max(year) AS y FROM athlete_season "
-                                "WHERE sport = %s AND mean_rating IS NOT NULL",
+                    from predict import SEASON_MIN_RESULTS
+                    cur.execute("SELECT DISTINCT year FROM athlete_season "
+                                "WHERE sport = %s ORDER BY year DESC LIMIT 6",
                                 (L.SPORTS[sport],))
-                    _y = (cur.fetchone() or {}).get("y")
-                    if _y is not None:
-                        year = int(_y) + (1 if L.SPORTS[sport] == "TF" else 0)
+                    for _r in cur.fetchall():
+                        cur.execute("""SELECT count(*) AS n FROM (
+                                           SELECT 1 FROM athlete_season
+                                           WHERE sport = %s AND year = %s AND n_races >= 3
+                                             AND mean_rating IS NOT NULL LIMIT %s) x""",
+                                    (L.SPORTS[sport], _r["year"], SEASON_MIN_RESULTS))
+                        if int(cur.fetchone()["n"]) >= SEASON_MIN_RESULTS:
+                            year = int(_r["year"]) + (1 if L.SPORTS[sport] == "TF" else 0)
+                            break
                 except psycopg2.Error:
                     conn.rollback()
             try:
