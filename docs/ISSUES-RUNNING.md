@@ -4286,8 +4286,16 @@ venue: a different distance cell, a different date, or none at all.
 - **🔎 Predicting an upcoming meet doesn't work.** Owner: "where does the roster come from?"
   Nowhere: the races, date and field are all read from the meet's RESULTS, which an upcoming meet
   doesn't have, so the Upcoming list's Predict links open an empty page. The scraper doesn't fetch
-  entries. In progress: races and date from the meet's own rows; the field from the previous
-  edition's teams with this season's squads, said on the page.
+  entries. ✅ FIXED (racecast/last_edition.py):
+  - The races and date come from the meet's posted rows.
+  - The field is the teams at the meet's last running (same feed, normalised name, earlier, with
+    results; same venue, then same state, then most recent), with this season's squads.
+  - The page names the running it borrowed. With no earlier running, it asks for teams.
+  - The Coming-up link's &src= is now read, so an upcoming tfrrs meet no longer resolves to an old
+    anet meet that shares its id.
+  - Tests: tests/test_upcoming_meet.py (Postgres included) and tests/test_predict_upcoming.js.
+  - Unverified on the real corpus: anet "Varsity" pairing assumes divisions keep their order year
+    to year; an upcoming tfrrs meet may have no race list (it falls back to the whole edition).
 - **✅ FIXED: 04_grade_sanity rule 7, track half.** pg_stat_activity: one CREATE TEMP TABLE tmp_elite
   running 5h57m, no lock wait. The statement joined every results_tf row to race_top_level on an
   md5 key before an unestimable SQL-function grade filter. Now one pass stages the elementary and

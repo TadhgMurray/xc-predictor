@@ -1,6 +1,6 @@
 /*
  * A meet not yet run, opened from /meets?view=upcoming (owner, 2026-10-06:
- * "Make predicting an UPCOMING meet work"). The Coming-up link names the
+ * "predicting upcoming races doesn't work bcs where does the roster come from?"). The Coming-up link names the
  * feed that posted the meet (&src=tfrrs) -- with no results there is
  * nothing else to pick it by -- so every request carries it; and the field
  * the server borrowed from the meet's last edition is said so under the
@@ -96,7 +96,7 @@ const sb = eval(`(() => {
       kind: "last_edition", meet_id: 400, date: "2025-10-11",
       meet_name: "2025 Lakeside Invitational" } };
     sb.showBasis(["5001"]);
-    ok(!basisEl.hidden && /last year's edition \(2025-10-11\)/.test(
+    ok(!basisEl.hidden && /last running of this meet \(2025-10-11\)/.test(
          basisEl.textContent) && /Edit it below/.test(basisEl.textContent),
        "a borrowed field names the edition's date");
     sb.editsFor("5001").field = { teams: [], basis: { kind: "none" } };

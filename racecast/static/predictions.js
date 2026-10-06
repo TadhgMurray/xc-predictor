@@ -1575,7 +1575,7 @@ async function loadField() {
 
 
 /* ★ SAY WHERE THE FIELD CAME FROM WHEN IT IS NOT AN ENTRY LIST (owner,
-   2026-10-06: "Make predicting an UPCOMING meet work"). A meet not yet run
+   2026-10-06: "predicting upcoming races doesn't work bcs where does the roster come from?"). A meet not yet run
    has no entries anywhere we read, so the server builds its field from the
    last running of the same meet (last_edition.py) and says so in `basis`;
    one line under the meet tells the reader, so last year's teams are not
@@ -1592,8 +1592,8 @@ function showBasis(blocks) {
   el.hidden = !b;
   if (!b) { el.textContent = ""; return; }
   el.textContent = b.kind === "last_edition"
-    ? `No entries posted yet \u2014 the field is the teams from last year's `
-      + `edition (${b.date}), with this season's squads. Edit it below.`
+    ? `No entries posted yet \u2014 the field is the teams from the last `
+      + `running of this meet (${b.date}), with this season's squads. Edit it below.`
     : `No entries posted yet and no earlier edition to borrow teams from `
       + `\u2014 add teams below.`;
 }

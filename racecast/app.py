@@ -8828,7 +8828,7 @@ def _predictSource(cur, meet_id, sport, alt=None, div_id=None):
 
 
 # ★ A COMING-UP LINK NAMES ITS FEED, AND AN UPCOMING MEET NEEDS IT (owner,
-#   2026-10-06: "Make predicting an UPCOMING meet work"). _predictSource
+#   2026-10-06: "predicting upcoming races doesn't work bcs where does the roster come from?"). _predictSource
 #   counts RESULTS, and a meet not yet run has none -- so a tfrrs meet
 #   posted for Saturday resolved to whichever anet meet shares its number
 #   and HAS run (the 2009 New Jersey meet under the D3 championships' id),
@@ -9143,7 +9143,7 @@ def api_predict_races():
             meet_date = (row or {}).get("d") or None
 
             # ★ A MEET NOT YET RUN LISTS ITS POSTED RACES (owner, 2026-10-06:
-            #   "Make predicting an UPCOMING meet work"). Both answers above
+            #   "predicting upcoming races doesn't work bcs where does the roster come from?"). Both answers above
             #   are grouped FROM results, so a meet off the Coming up list had
             #   no races and no date -- and the re-run date fell to today.
             #   The host has posted both (the rows weekend.py reads); they

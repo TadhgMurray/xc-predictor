@@ -2206,7 +2206,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
 #            came from: (originals, basis).
 #
 # ★ THE MEET'S OWN RUNNERS WHEN IT HAS RUN; ITS LAST EDITION'S WHEN IT HAS
-#   NOT (owner, 2026-10-06: "Make predicting an UPCOMING meet work"). A meet
+#   NOT (owner, 2026-10-06: "predicting upcoming races doesn't work bcs where does the roster come from?"). A meet
 #   on the Coming up list has a date and races and no results, and every
 #   field here was built from _exactField -- who RAN it -- so the page had
 #   nothing to predict. No feed posts entries, so the teams are borrowed
