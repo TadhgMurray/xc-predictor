@@ -53,7 +53,7 @@ def _sql():
                  encoding="utf-8") as fh:
         src = fh.read()
     ns = {}
-    want = {"_SEASON_Q", "_DECAY_K", "_ANCHOR", "_SEASON_OUTLIER_PTS",
+    want = {"_SEASON_Q", "_DECAY_K", "_ANCHOR", "_SEASON_OUTLIER_PTS", "_CLUB_NAME_RE",
             "_ATHLETE_SEASON_SQL"}
     for node in ast.parse(src).body:
         if (isinstance(node, ast.Assign)

@@ -2835,6 +2835,12 @@ _SEASON_OUTLIER_PTS = 20.0
 # ⚠ SO EVERY READER MUST TOLERATE A NULL RATING, and in Postgres `ORDER BY
 #   rating DESC` puts NULLs FIRST. The boards that sort on these columns were
 #   audited for NULLS LAST and IS NOT NULL when this shipped.
+# A team name that is a club, not a school: the words clubs use and schools
+# do not (\m \M are Postgres word boundaries). Used only to choose a
+# school-age season's label when the season also has a school row.
+_CLUB_NAME_RE = (r"\m(club|tc|ac|xtc|elite|striders|endurance|athletics|"
+                 r"track (and|&) field|racing|harriers|youth)\M")
+
 _ATHLETE_SEASON_SQL = f"""
 WITH season_med AS (
     SELECT person_id, pool, sport, year,
@@ -2865,7 +2871,18 @@ SELECT base.person_id, base.pool, base.sport, base.year,
        --   the college. The school that carries a college division on
        --   its rows is the college; only when no row does is the plain
        --   majority used.
+       -- ★ A SCHOOL-AGE SEASON'S TEAM IS THE SCHOOL, NOT THE CLUB (owner,
+       --   2026-10-06: Brady Keller headed "Leduc Track and Field" over a
+       --   Lacombe season, Leo Young "Newbury Park Athletic Club"). Summer
+       --   club meets can outnumber the school's; where the season has a
+       --   school row, the club-shaped names step aside. Only the choice
+       --   of label: a season with nothing but club rows keeps its club.
        COALESCE(mode() WITHIN GROUP (ORDER BY school)
+                    FILTER (WHERE base.pool ~ '^(hs|ms|elem)_'
+                              AND school IS NOT NULL
+                              AND lower(school) NOT LIKE 'unattached%%'
+                              AND lower(school) !~ '{_CLUB_NAME_RE}'),
+                mode() WITHIN GROUP (ORDER BY school)
                     FILTER (WHERE base.pool LIKE 'college%%'
                               AND division IS NOT NULL
                               AND school IS NOT NULL),

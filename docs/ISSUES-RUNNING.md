@@ -4291,6 +4291,23 @@ The owner's two URLs: /rankings?board=ability&pool=hs_m&sport=TF&state=CA&year=2
   newest rated season, labelled the meta's way.
 - **State pages UI.** One filter card: sport as joined tabs, pool as chips, state as a picker.
   This replaces two lines of underlined links; the full state list stays at the foot for crawlers.
+- **diag_board_people.py on the CA 2024 track board** (owner ran it, 2026-10-06):
+  - **Eric Van Der Els** (2000000023): UConn SR-4 in 2022, then ZAP Endurance pro rows graded
+    "11"/"12" in 2024-25. Rule 5b (post_collegiate) should already pool these pro. Likely cause:
+    the id comes from a manual person_collision split made after the last grade_sanity, so
+    grade_fix is keyed on the old id (32786559). Re-check after this run.
+  - **Bobby Poynter** (2000000845): grade 12 two seasons running, at the Olympic Trials and USATF
+    championships. Also a collision split, so the same re-check.
+  - **✅ Elijah Ocegueda:** "grade 11" for Performance Elite RC in 2024-25, then a JR-3 at Cal
+    Poly Pomona in 2025-26. Rule 5b started college at the first definite row; it now starts it
+    at row year - (class number - 1), so a JR-3 in 2025 means 2023.
+  - **✅ Brady Keller** (Lacombe HS, Alberta) under "Leduc Track and Field", and Leo Young under
+    "Newbury Park Athletic Club": a school-age season's label now prefers a non-club name when the
+    season has one (_CLUB_NAME_RE in build_ranking_results). Club-only seasons keep the club.
+  - **🔎 Tanner Chada** (Gazelle Sports Elite, MI): a tfrrs "Freshman" in 2015 and "12" in 2025.
+    With only two seasons the progression rule needs a third, so it is left; noted.
+  - Clive Terrelonge ("Jamaica"): the 2026-09-29 national-team seed covers it, and the national
+    page now shows the current season.
 - **🔎 Still on those boards (not fixed):**
   - pro or club groups' athletes graded 12 in HS boys (ZAP Endurance, Railroad Athletics,
     Tracksmith);

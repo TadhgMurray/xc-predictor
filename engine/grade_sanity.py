@@ -1411,9 +1411,20 @@ def _resolveBareClass(acad, bare):
 #   verdict the data cannot support. A ratchet that subtracts claims fails
 #   toward "we do not know"; one that adds them fails toward a seventh grader
 #   on the college board.
+# ★ COLLEGE BEGAN WHEN THE CLASS SAYS IT DID, NOT AT THE FIRST ROW WE HAVE
+#   (owner, 2026-10-06: Elijah Ocegueda, "grade 11" for Performance Elite
+#   Running Club in 2024-25 on the CA high school track board, then a JR-3
+#   at Cal Poly Pomona in 2025-26). A JR-3 in 2025 is a third year: the
+#   first college year was 2023, and the club season after it cannot be
+#   high school. The definite spelling carries the year (FR-1 .. SR-6), so
+#   the start is the row's academic year less (that number - 1).
+# ! NOTHING BEFORE THE START MOVES: a FR-1 row says college began that year,
+#   the same as before; only an upper-class first row reaches back.
 _COLLEGIATE_SQL = """
     WITH elig AS (
-        SELECT person_id, min(acad) AS first_acad
+        SELECT person_id,
+               min(acad - (substring(upper(TRIM(raw_grade)) FROM '-([1-6])$')::int - 1))
+                   AS first_acad
         FROM   allraces
         WHERE  definite
         GROUP  BY 1
