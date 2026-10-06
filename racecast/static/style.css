@@ -5634,8 +5634,17 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .csv-link { margin: .8rem 0 0; font-size: .85rem; color: var(--muted, #6b7280); }
 .csv-link.hidden { display: none; }
 .csv-link a { margin: 0 .15rem; }
-/* the pager spans the board it pages (owner, 2026-10-06) */
-.rankings-page .pager { width: 100%; box-sizing: border-box; flex-wrap: wrap; }
+/* the pager spans the board it pages, right under it (owner, 2026-10-06:
+   "the page thing ... should be just under the table, not a big space") */
+.rankings-page .pager { width: 100%; box-sizing: border-box; flex-wrap: wrap; margin-top: 0.6rem; }
+/* ⚠ ITS LABEL IS span.page, AND .page IS THE ABOUT PAGE'S PROSE BOX
+   (2rem/4rem padding, 68ch, auto margins). That rule made the pager 117px
+   tall, floated the "1-50" above the buttons and pushed Next/Last to the
+   far edge. Undone here; the label sits between the buttons. */
+.rankings-page .pager .page { max-width: none; margin: 0 0.4rem; padding: 0; line-height: normal; }
+/* CSV and the state links start on the board's left edge, like the table */
+.rankings-page .csv-link { margin: 0.5rem 0 0; }
+.rankings-page .by-state { padding: 0; margin-top: 1rem; }
 
 /* /meets "Coming up" (weekend.py) */
 .coming-up { margin-bottom: 1.5rem; }
