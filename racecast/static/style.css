@@ -5744,3 +5744,40 @@ td.vs-level.is-under { color: var(--muted); }
    is a Rankings board and the state ranking pages are boards; everything
    else keeps .page-wide's centred 1080. */
 .page-wide.brk-page, .page-wide.landing-page { max-width: none; padding-left: 2rem; padding-right: 2rem; }
+
+/* ---- TABS ARE JOINED (owner, 2026-10-06: "I prefer the buttons being
+ *      together"). One bar per group: no gap, shared 1px seams, the 6px
+ *      radius on the outer corners only, the selected tab raised so its
+ *      black edge draws over both seams. Chips stay separate pills -- they
+ *      narrow, they do not switch. On a phone a bar that will not fit
+ *      scrolls sideways rather than breaking into a second, cornerless row. */
+.rankings-page .tabs, .board-strip, .seg, .toggle-group, .sport-toggle, .scale-toggle {
+  gap: 0;
+}
+.rankings-page .tabs > .tab, .board-strip > a, .seg > .seg-btn, .toggle-group > button,
+.sport-toggle > a, .scale-toggle > button {
+  border-radius: 0; margin-left: -1px; position: relative;
+}
+.rankings-page .tabs > .tab:first-child, .board-strip > a:first-child, .seg > .seg-btn:first-child,
+.toggle-group > button:first-child, .sport-toggle > a:first-child, .scale-toggle > button:first-of-type {
+  margin-left: 0; border-radius: 6px 0 0 6px;
+}
+.rankings-page .tabs > .tab:last-child, .board-strip > a:last-child, .seg > .seg-btn:last-child,
+.toggle-group > button:last-child, .sport-toggle > a:last-child, .scale-toggle > button:last-of-type {
+  border-radius: 0 6px 6px 0;
+}
+.rankings-page .tabs > .tab:only-child, .board-strip > a:only-child, .seg > .seg-btn:only-child,
+.toggle-group > button:only-child, .sport-toggle > a:only-child {
+  border-radius: 6px;
+}
+.rankings-page .tabs > .tab[aria-selected="true"], .board-strip > a.is-on, .seg > .seg-btn.is-on,
+.toggle-group > button.is-active, .scale-toggle > button.is-active { z-index: 1; }
+.rankings-page .tabs > .tab:hover, .board-strip > a:hover, .seg > .seg-btn:hover,
+.toggle-group > button:hover, .sport-toggle > a:hover, .scale-toggle > button:hover { z-index: 2; }
+@media (max-width: 640px) {
+  .rankings-page .tabs, .board-strip, .seg {
+    flex-wrap: nowrap; overflow-x: auto; max-width: 100%;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .rankings-page .tabs > .tab, .board-strip > a, .seg > .seg-btn { flex: 0 0 auto; white-space: nowrap; }
+}

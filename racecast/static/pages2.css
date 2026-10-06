@@ -163,3 +163,10 @@
 .p2-page .p2-seg a.is-on { background: var(--sel, #111418); border-color: var(--sel, #111418); color: #fff; }
 .p2-page .p2-chips a { border-radius: 999px; }
 .p2-page .p2-chips a.is-on { background: var(--sel-bg, #f1f2f4); font-weight: 600; }
+
+/* joined, like style.css's TABS ARE JOINED block */
+.p2-page .p2-seg { gap: 0; }
+.p2-page .p2-seg a { border-radius: 0; margin-left: -1px; position: relative; }
+.p2-page .p2-seg a:first-child { margin-left: 0; border-radius: 6px 0 0 6px; }
+.p2-page .p2-seg a:last-child { border-radius: 0 6px 6px 0; }
+.p2-page .p2-seg a.is-on { z-index: 1; }
