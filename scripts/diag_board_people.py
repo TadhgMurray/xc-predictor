@@ -51,6 +51,8 @@ def boardPeople(cur, sport, pool, year, top, state=None):
 
 
 def byName(cur, names):
+    """! SLOW: a scan of athletes per name (no name index). --person or
+    --board is the fast way in."""
     out = []
     for n in names:
         cur.execute("""SELECT DISTINCT athlete_id FROM athletes
@@ -73,7 +75,7 @@ def person(cur, pid, tables):
             if r:
                 name = f"{r[0]} (from result rows)"
                 break
-    print(f"\n==== person {pid}: {name or '(no name anywhere)'}")
+    print(f"\n==== person {pid}: {name or '(no name anywhere)'}", flush=True)
     cur.execute("""SELECT sport, year, pool, school, state, grade, n_races,
                           round(mean_rating::numeric, 1)
                    FROM athlete_season WHERE person_id = %s ORDER BY year, sport""", (pid,))
@@ -86,22 +88,31 @@ def person(cur, pid, tables):
         tp = (f"LEFT JOIN team_pool tp ON tp.team_id = {team}"
               if tables["team_pool"] and tables[t]["team_id"] else "")
         tpk = "tp.kind" if tp else "NULL::text"
+        # ! THE MEET NAMES AFTER, FOR THIS PERSON'S MEETS ONLY (2026-10-06:
+        #   the first cut joined a DISTINCT over all of meets_tf per person
+        #   and hung). One indexed lookup of the ids the rows name.
         cur.execute(f"""
             SELECT substr(r.date, 1, 4) AS yr, r.source, r.school, {team} AS team,
                    r.grade, {tpk} AS kind, count(*),
-                   string_agg(DISTINCT m.meet_name, ' | ') AS meets
+                   array_agg(DISTINCT r.meet_id) AS meet_ids
             FROM   {t} r
-            LEFT JOIN (SELECT DISTINCT meet_id, meet_name FROM
-                       {'meets' if sport == 'XC' else 'meets_tf'}) m ON m.meet_id = r.meet_id
             {tp}
             WHERE  r.person_id = %s
             GROUP  BY 1, 2, 3, 4, 5, 6 ORDER BY 1, 2, 3""", (pid,))
         rows = cur.fetchall()
         if rows:
+            ids = sorted({m for r in rows for m in (r[7] or []) if m is not None})
+            names = {}
+            if ids:
+                cur.execute(f"""SELECT DISTINCT ON (meet_id) meet_id, meet_name
+                                FROM {'meets' if sport == 'XC' else 'meets_tf'}
+                                WHERE meet_id = ANY(%s)""", (ids,))
+                names = dict(cur.fetchall())
             print(f"  {sport} rows (year, feed, school, team_id, grade, team_pool, n, meets):")
-            for yr, src, sch, tid, gr, kind, n, meets in rows:
+            for yr, src, sch, tid, gr, kind, n, mids in rows:
+                meets = " | ".join(sorted({str(names.get(m) or m) for m in (mids or [])}))
                 print(f"    {yr} {src:<5} {str(sch)[:32]:<32} team {tid} grade {gr} "
-                      f"[{kind or '-'}] x{n}  {(meets or '')[:90]}")
+                      f"[{kind or '-'}] x{n}  {meets[:90]}", flush=True)
     if tables["pro_athlete_season"]:
         cur.execute("SELECT season, pro_races FROM pro_athlete_season WHERE person_id = %s "
                     "ORDER BY season", (pid,))
@@ -131,7 +142,8 @@ def main():
     a = ap.parse_args()
     with getConn() as conn:
         cur = conn.cursor()
-        cur.execute("SET statement_timeout = 0")
+        # ! NO QUERY GETS TO HANG THE RUN: a minute each, then it says so
+        cur.execute("SET statement_timeout = '60s'")
         tables = {t: _has(cur, t) for t in ("team_pool", "pro_athlete_season",
                                             "person_split", "person_link_log")}
         for t in ("results", "results_tf"):
