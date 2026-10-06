@@ -4270,6 +4270,29 @@ Invitational 2024, Roughrider 2023, De La Salle Nike Invitational 2021-23, and t
 `scripts/diag_day_terms.py --person 29603086` names, for each, the race_day_effect rows at that
 venue: a different distance cell, a different date, or none at all.
 
+## 2026-10-06 — State meets UI; track same-day twins; upcoming predictions had no field; pipeline slow at 04
+
+- **State meets UI.** Owner: "update the ui for the state meets predictions".
+  - /projections: a "Find a state" box (typing narrows the list; Enter on a single match opens it)
+    and the states as tiles, replacing four columns of underlined links.
+  - /projections/<st>: one card shape for every division, with the name and school count stacked
+    and Boys | Girls as a joined pair. The redundant state prefix is dropped.
+  - Division page: when the early-season banner shows, the per-row THIN flags are muted text
+    rather than fifty yellow badges.
+- **twin_same_day on the track.** Owner: "for track do day + time + if it's cross source". The
+  rule flags a tfrrs track row whose person has an anet row the same day at the same time to the
+  hundredth. Relays and field events are out, and anet survives. XC keeps its 1-second tolerance
+  (tfrrs posts whole seconds).
+- **🔎 Predicting an upcoming meet doesn't work.** Owner: "where does the roster come from?"
+  Nowhere: the races, date and field are all read from the meet's RESULTS, which an upcoming meet
+  doesn't have, so the Upcoming list's Predict links open an empty page. The scraper doesn't fetch
+  entries. In progress: races and date from the meet's own rows; the field from the previous
+  edition's teams with this season's squads, said on the page.
+- **🔎 Pipeline 20261006_024705 is still at 04_grade_sanity after ~9 h.** It printed rule 7's XC
+  bars, so it is in the track half of eliteFieldSeasons. On 2026-10-05 the whole run reached 08
+  in 2h17m, and grade_sanity hasn't changed since 2026-09-30, so something is waiting (a lock?)
+  or the track query has gone slow. Next: pg_stat_activity, and the log dir's summary.log.
+
 ## 2026-10-06 — Upcoming filter normalised; a race with no difficulty; a cross-feed twin
 
 - **/meets Upcoming.** The state filter was a bare select in a sentence ("out of place"). It is

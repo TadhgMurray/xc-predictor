@@ -170,3 +170,48 @@
 .p2-page .p2-seg a:first-child { margin-left: 0; border-radius: 6px 0 0 6px; }
 .p2-page .p2-seg a:last-child { border-radius: 0 6px 6px 0; }
 .p2-page .p2-seg a.is-on { z-index: 1; }
+
+/* ---- State meets, second look (owner, 2026-10-06: "update the ui for the
+ *      state meets predictions") ------------------------------------------ */
+/* the state picker: a finder and tiles, not four columns of underlines */
+.p2-page .p2-find { display: flex; flex-direction: column; gap: 0.25rem; max-width: 22rem;
+                    margin: 1rem 0 0.8rem; padding: 0.85rem 1rem; background: #fff;
+                    border: 1px solid var(--line, #e5e7eb); border-radius: 8px; }
+.p2-page .p2-find label { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.04em;
+                          color: var(--muted, #6b7280); }
+.p2-page .p2-find input { font: inherit; font-size: 0.95rem; padding: 0.4rem 0.55rem; height: 2.3rem;
+                          box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+.p2-page .p2-states { columns: auto; display: grid; gap: 0.4rem; line-height: 1.3;
+                      grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); }
+.p2-page .p2-states li[hidden] { display: none; }
+.p2-page .p2-states a { display: flex; justify-content: space-between; align-items: baseline;
+                        gap: 0.5rem; padding: 0.55rem 0.75rem; background: #fff; text-decoration: none;
+                        border: 1px solid var(--line, #e5e7eb); border-radius: 6px;
+                        color: var(--ink, #111418); font-weight: 600; }
+.p2-page .p2-states a:hover { border-color: var(--sel, #111418); background: var(--hover, #f3f6fa); }
+.p2-page .p2-st-code { color: var(--muted, #6b7280); font-size: 0.78rem; font-weight: 500; }
+
+/* the division cards: one shape for every card -- name and count stacked,
+   Boys | Girls a joined pair on the right, like the site's other tabs */
+.p2-page .p2-div { align-items: center; flex-wrap: nowrap; border-radius: 6px; }
+.p2-page .p2-div-txt { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.p2-page .p2-div-go { gap: 0; flex: 0 0 auto; }
+.p2-page .p2-div-go a { color: var(--ink, #111418); font-weight: 500; padding: 0.3rem 0.8rem;
+                        border: 1px solid var(--line, #e5e7eb); margin-left: -1px; background: #fff; }
+.p2-page .p2-div-go a:first-child { margin-left: 0; border-radius: 6px 0 0 6px; }
+.p2-page .p2-div-go a:last-child { border-radius: 0 6px 6px 0; }
+.p2-page .p2-div-go a:hover { background: var(--sel, #111418); border-color: var(--sel, #111418);
+                              color: #fff; position: relative; }
+
+/* ! WHEN THE BANNER SAYS THE WHOLE FIELD IS THIN, THE ROW FLAGS ARE QUIET.
+ *   With 98% of a field thin, a yellow THIN on every row repeated the
+ *   banner fifty times; the banner (shown at p2-banner's own threshold)
+ *   says it once, and the rows keep the count in plain muted text. */
+.p2-page .p2-banner ~ * .p2-thin, .p2-page .p2-banner .p2-thin {
+  background: none; border: 0; padding: 0; color: var(--muted, #6b7280);
+  font-weight: 500; text-transform: none; letter-spacing: 0; font-size: 0.78rem;
+}
+@media (max-width: 640px) {
+  .p2-page .p2-states { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .p2-page .p2-find { max-width: none; }
+}

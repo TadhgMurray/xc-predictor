@@ -53,11 +53,44 @@
     season's speed ratings: team scores with five scorers and two displacers,
     and the individual race. Pick a state, then a division.
   </p>
-  <ul class="p2-states">
+  {# ★ A FINDER AND TILES, NOT A WALL OF UNDERLINES (owner, 2026-10-06:
+     "update the ui for the state meets predictions"). Typing narrows the
+     tiles; Enter on one match opens it. Works without the script: the
+     tiles are plain links. #}
+  <div class="p2-find">
+    <label for="p2-state-q">Find a state</label>
+    <input id="p2-state-q" type="search" placeholder="Type a state" autocomplete="off">
+  </div>
+  <ul class="p2-states" id="p2-states">
     {% for code, name in states %}
-    <li><a href="/projections/{{ code|lower }}">{{ name }}</a></li>
+    <li><a href="/projections/{{ code|lower }}" data-q="{{ (name ~ ' ' ~ code)|lower }}">
+      <span class="p2-st-name">{{ name }}</span><span class="p2-st-code">{{ code }}</span></a></li>
     {% endfor %}
   </ul>
+  <p class="p2-note" id="p2-states-none" hidden>No state matches.</p>
+  <script>
+  (function () {
+    var q = document.getElementById("p2-state-q"), box = document.getElementById("p2-states");
+    if (!q || !box) return;
+    var none = document.getElementById("p2-states-none");
+    function apply() {
+      var v = q.value.trim().toLowerCase(), shown = [];
+      box.querySelectorAll("a").forEach(function (a) {
+        var ok = !v || a.dataset.q.indexOf(v) >= 0;
+        a.parentNode.hidden = !ok;
+        if (ok) shown.push(a);
+      });
+      none.hidden = shown.length > 0;
+      return shown;
+    }
+    q.addEventListener("input", apply);
+    q.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      var shown = apply();
+      if (shown.length === 1) { e.preventDefault(); location.href = shown[0].href; }
+    });
+  })();
+  </script>
 
 {% elif mode == "state" %}
   <p class="p2-crumbs"><a href="/projections">All states</a></p>
@@ -69,8 +102,8 @@
   <div class="p2-divs">
     {% for d in divisions %}
     <div class="p2-div">
-      <span class="p2-div-name">{{ d.label }}</span>
-      <span class="p2-div-n">{{ d.n_schools }} schools</span>
+      <span class="p2-div-txt"><span class="p2-div-name">{{ d.label|replace(state ~ ' ', '') }}</span>
+        <span class="p2-div-n">{{ d.n_schools }} schools</span></span>
       <span class="p2-div-go">
         <a href="/projections/{{ state|lower }}/{{ d.slug }}">Boys</a>
         <a href="/projections/{{ state|lower }}/{{ d.slug }}?g=girls">Girls</a>
@@ -78,8 +111,8 @@
     </div>
     {% endfor %}
     <div class="p2-div p2-div-all">
-      <span class="p2-div-name">Whole state, every division</span>
-      <span class="p2-div-n">{{ "a meet of champions" if divisions else "no divisions on record" }}</span>
+      <span class="p2-div-txt"><span class="p2-div-name">Whole state, every division</span>
+        <span class="p2-div-n">{{ "a meet of champions" if divisions else "no divisions on record" }}</span></span>
       <span class="p2-div-go">
         <a href="/projections/{{ state|lower }}/all">Boys</a>
         <a href="/projections/{{ state|lower }}/all?g=girls">Girls</a>
