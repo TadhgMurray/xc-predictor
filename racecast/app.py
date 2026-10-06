@@ -4255,13 +4255,8 @@ def _ridArg(args):
     return None
 
 
-def _tf_meet_sources(cur, meet_id, args):
-    """(src, alt_idx, others) for a TF meet page, three rules deep:
-    meets_tf first; results_tf when the meet has no meets_tf coverage at
-    all (tfrrs fragments used to 404); and ?r=<result_id> pins the page
-    to the clicked row's source -- opaque (no feed names in URLs), exact
-    (the id spaces collide, and "biggest source wins" picks the WRONG
-    meet for a link that came from the smaller one)."""
+def _tfSourceList(cur, meet_id):
+    """The TF meet's feeds, biggest first: meets_tf's, then results-only."""
     sources = meet_sources(cur, "meets_tf", meet_id)
     # ! MERGE, NOT FALLBACK (meet 48789). A feed can exist ONLY on the
     #   results side while the other feed covers meets_tf -- fallback-only
@@ -4269,9 +4264,19 @@ def _tf_meet_sources(cur, meet_id, args):
     #   colliding anet meet. meets_tf sources keep their order (the
     #   unpinned default is unchanged); results-only feeds append.
     known = {s["source"] for s in sources}
-    sources = list(sources) + [
+    return list(sources) + [
         s for s in meet_sources(cur, "results_tf", meet_id)
         if s["source"] not in known]
+
+
+def _tf_meet_sources(cur, meet_id, args):
+    """(src, alt_idx, others) for a TF meet page, three rules deep:
+    meets_tf first; results_tf when the meet has no meets_tf coverage at
+    all (tfrrs fragments used to 404); and ?r=<result_id> pins the page
+    to the clicked row's source -- opaque (no feed names in URLs), exact
+    (the id spaces collide, and "biggest source wins" picks the WRONG
+    meet for a link that came from the smaller one)."""
+    sources = _tfSourceList(cur, meet_id)
     alt = args.get("alt")
     rid = _ridArg(args)
     if rid is not None:
@@ -8822,15 +8827,50 @@ def _predictSource(cur, meet_id, sport, alt=None, div_id=None):
     return src, idx
 
 
+# ★ A COMING-UP LINK NAMES ITS FEED, AND AN UPCOMING MEET NEEDS IT (owner,
+#   2026-10-06: "Make predicting an UPCOMING meet work"). _predictSource
+#   counts RESULTS, and a meet not yet run has none -- so a tfrrs meet
+#   posted for Saturday resolved to whichever anet meet shares its number
+#   and HAS run (the 2009 New Jersey meet under the D3 championships' id),
+#   or to None. weekend.predictHref has carried &src=tfrrs for exactly this
+#   since it landed; nothing read it.
+# ! A PIN, LIKE ?r=. Where that feed has results under the id, its ?alt=
+#   index is the answer, the meet page's own rule; where it has none, the
+#   meet is the posted one and the feed is the answer with no index.
+# ! ONLY THE TWO FEED NAMES. Anything else is ignored, never echoed, and a
+#   link without it resolves exactly as before.
+_FEEDS = ("anet", "tfrrs")
+
+
+def _feedPin(cur, meet_id, sport, hint, src, alt_idx):
+    """(source, alt_idx) after a link's ?src=; unchanged without one."""
+    hint = (hint or "").strip().lower()
+    if hint not in _FEEDS or hint == src or not meet_id:
+        return src, alt_idx
+    sources = (_tfSourceList(cur, int(meet_id))
+               if (sport or "XC").upper() == "TF"
+               else meet_sources(cur, "results", int(meet_id)))
+    for i, s in enumerate(sources):
+        if s["source"] == hint:
+            return hint, i
+    return hint, 0
+
+
+def _predictSourceFor(cur, meet_id, sport, alt=None, div_id=None, hint=None):
+    """_predictSource, then the link's feed pin (_feedPin)."""
+    src, idx = _predictSource(cur, meet_id, sport, alt, div_id)
+    return _feedPin(cur, meet_id, sport, hint, src, idx)
+
+
 def _withSource(cur, target):
     """Resolve target["alt"] to target["source"] once, in place; returns
     target. Every predict.py lookup of the meet reads target["source"]."""
     if target.get("meet_id") and "source" not in target:
         div = target.get("div_id") or next(
             iter(target.get("div_ids") or []), None)
-        target["source"], target["alt"] = _predictSource(
+        target["source"], target["alt"] = _predictSourceFor(
             cur, target["meet_id"], target.get("sport"), target.get("alt"),
-            div)
+            div, target.get("src"))
     return target
 
 
@@ -8865,6 +8905,8 @@ def _target(args):
         #   _withSource once a cursor exists; validated there by pick_source,
         #   which clamps anything out of range to a real index.
         t["alt"] = (args.get("alt") or "").strip() or None
+        # ★ AND THE FEED A COMING-UP LINK NAMED (2026-10-06): _feedPin
+        t["src"] = (args.get("src") or "").strip() or None
         # none | normal | forecast | both (default) | all -- see predict._weatherVariants
         # ⚠ none, NOT both, AND IT IS MEASURED (2026-09-17). Feeding the
         #   venue's climatological normal made every prediction 5.44% faster,
@@ -9023,9 +9065,11 @@ def api_predict_field():
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # ★ THE ONE MEET (2026-10-05): see _predictSource
-            src, alt_idx = _predictSource(cur, int(meet), sport,
-                                          request.args.get("alt"), div)
+            # ★ THE ONE MEET (2026-10-05): see _predictSource; and the feed
+            #   a Coming-up link named, for a meet not yet run (_feedPin)
+            src, alt_idx = _predictSourceFor(cur, int(meet), sport,
+                                             request.args.get("alt"), div,
+                                             request.args.get("src"))
             out = meetField(cur, int(meet), int(div) if div.isdigit() else None,
                             sport, when=when, source=src)
     out["alt"] = alt_idx
@@ -9052,9 +9096,10 @@ def api_predict_races():
             #   races beside its own). Resolved by the meet page's rule; the
             #   index goes back to the page so every later request names the
             #   same meet, even when a pin or the division moved it.
-            src, alt_idx = _predictSource(cur, int(meet), sport,
-                                          request.args.get("alt"),
-                                          request.args.get("div_id"))
+            src, alt_idx = _predictSourceFor(cur, int(meet), sport,
+                                             request.args.get("alt"),
+                                             request.args.get("div_id"),
+                                             request.args.get("src"))
             if sport == "XC":
                 rows = get_meet_divisions(cur, int(meet), source=src)
                 races = [{"div_id": r["div_id"],
@@ -9097,6 +9142,33 @@ def api_predict_races():
             row = cur.fetchone()
             meet_date = (row or {}).get("d") or None
 
+            # ★ A MEET NOT YET RUN LISTS ITS POSTED RACES (owner, 2026-10-06:
+            #   "Make predicting an UPCOMING meet work"). Both answers above
+            #   are grouped FROM results, so a meet off the Coming up list had
+            #   no races and no date -- and the re-run date fell to today.
+            #   The host has posted both (the rows weekend.py reads); they
+            #   come from there, of the same feed (last_edition.upcomingRaces).
+            # ! ONLY WHEN THE RESULTS HAVE NOTHING: a meet that ran is read
+            #   exactly as before.
+            up = None
+            if not races and meet_date is None:
+                from last_edition import upcomingRaces
+                try:
+                    cur.execute("SAVEPOINT upcoming")
+                    up_races, up = upcomingRaces(cur, int(meet), sport, src)
+                    cur.execute("RELEASE SAVEPOINT upcoming")
+                except psycopg2.Error as exc:
+                    # ! a table this box does not have: the old empty answer
+                    print(f"upcoming races: {exc}", flush=True)
+                    cur.execute("ROLLBACK TO SAVEPOINT upcoming")
+                    up = None
+                if up:
+                    races, meet_date = up_races, up.get("date")
+                    # the feed the posted meet was found in, when the
+                    # results could not say: the course and name below
+                    # read the same meet
+                    src = src or up.get("source")
+
             # ★ THE COURSE IT ACTUALLY RAN ON, so the override box can NAME
             #   what it defaults to instead of describing it.
             # ! THIS MEET'S: `meets` is anet's, and a tfrrs meet's venue is in
@@ -9120,8 +9192,11 @@ def api_predict_races():
                 meet_course = (crow or {}).get("course_name") or None
 
             meta = predictMeetName(cur, int(meet), sport, source=src)
+    # ! `upcoming` SO THE PAGE DOES NOT SAY "ran" OF A MEET THAT HAS NOT
     return jsonify({"races": races, "date": meet_date, "course": meet_course,
-                    "meet_name": meta.get("meet_name"), "alt": alt_idx})
+                    "meet_name": (meta.get("meet_name")
+                                  or (up or {}).get("name")),
+                    "alt": alt_idx, "upcoming": bool(up)})
 
 
 @app.route("/api/predict/squad")
@@ -9201,7 +9276,9 @@ def _squadParams(args):
             "meet_id": int(meet) if meet.isdigit() else None,
             "div_id": int(div) if div.isdigit() else None,
             # ★ WHICH MEET OF THE ID (2026-10-05): _squadsServed resolves it
-            "alt": (args.get("alt") or "").strip() or None}, None
+            "alt": (args.get("alt") or "").strip() or None,
+            # and the feed a Coming-up link named (2026-10-06): _feedPin
+            "src": (args.get("src") or "").strip() or None}, None
 
 
 def _squadsServed(cur, wanted, p):
@@ -9217,8 +9294,8 @@ def _squadsServed(cur, wanted, p):
     #   gender, state and season below are all read off it.
     src = None
     if p["meet_id"]:
-        src, _alt = _predictSource(cur, p["meet_id"], sport, p.get("alt"),
-                                   p["div_id"])
+        src, _alt = _predictSourceFor(cur, p["meet_id"], sport, p.get("alt"),
+                                      p["div_id"], p.get("src"))
         if not p["levels_given"]:
             levels = predict.meetLevels(cur, p["meet_id"], p["div_id"], sport,
                                         source=src)

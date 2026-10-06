@@ -11,8 +11,11 @@ weekend", a front door to predicting the meets about to run).
 
 ! NO ENTRIES, SO NO FIELD. A posted meet does not say who is running. The
   link opens the predictions page's "This year" mode, which builds the
-  field from the teams that ran the course and today's rosters -- the same
-  page anyone reaches by searching the meet.
+  field from the teams at the meet's LAST EDITION and this season's squads
+  (last_edition.py, 2026-10-06) -- the same page anyone reaches by
+  searching the meet. The tfrrs link's &src= is what tells that page which
+  feed posted the meet (app._feedPin): with no results there is nothing
+  else to pick it by.
 
 ! ORDERED BY HOW MANY RACES ARE POSTED. With no field, the number of
   divisions a host has set up is the size signal there is: an invitational

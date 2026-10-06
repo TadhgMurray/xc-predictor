@@ -82,9 +82,13 @@
     </div>
     {% endif %}
     {% if upcoming %}
+    {# ! WHAT THE PREDICTION ACTUALLY DOES (2026-10-06): the field is the
+         teams from the meet's last edition, with this season's squads
+         (last_edition.py) -- not "the teams that race the course now",
+         which nothing computed. #}
     <p class="meta">Meets posted for the next seven days, biggest first. No entries
-       are posted yet, so a prediction builds the field from the teams that race
-       the course now.</p>
+       are posted yet, so a prediction builds the field from the teams at last
+       year's running of the meet, with this season's squads.</p>
     {% elif filtering %}
     <p class="meta">
        {{ "{:,}".format(n_meets) }} meet{{ "" if n_meets == 1 else "s" }}

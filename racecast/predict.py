@@ -2098,7 +2098,8 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         _stampCrests(teams, "school", "state")
         return {"season_year": season_year, "when": when, "teams": teams}
 
-    originals = _exactField(cur, meet_id, div_id, sport, source=source)
+    originals, basis = thisYearOriginals(cur, meet_id, div_id, sport,
+                                         source=source)
     at_meet = sorted({r["school"] for r in originals if r.get("school")})
     # ★ THE RACE'S OWN GENDER, from the people who ran it. None means the
     #   field really is mixed -- "All races" at a meet with both -- and then
@@ -2194,8 +2195,41 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     #   the same side of the school this field is made of.
     # ! THE PAGE NEEDS THE LEVEL TOO, so "add from squad" and "add the whole
     #   squad" narrow the same way this field did.
+    # ★ AND WHERE THE FIELD CAME FROM when it is not this meet's own (owner,
+    #   2026-10-06): the page says so under the meet, so nobody takes last
+    #   year's teams for an entry list.
     return {"season_year": season_year, "when": when, "teams": teams,
-            "gender": gender, "levels": sorted(levels)}
+            "gender": gender, "levels": sorted(levels), "basis": basis}
+
+
+# Purpose:   the runners a "this year" field is built from, and where they
+#            came from: (originals, basis).
+#
+# ★ THE MEET'S OWN RUNNERS WHEN IT HAS RUN; ITS LAST EDITION'S WHEN IT HAS
+#   NOT (owner, 2026-10-06: "Make predicting an UPCOMING meet work"). A meet
+#   on the Coming up list has a date and races and no results, and every
+#   field here was built from _exactField -- who RAN it -- so the page had
+#   nothing to predict. No feed posts entries, so the teams are borrowed
+#   from the previous running of the same meet (last_edition.py) and the
+#   rest of the field is built from them exactly as from a real entry list.
+# ! basis IS None FOR A MEET THAT RAN: nothing was borrowed, nothing to say.
+# ! ONE HELPER FOR meetField AND _teamRosters, which "must agree or the page
+#   shows one lineup and the model scores another".
+def thisYearOriginals(cur, meet_id, div_id, sport, source=None):
+    originals = _exactField(cur, meet_id, div_id, sport, source=source)
+    if originals or not meet_id:
+        return originals, None
+    from last_edition import lastEditionField
+    try:
+        return lastEditionField(cur, int(meet_id),
+                                int(div_id) if div_id is not None else None,
+                                sport, source=source)
+    except Exception as exc:                              # noqa: BLE001
+        # ! A TABLE THIS BOX DOES NOT HAVE (weekend.py skips one the same
+        #   way): an empty field to fill by hand, not a 500
+        print(f"last edition: {type(exc).__name__}: {exc}", flush=True)
+        _rollback(cur)
+        return [], {"kind": "none"}
 
 
 # Purpose:   the gender a race is run in, read off the people who ran it.
@@ -2820,8 +2854,14 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     if target.get("meet_id") and len(div_ids) > 1:
         entries = _combinedRoster(cur, target, div_ids, sport, mode)
     elif target.get("meet_id"):
-        originals = _exactField(cur, int(target["meet_id"]), div, sport,
-                                source=src)
+        # ★ A MEET NOT YET RUN BORROWS ITS LAST EDITION'S TEAMS, as
+        #   meetField does (2026-10-06); "as it ran" stays the meet's own
+        if mode == "rerun_exact":
+            originals = _exactField(cur, int(target["meet_id"]), div, sport,
+                                    source=src)
+        else:
+            originals, _basis = thisYearOriginals(
+                cur, int(target["meet_id"]), div, sport, source=src)
         if mode == "rerun_exact":
             # The exact field IS the entry list, so counting it is counting
             # who entered -- no stamp needed, and _score falls back to it.

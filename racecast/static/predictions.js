@@ -480,6 +480,8 @@ async function restoreFromQuery(p, names) {
      D3 championships has to reopen the D3 championships, not the 2009 New
      Jersey meet that shares its number. Opaque, like the meet page's. */
   const alt = /^\d+$/.test(p.get("alt") || "") ? p.get("alt") : "";
+  // the feed a Coming-up link names (2026-10-06): see parseMeetLink
+  const src = /^(anet|tfrrs)$/.test(p.get("src") || "") ? p.get("src") : "";
   const first = divIds[0] || div;
 
   showWhen(p.get("mode") === "rerun_exact" ? "asran" : "thisyear");
@@ -489,13 +491,15 @@ async function restoreFromQuery(p, names) {
   try {
     const rq = new URLSearchParams({ meet_id: id, sport: sport.toUpperCase() });
     if (alt) rq.set("alt", alt);
+    if (src) rq.set("src", src);
     if (first) rq.set("div_id", first);
     const res = await fetch("/api/predict/races?" + rq.toString());
     const data = await res.json();
     name = data.meet_name || "";
     date = data.date || null;
   } catch (err) { /* the meet still opens, unnamed */ }
-  const tail = alt ? `?alt=${alt}` : "";
+  const tail = (alt ? `?alt=${alt}` : "")
+    + (src ? `${alt ? "&" : "?"}src=${src}` : "");
   await chooseMeet({ link: (first ? `/race/${sport}/${id}/${first}` : `/meet/${sport}/${id}`) + tail,
                      label: name || `Meet ${id}`, sub: date || "" });
 
@@ -591,8 +595,11 @@ function restoreState() {
        other one must not answer for it. */
   const savedAlt = saved && saved.meet ? String(saved.meet.alt || 0) : "0";
   const linkedAlt = String(Number(url.get("alt")) || 0);
+  // ! and a Coming-up link's feed the same way (2026-10-06)
+  const savedSrc = saved && saved.meet ? String(saved.meet.src || "") : "";
   if (!saved || !saved.meet || (linked && linked !== savedId)
-      || (linked && url.has("alt") && linkedAlt !== savedAlt)) {
+      || (linked && url.has("alt") && linkedAlt !== savedAlt)
+      || (linked && url.has("src") && url.get("src") !== savedSrc)) {
     if (linked) restoreFromQuery(url, {});
     return;
   }
@@ -986,14 +993,21 @@ function parseMeetLink(link) {
      for the bare link (the biggest of them, as on the meet page). */
   const am = /[?&]alt=(\d+)/.exec(link || "");
   const alt = am ? Number(am[1]) : null;
+  /* ★ AND THE FEED A COMING-UP LINK NAMED (2026-10-06): a meet not yet run
+     has no results to pick it by, so the server is told which feed posted
+     it (app._feedPin). Only on links that carried it; null otherwise. */
+  const sm = /[?&]src=(anet|tfrrs)\b/.exec(link || "");
+  const src = sm ? sm[1] : null;
   const race = /^\/race\/(xc|tf)\/(\d+)\/(\d+)(?:\/(\d+))?/.exec(link || "");
   if (race) {
     return { sport: race[1].toUpperCase(), id: race[2],
-             div: race[1] === "tf" ? (race[4] || race[3]) : race[3], alt: alt };
+             div: race[1] === "tf" ? (race[4] || race[3]) : race[3], alt: alt,
+             src: src };
   }
   const meet = /^\/meet\/(xc|tf)\/(\d+)/.exec(link || "");
   if (meet) {
-    return { sport: meet[1].toUpperCase(), id: meet[2], div: null, alt: alt };
+    return { sport: meet[1].toUpperCase(), id: meet[2], div: null, alt: alt,
+             src: src };
   }
   return null;
 }
@@ -1165,9 +1179,10 @@ function renderChosenMeet(bare) {
        ${state.meet.year ? `<span class="mc-year">${esc(state.meet.year)}</span>` : ""}
      </div>
      <div class="mc-sub">
-       <span id="mc-date">${state.meet.date ? `ran ${esc(state.meet.date)} \u00b7 ` : ""}</span>
+       <span id="mc-date">${state.meet.date ? `${state.meet.upcoming ? "" : "ran "}${esc(state.meet.date)} \u00b7 ` : ""}</span>
        ${esc(state.meet.sport === "XC" ? "Cross Country" : "Track & Field")}
        <span id="mc-course"></span>
+       <p class="hint" id="mc-basis" hidden></p>
      </div>
      <button class="mc-change" data-clear="meet">Change</button>
      <div class="mc-races" id="mc-races"></div>
@@ -1212,6 +1227,7 @@ async function loadRaces() {
        is shared. The division rides along so an old link without ?alt= still
        lands on the meet that HAS that race (the meet page's own rule). */
     if (state.meet.alt) q.set("alt", state.meet.alt);
+    if (state.meet.src) q.set("src", state.meet.src);
     if (state.meet.div) q.set("div_id", state.meet.div);
     const res = await fetch("/api/predict/races?" + q.toString());
     const data = await res.json();
@@ -1236,7 +1252,11 @@ async function loadRaces() {
          a saved session knew, and a session saved on the colliding meet
          kept showing that meet's date (2026-10-05). */
       const md = $("mc-date");
-      if (md) md.textContent = `ran ${data.date} \u00b7 `;
+      /* ! A MEET NOT YET RUN DID NOT "run" (2026-10-06): its date is the
+         one it is posted for */
+      state.meet.upcoming = !!data.upcoming;
+      if (md) md.textContent = data.upcoming ? `${data.date} \u00b7 `
+                                             : `ran ${data.date} \u00b7 `;
     }
     /* ★ NAME THE COURSE RATHER THAN DESCRIBING IT (owner, 2026-09-01).
        "the meet's own course" tells you nothing you did not already know;
@@ -1288,7 +1308,10 @@ async function loadRaces() {
         _divLabels.set(String(r.div_id), bits.join(" \u00b7 "));
         const id = String(r.div_id);
         const gi = groupIndex().get(id);
-        return chip(`${bits.join(" \u00b7 ")} (${r.n_results})`, id,
+        /* ! NO COUNT FOR A RACE NOT YET RUN: "(0)" reads as an empty race,
+             and it is a posted one (2026-10-06) */
+        return chip(`${bits.join(" \u00b7 ")}`
+                    + `${r.n_results ? ` (${r.n_results})` : ""}`, id,
                     state.divs.includes(id),
                     gi === undefined ? null : raceColour(gi));
       }).join("");
@@ -1547,6 +1570,32 @@ async function loadField() {
     });
   }
   renderField();
+  showBasis(blocks);
+}
+
+
+/* ★ SAY WHERE THE FIELD CAME FROM WHEN IT IS NOT AN ENTRY LIST (owner,
+   2026-10-06: "Make predicting an UPCOMING meet work"). A meet not yet run
+   has no entries anywhere we read, so the server builds its field from the
+   last running of the same meet (last_edition.py) and says so in `basis`;
+   one line under the meet tells the reader, so last year's teams are not
+   taken for who is coming. A meet that ran sends no basis and the line
+   stays hidden. Every block of one meet borrows the same edition. */
+function showBasis(blocks) {
+  const el = $("mc-basis");
+  if (!el) return;
+  const b = (blocks || activeBlocks())
+    .map((d) => (editsFor(d).field || {}).basis)
+    .find((x) => x && x.kind);
+  /* ! THE hidden ATTRIBUTE, NOT class="hidden": there is no global .hidden
+     in style.css (its own warning), and .predict2 .hint sets no display */
+  el.hidden = !b;
+  if (!b) { el.textContent = ""; return; }
+  el.textContent = b.kind === "last_edition"
+    ? `No entries posted yet \u2014 the field is the teams from last year's `
+      + `edition (${b.date}), with this season's squads. Edit it below.`
+    : `No entries posted yet and no earlier edition to borrow teams from `
+      + `\u2014 add teams below.`;
 }
 
 
@@ -1561,6 +1610,7 @@ async function fetchField(div) {
   if (div) q.set("div_id", div);
   // ★ which meet of the id (2026-10-05): see parseMeetLink
   if (state.meet.alt) q.set("alt", state.meet.alt);
+  if (state.meet.src) q.set("src", state.meet.src);
   try {
     const res = await fetch("/api/predict/field?" + q.toString());
     const data = await readJson(res);
@@ -1967,6 +2017,8 @@ function buildQuery(div) {
      reads the date, the course, the field and "as it ran"'s season off it.
      Absent is the biggest meet of the id, as on the meet page. */
   if (state.meet.alt) q.set("alt", state.meet.alt);
+  // and a Coming-up link's feed, for a meet not yet run (2026-10-06)
+  if (state.meet.src) q.set("src", state.meet.src);
   if (group.length === 1) q.set("div_id", group[0]);
   /* ★ SEVERAL DIVISIONS AS ONE RACE (issues #86, #89). A group of one sends
      div_id and is the ordinary single-division request; a group of several
@@ -3465,7 +3517,8 @@ function squadKey(school, ctx, st) {
   //   (2026-10-05), so the other meet's squad is another answer
   return [school, state.meet ? state.meet.sport : "",
           state.meet ? state.meet.id : "",
-          state.meet ? (state.meet.alt || 0) : "", ctx.div ?? "", ctx.gender,
+          state.meet ? (state.meet.alt || 0) : "",
+          state.meet ? (state.meet.src || "") : "", ctx.div ?? "", ctx.gender,
           ctx.levels ? ctx.levels.join(",") : "?", st || "",
           state.when || ""].join("\u0000");
 }
@@ -3486,6 +3539,7 @@ function squadParams(ctx) {
      2025 D3 championships filled Tufts' card with its 2009 roster -- the
      season of a New Jersey meet that shares the id). */
   if (state.meet && state.meet.alt) q.set("alt", state.meet.alt);
+  if (state.meet && state.meet.src) q.set("src", state.meet.src);
   /* ★ AS IT RAN, THAT SEASON'S SQUAD (owner, 2026-10-05: "as it ran
      includes new freshmen"). Everyone used to add every CURRENT runner. */
   if (state.when === "asran") q.set("when", "asran");
