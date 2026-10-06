@@ -1478,6 +1478,9 @@ _COLLEGE_START_SQL = """
 #   is an extrapolation, not a measurement.
 ELITE_QUANTILE = 0.0001
 ELITE_K = 1.06
+# the senior 5000 m world records (men 12:35.36, women 14:00.21): the floor
+# under which a 5 km equivalent is a data error, not a run
+WR_5K_S = {"M": 755.36, "F": 840.21}
 
 
 def _eliteRowsSql(sport, src=None):
@@ -1564,8 +1567,18 @@ def eliteFieldSeasons(cur):
             SELECT count(*) FROM tmp_elite_src;""")
         print(f"    [7] {sport}: {cur.fetchone()[0]:,} elementary/middle-school rows staged "
               f"({time.time() - t0:.0f}s)", flush=True)
+        # ★ NOTHING FASTER THAN THE WORLD RECORD IS A TIME (run
+        #   20261006_024705: the track bars read 0:38-0:53 for 5 km). The bar
+        #   is the fastest 1 in 10,000, and among 17.5M track rows that
+        #   quantile is junk -- field marks and mislabelled distances stored
+        #   as times -- so the track half never fired. A 5 km equivalent under
+        #   the senior world record for the gender is impossible, so those
+        #   rows are out of the bar AND out of the comparison below.
         cur.execute(f"""
-            CREATE TEMP TABLE tmp_elite AS {_eliteRowsSql(sport, src="tmp_elite_src")};
+            CREATE TEMP TABLE tmp_elite AS
+                SELECT * FROM ({_eliteRowsSql(sport, src="tmp_elite_src")}) e
+                WHERE  e.t5k >= CASE e.gender WHEN 'F' THEN {WR_5K_S['F']}
+                                              ELSE {WR_5K_S['M']} END;
             SELECT lvl, gender,
                    percentile_cont({float(ELITE_QUANTILE)!r}) WITHIN GROUP (ORDER BY t5k)
             FROM   tmp_elite WHERE top_level = lvl GROUP BY 1, 2""")

@@ -4364,6 +4364,11 @@ The owner's two URLs: /rankings?board=ability&pool=hs_m&sport=TF&state=CA&year=2
   middle school rows (tmp_elite_src, ANALYZEd), and the joins run on that with nested loops off.
   The rows were checked identical to the old statement on a scratch database (XC 694, TF 456).
   Restart from 04.
+- **✅ Rule 7's track half never fired.** In run 20261006_024705 rule 7 ran in 163 s (XC) and
+  573 s (TF) after the staging fix, but the track bars read 0:38-0:53 for 5 km, so "0 rows under
+  them". The 1-in-10,000 quantile of 17.5M track rows is junk (field marks, wrong distances
+  stored as times). A 5 km equivalent under the senior world record (M 12:35.36, F 14:00.21) is
+  now dropped before the bar and the comparison. It takes effect at the next run's 04.
 - **📌 Link meets across years** (owner: "maybe we should have some way to link meets across
   years"). Upcoming predictions need a meet's previous edition, and so would "this meet, year by
   year". A meet_series table (normalised name + venue + source, built in the pipeline) would give
