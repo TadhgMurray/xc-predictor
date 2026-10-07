@@ -4707,3 +4707,24 @@ From run 20261006_120609's gaps (line before and after each):
   with interned level strings.
 - Not changed: 04_grade_sanity's three field queries (~20-25 min each) -- set-based already; need EXPLAIN on the
   real tables to pick a change. 08_golive's solve (warm start measured at ~4% in September).
+
+## 2026-10-07 — 🔎 race importance in the season number: a bake-off, before any change
+
+- Owner: "race importance could be good for deciding someone's rating" (with XCRI-26A's guide: one rating per
+  athlete, every race equal, validated by "matched the next weekend's races"). Today the boards' season number is
+  the 80th-percentile race, every race alike; the engine's importance term (off) is a course-difficulty covariate,
+  not a weight on a person's races.
+- **scripts/season_estimator_bakeoff.py (read-only).** Holds out each completed athlete-season's LAST race and
+  scores candidate season numbers from the races before it by how well they order the athletes who met in that
+  race (pairs; a race-wide taper or course cancels) and by race-centred MAE. Candidates: q80 (the board), mean,
+  median, decayed mean, and q80 / mean weighted by exp(beta x importance), importance = field front (top-5 mean,
+  standardised per pool-year) or season-end share. beta is chosen on even person ids from a grid that includes 0
+  and scored on odd ones -- out of sample, and "no weight" stays possible. Board rules: rated rows, the season
+  outlier cut. tests/test_season_estimator_bakeoff.py.
+- **What the simulation already says (not data, a warning):** (1) if easy races are run consistently BELOW
+  level, weighting important races does NOT help ordering -- athletes with deep races get unbiased numbers,
+  those without keep the shallow bias, and the mix misorders them; (2) where important races are only less
+  noisy, the weighted MEAN gains and the weighted q80 barely moves; (3) a field's front can track its noise
+  (noisy races throw fast outliers), which out-of-sample scoring is there to catch.
+- Next: the owner runs it on the box; if a weighted estimator wins out of sample, it goes into
+  build_ranking_results as a switch, measured again on the following run.
