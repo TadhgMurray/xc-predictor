@@ -5008,3 +5008,12 @@ gradient."
   toggle. The rankings boards, drawn by rankings.js without `.rv` spans,
   are not coloured yet.
 - Test: `tests/test_difficulty_shades.py`.
+
+**Revised, same day** ("neither of them are on a gradient, and why would
+better difficulty be red? ... it's not very easy to tell it's a gradient"):
+the coloured text could not show the gradient, because text has to stay
+dark to read, so 130 and 136 looked the same. Both are now a **wash behind
+the number** with black text (`.dv-tint`, `.rv-tint`). The rating runs from
+almost none at 95 to a clear orange at 145; difficulty and race day get
+**green for harder / slower, red for easier / faster**, full at 10%
+(`difficulty_view.tintFor`). Shipped on the owner's "go" (52f632c).
