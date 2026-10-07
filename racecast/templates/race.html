@@ -156,9 +156,13 @@
         <th class="n">1</th><th class="n">2</th><th class="n">3</th><th class="n">4</th><th class="n">5</th><th class="n">6</th><th class="n">7</th></tr></thead>
       <tbody>
       {% for t in scores.teams %}
-      <tr>
+      {% set key = t.runners[0].school if t.runners else t.school %}
+      <tr data-team="{{ key }}" data-rids="{% for r in t.runners or [] %}{{ r.result_id }} {% endfor %}"
+          data-pl="{{ t.place if t.place else loop.index }}" data-pts="{{ t.points if t.points is not none else '' }}"
+          data-label="{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}"
+          data-href="{{ school_href(t.school, t.state or header.state) if t.school|is_team else '' }}">
         <td class="pl"><span>{{ t.place if t.place else loop.index }}</span></td>
-        <td>{% if t.school|is_team %}{{ crest(t.school, t.state) }}<a href="{{ school_href(t.school, t.state or header.state) }}">{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
+        <td>{% if t.school|is_team %}{{ crest(t.school, t.state) }}<a class="rc-team-open" href="{{ school_href(t.school, t.state or header.state) }}">{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
         <td class="n"><b>{{ t.points if t.points is not none else " - " }}</b></td>
         {% for i in range(7) %}
           {% set r = t.runners[i] if t.runners and t.runners|length > i else none %}
@@ -201,7 +205,10 @@
        right, not open the tab"). #}
     {% for t in scores.teams %}
     {% set key = t.runners[0].school if t.runners else t.school %}
-    <tr{% if loop.index > 10 %} class="rc-team-more" hidden{% endif %} data-team="{{ key }}" data-rids="{% for r in t.runners or [] %}{{ r.result_id }} {% endfor %}" tabindex="0" title="Light {{ t.school }}'s runners in the results">
+    <tr{% if loop.index > 10 %} class="rc-team-more" hidden{% endif %} data-team="{{ key }}" data-rids="{% for r in t.runners or [] %}{{ r.result_id }} {% endfor %}" tabindex="0" title="{{ t.school }}: their runners in this race"
+        data-pl="{{ t.place if t.place else loop.index }}" data-pts="{{ t.points if t.points is not none else '' }}"
+        data-label="{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}"
+        data-href="{{ school_href(t.school, t.state or header.state) if t.school|is_team else '' }}">
       <td class="tp">{{ t.place if t.place else loop.index }}</td>
       <td class="tn">{% if t.school|is_team %}{{ crest(t.school, t.state or header.state) }}{% endif %}{{ t.school }}
         <span class="sp">{% for i in range(5) %}{% set r = t.runners[i] if t.runners and t.runners|length > i else none %}<i>{{ r.score_place if r else "-" }}</i>{% endfor %}</span></td>
@@ -210,7 +217,7 @@
     {% endfor %}
     </tbody>
   </table>
-  <p class="rc-tip"><span class="rc-tip-name">{{ ((scores.teams[0].runners[0].school if scores.teams[0].runners else scores.teams[0].school) if not hl_school else hl_school).split("\x00")[0] }}</span>'s runners are lit in the results. Tap any team to light theirs.</p>
+  <p class="rc-tip"><span class="rc-tip-name">{{ ((scores.teams[0].runners[0].school if scores.teams[0].runners else scores.teams[0].school) if not hl_school else hl_school).split("\x00")[0] }}</span>'s runners are lit in the results. Tap any team for its runners.</p>
   {% if scores.teams|length > 10 %}<button type="button" class="rc-more rc-more-teams" data-all="All {{ scores.teams|length }} teams">All {{ scores.teams|length }} teams</button>{% endif %}
   {% endif %}
   {{ al.box(above_spec) }}
@@ -226,6 +233,16 @@
               el.scrollIntoView({ block: "center" }); }
 })();</script>
 {% endif %}
+{# ★ A TEAM'S RACE, ONE TAP AWAY (owner, 2026-10-07: "a pop up that has the
+   teams results (how each indiv person did and their score and the team
+   score) in that race, where you can then click to the team"). Filled by
+   race-page.js from the results table, so it can never disagree with it. #}
+<dialog class="rc-teampop" aria-label="Team results">
+  <form method="dialog"><button class="rc-pop-x" aria-label="Close">&times;</button></form>
+  <h2 class="rc-pop-h"></h2>
+  <table class="rc-pop-t"><thead><tr><th>Pl</th><th>Athlete</th><th class="n">Time</th><th class="n">Rating</th><th class="n">Pts</th></tr></thead><tbody></tbody></table>
+  <a class="rc-pop-go" href="#" hidden>Team page &rarr;</a>
+</dialog>
 </main>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>

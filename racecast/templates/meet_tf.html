@@ -78,7 +78,15 @@
       {% if has_teams %}<a class="seg-btn" href="#teams" data-tab="teams">Team scores</a>{% endif %}
     </nav>
     {% if has_teams %}<a class="rc-out" href="/meet/tf/{{ header.meet_id }}/compiled{{ ('?alt=' ~ alt_idx) if alt_idx }}">Compiled results →</a>{% endif %}
-    {% if events and events|length > 8 %}<input class="rc-find" type="search" placeholder="Find an event" aria-label="Find an event">{% endif %}
+    {# ★ SEARCHES THE WHOLE MEET (owner, 2026-10-07: "so you can search your
+       result"): a name or school lists every athlete who matches, each
+       linking to their row in their event (app.meet_tf_find); an event
+       name filters the table below. #}
+    {% if events %}<div class="rc-findwrap">
+      <input class="rc-find" type="search" autocomplete="off" placeholder="Find an athlete, school or event" aria-label="Find an athlete, school or event"
+             data-api="/api/meet/tf/{{ header.meet_id }}/find{% if alt_idx %}?alt={{ alt_idx }}{% endif %}">
+      <ul class="rc-findlist" hidden></ul>
+    </div>{% endif %}
   </div>
 
   <section class="rc-panel" id="events" data-panel="events">

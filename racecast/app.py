@@ -4548,6 +4548,56 @@ def meet_xc_find(meet_id):
     return jsonify(out)
 
 
+@app.route("/api/meet/tf/<int:meet_id>/find")
+def meet_tf_find(meet_id):
+    """Everyone at one track meet whose name or school matches ?q=, each a
+    link to their row in their event (owner, 2026-10-07: "so you can search
+    your result"). The track twin of meet_xc_find; the box used to filter
+    the events table only."""
+    from tf_points import prettyEventName, genderOf
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify([])
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            src, alt_idx, others = _tf_meet_sources(cur, meet_id, request.args)
+            cur.execute(f"""
+                SELECT * FROM (
+                    SELECT r.result_id, r.div_id, r.event_id, r.school,
+                           r.time_seconds, r.mark, r.event_short,
+                           (SELECT m.division FROM meets_tf m
+                            WHERE m.meet_id = r.meet_id AND m.div_id = r.div_id
+                              AND m.event_id = r.event_id LIMIT 1) AS division,
+                           COALESCE(r.is_field, 0) = 1 AS is_field,
+                           {_name_sql('r')} AS name
+                    FROM   results_tf r
+                    {_athlete_lateral('r')}
+                    WHERE  r.meet_id = %(m)s
+                      AND  r.event_id IS NOT NULL
+                      AND  (%(src)s::text IS NULL OR r.source = %(src)s)
+                ) x
+                WHERE  x.name ILIKE %(q)s OR x.school ILIKE %(q)s
+                ORDER  BY (x.name ILIKE %(q)s) DESC, x.name, x.event_short
+                LIMIT  40
+            """, {"m": meet_id, "src": src, "q": "%" + q + "%"})
+            rows = cur.fetchall()
+    out = []
+    for r in rows:
+        # the gender word lives in the event name ("Boys 1600", kept) or
+        # only in the division ("Girls Varsity"), which then prefixes it
+        ev = prettyEventName(r["event_short"]) if r["event_short"] else f"Event {r['event_id']}"
+        g = None if genderOf(ev) else genderOf(r.get("division"))
+        race = ("Boys " if g == "M" else "Girls " if g == "F" else "") + ev
+        if r["is_field"] or not r["time_seconds"] or _isSentinelTime(r["time_seconds"]):
+            mark = r["mark"] or ""
+        else:
+            mark = format_time(r["time_seconds"])
+        out.append({"name": r["name"], "school": r["school"] or "",
+                    "race": race, "time": mark,
+                    "href": f"/race/tf/{meet_id}/{r['event_id']}/{r['div_id']}?r={r['result_id']}"})
+    return jsonify(out)
+
+
 @app.route("/race/xc/<int:meet_id>/compiled/<int:distance>/<gender>")
 def compiled_race(meet_id, distance, gender):
     """One compiled race: every division at this distance and gender, merged.

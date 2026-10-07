@@ -70,3 +70,17 @@ def test_the_race_page_has_the_field_and_redraws_it_on_a_team_or_scale_change():
     assert re.search(r'addEventListener\("rc-scale-change"[^\n]*drawField', js)
     # the team key's hidden state separator never reaches the reader
     assert '.split(/[\\u0000\\uFFFD]/)[0]' in light
+
+
+def test_team_scores_open_the_team_popup():
+    """Owner, 2026-10-07: team scores open a popup of that team's runners in
+    the race, with their points, the team score and a link to the team."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    html = open(os.path.join(root, "racecast", "templates", "race.html"), encoding="utf-8").read()
+    js = open(os.path.join(root, "racecast", "static", "race-page.js"), encoding="utf-8").read()
+    assert '<dialog class="rc-teampop"' in html
+    assert html.index('<dialog class="rc-teampop"') < html.index("</main>")   # race.css is main.rc-scoped
+    assert html.count('data-href="{{ school_href(t.school') == 2                # sidebar and Teams tab
+    assert 'class="rc-team-open"' in html
+    assert "function openTeam(t)" in js and "pop.showModal()" in js

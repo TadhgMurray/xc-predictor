@@ -5106,6 +5106,16 @@ Chromium against the old script (readout 15:00, label under the pointer
 - Soheib Dissa: his UNAT-Duke rows sit on separate person ids (31559611,
   32891852) from his main id 32309981, and his 2025 college XC rows
   ('Unattached', gr Fr) are unrated. Under investigation.
+- **Team scores open the team's race.** On an XC race page, tapping a team
+  in the sidebar (or its name on the Teams tab) opens a popup: each of the
+  team's runners in this race with place, time, rating and points, the team
+  place and score, and a "Team page →" link. Built from the results table
+  (`race-page.js openTeam`). Ctrl/cmd-click on the Teams tab name still
+  opens the team page.
+- **Track meet page searches athletes.** Its box only filtered events; it
+  now lists every athlete or school that matches, each linking to their row
+  in their event (`/api/meet/tf/<id>/find`, the twin of the XC one). Test in
+  `test_meet_find.py`.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

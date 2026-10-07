@@ -187,8 +187,79 @@
     }
   }
 
+  // ---- a team's race in a popup: its runners, their points, the score
+  // ★ OWNER, 2026-10-07: "a pop up that has the teams results ... in that
+  //   race, where you can then click to the team". Read off the results
+  //   table -- the same rows the team lights -- so the two cannot disagree.
+  //   Where a team has no popup (the track page) a tap only lights.
+  var pop = main.querySelector(".rc-teampop");
+  function teamRowsOf(key, rids) {
+    var ids = {}, dup = 0;
+    (rids || "").split(/\s+/).forEach(function (r) { if (r) ids["r" + r] = true; });
+    teamRows.forEach(function (t) { if (t.dataset.team === key) dup++; });
+    return Array.prototype.filter.call(rows, function (tr) {
+      return ids[tr.id] || (dup <= 1 && tr.dataset.team === key);
+    });
+  }
+  function cellText(tr, sel) {
+    var c = tr.querySelector(sel);
+    return c ? c.textContent.replace(/\s+/g, " ").trim() : "";
+  }
+  function openTeam(t) {
+    if (!pop || typeof pop.showModal !== "function") return false;
+    var label = t.dataset.label || (t.dataset.team || "").split(/[\u0000\uFFFD]/)[0];
+    pop.querySelector(".rc-pop-h").textContent =
+      (t.dataset.pl ? t.dataset.pl + ". " : "") + label +
+      (t.dataset.pts ? " \u00b7 " + t.dataset.pts + " pts" : "");
+    var body = pop.querySelector(".rc-pop-t tbody");
+    body.innerHTML = "";
+    teamRowsOf(t.dataset.team, t.dataset.rids).forEach(function (tr) {
+      var out = document.createElement("tr");
+      var a = tr.querySelector("td.nm > a");
+      var nm = document.createElement("td");
+      if (a) {
+        var link = document.createElement("a");
+        link.href = a.getAttribute("href");
+        link.textContent = a.textContent.trim();
+        nm.appendChild(link);
+      } else {
+        nm.textContent = (tr.querySelector("td.nm").firstChild.textContent || "").trim();
+      }
+      var pts = cellText(tr, "td.pts");
+      [cellText(tr, "td.pl"), nm, cellText(tr, "td.tm"), cellText(tr, "td.rt .rc-rv"),
+       pts === "-" ? "" : pts].forEach(function (v, i) {
+        var td = v instanceof Node ? v : document.createElement("td");
+        if (!(v instanceof Node)) td.textContent = v;
+        if (i >= 2) td.className = "n";
+        out.appendChild(td);
+      });
+      body.appendChild(out);
+    });
+    var go = pop.querySelector(".rc-pop-go");
+    go.hidden = !t.dataset.href;
+    if (t.dataset.href) go.href = t.dataset.href;
+    pop.showModal();
+    return true;
+  }
+  if (pop) {
+    pop.addEventListener("click", function (e) { if (e.target === pop) pop.close(); });
+    main.querySelectorAll(".rc-teams-full tr[data-team]").forEach(function (t) {
+      var a = t.querySelector(".rc-team-open");
+      if (!a) return;
+      a.addEventListener("click", function (e) {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;   // new tab: the page
+        if (openTeam(t)) e.preventDefault();
+      });
+    });
+  }
+
   teamRows.forEach(function (t) {
     function go() {
+      if (pop) {
+        light(t.dataset.team, t.dataset.rids);
+        openTeam(t);
+        return;
+      }
       var on = t.classList.contains("rc-lit");
       light(on ? "" : t.dataset.team, on ? "" : t.dataset.rids);
     }
