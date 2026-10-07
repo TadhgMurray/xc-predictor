@@ -66,3 +66,27 @@ def test_names_on_a_scratch_database():
     got = dict(cur.fetchall())
     cx.rollback()
     assert got == {1: "Ana Ruiz", 2: "Unknown", 3: "Di Fox", 4: "Bo Lee", 5: "Cy Diaz"}, got
+
+
+def test_the_boards_copy_reads_every_profile_too():
+    dsn = os.environ.get("XCP_TWIN_TEST_DSN")
+    src = open(os.path.join(ROOT, "racecast", "rankings.py"), encoding="utf-8").read()
+    lat = re.search(r'_NAME_LATERAL = """(.*?)"""', src, re.S).group(1)
+    assert "a.person_id = {alias}.person_id" in lat
+    if not dsn:
+        pytest.skip("set XCP_TWIN_TEST_DSN to a scratch Postgres")
+    import psycopg2
+    cx = psycopg2.connect(dsn)
+    cur = cx.cursor()
+    cur.execute("""
+        CREATE TEMP TABLE athletes (athlete_id bigint PRIMARY KEY, first_name text,
+                                    last_name text, gender text, school text, person_id bigint);
+        CREATE TEMP TABLE results (person_id bigint, athlete_name text);
+        CREATE TEMP TABLE results_tf (person_id bigint, athlete_name text);
+        CREATE TEMP TABLE rr (person_id bigint);
+        INSERT INTO athletes VALUES (10, '', '', NULL, NULL, 10), (11, 'Ana', 'Ruiz', 'F', 'X', 10);
+        INSERT INTO rr VALUES (10);
+    """)
+    cur.execute("SELECT a.name FROM rr " + lat.format(alias="rr"))
+    assert cur.fetchone()[0] == "Ana Ruiz"
+    cx.rollback()

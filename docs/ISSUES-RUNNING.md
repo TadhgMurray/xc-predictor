@@ -4893,8 +4893,10 @@ person's profiles plus the result's own athlete row, and its ORDER BY picks a
 named one. It uses two indexed branches. **Needs** `idx_athletes_person_id`:
 run `scripts/add_page_indexes.py`, which builds it concurrently if missing;
 the athlete page already depended on this lookup. Test:
-`tests/test_name_every_profile.py`. Rankings boards built before this keep
-their stored names until step 10 rebuilds them.
+`tests/test_name_every_profile.py`. The rankings boards had their own copy
+(`rankings._NAME_LATERAL`) with the same one-profile match, now fixed too.
+Names are looked up when a page loads, so a restart applies the fix; no
+rebuild is needed.
 
 **Requeue "hang".** `requeue_blank_athletes.py` printed nothing until all
 three scans finished, and the middle one reads every anet row of `results`

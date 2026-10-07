@@ -353,7 +353,10 @@ _NAME_LATERAL = """
         SELECT COALESCE(
                  (SELECT NULLIF(TRIM(concat_ws(' ', a.first_name, a.last_name)), '')
                   FROM   athletes a
-                  WHERE  a.athlete_id = {alias}.person_id
+                  -- ⚠ every profile of the person, as the athlete page reads
+                  --   them (2026-10-07): the profile whose id IS the person
+                  --   id can be blank while another carries the name
+                  WHERE  a.person_id = {alias}.person_id OR a.athlete_id = {alias}.person_id
                   ORDER  BY (COALESCE(TRIM(a.first_name), '') <> ''
                           OR COALESCE(TRIM(a.last_name),  '') <> '') DESC,
                             (a.gender IN ('M', 'F')) DESC
