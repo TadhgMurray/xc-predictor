@@ -11,7 +11,7 @@
 @font-face { font-family: "RC Mono"; src: url(fonts/jetbrains-mono-500-normal.woff2) format("woff2"); font-weight: 500; font-display: swap; }
 @font-face { font-family: "RC Mono"; src: url(fonts/jetbrains-mono-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
 
-body.rc-body { background: #f3f2ee; margin: 0; }
+body.rc-body { background: #f3f2ee; }
 main.rc {
   --rc-ink: #0d0d0d; --rc-red: #d7192d; --rc-mute: #6f6f69; --rc-line: #e2e1db;
   --rc-gold: #c9a227; --rc-silver: #b9c0c6; --rc-bronze: #b06a35; --rc-lit: #fff6d8;
@@ -20,7 +20,10 @@ main.rc {
 }
 main.rc a { color: inherit; text-decoration: none; }
 main.rc a:hover { text-decoration: underline; }
-.rc-w { max-width: 1180px; margin: 0 auto; padding: 0 2rem; }
+/* ★ THE SITE'S OWN COLUMN (owner, 2026-10-07: "a lot of things are off-center"):
+   1080 wide with the 1.5rem gutter of .page-wide, so the race page's edges are the
+   meet and course pages' edges. The dark band runs the width of the top bar's rule. */
+.rc-w { max-width: 1080px; margin: 0 auto; padding: 0 1.5rem; box-sizing: content-box; }
 
 /* ---- header ---------------------------------------------------------- */
 .rc-hd { background: var(--rc-ink); color: #fff; padding: 1.1rem 0 1.2rem; border-bottom: 4px solid var(--rc-red); }
@@ -36,7 +39,7 @@ main.rc h1 { font-family: "RC Cond"; font-weight: 800; font-style: italic; text-
 .rc-champs .k { font-family: "RC Cond"; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #a9a9a2; font-size: .8rem; display: block; }
 .rc-champs .rc-cn { font-family: "RC Cond"; font-weight: 800; font-style: italic; text-transform: uppercase; font-size: 1.35rem; color: #fff; }
 .rc-champs i { font-family: "RC Mono"; font-style: normal; font-weight: 700; color: #ffd166; margin-left: .45rem; font-size: 1.05rem; }
-.rc-right { position: relative; }
+.rc-right { display: flex; flex-direction: column; }
 .rc-story { margin: 0; font-size: 1.02rem; line-height: 1.5; color: #e6e6e1; }
 .rc-story b { color: #fff; }
 .rc-facts { display: flex; flex-wrap: wrap; margin-top: .7rem; }
@@ -45,11 +48,10 @@ main.rc h1 { font-family: "RC Cond"; font-weight: 800; font-style: italic; text-
 .rc-facts b { font-family: "RC Mono"; font-weight: 700; letter-spacing: 0; text-transform: none; margin-left: .35rem; color: #fff; }
 main.rc .rc-facts .dv { color: #fff; background: none !important; padding: 0; margin: 0; font: inherit; font-style: normal; vertical-align: baseline; }
 .rc-facts .info-i { color: #a9a9a2; border-color: #55554f; margin-left: .3rem; }
-.rc-share { position: absolute; top: -.2rem; right: 0; background: transparent; color: #d9d9d4; border: 1px solid #3a3a36; }
-.rc-right:has(.rc-story) .rc-share { top: auto; bottom: 100%; margin-bottom: .6rem; }
+.rc-share { order: -1; align-self: flex-end; margin-bottom: .7rem; background: transparent; color: #d9d9d4; border: 1px solid #3a3a36; }
 
 /* ---- body grid -------------------------------------------------------- */
-.rc-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1.6rem; align-items: start; margin-top: 1.2rem; }
+.rc-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 1.4rem; align-items: start; margin-top: 1.2rem; }
 .rc-tbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; border-bottom: 2px solid var(--rc-ink); }
 .rc-tabs { display: flex; gap: 1.4rem; overflow-x: auto; white-space: nowrap; }
 .rc-tabs a { font-family: "RC Cond"; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; font-size: 1.1rem;
@@ -132,13 +134,13 @@ main.rc .page-report { margin-top: 1.4rem; }
 /* ---- phone ----------------------------------------------------------- */
 @media (max-width: 760px) {
   /* the site's one 12px phone gutter is on <main> (style.css "ONE
-     WIDTH"); the dark header runs edge to edge through it */
+     WIDTH"): the band is as wide as every other block on the page */
   .rc-w { padding: 0; }
-  .rc-hd { margin: 0 -12px; padding-left: 12px; padding-right: 12px; }
+  .rc-hd { padding-left: 12px; padding-right: 12px; }
   .rc-hgrid { grid-template-columns: minmax(0, 1fr); gap: .9rem; }
   main.rc h1 { font-size: 2.3rem; }
   .rc-champs .rc-cn { font-size: 1.1rem; }
-  .rc-share { position: static; margin-top: .6rem; }
+  .rc-share { order: 1; align-self: flex-start; margin: .7rem 0 0; }
   .rc-grid { grid-template-columns: minmax(0, 1fr); }
   .rc-side { order: 2; }
   .rc-tbar { flex-direction: column; align-items: stretch; }

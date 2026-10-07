@@ -78,12 +78,12 @@
   {% if rows %}
   <table class="landing-tbl">
     <thead>
-      <tr><th>#</th><th>Athlete</th><th>School</th><th>Grade</th><th>Rating</th><th>Races</th></tr>
+      <tr><th class="rk">#</th><th>Athlete</th><th>School</th><th>Grade</th><th class="num">Rating</th><th class="num">Races</th></tr>
     </thead>
     <tbody>
       {% for r in rows %}
       <tr>
-        <td class="num">{{ loop.index }}</td>
+        <td class="rk">{{ loop.index }}</td>
         <td><a href="/athlete/{{ r.person_id }}">{{ r.name }}</a></td>
         <td>{% if r.school and r.school|is_team %}{{ crest(r.school, r.state, pool=pool_level) }}<a href="{{ school_href(r.school, r.state, pool=pool_level) }}">{{ r.school|school_label_for(pool_level, r.state) }}</a>{% elif r.school %}{{ r.school|school_label_for(pool_level, r.state) }}{% else %} - {% endif %}</td>
         <td>{{ r.grade|grade_label(pool_level) if r.grade else " - " }}</td>

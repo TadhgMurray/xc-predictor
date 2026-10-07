@@ -4484,3 +4484,25 @@ Owner: "the site is info overload" → mockup rounds → picked D5, minus the ru
 - **To check on the server:** the repeat-title clause has only run against a fake cursor here. Open
   /race/xc/236800/1011723 — it should read "won a third straight title here" if Noonan's 2022 and 2023
   CIF State rows are linked to the same person.
+
+## 2026-10-07 — "site is much slower" / "off-center, weird spacing"
+
+**Speed, measured on the live site (probe UA, a handful of requests):**
+- Warm (cached) pages answer in 0.14–0.4 s. Uncached first hits are the slow ones: the CA state XC page took 3.7 s once,
+  then 0.2 s; the race page 1.2 s, then 0.2–0.4 s. A restart empties every cache, so right after a deploy every page
+  pays its first hit, and a running pipeline makes those first hits slower still.
+- **One real regression from my side, fixed:** the track state pages' season probe (2026-10-06) filtered athlete_season
+  on sport + year only. Every index on that table leads with pool, so each probe was a sequential scan, and the new
+  season's probe (almost no rows) read the whole table on every uncached track state page. It now probes
+  pool = 'hs_m' + sport + year (as_board_mean_idx's prefix): one season for the whole sport, as before, from its
+  biggest board.
+- The race page's new repeat-title query is one per uncached race page, by person_id, bounded at 1.5 s.
+
+**Layout, measured edges at 1280 px:**
+- Centered pages (meets, course, school, predictions) put content at 100–1180. Conversions was at 90–1190: now 1080
+  like the rest. The new race page was at 124 and had zeroed the body margin, moving the top bar 8 px: now the site's
+  margin and the 100–1180 column, and the Share button sits in the header instead of over its top edge.
+- Full-width pages: /rankings and the athlete page at 32; the state ranking pages and breakouts at 40. Now all 32
+  (1.5rem gutter).
+- State ranking table: Rating and Races headers were left-aligned over right-aligned numbers, and # was a right-aligned
+  number in a wide cell. Headers now align with their numbers, # reads like the rankings board's.

@@ -10188,14 +10188,26 @@ def rankings_landing(sport, pool, state=None):
                     import datetime as _dt
                     from predict import SEASON_MIN_RESULTS
                     from season_year import academicYear
-                    # newest first, one bounded probe per year (no scan)
+                    # newest first, one bounded probe per year
+                    # ! WITH THE POOL (owner, 2026-10-07: "site is much
+                    #   slower"): every athlete_season index leads with
+                    #   pool, so sport + year alone was a sequential scan --
+                    #   and the new season's probe, with almost no rows,
+                    #   read the whole table on every uncached page. pool,
+                    #   sport, year is as_board_mean_idx's prefix.
+                    #   The pool is the sport's biggest board (HS boys), not
+                    #   the page's: a season is the sport's, and one year
+                    #   for every pool's page is what the old all-pool probe
+                    #   gave (a middle-school track pool may never reach the
+                    #   floor on its own).
                     for _y in range(academicYear(_dt.date.today()),
                                     academicYear(_dt.date.today()) - 6, -1):
                         cur.execute("""SELECT count(*) AS n FROM (
                                            SELECT 1 FROM athlete_season
-                                           WHERE sport = %s AND year = %s AND n_races >= 3
+                                           WHERE pool = %s AND sport = %s AND year = %s
+                                             AND n_races >= 3
                                              AND mean_rating IS NOT NULL LIMIT %s) x""",
-                                    (L.SPORTS[sport], _y, SEASON_MIN_RESULTS))
+                                    ("hs_m", L.SPORTS[sport], _y, SEASON_MIN_RESULTS))
                         if int(cur.fetchone()["n"]) >= SEASON_MIN_RESULTS:
                             year = _y + (1 if L.SPORTS[sport] == "TF" else 0)
                             break

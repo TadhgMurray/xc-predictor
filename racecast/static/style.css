@@ -764,7 +764,9 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 
 /* ===== CONVERSIONS ===== matches the site's tables + spacing ===== */
 
-.conv { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+/* 1080: the column .page-wide gives meets, course, school and predictions, so
+   the converter's edges are theirs (owner, 2026-10-07: "off-center") */
+.conv { max-width: 1080px; margin: 0 auto; padding: 1.5rem; }
 .conv h1 { margin: 0 0 0.25rem; }
 .conv-intro { color: #666; margin: 0 0 1.5rem; font-size: 0.95rem; }
 
@@ -4565,7 +4567,10 @@ tr.is-carried td a { color: var(--link); }
 .landing-page .landing-nav { font-size: 0.9rem; color: #374151; line-height: 1.8; }
 .landing-page .landing-nav .is-on, .landing-page .landing-states .is-on { font-weight: 700; color: #111; }
 .landing-page .landing-tbl { width: 100%; border-collapse: collapse; margin-top: 0.8rem; }
-.landing-page .landing-tbl td.num, .landing-page .landing-tbl th:first-child { text-align: right; font-variant-numeric: tabular-nums; }
+.landing-page .landing-tbl td.num, .landing-page .landing-tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* # as the rankings board sets it: narrow, left, not a right-aligned number
+   under a wide empty cell (owner, 2026-10-07: "weird spacing") */
+.landing-page .landing-tbl td.rk, .landing-page .landing-tbl th.rk { text-align: left; width: 2.5rem; font-variant-numeric: tabular-nums; }
 .landing-page .landing-h2 { margin-top: 2rem; font-size: 1.05rem; }
 .landing-page .landing-states { font-size: 0.88rem; line-height: 1.9; color: #374151; }
 .by-state { font-size: 0.85rem; color: #4b5563; margin: 1.6rem 0 0; line-height: 1.8; }
@@ -5752,7 +5757,9 @@ td.vs-level.is-under { color: var(--muted); }
 /* ★ BOARDS RUN FULL WIDTH, LIKE /rankings (owner, 2026-10-05: B). Breakouts
    is a Rankings board and the state ranking pages are boards; everything
    else keeps .page-wide's centred 1080. */
-.page-wide.brk-page, .page-wide.landing-page { max-width: none; padding-left: 2rem; padding-right: 2rem; }
+/* 1.5rem: the gutter /rankings and the athlete page already use, so every
+   full-width page starts at one left edge (owner, 2026-10-07: "off-center") */
+.page-wide.brk-page, .page-wide.landing-page { max-width: none; padding-left: 1.5rem; padding-right: 1.5rem; }
 
 /* ---- TABS ARE JOINED (owner, 2026-10-06: "I prefer the buttons being
  *      together"). One bar per group: no gap, shared 1px seams, the 6px
