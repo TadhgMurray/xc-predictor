@@ -53,7 +53,10 @@ def test_shift_makes_each_band_read_the_stated_gain():
     gains = (0.03, 0.02, 0.03)
     shift, gap, n = js.sportGainShift(log_adj, sport, ath, rating, pool, 2, gains)
     assert (n >= 100).all(), n
-    assert np.allclose(gap, 0.007, atol=0.004), gap           # what it read
+    # what it read, on the mean the gap was first defined by
+    _s, gap_mean, _n = js.sportGainShift(log_adj, sport, ath, rating, pool, 2, gains,
+                                         row_q=None, min_rows=1)
+    assert np.allclose(gap_mean, 0.007, atol=0.004), gap_mean
     # ★ apply it as the go-live does (interpolated by rating): each band's
     #   MEDIAN gap now lands on -gain, as the boards read it (2026-10-03:
     #   the one-pass mean left hs 0.56% short of its stated level)
@@ -140,9 +143,80 @@ def test_a_skewed_gap_is_held_on_the_median():
     sport = np.array([r[1] for r in rows])
     log_adj = np.array([r[2] for r in rows])
     gains = (0.0092, 0.0092, 0.0092)
-    shift, _gap, _n = js.sportGainShift(log_adj, sport, ath, rating, pool, 1, gains)
+    # one row a sport: the quantile of one row is that row (min_rows=1 to
+    # keep them; the boards' 3-race floor is tested below)
+    shift, _gap, _n = js.sportGainShift(log_adj, sport, ath, rating, pool, 1, gains,
+                                        min_rows=1)
     after = log_adj - np.where(sport == 1, js.sportGainRow(rating[ath], pool[ath], shift), 0.0)
     gap_ath = after[sport == 1] - after[sport == 0]
     band = np.digitize(rating, js.SPORT_GAIN_BANDS)
     for b in range(3):
         assert abs(np.median(gap_ath[band == b]) + 0.0092) < 2e-4
+
+
+def _boardGap(log_adj, sport, ath, rating, n_ath):
+    """What board_sanity reads: per athlete-season and sport the 80th
+    percentile rating (rating ~ 1/adjusted time), 3+ races each, then the
+    median of ln(TF/XC) per band, as a log-time gap (negative = track higher)."""
+    out = {}
+    band = np.digitize(rating, js.SPORT_GAIN_BANDS)
+    for i in range(n_ath):
+        tf = log_adj[(ath == i) & (sport == 1)]
+        xc = log_adj[(ath == i) & (sport == 0)]
+        if tf.size < 3 or xc.size < 3:
+            continue
+        r_tf = np.percentile(np.exp(-tf), 80)
+        r_xc = np.percentile(np.exp(-xc), 80)
+        out.setdefault(band[i], []).append(-np.log(r_tf / r_xc))
+    return {b: float(np.median(v)) for b, v in out.items()}
+
+
+def test_the_gap_is_held_on_the_season_number_the_boards_show():
+    """2026-10-07 (run 20261006_120609's 10a): XC rows scatter more than
+    track rows, so on the boards' 80th-percentile season number the mean-held
+    gap came out short (hs 0.39% of 0.92%). Held on the quantile, the board
+    reads the stated gain; held on the mean, it does not."""
+    rng = np.random.default_rng(5)
+    n_ath = 1500
+    rating = rng.uniform(90, 135, n_ath)
+    pool = np.zeros(n_ath, dtype=int)
+    rows = []
+    for i in range(n_ath):
+        for _ in range(rng.integers(3, 9)):
+            rows.append((i, 0, rng.normal(0, 0.035)))           # XC: courses, days
+        for _ in range(rng.integers(3, 9)):
+            rows.append((i, 1, 0.004 + rng.normal(0, 0.012)))   # track: tighter
+        if rng.random() < 0.2:
+            rows.append((i, 1, 0.0))                            # a lone extra: fine
+    ath = np.array([r[0] for r in rows])
+    sport = np.array([r[1] for r in rows])
+    log_adj = np.array([r[2] for r in rows]) - 0.3 * (rating[ath] - 100) / 100
+    gains = (0.0092, 0.0092, 0.0092)
+
+    def _after(**kw):
+        shift, _g, _n = js.sportGainShift(log_adj, sport, ath, rating, pool, 1, gains, **kw)
+        return log_adj - np.where(sport == 1, js.sportGainRow(rating[ath], pool[ath], shift), 0.0)
+
+    held = _boardGap(_after(), sport, ath, rating, n_ath)
+    for b, g in held.items():
+        assert abs(g + 0.0092) < 1.5e-3, (b, g)
+    mean_held = _boardGap(_after(row_q=None, min_rows=1), sport, ath, rating, n_ath)
+    assert all(g > -0.0092 + 3e-3 for g in mean_held.values()), mean_held
+
+
+def test_group_quantile_is_percentile_cont():
+    key = np.array([0, 0, 0, 0, 1, 1, 2])
+    val = np.array([4.0, 1.0, 3.0, 2.0, 10.0, 20.0, 7.0])
+    q = js._groupQuantile(key, val, 4, 0.2)
+    assert np.allclose(q[:3], [np.percentile([1, 2, 3, 4], 20),
+                               np.percentile([10, 20], 20), 7.0])
+    assert np.isnan(q[3])
+
+
+def test_the_quantile_mirrors_the_boards_season_number():
+    src = open(os.path.join(ROOT, "racecast", "build_ranking_results.py"), encoding="utf-8").read()
+    import re
+    season_q = float(re.search(r"^_SEASON_Q = ([0-9.]+)", src, re.M).group(1))
+    assert abs((1 - season_q) - js.SPORT_GAIN_ROW_Q) < 1e-9
+    bs = open(os.path.join(ROOT, "scripts", "board_sanity.py"), encoding="utf-8").read()
+    assert "n_races >= 3 AND t.n_races >= 3" in bs and js.SPORT_GAIN_MIN_ROWS == 3

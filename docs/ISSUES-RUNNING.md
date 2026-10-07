@@ -4653,3 +4653,26 @@ Owner: "feels half-assed, only some things were put into new theme." Went throug
 - Noticed: the 08a holdouts are run without --sport-level-pools, --difficulty bracket, --race-effect-*, the gauge
   and the bracket window that 08_golive gets. Possibly intended (the bracket engine is scored by 08d's "SAME
   ROWS"); left alone, noted.
+
+## 2026-10-07 — 04_grade_sanity: the 5 hours found; 10a's sport level held on the boards' statistic
+
+- **The 303-min gap was rule 5d, not rule 8** (the run predates rule 8: its track bars still read 0:38-0:53, the bug
+  fixed at 18:24 UTC). 5d fetched every graded allraces row (most of ~225M) into Python to count contradicted
+  entrants per event. ✅ Now SQL (grade_sanity.thinFieldSeasons): the events are found from the contradicted seasons
+  through allraces' (person_id, acad, race) index and only theirs are counted -- an event needs 70% of 4+ graded
+  entrants contradicted, so one with none cannot pass. Same counts (rows, a person twice counts twice; float8 as
+  Python). tests/test_thin_field_sql.py checks it against the old loop on random fields and at both edges.
+- ✅ The fold's UPDATE (3,009 s) is a rebuild of allraces with the column (the table's own build took 335 s), indexes
+  rebuilt after. Checked equal to the UPDATE row for row on a scratch database.
+- ✅ Rules 5e, 6 and trust each read allraces whole for the same per-season race count; now one query.
+- New timing lines: "[5b] ... (Ns)", "[5d] ... (Ns)", "[5e] ... (Ns)", so no stretch of this step is silent.
+- **⏳ 10a's sport level.** The go-live held the track-over-XC gap on each athlete-season's MEAN row, over anyone with
+  one row in each sport; the boards and the check read the 80th-percentile season number over 3+ races each. XC rows
+  scatter more, so its upper quantile sits further above its mean and the published gap fell short (hs 0.39% of
+  0.92%). js.sportGainShift now holds it on the 20th percentile of log adjusted time (= the 80th-percentile rating)
+  with 3+ rows each; XCP_SPORT_GAIN_STAT=mean restores the old measure. A simulation with noisier XC than track
+  reads the stated gap on the board statistic this way and >0.3 points short the old way (tests/test_sport_gain.py).
+  Expect 10a's level check to pass next run.
+- Pre-existing failures, unchanged by this (same on the old tree): test_bracket_golive, test_course_bracket,
+  test_diagnose, test_era_publish (collection errors), test_meet_units, test_pipeline_shards,
+  test_pipeline_step_guards, test_report_steps_report_only.

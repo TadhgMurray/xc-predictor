@@ -301,6 +301,24 @@ DIST_CAL_SHARE = 0.9
 #   --winter-gain-bands is given.
 SPORT_GAIN_ANCHORS = (90.0, 112.0, 130.0)
 SPORT_GAIN_MIN_ATHLETES = 50
+# ★ THE GAP IS HELD ON THE STATISTIC THE BOARDS SHOW (2026-10-07; run
+#   20261006_120609's 10a: hs read 0.39% track over XC against the stated
+#   0.92%, ms 1.00% of 1.91%, while this shift had set the target on its own
+#   measure). The shift measured each athlete-season's MEAN track row
+#   against its MEAN XC row, over everyone with one row in each sport. The
+#   boards -- and board_sanity's level check -- read athlete_season's season
+#   number, the 80th-percentile race (build_ranking_results._SEASON_Q), over
+#   athlete-seasons with 3+ races in each sport. Cross country rows scatter
+#   more (course and day), so their upper quantile sits further above their
+#   mean than track's does and the published gap came out short. Each
+#   athlete's track rows move by one shift, so any quantile of them moves by
+#   exactly that: the iteration below holds on the quantile as it held on
+#   the mean. In log adjusted time the 80th-percentile RATING is the 20th
+#   percentile (a rating is pool mean / adjusted time).
+#   XCP_SPORT_GAIN_STAT=mean puts back the mean over one row each.
+SPORT_GAIN_ROW_Q = (None if os.environ.get("XCP_SPORT_GAIN_STAT", "").strip().lower() == "mean"
+                    else 0.20)          # 1 - build_ranking_results._SEASON_Q
+SPORT_GAIN_MIN_ROWS = 1 if SPORT_GAIN_ROW_Q is None else 3   # board_sanity: n_races >= 3
 
 
 def distOffsetRow(D, e, rating_row):
@@ -381,9 +399,29 @@ def _bandMedian(key, val, n_key):
     return out
 
 
+def _groupQuantile(key, val, n_key, q):
+    """percentile_cont(q) of val per integer key in [0, n_key) -- Postgres'
+    linear interpolation, as the boards compute the season number; NaN for
+    an empty key."""
+    out = np.full(n_key, np.nan)
+    if key.size == 0:
+        return out
+    order = np.lexsort((val, key))
+    k, v = key[order], val[order]
+    starts = np.flatnonzero(np.r_[True, k[1:] != k[:-1]])
+    cnt = np.diff(np.r_[starts, k.size])
+    pos = q * (cnt - 1)
+    lo = np.floor(pos).astype(np.int64)
+    frac = pos - lo
+    hi = np.minimum(lo + 1, cnt - 1)
+    out[k[starts]] = v[starts + lo] + frac * (v[starts + hi] - v[starts + lo])
+    return out
+
+
 def sportGainShift(log_adj, sport, athlete, rating_ath, pool_ath, n_pool,
                    gains, anchors=SPORT_GAIN_ANCHORS,
-                   min_athletes=SPORT_GAIN_MIN_ATHLETES, iters=8):
+                   min_athletes=SPORT_GAIN_MIN_ATHLETES, iters=8,
+                   row_q=SPORT_GAIN_ROW_Q, min_rows=SPORT_GAIN_MIN_ROWS):
     """Per (pool, band): the realised dual-sport gap in log adjusted time
     (track minus XC, negative = track rates higher), the athletes behind
     it, and the shift that turns it into -gains[band]. Returns
@@ -413,13 +451,19 @@ def sportGainShift(log_adj, sport, athlete, rating_ath, pool_ath, n_pool,
     n_ath = int(rating_ath.size)
     tf = sport == 1
     ok = np.isfinite(log_adj)
-    sum_tf = np.bincount(athlete[tf & ok], weights=log_adj[tf & ok], minlength=n_ath)
     cnt_tf = np.bincount(athlete[tf & ok], minlength=n_ath)
-    sum_xc = np.bincount(athlete[~tf & ok], weights=log_adj[~tf & ok], minlength=n_ath)
     cnt_xc = np.bincount(athlete[~tf & ok], minlength=n_ath)
-    both = (cnt_tf > 0) & (cnt_xc > 0) & np.isfinite(rating_ath) & (pool_ath >= 0)
-    gap_ath = np.where(both, sum_tf / np.maximum(cnt_tf, 1)
-                       - sum_xc / np.maximum(cnt_xc, 1), 0.0)
+    both = ((cnt_tf >= max(1, int(min_rows))) & (cnt_xc >= max(1, int(min_rows)))
+            & np.isfinite(rating_ath) & (pool_ath >= 0))
+    if row_q is None:
+        sum_tf = np.bincount(athlete[tf & ok], weights=log_adj[tf & ok], minlength=n_ath)
+        sum_xc = np.bincount(athlete[~tf & ok], weights=log_adj[~tf & ok], minlength=n_ath)
+        stat_tf = sum_tf / np.maximum(cnt_tf, 1)
+        stat_xc = sum_xc / np.maximum(cnt_xc, 1)
+    else:
+        stat_tf = _groupQuantile(athlete[tf & ok], log_adj[tf & ok], n_ath, float(row_q))
+        stat_xc = _groupQuantile(athlete[~tf & ok], log_adj[~tf & ok], n_ath, float(row_q))
+    gap_ath = np.where(both, np.nan_to_num(stat_tf) - np.nan_to_num(stat_xc), 0.0)
     band = np.digitize(np.nan_to_num(rating_ath, nan=100.0), SPORT_GAIN_BANDS)
     key = np.clip(pool_ath, 0, None) * nb + band
     n = np.bincount(key[both], minlength=n_pool * nb).reshape(n_pool, nb)

@@ -76,13 +76,13 @@ def test_the_gain_per_pool_shifts_only_the_pools_it_names():
     pool = np.array([0, 0, 1, 1])
     gains = np.full((2, 3), np.nan); gains[0, :] = 0.02          # pool 0 named, pool 1 not
     shift, gap, n = js.sportGainShift(log_adj, sport, athlete, rating, pool, 2, gains,
-                                      min_athletes=1)
+                                      min_athletes=1, min_rows=1)
     assert abs(gap[0, 1] + 0.1) < 1e-9 and abs(gap[1, 1] + 0.05) < 1e-9
     assert abs(shift[0, 1] - (-0.1 + 0.02)) < 1e-9
     assert shift[1].tolist() == [0.0, 0.0, 0.0]
     # the one-dimensional form still means one gain per band for every pool
     shift1, _g, _n = js.sportGainShift(log_adj, sport, athlete, rating, pool, 2,
-                                       np.array([0.0, 0.02, 0.0]), min_athletes=1)
+                                       np.array([0.0, 0.02, 0.0]), min_athletes=1, min_rows=1)
     assert abs(shift1[1, 1] - (-0.05 + 0.02)) < 1e-9
 
 

@@ -805,7 +805,6 @@ _BUILD = f"""
     --   every row, then a second UPDATE nulling the minority -- two full
     --   rewrites of a 225M-row table to produce one column. The column is
     --   now written once, below, from the join.
-    ALTER TABLE allraces ADD COLUMN grade_folded text;
 
     -- Which KIND owns the season, counted in races rather than rows.
     -- ★ ONE ROW PER RACE FIRST, THEN COUNT KINDS. THE ORDER IS THE WHOLE
@@ -869,16 +868,27 @@ _BUILD = f"""
     --   one graded race, so a row that fails this join has grade NULL
     --   anyway. The old first pass set grade_folded = grade for all 225M
     --   rows purely to give those rows a value they already had.
-    UPDATE allraces a
-       SET grade_folded =
-           CASE WHEN k.n_num > 0 AND k.n_word > 0
-                 AND ((k.n_num >= k.n_word
-                       AND a.grade IN ('FR','SO','JR','SR'))
-                   OR (k.n_word > k.n_num AND a.grade ~ '^[0-9]+$'))
-                THEN NULL ELSE a.grade END
-      FROM   gradekind k
-     WHERE   k.person_id = a.person_id AND k.acad = a.acad;
-
+    -- ★ A NEW TABLE, NOT AN UPDATE (run 20261006_120609: the UPDATE took
+    --   3,009 s). An UPDATE of nearly every graded row writes a second copy
+    --   of each one and leaves the dead copies for every later scan; the
+    --   table this step builds from scratch took 335 s. So the column is
+    --   written by building allraces again with it, and the indexes are
+    --   built on the new table. A row with no gradekind match has grade NULL
+    --   (above), so the ELSE gives it NULL exactly as the UPDATE left it.
+    DROP TABLE IF EXISTS allraces_folded;
+    CREATE UNLOGGED TABLE allraces_folded AS
+        SELECT a.*,
+               CASE WHEN k.n_num > 0 AND k.n_word > 0
+                     AND ((k.n_num >= k.n_word
+                           AND a.grade IN ('FR','SO','JR','SR'))
+                       OR (k.n_word > k.n_num AND a.grade ~ '^[0-9]+$'))
+                    THEN NULL ELSE a.grade END                  AS grade_folded
+        FROM   allraces a
+        LEFT   JOIN gradekind k ON k.person_id = a.person_id AND k.acad = a.acad;
+    DROP TABLE allraces;
+    ALTER TABLE allraces_folded RENAME TO allraces;
+    CREATE INDEX ON allraces (person_id, acad, race);
+    CREATE INDEX ON allraces (meet_id, div_id, source, event_key);
     CREATE INDEX ON allraces (person_id, acad, grade_folded);
     ANALYZE allraces;
 """
@@ -1746,6 +1756,56 @@ def _adultClubDecide(cand, facts, club_seasons, adult, hs_grade):
     return out
 
 
+# ★ RULE 5d IN SQL (run 20261006_120609: five hours between rule 7 and the
+#   verdicts). It fetched every graded row of allraces -- most of 225M --
+#   into Python to count, per event, how many entrants were contradicted
+#   seasons. An event passes only with MIN_FIELD_GRADED entrants of whom
+#   NUKED_FIELD_SHARE are contradicted, so it must hold at least one: the
+#   events are found from the contradicted seasons by allraces' (person_id,
+#   acad, race) index, and only their rows are counted. Same counts as the
+#   loop it replaces -- rows, not people, a person twice in one event twice --
+#   and the same float comparison (float8, as Python's).
+def thinFieldSeasons(cur, nuked_seasons):
+    """{(person_id, acad)} entered in an event at least MIN_FIELD_GRADED
+    graded entrants strong of which NUKED_FIELD_SHARE are contradicted."""
+    if not nuked_seasons:
+        return set()
+    from psycopg2.extras import execute_values
+    cur.execute("DROP TABLE IF EXISTS tmp_nuked; "
+                "CREATE TEMP TABLE tmp_nuked (person_id bigint, acad int, "
+                "PRIMARY KEY (person_id, acad))")
+    execute_values(cur, "INSERT INTO tmp_nuked VALUES %s",
+                   sorted(nuked_seasons), page_size=10000)
+    cur.execute("ANALYZE tmp_nuked")
+    cur.execute("""
+        WITH ev AS (
+            SELECT DISTINCT a.meet_id, a.div_id, a.source, a.event_key
+            FROM   tmp_nuked n
+            JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
+            WHERE  a.grade_folded IS NOT NULL
+        ),
+        thin AS (
+            SELECT a.meet_id, a.div_id, a.source, a.event_key
+            FROM   ev
+            JOIN   allraces a ON a.meet_id = ev.meet_id AND a.div_id = ev.div_id
+                             AND a.source = ev.source AND a.event_key = ev.event_key
+            LEFT   JOIN tmp_nuked n ON n.person_id = a.person_id AND n.acad = a.acad
+            WHERE  a.grade_folded IS NOT NULL
+            GROUP  BY 1, 2, 3, 4
+            HAVING count(*) >= %(minf)s
+               AND count(n.person_id)::float8 >= %(share)s::float8 * count(*)::float8
+        )
+        SELECT DISTINCT a.person_id, a.acad
+        FROM   thin t
+        JOIN   allraces a ON a.meet_id = t.meet_id AND a.div_id = t.div_id
+                         AND a.source = t.source AND a.event_key = t.event_key
+        WHERE  a.grade_folded IS NOT NULL
+    """, {"minf": MIN_FIELD_GRADED, "share": NUKED_FIELD_SHARE})
+    out = {(int(p), int(a)) for p, a in cur.fetchall()}
+    cur.execute("DROP TABLE tmp_nuked")
+    return out
+
+
 def resolve(cur, audit=False):
     """{(person_id, calendar_year): {grade, level, method}}.
 
@@ -1929,9 +1989,12 @@ def resolve(cur, audit=False):
     #   This is a narrow subtraction, not a sweep: it fires on 2,310 of
     #   roughly 563,000 seasons behind these athletes.
     _SCHOOL_LEVELS = ("elem", "ms", "hs")
+    t5b = time.time()
     cur.execute(_COLLEGIATE_SQL)
     n_postcoll = 0
     _coll_rows = cur.fetchall()
+    print(f"    [5b] {len(_coll_rows):,} seasons after a college start "
+          f"({time.time() - t5b:.0f}s)", flush=True)
     for pid, ay in _coll_rows:
         key = (int(pid), int(ay))
         v = acad.get(key)
@@ -2035,25 +2098,14 @@ def resolve(cur, audit=False):
     #    thin, which would cascade. The bar is high and it runs once.
     nuked_seasons = {k for k, v in acad.items() if v["method"] == "contradicted"}
     n_nuked_field = 0
-    if nuked_seasons:
-        cur.execute("SELECT person_id, acad, meet_id, div_id, source, event_key "
-                    "FROM allraces WHERE grade_folded IS NOT NULL")
-        by_event = {}
-        for pid, ay, m, d, src, ek in cur.fetchall():
-            by_event.setdefault((m, d, src, ek), []).append((int(pid), int(ay)))
-
-        for entrants in by_event.values():
-            if len(entrants) < MIN_FIELD_GRADED:
-                continue
-            bad = sum(1 for k in entrants if k in nuked_seasons)
-            if bad < NUKED_FIELD_SHARE * len(entrants):
-                continue
-            for key in entrants:
-                v = acad.get(key)
-                if v is not None and v["method"] in _UNCERTAIN_METHODS:
-                    acad[key] = {"grade": None, "level": None,
-                                 "method": "thin_field"}
-                    n_nuked_field += 1
+    t5d = time.time()
+    for key in thinFieldSeasons(cur, nuked_seasons):
+        v = acad.get(key)
+        if v is not None and v["method"] in _UNCERTAIN_METHODS:
+            acad[key] = {"grade": None, "level": None, "method": "thin_field"}
+            n_nuked_field += 1
+    print(f"    [5d] {len(nuked_seasons):,} contradicted seasons, {n_nuked_field:,} "
+          f"field verdicts in their fields dropped ({time.time() - t5d:.0f}s)", flush=True)
 
     # ============================================================== #
     #  RULE 5e: A BARE WORD WITH NOTHING AROUND IT
@@ -2072,41 +2124,37 @@ def resolve(cur, audit=False):
     #    "Senior" at Springboro MS in 2018 across five seasons, so this rule
     #    leaves him alone and he stays collegiate. Only the school string
     #    says middle school, and that is a separate decision.
-    # ⚠ A WINDOW FUNCTION, NOT A CORRELATED SUBQUERY. The first version asked
-    #   "how many seasons does this person have?" as a subquery over the same
-    #   CTE, which Postgres re-evaluated PER ROW against a materialised result
-    #   with no index -- 30M rows each scanning 30M. It ran for 92 minutes and
-    #   was killed.
-    #
-    #   count(*) OVER (PARTITION BY person_id) answers the same question in
-    #   the single pass that already sorted the rows.
+    # ⚠ NEVER A CORRELATED SUBQUERY for "how many seasons does this person
+    #   have?": the first version re-evaluated it per row, 30M rows each
+    #   scanning 30M, and was killed after 92 minutes. It became a window
+    #   function, and is now a count over race_count's keys (below).
+    # ★ ONE PASS FOR 5e, RULE 6 AND THE TRUST RULE (2026-10-07). Each of the
+    #   three read allraces whole: this window for 5e, a SELECT DISTINCT
+    #   (person_id, acad) for rule 6, and count(DISTINCT race) per season for
+    #   trust -- three passes over 225M rows for one table of 31M seasons.
+    #   race_count IS that table; the other two are read off it.
+    t_rc = time.time()
     cur.execute("""
-        WITH per_season AS (
-            SELECT person_id, acad, count(DISTINCT race) AS races
-            FROM   allraces
-            GROUP  BY 1, 2
-        ),
-        counted AS (
-            SELECT person_id, acad, races,
-                   count(*) OVER (PARTITION BY person_id) AS seasons
-            FROM   per_season
-        )
-        SELECT person_id, acad
-        FROM   counted
-        WHERE  races = 1 AND seasons = 1
+        SELECT person_id, acad, count(DISTINCT race) AS races
+        FROM   allraces GROUP BY 1, 2
     """)
+    race_count = {(int(p), int(a)): int(n) for p, a, n in cur.fetchall()}
+    seasons_of = {}
+    for (pid, _ay) in race_count:
+        seasons_of[pid] = seasons_of.get(pid, 0) + 1
+    print(f"    [5e] races per season counted: {len(race_count):,} seasons "
+          f"({time.time() - t_rc:.0f}s)", flush=True)
     n_lone = 0
-    for pid, ay in cur.fetchall():
-        key = (int(pid), int(ay))
+    for key, races in race_count.items():
+        if races != 1 or seasons_of[key[0]] != 1:
+            continue
         v = acad.get(key)
         if v is not None and v["grade"] in ("FR", "SO", "JR", "SR"):
             acad[key] = {"grade": None, "level": None, "method": "lone_word"}
             n_lone += 1
 
-    cur.execute("SELECT DISTINCT person_id, acad FROM allraces")
     n_none = 0
-    for pid, ay in cur.fetchall():
-        key = (int(pid), int(ay))
+    for key in race_count:
         if key in acad:
             continue
         acad[key] = {"grade": None, "level": None, "method": "no_evidence"}
@@ -2130,11 +2178,7 @@ def resolve(cur, audit=False):
     #  ! A SEASON IS TRUSTED WHEN IT HAS MORE THAN ONE RACE. One race can be
     #    a mismeasured course, a mistyped time or a field that voted wrong,
     #    and nothing in the season contradicts it. Two agree or they do not.
-    cur.execute("""
-        SELECT person_id, acad, count(DISTINCT race) AS races
-        FROM   allraces GROUP BY 1, 2
-    """)
-    race_count = {(int(p), int(a)): int(n) for p, a, n in cur.fetchall()}
+    # race_count: counted once, before rule 5e
 
     #  ★ OR WHEN THE PREVIOUS SEASON VOUCHES FOR IT (owner, 2026-09-06:
     #    "this fails for the current season -- not enough races yet"). The
