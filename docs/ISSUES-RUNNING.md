@@ -4728,3 +4728,22 @@ From run 20261006_120609's gaps (line before and after each):
   (noisy races throw fast outliers), which out-of-sample scoring is there to catch.
 - Next: the owner runs it on the box; if a weighted estimator wins out of sample, it goes into
   build_ranking_results as a switch, measured again on the following run.
+
+## 2026-10-07 — scoring each assumption; the knobs; the XC day term says "leave it out"
+
+- **🔎 XC race-day term (run 20261006_120609, 08_golive):** scatter of an athlete-season's races about its own mean,
+  robust: day out 3.478%, day in (leave-self-out) 3.535% -- the log's own verdict "the day term adds noise -- leave
+  it out". One run without it prices it: `XCP_RACE_EFFECT_SPORTS=` (empty) on the pipeline command. Owner's call
+  (the XC day term was the owner's 2026-10-03 choice).
+- **How each assumption is scored, or would be:** course difficulty -- race holdout, by course thickness (08a,
+  08d SAME ROWS); cross-sport -- sport holdout (08a_sport_holdout; last run bias 0.001, sd 0.059); tilt/ability --
+  holdout error by ability band (since 10-06); day term -- day-term consistency (above); season number -- the
+  bake-off; sport level -- 10a's level check. NOT yet scored directly: the distance spline (proposed: a "distance"
+  holdout -- hold out one distance of a multi-distance athlete-season whole, predict from the others, bias by event
+  and distance gap) and the season/era curve (the "forward" holdout exists; proposed: race-holdout residual by week
+  of season).
+- **Knobs that are stated, not fitted** (candidates for a holdout grid in the ladder, on its 15% sample, run in the
+  background chain): era years (2), era drift sd, bracket window (30 d), voter weight n/(n+5) and min voters (3),
+  course prior (one race) and era prior (two), damping (0.5), distance prior/walk sd, LINK_WEIGHT, SLOPE_RIDGE,
+  FRONT_K, the season outlier cut (20 pts), _SEASON_Q (0.80), decay (0.996), the indoor level (0.003). Already
+  fitted: the curve curvature per pool, the day noise, the variance components, the course scale, the event offsets.
