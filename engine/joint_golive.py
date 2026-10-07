@@ -109,8 +109,15 @@ def dayConsistencyReport(y, eff_pre, out, D, u_row, u_applied, day_on,
             if not m.any():
                 continue
             rows = []
-            for label, z in (("day out", z_off), ("day in, leave-self-out", z_on),
-                             ("day in, own race u", z_own)):
+            variants = [("day out", z_off), ("day in, leave-self-out", z_on),
+                        ("day in, own race u", z_own)]
+            mix = out.get("race_effect_row_mix")
+            if mix is not None and np.asarray(mix).size == z_off.size:
+                # the heavy-tailed prior's leave-self-out day (js.dayMixtureFit)
+                um = np.clip(np.asarray(mix, dtype=np.float64), -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
+                um = np.where(fast_only, np.minimum(um, 0.0), um)
+                variants.append(("day in, heavy-tailed", z_off - np.where(day_on, h * um, 0.0)))
+            for label, z in variants:
                 sd, rsd, n = _scatter(z, D.athlete, m)
                 rows.append((label, sd, rsd, n))
             base_sd, base_r = rows[0][1], rows[0][2]

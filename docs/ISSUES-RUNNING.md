@@ -4747,3 +4747,25 @@ From run 20261006_120609's gaps (line before and after each):
   course prior (one race) and era prior (two), damping (0.5), distance prior/walk sd, LINK_WEIGHT, SLOPE_RIDGE,
   FRONT_K, the season outlier cut (20 pts), _SEASON_Q (0.80), decay (0.996), the indoor level (0.003). Already
   fitted: the curve curvature per pool, the day noise, the variance components, the course scale, the event offsets.
+
+## 2026-10-07 — the race-day term: why it does not help on ordinary days; a heavy-tailed prior, measured beside it
+
+- Read correctly, run 20261006_120609's day-term consistency says the term HELPS on big days and HURTS on ordinary
+  ones: SD 4.190% -> 4.122% (-1.6%, the tails: mud, heat, long courses fixed) but robust 3.478% -> 3.535% (+1.6%,
+  the bulk). The verdict line reads only the robust number. Cause: the day is a ridge estimate (one normal prior,
+  variance sigma_u2), and a variance sized by all days -- tails included -- is too wide for ordinary days, so
+  their noise reaches the ratings.
+- ✅ js.dayMixtureFit / dayMixturePosterior: a two-normal scale mixture fitted by EM to each race's raw day (mean
+  residual, its noise sigma2 / sum w h^2), per sport; each runner's leave-self-out raw day shrunk under it. The
+  go-live now prints, per sport, the one-normal sd against the mixture's share and two sds and the log-likelihood
+  gain ("heavy-tailed" or "about normal"), and the consistency report gains a "day in, heavy-tailed" line beside
+  the ridge's. XCP_DAY_PRIOR=mixture puts it in the ratings. Same season-level centring as the ridge.
+  tests/test_day_mixture.py: heavy tails found and ordinary days estimated >20% better; normal days cost nothing.
+- ✅ Race titles: "Men's 5k Race - Women Boys". A college/pro field says Men/Women, a school field Boys/Girls (the
+  rows' pools); nothing is appended to a division that already names a gender (app.raceTitle; track pages too).
+- 🔎 Fairborn Community Park 2026 (college men's 5k): club and freshman runners rated 170-214 (an 18:58 at 172.7)
+  and returning college runners unrated; Eli Whetsone (Wittenberg, a man) predicted 1st at the women's NCAA
+  championships. A rating that high is another pool's scale, and a man in a women's field means his pool ends in
+  _f -- the pre-09-25 XC saver wrote blank names AND genders (the re-scrape now queued repairs both).
+  scripts/diag_person_pool.py "<name>" prints every profile's gender, person_gender, the season pools and the
+  raw rows with their division labels, to confirm which table did it.

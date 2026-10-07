@@ -234,6 +234,95 @@ DIST_WALK_SD = 0.02
 #   the RATING applies it clipped here, and the days beyond it go to the
 #   rowguard as race_day_suspect.
 RACE_DAY_CAP = 0.10
+
+
+# ★★ A HEAVY-TAILED PRIOR FOR THE DAY (2026-10-07, run 20261006_120609's
+#    day-term consistency: crediting the day lowered the XC scatter's SD
+#    4.190% -> 4.122% but RAISED its robust spread 3.478% -> 3.535%). The day
+#    is a ridge estimate -- a normal prior with one variance, sigma_u2 -- and
+#    days are not normal: most are ordinary and a few are mud, heat or a
+#    long course. One variance sized by all of them is too wide for the
+#    ordinary days (their noise passes into the ratings: the robust spread
+#    rises) and the big days it does fix (the SD falls). A scale mixture of
+#    two normals -- "most days small, some days large" -- fitted to the
+#    races' own raw day estimates by EM, shrinks an ordinary day hard and a
+#    big one little. Nothing is set by hand: the share and the two widths
+#    are the data's. dayMixtureFit also returns the one-normal fit's
+#    log-likelihood, so the run prints whether days ARE heavy-tailed.
+def dayMixtureFit(m, v, iters=500, tol=1e-9):
+    """m: raw day estimates (one per race), v: their noise variances.
+    Returns {"pi", "t1", "t2", "ll_mix", "t_one", "ll_one"}: the share of
+    the narrow component, the two prior variances (t1 <= t2), and both
+    fits' log-likelihoods."""
+    m = np.asarray(m, dtype=np.float64)
+    v = np.asarray(v, dtype=np.float64)
+    ok = np.isfinite(m) & np.isfinite(v) & (v > 0)
+    m, v = m[ok], v[ok]
+    if m.size < 50:
+        return None
+
+    def _ll1(t):
+        s = t + v
+        return float(np.sum(-0.5 * (np.log(2 * np.pi * s) + m * m / s)))
+
+    V = max(float(np.mean(m * m) - np.mean(v)), 1e-8)
+    # the one-normal fit (what the ridge assumes), by the same EM
+    t = V
+    for _ in range(iters):
+        post_var = t * v / (t + v)
+        post_mean = t / (t + v) * m
+        t_new = max(float(np.mean(post_var + post_mean ** 2)), 1e-10)
+        if abs(t_new - t) < tol * max(t, 1e-12):
+            t = t_new
+            break
+        t = t_new
+    ll_one = _ll1(t)
+    pi, t1, t2 = 0.8, V / 10.0, V * 3.0
+    ll_prev = -np.inf
+    for _ in range(iters):
+        s1, s2 = t1 + v, t2 + v
+        l1 = np.log(pi) - 0.5 * (np.log(2 * np.pi * s1) + m * m / s1)
+        l2 = np.log(1 - pi) - 0.5 * (np.log(2 * np.pi * s2) + m * m / s2)
+        mx = np.maximum(l1, l2)
+        ll = float(np.sum(mx + np.log(np.exp(l1 - mx) + np.exp(l2 - mx))))
+        r1 = 1.0 / (1.0 + np.exp(l2 - l1))
+        r2 = 1.0 - r1
+        e1 = t1 * v / s1 + (t1 / s1 * m) ** 2
+        e2 = t2 * v / s2 + (t2 / s2 * m) ** 2
+        pi = float(np.clip(np.mean(r1), 1e-4, 1 - 1e-4))
+        t1 = max(float(np.sum(r1 * e1) / max(np.sum(r1), 1e-12)), 1e-10)
+        t2 = max(float(np.sum(r2 * e2) / max(np.sum(r2), 1e-12)), 1e-10)
+        if t1 > t2:
+            t1, t2, pi = t2, t1, 1.0 - pi
+        if ll - ll_prev < tol * abs(ll):
+            break
+        ll_prev = ll
+    s1, s2 = t1 + v, t2 + v
+    l1 = np.log(pi) - 0.5 * (np.log(2 * np.pi * s1) + m * m / s1)
+    l2 = np.log(1 - pi) - 0.5 * (np.log(2 * np.pi * s2) + m * m / s2)
+    mx = np.maximum(l1, l2)
+    ll_mix = float(np.sum(mx + np.log(np.exp(l1 - mx) + np.exp(l2 - mx))))
+    return {"pi": pi, "t1": t1, "t2": t2, "ll_mix": ll_mix,
+            "t_one": t, "ll_one": ll_one, "n": int(m.size)}
+
+
+def dayMixturePosterior(m, v, fit):
+    """The posterior mean of the day under the fitted mixture, per estimate;
+    0 where there is no estimate (v not positive or not finite)."""
+    m = np.asarray(m, dtype=np.float64)
+    v = np.asarray(v, dtype=np.float64)
+    out = np.zeros(m.shape)
+    ok = np.isfinite(m) & np.isfinite(v) & (v > 0)
+    if fit is None or not ok.any():
+        return out
+    mm, vv = m[ok], v[ok]
+    pi, t1, t2 = fit["pi"], fit["t1"], fit["t2"]
+    s1, s2 = t1 + vv, t2 + vv
+    l1 = np.log(pi) - 0.5 * (np.log(s1) + mm * mm / s1)
+    l2 = np.log(1 - pi) - 0.5 * (np.log(s2) + mm * mm / s2)
+    r1 = 1.0 / (1.0 + np.exp(l2 - l1))
+    out[ok] = (r1 * t1 / s1 + (1.0 - r1) * t2 / s2) * mm
+    return out
 # ★ BY RATING BAND (issue 167, 2026-09-04, the owner's option 1). One
 #   number per pool and event was the AVERAGE runner's exchange rate; a
 #   4:13 1600 rated under a 15:40 at Mt. SAC because the top needs more

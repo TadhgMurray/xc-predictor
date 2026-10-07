@@ -37,7 +37,6 @@
      and the event's points by school beside them. race.css and
      race-page.js are the cross country page's; nothing the old page showed
      is gone. -#}
-{% set gword = "Boys" if header.gender == 'M' else "Girls" if header.gender == 'F' else "" %}
 {% set pool_lv = 'college' if college else none %}
 {% set has_wind = results | selectattr("wind", "ne", None) | list | length > 0 %}
 {# Points exist only where this event scored: a prelim page's rows
@@ -48,7 +47,7 @@
 <header class="rc-hd"><div class="rc-w rc-hgrid">
   <div>
     <div class="rc-kick"><a href="/meet/tf/{{ header.meet_id }}">{{ header.meet_name|with_year(race_date) }}</a></div>
-    <h1>{{ header.event_short or "Results" }}{% if gword %} {{ gword }}{% endif %}{% if header.division %} · {{ header.division }}{% endif %}</h1>
+    <h1>{{ race_title(header.event_short, header.gender, results) }}{% if header.division %} · {{ header.division }}{% endif %}</h1>
     <div class="rc-meta">
       {# the venue by its own name and city (meets_tf_meta); without one, a
          plain "Venue page" link rather than the bare word #}

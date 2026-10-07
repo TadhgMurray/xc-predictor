@@ -298,6 +298,40 @@ app.jinja_env.globals["crest"] = school_logo.crestImg
 #   one answer about one school; the href used to be a bare /school/<name>
 #   and sent Oregon (IL) to Oregon (OR)'s page.
 app.jinja_env.globals["school_href"] = school_identity.schoolHref
+
+
+# ★ THE RACE'S GENDER WORD, AND ONLY WHEN THE NAME LACKS ONE (owner,
+#   2026-10-07: a college race titled "Men's 5k Race - Women Boys"). A college
+#   or pro field is Men / Women, a school field Boys / Girls -- read off the
+#   rows' own pools, the level the ratings were made in. And a division whose
+#   name already says a gender (any of boys, girls, men, women -- even a
+#   host's contradictory "Men's 5k Race - Women") gets nothing appended:
+#   adding a third word to two cannot make the title truer.
+_GENDER_WORD_RX = re.compile(r"\b(boys?|girls?|men|mens|women|womens|male|female)\b", re.I)
+
+
+def raceGenderWord(gender, rows):
+    if gender not in ("M", "F"):
+        return ""
+    pools = [str(r.get("rating_pool") or "") for r in (rows or []) if r.get("rating_pool")]
+    adult = bool(pools) and (sum(1 for p in pools if p.startswith(("college", "pro")))
+                             > len(pools) / 2)
+    if adult:
+        return "Men" if gender == "M" else "Women"
+    return "Boys" if gender == "M" else "Girls"
+
+
+def raceTitle(division, gender, rows, fallback="Results"):
+    word = raceGenderWord(gender, rows)
+    if not division:
+        return word or fallback
+    if word and not _GENDER_WORD_RX.search(division):
+        return f"{division} {word}"
+    return division
+
+
+app.jinja_env.globals["race_gender_word"] = raceGenderWord
+app.jinja_env.globals["race_title"] = raceTitle
 stampCrests = school_logo.stampCrests
 
 

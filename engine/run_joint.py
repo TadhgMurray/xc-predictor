@@ -2828,6 +2828,42 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         u_ref = num / P
         u_loo = (num[D.race] - c * r_pre) / (P[D.race] - w * h * h)
         out["race_effect_row_bracket"] = u_new[D.race] + (u_loo - u_ref[D.race])
+        # ★ THE HEAVY-TAILED DAY, BESIDE THE RIDGE (js.dayMixtureFit): the
+        #   race's raw day (its runners' mean residual, no prior) and that
+        #   mean's noise, fitted per sport; each runner's leave-self-out raw
+        #   day shrunk under the fit. Printed always, so a run shows whether
+        #   days are heavy-tailed; applied when XCP_DAY_PRIOR=mixture.
+        mix_row = None
+        try:
+            sig2 = float(out["sigma2"])
+            W = P - pen                                    # sum of w h^2 per race
+            race_tf = (np.array([1 if str(cell_keys[cc]).startswith("TF:") else 0
+                                 for cc in range(len(cell_keys))], dtype=np.int8)
+                       [js.cellOfRace(D)])
+            with np.errstate(divide="ignore", invalid="ignore"):
+                m_race = np.where(W > 0, num / W, np.nan)
+                v_race = np.where(W > 0, sig2 / W, np.nan)
+                W_loo = W[D.race] - w * h * h
+                m_loo = np.where(W_loo > 0, (num[D.race] - c * r_pre) / W_loo, np.nan)
+                v_loo = np.where(W_loo > 0, sig2 / W_loo, np.nan)
+            mix_row = np.zeros(D.n)
+            row_tf = race_tf[D.race]
+            for code, name in ((0, "XC"), (1, "TF")):
+                fit = js.dayMixtureFit(m_race[race_tf == code], v_race[race_tf == code])
+                if fit is None:
+                    continue
+                sel = row_tf == code
+                mix_row[sel] = js.dayMixturePosterior(m_loo[sel], v_loo[sel], fit)
+                print(f"[joint] day prior, {name}: {fit['n']:,} races. One normal (the ridge's "
+                      f"shape): sd {100 * fit['t_one'] ** 0.5:.2f}%. Two: {100 * fit['pi']:.0f}% "
+                      f"of days sd {100 * fit['t1'] ** 0.5:.2f}%, {100 * (1 - fit['pi']):.0f}% "
+                      f"sd {100 * fit['t2'] ** 0.5:.2f}%; log-likelihood "
+                      f"{fit['ll_mix'] - fit['ll_one']:+,.0f} for the two "
+                      f"({'heavy-tailed' if fit['ll_mix'] - fit['ll_one'] > 10 else 'about normal'})",
+                      flush=True)
+        except Exception as exc:                                # noqa: BLE001
+            print(f"[joint] day prior: mixture not fitted ({type(exc).__name__}: {exc})")
+            mix_row = None
         # ★ THE SEASON'S LEVEL OUT OF THE DAYS, INTO THE ABILITIES (see
         #   centreDaysBySeason). Every fitted value stays where it was --
         #   h*shift leaves the day and the same amount, row-weighted, joins
@@ -2841,6 +2877,10 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                                  dtype=np.int64)[D.cell]
             u_new, shift_row = centreDaysBySeason(u_new, D, season_row, sport_row)
             out["race_effect_row_bracket"] = out["race_effect_row_bracket"] - shift_row
+            if mix_row is not None:
+                # the same season level out of the mixture's days, so the two
+                # differ only in how each day is shrunk
+                mix_row = mix_row - shift_row
             a_new = a_new + (np.bincount(D.athlete, weights=w * h * shift_row,
                                          minlength=D.n_ath) / np.maximum(den, 1e-12))
             xc = sport_row == 0
@@ -2852,6 +2892,12 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                   + ", ".join(f"{int(yy)} {100 * float(shift_row[xc & (season_row == yy)].mean()):+.1f}%"
                               for yy in sorted(set(season_row[xc].tolist()))[-6:]),
                   flush=True)
+        if mix_row is not None:
+            out["race_effect_row_mix"] = mix_row
+            if os.environ.get("XCP_DAY_PRIOR", "").strip().lower() == "mixture":
+                out["race_effect_row_bracket"] = mix_row
+                print("[joint] day prior: XCP_DAY_PRIOR=mixture -- the ratings carry the "
+                      "heavy-tailed day", flush=True)
         moved = np.abs(u_new - np.asarray(b["u"], dtype=np.float64))
         print(f"[joint] bracket: day terms refitted against the published courses "
               f"-- median move {100 * float(np.median(moved)):.2f}%, p95 "

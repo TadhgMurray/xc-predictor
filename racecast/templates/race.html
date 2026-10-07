@@ -39,9 +39,7 @@
      is gone -- it moved. race.css carries the layout only, scoped to .rc; the look is style.css. -#}
 {% set champ = finishers[0] if finishers else none %}
 {% set tchamp = scores.teams[0] if scores and scores.teams and scores.teams[0].points is not none else none %}
-{% set gword = "Boys" if header.gender == 'M' else "Girls" if header.gender == 'F' else "" %}
-{% set title = header.division or gword or "Results" %}
-{% if gword and gword|lower not in (header.division or "")|lower and header.division %}{% set title = header.division ~ " " ~ gword %}{% endif %}
+{% set title = race_title(header.division, header.gender, results) %}
 <main class="page-wide rc">
 <header class="rc-hd"><div class="rc-w rc-hgrid">
   <div>
