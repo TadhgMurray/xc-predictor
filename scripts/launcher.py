@@ -590,36 +590,41 @@ SESSION_CONFIGS = [
 # Arguments:
 #           playwright: the shared Playwright instance.
 # Output: A Playwright browser object.
+# The flags every session launches Chrome with (diag_chrome_launch.py
+# launches with the same list).
+CHROME_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-setuid-sandbox",
+    "--single-process",
+    # New — turn off peripheral Chrome features unrelated to
+    # page rendering, to reduce per-instance CPU/memory overhead.
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-sync",
+    "--metrics-recording-only",
+    "--no-first-run",
+    "--disable-software-rasterizer",  # disables fallback CPU renderer (you already have --disable-gpu)
+    "--disable-background-timer-throttling",  # stops Chrome throttling timers in background tabs
+    "--disable-renderer-backgrounding",  # prevents Chrome deprioritizing background renderers
+    "--disable-backgrounding-occluded-windows",  # same but for hidden windows
+    "--js-flags=--max-old-space-size=128",  # caps V8 heap at 128MB per instance (default is ~1.4GB)
+    "--disable-features=TranslateUI,BlinkGenPropertyTrees",  # kills translate popup + a rendering feature you don't need
+    "--disable-ipc-flooding-protection",  # removes artificial throttle on IPC messages between processes
+    "--no-default-browser-check",  # skips the "make Chrome default?" check on startup
+    "--disable-client-side-phishing-detection",  # kills a background ML model Chrome runs
+    "--disable-component-extensions-with-background-pages",  # disables built-in extensions (PDF viewer etc)
+]
+
+
 async def _launchBrowser(playwright):
 
     return await playwright.chromium.launch(
         headless=False,
         executable_path=_chromePath(),
-        args=[
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-setuid-sandbox",
-            "--single-process",
-            # New — turn off peripheral Chrome features unrelated to
-            # page rendering, to reduce per-instance CPU/memory overhead.
-            "--disable-extensions",
-            "--disable-background-networking",
-            "--disable-sync",
-            "--metrics-recording-only",
-            "--no-first-run",
-            "--disable-software-rasterizer",  # disables fallback CPU renderer (you already have --disable-gpu)
-            "--disable-background-timer-throttling",  # stops Chrome throttling timers in background tabs
-            "--disable-renderer-backgrounding",  # prevents Chrome deprioritizing background renderers
-            "--disable-backgrounding-occluded-windows",  # same but for hidden windows
-            "--js-flags=--max-old-space-size=128",  # caps V8 heap at 128MB per instance (default is ~1.4GB)
-            "--disable-features=TranslateUI,BlinkGenPropertyTrees",  # kills translate popup + a rendering feature you don't need
-            "--disable-ipc-flooding-protection",  # removes artificial throttle on IPC messages between processes
-            "--no-default-browser-check",  # skips the "make Chrome default?" check on startup
-            "--disable-client-side-phishing-detection",  # kills a background ML model Chrome runs
-            "--disable-component-extensions-with-background-pages",  # disables built-in extensions (PDF viewer etc)
-        ]
+        args=CHROME_ARGS,
     )
 
 # _buildContext

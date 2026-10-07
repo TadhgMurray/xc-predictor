@@ -88,12 +88,12 @@ anet_teams run keeps pointing at, and it now has 20,344 more teams' worth of
 ### 2. The meet rescrape
 
     # 143 known-broken meets first -- minutes
-    NO_VPN=1 ANET_RETRY_FAILED=1 xvfb-run -a scripts/launcher.py
-    NO_VPN=1 TFRRS_RETRY_FAILED=1 xvfb-run -a tfrrs/driver/launch_tfrrs.py
+    NO_VPN=1 ANET_RETRY_FAILED=1 xvfb-run -a /srv/venv/bin/python -u scripts/launcher.py
+    NO_VPN=1 TFRRS_RETRY_FAILED=1 xvfb-run -a /srv/venv/bin/python -u tfrrs/driver/launch_tfrrs.py
 
     # then the 5,420 genuinely-due ids
-    NO_VPN=1 PER_MEET_DELAY=3,6 xvfb-run -a scripts/launcher.py
-    NO_VPN=1 xvfb-run -a tfrrs/driver/launch_tfrrs.py
+    NO_VPN=1 PER_MEET_DELAY=3,6 xvfb-run -a /srv/venv/bin/python -u scripts/launcher.py
+    NO_VPN=1 xvfb-run -a /srv/venv/bin/python -u tfrrs/driver/launch_tfrrs.py
 
 **anet and tfrrs CAN run together** — separate hosts, separate queue rows,
 separate id spaces. That pair is the one genuinely free parallelism here, and

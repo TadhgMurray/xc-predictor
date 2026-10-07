@@ -2968,8 +2968,8 @@ claimed / no meet / never seeded).
 
     /srv/venv/bin/python scripts/queue_meets.py                 # dry run: what it will seed
     /srv/venv/bin/python scripts/queue_meets.py --source tfrrs
-    NO_VPN=1 ANET_RETRY_FAILED=1 xvfb-run -a scripts/launcher.py        # failures first
-    NO_VPN=1 PER_MEET_DELAY=3,6 xvfb-run -a scripts/launcher.py         # then everything due
+    NO_VPN=1 ANET_RETRY_FAILED=1 xvfb-run -a /srv/venv/bin/python -u scripts/launcher.py        # failures first
+    NO_VPN=1 PER_MEET_DELAY=3,6 xvfb-run -a /srv/venv/bin/python -u scripts/launcher.py         # then everything due
 
 ## 2026-09-29 — 📋 COMPILED: what the owner's check runs said (logs/checks 142744, 161158, 161425)
 
@@ -4853,3 +4853,14 @@ to 0 (`resetInProgress`). **🔎 Open:** why Chrome stopped launching. Next
 time, check `ps aux | grep -c chrome`, `free -g`, `df -h /dev/shm`. Each
 session launches with `--single-process`, which Chrome does not support and
 which is a known source of exactly this error under memory pressure.
+
+**Follow-up, same day.** The relaunch kept crashing. `scripts/diag_chrome_launch.py`
+(read-only) prints the machine's state and launches Chrome three ways: the
+launcher's exact flags (now `launcher.CHROME_ARGS`), the same without
+`--single-process`, and bare. It prints each one's full error, which the
+launcher's tail cuts off. Run it with `xvfb-run -a /srv/venv/bin/python
+scripts/diag_chrome_launch.py`. Also: under NO_VPN=1 the Linux rotator's
+`rotate`/`checkRotation` were not no-ops. Past the rotation threshold, every
+meet tried an empty pool and printed "all 0 configs failed" (seen in tfrrs).
+Both now return at once. The runbooks' `xvfb-run -a scripts/launcher.py`
+lines could never run (the file has no `#!`); they now name the venv python.

@@ -1081,6 +1081,15 @@ class VPNRotatorLinux:
     # Output: True if the new tunnel came up successfully, False otherwise.
     async def rotate(self, label: str, reason: str) -> bool:
 
+        # ! NO_VPN=1 HAS NOTHING TO ROTATE TO (owner, 2026-10-07: tfrrs
+        #   printed "all 0 configs failed -- giving up on this rotation"
+        #   after every meet). checkRotation's counter never resets without a
+        #   rotation, so past the threshold every meet called this, shut the
+        #   gate and tried an empty pool. The class header promises every
+        #   method is a no-op when disabled; these two were not.
+        if self.disabled:
+            return False
+
         # Snapshot before acquiring the lock. If this changes by the
         # time we get the lock, another session already completed a
         # rotation while we were waiting — the IP is already fresh,
@@ -1172,6 +1181,9 @@ class VPNRotatorLinux:
     #           label: session label for log output.
     # Output: True if a rotation happened, False otherwise.
     async def checkRotation(self, label: str) -> bool:
+
+        if self.disabled:
+            return False
  
         async with self.lock:
             self.global_meets_since_rotation += 1
