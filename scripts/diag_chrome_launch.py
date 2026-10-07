@@ -13,6 +13,11 @@ READ-ONLY: launches Chrome a few times, scrapes nothing, writes nothing.
   with the launcher's exact flags (launcher.CHROME_ARGS), then without
   --single-process, then with no flags at all, printing each one's FULL error.
   Whichever succeeds names the cause.
+
+  If all three succeed, the failure needs MANY Chromes at once, as the
+  launcher runs them: the last test launches NUM_SESSIONS (default 10) in one
+  Playwright, at the open-file limit the shell gave, then again after raising
+  it as the launcher now does. about:blank only -- no site is contacted.
 """
 import asyncio
 import os
@@ -70,6 +75,34 @@ async def tryLaunch(pw, chrome, name, args):
         await browser.close()
 
 
+async def manyAtOnce(pw, chrome, args, n, tag=""):
+    print(f"\n== launch: {n} at once, the launcher's flags{tag}")
+    got = await asyncio.gather(*[pw.chromium.launch(headless=False, executable_path=chrome,
+                                                    args=args, timeout=60000)
+                                 for _ in range(n)], return_exceptions=True)
+    bad = [g for g in got if isinstance(g, BaseException)]
+    ok = [g for g in got if not isinstance(g, BaseException)]
+    pages = 0
+    for b in ok:
+        try:
+            await (await (await b.new_context()).new_page()).goto("about:blank")
+            pages += 1
+        except Exception as e:                                   # noqa: BLE001
+            bad.append(e)
+    print(f"  {len(ok)}/{n} launched, {pages} opened a page")
+    if bad:
+        import launcher
+        print("  first failure:\n  " + str(bad[0]).splitlines()[0])
+        for line in launcher.chromeErrorLines(bad[0]):
+            print(f"    {line}")
+    for b in ok:
+        try:
+            await b.close()
+        except Exception:                                        # noqa: BLE001
+            pass
+    return not bad
+
+
 async def main():
     from chrome_path import chromePath
     from playwright.async_api import async_playwright
@@ -84,11 +117,20 @@ async def main():
         got["without --single-process"] = await tryLaunch(
             pw, chrome, "the launcher's flags without --single-process", no_single)
         got["no flags"] = await tryLaunch(pw, chrome, "no flags but --no-sandbox", ["--no-sandbox"])
+        n = int(os.environ.get("NUM_SESSIONS", 10))
+        import resource
+        print(f"\n  open-file limit now: {resource.getrlimit(resource.RLIMIT_NOFILE)[0]}")
+        got[f"{n} at once"] = await manyAtOnce(pw, chrome, flags, n)
+    launcher.raiseOpenFileLimit()
+    async with async_playwright() as pw:
+        got[f"{n} at once, limit raised"] = await manyAtOnce(pw, chrome, flags, n, ", open-file limit raised")
     print("\n== verdict")
     for k, v in got.items():
-        print(f"  {k:28} {'OK' if v else 'FAILED'}")
+        print(f"  {k:30} {'OK' if v else 'FAILED'}")
     if not got["launcher flags"] and got["without --single-process"]:
         print("  -> --single-process is the cause on this Chrome.")
+    elif got["no flags"] and not got[f"{n} at once"] and got[f"{n} at once, limit raised"]:
+        print("  -> the open-file limit is the cause; the launcher now raises it.")
     elif not any(got.values()):
         print("  -> Chrome itself will not start: read the first FAILED block "
               "(and the machine section: memory, /dev/shm, leftover processes).")

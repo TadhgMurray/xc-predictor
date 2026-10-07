@@ -1188,6 +1188,33 @@ async def _processMeetResult(n: int, exists: bool, meet_id: int, sport: str,
 #           session_start: this session's range lower bound (inclusive).
 #           session_end: this session's range upper bound (inclusive).
 # Output: Dict with keys label, processed, failed, results_saved.
+# raiseOpenFileLimit
+# Purpose: lift this process's open-file limit to its hard limit.
+# ⚠ WHY (owner, 2026-10-07): Chrome launched fine alone
+#   (diag_chrome_launch.py) yet every session's launch failed, on a box with
+#   125 GB and an open-file limit of 1024. Every session's Chrome talks to
+#   ONE Playwright driver process, which inherits this limit, and Chrome
+#   itself does too; 1024 is the shell default, not a choice anyone made.
+def raiseOpenFileLimit():
+    try:
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if hard == resource.RLIM_INFINITY or hard > soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+            print(f"[launcher] open-file limit {soft} -> {hard}")
+    except (ImportError, ValueError, OSError) as e:
+        print(f"[launcher] could not raise the open-file limit: {e}")
+
+
+# chromeErrorLines
+# Purpose: the lines of a Playwright launch error that are Chrome's own
+#          stderr ("[pid=N][err] ..."), which the tail of the traceback
+#          buries under the driver's cleanup lines.
+def chromeErrorLines(e, limit=15):
+    lines = [l.strip() for l in str(e).splitlines() if "][err]" in l]
+    return lines[:limit]
+
+
 # _afterCrash
 # Purpose: what a session does after an exception escapes its batch loop --
 #          hand the batch's unreached rows back, drop the browser (it may be
@@ -1430,6 +1457,8 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
             import traceback
             print(f"{label} Session crashed: {e}")
             traceback.print_exc()
+            for line in chromeErrorLines(e):
+                print(f"{label} chrome: {line}")
             browser, crashes, stop = await _afterCrash(browser, pending, crashes, label)
             pending = set()
             if stop:
@@ -1689,6 +1718,8 @@ def _fillVenueNames(label="[venues]"):
 
 
 async def main():
+
+    raiseOpenFileLimit()
  
     # Pool must be initialized before any session touches the DB.
     initPool()

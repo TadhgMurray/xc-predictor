@@ -4864,3 +4864,20 @@ scripts/diag_chrome_launch.py`. Also: under NO_VPN=1 the Linux rotator's
 meet tried an empty pool and printed "all 0 configs failed" (seen in tfrrs).
 Both now return at once. The runbooks' `xvfb-run -a scripts/launcher.py`
 lines could never run (the file has no `#!`); they now name the venv python.
+
+**Second follow-up, same day.** On the box, `diag_chrome_launch.py` launched
+Chrome 153 cleanly all three ways, with 125 GB RAM, 62 GB /dev/shm, and no
+leftover processes. One thing was low: open files, **1024**. Changes:
+- The launcher raises its open-file limit to the hard limit at start
+  (`raiseOpenFileLimit`). This is a suspect, not a proven cause: 25 Chromium
+  instances launched fine at 1024 in the sandbox.
+- A crash now prints Chrome's own stderr lines (`[pid=N][err] ...`) as
+  `chrome:` lines, which the traceback's tail buried.
+- The diagnostic also launches NUM_SESSIONS Chromes at once, before and after
+  raising the limit.
+- **✅ tfrrs deleted anet queue rows.** `run_tfrrs._deleteQueueRow` deleted by
+  `(meet_id, sport)` with no source (since 2026-09-19). Every tfrrs event leaf
+  also removed the anet row with the same id and sport, done or due. It is now
+  scoped to `source='tfrrs'`. Repair for the name-repair set: the dry run of
+  `scripts/requeue_blank_athletes.py` shows "not queued" per season; `--apply`
+  re-adds them.

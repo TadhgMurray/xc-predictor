@@ -150,3 +150,22 @@ def test_release_touches_only_this_batchs_unreached_rows(conn):
     assert got == [(1, "TF", "anet", 0), (1, "XC", "anet", 0), (1, "XC", "tfrrs", 3),
                    (2, "XC", "anet", 1), (3, "XC", "anet", 3)]
     assert database.releaseClaims([], 0) == 0
+
+
+# ⚠ tfrrs deleted queue rows by (meet_id, sport) alone, taking anet's row with
+#   the same id and sport with it (2026-10-07).
+def test_every_queue_delete_names_its_source():
+    import re
+    for path in ("tfrrs/driver/run_tfrrs.py", "scripts/purge_tfrrs_xc_in_tf.py"):
+        src = open(os.path.join(ROOT, path), encoding="utf-8").read()
+        for stmt in re.findall(r'"DELETE FROM meet_queue[^"]*"(?:\s*"[^"]*")*', src):
+            assert "source" in stmt, (path, stmt)
+
+
+def test_chrome_stderr_is_pulled_out_of_a_launch_error(monkeypatch):
+    L = _launcher(monkeypatch)
+    e = Exception("BrowserType.launch: Target page, context or browser has been closed\n"
+                  "Browser logs:\n\n<launching> /usr/bin/google-chrome ...\n"
+                  "[pid=7][err] Too many open files (24)\n"
+                  "  - [pid=7] <gracefully close start>\n")
+    assert L.chromeErrorLines(e) == ["[pid=7][err] Too many open files (24)"]

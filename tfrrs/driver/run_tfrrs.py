@@ -197,9 +197,15 @@ def _isMeetPage(html, requested_id, sport=None):
 #           sport:   'XC' or 'TF'.
 # Output:   none.
 def _deleteQueueRow(conn, meet_id, sport):
+    # ⚠ SCOPED TO tfrrs (owner, 2026-10-07). It deleted by (meet_id, sport)
+    #   alone, and anet and tfrrs ids collide: every tfrrs event leaf also
+    #   deleted the anet queue row with the same id and sport -- done or due,
+    #   so anet meets queued for a re-scrape (requeue_blank_athletes.py) could
+    #   vanish from the queue. _markMeetDone/_markMeetFailed were scoped;
+    #   this one was not.
     cursor = conn.cursor()
     cursor.execute(
-        "DELETE FROM meet_queue WHERE meet_id = %s AND sport = %s",
+        "DELETE FROM meet_queue WHERE meet_id = %s AND sport = %s AND source = 'tfrrs'",
         (meet_id, sport),
     )
 
