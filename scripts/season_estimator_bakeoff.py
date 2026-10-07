@@ -302,26 +302,38 @@ def chooseBeta(prep, q, decay_k, train_mask):
 # ------------------------------------------------------------------ db
 
 def load(sport, y0, y1):
+    """The rated board rows, streamed into numpy (no pandas: the server's
+    venv has none)."""
     from database import getConn
-    import pandas as pd
-    buf = io.StringIO()
+    cols = {k: [] for k in ("person_id", "pool", "year", "rating", "days",
+                            "meet_id", "div_id", "event_id")}
     with getConn() as conn:
-        with conn.cursor() as cur:
-            cur.copy_expert(f"""
-                COPY (SELECT person_id, pool, year, speed_rating,
-                             (race_date - DATE '2000-01-01') AS days,
-                             COALESCE(meet_id, -1), COALESCE(div_id, -1),
-                             COALESCE(event_id, -1)
-                      FROM   ranking_results
-                      WHERE  sport = '{sport}' AND speed_rating IS NOT NULL
-                        AND  person_id IS NOT NULL AND race_date IS NOT NULL
-                        AND  year BETWEEN {int(y0)} AND {int(y1)}) TO STDOUT""", buf)
+        with conn.cursor(name="bakeoff_rows") as cur:
+            cur.itersize = 500000
+            cur.execute(f"""
+                SELECT person_id, pool, year, speed_rating,
+                       (race_date - DATE '2000-01-01') AS days,
+                       COALESCE(meet_id, -1), COALESCE(div_id, -1),
+                       COALESCE(event_id, -1)
+                FROM   ranking_results
+                WHERE  sport = %s AND speed_rating IS NOT NULL
+                  AND  person_id IS NOT NULL AND race_date IS NOT NULL
+                  AND  year BETWEEN %s AND %s""", (sport, int(y0), int(y1)))
+            while True:
+                chunk = cur.fetchmany(500000)
+                if not chunk:
+                    break
+                for k, col in zip(cols, zip(*chunk)):
+                    cols[k].append(np.asarray(col, dtype=object if k == "pool" else None))
         conn.rollback()
-    buf.seek(0)
-    df = pd.read_csv(buf, sep="\t", header=None,
-                     names=["person_id", "pool", "year", "rating", "days",
-                            "meet_id", "div_id", "event_id"])
-    return {c: df[c].to_numpy() for c in df.columns}
+    out = {}
+    for k, parts in cols.items():
+        out[k] = np.concatenate(parts) if parts else np.array([])
+    for k in ("person_id", "year", "days", "meet_id", "div_id", "event_id"):
+        out[k] = out[k].astype(np.int64)
+    out["rating"] = out["rating"].astype(np.float64)
+    out["pool"] = out["pool"].astype(str)
+    return out
 
 
 def main():
