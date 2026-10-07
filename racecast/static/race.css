@@ -141,7 +141,14 @@ main.rc .page-report { margin-top: 1.4rem; }
   .rc-hd { padding-left: 12px; padding-right: 12px; }
   .rc-hgrid { grid-template-columns: minmax(0, 1fr); gap: .9rem; }
   main.rc h1 { font-size: 2.3rem; }
-  .rc-champs .rc-cn { font-size: 1.1rem; }
+  /* side by side on a phone; a long name wraps the pair onto two rows
+     rather than squeezing (owner, 2026-10-07) */
+  .rc-champs { gap: .5rem 1.1rem; }
+  .rc-champs .rc-crow { gap: .4rem; }
+  main.rc .rc-champs img.school-mark { width: 22px; height: 22px; padding: 1px; }
+  .rc-champs .rc-cn { font-size: 1rem; }
+  .rc-champs i { font-size: .88rem; }
+  .rc-champs .k { font-size: .7rem; }
   .rc-share { order: 1; align-self: flex-start; margin: .7rem 0 0; }
   .rc-grid { grid-template-columns: minmax(0, 1fr); }
   .rc-side { order: 2; }
