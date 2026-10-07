@@ -4786,3 +4786,21 @@ From run 20261006_120609's gaps (line before and after each):
   ladder as done. The bracket engine's knobs are scored by 08d, not here.
 - Tests: tests/test_distance_holdout.py (one whole class of multi-distance seasons only, ~10%; the gap; the
   breakdowns find a planted bias at 1600 and in September).
+
+## 2026-10-07 — 🧪 new UI from scratch: three directions, judged blind
+
+- Three designers built home / athlete / race / rankings from one brief (the owner's likes and dislikes, real
+  saved pages for data): Editorial (warm paper, serif headlines, quiet coloured-text flags, written summary),
+  Instrument (cool light grey, Inter, dense hairline tables, one cobalt accent, sparklines), App (mobile-first,
+  big rating hero, PR tiles, rounded cards, ember accent, bottom tab bar). Files: scratchpad/ui/{A_editorial,
+  B_instrument,C_app}/ (HTML + NOTES.md + 1280/390 screenshots).
+- Blind pairwise judging: 12 comparisons (4 pages x 3 pairs), X/Y labels randomised, screenshots only, by three
+  judges -- a HS runner on a phone, a coach on desktop, a design critic holding the owner's stated taste.
+  Wins (of 24 each): Editorial 14, Instrument 14, App 8. By judge: runner App 8 / Instrument 3 / Editorial 1;
+  coach Instrument 7 / Editorial 5 / App 0; critic Editorial 8 / Instrument 4 / App 0 (Editorial won every page
+  type for the critic except rankings, where Instrument won).
+- Read: no single direction wins every audience. The critic's (owner-taste) pick is Editorial; the coach wants
+  Instrument's density (rows per screen, one-line rows, fixed rating column, filters up front); the runner wants
+  App's big rating and PR tiles and the thumb-reach tab bar. Suggested next round: one hybrid -- Editorial's type,
+  paper, summary and quiet flags; Instrument's table density and rankings; App's phone athlete header (big
+  rating + PR tiles) -- then judged blind again against each parent.
