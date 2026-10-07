@@ -150,3 +150,20 @@ main.rc td .rv { font-weight: 600; }
   main.rc .rc-panel table.staged td, main.rc .rc-panel table.staged th,
   main.rc .rec-pair td, main.rc .rec-pair th { white-space: nowrap; }
 }
+
+/* ---- the meet page's finder: matching runners under the box ------------- */
+main.rc .rc-findwrap { position: relative; margin-left: auto; }
+main.rc .rc-findwrap .rc-find { margin-left: 0; width: 280px; }
+main.rc .rc-findlist { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; width: min(420px, 92vw);
+  max-height: 360px; overflow-y: auto; margin: 0; padding: .3rem 0; list-style: none;
+  background: #fff; border: 1px solid var(--line-2); border-radius: 4px; box-shadow: 0 6px 18px rgba(17,20,24,.12); }
+main.rc .rc-findlist a { display: block; padding: .4rem .75rem; text-decoration: none; color: var(--ink); }
+main.rc .rc-findlist a:hover, main.rc .rc-findlist a:focus { background: var(--hover); }
+main.rc .rc-findlist b { display: block; color: var(--link); }
+main.rc .rc-findlist span { display: block; font-size: .8rem; color: var(--muted); }
+main.rc .rc-findlist .none { padding: .5rem .75rem; font-size: .85rem; color: var(--muted); }
+@media (max-width: 760px) {
+  main.rc .rc-findwrap { width: 100%; margin-left: 0; }
+  main.rc .rc-findwrap .rc-find { width: 100%; }
+  main.rc .rc-findlist { left: 0; right: auto; width: 100%; }
+}

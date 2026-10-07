@@ -184,13 +184,63 @@
 
   // ---- finder: hide rows whose name or school does not contain the text
   var find = main.querySelector(".rc-find");
+  var list = main.querySelector(".rc-findlist");
+  var pending = null, asked = "", raceHit = false;
+  function esc(t) { return String(t).replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  // ★ THE MEET PAGE ASKS THE SERVER (data-api): every finisher at the meet
+  //   whose name or school matches, each a link to their row in their race.
+  function askServer(q) {
+    if (!list) return;
+    if (q.length < 2) { list.hidden = true; list.innerHTML = ""; return; }
+    clearTimeout(pending);
+    pending = setTimeout(function () {
+      asked = q;
+      var url = find.dataset.api + (find.dataset.api.indexOf("?") < 0 ? "?" : "&") +
+                "q=" + encodeURIComponent(q);
+      fetch(url).then(function (r) { return r.ok ? r.json() : []; }).then(function (got) {
+        if (asked !== q) return;                       // a newer query is out
+        if (!got.length && raceHit) { list.hidden = true; return; }   // the table answered
+        list.innerHTML = got.length
+          ? got.map(function (m) {
+              return '<li><a href="' + esc(m.href) + '"><b>' + esc(m.name) + "</b>" +
+                     '<span>' + esc([m.school, m.race, m.time].filter(Boolean).join(" \u00b7 ")) +
+                     "</span></a></li>"; }).join("")
+          : '<li class="none">No runner or school by that name ran here.</li>';
+        list.hidden = false;
+      }).catch(function () { list.hidden = true; });
+    }, 180);
+  }
   if (find) {
     find.addEventListener("input", function () {
       var q = find.value.trim().toLowerCase();
       if (q) show(first);
+      // with a server behind the box, the table filters on the RACE name
+      // only: a runner's name belongs in the list, not in hiding races
+      function hit(tr) {
+        var cell = find.dataset.api ? (tr.querySelector("td.nm") || tr) : tr;
+        return cell.textContent.toLowerCase().indexOf(q) >= 0;
+      }
+      // ! a name or school that is no race's name leaves the table whole:
+      //   emptying it under a list of runners read as "nothing found"
+      var anyHit = !q || Array.prototype.some.call(rows, hit);
+      raceHit = !!q && anyHit;
       rows.forEach(function (tr) {
-        tr.hidden = !!q && tr.textContent.toLowerCase().indexOf(q) < 0;
+        tr.hidden = !!q && (anyHit || !find.dataset.api) && !hit(tr);
       });
+      if (find.dataset.api) askServer(find.value.trim());
     });
+    find.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { find.value = ""; find.dispatchEvent(new Event("input")); }
+    });
+  }
+
+  // ---- arriving at #r<result id> (from the meet page's finder): that row
+  if (/^#r\d+$/.test(location.hash)) {
+    var target = document.getElementById(location.hash.slice(1));
+    if (target) {
+      target.scrollIntoView({ block: "center" });
+      target.classList.add("rc-flash");
+    }
   }
 })();

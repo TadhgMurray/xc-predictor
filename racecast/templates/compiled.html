@@ -1,8 +1,9 @@
 {# =====================================================================
   compiled.html -- one compiled race.
 
-  ★ BUILT TO MATCH race.html. Same plain structure: h1, meta lines, one
-    table, no wrapper div and no page-specific classes. A compiled race is a
+  ★ BUILT TO MATCH race.html (owner, 2026-10-07: "the compiled page is
+    still the old stuff"): the same header, tab bar, results table, team
+    sidebar with lighting, and the field on one scale. A compiled race is a
     race, and looking like a different kind of page made it read as one.
 
   ⚠ IT DID NOT HAPPEN, WHICH THE PAGE SAYS PLAINLY. Varsity and JV started
@@ -25,127 +26,136 @@
        "beats whom when the races at this meet are compiled together." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
-<main class="page-wide">
-{% set g_label = "Boys" if group.gender == 'M' else "Girls" if group.gender == 'F' else " - " %}
-    <h1>{{ header.meet_name }}</h1>
-    <p class="meta">
-        {% if header.course_name %}
-          <a href="/course/{{ header.course_name }}">{{ header.course_name }}</a> ·
-        {% endif %}
-        {{ group.distance }}m ·
-        {{ g_label }} ·
-        Compiled
-        {% if header.state %} · {{ header.state }}{% endif %}
-    </p>
-    <p class="meta">
-        {{ group.results|length }} runners from
-        {{ group.divisions|length }} division{{ "" if group.divisions|length == 1 else "s" }}
-    </p>
-
+<main class="page-wide rc">
+{% set g_label = "Boys" if group.gender == 'M' else "Girls" if group.gender == 'F' else "All" %}
+<header class="rc-hd"><div class="rc-w rc-hgrid">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country · compiled</span></div>
+    <div class="rc-kick"><a href="/meet/xc/{{ header.meet_id }}">{{ header.meet_name }}</a></div>
+    <h1>{{ g_label }} {{ group.distance }}m, every division</h1>
+    <div class="rc-meta">
+      {% if header.course_name %}<a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a> · {% endif %}{{ group.distance }}&nbsp;m{% if header.state %} · {{ header.state }}{% endif %}
+    </div>
+    <div class="rc-facts">
+      <span>Runners <b>{{ group.results|length }}</b></span>
+      <span>Divisions <b>{{ group.divisions|length }}</b></span>
+      {% if group.scores.teams %}<span>Teams scored <b>{{ group.scores.teams|length }}</b></span>{% endif %}
+    </div>
+  </div>
+  <div class="rc-right">
     {# Not a footnote: someone arriving from a link has no other way to know
-       these runners were not on the line together. #}
-    <p class="synthetic">
-        These divisions were run separately. This is how their times compare,
-        not how they finished - the places and scores below were never contested.
-    </p>
+       these runners were not on the line together. It stands where the race
+       page's summary does. #}
+    <p class="rc-story synthetic">These divisions were run separately. This is how
+      their times compare, not how they finished: the places and scores below
+      were never contested.</p>
+  </div>
+</div></header>
 
-    <p><a class="meet-link" href="/meet/xc/{{ header.meet_id }}">View full meet →</a></p>
+<div class="rc-w rc-grid{% if not group.scores.teams %} rc-grid-one{% endif %}">
+<div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#results" data-tab="results">Results<span class="n">{{ group.results|length }}</span></a>
+      {% if group.scores.teams %}<a class="seg-btn" href="#teams" data-tab="teams">Teams<span class="n">{{ group.scores.teams|length }}</span></a>{% endif %}
+    </nav>
+    <a class="rc-out" href="/meet/xc/{{ header.meet_id }}">The races as run →</a>
+    <input class="rc-find" type="search" placeholder="Find a runner or school" aria-label="Find a runner or school">
+  </div>
 
-{% if group.scores.teams %}
-    <h2>Team scores</h2>
-    {# ★ ONE COLUMN PER SCORER. Packed into a single cell the numbers do not
-       line up between rows, so comparing two teams' third runners -- which is
-       how a close score is read -- meant counting across.
-       ★ AND EACH PLACE LINKS TO THE ATHLETE: the number is a person. #}
-    <table>
-        <thead>
-            <tr>
-                <th>Place</th>
-                <th>Team</th>
-                <th>Points</th>
-                <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th>
-                <th>6</th><th>7</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for t in group.scores.teams %}
-            <tr>
-                <td>{{ t.place }}</td>
-                <td>{% if t.school|is_team %}{{ crest(t.school, t.state) }}<a href="{{ school_href(t.school, t.state) }}">{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label }}{% endif %}</a>{% else %}{{ t.school|school_label }}{% endif %}</td>
-                <td>{{ t.points }}</td>
-                {# 6 and 7 are greyed: they do not score, but they DO displace,
-                   and hiding them makes a deep team look like a top-heavy one. #}
-                {% for i in range(7) %}
-                    {% set r = t.runners[i] if t.runners|length > i else none %}
-                    <td{{ ' class="displacer"'|safe if i >= 5 }}>
-                        {% if r %}<a href="/athlete/{{ r.person_id }}"
-                                     title="{{ r.name }}">{{ r.score_place }}</a>
-                        {% else %} - {% endif %}
-                    </td>
-                {% endfor %}
-            </tr>
-            {% endfor %}
-        </tbody>
+  <section class="rc-panel" id="results" data-panel="results">
+    {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+    <figure class="rc-field" hidden><figcaption>The field on one scale<span class="rc-field-key"></span></figcaption><div class="rc-field-plot"></div></figure>
+    <table class="rc-table">
+      <thead><tr>
+        <th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th>
+        <th class="n">Time</th><th class="n">Rating</th>
+        {# Same Points as race.html: rank among the scorable, within THIS
+           compiled field. #}
+        <th class="n rc-wide">Pts</th>
+        {# Where they actually finished, and in which race. The gap between
+           this and the compiled place is why compiling exists. Derived in
+           meet_compile, NOT read from results.place. #}
+        <th class="n">Ran</th>
+      </tr></thead>
+      <tbody>
+      {% for row in group.results %}
+      <tr id="r{{ row.result_id }}" data-team="{{ row.school or '' }}">
+        <td class="pl"><span>{{ loop.index }}</span></td>
+        <td class="nm">
+          {% if row.person_id %}<a href="/athlete/{{ row.person_id }}">{{ row.name if row.name else "Unknown" }}</a>{% else %}{{ row.name if row.name else "Unknown" }}{% endif %}
+          <span class="rc-subline">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}{% endif %}{{ row.school|school_label_in(header.state) if row.school else "" }}{% if row.grade %} · {{ row.grade|grade_label(row.rating_pool or row.label_pool) }}{% endif %}</span>
+        </td>
+        <td class="sch rc-wide">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}<a href="{{ school_href(row.school, header.state) }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label }}{% else %} - {% endif %}{% if row.grade %}<span class="gr">{{ row.grade|grade_label(row.rating_pool or row.label_pool) }}</span>{% endif %}</td>
+        <td class="n tm">{{ "%d:%04.1f"|format(row.time_seconds // 60, row.time_seconds % 60) }}</td>
+        <td class="n rt"><span class="rc-rv">{{ rv(row.speed_rating, row.hs_rating) }}</span></td>
+        <td class="n pts rc-wide">{{ row.score_place if row.score_place else " - " }}</td>
+        <td class="n"><a href="/race/xc/{{ header.meet_id }}/{{ row.div_id }}#r{{ row.result_id }}" title="Their place in the race they ran">{{ row.division_place }}</a></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  {% if group.scores.teams %}
+  <section class="rc-panel" id="teams" data-panel="teams">
+    {# ★ ONE COLUMN PER SCORER, and each place links to the athlete. #}
+    <table class="rc-teams-full">
+      <thead><tr>
+        <th>Pl</th><th>Team</th><th class="n">Pts</th>
+        <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th>
+      </tr></thead>
+      <tbody>
+      {% for t in group.scores.teams %}
+      <tr>
+        <td>{{ t.place }}</td>
+        <td>{% if t.school|is_team %}{{ crest(t.school, t.state) }}<a href="{{ school_href(t.school, t.state) }}">{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label }}{% endif %}</a>{% else %}{{ t.school|school_label }}{% endif %}</td>
+        <td class="n">{{ t.points }}</td>
+        {# 6 and 7 are greyed: they do not score, but they DO displace #}
+        {% for i in range(7) %}
+          {% set r = t.runners[i] if t.runners|length > i else none %}
+          <td{{ ' class="displacer"'|safe if i >= 5 }}>{% if r %}<a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.score_place }}</a>{% else %} - {% endif %}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+      </tbody>
     </table>
     {% if group.scores.incomplete %}
-    <p class="meta">
-        Not scored, fewer than five finishers:
-        {% for i in group.scores.incomplete %}{{ i.school }} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}
-    </p>
+    <p class="meta">Not scored, fewer than five finishers:
+      {% for i in group.scores.incomplete %}{{ i.school }} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
     {% endif %}
+  </section>
+  {% endif %}
+</div>
+
+{% if group.scores.teams %}
+<aside class="rc-side">
+  <h2>Team scores <small>top 5, computed</small></h2>
+  <table class="rc-tscores">
+    <tbody>
+    {% for t in group.scores.teams[:10] %}
+    {% set key = t.runners[0].school if t.runners else t.school %}
+    <tr data-team="{{ key }}" data-rids="{% for r in t.runners or [] %}{{ r.result_id }} {% endfor %}" tabindex="0" title="Light {{ t.school }}'s runners in the results">
+      <td class="tp">{{ t.place }}</td>
+      <td class="tn">{% if t.school|is_team %}{{ crest(t.school, t.state) }}{% endif %}{{ t.school|school_label }}
+        <span class="sp">{% for i in range(5) %}{% set r = t.runners[i] if t.runners|length > i else none %}<i>{{ r.score_place if r else "-" }}</i>{% endfor %}</span></td>
+      <td class="n tpts">{{ t.points }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="rc-tip"><span class="rc-tip-name">{{ ((group.scores.teams[0].runners[0].school if group.scores.teams[0].runners else group.scores.teams[0].school) or "").split("\x00")[0] }}</span>'s runners are lit in the results. Tap any team to light theirs.</p>
+  {% if group.scores.teams|length > 10 %}<a class="rc-more" href="#teams" data-tab="teams">All {{ group.scores.teams|length }} teams</a>{% endif %}
+</aside>
 {% endif %}
-
-{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
-        <h2>Results</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Place</th>
-                <th>Athlete</th>
-                <th>Grade</th>
-                <th>School</th>
-                <th>Time</th>
-                <th>Rating</th>
-                {# Same Points as race.html: rank among the scorable, within
-                   THIS compiled field. #}
-                <th>Points</th>
-                <th>Actual race</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for row in group.results %}
-            <tr>
-                <td>{{ loop.index }}</td>
-                <td>
-                    {% if row.person_id %}
-                        <a href="/athlete/{{ row.person_id }}">{{ row.name if row.name else "Unknown" }}</a>
-                    {% else %}
-                        {{ row.name if row.name else "Unknown" }}
-                    {% endif %}
-                </td>
-                <td>{{ row.grade|grade_label(row.rating_pool or row.label_pool) if row.grade else " - " }}</td>
-                <td>{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}<a href="{{ school_href(row.school, header.state) }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label }}{% if row.team_place %} <sup class="muted">{{ row.team_place }}</sup>{% endif %}{% else %} - {% endif %}</td>
-                <td>{{ "%d:%04.1f"|format(row.time_seconds // 60, row.time_seconds % 60) }}</td>
-                <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
-                <td>{{ row.score_place if row.score_place else " - " }}</td>
-                {# Where they actually finished, and in which race. The gap
-                   between this and the compiled place is why compiling exists.
-                   Derived in meet_compile, NOT read from results.place -- that
-                   column is not a within-division position, which is why
-                   race.html renders Place from loop.index too. #}
-                <td>
-                    <a href="/race/xc/{{ header.meet_id }}/{{ row.div_id }}">{{ row.division_place }}</a>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-
+</div>
 </main>
 <script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}" data-light="{{ (group.scores.teams[0].runners[0].school if group.scores.teams and group.scores.teams[0].runners else '') }}"></script>
 </body>
 </html>

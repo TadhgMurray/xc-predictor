@@ -89,7 +89,15 @@
     </nav>
     {# ?alt= when this id holds two meets: predict THIS one (2026-10-05) #}
     <a class="rc-out" href="/predictions?meet_id={{ header.meet_id }}&amp;sport=XC{% if other_sources %}&amp;alt={{ alt_idx }}{% endif %}">Predict this meet →</a>
-    {% if divisions|length > 6 %}<input class="rc-find" type="search" placeholder="Find a race, runner or team" aria-label="Find a race, runner or team">{% endif %}
+    {# ★ SEARCHES THE WHOLE MEET (owner, 2026-10-07: "kind of disfunctional"):
+       a name or school lists every finisher who matches, each linking to
+       their row in their race (app.meet_xc_find); a race name filters the
+       table below. #}
+    <div class="rc-findwrap">
+      <input class="rc-find" type="search" autocomplete="off" placeholder="Find a runner, school or race" aria-label="Find a runner, school or race"
+             data-api="/api/meet/xc/{{ header.meet_id }}/find{% if other_sources %}?alt={{ alt_idx }}{% endif %}">
+      <ul class="rc-findlist" hidden></ul>
+    </div>
   </div>
 
   <section class="rc-panel" id="races" data-panel="races">

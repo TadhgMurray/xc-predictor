@@ -4962,3 +4962,29 @@ not good!"
   percentile, where and when the best race was) without repeating them, the
   races and seasons facts, and the links plus Share. The stat tiles are gone;
   everything they held appears once. The sport tabs carry the sport dots.
+
+## 2026-10-07 — owner on the batch above: athlete page reverted, meet search fixed, compiled page done
+
+"New athlete page is bad bad bad. You basically just chucked the ui for the
+race page on without checking if you should. Also the search bar on the meet
+page is kind of dysfunctional. Also the compiled page is still the old stuff.
+Also you just added color randomly, it is just small bits."
+- **Athlete header reverted** to the version before cdb447f (stat strip and
+  all) and its CSS removed. The race page's arrangement suits a race, which
+  has a summary and a winner; an athlete page is a record and was made worse
+  by forcing it.
+- **Meet page search**: it said "Find a race, runner or team" but only
+  filtered the races table, so a runner was found only if they had won.
+  `/api/meet/xc/<id>/find?q=` now returns every finisher whose name or school
+  matches, listed under the box, each linking to their row in their race
+  (`#r<result id>`; the race page scrolls to and flashes it). The table
+  filters on race names only, and stays whole when the text names no race.
+  Test: `tests/test_meet_find.py` (scratch Postgres).
+- **Compiled page** (`compiled.html`): the race page's header (with the "run
+  separately" note where the summary goes), Results | Teams tabs, the team
+  sidebar with lighting, the field on one scale, and a "Ran" column linking
+  each runner to their row in the race they ran. No medal discs, since those
+  places were never contested.
+- **Colour**: the owner is right that it is decoration in small bits. Next is
+  a proposal where colour carries the rating itself, previewed for a yes or
+  no before it goes site-wide.

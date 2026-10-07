@@ -4462,6 +4462,50 @@ def meet_xc(meet_id):
                            alt_idx=alt_idx, other_sources=other_sources)
 
 
+@app.route("/api/meet/xc/<int:meet_id>/find")
+def meet_xc_find(meet_id):
+    """Everyone at one XC meet whose name or school matches ?q=.
+
+    ★ WHY (owner, 2026-10-07: "the search bar on the meet page is kind of
+      disfunctional"). It said "Find a race, runner or team" and only
+      filtered the races table, so a runner was found only if they had won
+      a race. This answers the question the box asks: every finisher at the
+      meet, each linking to their own row in their own race.
+    """
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify([])
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            src, alt_idx, _others = _xc_meet_sources(cur, meet_id, request.args)
+            divs = {d["div_id"]: d for d in get_meet_divisions(cur, meet_id, source=src)}
+            cur.execute(f"""
+                SELECT * FROM (
+                    SELECT r.result_id, r.div_id, r.school, r.time_seconds,
+                           {_name_sql('r')} AS name
+                    FROM   results r
+                    {_athlete_lateral('r')}
+                    WHERE  r.meet_id = %(m)s
+                      AND  (%(src)s::text IS NULL OR r.source = %(src)s)
+                ) x
+                WHERE  x.name ILIKE %(q)s OR x.school ILIKE %(q)s
+                ORDER  BY (x.name ILIKE %(q)s) DESC, x.time_seconds NULLS LAST
+                LIMIT  25
+            """, {"m": meet_id, "src": src, "q": "%" + q + "%"})
+            rows = cur.fetchall()
+    out = []
+    for r in rows:
+        d = divs.get(r["div_id"]) or {}
+        race = ("Boys " if d.get("gender") == "M" else "Girls " if d.get("gender") == "F" else "") \
+            + (d.get("division") or f"Division {r['div_id']}")
+        out.append({"name": r["name"], "school": r["school"] or "",
+                    "race": race, "time": format_time(r["time_seconds"]) if r["time_seconds"] else "",
+                    "href": f"/race/xc/{meet_id}/{r['div_id']}"
+                            + (f"?alt={alt_idx}" if _others else "")
+                            + f"#r{r['result_id']}"})
+    return jsonify(out)
+
+
 @app.route("/race/xc/<int:meet_id>/compiled/<int:distance>/<gender>")
 def compiled_race(meet_id, distance, gender):
     """One compiled race: every division at this distance and gender, merged.
