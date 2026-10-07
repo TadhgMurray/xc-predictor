@@ -32,8 +32,8 @@ def _lateral():
 def test_every_profile_is_a_candidate():
     lat, _ = _lateral()
     sql = lat("r")
-    assert "WHERE  person_id = r.person_id" in sql
-    assert "athlete_id IN (r.person_id, r.athlete_id)" in sql
+    assert "WHERE  ap.person_id = r.person_id" in sql
+    assert "ai.athlete_id IN (r.person_id, r.athlete_id)" in sql
 
 
 def test_names_on_a_scratch_database():

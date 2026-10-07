@@ -3107,13 +3107,20 @@ def _fullField(cur, roster, target):
     return roster
 
 
+# ⚠ EVERY PROFILE OF THE PERSON (owner, 2026-10-07: "still seeing unknowns
+#   that shouldn't be unknowns"). athlete_id = {pid} is one row, the
+#   profile whose id is the person id; when it was blank the roster read
+#   Unknown while another profile carried the name. Same rule as
+#   app._athlete_lateral: every profile of the person, named first.
 _NAME_LATERAL = """
         LEFT JOIN LATERAL (
             SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
                    NULLIF(TRIM(x.last_name),  '') AS last_name
-            FROM   athletes x
-            WHERE  x.athlete_id = {pid}
-            ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
+            FROM   (SELECT ap.first_name, ap.last_name FROM athletes ap WHERE ap.person_id = {pid}
+                    UNION ALL
+                    SELECT ai.first_name, ai.last_name FROM athletes ai WHERE ai.athlete_id = {pid}) x
+            ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL
+                       OR NULLIF(TRIM(x.first_name), '') IS NOT NULL) DESC
             LIMIT  1
         ) a ON TRUE
 """

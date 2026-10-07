@@ -13,8 +13,9 @@
          data-sport="{{ spec.sport }}" data-date="{{ spec.date }}"
          data-distance="{{ spec.distance if spec.distance else '' }}">
   <h2>Ran above their level</h2>
-  <p class="meta">Beat their season rating by more than a normal day's
-    swing (<span class="ab-sigma"></span> for these runners).</p>
+  <p class="meta">Beat their level coming in (their rating over the year before
+    this race) by more than a normal day's swing (<span class="ab-sigma"></span>
+    for these runners).</p>
   <ul></ul>
 </section>
 <script src="{{ static_v('above-level.js') }}" defer></script>
@@ -22,8 +23,8 @@
 
 {% macro level_i() -%}
 <span class="flag info-i" tabindex="0" data-title="What vs Level Means"
-      data-blurb="This race against the runner's season rating, worked out from their OTHER races this season. +4% means they ran 4% faster than their usual level; a runner with no other race this season gets none. Green is beyond a normal day's swing."
-      aria-label="What vs level means: this race against the runner's season rating from their other races this season.">i</span>
+      data-blurb="This race against the runner's level coming in: their rating, worked out the way a season rating is, from their races in the year before this one. +4% means they ran 4% faster than that level; a runner with no race in that year gets none. Green is beyond a normal day's swing."
+      aria-label="What vs level means: this race against the runner's rating from their races in the year before it.">i</span>
 {%- endmacro %}
 
 {% macro head(spec) %}{% if spec %}<th class="vs-level-h">vs level{{ level_i() }}</th>{% endif %}{% endmacro %}

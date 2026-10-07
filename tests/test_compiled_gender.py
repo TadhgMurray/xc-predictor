@@ -16,10 +16,12 @@ _FIXTURE = """
 DROP TABLE IF EXISTS results, meets, meets_tfrrs, athletes;
 CREATE TABLE results (result_id bigint, person_id bigint, athlete_name text, team_id bigint,
                       place int, time_seconds real, grade text, school text,
-                      speed_rating real, div_id bigint, meet_id bigint, source text);
+                      speed_rating real, div_id bigint, meet_id bigint, source text,
+                      athlete_id bigint);  -- the real table has it; the name lookup reads it
 CREATE TABLE meets (meet_id bigint, div_id bigint, source text, distance real, division text);
 CREATE TABLE meets_tfrrs (meet_id bigint, sport text, division_distances jsonb);
-CREATE TABLE athletes (athlete_id bigint, first_name text, last_name text, gender text);
+CREATE TABLE athletes (athlete_id bigint, first_name text, last_name text, gender text,
+                       person_id bigint);
 INSERT INTO meets_tfrrs VALUES (1, 'XC',
   '{"10": {"distance": 10000, "div_name": "Men''s 10k"},
     "20": {"distance": 6000,  "div_name": "Women''s 6k"}}');
@@ -29,6 +31,7 @@ INSERT INTO athletes VALUES (1,'A','One','M'),(2,'B','Two','M'),(3,'C','Three','
   (4,'April','Gienger','F'),(6,'D','Six','F'),(7,'E','Seven','F'),
   (11,'F','x','M'),(12,'G','x','M'),(13,'H','x','M'),(14,'I','x','M'),
   (21,'J','x','M'),(22,'K','x','F');
+UPDATE athletes SET person_id = athlete_id;
 INSERT INTO results VALUES
   (1,1,NULL,1,1,1700,'SR-4','A',120,10,1,'tfrrs'),
   (2,2,NULL,1,2,1710,'SR-4','A',120,10,1,'tfrrs'),

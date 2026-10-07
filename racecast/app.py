@@ -80,11 +80,11 @@ def _athlete_lateral(r="r"):
         SELECT NULLIF(TRIM(concat_ws(' ', a.first_name, a.last_name)), '') AS name,
                a.gender,
                a.school
-        FROM   (SELECT first_name, last_name, gender, school FROM athletes
-                WHERE  person_id = {r}.person_id
+        FROM   (SELECT ap.first_name, ap.last_name, ap.gender, ap.school FROM athletes ap
+                WHERE  ap.person_id = {r}.person_id
                 UNION ALL
-                SELECT first_name, last_name, gender, school FROM athletes
-                WHERE  athlete_id IN ({r}.person_id, {r}.athlete_id)) a
+                SELECT ai.first_name, ai.last_name, ai.gender, ai.school FROM athletes ai
+                WHERE  ai.athlete_id IN ({r}.person_id, {r}.athlete_id)) a
         ORDER  BY (COALESCE(TRIM(a.first_name), '') <> ''
                 OR COALESCE(TRIM(a.last_name),  '') <> '') DESC,
                   (a.gender IN ('M', 'F')) DESC
@@ -188,6 +188,42 @@ def _blob(r="r", field="distance"):
 def _xc_course_sql(r="r"):
     """Display course name, either source."""
     return "COALESCE(m.course_name, mt.venue_name)"
+
+
+def _xc_cell_join(r="r"):
+    """The course-difficulty cell for an XC result row, as a LATERAL `cd`
+    exposing canonical_id, difficulty and distance_m.
+
+    ⚠ WHY (owner, 2026-10-07: "difficulty doesn't show on some race pages
+      even if a course has a difficulty"). The race header and the athlete
+      page joined course_canonical on the name AND the gps equal to five
+      decimals (about a metre), then the cell on distance_m equal to the
+      race distance rounded to 100 m. The course page matched on the name
+      and kept both spellings of distance_m -- some cells are stored rounded
+      (4800), some not (4828), the bug it fixed on 2026-09-09. So a meet
+      whose gps was entered a few metres off, or a 3-mile race whose cell is
+      stored at 4828, showed no difficulty on its race page while its
+      course page had one.
+
+    ★ NOW: the same-named venue NEAREST the meet's gps (the exact one when
+      it matches, as before), and the distance compared rounded on both
+      sides. Among equals, the cell with the most results, as the course
+      page does.
+    """
+    course = _xc_course_sql(r)
+    dist = _xc_distance_sql(r)
+    return f"""LEFT JOIN LATERAL (
+            SELECT cc.canonical_id, cd0.difficulty, cd0.distance_m
+            FROM   course_canonical cc
+            JOIN   course_difficulties cd0 ON cd0.canonical_id = cc.canonical_id
+            WHERE  cc.course_name = {course}
+              AND  round(cd0.distance_m / 100.0) = round(({dist})::numeric / 100.0)
+              AND  cd0.difficulty IS NOT NULL
+            ORDER  BY (power(cc.gps_lat  - COALESCE(m.gps_lat,  mt.gps_lat),  2)
+                     + power(cc.gps_long - COALESCE(m.gps_long, mt.gps_long), 2)) NULLS LAST,
+                      cd0.n_results DESC NULLS LAST
+            LIMIT  1
+        ) cd ON TRUE"""
 
 
 def _champ_join(r="r"):
@@ -2397,7 +2433,7 @@ def get_races(cur, person_id):
                     AND rde.course_name = cdc.course_name
                     AND rde.distance_m  = cdc.distance_m)
                 OR (cdc.course_name IS NULL
-                    AND rde.canonical_id = cc.canonical_id
+                    AND rde.canonical_id = cd.canonical_id
                     AND rde.distance_m   = cd.distance_m))""")
         day_join_tf = ("""LEFT JOIN race_day_effect rde
                ON rde.course_name = cd.course_name
@@ -2502,16 +2538,7 @@ def get_races(cur, person_id):
         -- course_canonical resolves (name, lat, lng) to the venue id the
         -- engine actually used; distance_m picks the right cell within it.
         -- The COALESCEd name and gps let a tfrrs race resolve a cell too.
-        LEFT JOIN course_canonical cc
-               ON cc.course_name = {_xc_course_sql('r')}
-              AND round(cc.gps_lat::numeric,  5)
-                = round(COALESCE(m.gps_lat,  mt.gps_lat)::numeric,  5)
-              AND round(cc.gps_long::numeric, 5)
-                = round(COALESCE(m.gps_long, mt.gps_long)::numeric, 5)
-        LEFT JOIN course_difficulties cd
-               ON cd.canonical_id = cc.canonical_id
-              AND cd.distance_m   =
-                  (round({_xc_distance_sql('r')} / 100.0) * 100)::int
+        {_xc_cell_join('r')}
         {_champ_join('r')}
         {day_join_xc}
         WHERE r.person_id = %(pid)s
@@ -3374,7 +3401,7 @@ def get_race_header(cur, meet_id, div_id, source=None):
                (cdc.difficulty IS NOT NULL)                  AS champ_cell,
                cdc.course_name                               AS champ_key,
                cdc.distance_m                                AS champ_distance_m,
-               cc.canonical_id                               AS canonical_id,
+               cd.canonical_id                               AS canonical_id,
                cd.distance_m                                 AS cell_distance_m,
                -- FILTER because the lateral no longer restricts gender to M/F
                -- (it sorts by it instead), so junk values could reach mode().
@@ -3395,16 +3422,7 @@ def get_race_header(cur, meet_id, div_id, source=None):
               AND m.div_id  = r.div_id
               AND m.source  = r.source
         {_tfrrs_join('r')}{_dist_override_join('r')}
-        LEFT JOIN course_canonical cc
-               ON cc.course_name = {_xc_course_sql('r')}
-              AND round(cc.gps_lat::numeric,  5)
-                = round(COALESCE(m.gps_lat,  mt.gps_lat)::numeric,  5)
-              AND round(cc.gps_long::numeric, 5)
-                = round(COALESCE(m.gps_long, mt.gps_long)::numeric, 5)
-        LEFT JOIN course_difficulties cd
-               ON cd.canonical_id = cc.canonical_id
-              AND cd.distance_m   =
-                  (round({_xc_distance_sql('r')} / 100.0) * 100)::int
+        {_xc_cell_join('r')}
         {_champ_join('r')}
         ORDER BY (COALESCE(m.meet_name, mt.venue_name) IS NOT NULL) DESC, r.source
         LIMIT 1

@@ -15,6 +15,12 @@ p  { color: rgb(82, 82, 82); }
   display: inline-block;
   font-size: 11px;
   font-weight: 700;
+  /* ! ITS OWN LINE HEIGHT (owner, 2026-10-07: "the symbols next to rating
+     and time denoting pr/sr should be the same size"). Inherited, it took
+     each cell's: 20.5px tall beside a time, 16.6px beside a rating (the
+     rating cell is set at 1.15). */
+  line-height: 13px;
+  vertical-align: 1px;
   padding: 2px 5px;
   border-radius: 3px;
   margin-right: 3px;

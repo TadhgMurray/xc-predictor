@@ -22,6 +22,10 @@
     panels.forEach(function (p) { if (p.dataset.panel === name) found = true; });
     if (!found) name = first;
     panels.forEach(function (p) { p.hidden = p.dataset.panel !== name; });
+    // ! THE FULL TEAMS TABLE AND THE SIDEBAR'S TOP TEN ARE ONE LIST TWICE
+    //   (owner, 2026-10-07, on "All teams"): with the Teams tab open the
+    //   sidebar steps aside and the table takes the width
+    main.classList.toggle("rc-on-teams", name === "teams");
     main.querySelectorAll(".rc-tabs [data-tab]").forEach(function (a) {
       a.classList.toggle("is-on", a.dataset.tab === name);   // the site's .seg-btn.is-on
     });

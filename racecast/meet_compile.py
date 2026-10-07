@@ -226,8 +226,8 @@ def compiledResults(cur, meet_id, source=None):
                    m.distance,
                    (mt.division_distances -> r.div_id::text ->> 'distance')::real
                 ) / 100.0) * 100)::int                AS distance,
-               COALESCE(NULLIF(btrim(COALESCE(a.first_name, '') || ' '
-                   || COALESCE(a.last_name, '')), ''),
+               COALESCE(NULLIF(btrim(COALESCE(an.first_name, '') || ' '
+                   || COALESCE(an.last_name, '')), ''),
                    NULLIF(btrim(r.athlete_name), ''))   AS name,
                -- ★ AND THE DIVISION'S OWN WORD FOR IT (owner, 2026-09-25:
                --   "compiled race for that race 404s"). Gender came only off
@@ -252,6 +252,23 @@ def compiledResults(cur, meet_id, source=None):
             ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
             LIMIT  1
         ) a ON TRUE
+        -- ⚠ THE NAME FROM EVERY PROFILE, GENDERED OR NOT (owner, 2026-10-07:
+        --   "still seeing unknowns"). `a` above keeps only M/F profiles of
+        --   the person's id row -- right for the gender, wrong for the name:
+        --   a named profile with no gender, or a name on another profile,
+        --   read Unknown. Same rule as app._athlete_lateral.
+        LEFT JOIN LATERAL (
+            SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
+                   NULLIF(TRIM(x.last_name),  '') AS last_name
+            FROM   (SELECT ap.first_name, ap.last_name FROM athletes ap
+                    WHERE  ap.person_id = r.person_id
+                    UNION ALL
+                    SELECT ai.first_name, ai.last_name FROM athletes ai
+                    WHERE  ai.athlete_id IN (r.person_id, r.athlete_id)) x
+            ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL
+                       OR NULLIF(TRIM(x.first_name), '') IS NOT NULL) DESC
+            LIMIT  1
+        ) an ON TRUE
         WHERE  r.meet_id = %(meet)s
           AND  (%(src)s::text IS NULL OR r.source = %(src)s)
           AND  r.time_seconds IS NOT NULL

@@ -1,6 +1,7 @@
 """Ran above their level (above_level.py, 2026-10-05): the level is the
-season rating (80th percentile, outlier rule) over the athlete's OTHER
-races that season in the same pool; the same race from the other feed is
+season statistic (80th percentile, outlier rule) over the athlete's races
+in the 365 days BEFORE the race, same pool (2026-10-07; it was the other
+races of this season, later ones included); the same race from the other feed is
 not another race; the gap is a percent; above = beyond the measured swing."""
 import os
 import sys
@@ -87,6 +88,33 @@ class AboveLevel(unittest.TestCase):
                     pass
         rows = [{"person_id": 1, "speed_rating": 100, "rating_pool": "hs_m"}]
         self.assertIsNone(AL.stampAboveLevel(Boom([]), "XC", rows, "2025-10-04", 5000))
+
+
+class TheLevelIsTheYearBeforeTheRace(unittest.TestCase):
+    """★ OWNER, 2026-10-07: "should prolly be career rating before the race".
+    The query asks for races strictly before the race day and no more than
+    a year back -- nothing later in the season can lift the yardstick."""
+
+    def test_the_query_window(self):
+        cur = _Cur([_s(1, 100, "2025-05-01")])
+        AL.stampAboveLevel(cur, "XC",
+                           [{"result_id": "9", "person_id": 1, "speed_rating": 104.0,
+                             "rating_pool": "hs_m"}], "2025-10-04", 5000)
+        self.assertEqual(cur.args["day"], "2025-10-04")
+        self.assertEqual(cur.args["back"], AL.LOOKBACK_DAYS)
+        self.assertEqual(AL.LOOKBACK_DAYS, 365)
+        src = open(AL.__file__, encoding="utf-8").read()
+        self.assertIn("race_date <  %(day)s::date", src)
+        self.assertIn("race_date >= %(day)s::date - %(back)s", src)
+        self.assertNotIn("AND year = %(yr)s", src)
+
+    def test_last_springs_races_give_an_opener_a_level(self):
+        # a September opener, no earlier race this season: last spring's
+        # track-season form is in the window (same sport passed by the caller)
+        cur = _Cur([_s(1, 100, "2025-04-12"), _s(1, 102, "2025-05-03")])
+        rows = [{"result_id": "9", "person_id": 1, "speed_rating": 108.0, "rating_pool": "hs_m"}]
+        AL.stampAboveLevel(cur, "XC", rows, "2025-09-06", 5000)
+        self.assertIsNotNone(rows[0].get("level"))
 
 
 if __name__ == "__main__":

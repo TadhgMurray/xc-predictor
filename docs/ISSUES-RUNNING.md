@@ -5036,3 +5036,39 @@ described: a minute or two at XC distances. The only redraw hook was window
 redraws at its real width and returns to the time being read. Reproduced in
 Chromium against the old script (readout 15:00, label under the pointer
 16:00); fixed, both read 15:00.
+
+## 2026-10-07 — owner's list: All teams, missing difficulty, above-level baseline, flag sizes, Unknowns
+
+- **"All teams" showed the teams twice.** The link opens the Teams tab, but
+  the sidebar's top ten stayed beside the full table. With the Teams tab
+  open, the sidebar now steps aside and the table takes the width
+  (`race-page.js` rc-on-teams).
+- **✅ Difficulty missing on race pages whose course has one.** The race
+  header and the athlete page's race rows joined `course_canonical` on the
+  name AND the gps equal to 5 decimals (~1 m), then the cell at exactly the
+  rounded distance. The course page matches the name and both spellings of
+  `distance_m` (some cells are stored 4828, some 4800; it fixed this on
+  2026-09-09). New shared `app._xc_cell_join`: the same-named venue nearest
+  the meet's gps, distances compared rounded on both sides, most results
+  among equals. Test: `tests/test_race_difficulty_cell.py`.
+- **Ran above their level: the level coming in.** It was the q80 of the
+  athlete's other races this season, including races run after this one.
+  It is now the same statistic over their races in the **365 days before**
+  the race, same sport and pool (`above_level.LOOKBACK_DAYS`); wording on
+  the page updated. Tests in `test_above_level.py`.
+- **PR/SR badges the same size.** `.flag` inherited each cell's line height:
+  20.5px tall beside a time, 16.6px beside a rating. It has its own now; both
+  measure 26.4 x 17px.
+- **More Unknowns fixed.** Three lookups still read one profile:
+  predictions' `_NAME_LATERAL` (athlete_id = person id); the compiled page
+  (`meet_compile`, which also kept only M/F profiles); and the panels' `ath`
+  table, which dropped every profile without an M/F gender before picking a
+  name. All now take the name from any profile, and the gender from a
+  gendered one. The panels change takes effect at the next panels build.
+  Test: `tests/test_names_more_lookups.py`.
+  ! Writing the test exposed an unqualified `person_id` in the new lookups:
+  against a table without that column it silently bound to the outer row and
+  matched everyone. Production has the column, but every column in those
+  lookups is qualified now.
+- Open, needs the owner: rated-not-ranked current seasons with few races
+  (see the reply of this date).

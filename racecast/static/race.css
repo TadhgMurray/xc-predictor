@@ -170,3 +170,7 @@ main.rc .rc-findlist .none { padding: .5rem .75rem; font-size: .85rem; color: va
   main.rc .rc-findwrap .rc-find { width: 100%; }
   main.rc .rc-findlist { left: 0; right: auto; width: 100%; }
 }
+
+/* the Teams tab open: the sidebar's top ten would repeat it (race-page.js) */
+main.rc.rc-on-teams .rc-side { display: none; }
+main.rc.rc-on-teams .rc-grid { grid-template-columns: minmax(0, 1fr); }

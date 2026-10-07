@@ -677,16 +677,26 @@ _YEAR_MAX_STR = "2036"
 #   arbitrary row would lose the name.
 _ATHLETE_ONE = """
     ath AS (
-        SELECT DISTINCT ON (person_id)
-               person_id,
-               NULLIF(TRIM(first_name), '') AS first_name,
-               NULLIF(TRIM(last_name),  '') AS last_name,
-               gender
-        FROM   athletes
-        WHERE  gender IN ('M', 'F')
-        ORDER  BY person_id,
-                  (NULLIF(TRIM(last_name), '') IS NOT NULL) DESC,
-                  (gender IS NOT NULL) DESC
+        -- ⚠ THE NAME FROM ANY PROFILE, THE GENDER FROM A GENDERED ONE
+        --   (owner, 2026-10-07: "still seeing unknowns"). WHERE gender IN
+        --   ('M','F') ran before the pick, so a person whose only named
+        --   profile had no gender lost the name entirely.
+        SELECT n.person_id, n.first_name, n.last_name, g.gender
+        FROM  (SELECT DISTINCT ON (person_id)
+                      person_id,
+                      NULLIF(TRIM(first_name), '') AS first_name,
+                      NULLIF(TRIM(last_name),  '') AS last_name
+               FROM   athletes
+               WHERE  person_id IS NOT NULL
+               ORDER  BY person_id,
+                         (NULLIF(TRIM(last_name), '') IS NOT NULL
+                          OR NULLIF(TRIM(first_name), '') IS NOT NULL) DESC,
+                         (gender IN ('M', 'F')) DESC) n
+        LEFT JOIN (SELECT DISTINCT ON (person_id) person_id, gender
+                   FROM   athletes
+                   WHERE  person_id IS NOT NULL AND gender IN ('M', 'F')
+                   ORDER  BY person_id, (NULLIF(TRIM(last_name), '') IS NOT NULL) DESC) g
+               USING (person_id)
     )
 """
 
@@ -710,16 +720,26 @@ _ATHLETE_ONE = """
 _ATH_TEMP_DDL = """
     DROP TABLE IF EXISTS ath;
     CREATE TEMP TABLE ath AS
-        SELECT DISTINCT ON (person_id)
-               person_id,
-               NULLIF(TRIM(first_name), '') AS first_name,
-               NULLIF(TRIM(last_name),  '') AS last_name,
-               gender
-        FROM   athletes
-        WHERE  gender IN ('M', 'F')
-        ORDER  BY person_id,
-                  (NULLIF(TRIM(last_name), '') IS NOT NULL) DESC,
-                  (gender IS NOT NULL) DESC;
+        -- ⚠ THE NAME FROM ANY PROFILE, THE GENDER FROM A GENDERED ONE
+        --   (owner, 2026-10-07: "still seeing unknowns"). WHERE gender IN
+        --   ('M','F') ran before the pick, so a person whose only named
+        --   profile had no gender lost the name entirely.
+        SELECT n.person_id, n.first_name, n.last_name, g.gender
+        FROM  (SELECT DISTINCT ON (person_id)
+                      person_id,
+                      NULLIF(TRIM(first_name), '') AS first_name,
+                      NULLIF(TRIM(last_name),  '') AS last_name
+               FROM   athletes
+               WHERE  person_id IS NOT NULL
+               ORDER  BY person_id,
+                         (NULLIF(TRIM(last_name), '') IS NOT NULL
+                          OR NULLIF(TRIM(first_name), '') IS NOT NULL) DESC,
+                         (gender IN ('M', 'F')) DESC) n
+        LEFT JOIN (SELECT DISTINCT ON (person_id) person_id, gender
+                   FROM   athletes
+                   WHERE  person_id IS NOT NULL AND gender IN ('M', 'F')
+                   ORDER  BY person_id, (NULLIF(TRIM(last_name), '') IS NOT NULL) DESC) g
+               USING (person_id);
     CREATE INDEX ON ath (person_id);
     ANALYZE ath;
 """
