@@ -118,6 +118,18 @@ def watermark(cur, sport, source="anet"):
     return cur.fetchone()[0]
 
 
+def frontierLeft(cur, sport, source="anet"):
+    """Ids above the watermark still due (0) or in flight (3): the part of
+    the walk's block the scrape has not finished."""
+    mark = watermark(cur, sport, source)
+    if mark is None:
+        return 0
+    cur.execute("""SELECT count(*) FROM meet_queue
+                   WHERE source = %s AND sport = %s AND scraped IN (0, 3)
+                     AND meet_id > %s""", (source, sport, mark))
+    return cur.fetchone()[0]
+
+
 def askedFrontier(cur, sport, source="anet"):
     """The highest id ever queued for this feed and sport. Context only."""
     cur.execute("""SELECT max(meet_id) FROM meet_queue
@@ -529,12 +541,34 @@ class ForwardWalk:
     def live(self):
         return [sp for sp in self.sports if sp not in self.done]
 
-    def extend(self):
-        """(has_more, [lines to print]). False means every sport is finished."""
+    def frontierDrained(self):
+        """The live sports whose seeded block is all scraped.
+
+        ★ THE WALK NO LONGER WAITS FOR THE WHOLE QUEUE (owner, 2026-10-07).
+          With the claim newest first (database._CLAIM_ORDER), the block
+          above the watermark is claimed before anything older, so "nothing
+          due or in flight above the watermark" is exactly the moment a
+          drained queue used to mean -- for that sport -- while 93k old
+          meets are still queued beneath it.
+        """
+        out = []
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                for sp in self.live():
+                    if frontierLeft(cur, sp, self.source) == 0:
+                        out.append(sp)
+            conn.rollback()
+        return out
+
+    def extend(self, sports=None):
+        """(has_more, [lines to print]). False means every sport is finished.
+
+        sports= extends only those (a frontier drained while the queue below
+        it is not); a sport left out keeps its dry count untouched."""
         lines = []
-        live = self.live()
+        live = [sp for sp in self.live() if sports is None or sp in sports]
         if not live:
-            return False, lines
+            return bool(self.live()), lines
 
         with getConn() as conn:
             with conn.cursor() as cur:
@@ -561,6 +595,13 @@ class ForwardWalk:
 
         still = {sp: n for sp, n in due.items()
                  if sp not in self.done and n}
+        if sports is not None:
+            # a frontier extension mid-queue: the run goes on whatever this
+            # block found, as long as a sport is still walking or rows are due
+            if still:
+                lines.append("frontier scraped -- seeded the next block: "
+                             + ", ".join(f"{sp} {n:,}" for sp, n in sorted(still.items())))
+            return True, lines
         if still:
             parts = ", ".join(
                 f"{sp} {n:,}"

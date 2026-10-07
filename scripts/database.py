@@ -2731,18 +2731,31 @@ def _claimMeetBatch(cursor, batch_size, sport=None, states=(0,)):
     return rows
 
 
+# ★ NEWEST FIRST (owner, 2026-10-07: "is this the scrape that will add new
+#   meet ids?"). Oldest-first put the forward walk's new ids -- always the
+#   highest -- behind every old meet in the queue: 93,523 meets requeued for
+#   their missing names (requeue_blank_athletes.py) would all have been
+#   re-scraped before one new meet. anet ids rise with time, so the highest
+#   due id is the newest meet; the launcher re-seeds the frontier as soon as
+#   its block is scraped (launcher._maybeExtendFrontier), so new meets keep
+#   coming first and the old repairs fill the rest of the night.
+#   ANET_OLDEST_FIRST=1 puts the old order back.
+_CLAIM_ORDER = ("ASC" if os.environ.get("ANET_OLDEST_FIRST", "") not in ("", "0", "false")
+                else "DESC")
+
+
 def _claimOneSport(cursor, limit, sport, states=(0,)):
     if limit <= 0:
         return []
     cursor.execute(
-        """
+        f"""
         UPDATE meet_queue
         SET scraped = 3
         WHERE (meet_id, sport, source) IN (
             SELECT meet_id, sport, source
             FROM meet_queue
             WHERE scraped = ANY(%s) AND source = 'anet' AND sport = %s
-            ORDER BY meet_id
+            ORDER BY meet_id {_CLAIM_ORDER}
             FOR UPDATE SKIP LOCKED
             LIMIT %s
         )

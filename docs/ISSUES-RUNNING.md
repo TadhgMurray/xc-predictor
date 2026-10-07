@@ -4609,3 +4609,19 @@ Owner: "feels half-assed, only some things were put into new theme." Went throug
 
 - Full run finished in 24h 38m; every step ok except 10a_board_sanity. Logs: /srv/xc-predictor/logs/20261006_120609.
 - Race-page revert (af5f973) deployed after the run. Owner: come back to 10a later. Not yet looked at.
+
+## 2026-10-07 — the scrape: newest meets first; the name repair is queued
+
+- Owner: "is this the scrape that will add new meet ids? did we fix the name issue?" queue_status on the box: anet
+  due 98,780 (TF 73,340, XC 25,440), ids 3..675,708. Since 2026-09-18 done fell TF 536,894 -> 465,424 and XC
+  171,428 -> 154,228: that is `requeue_blank_athletes.py --apply` (dry run said 93,523 meets), already run. So the
+  name fix is in the savers (a5a9009, 3d56bd0, 48c842c) and its re-scrape is queued; nothing else to do.
+- **Was:** the claim was ORDER BY meet_id and the forward walk seeded only when the whole queue was empty, so the new
+  meets (always the highest ids) would have come after all 93k repairs -- days at TF's 3 requests/s.
+- **Now:** anet claims newest first (database._CLAIM_ORDER; ANET_OLDEST_FIRST=1 restores the old order), and the
+  launcher re-seeds the walk as soon as its block above the watermark is scraped (launcher._maybeExtendFrontier,
+  one check per 30 s for all sessions; ForwardWalk.frontierDrained / extend(sports)). The dry-block stop is the
+  same rule, counted per sport. New meets first, then this season's repairs, then older ones; the run can be stopped
+  any time and the rest stays due for the nightly job.
+- Tests: tests/test_newest_first_scrape.py (scratch Postgres: claim order, re-seed with old meets still due,
+  two dry blocks stop the walk).

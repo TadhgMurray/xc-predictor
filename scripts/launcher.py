@@ -1214,11 +1214,12 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
             # Meet_ids already done or in progress (status 1/2/3/4) 
             # are absent from needs_work entirely — we never loop over them.
             # ANET_SPORT=XC (or TF) scopes the whole run to one sport;
-            # unset takes both, in meet_id order.
+            # unset takes both, newest first (database._CLAIM_ORDER).
             # ! RETRY-ONLY CLAIMS THE FAILURES THEMSELVES, not state 0. See
             #   database._claimMeetBatch: resetting them to 0 first made them
             #   indistinguishable from every other due row, so the run scraped
             #   the whole queue.
+            await _maybeExtendFrontier(config["label"])
             batch = await runDbCall(getBatchUnscrapedMeets, BATCH_SIZE,
                                     ANET_SPORT, CLAIM_STATES)
             
@@ -1470,6 +1471,43 @@ async def _extendFrontier(label):
         for line in lines:
             print(f"[queue] {label} {line}", flush=True)
         return more
+
+
+# ★ AND THE FRONTIER IS RE-SEEDED WHILE OLD MEETS ARE STILL QUEUED (owner,
+#   2026-10-07). The claim is newest first (database._CLAIM_ORDER), so the
+#   walk's block above the watermark goes before the old meets; once it is
+#   scraped the next block is seeded at once, instead of after the whole
+#   queue -- 93k name repairs -- drains. One check per FRONTIER_CHECK_S
+#   across every session: two cheap index reads per sport.
+FRONTIER_CHECK_S = float(os.environ.get("FRONTIER_CHECK_S", 30))
+_FRONTIER_LAST = {"t": 0.0}
+
+
+async def _maybeExtendFrontier(label):
+    if RETRY_FAILED:
+        return
+    from database import _CLAIM_ORDER
+    if _CLAIM_ORDER != "DESC":
+        return
+    import time as _time
+    from queue_meets import ForwardWalk
+    async with _EXTEND_LOCK:
+        now = _time.monotonic()
+        if now - _FRONTIER_LAST["t"] < FRONTIER_CHECK_S:
+            return
+        _FRONTIER_LAST["t"] = now
+        if _WALK["it"] is None:
+            _WALK["it"] = ForwardWalk(
+                source="anet",
+                sports=[ANET_SPORT] if ANET_SPORT else None,
+                ahead=SEED_AHEAD, dry_blocks=DRY_BLOCKS_TO_STOP)
+        walk = _WALK["it"]
+        drained = await runDbCall(walk.frontierDrained)
+        if not drained:
+            return
+        _more, lines = await runDbCall(walk.extend, drained)
+        for line in lines:
+            print(f"[queue] {label} {line}", flush=True)
 
 
 def _queueState(conn):
