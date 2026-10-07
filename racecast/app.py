@@ -66,13 +66,25 @@ def _athlete_lateral(r="r"):
     Arguments: r -- alias of the results row in the OUTER query ('r', 'r2').
     Output: SQL text exposing a.name, a.gender, a.school.
     """
+    # ⚠ EVERY PROFILE OF THE PERSON, NOT ONE (owner, 2026-10-07: "unknown
+    #   ppl with athlete names that are not unknown"). This matched one row,
+    #   athlete_id = COALESCE(person_id, athlete_id) -- athlete_id is the key,
+    #   so the ORDER BY below had nothing to choose between. When that one
+    #   profile was blank the row read Unknown, while the athlete page, which
+    #   reads `WHERE person_id = ...` across all of them, showed the name from
+    #   another. Now the person's profiles AND the result's own athlete row
+    #   are candidates, and the ORDER BY picks a named one. Two indexed
+    #   branches (idx_athletes_person_id, the key) rather than an OR.
     return f"""
     LEFT JOIN LATERAL (
         SELECT NULLIF(TRIM(concat_ws(' ', a.first_name, a.last_name)), '') AS name,
                a.gender,
                a.school
-        FROM   athletes a
-        WHERE  a.athlete_id = COALESCE({r}.person_id, {r}.athlete_id)
+        FROM   (SELECT first_name, last_name, gender, school FROM athletes
+                WHERE  person_id = {r}.person_id
+                UNION ALL
+                SELECT first_name, last_name, gender, school FROM athletes
+                WHERE  athlete_id IN ({r}.person_id, {r}.athlete_id)) a
         ORDER  BY (COALESCE(TRIM(a.first_name), '') <> ''
                 OR COALESCE(TRIM(a.last_name),  '') <> '') DESC,
                   (a.gender IN ('M', 'F')) DESC

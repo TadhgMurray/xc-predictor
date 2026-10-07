@@ -199,6 +199,10 @@ WANTED = [
     # ⚠ THE EXPRESSION MUST MATCH THE QUERY'S CHARACTER FOR CHARACTER, or the
     #   planner will not use it. If that concatenation changes in app.py,
     #   this changes with it.
+    # ★ EVERY NAME LOOKUP BY PERSON (2026-10-07). app._athlete_lateral reads
+    #   every profile of a result's person, on every row of every list page;
+    #   the athlete page has always read `WHERE person_id = %s`.
+    ("athletes", "person_id", "idx_athletes_person_id", None),
     ("athletes", "first_name", "idx_athletes_name_trgm",
      "USING gin ((COALESCE(first_name,'') || ' ' || COALESCE(last_name,''))"
      " gin_trgm_ops)"),

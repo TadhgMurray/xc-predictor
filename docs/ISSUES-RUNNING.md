@@ -4881,3 +4881,22 @@ leftover processes. One thing was low: open files, **1024**. Changes:
   scoped to `source='tfrrs'`. Repair for the name-repair set: the dry run of
   `scripts/requeue_blank_athletes.py` shows "not queued" per season; `--apply`
   re-adds them.
+
+## 2026-10-07 — ✅⏳ "Unknown" on list pages for people with a name; requeue looked hung
+
+**Unknown.** `app._athlete_lateral` is the shared name lookup behind race
+pages, the boards and the other lists. It matched one `athletes` row,
+`athlete_id = COALESCE(person_id, athlete_id)`. When that profile was blank,
+the row read Unknown. The athlete page reads `WHERE person_id = …` across
+every profile, so it showed a name from another one. The lookup now takes the
+person's profiles plus the result's own athlete row, and its ORDER BY picks a
+named one. It uses two indexed branches. **Needs** `idx_athletes_person_id`:
+run `scripts/add_page_indexes.py`, which builds it concurrently if missing;
+the athlete page already depended on this lookup. Test:
+`tests/test_name_every_profile.py`. Rankings boards built before this keep
+their stored names until step 10 rebuilds them.
+
+**Requeue "hang".** `requeue_blank_athletes.py` printed nothing until all
+three scans finished, and the middle one reads every anet row of `results`
+and `results_tf`. It now prints a timed line per step.
+`--sport XC --since 2025` narrows the long step.

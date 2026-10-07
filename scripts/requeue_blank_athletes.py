@@ -71,6 +71,12 @@ def main():
         with conn.cursor() as cur:
             cur.execute("SET statement_timeout = 0")
             cur.execute("SET work_mem = '1GB'")
+            # ! A LINE PER STEP (owner, 2026-10-07: "REQUEUE BLANK ATHLETES IS
+            #   HANGING"). Three scans of the big tables printed nothing until
+            #   the table at the end; on 40M+ rows that is many silent minutes.
+            def step(msg):
+                print(f"[requeue] {msg}  ({time.time() - t0:.0f}s)", flush=True)
+            step("1/3 named ids from athletes ...")
             # every id the site can put a name to (scripts/unknown_names.py)
             cur.execute("""
                 CREATE TEMP TABLE rb_named AS
@@ -84,6 +90,9 @@ def main():
                 CREATE UNIQUE INDEX ON rb_named (id);
                 ANALYZE rb_named
             """)
+            step(f"2/3 nameless rows in results{'' if a.sport == 'TF' else ' and'}"
+                 f"{'' if a.sport == 'XC' else ' results_tf'} since {since} "
+                 f"(the long one; --sport XC --since 2025 narrows it) ...")
             cur.execute(f"""
                 CREATE TEMP TABLE rb_meets AS
                 SELECT sport, meet_id, min(season) AS season, count(*) AS nameless FROM (
@@ -104,6 +113,7 @@ def main():
                 GROUP  BY 1, 2
                 HAVING count(*) >= %(min_rows)s
             """, {"since": since, "min_rows": a.min_rows, "sport": a.sport})
+            step(f"3/3 {cur.rowcount:,} meets found; matching them to the queue ...")
             cur.execute("""
                 SELECT m.sport, m.season, count(*), sum(m.nameless),
                        count(*) FILTER (WHERE q.meet_id IS NULL)
