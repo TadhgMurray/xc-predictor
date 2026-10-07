@@ -5820,3 +5820,58 @@ td.vs-level.is-under { color: var(--muted); }
 .landing-page .landing-filters select { font: inherit; font-size: 0.9rem; height: 2.3rem; min-width: 12rem;
   padding: 0.3rem 0.5rem; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
 .landing-page .landing-filters .seg-btn { text-decoration: none; }
+
+/* ======================================================================= *
+ *  COLOUR (owner, 2026-10-07: "I feel like we just use very little color,
+ *  not good!")
+ *
+ *  A few colours, each with one job, used the same way on every page --
+ *  never as decoration, never as a filled badge or a band:
+ *    --xc / --tf      the sport: a dot or a coloured word, wherever a sport
+ *                     is named (header kicker, sport tabs, section heads)
+ *    --m1 / --m2 / --m3  places 1, 2, 3 in any results table
+ *    --harder / --easier  which way a course or a day moved the clock
+ *    --gold           the lit team (rows, the field plot, the key)
+ *  Links stay navy and selected controls stay black (2026-10-06).
+ * ======================================================================= */
+:root {
+  --xc:     #2f7a4a;   /* grass */
+  --xc-bg:  #ecf5ef;
+  --tf:     #c8561c;   /* the track's own colour */
+  --tf-bg:  #fbefe7;
+  --m1:     #c99a2e;
+  --m2:     #9aa3ad;
+  --m3:     #b0703e;
+  --harder: #b42318;
+  --easier: #0f766e;
+}
+
+/* the sport, named: a dot in its colour before the word */
+.sport-tag { display: inline-flex; align-items: center; gap: .35rem; font-weight: 650;
+             font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; }
+.sport-tag::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%;
+                     background: currentColor; }
+.sport-tag--xc { color: var(--xc); }
+.sport-tag--tf { color: var(--tf); }
+/* sport tabs and section heads carry the same dot */
+.seg-btn.sport--xc::before, .seg-btn.sport--tf::before,
+h2.sport--xc::before, h2.sport--tf::before {
+  content: ""; display: inline-block; width: .55rem; height: .55rem; border-radius: 50%;
+  margin-right: .45rem; vertical-align: .08em;
+}
+.seg-btn.sport--xc::before, h2.sport--xc::before { background: var(--xc); }
+.seg-btn.sport--tf::before, h2.sport--tf::before { background: var(--tf); }
+
+/* places 1-3: a disc in the medal's colour, the number on it */
+td.pl.rc-m1 > span, td.pl.rc-m2 > span, td.pl.rc-m3 > span {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.55rem; height: 1.55rem; border-radius: 50%;
+  color: #fff; font-weight: 700; font-size: .85rem;
+}
+td.pl.rc-m1 > span { background: var(--m1); }
+td.pl.rc-m2 > span { background: var(--m2); }
+td.pl.rc-m3 > span { background: var(--m3); }
+
+/* course difficulty and the race day: which way the clock moved */
+.dv.dv-hard, .day-slow { color: var(--harder); }
+.dv.dv-easy, .day-fast { color: var(--easier); }

@@ -15,6 +15,7 @@
     {% set meta_image_alt = course_name ~ ": course difficulty and the fastest ever here" %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
@@ -40,61 +41,75 @@
 
 {% macro hid(i) %}{{ ' class="row-hidden"'|safe if i >= 15 }}{% endmacro %}
 
-<main class="page-wide">
-    <div class="hdr-row">
-      <h1>{{ course_name }}</h1>
-      {% with share_title=course_name ~ " on Racecast", share_url=site_origin ~ "/course/" ~ (course_name|urlencode) %}{% include "_share.html" %}{% endwith %}
-    </div>
+<main class="page-wide rc">
+{# ★ THE RACE PAGE'S ARRANGEMENT (owner, 2026-10-07: "I like the new race
+   page ... emulate that in other places"): header with the facts, then a
+   tab bar and one table at a time. race.css carries the layout. #}
+<header class="rc-hd"><div class="rc-w rc-hgrid">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country course</span></div>
+    <h1>{{ course_name }}</h1>
     {# ★ THE HEADER FOLLOWS THE VIEW. On the overview the difficulty is
        the usual distance's, and says which -- a course is a different
        course at 2 miles and at 5K, and one bare number silently
        averaging them claimed more than the fit knows. Scoped, both the
        difficulty and the counts are the selected distance's. #}
-    <p class="meta">
-        Difficulty:{{ difficulty_i("XC") }}
+    <div class="rc-facts rc-facts-lead">
+      <span>Difficulty{{ difficulty_i("XC") }}
         {% if sel_dist %}
-            {% if sel_difficulty is not none %}
-                {{ dv(sel_difficulty, "XC") }}
-                <span class="dist-note-quiet">({{ sel_dist }}m)</span>
-            {% else %} - {% endif %}
+          {% if sel_difficulty is not none %}<b>{{ dv(sel_difficulty, "XC") }}</b> <span class="dist-note-quiet">at {{ sel_dist }}m</span>{% else %}<b> - </b>{% endif %}
         {% elif primary_difficulty is not none %}
-            {{ dv(primary_difficulty, "XC") }}
-            <span class="dist-note-quiet">({{ primary_dist }}m, the usual distance here)</span>
-        {% else %} - {% endif %}
-        {% if header %}
-            · {{ "{:,}".format(header.n_results) }} results
-            · {{ "{:,}".format(header.n_athletes) }} athletes
-        {% endif %}
-    </p>
-
-    {% if dist_values %}
-    <div class="yearbar">
-        <a class="yb{{ ' is-on' if not sel_dist }}"
-           href="/course/{{ course_name|urlencode }}">All</a>
-        {% for d in dist_values %}
-        <a class="yb{{ ' is-on' if d == sel_dist }}"
-           href="/course/{{ course_name|urlencode }}?dist={{ d }}">{{ d }}m</a>
-        {% endfor %}
+          <b>{{ dv(primary_difficulty, "XC") }}</b> <span class="dist-note-quiet">at {{ primary_dist }}m, the usual distance</span>
+        {% else %}<b> - </b>{% endif %}</span>
+      {% if header %}
+      <span>Results <b>{{ "{:,}".format(header.n_results) }}</b></span>
+      <span>Athletes <b>{{ "{:,}".format(header.n_athletes) }}</b></span>
+      {% endif %}
     </div>
-    {% endif %}
+  </div>
+  <div class="rc-right rc-right-end">
+    {% with share_title=course_name ~ " on Racecast", share_url=site_origin ~ "/course/" ~ (course_name|urlencode) %}{% include "_share.html" %}{% endwith %}
+  </div>
+</div></header>
 
-{# ★ THE EQUIVALENCE LINE (2026-09-25): the selected distance, or the usual
-   one. ! NO DISTANCE PILLS OF ITS OWN (owner, 2026-10-07: "try not to have
-   duplicated things"): the row of distances just above already picks the
-   distance for the whole page, the ruler included. #}
-{% set eq_dist = sel_dist or primary_dist %}
-{% if eq_dist and dist_table %}
-{{ equiv_line("hs_m", eq_dist,
-              sel_difficulty if sel_dist else primary_difficulty,
-              course_name) }}
+{% if dist_values %}
+<div class="yearbar rc-scope">
+    <a class="yb{{ ' is-on' if not sel_dist }}"
+       href="/course/{{ course_name|urlencode }}">All distances</a>
+    {% for d in dist_values %}
+    <a class="yb{{ ' is-on' if d == sel_dist }}"
+       href="/course/{{ course_name|urlencode }}?dist={{ d }}">{{ d }}m</a>
+    {% endfor %}
+</div>
 {% endif %}
 
-{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+{% set eq_dist = sel_dist or primary_dist %}
+{% set has_track = eq_dist and dist_table %}
+{% set has_hist = course_history and course_history.seasons %}
+<div class="rc-w rc-grid rc-grid-one">
+<div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      {% if not sel_dist %}
+      <a class="seg-btn is-on" href="#best" data-tab="best">Best ratings</a>
+      <a class="seg-btn" href="#teams" data-tab="teams">Team bests</a>
+      {% if dist_table %}<a class="seg-btn" href="#distances" data-tab="distances">Distances<span class="n">{{ dist_table|length }}</span></a>{% endif %}
+      {% else %}
+      <a class="seg-btn is-on" href="#records" data-tab="records">Records</a>
+      <a class="seg-btn" href="#teams" data-tab="teams">Team records</a>
+      <a class="seg-btn" href="#best" data-tab="best">Best ratings</a>
+      {% endif %}
+      {% if has_hist %}<a class="seg-btn" href="#history" data-tab="history">Year by year</a>{% endif %}
+      <a class="seg-btn" href="#meets" data-tab="meets">Meets{% if meets %}<span class="n">{{ meets|length }}</span>{% endif %}</a>
+      {% if has_track %}<a class="seg-btn" href="#track" data-tab="track">On the track</a>{% endif %}
+    </nav>
+    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+  </div>
 
 {% if not sel_dist %}
     {# ============================ OVERVIEW ============================ #}
     {% if dist_table %}
-    <h2>Distances raced here</h2>
+    <section class="rc-panel" id="distances" data-panel="distances">
     <table class="dist-table">
         <thead><tr><th>Distance</th><th>Difficulty{{ difficulty_i("XC") }}</th><th>Results</th>
             <th>First</th><th>Last</th></tr></thead>
@@ -110,9 +125,11 @@
             {% endfor %}
         </tbody>
     </table>
+    </section>
     {% endif %}
 
-    <h2>Best speed ratings <span class="dist-note">all distances</span></h2>
+    <section class="rc-panel" id="best" data-panel="best">
+    <p class="meta rc-lead">All distances, ranked by rating.</p>
     <div class="rec-pair">
         {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
         {% set rows = rating_bests[key] %}
@@ -126,7 +143,7 @@
                 <tbody>
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
-                        <td>{{ loop.index }}</td>
+                        <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
                         <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td class="no-break">{{ r.display_time }}</td>
@@ -144,8 +161,10 @@
         {% endfor %}
     </div>
 
-    <h2>Best team performances by rating
-        <span class="dist-note">top-5 average rating, one race, all distances</span></h2>
+    </section>
+
+    <section class="rc-panel" id="teams" data-panel="teams">
+    <p class="meta rc-lead">Top-5 average rating in one race, all distances.</p>
     <div class="rec-pair">
         {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
         {% set rows = team_rating[key] %}
@@ -159,7 +178,7 @@
                 <tbody>
                     {% for t in rows %}
                     <tr{{ hid(loop.index0) }}>
-                        <td>{{ loop.index }}</td>
+                        <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
                         <td>{% if t.school|is_team %}{{ crest(t.school, header.state) }}<a href="{{ school_href(t.school, header.state) }}" title="{{ t.school }}">{{ t.school|school_label_in(header.state) }}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
                         <td>{{ rv(t.avg5, t.hs_avg5) }}</td>
                         <td>{{ t.distance }}m</td>
@@ -176,13 +195,11 @@
         {% endfor %}
     </div>
 
+    </section>
 {% else %}
     {# ======================== ONE DISTANCE =========================== #}
-    <h2>Course records
-        <span class="dist-note">{{ sel_dist }}m
-            {%- if sel_difficulty is not none %} · difficulty {{ dv(sel_difficulty, "XC") }}{% endif %}
-            {%- if sel_n %} · {{ "{:,}".format(sel_n) }} results{% endif %}</span>
-    </h2>
+    <section class="rc-panel" id="records" data-panel="records">
+    <p class="meta rc-lead">Fastest times at {{ sel_dist }}m{% if sel_n %}, from {{ "{:,}".format(sel_n) }} results{% endif %}.</p>
     <div class="rec-pair">
         {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
         {% set rows = records[key] %}
@@ -196,7 +213,7 @@
                 <tbody>
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
-                        <td>{{ loop.index }}</td>
+                        <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
                         <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
@@ -214,8 +231,10 @@
         {% endfor %}
     </div>
 
-    <h2>Team records
-        <span class="dist-note">{{ sel_dist }}m · top-5 total, one race</span></h2>
+    </section>
+
+    <section class="rc-panel" id="teams" data-panel="teams">
+    <p class="meta rc-lead">Top-5 total time in one race at {{ sel_dist }}m.</p>
     <div class="rec-pair">
         {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
         {% set rows = team_records[key] %}
@@ -229,7 +248,7 @@
                 <tbody>
                     {% for t in rows %}
                     <tr{{ hid(loop.index0) }}>
-                        <td>{{ loop.index }}</td>
+                        <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
                         <td>{% if t.school|is_team %}{{ crest(t.school, header.state) }}<a href="{{ school_href(t.school, header.state) }}" title="{{ t.school }}">{{ t.school|school_label_in(header.state) }}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
                         <td class="no-break">{{ t.display_total }}</td>
                         <td class="no-break">{{ t.display_avg }}</td>
@@ -249,7 +268,10 @@
         {% endfor %}
     </div>
 
-    <h2>Best speed ratings <span class="dist-note">{{ sel_dist }}m</span></h2>
+    </section>
+
+    <section class="rc-panel" id="best" data-panel="best">
+    <p class="meta rc-lead">Best ratings at {{ sel_dist }}m.</p>
     <div class="rec-pair">
         {% for label, key in [("Boys", "M"), ("Girls", "F")] %}
         {% set rows = rating_bests[key] %}
@@ -263,7 +285,7 @@
                 <tbody>
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
-                        <td>{{ loop.index }}</td>
+                        <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
                         <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td class="no-break">{{ r.display_time }}</td>
@@ -280,12 +302,17 @@
         </div>
         {% endfor %}
     </div>
+    </section>
 {% endif %}
 
+    {% if has_hist %}
+    <section class="rc-panel" id="history" data-panel="history">
     {% include "_course_history.html" %}
+    </section>
+    {% endif %}
 
-    <h2>Meets held here
-        <span class="dist-note">{{ (sel_dist ~ "m") if sel_dist else "all distances" }}</span></h2>
+    <section class="rc-panel" id="meets" data-panel="meets">
+    <p class="meta rc-lead">Meets held here, {{ (sel_dist ~ "m") if sel_dist else "all distances" }}.</p>
     {% if meets %}
     <table class="staged meets-table" data-step="20">
         <thead><tr><th>Meet</th><th>Last held</th><th>Distance</th><th>Results</th></tr></thead>
@@ -305,11 +332,20 @@
                    "/meets?course=" ~ course_name|urlencode) }}
     <p class="view-all"><a href="/meets?course={{ course_name|urlencode }}">View all →</a></p>
     {% else %}<p class="meta">No meets on record.</p>{% endif %}
+    </section>
 
+    {% if has_track %}
+    <section class="rc-panel" id="track" data-panel="track">
+    {{ equiv_line("hs_m", eq_dist, sel_difficulty if sel_dist else primary_difficulty, course_name) }}
+    </section>
+    {% endif %}
+</div>
+</div>
 </main>
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('staged.js') }}"></script>
 <script src="{{ static_v('equiv-line.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

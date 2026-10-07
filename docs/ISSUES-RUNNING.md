@@ -4923,3 +4923,31 @@ current site's look.
   Hart) have a key `school\x00state`, and the sidebar line "…'s runners are
   lit" printed the hidden separator. Both places now show only the school.
 - Test: `tests/test_school_bands_field.py`. Not on track race pages yet.
+
+## 2026-10-07 — ✅ the race page's arrangement on the meet and course pages; more colour
+
+Owner: "I like the new race page, compared to the old one. Maybe just try to
+emulate that in other places? Also I feel like we just use very little color,
+not good!"
+- **Colour** (`style.css`, COLOUR block; tokens `--xc --tf --m1 --m2 --m3
+  --harder --easier`). Each colour has one job: green XC and orange track as
+  a dot or coloured word wherever a sport is named (header tag, sport tabs,
+  the athlete page's section heads); gold, silver and bronze discs for places
+  1–3 in results and records tables; course difficulty and the race-day word
+  red when harder or slower, teal when easier or faster (`_explain.dv`, the
+  facts line); the lit team gold everywhere, including the field plot. No
+  filled badges, no bands.
+- **Meet pages** (`meet.html`, `meet_tf.html`): race-page header (sport tag,
+  name, course and date, a facts line), then a tab bar (Races | Compiled, or
+  Events | Team scores), the predict or compiled link, a finder, and the
+  table first. The winner cell carries a gold disc.
+- **Course page** (`course.html`): header with the difficulty; the distance
+  picker under it; tabs for Best ratings / Team bests / Distances (overview)
+  or Records / Team records / Best ratings (one distance), plus Year by year,
+  Meets, and "On the track" (the ruler, as on the race page). Boys and Girls
+  tables stack full width inside the layout; side by side they truncated
+  every name and school.
+- `race-page.js` defaults to the first **tab**. It used to assume "results"
+  and would have hidden every panel on a page without one.
+- Checked with real templates rendered against sample data, at 1280 and 390,
+  with no page-level horizontal scroll. Not yet: school page, athlete header.

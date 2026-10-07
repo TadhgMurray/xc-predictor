@@ -45,6 +45,7 @@
   <div>
     {# ★ THE ONE LINK TO THE MEET (owner, 2026-10-07: "try not to have
        duplicated things"): the meet's name, above the title #}
+    <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country</span></div>
     <div class="rc-kick"><a href="/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}">{{ header.meet_name|with_year(race_date) }}</a></div>
     <h1>{{ title }}</h1>
     <div class="rc-meta">
@@ -72,7 +73,7 @@
     {% if story %}<p class="rc-story">{% for s in story %}{{ s }}{% if not loop.last %} {% endif %}{% endfor %}</p>{% endif %}
     <div class="rc-facts">
       <span>Course <b>{{ dv(header.difficulty, "XC", day_effect) }}</b>{{ difficulty_i("XC") }}</span>
-      {% if day_effect is not none %}<span>Day <b>{{ day_effect|dayword }}{% if (day_effect|dayword) != 'level' %} · {{ day_effect|dayabs }}{% endif %}</b></span>{% endif %}
+      {% if day_effect is not none %}<span>Day <b class="day-{{ day_effect|dayword }}">{{ day_effect|dayword }}{% if (day_effect|dayword) != 'level' %} · {{ day_effect|dayabs }}{% endif %}</b></span>{% endif %}
       {% if extras and extras.weather %}<span>Weather <b>{{ extras.weather.temp_f }}°F{% if extras.weather.wind_mph is not none %} · wind {{ extras.weather.wind_mph }}{% endif %}{% if extras.weather.humidity is not none %} · {{ extras.weather.humidity }}%&nbsp;hum{% endif %}{% if extras.weather.rain %} · rain{% endif %}</b></span>{% endif %}
     </div>
     <button type="button" class="share-box share-btn rc-share" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"

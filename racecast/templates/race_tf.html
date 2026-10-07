@@ -46,6 +46,7 @@
 <main class="page-wide rc">
 <header class="rc-hd"><div class="rc-w rc-hgrid">
   <div>
+    <div class="rc-sport"><span class="sport-tag sport-tag--tf">Track &amp; field</span></div>
     <div class="rc-kick"><a href="/meet/tf/{{ header.meet_id }}">{{ header.meet_name|with_year(race_date) }}</a></div>
     <h1>{{ race_title(header.event_short, header.gender, results) }}{% if header.division %} · {{ header.division }}{% endif %}</h1>
     <div class="rc-meta">
@@ -65,7 +66,7 @@
     {% if story %}<p class="rc-story">{% for s in story %}{{ s }}{% if not loop.last %} {% endif %}{% endfor %}</p>{% endif %}
     <div class="rc-facts">
       <span>Venue <b>{{ dv(header.difficulty, "TF", day_effect) }}</b>{{ difficulty_i("TF") }}</span>
-      {% if day_effect is not none %}<span>Day <b>{{ day_effect|dayword }}{% if (day_effect|dayword) != 'level' %} · {{ day_effect|dayabs }}{% endif %}</b></span>{% endif %}
+      {% if day_effect is not none %}<span>Day <b class="day-{{ day_effect|dayword }}">{{ day_effect|dayword }}{% if (day_effect|dayword) != 'level' %} · {{ day_effect|dayabs }}{% endif %}</b></span>{% endif %}
       {% if has_wind %}<span>Wind <b>on the sheet</b></span>{% endif %}
     </div>
     <button type="button" class="share-box share-btn rc-share" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"

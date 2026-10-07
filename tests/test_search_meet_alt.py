@@ -62,7 +62,10 @@ def test_the_page_side_ranks_the_same_way_and_the_race_page_carries_alt():
     res = a[a.index("def get_race_results("):a.index("_REC_DIST_TOL =")]
     assert "%(src)s::text IS NULL OR r.source = %(src)s" in res
     meet = _src("racecast", "templates", "meet.html")
-    assert "/race/xc/{{ header.meet_id }}/{{ d.div_id }}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}" in meet
+    # the race links carry ?alt= through meet.html's race_q() macro
+    assert "{% macro race_q() %}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}" in meet
+    assert "/race/xc/{{ header.meet_id }}/{{ d.div_id }}{{ race_q() }}" in meet
+    assert "/compiled/{{ g.distance }}/{{ g.gender|urlencode }}{{ race_q() }}" in meet
     race = _src("racecast", "templates", "race.html")
     assert '/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}' in race
     sm = _src("racecast", "build_sitemap.py")

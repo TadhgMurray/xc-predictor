@@ -11,10 +11,16 @@
   // ---- tabs: #results / #teams / #track, kept in the URL hash
   var tabs = main.querySelectorAll("[data-tab]");
   var panels = main.querySelectorAll("[data-panel]");
+  // ! THE FIRST TAB IS THE DEFAULT, not "results": the meet page's first
+  //   tab is "races", and an unknown name used to hide every panel. The
+  //   tab bar's order, not the panels' order in the source, says which.
+  var firstTab = main.querySelector(".rc-tabs [data-tab]");
+  var first = firstTab ? firstTab.dataset.tab
+            : (panels.length ? panels[0].dataset.panel : "results");
   function show(name) {
     var found = false;
     panels.forEach(function (p) { if (p.dataset.panel === name) found = true; });
-    if (!found) name = "results";
+    if (!found) name = first;
     panels.forEach(function (p) { p.hidden = p.dataset.panel !== name; });
     main.querySelectorAll(".rc-tabs [data-tab]").forEach(function (a) {
       a.classList.toggle("is-on", a.dataset.tab === name);   // the site's .seg-btn.is-on
@@ -30,7 +36,7 @@
       }
     });
   });
-  show((location.hash || "#results").slice(1));
+  show((location.hash || "#" + first).slice(1));
 
   // ---- team lighting: a team's runners lit in the results
   // ★ BY RESULT ID AND BY NAME. The scorers' ids are exact (the grafted
@@ -129,7 +135,7 @@
         tt.textContent = p.label;
         c.appendChild(tt);
         c.addEventListener("click", function () {
-          show("results");
+          show(first);
           p.tr.hidden = false;
           p.tr.scrollIntoView({ block: "center", behavior: "smooth" });
           p.tr.classList.remove("rc-flash"); void p.tr.offsetWidth; p.tr.classList.add("rc-flash");
@@ -167,11 +173,11 @@
     });
   });
   var me = document.currentScript;
-  var first = me && me.dataset.light;
-  if (first) {
+  var lightFirst = me && me.dataset.light;
+  if (lightFirst) {
     var match = null;
-    teamRows.forEach(function (t) { if (!match && t.dataset.team === first) match = t; });
-    light(first, match ? match.dataset.rids : "");
+    teamRows.forEach(function (t) { if (!match && t.dataset.team === lightFirst) match = t; });
+    light(lightFirst, match ? match.dataset.rids : "");
   } else {
     drawField();
   }
@@ -181,7 +187,7 @@
   if (find) {
     find.addEventListener("input", function () {
       var q = find.value.trim().toLowerCase();
-      if (q) show("results");
+      if (q) show(first);
       rows.forEach(function (tr) {
         tr.hidden = !!q && tr.textContent.toLowerCase().indexOf(q) < 0;
       });

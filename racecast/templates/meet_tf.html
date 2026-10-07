@@ -24,67 +24,81 @@
     {% set meta_image_alt = (header.meet_name|with_year(meet_date)) ~ (": the best marks of the meet" if marks else ": the team standings") %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
-<main class="page-wide">
-    <div class="hdr-row">
-      <h1>{{ header.meet_name }}</h1>
-      <span class="share-pair">
-      {% with share_title=(header.meet_name|with_year(meet_date)) ~ " on Racecast", share_url=site_origin ~ "/meet/tf/" ~ header.meet_id ~ ("?" ~ alt_q if alt_q else "") %}{% include "_share.html" %}{% endwith %}
-      {% with share_title=(header.meet_name|with_year(meet_date)) ~ " best marks on Racecast", share_url=site_origin ~ "/meet/tf/" ~ header.meet_id ~ "?card=marks" ~ ("&" ~ alt_q if alt_q else ""), share_label="Share best marks" %}{% include "_share.html" %}{% endwith %}
-      </span>
+<main class="page-wide rc">
+{# ★ THE RACE PAGE'S ARRANGEMENT (owner, 2026-10-07), as meet.html: header,
+   then a tab bar -- Events | Team scores, compiled results, a finder --
+   and the events table first. race.css carries the layout. #}
+<header class="rc-hd"><div class="rc-w rc-hgrid">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--tf">{{ "Indoor track" if header.is_indoor == 1 else "Outdoor track" }}</span></div>
+    <h1>{{ header.meet_name }}</h1>
+    <div class="rc-meta">
+      {% if meet_date %}{{ meet_date|mdy }}{% endif %}
+      {% if header.state %} · {{ header.state }}{% endif %}
+      {% if header.location_id %} · <a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">Venue</a>{% endif %}
     </div>
-    <p class="meta">
-        {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }}
-        {% if meet_date %} · {{ meet_date|mdy }}{% endif %}
-        {% if header.state %} · {{ header.state }}{% endif %}
-        {% if header.location_id %} ·
-            <a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">View venue →</a>
-        {% endif %}
-    </p>
-
-    {% if other_sources %}
-    {# Same collision note as meet.html: one id, two real-world meets.
-       No feed names, in the text or the URL. #}
-    <p class="meta source-split-note">
-        Two different meets share this page address.
-        {% for o in other_sources %}
-        <a href="?alt={{ o.alt }}">View the other meet</a>{{ ", " if not loop.last }}
-        {% endfor %}
-    </p>
-    {% endif %}
-
-    {% if scored and scored.n_scored_events %}
-    <p><a class="meet-link" href="/meet/tf/{{ header.meet_id }}/compiled{{ ('?alt=' ~ alt_idx) if alt_idx }}">Compiled results →</a></p>
-    {{ tf_team_block(scored.divisions) }}
-    {% endif %}
-
     {% if events %}
-    <h2>Events</h2>
-    <table>
+    <div class="rc-facts">
+      <span>Events <b>{{ events|length }}</b></span>
+      <span>Marks <b>{{ "{:,}".format(events|sum(attribute='n_results')) }}</b></span>
+      {% if scored and scored.n_scored_events %}<span>Scored events <b>{{ scored.n_scored_events }}</b></span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  <div class="rc-right rc-right-end">
+    <span class="share-pair">
+    {% with share_title=(header.meet_name|with_year(meet_date)) ~ " on Racecast", share_url=site_origin ~ "/meet/tf/" ~ header.meet_id ~ ("?" ~ alt_q if alt_q else "") %}{% include "_share.html" %}{% endwith %}
+    {% with share_title=(header.meet_name|with_year(meet_date)) ~ " best marks on Racecast", share_url=site_origin ~ "/meet/tf/" ~ header.meet_id ~ "?card=marks" ~ ("&" ~ alt_q if alt_q else ""), share_label="Share best marks" %}{% include "_share.html" %}{% endwith %}
+    </span>
+  </div>
+</div></header>
+
+{% if other_sources %}
+{# Same collision note as meet.html: one id, two real-world meets.
+   No feed names, in the text or the URL. #}
+<p class="meta source-split-note">
+    Two different meets share this page address.
+    {% for o in other_sources %}
+    <a href="?alt={{ o.alt }}">View the other meet</a>{{ ", " if not loop.last }}
+    {% endfor %}
+</p>
+{% endif %}
+
+{% set has_teams = scored and scored.n_scored_events %}
+<div class="rc-w rc-grid rc-grid-one">
+<div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#events" data-tab="events">Events{% if events %}<span class="n">{{ events|length }}</span>{% endif %}</a>
+      {% if has_teams %}<a class="seg-btn" href="#teams" data-tab="teams">Team scores</a>{% endif %}
+    </nav>
+    {% if has_teams %}<a class="rc-out" href="/meet/tf/{{ header.meet_id }}/compiled{{ ('?alt=' ~ alt_idx) if alt_idx }}">Compiled results →</a>{% endif %}
+    {% if events and events|length > 8 %}<input class="rc-find" type="search" placeholder="Find an event" aria-label="Find an event">{% endif %}
+  </div>
+
+  <section class="rc-panel" id="events" data-panel="events">
+    {% if events %}
+    <table class="rc-table">
         <thead>
-            <tr>
-                <th>Event</th>
-                <th>Gender</th>
-                <th>Division</th>
-                <th>Results</th>
-            </tr>
+            <tr><th>Event</th><th>Gender</th><th class="rc-wide">Division</th><th class="n">Marks</th></tr>
         </thead>
         <tbody>
             {% for e in events %}
             <tr id="ev-{{ e.div_id }}-{{ e.event_id }}">
-                <td>
+                <td class="nm">
                     <a href="/race/tf/{{ header.meet_id }}/{{ e.event_id }}/{{ e.div_id }}{% if school %}?school={{ school|urlencode }}{% endif %}">
                         {{ e.display_name }}{% if e.dup_ix %} <span class="dist-note">· {{ e.dup_ix }}</span>{% endif %}
                     </a>
                     {% if school and (e.div_id, e.event_id) in school_events %}<span class="school-ran" title="{{ school }} entered this event">· {{ school|school_label }}</span>{% endif %}
-
                 </td>
                 <td>{{ "Boys" if e.gender == "M" else "Girls" if e.gender == "F" else " - " }}</td>
-                <td>{{ e.division if e.division else " - " }}</td>
-                <td>{{ e.n_results }}</td>
+                <td class="rc-wide">{{ e.division if e.division else " - " }}</td>
+                <td class="n">{{ e.n_results }}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -95,29 +109,37 @@
        own event name. #}
     {% for ev in loose %}
     <h2>{{ ev.name }}</h2>
-    <table>
+    <table class="rc-table">
         <thead>
-            <tr><th>Place</th><th>Athlete</th><th>Grade</th><th>School</th>
-                <th>Result</th><th>Rating</th></tr>
+            <tr><th>Pl</th><th>Athlete</th><th class="rc-wide">Grade</th><th class="rc-wide">School</th>
+                <th class="n">Result</th><th class="n">Rating</th></tr>
         </thead>
         <tbody>
             {% for r in ev.rows %}
             <tr id="r{{ r.result_id }}">
-                <td>{{ r.row_place }}</td>
-                <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.athlete_name or " - " }}</a>{% else %}{{ r.athlete_name or " - " }}{% endif %}</td>
-                <td>{{ r.grade|grade_label('college' if college else 'hs') if r.grade else " - " }}</td>
-                <td>{% if r.school and r.school|is_team %}{{ crest(r.school, header.state, pool='college' if college else none) }}<a href="{{ school_href(r.school, header.state, pool='college' if college else none) }}">{{ r.school|school_label_for('college' if college else none, header.state) }}</a>{% elif r.school %}{{ r.school|school_label_for('college' if college else none, header.state) }}{% else %} - {% endif %}</td>
-                <td>{{ r.display_result }}</td>
-                <td>{{ "%.1f"|format(r.speed_rating) if r.speed_rating else " - " }}</td>
+                <td class="pl{% if r.row_place|string in ['1','2','3'] %} rc-m{{ r.row_place }}{% endif %}"><span>{{ r.row_place }}</span></td>
+                <td class="nm">{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.athlete_name or " - " }}</a>{% else %}{{ r.athlete_name or " - " }}{% endif %}</td>
+                <td class="rc-wide">{{ r.grade|grade_label('college' if college else 'hs') if r.grade else " - " }}</td>
+                <td class="rc-wide">{% if r.school and r.school|is_team %}{{ crest(r.school, header.state, pool='college' if college else none) }}<a href="{{ school_href(r.school, header.state, pool='college' if college else none) }}">{{ r.school|school_label_for('college' if college else none, header.state) }}</a>{% elif r.school %}{{ r.school|school_label_for('college' if college else none, header.state) }}{% else %} - {% endif %}</td>
+                <td class="n">{{ r.display_result }}</td>
+                <td class="n">{{ "%.1f"|format(r.speed_rating) if r.speed_rating else " - " }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
     {% endfor %}
     {% else %}
-    <h2>Events</h2>
     <p class="meta">No results are attached to this meet.</p>
     {% endif %}
+  </section>
+
+  {% if has_teams %}
+  <section class="rc-panel" id="teams" data-panel="teams">
+    {{ tf_team_block(scored.divisions) }}
+  </section>
+  {% endif %}
+</div>
+</div>
 
     {% if anchor %}
     {# scroll to the clicked result's row (or its event's row) and tint it;
@@ -132,5 +154,6 @@
 </main>
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('staged.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

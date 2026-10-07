@@ -8,6 +8,7 @@
 
 /* ---- header ---------------------------------------------------------- */
 main.rc .rc-hgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .8rem 2rem; align-items: start; }
+main.rc .rc-sport { margin-bottom: .15rem; }
 main.rc .rc-kick { font-size: .95rem; font-weight: 600; }
 main.rc h1 { margin: .15rem 0 .3rem; }
 main.rc .rc-meta { font-size: .95rem; color: #374151; }
@@ -22,7 +23,22 @@ main.rc .rc-right { display: flex; flex-direction: column; align-items: flex-sta
 main.rc .rc-story { margin: .35rem 0 0; line-height: 1.55; }
 main.rc .rc-facts { display: flex; flex-wrap: wrap; gap: .2rem 1.2rem; margin-top: .5rem; font-size: .9rem; color: var(--muted); }
 main.rc .rc-facts b { color: var(--ink); margin-left: .25rem; }
+main.rc .rc-facts b.day-fast { color: var(--easier); }
+main.rc .rc-facts b.day-slow { color: var(--harder); }
 main.rc .rc-share { margin-top: .7rem; }
+main.rc .rc-right-end { align-items: flex-end; }
+main.rc .rc-facts-lead { font-size: 1rem; margin-top: .6rem; }
+main.rc .rc-facts .dist-note-quiet { color: var(--muted); font-weight: 400; }
+main.rc .rc-scope { margin: 1.1rem 0 0; }
+main.rc .rc-tbar-end { margin-left: auto; }
+main.rc .rc-tbar-end .toggle-group, main.rc .rc-tbar-end .seg { margin: 0; }
+main.rc .rc-lead { margin: .2rem 0 .7rem; }
+/* the meet page's winner: a gold disc, the same gold as place 1 */
+main.rc .mw-medal { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; background: var(--m1); margin-right: .4rem; vertical-align: .05em; }
+main.rc .meet-races td.nm a { white-space: normal; }
+main.rc .meet-races .cell-sub { display: block; font-size: .8rem; color: var(--muted); }
+main.rc .meet-races .cell-sub.rc-subline { display: none; }
+@media (max-width: 760px) { main.rc .meet-races .cell-sub.rc-subline { display: block; } }
 
 /* ---- body grid -------------------------------------------------------- */
 main.rc .rc-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 1.6rem; align-items: start; margin-top: 1.4rem; }
@@ -69,11 +85,11 @@ main.rc .rc-table td.wind { color: var(--muted); font-size: .88rem; }
 main.rc .rc-field { margin: .2rem 0 .9rem; }
 main.rc .rc-field figcaption { display: flex; align-items: center; gap: .9rem; font-size: .8rem; color: var(--muted); margin-bottom: .2rem; }
 main.rc .rc-field-key { display: inline-flex; align-items: center; gap: .3rem; color: var(--ink); font-weight: 600; }
-main.rc .rc-field-key i.lit { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
+main.rc .rc-field-key i.lit { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--gold); }
 main.rc .rc-field svg { display: block; width: 100%; height: auto; overflow: visible; }
 main.rc .rc-field .d { fill: #c9cdd3; cursor: pointer; }
 main.rc .rc-field .d:hover { fill: #8a9099; }
-main.rc .rc-field .d.lit { fill: var(--ink); }
+main.rc .rc-field .d.lit { fill: var(--gold); }
 main.rc .rc-field .ax, main.rc .rc-field .tk { stroke: var(--line-2); stroke-width: 1; }
 main.rc .rc-field .tl { font-size: 10px; fill: var(--muted); font-variant-numeric: tabular-nums; }
 main.rc tr.rc-flash td { animation: rc-flash 1.6s ease-out; }
@@ -104,4 +120,20 @@ main.rc .page-report { margin-top: 1.4rem; }
   main.rc .rc-table td.nm a { display: block; line-height: 1.2; white-space: normal; }
   main.rc td { padding-left: .35rem; padding-right: .35rem; }
   main.rc .rc-teams-full { display: block; overflow-x: auto; }
+}
+
+/* ---- the course page's Boys / Girls pairs ------------------------------ */
+/* side by side they truncated every name and school ("Runne...", "Dana ...");
+   stacked, each table has the full width */
+main.rc .rec-pair { grid-template-columns: minmax(0, 1fr); gap: .4rem; }
+main.rc .rec-pair table { table-layout: auto; }
+main.rc .rec-pair .rec-gender { margin: .6rem 0 .3rem; }
+main.rc .rec-pair td.rt, main.rc .rec-pair td .rv { font-weight: 600; }
+@media (max-width: 760px) {
+  /* a long tab bar or a wide records table scrolls inside itself, never
+     the page */
+  main.rc .rc-tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  main.rc .rc-tabs .seg-btn { white-space: nowrap; flex: 0 0 auto; }
+  main.rc .rec-pair > div, main.rc .rc-panel > table.meets-table { overflow-x: auto; }
+  main.rc .rec-pair table { min-width: 0; }
 }
