@@ -32,10 +32,13 @@ TEAMS = [{"school": "Campolindo", "points": 153, "place": 1,
 
 def test_the_cif_d3_story_reads_off_the_rows():
     s = [str(x) for x in rs.raceStory(FIELD, TEAMS, titles=2)]
-    assert s[0] == ("<b>Evan Noonan</b> (Dana Hills) won a third straight title here "
-                    "in <b>14:43.7</b>, 8.2 seconds clear of Liam Miller (South Torrance).")
-    assert s[1] == ("<b>Campolindo</b> took the team title with 153 points, 29 ahead "
-                    "of Oak Park, led by Clark Gregory in 12th.")
+    # the champion line above already shows "EVAN NOONAN 14:43.7" and the
+    # sidebar Campolindo's 153: the sentences add margins, not repeats
+    assert s[0] == ("<b>Noonan</b> won a third straight title here, "
+                    "8.2 seconds clear of Liam Miller (South Torrance).")
+    assert s[1] == ("<b>Campolindo</b> won the team title by 29 points over "
+                    "Oak Park, led by Clark Gregory in 12th.")
+    assert "14:43.7" not in s[0] and "153" not in s[1]
 
 
 def test_no_judgement_words():
@@ -48,7 +51,7 @@ def test_no_judgement_words():
 
 def test_no_title_streak_is_plain_won():
     s = str(rs.winnerSentence(FIELD, titles=0))
-    assert " won in <b>14:43.7</b>" in s and "straight" not in s
+    assert s.startswith("<b>Noonan</b> won, 8.2 seconds clear") and "straight" not in s
 
 
 def test_a_streak_past_ten_uses_the_ordinal():
@@ -61,9 +64,9 @@ def test_a_dead_heat_is_not_zero_seconds_clear():
     assert "0 seconds" not in s and "on the same time" in s
 
 
-def test_one_finisher_and_sentinels():
-    s = str(rs.winnerSentence([_row("Solo", "X", 1000.0), _row("DNF", "Y", 999999.0)]))
-    assert s == "<b>Solo</b> (X) won in <b>16:40</b>."
+def test_one_finisher_says_nothing_the_header_does_not():
+    # a lone finisher's name and time are the champion line; no sentence
+    assert rs.winnerSentence([_row("Solo Runner", "X", 1000.0), _row("DNF", "Y", 999999.0)]) is None
     assert rs.winnerSentence([_row("DNF", "Y", 999999.0)]) is None
 
 
@@ -75,7 +78,7 @@ def test_one_second_is_singular():
 def test_a_points_tie_names_the_tiebreak():
     teams = [{"school": "A", "points": 64, "place": 1, "runners": []},
              {"school": "B", "points": 64, "place": 2, "runners": []}]
-    assert str(rs.teamSentence(teams)) == ("<b>A</b> took the team title with 64 points, "
+    assert str(rs.teamSentence(teams)) == ("<b>A</b> won the team title "
                                            "on the sixth-runner tiebreak over B.")
 
 
@@ -86,8 +89,15 @@ def test_no_scored_teams_no_team_sentence():
 
 
 def test_names_are_escaped():
-    s = str(rs.winnerSentence([_row("<script>", "A&B", 900.0)]))
-    assert "<script>" not in s and "&lt;script&gt;" in s and "A&amp;B" in s
+    s = str(rs.winnerSentence([_row("Bad <script>", "A&B", 900.0), _row("C D", "E&F", 901.0)]))
+    assert "<script>" not in s and "&lt;script&gt;" in s and "E&amp;F" in s
+
+
+def test_surname():
+    assert rs.surname("Evan Noonan") == "Noonan"
+    assert rs.surname("Cody De la Cruz") == "Cruz"
+    assert rs.surname("Madonna") == "Madonna"
+    assert rs.surname(None) == "Unknown"
 
 
 def test_ordinals():
@@ -182,8 +192,7 @@ def test_tf_one_field_wins_with_hundredths():
                                    _tf("Mike Ayala", "Dana Hills", 286.04)]}]
     w, s = rs.tfStory(secs, False)
     assert w["athlete_name"] == "Tyler Renteria"
-    assert str(s[0]) == ("<b>Tyler Renteria</b> (El Toro) won in <b>4:33.07</b>, "
-                         "0.05 seconds clear of Evan Noonan (Dana Hills).")
+    assert str(s[0]) == ("<b>Renteria</b> won, 0.05 seconds clear of Evan Noonan (Dana Hills).")
     assert str(s[1]) == "2 of 3 set personal records."
 
 
@@ -191,27 +200,26 @@ def test_tf_the_final_decides_not_the_prelims():
     final = [_tf("A", "X", 128.0), _tf("B", "Y", 128.1)]
     prelim = [_tf("A", "X", 127.5), _tf("C", "Z", 127.9)]       # faster prelim, not a win
     w, s = rs.tfStory([{"label": "Finals", "rows": final}, {"label": "Prelims", "rows": prelim}], False)
-    assert "won in <b>2:08</b>, 0.1 seconds clear of B (Y)" in str(s[0])
+    assert str(s[0]) == "<b>A</b> won, 0.1 seconds clear of B (Y)."
 
 
 def test_tf_heats_without_a_final_are_not_a_win():
     s = rs.tfStory([{"label": "Heat 1", "rows": [_tf("A", "X", 600.0)]},
                     {"label": "Heat 2", "rows": [_tf("B", "Y", 590.0)]}], False)[1]
-    assert str(s[0]).startswith("<b>B</b> (Y) ran the fastest time across 2 heats, <b>9:50</b>")
+    assert str(s[0]).startswith("<b>B</b> ran the fastest time across 2 heats, 10 seconds clear of A (X)")
     assert " won " not in str(s[0])
 
 
 def test_tf_field_marks_are_not_subtracted():
     secs = [{"label": "", "rows": [_tf("A", "X", mark="20-6"), _tf("B", "Y", mark="6.20m")]}]
     s = str(rs.tfStory(secs, True)[1][0])
-    assert "won with" in s and "was next with" in s and "clear" not in s
+    assert s.startswith("<b>A</b> won; B (Y) was next with 6.20m") and "clear" not in s
 
 
 def test_tf_relay_is_the_team():
     secs = [{"label": "", "rows": [_tf(None, "Dana Hills", 200.5, relay=True),
                                    _tf(None, "El Toro", 201.0, relay=True)]}]
-    assert str(rs.tfStory(secs, False)[1][0]) == ("<b>Dana Hills</b> won in <b>3:20.5</b>, "
-                                                  "0.5 seconds clear of El Toro.")
+    assert str(rs.tfStory(secs, False)[1][0]) == "<b>Dana Hills</b> won, 0.5 seconds clear of El Toro."
 
 
 def test_tf_no_marks_no_story():

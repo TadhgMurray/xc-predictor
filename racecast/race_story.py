@@ -86,23 +86,31 @@ def _plain(row):
     return Markup(f"{name} ({escape(school)})") if school else name
 
 
+def surname(name):
+    """'Evan Noonan' -> 'Noonan'; a one-word name stays whole."""
+    parts = (name or "").split()
+    return parts[-1] if len(parts) > 1 else (name or "Unknown")
+
+
+# ★ THE HEADER ALREADY NAMES THE WINNER AND THE MARK (owner, 2026-10-07:
+#   "try not to have duplicated things"): the champion line above the
+#   summary shows "EVAN NOONAN 14:43.7", so the sentence carries what the
+#   line cannot -- the margin, the runner-up, the streak -- and calls the
+#   winner by surname. The team's points are in the sidebar's first row; the
+#   sentence gives the margin and who led them.
 def winnerSentence(results, titles=0):
     fin = [r for r in results if _t(r) is not None]
-    if not fin:
+    if len(fin) < 2:
         return None
-    w = fin[0]
+    w, s = fin[0], fin[1]
+    who = Markup(f"<b>{escape(surname(w.get('name')))}</b>")
     won = "won"
     if titles >= 1:
         won = f"won a {_ORD_WORDS.get(titles + 1, ordinal(titles + 1))} straight title here"
-    if len(fin) == 1:
-        return Markup(f"{_who(w)} {won} in <b>{escape(w['display_time'] if w.get('display_time') else _clock(_t(w)))}</b>.")
-    s = fin[1]
     gap = _t(s) - _t(w)
-    wt = escape(w.get("display_time") or _clock(_t(w)))
     if round(gap, 1) <= 0:
-        return Markup(f"{_who(w)} {won} in <b>{wt}</b>, given the place over "
-                      f"{_plain(s)} on the same time.")
-    return Markup(f"{_who(w)} {won} in <b>{wt}</b>, {_gap(gap)} clear of {_plain(s)}.")
+        return Markup(f"{who} {won}, given the place over {_plain(s)} on the same time.")
+    return Markup(f"{who} {won}, {_gap(gap)} clear of {_plain(s)}.")
 
 
 def teamSentence(teams):
@@ -112,15 +120,15 @@ def teamSentence(teams):
     scored = sorted(scored, key=lambda t: (t.get("place") or 10 ** 6))
     a = scored[0]
     name = escape(a.get("label") or a.get("school"))
-    out = f"<b>{name}</b> took the team title with {int(a['points'])} points"
+    out = f"<b>{name}</b> won the team title"
     if len(scored) > 1:
         b = scored[1]
         bname = escape(b.get("label") or b.get("school"))
         m = int(b["points"]) - int(a["points"])
         if m == 0:
-            out += f", on the sixth-runner tiebreak over {bname}"
+            out += f" on the sixth-runner tiebreak over {bname}"
         else:
-            out += f", {m} ahead of {bname}"
+            out += f" by {m} point{'' if m == 1 else 's'} over {bname}"
     lead = (a.get("runners") or [None])[0]
     if lead and lead.get("place"):
         out += f", led by {escape(lead.get('name') or 'Unknown')} in {ordinal(lead['place'])}"
@@ -251,26 +259,27 @@ def tfStory(sections, is_field):
     w, s, how = tfWinner(sections, is_field)
     out = []
     if w is not None:
-        mark = escape(w.get("display_result") or "")
         n = sum(1 for x in sections if x.get("rows"))
+        who = (Markup(f"<b>{escape(w.get('school') or 'Relay')}</b>") if w.get("is_relay")
+               else Markup(f"<b>{escape(surname(w.get('athlete_name')))}</b>"))
         if how == "won":
-            lead = f"{_tfWho(w)} won {'with' if is_field else 'in'} <b>{mark}</b>"
+            lead = f"{who} won"
         elif is_field:
-            lead = f"{_tfWho(w)} had the best mark across {n} flights, <b>{mark}</b>"
+            lead = f"{who} had the best mark across {n} flights"
         else:
-            lead = f"{_tfWho(w)} ran the fastest time across {n} heats, <b>{mark}</b>"
-        if is_field:
+            lead = f"{who} ran the fastest time across {n} heats"
+        sent = None
+        if s is not None and is_field:
+            sent = f"{lead}; {_tfWho(s, bold=False)} was next with {escape(s.get('display_result') or '')}"
+        elif s is not None:
+            gap = _t(s) - _t(w)
+            sent = (f"{lead}, given the place over {_tfWho(s, bold=False)} on the same time"
+                    if round(gap, 2) <= 0 else
+                    f"{lead}, {_gapTf(gap)} clear of {_tfWho(s, bold=False)}")
+        elif how != "won":
             sent = lead
-            if s is not None:
-                sent += f"; {_tfWho(s, bold=False)} was next with {escape(s.get('display_result') or '')}"
-        else:
-            sent = lead
-            if s is not None:
-                gap = _t(s) - _t(w)
-                sent += (f", given the place over {_tfWho(s, bold=False)} on the same time"
-                         if round(gap, 2) <= 0 else
-                         f", {_gapTf(gap)} clear of {_tfWho(s, bold=False)}")
-        out.append(Markup(sent + "."))
+        if sent:
+            out.append(Markup(sent + "."))
     rows = [r for sec in sections for r in sec["rows"]]
     fin = [r for r in rows if (r.get("display_result") or " - ").strip() not in ("-", "")]
     prs = sum(1 for r in fin if r.get("is_pr"))

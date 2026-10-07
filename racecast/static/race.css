@@ -100,9 +100,15 @@ main.rc .rc-table .flag { display: inline; }
 .rc-table td.rt .vs-level.is-above { color: #1a7f37; font-weight: 700; }
 .rc-table td.pts { font-family: "RC Mono"; }
 /* record flags: the same facts and tooltips, as quiet text, not pills */
-main.rc .flag:not(.info-i):not(.dv) { background: none !important; color: var(--rc-red); padding: 0; margin: 0 0 0 .3rem; font-family: "RC Cond";
-  font-weight: 800; font-style: italic; font-size: .75rem; border-radius: 0; vertical-align: .1em; }
-main.rc .flag.flag--sr { color: var(--rc-mute); }
+/* record flags: small solid tags (owner, 2026-10-07: did not like the bare
+   red text). PR red, SR black; course and rating records outlined. The same
+   facts and tooltips as before. */
+main.rc .flag:not(.info-i):not(.dv) { display: inline-block; margin: 0 0 0 .35rem; padding: .08rem .3rem .04rem;
+  font-family: "RC Cond"; font-weight: 800; font-style: italic; font-size: .7rem; line-height: 1; letter-spacing: .03em;
+  border-radius: 2px; vertical-align: .12em; color: #fff; background: var(--rc-red) !important; border: 1px solid var(--rc-red); }
+main.rc .flag.flag--sr:not(.info-i):not(.dv) { background: var(--rc-ink) !important; border-color: var(--rc-ink); }
+main.rc .flag.flag--cpr:not(.info-i):not(.dv), main.rc .flag.flag--csr:not(.info-i):not(.dv) { background: #fff !important; color: var(--rc-red); }
+main.rc .flag.flag--rpr:not(.info-i):not(.dv), main.rc .flag.flag--rsr:not(.info-i):not(.dv) { background: #fff !important; color: var(--rc-ink); border-color: var(--rc-ink); }
 .rc-table tr.rc-lit td, .rc-table tr.hl-school td { background: var(--rc-lit); }
 .rc-table tr.rc-lit td.pl, .rc-table tr.hl-school td.pl { box-shadow: inset 4px 0 0 var(--rc-gold); }
 .rc-table tr.row-hi td { background: #e8f0fb; }
@@ -172,3 +178,22 @@ main.rc .relay-team { font-weight: 700; display: block; }
 main.rc .relay-legs { display: block; font-size: .8rem; color: var(--rc-mute); }
 main.rc .relay-legs a { color: var(--rc-mute); font-weight: 400; }
 .rc-table td.wind { font-family: "RC Mono"; font-size: .85rem; color: var(--rc-mute); }
+
+/* ---- what is a link (owner, 2026-10-07: "how can we show which things are
+   linked"). In the tables a quiet underline under every name that goes
+   somewhere, red on hover; in the header, the same on white. A link that
+   leaves for another page of the site carries an arrow (.rc-go). -------- */
+.rc-table td.nm a, .rc-table td.sch a, .rc-teams-full td a, .rc-table .relay-legs a,
+.rc-champs .rc-cn a, .rc-hd .rc-meta a, .rc-hd .rc-kick a, .rc-story a {
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.rc-table td.nm a, .rc-table td.sch a, .rc-teams-full td a, .rc-table .relay-legs a { text-decoration-color: #c9c8c2; }
+.rc-hd a { text-decoration-color: rgba(255, 255, 255, .35); }
+main.rc .rc-table td a:hover, main.rc .rc-teams-full td a:hover { color: var(--rc-red); text-decoration-color: var(--rc-red); }
+main.rc .rc-hd a:hover { color: #fff; text-decoration-color: var(--rc-red); }
+.rc-go::after { content: "\2192"; display: inline-block; margin-left: .35em; text-decoration: none; }
+.rc-out { margin-left: auto; align-self: center; padding: .35rem 0 .45rem; font-family: "RC Cond"; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em; font-size: 1rem; color: var(--rc-red) !important; white-space: nowrap; }
+.rc-out:hover { text-decoration: underline !important; }
+.rc-tscores tr { cursor: pointer; }
+.rc-tscores tr:hover td { background: #faf9f5; }
+@media (max-width: 760px) { .rc-out { margin-left: 0; order: 1; } }

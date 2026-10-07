@@ -539,30 +539,10 @@
             <div class="bests-panel">
                 <h3>All-Time Bests</h3>
 
-                <div class="rating-head">
-                    <div class="stat">
-                        <span class="label">Athlete rating</span>
-                        <span class="value">{{ rv(athlete.rating, athlete.rating_hs) }}</span>
-                        {# WHICH season this number is -- the most recent one,
-                           from athlete_season. Without the note, a number
-                           that changes when a new season starts looks like
-                           drift rather than an update. #}
-                        {# the season, a dot, the percentile (owner, 2026-09-07); the
-                           column may shrink and the note may wrap, so it never
-                           pushes the panel past its edge #}
-                        {% if athlete.rating_note or athlete.percentile %}<span class="note">{{ athlete.rating_note or "" }}{% if athlete.rating_note and athlete.percentile %} &middot; {% endif %}{% if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif %}</span>{% endif %}
-                    </div>
-                    {% if alltime.rating %}
-                    <div class="stat">
-                        <span class="label">Best race</span>
-                        {# the sport beside the number, on its line (owner, 2026-09-07) #}
-                        <span class="value">
-                            <a href="#race-{{ alltime.rating.result_id }}">{{ rv(alltime.rating.speed_rating, alltime.rating.hs_rating) }}</a>
-                            <span class="value-sport">{{ alltime.rating.sport }}</span>
-                        </span>
-                    </div>
-                    {% endif %}
-                </div>
+                {# ★ NO RATING / BEST RACE HERE ANY MORE (owner, 2026-10-07: "try not
+                   to have duplicated things"): the header's stat strip shows the
+                   same two numbers, with the same notes, directly above. The
+                   sidebar keeps what only it has: each sport's bests. #}
                 {# The rating in words -- the 5K it stands for and where it
                    sits in the pool. Here, under both stats, not in the
                    header strip (owner, 2026-09-02); inside the rating stat

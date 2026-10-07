@@ -50,7 +50,10 @@ html.rc-theme .topnav-menu a { color: #d9d9d4; }
 html.rc-theme .viewswitch { border-color: #3a3a36; background: transparent; }
 html.rc-theme .viewswitch a { font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #a9a9a2; background: transparent; }
 html.rc-theme .viewswitch a.is-on { background: #fff; color: var(--rc-ink); }
-html.rc-theme .search-wrap input { background: #1d1d1b; border-color: #33332f; color: #fff; }
+/* ! BY ID: the generic input rule below (white field) has the same weight as
+     a class selector and came later, so the field turned white while the
+     text stayed white -- "you can't see what you type" (owner, 2026-10-07) */
+html.rc-theme .topbar #search-input { background: #1d1d1b; border-color: #3a3a36; color: #fff; caret-color: #fff; }
 html.rc-theme .search-wrap input::placeholder { color: #8b8b85; }
 html.rc-theme .topbar-account a, html.rc-theme .tb-signin { color: #fff; border-color: #3a3a36; background: transparent;
   font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
@@ -68,9 +71,14 @@ html.rc-theme table td.rating, html.rc-theme table td.rating a { font-family: "R
 html.rc-theme .displacer, html.rc-theme td.displacer a { color: var(--rc-mute); font-weight: 400; }
 
 /* ---- record flags: quiet text, as on the race page -------------------- */
-html.rc-theme .flag:not(.info-i):not(.dv) { background: none !important; color: var(--rc-red); padding: 0 .1rem;
-  font-family: "RC Cond", sans-serif; font-weight: 800; font-style: italic; font-size: .78rem; border-radius: 0; }
-html.rc-theme .flag.flag--sr, html.rc-theme .flag.flag--csr, html.rc-theme .flag.flag--rsr { color: var(--rc-mute); }
+/* record flags: the race page's solid tags. PR red, SR black, course and
+   rating records outlined; ★ (still standing) stays as the page writes it */
+html.rc-theme .flag:not(.info-i):not(.dv):not(.rank-note) { display: inline-block; padding: .08rem .3rem .04rem; line-height: 1;
+  font-family: "RC Cond", sans-serif; font-weight: 800; font-style: italic; font-size: .7rem; letter-spacing: .03em;
+  border-radius: 2px; color: #fff; background: var(--rc-red) !important; border: 1px solid var(--rc-red); }
+html.rc-theme .flag.flag--sr:not(.info-i):not(.dv):not(.rank-note) { background: var(--rc-ink) !important; border-color: var(--rc-ink); }
+html.rc-theme .flag.flag--cpr:not(.info-i):not(.dv):not(.rank-note), html.rc-theme .flag.flag--csr:not(.info-i):not(.dv):not(.rank-note) { background: #fff !important; color: var(--rc-red); }
+html.rc-theme .flag.flag--rpr:not(.info-i):not(.dv):not(.rank-note), html.rc-theme .flag.flag--rsr:not(.info-i):not(.dv):not(.rank-note) { background: #fff !important; color: var(--rc-ink); border-color: var(--rc-ink); }
 
 /* ---- tabs, segmented buttons, chips ----------------------------------- */
 html.rc-theme .rankings-page .tabs a, html.rc-theme .rankings-page .tabs button,
@@ -241,3 +249,28 @@ html.rc-theme .rc-band .ath-portrait { background: #fff; }
   html.rc-theme body:has(> .rc-band-body) > :not(.topbar):not(script):not(style):not(link):not(iframe) {
     padding-left: 1.5rem; padding-right: 1.5rem; box-sizing: border-box; }
 }
+
+/* ---- what is a link (owner, 2026-10-07): a quiet underline under every link
+   in a table, red on hover; links in running text already underline red ---- */
+html.rc-theme table td a, html.rc-theme .board-grid a {
+  text-decoration: underline; text-decoration-color: #c9c8c2; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+html.rc-theme table td a:hover, html.rc-theme .board-grid a:hover { color: var(--rc-red); text-decoration-color: var(--rc-red); }
+html.rc-theme thead th a { text-decoration: none; }
+
+/* ---- the last blues the sweep found (2026-10-07) ---------------------- */
+html.rc-theme .more-btn, html.rc-theme .rankings-page .year-chips .ymore, html.rc-theme .predict2 .linkish,
+html.rc-theme .predict2 .pick-act, html.rc-theme .rankings-page .combo-done {
+  color: var(--rc-ink); font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+html.rc-theme .more-btn { background: #fff; border-top: 1px solid var(--rc-line); }
+html.rc-theme .more-btn:hover { background: #faf9f5; color: var(--rc-red); }
+html.rc-theme .more-btn .more-left { color: var(--rc-mute); text-transform: none; font-family: "RC Sans", sans-serif; font-weight: 400; }
+html.rc-theme .cdh-fill { background: var(--rc-ink); border-radius: 0; }
+html.rc-theme .cdh-fill.neg { background: #b9b8b1; }
+html.rc-theme .cdh-bar { border-radius: 0; }
+html.rc-theme .cdh-fast { color: #1a7f37; }
+html.rc-theme .cdh-slow { color: var(--rc-red); }
+html.rc-theme .cdh-days summary { color: var(--rc-ink); font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+html.rc-theme .sc-fill { background: var(--rc-ink); }
+html.rc-theme .rankings-page .spinner { border-top-color: var(--rc-red); }
+html.rc-theme .chart-slot .legend .k--xc { background: var(--rc-ink); }
+html.rc-theme .chart-slot .dot--xc { stroke: var(--rc-ink); }

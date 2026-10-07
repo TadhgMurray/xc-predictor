@@ -45,17 +45,20 @@
 <main class="rc">
 <header class="rc-hd"><div class="rc-w rc-hgrid">
   <div>
-    <div class="rc-kick"><a href="/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}">{{ header.meet_name|with_year(race_date) }}</a></div>
+    {# ★ THE ONE LINK TO THE MEET (owner, 2026-10-07: "full meet should have an
+       arrow" / "try not to have duplicated things"): the meet's name, with the
+       arrow every link that leaves the page carries (.rc-go) #}
+    <div class="rc-kick"><a class="rc-go" href="/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}">{{ header.meet_name|with_year(race_date) }}</a></div>
     <h1>{{ title }}</h1>
     <div class="rc-meta">
       {# |urlencode, same as every school link: the name goes into the URL
          as DATA, so characters that mean something in a URL (& # ? %) must
          be escaped or the browser reads them as URL structure. #}
-      <a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a> ·
+      <a class="rc-go" href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a> ·
       {{ header.distance|int if header.distance else " - " }}&nbsp;m{% if corrected %}<span class="dist-note" tabindex="0" aria-label="Distance corrected. This race was listed at {{ header.listed_distance|int }} meters; a verified correction rates it at {{ header.distance|int }} meters.">★<span class="dist-tip"><span class="dist-tip-box"><b>Distance corrected.</b> This race was listed at {{ header.listed_distance|int }}&thinsp;m; times are rated at the verified {{ header.distance|int }}&thinsp;m. <a href="/report?about={{ request.path|urlencode }}&kind=meet">Is the correction wrong? Report it →</a></span></span></span>{% endif %}
       · {{ race_date|mdy if race_date else " - " }}{% if header.state %} · {{ header.state }}{% endif %}
     </div>
-    {% if champ or tchamp %}
+    {% if champ %}
     <div class="rc-champs">
       {% if champ %}
       {% set csst = champ.school_state or header.state %}
@@ -64,10 +67,6 @@
          (owner, 2026-10-07: "this is off") #}
       <div><span class="k">Individual</span>
         <span class="rc-crow">{% if champ.school and champ.school|is_team %}{{ crest(champ.school, csst, trusted=champ.school_state) }}{% endif %}<b class="rc-cn">{% if champ.person_id %}<a href="/athlete/{{ champ.person_id }}">{{ champ.name or "Unknown" }}</a>{% else %}{{ champ.name or "Unknown" }}{% endif %}</b><i>{{ champ.display_time }}</i></span></div>
-      {% endif %}
-      {% if tchamp %}
-      <div><span class="k">Team</span>
-        <span class="rc-crow">{% if tchamp.school|is_team %}{{ crest(tchamp.school, tchamp.state or header.state) }}{% endif %}<b class="rc-cn">{% if tchamp.school|is_team %}<a href="{{ school_href(tchamp.school, tchamp.state or header.state) }}">{{ tchamp.school }}</a>{% else %}{{ tchamp.school }}{% endif %}</b><i>{{ tchamp.points }}</i></span></div>
       {% endif %}
     </div>
     {% endif %}
@@ -95,10 +94,11 @@
       <a class="on" href="#results" data-tab="results">Results<span class="n">{{ finishers|length }}</span></a>
       {% if scores and scores.teams %}<a href="#teams" data-tab="teams">Teams<span class="n">{{ scores.teams|length }}</span></a>{% endif %}
       {% if header.distance %}<a href="#track" data-tab="track">On the track</a>{% endif %}
-      {# ★ THE WAY INTO PREDICTIONS FROM THE RACE ITSELF (sweep, 2026-09-26),
-         with ?alt= when this id holds two meets (owner, 2026-10-05) #}
-      <a href="/predictions?meet_id={{ header.meet_id }}&amp;div_id={{ header.div_id }}&amp;sport=XC{% if other_sources %}&amp;alt={{ alt_idx }}{% endif %}">Predict next year</a>
     </nav>
+    {# ★ THE WAY INTO PREDICTIONS FROM THE RACE ITSELF (sweep, 2026-09-26),
+       with ?alt= when this id holds two meets (owner, 2026-10-05). It leaves
+       the page, so it is a link with an arrow, not a tab. #}
+    <a class="rc-out rc-go" href="/predictions?meet_id={{ header.meet_id }}&amp;div_id={{ header.div_id }}&amp;sport=XC{% if other_sources %}&amp;alt={{ alt_idx }}{% endif %}">Predict next year</a>
     <input class="rc-find" type="search" placeholder="Find a runner or school" aria-label="Find a runner or school">
   </div>
 
@@ -208,7 +208,6 @@
   {% if scores.teams|length > 10 %}<a class="rc-more" href="#teams" data-tab="teams">All {{ scores.teams|length }} teams</a>{% endif %}
   {% endif %}
   {{ al.box(above_spec) }}
-  <p class="rc-sidelinks"><a href="/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}">Full meet →</a></p>
 </aside>
 </div>
 

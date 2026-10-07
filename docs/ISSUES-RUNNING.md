@@ -4547,3 +4547,31 @@ Owner: "feels half-assed, only some things were put into new theme." Went throug
   with heats, relays and their legs, wind and points kept; event points by school in the sidebar with team lighting;
   the equivalents ruler behind a tab. tests/test_race_story.py: 6 new tests.
 - Pre-existing test failures unchanged (identical output before and after for the crest/label consistency tests).
+
+## 2026-10-07 — flags, search box, what is a link, track venue, duplicates (owner's list + a sweep)
+
+- **Flags:** solid tags instead of bare red text -- PR red, SR black, course records (CR/CSR) outlined red, rating
+  records (R/RSR) outlined black; same tooltips. On the race pages for everyone, site-wide under ?theme=rc. (The
+  variants had lost a specificity contest at first: everything came out red. Fixed.)
+- **Search box (theme):** the field went white while its text stayed white -- two theme rules of equal weight, the
+  later one winning. Now set by id: dark field, white text and caret.
+- **What is a link:** a quiet underline under every link in a table (names, schools, meets), red on hover; header
+  links underlined. Links that leave for another part of the site carry an arrow: the meet name above a race,
+  the course/venue, "Predict next year" (now a link beside the tabs, not a tab).
+- **Track race venue:** the venue's own name and city from meets_tf_meta (one primary-key read); "Venue page" when a
+  meet has none, never the bare word.
+- **Duplicates removed:**
+  - race pages: "Full meet" was in the tabs and the sidebar and the meet name -- now only the meet name. The track
+    page's "Venue" was in the meta and the sidebar -- now only the meta. The team champion was in the champion
+    line, the summary and the sidebar's first row -- now the summary and the sidebar. The track page's "Most points"
+    duplicated the sidebar's first row -- removed.
+  - the summary no longer repeats the champion line: surname, margin, runner-up, streak; the team's margin and leader,
+    not its points (race_story; tests updated).
+  - athlete page: the sidebar's "Athlete rating / Best race" card repeated the header's stat strip -- removed.
+  - course page: the equivalents card had its own row of distance pills under the page's own row -- removed; the
+    page's row picks the ruler's distance too.
+  - search results page: the query was pre-filled in the top bar and in the page's own search box -- top bar no longer.
+- **Last blues (theme):** "Show 20 more" buttons, the course year-by-year bars and fast/slow colours, spinner, legend.
+- **Noticed, left as is (owner's call):** the home snapshot's "Top athletes" and "Best performances" columns often list
+  the same names (different measures); the athlete sidebar's per-season bests repeat each season header's rating; the
+  race sidebar's top 10 teams are also the first 10 rows of the Teams tab.

@@ -4782,6 +4782,23 @@ def race_tf(meet_id, event_id, div_id):
                 stampRatingFlags(cur, "TF", results, results[0].get("date"))
             day_effect = raceDayEffect(cur, "TF", header,
                                        results[0].get("date") if results else None)
+            # ★ THE VENUE BY NAME (owner, 2026-10-07: "tf race shouldn't
+            #   just say venue"): meets_tf_meta carries the feed's own venue
+            #   name and city per meet, one primary-key read. A meet without
+            #   them shows no venue name at all rather than the word "Venue".
+            if header:
+                try:
+                    cur.execute("SAVEPOINT tf_venue")
+                    cur.execute("""SELECT NULLIF(TRIM(venue_name), '') AS venue_name,
+                                          NULLIF(TRIM(city), '') AS city
+                                   FROM meets_tf_meta WHERE meet_id = %s""", (meet_id,))
+                    vrow = cur.fetchone()
+                    cur.execute("RELEASE SAVEPOINT tf_venue")
+                    if vrow:
+                        header["venue_name"] = vrow["venue_name"]
+                        header["venue_city"] = vrow["city"]
+                except psycopg2.Error:
+                    cur.execute("ROLLBACK TO SAVEPOINT tf_venue")
             # Points come from scoring the WHOLE meet, not this page's rows:
             # a prelim page's athletes score in the final, and a sectioned
             # final scores across its sections. Scope to this race's own

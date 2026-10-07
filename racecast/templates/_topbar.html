@@ -106,10 +106,11 @@
 
            Guarded on the endpoint rather than just reading ?q=, so a route
            that happens to use q for something else cannot leak it in here. #}
+        {# ★ NOT PRE-FILLED ON /search ANY MORE (owner, 2026-10-07: "try not to
+           have duplicated things"): the results page has its own search
+           box, carrying the query and the result-type tabs, right under
+           its heading; the same query in this box was the second copy. #}
         <input type="search" id="search-input"
-               {% if request.endpoint == 'search_page' %}
-                   value="{{ request.args.get('q', '') }}"
-               {% endif %}
                placeholder="Search athletes, meets, courses…"
                autocomplete="off" aria-label="Search">
         <div id="search-results" class="search-results"></div>
