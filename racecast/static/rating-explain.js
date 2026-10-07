@@ -99,9 +99,24 @@
     pop.hidden = true;
     document.body.appendChild(backdrop);
     document.body.appendChild(pop);
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, { passive: true });
-    document.addEventListener("scroll", place, { passive: true, capture: true });
+    window.addEventListener("resize", follow);
+    window.addEventListener("scroll", follow, { passive: true });
+    document.addEventListener("scroll", follow, { passive: true, capture: true });
+  }
+
+  /* ★ THE PANEL FOLLOWS THE PAGE, NOT ITS OWN SCROLLING (owner, 2026-10-07:
+     "the scroll bar doesn't work well"). The capture listener heard the
+     panel's own scroll events too, so every wheel tick inside it re-ran
+     place(), which clears the height cap to measure -- with no cap there is
+     nothing to scroll, the position snapped to the top, and the bar jumped
+     under the pointer. Its own scrolling is ignored now, page scrolls are
+     coalesced to one place() a frame, and place() keeps the scroll position. */
+  var raf = 0;
+  function follow(e) {
+    var t = e && e.target;
+    if (pop && t && t.nodeType === 1 && pop.contains(t)) return;
+    if (raf) return;
+    raf = window.requestAnimationFrame(function () { raf = 0; place(); });
   }
 
   function open(rv) {
@@ -172,6 +187,8 @@
        above, else on the roomier side with its height cut to that room
        (it scrolls inside); only a cell with no room either side is
        covered. */
+    var bodyEl = pop.querySelector(".rx-body");
+    var keep = bodyEl ? bodyEl.scrollTop : 0;
     pop.style.maxHeight = "";
     var h = pop.offsetHeight;
     var below = vh - r.bottom - 20, above = r.top - 20, top;
@@ -193,6 +210,7 @@
     top = Math.max(12, Math.min(top, vh - pop.offsetHeight - 12));
     pop.style.left = left + "px";
     pop.style.top = top + "px";
+    if (bodyEl && keep) bodyEl.scrollTop = keep;
   }
 
   function head(body) {

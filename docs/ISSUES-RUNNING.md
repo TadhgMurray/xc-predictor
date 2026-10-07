@@ -4676,3 +4676,15 @@ Owner: "feels half-assed, only some things were put into new theme." Went throug
 - Pre-existing failures, unchanged by this (same on the old tree): test_bracket_golive, test_course_bracket,
   test_diagnose, test_era_publish (collection errors), test_meet_units, test_pipeline_shards,
   test_pipeline_step_guards, test_report_steps_report_only.
+
+## 2026-10-07 — ✅ "How was this rated?" popup: the scroll bar
+
+- Owner: "the scroll bar doesn't work well." Cause: the panel follows its row with a capture-phase scroll listener,
+  which also heard the panel's OWN scrolling; each wheel tick re-ran place(), which clears the height cap to measure
+  -- uncapped there is nothing to scroll, so the position snapped back and the bar jumped. And the whole panel
+  scrolled, so the bar ran up through the sticky header and was clipped by the rounded corners.
+- Now: the panel's own scroll events are ignored, page scrolls are coalesced to one place() a frame, and place()
+  keeps the body's scroll position. The panel is a column: header fixed, .rx-body the only scroller (thin bar,
+  clear of the bottom corners). Checked in Chromium at 1280 and 390 with a 15-step breakdown: wheel scrolling
+  moves 480px and holds (old: the panel scrolled and the body never did); a page scroll leaves the panel's
+  position where it was.

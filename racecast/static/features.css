@@ -31,8 +31,14 @@
     z-index: 1000;
     box-sizing: border-box;
     max-height: min(72vh, 640px);
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    /* ★ THE HEADER STAYS, THE BODY SCROLLS (2026-10-07). The whole panel
+         scrolled, so its bar ran up through the sticky header and was cut
+         off by the rounded corners; now the panel is a column, the head
+         fixed at the top and .rx-body the only scroller, its bar beside the
+         breakdown alone. */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     background: #fff;
     color: var(--ink, #111418);
     border: 1px solid var(--line-2, #cbd0d6);
@@ -60,7 +66,7 @@
 }
 
 .rx-head {
-    position: sticky; top: 0; z-index: 1;
+    flex: none;
     display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem;
     padding: 0.75rem 0.9rem 0.6rem;
     background: #fff;
@@ -80,7 +86,18 @@
 }
 .rx-close:hover, .rx-close:focus-visible { background: var(--hover, #f3f6fa); color: var(--ink, #111418); }
 
-.rx-body { padding: 0.65rem 0.9rem 0.8rem; }
+.rx-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-2, #cbd0d6) transparent;
+    padding: 0.65rem 0.9rem 0.8rem;
+    /* clear of the bottom corners' curve, so the bar's end is not clipped */
+    margin-bottom: 6px;
+}
+.rx-pop.rx-sheet .rx-body { margin-bottom: 0; }
 .rx-loading, .rx-na { color: var(--muted, #6b7280); margin: 0.4rem 0; }
 
 .rx-start { display: flex; gap: 0.6rem; align-items: flex-start; margin-bottom: 0.35rem; }
