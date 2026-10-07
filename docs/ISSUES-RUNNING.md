@@ -4617,7 +4617,12 @@ Owner: "feels half-assed, only some things were put into new theme." Went throug
   171,428 -> 154,228: that is `requeue_blank_athletes.py --apply` (dry run said 93,523 meets), already run. So the
   name fix is in the savers (a5a9009, 3d56bd0, 48c842c) and its re-scrape is queued; nothing else to do.
 - **Was:** the claim was ORDER BY meet_id and the forward walk seeded only when the whole queue was empty, so the new
-  meets (always the highest ids) would have come after all 93k repairs -- days at TF's 3 requests/s.
+  meets (always the highest ids) would have come after all 93k repairs.
+- **Correction (same day, owner: "each track meet should only be one request of compiled results").** It is:
+  every anet meet, XC and TF, is GetMeetData (meet, divisions, the JWT) + one GetAllResultsData for the whole meet.
+  The per-event TF loop that TARGET_REQUESTS_PER_SEC_PER_IP paces has been dead since 6/22, so my "days" was wrong:
+  the pace is PER_MEET_DELAY over 25 sessions -- at 3-6 s about 4 meets/s, ~7 h for 98,780 meets (+ page time);
+  at the default 1.5-2.5 s about twice that. scrape_tuning.py's comment now says so.
 - **Now:** anet claims newest first (database._CLAIM_ORDER; ANET_OLDEST_FIRST=1 restores the old order), and the
   launcher re-seeds the walk as soon as its block above the watermark is scraped (launcher._maybeExtendFrontier,
   one check per 30 s for all sessions; ForwardWalk.frontierDrained / extend(sports)). The dry-block stop is the

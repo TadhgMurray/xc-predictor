@@ -54,8 +54,13 @@ NUM_SESSIONS = int(_envFloat("NUM_SESSIONS", 25))
 #   being divided). Measured 2026-09-18, after an estimate given on the
 #   assumption this applied to both.
 #
-# ★ THE REAL PACE KNOB FOR TF. Halve it and the TF run takes twice as long,
-#   whatever the session count.
+# ⚠⚠ AND THAT LOOP IS DEAD (checked 2026-10-07, owner: "each track meet should
+#   only be one request of compiled results"). Since 6/22 both sports take the
+#   fast path: GetMeetData (the meet, its divisions and the JWT the results
+#   call needs) then ONE GetAllResultsData for the whole meet -- two requests a
+#   meet, XC and TF alike. _scrapeMeetTFPerDiv is no longer called, so this
+#   number paces nothing today; PER_MEET_DELAY and NUM_SESSIONS set the pace
+#   for both sports.
 TARGET_REQUESTS_PER_SEC_PER_IP = _envFloat(
     "TARGET_REQUESTS_PER_SEC_PER_IP", 3.0)
 
