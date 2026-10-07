@@ -5017,3 +5017,8 @@ the number** with black text (`.dv-tint`, `.rv-tint`). The rating runs from
 almost none at 95 to a clear orange at 145; difficulty and race day get
 **green for harder / slower, red for easier / faster**, full at 10%
 (`difficulty_view.tintFor`). Shipped on the owner's "go" (52f632c).
+
+**Reverted, same day** (owner: "nvm this is awful revert revert"): both
+colour changes are undone (f597998 and 52f632c). Difficulty and race day are
+back to the flat red/teal from 43f2023, and ratings carry no colour. The
+field plot keeps its rating colours (89c85ec), which the owner likes.

@@ -125,45 +125,6 @@ def diffPct(difficulty, sport="XC"):
     return f"{pct:+.1f}%"
 
 
-# ★ DIFFICULTY IN SHADES OF RED AND GREEN (owner, 2026-10-07: "make
-#   difficulty have different shades of red/green"). A diverging scale: grey
-#   at 0, red for a course that slows the clock, green for one that speeds
-#   it, deepening with the size of the effect and full at 10% -- the bound
-#   the site already puts on a race day (app._RACE_DAY_CAP). Both ends stay
-#   dark enough to read as text on the page.
-# ★ A TINT BEHIND THE NUMBER, NOT THE NUMBER'S COLOUR (owner, 2026-10-07:
-#   "neither of them are on a gradient ... it's not very easy to tell it's a
-#   gradient"). Text can only use a narrow band of darkness and stay
-#   readable, so +4.1% and +4.7% looked identical. A wash behind black text
-#   can run from nothing to a clear tint, so the size shows.
-# ★ AND HARDER IS GREEN ("why would better difficulty be red?"): a hard
-#   course is the one a time is worth more on. Easier is red. Full at 10%,
-#   the site's own race-day bound; exactly 0.0% gets no tint.
-_HARDER_RGB = (22, 163, 74)
-_EASIER_RGB = (220, 38, 38)
-FULL_COLOUR_PCT = 10.0
-_MIN_ALPHA, _MAX_ALPHA = 0.10, 0.55
-
-
-def tintFor(pct):
-    """'rgba(...)' wash for a percentage effect on the clock (+ harder)."""
-    if pct is None or abs(pct) < 0.05:
-        return "transparent"
-    t = min(abs(pct) / FULL_COLOUR_PCT, 1.0)
-    r, g, b = _HARDER_RGB if pct > 0 else _EASIER_RGB
-    return f"rgba({r},{g},{b},{_MIN_ALPHA + (_MAX_ALPHA - _MIN_ALPHA) * t:.2f})"
-
-
-# kept for callers that colour text (none in the templates now)
-def shadeFor(pct):
-    return tintFor(pct)
-
-
-def diffColour(difficulty, sport="XC"):
-    """The template filter: the wash behind a course's difficulty."""
-    return tintFor(relativePct(difficulty, sport))
-
-
 def diffWords(difficulty, sport="XC"):
     """A sentence: '+4.1% slower than a typical XC course, about 40 seconds
     on a 16-minute 5K'."""

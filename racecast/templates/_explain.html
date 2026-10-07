@@ -34,13 +34,13 @@
 {% macro dv(d, sport="XC", day=None) -%}
     {%- if d is none -%}-
     {%- elif day is none -%}
-    {#- a wash by size: green harder, red easier (difficulty_view.tintFor) -#}
-    <span class="dv dv-tint" style="background:{{ d|diffcolour(sport) }}" title="raw difficulty {{ "%+.3f"|format(d) }}">{{ d|diffpct(sport) }}</span>
+    {#- colour by direction (style.css COLOUR): harder red, easier teal -#}
+    <span class="dv{{ ' dv-hard' if d > 0 else ' dv-easy' if d < 0 }}" title="raw difficulty {{ "%+.3f"|format(d) }}">{{ d|diffpct(sport) }}</span>
     {%- else -%}
     {#- The race-day term rides on the difficulty as a hover (owner,
         2026-09-06): the course is the column, the day is what the RATING
         also carried, and the two only show together on request. -#}
-    <span class="dv dv-day flag dv-tint" style="background:{{ d|diffcolour(sport) }}" tabindex="0"
+    <span class="dv dv-day flag{{ ' dv-hard' if d > 0 else ' dv-easy' if d < 0 }}" tabindex="0"
           data-title="Course {{ d|diffpct(sport) }} · Race Day {{ day|daypct }}"
           data-blurb="The course runs {{ d|diffpct(sport) }} against a typical one.{% if (day|dayword) == 'level' %} That day the field ran level for this course, so the ratings carry only the course.{% elif sport not in RACE_DAY_SPORTS %} That day the field ran {{ day|dayabs }} {{ day|dayword }} for this venue (weather, conditions, or the sheet). These ratings carry the venue only, not the day.{% else %} That day the field ran {{ day|dayabs }} {{ day|dayword }} for this course (weather, conditions, or the sheet), so every rating from it is {{ 'raised' if (day|dayword) == 'slow' else 'lowered' }} by {{ day|dayabs }}.{% endif %}{% if day|daycapped and sport in RACE_DAY_SPORTS %} Capped at 10%: beyond that the result sheet, not the day, is suspect.{% endif %}"
           aria-label="Course difficulty {{ d|diffpct(sport) }}; race day {{ day|daypct }}.">{{ d|diffpct(sport) }}<span class="dv-tick" aria-hidden="true"></span></span>

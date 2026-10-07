@@ -389,7 +389,6 @@ def _is_team_filter(school):
 #   read ~2% harder than it is. See difficulty_view.py.
 import difficulty_view
 app.template_filter("diffpct")(difficulty_view.diffPct)
-app.template_filter("diffcolour")(difficulty_view.diffColour)
 
 # The sports whose ratings carry the race-day term. The hover still SHOWS
 # the day for every sport; this decides whether it says the rating carries
@@ -498,13 +497,6 @@ def _dayabs(u):
     the direction in words."""
     pct = dayPct(u)
     return "" if pct is None else f"{abs(pct):.1f}%"
-
-
-@app.template_filter("daycolour")
-def _daycolour(u):
-    """The race day in the same washes as the course: a slow day (times
-    ran slower, like a hard course) green, a fast day red."""
-    return difficulty_view.tintFor(dayPct(u))
 
 
 @app.template_filter("dayword")

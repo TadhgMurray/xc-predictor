@@ -47,18 +47,6 @@
      span's server-rendered text; it is stashed in data-own on first touch so
      the swap is reversible without a reload. A span with no data-hs keeps
      its own number in both views. */
-  /* ★ THE RATING ON A GRADIENT (owner, 2026-10-07: "give rating a color
-     gradient" ... "it's not very easy to tell it's a gradient"). A wash
-     behind the number, the text staying black: almost none at 95,
-     deepening smoothly to a clear orange at 145 -- the field plot's hue.
-     A text colour could not show it; a wash can. */
-  function ratingTint(v) {
-    if (isNaN(v)) return "";
-    var t = Math.max(0, Math.min(1, (v - 95) / 50));
-    return "rgba(234,88,12," + (0.04 + 0.52 * t).toFixed(2) + ")";
-  }
-  window.rcRatingTint = ratingTint;
-
   function applySpans() {
     var spans = document.querySelectorAll(".rv");
     for (var i = 0; i < spans.length; i++) {
@@ -67,8 +55,6 @@
       el.textContent = (window.rcScale.mode === "hs" && el.dataset.hs)
         ? el.dataset.hs
         : el.dataset.own;
-      el.style.backgroundColor = ratingTint(parseFloat(el.textContent));
-      el.classList.add("rv-tint");
     }
     /* The numbers changed, so the order of any opted-in table may have. */
     if (typeof resortTables === "function") resortTables();
