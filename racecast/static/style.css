@@ -3803,17 +3803,27 @@ td.margin-b { color: #b45309; font-weight: 600; }
    quiet circled hint rather than a record pill. */
 .scale-note {
     --tip: #374151;
+    /* ! CENTRED BY FLEX, NOT line-height (owner, 2026-10-07: "question mark
+       for rating scale is off centered"): line-height centring put the
+       glyph low in its ring, as with .info-i (2026-09-02). align-self
+       centres the ring on the toggle's buttons beside it. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    box-sizing: border-box;
     background: none;
     color: #6b7280;
     border: 1px solid var(--line-2);
     border-radius: 50%;
     width: 1.15rem;
     height: 1.15rem;
-    line-height: 1.05rem;
-    text-align: center;
+    line-height: 1;
     padding: 0;
     margin-left: 0.55rem;
     font-size: 11px;
+    font-weight: 700;
+    font-style: normal;
 }
 /* The toggle sits flush against the page's RIGHT edge, and the flag
    tooltip opens rightward by default (left: 0) -- so this one ran off the

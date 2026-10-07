@@ -4575,3 +4575,15 @@ Owner: "feels half-assed, only some things were put into new theme." Went throug
 - **Noticed, left as is (owner's call):** the home snapshot's "Top athletes" and "Best performances" columns often list
   the same names (different measures); the athlete sidebar's per-season bests repeat each season header's rating; the
   race sidebar's top 10 teams are also the first 10 rows of the Teams tab.
+
+## 2026-10-07 — softer contrast; the rating-scale "?"
+
+- Owner: "too much white black contrast." Race pages (everyone) and ?theme=rc: "black" is now a warm charcoal
+  (#24221f), "white" a warm off-white (#faf8f4 surfaces, #efece6 type on dark), the paper a step darker (#edeae3),
+  and table heads a light warm grey (#e3dfd6) instead of a black bar. The header band and top bar stay dark.
+  Every white surface in style.css / pages2.css / features.css (82 selectors) is re-pointed under the theme by a
+  generated block wrapped in :where(), so it weighs what the white rule weighs and the site's selected states still
+  win. (Regenerate: scan those files for `background: #fff|white` rules and emit `:where(html.rc-theme) <sel>`.)
+- The rating-scale "?" was centred by line-height (glyph sat low) and the new flag rules styled it as a red record
+  tag. Now flex-centred site-wide and aligned to the toggle's buttons, and excluded from the flag rules: the quiet
+  grey ring the other help icons use.

@@ -11,9 +11,13 @@
 @font-face { font-family: "RC Mono"; src: url(fonts/jetbrains-mono-500-normal.woff2) format("woff2"); font-weight: 500; font-display: swap; }
 @font-face { font-family: "RC Mono"; src: url(fonts/jetbrains-mono-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
 
-body.rc-body { background: #f3f2ee; }
+body.rc-body { background: #edeae3; }
 main.rc {
-  --rc-ink: #0d0d0d; --rc-red: #d7192d; --rc-mute: #6f6f69; --rc-line: #e2e1db;
+  /* ★ SOFTER (owner, 2026-10-07: "too much white black contrast"): a warm
+     charcoal, not black; warm off-white cards and type, not pure white; table
+     heads a light warm grey, not a black bar. The header band stays dark. */
+  --rc-ink: #24221f; --rc-red: #c8202f; --rc-mute: #6f6c64; --rc-line: #dfdbd2;
+  --rc-card: #faf8f4; --rc-on-dark: #efece6; --rc-paper: #edeae3; --rc-head: #e3dfd6; --rc-head-ink: #4b4842;
   --rc-gold: #c9a227; --rc-silver: #b9c0c6; --rc-bronze: #b06a35; --rc-lit: #fff6d8;
   font-family: "RC Sans", system-ui, sans-serif; color: var(--rc-ink);
   max-width: none; margin: 0; padding: 0 0 3rem;
@@ -26,29 +30,29 @@ main.rc a:hover { text-decoration: underline; }
 .rc-w { max-width: 1080px; margin: 0 auto; padding: 0 1.5rem; box-sizing: content-box; }
 
 /* ---- header ---------------------------------------------------------- */
-.rc-hd { background: var(--rc-ink); color: #fff; padding: 1.1rem 0 1.2rem; border-bottom: 4px solid var(--rc-red); }
+.rc-hd { background: var(--rc-ink); color: var(--rc-on-dark); padding: 1.1rem 0 1.2rem; border-bottom: 4px solid var(--rc-red); }
 .rc-hgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 2.4rem; align-items: end; }
 .rc-kick { font-family: "RC Cond"; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: .95rem; color: #a9a9a2; }
 main.rc h1 { font-family: "RC Cond"; font-weight: 800; font-style: italic; text-transform: uppercase;
-  font-size: 3.4rem; line-height: .92; margin: .2rem 0 .4rem; color: #fff; letter-spacing: 0; }
+  font-size: 3.4rem; line-height: .92; margin: .2rem 0 .4rem; color: var(--rc-on-dark); letter-spacing: 0; }
 .rc-meta { font-family: "RC Cond"; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: 1rem; color: #d9d9d4; }
 .rc-meta .dist-note { color: #ffd166; }
 .rc-champs { display: flex; gap: .6rem 2.4rem; flex-wrap: wrap; margin-top: .8rem; }
 .rc-champs > div { display: flex; flex-direction: column; gap: .2rem; }
 .rc-champs .rc-crow { display: flex; align-items: center; gap: .55rem; }
-main.rc .rc-champs img.school-mark { width: 28px; height: 28px; object-fit: contain; background: #fff; border-radius: 3px; padding: 2px; margin: 0; vertical-align: middle; box-sizing: border-box; }
+main.rc .rc-champs img.school-mark { width: 28px; height: 28px; object-fit: contain; background: var(--rc-card); border-radius: 3px; padding: 2px; margin: 0; vertical-align: middle; box-sizing: border-box; }
 .rc-champs .k { font-family: "RC Cond"; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #a9a9a2; font-size: .8rem; display: block; line-height: 1; }
-.rc-champs .rc-cn { font-family: "RC Cond"; font-weight: 800; font-style: italic; text-transform: uppercase; font-size: 1.35rem; color: #fff; }
+.rc-champs .rc-cn { font-family: "RC Cond"; font-weight: 800; font-style: italic; text-transform: uppercase; font-size: 1.35rem; color: var(--rc-on-dark); }
 .rc-champs .rc-cn { line-height: 1.1; }
 .rc-champs i { font-family: "RC Mono"; font-style: normal; font-weight: 700; color: #ffd166; font-size: 1.05rem; }
 .rc-right { display: flex; flex-direction: column; }
 .rc-story { margin: 0; font-size: 1.02rem; line-height: 1.5; color: #e6e6e1; }
-.rc-story b { color: #fff; }
+.rc-story b { color: var(--rc-on-dark); }
 .rc-facts { display: flex; flex-wrap: wrap; margin-top: .7rem; }
 .rc-facts > span { font-family: "RC Cond"; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: .9rem;
   color: #a9a9a2; border-left: 3px solid var(--rc-red); padding: .1rem .9rem .1rem .55rem; margin: 0 .9rem .3rem 0; }
-.rc-facts b { font-family: "RC Mono"; font-weight: 700; letter-spacing: 0; text-transform: none; margin-left: .35rem; color: #fff; }
-main.rc .rc-facts .dv { color: #fff; background: none !important; padding: 0; margin: 0; font: inherit; font-style: normal; vertical-align: baseline; }
+.rc-facts b { font-family: "RC Mono"; font-weight: 700; letter-spacing: 0; text-transform: none; margin-left: .35rem; color: var(--rc-on-dark); }
+main.rc .rc-facts .dv { color: var(--rc-on-dark); background: none !important; padding: 0; margin: 0; font: inherit; font-style: normal; vertical-align: baseline; }
 .rc-facts .info-i { color: #a9a9a2; border-color: #55554f; margin-left: .3rem; }
 .rc-share { order: -1; align-self: flex-end; margin-bottom: .7rem; background: transparent; color: #d9d9d4; border: 1px solid #3a3a36; }
 
@@ -61,19 +65,19 @@ main.rc .rc-facts .dv { color: #fff; background: none !important; padding: 0; ma
 .rc-tabs a.on { color: var(--rc-ink) !important; box-shadow: inset 0 -4px 0 var(--rc-red); }
 .rc-tabs a:hover { text-decoration: none !important; color: var(--rc-ink) !important; }
 .rc-tabs .n { font-family: "RC Mono"; font-size: .8rem; margin-left: .3rem; }
-.rc-find { border: 1px solid #cfcec7; background: #fff; padding: .4rem .6rem; font: inherit; font-size: .9rem; width: 230px; margin-bottom: .4rem; }
+.rc-find { border: 1px solid #cfcec7; background: var(--rc-card); padding: .4rem .6rem; font: inherit; font-size: .9rem; width: 230px; margin-bottom: .4rem; }
 main.rc .rc-panel { margin-top: .6rem; }
 main.rc.rc-js .rc-panel[hidden] { display: none; }
 main.rc .toggle-row { margin: .2rem 0 .6rem; }
 
 /* ---- tables ---------------------------------------------------------- */
-main.rc table { display: table; width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--rc-line); font-size: .95rem; overflow: visible; }
-main.rc thead th { background: var(--rc-ink); color: #fff; font-family: "RC Cond"; font-weight: 700; text-transform: uppercase;
+main.rc table { display: table; width: 100%; border-collapse: collapse; background: var(--rc-card); border: 1px solid var(--rc-line); font-size: .95rem; overflow: visible; }
+main.rc thead th { background: var(--rc-head); color: var(--rc-head-ink); border-bottom: 1px solid #d3cec3; font-family: "RC Cond"; font-weight: 700; text-transform: uppercase;
   letter-spacing: .08em; font-size: .8rem; padding: .45rem .5rem; border: 0; vertical-align: bottom; }
-main.rc thead th .info-i { background: none; color: #a9a9a2; }
+main.rc thead th .info-i { background: none; color: var(--rc-mute); border-color: #b9b5ab; }
 main.rc td { padding: .42rem .5rem; border: 0; border-bottom: 1px solid var(--rc-line); vertical-align: middle; }
 main.rc tbody tr:nth-child(even) { background: none; }
-main.rc tbody tr:hover { background: #faf9f5; }
+main.rc tbody tr:hover { background: #f1eee7; }
 main.rc .n { text-align: right; white-space: nowrap; }
 main.rc th.n { text-align: right; }
 .rc-sub { display: block; font-size: .66rem; letter-spacing: .06em; opacity: .75; }
@@ -83,7 +87,7 @@ main.rc th.n { text-align: right; }
   font-style: normal; font-size: 1rem; padding: .05rem .35rem; border-radius: 2px; color: #111; }
 .rc-table td.pl.rc-m1 span { background: var(--rc-gold); }
 .rc-table td.pl.rc-m2 span { background: var(--rc-silver); }
-.rc-table td.pl.rc-m3 span { background: var(--rc-bronze); color: #fff; }
+.rc-table td.pl.rc-m3 span { background: var(--rc-bronze); color: var(--rc-on-dark); }
 .rc-table td.nm a { font-weight: 700; color: var(--rc-ink); }
 .rc-subline { display: none; }
 .rc-table td.sch { white-space: nowrap; }
@@ -103,12 +107,12 @@ main.rc .rc-table .flag { display: inline; }
 /* record flags: small solid tags (owner, 2026-10-07: did not like the bare
    red text). PR red, SR black; course and rating records outlined. The same
    facts and tooltips as before. */
-main.rc .flag:not(.info-i):not(.dv) { display: inline-block; margin: 0 0 0 .35rem; padding: .08rem .3rem .04rem;
+main.rc .flag:not(.info-i):not(.dv):not(.scale-note) { display: inline-block; margin: 0 0 0 .35rem; padding: .08rem .3rem .04rem;
   font-family: "RC Cond"; font-weight: 800; font-style: italic; font-size: .7rem; line-height: 1; letter-spacing: .03em;
-  border-radius: 2px; vertical-align: .12em; color: #fff; background: var(--rc-red) !important; border: 1px solid var(--rc-red); }
+  border-radius: 2px; vertical-align: .12em; color: var(--rc-on-dark); background: var(--rc-red) !important; border: 1px solid var(--rc-red); }
 main.rc .flag.flag--sr:not(.info-i):not(.dv) { background: var(--rc-ink) !important; border-color: var(--rc-ink); }
-main.rc .flag.flag--cpr:not(.info-i):not(.dv), main.rc .flag.flag--csr:not(.info-i):not(.dv) { background: #fff !important; color: var(--rc-red); }
-main.rc .flag.flag--rpr:not(.info-i):not(.dv), main.rc .flag.flag--rsr:not(.info-i):not(.dv) { background: #fff !important; color: var(--rc-ink); border-color: var(--rc-ink); }
+main.rc .flag.flag--cpr:not(.info-i):not(.dv), main.rc .flag.flag--csr:not(.info-i):not(.dv) { background: var(--rc-card) !important; color: var(--rc-red); }
+main.rc .flag.flag--rpr:not(.info-i):not(.dv), main.rc .flag.flag--rsr:not(.info-i):not(.dv) { background: var(--rc-card) !important; color: var(--rc-ink); border-color: var(--rc-ink); }
 .rc-table tr.rc-lit td, .rc-table tr.hl-school td { background: var(--rc-lit); }
 .rc-table tr.rc-lit td.pl, .rc-table tr.hl-school td.pl { box-shadow: inset 4px 0 0 var(--rc-gold); }
 .rc-table tr.row-hi td { background: #e8f0fb; }
@@ -132,9 +136,9 @@ main.rc .csv-link { margin: .5rem 0 0; }
 .rc-tscores tr.rc-lit td.tp { box-shadow: inset 4px 0 0 var(--rc-gold); }
 .rc-tip { font-size: .8rem; color: var(--rc-mute); margin: .45rem 0 .6rem; }
 .rc-more { display: block; text-align: center; padding: .7rem; font-family: "RC Cond"; font-weight: 700; letter-spacing: .08em;
-  text-transform: uppercase; background: var(--rc-ink); color: #fff !important; }
+  text-transform: uppercase; background: var(--rc-ink); color: var(--rc-on-dark) !important; }
 .rc-more:hover { text-decoration: none !important; }
-.rc-side .above-box { margin-top: 1.2rem; background: #fff; border: 1px solid var(--rc-line); padding: .7rem .9rem; }
+.rc-side .above-box { margin-top: 1.2rem; background: var(--rc-card); border: 1px solid var(--rc-line); padding: .7rem .9rem; }
 .rc-side .above-box h2 { font-size: 1.2rem; margin: 0 0 .2rem; }
 .rc-sidelinks { font-family: "RC Cond"; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; margin-top: 1rem; }
 main.rc .page-report { margin-top: 1.4rem; }
@@ -189,7 +193,7 @@ main.rc .relay-legs a { color: var(--rc-mute); font-weight: 400; }
 .rc-table td.nm a, .rc-table td.sch a, .rc-teams-full td a, .rc-table .relay-legs a { text-decoration-color: #c9c8c2; }
 .rc-hd a { text-decoration-color: rgba(255, 255, 255, .35); }
 main.rc .rc-table td a:hover, main.rc .rc-teams-full td a:hover { color: var(--rc-red); text-decoration-color: var(--rc-red); }
-main.rc .rc-hd a:hover { color: #fff; text-decoration-color: var(--rc-red); }
+main.rc .rc-hd a:hover { color: var(--rc-on-dark); text-decoration-color: var(--rc-red); }
 .rc-go::after { content: "\2192"; display: inline-block; margin-left: .35em; text-decoration: none; }
 .rc-out { margin-left: auto; align-self: center; padding: .35rem 0 .45rem; font-family: "RC Cond"; font-weight: 700;
   text-transform: uppercase; letter-spacing: .06em; font-size: 1rem; color: var(--rc-red) !important; white-space: nowrap; }
