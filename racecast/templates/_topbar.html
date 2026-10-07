@@ -1,5 +1,21 @@
 {# Shared topbar. Included at the top of every page's <body>.
    Change it here once -> every page updates. #}
+{# ★ THE SITE-WIDE LOOK, AS A PREVIEW (owner, 2026-10-07: "try this style on
+   the other pages"). ?theme=rc turns it on for this browser (localStorage),
+   ?theme=off turns it off. Client-side ON PURPOSE: the server sends every
+   reader the same HTML, so edge caching is untouched (see the edition note
+   below). static/theme-rc.css scopes every rule under html.rc-theme. #}
+<script>(function () {
+  try {
+    var m = location.search.match(/[?&]theme=(rc|off)\b/);
+    if (m) { if (m[1] === "rc") localStorage.setItem("rcTheme", "1"); else localStorage.removeItem("rcTheme"); }
+    if (localStorage.getItem("rcTheme") !== "1") return;
+    var l = document.createElement("link");
+    l.rel = "stylesheet"; l.href = "{{ static_v('theme-rc.css') }}";
+    document.head.appendChild(l);
+    document.documentElement.classList.add("rc-theme");
+  } catch (e) {}
+})();</script>
 <header class="topbar">
     {# The full lockup -- trail, plate and tick scale -- sized big enough
        that those details still read. This is why the topbar is taller than

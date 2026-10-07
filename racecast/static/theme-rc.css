@@ -1,0 +1,117 @@
+/* theme-rc.css -- the race page's look on every page, as a PREVIEW (owner,
+   2026-10-07: "try this style on the other pages").
+
+   Loaded only when the reader opts in with ?theme=rc (remembered in
+   localStorage; ?theme=off turns it off) by the snippet in _topbar.html.
+   The server sends the same HTML to everyone, so edge caching is untouched.
+   Every rule is under html.rc-theme: without the class nothing here applies.
+
+   The race page keeps race.css; this file gives the rest of the site the same
+   type, colours and table treatment so the race page stops being an island. */
+@font-face { font-family: "RC Cond"; src: url(fonts/barlow-condensed-800-italic.woff2) format("woff2"); font-weight: 800; font-style: italic; font-display: swap; }
+@font-face { font-family: "RC Cond"; src: url(fonts/barlow-condensed-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "RC Cond"; src: url(fonts/barlow-condensed-600-normal.woff2) format("woff2"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "RC Sans"; src: url(fonts/barlow-400-normal.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "RC Sans"; src: url(fonts/barlow-600-normal.woff2) format("woff2"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "RC Sans"; src: url(fonts/barlow-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "RC Mono"; src: url(fonts/jetbrains-mono-500-normal.woff2) format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "RC Mono"; src: url(fonts/jetbrains-mono-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
+
+html.rc-theme {
+  --rc-ink: #0d0d0d; --rc-red: #d7192d; --rc-mute: #6f6f69; --rc-line: #e2e1db;
+  --rc-paper: #f3f2ee; --rc-gold: #c9a227;
+  /* the site's own tokens, re-pointed */
+  --ink: #0d0d0d; --link: #0d0d0d; --line: #e2e1db; --line-2: #cfcec7;
+  --zebra: transparent; --hover: #faf9f5; --muted: #6f6f69;
+}
+html.rc-theme body { background: var(--rc-paper); }
+html.rc-theme body, html.rc-theme input, html.rc-theme select,
+html.rc-theme button, html.rc-theme textarea { font-family: "RC Sans", system-ui, sans-serif; }
+
+/* ---- type ------------------------------------------------------------- */
+html.rc-theme h1 { font-family: "RC Cond", sans-serif; font-weight: 800; font-style: italic; text-transform: uppercase;
+  letter-spacing: 0; line-height: .95; font-size: 2.6rem; color: var(--rc-ink); }
+html.rc-theme h2 { font-family: "RC Cond", sans-serif; font-weight: 800; font-style: italic; text-transform: uppercase;
+  letter-spacing: .005em; font-size: 1.55rem; line-height: 1; }
+html.rc-theme h3 { font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: 1.1rem; }
+html.rc-theme a { color: var(--rc-ink); }
+html.rc-theme p a, html.rc-theme .meta a { text-decoration-color: var(--rc-red); text-underline-offset: 2px; }
+
+/* ---- top bar: black, as the race page's header ------------------------ */
+html.rc-theme .topbar { background: var(--rc-ink); border-bottom: 0; }
+html.rc-theme .topnav a, html.rc-theme .topnav-more summary {
+  font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  font-size: 1.02rem; color: #c9c9c3; }
+html.rc-theme .topnav a:hover, html.rc-theme .topnav-more summary:hover { color: #fff; }
+html.rc-theme .topnav a.is-here, html.rc-theme .topnav-more summary.is-here {
+  color: #fff; text-decoration: none; box-shadow: inset 0 -3px 0 var(--rc-red); border-bottom: 0; }
+html.rc-theme .topnav-menu { background: var(--rc-ink); border-color: #33332f; }
+html.rc-theme .topnav-menu a { color: #d9d9d4; }
+html.rc-theme .viewswitch { border-color: #3a3a36; background: transparent; }
+html.rc-theme .viewswitch a { font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #a9a9a2; background: transparent; }
+html.rc-theme .viewswitch a.is-on { background: #fff; color: var(--rc-ink); }
+html.rc-theme .search-wrap input { background: #1d1d1b; border-color: #33332f; color: #fff; }
+html.rc-theme .search-wrap input::placeholder { color: #8b8b85; }
+html.rc-theme .topbar-account a, html.rc-theme .tb-signin { color: #fff; border-color: #3a3a36; background: transparent;
+  font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+
+/* ---- tables: the race page's ----------------------------------------- */
+html.rc-theme table { background: #fff; border-color: var(--rc-line); }
+html.rc-theme thead th { background: var(--rc-ink); color: #fff; border-bottom: 0;
+  font-family: "RC Cond", sans-serif; font-weight: 700; letter-spacing: .08em; font-size: .8rem; }
+html.rc-theme thead th a, html.rc-theme thead th button { color: #fff; }
+html.rc-theme thead th .info-i { color: #a9a9a2; border-color: #55554f; }
+html.rc-theme tbody tr:nth-child(even) { background: transparent; }
+html.rc-theme td { border-bottom-color: var(--rc-line); font-variant-numeric: tabular-nums; }
+html.rc-theme table a { color: var(--rc-ink); font-weight: 600; }
+html.rc-theme table td.rating, html.rc-theme table td.rating a { font-family: "RC Mono", monospace; }
+html.rc-theme .displacer, html.rc-theme td.displacer a { color: var(--rc-mute); font-weight: 400; }
+
+/* ---- record flags: quiet text, as on the race page -------------------- */
+html.rc-theme .flag:not(.info-i):not(.dv) { background: none !important; color: var(--rc-red); padding: 0 .1rem;
+  font-family: "RC Cond", sans-serif; font-weight: 800; font-style: italic; font-size: .78rem; border-radius: 0; }
+html.rc-theme .flag.flag--sr, html.rc-theme .flag.flag--csr, html.rc-theme .flag.flag--rsr { color: var(--rc-mute); }
+
+/* ---- tabs, segmented buttons, chips ----------------------------------- */
+html.rc-theme .rankings-page .tabs a, html.rc-theme .rankings-page .tabs button,
+html.rc-theme .board-strip a, html.rc-theme .seg a, html.rc-theme .seg button, html.rc-theme .seg-btn,
+html.rc-theme .toggle-group button, html.rc-theme .toggle-group a, html.rc-theme .sport-toggle a,
+html.rc-theme .sport-toggle button, html.rc-theme .scale-toggle button, html.rc-theme .tabs a, html.rc-theme .tab {
+  font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-size: .98rem; }
+html.rc-theme .chip, html.rc-theme .pool-chips a, html.rc-theme .pool-chips button {
+  font-family: "RC Cond", sans-serif; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+html.rc-theme .scale-lab, html.rc-theme .lf-label, html.rc-theme .field-label, html.rc-theme label,
+html.rc-theme .rankings-page .field > label {
+  font-family: "RC Cond", sans-serif; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+
+/* ---- buttons ---------------------------------------------------------- */
+html.rc-theme .meet-link, html.rc-theme .share-btn, html.rc-theme .share-box {
+  font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--rc-ink); }
+html.rc-theme button[type=submit], html.rc-theme .btn-primary, html.rc-theme .apply-btn {
+  font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+
+/* ---- cards and filter panels: white on the paper ---------------------- */
+html.rc-theme .rankings-page .filters, html.rc-theme .landing-filters, html.rc-theme .meet-filters,
+html.rc-theme .filter-card, html.rc-theme .card { background: #fff; }
+
+/* ---- edge to edge: the black bar and the race page's band run the full
+   width (the body's 8px desktop margin made them floating boxes; phones
+   already have no body margin -- style.css "ONE WIDTH") ---------------- */
+@media (min-width: 701px) {
+  html.rc-theme .topbar { margin: -8px -8px 0; padding-left: calc(1.5rem + 8px); padding-right: calc(1.5rem + 8px); }
+  html.rc-theme .rc-hd { margin-left: -8px; margin-right: -8px; }
+}
+html.rc-theme .rc-hd { border-top: 1px solid #262624; }
+
+/* ---- the race page's dark band keeps its own colours (the generic h1 and
+   link colours above turned its white type black on black) ------------- */
+html.rc-theme main.rc .rc-hd h1 { color: #fff; }
+html.rc-theme main.rc .rc-hd a { color: inherit; }
+html.rc-theme main.rc .rc-hd .rc-share { color: #d9d9d4; }
+html.rc-theme main.rc .rc-tabs a { color: var(--rc-mute); }
+html.rc-theme main.rc .rc-tabs a.on { color: var(--rc-ink); }
+html.rc-theme main.rc .rc-more { color: #fff; }
+@media (max-width: 700px) {
+  /* under the full-width black bar the band runs edge to edge too */
+  html.rc-theme main.rc .rc-hd { margin-left: -12px; margin-right: -12px; padding-left: 24px; padding-right: 24px; }
+}

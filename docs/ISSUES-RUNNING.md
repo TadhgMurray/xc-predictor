@@ -4506,3 +4506,22 @@ Owner: "the site is info overload" → mockup rounds → picked D5, minus the ru
   (1.5rem gutter).
 - State ranking table: Rating and Races headers were left-aligned over right-aligned numbers, and # was a right-aligned
   number in a wide cell. Headers now align with their numbers, # reads like the rankings board's.
+
+## 2026-10-07 — 🧪 the race page's look on every page, as a preview (?theme=rc)
+
+Owner: "try this style on the other pages." Built as an opt-in preview so nobody else sees it until it's approved:
+- **Switch:** add `?theme=rc` to any URL (remembered in this browser), `?theme=off` to turn it off. A few lines in
+  _topbar.html read it client-side and load static/theme-rc.css; the HTML the server sends is identical for every
+  reader, so edge caching is untouched. Every rule sits under `html.rc-theme`.
+- **What it changes (CSS only, no template changes):** black full-width top bar with condensed uppercase nav and a
+  red underline on the current section; condensed italic uppercase h1/h2; the paper background; black table heads,
+  white tables, ink links; record flags as quiet red text (as on the race page); condensed uppercase tabs, chips,
+  labels and buttons; white filter cards. The race page's dark band runs full width under the bar.
+- Checked by loading the live pages with the stylesheet injected (home, rankings, state rankings, athlete, meets,
+  meet, school, course, predictions, conversions, race, recruiting, coaches, about; phones for race, rankings,
+  athlete, meets).
+- **Not themed yet:** chart lines (athlete charts stay blue), the equivalents ruler's selected pill (blue), the home
+  mural's own type. If the look is approved, those plus the per-page headers become real template changes and the
+  switch goes away.
+- Pre-existing test failures, unchanged by this: test_coach_view::test_the_per_reader_block_rides_the_topbar_s_one_request,
+  test_recruiting_athlete (2), plus the three noted earlier today.
