@@ -4630,3 +4630,26 @@ Owner: "feels half-assed, only some things were put into new theme." Went throug
   any time and the rest stays due for the nightly job.
 - Tests: tests/test_newest_first_scrape.py (scratch Postgres: claim order, re-seed with old meets still due,
   two dry blocks stop the walk).
+
+## 2026-10-07 — run 20261006_120609: where the 24h 38m went; evidence steps moved off the critical path
+
+- Per-step (summary.log): 04_grade_sanity 460.7 min, 08b_ladder 351.1, 08_golive 157.5, 10f2_projection 81.2
+  (background), 07_pack 58.3, 08a_sport_holdout 51.1, 08a_holdout 48.1, 10_rankings x4 45.4 (parallel), 04c_twins
+  44.7, 10_rankings_finish 39.5, 05_backfill 26.8.
+- **04_grade_sanity: one gap of 303.6 min right after rule 7's "[7] 21 seasons ... -> pro" line.** What runs there
+  prints nothing until it ends: rule 5b's _COLLEGIATE_SQL, _COLLEGE_START_SQL and rule 8 (adultClubSeasons, new on
+  2026-10-06; it prints "[8] ... (Ns)" with its own time). On 10-05, before rule 8 existed, 00-07 took 2h17m in
+  all, so rule 8 is the suspect. Asked the owner for the step's timed lines to confirm before changing it. Other
+  gaps: 50.1 min after "CREATE INDEX ON gradekind", 27.6 after "rows they hold", 25.1 / 20.4 for the two 2c rounds.
+- **✅ The evidence steps no longer hold up the boards.** 08a_holdout, 08a_sport_holdout, 08b_ladder, 08d_diagnose,
+  08c_anchor_check (451 min this run) publish nothing; they now run as ONE background chain at nice 19 from the
+  go-live on, beside 09-16, collected before 17 (17_checklist and 17c_report read their logs). One chain, not
+  five, so two solves never hold the pack at once. Failures still count (written to a file, merged into FAILED).
+  Lines carry "[evidence]". XCP_EVIDENCE_BG=0 runs them in line as before.
+- **🔎 10a's 2 HARD findings: the sport level per level is still not held** (hs read -0.0039 vs target -0.0092,
+  ms -0.0100 vs -0.0191; college and elem within tolerance). The 10-02 change (sportGainShift iterating on the
+  median) moved it (hs -0.0036 -> -0.0039, ms -0.0061 -> -0.0100) but did not close it. Next: the go-live's own
+  shift table, to see whether the solve holds it and the season ratings lose it, or the solve does not.
+- Noticed: the 08a holdouts are run without --sport-level-pools, --difficulty bracket, --race-effect-*, the gauge
+  and the bracket window that 08_golive gets. Possibly intended (the bracket engine is scored by 08d's "SAME
+  ROWS"); left alone, noted.

@@ -989,6 +989,22 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
       $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) \
       $([ "${XCP_ALTITUDE:-1}" != "0" ] && echo --altitude)
+  # ★★ THE EVIDENCE STEPS RUN BESIDE THE BOARDS, NOT BEFORE THEM (owner,
+  #    2026-10-07: "make it faster"). 08a_holdout, 08a_sport_holdout,
+  #    08b_ladder, 08d_diagnose and 08c_anchor_check publish nothing: they
+  #    read the pack and the solve's state file and write reports. In run
+  #    20261006_120609 they were 451 minutes between the go-live and the
+  #    first board step (08b 351, 08a 48 + 51). Now they run in ONE
+  #    background chain, in this order, while 09 onward builds the site, and
+  #    are collected before 17 (17_checklist and 17c_report read their logs).
+  #  ! ONE CHAIN, NOT FIVE bgsteps: each is a solve over the pack; side by
+  #    side they would hold several packs in memory at once.
+  #  ! AT nice 19 (XCP_EVIDENCE_NICE): the board steps win the CPU whenever
+  #    both want it; with the boards done, the chain has the box.
+  #  ! A FAILURE STILL COUNTS: the chain writes its failed steps to a file
+  #    that the collection point adds to FAILED, as before.
+  #  XCP_EVIDENCE_BG=0 runs them in line, where they used to be.
+  _evidence() {
   # ★★ THE SCOREBOARD, EVERY RUN (2026-09-10). Until now nothing in this
   #    pipeline produced a number that said whether a change helped, so
   #    modelling questions were settled by argument. 08a scores the shipped
@@ -1120,6 +1136,24 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   the two stages have drifted apart again.
   step 08c_anchor_check "$PY" -u engine/anchor_check.py --sport TF --pct 1 \
       || true
+  }
+  EVID_PID=""
+  EVID_FAILED_FILE="$LOGDIR/.evidence_failed"
+  if [ "${XCP_EVIDENCE_BG:-1}" = "1" ] && [ "$DRY" -eq 0 ] && [ "${FROM:-0}" -le 8 ]; then
+    echo ""
+    echo "  08a..08d (holdouts, ladder, diagnostics) started IN THE BACKGROUND at nice" \
+         "${XCP_EVIDENCE_NICE:-19}; their lines carry [evidence]"
+    (
+      FAILED=""
+      NICE="nice -n ${XCP_EVIDENCE_NICE:-19}"
+      command -v ionice >/dev/null 2>&1 && NICE="$NICE ionice -c2 -n7"
+      _evidence
+      echo "$FAILED" > "$EVID_FAILED_FILE"
+    ) 2>&1 | sed -u "s/^/  [evidence] /" &
+    EVID_PID=$!
+  else
+    _evidence
+  fi
   echo "  08b_joint_shadow: the joint solve is live (XCP_JOINT_LIVE=1)"
   echo "  09_tilt skipped: the joint ratings carry the tilt"
 else
@@ -1312,6 +1346,13 @@ step 16_rowguard_apply     "$PY" -u scripts/apply_triage.py
 
 # ---- the owner's go/no-go ------------------------------------------- #
 bgwait
+# the evidence chain (08a..08d), started after the go-live
+if [ -n "${EVID_PID:-}" ]; then
+  echo "  waiting for the evidence chain (08a..08d)..."
+  wait "$EVID_PID"
+  _ef=$(tr -s ' \n' ' ' < "$EVID_FAILED_FILE" 2>/dev/null | sed 's/^ *//; s/ *$//')
+  [ -n "$_ef" ] && FAILED="$FAILED $_ef"
+fi
 step 17_checklist     "$PY" -u scripts/run_checklist.py
 # the status page's slow counts (tfrrs identity, rated rows, blank
 # athletes), recounted after the run so /account/status is current
