@@ -111,6 +111,11 @@
     </div>
     {% endif %}
     {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+    {# ★ THE FIELD ON ONE SCALE (owner, 2026-10-07: "I kind of like the
+       field on one scale"). race-page.js draws every rated finisher as a dot
+       on the rating axis, stacked by whole rating point, the lit team dark.
+       Empty without the script; nothing else depends on it. #}
+    <figure class="rc-field" hidden><figcaption>The field on one scale<span class="rc-field-key"></span></figcaption><div class="rc-field-plot"></div></figure>
     <table class="rc-table">
       <thead><tr>
         <th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th>
@@ -201,7 +206,7 @@
     {% endfor %}
     </tbody>
   </table>
-  <p class="rc-tip"><span class="rc-tip-name">{{ (scores.teams[0].runners[0].school if scores.teams[0].runners else scores.teams[0].school) if not hl_school else hl_school }}</span>'s runners are lit in the results. Tap any team to light theirs.</p>
+  <p class="rc-tip"><span class="rc-tip-name">{{ ((scores.teams[0].runners[0].school if scores.teams[0].runners else scores.teams[0].school) if not hl_school else hl_school).split("\x00")[0] }}</span>'s runners are lit in the results. Tap any team to light theirs.</p>
   {% if scores.teams|length > 10 %}<a class="rc-more" href="#teams" data-tab="teams">All {{ scores.teams|length }} teams</a>{% endif %}
   {% endif %}
   {{ al.box(above_spec) }}

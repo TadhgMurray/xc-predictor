@@ -31,7 +31,39 @@ and add one keyword to render_template:
   before it, every tooltip reads "920.1".
 """
 
+import re
+from collections import Counter
+
 METERS_PER_MILE = 1609.34
+
+_STATE_SUFFIX = re.compile(r"\s*\([A-Z]{2}\)\s*$")
+
+
+def _teamName(school):
+    """A school as the chart labels it, or None for no team at all."""
+    name = (school or "").strip()
+    low = name.lower()
+    if not name or low.startswith("unattached") or low in ("unat", "independent"):
+        return None
+    return _STATE_SUFFIX.sub("", name)
+
+
+def _seasonSchools(races):
+    """(season_label, sport) -> the school most of that season's races name.
+
+    ★ THE SCHOOL ON THE CHART (owner, 2026-10-07: "I do like the idea of
+      putting their school on the graph"). Per SEASON, not per race: one
+      club meet or a relay entered under another name would otherwise split
+      a career into slivers. The season is the unit the tables already name a
+      school for, so the chart and the tables agree.
+    """
+    votes = {}
+    for race in races:
+        team = _teamName(race.get("school"))
+        if team:
+            key = (race.get("season_label") or _year_of(race.get("date")), race.get("sport"))
+            votes.setdefault(key, Counter())[team] += 1
+    return {k: c.most_common(1)[0][0] for k, c in votes.items()}
 
 
 def _pace_per_mile(time_seconds, distance_meters):
@@ -74,7 +106,7 @@ def _year_of(date_text):
         return None
 
 
-def _point(race, value, alt=None):
+def _point(race, value, alt=None, school=None):
     """
     One chart point.
 
@@ -107,6 +139,8 @@ def _point(race, value, alt=None):
     }
     if alt is not None:
         point["vh"] = round(float(alt), 4)
+    if school:
+        point["sc"] = school
     return point
 
 
@@ -146,6 +180,8 @@ def build_chart_data(races):
         "tf_dist": {},
     }
 
+    schools = _seasonSchools(races)
+
     for race in races:
         if not race.get("date"):
             continue
@@ -156,7 +192,9 @@ def build_chart_data(races):
         if rating is not None:
             # hs_rating rides along for the pool-view toggle; pace and raw
             # time series are absolute already and carry no alternate value.
-            point = _point(race, rating, alt=race.get("hs_rating"))
+            # sc: the season's school, for the chart's school bands.
+            school = schools.get((race.get("season_label") or _year_of(race["date"]), sport))
+            point = _point(race, rating, alt=race.get("hs_rating"), school=school)
             data["all_rating"].append(point)
             if sport == "XC":
                 data["xc_rating"].append(point)

@@ -65,6 +65,20 @@ main.rc .relay-team { font-weight: 600; display: block; }
 main.rc .relay-legs { display: block; font-size: .82rem; color: var(--muted); }
 main.rc .rc-table td.wind { color: var(--muted); font-size: .88rem; }
 
+/* ---- the field on one scale (race-page.js drawField) ------------------- */
+main.rc .rc-field { margin: .2rem 0 .9rem; }
+main.rc .rc-field figcaption { display: flex; align-items: center; gap: .9rem; font-size: .8rem; color: var(--muted); margin-bottom: .2rem; }
+main.rc .rc-field-key { display: inline-flex; align-items: center; gap: .3rem; color: var(--ink); font-weight: 600; }
+main.rc .rc-field-key i.lit { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
+main.rc .rc-field svg { display: block; width: 100%; height: auto; overflow: visible; }
+main.rc .rc-field .d { fill: #c9cdd3; cursor: pointer; }
+main.rc .rc-field .d:hover { fill: #8a9099; }
+main.rc .rc-field .d.lit { fill: var(--ink); }
+main.rc .rc-field .ax, main.rc .rc-field .tk { stroke: var(--line-2); stroke-width: 1; }
+main.rc .rc-field .tl { font-size: 10px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+main.rc tr.rc-flash td { animation: rc-flash 1.6s ease-out; }
+@keyframes rc-flash { 0% { background: #fdeeb5; } 100% { background: transparent; } }
+
 /* ---- sidebar --------------------------------------------------------- */
 main.rc .rc-side h2 { margin: .3rem 0 .5rem; display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
 main.rc .rc-side h2 small { font-size: .8rem; font-weight: 400; color: var(--muted); letter-spacing: 0; }

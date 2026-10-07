@@ -221,6 +221,34 @@ function seasonRuns(points) {
 }
 
 
+/*
+ * Split point indices into runs at one SCHOOL (p.sc, the season's school --
+ * athlete_chart_data._seasonSchools). A season with no school joins the run
+ * before it (or after it, at the start of a career), so an unattached summer
+ * does not split a high school career in two.
+ *
+ * ★ OWNER, 2026-10-07: "I do like the idea of putting their school on the
+ *   graph." The bands answer the question a career chart raises first --
+ *   where did that jump happen -- and say at once when a drop is a move to a
+ *   college pool rather than a slower runner.
+ */
+function schoolRuns(points) {
+  const runs = [];
+  points.forEach((p, i) => {
+    const last = runs[runs.length - 1];
+    if (last && (!p.sc || p.sc === last.school)) {
+      last.end = i;
+    } else if (last && !last.school) {
+      last.school = p.sc;
+      last.end = i;
+    } else {
+      runs.push({ school: p.sc || null, start: i, end: i });
+    }
+  });
+  return runs;
+}
+
+
 /* ------------------------------------------------------------------ *
  *  DRAWING
  * ------------------------------------------------------------------ */
@@ -267,6 +295,40 @@ function drawChart(host, points, opts) {
   const yScale = makeYScale(yLo, yHi, height);
 
   const parts = [];
+
+  /* --- school bands, behind everything ---
+     Only when the career spans more than one school: one band across the
+     whole chart says nothing the header does not. Alternate bands are
+     shaded; the name sits at the top of its band when it fits. */
+  const schools = schoolRuns(data).filter((r) => r.school);
+  if (schools.length > 1) {
+    const plotL = PAD.left, plotR = width - PAD.right;
+    schools.forEach((run, i) => {
+      const x0 = run.start === 0 ? plotL : (xScale(run.start) + xScale(run.start - 1)) / 2;
+      const x1 = run.end === n - 1 ? plotR : (xScale(run.end) + xScale(run.end + 1)) / 2;
+      parts.push(
+        `<rect class="school-band${i % 2 ? " school-band--alt" : ""}" ` +
+        `x="${x0.toFixed(1)}" y="${PAD.top}" width="${(x1 - x0).toFixed(1)}" ` +
+        `height="${height - PAD.bottom - PAD.top}"/>`);
+      if (i > 0) {
+        parts.push(
+          `<line class="school-div" x1="${x0.toFixed(1)}" y1="${PAD.top}" ` +
+          `x2="${x0.toFixed(1)}" y2="${height - PAD.bottom}"/>`);
+      }
+      /* the same 6.2px-per-character estimate the season labels use */
+      const room = x1 - x0 - 8;
+      let name = run.school;
+      if (name.length * 6.2 > room) {
+        const cut = Math.floor(room / 6.2) - 1;
+        name = cut >= 4 ? name.slice(0, cut).trimEnd() + "\u2026" : "";
+      }
+      if (name) {
+        parts.push(
+          `<text class="school-label" x="${(x0 + 5).toFixed(1)}" ` +
+          `y="${PAD.top + 11}">${esc(name)}</text>`);
+      }
+    });
+  }
 
   /* --- horizontal gridlines + y labels ---
      Gridlines start at PAD.left; the first dot is X_INSET further right, so

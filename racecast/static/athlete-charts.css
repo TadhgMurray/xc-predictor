@@ -105,6 +105,26 @@
   vector-effect: non-scaling-stroke;
 }
 
+/* School bands (athlete-charts.js schoolRuns): every other school is
+   shaded, a solid hairline marks the move, and the name sits at the top of
+   its band. Quieter than the gridlines' data, louder than nothing. */
+.chart-slot .school-band { fill: transparent; }
+.chart-slot .school-band--alt { fill: #f4f6f9; }
+.chart-slot .school-div {
+  stroke: #9ca3af;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.chart-slot .school-label {
+  font-size: 11px;
+  font-weight: 600;
+  fill: #4b5563;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
 /* The season divider: a vertical rule between the last race of one year and
    the first of the next. Dashed and pale so it reads as a boundary rather than
    as data. */

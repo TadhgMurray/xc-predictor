@@ -4902,3 +4902,24 @@ rebuild is needed.
 three scans finished, and the middle one reads every anet row of `results`
 and `results_tf`. It now prints a timed line per step.
 `--sport XC --since 2025` narrows the long step.
+
+## 2026-10-07 — ✅ from the round-3 mockups: school bands on the career chart, the field on one scale
+
+The owner rejected all three round-3 designs but kept two ideas: "putting their
+school on the graph" and "the field on one scale". Both are now built into the
+current site's look.
+- **Athlete page, rating charts:** each school gets a band, shaded every other
+  school, with a hairline at the move and the school's name at the top. A
+  point's school is its **season's** majority school
+  (`athlete_chart_data._seasonSchools`), so one club race or relay entry does
+  not split a career. A season with no school joins its neighbour. Bands
+  appear only when a career has more than one school.
+- **XC race page:** above the results table, every rated finisher is a dot on
+  the rating axis, stacked per whole rating point. The lit team is dark and
+  sits on top of its columns. It follows team clicks and the HS/college
+  toggle; hovering a dot names the runner, and clicking jumps to the row.
+  Height fits the deepest column (96–160 px).
+- **Fixed in passing:** teams whose name schools in two states share (Oak Park,
+  Hart) have a key `school\x00state`, and the sidebar line "…'s runners are
+  lit" printed the hidden separator. Both places now show only the school.
+- Test: `tests/test_school_bands_field.py`. Not on track race pages yet.
