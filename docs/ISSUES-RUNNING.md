@@ -4988,3 +4988,23 @@ Also you just added color randomly, it is just small bits."
 - **Colour**: the owner is right that it is decoration in small bits. Next is
   a proposal where colour carries the rating itself, previewed for a yes or
   no before it goes site-wide.
+
+## 2026-10-07 — ✅ difficulty in shades of red/green; the rating on a colour gradient
+
+After several colour proposals were turned down (coloured rating cells
+"gaudy"; team colours, a header wash, podium rows and a one-accent pass
+"just adding shit"), the owner asked for two specific things:
+"make difficulty have different shades of red/green. give rating a color
+gradient."
+- **Difficulty and race day** (`difficulty_view.shadeFor`, filters
+  `diffcolour` / `daycolour`, the `_explain.dv` macro, the race-page facts
+  line): red for slower and green for faster, each a light-to-deep ramp
+  within its own hue, so the middle never turns muddy. Full at 10%, the
+  site's own race-day bound; exactly 0.0% is grey. Replaces the flat
+  red/teal from earlier today.
+- **Rating gradient** (`scale-view.js`, `applySpans`): every `.rv` number's
+  own text colour, grey at 100 (pool average) to the field plot's orange at
+  140 (national class), continuous, no fills. Follows the HS/own-pool
+  toggle. The rankings boards, drawn by rankings.js without `.rv` spans,
+  are not coloured yet.
+- Test: `tests/test_difficulty_shades.py`.

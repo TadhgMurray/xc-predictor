@@ -125,6 +125,36 @@ def diffPct(difficulty, sport="XC"):
     return f"{pct:+.1f}%"
 
 
+# ★ DIFFICULTY IN SHADES OF RED AND GREEN (owner, 2026-10-07: "make
+#   difficulty have different shades of red/green"). A diverging scale: grey
+#   at 0, red for a course that slows the clock, green for one that speeds
+#   it, deepening with the size of the effect and full at 10% -- the bound
+#   the site already puts on a race day (app._RACE_DAY_CAP). Both ends stay
+#   dark enough to read as text on the page.
+_NEUTRAL = "#6b7280"
+# light -> deep within one hue each side, so the middle never turns muddy
+# (a grey-to-red blend passes through mauve)
+_SLOWER = ((0xe0, 0x5a, 0x4f), (0x99, 0x1b, 0x1b))
+_FASTER = ((0x3d, 0xa8, 0x6a), (0x14, 0x53, 0x2d))
+FULL_COLOUR_PCT = 10.0
+
+
+def shadeFor(pct):
+    """'#rrggbb' for a percentage effect on the clock (+ slower, - faster)."""
+    if pct is None:
+        return ""
+    if abs(pct) < 0.05:                       # prints as 0.0%
+        return _NEUTRAL
+    t = min(abs(pct) / FULL_COLOUR_PCT, 1.0)
+    light, deep = _SLOWER if pct > 0 else _FASTER
+    return "#%02x%02x%02x" % tuple(round(l + (d - l) * t) for l, d in zip(light, deep))
+
+
+def diffColour(difficulty, sport="XC"):
+    """The template filter: the shade for a course's difficulty."""
+    return shadeFor(relativePct(difficulty, sport))
+
+
 def diffWords(difficulty, sport="XC"):
     """A sentence: '+4.1% slower than a typical XC course, about 40 seconds
     on a 16-minute 5K'."""
