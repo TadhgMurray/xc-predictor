@@ -1536,6 +1536,94 @@ def crossSportBreakdown(err, pool, dist, rating=None, athlete=None, min_rows=200
     return out
 
 
+_MONTH_ENDS = np.array([31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 366])
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def seasonCurveBreakdown(err, sport, doy, min_rows=200):
+    """★ THE SEASON CURVE, SCORED (owner, 2026-10-07: "how can we score the
+    era curve"). The held-out error by sport and calendar month: the form
+    curve puts each race's expected fitness at its date, so a month whose
+    mean runs + (slower than predicted) or - is where the curve's shape is
+    wrong, whatever the headline sd says. Pure."""
+    err = np.asarray(err, dtype=np.float64)
+    sport = np.asarray(sport)
+    month = np.searchsorted(_MONTH_ENDS, np.asarray(doy, dtype=np.int64), side="left")
+    out = ["        by month (the season curve; + = ran SLOWER than predicted):"]
+    for code, name in ((0, "XC"), (1, "TF")):
+        cells = []
+        for mo in range(12):
+            m = (sport == code) & (month == mo)
+            if int(m.sum()) >= min_rows:
+                cells.append(f"{_MONTHS[mo]} {100 * err[m].mean():+.2f}%")
+        if cells:
+            out.append(f"          {name}: " + "  ".join(cells))
+    return out
+
+
+DIST_GAP_BUCKETS = ((0.0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.1), (1.1, 9.0))
+
+
+def distanceBreakdown(err, pool, dist_te, gap, min_rows=200):
+    """★ THE DISTANCE LAW, SCORED (owner, 2026-10-07: "how can we score the
+    accuracy of the distance spline"). For the distance holdout: the bias
+    (+ = ran SLOWER than predicted from the athlete's other distances) by
+    the held-out distance per pool, and by the gap in log distance to the
+    nearest distance the athlete did race that season (0.69 is a doubling:
+    1600 from 3200). A bias that grows with the gap is the spline's slope;
+    one at a single distance is that event's offset. Pure."""
+    err = np.asarray(err, dtype=np.float64)
+    pool = np.asarray(pool, dtype=object)
+    dist_te = np.asarray(dist_te, dtype=np.float64)
+    gap = np.asarray(gap, dtype=np.float64)
+    std = np.asarray(CROSS_SPORT_DISTANCES, dtype=np.float64)
+    near = std[np.abs(dist_te[:, None] - std[None, :]).argmin(axis=1)] if dist_te.size else dist_te
+    ok_d = np.abs(dist_te - near) <= near * 0.04
+    out = ["        distance holdout BIAS by the held-out distance, % of time:",
+           f"          {'pool':<11}{'distance':>9}{'rows':>10}{'mean':>8}{'median':>8}"]
+    for name in sorted(set(pool.tolist())):
+        for d in std:
+            m = (pool == name) & ok_d & (near == d)
+            if int(m.sum()) < min_rows:
+                continue
+            out.append(f"          {str(name):<11}{int(d):>9}{int(m.sum()):>10,}"
+                       f"{100 * err[m].mean():>+7.2f}%{100 * np.median(err[m]):>+7.2f}%")
+    out.append("        by the gap to the nearest distance raced (log distance; "
+               "0.69 = double):")
+    for lo, hi in DIST_GAP_BUCKETS:
+        m = np.isfinite(gap) & (gap >= lo) & (gap < hi)
+        if int(m.sum()) < min_rows:
+            continue
+        out.append(f"          {lo:.2f}-{hi:.2f}: mean {100 * err[m].mean():+.2f}%  "
+                   f"median {100 * np.median(err[m]):+.2f}%  sd {100 * err[m].std():.2f}%  "
+                   f"({int(m.sum()):,})")
+    return out
+
+
+def nearestTrainingGap(season_te, logd_te, season_tr, logd_tr):
+    """|log distance| from each held-out row to the nearest distance its
+    athlete-season raced in training (inf when none)."""
+    season_te = np.asarray(season_te, dtype=np.int64)
+    season_tr = np.asarray(season_tr, dtype=np.int64)
+    logd_te = np.asarray(logd_te, dtype=np.float64)
+    logd_tr = np.asarray(logd_tr, dtype=np.float64)
+    out = np.full(season_te.size, np.inf)
+    if season_tr.size == 0 or season_te.size == 0:
+        return out
+    o = np.lexsort((logd_tr, season_tr))
+    st, lt = season_tr[o], logd_tr[o]
+    # one sorted key: season, then distance within it (log distance < 20)
+    key = st.astype(np.float64) * 32.0 + lt
+    q = season_te.astype(np.float64) * 32.0 + logd_te
+    pos = np.searchsorted(key, q)
+    for cand in (pos - 1, pos):
+        ok = (cand >= 0) & (cand < key.size)
+        c = np.clip(cand, 0, key.size - 1)
+        same = ok & (st[c] == season_te)
+        out = np.where(same, np.minimum(out, np.abs(lt[c] - logd_te)), out)
+    return out
+
+
 def holdout(cols, keep, args, athlete_pool, D_full):
     import pair_validate as pv
     y_all = np.log(cols["norm"])
@@ -1566,7 +1654,16 @@ def holdout(cols, keep, args, athlete_pool, D_full):
             raise SystemExit("[forward] nothing to fit or nothing to score in "
                              "this window")
     else:
-        _season = _sport = None
+        _season = _sport = _dcls = None
+        if kind == "distance":
+            if "dist_m" not in cols:
+                raise SystemExit("[joint] --holdout-kind distance needs a pack with dist_m")
+            _sp = (np.asarray(cols["sport"])[idx] if "sport" in cols
+                   else np.zeros(idx.size, dtype=np.int64))
+            _season, _ = pe.athleteSeasonCodes(np.asarray(cols["athlete"])[idx],
+                                               np.asarray(cols["year"])[idx], _sp)
+            # 100 m classes: 1600 and 3200 apart, 5000 and 5000.0 together
+            _dcls = np.rint(np.asarray(cols["dist_m"], dtype=np.float64)[idx] / 100.0).astype(np.int64)
         if kind in ("sport", "sport-xc"):
             # one code per athlete and academic year: fall XC and the next
             # spring's track share it (pe.athleteSeasonCodes without sport)
@@ -1579,7 +1676,8 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                                race=race_all[idx],
                                athlete=np.asarray(cols["athlete"])[idx],
                                cell=np.asarray(cols["course"])[idx],
-                               frac=0.10, seed=1, season=_season, sport=_sport)
+                               frac=0.10, seed=1, season=_season, sport=_sport,
+                               dist_class=_dcls)
         keep_tr = np.zeros(keep.size, dtype=bool); keep_tr[idx[~te_local]] = True
         keep_te = np.zeros(keep.size, dtype=bool); keep_te[idx[te_local]] = True
     # ★ THE GO-LIVE'S DESIGN (designKwargs), one call for both kinds.
@@ -1695,6 +1793,9 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                       "conversion, on races never seen",
              "sport-xc": "the CROSS COUNTRY season of 10% of dual-sport "
                          "athlete-seasons, predicted from their track alone",
+             "distance": "ONE DISTANCE of 10% of multi-distance athlete-seasons, "
+                         "predicted from their other distances -- the distance "
+                         "law and the event offsets, on races never seen",
              "forward": (f"every rated row in [{fwd['from']}, {fwd['until']}) "
                          f"from a fit on the rows before it -- a whole "
                          f"{'SEALED ' if fwd['sealed'] else ''}season forward"
@@ -1730,6 +1831,19 @@ def holdout(cols, keep, args, athlete_pool, D_full):
             rating=(None if _r is None
                     else np.asarray(_r, dtype=np.float64)[D_te.athlete[cov]])):
         print(line)
+    if "doy" in cols:
+        for line in seasonCurveBreakdown(err, sport_te[cov],
+                                         np.asarray(cols["doy"])[keep_te][cov]):
+            print(line)
+    if kind == "distance":
+        _dist_all = np.asarray(cols["dist_m"], dtype=np.float64)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            _logd_te = np.log(np.maximum(_dist_all[idx[te_local]], 1.0))
+            _logd_tr = np.log(np.maximum(_dist_all[idx[~te_local]], 1.0))
+        _gap = nearestTrainingGap(_season[te_local], _logd_te,
+                                  _season[~te_local], _logd_tr)
+        for line in distanceBreakdown(err, pool_te[cov], _dist_all[keep_te][cov], _gap[cov]):
+            print(line)
     if kind in ("sport", "sport-xc") and "dist_m" in cols:
         for line in crossSportBreakdown(err, pool_te[cov],
                                         np.asarray(cols["dist_m"])[keep_te][cov],

@@ -1063,6 +1063,29 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
       ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
       $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
+  # ★ THE DISTANCE HOLDOUT (owner, 2026-10-07: "how can we score the accuracy
+  #   of the distance spline"): one whole distance of 10% of multi-distance
+  #   athlete-seasons, predicted from their other distances; the log's
+  #   "distance holdout BIAS" tables are the distance law's and the event
+  #   offsets' error by distance and by the gap to the nearest distance raced.
+  #   Every held-out run also prints the error by month (the season curve).
+  #   In the background chain; XCP_DIST_HOLDOUT=0 skips it.
+  if [ "${XCP_DIST_HOLDOUT:-1}" != "0" ]; then
+    step 08a_distance_holdout "$PY" -u engine/run_joint.py --holdout-only \
+        --holdout-kind distance --sample-pct "${XCP_HOLDOUT_PCT:-25}" \
+        --outer "${XCP_OUTER:-5}" --probes 0 --altitude \
+        ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
+        ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \
+        ${XCP_NO_IMPORTANCE:+--no-importance} \
+        ${XCP_NO_INDOOR:+--no-indoor} \
+        ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
+        ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
+        ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
+        ${XCP_NO_DIST_TABLE:+--no-dist-table} \
+        ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
+        ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
+        $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
+  fi
   # ! A RUNG IS A SOLVE (2026-09-12: "08b takes over 6 hours ... gets
   #   stuck"). Each rung solves XCP_LADDER_PCT of the athletes, the era
   #   rungs on three times the cells, and until today nothing was printed
@@ -1070,7 +1093,10 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   default, streams each rung to engine/data/ladder_logs/<rung>.log with
   #   a heartbeat in this log, and kills a rung past XCP_RUNG_TIMEOUT
   #   seconds (default 7200). XCP_LADDER_ALL=1 runs every rung;
-  #   XCP_LADDER_ONLY=base,no-importance runs a named subset.
+  #   XCP_LADDER_ONLY=base,no-importance runs a named subset;
+  #   XCP_LADDER_TUNE=1 runs the tuning grid (era length and drift, the
+  #   distance walk, one step either side of what ships -- see TUNE in
+  #   scripts/ablation_ladder.py).
   # ★★ ONLY WHEN THE MODEL CHANGED (2026-10-05: 18,193 s of run
   #    20261004_125010's 17h44m). The ladder answers "does switch X help?"
   #    and the answer moves when the engine's code or settings move, not
@@ -1101,10 +1127,11 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
         --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" \
         --rung-timeout "${XCP_RUNG_TIMEOUT:-7200}" \
         ${XCP_LADDER_ALL:+--all} \
+        $([ "${XCP_LADDER_TUNE:-0}" = "1" ] && echo --tune) \
         ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} || true
     case " $FAILED " in
       *" 08b_ladder "*) ;;
-      *) [ "$DRY" -eq 1 ] || [ -n "${XCP_LADDER_ONLY:-}" ] || echo "$LADDER_STAMP" > "$LADDER_STAMP_FILE" ;;
+      *) [ "$DRY" -eq 1 ] || [ -n "${XCP_LADDER_ONLY:-}" ] || [ "${XCP_LADDER_TUNE:-0}" = "1" ] || echo "$LADDER_STAMP" > "$LADDER_STAMP_FILE" ;;
     esac
   else
     echo "  08b_ladder skipped ($LADDER_WHY; XCP_LADDER=1 forces it)" | tee -a "$SUMMARY"

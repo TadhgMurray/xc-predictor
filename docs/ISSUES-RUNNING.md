@@ -4769,3 +4769,20 @@ From run 20261006_120609's gaps (line before and after each):
   _f -- the pre-09-25 XC saver wrote blank names AND genders (the re-scrape now queued repairs both).
   scripts/diag_person_pool.py "<name>" prints every profile's gender, person_gender, the season pools and the
   raw rows with their division labels, to confirm which table did it.
+
+## 2026-10-07 — new holdouts: the distance law and the season curve; the tuning grid
+
+- **✅ Distance holdout** (`--holdout-kind distance`, pair_validate.splitByDistance): of athlete-seasons (one sport
+  each) that raced 2+ distance classes (100 m), 10% are picked and ONE class -- chosen at random -- is held out
+  whole, so each held-out row is predicted from the same athlete's other distances. Its log prints "distance
+  holdout BIAS" by held-out distance per pool, and by the log-distance gap to the nearest distance raced (a bias
+  growing with the gap is the spline's slope; one at a single distance is that event's offset). Pipeline step
+  08a_distance_holdout, in the background evidence chain (XCP_DIST_HOLDOUT=0 skips).
+- **✅ The season curve, scored:** every holdout now prints the error by sport and calendar month ("by month") --
+  a month whose mean runs + or - is where the form curve's shape is wrong.
+- **✅ The tuning grid** (scripts/ablation_ladder.py --tune; XCP_LADDER_TUNE=1 in the pipeline): era-2 (what ships)
+  against era-1, era-3, era-2-tight (0.5%/era), era-2-loose (3%), and the distance walk halved / doubled. A knob
+  moves only when a neighbour beats era-2 on the race AND the forward holdout. A tuning run does not stamp the core
+  ladder as done. The bracket engine's knobs are scored by 08d, not here.
+- Tests: tests/test_distance_holdout.py (one whole class of multi-distance seasons only, ~10%; the gap; the
+  breakdowns find a planted bias at 1600 and in September).

@@ -120,7 +120,7 @@ def splitByGroup(group, frac=0.10, seed=1):
 
 
 # The ladder, by name, so callers and logs agree on what a number means.
-HOLDOUT_KINDS = ("row", "race", "athlete", "course", "sport", "sport-xc")
+HOLDOUT_KINDS = ("row", "race", "athlete", "course", "sport", "sport-xc", "distance")
 
 
 def splitBySport(season, sport, frac=0.10, seed=1, predict=1):
@@ -146,11 +146,48 @@ def splitBySport(season, sport, frac=0.10, seed=1, predict=1):
     return picked[season] & want
 
 
+def splitByDistance(season, dist_class, frac=0.10, seed=1):
+    """★ THE DISTANCE QUESTION (owner, 2026-10-07: "how can we score the
+    accuracy of the distance spline"). Of the athlete-seasons (one sport
+    each) that raced two or more distance classes, `frac` are picked, and
+    every row of ONE of their classes -- chosen at random -- is held out, so
+    each held-out row is predicted from the same athlete's OTHER distances:
+    the distance law and the event offsets, scored on races never seen.
+    `season` is the athlete-season-sport code per row, `dist_class` the
+    row's distance class (any integer code)."""
+    season = np.asarray(season, dtype=np.int64)
+    dist_class = np.asarray(dist_class, dtype=np.int64)
+    if season.size == 0:
+        return np.zeros(0, dtype=bool)
+    pair = np.unique(np.stack([season, dist_class], 1), axis=0)
+    n_cls = np.bincount(pair[:, 0], minlength=int(season.max()) + 1)
+    multi = np.flatnonzero(n_cls >= 2)
+    rng = np.random.default_rng(seed)
+    picked = multi[rng.random(multi.size) < frac]
+    # one class per picked season, uniformly among its classes
+    held = {}
+    starts = np.searchsorted(pair[:, 0], picked, side="left")
+    for s_, st in zip(picked.tolist(), starts.tolist()):
+        k = int(n_cls[s_])
+        held[s_] = int(pair[st + int(rng.integers(0, k)), 1])
+    if not held:
+        return np.zeros(season.size, dtype=bool)
+    keys = np.fromiter(held.keys(), dtype=np.int64)
+    vals = np.fromiter(held.values(), dtype=np.int64)
+    want = np.full(int(season.max()) + 1, np.iinfo(np.int64).min, dtype=np.int64)
+    want[keys] = vals
+    return want[season] == dist_class
+
+
 def splitFor(kind, n_rows, race=None, athlete=None, cell=None,
-             frac=0.10, seed=1, season=None, sport=None):
+             frac=0.10, seed=1, season=None, sport=None, dist_class=None):
     """One entry point for the ladder. Returns a boolean row mask."""
     if kind == "row":
         return splitByRow(n_rows, frac=frac, seed=seed)
+    if kind == "distance":
+        if season is None or dist_class is None:
+            raise ValueError("holdout kind 'distance' needs the season and distance arrays")
+        return splitByDistance(season, dist_class, frac=frac, seed=seed)
     if kind in ("sport", "sport-xc"):
         if season is None or sport is None:
             raise ValueError(f"holdout kind {kind!r} needs the season and sport arrays")

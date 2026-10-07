@@ -135,7 +135,31 @@ LADDER = [
     ("tilt-hs", ["--altitude", "--tilt-scale", "hs"],
      "the course tilt reads the HS-equivalent rating instead of the own-"
      "pool one. Read the by-pool lines of the rung's log"),
+
+    # ---- the tuning grid (owner, 2026-10-07: "are there any hyperparams
+    #      to tune?"). The stated knobs the joint solve exposes, one step
+    #      either side of what ships (era-2: two-year eras, 1% drift; the
+    #      distance walk at its default), every rung on the same sample and
+    #      race split, so era-2 is the reference to read them against. A
+    #      knob moves only when a neighbour beats era-2 on the race AND the
+    #      forward holdout. The bracket engine's knobs (window, voter
+    #      weight, priors) are not here: these holdouts score the joint
+    #      solve; 08d's "SAME ROWS" scores the bracket.
+    ("era-1", ["--altitude", "--era-years", "1"],
+     "one-year eras: a venue can change every season"),
+    ("era-3", ["--altitude", "--era-years", "3"],
+     "three-year eras: more races per era, slower to follow a change"),
+    ("era-2-tight", ["--altitude", "--era-years", "2", "--era-drift", "0.005"],
+     "two-year eras with half the walk (0.5%/era): eras lean on each other more"),
+    ("era-2-dist-0.01", ["--altitude", "--era-years", "2", "--dist-walk", "0.01"],
+     "the distance law's walk halved: neighbouring event offsets tied tighter"),
+    ("era-2-dist-0.04", ["--altitude", "--era-years", "2", "--dist-walk", "0.04"],
+     "the distance law's walk doubled: each event offset freer"),
 ]
+
+# the tuning set: the reference and its neighbours (--tune)
+TUNE = ("era-2", "era-1", "era-3", "era-2-tight", "era-2-loose",
+        "era-2-dist-0.01", "era-2-dist-0.04")
 
 
 # ★ THE RUNGS A RUN NEEDS (2026-09-12, owner: "08b is slow as f and gets
@@ -349,6 +373,8 @@ def main():
     ap.add_argument("--only", help="comma list of rung names")
     ap.add_argument("--all", action="store_true",
                     help=f"every rung; the default is the core set {', '.join(CORE)}")
+    ap.add_argument("--tune", action="store_true",
+                    help=f"the tuning set instead of the core one: {', '.join(TUNE)}")
     ap.add_argument("--rung-timeout", type=float, default=7200.0,
                     help="seconds a rung may run before it is killed and "
                          "recorded (default 7200; 0 = no limit)")
@@ -360,7 +386,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    rungs = LADDER if args.all else [r for r in LADDER if r[0] in CORE]
+    rungs = (LADDER if args.all else
+             [r for r in LADDER if r[0] in TUNE] if getattr(args, "tune", False) else
+             [r for r in LADDER if r[0] in CORE])
     if args.only:
         want = {s.strip() for s in args.only.split(",")}
         rungs = [r for r in LADDER if r[0] in want]
