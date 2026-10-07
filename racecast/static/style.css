@@ -5876,3 +5876,21 @@ td.pl.rc-m3 > span { background: var(--m3); }
 /* course difficulty and the race day: which way the clock moved */
 .dv.dv-hard, .day-slow { color: var(--harder); }
 .dv.dv-easy, .day-fast { color: var(--easier); }
+
+/* ---- the rating, coloured by tier (rating-colour.js) ------------------- */
+:root {
+  --rt1: #eda06f;   /* 100-110 */
+  --rt2: #e47f43;   /* 110-120 */
+  --rt3: #d2621f;   /* 120-130 */
+  --rt4: #b04a14;   /* 130-140 */
+  --rt5: #86360d;   /* 140+, national class */
+}
+[data-rcolour] td[data-tier] .rv { display: inline-block; min-width: 3.4em; padding: .12rem .4rem; text-align: right;
+                                   border-radius: 2px; font-variant-numeric: tabular-nums; }
+[data-rcolour] td[data-tier="1"] .rv { background: var(--rt1); color: var(--ink); }
+[data-rcolour] td[data-tier="2"] .rv { background: var(--rt2); color: var(--ink); }
+[data-rcolour] td[data-tier="3"] .rv { background: var(--rt3); color: #fff; }
+[data-rcolour] td[data-tier="4"] .rv { background: var(--rt4); color: #fff; }
+[data-rcolour] td[data-tier="5"] .rv { background: var(--rt5); color: #fff; }
+.rt-key { display: flex; flex-wrap: wrap; align-items: center; gap: .2rem .9rem; font-size: .78rem; color: var(--muted); margin: .5rem 0 0; }
+.rt-key i { display: inline-block; width: .8rem; height: .8rem; border-radius: 2px; margin-right: .3rem; vertical-align: -.1em; }

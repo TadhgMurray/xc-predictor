@@ -85,11 +85,16 @@ main.rc .rc-table td.wind { color: var(--muted); font-size: .88rem; }
 main.rc .rc-field { margin: .2rem 0 .9rem; }
 main.rc .rc-field figcaption { display: flex; align-items: center; gap: .9rem; font-size: .8rem; color: var(--muted); margin-bottom: .2rem; }
 main.rc .rc-field-key { display: inline-flex; align-items: center; gap: .3rem; color: var(--ink); font-weight: 600; }
-main.rc .rc-field-key i.lit { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--gold); }
+main.rc .rc-field-key i.lit { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); }
 main.rc .rc-field svg { display: block; width: 100%; height: auto; overflow: visible; }
 main.rc .rc-field .d { fill: #c9cdd3; cursor: pointer; }
 main.rc .rc-field .d:hover { fill: #8a9099; }
-main.rc .rc-field .d.lit { fill: var(--gold); }
+main.rc .rc-field .d.t1 { fill: var(--rt1); }
+main.rc .rc-field .d.t2 { fill: var(--rt2); }
+main.rc .rc-field .d.t3 { fill: var(--rt3); }
+main.rc .rc-field .d.t4 { fill: var(--rt4); }
+main.rc .rc-field .d.t5 { fill: var(--rt5); }
+main.rc .rc-field .d.lit { fill: var(--ink); }
 main.rc .rc-field .ax, main.rc .rc-field .tk { stroke: var(--line-2); stroke-width: 1; }
 main.rc .rc-field .tl { font-size: 10px; fill: var(--muted); font-variant-numeric: tabular-nums; }
 main.rc tr.rc-flash td { animation: rc-flash 1.6s ease-out; }

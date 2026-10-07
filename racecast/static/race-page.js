@@ -129,7 +129,10 @@
     svg.appendChild(el("line", { class: "ax", x1: PADX, x2: W - PADX, y1: H - AX, y2: H - AX }));
     Object.keys(bins).forEach(function (k) {
       bins[k].forEach(function (p, i) {
-        var c = el("circle", { class: "d" + (p.lit ? " lit" : ""), cx: x(+k).toFixed(1),
+        // the dot wears the rating's colour (rating-colour.js); the lit
+        // team's are ink, so a team reads against the heat
+        var tierCls = window.rcTier ? " t" + window.rcTier(p.v) : "";
+        var c = el("circle", { class: "d" + tierCls + (p.lit ? " lit" : ""), cx: x(+k).toFixed(1),
                                cy: (H - AX - r - 1 - i * 2 * r).toFixed(1), r: r.toFixed(2) });
         var tt = el("title", {});
         tt.textContent = p.label;
