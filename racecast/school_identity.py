@@ -569,3 +569,33 @@ def homeStates(cur, person_ids):
                    else (r[0], r[1]))
         out[pid] = st
     return out
+
+
+def _stateNames():
+    try:
+        from landing import STATE_NAMES
+    except ImportError:                  # landing not importable: no state teams
+        return frozenset()
+    return frozenset(n.lower() for n in STATE_NAMES.values())
+
+
+def isStateTeamRace(schools):
+    """True when most of a race's teams are US states ("Arkansas",
+    "Texas") -- an all-star or state-team meet.
+
+    ★ A STATE TEAM IS NOT A SCHOOL (owner, 2026-10-07: RunningLane Track
+      Championships 2026 read "Arkansas (AL)" -- the label looked up the
+      school called Arkansas and appended where it races). On such a race
+      the team name already says where it is from, so no suffix is drawn.
+      It is a RACE-level verdict, not a name-level one: Oregon (IL) is a
+      real high school, and on an ordinary race it keeps its "(IL)".
+      "Most" is a plain majority of the race's distinct teams."""
+    names = _stateNames()
+    teams = {str(s).strip().lower() for s in schools if s and str(s).strip()}
+    if not teams or not names:
+        return False
+    return 2 * sum(1 for t in teams if t in names) > len(teams)
+
+
+def isStateName(school):
+    return bool(school) and str(school).strip().lower() in _stateNames()

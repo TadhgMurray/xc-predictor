@@ -1,3 +1,4 @@
+import jinja2
 import math
 import os
 from functools import lru_cache
@@ -335,9 +336,23 @@ app.template_filter("school_label")(school_identity.schoolLabel)
 import grade_label as _grade_label
 app.template_filter("grade_label")(_grade_label.gradeLabel)
 # the same label in a known context: a race or a meet in one state
-app.template_filter("school_label_in")(school_identity.schoolLabelIn)
-app.template_filter("school_label_for")(school_identity.schoolLabelFor)
-app.template_filter("with_state")(school_identity.withState)
+# ★ ON A STATE-TEAM RACE A STATE'S NAME IS DRAWN BARE (owner, 2026-10-07:
+#   "Arkansas (AL)"). The route sets state_teams from
+#   school_identity.isStateTeamRace; every suffixing filter checks it, so
+#   no template site can forget.
+def _stateTeamAware(fn):
+    @jinja2.pass_context
+    def wrapped(ctx, school, *a, **kw):
+        if ctx.get("state_teams") and school_identity.isStateName(school):
+            return school
+        return fn(school, *a, **kw)
+    return wrapped
+
+
+app.template_filter("school_label_in")(_stateTeamAware(school_identity.schoolLabelIn))
+app.template_filter("school_label_for")(_stateTeamAware(school_identity.schoolLabelFor))
+app.template_filter("with_state")(_stateTeamAware(school_identity.withState))
+app.template_filter("school_label")(_stateTeamAware(school_identity.schoolLabel))
 
 # the crest beside a school's name, everywhere one is named (305). Both
 # live in school_logo so they can be tested without importing the app.
@@ -4128,6 +4143,7 @@ def race_xc(meet_id, div_id):
             "-".join(str(x) for x in (header.get("meet_name"), header.get("division"),
                                       race_date) if x) + ".csv")
     return render_template("race.html", hl_school=hl_school,
+                           state_teams=school_identity.isStateTeamRace(r.get("school") for r in results),
                            story=story, finishers=_fin,
                            above_spec=_aboveSpec("XC", results, header.get("distance") if header else None),
                            has_hs_view=has_hs_view,
@@ -4558,6 +4574,7 @@ def compiled_race(meet_id, distance, gender):
         abort(404)
 
     return render_template("compiled.html", header=header, group=group,
+                           state_teams=school_identity.isStateTeamRace(r.get("school") for r in group["results"]),
                            has_hs_view=has_hs_view)
 
 
@@ -4992,6 +5009,7 @@ def race_tf(meet_id, event_id, div_id):
             pts_by[r["school"]] = pts_by.get(r["school"], 0.0) + p_
     school_points = sorted(pts_by.items(), key=lambda kv: (-kv[1], kv[0]))
     return render_template("race_tf.html", hl_school=hl_school,
+                           state_teams=school_identity.isStateTeamRace(r.get("school") for r in results),
                            story=story, tf_champ=tf_champ, tf_is_field=tf_is_field, tf_how=tf_how,
                            school_points=school_points,
                            above_spec=_aboveSpec("TF", results, equiv_dist or (header or {}).get("distance_meters")),

@@ -15,12 +15,6 @@ p  { color: rgb(82, 82, 82); }
   display: inline-block;
   font-size: 11px;
   font-weight: 700;
-  /* ! ITS OWN LINE HEIGHT (owner, 2026-10-07: "the symbols next to rating
-     and time denoting pr/sr should be the same size"). Inherited, it took
-     each cell's: 20.5px tall beside a time, 16.6px beside a rating (the
-     rating cell is set at 1.15). */
-  line-height: 13px;
-  vertical-align: 1px;
   padding: 2px 5px;
   border-radius: 3px;
   margin-right: 3px;
@@ -5892,3 +5886,11 @@ td.pl.rc-m3 > span { background: var(--m3); }
 .rt-key i { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; margin: 0 .1rem 0 .45rem; }
 .rt-key i.t1 { background: var(--rt1); } .rt-key i.t2 { background: var(--rt2); } .rt-key i.t3 { background: var(--rt3); }
 .rt-key i.t4 { background: var(--rt4); } .rt-key i.t5 { background: var(--rt5); }
+
+/* ! THE RACE TABLES' BADGES SHARE ONE HEIGHT (owner, 2026-10-07: "the
+   symbols next to rating and time denoting pr/sr should be the same
+   size"). Inherited, each took its cell's line height: 20.5px beside a
+   time, 16.6px beside a rating (that cell is set at 1.15). Scoped to the
+   race pages: set on every .flag it also changed the athlete page's badges,
+   which the owner wanted left as they were. */
+main.rc .flag { line-height: 13px; vertical-align: 1px; }

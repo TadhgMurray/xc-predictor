@@ -155,7 +155,7 @@
     {% endfor %}
     </tbody>
   </table>
-  <p class="rc-tip"><span class="rc-tip-name">{{ hl_school or school_points[0][0] }}</span>'s athletes are lit in the results. Tap any school to light theirs.</p>
+  <p class="rc-tip"><span class="rc-tip-name">{{ (hl_school or school_points[0][0] or "").split("\x00")[0] }}</span>'s athletes are lit in the results. Tap any school to light theirs.</p>
   {% endif %}
   {{ al.box(above_spec) }}
 </aside>

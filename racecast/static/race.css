@@ -174,3 +174,7 @@ main.rc .rc-findlist .none { padding: .5rem .75rem; font-size: .85rem; color: va
 /* the Teams tab open: the sidebar's top ten would repeat it (race-page.js) */
 main.rc.rc-on-teams .rc-side { display: none; }
 main.rc.rc-on-teams .rc-grid { grid-template-columns: minmax(0, 1fr); }
+
+/* "All N teams" is a button that reads as the link it replaced */
+main.rc button.rc-more-teams { background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--link); text-decoration: underline; font: inherit; font-weight: 600; font-size: .9rem; }

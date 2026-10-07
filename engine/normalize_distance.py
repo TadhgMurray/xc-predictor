@@ -826,6 +826,31 @@ _FOREIGN_UNIVERSITY = re.compile(
     re.IGNORECASE)
 
 
+# ★ "UNAT-<COLLEGE>" IS A COLLEGE ATHLETE (owner, 2026-10-07: Soheib Dissa,
+#   "UNAT-Duke (NC) · 9", rated top 0.1% of high-school boys for a 3:46 1500).
+#   Unattached-under-a-college is how a redshirt or a club member races; no
+#   high school runner enters as "UNAT-Duke". The school after the prefix must
+#   be one the level lookup KNOWS is a college -- "UNAT-On Athletics Club" (a
+#   pro club) or "Unattached" alone match nothing, so nothing else moves.
+_UNAT_PREFIX = re.compile(r"^\s*unat(?:tached)?\s*[-\u2013:/]\s*(.+)$", re.IGNORECASE)
+
+
+def unattachedCollege(school):
+    """The college named after an UNAT- prefix, when the lookup knows it as
+    one; else None."""
+    m = _UNAT_PREFIX.match(str(school or ""))
+    if not m:
+        return None
+    inner = m.group(1).strip()
+    # the short name a college races under ("Duke"), and the longer forms the
+    # level lookup may hold it as
+    bare = _SCHOOL_PAREN.sub("", inner).strip() if _SCHOOL_PAREN.search(inner) else inner
+    for name in (inner, f"{bare} University", f"University of {bare}"):
+        if levelForSchool(name) == "college":
+            return inner
+    return None
+
+
 def isForeignUniversity(school):
     """True when the school NAMES itself a university in a language that has
     no high-school collision. See _FOREIGN_UNIVERSITY."""
@@ -1279,6 +1304,9 @@ def poolFor(grade, gender, source, school=None, season_level=None):
     #   isForeignUniversity is deliberately narrow -- no English "University",
     #   because University High School is a real and common name. See it.
     if isForeignUniversity(school):
+        return levelToPool("college", gender)
+    # and a college athlete racing unattached under the college's name
+    if unattachedCollege(school):
         return levelToPool("college", gender)
 
     grade_level = GRADE_TO_LEVEL.get(normalizeGrade(grade))

@@ -42,6 +42,18 @@
   });
   show((location.hash || "#" + first).slice(1));
 
+  // ---- "All N teams" extends the sidebar's list in place, and folds it back
+  var moreTeams = main.querySelector(".rc-more-teams");
+  if (moreTeams) {
+    moreTeams.addEventListener("click", function () {
+      var extra = main.querySelectorAll(".rc-tscores .rc-team-more");
+      var open = moreTeams.getAttribute("aria-expanded") === "true";
+      extra.forEach(function (tr) { tr.hidden = open; });
+      moreTeams.setAttribute("aria-expanded", open ? "false" : "true");
+      moreTeams.textContent = open ? moreTeams.dataset.all : "Top 10 only";
+    });
+  }
+
   // ---- team lighting: a team's runners lit in the results
   // ★ BY RESULT ID AND BY NAME. The scorers' ids are exact (the grafted
   //   seven); the school string catches the rest of the squad. A school
@@ -63,8 +75,11 @@
       t.classList.toggle("rc-lit", t.dataset.team === key && (!rids || t.dataset.rids === rids));
     });
     // ! A team key can be "school\u0000state" (a name schools in two states
-    //   share); the reader sees the school.
-    if (tipName) tipName.textContent = (key || "").split("\u0000")[0];
+    //   share); the reader sees the school. ⚠ AND THE BROWSER HAS ALREADY
+    //   TURNED THE NUL INTO U+FFFD by the time the attribute is read (the
+    //   HTML parser replaces it), so splitting on \u0000 alone never fired:
+    //   "Williams\uFFFDMA's runners are lit" (owner, 2026-10-07).
+    if (tipName) tipName.textContent = (key || "").split(/[\u0000\uFFFD]/)[0];
     drawField();
   }
   // ---- the field on one scale: every rated finisher, one dot each

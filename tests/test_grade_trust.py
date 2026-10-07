@@ -49,3 +49,25 @@ def test_college_and_pro_seasons_vouch_by_level_and_by_class():
     assert _advances(_v(None, "pro"), _v(None, "pro"))
     assert not _advances(_v("JR-3", "college"), _v("SO-2", "college"))
     assert not _advances(_v("8", "ms"), _v("8", "ms"))
+
+
+def test_a_skipped_year_is_vouched_for_by_the_last_trusted_season():
+    acad = {(1, 2023): _v("9"), (1, 2025): _v("11")}           # no 2024 at all
+    trustByProgression(acad, {(1, 2023): 4, (1, 2025): 1})
+    assert acad[(1, 2025)]["trust"] == "high"
+    acad = {(1, 2023): _v("9"), (1, 2025): _v("10")}           # one step in two years
+    trustByProgression(acad, {(1, 2023): 4, (1, 2025): 1})
+    assert acad[(1, 2025)]["trust"] == "low"
+
+
+def test_a_thin_contradicting_season_between_does_not_break_the_chain():
+    acad = {(1, 2023): _v("9"), (1, 2024): _v("12"), (1, 2025): _v("11")}
+    trustByProgression(acad, {(1, 2023): 4, (1, 2024): 1, (1, 2025): 1})
+    assert acad[(1, 2024)]["trust"] == "low"
+    assert acad[(1, 2025)]["trust"] == "high"
+
+
+def test_a_first_season_has_nothing_to_vouch_for_it():
+    acad = {(1, 2025): _v("9")}
+    trustByProgression(acad, {(1, 2025): 1})
+    assert acad[(1, 2025)]["trust"] == "low"

@@ -69,4 +69,4 @@ def test_the_race_page_has_the_field_and_redraws_it_on_a_team_or_scale_change():
     assert "drawField();" in light
     assert re.search(r'addEventListener\("rc-scale-change"[^\n]*drawField', js)
     # the team key's hidden state separator never reaches the reader
-    assert '.split("\\u0000")[0]' in light
+    assert '.split(/[\\u0000\\uFFFD]/)[0]' in light

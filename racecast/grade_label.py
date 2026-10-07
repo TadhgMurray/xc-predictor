@@ -19,7 +19,12 @@ _CLASS = {"fr": 0, "fresh": 0, "freshman": 0, "freshmen": 0,
 _WORD_HS = {w: str(9 + i) for w, i in _CLASS.items()}
 _WORD_COLLEGE = {w: ("FR-1", "SO-2", "JR-3", "SR-4")[i] for w, i in _CLASS.items()}
 _ORDINAL = re.compile(r"^0*(\d{1,2})(st|nd|rd|th)?\.?$", re.I)
-_NUM_COLLEGE = {"13": "FR-1", "14": "SO-2", "15": "JR-3", "16": "SR-4"}
+# ★ A SCHOOL GRADE IN A COLLEGE POOL IS A COLLEGE YEAR (owner, 2026-10-07:
+#   "if someone puts 9th grade, and we know they're a college freshman,
+#   we'll print college freshman"). The pool is the engine's verdict on the
+#   level; a feed that typed 9-12 for a college athlete meant the year.
+_NUM_COLLEGE = {"13": "FR-1", "14": "SO-2", "15": "JR-3", "16": "SR-4",
+                "9": "FR-1", "10": "SO-2", "11": "JR-3", "12": "SR-4"}
 _ELIG = re.compile(r"^(FR|SO|JR|SR)-?([1-6])$", re.I)
 
 

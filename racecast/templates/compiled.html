@@ -138,9 +138,12 @@
   <h2>Team scores <small>top 5, computed</small></h2>
   <table class="rc-tscores">
     <tbody>
-    {% for t in group.scores.teams[:10] %}
+    {# ★ EVERY TEAM, THE ELEVENTH ON HIDDEN: "All teams" extends this list in
+       place (owner, 2026-10-07: "I want all teams to extend the list on the
+       right, not open the tab"). #}
+    {% for t in group.scores.teams %}
     {% set key = t.runners[0].school if t.runners else t.school %}
-    <tr data-team="{{ key }}" data-rids="{% for r in t.runners or [] %}{{ r.result_id }} {% endfor %}" tabindex="0" title="Light {{ t.school }}'s runners in the results">
+    <tr{% if loop.index > 10 %} class="rc-team-more" hidden{% endif %} data-team="{{ key }}" data-rids="{% for r in t.runners or [] %}{{ r.result_id }} {% endfor %}" tabindex="0" title="Light {{ t.school }}'s runners in the results">
       <td class="tp">{{ t.place }}</td>
       <td class="tn">{% if t.school|is_team %}{{ crest(t.school, t.state) }}{% endif %}{{ t.school|school_label }}
         <span class="sp">{% for i in range(5) %}{% set r = t.runners[i] if t.runners|length > i else none %}<i>{{ r.score_place if r else "-" }}</i>{% endfor %}</span></td>
@@ -150,7 +153,7 @@
     </tbody>
   </table>
   <p class="rc-tip"><span class="rc-tip-name">{{ ((group.scores.teams[0].runners[0].school if group.scores.teams[0].runners else group.scores.teams[0].school) or "").split("\x00")[0] }}</span>'s runners are lit in the results. Tap any team to light theirs.</p>
-  {% if group.scores.teams|length > 10 %}<a class="rc-more" href="#teams" data-tab="teams">All {{ group.scores.teams|length }} teams</a>{% endif %}
+  {% if group.scores.teams|length > 10 %}<button type="button" class="rc-more rc-more-teams" data-all="All {{ group.scores.teams|length }} teams">All {{ group.scores.teams|length }} teams</button>{% endif %}
 </aside>
 {% endif %}
 </div>

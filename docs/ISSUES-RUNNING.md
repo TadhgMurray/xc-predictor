@@ -5070,5 +5070,34 @@ Chromium against the old script (readout 15:00, label under the pointer
   against a table without that column it silently bound to the outer row and
   matched everyone. Production has the column, but every column in those
   lookups is qualified now.
-- Open, needs the owner: rated-not-ranked current seasons with few races
-  (see the reply of this date).
+- **Rated-not-ranked: the voucher is the last trusted season.** The +1 rule
+  already existed (`grade_sanity.trustByProgression`), but only against the
+  academic year immediately before. A runner with no results last year had
+  nothing to vouch for them. Now the most recent trusted season vouches if
+  the grade moved on by the years actually elapsed (9 then 11 two years
+  later); a thin season in between does not break the chain. A first-ever
+  season still has nothing to vouch for it. Takes effect at the next
+  grade_sanity run. Tests in `test_grade_trust.py`.
+- **Athlete page flags back to their old size.** The badge line-height fix
+  above is scoped to `main.rc` (race pages); the athlete page's `.flag` is
+  as it was.
+- **"All N teams" extends the sidebar list** in place (and back to "Top 10
+  only") on race and compiled pages, instead of opening the Teams tab.
+- **"Williams\uFFFDMA" in the lit-team tip.** A NUL in a team key becomes
+  U+FFFD in HTML; the tip now splits on either. Track page tip too.
+- **College grade spelled as college.** A college-pooled row with grade 9-12
+  prints FR/SO/JR/SR (`grade_label._NUM_COLLEGE`).
+- **UNAT-<college> pools as college.** "UNAT-Duke (NC)" with grade 9 was
+  pooled HS. `normalize_distance.unattachedCollege` accepts it only when the
+  inner name (or "<name> University" / "University of <name>") is a college
+  in the school graph. Takes effect at the next backfill. Test:
+  `tests/test_unat_college.py`.
+- **State-team meets label states bare.** RunningLane Track Championships
+  2026 read "Arkansas (AL)". When most of a race's distinct teams are US
+  state names (`school_identity.isStateTeamRace`), state-named teams print
+  without a suffix; ordinary races keep "Oregon (IL)". Race, track and
+  compiled pages. Test: `tests/test_state_team_labels.py`.
+- Open: steeple has no rating (not priced by the engine; needs its own event
+  offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
+  `diag_person_pool.py`); races without weather and the RunningLane
+  "Unknown" (need URLs).

@@ -242,17 +242,18 @@ def _gradeStep(grade):
     return None
 
 
-def _advances(prev, cur):
-    """Is `cur` the season after `prev` for one athlete: the grade one
-    year on (10 after 9, JR after SO, FR after 12), or the same college
-    or pro level again (a Senior-5 is still college)."""
+def _advances(prev, cur, years=1):
+    """Is `cur` `years` seasons after `prev` for one athlete: the grade
+    that many years on (10 after 9, JR after SO, FR after 12; 12 two
+    years after 10), or the same college or pro level again (a Senior-5
+    is still college)."""
     a, b = _gradeStep(prev.get("grade")), _gradeStep(cur.get("grade"))
     if a and b:
         # two readable grades: only the step forward counts; a repeat or
         # a step back is the very disagreement trust exists to catch
-        if a[0] == b[0] and b[1] == a[1] + 1:
+        if a[0] == b[0] and b[1] == a[1] + years:
             return True
-        return a == ("n", 12) and b == ("c", 1)
+        return a == ("n", 12) and b == ("c", years)
     lp, lc = prev.get("level"), cur.get("level")
     return bool(lp) and lp == lc and lp in ("college", "pro")
 
@@ -268,17 +269,29 @@ def trustByProgression(acad, race_count, min_races=MIN_TRUSTED_RACES):
           jump levels (Dominic Colussi, above) is not.
     low   otherwise: rated and shown, off the boards.
     Returns (n_low, n_vouched)."""
+    # ★ THE VOUCHER IS THE LAST TRUSTED SEASON, NOT ONLY LAST YEAR (owner,
+    #   2026-10-07, agreeing to the +1 rule). A runner with no results last
+    #   year -- injured, a year off, a season nobody scraped -- had nothing
+    #   to vouch for them, and a trusted grade 9 who comes back as a one-race
+    #   grade 11 is exactly as corroborated by the calendar as a grade 10
+    #   would have been. So the grade must have moved on by the years that
+    #   have actually passed. A thin season between them does not break the
+    #   chain: it is low because nothing vouched for IT, not because it
+    #   contradicts anything.
     n_low = n_vouched = 0
+    last_trusted = {}
     for key in sorted(acad):
         v = acad[key]
         pid, ay = key
         if race_count.get(key, 0) >= min_races:
             v["trust"] = "high"
+            last_trusted[pid] = (ay, v)
             continue
-        prev = acad.get((pid, ay - 1))
-        if prev is not None and prev.get("trust") == "high" and _advances(prev, v):
+        prev_ay, prev = last_trusted.get(pid, (None, None))
+        if prev is not None and _advances(prev, v, ay - prev_ay):
             v["trust"] = "high"
             v["trust_by"] = "progression"
+            last_trusted[pid] = (ay, v)
             n_vouched += 1
         else:
             v["trust"] = "low"
