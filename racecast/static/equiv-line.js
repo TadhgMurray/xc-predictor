@@ -381,9 +381,27 @@
     //   and the HS-equivalent: only the own-scale rating moves.
     selPool.addEventListener("change", function () { load(st.cur); });
     document.addEventListener("rc-scale-change", function () { show(st.cur); });
-    window.addEventListener("resize", function () {
-      if (st.points.length) { var t = st.cur; draw(); goTo(t); }
-    });
+    // ⚠ REDRAW WHEN THE RULER'S OWN WIDTH CHANGES, NOT ONLY THE WINDOW'S
+    //   (owner, 2026-10-07: "the line says 25:00 while the number says
+    //   23:00"). On the race and course pages the card sits in a tab that
+    //   starts hidden, so the first draw ran at width 0: the padding that
+    //   puts the ruler's start under the centre pointer came out 0, and once
+    //   the tab opened the pointer stood half a ruler -- a minute or two at
+    //   XC distances -- away from the time the readout described. A window
+    //   resize never fires on a tab switch; a ResizeObserver on the ruler
+    //   does, so the ruler is redrawn at its real width and returned to the
+    //   time being read.
+    var lastW = ruler.clientWidth;
+    function refit() {
+      var w = ruler.clientWidth;
+      if (!st.points.length || w === lastW) return;
+      lastW = w;
+      var t = st.cur;
+      draw();
+      goTo(t);
+    }
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(refit).observe(ruler);
+    window.addEventListener("resize", refit);
     load(null);
   }
 

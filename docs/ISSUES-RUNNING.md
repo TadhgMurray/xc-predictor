@@ -5024,3 +5024,15 @@ back to the flat red/teal from 43f2023, and ratings carry no colour. The
 field plot keeps its rating colours (89c85ec), which the owner likes.
 Then, on the owner's "yes": the flat red/teal on difficulty and race day is
 gone as well. Both print in plain ink again.
+
+## 2026-10-07 — ✅ "On the track": the ruler and the readout disagreed (25:00 vs 23:00)
+
+The card sits in a tab that starts hidden (race page, and the course page
+since today), so `equiv-line.js` drew the ruler at width 0. The padding that
+puts the ruler's start under the centre pointer came out 0, and once the tab
+opened, the pointer stood half a ruler away from the time the readout
+described: a minute or two at XC distances. The only redraw hook was window
+`resize`, which a tab switch never fires. A ResizeObserver on the ruler now
+redraws at its real width and returns to the time being read. Reproduced in
+Chromium against the old script (readout 15:00, label under the pointer
+16:00); fixed, both read 15:00.
