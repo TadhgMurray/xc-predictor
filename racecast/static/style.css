@@ -5873,8 +5873,11 @@ td.pl.rc-m1 > span { background: var(--m1); }
 td.pl.rc-m2 > span { background: var(--m2); }
 td.pl.rc-m3 > span { background: var(--m3); }
 
-/* course difficulty and the race day: shaded inline by size
-   (difficulty_view.shadeFor) -- red slower, green faster */
+/* course difficulty and the race day: a wash behind the number, its depth
+   the size (difficulty_view.tintFor) -- green harder, red easier */
+.dv-tint { padding: .05rem .35rem; border-radius: 3px; color: var(--ink); }
+/* the rating's wash (scale-view.js ratingTint) */
+.rv.rv-tint { padding: .05rem .35rem; border-radius: 3px; }
 
 /* ---- the rating tiers, for the field plot (race-page.js drawField) ------- */
 :root {

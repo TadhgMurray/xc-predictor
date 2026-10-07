@@ -66,7 +66,7 @@
     {% if story %}<p class="rc-story">{% for s in story %}{{ s }}{% if not loop.last %} {% endif %}{% endfor %}</p>{% endif %}
     <div class="rc-facts">
       <span>Venue <b>{{ dv(header.difficulty, "TF", day_effect) }}</b>{{ difficulty_i("TF") }}</span>
-      {% if day_effect is not none %}<span>Day <b style="color:{{ day_effect|daycolour }}">{{ day_effect|dayword }}{% if (day_effect|dayword) != 'level' %} · {{ day_effect|dayabs }}{% endif %}</b></span>{% endif %}
+      {% if day_effect is not none %}<span>Day <b class="dv-tint" style="background:{{ day_effect|daycolour }}">{{ day_effect|dayword }}{% if (day_effect|dayword) != 'level' %} · {{ day_effect|dayabs }}{% endif %}</b></span>{% endif %}
       {% if has_wind %}<span>Wind <b>on the sheet</b></span>{% endif %}
     </div>
     <button type="button" class="share-box share-btn rc-share" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"

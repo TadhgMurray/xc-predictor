@@ -502,9 +502,9 @@ def _dayabs(u):
 
 @app.template_filter("daycolour")
 def _daycolour(u):
-    """The race day in the same red/green shades as the course: slow red,
-    fast green, deeper with the size of the effect."""
-    return difficulty_view.shadeFor(dayPct(u))
+    """The race day in the same washes as the course: a slow day (times
+    ran slower, like a hard course) green, a fast day red."""
+    return difficulty_view.tintFor(dayPct(u))
 
 
 @app.template_filter("dayword")

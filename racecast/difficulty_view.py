@@ -131,28 +131,37 @@ def diffPct(difficulty, sport="XC"):
 #   it, deepening with the size of the effect and full at 10% -- the bound
 #   the site already puts on a race day (app._RACE_DAY_CAP). Both ends stay
 #   dark enough to read as text on the page.
-_NEUTRAL = "#6b7280"
-# light -> deep within one hue each side, so the middle never turns muddy
-# (a grey-to-red blend passes through mauve)
-_SLOWER = ((0xe0, 0x5a, 0x4f), (0x99, 0x1b, 0x1b))
-_FASTER = ((0x3d, 0xa8, 0x6a), (0x14, 0x53, 0x2d))
+# ★ A TINT BEHIND THE NUMBER, NOT THE NUMBER'S COLOUR (owner, 2026-10-07:
+#   "neither of them are on a gradient ... it's not very easy to tell it's a
+#   gradient"). Text can only use a narrow band of darkness and stay
+#   readable, so +4.1% and +4.7% looked identical. A wash behind black text
+#   can run from nothing to a clear tint, so the size shows.
+# ★ AND HARDER IS GREEN ("why would better difficulty be red?"): a hard
+#   course is the one a time is worth more on. Easier is red. Full at 10%,
+#   the site's own race-day bound; exactly 0.0% gets no tint.
+_HARDER_RGB = (22, 163, 74)
+_EASIER_RGB = (220, 38, 38)
 FULL_COLOUR_PCT = 10.0
+_MIN_ALPHA, _MAX_ALPHA = 0.10, 0.55
 
 
-def shadeFor(pct):
-    """'#rrggbb' for a percentage effect on the clock (+ slower, - faster)."""
-    if pct is None:
-        return ""
-    if abs(pct) < 0.05:                       # prints as 0.0%
-        return _NEUTRAL
+def tintFor(pct):
+    """'rgba(...)' wash for a percentage effect on the clock (+ harder)."""
+    if pct is None or abs(pct) < 0.05:
+        return "transparent"
     t = min(abs(pct) / FULL_COLOUR_PCT, 1.0)
-    light, deep = _SLOWER if pct > 0 else _FASTER
-    return "#%02x%02x%02x" % tuple(round(l + (d - l) * t) for l, d in zip(light, deep))
+    r, g, b = _HARDER_RGB if pct > 0 else _EASIER_RGB
+    return f"rgba({r},{g},{b},{_MIN_ALPHA + (_MAX_ALPHA - _MIN_ALPHA) * t:.2f})"
+
+
+# kept for callers that colour text (none in the templates now)
+def shadeFor(pct):
+    return tintFor(pct)
 
 
 def diffColour(difficulty, sport="XC"):
-    """The template filter: the shade for a course's difficulty."""
-    return shadeFor(relativePct(difficulty, sport))
+    """The template filter: the wash behind a course's difficulty."""
+    return tintFor(relativePct(difficulty, sport))
 
 
 def diffWords(difficulty, sport="XC"):

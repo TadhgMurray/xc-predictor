@@ -48,17 +48,16 @@
      the swap is reversible without a reload. A span with no data-hs keeps
      its own number in both views. */
   /* ★ THE RATING ON A GRADIENT (owner, 2026-10-07: "give rating a color
-     gradient"). The number's own colour, nothing behind it: grey at 100
-     (the pool average) deepening to the field plot's orange at 140
-     (national class). Text colours only -- both ends read on the page. */
-  var LOW = [0x6b, 0x72, 0x80], HIGH = [0xc2, 0x41, 0x0c];
-  function ratingColour(v) {
+     gradient" ... "it's not very easy to tell it's a gradient"). A wash
+     behind the number, the text staying black: almost none at 95,
+     deepening smoothly to a clear orange at 145 -- the field plot's hue.
+     A text colour could not show it; a wash can. */
+  function ratingTint(v) {
     if (isNaN(v)) return "";
-    var t = Math.max(0, Math.min(1, (v - 100) / 40));
-    return "rgb(" + LOW.map(function (lo, k) {
-      return Math.round(lo + (HIGH[k] - lo) * t); }).join(",") + ")";
+    var t = Math.max(0, Math.min(1, (v - 95) / 50));
+    return "rgba(234,88,12," + (0.04 + 0.52 * t).toFixed(2) + ")";
   }
-  window.rcRatingColour = ratingColour;
+  window.rcRatingTint = ratingTint;
 
   function applySpans() {
     var spans = document.querySelectorAll(".rv");
@@ -68,7 +67,8 @@
       el.textContent = (window.rcScale.mode === "hs" && el.dataset.hs)
         ? el.dataset.hs
         : el.dataset.own;
-      el.style.color = ratingColour(parseFloat(el.textContent));
+      el.style.backgroundColor = ratingTint(parseFloat(el.textContent));
+      el.classList.add("rv-tint");
     }
     /* The numbers changed, so the order of any opted-in table may have. */
     if (typeof resortTables === "function") resortTables();

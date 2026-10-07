@@ -14,28 +14,23 @@ sys.path.insert(0, os.path.join(ROOT, "racecast"))
 import difficulty_view as dv                                    # noqa: E402
 
 
-def _rgb(h):
-    return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+def test_green_for_harder_red_for_easier_none_for_zero():
+    assert dv.tintFor(None) == dv.tintFor(0.0) == "transparent"
+    assert dv.tintFor(4.0).startswith("rgba(22,163,74,")       # harder: green
+    assert dv.tintFor(-4.0).startswith("rgba(220,38,38,")      # easier: red
 
 
-def test_red_for_slower_green_for_faster_grey_for_none():
-    assert dv.shadeFor(None) == ""
-    assert dv.shadeFor(0.0) == "#6b7280"
-    r, g, b = _rgb(dv.shadeFor(4.0))
-    assert r > g and r > b                     # a red
-    r, g, b = _rgb(dv.shadeFor(-4.0))
-    assert g > r and g > b                     # a green
+def _alpha(t):
+    return float(t.rsplit(",", 1)[1].rstrip(")"))
 
 
 def test_deeper_with_size_and_full_at_ten_percent():
-    small, big = _rgb(dv.shadeFor(1.0)), _rgb(dv.shadeFor(8.0))
-    assert sum(big) < sum(small)               # darker = bigger effect
-    assert dv.shadeFor(10.0) == dv.shadeFor(25.0) == "#991b1b"
-    assert dv.shadeFor(-10.0) == "#14532d"
+    assert _alpha(dv.tintFor(1.0)) < _alpha(dv.tintFor(4.0)) < _alpha(dv.tintFor(8.0))
+    assert dv.tintFor(10.0) == dv.tintFor(25.0)
 
 
 def test_the_templates_use_it():
     ex = open(os.path.join(ROOT, "racecast", "templates", "_explain.html"), encoding="utf-8").read()
-    assert ex.count('style="color:{{ d|diffcolour(sport) }}"') == 2
+    assert ex.count('style="background:{{ d|diffcolour(sport) }}"') == 2
     sv = open(os.path.join(ROOT, "racecast", "static", "scale-view.js"), encoding="utf-8").read()
-    assert "el.style.color = ratingColour(parseFloat(el.textContent));" in sv
+    assert "el.style.backgroundColor = ratingTint(parseFloat(el.textContent));" in sv
