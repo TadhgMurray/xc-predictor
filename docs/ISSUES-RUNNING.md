@@ -4587,3 +4587,20 @@ Owner: "feels half-assed, only some things were put into new theme." Went throug
 - The rating-scale "?" was centred by line-height (glyph sat low) and the new flag rules styled it as a red record
   tag. Now flex-centred site-wide and aligned to the toggle's buttons, and excluded from the flag rules: the quiet
   grey ring the other help icons use.
+
+## 2026-10-07 — race pages back to the site's own look; theme preview removed
+
+- Owner: "this just feels like an affront to my eyes" → chose "Back to the old look".
+- **Removed:** the ?theme=rc preview (theme-rc.css, theme-rc.js, the snippet in _topbar.html) and the self-hosted
+  Barlow / JetBrains Mono fonts (static/fonts; only race.css and the theme used them).
+- **race.css is layout only now:** no fonts, colours, dark band, solid flag tags or medal colours. Both race pages use
+  `<main class="page-wide">` like the meet and course pages, so h1, tables, the coloured flag pills, links and the
+  black joined `.seg` tabs are style.css's. Kept: results first, the two-sentence summary, team scores beside the
+  table with team lighting (pale gold ground, gold left rule), the finder box, phone subline, vs-level under the
+  rating, track venue name, the duplicate removals.
+- Table cells give back some of the site's .9rem side padding (the sidebar takes 280px) so names stay on one line;
+  the school wraps instead.
+- Kept from the theme work (site-wide fixes, not theme): the rating-scale "?" centring, landing table alignment,
+  .page-wide padding on brackets/landing, .conv width, the athlete-page and course-page duplicate removals.
+- Tests: the 24 failures (plus 9 order-dependent ones in the full run) and 6 collection errors are identical with
+  and without this change.

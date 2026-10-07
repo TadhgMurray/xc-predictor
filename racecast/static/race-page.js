@@ -17,7 +17,7 @@
     if (!found) name = "results";
     panels.forEach(function (p) { p.hidden = p.dataset.panel !== name; });
     main.querySelectorAll(".rc-tabs [data-tab]").forEach(function (a) {
-      a.classList.toggle("on", a.dataset.tab === name);
+      a.classList.toggle("is-on", a.dataset.tab === name);   // the site's .seg-btn.is-on
     });
   }
   tabs.forEach(function (a) {

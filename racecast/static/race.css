@@ -1,203 +1,93 @@
-/* race.css -- the XC race page, results first (owner, 2026-10-07; the D5
-   mockup). Everything is scoped to main.rc / body.rc-body so no other page
-   moves. Fonts are self-hosted (static/fonts, SIL OFL 1.1): no third-party
-   request on page load. */
-@font-face { font-family: "RC Cond"; src: url(fonts/barlow-condensed-800-italic.woff2) format("woff2"); font-weight: 800; font-style: italic; font-display: swap; }
-@font-face { font-family: "RC Cond"; src: url(fonts/barlow-condensed-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
-@font-face { font-family: "RC Cond"; src: url(fonts/barlow-condensed-600-normal.woff2) format("woff2"); font-weight: 600; font-display: swap; }
-@font-face { font-family: "RC Sans"; src: url(fonts/barlow-400-normal.woff2) format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "RC Sans"; src: url(fonts/barlow-600-normal.woff2) format("woff2"); font-weight: 600; font-display: swap; }
-@font-face { font-family: "RC Sans"; src: url(fonts/barlow-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
-@font-face { font-family: "RC Mono"; src: url(fonts/jetbrains-mono-500-normal.woff2) format("woff2"); font-weight: 500; font-display: swap; }
-@font-face { font-family: "RC Mono"; src: url(fonts/jetbrains-mono-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
-
-body.rc-body { background: #edeae3; }
-main.rc {
-  /* ★ SOFTER (owner, 2026-10-07: "too much white black contrast"): a warm
-     charcoal, not black; warm off-white cards and type, not pure white; table
-     heads a light warm grey, not a black bar. The header band stays dark. */
-  --rc-ink: #24221f; --rc-red: #c8202f; --rc-mute: #6f6c64; --rc-line: #dfdbd2;
-  --rc-card: #faf8f4; --rc-on-dark: #efece6; --rc-paper: #edeae3; --rc-head: #e3dfd6; --rc-head-ink: #4b4842;
-  --rc-gold: #c9a227; --rc-silver: #b9c0c6; --rc-bronze: #b06a35; --rc-lit: #fff6d8;
-  font-family: "RC Sans", system-ui, sans-serif; color: var(--rc-ink);
-  max-width: none; margin: 0; padding: 0 0 3rem;
-}
-main.rc a { color: inherit; text-decoration: none; }
-main.rc a:hover { text-decoration: underline; }
-/* ★ THE SITE'S OWN COLUMN (owner, 2026-10-07: "a lot of things are off-center"):
-   1080 wide with the 1.5rem gutter of .page-wide, so the race page's edges are the
-   meet and course pages' edges. The dark band runs the width of the top bar's rule. */
-.rc-w { max-width: 1080px; margin: 0 auto; padding: 0 1.5rem; box-sizing: content-box; }
+/* race.css -- the race pages' LAYOUT, results first (owner, 2026-10-07).
+   ★ THE LOOK IS THE SITE'S (owner, 2026-10-07: "Back to the old look"):
+   no fonts, colours, tags or bands of its own. <main> is .page-wide like the
+   meet and course pages; h1, tables, flags, links and the .seg tabs are
+   style.css's. What lives here is only the arrangement: header and summary,
+   the results table with the team-scores sidebar, the phone subline, the
+   vs-level line under a rating and the lit team rows. Scoped to main.rc. */
 
 /* ---- header ---------------------------------------------------------- */
-.rc-hd { background: var(--rc-ink); color: var(--rc-on-dark); padding: 1.1rem 0 1.2rem; border-bottom: 4px solid var(--rc-red); }
-.rc-hgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 2.4rem; align-items: end; }
-.rc-kick { font-family: "RC Cond"; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: .95rem; color: #a9a9a2; }
-main.rc h1 { font-family: "RC Cond"; font-weight: 800; font-style: italic; text-transform: uppercase;
-  font-size: 3.4rem; line-height: .92; margin: .2rem 0 .4rem; color: var(--rc-on-dark); letter-spacing: 0; }
-.rc-meta { font-family: "RC Cond"; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: 1rem; color: #d9d9d4; }
-.rc-meta .dist-note { color: #ffd166; }
-.rc-champs { display: flex; gap: .6rem 2.4rem; flex-wrap: wrap; margin-top: .8rem; }
-.rc-champs > div { display: flex; flex-direction: column; gap: .2rem; }
-.rc-champs .rc-crow { display: flex; align-items: center; gap: .55rem; }
-main.rc .rc-champs img.school-mark { width: 28px; height: 28px; object-fit: contain; background: var(--rc-card); border-radius: 3px; padding: 2px; margin: 0; vertical-align: middle; box-sizing: border-box; }
-.rc-champs .k { font-family: "RC Cond"; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #a9a9a2; font-size: .8rem; display: block; line-height: 1; }
-.rc-champs .rc-cn { font-family: "RC Cond"; font-weight: 800; font-style: italic; text-transform: uppercase; font-size: 1.35rem; color: var(--rc-on-dark); }
-.rc-champs .rc-cn { line-height: 1.1; }
-.rc-champs i { font-family: "RC Mono"; font-style: normal; font-weight: 700; color: #ffd166; font-size: 1.05rem; }
-.rc-right { display: flex; flex-direction: column; }
-.rc-story { margin: 0; font-size: 1.02rem; line-height: 1.5; color: #e6e6e1; }
-.rc-story b { color: var(--rc-on-dark); }
-.rc-facts { display: flex; flex-wrap: wrap; margin-top: .7rem; }
-.rc-facts > span { font-family: "RC Cond"; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: .9rem;
-  color: #a9a9a2; border-left: 3px solid var(--rc-red); padding: .1rem .9rem .1rem .55rem; margin: 0 .9rem .3rem 0; }
-.rc-facts b { font-family: "RC Mono"; font-weight: 700; letter-spacing: 0; text-transform: none; margin-left: .35rem; color: var(--rc-on-dark); }
-main.rc .rc-facts .dv { color: var(--rc-on-dark); background: none !important; padding: 0; margin: 0; font: inherit; font-style: normal; vertical-align: baseline; }
-.rc-facts .info-i { color: #a9a9a2; border-color: #55554f; margin-left: .3rem; }
-.rc-share { order: -1; align-self: flex-end; margin-bottom: .7rem; background: transparent; color: #d9d9d4; border: 1px solid #3a3a36; }
+main.rc .rc-hgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .8rem 2rem; align-items: start; }
+main.rc .rc-kick { font-size: .95rem; font-weight: 600; }
+main.rc h1 { margin: .15rem 0 .3rem; }
+main.rc .rc-meta { font-size: .95rem; color: #374151; }
+main.rc .rc-meta a { font-weight: 600; }
+main.rc .rc-champs { display: flex; flex-wrap: wrap; gap: .4rem 2rem; margin-top: .7rem; }
+main.rc .rc-champs .k { display: block; font-size: .7rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+main.rc .rc-crow { display: flex; align-items: center; gap: .45rem; }
+main.rc .rc-crow img.school-mark { margin: 0; }
+main.rc .rc-cn { font-size: 1.1rem; }
+main.rc .rc-crow i { font-style: normal; font-weight: 600; font-variant-numeric: tabular-nums; }
+main.rc .rc-right { display: flex; flex-direction: column; align-items: flex-start; }
+main.rc .rc-story { margin: .35rem 0 0; line-height: 1.55; }
+main.rc .rc-facts { display: flex; flex-wrap: wrap; gap: .2rem 1.2rem; margin-top: .5rem; font-size: .9rem; color: var(--muted); }
+main.rc .rc-facts b { color: var(--ink); margin-left: .25rem; }
+main.rc .rc-share { margin-top: .7rem; }
 
 /* ---- body grid -------------------------------------------------------- */
-.rc-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 1.4rem; align-items: start; margin-top: 1.2rem; }
-.rc-tbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; border-bottom: 2px solid var(--rc-ink); }
-.rc-tabs { display: flex; gap: 1.4rem; overflow-x: auto; white-space: nowrap; }
-.rc-tabs a { font-family: "RC Cond"; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; font-size: 1.1rem;
-  color: var(--rc-mute) !important; padding: .35rem 0; }
-.rc-tabs a.on { color: var(--rc-ink) !important; box-shadow: inset 0 -4px 0 var(--rc-red); }
-.rc-tabs a:hover { text-decoration: none !important; color: var(--rc-ink) !important; }
-.rc-tabs .n { font-family: "RC Mono"; font-size: .8rem; margin-left: .3rem; }
-.rc-find { border: 1px solid #cfcec7; background: var(--rc-card); padding: .4rem .6rem; font: inherit; font-size: .9rem; width: 230px; margin-bottom: .4rem; }
-main.rc .rc-panel { margin-top: .6rem; }
+main.rc .rc-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 1.6rem; align-items: start; margin-top: 1.4rem; }
+main.rc .rc-grid.rc-grid-one { grid-template-columns: minmax(0, 1fr); }
+main.rc .rc-tbar { display: flex; align-items: center; gap: .6rem 1rem; flex-wrap: wrap; margin-bottom: .4rem; }
+main.rc .rc-tabs { margin: 0; }
+main.rc .rc-tabs .n { margin-left: .35rem; opacity: .65; font-variant-numeric: tabular-nums; }
+main.rc .rc-out { font-weight: 600; font-size: .9rem; white-space: nowrap; }
+main.rc .rc-find { margin-left: auto; width: 230px; padding: .4rem .6rem; font-size: .9rem; border: 1px solid var(--line-2); border-radius: 3px; }
 main.rc.rc-js .rc-panel[hidden] { display: none; }
 main.rc .toggle-row { margin: .2rem 0 .6rem; }
 
 /* ---- tables ---------------------------------------------------------- */
-main.rc table { display: table; width: 100%; border-collapse: collapse; background: var(--rc-card); border: 1px solid var(--rc-line); font-size: .95rem; overflow: visible; }
-main.rc thead th { background: var(--rc-head); color: var(--rc-head-ink); border-bottom: 1px solid #d3cec3; font-family: "RC Cond"; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .08em; font-size: .8rem; padding: .45rem .5rem; border: 0; vertical-align: bottom; }
-main.rc thead th .info-i { background: none; color: var(--rc-mute); border-color: #b9b5ab; }
-main.rc td { padding: .42rem .5rem; border: 0; border-bottom: 1px solid var(--rc-line); vertical-align: middle; }
-main.rc tbody tr:nth-child(even) { background: none; }
-main.rc tbody tr:hover { background: #f1eee7; }
+main.rc td { vertical-align: middle; }
+/* the sidebar takes 280px, so the cells give back some of the site's .9rem
+   side padding and a runner's name stays on one line; the school wraps */
+main.rc .rc-table th, main.rc .rc-table td { padding-left: .55rem; padding-right: .55rem; }
 main.rc .n { text-align: right; white-space: nowrap; }
-main.rc th.n { text-align: right; }
-.rc-sub { display: block; font-size: .66rem; letter-spacing: .06em; opacity: .75; }
-.rc-table td.pl { width: 2.8rem; }
-.rc-table td.pl span { font-family: "RC Cond"; font-weight: 800; font-style: italic; font-size: 1.15rem; }
-.rc-table td.pl.rc-m1 span, .rc-table td.pl.rc-m2 span, .rc-table td.pl.rc-m3 span { display: inline-block; min-width: 1.7rem; text-align: center;
-  font-style: normal; font-size: 1rem; padding: .05rem .35rem; border-radius: 2px; color: #111; }
-.rc-table td.pl.rc-m1 span { background: var(--rc-gold); }
-.rc-table td.pl.rc-m2 span { background: var(--rc-silver); }
-.rc-table td.pl.rc-m3 span { background: var(--rc-bronze); color: var(--rc-on-dark); }
-.rc-table td.nm a { font-weight: 700; color: var(--rc-ink); }
-.rc-subline { display: none; }
-.rc-table td.sch { white-space: nowrap; }
-.rc-table td.sch a { color: var(--rc-ink); }
-.rc-table td.sch .gr { font-family: "RC Mono"; font-size: .78rem; color: var(--rc-mute); margin-left: .45rem; }
-main.rc img.school-mark { width: 18px; height: 18px; object-fit: contain; vertical-align: -4px; margin-right: .4rem; }
-.rc-table td.tm { font-family: "RC Mono"; font-weight: 700; }
-.rc-table td.rt { font-family: "RC Mono"; line-height: 1.1; }
-.rc-table td.rt .rc-rv { display: block; font-weight: 700; white-space: nowrap; }
-/* ! style.css sets td white-space on phones; times never break */
-main.rc .rc-table td.tm, main.rc .rc-table td.rt { white-space: nowrap !important; }
-main.rc .rc-table .flag { display: inline; }
-.rc-table td.rt .vs-level { display: block; font-size: .75rem; color: var(--rc-mute); }
-.rc-table td.rt .vs-level.is-above { color: #1a7f37; font-weight: 700; }
-.rc-table td.pts { font-family: "RC Mono"; }
-/* record flags: the same facts and tooltips, as quiet text, not pills */
-/* record flags: small solid tags (owner, 2026-10-07: did not like the bare
-   red text). PR red, SR black; course and rating records outlined. The same
-   facts and tooltips as before. */
-main.rc .flag:not(.info-i):not(.dv):not(.scale-note) { display: inline-block; margin: 0 0 0 .35rem; padding: .08rem .3rem .04rem;
-  font-family: "RC Cond"; font-weight: 800; font-style: italic; font-size: .7rem; line-height: 1; letter-spacing: .03em;
-  border-radius: 2px; vertical-align: .12em; color: var(--rc-on-dark); background: var(--rc-red) !important; border: 1px solid var(--rc-red); }
-main.rc .flag.flag--sr:not(.info-i):not(.dv) { background: var(--rc-ink) !important; border-color: var(--rc-ink); }
-main.rc .flag.flag--cpr:not(.info-i):not(.dv), main.rc .flag.flag--csr:not(.info-i):not(.dv) { background: var(--rc-card) !important; color: var(--rc-red); }
-main.rc .flag.flag--rpr:not(.info-i):not(.dv), main.rc .flag.flag--rsr:not(.info-i):not(.dv) { background: var(--rc-card) !important; color: var(--rc-ink); border-color: var(--rc-ink); }
-.rc-table tr.rc-lit td, .rc-table tr.hl-school td { background: var(--rc-lit); }
-.rc-table tr.rc-lit td.pl, .rc-table tr.hl-school td.pl { box-shadow: inset 4px 0 0 var(--rc-gold); }
-.rc-table tr.row-hi td { background: #e8f0fb; }
-.rc-teams-full td.displacer { color: var(--rc-mute); }
-.rc-teams-full td:nth-child(n+3) { text-align: right; font-family: "RC Mono"; }
-.rc-teams-full td.pl span { font-family: "RC Cond"; font-weight: 800; font-style: italic; font-size: 1.1rem; }
-main.rc .csv-link { margin: .5rem 0 0; }
+main.rc .rc-sub { display: block; text-transform: none; letter-spacing: 0; }
+main.rc .rc-table td.pl { width: 2.6rem; font-variant-numeric: tabular-nums; }
+main.rc .rc-table td.nm a { font-weight: 600; white-space: nowrap; }
+main.rc .rc-subline { display: none; }
+main.rc .rc-table td.sch .gr { color: var(--muted); margin-left: .45rem; font-size: .85rem; white-space: nowrap; }
+main.rc .rc-table td.tm, main.rc .rc-table td.rt { white-space: nowrap !important; font-variant-numeric: tabular-nums; }
+main.rc .rc-table td.rt { line-height: 1.15; }
+main.rc .rc-table td.rt .rc-rv { display: block; font-weight: 600; }
+main.rc .rc-table td.rt .vs-level { display: block; font-size: .75rem; color: var(--muted); }
+main.rc .rc-table td.rt .vs-level.is-above { color: #1a7f37; font-weight: 600; }
+main.rc .rc-teams-full td.displacer, main.rc .rc-teams-full td.displacer a { color: var(--muted); }
+main.rc .rc-teams-full td:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* the lit team: the site's gold as a left rule, a pale ground */
+main.rc tr.rc-lit td, main.rc tr.hl-school td { background: #fdf7e6; }
+main.rc tr.rc-lit td:first-child, main.rc tr.hl-school td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
+main.rc .rc-table tr.row-hi td { background: #e8f0fb; }
+
+/* track: heats, relays, wind */
+main.rc tr.rc-heat td { background: #f7f8fa; font-weight: 650; padding-top: .6rem; }
+main.rc .relay-team { font-weight: 600; display: block; }
+main.rc .relay-legs { display: block; font-size: .82rem; color: var(--muted); }
+main.rc .rc-table td.wind { color: var(--muted); font-size: .88rem; }
 
 /* ---- sidebar --------------------------------------------------------- */
-.rc-side h2 { font-family: "RC Cond"; font-weight: 800; font-style: italic; text-transform: uppercase; font-size: 1.5rem;
-  margin: .2rem 0 .4rem; display: flex; justify-content: space-between; align-items: baseline; }
-.rc-side h2 small { font-family: "RC Sans"; font-style: normal; font-weight: 600; font-size: .85rem; text-transform: none; color: var(--rc-mute); }
-.rc-tscores tr { cursor: pointer; }
-.rc-tscores td { padding: .38rem .3rem; }
-.rc-tscores td.tp { font-family: "RC Cond"; font-weight: 800; font-style: italic; font-size: 1.1rem; width: 1.6rem; }
-.rc-tscores td.tn { font-weight: 700; font-size: .92rem; }
-.rc-tscores td.tn .sp { display: block; font-family: "RC Mono"; font-weight: 500; font-size: .72rem; color: var(--rc-mute); margin-top: .1rem; }
-.rc-tscores td.tn .sp i { font-style: normal; margin-right: .35rem; }
-.rc-tscores td.tpts { font-family: "RC Mono"; font-weight: 700; font-size: 1rem; }
-.rc-tscores tr.rc-lit td { background: var(--rc-lit); }
-.rc-tscores tr.rc-lit td.tp { box-shadow: inset 4px 0 0 var(--rc-gold); }
-.rc-tip { font-size: .8rem; color: var(--rc-mute); margin: .45rem 0 .6rem; }
-.rc-more { display: block; text-align: center; padding: .7rem; font-family: "RC Cond"; font-weight: 700; letter-spacing: .08em;
-  text-transform: uppercase; background: var(--rc-ink); color: var(--rc-on-dark) !important; }
-.rc-more:hover { text-decoration: none !important; }
-.rc-side .above-box { margin-top: 1.2rem; background: var(--rc-card); border: 1px solid var(--rc-line); padding: .7rem .9rem; }
-.rc-side .above-box h2 { font-size: 1.2rem; margin: 0 0 .2rem; }
-.rc-sidelinks { font-family: "RC Cond"; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; margin-top: 1rem; }
+main.rc .rc-side h2 { margin: .3rem 0 .5rem; display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
+main.rc .rc-side h2 small { font-size: .8rem; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+main.rc .rc-tscores tr { cursor: pointer; }
+main.rc .rc-tscores td { padding: .4rem .45rem; }
+main.rc .rc-tscores td.tp { width: 1.6rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+main.rc .rc-tscores td.tn { font-weight: 600; }
+main.rc .rc-tscores td.tn .sp { display: block; font-weight: 400; font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+main.rc .rc-tscores td.tn .sp i { font-style: normal; margin-right: .35rem; }
+main.rc .rc-tscores td.tpts { font-weight: 650; }
+main.rc .rc-tip { font-size: .8rem; color: var(--muted); margin: .45rem 0 .6rem; }
+main.rc .rc-more { font-weight: 600; font-size: .9rem; }
+main.rc .rc-side .above-box { margin-top: 1.2rem; }
 main.rc .page-report { margin-top: 1.4rem; }
 
 /* ---- phone ----------------------------------------------------------- */
 @media (max-width: 760px) {
-  /* the site's one 12px phone gutter is on <main> (style.css "ONE
-     WIDTH"): the band is as wide as every other block on the page */
-  .rc-w { padding: 0; }
-  .rc-hd { padding-left: 12px; padding-right: 12px; }
-  .rc-hgrid { grid-template-columns: minmax(0, 1fr); gap: .9rem; }
-  main.rc h1 { font-size: 2.3rem; }
-  /* side by side on a phone; a long name wraps the pair onto two rows
-     rather than squeezing (owner, 2026-10-07) */
-  .rc-champs { gap: .5rem 1.1rem; }
-  .rc-champs .rc-crow { gap: .4rem; }
-  main.rc .rc-champs img.school-mark { width: 22px; height: 22px; padding: 1px; }
-  .rc-champs .rc-cn { font-size: 1rem; }
-  .rc-champs i { font-size: .88rem; }
-  .rc-champs .k { font-size: .7rem; }
-  .rc-share { order: 1; align-self: flex-start; margin: .7rem 0 0; }
-  .rc-grid { grid-template-columns: minmax(0, 1fr); }
-  .rc-side { order: 2; }
-  .rc-tbar { flex-direction: column; align-items: stretch; }
-  .rc-find { width: 100%; margin: .5rem 0; order: 2; }
-  .rc-wide { display: none; }
-  .rc-subline { display: block; font-size: .8rem; line-height: 1.3; color: var(--rc-mute); margin-top: .1rem; }
-  .rc-subline img.school-mark { width: 15px; height: 15px; margin-right: .3rem; vertical-align: -3px; }
-  .rc-table td.nm a { display: block; line-height: 1.15; }
-  main.rc table { font-size: .9rem; }
-  main.rc td { padding: .4rem .3rem; }
-  .rc-teams-full { display: block !important; overflow-x: auto; }
+  main.rc .rc-hgrid, main.rc .rc-grid { grid-template-columns: minmax(0, 1fr); }
+  main.rc .rc-find { width: 100%; margin-left: 0; }
+  main.rc .rc-wide { display: none; }
+  main.rc .rc-subline { display: block; font-size: .8rem; line-height: 1.3; color: var(--muted); margin-top: .1rem; }
+  main.rc .rc-subline img.school-mark { width: 15px; height: 15px; margin-right: .3rem; vertical-align: -3px; }
+  main.rc .rc-table td.nm a { display: block; line-height: 1.2; white-space: normal; }
+  main.rc td { padding-left: .35rem; padding-right: .35rem; }
+  main.rc .rc-teams-full { display: block; overflow-x: auto; }
 }
-
-/* ---- the track race page's extras ------------------------------------ */
-.rc-grid.rc-grid-one { grid-template-columns: minmax(0, 1fr); }
-
-main.rc tr.rc-heat td { background: var(--rc-paper, #f3f2ee); font-family: "RC Cond"; font-weight: 800; font-style: italic;
-  text-transform: uppercase; letter-spacing: .04em; font-size: .95rem; padding-top: .7rem; }
-main.rc .relay-team { font-weight: 700; display: block; }
-main.rc .relay-legs { display: block; font-size: .8rem; color: var(--rc-mute); }
-main.rc .relay-legs a { color: var(--rc-mute); font-weight: 400; }
-.rc-table td.wind { font-family: "RC Mono"; font-size: .85rem; color: var(--rc-mute); }
-
-/* ---- what is a link (owner, 2026-10-07: "how can we show which things are
-   linked"). In the tables a quiet underline under every name that goes
-   somewhere, red on hover; in the header, the same on white. A link that
-   leaves for another page of the site carries an arrow (.rc-go). -------- */
-.rc-table td.nm a, .rc-table td.sch a, .rc-teams-full td a, .rc-table .relay-legs a,
-.rc-champs .rc-cn a, .rc-hd .rc-meta a, .rc-hd .rc-kick a, .rc-story a {
-  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-.rc-table td.nm a, .rc-table td.sch a, .rc-teams-full td a, .rc-table .relay-legs a { text-decoration-color: #c9c8c2; }
-.rc-hd a { text-decoration-color: rgba(255, 255, 255, .35); }
-main.rc .rc-table td a:hover, main.rc .rc-teams-full td a:hover { color: var(--rc-red); text-decoration-color: var(--rc-red); }
-main.rc .rc-hd a:hover { color: var(--rc-on-dark); text-decoration-color: var(--rc-red); }
-.rc-go::after { content: "\2192"; display: inline-block; margin-left: .35em; text-decoration: none; }
-.rc-out { margin-left: auto; align-self: center; padding: .35rem 0 .45rem; font-family: "RC Cond"; font-weight: 700;
-  text-transform: uppercase; letter-spacing: .06em; font-size: 1rem; color: var(--rc-red) !important; white-space: nowrap; }
-.rc-out:hover { text-decoration: underline !important; }
-.rc-tscores tr { cursor: pointer; }
-.rc-tscores tr:hover td { background: #faf9f5; }
-@media (max-width: 760px) { .rc-out { margin-left: 0; order: 1; } }

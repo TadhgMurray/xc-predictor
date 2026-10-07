@@ -28,10 +28,10 @@
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
-<body class="rc-body">
+<body>
 {% include "_topbar.html" %}
 {#- ★ THE TRACK RACE PAGE IN THE CROSS COUNTRY RACE PAGE'S LAYOUT (owner,
-     2026-10-07: "feels half-assed"): one dark header (event, winner, the
+     2026-10-07: "feels half-assed"): one header (event, winner, the
      race_story summary, venue difficulty), then the results -- heats kept,
      relays with their legs, wind and points where the event has them --
      and the event's points by school beside them. race.css and
@@ -44,15 +44,15 @@
    score in the final, so the column stays off prelim pages. #}
 {% set has_pts = results | selectattr("points") | list | length > 0 %}
 {% import "_above_level.html" as al %}
-<main class="rc">
+<main class="page-wide rc">
 <header class="rc-hd"><div class="rc-w rc-hgrid">
   <div>
-    <div class="rc-kick"><a class="rc-go" href="/meet/tf/{{ header.meet_id }}">{{ header.meet_name|with_year(race_date) }}</a></div>
+    <div class="rc-kick"><a href="/meet/tf/{{ header.meet_id }}">{{ header.meet_name|with_year(race_date) }}</a></div>
     <h1>{{ header.event_short or "Results" }}{% if gword %} {{ gword }}{% endif %}{% if header.division %} · {{ header.division }}{% endif %}</h1>
     <div class="rc-meta">
       {# the venue by its own name and city (meets_tf_meta); without one, a
          plain "Venue page" link rather than the bare word #}
-      {% if header.location_id %}<a class="rc-go" href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">{% if header.venue_name %}{{ header.venue_name }}{% if header.venue_city and header.venue_city|lower not in header.venue_name|lower %}, {{ header.venue_city }}{% endif %}{% else %}Venue page{% endif %}</a> · {% elif header.venue_name %}{{ header.venue_name }} · {% endif %}
+      {% if header.location_id %}<a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">{% if header.venue_name %}{{ header.venue_name }}{% if header.venue_city and header.venue_city|lower not in header.venue_name|lower %}, {{ header.venue_city }}{% endif %}{% else %}Venue page{% endif %}</a> · {% elif header.venue_name %}{{ header.venue_name }} · {% endif %}
       {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }} · {{ race_date|mdy if race_date else " - " }}{% if header.state %} · {{ header.state }}{% endif %}
     </div>
     {% if tf_champ %}
@@ -80,9 +80,9 @@
 <div class="rc-w rc-grid{% if not school_points %} rc-grid-one{% endif %}">
 <div class="rc-mainc">
   <div class="rc-tbar">
-    <nav class="rc-tabs" role="tablist">
-      <a class="on" href="#results" data-tab="results">Results<span class="n">{{ results|length }}</span></a>
-      {% if equiv_dist %}<a href="#track" data-tab="track">Equivalent times</a>{% endif %}
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#results" data-tab="results">Results<span class="n">{{ results|length }}</span></a>
+      {% if equiv_dist %}<a class="seg-btn" href="#track" data-tab="track">Equivalent times</a>{% endif %}
     </nav>
     <input class="rc-find" type="search" placeholder="Find an athlete or school" aria-label="Find an athlete or school">
   </div>
