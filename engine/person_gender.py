@@ -79,10 +79,44 @@ def boardGenderExpr(sport):
 _BUILD = f"""
 DROP TABLE IF EXISTS person_gender_new;
 CREATE TABLE person_gender_new AS
-WITH ev AS (
+-- ★ THE FIELD, BY PERSON (2026-10-07): each runner's scraped profile gender,
+--   one per person (a person whose profiles disagree has none here). By
+--   person, not by the row's athlete_id: a tfrrs row carries no athletic.net
+--   profile id, so the field of a tfrrs race counted almost nobody.
+WITH pa AS (
+    SELECT person_id, min(gender) AS g
+    FROM   athletes
+    WHERE  person_id IS NOT NULL AND gender IN ('M', 'F')
+    GROUP  BY person_id HAVING count(DISTINCT gender) = 1
+),
+fld AS (
+    SELECT fr.source, fr.meet_id, fr.div_id,
+           count(DISTINCT fr.person_id) FILTER (WHERE pa.g = 'M') AS fm,
+           count(DISTINCT fr.person_id) FILTER (WHERE pa.g = 'F') AS ff
+    FROM   results fr JOIN pa ON pa.person_id = fr.person_id
+    GROUP  BY fr.source, fr.meet_id, fr.div_id
+),
+ev AS (
+    -- ★ THE FIELD OUTVOTES THE LABEL WHEN IT IS DECISIVE (2026-10-07,
+    --   owner: Fairborn Community Park 2026, a college MEN's 5k whose tfrrs
+    --   division reads "Women"). The label decided, so every runner first
+    --   seen there became a woman: rated on the women's scale (a 15:17 at
+    --   206) and predicted into the women's NCAA championship. A cross
+    --   country division is one gender, and when {FIELD_MIN}+ of its known
+    --   runners say one gender {FIELD_SHARE} to 1 that is the division's,
+    --   whatever its label says. A field that is not decisive leaves the
+    --   label (and, with no label, no vote) exactly as before.
+    -- ★ AND WHERE THE DIVISION SAYS NOTHING, THE FIELD (2026-09-29): a
+    --   college division on athletic.net is often just "Collegiate", and
+    --   45 first-years at the Bates Preview 2026 were normalised on the
+    --   women's 6 km anchor for want of a word.
     SELECT r.person_id,
-           {labelExpr(ROW_LABEL_PACK['XC'])} AS g
+           COALESCE(CASE WHEN f.fm >= {FIELD_MIN} AND f.fm >= {FIELD_SHARE} * f.ff THEN 'M'
+                         WHEN f.ff >= {FIELD_MIN} AND f.ff >= {FIELD_SHARE} * f.fm THEN 'F' END,
+                    {labelExpr(ROW_LABEL_PACK['XC'])}) AS g
     FROM   results r
+    LEFT   JOIN fld f ON f.source = r.source AND f.meet_id = r.meet_id
+                     AND f.div_id IS NOT DISTINCT FROM r.div_id
     LEFT   JOIN meets m        ON m.div_id = r.div_id AND r.source = 'anet'
     LEFT   JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id AND r.source = 'tfrrs'
     WHERE  r.person_id IS NOT NULL
@@ -91,32 +125,6 @@ WITH ev AS (
     FROM   results_tf r
     WHERE  r.person_id IS NOT NULL
       AND  r.event_short ~* '{M_RX}|{F_RX}'
-    UNION ALL
-    -- ★ THE FIELD, WHERE THE DIVISION SAYS NOTHING (2026-09-29). A college
-    --   division on athletic.net is often just "Collegiate": no gender
-    --   word, so a first-year with no scraped profile had no vote at all,
-    --   was normalised as 'college_unknown_gender' on the women's 6 km
-    --   anchor, and rated like a woman -- 45 men at the Bates Preview
-    --   2026, a 13:23.6 at 140.2 beside the winner's 13:21.8 at 109.2.
-    --   A cross country division is one gender; its known runners say
-    --   which, when there are {FIELD_MIN}+ of them and one side outnumbers
-    --   the other {FIELD_SHARE} to 1. Only for rows whose own label is empty.
-    SELECT r.person_id,
-           CASE WHEN f.fm >= {FIELD_MIN} AND f.fm >= {FIELD_SHARE} * f.ff THEN 'M'
-                WHEN f.ff >= {FIELD_MIN} AND f.ff >= {FIELD_SHARE} * f.fm THEN 'F' END
-    FROM   results r
-    JOIN   (SELECT fr.source, fr.meet_id, fr.div_id,
-                   count(*) FILTER (WHERE fa.gender = 'M') AS fm,
-                   count(*) FILTER (WHERE fa.gender = 'F') AS ff
-            FROM   results fr JOIN athletes fa ON fa.athlete_id = fr.athlete_id
-            WHERE  fa.gender IN ('M', 'F')
-            GROUP  BY fr.source, fr.meet_id, fr.div_id) f
-           ON f.source = r.source AND f.meet_id = r.meet_id
-          AND f.div_id IS NOT DISTINCT FROM r.div_id
-    LEFT   JOIN meets m        ON m.div_id = r.div_id AND r.source = 'anet'
-    LEFT   JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id AND r.source = 'tfrrs'
-    WHERE  r.person_id IS NOT NULL
-      AND  ({labelExpr(ROW_LABEL_PACK['XC'])}) IS NULL
 ),
 -- ★ THE PROFILES VOTE TOO, AT {PROFILE_VOTES} EACH (2026-09-06). A boy
 --   whose every division read "Varsity" had ONE row labelled the other

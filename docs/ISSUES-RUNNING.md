@@ -4804,3 +4804,24 @@ From run 20261006_120609's gaps (line before and after each):
   App's big rating and PR tiles and the thumb-reach tab bar. Suggested next round: one hybrid -- Editorial's type,
   paper, summary and quiet flags; Instrument's table density and rankings; App's phone athlete header (big
   rating + PR tiles) -- then judged blind again against each parent.
+
+## 2026-10-07 — bake-off verdict; Fairborn explained; the field outvotes a wrong division label
+
+- **Season-number bake-off (server, 2022-2025, test half, out of sample).** The board's q80 beats the mean
+  (-0.44 pts order, XC), median (-0.93) and decayed mean (-0.31) everywhere. Importance weighting: by field front,
+  nothing (q80 +0.00, mean -0.32); by season-end share, the weighted MEAN edges q80 by +0.11 pts XC (88.64% vs
+  88.53%), +0.10 TF, and in every pool (+0.04 to +0.45; MAE 2.65 vs 2.66), at beta 2 (a championship ~7x a mid-season
+  race); the weighted q80 barely moves (+0.01/+0.04). Read: race importance is real but small -- about one in a
+  hundred of the pairs q80 gets wrong. Not adopted; owner's call (it changes what the season number means).
+- **Fairborn Community Park 2026, explained (diag_person_pool).** The page the owner saw is the TFRRS copy (meet
+  27559 div 0) of an athletic.net race (meet 282280): the returning runners' tfrrs rows are cross-feed twins and
+  unrated there (their rating is on the anet copy: Sayer 107.69, McGraw 108.02) -- the "-"s. The rated ~200s are
+  tfrrs-only runners (Eli Whetsone has no athletes row at all; this "Isaiah Lanoy, Ashland (OR)" is not the
+  Shawnee State one) whose gender came from the tfrrs division's label, "Women": a men's 15:17 at 206 is the
+  women's college scale, and their pool ends _f, so they were predicted into the women's NCAA championship.
+- **✅ person_gender: a decisive field outvotes the label.** The field vote (3+ known runners, 9 to 1) applied only
+  where the label was empty; now it wins over a contradicting label too, and counts runners by PERSON (a tfrrs
+  row carries no anet profile id, so a tfrrs field counted almost nobody). tests/test_person_gender_field.py adds a
+  men's field labelled "Women". Takes effect at 04d; the boards follow at 07/08.
+- 📋 Open: a tfrrs race page that is a twin of an anet race shows "-" for every twin; it should say so and link to
+  the copy that carries the ratings.
