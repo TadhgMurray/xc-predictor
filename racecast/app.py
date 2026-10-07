@@ -430,10 +430,18 @@ def _with_year(name, date_text):
 
 
 @app.template_filter("is_team")
-def _is_team_filter(school):
+@jinja2.pass_context
+def _is_team_filter(ctx, school):
     """Link a school name only when it names a team (panels.isTeamName):
-    "Unattached" and "SW Individuals -6 (AZ)" get their label, no link."""
+    "Unattached" and "SW Individuals -6 (AZ)" get their label, no link.
+
+    ★ NOR A STATE TEAM (owner, 2026-10-07: RunningLane's "Colorado" wore CU
+      Boulder's crest and linked to its page). On a state-team race
+      (state_teams, see _stateTeamAware) a state's name is not a school, so
+      it gets no crest and no link -- every template gates both on this."""
     from panels import isTeamName
+    if ctx.get("state_teams") and school_identity.isStateName(school):
+        return False
     return isTeamName(school)
 # ★ COURSE DIFFICULTY AS A PERCENTAGE AGAINST A TYPICAL COURSE OF ITS SPORT.
 #   The raw multiplier's zero sits between XC and track, so every XC course

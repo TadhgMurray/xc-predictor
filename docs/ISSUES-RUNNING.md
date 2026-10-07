@@ -5097,6 +5097,15 @@ Chromium against the old script (readout 15:00, label under the pointer
   state names (`school_identity.isStateTeamRace`), state-named teams print
   without a suffix; ordinary races keep "Oregon (IL)". Race, track and
   compiled pages. Test: `tests/test_state_team_labels.py`.
+- **State teams wore a school's crest** ("Colorado" with CU Boulder's logo
+  and link, owner's actual complaint). On a state-team race the `is_team`
+  filter now says no for a state's name, so it gets no crest and no link.
+- `diag_person_pool.py`: `--school SUBSTR` to pick among many same-named
+  people, lists every id's schools when there are more than five, and prints
+  TF rows, grade_fix and pro seasons.
+- Soheib Dissa: his UNAT-Duke rows sit on separate person ids (31559611,
+  32891852) from his main id 32309981, and his 2025 college XC rows
+  ('Unattached', gr Fr) are unrated. Under investigation.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

@@ -35,3 +35,11 @@ def test_filters_respect_flag():
     assert t.render(s="Arkansas", state_teams=True) == "Arkansas"
     assert t.render(s="Arkansas", state_teams=False) == "Arkansas (AL)"
     assert t.render(s="Hoover", state_teams=True) == "Hoover (AL)"
+
+
+def test_state_team_gets_no_crest_or_link():
+    src = open(os.path.join(os.path.dirname(__file__), "..", "racecast", "app.py")).read()
+    start = src.index('@app.template_filter("is_team")')
+    body = src[start:src.index("\n# ", start)]
+    assert "@jinja2.pass_context" in body
+    assert 'ctx.get("state_teams") and school_identity.isStateName(school)' in body
