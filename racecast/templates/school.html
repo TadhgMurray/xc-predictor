@@ -50,45 +50,51 @@
     {% set meta_image_alt = school ~ " on Racecast: the top seven and the team rating" %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% from "_units.html" import unit_chips %}
 {% include "_topbar.html" %}
-<main class="page-wide">
-    <div class="hdr-row">
-      {# the crest (305): INSIDE the h1, so it stays with the name when the
-         header row wraps on a phone, and drawn by the same helper every
-         other mention of a school on the site uses -- it returns nothing at
-         all when there is no crest, so there is never a broken image here.
-         header.state, not state: the route settles the identity there, so a
-         page reached without ?state still gets its own school's crest. #}
-      <h1>{{ crest(school, header.state, px=128, size=44, cls="school-crest") }}{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
-      <button type="button" class="share-box share-btn" data-share-title="{{ school }} on Racecast"
-              data-share-url="{{ site_origin }}{{ meta_path }}" title="Share this page; the preview is its card">
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
-        <span>Share</span>
-      </button>
-    </div>
-    {# the school's own facts, long-form: this line is not shared with a
-       grade and a compare link, so there is room to spell them out #}
-    {% if units %}<p class="meta">{{ unit_chips(units) }}</p>{% endif %}
+<main class="page-wide rc">
+{# ★ THE RACE PAGE'S ARRANGEMENT (owner, 2026-10-07: "emulate that in other
+   places"): header with the school's facts, the sport and season pickers,
+   then a tab bar and one table at a time. race.css carries the layout. #}
+<header class="rc-hd"><div class="rc-w rc-hgrid">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ "Cross country" if sport == 'XC' else "Track & field" }}</span></div>
+    {# the crest (305): INSIDE the h1, so it stays with the name when the
+       header wraps on a phone, drawn by the same helper as every other
+       mention of a school -- it returns nothing when there is no crest.
+       header.state, not state: the route settles the identity there. #}
+    <h1>{{ crest(school, header.state, px=128, size=44, cls="school-crest") }}{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
+    {# the school's own facts, long-form #}
+    {% if units %}<div class="rc-meta">{{ unit_chips(units) }}</div>{% endif %}
     {# ! EACH FACT IS OPTIONAL. schoolHeader's raw-results fallback is
        bounded (school.RAW_HEADER_TIMEOUT_MS): past the budget it returns the
        header with the counts set to None rather than 404-ing a school that
        plainly has results, so the line prints what it was given. #}
-    <p class="meta">
-        {% if header.state %}{{ header.state }} · {% endif %}
-        {% if header.athletes %}{{ header.athletes }} athletes · {% endif %}
-        {% if header.first_year and header.last_year %}
-        {{ header.first_year }} to {{ header.last_year }} ·{% endif %}
-        <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">School PRs →</a>
-        {# a college's recruits (282): only a school with a college unit
-           gets the link; a high school has no recruiting page #}
-        {% if units and (units|selectattr("kind", "in", ["division", "conference"])|list) %}
-        · <a href="/recruiting/school/{{ school|urlencode }}?{% if state %}state={{ state }}{% endif %}">Recruiting →</a>
-        {% endif %}
-    </p>
+    <div class="rc-facts">
+      {% if header.state %}<span>State <b>{{ header.state }}</b></span>{% endif %}
+      {% if header.athletes %}<span>Athletes <b>{{ header.athletes }}</b></span>{% endif %}
+      {% if header.first_year and header.last_year %}<span>Racing <b>{{ header.first_year }} to {{ header.last_year }}</b></span>{% endif %}
+    </div>
+    <div class="rc-links">
+      <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">School PRs →</a>
+      {# a college's recruits (282): only a school with a college unit #}
+      {% if units and (units|selectattr("kind", "in", ["division", "conference"])|list) %}
+      <a href="/recruiting/school/{{ school|urlencode }}?{% if state %}state={{ state }}{% endif %}">Recruiting →</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="rc-right rc-right-end">
+    <button type="button" class="share-box share-btn rc-share" data-share-title="{{ school }} on Racecast"
+            data-share-url="{{ site_origin }}{{ meta_path }}" title="Share this page; the preview is its card">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <span>Share</span>
+    </button>
+  </div>
+</div></header>
 
     {# Same name and state, DIFFERENT INSTITUTIONS: Amherst (MA) is a
        college and a middle school. Only shown when there really are two
@@ -131,6 +137,7 @@
        middle school); a sport or year link that dropped ?state= / ?level=
        quietly switched to the other one. #}
     {% set keep %}{% if state %}&amp;state={{ state|urlencode }}{% endif %}{% if level %}&amp;level={{ level|urlencode }}{% endif %}{% endset %}
+    <div class="rc-scope rc-scope-row">
     <div class="seg">
         {% for s in ['XC', 'TF'] %}
           <a class="seg-btn sport--{{ s|lower }}{{ ' is-on' if s == sport }}"
@@ -151,7 +158,7 @@
     {% endif %}
 
     {% if season_years %}
-    <div class="yearbar">
+    <div class="yearbar rc-years">
         <a class="yb{{ ' is-on' if not picked }}"
            href="/school/{{ school|urlencode }}?sport={{ sport }}{{ keep }}">All time</a>
         {% for y in season_years %}
@@ -161,11 +168,25 @@
     </div>
     {% endif %}
 
+    </div>{# .rc-scope-row #}
+
+<div class="rc-w rc-grid rc-grid-one">
+<div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      {% if roster %}<a class="seg-btn" href="#roster" data-tab="roster">{{ (picked ~ " roster") if picked else "Roster" }}<span class="n">{{ roster|length }}</span></a>{% endif %}
+      {% if top %}<a class="seg-btn" href="#athletes" data-tab="athletes">Best athletes</a>{% endif %}
+      {% if best %}<a class="seg-btn" href="#best" data-tab="best">Best performances</a>{% endif %}
+      {% if meets %}<a class="seg-btn" href="#races" data-tab="races">{{ (picked ~ " races") if picked else "Races" }}<span class="n">{{ meets|length }}</span></a>{% endif %}
+    </nav>
+    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+  </div>
+
 {% if roster %}
+    <section class="rc-panel" id="roster" data-panel="roster">
     {# On the history page this IS the current squad, so say so. Under a year
        it is that season's, and the year is the useful label. #}
-    <h2>{% if picked %}{{ picked }} roster{% else %}Current roster{% if year %}
-        <span class="h2-note">{{ year }}</span>{% endif %}{% endif %}</h2>
+    <p class="meta rc-lead">{% if picked %}The {{ picked }} roster.{% else %}The current roster{% if year %}, {{ year }}{% endif %}.{% endif %}</p>
     {# ★ ONE TABLE PER POOL when the school has more than one: men and
        women, and each level (K-12, a college with a club side). A rating is
        a place in its own pool, so one ranked list across pools was a race
@@ -219,12 +240,12 @@
     {% endif %}
     {% endfor %}
     {{ view_all("ability") }}
+    </section>
 {% endif %}
 
 {% if top %}
-{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
-        <h2>Best athletes</h2>
-    <p class="meta">Best career rating, one row per athlete.</p>
+    <section class="rc-panel" id="athletes" data-panel="athletes">
+    <p class="meta rc-lead">Best career rating, one row per athlete.</p>
     {# per pool, as the roster is: a best career rating is a college_f or
        an hs_m number, never both. `top` is the group's rows in here; the
        capped note below reads the whole list again. #}
@@ -237,7 +258,7 @@
         <tbody>
             {% for a in top %}
             <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
-                <td>{{ loop.index }}</td>
+                <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
                 <td><a href="/athlete/{{ a.person_id }}">{{ a.name.strip() if a.name and a.name.strip() else "Unknown" }}</a></td>
                 <td>{{ rv(a.best, a.hs_best) }}</td>
                 <td>{{ a.seasons }}</td>
@@ -256,10 +277,12 @@
     {% endfor %}
     {{ capped_note(top, "athletes") }}
     {{ view_all("ability") }}
+    </section>
 {% endif %}
 
 {% if best %}
-    <h2>Best performances</h2>
+    <section class="rc-panel" id="best" data-panel="best">
+    <p class="meta rc-lead">Every race, not one per athlete.</p>
     {# Every race, not one per athlete. If the same runner owns the top four,
        that is the school's history. The table above is the per athlete one. #}
     {% for group_label, best in (best_groups if best_groups else [(None, best)]) %}
@@ -272,7 +295,7 @@
         <tbody>
             {% for b in best %}
             <tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
-                <td>{{ loop.index }}</td>
+                <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
                 <td><a href="/athlete/{{ b.person_id }}">{{ b.name.strip() if b.name and b.name.strip() else "Unknown" }}</a></td>
                 <td>{{ b.grade|grade_label(b.pool) if b.grade else "" }}</td>
                 <td>{{ rv(b.rating, b.hs_rating) }}</td>
@@ -294,11 +317,12 @@
     {% endfor %}
     {{ capped_note(best, "performances") }}
     {{ view_all("performance") }}
+    </section>
 {% endif %}
 
 {% if meets %}
-    <h2>{% if picked %}{{ picked }} races{% else %}Every race{% endif %}</h2>
-    <p class="meta">{{ meets|length }} meets, newest first.</p>
+    <section class="rc-panel" id="races" data-panel="races">
+    <p class="meta rc-lead">{{ meets|length }} meets, newest first.</p>
 
     {# ★ THE VIEW-ALL GOES TO /meets, NOT TO A LONGER VERSION OF THIS TABLE.
        This one is capped at schoolMeets' limit and is scoped to a division
@@ -354,7 +378,10 @@
     <p class="view-all">
         <a href="/meets?sport={{ sport }}&amp;school={{ school|urlencode }}{% if picked %}&amp;year={{ picked }}{% endif %}">View all →</a>
     </p>
+    </section>
 {% endif %}
+</div>
+</div>
 
 {# Staged reveal -- shared with the home page's Latest results table. #}
 <script src="{{ static_v('staged.js') }}"></script>
@@ -378,5 +405,6 @@
 </main>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

@@ -4950,4 +4950,15 @@ not good!"
 - `race-page.js` defaults to the first **tab**. It used to assume "results"
   and would have hidden every panel on a page without one.
 - Checked with real templates rendered against sample data, at 1280 and 390,
-  with no page-level horizontal scroll. Not yet: school page, athlete header.
+  with no page-level horizontal scroll.
+- **School page** (`school.html`): race-page header (sport tag, crest and
+  name, facts row: state, athletes, years racing; School PRs and Recruiting
+  links), the sport and season pickers on one row, then tabs for Roster /
+  Best athletes / Best performances / Races. Medal discs on the two "best"
+  tables. On a phone, wide tables scroll inside themselves.
+- **Athlete header** (`athlete.html`): left has name, school line, and Athlete
+  rating and Best race as large label-over-value numbers (best race with its
+  sport). Right has one sentence saying what the numbers mean (season,
+  percentile, where and when the best race was) without repeating them, the
+  races and seasons facts, and the links plus Share. The stat tiles are gone;
+  everything they held appears once. The sport tabs carry the sport dots.

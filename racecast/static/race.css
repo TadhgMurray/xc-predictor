@@ -134,6 +134,19 @@ main.rc .rec-pair td.rt, main.rc .rec-pair td .rv { font-weight: 600; }
      the page */
   main.rc .rc-tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
   main.rc .rc-tabs .seg-btn { white-space: nowrap; flex: 0 0 auto; }
-  main.rc .rec-pair > div, main.rc .rc-panel > table.meets-table { overflow-x: auto; }
+  main.rc .rec-pair > div, main.rc .rc-panel table.meets-table { overflow-x: auto; }
   main.rc .rec-pair table { min-width: 0; }
+}
+
+/* ---- the school page: sport + seasons row, header links ------------------ */
+main.rc .rc-scope-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; }
+main.rc .rc-scope-row .seg { margin: 0; }
+main.rc .rc-scope-row .yearbar { margin: 0; }
+main.rc .rc-links { display: flex; flex-wrap: wrap; gap: .3rem 1.2rem; margin-top: .55rem; font-weight: 600; font-size: .92rem; }
+main.rc h1 .school-crest { vertical-align: middle; margin-right: .5rem; }
+main.rc td .rv { font-weight: 600; }
+@media (max-width: 760px) {
+  main.rc .rc-panel table.staged { display: block; overflow-x: auto; }
+  main.rc .rc-panel table.staged td, main.rc .rc-panel table.staged th,
+  main.rc .rec-pair td, main.rc .rec-pair th { white-space: nowrap; }
 }

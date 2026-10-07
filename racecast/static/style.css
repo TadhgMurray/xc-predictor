@@ -5855,12 +5855,13 @@ td.vs-level.is-under { color: var(--muted); }
 .sport-tag--tf { color: var(--tf); }
 /* sport tabs and section heads carry the same dot */
 .seg-btn.sport--xc::before, .seg-btn.sport--tf::before,
+.sport-toggle a.sport--xc::before, .sport-toggle a.sport--tf::before,
 h2.sport--xc::before, h2.sport--tf::before {
   content: ""; display: inline-block; width: .55rem; height: .55rem; border-radius: 50%;
   margin-right: .45rem; vertical-align: .08em;
 }
-.seg-btn.sport--xc::before, h2.sport--xc::before { background: var(--xc); }
-.seg-btn.sport--tf::before, h2.sport--tf::before { background: var(--tf); }
+.seg-btn.sport--xc::before, .sport-toggle a.sport--xc::before, h2.sport--xc::before { background: var(--xc); }
+.seg-btn.sport--tf::before, .sport-toggle a.sport--tf::before, h2.sport--tf::before { background: var(--tf); }
 
 /* places 1-3: a disc in the medal's colour, the number on it */
 td.pl.rc-m1 > span, td.pl.rc-m2 > span, td.pl.rc-m3 > span {
@@ -5875,3 +5876,21 @@ td.pl.rc-m3 > span { background: var(--m3); }
 /* course difficulty and the race day: which way the clock moved */
 .dv.dv-hard, .day-slow { color: var(--harder); }
 .dv.dv-easy, .day-fast { color: var(--easier); }
+
+/* ---- the athlete header, arranged like the race page's (2026-10-07) ---- */
+.ath-rc { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .8rem 2rem; align-items: start; margin: 1.1rem 0 .6rem; }
+.ath-rc h1 { margin: .1rem 0 .3rem; }
+.ath-rc .meta { margin: 0; }
+.ath-rc-nums { display: flex; flex-wrap: wrap; gap: .5rem 2.2rem; margin-top: .8rem; }
+.ath-rc-nums .k { display: block; font-size: .7rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.ath-rc-big { font-size: 1.9rem; line-height: 1.1; font-variant-numeric: tabular-nums; margin-right: .45rem; }
+.ath-rc-nums .sport-tag { vertical-align: .35em; }
+.ath-rc-story { margin: .35rem 0 0; line-height: 1.55; }
+.ath-rc-facts { display: flex; flex-wrap: wrap; gap: .2rem 1.2rem; margin-top: .5rem; font-size: .9rem; color: var(--muted); }
+.ath-rc-facts b { color: var(--ink); margin-left: .25rem; }
+.ath-rc-facts i { font-style: normal; margin-left: .2rem; }
+.ath-rc-links { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem 1.1rem; margin-top: .7rem; font-size: .9rem; font-weight: 600; }
+@media (max-width: 760px) {
+  .ath-rc { grid-template-columns: minmax(0, 1fr); }
+  .ath-rc-big { font-size: 1.6rem; }
+}

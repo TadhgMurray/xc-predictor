@@ -143,7 +143,8 @@ class TheTemplateSurvivesAnUnknownCount(unittest.TestCase):
         worse than printing neither. What matters is that no fact reaches the
         page unguarded, so each one is named in a condition."""
         html = _read("racecast/templates/school.html")
-        i = html.index('<p class="meta">\n        {% if header.state %}')
+        # the facts row of the race-page header (2026-10-07)
+        i = html.index('<div class="rc-facts">\n      {% if header.state %}')
         line = html[i:i + 500]
         conds = [c for c in line.split("{% if ")[1:]]
         named = " ".join(c.split("%}")[0] for c in conds)
