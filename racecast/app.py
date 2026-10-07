@@ -4848,7 +4848,27 @@ def race_tf(meet_id, event_id, div_id):
             _csv.toCsv(_csv.flattenTfSections(sections), _csv.raceTfColumns(SITE_ORIGIN)),
             "-".join(str(x) for x in (header.get("meet_name"), header.get("event_short"),
                                       header.get("division"), race_date) if x) + ".csv")
+    # ★ THE SAME HEADER AS THE CROSS COUNTRY RACE PAGE (owner, 2026-10-07:
+    #   "feels half-assed ... only some things were put into new theme"):
+    #   race_story's track rules on the rows this page shows -- the final's
+    #   winner and margin (or the best mark across the heats), how many set
+    #   PRs -- and the event's points by school for the sidebar.
+    import race_story
+    tf_is_field = any(r.get("is_field") for r in results)
+    tf_champ, story = race_story.tfStory(sections, tf_is_field)
+    tf_how = race_story.tfWinner(sections, tf_is_field)[2]
+    pts_by = {}
+    for r in results:
+        try:
+            p_ = float(r.get("points") or 0)
+        except (TypeError, ValueError):
+            p_ = 0.0
+        if p_ and r.get("school"):
+            pts_by[r["school"]] = pts_by.get(r["school"], 0.0) + p_
+    school_points = sorted(pts_by.items(), key=lambda kv: (-kv[1], kv[0]))
     return render_template("race_tf.html", hl_school=hl_school,
+                           story=story, tf_champ=tf_champ, tf_is_field=tf_is_field, tf_how=tf_how,
+                           school_points=school_points,
                            above_spec=_aboveSpec("TF", results, equiv_dist or (header or {}).get("distance_meters")),
                            has_hs_view=has_hs_view,
                            equiv_dist=equiv_dist, equiv_pool=equiv_pool,

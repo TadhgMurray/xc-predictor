@@ -115,3 +115,129 @@ html.rc-theme main.rc .rc-more { color: #fff; }
   /* under the full-width black bar the band runs edge to edge too */
   html.rc-theme main.rc .rc-hd { margin-left: -12px; margin-right: -12px; padding-left: 24px; padding-right: 24px; }
 }
+
+/* ===================================================================== *
+ *  THE HEADER BAND ON EVERY PAGE (theme-rc.js builds it from the page's   *
+ *  own title row and header lines). Full width by border-image outset:    *
+ *  paints edge to edge without widening the page.                         *
+ * ===================================================================== */
+html.rc-theme .rc-band {
+  position: relative; z-index: 0; color: #e6e6e1; padding: 1.15rem 0 1.25rem; margin-bottom: 0;
+  border-image: linear-gradient(var(--rc-ink) 0 0) fill 0 // 0 100vmax;
+}
+html.rc-theme .rc-band-rule { height: 4px; margin-bottom: 1.3rem;
+  border-image: linear-gradient(var(--rc-red) 0 0) fill 0 // 0 100vmax; }
+html.rc-theme .rc-band > * { margin-top: 0; }
+html.rc-theme .rc-band > * + * { margin-top: .55rem; }
+html.rc-theme .rc-band h1, html.rc-theme .rc-band h1 a { color: #fff; margin: 0; }
+html.rc-theme .rc-band .hdr-row { margin: 0; align-items: center; }
+html.rc-theme .rc-band p, html.rc-theme .rc-band .meta, html.rc-theme .rc-band .sub,
+html.rc-theme .rc-band .page-lead, html.rc-theme .rc-band .p2-lead, html.rc-theme .rc-band .rc-sub,
+html.rc-theme .rc-band .conv-intro { color: #d9d9d4; margin-bottom: 0; }
+html.rc-theme .rc-band a { color: #fff; text-decoration-color: var(--rc-red); }
+html.rc-theme .rc-band b, html.rc-theme .rc-band strong { color: #fff; }
+html.rc-theme .rc-band .muted, html.rc-theme .rc-band .s-sub, html.rc-theme .rc-band .s-lab,
+html.rc-theme .rc-band .rl-lab, html.rc-theme .rc-band .rl-floor, html.rc-theme .rc-band .scope,
+html.rc-theme .rc-band .req-key { color: #a9a9a2; }
+html.rc-theme .rc-band .s-lab, html.rc-theme .rc-band .rl-lab {
+  font-family: "RC Cond", sans-serif; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+html.rc-theme .rc-band .s-val { color: #fff; font-family: "RC Mono", monospace; font-weight: 700; }
+html.rc-theme .rc-band .s-val a { color: #ffd166; }
+html.rc-theme .rc-band .stat-strip, html.rc-theme .rc-band .stat-strip * { border-color: #33332f; background: transparent; }
+html.rc-theme .rc-band .rk, html.rc-theme .rc-band .rank-line b { color: #fff; }
+html.rc-theme .rc-band .share-box, html.rc-theme .rc-band .share-btn, html.rc-theme .rc-band .meet-link {
+  background: transparent; color: #d9d9d4; border-color: #3a3a36; }
+html.rc-theme .rc-band .unit-chip, html.rc-theme .rc-band .chip, html.rc-theme .rc-band .badge,
+html.rc-theme .rc-band [class*="unit"] a, html.rc-theme .rc-band .conf-chip {
+  color: #d9d9d4; border-color: #55554f; background: transparent; }
+html.rc-theme .rc-band .dist-note { color: #ffd166; }
+html.rc-theme .rc-band img.school-crest, html.rc-theme .rc-band .ath-portrait img,
+html.rc-theme .rc-band h1 img, html.rc-theme .rc-band .meta img {
+  background: #fff; border-radius: 4px; padding: 2px; box-sizing: border-box; }
+html.rc-theme .rc-band .info-i, html.rc-theme .rc-band .flag.info-i { color: #a9a9a2; border-color: #55554f; background: transparent; }
+html.rc-theme .rc-band .flag:not(.info-i):not(.dv) { color: #ffd166; }
+html.rc-theme .rc-band .dv { color: #fff; }
+html.rc-theme .rc-band .wx, html.rc-theme .rc-band .wx b { color: #d9d9d4; }
+
+/* ===================================================================== *
+ *  WHAT WAS STILL THE OLD SITE                                           *
+ * ===================================================================== */
+/* one accent: ink for "selected", red for marks -- no navy, no bright blue */
+html.rc-theme { --accent: #0d0d0d; --eqc-accent: #0d0d0d; --rk-warn-bg: #fff; }
+html.rc-theme .eqc-pill[aria-pressed="true"], html.rc-theme .eqc-pill.is-on {
+  background: var(--rc-ink); border-color: var(--rc-ink); color: #fff; }
+html.rc-theme .eqc-pill, html.rc-theme .eqc-pill-label, html.rc-theme .eqc-cap, html.rc-theme .eqc-groupchip {
+  font-family: "RC Cond", sans-serif; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+html.rc-theme .eqc-big, html.rc-theme .eqc-out { font-family: "RC Mono", monospace; color: var(--rc-ink); }
+html.rc-theme .eqc-title { font-family: "RC Cond", sans-serif; font-weight: 800; font-style: italic; text-transform: uppercase; }
+html.rc-theme .eqc, html.rc-theme section.eqc { background: #fff; border-color: var(--rc-line); }
+
+/* charts: an ink line, red dots (the dots carry a fill attribute; CSS wins) */
+html.rc-theme .chart-slot .line { stroke: var(--rc-ink); }
+html.rc-theme .chart-slot .dot { fill: var(--rc-red); stroke: var(--rc-red) !important; }
+html.rc-theme .chart-slot text { font-family: "RC Mono", monospace; }
+
+/* head to head: A ink, B red */
+html.rc-theme .h2h-go { background: var(--rc-ink); border-color: var(--rc-ink);
+  font-family: "RC Cond", sans-serif; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+html.rc-theme .h2h-card.a { border-top-color: var(--rc-ink); }
+html.rc-theme .h2h-card.b { border-top-color: var(--rc-red); }
+html.rc-theme .h2h-rec .wl .a, html.rc-theme td.margin-a { color: var(--rc-ink); }
+html.rc-theme .h2h-rec .wl .b, html.rc-theme td.margin-b { color: var(--rc-red); }
+html.rc-theme .dot-a { background: var(--rc-ink); }
+html.rc-theme .dot-b { background: var(--rc-red); }
+
+/* small amber labels and notices -> the race page's red and white */
+html.rc-theme .dist-note { color: var(--rc-red); font-family: "RC Cond", sans-serif; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em; }
+html.rc-theme .synthetic, html.rc-theme .withheld, html.rc-theme .p2-banner, html.rc-theme .notice {
+  background: #fff; color: var(--rc-ink); border: 1px solid var(--rc-line); border-left: 4px solid var(--rc-red); border-radius: 0; }
+html.rc-theme .star { color: var(--rc-red); }
+html.rc-theme .rankings-page tr.is-found td:first-child { box-shadow: inset 4px 0 0 var(--rc-gold); }
+html.rc-theme .rankings-page tr.is-found td { background: #fff6d8; }
+html.rc-theme .share-box.is-done { border-color: var(--rc-ink); color: var(--rc-ink); }
+html.rc-theme .r-pill-recruit { background: var(--rc-ink); }
+html.rc-theme .recruit-school .r-tier-recruit { border-color: var(--rc-ink); }
+
+/* numbers: the race page's mono for times and ratings */
+/* ! RATINGS ONLY: times and dates in mono overflowed the fixed-layout tables
+     (school PRs read "14:12..." and "Nov 2, 2...") */
+html.rc-theme .rv, html.rc-theme td.rating, html.rc-theme .s-val { font-family: "RC Mono", monospace; }
+
+/* every button: condensed capitals; the plain grey ones become the black one */
+html.rc-theme main button, html.rc-theme .page-wide button, html.rc-theme .rankings-page button,
+html.rc-theme .predict2 button, html.rc-theme .conv button, html.rc-theme input[type=submit] {
+  font-family: "RC Cond", sans-serif; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+html.rc-theme .page form button[type=submit], html.rc-theme .page .send-btn, html.rc-theme #report-send {
+  background: var(--rc-ink); color: #fff; border-color: var(--rc-ink); padding: .5rem 1rem; }
+
+/* section labels inside cards and tables ("BOYS", "GIRLS", month heads) */
+html.rc-theme h4, html.rc-theme .rec-gender, html.rc-theme .month-head, html.rc-theme caption {
+  font-family: "RC Cond", sans-serif; font-weight: 800; font-style: italic; text-transform: uppercase; letter-spacing: .03em; }
+
+/* inputs and selects: square, white, the race page's line */
+html.rc-theme input[type=text], html.rc-theme input[type=search], html.rc-theme input[type=number],
+html.rc-theme input[type=email], html.rc-theme input[type=date], html.rc-theme select, html.rc-theme textarea {
+  border-radius: 2px; border-color: #cfcec7; background-color: #fff; }
+
+/* cards (coach tools, recruiting forms, all-time bests): white, square */
+html.rc-theme .tool-card, html.rc-theme .coach-tool, html.rc-theme .side-card, html.rc-theme .acct-block,
+html.rc-theme .rc-find-card, html.rc-theme .bests-card, html.rc-theme .sidebar > section,
+html.rc-theme .chart-card, html.rc-theme .chart-slot { border-radius: 2px; }
+html.rc-theme .sidebar h2, html.rc-theme .sidebar h3 { font-family: "RC Cond", sans-serif; font-weight: 800; font-style: italic; text-transform: uppercase; }
+
+/* the athlete page's header is the body's own child: the band takes the
+   page's 1.5rem gutter as its inner edge */
+html.rc-theme .rc-band.rc-band-body { padding-left: 1.5rem; padding-right: 1.5rem; }
+html.rc-theme .rc-band-body + .rc-band-rule { margin-left: 0; margin-right: 0; }
+/* unit badges (CA Division 3, NCAA DI ...) on the dark band */
+html.rc-theme .rc-band .unit { color: #d9d9d4; border-color: #55554f; background: transparent; }
+html.rc-theme .rc-band .unit-q { color: #ffd166; }
+html.rc-theme .rc-band .ath-portrait { background: #fff; }
+@media (min-width: 701px) {
+  /* style.css insets the athlete page's top-level blocks by finding .ath-head
+     among the body's children ("FULL-WIDTH PAGES LINE UP WITH THE TOPBAR");
+     in the band it is no longer one, so the band says so instead */
+  html.rc-theme body:has(> .rc-band-body) > :not(.topbar):not(script):not(style):not(link):not(iframe) {
+    padding-left: 1.5rem; padding-right: 1.5rem; box-sizing: border-box; }
+}

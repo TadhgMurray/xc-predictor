@@ -4525,3 +4525,25 @@ Owner: "try this style on the other pages." Built as an opt-in preview so nobody
   switch goes away.
 - Pre-existing test failures, unchanged by this: test_coach_view::test_the_per_reader_block_rides_the_topbar_s_one_request,
   test_recruiting_athlete (2), plus the three noted earlier today.
+
+## 2026-10-07 — 🧪 ?theme=rc, second pass: every page, not just the shared pieces
+
+Owner: "feels half-assed, only some things were put into new theme." Went through all 29 page types with the theme on
+(screenshots of the live pages with the stylesheet injected) and themed what was still the old site:
+- **The dark header band on every page.** static/theme-rc.js (loaded with the theme) gathers the page's title row and
+  its header lines -- by a class whitelist: meta lines, lead, the athlete's stat strip and rank lines, a paragraph of
+  meet-link buttons -- into one band at the top of the page's container, with the red rule under it. Tabs that sat
+  above the title now sit under it. The athlete page (header is the body's own child) keeps its 1.5rem gutter.
+  If approved, this becomes template markup and the script goes.
+- **Leftover blue:** chart line (ink) and dots (red); the equivalents ruler's selected pills and big times; the head to
+  head Compare button and A/B colours (ink/red); the recruit pills; `--accent` re-pointed to ink.
+- **Leftover old details:** amber sub-labels (dist-note) and notice boxes (synthetic, withheld, banners) to the race
+  page's red rule on white; every button in condensed capitals; h4 / section labels; square white inputs; ratings in
+  the race page's mono (ratings only: mono times and dates overflowed the fixed-layout school PRs table).
+- **The track race page in the cross country race page's layout** (live for everyone, like the XC one): dark header
+  with the event, the winner (or the best mark across heats when there is no final) and the event's top-scoring school;
+  race_story.tfStory writes the summary (winner and margin for running events -- hundredths; the runner-up's mark for
+  field events, never subtracted because marks can be feet or metres; "N of M set personal records"); results first
+  with heats, relays and their legs, wind and points kept; event points by school in the sidebar with team lighting;
+  the equivalents ruler behind a tab. tests/test_race_story.py: 6 new tests.
+- Pre-existing test failures unchanged (identical output before and after for the crest/label consistency tests).

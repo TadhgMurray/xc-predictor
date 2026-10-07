@@ -204,3 +204,84 @@ def priorTitles(cur, person_id, race_date, meet_name, division):
     while (year - 1 - n) in won:
         n += 1
     return n
+
+
+# ------------------------------------------------------------ track events
+def _tfWho(row, bold=True):
+    """A relay is its team; anyone else is "Name (School)"."""
+    if row.get("is_relay"):
+        name = escape(row.get("school") or "Relay")
+        return Markup(f"<b>{name}</b>") if bold else name
+    name = escape(row.get("athlete_name") or "Unknown")
+    school = row.get("school")
+    core = f"<b>{name}</b>" if bold else str(name)
+    return Markup(f"{core} ({escape(school)})") if school else Markup(core)
+
+
+def tfWinner(sections, is_field):
+    """(winner row, runner-up row or None, how) for a track race page.
+
+    ★ THE FINAL DECIDES WHEN THERE IS ONE: its first two places. Without a
+      final but with several heats, the best mark across the heats is the
+      fastest/longest, not a win -- `how` is "heats" and the sentence says
+      so. One undivided field: its own order.
+    Running events rank by time, field events by parseMark (both the
+    route's own sort keys), so a DNS row never leads."""
+    from tf_points import parseMark
+    finals = [s for s in sections if (s.get("label") or "").lower().startswith("final")]
+    pool = finals[0]["rows"] if finals else [r for s in sections for r in s["rows"]]
+    how = "won" if finals or len(sections) <= 1 else "heats"
+    if is_field:
+        marked = [(parseMark(r.get("mark")), r) for r in pool]
+        marked = [(m, r) for m, r in marked if m is not None and m > 0]
+        marked.sort(key=lambda x: -x[0])
+    else:
+        marked = [(_t(r), r) for r in pool]
+        marked = [(t, r) for t, r in marked if t is not None]
+        marked.sort(key=lambda x: x[0])
+    if not marked:
+        return None, None, how
+    return marked[0][1], (marked[1][1] if len(marked) > 1 else None), how
+
+
+def tfStory(sections, is_field):
+    """(winner row, [sentences]) for a track race page: the winner and the
+    margin (running) or the runner-up's mark (field; marks can be in feet
+    or metres, so no subtraction), then how many set PRs."""
+    w, s, how = tfWinner(sections, is_field)
+    out = []
+    if w is not None:
+        mark = escape(w.get("display_result") or "")
+        n = sum(1 for x in sections if x.get("rows"))
+        if how == "won":
+            lead = f"{_tfWho(w)} won {'with' if is_field else 'in'} <b>{mark}</b>"
+        elif is_field:
+            lead = f"{_tfWho(w)} had the best mark across {n} flights, <b>{mark}</b>"
+        else:
+            lead = f"{_tfWho(w)} ran the fastest time across {n} heats, <b>{mark}</b>"
+        if is_field:
+            sent = lead
+            if s is not None:
+                sent += f"; {_tfWho(s, bold=False)} was next with {escape(s.get('display_result') or '')}"
+        else:
+            sent = lead
+            if s is not None:
+                gap = _t(s) - _t(w)
+                sent += (f", given the place over {_tfWho(s, bold=False)} on the same time"
+                         if round(gap, 2) <= 0 else
+                         f", {_gapTf(gap)} clear of {_tfWho(s, bold=False)}")
+        out.append(Markup(sent + "."))
+    rows = [r for sec in sections for r in sec["rows"]]
+    fin = [r for r in rows if (r.get("display_result") or " - ").strip() not in ("-", "")]
+    prs = sum(1 for r in fin if r.get("is_pr"))
+    if fin and prs:
+        out.append(Markup(f"{prs} of {len(fin)} set personal records."))
+    return w, out
+
+
+def _gapTf(seconds):
+    """Hundredths on the track, as the clock gives them: '0.05 seconds'."""
+    g = round(float(seconds), 2)
+    if g == 1:
+        return "1 second"
+    return f"{g:g} seconds"

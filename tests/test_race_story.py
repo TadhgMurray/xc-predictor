@@ -168,3 +168,52 @@ def test_no_person_no_query():
     cur = _Cur([], {})
     assert rs.priorTitles(cur, None, "2024-11-30", "CIF State XC", "Boys") == 0
     assert cur.sql == []
+
+
+# ------------------------------------------------------------ track events
+def _tf(name, school, secs=None, mark=None, pr=False, relay=False):
+    return {"athlete_name": name, "school": school, "time_seconds": secs, "mark": mark,
+            "display_result": mark if mark else rs._clock(secs), "is_pr": pr, "is_relay": relay}
+
+
+def test_tf_one_field_wins_with_hundredths():
+    secs = [{"label": "", "rows": [_tf("Tyler Renteria", "El Toro", 273.07, pr=True),
+                                   _tf("Evan Noonan", "Dana Hills", 273.12, pr=True),
+                                   _tf("Mike Ayala", "Dana Hills", 286.04)]}]
+    w, s = rs.tfStory(secs, False)
+    assert w["athlete_name"] == "Tyler Renteria"
+    assert str(s[0]) == ("<b>Tyler Renteria</b> (El Toro) won in <b>4:33.07</b>, "
+                         "0.05 seconds clear of Evan Noonan (Dana Hills).")
+    assert str(s[1]) == "2 of 3 set personal records."
+
+
+def test_tf_the_final_decides_not_the_prelims():
+    final = [_tf("A", "X", 128.0), _tf("B", "Y", 128.1)]
+    prelim = [_tf("A", "X", 127.5), _tf("C", "Z", 127.9)]       # faster prelim, not a win
+    w, s = rs.tfStory([{"label": "Finals", "rows": final}, {"label": "Prelims", "rows": prelim}], False)
+    assert "won in <b>2:08</b>, 0.1 seconds clear of B (Y)" in str(s[0])
+
+
+def test_tf_heats_without_a_final_are_not_a_win():
+    s = rs.tfStory([{"label": "Heat 1", "rows": [_tf("A", "X", 600.0)]},
+                    {"label": "Heat 2", "rows": [_tf("B", "Y", 590.0)]}], False)[1]
+    assert str(s[0]).startswith("<b>B</b> (Y) ran the fastest time across 2 heats, <b>9:50</b>")
+    assert " won " not in str(s[0])
+
+
+def test_tf_field_marks_are_not_subtracted():
+    secs = [{"label": "", "rows": [_tf("A", "X", mark="20-6"), _tf("B", "Y", mark="6.20m")]}]
+    s = str(rs.tfStory(secs, True)[1][0])
+    assert "won with" in s and "was next with" in s and "clear" not in s
+
+
+def test_tf_relay_is_the_team():
+    secs = [{"label": "", "rows": [_tf(None, "Dana Hills", 200.5, relay=True),
+                                   _tf(None, "El Toro", 201.0, relay=True)]}]
+    assert str(rs.tfStory(secs, False)[1][0]) == ("<b>Dana Hills</b> won in <b>3:20.5</b>, "
+                                                  "0.5 seconds clear of El Toro.")
+
+
+def test_tf_no_marks_no_story():
+    w, s = rs.tfStory([{"label": "", "rows": [_tf("A", "X", 999999.0)]}], False)
+    assert w is None and s == []

@@ -162,3 +162,13 @@ main.rc .page-report { margin-top: 1.4rem; }
   main.rc td { padding: .4rem .3rem; }
   .rc-teams-full { display: block !important; overflow-x: auto; }
 }
+
+/* ---- the track race page's extras ------------------------------------ */
+.rc-grid.rc-grid-one { grid-template-columns: minmax(0, 1fr); }
+
+main.rc tr.rc-heat td { background: var(--rc-paper, #f3f2ee); font-family: "RC Cond"; font-weight: 800; font-style: italic;
+  text-transform: uppercase; letter-spacing: .04em; font-size: .95rem; padding-top: .7rem; }
+main.rc .relay-team { font-weight: 700; display: block; }
+main.rc .relay-legs { display: block; font-size: .8rem; color: var(--rc-mute); }
+main.rc .relay-legs a { color: var(--rc-mute); font-weight: 400; }
+.rc-table td.wind { font-family: "RC Mono"; font-size: .85rem; color: var(--rc-mute); }

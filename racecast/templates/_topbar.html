@@ -14,6 +14,9 @@
     l.rel = "stylesheet"; l.href = "{{ static_v('theme-rc.css') }}";
     document.head.appendChild(l);
     document.documentElement.classList.add("rc-theme");
+    var j = document.createElement("script");
+    j.src = "{{ static_v('theme-rc.js') }}";
+    document.head.appendChild(j);
   } catch (e) {}
 })();</script>
 <header class="topbar">

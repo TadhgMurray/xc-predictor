@@ -25,120 +25,161 @@
     {% set meta_image_alt = (header.meet_name|with_year(race_date)) ~ ": the top finishers and their ratings" %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
-<body>
+<body class="rc-body">
 {% include "_topbar.html" %}
-<main class="page-wide">
-    <div class="hdr-row">
-      <h1>{{ header.meet_name }}</h1>
-      <button type="button" class="share-box share-btn" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"
-              data-share-url="{{ site_origin }}/race/tf/{{ meet_id }}/{{ event_id }}/{{ div_id }}" title="Share this page; the preview is its card">
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
-        <span>Share</span>
-      </button>
+{#- ★ THE TRACK RACE PAGE IN THE CROSS COUNTRY RACE PAGE'S LAYOUT (owner,
+     2026-10-07: "feels half-assed"): one dark header (event, winner, the
+     race_story summary, venue difficulty), then the results -- heats kept,
+     relays with their legs, wind and points where the event has them --
+     and the event's points by school beside them. race.css and
+     race-page.js are the cross country page's; nothing the old page showed
+     is gone. -#}
+{% set gword = "Boys" if header.gender == 'M' else "Girls" if header.gender == 'F' else "" %}
+{% set pool_lv = 'college' if college else none %}
+{% set has_wind = results | selectattr("wind", "ne", None) | list | length > 0 %}
+{# Points exist only where this event scored: a prelim page's rows
+   score in the final, so the column stays off prelim pages. #}
+{% set has_pts = results | selectattr("points") | list | length > 0 %}
+{% import "_above_level.html" as al %}
+<main class="rc">
+<header class="rc-hd"><div class="rc-w rc-hgrid">
+  <div>
+    <div class="rc-kick"><a href="/meet/tf/{{ header.meet_id }}">{{ header.meet_name|with_year(race_date) }}</a></div>
+    <h1>{{ header.event_short or "Results" }}{% if gword %} {{ gword }}{% endif %}{% if header.division %} · {{ header.division }}{% endif %}</h1>
+    <div class="rc-meta">
+      {% if header.location_id %}<a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">{{ header.course_name or "Venue" }}</a> · {% endif %}
+      {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }} · {{ race_date|mdy if race_date else " - " }}{% if header.state %} · {{ header.state }}{% endif %}
     </div>
-    <p class="meta">
-        {{ header.event_short }} ·
-        {{ "Boys" if header.gender == 'M' else "Girls" if header.gender == 'F' else " - " }} ·
-        {{ header.division if header.division else " - " }} ·
-        {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }} ·
-        {{ race_date|mdy if race_date else " - " }}
-        {% if header.state %} · {{ header.state }}{% endif %}
-    </p>
-    <p class="meta">
-        Venue difficulty: {{ dv(header.difficulty, "TF", day_effect) }}{{ difficulty_i("TF") }}
-    </p>
-    <p><a class="meet-link" href="/meet/tf/{{ header.meet_id }}">View full meet →</a></p>
-    {# no venue on record (a race with no meet row) has no venue page: the
-       link went to /venue/tf/None/out and 404'd (ISSUES-RUNNING, 15,971) #}
-    {% if header.location_id %}
-    <p>
-        <a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">
-            View venue →
-        </a>
-    </p>
+    {% if tf_champ %}
+    <div class="rc-champs">
+      <div><span class="k">{{ "Winner" if tf_how == "won" else "Best mark" }}</span>
+        <span class="rc-crow">{% if tf_champ.school and tf_champ.school|is_team %}{{ crest(tf_champ.school, header.state, pool=pool_lv) }}{% endif %}<b class="rc-cn">{% if tf_champ.is_relay %}{{ tf_champ.school|school_label_for(pool_lv, header.state) if tf_champ.school else "Relay" }}{% elif tf_champ.person_id %}<a href="/athlete/{{ tf_champ.person_id }}">{{ tf_champ.athlete_name or "Unknown" }}</a>{% else %}{{ tf_champ.athlete_name or "Unknown" }}{% endif %}</b><i>{{ tf_champ.display_result }}</i></span></div>
+      {% if school_points %}
+      <div><span class="k">Most points</span>
+        <span class="rc-crow">{% if school_points[0][0]|is_team %}{{ crest(school_points[0][0], header.state, pool=pool_lv) }}{% endif %}<b class="rc-cn">{{ school_points[0][0]|school_label_for(pool_lv, header.state) }}</b><i>{{ "%g"|format(school_points[0][1]) }}</i></span></div>
+      {% endif %}
+    </div>
     {% endif %}
+  </div>
+  <div class="rc-right">
+    {% if story %}<p class="rc-story">{% for s in story %}{{ s }}{% if not loop.last %} {% endif %}{% endfor %}</p>{% endif %}
+    <div class="rc-facts">
+      <span>Venue <b>{{ dv(header.difficulty, "TF", day_effect) }}</b>{{ difficulty_i("TF") }}</span>
+      {% if day_effect is not none %}<span>Day <b>{{ day_effect|dayword }}{% if (day_effect|dayword) != 'level' %} · {{ day_effect|dayabs }}{% endif %}</b></span>{% endif %}
+      {% if has_wind %}<span>Wind <b>on the sheet</b></span>{% endif %}
+    </div>
+    <button type="button" class="share-box share-btn rc-share" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"
+            data-share-url="{{ site_origin }}/race/tf/{{ meet_id }}/{{ event_id }}/{{ div_id }}" title="Share this page; the preview is its card">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <span>Share</span>
+    </button>
+  </div>
+</div></header>
 
-    {% if equiv_dist %}
+<div class="rc-w rc-grid{% if not school_points %} rc-grid-one{% endif %}">
+<div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="rc-tabs" role="tablist">
+      <a class="on" href="#results" data-tab="results">Results<span class="n">{{ results|length }}</span></a>
+      {% if equiv_dist %}<a href="#track" data-tab="track">Equivalent times</a>{% endif %}
+      <a href="/meet/tf/{{ header.meet_id }}">Full meet</a>
+    </nav>
+    <input class="rc-find" type="search" placeholder="Find an athlete or school" aria-label="Find an athlete or school">
+  </div>
+
+  <section class="rc-panel" id="results" data-panel="results">
+    {% if not school_points %}{{ al.box(above_spec) }}{% endif %}
+    {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+    <table class="rc-table">
+      <thead><tr>
+        <th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th>
+        <th class="n">Result</th>
+        {% if has_wind %}<th class="n rc-wide">Wind</th>{% endif %}
+        <th class="n">Rating{{ rating_i() }}{% if above_spec %}<span class="vs-level-h rc-sub">vs level{{ al.level_i() }}</span>{% endif %}</th>
+        {% if has_pts %}<th class="n rc-wide">Pts</th>{% endif %}
+      </tr></thead>
+      <tbody>
+      {% set n_cols = 5 + (1 if has_wind else 0) + (1 if has_pts else 0) %}
+      {% for sec in sections %}
+      {% if sec.label %}<tr class="heat-row rc-heat"><td colspan="{{ n_cols }}">{{ sec.label }}</td></tr>{% endif %}
+      {% for row in sec.rows %}
+      <tr id="r{{ row.result_id }}"{{ al.attrs(above_spec, row) }} data-team="{{ row.school or '' }}"{% if hl_school and row.school == hl_school %} class="hl-school"{% endif %}>
+        <td class="pl{% if row.sec_place and row.sec_place|string in ['1','2','3'] and (not sec.label or (sec.label|lower).startswith('final')) %} rc-m{{ row.sec_place }}{% endif %}"><span>{{ row.sec_place }}</span></td>
+        <td class="nm">
+          {% if row.is_relay %}
+            {# a relay row is a team: the squad, then its runners #}
+            <span class="relay-team">{{ row.school|school_label_for(pool_lv, header.state) if row.school else "Relay" }}</span>
+            {% set legs = row.relay_legs|selectattr("name")|list if row.relay_legs else [] %}
+            {% if legs %}<span class="relay-legs">{% for leg in legs %}<a href="/athlete/{{ leg.person_id }}">{{ leg.name }}</a>{{ ", " if not loop.last }}{% endfor %}</span>
+            {% elif row.athlete_name and row.athlete_name != "Unknown" %}<span class="relay-legs">{{ row.athlete_name }}</span>{% endif %}
+          {% elif row.person_id %}<a href="/athlete/{{ row.person_id }}">{{ row.athlete_name if row.athlete_name else "Unknown" }}</a>
+          {% else %}{{ row.athlete_name if row.athlete_name else "Unknown" }}{% endif %}
+          {% if not row.is_relay %}<span class="rc-subline">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state, pool=pool_lv) }}{% endif %}{{ row.school|school_label_for(pool_lv, header.state) if row.school else "" }}{% if row.grade %} · {{ row.grade|grade_label(row.rating_pool) }}{% endif %}</span>{% endif %}
+        </td>
+        <td class="sch rc-wide">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state, pool=pool_lv) }}<a href="{{ school_href(row.school, header.state, pool=pool_lv) }}">{{ row.school|school_label_for(pool_lv, header.state) }}</a>{% elif row.school %}{{ row.school|school_label_for(pool_lv, header.state) }}{% else %} - {% endif %}{% if row.grade %}<span class="gr">{{ row.grade|grade_label(row.rating_pool) }}</span>{% endif %}</td>
+        <td class="n tm">{{ row.display_result }}{{ recflag(row) }}</td>
+        {% if has_wind %}<td class="n rc-wide wind">{{ "%+.1f"|format(row.wind) if row.wind is not none else " - " }}</td>{% endif %}
+        <td class="n rt" data-rx="tf:{{ row.result_id }}"><span class="rc-rv">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</span>{% if above_spec %}<span class="vs-level" data-rid="{{ row.result_id }}"></span>{% endif %}</td>
+        {% if has_pts %}<td class="n pts rc-wide">{{ row.points if row.points else "" }}</td>{% endif %}
+      </tr>
+      {% endfor %}
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="csv-link"><a href="{{ csv_href() }}" rel="nofollow" download>Download CSV</a></p>
+  </section>
+
+  {% if equiv_dist %}
+  <section class="rc-panel" id="track" data-panel="track">
     {{ equiv_line(equiv_pool, equiv_dist, header.difficulty, none, sport="TF",
                   lo=equiv_lo, hi=equiv_hi, target="5000:XC", fixed_pool=True) }}
-    {% endif %}
+  </section>
+  {% endif %}
 
-    {% set has_wind = results | selectattr("wind", "ne", None) | list | length > 0 %}
-    {# Points exist only where this event scored: a prelim page's rows
-       score in the final, so the column stays off prelim pages. #}
-    {% set has_pts = results | selectattr("points") | list | length > 0 %}
+  <div class="page-report">Something wrong on this page?
+      <a href="/report?about={{ request.path|urlencode }}">Report it →</a></div>
+</div>
 
-{% import "_above_level.html" as al %}
-{{ al.box(above_spec) }}
-{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
-        <table>
-        <thead>
-            <tr>
-                <th>Place</th>
-                <th>Athlete</th>
-                <th>Grade</th>
-                <th>School</th>
-                <th>Result</th>
-                {% if has_wind %}<th>Wind</th>{% endif %}
-                <th>Rating{{ rating_i() }}</th>
-                {{ al.head(above_spec) }}
-                {% if has_pts %}<th>Points</th>{% endif %}
-            </tr>
-        </thead>
-        <tbody>
-            {% set n_cols = 6 + (1 if has_wind else 0) + (1 if has_pts else 0) + (1 if above_spec else 0) %}
-            {% for sec in sections %}
-            {% if sec.label %}
-            <tr class="heat-row"><td colspan="{{ n_cols }}">{{ sec.label }}</td></tr>
-            {% endif %}
-            {% for row in sec.rows %}
-            <tr id="r{{ row.result_id }}"{{ al.attrs(above_spec, row) }}{% if hl_school and row.school == hl_school %} class="hl-school"{% endif %}>
-                <td>{{ row.sec_place }}</td>
-                <td>
-                    {% if row.is_relay %}
-                        {# a relay row is a team: the squad, then its runners #}
-                        <span class="relay-team">{{ row.school|school_label_for('college' if college else none, header.state) if row.school else "Relay" }}</span>
-                        {% set legs = row.relay_legs|selectattr("name")|list if row.relay_legs else [] %}
-                        {% if legs %}<span class="relay-legs">{% for leg in legs %}<a href="/athlete/{{ leg.person_id }}">{{ leg.name }}</a>{{ ", " if not loop.last }}{% endfor %}</span>
-                        {% elif row.athlete_name and row.athlete_name != "Unknown" %}<span class="relay-legs">{{ row.athlete_name }}</span>{% endif %}
-                    {% elif row.person_id %}
-                        <a href="/athlete/{{ row.person_id }}">{{ row.athlete_name if row.athlete_name else "Unknown" }}</a>
-                    {% else %}
-                        {{ row.athlete_name if row.athlete_name else "Unknown" }}
-                    {% endif %}
-                </td>
-                <td>{{ row.grade|grade_label(row.rating_pool) if row.grade else " - " }}</td>
-                <td>{% if row.school and row.school|is_team %}{{ crest(row.school, header.state, pool='college' if college else none) }}<a href="{{ school_href(row.school, header.state, pool='college' if college else none) }}">{{ row.school|school_label_for('college' if college else none, header.state) }}</a>{% elif row.school %}{{ row.school|school_label_for('college' if college else none, header.state) }}{% else %} - {% endif %}</td>
-                <td class="no-break">{{ row.display_result }}{{ recflag(row) }}</td>
-                {% if has_wind %}<td>{{ "%+.1f"|format(row.wind) if row.wind is not none else " - " }}</td>{% endif %}
-                <td class="no-break" data-rx="tf:{{ row.result_id }}">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</td>
-                {{ al.cell(above_spec, row) }}
-                {% if has_pts %}{% if row.points %}<td class="pts">{{ row.points }}</td>{% else %}<td></td>{% endif %}{% endif %}
-            </tr>
-            {% endfor %}
-            {% endfor %}
-        </tbody>
-    </table>
+{% if school_points %}
+<aside class="rc-side">
+  {% if school_points %}
+  <h2>Event points <small>by school</small></h2>
+  <table class="rc-tscores">
+    <tbody>
+    {% for sch, pts in school_points[:10] %}
+    <tr data-team="{{ sch }}" data-rids="" tabindex="0" title="Light {{ sch }}'s athletes in the results">
+      <td class="tp">{{ loop.index }}</td>
+      <td class="tn">{% if sch|is_team %}{{ crest(sch, header.state, pool=pool_lv) }}{% endif %}{{ sch|school_label_for(pool_lv, header.state) }}</td>
+      <td class="n tpts">{{ "%g"|format(pts) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="rc-tip"><span class="rc-tip-name">{{ hl_school or school_points[0][0] }}</span>'s athletes are lit in the results. Tap any school to light theirs.</p>
+  {% endif %}
+  {{ al.box(above_spec) }}
+  <p class="rc-sidelinks"><a href="/meet/tf/{{ header.meet_id }}">Full meet →</a>{% if header.location_id %}<br><a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">Venue →</a>{% endif %}</p>
+</aside>
+{% endif %}
+</div>
 
-    <p class="csv-link"><a href="{{ csv_href() }}" rel="nofollow" download>Download CSV</a></p>
-    <div class="page-report">Something wrong on this page?
-        <a href="/report?about={{ request.path|urlencode }}">Report it →</a></div>
-
-    {% set rid = request.args.get('r') %}
-    {# lstrip('-'): tfrrs result ids are NEGATIVE bignums #}
-    {% if rid and rid.lstrip('-').isdigit() %}
-    {# arrived from a profile: scroll to and tint the clicked result #}
-    <script>(function () {
-        var el = document.getElementById("r{{ rid|int }}");
-        if (el) { el.classList.add("row-hi");
-                  el.scrollIntoView({ block: "center" }); }
-    })();</script>
-    {% endif %}
+{% set rid = request.args.get('r') %}
+{# lstrip('-'): tfrrs result ids are NEGATIVE bignums #}
+{% if rid and rid.lstrip('-').isdigit() %}
+{# arrived from a profile: scroll to and tint the clicked result #}
+<script>(function () {
+    var el = document.getElementById("r{{ rid|int }}");
+    if (el) { el.classList.add("row-hi");
+              el.scrollIntoView({ block: "center" }); }
+})();</script>
+{% endif %}
 </main>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('equiv-line.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}" data-light="{{ hl_school or (school_points[0][0] if school_points else '') }}"></script>
 </body>
 </html>
