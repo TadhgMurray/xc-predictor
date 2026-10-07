@@ -116,8 +116,8 @@
        field on one scale"). race-page.js draws every rated finisher as a dot
        on the rating axis, stacked by whole rating point, the lit team dark.
        Empty without the script; nothing else depends on it. #}
-    <figure class="rc-field" hidden><figcaption>The field on one scale<span class="rc-field-key"></span></figcaption><div class="rc-field-plot"></div></figure>
-    <table class="rc-table" data-rcolour>
+    <figure class="rc-field" hidden><figcaption>The field on one scale<span class="rc-field-key"></span><span class="rt-key"><i class="t1"></i>100<i class="t2"></i>110<i class="t3"></i>120<i class="t4"></i>130<i class="t5"></i>140+</span></figcaption><div class="rc-field-plot"></div></figure>
+    <table class="rc-table">
       <thead><tr>
         <th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th>
         <th class="n">Time</th>
@@ -143,8 +143,6 @@
       {% endfor %}
       </tbody>
     </table>
-    {# the key to the rating colour (rating-colour.js), once, under the table #}
-    <p class="rt-key"><span>Rating</span><span><i style="background:var(--rt1)"></i>100+ above the average</span><span><i style="background:var(--rt2)"></i>110+</span><span><i style="background:var(--rt3)"></i>120+</span><span><i style="background:var(--rt4)"></i>130+</span><span><i style="background:var(--rt5)"></i>140+ national class</span></p>
     <p class="csv-link"><a href="{{ csv_href() }}" rel="nofollow" download>Download CSV</a></p>
   </section>
 
@@ -229,7 +227,6 @@
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('equiv-line.js') }}"></script>
-<script src="{{ static_v('rating-colour.js') }}"></script>
 <script src="{{ static_v('race-page.js') }}" data-light="{{ hl_school or (scores.teams[0].runners[0].school if scores and scores.teams and scores.teams[0].runners else '') }}"></script>
 </body>
 </html>

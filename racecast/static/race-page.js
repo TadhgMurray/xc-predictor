@@ -129,9 +129,12 @@
     svg.appendChild(el("line", { class: "ax", x1: PADX, x2: W - PADX, y1: H - AX, y2: H - AX }));
     Object.keys(bins).forEach(function (k) {
       bins[k].forEach(function (p, i) {
-        // the dot wears the rating's colour (rating-colour.js); the lit
+        // the dot wears its rating tier's colour; the lit
         // team's are ink, so a team reads against the heat
-        var tierCls = window.rcTier ? " t" + window.rcTier(p.v) : "";
+        // tiers of 10 points (10% faster than the pool average, the scale's
+        // own unit) from 100 (average) to 140 (national class); below 100
+        // stays grey. One orange ramp, validated as ordinal (dataviz).
+        var tierCls = p.v >= 100 ? " t" + Math.min(5, Math.floor((p.v - 100) / 10) + 1) : "";
         var c = el("circle", { class: "d" + tierCls + (p.lit ? " lit" : ""), cx: x(+k).toFixed(1),
                                cy: (H - AX - r - 1 - i * 2 * r).toFixed(1), r: r.toFixed(2) });
         var tt = el("title", {});
