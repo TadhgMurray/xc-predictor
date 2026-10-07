@@ -25,6 +25,7 @@ COST
 """
 
 import io
+import os
 import re
 import sys
 import time
@@ -2848,6 +2849,7 @@ WITH season_med AS (
                FILTER (WHERE speed_rating IS NOT NULL)      AS med,
            count(speed_rating)                              AS n_rated
     FROM   {{load_table}}
+    WHERE  {{shard_where}}
     GROUP  BY person_id, pool, sport, year)
 INSERT INTO {{season_table}}
     (person_id, pool, sport, year, mean_rating, decayed_rating, best_rating,
@@ -2911,13 +2913,14 @@ JOIN season_med sm ON sm.person_id = base.person_id AND sm.pool = base.pool
 --   that have no rating, and -- worse -- decayed_rating's denominator
 --   sum(power(...)) counts every row while its numerator skips the NULLs, so
 --   every sprinter's decayed rating would be silently diluted toward zero.
-WHERE (sm.n_rated > 0
+WHERE ({{shard_where_base}})
+  AND ((sm.n_rated > 0
        AND speed_rating IS NOT NULL
        AND speed_rating >= sm.med - {_SEASON_OUTLIER_PTS})
    -- ★ OR THE SEASON HAS NO RATED RACE AT ALL: a sprinter's or a thrower's
    --   whole year. Every row counts, because there is no rated subset to
    --   prefer and n_races would otherwise be zero for a season that happened.
-   OR sm.n_rated = 0
+   OR sm.n_rated = 0)
 GROUP BY base.person_id, base.pool, base.sport, base.year;
 """
 
@@ -2947,6 +2950,32 @@ GROUP BY base.person_id, base.pool, base.sport, base.year;
 #   is for a server that says no.
 _SEASON_WORK_MEM = (("512MB", "256MB") if dbQuiet()
                     else ("4GB", "2GB", "1GB", "512MB"))   # capped under XCP_DB_QUIET
+
+
+# the shards of the athlete_season aggregate, and each one's sort memory:
+# a quarter of the ~3.4GB sort fits in 1GB (XCP_SEASON_SHARDS=1: one
+# statement, as before)
+_SEASON_SHARDS = max(1, int(os.environ.get("XCP_SEASON_SHARDS", "4")))
+_SEASON_SHARD_WORK_MEM = ("1GB", "512MB", "256MB")
+
+
+def _shardWhere(col, k):
+    """This shard's people: every row of a person, so every season, in one."""
+    return f"mod(abs(COALESCE({col}, 0)), {_SEASON_SHARDS}) = {int(k)}"
+
+
+def _seasonWorkMem(conn, cur, ladder, quiet_log=False):
+    for want in ladder:
+        try:
+            cur.execute(f"SET LOCAL work_mem = '{want}'")
+            if not quiet_log:
+                print(f"    work_mem {want} for the group-by sort")
+            return want
+        except Exception as exc:                      # noqa: BLE001
+            conn.rollback()
+            print(f"    (server refused work_mem {want}: "
+                  f"{str(exc).splitlines()[0]})")
+    return None
 
 
 def refreshAthleteSeason(conn):
@@ -2991,22 +3020,38 @@ def refreshAthleteSeason(conn):
         print(f"    {_LOAD_SEASON}: dropped a stale NOT NULL on "
               f"{', '.join(bad)} (a season with no rated race writes NULL); "
               f"the swap carries the fix to athlete_season")
+    t0 = time.time()
+    if _SEASON_SHARDS > 1:
+        # ★ IN SHARDS, SIDE BY SIDE (2026-10-07; run 20261006_120609: 1,036 s
+        #   in this one statement). Its ordered-set aggregates get no
+        #   parallel plan and its sort spilled at the quiet 512MB. Split by
+        #   person, every season's rows land in one shard, so each shard's
+        #   groups are whole; each sorts a quarter of the rows, in memory,
+        #   on its own core, and inserts into the committed shadow.
+        def _shard(k):
+            sql_k = _ATHLETE_SEASON_SQL.format(
+                load_table=_LOAD_TABLE, season_table=_LOAD_SEASON,
+                shard_where=_shardWhere("person_id", k),
+                shard_where_base=_shardWhere("base.person_id", k))
+            t_k = time.time()
+            with getConn() as c:
+                with c.cursor() as cur:
+                    _seasonWorkMem(c, cur, _SEASON_SHARD_WORK_MEM, quiet_log=True)
+                    cur.execute(sql_k)
+                c.commit()
+            return k, time.time() - t_k
+        with cf.ThreadPoolExecutor(max_workers=_SEASON_SHARDS) as pool:
+            for k, dt in pool.map(_shard, range(_SEASON_SHARDS)):
+                print(f"    [{dt:7.1f}s] shard {k + 1}/{_SEASON_SHARDS}")
     sql = _ATHLETE_SEASON_SQL.format(load_table=_LOAD_TABLE,
-                                     season_table=_LOAD_SEASON)
+                                     season_table=_LOAD_SEASON,
+                                     shard_where="TRUE", shard_where_base="TRUE")
     with conn.cursor() as cur:
-        # ★ ASK FOR ROOM BEFORE THE STATEMENT, NOT AFTER IT. See
-        #   _SEASON_WORK_MEM: this is the sort that decides the step.
-        for want in _SEASON_WORK_MEM:
-            try:
-                cur.execute(f"SET LOCAL work_mem = '{want}'")
-                print(f"    work_mem {want} for the group-by sort")
-                break
-            except Exception as exc:                      # noqa: BLE001
-                conn.rollback()
-                print(f"    (server refused work_mem {want}: "
-                      f"{str(exc).splitlines()[0]})")
-        t0 = time.time()
-        cur.execute(sql)
+        if _SEASON_SHARDS <= 1:
+            # ★ ASK FOR ROOM BEFORE THE STATEMENT, NOT AFTER IT. See
+            #   _SEASON_WORK_MEM: this is the sort that decides the step.
+            _seasonWorkMem(conn, cur, _SEASON_WORK_MEM)
+            cur.execute(sql)
         print(f"    [{time.time() - t0:7.1f}s] GROUP BY -> {_LOAD_SEASON}")
         # ! THE UNRATED SHARE IS PRINTED, because it is a new population and
         #   its size is the whole claim: these are the sprint-and-field

@@ -600,54 +600,96 @@ def explain(conn, which):
     conn.rollback()
 
 
-def build(conn, write=False):
+def _runSport(cur, sport, table, write, skip):
+    """Every rule of one sport, in RULES order, on this cursor."""
     import psycopg2.errors
+    for reason, fn in RULES:
+        t0 = time.time()
+        if reason in skip:
+            kept = carryOver(cur, sport, reason) if write else 0
+            print(f"  [{sport}] {reason:<14} skipped (XCP_TWIN_SKIP); "
+                  f"{kept:,} flags kept from the last run", flush=True)
+            continue
+        cur.execute("SAVEPOINT twin_rule")
+        cur.execute(f"SET statement_timeout = {int(RULE_TIMEOUT * 1000)}")
+        try:
+            prepareRule(cur, table, sport, reason)
+            if write:
+                # earlier reasons win the primary key: a row that is a
+                # cross-feed twin is filed as one, not as a feed dup
+                cur.execute(f"""
+                    INSERT INTO result_twin_new (sport, result_id, reason)
+                    SELECT %s, s.result_id, %s FROM ({fn(table, sport)}) s
+                    ON CONFLICT DO NOTHING
+                """, (sport, reason))
+                n = cur.rowcount
+            else:
+                cur.execute(f"SELECT count(*) FROM ({fn(table, sport)}) s")
+                n = cur.fetchone()[0]
+        except psycopg2.errors.QueryCanceled:
+            # the SET above is undone with the savepoint
+            cur.execute("ROLLBACK TO SAVEPOINT twin_rule")
+            kept = carryOver(cur, sport, reason) if write else 0
+            print(f"  [{sport}] {reason:<14} TIMED OUT after {time.time() - t0:.0f}s "
+                  f"(XCP_TWIN_RULE_TIMEOUT={RULE_TIMEOUT}); {kept:,} flags kept "
+                  "from the last run", flush=True)
+            continue
+        cur.execute("RESET statement_timeout")
+        cur.execute("RELEASE SAVEPOINT twin_rule")
+        print(f"  [{sport}] {reason:<14} {n:>12,}  ({time.time() - t0:.0f}s)",
+              flush=True)
+
+
+# ★ THE TWO SPORTS SIDE BY SIDE (2026-10-07, run 20261006_120609: 04c 44.7
+#   min, the track rules alone ~31). A sport's rules read only its own table
+#   and write only its own sport's rows of result_twin_new (the key is
+#   (sport, result_id)), and every staging table they make is TEMP, so two
+#   sessions cannot see each other's. Within a sport the order is kept --
+#   earlier reasons win the key. result_twin_new is committed first so both
+#   sessions can write it, and dropped if either fails, which is what the
+#   one-transaction version's rollback did. XCP_TWIN_PARALLEL=0 runs them in
+#   one session, one after the other, as before.
+TWIN_PARALLEL = os.environ.get("XCP_TWIN_PARALLEL", "1") not in ("0", "false", "")
+
+
+def build(conn, write=False, parallel=None, connect=None):
+    """parallel: None reads XCP_TWIN_PARALLEL. connect: a context manager
+    giving a connection to the same database for the second session
+    (default database.getConn)."""
+    if parallel is None:
+        parallel = TWIN_PARALLEL
+    skip = {r.strip() for r in os.environ.get("XCP_TWIN_SKIP", "").split(",") if r.strip()}
+    # ! XCP_TWIN_SKIP=dup_cross_date,dup_race_copy skips named rules for
+    #   one run (2026-09-06): a rule that stalls should cost the run
+    #   that rule, not the whole pipeline. Says so in the log; since
+    #   2026-09-27 a skipped rule keeps its flags from the last run.
     with conn.cursor() as cur:
         ensureTable(cur)
         _session(conn, cur)
         if write:
             cur.execute("CREATE TABLE result_twin_new (LIKE result_twin INCLUDING ALL)")
-        # ! XCP_TWIN_SKIP=dup_cross_date,dup_race_copy skips named rules for
-        #   one run (2026-09-06): a rule that stalls should cost the run
-        #   that rule, not the whole pipeline. Says so in the log; since
-        #   2026-09-27 a skipped rule keeps its flags from the last run.
-        skip = {r.strip() for r in os.environ.get("XCP_TWIN_SKIP", "").split(",") if r.strip()}
-        for sport, table in TABLES.items():
-            for reason, fn in RULES:
-                t0 = time.time()
-                if reason in skip:
-                    kept = carryOver(cur, sport, reason) if write else 0
-                    print(f"  [{sport}] {reason:<14} skipped (XCP_TWIN_SKIP); "
-                          f"{kept:,} flags kept from the last run", flush=True)
-                    continue
-                cur.execute("SAVEPOINT twin_rule")
-                cur.execute(f"SET statement_timeout = {int(RULE_TIMEOUT * 1000)}")
-                try:
-                    prepareRule(cur, table, sport, reason)
-                    if write:
-                        # earlier reasons win the primary key: a row that is a
-                        # cross-feed twin is filed as one, not as a feed dup
-                        cur.execute(f"""
-                            INSERT INTO result_twin_new (sport, result_id, reason)
-                            SELECT %s, s.result_id, %s FROM ({fn(table, sport)}) s
-                            ON CONFLICT DO NOTHING
-                        """, (sport, reason))
-                        n = cur.rowcount
-                    else:
-                        cur.execute(f"SELECT count(*) FROM ({fn(table, sport)}) s")
-                        n = cur.fetchone()[0]
-                except psycopg2.errors.QueryCanceled:
-                    # the SET above is undone with the savepoint
-                    cur.execute("ROLLBACK TO SAVEPOINT twin_rule")
-                    kept = carryOver(cur, sport, reason) if write else 0
-                    print(f"  [{sport}] {reason:<14} TIMED OUT after {time.time() - t0:.0f}s "
-                          f"(XCP_TWIN_RULE_TIMEOUT={RULE_TIMEOUT}); {kept:,} flags kept "
-                          "from the last run", flush=True)
-                    continue
-                cur.execute("RESET statement_timeout")
-                cur.execute("RELEASE SAVEPOINT twin_rule")
-                print(f"  [{sport}] {reason:<14} {n:>12,}  ({time.time() - t0:.0f}s)",
-                      flush=True)
+        if not (parallel and write):
+            for sport, table in TABLES.items():
+                _runSport(cur, sport, table, write, skip)
+        else:
+            conn.commit()
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _one(item):
+                sport, table = item
+                with (connect or getConn)() as c2:
+                    with c2.cursor() as cur2:
+                        _session(c2, cur2)
+                        _runSport(cur2, sport, table, write, skip)
+                    c2.commit()
+            try:
+                with ThreadPoolExecutor(max_workers=len(TABLES)) as ex:
+                    list(ex.map(_one, TABLES.items()))
+            except Exception:
+                conn.rollback()
+                cur.execute("DROP TABLE IF EXISTS result_twin_new")
+                conn.commit()
+                raise
         if write:
             # short-lock swap with retries, then ANALYZE outside the lock
             # (database.swapTable says why a bare DROP was a site outage)

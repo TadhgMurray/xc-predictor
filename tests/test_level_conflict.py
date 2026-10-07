@@ -225,7 +225,8 @@ def test_the_flag_rides_result_twin_so_every_reader_already_honours_it():
     src = read("engine", "twin_flag.py")
     assert "import level_conflict as LC" in src
     assert "(LC.REASON, LC.ruleSql))" in src, "the last rule: a twin files as a twin"
-    assert "prepareRule(cur, table, sport, reason)" in src.split("def build(")[1]
+    assert "prepareRule(cur, table, sport, reason)" in src.split("def _runSport(")[1]
+    assert "_runSport(" in src.split("def build(")[1]
     assert LC.REASON == "level_conflict"
     sh = read("deploy", "run_pipeline.sh")
     assert "level_conflict" in sh

@@ -89,7 +89,7 @@ class AnUnratedSeasonStillCounts(unittest.TestCase):
         """★ BYTE-IDENTICAL FOR EVERY SEASON THAT ALREADY HAD A ROW. The
         rated arm must still be `speed_rating IS NOT NULL AND speed_rating >=
         med - OUTLIER`, so n_races stays a count of RATED races."""
-        where = self.sql[self.sql.index("WHERE (sm.n_rated"):]
+        where = self.sql[self.sql.index("((sm.n_rated"):]
         pts = self.ns["_SEASON_OUTLIER_PTS"]
         self.assertIn("sm.n_rated > 0", where)
         self.assertIn("speed_rating IS NOT NULL", where)
@@ -99,7 +99,7 @@ class AnUnratedSeasonStillCounts(unittest.TestCase):
         """! AND IT IS GATED ON n_rated = 0, not on `speed_rating IS NULL`.
         Gating on the row would let a hybrid's four unrated sprints join its
         two rated 800s and take n_races from 2 to 6."""
-        where = self.sql[self.sql.index("WHERE (sm.n_rated"):
+        where = self.sql[self.sql.index("((sm.n_rated"):
                          self.sql.index("GROUP BY base.person_id")]
         self.assertIn("OR sm.n_rated = 0", where)
         self.assertNotIn("OR speed_rating IS NULL", where)

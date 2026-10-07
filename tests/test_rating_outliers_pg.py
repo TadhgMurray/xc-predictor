@@ -276,7 +276,9 @@ def test_the_season_number_leaves_the_slow_row_out(judged):
         cur.execute("SELECT count(*) FROM ro_load")
         assert cur.fetchone()[0] == 1
         cur.execute(B._ATHLETE_SEASON_SQL.format(load_table="ro_load",
-                                                 season_table="ro_season"))
+                                                 season_table="ro_season",
+                                                 shard_where="TRUE",
+                                                 shard_where_base="TRUE"))
         cur.execute("SELECT mean_rating, n_races FROM ro_season")
         rating, n = cur.fetchone()
     conn.rollback()

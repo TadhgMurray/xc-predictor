@@ -740,19 +740,38 @@ def loadSeasonLevels():
             #   first and fall back. A season with no votes for one sport is
             #   then exactly as well served as it was before the table gained
             #   a sport dimension.
-            cur.execute("SELECT person_id, ay, sport, level "
-                        "FROM athlete_season_level WHERE level IS NOT NULL")
+            # ★ ONLY THE PER-SPORT VERDICTS THAT SAY SOMETHING (2026-10-07;
+            #   run 20261006_120609: 21 minutes loading 61.8M rows). poolOf
+            #   asks `by_sport.get(...) or combined.get(...)`, so a per-sport
+            #   verdict equal to the season's combined one answers exactly
+            #   what the combined one would. Those are left in the database;
+            #   a per-sport verdict is loaded when it differs, or when the
+            #   season has no combined verdict. Same answer for every lookup.
+            cur.execute("""
+                SELECT s.person_id, s.ay, s.sport, s.level
+                FROM   athlete_season_level s
+                LEFT   JOIN athlete_season_level a
+                       ON a.person_id = s.person_id AND a.ay = s.ay
+                      AND a.sport = 'ALL'
+                WHERE  s.level IS NOT NULL
+                  AND  (s.sport = 'ALL' OR a.level IS NULL OR a.level <> s.level)""")
             by_sport, combined = {}, {}
-            for p, a, sp, lvl in cur.fetchall():
-                key = (int(p), int(a))
-                if sp == "ALL":
-                    combined[key] = lvl
-                else:
-                    by_sport[(key, sp)] = lvl
+            names = {}
+            while True:
+                chunk = cur.fetchmany(500000)
+                if not chunk:
+                    break
+                for p, a, sp, lvl in chunk:
+                    lvl = names.setdefault(lvl, lvl)
+                    key = (int(p), int(a))
+                    if sp == "ALL":
+                        combined[key] = lvl
+                    else:
+                        by_sport[(key, names.setdefault(sp, sp))] = lvl
             _SEASON_LEVELS = (by_sport, combined)
         print(f"[engine] {len(_SEASON_LEVELS[0]) + len(_SEASON_LEVELS[1]):,} "
-              f"season levels ({len(_SEASON_LEVELS[0]):,} per-sport, "
-              f"{len(_SEASON_LEVELS[1]):,} combined)")
+              f"season levels ({len(_SEASON_LEVELS[0]):,} per-sport that differ from "
+              f"the season's combined verdict, {len(_SEASON_LEVELS[1]):,} combined)")
     except Exception as exc:
         print(f"[engine] athlete_season_level unavailable ({exc}) -- "
               f"no season-level pooling")

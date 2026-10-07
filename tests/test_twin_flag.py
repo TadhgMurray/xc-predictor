@@ -132,7 +132,7 @@ def test_rules_on_fixtures():
             assert got == _EXPECTED[(sport, reason)], (sport, reason, got)
     # and the build writes the union, earlier reasons winning the key
     _stubSwap()
-    TF.build(conn, write=True)
+    TF.build(conn, write=True, parallel=False)
     cur.execute("SELECT reason, count(*) FROM result_twin GROUP BY 1 ORDER BY 1")
     by = dict(cur.fetchall())
     assert by["twin_race"] == 1 and by["twin_person"] == 1
@@ -184,7 +184,7 @@ def test_a_rule_past_its_limit_keeps_last_runs_flags():
                     ("twin_person", lambda t, s: "SELECT 5::bigint AS result_id"))
         TF.RULE_TIMEOUT = 0.2
         _stubSwap()
-        TF.build(conn, write=True)
+        TF.build(conn, write=True, parallel=False)
     finally:
         TF.RULES, TF.TABLES, TF.RULE_TIMEOUT = saved
     cur = conn.cursor()
@@ -195,3 +195,56 @@ def test_a_rule_past_its_limit_keeps_last_runs_flags():
     assert cur.fetchone()[0] == "0", "the limit does not outlive the rules"
     cur.execute("DROP TABLE result_twin")
     conn.commit()
+
+
+def test_the_two_sports_in_parallel_write_what_one_session_writes():
+    """2026-10-07: the sports run in two sessions; the flags must be the
+    one-session build's, row for row."""
+    import pytest
+    import contextlib
+    dsn = os.environ.get("XCP_TWIN_TEST_DSN")
+    if not dsn:
+        pytest.skip("set XCP_TWIN_TEST_DSN to a scratch Postgres to run the rules")
+    import importlib
+    for name in [n for n in sys.modules if n == "psycopg2" or n.startswith("psycopg2.")]:
+        if not hasattr(sys.modules[name], "__file__"):
+            del sys.modules[name]
+    psycopg2 = importlib.import_module("psycopg2")
+    importlib.import_module("psycopg2.errors")
+    db = "xcp_twin_parallel_test"
+    admin = psycopg2.connect(dsn)
+    admin.autocommit = True
+    with admin.cursor() as c:
+        c.execute(f"DROP DATABASE IF EXISTS {db}")
+        c.execute(f"CREATE DATABASE {db}")
+    tdsn = " ".join(p for p in dsn.split() if not p.startswith("dbname=")) + f" dbname={db}"
+    try:
+        conn = psycopg2.connect(tdsn)
+        cur = conn.cursor()
+        cur.execute(open(os.path.join(os.path.dirname(__file__), "fixtures",
+                                      "twin_rules.sql"), encoding="utf-8").read())
+        conn.commit()
+        _stubSwap()
+        TF.build(conn, write=True, parallel=False)
+        cur.execute("SELECT sport, result_id, reason FROM result_twin ORDER BY 1, 2")
+        one = cur.fetchall()
+
+        @contextlib.contextmanager
+        def _connect():
+            c2 = psycopg2.connect(tdsn)
+            try:
+                yield c2
+            finally:
+                c2.close()
+        TF.build(conn, write=True, parallel=True, connect=_connect)
+        cur.execute("SELECT sport, result_id, reason FROM result_twin ORDER BY 1, 2")
+        two = cur.fetchall()
+        cur.execute("SELECT to_regclass('result_twin_new')")
+        leftover = cur.fetchone()[0]
+        conn.close()
+    finally:
+        with admin.cursor() as c:
+            c.execute(f"DROP DATABASE IF EXISTS {db}")
+        admin.close()
+    assert one and two == one
+    assert leftover is None

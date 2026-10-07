@@ -4688,3 +4688,22 @@ Owner: "feels half-assed, only some things were put into new theme." Went throug
   clear of the bottom corners). Checked in Chromium at 1280 and 390 with a 15-step breakdown: wheel scrolling
   moves 480px and holds (old: the panel scrolled and the body never did); a page scroll leaves the panel's
   position where it was.
+
+## 2026-10-07 — speed round 2: 04c in two sessions, athlete_season in four, 07's season levels trimmed
+
+From run 20261006_120609's gaps (line before and after each):
+- **✅ 04c_twins (44.7 min): the two sports side by side.** A sport's rules read only its table and write only its
+  sport's rows (key (sport, result_id)); staging tables are TEMP. result_twin_new is committed first, both sessions
+  write it, and it is dropped if either fails. Order within a sport kept. Expect ~31 min (the track half).
+  XCP_TWIN_PARALLEL=0 restores one session. tests/test_twin_flag.py: the parallel build writes the one-session
+  build's flags row for row.
+- **✅ 10_rankings_finish: the athlete_season GROUP BY (1,036 s) in 4 shards by person.** Ordered-set aggregates
+  get no parallel plan and the sort spilled at 512MB; each shard sorts a quarter, at work_mem 1GB, in its own
+  session, into the committed shadow. Checked equal to the single statement on scratch Postgres (1,963 seasons,
+  negative and NULL person ids included). XCP_SEASON_SHARDS=1 restores one statement.
+- **✅ 07_pack (21.3 min gap before "season levels"): only the per-sport verdicts that change an answer.** poolOf asks
+  `by_sport.get(...) or combined.get(...)`; a per-sport verdict equal to the season's combined one is left in the
+  database. Checked: every lookup identical on random data (8,973 -> 5,435 per-sport rows there); streamed in chunks
+  with interned level strings.
+- Not changed: 04_grade_sanity's three field queries (~20-25 min each) -- set-based already; need EXPLAIN on the
+  real tables to pick a change. 08_golive's solve (warm start measured at ~4% in September).
