@@ -4444,3 +4444,43 @@ Owner: keep `/embed/school/<name>` but it's "ass rn". To do before anyone is poi
   - the help icons ("i" vs "?");
   - athlete race tables on phones (sideways scroll);
   - the broken crest icon.
+
+## 2026-10-07 — ✅ XC race page, results first, with a rule-based summary
+
+Owner: "the site is info overload" → mockup rounds → picked D5, minus the rule every 10 places →
+"plug race page into site, and formalize summary so I can see it working".
+
+- **Layout (race.html, static/race.css, static/race-page.js).**
+  - Dark header: meet, division, course, distance, date; individual and team champion; the summary;
+    course difficulty, race-day term and weather on one line.
+  - The full results table is the page, 1-2-3 included (gold/silver/bronze place tags). Six columns:
+    grade sits after the school, and vs level sits under the rating.
+  - Team scores (top 10, top-5 places) beside the results on desktop. Tapping a team lights its
+    runners; the team champion is lit on load (`?school=` lights that school instead).
+  - Tabs: Results | Teams (the full 7-place table) | On the track (the equivalents ruler) | Predict
+    next year. A finder box filters rows by name or school.
+  - Nothing the old page showed is gone: share, distance-corrected star, withheld notice, HS scale
+    toggle, "ran above their level" box (now in the sidebar), CSV, report, `?r=` row highlight.
+  - Fonts self-hosted in static/fonts (Barlow, Barlow Condensed, JetBrains Mono; SIL OFL 1.1).
+  - Without JavaScript every panel shows, one under another.
+- **Summary (racecast/race_story.py).** Two sentences, each a template that fires only when its facts
+  are on the page:
+  1. winner, time, gap to second (a dead heat says so); "won a Nth straight title here" when the winner
+     also had the fastest time in this meet's same-level race in each of the previous seasons
+     (edition name via last_edition.editionName; division number ignored, level kept).
+  2. team champion, points, margin to second (a points tie names the sixth-runner tiebreak), and the
+     team's first runner with their place.
+  - **No verdict words.** The mockup's "Campolindo won on depth, five scorers 46.2 s apart" was false:
+    Oak Park (18.6 s) and Hart (19.7 s) had tighter 1–5 splits. Removed; the rules state margins only.
+  - The repeat-title count is the only new query: own connection, 1.5 s timeout, any failure → no clause.
+- **above-level.js** fills `.vs-level[data-rid]` (any element, was `td` only) so the value can sit under
+  the rating. race_tf still uses a td; unchanged there.
+- **Tests:** tests/test_race_story.py (17). test_race_school_state's template test now counts the
+  school's two mentions per row (the phone line and the column).
+- **Pre-existing failures, not from this change** (fail identically on the previous commit):
+  test_race_day_hover::test_dv_with_and_without_a_day, test_race_school_state::
+  test_the_scoring_split_prefers_the_assignment_over_the_home_state, test_meet_units::
+  test_pipeline_and_template_carry_the_feature.
+- **To check on the server:** the repeat-title clause has only run against a fake cursor here. Open
+  /race/xc/236800/1011723 — it should read "won a third straight title here" if Noonan's 2022 and 2023
+  CIF State rows are linked to the same person.

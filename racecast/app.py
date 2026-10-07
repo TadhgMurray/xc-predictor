@@ -4036,6 +4036,26 @@ def race_xc(meet_id, div_id):
                               header.get("difficulty"), header.get("course_name"))
                  if header and header.get("distance") else 0.0)
 
+    # ★ THE TWO SENTENCES AT THE TOP (owner, 2026-10-07: "formalize summary
+    #   so I can see it working"): race_story's rules, on the rows and team
+    #   scores this page already shows. The repeat-title count is the one
+    #   query it adds -- its own connection, bounded inside priorTitles.
+    import race_story
+    story_titles = 0
+    _fin = [r for r in results if r.get("time_seconds") is not None
+            and not (float(r["time_seconds"]) >= 100_000 or _isSentinelTime(r["time_seconds"]))]
+    if _fin and _fin[0].get("person_id") and race_date:
+        try:
+            with getConn() as _conn, _conn.cursor(
+                    cursor_factory=psycopg2.extras.RealDictCursor) as _cur:
+                story_titles = race_story.priorTitles(
+                    _cur, _fin[0]["person_id"], race_date,
+                    header.get("meet_name"), header.get("division"))
+                _conn.rollback()
+        except Exception as exc:                                # noqa: BLE001
+            print(f"race story titles: {type(exc).__name__}: {exc}", flush=True)
+    story = race_story.raceStory(_fin, scores["teams"], story_titles)
+
     import csv_export as _csv
     if _csv.wantsCsv(request.args):
         _csvAboveLevel("XC", results, header.get("distance") if header else None)
@@ -4044,6 +4064,7 @@ def race_xc(meet_id, div_id):
             "-".join(str(x) for x in (header.get("meet_name"), header.get("division"),
                                       race_date) if x) + ".csv")
     return render_template("race.html", hl_school=hl_school,
+                           story=story, finishers=_fin,
                            above_spec=_aboveSpec("XC", results, header.get("distance") if header else None),
                            has_hs_view=has_hs_view,
                            equiv_pool=equiv_pool, equiv_lo=equiv_lo,

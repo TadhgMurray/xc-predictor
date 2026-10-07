@@ -26,7 +26,7 @@
     if (!d || !d.levels || !Object.keys(d.levels).length) { hideColumn(); return; }
     var above = {};
     (d.surprises || []).forEach(function (rid) { above[rid] = true; });
-    document.querySelectorAll("td.vs-level[data-rid]").forEach(function (td) {
+    document.querySelectorAll(".vs-level[data-rid]").forEach(function (td) {
       var v = d.levels[td.dataset.rid];
       if (v === undefined || v === null) return;
       td.textContent = (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1) + "%";

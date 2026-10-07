@@ -97,15 +97,19 @@ def test_the_template_prefers_it_and_falls_back_to_the_meet():
     assert "{% set sst = row.school_state or header.state %}" in html
     # the label, the link and the crest all read the same answer -- the whole
     # point of school_identity.contextState's "a mention resolves ONCE"
-    cell = html[html.index("{% set sst ="):]
-    cell = cell[:cell.index("</td>")]
-    # the set, then the crest, the href and the label: four readers, one
-    # answer -- school_identity.contextState's "a mention resolves ONCE"
-    assert cell.count("sst") == 5
+    # ★ THE ROW NAMES ITS SCHOOL TWICE SINCE THE RESULTS-FIRST PAGE (2026-10-07):
+    #   the phone line under the athlete's name (crest, label) and the
+    #   School column (crest, href, label). Both read the one answer.
+    cell = html[html.index("{% set sst = row.school_state"):]
+    cell = cell[:cell.index('<td class="n tm">')]
+    # the set, then six readers: subline crest + label, column crest +
+    # href + label + the unlinked label -- school_identity.contextState's
+    # "a mention resolves ONCE"
+    assert cell.count("sst") == 7
     assert cell.count("header.state") == 1          # only inside the set
-    # and the trust flag rides with it, on all three readers
+    # and the trust flag rides with it, on every reader
     assert "{% set sok = row.school_state is defined and row.school_state %}" in cell
-    assert cell.count("sok") == 5      # the set, then four readers
+    assert cell.count("sok") == 7      # the set, then six readers
 
 
 def test_the_race_route_stamps_before_it_renders():
