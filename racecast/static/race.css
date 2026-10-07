@@ -34,11 +34,13 @@ main.rc h1 { font-family: "RC Cond"; font-weight: 800; font-style: italic; text-
 .rc-meta { font-family: "RC Cond"; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: 1rem; color: #d9d9d4; }
 .rc-meta .dist-note { color: #ffd166; }
 .rc-champs { display: flex; gap: .6rem 2.4rem; flex-wrap: wrap; margin-top: .8rem; }
-.rc-champs > div { display: flex; align-items: center; gap: .6rem; }
-.rc-champs img { width: 34px; height: 34px; object-fit: contain; background: #fff; border-radius: 3px; padding: 2px; }
-.rc-champs .k { font-family: "RC Cond"; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #a9a9a2; font-size: .8rem; display: block; }
+.rc-champs > div { display: flex; flex-direction: column; gap: .2rem; }
+.rc-champs .rc-crow { display: flex; align-items: center; gap: .55rem; }
+main.rc .rc-champs img.school-mark { width: 28px; height: 28px; object-fit: contain; background: #fff; border-radius: 3px; padding: 2px; margin: 0; vertical-align: middle; box-sizing: border-box; }
+.rc-champs .k { font-family: "RC Cond"; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #a9a9a2; font-size: .8rem; display: block; line-height: 1; }
 .rc-champs .rc-cn { font-family: "RC Cond"; font-weight: 800; font-style: italic; text-transform: uppercase; font-size: 1.35rem; color: #fff; }
-.rc-champs i { font-family: "RC Mono"; font-style: normal; font-weight: 700; color: #ffd166; margin-left: .45rem; font-size: 1.05rem; }
+.rc-champs .rc-cn { line-height: 1.1; }
+.rc-champs i { font-family: "RC Mono"; font-style: normal; font-weight: 700; color: #ffd166; font-size: 1.05rem; }
 .rc-right { display: flex; flex-direction: column; }
 .rc-story { margin: 0; font-size: 1.02rem; line-height: 1.5; color: #e6e6e1; }
 .rc-story b { color: #fff; }

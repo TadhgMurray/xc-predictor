@@ -59,12 +59,15 @@
     <div class="rc-champs">
       {% if champ %}
       {% set csst = champ.school_state or header.state %}
-      <div>{% if champ.school and champ.school|is_team %}{{ crest(champ.school, csst, trusted=champ.school_state) }}{% endif %}
-        <span><span class="k">Individual</span><b class="rc-cn">{% if champ.person_id %}<a href="/athlete/{{ champ.person_id }}">{{ champ.name or "Unknown" }}</a>{% else %}{{ champ.name or "Unknown" }}{% endif %}</b><i>{{ champ.display_time }}</i></span></div>
+      {# label on its own line, then crest + name + mark on one row: the
+         crest centred on the NAME, not on the label and name together
+         (owner, 2026-10-07: "this is off") #}
+      <div><span class="k">Individual</span>
+        <span class="rc-crow">{% if champ.school and champ.school|is_team %}{{ crest(champ.school, csst, trusted=champ.school_state) }}{% endif %}<b class="rc-cn">{% if champ.person_id %}<a href="/athlete/{{ champ.person_id }}">{{ champ.name or "Unknown" }}</a>{% else %}{{ champ.name or "Unknown" }}{% endif %}</b><i>{{ champ.display_time }}</i></span></div>
       {% endif %}
       {% if tchamp %}
-      <div>{% if tchamp.school|is_team %}{{ crest(tchamp.school, tchamp.state or header.state) }}{% endif %}
-        <span><span class="k">Team</span><b class="rc-cn">{% if tchamp.school|is_team %}<a href="{{ school_href(tchamp.school, tchamp.state or header.state) }}">{{ tchamp.school }}</a>{% else %}{{ tchamp.school }}{% endif %}</b><i>{{ tchamp.points }}</i></span></div>
+      <div><span class="k">Team</span>
+        <span class="rc-crow">{% if tchamp.school|is_team %}{{ crest(tchamp.school, tchamp.state or header.state) }}{% endif %}<b class="rc-cn">{% if tchamp.school|is_team %}<a href="{{ school_href(tchamp.school, tchamp.state or header.state) }}">{{ tchamp.school }}</a>{% else %}{{ tchamp.school }}{% endif %}</b><i>{{ tchamp.points }}</i></span></div>
       {% endif %}
     </div>
     {% endif %}
