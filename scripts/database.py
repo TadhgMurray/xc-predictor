@@ -2927,6 +2927,37 @@ def resetInProgress():
           f"failed meets")
 
 
+# releaseClaims
+# Purpose: hands claimed meet_queue rows a session never reached back to the
+#          queue -- the in-progress (3) rows of a batch whose session crashed.
+# ⚠ WHY (owner, 2026-10-07): every session's Chrome stopped launching, each
+#   crash went straight back for another 50 meets, and the whole queue --
+#   104,680 rows -- sat at "in progress" with 0 due, unscraped. Only rows
+#   still at 3 are touched, so a row the session did finish keeps its state.
+# Arguments:
+#           pairs: iterable of (meet_id, sport).
+#           to_state: 0 on a normal run; 2 on a retry run, which claims 2.
+# Output: rows released.
+def releaseClaims(pairs, to_state=0):
+    pairs = list(pairs)
+    if not pairs:
+        return 0
+    with getConn() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE meet_queue q SET scraped = %s
+            FROM   unnest(%s::bigint[], %s::text[]) AS p(meet_id, sport)
+            WHERE  q.meet_id = p.meet_id AND q.sport = p.sport
+              AND  q.source = 'anet' AND q.scraped = 3
+            """,
+            (to_state, [m for m, _ in pairs], [s for _, s in pairs]),
+        )
+        n = cursor.rowcount
+        conn.commit()
+    return n
+
+
 # getUnscrapedRecoveryEvents
 # Purpose: Atomically fetches and locks a batch of unscraped recovery events.
 #          Same UPDATE...RETURNING pattern as getUnscrapedMeets — marks rows

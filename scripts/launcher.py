@@ -20,7 +20,7 @@ from playwright_stealth import Stealth
 from database import (
     initPool, closePool, createTables,
     countRows, markScraped, getQueueStatus,
-    resetInProgress, getBatchUnscrapedMeets
+    resetInProgress, getBatchUnscrapedMeets, releaseClaims
 )
 from scrape_results import scrapeMeetBySport, scrapeMeetTFMetaOnly
 from scraper import CloudflareException
@@ -61,6 +61,16 @@ META_ONLY = False
 # Restarts prevent WebSocket connection collapse on long sessions and
 # cycle to a fresh proxy IP.
 RESTART_EVERY = 200
+
+# ⚠ A CRASHED SESSION BACKS OFF AND, AFTER SESSION_MAX_CRASHES IN A ROW, STOPS
+#   (owner, 2026-10-07: every session failed "BrowserType.launch: Target page,
+#   context or browser has been closed" and went straight back for another
+#   batch -- 104,680 rows claimed and never scraped). The wait doubles from
+#   CRASH_BACKOFF_S: 30, 60, 120, 240s -- 7.5 minutes, five VPN rotation
+#   windows (90s), enough for a rotation or a memory spike to clear. A launch
+#   that still fails after that is not transient and needs a person.
+CRASH_BACKOFF_S = float(os.environ.get("CRASH_BACKOFF_S", 30))
+SESSION_MAX_CRASHES = int(os.environ.get("SESSION_MAX_CRASHES", 5))
 
 # How long a session waits after its post-rotation reload comes back 429, before
 # rejoining normal scraping. We wait-then-rejoin — we do NOT retry the reload.
@@ -777,6 +787,18 @@ async def restartBrowser(playwright, old_browser, config: dict, proxy_index: int
     
     # Launches browser, builds its context, and opens a new page.
     browser = await _launchBrowser(playwright)
+    try:
+        page = await _openPage(browser, proxy_index)
+    except BaseException:
+        # ! A Chrome that launched but could not open athletic.net was
+        #   dropped un-closed -- a live process leaked on every failed start.
+        await _killOldBrowser(browser, label)
+        raise
+    print(f"{label} Browser restarted")
+    return browser, page
+
+
+async def _openPage(browser, proxy_index):
     context = await _buildContext(browser, proxy_index)
     page    = await context.new_page()
 
@@ -796,10 +818,7 @@ async def restartBrowser(playwright, old_browser, config: dict, proxy_index: int
     # looks like a real user before hitting API endpoints.
     await page.goto("https://www.athletic.net", timeout=60000)
     await page.wait_for_load_state("domcontentloaded", timeout=10000)
-
-    print(f"{label} Browser restarted")
-
-    return browser, page
+    return page
 
     # _reloadWithCooldown
 # Purpose: After a REAL VPN rotation, reload this session's page so its Cloudflare
@@ -1164,6 +1183,37 @@ async def _processMeetResult(n: int, exists: bool, meet_id: int, sport: str,
 #           session_start: this session's range lower bound (inclusive).
 #           session_end: this session's range upper bound (inclusive).
 # Output: Dict with keys label, processed, failed, results_saved.
+# _afterCrash
+# Purpose: what a session does after an exception escapes its batch loop --
+#          hand the batch's unreached rows back, drop the browser (it may be
+#          dead: the loop only relaunched when browser was None or every
+#          RESTART_EVERY meets, so a dead one was reused for every new batch),
+#          wait CRASH_BACKOFF_S doubling, and stop at SESSION_MAX_CRASHES.
+# Output: (browser=None, crashes, stop).
+async def _afterCrash(browser, pending, crashes, label):
+    try:
+        released = await runDbCall(releaseClaims, list(pending), CLAIM_STATES[0])
+        if released:
+            print(f"{label} Released {released} claimed meet rows back to the queue")
+    except Exception as e:
+        # the next launcher start resets them (resetInProgress)
+        print(f"{label} Could not release {len(pending)} claimed rows: {e}")
+    try:
+        await _killOldBrowser(browser, label)
+    except Exception as e:
+        print(f"{label} Could not close the old browser: {e}")
+    crashes += 1
+    if crashes >= SESSION_MAX_CRASHES:
+        print(f"{label} Stopping: {crashes} crashes in a row with no meet scraped "
+              f"between them. Check Chrome (ps aux | grep -c chrome; free -g) "
+              f"and relaunch.")
+        return None, crashes, True
+    wait = CRASH_BACKOFF_S * 2 ** (crashes - 1)
+    print(f"{label} Crash {crashes}/{SESSION_MAX_CRASHES}; retrying in {wait:.0f}s")
+    await asyncio.sleep(wait)
+    return None, crashes, False
+
+
 async def runSession(playwright, config: dict, rotator: VPNRotator,
                       index: int, first_meet_id: int, session_end: int,
                       stride: int) -> dict:
@@ -1203,6 +1253,11 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
     # so we cycle through different IPs over time.
     proxy_index = SESSION_CONFIGS.index(config)  # start each session on a different proxy
 
+    # The claimed (meet_id, sport) rows not yet recorded -- handed back to
+    # the queue if the session crashes -- and the crashes in a row.
+    pending = set()
+    crashes = 0
+
     while (True):
         # Wraps the entire session in a try/except so if anything bad happens
         # we return what we have instead of crashing the launcher and other sessions.
@@ -1236,6 +1291,7 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
                 if await _extendFrontier(config["label"]):
                     continue
                 break
+            pending = {(m, sp) for m, sports in batch.items() for sp in sports}
 
             for meet_id in batch:
 
@@ -1353,6 +1409,8 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
                             processed, failed, results_saved, consecutive_failures
                         )
                     )
+                    pending.discard((meet_id, sport))
+                    crashes = 0
 
                     # Proactive rotation check — rotates every GLOBAL_MEETS_PER_ROTATION
                     # meets across all sessions combined.
@@ -1367,6 +1425,10 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
             import traceback
             print(f"{label} Session crashed: {e}")
             traceback.print_exc()
+            browser, crashes, stop = await _afterCrash(browser, pending, crashes, label)
+            pending = set()
+            if stop:
+                break
 
     if browser:
         await browser.close()

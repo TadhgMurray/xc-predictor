@@ -4825,3 +4825,31 @@ From run 20261006_120609's gaps (line before and after each):
   men's field labelled "Women". Takes effect at 04d; the boards follow at 07/08.
 - 📋 Open: a tfrrs race page that is a twin of an anet race shows "-" for every twin; it should say so and link to
   the copy that carries the ratings.
+
+## 2026-10-07 — ✅ the anet scrape's crash loop claimed the whole queue
+
+Every session failed `BrowserType.launch: Target page, context or browser has
+been closed`. The session loop printed "Session crashed" and went straight
+back for another 50 meets. A crash mid-batch left that batch at state 3, so
+104,680 rows sat "in progress" with 0 due and nothing scraped. A second fault
+fed the loop: the browser was relaunched only when `browser is None` or every
+`RESTART_EVERY` (200) meets, so a dead browser was kept for every new batch.
+
+**Fixed in `scripts/launcher.py` and `scripts/database.py`:**
+- `database.releaseClaims(pairs, to_state)` hands back the crashed batch's
+  unreached rows. It touches only `source='anet'` rows still at 3: 0 on a
+  normal run, 2 on a retry run (which claims 2).
+- `_afterCrash` releases those rows, closes the browser, and sets it to None
+  so the next meet relaunches. It then waits `CRASH_BACKOFF_S` (30s), doubling
+  each time: 30, 60, 120, 240s, which is 7.5 min, or five 90s VPN rotation
+  windows. The session stops with a printed reason at `SESSION_MAX_CRASHES`
+  (5) crashes in a row. Any recorded meet resets the count.
+- `restartBrowser` no longer leaks a Chrome that launched but could not open
+  athletic.net.
+- Test: `tests/test_launcher_crash_loop.py`.
+
+**The stranded 104,680 need nothing extra.** A normal launcher start resets 3
+to 0 (`resetInProgress`). **🔎 Open:** why Chrome stopped launching. Next
+time, check `ps aux | grep -c chrome`, `free -g`, `df -h /dev/shm`. Each
+session launches with `--single-process`, which Chrome does not support and
+which is a known source of exactly this error under memory pressure.
