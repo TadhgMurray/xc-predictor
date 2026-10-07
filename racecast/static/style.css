@@ -5873,9 +5873,6 @@ td.pl.rc-m1 > span { background: var(--m1); }
 td.pl.rc-m2 > span { background: var(--m2); }
 td.pl.rc-m3 > span { background: var(--m3); }
 
-/* course difficulty and the race day: which way the clock moved */
-.dv.dv-hard, .day-slow { color: var(--harder); }
-.dv.dv-easy, .day-fast { color: var(--easier); }
 
 /* ---- the rating tiers, for the field plot (race-page.js drawField) ------- */
 :root {

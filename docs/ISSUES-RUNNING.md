@@ -5022,3 +5022,5 @@ almost none at 95 to a clear orange at 145; difficulty and race day get
 colour changes are undone (f597998 and 52f632c). Difficulty and race day are
 back to the flat red/teal from 43f2023, and ratings carry no colour. The
 field plot keeps its rating colours (89c85ec), which the owner likes.
+Then, on the owner's "yes": the flat red/teal on difficulty and race day is
+gone as well. Both print in plain ink again.
