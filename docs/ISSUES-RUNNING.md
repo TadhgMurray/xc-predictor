@@ -4604,3 +4604,8 @@ Owner: "feels half-assed, only some things were put into new theme." Went throug
   .page-wide padding on brackets/landing, .conv width, the athlete-page and course-page duplicate removals.
 - Tests: the 24 failures (plus 9 order-dependent ones in the full run) and 6 collection errors are identical with
   and without this change.
+
+## 2026-10-07 — open: pipeline run 20261006_120609 failed 10a_board_sanity
+
+- Full run finished in 24h 38m; every step ok except 10a_board_sanity. Logs: /srv/xc-predictor/logs/20261006_120609.
+- Race-page revert (af5f973) deployed after the run. Owner: come back to 10a later. Not yet looked at.
