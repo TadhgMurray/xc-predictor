@@ -6,6 +6,11 @@ been run. READ ONLY.
     /srv/venv/bin/python scripts/backtest_predictions.py --from 2026-09-01 --to 2026-10-05
     /srv/venv/bin/python scripts/backtest_predictions.py --from 2026-09-01 --to 2026-10-05 --weeks 0,3 --divs 60
 
+    # a candidate model, before it replaces the live one (train.py --out-dir
+    # writes a complete artifact folder; predict reads RACECAST_MODEL's):
+    RACECAST_MODEL=/srv/models/new/model.pt /srv/venv/bin/python \
+        scripts/backtest_predictions.py --from 2026-09-17 --to 2026-10-05
+
 ★ WHY (owner, 2026-10-08: "the last predictions round was really bad").
   Nothing scored the served predictions against what then happened, so
   "bad" had no number and no fix could be shown to help. This re-runs the
