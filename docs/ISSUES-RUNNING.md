@@ -5245,6 +5245,18 @@ Chromium against the old script (readout 15:00, label under the pointer
   two times on one day or two careers refuse. Once joined, 04c drops the
   tfrrs copy as a same-day twin. `diag_person_pool.py --twins` shows it per
   person. Test: `tests/test_link_feed_twins.py`.
+- **UI ideas, logged only (owner, 2026-10-08: "don't do either, just log").**
+  Renders in the session scratchpad, nothing built:
+  - Home rankings in the race-page arrangement: race-style header (sport
+    tag, "Rankings - 2026 season", one sentence naming each level's
+    leader), levels as one tab row plus Top athletes / Best races, one
+    board at a time with medal discs, Latest results as the sidebar card.
+    Page ~7,500 px -> ~2,300 px.
+  - Race header in one column: Share beside the title; Course, Day and
+    Weather in the meta line; winner and summary sentence below (owner:
+    the top-right block "feels random"). Would carry to meet/course/school.
+  - Athlete page attempt rejected ("really meshed together"; keep the
+    graphs where they are; the top-right numbers felt random).
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane
