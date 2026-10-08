@@ -96,3 +96,16 @@ def test_the_target_grade_moves_with_the_seasons():
                                "date": "2026-05-01"})["grade"] == "11"
     assert P._targetRow(spec, {"grade": "10", "gender": "M",
                                "date": "2026-09-05"})["grade"] == "10"
+
+
+def test_a_predicted_time_reads_as_the_rating_it_is_worth_here(monkeypatch):
+    """Owner, 2026-10-08: "column should probably show the rating that time
+    would be on the course". The inverse of the rating basis's own
+    rating -> time conversion."""
+    monkeypatch.setattr(P, "_ratingToSeconds",
+                        lambda r, pool, spec, season: 100000.0 / r)
+    assert P._secondsToRating(800.0, "college_m", {}, 2026) == 125.0
+    assert P._secondsToRating(100000.0 / 131.4, "college_m", {}, 2026) == 131.4
+    # outside the scale, or no pool: nothing
+    assert P._secondsToRating(10.0, "college_m", {}, 2026) is None
+    assert P._secondsToRating(800.0, None, {}, 2026) is None

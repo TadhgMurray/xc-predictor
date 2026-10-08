@@ -759,6 +759,11 @@ def _score(field, preds):
             row["season_rating"] = row["rating"]
             row["rating"] = pred["form_rating"]
             row["pool"] = (pred.get("form_pool") or row["pool"] or "").split("|")[0] or None
+        elif pred.get("time_rating"):
+            # a model-served time: the rating it is worth on this course
+            row["season_rating"] = row["rating"]
+            row["rating"] = pred["time_rating"]
+            row["pool"] = (pred.get("time_pool") or row["pool"] or "").split("|")[0] or None
         finishers.append(row)
         if not isTeam(team):
             continue
@@ -1025,6 +1030,7 @@ def _predictTimes(cur, person_ids, target, spec=None):
                 #   the same bug with extra steps.
                 "is_race_time": race is not None,
                 "time_basis": (clock or {}).get("basis"),
+                "time_pool": (clock or {}).get("pool"),
                 "n_races": len(s),
                 "weather_basis": headline})
             if sig is not None:
@@ -1195,6 +1201,17 @@ def _servedTimes(cur, person_ids, target):
             entry["model_seconds"] = secs
         entry.update(r)
         entry.pop("reason", None)
+    # the rating a model-served time is worth here (_secondsToRating)
+    if spec is not None:
+        season = (_asDate(spec.get("date")) or datetime.date.today()).year
+        for entry in preds:
+            if (entry.get("basis") != "rating" and entry.get("seconds")
+                    and entry.get("is_race_time") and entry.get("time_pool")):
+                try:
+                    entry["time_rating"] = _secondsToRating(
+                        entry["seconds"], entry["time_pool"], spec, season)
+                except Exception:                       # noqa: BLE001
+                    pass
     return preds
 
 
@@ -1288,6 +1305,54 @@ def _formRating(rows, sport=None):
     return rating, sig, pool, len(vals)
 
 
+def _ratingToSeconds(rating, pool, spec, season):
+    """A rating as a time at the target race (the rating basis's own
+    conversion: _norm_from_rating, then _raceSeconds on the target's
+    course and distance)."""
+    import conversions
+    dist = spec.get("distance_meters")
+    sport = spec.get("sport") or "XC"
+    if not dist:
+        return None
+    norm = conversions._norm_from_rating(rating, pool, 0.0, sport)
+    if not norm:
+        return None
+    return _raceSeconds(norm, {
+        "distance": float(dist), "pool": pool, "sport": sport,
+        "season": season,
+        "difficulty": spec.get("course_difficulty"),
+        "canonical_id": spec.get("canonical_id"),
+        "location_id": spec.get("location_id"),
+        "is_indoor": spec.get("is_indoor"),
+        "course": spec.get("course_name")})
+
+
+# ★ THE RATING A PREDICTED TIME IS WORTH ON THIS COURSE (owner, 2026-10-08:
+#   "column should probably show the rating that time would be on the
+#   course"). The inverse of _ratingToSeconds, by bisection: a rating is
+#   monotone in time (faster time, higher rating), so forty halvings pin it
+#   far below the 0.1 the page prints. For a model-served row this is what
+#   puts its time and its rating on one scale; a rating-served row already
+#   shows its form rating, which is the same number.
+def _secondsToRating(seconds, pool, spec, season, lo=20.0, hi=250.0):
+    if not seconds or not pool:
+        return None
+    t_lo, t_hi = (_ratingToSeconds(lo, pool, spec, season),
+                  _ratingToSeconds(hi, pool, spec, season))
+    if not t_lo or not t_hi or not (t_hi <= seconds <= t_lo):
+        return None
+    for _ in range(40):
+        mid = 0.5 * (lo + hi)
+        t = _ratingToSeconds(mid, pool, spec, season)
+        if not t:
+            return None
+        if t > seconds:
+            lo = mid                    # too slow: the rating is higher
+        else:
+            hi = mid
+    return round(0.5 * (lo + hi), 1)
+
+
 def _ratingTimes(cur, person_ids, spec, cut):
     """{pid: entry} -- each athlete's recent form, as a time at the target
     race, with its band. Shaped like a _predictTimes entry."""
@@ -1303,17 +1368,7 @@ def _ratingTimes(cur, person_ids, spec, cut):
     rows = _ratingRows(cur, person_ids, None, hi_d.isoformat())
 
     def at(rating, pool):
-        norm = conversions._norm_from_rating(rating, pool, 0.0, sport)
-        if not norm:
-            return None
-        return _raceSeconds(norm, {
-            "distance": float(dist), "pool": pool, "sport": sport,
-            "season": hi_d.year,
-            "difficulty": spec.get("course_difficulty"),
-            "canonical_id": spec.get("canonical_id"),
-            "location_id": spec.get("location_id"),
-            "is_indoor": spec.get("is_indoor"),
-            "course": spec.get("course_name")})
+        return _ratingToSeconds(rating, pool, spec, hi_d.year)
 
     out = {}
     lo_s = lo_d.isoformat()
@@ -1431,11 +1486,13 @@ def _distanceRatio(rows, distance, is_xc=None):
 def _targetClock(rows, spec):
     ratio = _distanceRatio(rows, spec.get("distance_meters"),
                            spec.get("is_xc"))
-    if ratio:
-        return {"ratio": ratio, "ctx": None, "basis": "own"}
     ctx = _denormContext(spec, rows[-1] if rows else None)
+    # the athlete's pool rides along either way, for the rating column
+    pool = (ctx or {}).get("pool")
+    if ratio:
+        return {"ratio": ratio, "ctx": None, "basis": "own", "pool": pool}
     if ctx:
-        return {"ratio": None, "ctx": ctx, "basis": "curve"}
+        return {"ratio": None, "ctx": ctx, "basis": "curve", "pool": pool}
     return None
 
 

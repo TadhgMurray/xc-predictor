@@ -325,7 +325,7 @@ def nameSimilarity(canonicalA, canonicalB):
 # ---------------------------------------------------------------------------
 
 def findMergePairs(venues, radiusMeters, minNameSimilarity,
-                   cellDegrees=0.01, blockFn=None):
+                   cellDegrees=0.01, blockFn=None, venueBlockFn=None):
     """
     Every pair of venues close enough, similarly named enough, and not vetoed.
 
@@ -334,6 +334,10 @@ def findMergePairs(venues, radiusMeters, minNameSimilarity,
         'gps_lat'    float
         'gps_long'   float
         'canonical'  str, already through normalizeCourseName (+ expansion)
+
+    `venueBlockFn` is an optional (venueA, venueB) -> bool veto on the
+    whole venue dicts, for a rule the normalized name has already lost (a
+    "(rain course)" suffix).
 
     `blockFn` is an optional (canonicalA, canonicalB) -> (blocked, reason)
     predicate. Passed IN rather than imported so this module stays pure
@@ -392,6 +396,8 @@ def findMergePairs(venues, radiusMeters, minNameSimilarity,
                                                venueB["canonical"])
                     if blocked:
                         continue
+                if venueBlockFn is not None and venueBlockFn(venueA, venueB):
+                    continue
 
                 pairs.append((idxA, idxB, distance, similarity))
 

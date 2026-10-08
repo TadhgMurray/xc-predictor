@@ -216,8 +216,10 @@ def runSweep(venues, minNameSimilarity, sampleLimit, useRules):
     blockFn = blocksMerge if useRules else None
 
     for radiusMeters in _RADII_TO_TRY:
+        from build_course_canonical import protectedSplit
         pairs = findMergePairs(venues, radiusMeters, minNameSimilarity,
-                               blockFn=blockFn)
+                               blockFn=blockFn,
+                               venueBlockFn=protectedSplit if useRules else None)
         clusters = buildClusters(len(venues), pairs)
         summary = _summarizeClusters(clusters, venues)
 

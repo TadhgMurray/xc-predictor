@@ -5593,3 +5593,25 @@ Chromium against the old script (readout 15:00, label under the pointer
   137.9). It showed the squad's season rating while the time is the recent
   form (_formRating); where the time is the rating's, the column takes
   form_rating/form_pool (season_rating kept on the row).
+- **✅ FOUND: Mt. SAC's rain course was fitted as the main course.** The
+  two unnamed days (2025-11-22, 2023-11-18, the CIF-SS Finals, ~1,150 rows)
+  ran on "Mt. San Antonio College (rain course)" -- a split the owner made
+  by hand, and engine/course_merge.py protects (rain -3.2% vs main +4.3%).
+  But scripts/build_course_canonical.py (pipeline 06b) clusters by
+  coordinates + normalized name and never asked: same coordinates, near-
+  identical name, same canonical_id, so the joint solve keyed both to one
+  cell and the rain days read "-5.7% / -6.5%" on the main Mt. SAC 4800 cell,
+  pulling its course down. Now findMergePairs takes a venueBlockFn and the
+  build vetoes merging names with different protected tags
+  (build_course_canonical.protectedSplit, course_merge's regex on the RAW
+  names), and keepIds gives a protected name sharing an old id a fresh id
+  (the plain name keeps it). Next pipeline run: 06b splits it, the solve
+  fits it. Owner: the HS course is 3 miles since 2024, so the 4700 (2.93 mi)
+  and 4800 cells are genuinely two distances -- no pin needed.
+  test_course_canonical_ids.
+- **✅ Predicted results: every row's Rating is the rating its time is worth
+  on this course** (owner: "column should probably show the rating that
+  time would be on the course"). Rating-served rows already showed their
+  form rating (the same number); model-served rows now show
+  _secondsToRating(seconds, pool, spec) -- the inverse of the rating
+  basis's own rating->time conversion (_ratingToSeconds), by bisection.

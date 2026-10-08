@@ -185,6 +185,34 @@ def _chooseCanonicalName(group, venues):
     return venues[ranked[0]]["name"].strip()
 
 
+# ★ A DELIBERATE SPLIT STAYS SPLIT (owner, 2026-10-08: "the rain course was
+#   done manually by me"). "Mt. San Antonio College (rain course)" sits at
+#   exactly the main course's coordinates and is a different, faster loop
+#   (engine/course_merge.py measured -3.2% against +4.3%). course_merge
+#   protects it, but this clustering never asked: the normalized names are
+#   near-identical, so the rain course took the main course's canonical id
+#   and the joint solve fitted the two as one -- the 2023 and 2025 CIF-SS
+#   Finals read "-6.5%" and "-5.7%" days on the main Mt. SAC cell and pulled
+#   its difficulty down. Same regex as course_merge, on the RAW names (the
+#   normalized ones may have dropped the parenthesis): a protected name joins
+#   only a name carrying the same protected suffix.
+def protectedTag(name):
+    """'(rain course)' etc. for a deliberately split name, else None."""
+    import os as _os
+    import sys as _sys
+    _eng = _os.path.join(_os.path.dirname(_os.path.dirname(
+        _os.path.abspath(__file__))), "engine")
+    if _eng not in _sys.path:
+        _sys.path.insert(0, _eng)
+    from course_merge import _PROTECTED
+    m = _PROTECTED.search(str(name or ""))
+    return m.group(0).lower() if m else None
+
+
+def protectedSplit(venueA, venueB):
+    return protectedTag(venueA.get("name")) != protectedTag(venueB.get("name"))
+
+
 def buildMapping(venues, radiusMeters, minNameSimilarity):
     """
     Cluster the venues and flatten to insertable rows.
@@ -201,7 +229,7 @@ def buildMapping(venues, radiusMeters, minNameSimilarity):
     same input always produces the same ids.
     """
     pairs = findMergePairs(venues, radiusMeters, minNameSimilarity,
-                           blockFn=blocksMerge)
+                           blockFn=blocksMerge, venueBlockFn=protectedSplit)
     clusters = buildClusters(len(venues), pairs)
 
     rows = []
@@ -330,6 +358,31 @@ def keepIds(rows, old):
                 oid, oname = host_id, host_name
                 n_new_v += 1
             out.append((m[0], m[1], m[2], oid, oname, 0, m[6]))
+    # ★ EXCEPT A DELIBERATE SPLIT THAT AN OLD BUILD MERGED (protectedSplit).
+    #   "Keeps its id, always" would hand the rain course the main course's id
+    #   on every rebuild, which is the bug. Where one id holds names with
+    #   different protected tags, the tag with the most rows (the plain name)
+    #   keeps it and each other tag gets a fresh id of its own, named as it
+    #   is spelled. Its difficulty arrives with the next solve.
+    by_id = {}
+    for i, r in enumerate(out):
+        by_id.setdefault(r[3], []).append(i)
+    for cid, idxs in sorted(by_id.items()):
+        tags = {}
+        for i in idxs:
+            tags.setdefault(protectedTag(out[i][0]), []).append(i)
+        if len(tags) < 2:
+            continue
+        keep = max(tags, key=lambda t: sum(out[i][6] or 0 for i in tags[t]))
+        for t, members in sorted(tags.items(), key=lambda kv: str(kv[0])):
+            if t == keep:
+                continue
+            name = max(members, key=lambda i: out[i][6] or 0)
+            for i in members:
+                a, b, c, _d, _e, f, g = out[i]
+                out[i] = (a, b, c, next_id, out[name][0], f, g)
+            next_id += 1
+            n_new_ids += 1
     sizes = {}
     for r in out:
         sizes[r[3]] = sizes.get(r[3], 0) + 1
