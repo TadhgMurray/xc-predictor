@@ -6761,7 +6761,7 @@ def predictMeetName(cur, meet_id, sport, div_id=None, source=None):
                        ORDER BY (div_id = %(d)s) DESC NULLS LAST LIMIT 1""",
                     {"m": meet_id, "d": div, "src": source})
         row = cur.fetchone() or {}
-        out = {"meet_name": row.get("meet_name"), "division": row.get("division") if div_id else None}
+        out = {"meet_name": row.get("meet_name"), "division": row.get("division") if div is not None else None}
         if not out["meet_name"] and source == "tfrrs":
             out["meet_name"] = _tfrrsMeetMeta(cur, meet_id).get("meet_name")
         cur.execute("SELECT min(date) AS d FROM results_tf WHERE meet_id = %s "
@@ -6776,7 +6776,7 @@ def predictMeetName(cur, meet_id, sport, div_id=None, source=None):
         row = cur.fetchone() or {}
         out = {"meet_name": row.get("meet_name") or row.get("venue_name"),
                "course": row.get("venue_name"),
-               "division": row.get("division") if div_id else None}
+               "division": row.get("division") if div is not None else None}
         cur.execute("SELECT min(date) AS d FROM results WHERE meet_id = %s "
                     "AND source = 'tfrrs'", (meet_id,))
     else:
@@ -6788,7 +6788,7 @@ def predictMeetName(cur, meet_id, sport, div_id=None, source=None):
                     {"m": meet_id, "d": div, "src": source})
         row = cur.fetchone() or {}
         out = {"meet_name": row.get("meet_name"), "course": row.get("course_name"),
-               "division": row.get("division") if div_id else None}
+               "division": row.get("division") if div is not None else None}
         cur.execute("SELECT min(date) AS d FROM results WHERE meet_id = %s "
                     "AND (%s::text IS NULL OR source = %s)",
                     (meet_id, source, source))

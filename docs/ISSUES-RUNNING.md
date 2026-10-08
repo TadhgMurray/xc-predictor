@@ -5338,6 +5338,12 @@ Chromium against the old script (readout 15:00, label under the pointer
   (read-only) runs meetField and prints, per listed runner, the season
   pools, person_gender, profiles and labelled rows, to say which source
   still carries the other gender.
+- **Predictions: tfrrs division 0 read as "no division".** diag_predict_gender
+  on NCAA 2025 (tfrrs meet 27292 div 0) printed label None, gender None and
+  578 originals: `_divisionLabel` and `_exactField` tested `not div_id`, so a
+  tfrrs meet's first race (div 0) had no title (so no title gender) and its
+  field was the WHOLE meet, men and women. Now `is None`; the predict header
+  (app.predictMeetName) too. Test in `test_predict_squads.py`.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

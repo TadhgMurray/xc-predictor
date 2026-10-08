@@ -279,3 +279,26 @@ def test_the_season_squads_query_checks_person_gender(monkeypatch):
     assert "%(gender)s" in sql
     monkeypatch.setattr(P, "_personGenderJoin", lambda cur: "LEFT JOIN (SELECT 1) pg ON FALSE")
     assert P._pgGenderClause(None, "s.person_id") == ""
+
+
+def test_division_zero_is_a_division():
+    """Owner, 2026-10-08 (NCAA 2025, tfrrs meet 27292 div 0): a tfrrs meet's
+    first race is division 0, which read as "no division" -- no title, so
+    no title gender, and the field was the whole meet (578 runners)."""
+    class Cur:
+        def __init__(self):
+            self.sql = []
+
+        def execute(self, sql, params=None):
+            self.sql.append((sql, params))
+
+        def fetchone(self):
+            return {"d": "Women 6k"}
+
+        def fetchall(self):
+            return []
+    cur = Cur()
+    assert P._divisionLabel(cur, 27292, 0, "XC", source="tfrrs") == "Women 6k"
+    cur = Cur()
+    P._exactField(cur, 27292, 0, "XC", source="tfrrs")
+    assert "r.div_id = %(div)s" in cur.sql[0][0]

@@ -3065,7 +3065,7 @@ def _combinedRoster(cur, target, div_ids, sport, mode):
 
 # The division's own name, for the "(Varsity)" suffix. Falls back to the id.
 def _divisionLabel(cur, meet_id, div_id, sport, source=None):
-    if not meet_id or not div_id:
+    if not meet_id or div_id is None:
         return None
     # ! THE DIVISION OF THE MEET `source` NAMES (2026-10-05): the same
     #   (meet_id, div_id) can be a division of the colliding meet. A tfrrs XC
@@ -3165,7 +3165,7 @@ def _exactField(cur, meet_id, div_id, sport, source=None):
     """
     from season_year import seasonYearSqlInt
     table = "results" if sport == "XC" else "results_tf"
-    div_clause = "AND r.div_id = %(div)s" if div_id else ""
+    div_clause = "AND r.div_id = %(div)s" if div_id is not None else ""
     cur.execute(f"""
         SELECT DISTINCT ON (r.person_id)
                r.person_id, r.team_id, r.school, r.grade,
