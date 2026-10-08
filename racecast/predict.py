@@ -3517,11 +3517,28 @@ def _personGenderJoin(cur):
                 pass
             # ! NOT CACHED: a cursor that cannot answer (a test double) says
             #   nothing about the database the next request will use
-            return "LEFT JOIN (SELECT NULL::bigint AS person_id, NULL::text AS gender) pg ON FALSE"
+            return "LEFT JOIN (SELECT NULL::bigint AS person_id, NULL::text AS gender, NULL::boolean AS split) pg ON FALSE"
     if _PG["has"]:
         return ("LEFT JOIN person_gender pg ON pg.person_id = r.person_id "
                 "AND pg.gender IN ('M', 'F')")
-    return "LEFT JOIN (SELECT NULL::bigint AS person_id, NULL::text AS gender) pg ON FALSE"
+    return "LEFT JOIN (SELECT NULL::bigint AS person_id, NULL::text AS gender, NULL::boolean AS split) pg ON FALSE"
+
+
+# ★ person_gender OUTRANKS A STALE POOL (owner, 2026-10-08: "it's
+#   consistently the same guys" in last year's NCAA women's race). A pool's
+#   letter is the gender the LAST go-live rated a person under; 04d can
+#   since have corrected it (the Fairborn men a tfrrs label called "Women"
+#   are college_f until the next go-live). Where person_gender has a
+#   verdict and the person is not split, that verdict decides. Split
+#   people keep their per-row pool: they really are both.
+def _pgGenderClause(cur, pid_sql):
+    """SQL: AND-clause dropping people whose person_gender verdict is the
+    other gender than %(gender)s, or "" without the table."""
+    if "person_gender pg" not in _personGenderJoin(cur):
+        return ""
+    return (f"AND NOT EXISTS (SELECT 1 FROM person_gender pgx "
+            f"WHERE pgx.person_id = {pid_sql} AND NOT pgx.split "
+            f"AND pgx.gender IN ('M', 'F') AND pgx.gender <> %(gender)s)")
 
 
 def _raceEntrantsUncached(cur, schools, sport, year, gender=None, levels=None):
@@ -3543,6 +3560,8 @@ def _raceEntrantsUncached(cur, schools, sport, year, gender=None, levels=None):
                    FILTER (WHERE r.speed_rating > 0)               AS rating,
                count(*)                                            AS n_races,
                {_PERSON_GENDER_SQL}                               AS gender,
+               bool_or(COALESCE(pg.split, FALSE))                 AS pg_split,
+               max(pg.gender)                                     AS pg_gender,
                -- ★ THE ROW'S OWN NAME WHEN athletes HAS NONE (owner,
                --   2026-09-25: "all freshman are unknown"). A tfrrs-only
                --   person -- a freshman whose high school career is on anet
@@ -3566,6 +3585,9 @@ def _raceEntrantsUncached(cur, schools, sport, year, gender=None, levels=None):
         pool = r.get("pool") or None
         g = (pool[-1].upper() if pool and pool[-2:] in ("_m", "_f")
              else (r.get("gender") or "").upper()[:1] or None)
+        # person_gender outranks a stale pool letter (_pgGenderClause)
+        if r.get("pg_gender") in ("M", "F") and not r.get("pg_split"):
+            g = r["pg_gender"]
         # ★ AN UNKNOWN GENDER DOES NOT GET INTO A GENDERED RACE (owner,
         #   2026-10-08: "predictions still has issues with gender"). A
         #   runner whose pool, person_gender verdict and profiles all say
@@ -3679,7 +3701,8 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
                    if active_year is not None else "")
     # ★ A SCHOOL IS TWO TEAMS. Without this the boys squad and the girls squad
     #   come back as one list and the top seven of it is a mixed team.
-    gender_clause = ("AND upper(right(s.pool, 1)) = %(gender)s"
+    gender_clause = ("AND upper(right(s.pool, 1)) = %(gender)s "
+                     + _pgGenderClause(cur, "s.person_id")
                      if gender in ("M", "F") else "")
     # ★ AND A NAME IS NOT A SCHOOL. Same split the pool already carries.
     level_clause = ("AND split_part(split_part(s.pool, '|', 1), '_', 1) "

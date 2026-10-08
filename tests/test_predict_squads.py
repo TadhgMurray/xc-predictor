@@ -250,3 +250,32 @@ def test_the_squad_filter_takes_the_title_gender_before_the_runners(monkeypatch)
     # a silent title leaves it to the runners
     assert P._raceGender(None, 5, 9, "XC", "anet", [1]) == "runners"
     assert P._raceGender(None, 5, None, "XC", "anet", [1]) == "runners"
+
+
+def test_person_gender_outranks_a_stale_pool_letter(monkeypatch):
+    """Owner, 2026-10-08: "consistently the same guys" in last year's NCAA
+    women's race -- men a tfrrs label called "Women", still rated college_f
+    until the next go-live after person_gender corrected them."""
+    import pool_view
+    monkeypatch.setattr(pool_view, "stampBoardRows", lambda rows, **k: None)
+    rows = [{"school": "Wittenberg", "person_id": 9, "grade": "FR-1",
+             "pool": "college_f", "rating": 172.7, "n_races": 1, "gender": "M",
+             "pg_gender": "M", "pg_split": False, "name": "Eli Whetsone"},
+            {"school": "Wittenberg", "person_id": 10, "grade": "SO-2",
+             "pool": "college_f", "rating": 110.0, "n_races": 4, "gender": "F",
+             "pg_gender": "M", "pg_split": True, "name": "Split Person"}]
+    got = P._raceEntrantsUncached(_Cur(rows), ["Wittenberg"], "XC", 2026, gender="F")
+    # the split person keeps the row's pool; the stale letter does not decide
+    assert [e["person_id"] for e in got["Wittenberg"]] == [10]
+    got = P._raceEntrantsUncached(_Cur(rows), ["Wittenberg"], "XC", 2026, gender="M")
+    assert [e["person_id"] for e in got["Wittenberg"]] == [9]
+
+
+def test_the_season_squads_query_checks_person_gender(monkeypatch):
+    monkeypatch.setattr(P, "_personGenderJoin",
+                        lambda cur: "LEFT JOIN person_gender pg ON pg.person_id = r.person_id")
+    sql = P._pgGenderClause(None, "s.person_id")
+    assert "person_gender pgx" in sql and "NOT pgx.split" in sql
+    assert "%(gender)s" in sql
+    monkeypatch.setattr(P, "_personGenderJoin", lambda cur: "LEFT JOIN (SELECT 1) pg ON FALSE")
+    assert P._pgGenderClause(None, "s.person_id") == ""

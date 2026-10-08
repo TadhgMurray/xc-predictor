@@ -5323,6 +5323,21 @@ Chromium against the old script (readout 15:00, label under the pointer
   per-person scan of athletes by person_id for every runner at every
   school); it is back to the primary-key lookup, person_gender kept. Test in
   `test_predict_squads.py`.
+- **Predictions: the same men in every women's race (owner, NCAA 2025
+  women, "consistently the same guys").** The squad filter read a runner's
+  gender off their season POOL letter, which is the gender the last go-live
+  rated them under. The Fairborn men (Mike Baumer XC Classic 2026, tfrrs
+  division "Men's 5k Race - Women") were rated college_f/unknown on that
+  label, so they stayed women's-squad material even after person_gender
+  (04d, field vote of 2026-10-07) can say M. Now a non-split
+  person_gender verdict outranks the pool letter in both squad paths
+  (athlete_season and this season's results); split people keep the row's
+  pool. Tests in `test_predict_squads.py`. Their 170-214 ratings on that
+  page are the same wrong scale and need the pipeline (04d -> backfill ->
+  go-live). 🔎 `scripts/diag_predict_gender.py --meet M --div D --source S`
+  (read-only) runs meetField and prints, per listed runner, the season
+  pools, person_gender, profiles and labelled rows, to say which source
+  still carries the other gender.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane
