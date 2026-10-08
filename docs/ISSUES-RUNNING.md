@@ -5414,3 +5414,15 @@ Chromium against the old script (readout 15:00, label under the pointer
   a third basis, `base` (the model's own anchor through the same
   conversion), and splits the model by its conversion (own ratio vs
   curve): base biased too -> conversion; base clean -> the network.
+- **Verdict (owner's run, same 40 races, day before):** base 5.24% /
+  +0.87% / order 0.775; model 6.51% / +4.78% / 0.775; rating 3.97% /
+  +0.10% / 0.874. The NETWORK adds no ordering over "they run what they ran
+  last" and adds ~4% slow; the conversion is mostly sound (base hs within
+  +-0.7%). college_f base +9.8% is essentially one race (tfrrs meet 28819,
+  211 of 296 runners) -- not yet a general conversion bug; ms_m +13% is the
+  network (base +2%). Root cause candidate: the corpus rows carry only
+  normalized_time, never the race's rating, so the network reads day- and
+  field-noisy times the ratings have already corrected. 📋 Proposed: feed
+  each prior race's rating (as a common-scale time) into the sequence and
+  anchor on the rated form (a BASELINE_RATING), so the network learns
+  corrections on top of the 0.874 ordering instead of rebuilding it.
