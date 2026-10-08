@@ -274,6 +274,99 @@ def emptyUndated(cur, sport, top, span=UNDATED_SPAN, source="anet"):
     return [r[0] for r in cur.fetchall()]
 
 
+def emptyUnrecorded(cur, sport, top, span=UNDATED_SPAN, source="anet"):
+    """Meets marked DONE with 0 results that left NO meet row at all, within
+    `span` ids below the watermark.
+
+    ★ THE GAP emptyUndated CANNOT SEE EITHER (owner, 2026-10-08: "I see no
+      Purple Valley classic, or woodbridge"). scrapeMeetBySport answers
+      (0, True) for a meet that exists but has no divisions yet -- the shape
+      of a meet created weeks ahead of race day -- and the launcher writes
+      state 1. Nothing is saved: the meets row is written per DIVISION, from
+      the results payload, so there is no row to carry a name or a date.
+      Every re-ask pass here starts from that row (scheduledToRetry and
+      emptyUndated through _meetExistsSql, emptyRecent through the date
+      join), and seedForward's "state 1 and no meet row" clause only covers
+      the block it is walking. So once the watermark passed such an id, the
+      meet stayed "done" for ever, whatever was posted later.
+
+    ! STATE 1, NOT 4. State 4 is the feed saying "no meet here"; this is the
+      feed saying "a meet, nothing in it yet". A row with results, or with a
+      meet row, belongs to the passes above.
+    ! BOUNDED LIKE emptyUndated, by SEED_UNDATED_SPAN ids below the
+      watermark, because there is no date to bound it by -- that is the bug.
+    """
+    t = _t(source, sport)
+    cur.execute(f"""
+        SELECT q.meet_id
+        FROM   meet_queue q
+        WHERE  q.source = %s AND q.sport = %s
+          AND  q.scraped = 1
+          AND  q.meet_id BETWEEN %s AND %s
+          AND  NOT {_meetExistsSql(source, sport)}
+          AND  NOT EXISTS (SELECT 1 FROM {t['results']} r
+                           WHERE r.meet_id = q.meet_id AND r.source = %s)
+        ORDER  BY q.meet_id
+    """, (source, sport, max(0, top - span), top, source))
+    return [r[0] for r in cur.fetchall()]
+
+
+_SANE_DATE = r"^(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}"
+
+
+def seasonRange(cur, sport, source="anet", recent_days=RECENT_DAYS):
+    """(lo, hi, how) -- the ids this season's meets occupy in one feed/sport.
+
+    lo is the lowest id of a meet DATED in the last recent_days (the same
+    window the recent pass uses); hi is the highest id ever queued. With no
+    dated meet in the window it falls back to SEED_UNDATED_SPAN below the
+    watermark, the bound emptyUndated uses. Read-only.
+    """
+    t = _t(source, sport)
+    since = (datetime.date.today()
+             - datetime.timedelta(days=recent_days)).isoformat()
+    lo = None
+    if hasDateColumn(cur, sport, source):
+        cur.execute(f"""
+            SELECT min(d.meet_id) FROM {t['dates']} d
+            WHERE  d.{t['date_col']} ~ %s AND d.{t['date_col']} >= %s
+                   {_clause(t['dates_where'], 'd')}
+        """, (_SANE_DATE, since))
+        lo = cur.fetchone()[0]
+    hi = askedFrontier(cur, sport, source)
+    if lo is not None:
+        return lo, hi, f"lowest id dated since {since}"
+    mark = watermark(cur, sport, source)
+    if mark is None:
+        return None, hi, "no results and no dated meets"
+    return max(0, mark - UNDATED_SPAN), hi, \
+        f"SEED_UNDATED_SPAN ({UNDATED_SPAN:,}) below the watermark"
+
+
+def deletedIds(cur, sport, lo, hi, source="tfrrs"):
+    """Ids in lo..hi with NO queue row and NO meet row for this feed/sport.
+
+    ★ WHAT A tfrrs "event - deleted" LEAVES BEHIND. run_tfrrs.processMeet
+      deletes the queue row of any page _isMeetPage does not call a meet, so
+      nothing records that the id was ever asked. seedForward re-inserts it
+      only while it is inside the walk's block above the watermark; below
+      it, the id is never asked again. Read-only.
+    """
+    if lo is None or hi is None or hi < lo:
+        return []
+    t = _t(source, sport)
+    cur.execute(f"""
+        SELECT g FROM generate_series(%s::bigint, %s::bigint) g
+        WHERE NOT EXISTS (SELECT 1 FROM meet_queue q
+                          WHERE q.meet_id = g AND q.sport = %s
+                            AND q.source = %s)
+          AND NOT EXISTS (SELECT 1 FROM {t['meets']} m
+                          WHERE m.meet_id = g{_clause(t['meets_where'], 'm')})
+        ORDER BY g
+    """, (lo, hi, sport, source))
+    return [r[0] for r in cur.fetchall()]
+
+
 def scheduledToRetry(cur, sport, above, has_date, source="anet"):
     """Scheduled meets worth asking again: real meets above the watermark with
     no results, minus any we know are still in the future.
@@ -452,7 +545,14 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
         out["undated"] = len(undated)
         say(f"  [{tag}] undated with 0 results in the last {UNDATED_SPAN:,} ids: "
             f"{len(undated):,}")
-        dated = sorted(set(dated) | set(undated))
+        # ★ AND THE EMPTY MEETS THAT LEFT NO ROW (owner, 2026-10-08) -- see
+        #   emptyUnrecorded. Not gated on has_date: having no row is exactly
+        #   why no date exists for them.
+        unrecorded = emptyUnrecorded(cur, sport, top, source=source)
+        out["unrecorded"] = len(unrecorded)
+        say(f"  [{tag}] done with 0 results and no meet row in the last "
+            f"{UNDATED_SPAN:,} ids: {len(unrecorded):,}")
+        dated = sorted(set(dated) | set(undated) | set(unrecorded))
         out["dated"] = len(dated)
         out["scheduled_retry"] = len(sched_retry)
         say(f"  [{tag}] dated since {since} with 0 results: {len(dated):,}")

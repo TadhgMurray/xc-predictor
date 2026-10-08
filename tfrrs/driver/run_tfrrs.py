@@ -450,23 +450,15 @@ def _saveTeamScores(conn, bundle):
 #   from async_db_helper import runDbCall   # if the driver ends up async
 # (kept commented until chunk 5 decides sync vs async)
 
-# _markMeetDone
-# Purpose: Flip a meet's row to scraped=1 (success) - the LAST step, run only
-#          after a full save. Sport-specific because a meet_id can have both an
-#          XC and a TF queue row (composite PK (meet_id, sport)); we must touch
-#          only the one we scraped.
-# Arguments:
-#           conn:    open DB connection.
-#           meet_id: the meet.
-#           sport:   'XC' or 'TF' (UPPERCASE, matching the queue).
-# Output:   none. Caller commits. (getConn does NOT auto-commit - a write needs
-#           an explicit conn.commit(), per the database.py note.)
-def _markMeetDone(conn, meet_id, sport):
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE meet_queue SET scraped = 1 WHERE meet_id = %s AND sport = %s",
-        (meet_id, sport),
-    )
+# ⚠ A SECOND _markMeetDone USED TO SIT HERE, UNSCOPED, AND IT WON (found
+#   2026-10-08 while tracing "I see no Purple Valley classic, or woodbridge").
+#   A later `def` of the same name replaces the earlier one at import, so
+#   processMeet called THIS copy -- "UPDATE meet_queue SET scraped = 1 WHERE
+#   meet_id = %s AND sport = %s", no source -- and every tfrrs meet saved also
+#   marked the anet row with the same id and sport done, due or not. The
+#   2026-10-07 fix to _deleteQueueRow said _markMeetDone was already scoped;
+#   the first copy was, the one that ran was not. The scoped one above is now
+#   the only one.
 
 # _printMeetResult
 # Purpose: Print a one-line per-meet summary from a processMeet bundle, mirroring

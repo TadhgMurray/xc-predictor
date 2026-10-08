@@ -5264,6 +5264,24 @@ Chromium against the old script (readout 15:00, label under the pointer
   lit on load and the tip named it; now the tip reads "Tap a team ..."
   until one is tapped (a ?school= link still arrives lit). XC, track and
   compiled pages.
+- **Missing meets (Woodbridge, Purple Valley): a meet asked before it had
+  divisions was marked done and never asked again.** anet's getMeetData with
+  no divisions returns (0, True): queue state 1 and NO meets row (the row is
+  written per division), and every re-ask pass needs a meets row, so once
+  the forward walk passed the id the meet was gone. New
+  queue_meets.emptyUnrecorded re-queues state-1, no-row, no-result ids
+  within SEED_UNDATED_SPAN below the watermark at every launch.
+  `scripts/requeue_empty_meets.py` (dry run; --apply between runs) does it
+  now, and re-inserts tfrrs ids deleted as "not a meet" (no record that they
+  were asked) and resets tfrrs failures in the season range.
+  `scripts/diag_missing_meet.py <name> | --id N | --summary` says what
+  happened to a meet. Test: `tests/test_empty_meet_requeue.py`.
+  ! run_tfrrs.py had a second, unscoped _markMeetDone that replaced the
+  scoped one at import: every tfrrs save also marked the anet queue row of
+  the same id/sport done. Removed.
+  ! anet failures (5,741) are reset to due at every launch; a huge meet that
+  times out every time (15 s first-byte wait, scraper.py:223) would stay
+  failed -- the run log line names it.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane
