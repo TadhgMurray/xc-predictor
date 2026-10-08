@@ -5397,3 +5397,11 @@ Chromium against the old script (readout 15:00, label under the pointer
   model.pt's date may be training targets (flattered).
 - Tests: test_context_width.py (slot, cap, twin's span, old width),
   test_predict_hidden_days.py.
+- **Owner's backtest (40 races, 2026-09-03..10-04, current 24-wide model):**
+  day before: model median |err| 6.27%, bias +4.56% (slow), order 0.768;
+  rating 4.02%, -0.03%, 0.872. Three weeks: model 6.65%, +3.34%, 0.681;
+  rating 4.55%, -0.25%, 0.816. The served rating basis is sound; the model
+  runs ~4.5% slow on everyone, which is most of its extra miss. backtest
+  now breaks each basis's error down by level, days since last race
+  (quartiles), last race's sport and prior races, to locate the bias
+  before the retrain.

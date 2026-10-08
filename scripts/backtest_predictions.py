@@ -19,6 +19,10 @@ been run. READ ONLY.
     bias %               + = predicted too slow, - = too fast
     order                mean Spearman correlation, predicted vs actual
                          finishing order within each race (1 = perfect)
+  Then --breakdown (default on) splits each basis's error by level and
+  gender (the rating's pool), days since the runner's last race before
+  the cut (quartiles of this run), the sport of that last race (XC/TF) and
+  the number of prior races (quartiles) -- where a systematic bias lives.
   Two bases, on the same runners (those both could predict):
     rating  the athlete's recent rated form as a time at that race -- what
             the page serves by default (XCP_PREDICT_BASIS=rating)
@@ -81,6 +85,7 @@ def main():
                     help="how many races to sample (each costs a few seconds)")
     ap.add_argument("--min-field", type=int, default=20)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--no-breakdown", dest="breakdown", action="store_false")
     a = ap.parse_args()
     leads = [int(w) for w in a.weeks.split(",") if w.strip()]
 
@@ -144,10 +149,15 @@ def main():
                 if len(both) < 3:
                     continue
                 act = [actual[p] for p in both]
+                facts = _facts(cur, both, cut, rated)
+                conn.rollback()
                 for basis, got in (("rating", rated), ("model", model)):
                     pred = [float(got[p]["seconds"]) for p in both]
-                    s = acc.setdefault((basis, lead), {"err": [], "order": [], "races": 0})
-                    s["err"] += [100.0 * math.log(x / y) for x, y in zip(pred, act)]
+                    s = acc.setdefault((basis, lead), {"err": [], "order": [], "races": 0,
+                                                       "rows": []})
+                    errs = [100.0 * math.log(x / y) for x, y in zip(pred, act)]
+                    s["err"] += errs
+                    s["rows"] += [(e, facts[p]) for e, p in zip(errs, both)]
                     rho = _spearman(pred, act)
                     if rho is not None:
                         s["order"].append(rho)
@@ -165,6 +175,77 @@ def main():
         order = statistics.fmean(s["order"]) if s["order"] else float("nan")
         print(f"{basis:7} {lead:>4}w {s['races']:>6} {len(s['err']):>8} "
               f"{med:>12.2f}% {bias:>+6.2f}% {order:>6.3f}")
+    if a.breakdown:
+        _breakdown(acc)
+
+
+def _facts(cur, ids, cut, rated):
+    """{pid: {level, gap, sport, n}} as of the cut: the rating's pool,
+    days since the last race of either sport, that race's sport, and how
+    many races came before."""
+    cur.execute("""
+        SELECT person_id, 'XC' AS sport, max(left(date, 10)) AS last, count(*) AS n
+        FROM results WHERE person_id = ANY(%(ids)s) AND date < %(cut)s
+          AND time_seconds > 0 GROUP BY 1
+        UNION ALL
+        SELECT person_id, 'TF', max(left(date, 10)), count(*)
+        FROM results_tf WHERE person_id = ANY(%(ids)s) AND date < %(cut)s
+          AND COALESCE(is_field, 0) = 0 AND COALESCE(is_relay, 0) = 0
+          AND time_seconds > 0 GROUP BY 1""", {"ids": ids, "cut": cut.isoformat()})
+    by = {}
+    for r in cur.fetchall():
+        by.setdefault(r["person_id"], []).append(r)
+    out = {}
+    for p in ids:
+        rows = by.get(p) or []
+        last = max(rows, key=lambda r: r["last"]) if rows else None
+        gap = ((cut - datetime.date.fromisoformat(last["last"])).days
+               if last and last["last"] else None)
+        out[p] = {"level": ((rated.get(p) or {}).get("form_pool") or "?").split("|")[0],
+                  "gap": gap, "sport": last["sport"] if last else "?",
+                  "n": sum(r["n"] for r in rows)}
+    return out
+
+
+def _quartileBand(values):
+    """value -> 'lo-hi' by this run's own quartiles."""
+    vs = sorted(v for v in values if v is not None)
+    if len(vs) < 4:
+        return lambda v: "all"
+    q = [vs[0]] + [vs[int(len(vs) * k / 4)] for k in (1, 2, 3)] + [vs[-1]]
+
+    def band(v):
+        if v is None:
+            return "?"
+        for i in range(4):
+            if v <= q[i + 1]:
+                return f"{q[i]}-{q[i + 1]}"
+        return f"{q[3]}-{q[4]}"
+    return band
+
+
+def _breakdown(acc):
+    for (basis, lead), s in sorted(acc.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+        rows = s.get("rows") or []
+        if not rows:
+            continue
+        gap_band = _quartileBand([f["gap"] for _, f in rows])
+        n_band = _quartileBand([f["n"] for _, f in rows])
+        print(f"\n{basis} {lead}w by group (median bias, median |err|, runners)")
+        for title, key in (("level", lambda f: f["level"]),
+                           ("days since last race", lambda f: gap_band(f["gap"])),
+                           ("last race sport", lambda f: f["sport"]),
+                           ("prior races", lambda f: n_band(f["n"]))):
+            groups = {}
+            for e, f in rows:
+                groups.setdefault(key(f), []).append(e)
+            cells = []
+            for g, es in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+                if len(es) < 20:
+                    continue
+                cells.append(f"{g}: {statistics.median(es):+.1f}% "
+                             f"{statistics.median(abs(x) for x in es):.1f}% n{len(es)}")
+            print(f"  {title:22} " + " | ".join(cells))
 
 
 if __name__ == "__main__":
