@@ -29,7 +29,8 @@ import torch
 
 # ! MUST MATCH transformer.py. That is half the point of the smoke test:
 #   if these drift, the fake chunks stop reproducing the real failure.
-from transformer import SEQUENCE_FEATURES, CONTEXT_FEATURES, SEQ_NORM_TIME
+from transformer import (SEQUENCE_FEATURES, CONTEXT_FEATURES, SEQ_NORM_TIME,
+                         SEQ_RATED_TIME, SEQ_RATED_FLAG)
 
 DEFAULT_CHUNK_SIZE = 200
 MAX_HISTORY = 12
@@ -57,6 +58,13 @@ def buildChunk(n, n_venues, seed, ragged=True):
     # feature 0 is normalized_time in SECONDS -- baselineSeconds divides by
     # it, so it must be positive and realistic or the log-ratio is garbage
     seq[:, SEQ_NORM_TIME] = 900.0 + torch.rand(total, generator=g) * 600.0
+    # the rated time sits near the raw one, and most races have one -- so
+    # the default rated baseline is exercised, not fed noise (2026-10-08)
+    rated = torch.rand(total, generator=g) < 0.8
+    seq[:, SEQ_RATED_TIME] = torch.where(
+        rated, seq[:, SEQ_NORM_TIME] * torch.exp(
+            torch.randn(total, generator=g) * 0.02), torch.zeros(total))
+    seq[:, SEQ_RATED_FLAG] = rated.to(torch.float32)
     offsets = torch.zeros(n + 1, dtype=torch.long)
     offsets[1:] = torch.cumsum(lengths, dim=0)
 

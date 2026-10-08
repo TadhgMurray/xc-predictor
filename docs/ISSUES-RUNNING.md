@@ -5452,3 +5452,33 @@ Chromium against the old script (readout 15:00, label under the pointer
     default; the stale _loadModel source check now reads _loadModelLocked),
     test_context_width (rated algebra, sequence slots, old width),
     test_predict_hidden_days (21-wide trim).
+- **Model audit (2026-10-08, read-only agent; each finding checked here).**
+  Mechanics verified sound: newest-512 truncation both sides, sort, mask
+  polarity, last-real-row baseline, z-score inversion, exp(mu) is the
+  lognormal median (no exp(s^2/2) bias), athlete-disjoint split.
+  - ✅ **Cross-feed twins were in the corpus.** _XC_SQL/_TF_SQL now
+    anti-join result_twin (the engine/boards/page verdict). A twin pair put
+    one copy in the other's history at days_ago 0 (baseline == target):
+    teaches "next race = last race" and flatters validation. Inference
+    shares the SQL, so the live model also stops seeing the copies.
+  - ✅ **Target grade was the last race's.** _targetRow advances it by the
+    academic years between the last race and the target (_advanced, the
+    squads' rule); training reads the target's own grade.
+  - ✅ **"own" clock mixed track and XC** at the same distance:
+    _distanceRatio now reads only the target's sport.
+  - ✅ **train.computeStats under --chunk-range** loaded chunk c from zero
+    (_loadChunk takes a GLOBAL number): a missing file or another window's
+    chunk under this window's is_train. Now base_index // chunk_size + c.
+    fake_chunks fills the rated columns realistically (the smoke test fed
+    the rated baseline noise).
+  - Not a bug: the backtest's no-weather default is the page's measured
+    default (weather=none); both see the same zero-filled weather.
+  - Scale drift since 09-16 (per-pool anchors, ability curve, college veto;
+    under ability mode anchorShift is 1.0) -- only a retrain fixes it.
+  - 📋 Open, low: the XC target spec reads raw m.distance, training reads
+    the overridden distance (_XC_DIST); STATS_CHUNKS takes the first 200
+    chunks (lowest person_ids, the shuffle is 10 chunks deep) -- affects
+    conditioning and max_year, not the inverted predictions; long careers
+    get up to four examples per target (two horizon twins at rate 1.0);
+    "own" vs "curve" clock priority (own +1.8%, curve -0.6% in the base
+    row, but on different runners).

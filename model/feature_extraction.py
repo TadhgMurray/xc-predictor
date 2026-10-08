@@ -647,6 +647,16 @@ _XC_SQL = f"""
         --   three cannot drift.
         AND   NOT EXISTS (SELECT 1 FROM wheelchair_person wp
                           WHERE wp.person_id = r.person_id)
+        -- ★ ONE RACE, ONE ROW (2026-10-08 audit). result_twin is the
+        --   verdict the engine, the boards and the athlete page all
+        --   anti-join (engine/twin_flag.py); the corpus did not. A race
+        --   stored in both feeds then sat in its own copy's history at
+        --   days_ago 0, so baseline == target: the network learned "the
+        --   next race is the last race" and validation was flattered by
+        --   the copies sitting in both splits. Inference reads this SQL
+        --   too (personResultsSql), so both sides drop the same rows.
+        AND   NOT EXISTS (SELECT 1 FROM result_twin x
+                          WHERE x.sport = 'XC' AND x.result_id = r.result_id)
 {_ORDER_BY}
 """
 # The prose above is full of ordinary percentages; this is what keeps them
@@ -1033,6 +1043,9 @@ _TF_SQL = f"""
             --   three cannot drift.
             AND   NOT EXISTS (SELECT 1 FROM wheelchair_person wp
                               WHERE wp.person_id = r.person_id)
+            -- one race, one row: see _XC_SQL
+            AND   NOT EXISTS (SELECT 1 FROM result_twin x
+                              WHERE x.sport = 'TF' AND x.result_id = r.result_id)
 {_ORDER_BY}
 """
 _TF_SQL = escapeLiteralPercent(_TF_SQL)

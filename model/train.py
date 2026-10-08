@@ -838,8 +838,14 @@ def computeStats(dataset, is_train: torch.Tensor,
     raw_n = 0
     max_year = 0.0
 
+    # ! _loadChunk TAKES A GLOBAL CHUNK NUMBER (2026-10-08 audit). Under
+    #   --chunk-range the window's first chunk is base_index // chunk_size;
+    #   reading chunk c from zero loaded a file that is not on disk during
+    #   that shift, or another window's chunk under this window's is_train.
+    #   is_train itself is window-local, so g0 stays local.
+    first = getattr(dataset, "base_index", 0) // dataset.chunk_size
     for c in range(n_chunks):
-        chunk = dataset._loadChunk(c)
+        chunk = dataset._loadChunk(first + c)
         targets = chunk["targets"].to(torch.float32)
         n = targets.shape[0]
         g0 = c * dataset.chunk_size

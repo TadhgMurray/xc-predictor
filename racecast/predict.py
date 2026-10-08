@@ -1386,12 +1386,19 @@ _RATIO_MIN_ROWS = 2
 # ! MEDIAN, NOT MEAN. A single scraped 1-second time -- the same class of row
 #   that took the first full-corpus training run to NaN -- would drag a mean
 #   anywhere.
-def _distanceRatio(rows, distance):
+def _distanceRatio(rows, distance, is_xc=None):
     if not rows or not distance:
         return None
     lo, hi = distance * (1.0 - _DIST_TOL), distance * (1.0 + _DIST_TOL)
     got = []
     for r in rows:
+        # ★ THE TARGET'S SPORT ONLY (2026-10-08 audit). A track 5000 and a
+        #   cross country 5k are the same distance and very different
+        #   clocks: raw/normalized carries the course, and a track oval is
+        #   not a hilly park. The median mixed both for anyone who ran both.
+        if is_xc is not None and r.get("is_xc") is not None \
+                and bool(r.get("is_xc")) != bool(is_xc):
+            continue
         d = r.get("distance_meters")
         raw, norm = r.get("time_seconds"), r.get("normalized_time")
         if not d or not raw or not norm:
@@ -1410,7 +1417,8 @@ def _distanceRatio(rows, distance):
 #            clock: their own measured ratio first, the fitted curve second.
 # Output:    {"ratio"|"ctx", "basis"} -- basis is "own" or "curve".
 def _targetClock(rows, spec):
-    ratio = _distanceRatio(rows, spec.get("distance_meters"))
+    ratio = _distanceRatio(rows, spec.get("distance_meters"),
+                           spec.get("is_xc"))
     if ratio:
         return {"ratio": ratio, "ctx": None, "basis": "own"}
     ctx = _denormContext(spec, rows[-1] if rows else None)
@@ -1987,6 +1995,23 @@ def _targetRow(spec, last_row, weather=None):
     a forecast.py row, fills the weather fields; None leaves them as
     the model's no-weather shape."""
     row = dict(last_row)
+    # ★ THE GRADE THEY WILL HAVE ON THE DAY (2026-10-08 audit). Training
+    #   reads the target race's own grade; this row copied the last race's,
+    #   so a September race after a spring track season went in a year
+    #   young -- grade ordinal and level both, worst at ms->hs and
+    #   hs->college. Moved on by the academic years between the two dates,
+    #   the same rule the squads use (_advanced keeps the stored grade when
+    #   it cannot read it, or a senior has nothing to move to).
+    try:
+        from normalize_distance import academicYearOfDate, getPool
+        yrs = ((academicYearOfDate(spec.get("date")) or 0)
+               - (academicYearOfDate(last_row.get("date")) or 0))
+        if yrs > 0 and academicYearOfDate(last_row.get("date")) \
+                and row.get("grade") not in (None, ""):
+            row["grade"] = _advanced(row["grade"], yrs,
+                                     getPool(row["grade"], row.get("gender")))
+    except Exception:                                   # noqa: BLE001
+        pass
     row["is_xc"] = spec["is_xc"]
     row["is_indoor"] = None if spec["is_xc"] else bool(spec.get("is_indoor"))
     for f in _RACE_FIELDS:

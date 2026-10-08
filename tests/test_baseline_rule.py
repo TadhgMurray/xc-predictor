@@ -350,6 +350,29 @@ def test_rated_is_the_training_default():
     assert TR.BASELINE == T.BASELINE_RATING
 
 
+def test_stats_read_the_windows_own_chunks():
+    """2026-10-08 audit: under --chunk-range computeStats loaded chunk c
+    from zero, a file not on disk during that shift."""
+    import fake_chunks
+    chunk = fake_chunks.buildChunk(40, 4, seed=7)
+
+    class _DS:
+        chunk_size = 40
+        num_chunks = 1
+        base_index = 3 * 40              # a window starting at chunk 3
+
+        def __init__(self):
+            self.asked = []
+
+        def _loadChunk(self, i):
+            self.asked.append(i)
+            return chunk
+    ds = _DS()
+    stats = TR.computeStats(ds, torch.ones(40, dtype=torch.bool), max_chunks=1)
+    assert ds.asked == [3]
+    assert stats["n_examples"] >= 39       # the fake chunk has one empty history
+
+
 if __name__ == "__main__":
     for fn in [test_the_three_layouts_agree,
                test_the_padded_reductions_are_imported_not_rewritten,

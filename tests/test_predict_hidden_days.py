@@ -76,3 +76,23 @@ def test_an_old_checkpoint_gets_its_21_wide_sequence(monkeypatch):
     seq, ctx = P._forecastExample(fx, [{"date": "2026-09-01"}],
                                   {"date": "2026-10-29"}, {}, as_of=D(2026, 10, 8))
     assert all(len(v) == 21 for v in seq) and len(ctx) == 24
+
+
+def test_the_own_clock_reads_only_the_targets_sport():
+    rows = [{"is_xc": False, "distance_meters": 5000.0, "time_seconds": 900.0,
+             "normalized_time": 1000.0}] * 3 + \
+           [{"is_xc": True, "distance_meters": 5000.0, "time_seconds": 1050.0,
+             "normalized_time": 1000.0}] * 2
+    assert P._distanceRatio(rows, 5000.0, True) == 1.05
+    assert P._distanceRatio(rows, 5000.0, False) == 0.9
+    # one cross country race is not enough to measure from
+    assert P._distanceRatio(rows[:4], 5000.0, True) is None
+
+
+def test_the_target_grade_moves_with_the_seasons():
+    spec = {"is_xc": True, "date": "2026-09-20", "course_difficulty": 0.0,
+            "distance_meters": 5000.0}
+    assert P._targetRow(spec, {"grade": "10", "gender": "M",
+                               "date": "2026-05-01"})["grade"] == "11"
+    assert P._targetRow(spec, {"grade": "10", "gender": "M",
+                               "date": "2026-09-05"})["grade"] == "10"

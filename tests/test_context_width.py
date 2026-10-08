@@ -405,3 +405,13 @@ def test_the_sequence_carries_the_rated_time_and_its_flag():
 def test_an_old_checkpoint_builds_at_its_own_sequence_width():
     m = T.XCPredictor(n_venues=3, sequence_features=21, context_features=24)
     assert m.input_projection.in_features == 21 and m.seq_mean.shape[0] == 21
+
+
+def test_the_corpus_drops_flagged_twins_in_both_sports():
+    """2026-10-08 audit: a race stored in both feeds sat in its own copy's
+    history at days_ago 0. The corpus now anti-joins result_twin like the
+    engine, boards and athlete page; inference reads the same SQL."""
+    assert "FROM result_twin x" in fx._XC_SQL and "x.sport = 'XC'" in fx._XC_SQL
+    assert "FROM result_twin x" in fx._TF_SQL and "x.sport = 'TF'" in fx._TF_SQL
+    for sql in (fx._XC_SQL, fx._TF_SQL):
+        assert "r.speed_rating" in sql and "r.rating_pool" in sql
