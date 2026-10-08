@@ -5210,6 +5210,15 @@ Chromium against the old script (readout 15:00, label under the pointer
   term serves the venue-day, so races wrong by ~40% (distance or pool) drag
   it "slow" and over-credit the rest. Section 0 of the script now prints
   each race's stored distance, genders, pools and median time.
+  ! CONFIRMED: three divisions stored 3218 m were run at 5000 m (1120240
+  Varsity 1A-4A girls, median 28:46; 1120246 and 1120242 JV boys, 25:36 and
+  21:48). Production keys the day term by VENUE and day (solve_env.sh
+  XCP_RACE_KEY=venue), so their 344 rows at ~-40% among 1,091 pulled the
+  day to "slow" (344*0.4/1091 = 12.6%) and over-credited every correct race
+  ~12%. `scripts/pin_division_distance.py` pins a division's results to
+  the distance it was run at (per-result pins: a division override may only
+  lower a distance). Engine change in progress: a division far outside its
+  venue-day (beyond RACE_DAY_CAP) stops voting on the day, and is reported.
 - **College XC duplicates ("Unknown" Marshall x2 beside Rachael Withrow).**
   The Unknowns are athletic.net placeholder profiles (the XC saver wrote
   blank athlete rows until a5a9009, 2026-09-25; athlete_name only since
