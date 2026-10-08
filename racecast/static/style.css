@@ -5894,3 +5894,14 @@ td.pl.rc-m3 > span { background: var(--m3); }
    race pages: set on every .flag it also changed the athlete page's badges,
    which the owner wanted left as they were. */
 main.rc .flag { line-height: 13px; vertical-align: 1px; }
+
+/* ★ ONE WIDTH FOR EVERY RECORD FLAG ON THE ATHLETE PAGE (owner, 2026-10-08:
+   "all the flags on an athlete page should have same width no matter the
+   text"). The codes run from "R" to "★RSR"; each is centred in the width
+   of the widest, so a column of them lines up. The word tags ("not
+   counted", "out") keep their own width. */
+.main-col .flag[class*="flag--"]:not(.flag--out):not(.flag--warn) {
+  box-sizing: border-box;
+  min-width: 4.1em;
+  text-align: center;
+}
