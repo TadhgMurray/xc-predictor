@@ -5532,3 +5532,8 @@ Chromium against the old script (readout 15:00, label under the pointer
   ?alt= stays numbered over every entry, so surviving links are unchanged.
   The sitemap skips the same entries. Takes effect when the search index
   is rebuilt (pipeline step 13c, or racecast/search_index.py by hand).
+- **Owner's run:** search_index dropped 10,022 XC and 30,300 TF twin-copy
+  meet entries (186,993 / 420,038 kept). diag_venue_days "Mt. SAC" matched
+  only 'Mt SAC' / 'Mt Sac Cross Country Course' (one 2022 day): the big
+  course is stored under another name. `--meet "Mt. SAC Invitational"` now
+  finds the courses a meet ran on (every word, any order) and reads those.

@@ -55,7 +55,11 @@ def _corr(xs, ys):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--course", required=True, help="part of the course name")
+    ap.add_argument("--course", default="", help="part of the course name")
+    ap.add_argument("--meet", default="",
+                    help="part of a meet NAME run there, e.g. 'Mt. SAC Invitational': "
+                         "the courses its rows were run on are used (the engine's "
+                         "course name is often not the one people say)")
     ap.add_argument("--since", default="1900-01-01")
     a = ap.parse_args()
     # ! PUNCTUATION-BLIND (owner's first run: "no race_day_effect rows
@@ -70,7 +74,25 @@ def main():
         cur.execute("SET statement_timeout = '900s'")
         cur.execute(f"""SELECT canonical_id, course_name FROM course_canonical
                         WHERE {NORM.format('course_name')} LIKE %s""", (nlike,))
-        canon = cur.fetchall()
+        canon = cur.fetchall() if norm else []
+        if a.meet:
+            # the courses the named meet ran on, biggest first
+            # every WORD of it, in any order: "77th Annual Mt. SAC Cross
+            # Country Invitational" holds mt, sac and invitational apart
+            words = ["%" + "".join(ch for ch in w if ch.isalnum()) + "%"
+                     for w in a.meet.lower().split()]
+            words = [w for w in words if w != "%%"]
+            cond = " AND ".join([f"{NORM.format('m.meet_name')} LIKE %s"] * len(words))
+            cur.execute(f"""
+                SELECT m.course_name, count(*) FROM meets m
+                WHERE  {cond} AND m.course_name IS NOT NULL
+                GROUP  BY 1 ORDER BY 2 DESC LIMIT 5""", words)
+            got = cur.fetchall()
+            print(f"courses {a.meet!r} ran on: {got}")
+            if got:
+                cur.execute("""SELECT canonical_id, course_name FROM course_canonical
+                               WHERE course_name = ANY(%s)""", ([g[0] for g in got],))
+                canon += cur.fetchall()
         cids = [c for c, _n in canon]
         names = sorted({n for _c, n in canon if n})
         print(f"courses matching {a.course!r}: {len(cids)} canonical ids, names {names[:8]}")
@@ -78,10 +100,11 @@ def main():
             SELECT race_date::text, course_name, distance_m,
                    100 * day_effect, 100 * course_effect, n_rows
             FROM   race_day_effect
-            WHERE  (canonical_id = ANY(%s) OR {NORM.format('course_name')} LIKE %s)
+            WHERE  (canonical_id = ANY(%s)
+                    OR (%s <> '%%%%' AND {NORM.format('course_name')} LIKE %s))
               AND  course_name NOT LIKE 'TF:%%'
               AND  race_date >= %s
-            ORDER  BY race_date DESC, n_rows DESC""", (cids, nlike, a.since))
+            ORDER  BY race_date DESC, n_rows DESC""", (cids, nlike, nlike, a.since))
         days = cur.fetchall()
         if not days:
             print(f"no race_day_effect rows match {a.course!r}")
