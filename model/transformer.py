@@ -54,13 +54,14 @@ import torch.nn as nn
 SEQUENCE_FEATURES = 21
 
 # Width of the target-race context vector (also from feature_extraction).
-# 24: is_forecast at index 0, then 2026-09-15 appended the grade ordinal,
-# its known-flag and the race year at 21-23. ⚠ THIS MUST MATCH
+# 25: is_forecast at index 0, then 2026-09-15 appended the grade ordinal,
+# its known-flag and the race year at 21-23, and 2026-10-08 hidden_days at
+# 24 (CONTEXT_HIDDEN_INDEX). ⚠ THIS MUST MATCH
 # _buildContextVector IN feature_extraction.py. A mismatch surfaces as a shape
 # error inside the first Linear AFTER the extraction has written gigabytes --
 # which is why tests/test_context_width.py counts the builder's return and
 # compares it to both constants without needing a database.
-CONTEXT_FEATURES = 24
+CONTEXT_FEATURES = 25
 
 # ★ WHICH CONTEXT SLOT HOLDS THE RACE YEAR, duplicated here for the same
 #   reason CONTEXT_FEATURES is: this module imports nothing but torch, so
@@ -92,6 +93,15 @@ CONTEXT_YEAR_INDEX = 23
 #   possible without a new feature -- so validation can band on it directly.
 CONTEXT_IS_FORECAST_INDEX = 0
 CONTEXT_GAP_INDEX = 4          # days_since_last_race, raw days
+# ★ HOW MUCH OF THAT GAP IS HIDDEN (2026-10-08, owner: "we aren't
+#   predicting this person in 1 year, we're doing it in 3 weeks and this
+#   person hasn't ran in that year, and is prolly rolled"). Days from the
+#   moment the history stops being complete to the target: a twin's cut,
+#   0 for a real next race, (target - today) at inference. is_forecast
+#   alone said only "some of the gap is hidden", so a runner idle for a
+#   year with a race three weeks out read as a year of hidden racing --
+#   a year of improvement credited to someone who did not train or race.
+CONTEXT_HIDDEN_INDEX = 24
 
 # Positions inside a sequence row that this file reads by NAME. Mirror
 # _buildSequenceVector in feature_extraction.py: index 0 is the prior race's
@@ -313,8 +323,13 @@ class XCPredictor(nn.Module):
                                                        to produce
     """
 
-    def __init__(self, n_venues: int = 1):
+    def __init__(self, n_venues: int = 1, context_features: int = CONTEXT_FEATURES):
         super().__init__()
+        # ! A CHECKPOINT CARRIES ITS OWN WIDTH. racecast/predict.py builds
+        #   the model at the width model.pt was trained with, so a 24-wide
+        #   checkpoint from before hidden_days keeps serving until the
+        #   retrained one replaces it.
+        self.context_features = context_features
 
         self.input_projection = nn.Linear(SEQUENCE_FEATURES, EMBED_DIM)
 
@@ -336,7 +351,7 @@ class XCPredictor(nn.Module):
 
         # The question the target race asks of the history: one query vector
         # made from the context, attending over the encoded races.
-        self.context_query = nn.Linear(CONTEXT_FEATURES, EMBED_DIM)
+        self.context_query = nn.Linear(context_features, EMBED_DIM)
         self.pool_attention = nn.MultiheadAttention(
             EMBED_DIM, N_HEADS, dropout=DROPOUT, batch_first=True)
 
@@ -348,7 +363,7 @@ class XCPredictor(nn.Module):
         #   the mean, so every existing caller is unchanged; forwardDist()
         #   returns both.
         self.head = nn.Sequential(
-            nn.Linear(2 * EMBED_DIM + CONTEXT_FEATURES + VENUE_EMBED_DIM, 64),
+            nn.Linear(2 * EMBED_DIM + context_features + VENUE_EMBED_DIM, 64),
             nn.ReLU(),
             nn.Linear(64, 2),
         )
@@ -358,8 +373,8 @@ class XCPredictor(nn.Module):
         #   defaults are the identity, so an unset model still runs.
         self.register_buffer("seq_mean", torch.zeros(SEQUENCE_FEATURES))
         self.register_buffer("seq_std", torch.ones(SEQUENCE_FEATURES))
-        self.register_buffer("ctx_mean", torch.zeros(CONTEXT_FEATURES))
-        self.register_buffer("ctx_std", torch.ones(CONTEXT_FEATURES))
+        self.register_buffer("ctx_mean", torch.zeros(context_features))
+        self.register_buffer("ctx_std", torch.ones(context_features))
         self.register_buffer("target_mean", torch.zeros(()))
         self.register_buffer("target_std", torch.ones(()))
         # For an example with no usable last race (an empty history row):

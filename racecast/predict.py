@@ -136,7 +136,9 @@ def _loadModelLocked():
         state = blob["state_dict"] if isinstance(blob, dict) and \
             "state_dict" in blob else blob
         n_venues = state["venue_embedding.weight"].shape[0]
-        model = XCPredictor(n_venues=n_venues)
+        # the width it was trained at (24 before hidden_days, 2026-10-08)
+        ctx_width = state["context_query.weight"].shape[1]
+        model = XCPredictor(n_venues=n_venues, context_features=ctx_width)
         # ★ THE BASELINE RULE RIDES IN THE STATE DICT, so inference cannot use
         #   a different one from the weights (see transformer.BASELINE_LAST).
         #   A checkpoint trained before those buffers existed simply does not
@@ -177,6 +179,7 @@ def _loadModelLocked():
                       #   before the key was trained on the pool mixture and
                       #   must be fed it.
                       "norm_scale": stats.get("norm_scale", "pool"),
+                      "context_features": ctx_width,
                       "encoders": encoders, "vocab": vocab}
         _model = model
     except Exception as exc:                       # noqa: BLE001
@@ -276,11 +279,10 @@ def predictIndividual(cur, person_id, target):
     `target` is {"mode": "meet"|"rerun"|"manual", ...} -- see the module
     docstring. Returns a dict the page renders, or an unavailable marker.
 
-    ⚠ is_forecast IS ALWAYS TRUE HERE. Every prediction the site serves is a
-      forecast: the athlete has raced since their last recorded result, or the
-      target is weeks away, or both. The training set carries twins for
-      exactly this shape (see feature_extraction._forecastTwin) and the flag is
-      what tells the model the history does not run up to the target.
+    ★ is_forecast AND hidden_days COME FROM THE DATE (2026-10-08): the
+      history is complete to today (or a named cut), so only the days from
+      then to the target can hide races. Inside NOT_A_FORECAST_DAYS it is a
+      plain next race. See _hiddenDays.
     """
     status = modelStatus()
     if not status["available"]:
@@ -895,6 +897,11 @@ def _predictTimes(cur, person_ids, target, spec=None):
     if _hb is not None and (cut is None or _hb < cut):
         cut = _hb
 
+    def _asOf(cut):
+        # the history is complete to today, or to an earlier cut
+        today = datetime.date.today()
+        return min(cut, today) if cut is not None else today
+
     def _before(rows):
         if cut is None:
             return rows
@@ -916,7 +923,8 @@ def _predictTimes(cur, person_ids, target, spec=None):
         seq = None
         for name, wx_row in variants.items():
             target_row = _targetRow(spec, hist[-1], weather=wx_row)
-            seq, ctx = _forecastExample(fx, hist, target_row, encoders)
+            seq, ctx = _forecastExample(fx, hist, target_row, encoders,
+                                        as_of=_asOf(cut))
             ctxs_by[name] = ctx
             if venue is None:
                 venue = fx.venueIndex(target_row, vocab)
@@ -1539,11 +1547,37 @@ def _weatherVariants(cur, spec, want):
     return out
 
 
-def _forecastExample(fx, hist, target_row, encoders):
+# ★ HOW MUCH OF THE GAP TO THE TARGET IS UNSEEN (owner, 2026-10-08: "we
+#   aren't predicting this person in 1 year, we're doing it in 3 weeks and
+#   this person hasn't ran in that year, and is prolly rolled"). The history
+#   is complete up to `as_of` -- today, or the cut a backtest or projection
+#   names -- so only (target - as_of) can hide races; the rest of the gap
+#   since their last race is real idleness. The model reads both
+#   (feature_extraction.CONTEXT_HIDDEN_INDEX).
+# ★ AND INSIDE A WEEK IT IS NOT A FORECAST AT ALL (owner, same day: "if the
+#   date for a predicted race is within a week, we should change forecasted
+#   to 0"). A week is one race at most for anyone, and a real next-race
+#   example -- is_forecast 0, nothing hidden -- is exactly that shape.
+NOT_A_FORECAST_DAYS = 7
+
+
+def _hiddenDays(target_date, as_of):
+    """(is_forecast, hidden_days) for a target on target_date whose
+    history is complete to as_of."""
+    if target_date is None or as_of is None:
+        return True, 0.0
+    hidden = (target_date - as_of).days
+    if hidden < NOT_A_FORECAST_DAYS:
+        return False, 0.0
+    return True, float(hidden)
+
+
+def _forecastExample(fx, hist, target_row, encoders, as_of=None):
     """(sequence, context) for one athlete's hypothetical next race --
     the exact vectors buildAthleteExamples would emit for this target,
     built directly so a 60-race athlete costs one example, not sixty.
-    is_forecast is always True: see predictIndividual's header."""
+    as_of: the day the history is complete to (default today); see
+    _hiddenDays."""
     base = fx._baseVectors(hist, encoders)
     tdate = fx._parseDate(target_row["date"])
     seq = []
@@ -1553,8 +1587,15 @@ def _forecastExample(fx, hist, target_row, encoders):
         seq.append(v)
     seq = seq[-fx.MAX_SEQ_LEN:]
     prior = hist[-fx.MAX_SEQ_LEN:]
+    fc, hidden = _hiddenDays(_asDate(target_row["date"]),
+                             as_of or datetime.date.today())
     ctx = fx._buildContextVector(target_row, seq, prior, encoders,
-                                 is_forecast=True)
+                                 is_forecast=fc, hidden_days=hidden)
+    # ! A CHECKPOINT FROM BEFORE hidden_days IS 24 WIDE: it gets the vector
+    #   it was trained on until the retrained model replaces it
+    width = (_artifacts or {}).get("context_features")
+    if width and len(ctx) > width:
+        del ctx[width:]
     _clampYear(ctx, fx)
     return seq, ctx
 

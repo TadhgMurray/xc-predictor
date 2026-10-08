@@ -322,3 +322,54 @@ def test_the_clamp_actually_clamps():
     predict._artifacts = None
     predict._clampYear(fresh, fx)
     assert fresh[fx.CONTEXT_YEAR_INDEX] == 2029.0
+
+
+# ------------------------------------------------------------------ #
+# HIDDEN DAYS (2026-10-08)
+# ------------------------------------------------------------------ #
+
+def test_hidden_days_is_the_last_slot_and_capped_by_the_gap():
+    """Owner, 2026-10-08: a runner idle for a year with a race three weeks
+    out is not a year of hidden racing. The slot says how much is hidden."""
+    row = targetRow()
+    seq = [[0.0] * fx.SEQUENCE_FEATURES]
+    seq[0][2] = 330.0                    # last race 330 days before the target
+    ctx = fx._buildContextVector(row, seq, [row], encoders(),
+                                 is_forecast=True, hidden_days=21.0)
+    assert fx.CONTEXT_HIDDEN_INDEX == T.CONTEXT_HIDDEN_INDEX == len(ctx) - 1
+    assert ctx[fx.CONTEXT_HIDDEN_INDEX] == 21.0
+    assert ctx[4] == 330.0               # the gap itself is unchanged
+    # never more than the gap, never negative
+    assert fx._buildContextVector(row, seq, [row], encoders(),
+                                  hidden_days=999.0)[-1] == 330.0
+    assert fx._buildContextVector(row, seq, [row], encoders(),
+                                  hidden_days=-5.0)[-1] == 0.0
+    assert buildCtx()[-1] == 0.0         # a real next race hides nothing
+
+
+def test_a_twin_hides_exactly_its_cut():
+    start = datetime.date(2025, 8, 30)
+    prior = [targetRow(date=(start + datetime.timedelta(weeks=w)).isoformat())
+             for w in range(8)]
+    target = targetRow(date=(start + datetime.timedelta(weeks=10)).isoformat())
+    seq = [[0.0] * fx.SEQUENCE_FEATURES for _ in prior]
+    rng = random.Random(3)
+    twin = None
+    for _ in range(50):
+        twin = fx._gapTwin(prior, target, seq, rng)
+        if twin:
+            break
+    assert twin is not None
+    tdate = datetime.date.fromisoformat(target["date"])
+    last_kept = datetime.date.fromisoformat(twin["prior_results"][-1]["date"])
+    assert twin["hidden_days"] > 0
+    # the cut sits between the last kept race and the target
+    assert twin["hidden_days"] <= (tdate - last_kept).days
+    assert abs(twin["hidden_days"] - twin["gap_weeks"] * 7) <= 1.0
+
+
+def test_an_old_checkpoint_builds_at_its_own_width():
+    m = T.XCPredictor(n_venues=3, context_features=24)
+    assert m.context_query.in_features == 24
+    assert m.ctx_mean.shape[0] == 24
+    assert T.XCPredictor(n_venues=3).context_query.in_features == T.CONTEXT_FEATURES

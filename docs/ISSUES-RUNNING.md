@@ -5366,3 +5366,34 @@ Chromium against the old script (readout 15:00, label under the pointer
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane
   "Unknown" (need URLs).
+
+## 2026-10-08 — the transformer: what part of the gap is hidden
+
+- **Owner: "the last predictions round was really bad"; a runner idle for a
+  year with a race three weeks out reads as a year of hidden racing.** At
+  inference is_forecast was ALWAYS 1, and training's forecast/horizon twins
+  hide the WHOLE gap from the cut to the target -- so a 330-day gap with
+  is_forecast=1 looked like a horizon twin: a year of unseen racing and
+  development credited to someone who did not race ("prolly rolled").
+- **✅ hidden_days, context slot 24 (CONTEXT_FEATURES 24 -> 25).** Days of
+  the gap nobody can see: a twin's cut (target - cutoff), 0 for a real next
+  race, (target - as_of) at inference, where as_of is today or the cut a
+  backtest/projection names. Capped at days_since_last_race. The model can
+  now tell idle time (gap - hidden) from hidden racing.
+- **✅ Inside a week it is not a forecast** (owner): predict.NOT_A_FORECAST_DAYS
+  = 7 -> is_forecast 0, hidden 0, the shape of a real next-race example.
+  A past target (as-it-ran re-run) is the same.
+- **Needs re-extraction and a retrain.** Until then the live 24-wide
+  model.pt keeps serving: predict.py builds the model at the checkpoint's
+  own width and trims the vector to it (so the is_forecast change is live
+  at once; hidden_days only after the retrain). predict_check.py too.
+- ! Note: the page serves the RATING's time for every rated runner by
+  default (XCP_PREDICT_BASIS=rating); the transformer's time is served only
+  for unrated runners (and the hover). A bad round may not be the model.
+- 🔎 `scripts/backtest_predictions.py --from D --to D [--weeks 0,3]`
+  (read-only): finished XC races re-predicted with history cut before the
+  race (0w) or N weeks before, rating basis vs model on the same runners:
+  median |error| %, bias %, mean within-race Spearman. Races before
+  model.pt's date may be training targets (flattered).
+- Tests: test_context_width.py (slot, cap, twin's span, old width),
+  test_predict_hidden_days.py.

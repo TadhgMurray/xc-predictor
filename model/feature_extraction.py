@@ -137,11 +137,12 @@ SHUFFLE_SEED = 42
 #   gigabytes of chunk files. The padding row below used a hardcoded 18,
 #   which silently desyncs the moment a feature is added.
 SEQUENCE_FEATURES = 21
-# 24, not 21: is_forecast sits at index 0, and 2026-09-15 appended three at
-# the end -- the grade ordinal, its known-flag, and the race year. Count
+# 25, not 21: is_forecast sits at index 0, 2026-09-15 appended three at the
+# end -- the grade ordinal, its known-flag, and the race year -- and
+# 2026-10-08 appended hidden_days (CONTEXT_HIDDEN_INDEX). Count
 # _buildContextVector's return, and keep transformer.CONTEXT_FEATURES equal
 # to it. A test does that counting for you: tests/test_context_width.py.
-CONTEXT_FEATURES  = 24
+CONTEXT_FEATURES  = 25
 
 # ★ THE ONE CONTEXT INDEX ANYONE OUTSIDE THIS FILE READS BY NAME. The year
 #   at 22 is the only feature whose value can fall outside the range the
@@ -158,6 +159,13 @@ CONTEXT_FEATURES  = 24
 #   an off-by-one that no shape check would have found, because the width
 #   was right and only the meaning of a slot was wrong.
 CONTEXT_YEAR_INDEX = 23
+
+# ★ HOW MUCH OF THE GAP TO THE TARGET IS HIDDEN, in days (2026-10-08). See
+#   transformer.CONTEXT_HIDDEN_INDEX for why: is_forecast says SOME of
+#   days_since_last_race is hidden racing, this says how much. A twin's
+#   value is its cut (gap_weeks * 7), a real next race's is 0, and
+#   inference's is (target date - the day the history is complete to).
+CONTEXT_HIDDEN_INDEX = 24
 
 # ★ ATHLETE-DISJOINT VALIDATION, DECIDED HERE. train.py used to random_split
 #   over EXAMPLES, which puts the same athlete's examples -- and a forecast
@@ -2035,6 +2043,12 @@ def _gapTwin(prior_results, target_result, full_sequence, rng,
         # would depend on a value that cannot be supplied.
         "n_hidden": len(prior_results) - len(kept),
         "gap_weeks": round(weeks, 1),
+        # ★ THE HIDDEN SPAN, A FEATURE (CONTEXT_HIDDEN_INDEX). Unlike
+        #   n_hidden this IS known at inference: it is the time between
+        #   today and the target. The kept history's last race sits at or
+        #   before the cut, so days_since_last_race - hidden_days is the
+        #   athlete's own idle time, which the model can now see apart.
+        "hidden_days": float((target_date - cutoff).days),
         # Which generator made it, for the run's own counts. Same rule as
         # n_hidden: a diagnostic, never a feature.
         "kind": kind,
@@ -2877,7 +2891,8 @@ def _raceYear(date_str) -> float:
 # Output: list of CONTEXT_FEATURES floats, in the fixed order documented above
 def _buildContextVector(target_result: dict, sequence: list[list[float]],
                         prior_results: list[dict], encoders: dict,
-                        is_forecast: bool = False) -> list[float]:
+                        is_forecast: bool = False,
+                        hidden_days: float = 0.0) -> list[float]:
     
     # ★ THE ATHLETE'S LEVEL FOR THE TARGET RACE, AS AN ORDINAL. No encoder:
     #   buildPool already returns elem=0 < ms=1 < hs=2 < college=3 < pro=4,
@@ -2955,6 +2970,9 @@ def _buildContextVector(target_result: dict, sequence: list[list[float]],
         # did not say", which is a different statement from any real year.
         1.0 if grade_ord else 0.0,
         _raceYear(target_result["date"]),
+        # CONTEXT_HIDDEN_INDEX: days of the gap nobody can see. Never more
+        # than the gap itself.
+        float(min(max(hidden_days or 0.0, 0.0), days_since_last_race)),
     ]
 
 def addContextToExamples(examples: list[dict], encoders: dict) -> None:
@@ -2966,6 +2984,7 @@ def addContextToExamples(examples: list[dict], encoders: dict) -> None:
             example["prior_results"],
             encoders,
             example.get("is_forecast", False),
+            example.get("hidden_days", 0.0),
         )
 
     # No print here: this now runs once per ATHLETE in the streaming flow,
