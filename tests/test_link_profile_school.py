@@ -116,6 +116,7 @@ DROP TABLE IF EXISTS {_TABLES};
 CREATE TABLE results (result_id bigint, athlete_id bigint, person_id bigint,
   source text, date text, grade text, school text);
 CREATE TABLE results_tf (LIKE results);
+ALTER TABLE results_tf ADD COLUMN meet_id bigint, ADD COLUMN event_short text;
 CREATE TABLE athletes (athlete_id bigint, first_name text, last_name text,
   gender text, school text, person_id bigint);
 INSERT INTO athletes VALUES
@@ -210,3 +211,25 @@ def test_gather_write_undo_on_postgres():
         cur.execute(f"DROP TABLE IF EXISTS {_TABLES}")
         conn.commit()
         conn.close()
+
+
+# ---- the owner's site-wide dry run, 2026-10-08 ---------------------------- #
+
+def test_names_that_differ_by_a_number_are_refused():
+    a = M(22449377, "1A Boys 8th Grade FAT Standard", ["M"], True, [R("2024-05-01", "TF", None)])
+    b = M(25100544, "1A Boys 7th Grade FAT Standard", ["M"], True, [R("2025-05-01", "TF", None)] * 3)
+    assert L.decideGroup([a, b]).reason == "names differ by a number"
+
+
+def test_a_bracketed_bib_is_not_part_of_the_name():
+    a = M(21298812, "Aarav (1011) Shah", ["M"], True, [R("2024-04-01", "TF", "10")] * 3)
+    b = M(24463894, "Aarav (1045) Shah", ["M"], True, [R("2025-04-01", "TF", "11")])
+    assert L.decideGroup([a, b]).reason == L.MATCH
+
+
+def test_two_in_one_track_race_is_two_runners():
+    a = M(1, "Aaliyah Brown", ["F"], True, [R("2025-05-03", "TF", None, 77, "100m")] * 2)
+    b = M(2, "Aaliyah Brown", ["F"], True, [R("2025-05-03", "TF", None, 77, "100m")])
+    assert L.decideGroup([a, b]).reason == "same track race: two runners"
+    c = M(3, "Aaliyah Brown", ["F"], True, [R("2025-05-03", "TF", None, 77, "200m")])
+    assert L.decideGroup([a, c]).reason == L.MATCH          # two events, one runner

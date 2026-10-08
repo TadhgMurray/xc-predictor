@@ -151,7 +151,8 @@ def schoolKey(school):
 # ------------------------------------------------------------------ #
 #  THE DECISION -- pure
 # ------------------------------------------------------------------ #
-Row = namedtuple("Row", "date sport grade")
+# meet/event: two members in one track race on one day are two runners
+Row = namedtuple("Row", "date sport grade meet event", defaults=(None, None))
 # lone: an anet profile on its own seed with nothing else under its id
 Member = namedtuple("Member", "pid name gender lone rows")
 Verdict = namedtuple("Verdict", "target movers reason", defaults=((), ""))
@@ -183,6 +184,15 @@ def decideGroup(members):
         target = top[0]
     movers = [m for m in members if m.pid != target.pid]
 
+    # ★ NAMES THAT DIFFER BY A NUMBER ARE DIFFERENT NAMES (owner's dry run,
+    #   2026-10-08: "1A Boys 7th Grade FAT Standard" and "1A Boys 8th Grade
+    #   FAT Standard" -- IESA qualifying marks entered as athletes -- shared
+    #   a key, because the name key drops digits). A bib in brackets
+    #   ("Aarav (1011) Shah", "Aarav (1045) Shah") changes meet to meet and
+    #   is not part of the name; any other number is.
+    if len({_nameDigits(m.name) for m in members}) > 1:
+        return Verdict(None, (), "names differ by a number")
+
     # ! TWO CROSS COUNTRY RACES ON ONE DAY IS TWO PEOPLE (link_teamless's
     #   rule). Track is left out: one athlete runs several events a day.
     xc_days = {}
@@ -191,6 +201,17 @@ def decideGroup(members):
             if d in xc_days and xc_days[d] != m.pid:
                 return Verdict(None, (), "same cross country day: two runners")
             xc_days[d] = m.pid
+
+    # ! AND TWO IN ONE TRACK RACE (owner's dry run, 2026-10-08: groups of
+    #   two and three strays with dozens of rows each at one club). One
+    #   athlete runs several events a day, never one event twice.
+    tf_races = {}
+    for m in members:
+        for k in {(str(r.date)[:10], r.meet, r.event) for r in m.rows
+                  if r.sport == "TF" and r.meet is not None and r.event}:
+            if k in tf_races and tf_races[k] != m.pid:
+                return Verdict(None, (), "same track race: two runners")
+            tf_races[k] = m.pid
 
     t_cls = [c for c in (classYear(r.date, r.grade) for r in target.rows) if c]
     t_med = statistics.median(t_cls) if t_cls else None
@@ -203,6 +224,12 @@ def decideGroup(members):
             if cy is not None and t_med is not None and abs(cy - t_med) > CLASS_SLACK:
                 return Verdict(None, (), "generation mismatch")
     return Verdict(target.pid, tuple(sorted(m.pid for m in movers)), MATCH)
+
+
+def _nameDigits(name):
+    """The numbers in a name, bracketed bibs aside: '1A Boys 8th Grade' ->
+    ('1', '8'); 'Aarav (1011) Shah' -> ()."""
+    return tuple(re.findall(r"\d+", _PAREN.sub(" ", str(name or ""))))
 
 
 def groupsOf(key_persons):
@@ -300,14 +327,15 @@ def gather(cur, person=None):
     facts = {p: (g or [], nm, bool(lone)) for p, g, nm, lone in cur.fetchall()}
     rows = defaultdict(list)
     cur.execute("""
-        SELECT 'XC', r.person_id, r.date, r.grade FROM results r
+        SELECT 'XC', r.person_id, r.date, r.grade, NULL::bigint, NULL::text FROM results r
         JOIN ps_mp m ON m.person_id = r.person_id
         UNION ALL
-        SELECT 'TF', r.person_id, r.date, r.grade FROM results_tf r
+        SELECT 'TF', r.person_id, r.date, r.grade, r.meet_id, lower(btrim(r.event_short))
+        FROM results_tf r
         JOIN ps_mp m ON m.person_id = r.person_id
     """)
-    for sport, p, d, g in cur.fetchall():
-        rows[p].append(Row(d, sport, g))
+    for sport, p, d, g, meet, ev in cur.fetchall():
+        rows[p].append(Row(d, sport, g, meet, ev))
     out_m, out_k = {}, {}
     for i, (members, gkeys) in enumerate(groups):
         out_m[i] = [Member(p, facts[p][1], facts[p][0], facts[p][2],
