@@ -5313,6 +5313,16 @@ Chromium against the old script (readout 15:00, label under the pointer
   the women's race. /api/predict/races now fills a blank gender from the
   division title (tf_points.genderOf: "Mens 8K", "Womens 6K"), then the
   runners' person_gender. Track races take the title's too.
+- **...and the server still decided by the runners ("still not working, and
+  now it loads slower").** The page's race list had a gender, but the
+  server's squad filter (meetField, the scored lineup, coalescing) took its
+  own from the runners' seasons -- None for unlinked tfrrs rows -- so Jonah
+  Reisner stayed in the women's squad. All three now call one
+  `predict._raceGender`: the division title first, the runners only when the
+  title is silent. The slowdown was the profile fallback added above (a
+  per-person scan of athletes by person_id for every runner at every
+  school); it is back to the primary-key lookup, person_gender kept. Test in
+  `test_predict_squads.py`.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

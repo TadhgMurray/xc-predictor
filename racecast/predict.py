@@ -2104,7 +2104,8 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     # ★ THE RACE'S OWN GENDER, from the people who ran it. None means the
     #   field really is mixed -- "All races" at a meet with both -- and then
     #   nothing is filtered, because there is no one right answer to filter to.
-    gender = _fieldGender(cur, [r["person_id"] for r in originals], sport)
+    gender = _raceGender(cur, meet_id, div_id, sport, source,
+                         [r["person_id"] for r in originals])
     # ★ AND THE LEVEL, for the same reason: a school NAME is both a college
     #   and a high school often enough that "everyone at Amherst" is two
     #   different teams. See _fieldLevels.
@@ -2363,6 +2364,22 @@ def _lineupIds(rows, per_team=None):
 #   school and half college -- clears the bar for neither and is not filtered,
 #   which is the right answer: there is no single level to narrow to.
 _LEVEL_MIN_SHARE = 0.60
+
+
+# ★ THE DIVISION'S OWN TITLE FIRST (owner, 2026-10-08: Tufts men in the
+#   Purple Valley XC Classic's women's race, "still not working"). The
+#   runners' seasons cannot say a tfrrs race's gender while its rows are
+#   unlinked or unrated, and a None filled every squad with both sides of
+#   the school. "Womens 6K" says it outright; the runners decide only when
+#   the title is silent. ONE function for the field (meetField), the scored
+#   lineup (_entriesFor) and coalescing, so the page and the model agree.
+def _raceGender(cur, meet_id, div_id, sport, source, person_ids):
+    if meet_id and div_id is not None:
+        from tf_points import genderOf
+        g = genderOf(_divisionLabel(cur, meet_id, div_id, sport, source=source) or "")
+        if g:
+            return g
+    return _fieldGender(cur, person_ids, sport)
 
 
 def _fieldGender(cur, person_ids, sport):
@@ -2876,7 +2893,8 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
             # ! THE SAME NAMESAKE meetField NARROWS TO (_keepIdentity), from
             #   the same evidence: the meet's own runners and its state.
             squads = _currentSquads(cur, at_meet, sport, year,
-                                    gender=_fieldGender(cur, ids, sport),
+                                    gender=_raceGender(cur, int(target["meet_id"]),
+                                                       div, sport, src, ids),
                                     levels=_fieldLevels(
                                         cur, _lineupIds(originals), sport,
                                         year),
@@ -2978,7 +2996,8 @@ def _combinedRoster(cur, target, div_ids, sport, mode):
         #   else here reads it -- the un-coalesced path suffixes by division,
         #   which needs no gender at all.
         if target.get("coalesce"):
-            g = _fieldGender(cur, [e["person_id"] for e in rows], sport)
+            g = _raceGender(cur, int(target["meet_id"]), d, sport, target.get("source"),
+                            [e["person_id"] for e in rows])
             for e in rows:
                 e["div_gender"] = g
         for e in rows:
@@ -3475,14 +3494,13 @@ def _raceEntrants(cur, schools, sport, year, gender=None, levels=None):
 
 # A person's gender for the squad filter: person_gender's verdict (the
 # site's one person-level answer, from every row they ran) when the table
-# exists, else any of their profiles' -- not only the profile whose
-# athlete_id happens to equal the person_id, which a tfrrs-minted or merged
-# person does not have.
+# exists, else the profile whose athlete_id equals the person_id.
+# ! THE PROFILE FALLBACK IS THE OLD PRIMARY-KEY LOOKUP (owner, 2026-10-08:
+#   "now it loads slower"): a per-person scan of athletes by person_id, run
+#   for every runner at every school, cost more than it found.
 _PERSON_GENDER_SQL = """COALESCE(max(pg.gender),
-                   (SELECT max(x.gender) FROM athletes x
-                    WHERE  x.person_id = r.person_id
-                      AND  x.gender IN ('M', 'F')
-                    HAVING count(DISTINCT x.gender) = 1))"""
+                   (SELECT x.gender FROM athletes x
+                    WHERE  x.athlete_id = r.person_id LIMIT 1))"""
 _PG = {"has": None}
 
 

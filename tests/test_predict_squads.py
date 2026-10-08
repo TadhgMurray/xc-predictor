@@ -235,3 +235,18 @@ def test_a_tfrrs_race_takes_its_gender_from_its_title():
              {"div_id": 3, "label": "Varsity", "gender": "F"}]
     A._fillRaceGenders(Cur(), 28662, "tfrrs", races)
     assert [r["gender"] for r in races] == ["M", "F", "F"]
+
+
+def test_the_squad_filter_takes_the_title_gender_before_the_runners(monkeypatch):
+    """Owner, 2026-10-08, "still not working": Jonah Reisner (a man) in the
+    Tufts squad of the Purple Valley women's 6K. Unlinked tfrrs runners have
+    no season, so _fieldGender said None and nobody was filtered."""
+    labels = {(28662, 2): "Womens 6K", (28662, 1): "Mens 8K", (5, 9): "Varsity"}
+    monkeypatch.setattr(P, "_divisionLabel",
+                        lambda cur, m, d, sport, source=None: labels.get((m, d)))
+    monkeypatch.setattr(P, "_fieldGender", lambda cur, ids, sport: "runners")
+    assert P._raceGender(None, 28662, 2, "XC", "tfrrs", [1]) == "F"
+    assert P._raceGender(None, 28662, 1, "XC", "tfrrs", [1]) == "M"
+    # a silent title leaves it to the runners
+    assert P._raceGender(None, 5, 9, "XC", "anet", [1]) == "runners"
+    assert P._raceGender(None, 5, None, "XC", "anet", [1]) == "runners"
