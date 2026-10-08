@@ -23,6 +23,17 @@ field above their level. READ ONLY.
      2025 against 2026 (a 1-in-20 sample of rows).
   3. THE DAYS: race_day_effect for every XC venue-day Aug 20 - Sep 3 2026,
      biggest fields first -- is every late-August day slow, or this one?
+  4. THE VENUE-DAY (--div only; owner, 2026-10-08, meet 271911 div 1083503:
+     "how did this race come out as slow ... despite it being fast"). The
+     page's own lookup -- the course cell (course_canonical by name, the
+     nearest gps, distance at 100 m) and race_day_effect on that date --
+     then EVERY division that shares the venue-day term (same course name,
+     same date, any meet), each with its stored distance, rows, median
+     time and its here-vs-later median, and race_day_suspect_division's
+     rows for that day. One wrong division (a distance, a pool) can carry
+     the whole day term the way Midlothian's three did.
+
+    /srv/venv/bin/python scripts/diag_race_day_inflation.py --div 1083503 --sections 4
 """
 import argparse
 import os
@@ -136,7 +147,96 @@ def main():
                         (f"{a.year}-08-20", f"{a.year}-09-03"))
             for c, dm, d, dp, cp, n in cur.fetchall():
                 print(f"  {d}  {str(c)[:44]:44} {dm or '':>6}  day {dp:>6}  course {cp}  rows {n}")
+        if "4" in a.sections and a.div:
+            _venueDay(cur, a.div)
         conn.rollback()
+
+
+_LATER = """
+    WITH f AS (SELECT r.person_id, r.speed_rating::float here, r.date::date dy
+               FROM results r WHERE r.div_id = %s AND r.source = 'anet'
+                 AND r.speed_rating IS NOT NULL AND r.person_id IS NOT NULL),
+    x AS (SELECT f.*, (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY rr.speed_rating)
+                       FROM ranking_results rr WHERE rr.person_id = f.person_id
+                         AND rr.sport = 'XC' AND rr.race_date > f.dy
+                         AND rr.race_date < f.dy + 60) later FROM f)
+    SELECT count(*) n, count(later) nl,
+           round((100 * percentile_cont(0.5) WITHIN GROUP (ORDER BY here / later - 1))::numeric, 1) hl
+    FROM x"""
+
+
+def _clock(sec):
+    return f"{int(sec // 60)}:{sec % 60:04.1f}" if sec else "-"
+
+
+def _venueDay(cur, div):
+    print("\n4. THE VENUE-DAY")
+    cur.execute("""SELECT meet_id, meet_name, division, distance, course_name,
+                          gps_lat, gps_long, left(meet_date, 10)
+                   FROM meets WHERE div_id = %s LIMIT 1""", (div,))
+    row = cur.fetchone()
+    if not row:
+        print(f"  div {div}: no meets row")
+        return
+    meet, name, title, dist, course, lat, lon, day = row
+    if not day:
+        cur.execute("SELECT min(left(date, 10)) FROM results WHERE div_id = %s "
+                    "AND source = 'anet'", (div,))
+        day = cur.fetchone()[0]
+    print(f"  div {div}: {name} / {title} | {dist} m | course {course!r} | {day} "
+          f"| gps {lat},{lon}")
+    # the page's cell (app._xc_course_join, distance at 100 m)
+    cur.execute("""SELECT cc.canonical_id, cd0.distance_m, cd0.difficulty, cd0.n_results
+                   FROM course_canonical cc
+                   JOIN course_difficulties cd0 ON cd0.canonical_id = cc.canonical_id
+                   WHERE cc.course_name = %(c)s
+                     AND round(cd0.distance_m / 100.0) = round(%(d)s::numeric / 100.0)
+                     AND cd0.difficulty IS NOT NULL
+                   ORDER BY (power(cc.gps_lat - %(la)s, 2) + power(cc.gps_long - %(lo)s, 2))
+                            NULLS LAST, cd0.n_results DESC NULLS LAST LIMIT 1""",
+                {"c": course, "d": dist or 0, "la": lat, "lo": lon})
+    cell = cur.fetchone()
+    print(f"  page's course cell: {cell}")
+    cid = cell[0] if cell else None
+    cur.execute("""SELECT course_name, canonical_id, distance_m,
+                          round(100 * day_effect::numeric, 2), round(100 * course_effect::numeric, 2), n_rows
+                   FROM race_day_effect
+                   WHERE race_date::text = %(day)s
+                     AND (canonical_id = %(cid)s OR course_name = %(c)s)
+                   ORDER BY n_rows DESC""", {"day": day, "cid": cid, "c": course})
+    got = cur.fetchall()
+    print(f"  race_day_effect on {day} for this course ({len(got)} rows; + = slow, credited):")
+    for c, ci, dm, dp, cp, n in got:
+        print(f"    {str(c)[:40]:40} cid {ci} {dm} m  day {dp}%  course {cp}%  rows {n}")
+    cur.execute("""SELECT m.div_id, m.meet_id, m.meet_name, m.division, m.distance,
+                          count(r.*) n,
+                          percentile_cont(0.5) WITHIN GROUP (ORDER BY r.time_seconds)
+                              FILTER (WHERE r.time_seconds > 0 AND r.time_seconds < 999999),
+                          string_agg(DISTINCT split_part(r.rating_pool, '|', 1), ' ')
+                   FROM meets m JOIN results r ON r.div_id = m.div_id AND r.source = 'anet'
+                   WHERE m.course_name = %s AND left(r.date, 10) = %s
+                   GROUP BY 1, 2, 3, 4, 5 ORDER BY 6 DESC""", (course, day))
+    divs = cur.fetchall()
+    print(f"  divisions sharing the venue-day ({len(divs)}): here-vs-later median, "
+          f"+ = rated above their next 60 days")
+    for d, m, mn, dv, ds, n, med, pools in divs:
+        cur.execute(_LATER, (d,))
+        nn, nl, hl = cur.fetchone()
+        mark = " <-- this race" if d == div else ""
+        print(f"    div {d} meet {m}: {str(mn)[:30]} / {dv} | {ds} m | {n} rows | "
+              f"median {_clock(med)} | pools {pools} | here vs later {hl}% "
+              f"(n {nl}){mark}")
+    cur.execute("SELECT to_regclass('race_day_suspect_division')")
+    if cur.fetchone()[0]:
+        cur.execute("""SELECT meet_id, div_id, pool, distance_m, n_rows,
+                              round(100 * division_day::numeric, 1), round(100 * race_u::numeric, 1),
+                              round(100 * excess::numeric, 1), reconciled_m, snapped_m
+                       FROM race_day_suspect_division
+                       WHERE race_date::text = %(day)s
+                         AND (canonical_id = %(cid)s OR course_name = %(c)s)""",
+                    {"day": day, "cid": cid, "c": course})
+        sus = cur.fetchall()
+        print(f"  race_day_suspect_division that day: {sus or 'none'}")
 
 
 if __name__ == "__main__":

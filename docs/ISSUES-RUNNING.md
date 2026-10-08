@@ -5344,6 +5344,14 @@ Chromium against the old script (readout 15:00, label under the pointer
   tfrrs meet's first race (div 0) had no title (so no title gender) and its
   field was the WHOLE meet, men and women. Now `is None`; the predict header
   (app.predictMeetName) too. Test in `test_predict_squads.py`.
+- 🔎 **Race-day "slow" on a fast race (owner, meet 271911 div 1083503:
+  "overrated bcs of the day term helping it despite it being fast").** The
+  day term is one per venue-day (XCP_RACE_KEY=venue), so every division on
+  that course that day shares it. `diag_race_day_inflation.py --div D
+  --sections 014` now adds section 4: the page's own cell lookup, the
+  race_day_effect rows that day, every division sharing the venue-day with
+  distance / median / pools / here-vs-later, and the guard's suspects.
+  Waiting on the owner's output.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane
