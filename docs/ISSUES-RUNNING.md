@@ -5135,6 +5135,26 @@ Chromium against the old script (readout 15:00, label under the pointer
   (`_conv_side.html`, `race-page.js fillConv`). A track race with no event
   points gets the sidebar only on that tab. `equiv-line.js` keeps a time
   that arrives before the curve has loaded and opens on it.
+- **John Rivera (pro, Brooks Beasts) shown "Puerto Rico · Grade 12".**
+  National-team rows carry whatever the federation typed (his World Indoors
+  rows read '12'), and `_season_grade` took the first truthy grade ('-'
+  counted too). The athlete page now:
+  - takes no grade from a country's row, and none from '-';
+  - lets a pro club vote for the season's school, with a country naming it
+    only when nothing else does (season tables, header, chart bands);
+  - reads grade_fix's level: a pro verdict prints "Professional" instead of
+    a grade (not on hs/ms-pooled blocks), and a newest season judged pro
+    heads the page as "<club> · Professional".
+  Test: `tests/test_national_team_grade.py`.
+- **Rule 5e in grade_sanity: past eligibility is not college.** His 2026
+  rows had no grade, so the field rule called them college and they pooled
+  college_m. A field-derived college verdict with no grade, 7+ academic
+  years after the athlete's first college season, becomes pro
+  (post_collegiate). The 7 is NCAA eligibility (five seasons in six years,
+  plus the COVID year), not a tuned number; a redshirt only makes it fire
+  later. Needs the next grade_sanity run and solve.
+- **panels._NON_SCHOOL: missing comma.** "Poland" "saucony" concatenated
+  into "polandsaucony", so neither was recognised as a non-school.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

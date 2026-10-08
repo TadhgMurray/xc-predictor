@@ -121,7 +121,7 @@ _NON_SCHOOL = frozenset(s.lower() for s in {
     "mexico", "ireland", "belgium", "kenya", "netherlands", "canada",
     "japan", "new zealand", "australia", "great britain", "united states",
     "usa", "united states of america", "spain", "france", "germany", "italy",
-    "ethiopia", "uganda", "norway", "sweden", "guatemala", "portugal", "Uruguay", "Poland"
+    "ethiopia", "uganda", "norway", "sweden", "guatemala", "portugal", "Uruguay", "Poland",
     # --- pro clubs / brand teams ---
     "saucony", "brooks beasts", "brooks", "nike", "adidas", "on", "on running",
     "puma", "hoka", "hoka aggie running club", "minnesota distance elite",

@@ -57,13 +57,30 @@ def _seasonSchools(races):
       a career into slivers. The season is the unit the tables already name a
       school for, so the chart and the tables agree.
     """
-    votes = {}
+    # ★ A COUNTRY VOTES LAST (owner, 2026-10-07, John Rivera: 'Brooks
+    #   Beasts' and 'Puerto Rico' one race each, and the band read Puerto
+    #   Rico). A national team names the season only when nothing else does
+    #   -- the same rule as the season tables (app._season_school).
+    votes, national = {}, {}
     for race in races:
         team = _teamName(race.get("school"))
         if team:
             key = (race.get("season_label") or _year_of(race.get("date")), race.get("sport"))
-            votes.setdefault(key, Counter())[team] += 1
-    return {k: c.most_common(1)[0][0] for k, c in votes.items()}
+            box = national if _isNationalTeam(team) else votes
+            box.setdefault(key, Counter())[team] += 1
+    out = {k: c.most_common(1)[0][0] for k, c in national.items()}
+    out.update({k: c.most_common(1)[0][0] for k, c in votes.items()})
+    return out
+
+
+def _isNationalTeam(school):
+    """pool_resolve.isNationalTeam, or False where the engine is not on the
+    path (this module is importable on its own)."""
+    try:
+        from pool_resolve import isNationalTeam
+    except ImportError:
+        return False
+    return isNationalTeam(school)
 
 
 def _pace_per_mile(time_seconds, distance_meters):

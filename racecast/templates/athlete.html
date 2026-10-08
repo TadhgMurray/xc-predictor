@@ -183,7 +183,7 @@
             {{ year }} {{ sport }}
             <span class="season-rating">{{ rv(season.rating, season.rating_hs) }}</span>
         </h3>
-        <p class="season-meta">{% if season.school|is_team %}{{ crest(season.school, season.state, pool=season.pool) }}<a href="{{ school_href(season.school, season.state, pool=season.pool) }}">{{ season.school|school_label_for(season.pool, season.state) }}</a>{% else %}{{ season.school|school_label_for(season.pool, season.state) }}{% endif %} · Grade {{ season.grade|grade_label(season.pool) }}{% if gender_mixed and season.gender %} · {{ "Boys" if season.gender == "m" else "Girls" }}{% endif %}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
+        <p class="season-meta">{% if season.school|is_team %}{{ crest(season.school, season.state, pool=season.pool) }}<a href="{{ school_href(season.school, season.state, pool=season.pool) }}">{{ season.school|school_label_for(season.pool, season.state) }}</a>{% else %}{{ season.school|school_label_for(season.pool, season.state) }}{% endif %}{% if season.pro_verdict or (season.pool and (season.pool|string).startswith('pro_')) %} · Professional{% elif season.grade %} · Grade {{ season.grade|grade_label(season.pool) }}{% endif %}{% if gender_mixed and season.gender %} · {{ "Boys" if season.gender == "m" else "Girls" }}{% endif %}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
         <table>
             <thead>
                 <tr>

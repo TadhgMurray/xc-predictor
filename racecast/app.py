@@ -1887,7 +1887,7 @@ def athlete(person_id):
             #   turns these rows into the season flags.
             try:
                 cur.execute("""
-                    SELECT season, method, trust
+                    SELECT season, method, trust, level
                     FROM   grade_fix
                     WHERE  person_id = %s
                 """, (person_id,))
@@ -2225,6 +2225,7 @@ def athlete(person_id):
     #   stale. The pro season's number is the block's own, the one the page
     #   shows under it; it has no board, so no percentile and no rank line.
     pro_head = _proHeaderSeason(ordered, season_rating) if season_rating else None
+    pv = None
     if pro_head:
         (_plabel, _psport), _pblk = pro_head
         athlete["rating"] = _pblk["rating"]
@@ -2243,6 +2244,38 @@ def athlete(person_id):
             athlete["school"] = _pblk["school"]
         rank_line = None
         units = []
+    else:
+        # ★ AND A PROFESSIONAL VERDICT ON THE NEWEST SEASON, RATED OR NOT
+        #   (owner, 2026-10-07, John Rivera). _proHeaderSeason needs a RATED
+        #   pro-pooled block; grade_sanity's 'pro' verdict (graduated,
+        #   post_collegiate, adult_club) is the engine's word on the level
+        #   whether or not a rating came of it, and it outranks the row grade
+        #   and the old team the header was about to quote. The rating stays
+        #   the rated season's, and its note says which season that is.
+        from panels import isTeamName as _isTeamName
+        pv = _proVerdictHeader(ordered, season_rating)
+        if pv:
+            (_plabel, _psport), _pblk = pv
+            athlete["grade"] = None
+            athlete["pro_header"] = True
+            _ps = _pblk.get("school")
+            if _ps and _ps != athlete.get("school") and \
+                    (_isProClub(_ps) or _isNationalTeam(_ps) or _isTeamName(_ps)):
+                athlete["school"] = _ps
+                athlete["team_pool"] = _pblk.get("pool")
+                athlete["team_state"] = None
+                units = []
+    # ★ A COUNTRY IS NOT THE HEADER'S TEAM WHEN THE CLUB IS IN VIEW (owner,
+    #   2026-10-07): see _clubOverCountry. Only a professional header can
+    #   carry a country here (athlete_season never names one), so the window
+    #   is that season onward.
+    if athlete.get("pro_header") and _isNationalTeam(athlete.get("school")):
+        _since = (pro_head or pv or ((None, None), None))[0][0]
+        _club = _clubOverCountry(athlete["school"], races, since_label=_since)
+        if _club != athlete["school"]:
+            athlete["school"] = _club
+            athlete["team_state"] = None
+            units = []
 
     # ★ THE HEADER STAT STRIP. These numbers all existed -- in the sidebar,
     #   below the fold, or not at all -- while the header carried just a name
@@ -2986,6 +3019,33 @@ def _proHeaderSeason(ordered, season_rating):
     return (k, v) if last(v) > head_last else None
 
 
+def _proVerdictHeader(ordered, season_rating):
+    """The newest season block, as ((label, sport), block), when grade_fix
+    calls it professional (block["pro_verdict"], _attach_season_verdicts)
+    and it raced later than the season the header quotes; else None.
+
+    ! THE NEWEST BLOCK ONLY. A professional verdict three seasons back says
+      nothing about a college season since -- pro is not absorbing
+      (pro_flag's module note: Engelhardt) -- so only the athlete's latest
+      season can name their level now."""
+    def last(blk):
+        return max((str(r.get("date") or "") for r in blk["races"]), default="")
+
+    if not ordered:
+        return None
+    head_last = ""
+    if season_rating and season_rating.get("year") is not None:
+        lab = int(season_rating["year"]) + (1 if season_rating["sport"] == "TF" else 0)
+        blocks = dict(ordered)
+        head = (blocks.get((lab, season_rating["sport"]))
+                or blocks.get((str(lab), season_rating["sport"])))
+        head_last = last(head) if head else ""
+    k, v = max(ordered, key=lambda kv: last(kv[1]))
+    if v.get("pro_verdict") and last(v) > head_last:
+        return (k, v)
+    return None
+
+
 def group_into_seasons(races):
     """Turn a flat list of races into a dict keyed by (season label, sport),
     each value being the list of races in that season.
@@ -3163,31 +3223,136 @@ def _attach_season_verdicts(seasons, verdicts):
             season["board_note"] = v["method"]
         elif v.get("trust") == "low":
             season["board_note"] = "low_trust"
+        # ★ A PROFESSIONAL VERDICT OUTRANKS A ROW'S GRADE (owner, 2026-10-07,
+        #   John Rivera's 2025 TF: grade_fix says 'pro', method 'graduated',
+        #   and the block read "Grade 12" off two World Indoors rows).
+        #   grade_sanity looked at the whole season and said this athlete is
+        #   past school; the block now says Professional instead of quoting
+        #   the row grade grade_sanity overruled.
+        # ! NOT WHERE THE ROWS POOLED AS A SCHOOL. pool_resolve's school veto
+        #   (schoolSeasonVetoesPro) refuses a 'pro' verdict on a season raced
+        #   for a school with a school grade; the rows then sit in hs/ms/elem
+        #   and the grade they carry is the one the boards use.
+        if v.get("level") == "pro" and \
+                not str(season.get("pool") or "").startswith(("hs_", "ms_", "elem_")):
+            season["grade"] = None
+            season["pro_verdict"] = True
+
+
+def _isNationalTeam(school):
+    """A country in the school column (pool_resolve.isNationalTeam, the
+    engine's one list): 'Puerto Rico', 'Kenya (KEN)', 'Spain National Team'."""
+    from pool_resolve import isNationalTeam
+    return bool(school) and isNationalTeam(school)
+
+
+def _isProClub(school):
+    """A professional club or brand team in the school column ('Brooks
+    Beasts', 'Bowerman Track Club'), never a country: normalize_distance's
+    brand names and fragments, without its country half.
+
+    ! DISPLAY ONLY. poolFor's own note says why a school string must never
+      set a POOL ("a pro types the same string a rural high school is
+      named"); choosing which of a season's own team names to SHOW costs one
+      label if it is wrong, which is the use that note leaves open."""
+    if not school:
+        return False
+    from normalize_distance import _PRO_FRAGMENTS
+    t = str(school).strip().lower()
+    if t in ("on", "brooks", "joma", "boss", "team boss", "roots", "empire"):
+        return True
+    return any(frag in t for frag in _PRO_FRAGMENTS)
+
+
+_HAS_GRADE = re.compile(r"[A-Za-z0-9]")
 
 
 def _season_grade(races):
     """The grade for this season - same across its races, so take the first
-    one that actually has a grade."""
+    one that actually has a grade.
+
+    ★ A NATIONAL TEAM'S ROW SUPPLIES NO GRADE (owner, 2026-10-07, John
+      Rivera, /athlete/12652858: a Brooks Beasts professional and former Ole
+      Miss senior headed "Puerto Rico · Grade 12"). A country's entry list
+      carries whatever its federation typed -- his World Indoors rows read
+      '12' and his 2023 Worlds row '10', nine years after high school. The
+      engine already says a country is not a US athlete's school
+      (pool_resolve.isNationalTeam keeps it off every board); its grade
+      column is no more a school year than its name is a school.
+    ! AND '-' IS NOT A GRADE. The feeds write a dash for "none", and it was
+      truthy, so a season of dashes read "Grade -"."""
     for r in races:
-        if r["grade"]:                 # skip None/empty
-            return r["grade"]
+        g = r.get("grade")
+        if not g or not _HAS_GRADE.search(str(g)):    # None, '', '-'
+            continue
+        if _isNationalTeam(r.get("school")):
+            continue
+        return g
     return None                        # no grade on any race this season
 
 
 def _season_school(races):
     """The school this season was mostly raced for (owner, 2026-09-04):
     the majority over rows that name a team; an unattached string only
-    when no row names one. Same rule as athlete_season.school."""
+    when no row names one. Same rule as athlete_season.school.
+
+    ★ A CLUB OVER A COUNTRY (owner, 2026-10-07, John Rivera: 'Brooks
+      Beasts' and 'Puerto Rico' one race each, and the season read Puerto
+      Rico). isTeamName refuses every pro club (panels._NON_SCHOOL), so the
+      club never got a vote and the country won by default. A professional
+      club now votes with the teams, and a national team only answers when
+      nothing else names one -- athlete_season.school never holds a country
+      at all (inScope drops the rows), so this is the same rule, kept."""
     from collections import Counter
     from panels import isTeamName
-    named = Counter(r["school"] for r in races
-                    if r.get("school") and isTeamName(r["school"]))
+    named, national = Counter(), Counter()
+    for r in races:
+        s = r.get("school")
+        if not s:
+            continue
+        if _isNationalTeam(s):
+            national[s] += 1
+        elif isTeamName(s) or _isProClub(s):
+            named[s] += 1
     if named:
         return named.most_common(1)[0][0]
+    if national:
+        return national.most_common(1)[0][0]
     for r in races:
         if r.get("school"):
             return r["school"]
     return None
+
+
+def _clubOverCountry(school, races, since_label=None):
+    """The header's school, with a country swapped for the athlete's own
+    club when one is in view: the newest race on or after `since_label`
+    (a season label) for a professional club, else for any team that is not
+    a country. Anything else comes back as it was.
+
+    ★ OWNER, 2026-10-07 (John Rivera): the professional header named his
+      latest professional season's majority, which was Puerto Rico's World
+      Championships row, while he races for Brooks Beasts. A national team
+      is a few days a year; the club is who he is."""
+    if not _isNationalTeam(school):
+        return school
+    from panels import isTeamName
+
+    def _since(r):
+        if since_label is None:
+            return True
+        try:
+            return int(r.get("season_label")) >= int(since_label)
+        except (TypeError, ValueError):
+            return False
+    pool = sorted((r for r in races if r.get("school") and _since(r)
+                   and not _isNationalTeam(r["school"])),
+                  key=lambda r: str(r.get("date") or ""), reverse=True)
+    for ok in (_isProClub, isTeamName):
+        hit = next((r["school"] for r in pool if ok(r["school"])), None)
+        if hit:
+            return hit
+    return school
 
 
 def _season_gender(races):

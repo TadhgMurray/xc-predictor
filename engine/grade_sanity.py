@@ -1751,6 +1751,53 @@ def adultClubSeasons(cur, hs_grade, college_start):
     return out
 
 
+# ================================================================== #
+#  RULE 5e -- A COLLEGE FIELD IS NOT A COLLEGE SEASON PAST ELIGIBILITY
+# ================================================================== #
+#
+# ⚠ THE FAULT (owner, 2026-10-07, John Rivera, /athlete/12652858). Ole
+#   Miss FR-1 in academic 2017, senior in 2021, a Brooks Beasts professional
+#   since. His 2026 season -- two 800s in August, one for Brooks Beasts, one
+#   for Puerto Rico, both grade '-' -- has no grade, so the field rule read
+#   the races' level and answered 'college', trust high, and the rows pooled
+#   college_m at 124.1. Rule 5b exists for exactly this athlete and passed
+#   him by: it overturns only a BELOW-college verdict ("EVERYTHING ELSE IS
+#   LEFT ALONE"), because a college verdict after a college start is
+#   usually a collegian still racing.
+#
+# ★ THE CALENDAR SETTLES IT, NOT THE SCHOOL STRING. NCAA competition is
+#   five seasons inside six years, and the 2020 COVID year added one: no
+#   academic year POST_ELIGIBILITY_SEASONS or more after the first college
+#   season can be a college season. The first season is _COLLEGE_START_SQL's,
+#   the earliest academic year minus the tfrrs eligibility digit, so a
+#   redshirt only moves it later -- the rule can only fire later, never
+#   earlier. No school name is read: poolFor's note on why a club string
+#   never sets a pool stands.
+#
+# ! A FIELD VERDICT ONLY. That is the verdict with no evidence of the
+#   athlete's own -- "the level of the races they ran" -- and a college
+#   invitational's level is what a professional opening his summer there
+#   inherits. A corroborated class word or a majority is the athlete's own
+#   rows speaking and is left to the rules that read them.
+POST_ELIGIBILITY_SEASONS = 7
+
+
+def pastEligibilitySeasons(acad, college_start, gap=None):
+    """Rule 5e's decision, pure: the (person_id, acad) keys whose verdict is
+    a field-derived 'college' with no grade, at least `gap` academic years
+    (POST_ELIGIBILITY_SEASONS) after the person's first college season."""
+    gap = POST_ELIGIBILITY_SEASONS if gap is None else gap
+    out = []
+    for (pid, ay), v in acad.items():
+        if v.get("method") != "field" or v.get("level") != "college" \
+                or v.get("grade") is not None:
+            continue
+        first = college_start.get(pid)
+        if first is not None and ay - first >= gap:
+            out.append((pid, ay))
+    return sorted(out)
+
+
 def _adultClubDecide(cand, facts, club_seasons, adult, hs_grade):
     """Rule 8's decision, pure. {(pid, acad): club} of the seasons moved."""
     grads = {}
@@ -2021,10 +2068,21 @@ def resolve(cur, audit=False):
                      "method": "post_collegiate"}
         n_postcoll += 1
 
-    # ★ RULE 8, THE ADULT CLUB (see adultClubSeasons). After 5b, on the high
-    #   school verdicts still standing; college starts are 5b's own.
+    # ★ RULE 5e, PAST ELIGIBILITY (see pastEligibilitySeasons). With 5b,
+    #   on the field verdicts 5b leaves alone; the college starts it reads
+    #   are rule 8's too.
     cur.execute(_COLLEGE_START_SQL)
     college_start = {int(p): int(a) for p, a in cur.fetchall()}
+    moved5e = pastEligibilitySeasons(acad, college_start)
+    for key in moved5e:
+        acad[key] = {"grade": None, "level": "pro",
+                     "method": "post_collegiate"}
+    print(f"    [5e] {len(moved5e):,} field 'college' verdicts "
+          f"{POST_ELIGIBILITY_SEASONS}+ seasons after a college start "
+          f"made professional", flush=True)
+
+    # ★ RULE 8, THE ADULT CLUB (see adultClubSeasons). After 5b, on the high
+    #   school verdicts still standing; college starts are 5b's own.
     hs_grade = {k: int(v["grade"]) for k, v in acad.items()
                 if v["grade"] and str(v["grade"]).isdigit() and 9 <= int(v["grade"]) <= 12}
     moved8 = adultClubSeasons(cur, hs_grade, college_start)
