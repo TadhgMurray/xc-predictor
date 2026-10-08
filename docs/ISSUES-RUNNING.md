@@ -5180,6 +5180,19 @@ Chromium against the old script (readout 15:00, label under the pointer
   them too. The race still counts as a race. A field of national teams only
   reads as pro. Test: `tests/test_grade_sanity_national_team.py`. Next
   grade_sanity run.
+- **The July result-drop triage convicted first races in a new pool.**
+  Normalized times sit on their pool's anchor (ms 3200, hs 5000, college
+  men 8000, women 6000), and the triage compared them across pools: Soheib
+  Dissa's first college 8k (nt 1480.5) read 60% slower than his HS 5K
+  equivalents and was dropped as cooked (his tfrrs copy then died as its
+  twin). `amnesty_result_drops.py` now moves every value to the common
+  5000 m anchor (anchorShift) before the echo test; his 8k reads ~897 beside
+  884-964 and is pardoned. Re-run the report to see the new pardon count.
+  Test: `tests/test_amnesty_anchor.py`.
+- diag_title_distance (owner's run): 426 divisions, 13,369 results, 287
+  dropped. Real ones lead (Pat Ryan "Men's 4Mile" stored 5000, 34 of 52
+  dropped; Clawson "HS 5k" stored 3218, 17 dropped); the parser also misreads
+  years and ages ("Born 2013-14", "2023 Class B", "D1 HS 5K" -> 1000).
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

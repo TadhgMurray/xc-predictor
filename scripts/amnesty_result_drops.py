@@ -214,6 +214,7 @@ def main():
             "   ON COALESCE(person_id, athlete_id) = p.ident"
             " ORDER BY p.ident")
 
+        from normalize_distance import anchorShift as _anchorShift
         canaries = set(args.canary)
         pardons, n_islands, n_unval, n_done = [], 0, 0, 0
         cur_ident, career = None, []
@@ -248,7 +249,18 @@ def main():
             if ident != cur_ident:
                 close_person()
                 cur_ident, career = ident, []
-            rid, value, _reason, _trace = row_fn(row)
+            rid, value, _reason, trace = row_fn(row)
+            # ★ ONE ANCHOR FOR THE WHOLE CAREER (owner, 2026-10-08, Soheib
+            #   Dissa). A normalized time sits on its POOL's anchor -- ms
+            #   3200, hs 5000, college men 8000, women 6000 -- so his first
+            #   college 8k (nt 1480.5) stood 60% "slower" than his high
+            #   school 5K-equivalents, the July triage convicted it, and no
+            #   high-school race could ever echo it. Every value is moved to
+            #   the common 5000 m anchor (normalize_distance.anchorShift,
+            #   the same move the prediction model's one scale makes) before
+            #   any two are compared: his 8k reads ~891 beside 884-964.
+            if value is not None and trace is not None and trace[5]:
+                value = value * _anchorShift(trace[5], args.sport)
             career.append((rid, row[BF._MEET], row[BF._DATE], value))
         close_person()
         stream.close()
