@@ -233,3 +233,92 @@ def test_two_in_one_track_race_is_two_runners():
     assert L.decideGroup([a, b]).reason == "same track race: two runners"
     c = M(3, "Aaliyah Brown", ["F"], True, [R("2025-05-03", "TF", None, 77, "200m")])
     assert L.decideGroup([a, c]).reason == L.MATCH          # two events, one runner
+
+
+def test_two_careers_join_only_on_request_and_only_if_nothing_contradicts():
+    """Owner, 2026-10-08, Jason Minicozzi: a Rivers (MA) high school career
+    and a second profile with Rivers track AND his Tufts cross country."""
+    hs = M(101, "Jason Minicozzi", ["M"], False, [
+        R("2023-11-03", "XC", "10"), R("2024-11-09", "XC", "11"),
+        R("2025-11-08", "XC", "12"), R("2026-05-16", "TF", "12")])
+    split = M(102, "Jason Minicozzi", ["M"], False, [
+        R("2025-04-12", "TF", "11"), R("2026-09-19", "XC", "FR-1"),
+        R("2026-10-03", "XC", "FR-1")])
+    assert L.decideGroup([hs, split]).reason == "two careers share the profile school"
+    v = L.decideGroup([hs, split], allow_careers=True)
+    assert v.reason == L.MATCH and v.target == 101 and v.movers == (102,)
+    # a same-day cross country clash still refuses, careers or not
+    clash = M(103, "Jason Minicozzi", ["M"], False, [R("2025-11-08", "XC", "12")])
+    assert L.decideGroup([hs, clash], allow_careers=True).reason == \
+        "same cross country day: two runners"
+
+
+CAREER_FIXTURE = f"""
+DROP TABLE IF EXISTS {_TABLES}, profile_school_athletes;
+CREATE TABLE results (result_id bigint, athlete_id bigint, person_id bigint,
+  source text, date text, grade text, school text);
+CREATE TABLE results_tf (LIKE results);
+ALTER TABLE results_tf ADD COLUMN meet_id bigint, ADD COLUMN event_short text;
+CREATE TABLE athletes (athlete_id bigint, first_name text, last_name text,
+  gender text, school text, person_id bigint);
+INSERT INTO athletes VALUES
+  (101, 'Jason', 'Minicozzi', 'M', 'Rivers', 101),
+  (102, 'Jason', 'Minicozzi', 'M', 'Rivers', 102),
+  (103, 'Jason', 'Minicozzi', 'M', 'Tufts', 102),
+  (100, 'John', 'Rivera', 'M', 'Brooks', 100),
+  (200, 'John', 'Rivera', 'M', 'Brooks', 200);
+INSERT INTO results VALUES
+  (1, 101, 101, 'anet', '2023-11-03', '10', 'Rivers'),
+  (2, 101, 101, 'anet', '2024-11-09', '11', 'Rivers'),
+  (3, 101, 101, 'anet', '2025-11-08', '12', 'Rivers'),
+  (4, 103, 102, 'anet', '2026-09-19', 'FR-1', 'Tufts'),
+  (5, NULL, 102, 'tfrrs', '2026-10-03', NULL, 'Tufts'),
+  (10, 100, 100, 'anet', '2015-10-01', '11', 'Brooks'),
+  (11, NULL, 100, 'tfrrs', '2017-10-01', 'Fr', 'Brooks'),
+  (20, 200, 200, 'anet', '2022-10-01', '10', 'Brooks'),
+  (21, NULL, 200, 'tfrrs', '2024-10-01', 'Fr', 'Brooks');
+INSERT INTO results_tf VALUES
+  (50, 102, 102, 'anet', '2025-04-12', '11', 'Rivers', 1, '1500m');
+"""
+
+
+def test_two_careers_write_and_undo_on_postgres():
+    """--careers: every row under the moved career (its tfrrs row and the
+    second profile's rows too) and every profile move, and --undo puts all
+    of it back."""
+    conn = _pg()
+    cur = conn.cursor()
+    try:
+        cur.execute(CAREER_FIXTURE)
+        conn.commit()
+        groups, keys = L.gather(cur)
+        conn.rollback()
+        verdicts = L.judge(groups, allow_careers=True)
+        by = {tuple(m.pid for m in groups[i]): v for i, v in verdicts.items()}
+        v = by[(101, 102)]
+        assert v.reason == L.MATCH and v.target in (101, 102)
+        tgt, mover = v.target, (102 if v.target == 101 else 101)
+        # two Brooks runners a generation apart stay two, careers or not
+        assert by[(100, 200)].reason == "generation mismatch"
+        L.write(conn, L.decisionsOf(groups, keys, verdicts))
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT person_id FROM results WHERE result_id IN (1, 2, 3, 4, 5)")
+        assert cur.fetchall() == [(tgt,)], "every row, the tfrrs one included"
+        cur.execute("SELECT DISTINCT person_id FROM results_tf")
+        assert cur.fetchall() == [(tgt,)]
+        cur.execute("SELECT DISTINCT person_id FROM athletes WHERE athlete_id IN (101, 102, 103)")
+        assert cur.fetchall() == [(tgt,)], "every profile"
+        L.undo(conn, "all")
+        cur = conn.cursor()
+        cur.execute("SELECT result_id, person_id FROM results WHERE result_id <= 5 ORDER BY 1")
+        assert cur.fetchall() == [(1, 101), (2, 101), (3, 101), (4, 102), (5, 102)]
+        cur.execute("SELECT athlete_id, person_id FROM athletes "
+                    "WHERE athlete_id IN (101, 102, 103) ORDER BY 1")
+        assert cur.fetchall() == [(101, 101), (102, 102), (103, 102)]
+        assert mover in (101, 102)
+    finally:
+        conn.rollback()
+        cur = conn.cursor()
+        cur.execute(f"DROP TABLE IF EXISTS {_TABLES}, profile_school_athletes")
+        conn.commit()
+        conn.close()

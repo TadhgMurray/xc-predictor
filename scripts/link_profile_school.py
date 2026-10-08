@@ -9,6 +9,8 @@ school are already on another person's profile set joins that person.
     /srv/venv/bin/python scripts/link_profile_school.py --write       # by hand
     /srv/venv/bin/python scripts/link_profile_school.py --undo 31559611
     /srv/venv/bin/python scripts/link_profile_school.py --undo all
+    /srv/venv/bin/python scripts/link_profile_school.py --careers --person 12345   # two careers
+    /srv/venv/bin/python scripts/link_profile_school.py --careers --write
 
 ★ THE CASE (owner, 2026-10-07: "merge obviously doesn't work"). Soheib
   Dissa is three people. Person 32309981 holds his Newtown (CT) career,
@@ -163,19 +165,33 @@ def _genders(m):
                             else [m.gender])} - {None}
 
 
-def decideGroup(members):
+def decideGroup(members, allow_careers=False):
     """Verdict(target pid or None, mover pids, reason) for one group of
-    persons that share a profile key. See the header for the rule."""
+    persons that share a profile key. See the header for the rule.
+
+    allow_careers: two or more careers under one key may join (the one with
+    the most rows is the target) when every other check passes -- owner's
+    review, --careers."""
     if len(members) < 2:
         return Verdict(None, (), "alone")
     sexes = set().union(*(_genders(m) for m in members))
     if len(sexes) > 1:
         return Verdict(None, (), "sexes disagree")
     careers = [m for m in members if not m.lone]
-    if len(careers) > 1:
+    # ★ TWO CAREERS, ON REQUEST (owner, 2026-10-08: Jason Minicozzi is three
+    #   persons -- his Rivers (MA) high school career; a second profile with
+    #   Rivers track AND his Tufts cross country; a minted tfrrs person with
+    #   the Tufts races alone -- "fix these"). The same exact name and school
+    #   string on two careers is usually one runner whose anet profile split,
+    #   but not always, so it is never automatic: --careers prints them, and
+    #   --careers --write joins them. Every check below still applies --
+    #   sexes, a number in the name, two cross country races on one day, one
+    #   track race twice, the generation test -- and the career with the most
+    #   rows is the target.
+    if len(careers) > 1 and not allow_careers:
         return Verdict(None, (), "two careers share the profile school")
     if careers:
-        target = careers[0]
+        target = max(careers, key=lambda m: (len(m.rows), -m.pid))
     else:
         most = max(len(m.rows) for m in members)
         top = [m for m in members if len(m.rows) == most]
@@ -345,8 +361,8 @@ def gather(cur, person=None):
     return out_m, out_k
 
 
-def judge(groups):
-    return {i: decideGroup(ms) for i, ms in groups.items()}
+def judge(groups, allow_careers=False):
+    return {i: decideGroup(ms, allow_careers) for i, ms in groups.items()}
 
 
 # ------------------------------------------------------------------ #
@@ -363,6 +379,15 @@ CREATE TABLE IF NOT EXISTS profile_school_merge (
 CREATE TABLE IF NOT EXISTS profile_school_veto (
     old_id    bigint PRIMARY KEY,
     vetoed_at timestamptz NOT NULL DEFAULT now()
+)"""
+
+
+ATHLETE_LOG_DDL = """
+CREATE TABLE IF NOT EXISTS profile_school_athletes (
+    athlete_id  bigint NOT NULL,
+    from_person bigint NOT NULL,
+    to_person   bigint NOT NULL,
+    PRIMARY KEY (athlete_id, from_person)
 )"""
 
 
@@ -407,23 +432,32 @@ def write(conn, decisions):
                        SELECT old_id, new_id FROM profile_school_merge
                        WHERE old_id NOT IN (SELECT old_id FROM profile_school_veto)""")
         for sport, table in TABLES:
+            # ! EVERY ROW UNDER THE PERSON (2026-10-08, --careers). A stray
+            #   holds only its own anet rows, so for it this is the rows it
+            #   always moved; a career also holds its tfrrs rows and other
+            #   linked profiles' rows, and leaving those behind would split it.
             cur.execute(f"""
                 INSERT INTO person_link_log (sport, result_id, from_person,
                                              to_person, rule)
                 SELECT %s, r.result_id, m.old_id, m.new_id, %s
                 FROM   {table} r JOIN ps_map m ON r.person_id = m.old_id
-                WHERE  r.source = 'anet' AND r.athlete_id = m.old_id
                 ON CONFLICT DO NOTHING""", (sport, RULE))
             cur.execute(f"""
                 UPDATE {table} r SET person_id = m.new_id
                 FROM   ps_map m
-                WHERE  r.person_id = m.old_id
-                  AND  r.source = 'anet' AND r.athlete_id = m.old_id""")
+                WHERE  r.person_id = m.old_id""")
             out[f"{sport} rows moved"] = cur.rowcount
+        # every profile under the person, logged so --undo can put it back
+        cur.execute(ATHLETE_LOG_DDL)
+        cur.execute("""
+            INSERT INTO profile_school_athletes (athlete_id, from_person, to_person)
+            SELECT a.athlete_id, m.old_id, m.new_id
+            FROM   athletes a JOIN ps_map m ON a.person_id = m.old_id
+            ON CONFLICT (athlete_id, from_person) DO NOTHING""")
         cur.execute("""
             UPDATE athletes a SET person_id = m.new_id
             FROM   ps_map m
-            WHERE  a.athlete_id = m.old_id AND a.person_id = m.old_id""")
+            WHERE  a.person_id = m.old_id""")
         out["athletes rows repointed"] = cur.rowcount
         cur.execute("""
             INSERT INTO person_redirect (old_id, new_id, n_probes)
@@ -460,6 +494,17 @@ def undo(conn, which):
             WHERE  a.athlete_id = m.old_id AND a.person_id = m.new_id {mcond}
         """, {"one": one})
         back["athletes"] = cur.rowcount
+        # and every other profile a career merge moved (logged since 2026-10-08)
+        if _hasTable(cur, "profile_school_athletes"):
+            lcond = "" if one is None else "AND l.from_person = %(one)s"
+            cur.execute(f"""
+                UPDATE athletes a SET person_id = l.from_person
+                FROM   profile_school_athletes l
+                WHERE  a.athlete_id = l.athlete_id AND a.person_id = l.to_person {lcond}
+            """, {"one": one})
+            back["athletes"] += cur.rowcount
+            cur.execute(f"DELETE FROM profile_school_athletes l WHERE true {lcond}",
+                        {"one": one})
         if _hasTable(cur, "person_redirect"):
             cur.execute(f"""
                 DELETE FROM person_redirect p USING profile_school_merge m
@@ -506,6 +551,9 @@ def main():
     ap.add_argument("--show", type=int, default=40)
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--undo", metavar="ID|all")
+    ap.add_argument("--careers", action="store_true",
+                    help="also join two careers under one (name, school) key "
+                         "when every other check passes -- review the dry run first")
     a = ap.parse_args()
     from database import getConn
     with getConn() as conn:
@@ -515,7 +563,7 @@ def main():
         with conn.cursor() as cur:
             groups, keys = gather(cur, a.person)
         conn.rollback()                          # temp tables only
-        verdicts = judge(groups)
+        verdicts = judge(groups, allow_careers=a.careers)
         report(groups, keys, verdicts, a.show)
         decisions = decisionsOf(groups, keys, verdicts)
         if not a.write:
