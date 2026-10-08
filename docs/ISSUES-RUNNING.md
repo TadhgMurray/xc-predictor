@@ -5257,6 +5257,13 @@ Chromium against the old script (readout 15:00, label under the pointer
     the top-right block "feels random"). Would carry to meet/course/school.
   - Athlete page attempt rejected ("really meshed together"; keep the
     graphs where they are; the top-right numbers felt random).
+- **Athlete page flags back to how they were before the UI work.** The
+  one-width rule (a7b8c76) is gone (owner: "look stupid as fuck again");
+  diffed against ab83fee, no other rule touches the athlete page's flags.
+- **Race sidebar: nothing lit until a team is tapped.** The first team was
+  lit on load and the tip named it; now the tip reads "Tap a team ..."
+  until one is tapped (a ?school= link still arrives lit). XC, track and
+  compiled pages.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

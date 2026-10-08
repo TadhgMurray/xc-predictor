@@ -217,7 +217,10 @@
     {% endfor %}
     </tbody>
   </table>
-  <p class="rc-tip"><span class="rc-tip-name">{{ ((scores.teams[0].runners[0].school if scores.teams[0].runners else scores.teams[0].school) if not hl_school else hl_school).split("\x00")[0] }}</span>'s runners are lit in the results. Tap a team to light theirs, or its name for the team's results.</p>
+  {# ★ NOTHING LIT UNTIL A TEAM IS TAPPED (owner, 2026-10-08: "If you don't
+     press a team on the race sidebar it shouldn't have the runners names
+     list text"); a ?school= link still arrives lit. #}
+  <p class="rc-tip"><span class="rc-tip-lit"{% if not hl_school %} hidden{% endif %}><span class="rc-tip-name">{{ (hl_school or "").split("\x00")[0] }}</span>'s runners are lit in the results. </span>Tap a team to light its runners, or its name for the team's results.</p>
   {% if scores.teams|length > 10 %}<button type="button" class="rc-more rc-more-teams" data-all="All {{ scores.teams|length }} teams">All {{ scores.teams|length }} teams</button>{% endif %}
   {% endif %}
   {{ al.box(above_spec) }}
@@ -248,6 +251,6 @@
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('equiv-line.js') }}"></script>
-<script src="{{ static_v('race-page.js') }}" data-light="{{ hl_school or (scores.teams[0].runners[0].school if scores and scores.teams and scores.teams[0].runners else '') }}"></script>
+<script src="{{ static_v('race-page.js') }}" data-light="{{ hl_school or '' }}"></script>
 </body>
 </html>

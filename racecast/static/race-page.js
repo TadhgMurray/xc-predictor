@@ -65,6 +65,7 @@
   var rows = main.querySelectorAll(".rc-table tbody tr");
   var teamRows = main.querySelectorAll(".rc-tscores tr[data-team]");
   var tipName = main.querySelector(".rc-tip-name");
+  var tipLit = main.querySelector(".rc-tip-lit");
   function light(key, rids) {
     var ids = {};
     (rids || "").split(/\s+/).forEach(function (r) { if (r) ids["r" + r] = true; });
@@ -83,6 +84,7 @@
     //   HTML parser replaces it), so splitting on \u0000 alone never fired:
     //   "Williams\uFFFDMA's runners are lit" (owner, 2026-10-07).
     if (tipName) tipName.textContent = (key || "").split(/[\u0000\uFFFD]/)[0];
+    if (tipLit) tipLit.hidden = !key;
     drawField();
   }
   // ---- the field on one scale: every rated finisher, one dot each

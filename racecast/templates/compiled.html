@@ -152,13 +152,13 @@
     {% endfor %}
     </tbody>
   </table>
-  <p class="rc-tip"><span class="rc-tip-name">{{ ((group.scores.teams[0].runners[0].school if group.scores.teams[0].runners else group.scores.teams[0].school) or "").split("\x00")[0] }}</span>'s runners are lit in the results. Tap any team to light theirs.</p>
+  <p class="rc-tip"><span class="rc-tip-lit" hidden><span class="rc-tip-name"></span>'s runners are lit in the results. </span>Tap a team to light its runners.</p>
   {% if group.scores.teams|length > 10 %}<button type="button" class="rc-more rc-more-teams" data-all="All {{ group.scores.teams|length }} teams">All {{ group.scores.teams|length }} teams</button>{% endif %}
 </aside>
 {% endif %}
 </div>
 </main>
 <script src="{{ static_v('scale-view.js') }}"></script>
-<script src="{{ static_v('race-page.js') }}" data-light="{{ (group.scores.teams[0].runners[0].school if group.scores.teams and group.scores.teams[0].runners else '') }}"></script>
+<script src="{{ static_v('race-page.js') }}" data-light=""></script>
 </body>
 </html>
