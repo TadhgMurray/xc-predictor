@@ -5351,7 +5351,17 @@ Chromium against the old script (readout 15:00, label under the pointer
   --sections 014` now adds section 4: the page's own cell lookup, the
   race_day_effect rows that day, every division sharing the venue-day with
   distance / median / pools / here-vs-later, and the guard's suspects.
-  Waiting on the owner's output.
+  **Owner's output (D3 nationals, Roger Milliken Science Center, 2025-11-22):**
+  both divisions share day +3.02%; course 8000 m +7.63%, 6000 m +6.70%; each
+  course cell holds only this race's rows, so course and day are split by the
+  priors (pen_cell / pen_race), not measured apart -- "Day slow" there is not
+  a weather reading. Here vs level (median, %): 2025 men +2.0, women -0.6;
+  2024 div 1011333 +1.0, div 1011334 +0.3 (2022-2023 are tfrrs-only, not
+  read). The men's race is ~1-2% more generous than the women's on the same
+  day and than 2024; the shared day term cannot make that gap, so it sits in
+  the 8000 m course term or the men's season-end abilities. ~1.5 points a
+  rating. 📋 Open, small; and the page could show course + day as one
+  number for a course's first race (offered, not done).
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane
