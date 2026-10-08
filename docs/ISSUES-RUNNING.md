@@ -5564,3 +5564,32 @@ Chromium against the old script (readout 15:00, label under the pointer
   prints a college grade only when the pool it is handed is college; a race
   row's pool is its rating_pool (NULL when unrated) and an athlete season's
   is its board pool. Waiting on an example URL to see which is missing.
+- **✅ Rated-not-ranked fired on "basically everybody" in the season in
+  progress** (owner). A one-race season needed the last trusted season to
+  vouch, which needs readable grades on both sides: every first season (all
+  freshmen), field verdicts with no grade and level-only seasons could not
+  be vouched for and sat off the boards (and the athlete header, which
+  reads the latest board season, kept the old school -- "still says De La
+  Salle"). grade_sanity.trustByProgression(open_ay=academic year of today):
+  in the open year one race is trusted unless it CONTRADICTS the last
+  trusted season (_contradicts: grades that do not advance; a level that
+  goes back or skips one, the Colussi shape). A closed year keeps the
+  two-race rule. Takes effect at the next grade_sanity + board build.
+  test_grade_trust.
+- **✅ Predictions, NESCAC: the same runner twice** (Jonah Schulman x2,
+  Lysander Duffield x2, John Disturco / DiSturco): the name check compared
+  additions with the squad, not with each other, so an anet person and an
+  unlinked tfrrs person who both raced this season both came in.
+  _currentSquads now ends with _dedupeByName (rated copy, then graded,
+  then more races). The real cure is linking the persons
+  (scripts/link_feed_twins.py, still a dry run awaiting the owner's go).
+- **✅ College runners with no grade** ("fr don't get grades"): tfrrs XC
+  rows carry none. _inferCollegeGrades: seasons since college_first_season
+  (FR-1..SR-4, SR-5+), or FR-1 when the runner's earliest result of any kind
+  is this season; a carried grade is never replaced (grade_inferred marks
+  it).
+- **✅ Predicted results: the Rating column now shows the rating the time
+  came from** (owner: "the ratings are all fucked up" -- a 139 behind a
+  137.9). It showed the squad's season rating while the time is the recent
+  form (_formRating); where the time is the rating's, the column takes
+  form_rating/form_pool (season_rating kept on the row).

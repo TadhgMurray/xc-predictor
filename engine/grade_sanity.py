@@ -258,7 +258,26 @@ def _advances(prev, cur, years=1):
     return bool(lp) and lp == lc and lp in ("college", "pro")
 
 
-def trustByProgression(acad, race_count, min_races=MIN_TRUSTED_RACES):
+_LEVEL_RANK = {"elem": 0, "ms": 1, "hs": 2, "college": 3, "pro": 4}
+
+
+def _contradicts(prev, cur, years=1):
+    """Does `cur` disagree with the trusted season `years` before it:
+    two readable grades that do not advance, or a level that goes back or
+    skips one (ms straight to college -- the Colussi shape). Nothing
+    readable to compare is no contradiction."""
+    a, b = _gradeStep(prev.get("grade")), _gradeStep(cur.get("grade"))
+    if a and b:
+        return not _advances(prev, cur, years)
+    lp = _LEVEL_RANK.get(prev.get("level") or "")
+    lc = _LEVEL_RANK.get(cur.get("level") or "")
+    if lp is None or lc is None:
+        return False
+    return lc < lp or lc > lp + 1
+
+
+def trustByProgression(acad, race_count, min_races=MIN_TRUSTED_RACES,
+                       open_ay=None):
     """Stamp v['trust'] on every academic-year verdict, in year order.
 
     high  when the season has min_races or more, OR when the previous
@@ -292,6 +311,23 @@ def trustByProgression(acad, race_count, min_races=MIN_TRUSTED_RACES):
             v["trust"] = "high"
             v["trust_by"] = "progression"
             last_trusted[pid] = (ay, v)
+            n_vouched += 1
+        elif ay == open_ay and not (
+                prev is not None and _contradicts(prev, v, ay - prev_ay)):
+            # ★ THE SEASON IN PROGRESS IS NOT SHORT OF RACES, IT IS YOUNG
+            #   (owner, 2026-10-08: "a lot of the rated not ranked rules
+            #   fire bcs they haven't run enough races, on basically
+            #   everybody. Completely fucks the boards"). Vouching needs a
+            #   readable grade on both sides, so a first season (every
+            #   freshman), a field verdict without a grade, or a runner
+            #   whose last trusted season said only "hs" could not be
+            #   vouched for and sat off the boards until a second race.
+            #   In the open academic year one race is enough UNLESS it
+            #   contradicts the last trusted season (_contradicts: grades
+            #   that do not advance, a level that goes back or skips one).
+            #   Once the year closes, the two-race rule judges it as before.
+            v["trust"] = "high"
+            v["trust_by"] = "season_open"
             n_vouched += 1
         else:
             v["trust"] = "low"
@@ -2338,7 +2374,11 @@ def resolve(cur, audit=False):
     #    race. An athlete who was a trusted grade 10 in May and races as a
     #    grade 11 in September is corroborated by the calendar, not by a
     #    second race: see trustByProgression.
-    n_untrusted, n_vouched = trustByProgression(acad, race_count)
+    # the academic year still being raced (season_year's August clock)
+    import datetime as _dt
+    from season_year import academicYear
+    n_untrusted, n_vouched = trustByProgression(
+        acad, race_count, open_ay=academicYear(_dt.date.today()))
 
     out = dict(acad)
 

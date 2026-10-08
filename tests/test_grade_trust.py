@@ -71,3 +71,27 @@ def test_a_first_season_has_nothing_to_vouch_for_it():
     acad = {(1, 2025): _v("9")}
     trustByProgression(acad, {(1, 2025): 1})
     assert acad[(1, 2025)]["trust"] == "low"
+
+
+def test_the_open_season_trusts_one_race_unless_it_contradicts():
+    """Owner, 2026-10-08: "a lot of the rated not ranked rules fire bcs they
+    haven't run enough races, on basically everybody"."""
+    acad = {
+        (1, 2026): _v("9"),                                  # first season ever
+        (2, 2026): _v(None, "hs"),                           # field verdict, no grade
+        (3, 2025): _v("10"), (3, 2026): _v("10"),            # repeats a grade
+        (4, 2025): _v(None, "ms"), (4, 2026): _v(None, "college"),  # skips a level
+        (5, 2025): _v(None, "hs"), (5, 2026): _v(None, "college"),  # one step up
+        (6, 2024): _v("9"),                                  # closed year: old rule
+    }
+    counts = {(1, 2026): 1, (2, 2026): 1, (3, 2025): 4, (3, 2026): 1,
+              (4, 2025): 3, (4, 2026): 1, (5, 2025): 3, (5, 2026): 1,
+              (6, 2024): 1}
+    trustByProgression(acad, counts, open_ay=2026)
+    t = {k: v["trust"] for k, v in acad.items()}
+    assert t[(1, 2026)] == "high" and acad[(1, 2026)]["trust_by"] == "season_open"
+    assert t[(2, 2026)] == "high"
+    assert t[(3, 2026)] == "low"          # a repeated grade still contradicts
+    assert t[(4, 2026)] == "low"          # ms straight to college: Colussi
+    assert t[(5, 2026)] == "high"
+    assert t[(6, 2024)] == "low"          # a closed year keeps the two-race rule

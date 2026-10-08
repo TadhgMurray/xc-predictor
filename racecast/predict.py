@@ -747,6 +747,18 @@ def _score(field, preds):
                "school_state": runner.get("school_state"),
                "grade": runner.get("grade"), "pool": runner.get("pool"),
                "rating": runner.get("rating"), "score_place": None}
+        # ★ THE RATING THE TIME CAME FROM (owner, 2026-10-08, NESCAC: "the
+        #   ratings are all fucked up" -- a 139 placed behind a 137.9, a
+        #   130.8 placed 71st). The column showed the squad's season rating
+        #   (its average, or last season's carried forward) while the time
+        #   is the recent form: the last few rated races in their latest
+        #   pool, newest weighted up (_formRating). Where the time is the
+        #   rating's, the column now shows that same form rating and pool,
+        #   so the two read together; the season figure rides beside it.
+        if pred.get("basis") == "rating" and pred.get("form_rating"):
+            row["season_rating"] = row["rating"]
+            row["rating"] = pred["form_rating"]
+            row["pool"] = (pred.get("form_pool") or row["pool"] or "").split("|")[0] or None
         finishers.append(row)
         if not isTeam(team):
             continue
@@ -3470,9 +3482,36 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
             merged = sorted(squads.get(sch, []) + add,
                             key=lambda r: -(r.get("rating") or 0))
             squads[sch] = _bestFirst(merged, sport)
+    # ★ AND NOT TWO COPIES OF ONE RUNNER AMONG THE NEW ONES EITHER (owner,
+    #   2026-10-08, NESCAC: "Jonah Schulman" twice, "Lysander Duffield"
+    #   twice, "John Disturco" / "John DiSturco"). The check above compares
+    #   additions with the squad, not with each other, so a runner whose
+    #   anet person and unlinked tfrrs person BOTH raced this season came in
+    #   twice -- the second copy unrated and ungraded. One per name per
+    #   school, the rated copy first.
+    for sch in list(squads):
+        squads[sch] = _dedupeByName(squads[sch])
     if states:
         _keepIdentity(cur, squads, states)
     return squads
+
+
+def _dedupeByName(rows):
+    """One entry per _nameKey, keeping the best-evidenced copy (a rating,
+    then a grade, then more races); order otherwise kept. A row with no
+    usable name is never merged."""
+    best = {}
+    for i, r in enumerate(rows or []):
+        k = _nameKey(r.get("name"))
+        if k is None:
+            continue
+        score = (r.get("rating") is not None, bool(r.get("grade")),
+                 r.get("n_races") or 0, r.get("rating") or 0)
+        if k not in best or score > best[k][0]:
+            best[k] = (score, i)
+    keep = {i for _s, i in best.values()}
+    return [r for i, r in enumerate(rows or [])
+            if _nameKey(r.get("name")) is None or i in keep]
 
 
 # Purpose:   one namesake of a contested school name, not all of them
@@ -3685,9 +3724,67 @@ def _raceEntrantsUncached(cur, schools, sport, year, gender=None, levels=None):
             "n_races": r["n_races"], "from_results": True})
     flat = [e for rows in out.values() for e in rows]
     if flat:
+        _inferCollegeGrades(cur, flat, year, levels)
         from pool_view import stampBoardRows
         stampBoardRows(flat, rating_keys=("rating",), sport=sport)
     return out
+
+
+_COLLEGE_YEARS = ("FR-1", "SO-2", "JR-3", "SR-4")
+
+
+# ★ A COLLEGE RUNNER WITH NO GRADE GETS THEIR COLLEGE YEAR (owner,
+#   2026-10-08, NESCAC: "fr don't get grades here" -- Finn Miller, Rylan
+#   Preble, Taylor Combs read "-"). tfrrs cross country rows carry no grade
+#   at all, so a runner known only from tfrrs has none to show. Their year
+#   is a count, not a guess: seasons since their first college season
+#   (college_flag's college_first_season, which needs two college races),
+#   and a runner whose earliest result of ANY kind is this season is a
+#   first-year. A grade the rows do carry is never replaced.
+def _inferCollegeGrades(cur, entries, year, levels=None):
+    want = [e for e in entries if not e.get("grade") and e.get("person_id")
+            and ((e.get("pool") or "").startswith("college")
+                 or (not e.get("pool") and levels and set(levels) == {"college"}))]
+    if not want:
+        return
+    try:
+        from season_year import academicYear
+        cur.execute("SELECT to_regclass('college_first_season') IS NOT NULL AS ok")
+        got = cur.fetchone()
+        has = bool(got["ok"] if isinstance(got, dict) else got[0])
+        first_sql = ("(SELECT c.first_date FROM college_first_season c "
+                     "WHERE c.person_id = r.person_id LIMIT 1)" if has else "NULL::date")
+        cur.execute(f"""
+            SELECT r.person_id, {first_sql} AS coll_first, min(r.date) AS first_any
+            FROM   results r
+            WHERE  r.person_id = ANY(%(ids)s)
+            GROUP  BY r.person_id""", {"ids": sorted({e["person_id"] for e in want})})
+        by = {}
+        for row in cur.fetchall():
+            row = row if isinstance(row, dict) else dict(zip(
+                ("person_id", "coll_first", "first_any"), row))
+            by[row["person_id"]] = row
+    except Exception:                                   # noqa: BLE001
+        _rollback(cur)
+        return
+    for e in want:
+        row = by.get(e["person_id"])
+        if not row:
+            continue
+        start = _asDate(row.get("coll_first") or row.get("first_any"))
+        ay = academicYear(start) if start else None
+        if ay is None:
+            continue
+        n = int(year) - int(ay)
+        if row.get("coll_first") is None and n != 0:
+            continue                    # no college start on record: only a
+                                        # first season can be named for sure
+        if 0 <= n < len(_COLLEGE_YEARS):
+            e["grade"] = _COLLEGE_YEARS[n]
+            e["grade_inferred"] = True
+        elif n >= len(_COLLEGE_YEARS):
+            e["grade"] = f"SR-{n + 1}"
+            e["grade_inferred"] = True
 
 
 def _advanced(grade, years, pool):

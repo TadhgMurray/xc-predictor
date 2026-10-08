@@ -302,3 +302,46 @@ def test_division_zero_is_a_division():
     cur = Cur()
     P._exactField(cur, 27292, 0, "XC", source="tfrrs")
     assert "r.div_id = %(div)s" in cur.sql[0][0]
+
+
+def test_two_new_copies_of_one_runner_become_one():
+    """Owner, 2026-10-08, NESCAC: 'Jonah Schulman' twice, 'John Disturco' /
+    'John DiSturco' -- both copies new this season, so the squad check never
+    compared them with each other."""
+    rows = [{"person_id": 1, "name": "John Disturco", "rating": None, "grade": None},
+            {"person_id": 2, "name": "Jonah Schulman", "rating": None, "grade": None, "n_races": 2},
+            {"person_id": 3, "name": "John DiSturco", "rating": 127.0, "grade": "JR-3"},
+            {"person_id": 4, "name": "Jonah Schulman", "rating": None, "grade": None, "n_races": 3},
+            {"person_id": 5, "name": "Unknown", "rating": None},
+            {"person_id": 6, "name": "Unknown", "rating": None}]
+    got = [r["person_id"] for r in P._dedupeByName(rows)]
+    assert got == [3, 4, 5, 6]
+
+
+def test_a_college_runner_with_no_grade_gets_their_college_year():
+    """Owner, 2026-10-08, NESCAC: "fr don't get grades here". tfrrs rows
+    carry no grade; the year is seasons since the first college season, and
+    a runner whose earliest result is this season is a first-year."""
+    import datetime
+
+    class Cur:
+        def __init__(self):
+            self.n = 0
+
+        def execute(self, sql, params=None):
+            self.n += 1
+
+        def fetchone(self):
+            return {"ok": True}
+
+        def fetchall(self):
+            return [{"person_id": 1, "coll_first": datetime.date(2024, 9, 1), "first_any": "2020-09-01"},
+                    {"person_id": 2, "coll_first": None, "first_any": "2026-09-05"},
+                    {"person_id": 3, "coll_first": None, "first_any": "2022-09-05"}]
+    e = [{"person_id": 1, "grade": None, "pool": "college_m"},
+         {"person_id": 2, "grade": None, "pool": None},
+         {"person_id": 3, "grade": None, "pool": "college_m"},
+         {"person_id": 4, "grade": "JR-3", "pool": "college_m"}]
+    P._inferCollegeGrades(Cur(), e, 2026, levels={"college"})
+    assert [x["grade"] for x in e] == ["JR-3", "FR-1", None, "JR-3"]
+    assert e[0]["grade_inferred"] and "grade_inferred" not in e[3]
