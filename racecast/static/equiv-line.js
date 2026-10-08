@@ -140,6 +140,10 @@
 
     function centre() { return st.tmin + ruler.scrollLeft / st.sc.pxps; }
     function goTo(t) {
+      // ! A TIME CAN ARRIVE BEFORE THE CURVE DOES (a tap in the race page's
+      //   conversion list while /api/equivalence is still out): keep it, and
+      //   load() opens on it instead of the winner.
+      if (!st.sc) { st.want = t; return; }
       t = Math.max(st.tmin, Math.min(st.tmax, t));
       ruler.scrollLeft = (t - st.tmin) * st.sc.pxps;
       show(t);
@@ -239,7 +243,8 @@
           for (var i = 0; i < st.points.length; i++) {
             if (st.points[i][0] <= 100) { avg = st.points[i][1]; break; }
           }
-          var start = keep != null ? keep : st.lo ? st.lo : avg;
+          var start = keep != null ? keep : st.want != null ? st.want : st.lo ? st.lo : avg;
+          st.want = null;
           goTo(start != null ? start : st.points[0][1]);
         })
         .catch(function () {

@@ -26,6 +26,9 @@
     //   (owner, 2026-10-07, on "All teams"): with the Teams tab open the
     //   sidebar steps aside and the table takes the width
     main.classList.toggle("rc-on-teams", name === "teams");
+    // the conversion tab swaps the sidebar for the finishers (fillConv)
+    main.classList.toggle("rc-on-track", name === "track");
+    if (name === "track" && typeof fillConv === "function") fillConv();
     main.querySelectorAll(".rc-tabs [data-tab]").forEach(function (a) {
       a.classList.toggle("is-on", a.dataset.tab === name);   // the site's .seg-btn.is-on
     });
@@ -253,15 +256,23 @@
     });
   }
 
+  // ★ THE ROW LIGHTS, THE NAME OPENS (owner, 2026-10-08: "the actual name
+  //   should prolly be linked not the entire box, so you can highlight
+  //   without pressing team results"). A tap on the row toggles the team's
+  //   runners lit, as before; a tap on the name lights them and opens the
+  //   popup.
   teamRows.forEach(function (t) {
     function go() {
-      if (pop) {
-        light(t.dataset.team, t.dataset.rids);
-        openTeam(t);
-        return;
-      }
       var on = t.classList.contains("rc-lit");
       light(on ? "" : t.dataset.team, on ? "" : t.dataset.rids);
+    }
+    var nameBtn = t.querySelector(".rc-team-name");
+    if (nameBtn && pop) {
+      nameBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        light(t.dataset.team, t.dataset.rids);
+        openTeam(t);
+      });
     }
     t.addEventListener("click", go);
     t.addEventListener("keydown", function (e) {
@@ -330,6 +341,67 @@
       if (e.key === "Escape") { find.value = ""; find.dispatchEvent(new Event("input")); }
     });
   }
+
+  // ---- the conversion tab's sidebar: every timed finisher, tap to convert
+  // ★ OWNER, 2026-10-08: "it should show indiv results in the sidebar so you
+  //   can find your result so you can convert it". Built once, the first
+  //   time the tab opens, from the results table's timed rows (td.tm
+  //   data-t); a tap types that time into the line's box and commits it,
+  //   exactly as typing it would.
+  var conv = main.querySelector(".rc-conv");
+  var convBuilt = false;
+  function fillConv() {
+    if (!conv || convBuilt) return;
+    convBuilt = true;
+    var ol = conv.querySelector(".rc-conv-list");
+    var n = 0;
+    rows.forEach(function (tr) {
+      var tm = tr.querySelector("td.tm[data-t]");
+      if (!tm) return;
+      var nmCell = tr.querySelector("td.nm");
+      var a = nmCell && nmCell.querySelector("a");
+      var name = a ? a.textContent.trim()
+               : (nmCell && nmCell.firstChild ? nmCell.firstChild.textContent.trim() : "");
+      var sub = nmCell && nmCell.querySelector(".rc-subline");
+      var school = sub ? sub.textContent.replace(/\s+/g, " ").trim() : "";
+      var shown = (tm.firstChild ? tm.firstChild.textContent : tm.textContent).trim();
+      var li = document.createElement("li");
+      var b = document.createElement("button");
+      b.type = "button";
+      b.dataset.time = shown;
+      b.innerHTML = '<span class="p"></span><span class="w"><b></b><small></small></span><i></i>';
+      b.querySelector(".p").textContent = cellText(tr, "td.pl");
+      b.querySelector("b").textContent = name || "Unknown";
+      b.querySelector("small").textContent = school;
+      b.querySelector("i").textContent = shown;
+      li.appendChild(b);
+      ol.appendChild(li);
+      n++;
+    });
+    if (!n) { conv.hidden = true; return; }
+    ol.addEventListener("click", function (e) {
+      var b = e.target.closest("button");
+      if (!b) return;
+      var input = main.querySelector("#track .eq-time");
+      if (!input) return;
+      ol.querySelectorAll("button.is-on").forEach(function (x) { x.classList.remove("is-on"); });
+      b.classList.add("is-on");
+      input.value = b.dataset.time;
+      input.dispatchEvent(new Event("change"));
+      // on a phone the list sits under the line: bring the line back
+      if (window.matchMedia("(max-width: 900px)").matches) {
+        main.querySelector("#track").scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+    });
+    var cf = conv.querySelector(".rc-conv-find");
+    cf.addEventListener("input", function () {
+      var q = cf.value.trim().toLowerCase();
+      ol.querySelectorAll("li").forEach(function (li) {
+        li.hidden = !!q && li.textContent.toLowerCase().indexOf(q) < 0;
+      });
+    });
+  }
+  if (main.classList.contains("rc-on-track")) fillConv();
 
   // ---- arriving at #r<result id> (from the meet page's finder): that row
   if (/^#r\d+$/.test(location.hash)) {

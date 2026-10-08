@@ -84,3 +84,31 @@ def test_team_scores_open_the_team_popup():
     assert html.count('data-href="{{ school_href(t.school') == 2                # sidebar and Teams tab
     assert 'class="rc-team-open"' in html
     assert "function openTeam(t)" in js and "pop.showModal()" in js
+
+
+def test_team_row_lights_and_name_opens():
+    """Owner, 2026-10-08: "the actual name should prolly be linked not the
+    entire box, so you can highlight without pressing team results"."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    html = open(os.path.join(root, "racecast", "templates", "race.html"), encoding="utf-8").read()
+    js = open(os.path.join(root, "racecast", "static", "race-page.js"), encoding="utf-8").read()
+    assert '<button type="button" class="rc-team-name">' in html
+    assert 'nameBtn.addEventListener("click"' in js and "e.stopPropagation()" in js
+
+
+def test_conversion_tab_lists_finishers():
+    """Owner, 2026-10-08: the conversion tab shows individual results in the
+    sidebar so you can find yours and convert it."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    t = lambda n: open(os.path.join(root, "racecast", "templates", n), encoding="utf-8").read()
+    js = open(os.path.join(root, "racecast", "static", "race-page.js"), encoding="utf-8").read()
+    eq = open(os.path.join(root, "racecast", "static", "equiv-line.js"), encoding="utf-8").read()
+    for n in ("race.html", "race_tf.html"):
+        assert '{% include "_conv_side.html" %}' in t(n)
+        assert ' data-t="{{ row.time_seconds }}"' in t(n)
+    assert '<ol class="rc-conv-list"></ol>' in t("_conv_side.html")
+    assert 'main.classList.toggle("rc-on-track", name === "track")' in js
+    assert 'input.dispatchEvent(new Event("change"))' in js
+    assert "if (!st.sc) { st.want = t; return; }" in eq      # a tap before the curve loads

@@ -1,0 +1,11 @@
+{# ★ YOUR RESULT, ONE TAP FROM ITS CONVERSION (owner, 2026-10-08: "in the
+   conversion tab for races, it should show indiv results in the sidebar so
+   you can find your result so you can convert it"). Shown only while the
+   conversion tab is open (main.rc-on-track); race-page.js fills the list
+   from the results table's timed rows and a tap puts that time on the
+   line. Without the script it never shows. #}
+<div class="rc-conv">
+  <h2>Convert a result <small>tap yours</small></h2>
+  <input class="rc-conv-find" type="search" autocomplete="off" placeholder="Find your name or school" aria-label="Find your name or school">
+  <ol class="rc-conv-list"></ol>
+</div>

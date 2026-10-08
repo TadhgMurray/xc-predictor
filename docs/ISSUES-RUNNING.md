@@ -5116,6 +5116,15 @@ Chromium against the old script (readout 15:00, label under the pointer
   now lists every athlete or school that matches, each linking to their row
   in their event (`/api/meet/tf/<id>/find`, the twin of the XC one). Test in
   `test_meet_find.py`.
+- **Team row lights, team name opens** (owner, 2026-10-08). In the sidebar
+  a tap on the row toggles the team's runners lit, as before; the team name
+  is a button that lights them and opens the team popup.
+- **Conversion tab lists the finishers.** On the XC "On the track" tab and
+  the track "Equivalent times" tab, the sidebar swaps to every timed
+  finisher with a search box; a tap puts that time on the conversion line
+  (`_conv_side.html`, `race-page.js fillConv`). A track race with no event
+  points gets the sidebar only on that tab. `equiv-line.js` keeps a time
+  that arrives before the curve has loaded and opens on it.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

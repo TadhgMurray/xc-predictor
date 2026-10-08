@@ -77,7 +77,7 @@
   </div>
 </div></header>
 
-<div class="rc-w rc-grid{% if not school_points %} rc-grid-one{% endif %}">
+<div class="rc-w rc-grid{% if not school_points %} rc-grid-one{% if equiv_dist %} rc-conv-only{% endif %}{% endif %}">
 <div class="rc-mainc">
   <div class="rc-tbar">
     <nav class="seg rc-tabs" role="tablist">
@@ -117,7 +117,7 @@
           {% if not row.is_relay %}<span class="rc-subline">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state, pool=pool_lv) }}{% endif %}{{ row.school|school_label_for(pool_lv, header.state) if row.school else "" }}{% if row.grade %} · {{ row.grade|grade_label(row.rating_pool) }}{% endif %}</span>{% endif %}
         </td>
         <td class="sch rc-wide">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state, pool=pool_lv) }}<a href="{{ school_href(row.school, header.state, pool=pool_lv) }}">{{ row.school|school_label_for(pool_lv, header.state) }}</a>{% elif row.school %}{{ row.school|school_label_for(pool_lv, header.state) }}{% else %} - {% endif %}{% if row.grade %}<span class="gr">{{ row.grade|grade_label(row.rating_pool) }}</span>{% endif %}</td>
-        <td class="n tm">{{ row.display_result }}{{ recflag(row) }}</td>
+        <td class="n tm"{% if row.time_seconds and not row.is_field and not row.is_relay %} data-t="{{ row.time_seconds }}"{% endif %}>{{ row.display_result }}{{ recflag(row) }}</td>
         {% if has_wind %}<td class="n rc-wide wind">{{ "%+.1f"|format(row.wind) if row.wind is not none else " - " }}</td>{% endif %}
         <td class="n rt" data-rx="tf:{{ row.result_id }}"><span class="rc-rv">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</span>{% if above_spec %}<span class="vs-level" data-rid="{{ row.result_id }}"></span>{% endif %}</td>
         {% if has_pts %}<td class="n pts rc-wide">{{ row.points if row.points else "" }}</td>{% endif %}
@@ -140,7 +140,7 @@
       <a href="/report?about={{ request.path|urlencode }}">Report it →</a></div>
 </div>
 
-{% if school_points %}
+{% if school_points or equiv_dist %}
 <aside class="rc-side">
   {% if school_points %}
   <h2>Event points <small>by school</small></h2>
@@ -157,7 +157,8 @@
   </table>
   <p class="rc-tip"><span class="rc-tip-name">{{ (hl_school or school_points[0][0] or "").split("\x00")[0] }}</span>'s athletes are lit in the results. Tap any school to light theirs.</p>
   {% endif %}
-  {{ al.box(above_spec) }}
+  {% if school_points %}{{ al.box(above_spec) }}{% endif %}
+  {% if equiv_dist %}{% include "_conv_side.html" %}{% endif %}
 </aside>
 {% endif %}
 </div>

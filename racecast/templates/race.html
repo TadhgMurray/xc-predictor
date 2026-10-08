@@ -136,7 +136,7 @@
           <span class="rc-subline">{% if row.school and row.school|is_team %}{{ crest(row.school, sst, trusted=sok) }}{% endif %}{{ row.school|school_label_in(sst, sok) if row.school else "" }}{% if row.grade %} · {{ row.grade|grade_label(row.rating_pool) }}{% endif %}</span>
         </td>
         <td class="sch rc-wide">{% if row.school and row.school|is_team %}{{ crest(row.school, sst, trusted=sok) }}<a href="{{ school_href(row.school, sst, trusted=sok) }}">{{ row.school|school_label_in(sst, sok) }}</a>{% elif row.school %}{{ row.school|school_label_in(sst, sok) }}{% else %} - {% endif %}{% if row.grade %}<span class="gr">{{ row.grade|grade_label(row.rating_pool) }}</span>{% endif %}</td>
-        <td class="n tm">{{ row.display_time }}{{ recflag(row) }}</td>
+        <td class="n tm"{% if row.time_seconds %} data-t="{{ row.time_seconds }}"{% endif %}>{{ row.display_time }}{{ recflag(row) }}</td>
         <td class="n rt" data-rx="xc:{{ row.result_id }}"><span class="rc-rv">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</span>{% if above_spec %}<span class="vs-level" data-rid="{{ row.result_id }}"></span>{% endif %}</td>
         <td class="n pts rc-wide">{{ row.score_place if row.score_place else " - " }}</td>
       </tr>
@@ -205,22 +205,23 @@
        right, not open the tab"). #}
     {% for t in scores.teams %}
     {% set key = t.runners[0].school if t.runners else t.school %}
-    <tr{% if loop.index > 10 %} class="rc-team-more" hidden{% endif %} data-team="{{ key }}" data-rids="{% for r in t.runners or [] %}{{ r.result_id }} {% endfor %}" tabindex="0" title="{{ t.school }}: their runners in this race"
+    <tr{% if loop.index > 10 %} class="rc-team-more" hidden{% endif %} data-team="{{ key }}" data-rids="{% for r in t.runners or [] %}{{ r.result_id }} {% endfor %}" tabindex="0" title="Light {{ t.school }}'s runners in the results"
         data-pl="{{ t.place if t.place else loop.index }}" data-pts="{{ t.points if t.points is not none else '' }}"
         data-label="{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}"
         data-href="{{ school_href(t.school, t.state or header.state) if t.school|is_team else '' }}">
       <td class="tp">{{ t.place if t.place else loop.index }}</td>
-      <td class="tn">{% if t.school|is_team %}{{ crest(t.school, t.state or header.state) }}{% endif %}{{ t.school }}
+      <td class="tn">{% if t.school|is_team %}{{ crest(t.school, t.state or header.state) }}{% endif %}<button type="button" class="rc-team-name">{{ t.school }}</button>
         <span class="sp">{% for i in range(5) %}{% set r = t.runners[i] if t.runners and t.runners|length > i else none %}<i>{{ r.score_place if r else "-" }}</i>{% endfor %}</span></td>
       <td class="n tpts">{{ t.points if t.points is not none else "-" }}</td>
     </tr>
     {% endfor %}
     </tbody>
   </table>
-  <p class="rc-tip"><span class="rc-tip-name">{{ ((scores.teams[0].runners[0].school if scores.teams[0].runners else scores.teams[0].school) if not hl_school else hl_school).split("\x00")[0] }}</span>'s runners are lit in the results. Tap any team for its runners.</p>
+  <p class="rc-tip"><span class="rc-tip-name">{{ ((scores.teams[0].runners[0].school if scores.teams[0].runners else scores.teams[0].school) if not hl_school else hl_school).split("\x00")[0] }}</span>'s runners are lit in the results. Tap a team to light theirs, or its name for the team's results.</p>
   {% if scores.teams|length > 10 %}<button type="button" class="rc-more rc-more-teams" data-all="All {{ scores.teams|length }} teams">All {{ scores.teams|length }} teams</button>{% endif %}
   {% endif %}
   {{ al.box(above_spec) }}
+  {% if header.distance %}{% include "_conv_side.html" %}{% endif %}
 </aside>
 </div>
 

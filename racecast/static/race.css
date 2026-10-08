@@ -193,3 +193,33 @@ main.rc .rc-teampop .rc-pop-t td { padding: .3rem; border-bottom: 1px solid var(
 main.rc .rc-teampop .rc-pop-t .n { text-align: right; font-variant-numeric: tabular-nums; }
 main.rc .rc-teampop .rc-pop-go { display: inline-block; margin-top: .7rem; font-weight: 600; }
 main.rc .rc-tscores tr[data-team] { cursor: pointer; }
+
+/* team name in the sidebar: opens the team popup; the row itself lights */
+main.rc .rc-tscores .rc-team-name { border: 0; background: none; padding: 0; font: inherit; font-weight: 600;
+  color: var(--link); cursor: pointer; text-align: left; }
+main.rc .rc-tscores .rc-team-name:hover { text-decoration: underline; }
+
+/* the conversion tab's sidebar: the finishers, tap yours (race-page.js fillConv) */
+main.rc .rc-conv { display: none; }
+main.rc.rc-on-track .rc-side > :not(.rc-conv) { display: none; }
+main.rc.rc-on-track .rc-conv { display: block; }
+main.rc.rc-on-track .rc-grid.rc-conv-only { grid-template-columns: minmax(0, 1fr) 280px; }
+main.rc .rc-grid.rc-conv-only > .rc-side { display: none; }
+main.rc.rc-on-track .rc-grid.rc-conv-only > .rc-side { display: block; }
+main.rc .rc-conv-find { width: 100%; box-sizing: border-box; padding: .4rem .6rem; font-size: .9rem;
+  border: 1px solid var(--line-2); border-radius: 3px; margin-bottom: .4rem; }
+main.rc .rc-conv-list { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow-y: auto;
+  border-top: 1px solid var(--line); }
+main.rc .rc-conv-list button { display: flex; align-items: baseline; gap: .5rem; width: 100%; border: 0;
+  border-bottom: 1px solid var(--line); background: none; padding: .35rem .3rem; font: inherit; text-align: left; cursor: pointer; }
+main.rc .rc-conv-list button:hover { background: var(--hover); }
+main.rc .rc-conv-list button.is-on { box-shadow: inset 3px 0 0 var(--gold); background: var(--hover); }
+main.rc .rc-conv-list .p { width: 1.8rem; color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; }
+main.rc .rc-conv-list .w { flex: 1; min-width: 0; }
+main.rc .rc-conv-list .w b { display: block; font-weight: 600; font-size: .9rem; }
+main.rc .rc-conv-list .w small { display: block; color: var(--muted); font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+main.rc .rc-conv-list i { font-style: normal; font-variant-numeric: tabular-nums; font-size: .9rem; }
+@media (max-width: 760px) {
+  main.rc.rc-on-track .rc-grid.rc-conv-only { grid-template-columns: minmax(0, 1fr); }
+  main.rc .rc-conv-list { max-height: 50vh; }
+}
