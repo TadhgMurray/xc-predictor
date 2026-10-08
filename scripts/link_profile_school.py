@@ -524,8 +524,20 @@ def undo(conn, which):
 # ------------------------------------------------------------------ #
 #  THE REPORT
 # ------------------------------------------------------------------ #
-def report(groups, keys, verdicts, show):
+def careerMerges(groups, verdicts):
+    """The matched groups that join two careers or more (--careers only)."""
+    return {i: v for i, v in verdicts.items()
+            if v.target is not None and sum(1 for m in groups[i] if not m.lone) > 1}
+
+
+def report(groups, keys, verdicts, show, only_careers=False):
     from collections import Counter
+    if only_careers:
+        cm = careerMerges(groups, verdicts)
+        n_prof = sum(len(v.movers) for v in cm.values())
+        print(f"[profile-school] {len(cm):,} groups join two careers or more "
+              f"({n_prof:,} profiles move); the rest of --careers is ordinary strays")
+        verdicts = cm
     reasons = Counter(v.reason for v in verdicts.values())
     print(f"[profile-school] {len(verdicts):,} groups of persons sharing a "
           f"(name, school) profile key:")
@@ -551,6 +563,8 @@ def main():
     ap.add_argument("--show", type=int, default=40)
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--undo", metavar="ID|all")
+    ap.add_argument("--only-careers", action="store_true",
+                    help="with --careers: print only the groups that join two careers")
     ap.add_argument("--careers", action="store_true",
                     help="also join two careers under one (name, school) key "
                          "when every other check passes -- review the dry run first")
@@ -564,7 +578,7 @@ def main():
             groups, keys = gather(cur, a.person)
         conn.rollback()                          # temp tables only
         verdicts = judge(groups, allow_careers=a.careers)
-        report(groups, keys, verdicts, a.show)
+        report(groups, keys, verdicts, a.show, only_careers=a.only_careers)
         decisions = decisionsOf(groups, keys, verdicts)
         if not a.write:
             print(f"\n[profile-school] DRY RUN: {len(decisions):,} profiles would "

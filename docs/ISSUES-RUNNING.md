@@ -5649,3 +5649,15 @@ Chromium against the old script (readout 15:00, label under the pointer
   athlete_season.mean_rating (the board's number) and falls back to its own
   average only when the season has no row (a rated-not-ranked season), or
   takes the most-raced pool's row when a year has two. Waiting on an example.
+- **Owner's dry runs (2026-10-08).** link_feed_twins: 10,629 persons join
+  (10,619 groups; every sample a same-day exact-time pair; 102 two-career
+  groups reported, not merged) -- safe to write. link_profile_school
+  --careers: 69,556 matched groups, 71,865 profiles; the career joins are
+  mixed in with the strays, so --only-careers now prints just the groups
+  that join two careers (and counts them) for review before --write.
+- **Pipeline timings (last run):** 08_golive 9,121 s; 04_grade_sanity
+  5,215 s; 10_rankings 3,470 s (+ finish 2,281); 07_pack 2,369; 04c_twins
+  2,296; 05_backfill 1,663; the three 08a holdouts 2,952 + 2,782 + 2,983 in
+  the background chain beside the boards. ✅ XCP_EVIDENCE=0 skips the
+  whole evidence chain for an interim run (nothing it writes is read by the
+  site). Next: the per-phase lines of 04, 04c and 08 to find what to cut.

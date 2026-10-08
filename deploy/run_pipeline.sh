@@ -1166,7 +1166,15 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   }
   EVID_PID=""
   EVID_FAILED_FILE="$LOGDIR/.evidence_failed"
-  if [ "${XCP_EVIDENCE_BG:-1}" = "1" ] && [ "$DRY" -eq 0 ] && [ "${FROM:-0}" -le 8 ]; then
+  # ★ XCP_EVIDENCE=0 SKIPS THE CHAIN (owner, 2026-10-08: "speed it up" --
+  #   two runs back to back, the first only to settle data). The three
+  #   holdouts alone were 8,717 s of solves beside the boards in the last
+  #   run, competing with 10_rankings for memory and disk; nothing they
+  #   write is read by the site. The scorecard (17c) then reports no fair
+  #   tests for this run.
+  if [ "${XCP_EVIDENCE:-1}" = "0" ]; then
+    echo "  08a..08d (holdouts, ladder, diagnostics) skipped (XCP_EVIDENCE=0)" | tee -a "$SUMMARY"
+  elif [ "${XCP_EVIDENCE_BG:-1}" = "1" ] && [ "$DRY" -eq 0 ] && [ "${FROM:-0}" -le 8 ]; then
     echo ""
     echo "  08a..08d (holdouts, ladder, diagnostics) started IN THE BACKGROUND at nice" \
          "${XCP_EVIDENCE_NICE:-19}; their lines carry [evidence]"

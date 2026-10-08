@@ -322,3 +322,11 @@ def test_two_careers_write_and_undo_on_postgres():
         cur.execute(f"DROP TABLE IF EXISTS {_TABLES}, profile_school_athletes")
         conn.commit()
         conn.close()
+
+
+def test_only_careers_lists_the_career_joins_alone():
+    hs = M(101, "Jason Minicozzi", ["M"], False, [R("2025-11-08", "XC", "12")])
+    split = M(102, "Jason Minicozzi", ["M"], False, [R("2026-09-19", "XC", "FR-1")])
+    groups = {0: [hs, split], 1: [SOHEIB, STRAY_1500]}
+    verdicts = L.judge(groups, allow_careers=True)
+    assert set(L.careerMerges(groups, verdicts)) == {0}
