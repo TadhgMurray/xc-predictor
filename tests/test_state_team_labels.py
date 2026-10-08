@@ -43,3 +43,10 @@ def test_state_team_gets_no_crest_or_link():
     body = src[start:src.index("\n# ", start)]
     assert "@jinja2.pass_context" in body
     assert 'ctx.get("state_teams") and school_identity.isStateName(school)' in body
+
+
+def test_no_state_on_a_name_that_is_no_team():
+    """Owner, 2026-10-08: unattached runners read "Unknown (WA)"."""
+    assert si.withState("Unknown", "WA") == "Unknown"
+    assert si.withState("Unattached", "MA") == "Unattached"
+    assert si.withState("Williams", "MA") == "Williams (MA)"

@@ -5282,6 +5282,20 @@ Chromium against the old script (readout 15:00, label under the pointer
   ! anet failures (5,741) are reset to due at every launch; a huge meet that
   times out every time (15 s first-byte wait, scraper.py:223) would stay
   failed -- the run log line names it.
+- **TFRRS meets were named after their venue.** Purple Valley XC Classic
+  (tfrrs 28662) read "Mt. Greylock High School": the race and meet headers
+  and the /meets list took COALESCE(meets.meet_name, meets_tfrrs.venue_name)
+  and never meets_tfrrs.meet_name. Now the tfrrs meet's own name, its venue
+  last. The home/meets precompute (panels homepage_recent) also grouped
+  by meet_id alone and named a meet from `meets` by id, so a tfrrs meet
+  sharing an id with an anet one (28662 = "Walker - Week #1", 1996) could
+  carry the other's name; it groups by (meet_id, source) now. Panels build.
+- **"Unknown (WA)".** panels.isTeamName said "Unknown" was a team (linked,
+  crest, state suffix); "unknown" joins the not-a-team list, withState
+  never suffixes a non-team name, and the race sentence drops "(Unknown)".
+- Purple Valley's names are unlinked and unrated only because its tfrrs
+  rows have no person yet: 04a (link_tfrrs_rows) and the solve run in the
+  pipeline.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

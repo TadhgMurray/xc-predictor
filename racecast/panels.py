@@ -209,9 +209,11 @@ def _is_non_school(school):
 #   _is_non_school stays False for them -- but the string is not a team: no
 #   team page, no link to one, no league or area off it, and never the
 #   season's school when the person raced for a school at all.
+# "unknown" (owner, 2026-10-08): a feed's placeholder for "no team given";
+# it was linked as a school and labelled with a state ("Unknown (WA)")
 _NOT_A_TEAM_EXACT = frozenset({"unat", "none", "n/a", "na", "no team",
                                "no school", "independent", "individual",
-                               "individuals", "club", "open"})
+                               "individuals", "club", "open", "unknown"})
 _NOT_A_TEAM_FRAGMENTS = ("unattached", "individual", "independent",
                          "no team", "no school")
 
@@ -1378,35 +1380,43 @@ RECENT_MIN_RESULTS = 25      # below this a "meet" is a dual-meet sliver
 RECENT_WINDOW_DAYS = 365     # a full year back, so /meets spans the season
 
 _RECENT_SQL = {
+    # ★ (meet_id, source), NOT meet_id (owner, 2026-10-08: Purple Valley XC
+    #   Classic, tfrrs 28662, shared its id with a 1996 anet meet, "Walker -
+    #   Week #1"; the name lateral matched on the id alone and could carry
+    #   the other feed's meet). The two feeds' ids overlap, so each feed's
+    #   rows group apart and take their name from their own feed: anet from
+    #   `meets`, tfrrs from meets_tfrrs' own meet_name, its venue last.
     "XC": """
         WITH recent AS (
-            SELECT meet_id, max(date) AS date, count(*) AS n_results
+            SELECT meet_id, source, max(date) AS date, count(*) AS n_results
             FROM   results
             WHERE  date >= %(lo)s AND date <= %(hi)s
               AND  date ~ '^(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}$'
               AND  time_seconds IS NOT NULL
-            GROUP  BY meet_id
+            GROUP  BY meet_id, source
             HAVING count(*) >= %(min_n)s
             ORDER  BY max(date) DESC
             LIMIT  %(n)s
         )
         SELECT r.meet_id, r.date, r.n_results,
-               COALESCE(m.meet_name, mt.venue_name) AS meet_name,
-               m.course_name, m.state
+               COALESCE(m.meet_name, NULLIF(btrim(mt.meet_name), ''),
+                        mt.venue_name) AS meet_name,
+               COALESCE(m.course_name, mt.venue_name) AS course_name,
+               COALESCE(m.state, mt.state) AS state
         FROM   recent r
         -- One named division stands in for the meet, same pick the meet
-        -- page's own header makes; the tfrrs lateral is the fallback for
-        -- meets `meets` has never heard of.
+        -- page's own header makes.
         LEFT JOIN LATERAL (
             SELECT meet_name, course_name, state
             FROM   meets m
-            WHERE  m.meet_id = r.meet_id AND m.meet_name IS NOT NULL
+            WHERE  m.meet_id = r.meet_id AND m.source = r.source
+              AND  m.meet_name IS NOT NULL
             LIMIT  1
         ) m ON TRUE
         LEFT JOIN LATERAL (
-            SELECT venue_name
+            SELECT meet_name, venue_name, state
             FROM   meets_tfrrs t
-            WHERE  t.meet_id = r.meet_id AND t.sport = 'XC'
+            WHERE  r.source = 'tfrrs' AND t.meet_id = r.meet_id AND t.sport = 'XC'
             LIMIT  1
         ) mt ON TRUE
         ORDER  BY r.date DESC

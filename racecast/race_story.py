@@ -74,15 +74,28 @@ def _gap(seconds):
     return f"{g:g} seconds"
 
 
+def _school(row):
+    """The bracketed team, or None for a name that is no team ("John Lucey
+    (Unknown)", owner 2026-10-08): the sentence names nobody's school then."""
+    school = row.get("school_label") or row.get("school")
+    if not school:
+        return None
+    try:
+        from panels import isTeamName
+    except ImportError:
+        return school
+    return school if isTeamName(row.get("school") or school) else None
+
+
 def _who(row):
     name = escape(row.get("name") or "Unknown")
-    school = row.get("school_label") or row.get("school")
+    school = _school(row)
     return Markup(f"<b>{name}</b> ({escape(school)})") if school else Markup(f"<b>{name}</b>")
 
 
 def _plain(row):
     name = escape(row.get("name") or "Unknown")
-    school = row.get("school_label") or row.get("school")
+    school = _school(row)
     return Markup(f"{name} ({escape(school)})") if school else name
 
 

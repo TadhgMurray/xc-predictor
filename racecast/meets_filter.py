@@ -459,12 +459,14 @@ def filteredMeets(cur, f):
         LIMIT  1
     ) m ON TRUE
     LEFT JOIN LATERAL (
-        SELECT venue_name
+        SELECT meet_name, venue_name
         FROM   meets_tfrrs t
         WHERE  t.meet_id = x.meet_id AND t.sport = 'XC'
         LIMIT  1
     ) mt ON TRUE"""
-            name_expr = "COALESCE(m.meet_name, mt.venue_name)"
+            # a tfrrs meet's own name before its venue (owner, 2026-10-08:
+            # the Purple Valley XC Classic read "Mt. Greylock High School")
+            name_expr = "COALESCE(m.meet_name, NULLIF(btrim(mt.meet_name), ''), mt.venue_name)"
             course_expr = "m.course_name"
         else:
             meet_join = """

@@ -154,6 +154,14 @@ def splitsByState(school):
                if share >= CONTEXT_MIN_SHARE) > 1
 
 
+def _isTeam(school):
+    try:
+        from panels import isTeamName
+    except ImportError:                  # panels not importable: plain words only
+        return str(school).strip().lower() not in ("unknown", "unattached", "none", "-")
+    return isTeamName(school)
+
+
 def withState(school, state):
     """'Xavier' + 'NY' -> 'Xavier (NY)'; 'Xavier (NY)' + 'NY' -> unchanged.
 
@@ -162,6 +170,13 @@ def withState(school, state):
       every label site appended it again. Every "(ST)" the site writes goes
       through here."""
     if not school or not state:
+        return school
+    # ★ NO STATE ON A NAME THAT IS NO TEAM (owner, 2026-10-08: the Purple
+    #   Valley XC Classic's unattached runners read "Unknown (WA)" -- the
+    #   state of the biggest cluster of runners filed under "Unknown").
+    #   "Unknown", "Unattached", a country or a pro club names no school, so
+    #   it has no state to give; panels.isTeamName is the site's one test.
+    if not _isTeam(school):
         return school
     tail = f"({str(state).strip()})".lower()
     return school if str(school).rstrip().lower().endswith(tail) else f"{school} ({state})"

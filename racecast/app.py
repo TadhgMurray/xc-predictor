@@ -3570,7 +3570,7 @@ def get_race_header(cur, meet_id, div_id, source=None):
       without it the header would repeat once per athlete.
     """
     cur.execute(f"""
-        SELECT COALESCE(m.meet_name, mt.venue_name)          AS meet_name,
+        SELECT COALESCE(m.meet_name, NULLIF(btrim(mt.meet_name), ''), mt.venue_name)          AS meet_name,
                {_xc_course_sql('r')}                         AS course_name,
                {_xc_distance_sql('r')}                       AS distance,
                -- The SCRAPED value alone, so the page can say "corrected --
@@ -3612,7 +3612,7 @@ def get_race_header(cur, meet_id, div_id, source=None):
         {_tfrrs_join('r')}{_dist_override_join('r')}
         {_xc_cell_join('r')}
         {_champ_join('r')}
-        ORDER BY (COALESCE(m.meet_name, mt.venue_name) IS NOT NULL) DESC, r.source
+        ORDER BY (COALESCE(m.meet_name, NULLIF(btrim(mt.meet_name), ''), mt.venue_name) IS NOT NULL) DESC, r.source
         LIMIT 1
     """, {"meet": meet_id, "div": div_id, "divtext": str(div_id), "src": source})
     return cur.fetchone()
@@ -4348,7 +4348,7 @@ def get_meet_header(cur, meet_id, source=None):
       colliding anet meet's name.
     """
     cur.execute(f"""
-        SELECT COALESCE(m.meet_name, mt.venue_name) AS meet_name,
+        SELECT COALESCE(m.meet_name, NULLIF(btrim(mt.meet_name), ''), mt.venue_name) AS meet_name,
                {_xc_course_sql('r')}                AS course_name,
                m.state                              AS state,
                r.meet_id                            AS meet_id
@@ -4362,7 +4362,7 @@ def get_meet_header(cur, meet_id, source=None):
         {_tfrrs_join('r')}{_dist_override_join('r')}
         -- Rows that resolved a name sort first, so a meet where only SOME
         -- divisions carry metadata still shows one.
-        ORDER BY (COALESCE(m.meet_name, mt.venue_name) IS NOT NULL) DESC
+        ORDER BY (COALESCE(m.meet_name, NULLIF(btrim(mt.meet_name), ''), mt.venue_name) IS NOT NULL) DESC
         LIMIT 1
     """, {"meet": meet_id, "src": source})
     return cur.fetchone()
