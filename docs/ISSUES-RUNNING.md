@@ -5103,9 +5103,19 @@ Chromium against the old script (readout 15:00, label under the pointer
 - `diag_person_pool.py`: `--school SUBSTR` to pick among many same-named
   people, lists every id's schools when there are more than five, and prints
   TF rows, grade_fix and pro seasons.
-- Soheib Dissa: his UNAT-Duke rows sit on separate person ids (31559611,
-  32891852) from his main id 32309981, and his 2025 college XC rows
-  ('Unattached', gr Fr) are unrated. Under investigation.
+- **Soheib Dissa split across three ids: new manual linker.** Only
+  `link_teamless.py` joins two athletic.net profiles, and it never compares a
+  profile's school with another person's profile schools; 'UNAT-Duke' also
+  counts as a real team there, and an athletes-only profile (no rows) is
+  never a candidate. New `scripts/link_profile_school.py`: persons sharing a
+  profile key (full name, exact identifying school -- not 'Unattached', not
+  a hometown) join their one established career; two careers, sexes that
+  disagree, two XC races on one day or a class-year mismatch refuse the
+  group. Dry run by default, `--write` by hand, `--undo` vetoes. Not a
+  pipeline step. Test: `tests/test_link_profile_school.py`.
+  ! His 2025-10-18 college rows get a pool on every path (college_m); the
+  rating is lost elsewhere (normalized_time NULL, twin/impossible tables, or
+  the fill not rerun). `scripts/why_unrated.py 32309981 --sport XC` names it.
 - **Team scores open the team's race.** On an XC race page, tapping a team
   in the sidebar (or its name on the Teams tab) opens a popup: each of the
   team's runners in this race with place, time, rating and points, the team
