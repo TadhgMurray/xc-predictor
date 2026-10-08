@@ -247,6 +247,37 @@ def _yearClass(row):
     return row
 
 
+# ★ A TFRRS-ONLY RUNNER HAS NO athletes ROW, BUT HIS RESULTS HAVE A NAME
+#   (owner, 2026-10-08: Tufts's roster read "Unknown" four times -- "they all
+#   have athlete pages linked with actual names"). The athlete page and the
+#   predictor (predict._fillNames) already read the row's own athlete_name;
+#   the roster read athletes alone. A blank name now takes the person's
+#   latest named result row.
+def _fillRowNames(cur, rows):
+    need = sorted({r["person_id"] for r in rows
+                   if r.get("person_id") and not str(r.get("name") or "").strip()})
+    if not need:
+        return
+    got = {}
+    for table in ("results", "results_tf"):
+        try:
+            cur.execute(f"""
+                SELECT DISTINCT ON (person_id) person_id, btrim(athlete_name) AS name
+                FROM   {table}
+                WHERE  person_id = ANY(%s) AND NULLIF(btrim(athlete_name), '') IS NOT NULL
+                ORDER  BY person_id, date DESC""", (need,))
+        except Exception:                                # noqa: BLE001
+            cur.connection.rollback()
+            return
+        for row in cur.fetchall():
+            pid, nm = ((row["person_id"], row["name"]) if isinstance(row, dict)
+                       else (row[0], row[1]))
+            got.setdefault(pid, nm)
+    for r in rows:
+        if not str(r.get("name") or "").strip() and r.get("person_id") in got:
+            r["name"] = got[r["person_id"]]
+
+
 def schoolRoster(cur, school, year, sport, state=None, primary=None,
                  carry=True):
     """Everyone who raced for this school in one season, best first.
@@ -310,7 +341,9 @@ def schoolRoster(cur, school, year, sport, state=None, primary=None,
             ORDER  BY s.mean_rating DESC NULLS LAST
         """, {"school": school, "year": yr, "sport": sport, **sfp,
               **(params or {})})
-        return [_yearClass(r) for r in cur.fetchall()]
+        out = [_yearClass(r) for r in cur.fetchall()]
+        _fillRowNames(cur, out)
+        return out
 
     rows = fetch(year)
     if not carry or year is None:

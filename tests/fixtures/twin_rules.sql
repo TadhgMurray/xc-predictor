@@ -162,3 +162,10 @@ INSERT INTO results_tf (result_id, person_id, source, meet_id, div_id, event_id,
   (1902,  9902, 'tfrrs', 92, 921, 2, NULL, 1, 11.05, '2026-04-11', 0, 0),
   (19003, 9903, 'anet',  91, 911, 3, NULL, 1, 50.10, '2026-04-11', 1, 0),
   (1903,  9903, 'tfrrs', 92, 921, 3, NULL, 1, 50.10, '2026-04-11', 1, 0);
+
+-- 2026-10-08: the TwiKnight pair -- one run, two meet entries a day apart,
+-- 1st in both, 14:50.6 and 14:50.5; meet 120 is the bigger entry and keeps it
+INSERT INTO results VALUES (1201, 7701, 'anet', 120, 1201, NULL, 1, 890.6, '2026-09-25'),
+                           (1203, 7702, 'anet', 120, 1201, NULL, 2, 900.0, '2026-09-25'),
+                           (1204, 7703, 'anet', 120, 1201, NULL, 3, 905.0, '2026-09-25'),
+                           (1202, 7701, 'anet', 121, 1211, NULL, 1, 890.5, '2026-09-26');

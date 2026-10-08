@@ -39,6 +39,9 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
                   time to the tenth. Two rows, one run.
     dup_same_day  one run under two meet entries on one day whose names
                   differ (2026-09-28; see dupSameDaySql).
+    dup_adjacent_day one cross country run under two meet entries a day
+                  apart, same place, times within 0.15 s (2026-10-08, the
+                  TwiKnight pair; see dupAdjacentDaySql).
     dup_converted a track race stored as run and again converted to the
                   neighbouring distance, 2 mile / 3200 (dupConvertedSql).
     xc_placeholder a track race on the XC calendar (xcPlaceholderSql).
@@ -449,6 +452,48 @@ def dupSameDaySql(table, sport):
     """
 
 
+ADJACENT_DAY_TOL_S = 0.15     # 14:50.5 against 14:50.6: two feeds' rounding
+
+
+def dupAdjacentDaySql(table, sport):
+    """One cross country run listed under two meet entries ONE DAY APART
+    (owner, 2026-10-08: "TwiKnight Invitational", Sep 25 2026, 14:50.6, 1st,
+    and "TwiKnight Meet", Sep 26 2026, 14:50.5, 1st -- one race, a meet
+    entered twice with the date off by a day). dup_same_day needs the same
+    date and the time to the tenth. Same person, feed, finishing place,
+    times within ADJACENT_DAY_TOL_S, dates exactly a day apart, two meet
+    ids: nobody finishes two cross country races on consecutive days in the
+    same place a tenth apart. The copy in the SMALLER meet entry goes; ties
+    to the higher result_id. Cross country only -- a track prelim and final
+    on consecutive days can land close."""
+    if sport != "XC":
+        return f"SELECT result_id FROM {table} WHERE false"
+    return f"""
+        WITH base AS (
+            SELECT result_id, person_id, source, meet_id, place, time_seconds AS t,
+                   left(date, 10)::date AS d
+            FROM   {table}
+            WHERE  person_id IS NOT NULL AND place > 0 AND time_seconds IS NOT NULL
+              AND  time_seconds < 100000 AND date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'),
+        pairs AS (
+            SELECT a.result_id AS a_id, a.meet_id AS a_meet,
+                   b.result_id AS b_id, b.meet_id AS b_meet
+            FROM   base a JOIN base b
+                   ON  b.person_id = a.person_id AND b.source = a.source
+                   AND b.place = a.place AND b.meet_id <> a.meet_id
+                   AND abs(b.d - a.d) = 1
+                   AND abs(b.t - a.t) <= {ADJACENT_DAY_TOL_S}),
+        size AS (
+            SELECT meet_id, count(*) AS n FROM {table}
+            WHERE  meet_id IN (SELECT a_meet FROM pairs UNION SELECT b_meet FROM pairs)
+            GROUP  BY meet_id)
+        SELECT DISTINCT p.a_id AS result_id
+        FROM   pairs p JOIN size sa ON sa.meet_id = p.a_meet
+        JOIN   size sb ON sb.meet_id = p.b_meet
+        WHERE  sb.n > sa.n OR (sb.n = sa.n AND p.b_id < p.a_id)
+    """
+
+
 # a 2 mile is 3218.69 m against 3200, a mile 1609.34 against 1600: both 1.005838
 CONVERSION = 3218.688 / 3200.0
 CONVERSION_TOL = 0.0012
@@ -528,6 +573,7 @@ RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("dup_cross_date", dupCrossDateSql),
          ("dup_race_copy", dupRaceCopySql),
          ("dup_same_day", dupSameDaySql),
+         ("dup_adjacent_day", dupAdjacentDaySql),
          ("dup_converted", dupConvertedSql),
          ("xc_placeholder", xcPlaceholderSql),
          (LC.REASON, LC.ruleSql))

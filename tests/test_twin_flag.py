@@ -41,7 +41,8 @@ def test_rules_key_on_the_right_things():
     assert [r for r, _ in TF.RULES] == ["twin_race", "twin_person", "twin_same_day",
                                         "dup_same_feed",
                                         "dup_cross_date", "dup_race_copy",
-                                        "dup_same_day", "dup_converted", "xc_placeholder",
+                                        "dup_same_day", "dup_adjacent_day",
+                                        "dup_converted", "xc_placeholder",
                                         "level_conflict"], \
         "cross-feed reasons file first; the primary key keeps the first"
 
@@ -91,6 +92,9 @@ _EXPECTED = {
     # 2026-09-28
     ("XC", "dup_same_day"):   [1001],
     ("XC", "dup_converted"):  [],
+    # 2026-10-08: the TwiKnight pair, a day apart; 1202 is in the smaller entry
+    ("XC", "dup_adjacent_day"): [1202],
+    ("TF", "dup_adjacent_day"): [],
     ("XC", "xc_placeholder"): [1111],
     ("TF", "dup_same_day"):   [1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108],
     ("TF", "dup_converted"):  [1802],

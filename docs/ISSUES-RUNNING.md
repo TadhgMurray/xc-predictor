@@ -5623,3 +5623,29 @@ Chromium against the old script (readout 15:00, label under the pointer
   "already on the card" filter reads that race's field, and the remove
   button (state.removed = the focused race's set) writes to the card's race
   too. tests/test_predict_card_race.js.
+- **✅ "Unknown" on the school roster** (Tufts: four Unknowns, each with a
+  named athlete page): the roster took names from athletes alone, which a
+  tfrrs-only person lacks; school._fillRowNames fills a blank name from the
+  person's latest named result row (predict._fillNames' rule).
+- **✅ link_profile_school --careers** (owner: Jason Minicozzi is three
+  persons -- his Rivers HS career; a second profile with Rivers track AND
+  his Tufts XC; a minted tfrrs person with the Tufts races alone). Two
+  careers under one (name, school) key were always refused; --careers joins
+  them when every other check passes (sexes, a number in the name, two XC
+  races on one day, one track race twice, the generation test), the career
+  with the most rows the target. The write now moves EVERY row under a
+  merged person (all feeds) and every profile, logging profiles in
+  profile_school_athletes so --undo restores them (for a stray this is the
+  rows it always moved). Order: link_feed_twins --write (joins minted tfrrs
+  persons and blank anet placeholders to their careers -- Minicozzi's
+  third person, Katy Zang's twin), then link_profile_school --careers.
+  Tests incl. a Postgres write/undo of a career merge.
+- **✅ twin rule dup_adjacent_day** (owner: "TwiKnight Invitational" Sep 25
+  14:50.6 and "TwiKnight Meet" Sep 26 14:50.5, both 1st): same person, feed
+  and place, times within 0.15 s, dates a day apart, two meets, XC only;
+  the smaller entry's copy goes. Fixture-tested on Postgres; the existing
+  rules' answers are unchanged.
+- 🔎 Athlete-page season rating vs the board: the page already reads
+  athlete_season.mean_rating (the board's number) and falls back to its own
+  average only when the season has no row (a rated-not-ranked season), or
+  takes the most-raced pool's row when a year has two. Waiting on an example.
