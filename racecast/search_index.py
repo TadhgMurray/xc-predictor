@@ -414,10 +414,12 @@ def _load_courses(conn):
 _MEET_AGG = {
     "meet_agg_xc": """
         WITH c AS (
-            SELECT meet_id, source, min(substr(date, 1, 4))::int AS yr, count(*) AS n_ath
-            FROM   results
-            WHERE  meet_id IS NOT NULL AND source IS NOT NULL
-            GROUP  BY meet_id, source),
+            SELECT r.meet_id, r.source, min(substr(r.date, 1, 4))::int AS yr,
+                   count(*) AS n_ath, count(x.result_id) AS n_twin
+            FROM   results r
+            LEFT   JOIN result_twin x ON x.sport = 'XC' AND x.result_id = r.result_id
+            WHERE  r.meet_id IS NOT NULL AND r.source IS NOT NULL
+            GROUP  BY r.meet_id, r.source),
         nm AS (
             SELECT meet_id, source, min(meet_name) AS meet_name
             FROM   meets
@@ -430,7 +432,7 @@ _MEET_AGG = {
             GROUP  BY meet_id)
         SELECT c.meet_id, c.source,
                COALESCE(nm.meet_name, tn.meet_name) AS meet_name,
-               c.yr, c.n_ath, c.n_ath AS n_rank
+               c.yr, c.n_ath, c.n_ath AS n_rank, c.n_twin
         FROM   c
         LEFT   JOIN nm ON nm.meet_id = c.meet_id AND nm.source = c.source
         LEFT   JOIN tn ON tn.meet_id = c.meet_id AND c.source = 'tfrrs'
@@ -438,22 +440,32 @@ _MEET_AGG = {
     """,
     "meet_agg_tf": """
         WITH c AS (
-            SELECT meet_id, source, min(substr(date, 1, 4))::int AS yr, count(*) AS n_ath
-            FROM   results_tf
-            WHERE  meet_id IS NOT NULL AND source IS NOT NULL
-            GROUP  BY meet_id, source),
+            SELECT r.meet_id, r.source, min(substr(r.date, 1, 4))::int AS yr,
+                   count(*) AS n_ath, count(x.result_id) AS n_twin
+            FROM   results_tf r
+            LEFT   JOIN result_twin x ON x.sport = 'TF' AND x.result_id = r.result_id
+            WHERE  r.meet_id IS NOT NULL AND r.source IS NOT NULL
+            GROUP  BY r.meet_id, r.source),
         nm AS (
             SELECT meet_id, source, min(meet_name) AS meet_name, count(*) AS n_rank
             FROM   meets_tf
             WHERE  meet_name IS NOT NULL AND source IS NOT NULL
             GROUP  BY meet_id, source)
-        SELECT c.meet_id, c.source, nm.meet_name, c.yr, c.n_ath, nm.n_rank
+        SELECT c.meet_id, c.source, nm.meet_name, c.yr, c.n_ath, nm.n_rank, c.n_twin
         FROM   c JOIN nm ON nm.meet_id = c.meet_id AND nm.source = c.source
     """,
 }
 
 
 def _ensure_meet_agg(conn):
+    # the twin verdict the aggregates count (isTwinCopy): present, possibly
+    # empty, on a database that never ran engine/twin_flag.py --write
+    if "engine" not in sys.path:
+        sys.path.insert(0, "engine")
+    from twin_flag import ensureTable
+    with conn.cursor() as cur:
+        ensureTable(cur)
+    conn.commit()
     with conn.cursor() as cur:
         # the scan is the cost: let it run parallel and keep the hash in RAM
         cur.execute("SET max_parallel_workers_per_gather = 4")
@@ -471,6 +483,22 @@ def _ensure_meet_agg(conn):
             swapTable(conn, table, renames=[(f"{table}_new_pkey", f"{table}_pkey")])
             cur.execute(f"SELECT count(*) FROM {table}")
             print(f"  {table}: {cur.fetchone()[0]:,} meets (rebuilt)")
+
+
+# ★ ONE ENTRY PER RACE, NOT PER FEED (owner, 2026-10-08: "there are two
+#   versions of each race on the website, one from each source. This
+#   happened for predictions and for races/search. It is deduped everywhere
+#   else"). A race both feeds scraped is two (meet_id, source) entries; the
+#   boards, the engine and the athlete page drop the flagged copy through
+#   result_twin (engine/twin_flag.py), and this index did not. An entry
+#   whose rows are mostly flagged twins is the other feed's copy, and is
+#   left out of the index. The ?alt= numbering is computed over ALL entries
+#   first, because the meet page resolves ?alt= over all of them -- the
+#   surviving links point where they always did.
+def isTwinCopy(row):
+    """An entry whose rows are mostly result_twin's flagged copies."""
+    n, t = row.get("n_ath") or 0, row.get("n_twin") or 0
+    return n > 0 and 2 * t >= n
 
 
 def meetAltIndex(rows):
@@ -502,11 +530,16 @@ def _load_meets(conn):
     wr  = conn.cursor()
 
     def _meet_rows(table, link_fmt):
-        cur.execute(f"SELECT meet_id, source, meet_name, yr, n_ath, n_rank FROM {table}")
+        cur.execute(f"SELECT meet_id, source, meet_name, yr, n_ath, n_rank, n_twin "
+                    f"FROM {table}")
         rows = cur.fetchall()
         alt_of = meetAltIndex(rows)
         out = []
+        dropped = 0
         for r in rows:
+            if isTwinCopy(r):
+                dropped += 1
+                continue
             clean = _strip_year(r["meet_name"])
             if not clean:
                 continue
@@ -515,8 +548,9 @@ def _load_meets(conn):
                 "meet", clean, str(yr) if yr else "",
                 meetLink(link_fmt, r["meet_id"], alt_of[(r["meet_id"], r["source"])]),
                 clean.lower(), clean.lower(),
-                yr, r["n_ath"] or 0,
+                yr, (r["n_ath"] or 0) - (r.get("n_twin") or 0),
             ))
+        print(f"  {table}: {dropped:,} entries left out as the other feed's copy")
         return out
 
     xc = _meet_rows("meet_agg_xc", "/meet/xc/{mid}")

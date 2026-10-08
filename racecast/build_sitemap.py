@@ -208,15 +208,23 @@ def collect(conn):
         # ★ BOTH MEETS UNDER A COLLIDING ID (2026-09-13): the aggregates
         #   are keyed (meet_id, source) and the second meet lives at ?alt=N,
         #   the index the page resolves it under (search_index.meetAltIndex)
-        from search_index import meetAltIndex, meetLink
+        # ★ AND NOT THE OTHER FEED'S COPY OF A RACE (2026-10-08): one URL
+        #   per race, as the search index (search_index.isTwinCopy); ?alt=
+        #   is still numbered over every entry, as the page resolves it.
+        from search_index import meetAltIndex, meetLink, isTwinCopy
         for table, fmt in (("meet_agg_xc", "/meet/xc/{mid}"), ("meet_agg_tf", "/meet/tf/{mid}")):
             if _exists(cur, table):
-                cur.execute(f"SELECT meet_id, source, n_rank FROM {table}")
-                rows = [{"meet_id": r[0], "source": r[1], "n_rank": r[2]}
+                cur.execute(f"""SELECT column_name FROM information_schema.columns
+                                WHERE table_name = %s AND column_name = 'n_twin'""",
+                            (table,))
+                twin_col = "n_twin" if cur.fetchone() else "0"
+                cur.execute(f"SELECT meet_id, source, n_rank, n_ath, {twin_col} FROM {table}")
+                rows = [{"meet_id": r[0], "source": r[1], "n_rank": r[2],
+                         "n_ath": r[3], "n_twin": r[4]}
                         for r in cur.fetchall()]
                 alt_of = meetAltIndex(rows)
                 meets += [(meetLink(fmt, r["meet_id"], alt_of[(r["meet_id"], r["source"])]), None)
-                          for r in rows]
+                          for r in rows if not isTwinCopy(r)]
         if meets:
             by_kind["meets"] = meets
         # ★ RACE PAGES TOO (owner, 2026-09-05): a race page is where a

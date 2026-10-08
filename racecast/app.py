@@ -7195,6 +7195,50 @@ def course(course_name):
 _COURSE_HIST = {}
 
 
+# ★ EVERY RACE DAY NAMES ITS MEET (owner, 2026-10-08: "on course page not
+#   every meet has names"). The day list matched each date against the
+#   page's meet list by the meet's LAST date, so a two-day meet's first day
+#   and any meet past the list's 200-meet cap read "-". This reads the
+#   meets straight off the course's own rows, per day: the meet that ran
+#   this distance that day, then the one with the most rows. The link
+#   carries the meet page's own ?alt= (meet_sources' order), so a tfrrs
+#   meet whose id collides with an anet one opens itself.
+def _courseDayMeets(cur, course_name, dist, days):
+    dates = sorted({d["date"] for d in days})
+    if not dates:
+        return
+    cur.execute(f"""
+        WITH {_courseRowsCte()}
+        SELECT DISTINCT ON (day) day, meet_id, source, meet_name
+        FROM (
+            SELECT left(r.date, 10) AS day, r.meet_id, r.source,
+                   max(r.meet_name) AS meet_name,
+                   bool_or(abs(r.distance - %(dist)s) < 50) AS ran,
+                   count(*) AS n
+            FROM   course_rows r
+            WHERE  left(r.date, 10) = ANY(%(dates)s)
+            GROUP  BY 1, 2, 3
+        ) q
+        -- the anet copy of a race both feeds hold: the one every other
+        -- page keeps (result_twin flags the tfrrs copy)
+        ORDER  BY day, ran DESC, (source = 'anet') DESC, n DESC
+    """, {"course": course_name, "dist": dist, "dates": dates})
+    by_day = {r["day"]: r for r in cur.fetchall()}
+    alts = {}
+    for d in days:
+        m = by_day.get(d["date"])
+        if not m:
+            continue
+        key = m["meet_id"]
+        if key not in alts:
+            srcs = [x["source"] for x in meet_sources(cur, "results", key)]
+            alts[key] = srcs
+        srcs = alts[key]
+        d["meet_id"] = m["meet_id"]
+        d["meet"] = m["meet_name"] or d.get("meet")
+        d["alt"] = srcs.index(m["source"]) if m["source"] in srcs else 0
+
+
 def _courseHistory(cur, course_name, ctx):
     try:
         dist = (ctx or {}).get("sel_dist") or (ctx or {}).get("primary_dist")
@@ -7209,6 +7253,16 @@ def _courseHistory(cur, course_name, ctx):
         rows = _ch.fetchHistory(cur, course_name, dist, _raceDayCourseSql(cur))
         out = _ch.summarize(rows, ctx.get("meets"), int(dist),
                             _ex.dayModes().get("XC"))
+        if out:
+            # ! A NAME LOOKUP THAT FAILS LEAVES THE TABLE, not the section
+            cur.execute("SAVEPOINT day_meets")
+            try:
+                _courseDayMeets(cur, course_name, int(dist), out["days"])
+                cur.execute("RELEASE SAVEPOINT day_meets")
+            except Exception as exc:                      # noqa: BLE001
+                cur.execute("ROLLBACK TO SAVEPOINT day_meets")
+                print(f"course day meets: {course_name}: {type(exc).__name__}: {exc}",
+                      flush=True)
         _COURSE_HIST[key] = (time.time(), out)
         if len(_COURSE_HIST) > 4 * _COURSE_MAX:
             _COURSE_HIST.pop(min(_COURSE_HIST, key=lambda k: _COURSE_HIST[k][0]), None)

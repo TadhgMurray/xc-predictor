@@ -58,18 +58,30 @@ def main():
     ap.add_argument("--course", required=True, help="part of the course name")
     ap.add_argument("--since", default="1900-01-01")
     a = ap.parse_args()
-    like = "%" + a.course + "%"
+    # ! PUNCTUATION-BLIND (owner's first run: "no race_day_effect rows
+    #   match 'Mt. SAC'"): the engine's names and the page's need not agree
+    #   on dots and spaces, so both sides are compared as letters+digits
+    norm = "".join(ch for ch in a.course.lower() if ch.isalnum())
+    nlike = "%" + norm + "%"
+    NORM = "regexp_replace(lower({}), '[^a-z0-9]', '', 'g')"
 
     from database import getConn
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("SET statement_timeout = '900s'")
-        cur.execute("""
+        cur.execute(f"""SELECT canonical_id, course_name FROM course_canonical
+                        WHERE {NORM.format('course_name')} LIKE %s""", (nlike,))
+        canon = cur.fetchall()
+        cids = [c for c, _n in canon]
+        names = sorted({n for _c, n in canon if n})
+        print(f"courses matching {a.course!r}: {len(cids)} canonical ids, names {names[:8]}")
+        cur.execute(f"""
             SELECT race_date::text, course_name, distance_m,
                    100 * day_effect, 100 * course_effect, n_rows
             FROM   race_day_effect
-            WHERE  course_name ILIKE %s AND course_name NOT LIKE 'TF:%%'
+            WHERE  (canonical_id = ANY(%s) OR {NORM.format('course_name')} LIKE %s)
+              AND  course_name NOT LIKE 'TF:%%'
               AND  race_date >= %s
-            ORDER  BY race_date DESC, n_rows DESC""", (like, a.since))
+            ORDER  BY race_date DESC, n_rows DESC""", (cids, nlike, a.since))
         days = cur.fetchall()
         if not days:
             print(f"no race_day_effect rows match {a.course!r}")
@@ -90,7 +102,7 @@ def main():
                     LEFT   JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id
                                               AND r.source = 'tfrrs' AND mt.sport = 'XC'
                     WHERE  left(r.date, 10) = %(day)s
-                      AND  (m.course_name ILIKE %(like)s OR mt.venue_name ILIKE %(like)s)
+                      AND  (m.course_name = ANY(%(names)s) OR mt.venue_name = ANY(%(names)s))
                 ),
                 fronts AS (
                     SELECT meet_id, div_id, source, avg(speed_rating) AS front
@@ -104,7 +116,7 @@ def main():
                        (SELECT string_agg(DISTINCT left(meet, 40), ' | ') FROM d),
                        (SELECT array_agg(DISTINCT person_id) FROM d
                         WHERE person_id IS NOT NULL)""",
-                        {"day": day, "like": like})
+                        {"day": day, "names": names})
             front, med, meets, pids = cur.fetchone()
             end = None
             if pids:

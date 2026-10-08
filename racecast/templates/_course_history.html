@@ -71,7 +71,7 @@
             {% for d in ch.days %}
                 <tr>
                     <td class="no-break">{{ d.date|mdy }}</td>
-                    <td class="cdh-meet">{% if d.meet_id %}<a href="/meet/xc/{{ d.meet_id }}" title="{{ d.meet }}">{{ d.meet or "Meet" }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+                    <td class="cdh-meet">{% if d.meet_id %}<a href="/meet/xc/{{ d.meet_id }}{% if d.alt %}?alt={{ d.alt }}{% endif %}" title="{{ d.meet }}">{{ d.meet or "Meet" }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
                     <td class="cdh-opt">{{ d.n }}</td>
                     <td class="{{ 'cdh-slow' if d.day > 0.0005 else ('cdh-fast' if d.day < -0.0005 else '') }}">{{ d.day|daypct }}{% if d.capped %} <span class="muted" title="beyond the 10% cap: the result sheet, not the day, is suspect">capped</span>{% endif %}</td>
                     <td>{{ d.together|diffpct("XC") if d.together is not none else " - " }}</td>

@@ -70,3 +70,19 @@ def test_the_page_side_ranks_the_same_way_and_the_race_page_carries_alt():
     assert '/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}' in race
     sm = _src("racecast", "build_sitemap.py")
     assert "meetAltIndex" in sm and "meetLink(fmt" in sm
+
+
+def test_the_other_feeds_copy_is_left_out_but_alt_numbering_holds():
+    """Owner, 2026-10-08: "two versions of each race on the website, one
+    from each source ... predictions and races/search". An entry whose rows
+    are mostly result_twin copies is skipped; ?alt= is still counted over
+    every entry, as the meet page resolves it."""
+    import search_index as S
+    rows = [{"meet_id": 7, "source": "anet", "n_rank": 300, "n_ath": 300, "n_twin": 0},
+            {"meet_id": 7, "source": "tfrrs", "n_rank": 290, "n_ath": 290, "n_twin": 285},
+            {"meet_id": 9, "source": "tfrrs", "n_rank": 50, "n_ath": 50, "n_twin": 3}]
+    alt = S.meetAltIndex(rows)
+    kept = [r for r in rows if not S.isTwinCopy(r)]
+    assert [(r["meet_id"], r["source"]) for r in kept] == [(7, "anet"), (9, "tfrrs")]
+    assert alt[(9, "tfrrs")] == 0 and alt[(7, "anet")] == 0
+    assert not S.isTwinCopy({"n_ath": 0, "n_twin": 0})

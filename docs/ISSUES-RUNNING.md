@@ -5506,3 +5506,29 @@ Chromium against the old script (readout 15:00, label under the pointer
   correlation with each. Decides between: the solve's terms are too weak
   or the wrong one (fit both / loosen), or the days are different courses
   under one name (a key of their own, champ_course's mechanism).
+- **diag_venue_days found nothing for "Mt. SAC"** (owner's run): the
+  engine's course names need not match the typed one. Now punctuation-
+  blind, through course_canonical (prints the canonical ids and names it
+  matched), and the per-day meets read those exact names.
+- **✅ Course page day list: names and missing days** (owner: "not every
+  meet has names, and not every meet is shown").
+  - Names: a day was named only if it equalled a meet's LAST date in the
+    page's meet list (capped at 200 meets), so a two-day meet's first day
+    and older meets read "-". app._courseDayMeets now reads the meet per
+    day off the course's own rows (course_rows): the one that ran this
+    distance, the anet copy of a race both feeds hold, then the biggest;
+    the link carries the meet page's ?alt=.
+  - Days: course_history.historySql read only the BIGGEST canonical cell of
+    the name; every cell of the name at the distance is read now
+    (summarize merges a shared date by rows). Championship keys at the
+    venue (Foot Locker/Brooks regionals at Mt. SAC) are their own course
+    and stay on their own page.
+- **✅ Two copies of each race in search and predictions** (owner: "one
+  from each source ... predictions and races/search. It is deduped
+  everywhere else"). Both read search_index's meet entries, one per
+  (meet_id, source); meet_agg_xc/tf now count each entry's result_twin
+  rows (n_twin) and an entry mostly made of flagged copies is left out
+  (search_index.isTwinCopy), as the boards/engine/athlete page drop them.
+  ?alt= stays numbered over every entry, so surviving links are unchanged.
+  The sitemap skips the same entries. Takes effect when the search index
+  is rebuilt (pipeline step 13c, or racecast/search_index.py by hand).

@@ -87,11 +87,16 @@ class Cur:
         return self.rows
 
 
-def test_fetch_keys_one_cell_and_survives_a_missing_table():
+def test_fetch_keys_every_cell_of_the_name_and_survives_a_missing_table():
+    """Owner, 2026-10-08: "not every meet is shown" -- the day list read
+    only the biggest of the name's cells; now every cell of the name at the
+    distance (summarize merges a date two cells share)."""
     cur = Cur(ROWS)
     assert ch.fetchHistory(cur, "Woodward Park", 4997, "rde.course_effect") == ROWS
     assert cur.params == {"course": "Woodward Park", "dm": 5000}
-    assert "LIMIT  1" in cur.sql and "rde.course_effect AS course_effect" in cur.sql
+    cell = cur.sql.split("WITH cell AS", 1)[1].split(")", 1)[0]
+    assert "LIMIT" not in cell and "DISTINCT" in cell
+    assert "rde.course_effect AS course_effect" in cur.sql
     assert ch.fetchHistory(Cur(fail=True), "X", 5000) == []
     assert ch.fetchHistory(Cur(ROWS), "X", None) == []
 

@@ -32,14 +32,18 @@ def historySql(ce_col):
     """ce_col: app._raceDayCourseSql's answer ('rde.course_effect' once the
     go-live writes it, else 'NULL::real')."""
     return f"""
+        -- ★ EVERY CELL OF THIS NAME AT THIS DISTANCE (owner, 2026-10-08:
+        --   "not every meet is shown"). A course name can sit at several
+        --   canonical ids (one per set of coordinates entered), and the
+        --   page is the name's; taking only the biggest cell dropped every
+        --   day keyed under the others. summarize() merges a date that
+        --   appears in two cells by rows.
         WITH cell AS (
-            SELECT cd.canonical_id, cd.distance_m
+            SELECT DISTINCT cd.canonical_id, cd.distance_m
             FROM   course_canonical cc
             JOIN   course_difficulties cd ON cd.canonical_id = cc.canonical_id
             WHERE  cc.course_name = %(course)s
               AND  (round(cd.distance_m / 100.0) * 100)::int = %(dm)s
-            ORDER  BY cd.n_results DESC NULLS LAST
-            LIMIT  1
         )
         SELECT rde.race_date::text AS race_date, rde.day_effect, rde.n_rows,
                {ce_col} AS course_effect
