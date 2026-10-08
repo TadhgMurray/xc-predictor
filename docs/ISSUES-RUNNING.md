@@ -5615,3 +5615,11 @@ Chromium against the old script (readout 15:00, label under the pointer
   form rating (the same number); model-served rows now show
   _secondsToRating(seconds, pool, spec) -- the inverse of the rating
   basis's own rating->time conversion (_ratingToSeconds), by bisection.
+- **✅ Predictions, several races: "add from squad" landed in another race**
+  (owner). The squad list was found page-wide (document.querySelector on
+  the school), so a school in two races opened the FIRST race's list, and
+  the add button called addRunner(..., undefined) -- the focused race, not
+  the card's. Both now use the clicked card's race (cardDiv); the list's
+  "already on the card" filter reads that race's field, and the remove
+  button (state.removed = the focused race's set) writes to the card's race
+  too. tests/test_predict_card_race.js.

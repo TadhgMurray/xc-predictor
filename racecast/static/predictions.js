@@ -3848,7 +3848,12 @@ document.addEventListener("click", (e) => {
   const sq = e.target.closest("[data-squad]");
   if (sq) {
     const school = sq.dataset.squad;
-    const list = document.querySelector(`[data-squad-for="${CSS.escape(school)}"]`);
+    /* ★ THIS CARD'S LIST (owner, 2026-10-08: "if you are predicting multiple
+       races and you press add from squad it adds to the first squad in a
+       different race"). A school in two races has two cards, and a
+       page-wide lookup opened the first race's list. */
+    const sel = `[data-squad-for="${CSS.escape(school)}"]`;
+    const list = (card && card.querySelector(sel)) || document.querySelector(sel);
     if (!list) return;
     if (!list.classList.contains("hidden")) {
       list.classList.add("hidden");
@@ -3857,7 +3862,8 @@ document.addEventListener("click", (e) => {
     list.classList.remove("hidden");
     list.innerHTML = `<div class="squad-loading">Loading\u2026</div>`;
     loadSquad(school, cardDiv).then((squad) => {
-      const team = (state.field?.teams || []).find((t) => t.school === school);
+      const ed = editsFor(cardDiv === undefined ? state.meet.div : cardDiv);
+      const team = (ed.field?.teams || []).find((t) => t.school === school);
       const have = new Set((team?.runners || []).map((r) => String(r.person_id)));
       const rest = squad.runners.filter((r) => !have.has(String(r.person_id)));
       /* ★ ISSUE #84: A SEARCH, NOT A WALL. schoolSquad returns up to forty
@@ -3907,7 +3913,8 @@ document.addEventListener("click", (e) => {
 
   const rm = e.target.closest("[data-remove]");
   if (rm) {
-    state.removed.add(rm.dataset.remove);
+    /* the card's own race, as for add below */
+    editsFor(cardDiv === undefined ? state.meet.div : cardDiv).removed.add(rm.dataset.remove);
     rm.closest(".runner-row").remove();
     return;
   }
@@ -3919,9 +3926,12 @@ document.addEventListener("click", (e) => {
        and there was no way to see or undo what you had added. */
     const rating = add.dataset.rating;
     const hs = add.dataset.hs;
+    /* ! INTO THE RACE OF THE CARD IT WAS PRESSED ON (cardDiv), not the
+         focused one -- undefined only off a card, where the focused race is
+         the only answer */
     addRunner(add.dataset.school, add.dataset.add, add.dataset.name,
               rating === "" || rating === undefined ? null : Number(rating),
-              undefined,
+              cardDiv,
               hs === "" || hs === undefined ? null : Number(hs));
     renderField();
     return;
