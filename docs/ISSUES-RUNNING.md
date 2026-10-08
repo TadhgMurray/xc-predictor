@@ -5204,6 +5204,12 @@ Chromium against the old script (readout 15:00, label under the pointer
   a 2026 season ability that sits high. `scripts/diag_race_day_inflation.py`
   separates them; the fix depends on which (refit u against the bracket's
   own window level / centre days per matched weeks / refit weather).
+  ! Owner's run: not the season (2026 = 2025 week by week) and not every
+  late-August day (others within +-3%). Midlothian's four varsity-boys-like
+  races read +12% vs their runners' next races, three others -30%: one day
+  term serves the venue-day, so races wrong by ~40% (distance or pool) drag
+  it "slow" and over-credit the rest. Section 0 of the script now prints
+  each race's stored distance, genders, pools and median time.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

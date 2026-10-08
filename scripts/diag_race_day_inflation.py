@@ -55,6 +55,33 @@ def main():
             for d, mn, dv, n in got:
                 print(f"  div {d}: {mn} / {dv} ({n} results)")
             divs = [d for d, *_ in got]
+        # ★ 0. WHAT EACH RACE IS (owner's run, 2026-10-08: four Midlothian
+        #   races read +12% against their runners' next races, three read
+        #   -30%; one day term serves the whole venue-day, so races that are
+        #   wrong by 40% drag it "slow" and over-credit the rest). Stored
+        #   distance, profile genders, rating pools and the median time.
+        print("\n0. THE RACES (stored distance, genders, pools, median time)")
+        for d in divs:
+            cur.execute("""
+                SELECT m.division, m.distance,
+                  (SELECT string_agg(g || ':' || n, ' ') FROM (
+                     SELECT COALESCE(a.gender, '?') g, count(*) n FROM results r2
+                     LEFT JOIN athletes a ON a.athlete_id = r2.athlete_id
+                     WHERE r2.div_id = m.div_id AND r2.source = 'anet' GROUP BY 1) q),
+                  (SELECT string_agg(p || ':' || n, ' ') FROM (
+                     SELECT COALESCE(split_part(r2.rating_pool, '|', 1), '-') p, count(*) n
+                     FROM results r2 WHERE r2.div_id = m.div_id AND r2.source = 'anet'
+                     GROUP BY 1) q),
+                  (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY r2.time_seconds)
+                   FROM results r2 WHERE r2.div_id = m.div_id AND r2.source = 'anet'
+                     AND r2.time_seconds > 0 AND r2.time_seconds < 999999)
+                FROM meets m WHERE m.div_id = %s""", (d,))
+            row = cur.fetchone()
+            if row:
+                dv, dist, gs, ps, med = row
+                mt = f"{int(med // 60)}:{med % 60:04.1f}" if med else "-"
+                print(f"  div {d}: {dv} | stored {dist} m | genders {gs} | pools {ps} | median {mt}")
+
         print("\n1. THE RACE (medians, %)")
         for d in divs:
             cur.execute("""
