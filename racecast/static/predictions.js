@@ -1159,7 +1159,9 @@ async function chooseMeet(data) {
   showStep("who", true);
   $("actions").classList.remove("hidden");
 
-  loadRaces();
+  // ! AWAITED: loadRaces picks the races (all of them, by default), and the
+  //   field has to be loaded for that choice, not for the whole meet merged
+  await loadRaces();
   await loadField();
   saveState();
 }
@@ -1284,6 +1286,18 @@ async function loadRaces() {
     if (races.length < 2) {
       if (races.length === 1) state.meet.div = String(races[0].div_id);
       return;
+    }
+    /* ★ ALL RACES BY DEFAULT (owner, 2026-10-08: "the default race picked
+       should be all races"). A freshly picked meet with several races used
+       to open with none chosen -- the whole meet merged into one field.
+       Now every race is picked, each its own race (Separate), exactly what
+       pressing "All races" does. A shared link or a restored session that
+       names its races keeps them. */
+    if (!state.divs.length) {
+      state.divs = races.map((r) => String(r.div_id));
+      state.raceMode = "separate";
+      state.groups = groupsForMode(state.divs, state.raceMode);
+      state.meet.div = state.divs[0];
     }
     /* A picked chip wears its race's colour, so the chips and the blocks
        below them agree at a glance about which races exist. */

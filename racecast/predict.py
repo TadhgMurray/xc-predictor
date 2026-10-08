@@ -3473,6 +3473,39 @@ def _raceEntrants(cur, schools, sport, year, gender=None, levels=None):
     return copy.deepcopy(out)
 
 
+# A person's gender for the squad filter: person_gender's verdict (the
+# site's one person-level answer, from every row they ran) when the table
+# exists, else any of their profiles' -- not only the profile whose
+# athlete_id happens to equal the person_id, which a tfrrs-minted or merged
+# person does not have.
+_PERSON_GENDER_SQL = """COALESCE(max(pg.gender),
+                   (SELECT max(x.gender) FROM athletes x
+                    WHERE  x.person_id = r.person_id
+                      AND  x.gender IN ('M', 'F')
+                    HAVING count(DISTINCT x.gender) = 1))"""
+_PG = {"has": None}
+
+
+def _personGenderJoin(cur):
+    if _PG["has"] is None:
+        try:
+            cur.execute("SELECT to_regclass('person_gender') IS NOT NULL AS ok")
+            row = cur.fetchone()
+            _PG["has"] = bool(row["ok"] if isinstance(row, dict) else row[0])
+        except Exception:                                # noqa: BLE001
+            try:
+                cur.connection.rollback()
+            except Exception:                            # noqa: BLE001
+                pass
+            # ! NOT CACHED: a cursor that cannot answer (a test double) says
+            #   nothing about the database the next request will use
+            return "LEFT JOIN (SELECT NULL::bigint AS person_id, NULL::text AS gender) pg ON FALSE"
+    if _PG["has"]:
+        return ("LEFT JOIN person_gender pg ON pg.person_id = r.person_id "
+                "AND pg.gender IN ('M', 'F')")
+    return "LEFT JOIN (SELECT NULL::bigint AS person_id, NULL::text AS gender) pg ON FALSE"
+
+
 def _raceEntrantsUncached(cur, schools, sport, year, gender=None, levels=None):
     schools = [x for x in schools if x]
     if not schools or year is None:
@@ -3491,8 +3524,7 @@ def _raceEntrantsUncached(cur, schools, sport, year, gender=None, levels=None):
                percentile_cont(0.8) WITHIN GROUP (ORDER BY r.speed_rating)
                    FILTER (WHERE r.speed_rating > 0)               AS rating,
                count(*)                                            AS n_races,
-               (SELECT x.gender FROM athletes x
-                WHERE  x.athlete_id = r.person_id LIMIT 1)         AS gender,
+               {_PERSON_GENDER_SQL}                               AS gender,
                -- ★ THE ROW'S OWN NAME WHEN athletes HAS NONE (owner,
                --   2026-09-25: "all freshman are unknown"). A tfrrs-only
                --   person -- a freshman whose high school career is on anet
@@ -3503,6 +3535,7 @@ def _raceEntrantsUncached(cur, schools, sport, year, gender=None, levels=None):
                    max(NULLIF(btrim(r.athlete_name), '')))         AS name
         FROM   {table} r
         {_NAME_LATERAL.format(pid="r.person_id")}
+        {_personGenderJoin(cur)}
         WHERE  r.school = ANY(%(schools)s)
           AND  r.person_id IS NOT NULL
           AND  r.date >= %(lo)s AND r.date < %(hi)s
@@ -3515,7 +3548,13 @@ def _raceEntrantsUncached(cur, schools, sport, year, gender=None, levels=None):
         pool = r.get("pool") or None
         g = (pool[-1].upper() if pool and pool[-2:] in ("_m", "_f")
              else (r.get("gender") or "").upper()[:1] or None)
-        if gender in ("M", "F") and g and g != gender:
+        # ★ AN UNKNOWN GENDER DOES NOT GET INTO A GENDERED RACE (owner,
+        #   2026-10-08: "predictions still has issues with gender"). A
+        #   runner whose pool, person_gender verdict and profiles all say
+        #   nothing used to pass the filter by default, so a school's
+        #   unrated or unprofiled men joined its women's squad. The race's
+        #   own finishers are not filtered here; only the squad additions.
+        if gender in ("M", "F") and g != gender:
             continue
         if levels:
             lvl = (pool.split("_", 1)[0] if pool

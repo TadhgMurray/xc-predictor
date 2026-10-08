@@ -5296,6 +5296,16 @@ Chromium against the old script (readout 15:00, label under the pointer
 - Purple Valley's names are unlinked and unrated only because its tfrrs
   rows have no person yet: 04a (link_tfrrs_rows) and the solve run in the
   pipeline.
+- **Predictions: All races by default.** A freshly picked meet with several
+  races opened with none chosen (the whole meet merged into one field); now
+  every race is picked, each scored on its own, as the "All races" chip does.
+  A shared link or restored session naming its races keeps them.
+- **Predictions: an unknown gender stays out of a gendered race.** The squad
+  fill (_raceEntrants) took a runner's gender from the rating pool's suffix,
+  else the one profile whose athlete_id equals the person_id; with neither
+  the runner passed. Now pool, then person_gender, then any of the person's
+  profiles (when they agree); still unknown means not added to a boys' or
+  girls' race. Test in `test_predict_squads.py`.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

@@ -195,3 +195,20 @@ def test_with_no_runner_resolved_the_meets_state_decides(monkeypatch):
     assert P._teamStates(None, rows, "CA") == {"Antioch": "CA",
                                                "Washington": "CA"}
     assert P._teamStates(None, rows) == {}
+
+
+def test_an_unknown_gender_stays_out_of_a_gendered_race(monkeypatch):
+    """Owner, 2026-10-08: "predictions still has issues with gender". A
+    runner with no pool and no known gender used to pass the filter."""
+    import pool_view
+    monkeypatch.setattr(pool_view, "stampBoardRows", lambda rows, **k: None)
+    P._raceEntrantsUncached.__globals__  # module loaded
+    rows = [{"school": "Tufts", "person_id": 7, "grade": "FR-1", "pool": None,
+             "rating": None, "n_races": 1, "gender": None, "name": "Who Knows"},
+            {"school": "Tufts", "person_id": 8, "grade": "FR-1", "pool": None,
+             "rating": None, "n_races": 1, "gender": "F", "name": "Known Woman"}]
+    got = P._raceEntrantsUncached(_Cur(rows), ["Tufts"], "XC", 2026, gender="F")
+    assert [e["person_id"] for e in got["Tufts"]] == [8]
+    # with no gender asked, nobody is filtered
+    got = P._raceEntrantsUncached(_Cur(rows), ["Tufts"], "XC", 2026)
+    assert sorted(e["person_id"] for e in got["Tufts"]) == [7, 8]
