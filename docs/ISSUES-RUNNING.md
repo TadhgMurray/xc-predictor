@@ -5405,3 +5405,12 @@ Chromium against the old script (readout 15:00, label under the pointer
   now breaks each basis's error down by level, days since last race
   (quartiles), last race's sport and prior races, to locate the bias
   before the retrain.
+- **Owner's breakdown (model.pt 2026-09-16):** the model's slow bias is by
+  LEVEL, not by gap or sport: college_f +17.1% (rating -4.3%), ms_m +8.3%
+  (rating +3.8%), hs_m +3.1%, hs_f +4.9%; it grows with prior races (+2.4%
+  at 1-4, +7.6% at 29+) and barely moves with days since the last race or
+  its sport -- so hidden_days is not the cause and a retrain alone may not
+  fix it. A level-sized bias smells of scale/conversion. backtest now adds
+  a third basis, `base` (the model's own anchor through the same
+  conversion), and splits the model by its conversion (own ratio vs
+  curve): base biased too -> conversion; base clean -> the network.

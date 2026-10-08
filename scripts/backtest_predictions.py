@@ -27,6 +27,10 @@ been run. READ ONLY.
     rating  the athlete's recent rated form as a time at that race -- what
             the page serves by default (XCP_PREDICT_BASIS=rating)
     model   the transformer's own time
+    base    the model's own anchor (its "you'll run what you ran" baseline)
+            through the SAME conversion to a race time -- if base carries
+            the model's bias too, the conversion is wrong, not the network
+  The model's breakdown also splits by its conversion (time_basis).
 
 ! THE MODEL'S OWN TRAINING SET. A race before model.pt was written may have
   been a training target (validation is athlete-disjoint, not by date), so
@@ -151,13 +155,19 @@ def main():
                 act = [actual[p] for p in both]
                 facts = _facts(cur, both, cut, rated)
                 conn.rollback()
-                for basis, got in (("rating", rated), ("model", model)):
+                base = {p: {"seconds": model[p].get("baseline_race"),
+                            "time_basis": model[p].get("time_basis")}
+                        for p in both if model[p].get("baseline_race")}
+                for basis, got in (("rating", rated), ("model", model), ("base", base)):
+                    if basis == "base" and len(base) < len(both):
+                        continue
                     pred = [float(got[p]["seconds"]) for p in both]
                     s = acc.setdefault((basis, lead), {"err": [], "order": [], "races": 0,
                                                        "rows": []})
                     errs = [100.0 * math.log(x / y) for x, y in zip(pred, act)]
                     s["err"] += errs
-                    s["rows"] += [(e, facts[p]) for e, p in zip(errs, both)]
+                    s["rows"] += [(e, dict(facts[p], clock=(model[p].get("time_basis") or "?")))
+                                  for e, p in zip(errs, both)]
                     rho = _spearman(pred, act)
                     if rho is not None:
                         s["order"].append(rho)
@@ -235,7 +245,8 @@ def _breakdown(acc):
         for title, key in (("level", lambda f: f["level"]),
                            ("days since last race", lambda f: gap_band(f["gap"])),
                            ("last race sport", lambda f: f["sport"]),
-                           ("prior races", lambda f: n_band(f["n"]))):
+                           ("prior races", lambda f: n_band(f["n"])),
+                           ("model's conversion", lambda f: f["clock"])):
             groups = {}
             for e, f in rows:
                 groups.setdefault(key(f), []).append(e)
