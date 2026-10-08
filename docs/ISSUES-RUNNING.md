@@ -5193,6 +5193,17 @@ Chromium against the old script (readout 15:00, label under the pointer
   dropped. Real ones lead (Pat Ryan "Men's 4Mile" stored 5000, 34 of 52
   dropped; Clawson "HS 5k" stored 3218, 17 dropped); the parser also misreads
   years and ages ("Born 2013-14", "2023 Class B", "D1 HS 5K" -> 1000).
+- **Midlothian (Aug 27 2026): "Day slow 10.3%", field +10-20% vs level.**
+  Not double counting and not a cap/display bug: course and day reach a
+  rating as one sum (bracket course + a day term refit against it,
+  run_joint.bracketDifficulties; go-live adds each once), and that sum is
+  the field's shortfall against each runner's SEASON ability, barely shrunk
+  for a one-day venue. For a late-August opener it can carry heat (XC
+  weather correction off: stale artifact), early form (the day is read
+  against the calendar-year ability, the course against +-window races), or
+  a 2026 season ability that sits high. `scripts/diag_race_day_inflation.py`
+  separates them; the fix depends on which (refit u against the bracket's
+  own window level / centre days per matched weeks / refit weather).
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane
