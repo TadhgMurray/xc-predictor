@@ -458,6 +458,7 @@ def write(conn, decisions):
     """Record the new decisions, then (re)apply every decision on file."""
     from psycopg2.extras import execute_values
     from person_redirects import DDL as REDIRECT_DDL, follow
+    from person_move import MOVE_DDL, dropCollisions
     out = {}
     with conn.cursor() as cur:
         cur.execute(LOG_DDL)
@@ -483,21 +484,29 @@ def write(conn, decisions):
                        SELECT old_id, new_id, kind FROM feed_twin_merge
                        WHERE old_id NOT IN (SELECT old_id FROM feed_twin_veto)""")
         for sport, table in TABLES:
-            n = 0
+            # ! A ROW THE TARGET ALREADY HOLDS STAYS (2026-10-08,
+            #   UniqueViolation idx_results_tf_nodup): person_move's guard
+            cur.execute(MOVE_DDL)
             for kind, cond in _MOVE.items():
                 cur.execute(f"""
-                    INSERT INTO person_link_log (sport, result_id, from_person,
-                                                 to_person, rule)
-                    SELECT %s, r.result_id, m.old_id, m.new_id, %s
+                    INSERT INTO pm_move (result_id, new_id)
+                    SELECT r.result_id, m.new_id
                     FROM   {table} r JOIN ft_map m ON r.person_id = m.old_id
                     WHERE  m.kind = %s AND {cond}
-                    ON CONFLICT DO NOTHING""", (sport, RULE, kind))
-                cur.execute(f"""
-                    UPDATE {table} r SET person_id = m.new_id
-                    FROM   ft_map m
-                    WHERE  r.person_id = m.old_id AND m.kind = %s AND {cond}""", (kind,))
-                n += cur.rowcount
-            out[f"{sport} rows moved"] = n
+                    ON CONFLICT DO NOTHING""", (kind,))
+            kept = dropCollisions(cur, table)
+            out[f"{sport} rows kept back (target holds a copy)"] = sum(kept.values())
+            cur.execute(f"""
+                INSERT INTO person_link_log (sport, result_id, from_person,
+                                             to_person, rule)
+                SELECT %s, r.result_id, r.person_id, mv.new_id, %s
+                FROM   {table} r JOIN pm_move mv ON mv.result_id = r.result_id
+                ON CONFLICT DO NOTHING""", (sport, RULE))
+            cur.execute(f"""
+                UPDATE {table} r SET person_id = mv.new_id
+                FROM   pm_move mv
+                WHERE  r.result_id = mv.result_id""")
+            out[f"{sport} rows moved"] = cur.rowcount
         cur.execute("""
             UPDATE athletes a SET person_id = m.new_id
             FROM   ft_map m

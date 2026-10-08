@@ -330,3 +330,20 @@ def test_only_careers_lists_the_career_joins_alone():
     groups = {0: [hs, split], 1: [SOHEIB, STRAY_1500]}
     verdicts = L.judge(groups, allow_careers=True)
     assert set(L.careerMerges(groups, verdicts)) == {0}
+
+
+def test_careers_whose_own_names_disagree_or_share_a_country_are_refused():
+    """Owner's --only-careers dry run, 2026-10-08: 'Abe' joining 'Abraham
+    Alvarado' under 'mexico', and Aaron Ahl joining a career with no name."""
+    a = M(201, "Abe Alvarado", ["M"], False, [R("2019-04-01", "TF", "-")])
+    b = M(202, "Abraham Alvarado", ["M"], False, [R("2021-04-01", "TF", "-")])
+    assert L.decideGroup([a, b], allow_careers=True).reason == "career names disagree"
+    ahl = M(203, "Aaron Ahl", ["M"], False, [R("2019-04-01", "TF", "-")] * 3)
+    blank = M(204, "", ["M"], False, [R("2021-04-01", "TF", "-")])
+    assert L.decideGroup([ahl, blank], allow_careers=True).reason == "career names disagree"
+    c = M(205, "Abe Alvarado", ["M"], False, [R("2021-04-01", "TF", "-")])
+    nat = [("abe alvarado", "mexico")]
+    assert L.decideGroup([a, c], allow_careers=True, keys=nat).reason == \
+        "careers share only a national team"
+    club = [("abe alvarado", "mexico"), ("abe alvarado", "simon fraser, mexico")]
+    assert L.decideGroup([a, c], allow_careers=True, keys=club).reason == L.MATCH

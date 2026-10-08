@@ -165,13 +165,14 @@ def _genders(m):
                             else [m.gender])} - {None}
 
 
-def decideGroup(members, allow_careers=False):
+def decideGroup(members, allow_careers=False, keys=()):
     """Verdict(target pid or None, mover pids, reason) for one group of
     persons that share a profile key. See the header for the rule.
 
     allow_careers: two or more careers under one key may join (the one with
     the most rows is the target) when every other check passes -- owner's
-    review, --careers."""
+    review, --careers. keys: the group's (name, school) keys, for the
+    career checks."""
     if len(members) < 2:
         return Verdict(None, (), "alone")
     sexes = set().union(*(_genders(m) for m in members))
@@ -190,6 +191,20 @@ def decideGroup(members, allow_careers=False):
     #   rows is the target.
     if len(careers) > 1 and not allow_careers:
         return Verdict(None, (), "two careers share the profile school")
+    if len(careers) > 1:
+        # ★ A CAREER'S OWN NAME MUST AGREE (owner's --only-careers dry run,
+        #   2026-10-08: "Abe Alvarado" joining "Abraham Alvarado", and Aaron
+        #   Ahl's 65 rows joining a career whose own profile has no name).
+        #   The key matched on SOME profile under each person; a career whose
+        #   own profile reads otherwise, or blank, is not shown to be him.
+        names = {normName(m.name or "") for m in careers}
+        if len(names) > 1 or "" in names:
+            return Verdict(None, (), "career names disagree")
+        # ! A COUNTRY ALONE IS A NATIONAL TEAM, NOT A SCHOOL ('united states',
+        #   'canada', 'mexico' in the same dry run): every namesake who ever
+        #   ran for it shares the key
+        if keys and all(_isNationalKey(sk) for _nm, sk in keys):
+            return Verdict(None, (), "careers share only a national team")
     if careers:
         target = max(careers, key=lambda m: (len(m.rows), -m.pid))
     else:
@@ -240,6 +255,17 @@ def decideGroup(members, allow_careers=False):
             if cy is not None and t_med is not None and abs(cy - t_med) > CLASS_SLACK:
                 return Verdict(None, (), "generation mismatch")
     return Verdict(target.pid, tuple(sorted(m.pid for m in movers)), MATCH)
+
+
+def _isNationalKey(school):
+    """'canada', 'Kenya (KEN)', 'united states', 'mexico': a country and
+    nothing else -- pool_resolve's national teams, its ambiguous ones (also
+    American school strings, but for two careers to share one is weak), and
+    the US."""
+    from pool_resolve import AMBIGUOUS_NATIONAL_TEAMS, _NT_SUFFIX, isNationalTeam
+    s = _NT_SUFFIX.sub("", (school or "").strip().lower()).strip()
+    return (isNationalTeam(school) or s in AMBIGUOUS_NATIONAL_TEAMS
+            or s in ("united states", "usa", "u.s.a.", "us", "united states of america"))
 
 
 def _nameDigits(name):
@@ -361,8 +387,10 @@ def gather(cur, person=None):
     return out_m, out_k
 
 
-def judge(groups, allow_careers=False):
-    return {i: decideGroup(ms, allow_careers) for i, ms in groups.items()}
+def judge(groups, allow_careers=False, keys=None):
+    keys = keys or {}
+    return {i: decideGroup(ms, allow_careers, keys.get(i, ()))
+            for i, ms in groups.items()}
 
 
 # ------------------------------------------------------------------ #
@@ -407,6 +435,7 @@ def write(conn, decisions):
     """Record the new decisions, then (re)apply every decision on file."""
     from psycopg2.extras import execute_values
     from person_redirects import DDL as REDIRECT_DDL, follow
+    from person_move import MOVE_DDL, dropCollisions
     out = {}
     with conn.cursor() as cur:
         cur.execute(LOG_DDL)
@@ -436,16 +465,26 @@ def write(conn, decisions):
             #   holds only its own anet rows, so for it this is the rows it
             #   always moved; a career also holds its tfrrs rows and other
             #   linked profiles' rows, and leaving those behind would split it.
+            # ! A ROW THE TARGET ALREADY HOLDS STAYS (2026-10-08,
+            #   UniqueViolation idx_results_tf_nodup): person_move's guard
+            cur.execute(MOVE_DDL)
+            cur.execute(f"""
+                INSERT INTO pm_move (result_id, new_id)
+                SELECT r.result_id, m.new_id
+                FROM   {table} r JOIN ps_map m ON r.person_id = m.old_id
+                ON CONFLICT DO NOTHING""")
+            kept = dropCollisions(cur, table)
+            out[f"{sport} rows kept back (target holds a copy)"] = sum(kept.values())
             cur.execute(f"""
                 INSERT INTO person_link_log (sport, result_id, from_person,
                                              to_person, rule)
-                SELECT %s, r.result_id, m.old_id, m.new_id, %s
-                FROM   {table} r JOIN ps_map m ON r.person_id = m.old_id
+                SELECT %s, r.result_id, r.person_id, mv.new_id, %s
+                FROM   {table} r JOIN pm_move mv ON mv.result_id = r.result_id
                 ON CONFLICT DO NOTHING""", (sport, RULE))
             cur.execute(f"""
-                UPDATE {table} r SET person_id = m.new_id
-                FROM   ps_map m
-                WHERE  r.person_id = m.old_id""")
+                UPDATE {table} r SET person_id = mv.new_id
+                FROM   pm_move mv
+                WHERE  r.result_id = mv.result_id""")
             out[f"{sport} rows moved"] = cur.rowcount
         # every profile under the person, logged so --undo can put it back
         cur.execute(ATHLETE_LOG_DDL)
@@ -577,7 +616,7 @@ def main():
         with conn.cursor() as cur:
             groups, keys = gather(cur, a.person)
         conn.rollback()                          # temp tables only
-        verdicts = judge(groups, allow_careers=a.careers)
+        verdicts = judge(groups, allow_careers=a.careers, keys=keys)
         report(groups, keys, verdicts, a.show, only_careers=a.only_careers)
         decisions = decisionsOf(groups, keys, verdicts)
         if not a.write:

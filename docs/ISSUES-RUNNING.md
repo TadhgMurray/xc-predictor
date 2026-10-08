@@ -5661,3 +5661,16 @@ Chromium against the old script (readout 15:00, label under the pointer
   the background chain beside the boards. ✅ XCP_EVIDENCE=0 skips the
   whole evidence chain for an interim run (nothing it writes is read by the
   site). Next: the per-phase lines of 04, 04c and 08 to find what to cut.
+- ✅ **link_feed_twins --write crashed** (UniqueViolation idx_results_tf_nodup,
+  meet 663826 div 4 event 22, person 29567439, 165.5 s): the mover held a
+  copy of a race the target already had, and the server's per-person unique
+  index refused the second one. Nothing was written (one transaction).
+  New scripts/person_move.py: before a merge's UPDATE, every row whose key
+  under the target would break a unique index naming person_id (read from
+  the catalog) stays with the old id; the rest move. Both link_feed_twins
+  and link_profile_school use it and print "rows kept back".
+- ✅ **--careers tightened** after the --only-careers sample: two careers
+  join only when their own profile names agree and are not blank (refuses
+  "Abe" -> "Abraham Alvarado", Aaron Ahl -> a nameless career), and not when
+  every key they share is a country alone ('canada', 'united states',
+  'mexico'). Stray joins are unchanged.
