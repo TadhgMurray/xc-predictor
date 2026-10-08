@@ -212,3 +212,26 @@ def test_an_unknown_gender_stays_out_of_a_gendered_race(monkeypatch):
     # with no gender asked, nobody is filtered
     got = P._raceEntrantsUncached(_Cur(rows), ["Tufts"], "XC", 2026)
     assert sorted(e["person_id"] for e in got["Tufts"]) == [7, 8]
+
+
+def test_a_tfrrs_race_takes_its_gender_from_its_title():
+    """Owner, 2026-10-08: Tufts men in the Purple Valley women's squad --
+    the tfrrs races had no profiles, so no gender, so no filter."""
+    import os, sys
+    os.environ.setdefault("XCP_DB_PASSWORD", "x")
+    import app as A
+
+    class Cur:
+        def execute(self, sql, params=None):
+            self.sql = sql
+
+        def fetchone(self):
+            return {"ok": False}
+
+        def fetchall(self):
+            return []
+    races = [{"div_id": 1, "label": "Mens 8K", "gender": None},
+             {"div_id": 2, "label": "Womens 6K", "gender": None},
+             {"div_id": 3, "label": "Varsity", "gender": "F"}]
+    A._fillRaceGenders(Cur(), 28662, "tfrrs", races)
+    assert [r["gender"] for r in races] == ["M", "F", "F"]

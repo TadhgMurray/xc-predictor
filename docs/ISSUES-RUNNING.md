@@ -5306,6 +5306,13 @@ Chromium against the old script (readout 15:00, label under the pointer
   the runner passed. Now pool, then person_gender, then any of the person's
   profiles (when they agree); still unknown means not added to a boys' or
   girls' race. Test in `test_predict_squads.py`.
+- **Predictions: tfrrs races had no gender.** get_meet_divisions reads a
+  race's gender off its runners' athletes rows; tfrrs rows have none, so the
+  Purple Valley XC Classic's races were genderless and the squad fill put
+  Tufts men (Jonah Reisner, Harris Gulbransen -- college_m everywhere) in
+  the women's race. /api/predict/races now fills a blank gender from the
+  division title (tf_points.genderOf: "Mens 8K", "Womens 6K"), then the
+  runners' person_gender. Track races take the title's too.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

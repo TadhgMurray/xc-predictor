@@ -9483,6 +9483,46 @@ def api_predict_field():
     return jsonify(out)
 
 
+def _fillRaceGenders(cur, meet_id, source, races):
+    """A gender for every race the profiles left blank.
+
+    ★ A TFRRS RACE HAS NO PROFILES TO ASK (owner, 2026-10-08: Tufts' Jonah
+      Reisner and Harris Gulbransen, men in college_m, sat in the Purple
+      Valley XC Classic's women's squad). get_meet_divisions reads a race's
+      gender off its runners' athletes rows, and tfrrs rows have none, so
+      both races came back genderless and the squad fill had no gender to
+      filter by. The division's own title says it ("Mens 8K", "Womens 6K",
+      tf_points.genderOf, the track pages' parser); failing that, the
+      runners' person_gender verdicts, the site's one person-level answer."""
+    from tf_points import genderOf
+    for r in races:
+        if not r.get("gender"):
+            r["gender"] = genderOf(r.get("label") or "")
+    if all(r.get("gender") for r in races):
+        return
+    try:
+        cur.execute("SELECT to_regclass('person_gender') IS NOT NULL AS ok")
+        if not cur.fetchone()["ok"]:
+            return
+        cur.execute("""
+            SELECT r.div_id, mode() WITHIN GROUP (ORDER BY pg.gender) AS g
+            FROM   results r
+            JOIN   person_gender pg ON pg.person_id = r.person_id
+                                   AND pg.gender IN ('M', 'F')
+            WHERE  r.meet_id = %(meet)s
+              AND  (%(src)s::text IS NULL OR r.source = %(src)s)
+            GROUP  BY r.div_id
+        """, {"meet": meet_id, "src": source})
+        by = {row["div_id"]: row["g"] for row in cur.fetchall()}
+    except Exception as exc:                                # noqa: BLE001
+        cur.connection.rollback()
+        print(f"predict races gender: {type(exc).__name__}: {exc}", flush=True)
+        return
+    for r in races:
+        if not r.get("gender"):
+            r["gender"] = by.get(r["div_id"])
+
+
 @app.route("/api/predict/races")
 def api_predict_races():
     """The races inside a meet, so the page can predict ONE of them.
@@ -9514,6 +9554,7 @@ def api_predict_races():
                           "distance": r.get("distance"),
                           "gender": r.get("gender"),
                           "n_results": r["n_results"]} for r in rows]
+                _fillRaceGenders(cur, int(meet), src, races)
             else:
                 cur.execute("""
                     SELECT r.div_id, m.division,
@@ -9527,9 +9568,11 @@ def api_predict_races():
                     GROUP  BY r.div_id, m.division
                     ORDER  BY m.division NULLS LAST, r.div_id
                 """, {"meet": int(meet), "src": src})
+                from tf_points import genderOf as _genderOf
                 races = [{"div_id": r["div_id"],
                           "label": r.get("division") or f"Division {r['div_id']}",
-                          "distance": None, "gender": None,
+                          "distance": None,
+                          "gender": _genderOf(r.get("division") or ""),
                           "n_results": r["n_results"]} for r in cur.fetchall()]
             # ★ THE MEET'S OWN DATE (owner, 2026-09-01). The page used to
             #   scrape this out of the SEARCH SUBLABEL with a regex, so a meet
