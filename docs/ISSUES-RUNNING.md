@@ -5482,3 +5482,27 @@ Chromium against the old script (readout 15:00, label under the pointer
     get up to four examples per target (two horizon twins at rate 1.0);
     "own" vs "curve" clock priority (own +1.8%, curve -0.6% in the base
     row, but on different runners).
+
+## 2026-10-08 — Mt. SAC: the course reads low because the days split
+
+- **Owner's course page (Mt. SAC 4715):** course +6.6% (2025) .. +9.7%
+  (2017), but the Invitational's own days read "field ran" +5.1% / +6.3%
+  (2024/2025, ~10.5k rows each; together +12.9% / +13.3%) while the CIF-SS
+  prelims/finals on the same cell read -3.7 / -5.6 (2025), -6.5 (2023),
+  +0.3 / +2.3 (2024). The course term is the cell's average; the
+  Invitational sits ~6 points above it. Ratings use course + day, so a
+  rating there is right; anything that uses the COURSE ALONE -- the course
+  page's difficulty, predictions and conversions to a future Mt. SAC
+  Invitational -- reads it ~6% easy. Same shape as "deep fields read a
+  course as easy" (above, course_bracket): the CIF fields are stacked AND
+  tapered. joint_solve has a field-strength term (default) and a
+  season-end taper term, but fits ONE of them (--importance).
+- Nothing in the next run targets it (only the day guard and the
+  Midlothian pins touch course terms), so it is not expected to change.
+- 🔎 `scripts/diag_venue_days.py --course "Mt. SAC"` (read-only): per race
+  day, the solve's day/course terms, rows, the front strength (top five of
+  the strongest division; median over divisions), the share of runners
+  whose season ends within 14 days, the meets; and the day term's
+  correlation with each. Decides between: the solve's terms are too weak
+  or the wrong one (fit both / loosen), or the days are different courses
+  under one name (a key of their own, champ_course's mechanism).
