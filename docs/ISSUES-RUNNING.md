@@ -5537,3 +5537,30 @@ Chromium against the old script (readout 15:00, label under the pointer
   only 'Mt SAC' / 'Mt Sac Cross Country Course' (one 2022 day): the big
   course is stored under another name. `--meet "Mt. SAC Invitational"` now
   finds the courses a meet ran on (every word, any order) and reads those.
+- **Owner's Mt. SAC run (diag_venue_days --meet "Mt. SAC Invitational").**
+  Correlation of the day term with front strength +0.20, with season-end
+  share +0.39: stronger/tapered days read SLOWER here, so the field/taper
+  terms are not the story. What is: the cell's DISTANCE changed. 2021-2023
+  races sit at 4700 m with course +11.5..12.4%; 2024-2025 at 4800 m with
+  course +6.6..7.4%. The Invitational's course+day is steady -- ~+13.1%
+  (2021), +13.4 (2022), +11.2 (2023), +12.7 (2024), +13.1 (2025) -- so its
+  ratings are consistent; the 4800 cell's course is low because (a) a
+  4828-labelled race on the 2.93 mi (4715 m) course reads ~2.4% easy, and
+  (b) the CIF-SS days in that cell read -3.7/-5.8 (2025). 🔎 Owner to
+  confirm: the HS course distance since 2024, and whether the CIF-SS
+  prelims/finals run the Invitational's loop. Two 2025-11-22 / 2023-11-18
+  days (~1,150 rows, likely the finals) match no meet of the course's
+  names; the diag now prints the meets within ~3 km that day.
+- **✅ Course page schools carry their own state** (owner: "St. Joseph's
+  (Me.) (NY)", "Providence (NC)", no crests, "those athletes have correct
+  state/school/logo on their athlete page"). Every course list labelled
+  every school with the COURSE's state; app._stampCourseSchoolStates now
+  stamps school_state per runner (meet_compile.stampSchoolStates, the race
+  page's rule) at render time, and team rows take their school's resolved
+  state. **school_identity.withState** no longer adds a suffix to a name
+  that already ends in a parenthesised state in any spelling ("(Me.)",
+  "(Ohio)", "(N.Y.)", "(New York)"). test_state_team_labels.
+- 🔎 Grade label "not working on athlete page or race page": gradeLabel
+  prints a college grade only when the pool it is handed is college; a race
+  row's pool is its rating_pool (NULL when unrated) and an athlete season's
+  is its board pool. Waiting on an example URL to see which is missing.

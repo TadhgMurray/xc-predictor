@@ -7182,8 +7182,46 @@ def course(course_name):
                                      key=lambda k: _COURSE_CACHE[k][0])
                         _COURSE_CACHE.pop(oldest, None)
             history = _courseHistory(cur, course_name, ctx)
+            _stampCourseSchoolStates(cur, ctx)
 
     return render_template("course.html", course_history=history, **ctx)
+
+
+# ★ EACH RUNNER'S OWN SCHOOL, NOT THE COURSE'S STATE (owner, 2026-10-08:
+#   "St. Joseph's (Me.) (NY)", "Providence (NC)", "Georgetown (MA)", no
+#   crests -- "those athletes have correct state/school/logo on their
+#   athlete page"). Every school on the course page was labelled with the
+#   COURSE's state, so a visiting college took whichever namesake that
+#   state hint picked. The race page stamps school_state per row
+#   (meet_compile.stampSchoolStates: the runner's own school/state record,
+#   then the team id); the course page's individual lists get the same, at
+#   render time because the page itself is precomputed. A team row has no
+#   runner to ask, so it takes the state its school's runners resolved to
+#   on this page, else stays on the course's.
+def _stampCourseSchoolStates(cur, ctx):
+    try:
+        from meet_compile import stampSchoolStates
+        people = [r for key in ("rating_bests", "records")
+                  for rows in ((ctx or {}).get(key) or {}).values()
+                  for r in (rows or []) if isinstance(r, dict)]
+        if not people:
+            return
+        stampSchoolStates(cur, people)
+        by_school = {}
+        for r in people:
+            if r.get("school_state") and r.get("school"):
+                by_school.setdefault(r["school"], r["school_state"])
+        for key in ("team_rating", "team_records"):
+            for rows in ((ctx or {}).get(key) or {}).values():
+                for t in rows or []:
+                    if isinstance(t, dict) and t.get("school") in by_school:
+                        t["school_state"] = by_school[t["school"]]
+    except Exception as exc:                              # noqa: BLE001
+        try:
+            cur.connection.rollback()
+        except Exception:                                 # noqa: BLE001
+            pass
+        print(f"course school states: {type(exc).__name__}: {exc}", flush=True)
 
 
 # ★ YEAR BY YEAR (owner, 2026-10-04: "every year of a venue showed one

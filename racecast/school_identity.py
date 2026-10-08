@@ -30,6 +30,7 @@ Everything here degrades: tables missing (mid-rebuild, old database)
 means no chips, no splits, plain labels -- never an error.
 """
 
+import re
 import urllib.parse
 
 MIN_ATHLETES = 3
@@ -179,7 +180,50 @@ def withState(school, state):
     if not _isTeam(school):
         return school
     tail = f"({str(state).strip()})".lower()
-    return school if str(school).rstrip().lower().endswith(tail) else f"{school} ({state})"
+    if str(school).rstrip().lower().endswith(tail) or namesItsState(school):
+        return school
+    return f"{school} ({state})"
+
+
+# ★ A NAME THAT ALREADY SAYS ITS STATE, IN ANY SPELLING (owner, 2026-10-08:
+#   "St. Joseph's (Me.) (NY)"; "Franciscan (Ohio) (OH)" on the Fairborn
+#   page). tfrrs names colleges AP-style -- (Me.), (Ohio), (Wis.), (N.Y.),
+#   (Calif.) -- and a second suffix only contradicts or repeats it. Only a
+#   STATE in the parentheses counts: "(Club)" or "(Varsity)" say nothing
+#   about where the school is.
+_AP_STATES = {
+    "ala", "alaska", "ariz", "ark", "calif", "cal", "colo", "conn", "del", "dc",
+    "d.c", "fla", "ga", "hawaii", "idaho", "ill", "ind", "iowa", "kan", "kans",
+    "ky", "la", "maine", "me", "md", "mass", "mich", "minn", "miss", "mo",
+    "mont", "neb", "nebr", "nev", "n.h", "nh", "n.j", "nj", "n.m", "nm", "n.y",
+    "ny", "n.c", "nc", "n.d", "nd", "ohio", "okla", "ore", "oreg", "pa", "penn",
+    "r.i", "ri", "s.c", "sc", "s.d", "sd", "tenn", "texas", "tex", "utah", "vt",
+    "va", "wash", "w.va", "w. va", "wis", "wisc", "wyo",
+}
+_STATE_NAMES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine",
+    "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
+    "missouri", "montana", "nebraska", "nevada", "new hampshire", "new jersey",
+    "new mexico", "new york", "north carolina", "north dakota", "ohio",
+    "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina",
+    "south dakota", "tennessee", "texas", "utah", "vermont", "virginia",
+    "washington", "west virginia", "wisconsin", "wyoming",
+}
+_TRAIL_PAREN = re.compile(r"\(([^()]+)\)\s*$")
+
+
+def namesItsState(school):
+    """True when the name ends in a parenthesised US state, any spelling:
+    '(Me.)', '(Ohio)', '(N.Y.)', '(CA)', '(New York)'."""
+    m = _TRAIL_PAREN.search(str(school or ""))
+    if not m:
+        return False
+    inner = m.group(1).strip().rstrip(".").lower()
+    if len(inner) == 2 and inner.isalpha():
+        return True
+    return inner in _AP_STATES or inner in _STATE_NAMES
 
 
 def schoolLabelIn(school, state, trusted=False):

@@ -50,3 +50,15 @@ def test_no_state_on_a_name_that_is_no_team():
     assert si.withState("Unknown", "WA") == "Unknown"
     assert si.withState("Unattached", "MA") == "Unattached"
     assert si.withState("Williams", "MA") == "Williams (MA)"
+
+
+def test_a_name_that_already_says_its_state_gets_no_second_suffix():
+    """Owner, 2026-10-08: "St. Joseph's (Me.) (NY)", "Franciscan (Ohio)
+    (OH)" -- tfrrs names colleges AP-style."""
+    import school_identity as S
+    for n in ("St. Joseph's (Me.)", "Franciscan (Ohio)", "Concordia (Wis.)",
+              "Saint Mary (N.Y.)", "Bethel (New York)", "Xavier (NY)"):
+        assert S.withState(n, "NY") == n, n
+    # a parenthesis that is not a state still gets one
+    assert S.withState("Moorpark (Varsity)", "CA") == "Moorpark (Varsity) (CA)"
+    assert S.withState("Kingston", "MO") == "Kingston (MO)"

@@ -154,6 +154,22 @@ def main():
                           GROUP BY 1) q""", {"day": day, "p": pids})
                 end = cur.fetchone()[0]
             out.append((dp, front, end))
+            if not meets:
+                # ★ A DAY NO MEET OF THESE NAMES CLAIMS (owner's Mt. SAC run:
+                #   2025-11-22 and 2023-11-18, ~1,150 rows each, "-"): the
+                #   meets that day within ~3 km of the cell's coordinates,
+                #   with the course name each carries.
+                cur.execute("""
+                    SELECT m.meet_id, m.meet_name, m.course_name, count(*)
+                    FROM   meets m JOIN results r ON r.div_id = m.div_id AND r.source = 'anet'
+                    JOIN   course_canonical cc ON cc.canonical_id = ANY(%(c)s)
+                    WHERE  left(r.date, 10) = %(day)s
+                      AND  abs(m.gps_lat - cc.gps_lat) < 0.03
+                      AND  abs(m.gps_long - cc.gps_long) < 0.03
+                    GROUP  BY 1, 2, 3 ORDER BY 4 DESC LIMIT 5""",
+                            {"c": cids, "day": day})
+                near = cur.fetchall()
+                print(f"      no meet of these names; near the course that day: {near or 'none'}")
             print(f"  {day:10} {dist or '':>5} {dp:>+6.1f} {cp if cp is not None else float('nan'):>+6.1f} "
                   f"{n:>6} {front or float('nan'):>6.1f} {med or float('nan'):>6.1f} "
                   f"{(end if end is not None else float('nan')):>5.2f}  {meets or '-'}")
