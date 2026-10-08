@@ -5210,6 +5210,19 @@ Chromium against the old script (readout 15:00, label under the pointer
   term serves the venue-day, so races wrong by ~40% (distance or pool) drag
   it "slow" and over-credit the rest. Section 0 of the script now prints
   each race's stored distance, genders, pools and median time.
+- **College XC duplicates ("Unknown" Marshall x2 beside Rachael Withrow).**
+  The Unknowns are athletic.net placeholder profiles (the XC saver wrote
+  blank athlete rows until a5a9009, 2026-09-25; athlete_name only since
+  48c842c), the named row the tfrrs copy. Since 04a (link_tfrrs_rows) mints
+  a person for every unlinked tfrrs id, a runner with no anet career link
+  is rated twice; no twin rule sees it (canon_meet_id is not set for 2026,
+  and the same-day rule needs one person). New `scripts/link_feed_twins.py`
+  (dry run; --write by hand; --undo vetoes): a tfrrs row and an anet row of
+  one day, one time at both feeds' precision and one school, each with
+  exactly one such partner, chain their persons; names/sexes disagreeing,
+  two times on one day or two careers refuse. Once joined, 04c drops the
+  tfrrs copy as a same-day twin. `diag_person_pool.py --twins` shows it per
+  person. Test: `tests/test_link_feed_twins.py`.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

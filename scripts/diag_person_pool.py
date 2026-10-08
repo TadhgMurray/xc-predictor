@@ -17,6 +17,21 @@ table that decides it. READ-ONLY.
   rows the boards hold (pool, rating, races), and the season's raw rows with
   their division labels -- so which table put them in which pool is read, not
   guessed.
+
+★ --twins: ONE RUNNER UNDER SEVERAL PERSONS (owner, 2026-10-08: "Seems
+  there is a lot of duplication recently!" -- Rachael Withrow, Marshall,
+  on the 2026 college women's board as herself and twice as "Unknown"):
+
+    /srv/venv/bin/python scripts/diag_person_pool.py "Rachael Withrow" --school marshall --twins
+
+  A tfrrs person has no athletes row (a minted id, 1,000,000,000 + the
+  tfrrs id), so with --school the name is also looked up on the tfrrs
+  result rows of that school. --twins prints, per person, each cross
+  country row of this season with its feed, canon_meet_id, result_twin
+  verdict and person_link_log rule, then link_feed_twins' dry run for the
+  person: the other-feed persons holding the same runs (same day, same
+  time as printed, same school, one partner), their kind (stray anet
+  placeholder / minted tfrrs / career) and the verdict. Read-only.
 """
 import os
 import sys
@@ -36,6 +51,55 @@ def _persons(cur, arg):
     return [r[0] for r in cur.fetchall()]
 
 
+def _tfrrsPersons(cur, name, school_q):
+    """Persons whose tfrrs rows carry this name at a school matching
+    school_q. The school strings come from the profiles and the tfrrs rows'
+    own, so the lookup rides idx_results_school rather than a scan."""
+    cur.execute("""SELECT DISTINCT school FROM athletes
+                   WHERE lower(school) LIKE %s""", (f"%{school_q}%",))
+    schools = [r[0] for r in cur.fetchall()] + [school_q.title()]
+    cur.execute("""SELECT DISTINCT person_id FROM results
+                   WHERE school = ANY(%s) AND source = 'tfrrs'
+                     AND person_id IS NOT NULL
+                     AND lower(btrim(athlete_name)) = lower(%s) ORDER BY 1""",
+                (schools, name.strip()))
+    return [r[0] for r in cur.fetchall()]
+
+
+def _twins(conn, cur, pid):
+    """This season's XC rows with their dedup facts, then link_feed_twins'
+    group for the person (dry run)."""
+    import link_feed_twins as F
+    since = F.seasonStart(1)
+    has = {t: F._hasTable(cur, t) for t in ("result_twin", "person_link_log")}
+    tw = ("(SELECT reason FROM result_twin x WHERE x.sport = 'XC' "
+          "AND x.result_id = r.result_id)" if has["result_twin"] else "NULL")
+    lg = ("(SELECT string_agg(rule, ',') FROM person_link_log l WHERE l.sport = 'XC' "
+          "AND l.result_id = r.result_id)" if has["person_link_log"] else "NULL")
+    cur.execute(f"""
+        SELECT r.date, r.source, r.result_id, r.meet_id, r.canon_meet_id,
+               r.time_seconds, r.school, r.athlete_id, r.native_id,
+               NULLIF(btrim(r.athlete_name), ''), {tw}, {lg}
+        FROM   results r
+        WHERE  r.person_id = %s AND r.date >= %s ORDER BY r.date, r.source""",
+                (pid, since))
+    print(f"    XC rows since {since} (feed, canon meet, twin verdict, link rule):")
+    for d, src, rid, meet, canon, ts, sch, aid, nat, nm, why, rule in cur.fetchall():
+        print(f"      {d} {src:5} result {rid} meet {meet} canon={canon} "
+              f"t={F._clock(ts)} {sch!r} athlete={aid} tfrrs_id={nat} "
+              f"name={nm!r} twin={why} link={rule}")
+    conn.rollback()
+    cur.execute("SET statement_timeout = 0")
+    groups, pairs = F.gather(cur, since, pid)
+    conn.rollback()
+    cur.execute("SET statement_timeout = '120s'")
+    if not groups:
+        print("    link_feed_twins: no other-feed person holds this person's runs")
+        return
+    print("    link_feed_twins --person (dry run):")
+    F.report(groups, pairs, F.judge(groups), show=5)
+
+
 def main():
     from database import getConn
     args = sys.argv[1:]
@@ -44,6 +108,8 @@ def main():
         return
     # --school SUBSTR picks, among many people of one name, those whose
     # profiles name a matching school ("John Rivera" is 40 people).
+    twins = "--twins" in args
+    args = [x for x in args if x != "--twins"]
     school_q = None
     if "--school" in args:
         i = args.index("--school")
@@ -66,6 +132,10 @@ def main():
                     else:
                         pids = [p for p in pids if school_q in (schools.get(p) or "").lower()]
                         print(f"    matching school {school_q!r}: {pids}")
+                if school_q and not arg.isdigit():
+                    extra = [p for p in _tfrrsPersons(cur, arg, school_q) if p not in pids]
+                    print(f"    tfrrs rows named {arg!r} at {school_q!r}: persons {extra}")
+                    pids += extra
                 for pid in pids[:5]:
                     print(f"\n  person {pid}")
                     cur.execute("""SELECT athlete_id, first_name, last_name, gender, school
@@ -118,6 +188,8 @@ def main():
                                    GROUP BY pool ORDER BY 2 DESC""", (pid,))
                     for p in cur.fetchall():
                         print(f"    boards 2025+: pool={p[0]} rows={p[1]} mean rating={p[2]}")
+                    if twins:
+                        _twins(conn, cur, pid)
         conn.rollback()
 
 
