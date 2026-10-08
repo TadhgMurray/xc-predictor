@@ -5217,8 +5217,21 @@ Chromium against the old script (readout 15:00, label under the pointer
   day to "slow" (344*0.4/1091 = 12.6%) and over-credited every correct race
   ~12%. `scripts/pin_division_distance.py` pins a division's results to
   the distance it was run at (per-result pins: a division override may only
-  lower a distance). Engine change in progress: a division far outside its
-  venue-day (beyond RACE_DAY_CAP) stops voting on the day, and is reported.
+  lower a distance).
+- **Day guard: a division far outside its venue-day stops voting on the
+  day.** Within each race (venue-day), each division's own day is read the
+  way u is; one more than RACE_DAY_CAP (0.10) from the information-weighted
+  median of the race's divisions gets zero weight in u (it still RECEIVES
+  u), its excess held off its abilities. Applied in the joint solve, its
+  leave-one-out, and the bracket refit production rates with. Divisions come
+  from the pack's new meet_id/div_id (repack), else a (race, cell, pool)
+  fallback. Flagged divisions go to `race_day_suspect_division` at go-live
+  with the distance that reconciles them; `scripts/diag_race_day_suspects.py`
+  lists them, feeding pin_division_distance. No broken division: output
+  identical. Off with XCP_DAY_DIVISION_GUARD=0. Test:
+  `tests/test_race_day_divisions.py`. Needs repack + full re-solve.
+  ! Flagged divisions now read their full error until pinned (they no longer
+  get a clipped +10%).
 - **College XC duplicates ("Unknown" Marshall x2 beside Rachael Withrow).**
   The Unknowns are athletic.net placeholder profiles (the XC saver wrote
   blank athlete rows until a5a9009, 2026-09-25; athlete_name only since

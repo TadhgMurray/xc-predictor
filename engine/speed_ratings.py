@@ -248,6 +248,8 @@ _MEETCLASS = 11     # speed_ratings_db.COLUMNS: meet_class (issue #22)
 _TIME = 12          # speed_ratings_db.COLUMNS: time_seconds (the raw time)
 _TEAM = 13          # speed_ratings_db.COLUMNS: team_id (anet)
 _SLUG = 14          # speed_ratings_db.COLUMNS: team_slug (tfrrs)
+_MEET = 15          # speed_ratings_db.COLUMNS: meet_id (the day guard's division)
+_DIV = 16           # speed_ratings_db.COLUMNS: div_id
 _ANET_LEVELS = None
 
 
@@ -1461,6 +1463,7 @@ def packResults(batches, today, merge=False):
         rid, acode, vcode, norm, wt, scode, doys, yrs = [], [], [], [], [], [], [], []
         dists = []
         mcls = []                                # meet_class per row (issue #22)
+        meets, divs = [], []                     # the division (2026-10-08), -1 = none
         for r in rows:
             n_rows += 1
             # ⚠ DATE FIRST. The pool now depends on the SEASON, because a
@@ -1622,6 +1625,11 @@ def packResults(batches, today, merge=False):
             # the meet's championship class, 0 when the loader has none
             mc = r[_MEETCLASS] if len(r) > _MEETCLASS else None
             mcls.append(int(mc) if mc is not None else 0)
+            # the row's division, -1 when the loader has none (an older query)
+            mt_ = r[_MEET] if len(r) > _MEET else None
+            dv_ = r[_DIV] if len(r) > _DIV else None
+            meets.append(int(mt_) if mt_ is not None else -1)
+            divs.append(int(dv_) if dv_ is not None else -1)
             census["kept"] += 1
 
         census["tf_rollover_moved"] = _rollover.moved
@@ -1641,6 +1649,8 @@ def packResults(batches, today, merge=False):
                 np.asarray(yrs, dtype=np.int16),     # season year (rust/fitness)
                 np.asarray(dists, dtype=np.float32), # distance in metres, 0 = none
                 np.asarray(mcls, dtype=np.int8),     # meet class 0/1/2 (issue #22)
+                np.asarray(meets, dtype=np.int64),   # meet_id, -1 = none (2026-10-08)
+                np.asarray(divs, dtype=np.int64),    # div_id, -1 = none
             ))
 
     _us = 1e6 / max(n_rows, 1)
@@ -1661,6 +1671,8 @@ def packResults(batches, today, merge=False):
     year = np.concatenate([c[7] for c in chunks])
     dist_m = np.concatenate([c[8] for c in chunks])
     meet_class = np.concatenate([c[9] for c in chunks])
+    meet_id = np.concatenate([c[10] for c in chunks])
+    div_id = np.concatenate([c[11] for c in chunks])
     n_ath, n_crs = len(a_uniq), len(v_uniq)
 
     # Two decay curves from one day count, computed vectorised in float64.
@@ -1697,6 +1709,8 @@ def packResults(batches, today, merge=False):
     year = year[order]
     dist_m = dist_m[order]
     meet_class = meet_class[order]
+    meet_id = meet_id[order]
+    div_id = div_id[order]
     w_ath = w_ath[order]
     w_crs_norm = w_crs_norm[order]
 
@@ -1764,6 +1778,8 @@ def packResults(batches, today, merge=False):
         "year":      year,           # season year per row (rust/fitness term)
         "dist_m":    dist_m,         # the row's distance, 0 = none (issue 148)
         "meet_class": meet_class,    # 0 ordinary, 1 league-level, 2 state-level (#22)
+        "meet_id":   meet_id,        # the row's division (day guard), -1 = none
+        "div_id":    div_id,
         "athlete_keys": a_uniq,
         "course_keys":  v_uniq,
         "cell_days": cell_days,      # PER CELL: distinct race days, length n_crs
@@ -1779,7 +1795,8 @@ def packResults(batches, today, merge=False):
         "packResults: athlete column is not sorted -- kernels would be wrong"
     n_rows = len(out["athlete"])
     for k in ("result_id", "course", "norm", "weight", "cweight",
-              "days", "sport", "doy", "year", "dist_m", "meet_class"):
+              "days", "sport", "doy", "year", "dist_m", "meet_class",
+              "meet_id", "div_id"):
         assert len(out[k]) == n_rows, f"packResults: {k} length mismatch"
     # cell_days is indexed by CELL, so it gets its own check rather than
     # joining the row loop above -- a length bug here would surface as a

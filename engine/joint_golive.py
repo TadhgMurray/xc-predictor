@@ -611,6 +611,76 @@ def writeSuspectDays(rows):
     print(f"[joint/live] race_day_suspect: {len(rows):,} days written")
 
 
+# ★ THE DIVISIONS THE DAY GUARD DROPPED FROM THEIR RACE'S DAY (owner,
+#   2026-10-08; js.raceDayDivisions, run_joint.raceDaySuspectRows). Not the
+#   same list as race_day_suspect above: that one is whole race days beyond
+#   the cap; this one is a division inside an ordinary day whose own day
+#   departs from the rest of the venue's -- Midlothian's three 3218 m
+#   divisions run at 5000 m. reconciled_m is the distance that would make
+#   it agree (snapped_m on distance_pin's standard list); meet_id/div_id are
+#   NULL from a pack that predates them, and sample_result_id finds the
+#   division either way. scripts/diag_race_day_suspects.py reads it.
+_SUSPECT_DIV_DDL = """
+    CREATE TABLE race_day_suspect_division (
+        cell_key          text    NOT NULL,
+        course_name       text,
+        canonical_id      bigint,
+        race_date         date,
+        sport             text,
+        meet_id           bigint,
+        div_id            bigint,
+        sample_result_id  bigint,
+        pool              text,
+        distance_m        real,
+        n_rows            integer NOT NULL,
+        division_day      real    NOT NULL,
+        race_u            real    NOT NULL,
+        excess            real    NOT NULL,
+        log_excess        real,
+        reconciled_m      real,
+        snapped_m         real,
+        division_source   text,
+        solve_source      text,
+        last_updated      text
+    )
+"""
+
+
+def writeSuspectDivisions(rows, pack_date=None):
+    """Replace race_day_suspect_division with run_joint.raceDaySuspectRows'
+    rows (an empty list empties it: the guard found nothing this run)."""
+    from datetime import date
+    from database import getConn
+    from speed_ratings_db import _splitVenueKey, loadCanonicalNames
+    names = loadCanonicalNames()
+    today = date.today().isoformat()
+
+    def fin(x):
+        return None if x is None or not math.isfinite(float(x)) else float(x)
+    vals = []
+    for r in rows or []:
+        name, cid, _dist = _splitVenueKey(r["cell_key"], names)
+        vals.append((r["cell_key"], name, cid, r.get("race_date"), r.get("sport"),
+                     r.get("meet_id"), r.get("div_id"), r.get("sample_result_id"),
+                     r.get("pool"), fin(r.get("distance_m")), int(r["n_rows"]),
+                     float(r["division_day"]), float(r["race_u"]), float(r["excess"]),
+                     fin(r.get("log_excess")), fin(r.get("reconciled_m")),
+                     fin(r.get("snapped_m")), r.get("division_source"),
+                     r.get("source"), today))
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS race_day_suspect_division")
+        cur.execute(_SUSPECT_DIV_DDL)
+        if vals:
+            cur.executemany(
+                "INSERT INTO race_day_suspect_division (cell_key, course_name, "
+                "canonical_id, race_date, sport, meet_id, div_id, sample_result_id, "
+                "pool, distance_m, n_rows, division_day, race_u, excess, log_excess, "
+                "reconciled_m, snapped_m, division_source, solve_source, last_updated) "
+                "VALUES (" + ", ".join(["%s"] * 20) + ")", vals)
+        conn.commit()
+    print(f"[joint/live] race_day_suspect_division: {len(vals):,} divisions written")
+
+
 # The race-day term of every race the solve saw, keyed the way the site
 # resolves a cell (course_difficulties' columns) plus the date, so an
 # athlete's row or a race page can show "course +4.6%, that day -1.2%".

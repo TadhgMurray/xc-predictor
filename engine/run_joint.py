@@ -136,6 +136,53 @@ def raceCodes(course, day, venue_of_cell=None):
     return inv, int(inv.max()) + 1
 
 
+# ★ THE DIVISION INSIDE A RACE (owner, 2026-10-08; js.raceDayDivisions).
+#   Under --race-key venue a race is a venue on a day across every division
+#   and distance; the day guard reads each division's own day inside it.
+#   The pack's (meet_id, div_id) when it carries them (packs from
+#   2026-10-08 on); otherwise the nearest the pack can say: one division
+#   per (race, cell, pool) -- a distance and a sex/level at that venue that
+#   day. The fallback merges a varsity and a JV of one sex over one stored
+#   distance, which is exactly the case it must catch (a whole distance
+#   stored wrong); it cannot split a correct division from a wrong one of
+#   the same stored distance and pool.
+#
+#  ! A ROW WITHOUT A div_id (-1) FALLS BACK TO (cell, pool) INSIDE ITS RACE,
+#    never into another row's division.
+def divisionCodes(cols, keep, race, cell, pool_row):
+    """(dense division id per kept row, n, 'pack' | 'proxy')."""
+    race = np.asarray(race, dtype=np.int64)
+    cell = np.asarray(cell, dtype=np.int64)
+    pool = (np.zeros(race.size, dtype=np.int64) if pool_row is None
+            else np.asarray(pool_row, dtype=np.int64))
+    n_all = np.asarray(cols["norm"]).shape[0]
+    meet = div = None
+    if all(k in cols and np.asarray(cols[k]).shape[0] == n_all
+           for k in ("meet_id", "div_id")):
+        meet = np.asarray(cols["meet_id"], dtype=np.int64)[keep]
+        div = np.asarray(cols["div_id"], dtype=np.int64)[keep]
+        if not (div >= 0).any():
+            meet = div = None
+    if race.size == 0:
+        return np.zeros(0, dtype=np.int64), 0, "proxy"
+    if meet is None:
+        k2 = pool
+        k3 = np.zeros(race.size, dtype=np.int64)
+        how = "proxy"
+    else:
+        has = div >= 0
+        k2 = np.where(has, div, -1 - pool)
+        k3 = np.where(has, meet, -1)
+        how = "pack"
+    order = np.lexsort((k3, k2, cell, race))
+    rs, cs, a2, a3 = race[order], cell[order], k2[order], k3[order]
+    new = np.r_[True, (rs[1:] != rs[:-1]) | (cs[1:] != cs[:-1])
+                | (a2[1:] != a2[:-1]) | (a3[1:] != a3[:-1])]
+    code = np.empty(race.size, dtype=np.int64)
+    code[order] = np.cumsum(new) - 1
+    return code, int(new.sum()), how
+
+
 # Purpose:   one shrinkage group per CELL. XC is group 0 -- the REFERENCE
 #            level the abilities carry -- and TF is group 1, whose mu is the
 #            track-versus-XC surface level.
@@ -875,6 +922,12 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                             if alt is not None and "dist_m" in cols else None))
     D.course_keys = course_keys
     D.imp_labels = imp_labels
+    # the divisions inside each race, for the day guard (divisionCodes,
+    # js.raceDayDivisions); none when the race term is ablated to one id
+    D.subrace = None
+    if not _NO_RACE_TERM["on"]:
+        D.subrace, D.n_subrace, D.subrace_from = divisionCodes(
+            cols, keep, race, course, pool_row)
     D.dist_labels = (bandLabels(dist_labels) if D.dist_banded
                      else dist_labels)
     D.dist_refs = dist_refs
@@ -2697,6 +2750,118 @@ def dayLeanReport(u, D, cell_keys, min_races=5, top=15):
     return out
 
 
+# ★ THE BROKEN DIVISIONS, NAMED (owner, 2026-10-08; js.raceDayDivisions).
+#   A division the day guard gave zero weight is very likely a wrong stored
+#   distance: Midlothian's three 3218 m divisions were run at 5000 m. Per
+#   flagged division: its venue cell, date, (meet_id, div_id) when the pack
+#   carries them, one result_id to find it by, the stored distance, its own
+#   day against the race's, and the distance that would reconcile it --
+#   the normalisation scales a time by (5000 / d) ** k, so a division
+#   reading e (log) slow over a stored d was run over d * exp(e / k), with
+#   k the exponent distance_pin already pins distances by. snapped_m is
+#   that distance on distance_pin's standard list, None when ambiguous.
+#   Which solve's flags: the frame whose day the ratings carry -- the
+#   bracket refit under --difficulty bracket (production), else the joint.
+def raceDaySuspectRows(out, D, cols, keep, athlete_pool=None, pool_names=None,
+                       pack_date=None):
+    """(rows, source): one dict per flagged division, biggest first
+    (|excess| x rows); [] when nothing was flagged."""
+    import distance_pin as dp
+    from datetime import date as _date, timedelta
+    src = "bracket" if out.get("race_day_div_bracket") is not None else "joint"
+    tab = (out.get("race_day_div_table_bracket") if src == "bracket"
+           else out.get("race_day_div_table"))
+    sub = getattr(D, "subrace", None)
+    if tab is None or sub is None or np.asarray(tab).size == 0:
+        return [], src
+    tab = np.asarray(tab, dtype=np.float64).reshape(-1, len(js.DIVISION_TABLE_COLS))
+    ks = tab[:, 0].astype(np.int64)
+    keys = [str(k) for k in (getattr(D, "course_keys", None) or cols["course_keys"])]
+    w = np.asarray(out.get("weights") if out.get("weights") is not None
+                   else np.ones(D.n), dtype=np.float64)
+    h = np.asarray(out.get("h") if out.get("h") is not None else 1.0, dtype=np.float64)
+    h = np.full(D.n, float(h)) if h.ndim == 0 else h
+
+    def col(name):
+        if name in cols and np.asarray(cols[name]).shape[0] == np.asarray(cols["norm"]).shape[0]:
+            return np.asarray(cols[name])[keep]
+        return None
+    dist, days, rid = col("dist_m"), col("days"), col("result_id")
+    meet, div, sport = col("meet_id"), col("div_id"), col("sport")
+    pack_date = pack_date or _date.today()
+    sel = np.flatnonzero(np.isin(sub, ks))
+    order = sel[np.argsort(sub[sel], kind="stable")]
+    ss = sub[order]
+    starts = np.flatnonzero(np.r_[True, ss[1:] != ss[:-1]])
+    ends = np.r_[starts[1:], ss.size]
+    at = {int(k): i for i, k in enumerate(ks)}
+    rows = []
+    for a, b_ in zip(starts, ends):
+        idx = order[a:b_]
+        k = int(ss[a])
+        t = tab[at[k]]
+        m, u = float(t[2]), float(t[6])
+        excess = m - u
+        hbar = float(np.average(h[idx], weights=np.maximum(w[idx], 1e-12)))
+        e_log = excess * hbar
+        d_st = float(np.median(dist[idx])) if dist is not None else float("nan")
+        rec = (d_st * float(np.exp(e_log / dp.DISTANCE_EXPONENT))
+               if np.isfinite(d_st) and d_st > 0 else float("nan"))
+        snap = dp.snapStandard(rec) if np.isfinite(rec) else None
+        c0 = int(D.cell[idx[0]])
+        pool = None
+        if athlete_pool is not None and pool_names is not None:
+            pv = np.asarray(athlete_pool)[D.athlete[idx]]
+            pool = str(pool_names[int(np.bincount(pv).argmax())])
+        rows.append(dict(
+            cell_key=keys[c0], venue_key=keys[c0].partition("@e")[0].rpartition(":d")[0]
+            or keys[c0].partition("@e")[0],
+            race_date=(pack_date - timedelta(days=int(np.median(days[idx])))
+                       if days is not None else None),
+            sport=("TF" if sport is not None and int(sport[idx[0]]) else "XC"),
+            meet_id=(int(meet[idx[0]]) if meet is not None and meet[idx[0]] >= 0 else None),
+            div_id=(int(div[idx[0]]) if div is not None and div[idx[0]] >= 0 else None),
+            sample_result_id=(int(rid[idx[0]]) if rid is not None else None),
+            distance_m=d_st, n_rows=int(idx.size), division_day=m, race_u=u,
+            centre=float(t[5]), excess=excess, log_excess=e_log,
+            reconciled_m=rec, snapped_m=snap, pool=pool,
+            division_source=str(getattr(D, "subrace_from", "proxy")), source=src))
+    rows.sort(key=lambda r: -abs(r["excess"]) * r["n_rows"])
+    return rows, src
+
+
+def raceDaySuspectSummary(rows, src, n_rows_total=None, top=12):
+    """Lines for the solve log: how many divisions the day guard dropped
+    from their race's day, and the biggest."""
+    if not rows:
+        return [f"[joint] day guard ({src}): no division beyond "
+                f"{js.RACE_DAY_CAP:.2f} of its race's day"
+                + ("" if js.dayDivisionGuardOn() else " (XCP_DAY_DIVISION_GUARD=0: OFF)")]
+    n_r = sum(r["n_rows"] for r in rows)
+    by = {}
+    for r in rows:
+        by.setdefault(r["sport"], [0, 0])
+        by[r["sport"]][0] += 1
+        by[r["sport"]][1] += r["n_rows"]
+    races = len({(r["venue_key"], r["race_date"]) for r in rows})
+    out = [f"[joint] day guard ({src}): {len(rows):,} divisions ({n_r:,} rows"
+           + (f", {100 * n_r / n_rows_total:.3f}% of rows" if n_rows_total else "")
+           + f") on {races:,} race day{'' if races == 1 else 's'} read beyond {js.RACE_DAY_CAP:.2f} of their "
+           f"race's day and were given zero weight in it -- "
+           + ", ".join(f"{k} {v[0]:,} ({v[1]:,} rows)" for k, v in sorted(by.items()))
+           + f". Divisions from the {rows[0]['division_source']} key. Very likely "
+           f"wrong stored distances: race_day_suspect_division, "
+           f"scripts/diag_race_day_suspects.py. The biggest:"]
+    for r in rows[:top]:
+        out.append(f"        {r['cell_key']:<44} {str(r['race_date']):<10} "
+                   f"{r['pool'] or '':<8} {r['n_rows']:>5} rows  own day "
+                   f"{100 * r['division_day']:+6.1f}% vs race {100 * r['race_u']:+5.1f}%"
+                   f"  stored {r['distance_m']:.0f} m -> reconciles at "
+                   f"{r['reconciled_m']:.0f} m"
+                   + (f" (~{r['snapped_m']:.0f})" if r["snapped_m"] else ""))
+    return out
+
+
 def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                         window=21.0, top=0.5, verbose=True, prior_group="fit",
                         track_level_by_pool=True, place_radius=None, prior_place=None,
@@ -2728,6 +2893,14 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
     rest = rest + h * (mu_full[g_row] - b["mu"][g_row])   # the sport level, asserted or fitted
     y = np.asarray(y, dtype=np.float64)
     z = y - rest                     # ability + h*(course + day) + indoor level + noise; no sport level
+    # ★ THE DAY GUARD'S BROKEN DIVISIONS (js.raceDayDivisions): the solve held
+    #   their own excess off y; it is held off what the bracket engine votes
+    #   on too, so a division run over the wrong distance votes no course.
+    #   The day refit below reads them afresh from z_raw.
+    z_raw = z
+    s_joint = out.get("race_day_div_offset")
+    if s_joint is not None and np.asarray(s_joint).size == D.n:
+        z = z_raw - h * np.asarray(s_joint, dtype=np.float64)
     # the design's rows and codes, for the engine
     sub = bk.subsetCols(cols, keep)
     sub["_season"] = np.asarray(D.athlete, dtype=np.int64)
@@ -2925,23 +3098,49 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
             s_u2 = np.full(int(D.group_of_cell.max()) + 1, float(s_u2))
         pen = float(out["sigma2"]) / np.maximum(s_u2[js.groupOfRace(D)], 1e-12)
         c = w * h
-        P = np.bincount(D.race, weights=w * h * h, minlength=D.n_race) + pen
         u_new = np.asarray(b["u"], dtype=np.float64).copy()
+        # ★ THE DAY GUARD, IN THE FRAME THAT PUBLISHES (owner, 2026-10-08;
+        #   js.raceDayDivisions). Production's ratings carry THIS u, so the
+        #   rule is applied here too, each alternation: a division whose own
+        #   day is beyond RACE_DAY_CAP of its race's gets zero weight in
+        #   u_j, its excess is held out of its runners' abilities, and its
+        #   rows still receive u_j. With nothing flagged the sums are the
+        #   old ones exactly.
+        sub = getattr(D, "subrace", None) if js.dayDivisionGuardOn() else None
+        dd = None
         for _ in range(4):
-            r_pre = z - a_new[D.athlete] - h * D_b[D.cell]
-            u_new = np.bincount(D.race, weights=c * r_pre, minlength=D.n_race) / P
-            resid = z - h * (D_b[D.cell] + u_new[D.race])
+            r_pre = z_raw - a_new[D.athlete] - h * D_b[D.cell]
+            dd = js.raceDayDivisions(r_pre, w, h, D.race, sub, D.n_race, pen)
+            u_new = dd["u"]
+            resid = z_raw - h * (D_b[D.cell] + u_new[D.race] + dd["offset"])
             a_new = js.tiedAbilities(den, np.bincount(D.athlete, weights=w * resid,
                                                       minlength=D.n_ath),
                                      D, out.get("tie_w"), out.get("tie_mean"), b["a"])
         # each runner's day without themselves, in the same frame: u_new is
         # the day the abilities were taken against; the row moves it by the
-        # exact drop-one difference (as js.raceEffectLeaveOneOut does)
-        r_pre = z - a_new[D.athlete] - h * D_b[D.cell]
-        num = np.bincount(D.race, weights=c * r_pre, minlength=D.n_race)
+        # exact drop-one difference (as js.raceEffectLeaveOneOut does).
+        # A flagged division's rows had no pull on u_j: they get it whole.
+        r_pre = z_raw - a_new[D.athlete] - h * D_b[D.cell]
+        dd_fin = js.raceDayDivisions(r_pre, w, h, D.race, sub, D.n_race, pen)
+        # ! THE FLAGS u_new WAS TAKEN WITH, re-summed at the final abilities,
+        #   so the drop-one difference is a difference of one row, not of a
+        #   division flagged in one pass and not the other
+        kept = dd["keep"]
+        num = np.bincount(D.race, weights=c * r_pre * kept, minlength=D.n_race)
+        P = np.bincount(D.race, weights=w * h * h * kept, minlength=D.n_race) + pen
         u_ref = num / P
-        u_loo = (num[D.race] - c * r_pre) / (P[D.race] - w * h * h)
+        u_loo = (num[D.race] - kept * c * r_pre) / (P[D.race] - kept * w * h * h)
         out["race_effect_row_bracket"] = u_new[D.race] + (u_loo - u_ref[D.race])
+        out["race_day_div_bracket"] = dd
+        out["race_day_div_table_bracket"] = js.divisionTable(dd)
+        out["race_day_div_flag_bracket"] = (None if dd["flag"] is None
+                                            else (kept == 0).astype(np.int8))
+        if dd_fin["flag"] is not None and dd["flag"] is not None:
+            moved = int((dd_fin["flag"] != dd["flag"]).sum())
+            if moved:
+                print(f"[joint] bracket: day guard -- {moved:,} divisions change "
+                      f"flag at the final abilities (the published flags are "
+                      f"the last alternation's)", flush=True)
         # ★ THE HEAVY-TAILED DAY, BESIDE THE RIDGE (js.dayMixtureFit): the
         #   race's raw day (its runners' mean residual, no prior) and that
         #   mean's noise, fitted per sport; each runner's leave-self-out raw
@@ -2957,8 +3156,8 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
             with np.errstate(divide="ignore", invalid="ignore"):
                 m_race = np.where(W > 0, num / W, np.nan)
                 v_race = np.where(W > 0, sig2 / W, np.nan)
-                W_loo = W[D.race] - w * h * h
-                m_loo = np.where(W_loo > 0, (num[D.race] - c * r_pre) / W_loo, np.nan)
+                W_loo = W[D.race] - kept * w * h * h
+                m_loo = np.where(W_loo > 0, (num[D.race] - kept * c * r_pre) / W_loo, np.nan)
                 v_loo = np.where(W_loo > 0, sig2 / W_loo, np.nan)
             mix_row = np.zeros(D.n)
             row_tf = race_tf[D.race]
@@ -3151,7 +3350,8 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
 #   as usual. A bracket-engine knob, a go-live fix, or a crash after the
 #   solve costs minutes, not a re-solve. The state must come from the same
 #   pack, flags and sample; the sizes are checked before anything runs.
-_STATE_F32 = ("weights", "h", "amp")          # per row; float32 keeps 1e-7 of them
+# per row; float32 keeps 1e-7 of them (the day guard's offset too: js.raceDayDivisions)
+_STATE_F32 = ("weights", "h", "amp", "race_day_div_offset")
 
 
 def saveState(out, path):
@@ -3399,6 +3599,18 @@ def main():
                   f"are published so the run completes; the solve is saved in "
                   f"{state_path}. Fix, then rerun with --from-state {state_path} "
                   f"--difficulty bracket --golive: minutes, no solve.")
+    # ★ THE DAY GUARD'S DIVISIONS, IN THE SOLVE LOG (owner, 2026-10-08)
+    from datetime import date as _date
+    _pack_date = _date.fromtimestamp(os.path.getmtime(args.pack))
+    suspect_divisions = []
+
+    def _day_guard():
+        rows, src = raceDaySuspectRows(out, D, cols, keep, athlete_pool,
+                                       pool_names, pack_date=_pack_date)
+        suspect_divisions[:] = rows
+        for line in raceDaySuspectSummary(rows, src, D.n):
+            print(line, flush=True)
+    guardedReport("day guard divisions", _day_guard)
     delta = out["delta"]
     rows_per_cell = np.bincount(D.cell, minlength=D.n_cell).astype(np.float64)
     solved = rows_per_cell > 0
@@ -3560,6 +3772,14 @@ def main():
                                        "pair_difficulty.npz"))
         if args.golive:
             jg.writeLive(live)
+            # the day guard's divisions (raceDaySuspectRows), for a person
+            # and the distance pins -- replaced whole every go-live
+            try:
+                jg.writeSuspectDivisions(suspect_divisions, pack_date)
+            except Exception:                                    # noqa: BLE001
+                import traceback
+                traceback.print_exc()
+                print("[joint/live] race_day_suspect_division NOT written (above)")
         else:
             print("[joint/live] --golive-dry: nothing written to the database")
 

@@ -235,6 +235,148 @@ DIST_WALK_SD = 0.02
 #   rowguard as race_day_suspect.
 RACE_DAY_CAP = 0.10
 
+# ★★ ONE WRONG DIVISION MUST NOT MOVE THE DAY (owner, 2026-10-08: the venue
+#    key pools a venue-day "so one tactical race cannot move it" -- and a
+#    stored distance can). Midlothian James Smith HS Invitational, Aug 27
+#    2026: 8 divisions on one venue-day, three stored at 3218 m but run at
+#    5000 m (medians 28:46, 25:36, 21:48), 344 of 1,091 rows reading ~40%
+#    slow. The pooled day came out "slow 10.3%" (344 * 0.4 / 1091 = 12.6%,
+#    shrunk), and because an XC rating carries its day, every CORRECT race
+#    that afternoon was credited ~12%: +11 to +12% against the same
+#    runners' next-60-day ratings.
+#
+#  ★ THE RULE, FROM NUMBERS ALREADY HERE (raceDayDivisions). Within one race
+#    (venue-day), each DIVISION's own day is read off its rows exactly as
+#    u_j is (sum c r / sum w h^2, no prior). The race's centre is the
+#    information-weighted median of those -- robust to a minority of broken
+#    sheets, which is the case: three of eight. A division further than
+#    RACE_DAY_CAP from it is not a day, it is a broken sheet (the same line
+#    the rating's clip draws), and gets ZERO weight in u. Iterated once:
+#    the divisions are re-read against the clean day. Its rows still
+#    RECEIVE the venue-day u in a rating; inside the solve the division's
+#    own excess is held as a fixed offset (like an asserted level) so it
+#    reaches no ability, no course and no day.
+#
+#  ! A DIVISION OF ONE ROW IS NEVER FLAGGED: one runner cannot be told from
+#    their own bad day (as a one-race cell cannot tell d from u). A race of
+#    one division has nothing to compare against and is left alone.
+#  ! A RACE WITH NO FLAGGED DIVISION IS UNCHANGED, bit for bit: the sums are
+#    the old sums. XCP_DAY_DIVISION_GUARD=0 turns the guard off (ablation).
+#  ⚠ THE FLAGGED DIVISIONS ARE VERY LIKELY WRONG STORED DISTANCES. They go
+#    to race_day_suspect_division (run_joint / joint_golive) with the
+#    distance that would reconcile them; scripts/diag_race_day_suspects.py
+#    lists them, biggest first.
+def dayDivisionGuardOn():
+    return os.environ.get("XCP_DAY_DIVISION_GUARD", "1").strip().lower() not in (
+        "0", "false", "off", "no")
+
+
+def raceDayDivisions(r, w, h, race, sub, n_race, pen, cap=RACE_DAY_CAP,
+                     guard=True):
+    """The race-day term with whole broken divisions given zero weight.
+
+    r:    per row, the residual BEFORE the race's day (h-units, the r of
+          raceEffectLeaveOneOut: y less everything but h * u)
+    w, h: per row, the solve's weights and tilt
+    race: per row race id; sub: per row DIVISION id (dense, nested in race)
+    pen:  per race prior precision sigma2 / sigma_u2[group] (or a scalar)
+
+    Returns a dict: u (n_race, the shrunk day from the kept rows), num and
+    P (its sums, P with the prior), keep (per row 1.0 / 0.0), offset (per
+    row: the flagged division's own day less u, 0 elsewhere -- u-units),
+    and per division: m (its raw day), W (sum w h^2), n (rows), race_of,
+    flag, centre (the race's centre it was judged against)."""
+    r = np.asarray(r, dtype=np.float64)
+    w = np.asarray(w, dtype=np.float64)
+    h = np.asarray(h, dtype=np.float64)
+    h = np.full(r.size, float(h)) if h.ndim == 0 else h
+    race = np.asarray(race, dtype=np.int64)
+    c = w * h
+    wh2 = w * h * h
+    cr = c * r
+    pen = np.broadcast_to(np.asarray(pen, dtype=np.float64), (int(n_race),))
+    out = {"flag": None}
+    keep = None
+    if guard and sub is not None and r.size:
+        sub = np.asarray(sub, dtype=np.int64)
+        n_sub = int(sub.max()) + 1
+        num_s = np.bincount(sub, weights=cr, minlength=n_sub)
+        W_s = np.bincount(sub, weights=wh2, minlength=n_sub)
+        n_s = np.bincount(sub, minlength=n_sub)
+        race_of = np.zeros(n_sub, dtype=np.int64)
+        race_of[sub] = race
+        ok = W_s > 0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            m_s = np.where(ok, num_s / np.where(ok, W_s, 1.0), np.nan)
+        # races with two or more divisions that carry information
+        subs_per_race = np.bincount(race_of[ok], minlength=int(n_race))
+        cand = ok & (subs_per_race[race_of] >= 2) & (n_s >= 2)
+        flag = np.zeros(n_sub, dtype=bool)
+        centre = np.full(n_sub, np.nan)
+        if cand.any():
+            # the information-weighted median division of each race
+            idx = np.flatnonzero(ok & (subs_per_race[race_of] >= 2))
+            order = idx[np.lexsort((m_s[idx], race_of[idx]))]
+            rs = race_of[order]
+            cw = np.cumsum(W_s[order])
+            start = np.r_[True, rs[1:] != rs[:-1]]
+            base = np.maximum.accumulate(np.where(start, cw - W_s[order], 0.0))
+            within = cw - base
+            tot = np.bincount(rs, weights=W_s[order], minlength=int(n_race))
+            hit = within >= 0.5 * tot[rs]
+            first = hit & np.r_[True, ~hit[:-1] | start[1:]]
+            med = np.full(int(n_race), np.nan)
+            med[rs[first]] = m_s[order][first]
+            centre = med[race_of]
+            flag = cand & (np.abs(m_s - centre) > cap)
+            # ... and once more, against the day without the flagged ones
+            if flag.any():
+                kept = ok & ~flag
+                num_k = np.bincount(race_of[kept], weights=num_s[kept], minlength=int(n_race))
+                W_k = np.bincount(race_of[kept], weights=W_s[kept], minlength=int(n_race))
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    clean = np.where(W_k > 0, num_k / np.where(W_k > 0, W_k, 1.0), med)
+                touched = np.zeros(int(n_race), dtype=bool)
+                touched[race_of[flag]] = True
+                centre = np.where(touched[race_of], clean[race_of], centre)
+                flag = cand & touched[race_of] & (np.abs(m_s - centre) > cap)
+        if flag.any():
+            keep = (~flag[sub]).astype(np.float64)
+        out.update(m=m_s, W=W_s, n=n_s, race_of=race_of, flag=flag,
+                   centre=centre, n_flag=int(flag.sum()),
+                   rows_flag=int(n_s[flag].sum()))
+    if keep is None:
+        num = np.bincount(race, weights=cr, minlength=int(n_race))
+        P = np.bincount(race, weights=wh2, minlength=int(n_race)) + pen
+        keep_row = np.ones(r.size)
+        offset = np.zeros(r.size)
+    else:
+        num = np.bincount(race, weights=cr * keep, minlength=int(n_race))
+        P = np.bincount(race, weights=wh2 * keep, minlength=int(n_race)) + pen
+        keep_row = keep
+    u = num / P
+    if keep is not None:
+        s_sub = np.where(out["flag"], out["m"] - u[out["race_of"]], 0.0)
+        offset = s_sub[sub]
+    out.update(u=u, num=num, P=P, keep=keep_row, offset=offset)
+    return out
+
+
+DIVISION_TABLE_COLS = ("division", "race", "division_day", "info", "rows",
+                       "centre", "race_u")
+
+
+def divisionTable(dd):
+    """The flagged divisions of a raceDayDivisions result as one float
+    array, a row each, columns DIVISION_TABLE_COLS; None when none."""
+    if dd is None or dd.get("flag") is None or not dd["flag"].any():
+        return None
+    k = np.flatnonzero(dd["flag"])
+    ro = dd["race_of"][k]
+    return np.column_stack([k.astype(np.float64), ro.astype(np.float64),
+                            dd["m"][k], dd["W"][k], dd["n"][k].astype(np.float64),
+                            dd["centre"][k], dd["u"][ro]])
+
 
 # ★★ A HEAVY-TAILED PRIOR FOR THE DAY (2026-10-07, run 20261006_120609's
 #    day-term consistency: crediting the day lowered the XC scatter's SD
@@ -3128,10 +3270,21 @@ def raceEffectLeaveOneOut(out, D, y):
         s_u2 = np.full(int(D.group_of_cell.max()) + 1, float(s_u2))
     pen = float(out["sigma2"]) / np.maximum(s_u2[groupOfRace(D)], 1e-12)
     c = w * h
-    num = np.bincount(D.race, weights=c * r, minlength=D.n_race)
-    P = np.bincount(D.race, weights=w * h * h, minlength=D.n_race) + pen
-    u_ref = num / P
-    u_loo = (num[D.race] - c * r) / (P[D.race] - w * h * h)
+    # ★ THE DIVISION GUARD (raceDayDivisions): a flagged division's rows
+    #   had zero weight in the solve's u, so they have no pull to leave out
+    #   -- they receive u_j unchanged -- and the kept rows' sums are u_j's
+    flag = out.get("race_day_div_flag")
+    if flag is not None and np.asarray(flag).size == D.n and np.any(flag):
+        keep = 1.0 - np.asarray(flag, dtype=np.float64)
+        num = np.bincount(D.race, weights=c * r * keep, minlength=D.n_race)
+        P = np.bincount(D.race, weights=w * h * h * keep, minlength=D.n_race) + pen
+        u_ref = num / P
+        u_loo = (num[D.race] - keep * c * r) / (P[D.race] - keep * w * h * h)
+    else:
+        num = np.bincount(D.race, weights=c * r, minlength=D.n_race)
+        P = np.bincount(D.race, weights=w * h * h, minlength=D.n_race) + pen
+        u_ref = num / P
+        u_loo = (num[D.race] - c * r) / (P[D.race] - w * h * h)
     u_row = u[D.race] + (u_loo - u_ref[D.race])
     own = np.abs(u_row - u[D.race])
     info = {"max_conditional_gap": float(np.max(np.abs(u_ref - u))),
@@ -3258,6 +3411,13 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     tie_inv = tie_mean = tie_fit = tie_w_solved = None
     has_tie = bool(getattr(D, "n_tie", 0))
     tilt_factor = None                   # per pool, under tilt_scale
+    # ★ THE DIVISION GUARD ON THE DAY (raceDayDivisions): the flagged
+    #   divisions' own excess, held off y like an asserted level from the
+    #   pass after it is found; None = nothing flagged (the old solve)
+    div_sub = (getattr(D, "subrace", None)
+               if dayDivisionGuardOn() and D.n_race > 0 else None)
+    div_off = None
+    div_last = div_used = None
 
     for outer in range(n_outer):
         pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
@@ -3284,6 +3444,9 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         # the asserted level comes off y, tilted like the estimated one
         # the asserted level(s) come off y, tilted like the estimated ones
         y_fit = y - D.fixedOffset(h)
+        if div_off is not None:
+            y_fit = y_fit - h * div_off
+        div_used = div_last
         # the last outer carries the published numbers; see CG_TOL_OUTER
         theta, iters = conjugateGradient(
             op.rhs(y_fit), op.matvec, diag, max_iter=cg_max_iter, x0=theta,
@@ -3296,6 +3459,25 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         theta = _pack(b, D)
 
         resid = y_fit - rowPrediction(b, D, h, amp)
+
+        # --- the division guard on the day, for the next pass --------- #
+        # ! NOT AFTER THE LAST PASS: the published u, the offset and the
+        #   flags must be the ones that pass solved with
+        if div_sub is not None and outer < n_outer - 1:
+            r_pre = resid + h * b["u"][D.race]
+            if div_off is not None:
+                r_pre = r_pre + h * div_off
+            dd = raceDayDivisions(r_pre, w, h, D.race, div_sub, D.n_race,
+                                  pen_race)
+            if dd["flag"] is not None and dd["flag"].any():
+                div_off, div_last = dd["offset"], dd
+            else:
+                div_off, div_last = None, None
+            if verbose:
+                print(f"  [joint] day guard: {0 if div_last is None else div_last['n_flag']:,} "
+                      f"divisions ({0 if div_last is None else div_last['rows_flag']:,} rows) "
+                      f"beyond {RACE_DAY_CAP:.2f} of their race's day -- zero weight "
+                      f"in u from the next pass", flush=True)
 
         # --- variance components ------------------------------------ #
 
@@ -3554,6 +3736,16 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         # the tilt's scale (TILT_SCALES): per pool the HS factor it read the
         # rating through, and per athlete-season the rating it read
         "tilt_pool_factor": tilt_factor,
+        # the division guard as the last pass solved with it (None = no
+        # division flagged): per row the held-off excess (u-units, applied
+        # as h * offset) and the flag; per flagged division one row of
+        # (division, race, its raw day, sum w h^2, rows, the centre)
+        "race_day_div_offset": (None if div_used is None
+                                else div_used["offset"].copy()),
+        "race_day_div_flag": (None if div_used is None
+                              else (div_used["keep"] == 0).astype(np.int8)),
+        "race_day_div_table": (None if div_used is None
+                               else divisionTable(div_used)),
         "tilt_rating": (None if tilt_factor is None or rating is None
                         else rating * tilt_factor[athlete_pool]),
     }

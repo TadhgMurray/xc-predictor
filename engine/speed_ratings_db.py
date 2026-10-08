@@ -158,7 +158,13 @@ COLUMNS = ("result_id", "person_id", "normalized_time", "grade", "source",
            #   an elite squad is not a school, and its gradeless rows were
            #   landing in the college pool because they raced college fields
            #   (pool_resolve.resolvePool, team_level).
-           "team_id", "team_slug")
+           "team_id", "team_slug",
+           # ★ THE DIVISION (owner, 2026-10-08): the row's (meet_id, div_id),
+           #   so the joint solve's day guard can read each division's own
+           #   day inside a venue-day (joint_solve.raceDayDivisions;
+           #   run_joint.divisionCodes). A pack without them falls back to
+           #   (cell, pool) per race.
+           "meet_id", "div_id")
 
 
 # ------------------------------------------------------------------ #
@@ -672,7 +678,8 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                         {_meetClassSql("COALESCE(m.meet_name, mt.meet_name, '')",
                                        "COALESCE(mt.is_championship, 0) = 1")}) AS meet_class,
                r.time_seconds::real AS time_seconds,
-               {_teamColumns('results')}
+               {_teamColumns('results')},
+               r.meet_id::bigint AS meet_id, r.div_id::bigint AS div_id
         FROM results r{_ageBandJoin('XC')}
         LEFT JOIN meets m
                ON m.div_id = r.div_id AND m.source = r.source
@@ -795,7 +802,8 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                COALESCE(mc.cls,
                         {_meetClassSql("COALESCE(m.meet_name, '')")}) AS meet_class,
                r.time_seconds::real AS time_seconds,
-               {_teamColumns('results_tf')}
+               {_teamColumns('results_tf')},
+               r.meet_id::bigint AS meet_id, r.div_id::bigint AS div_id
         FROM results_tf r{_ageBandJoin('TF')}
         LEFT JOIN meets_tf m
                ON m.meet_id = r.meet_id AND m.div_id = r.div_id
