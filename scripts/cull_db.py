@@ -75,6 +75,7 @@ _PRODUCTION = {
 #   but NOT dropped locally: tonight's local pipeline may still read them.
 _REGENERABLE = {
     "allraces": "grade_sanity (04)",
+    "ntschool": "grade_sanity (04)",
     "gradekind": "grade_sanity (04)",
     "gradenorm": "grade_sanity (04)",
     "barefix": "grade_sanity (04)",

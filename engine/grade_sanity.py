@@ -462,6 +462,74 @@ def _ageBandJoins(cur):
     return (_AGE_BAND_REAL.format(sport="XC"),
             _AGE_BAND_REAL.format(sport="TF"))
 
+
+# ================================================================== #
+#  A NATIONAL TEAM'S GRADE IS NOT A GRADE
+# ================================================================== #
+#
+# ★ WHY (owner, 2026-10-08, John Rivera, /athlete/12652858: Ole Miss FR-1
+#   2017 to 2021, a professional since). His World Indoors rows of
+#   2025-03-21, school 'Puerto Rico', carry grade '12', and his 2023 Worlds
+#   row '10' -- a federation's column, not a school's. Two '12' rows
+#   corroborated academic 2024 as a twelfth grader (rule 2), and only the
+#   progression arithmetic (rule 3b) happened to turn that into 'graduated'.
+#   The athlete page already refuses these (racecast/app.py _season_grade,
+#   a860c29); the verdicts underneath it read them as the athlete's own.
+#
+# ! NULLED AT THE SOURCE, LIKE #47's BANDS AND FOR THE SAME REASON. Every
+#   rule counts, corroborates or compares allraces' grade, grade_folded,
+#   raw_grade or definite: corroboration (2), the fold and 5c (gradekind),
+#   bare class (2c, both passes), the field (4), stale (5), college start
+#   (5b, 5e, rule 8's graduation), thin field (5d). One CASE before any of
+#   them runs is one change instead of nine, and a rule added later cannot
+#   forget it. Rule 7 reads the results tables directly and asks the same
+#   table (eliteFieldSeasons).
+#
+# ★ THE ROW STAYS; ONLY ITS GRADE GOES. A national-team race is still a
+#   race the athlete ran, so it still counts in his races per season (5e,
+#   trust) and his season still asks its field (rule 4). As an ENTRANT it
+#   is ungraded: it does not vote on any field's level, and a field made of
+#   nothing else -- a World Indoors final -- has no graded entrant and reads
+#   'pro' through rule 4's own no-grade arm, which is what a senior
+#   international championship is. The junk '12's used to make that same
+#   field a high school race.
+#
+# ! ONE CLASSIFIER: pool_resolve.isNationalTeam, run in Python over the
+#   distinct school strings of graded rows and stored. No SQL copy of the
+#   list or of its suffix pattern exists to drift from it (pro_flag's seed
+#   carries one, _NT_STRIP, for a different question).
+# ⚠ UNLOGGED, NOT TEMP, like allraces: a temp table in the build's join
+#   would make its 225M-row scans parallel-restricted.
+_NT_TABLE = "ntschool"
+
+
+# _nationalTeamSchools
+# Purpose:   (re)build ntschool -- the exact school strings, on graded rows
+#            of either results table, that pool_resolve.isNationalTeam names.
+# Output:    how many strings it holds.
+def _nationalTeamSchools(cur):
+    from pool_resolve import isNationalTeam
+    from psycopg2.extras import execute_values
+    t0 = time.time()
+    cur.execute("""SELECT DISTINCT school FROM results
+                   WHERE  school IS NOT NULL AND grade IS NOT NULL
+                   UNION
+                   SELECT DISTINCT school FROM results_tf
+                   WHERE  school IS NOT NULL AND grade IS NOT NULL""")
+    rows = cur.fetchall()
+    schools = [r["school"] if isinstance(r, dict) else r[0] for r in rows]
+    nt = sorted(s for s in schools if isNationalTeam(s))
+    cur.execute(f"DROP TABLE IF EXISTS {_NT_TABLE}; "
+                f"CREATE UNLOGGED TABLE {_NT_TABLE} (school text PRIMARY KEY)")
+    if nt:
+        execute_values(cur, f"INSERT INTO {_NT_TABLE} (school) VALUES %s",
+                       [(s,) for s in nt], page_size=5000)
+    cur.execute(f"ANALYZE {_NT_TABLE}")
+    print(f"[grade] national teams: {len(nt):,} of {len(schools):,} graded "
+          f"school strings -- their rows lose the grade here "
+          f"({time.time() - t0:.0f}s)")
+    return len(nt)
+
 _BUILD = f"""
     SET work_mem = '1GB';
     SET temp_buffers = '256MB';
@@ -751,12 +819,15 @@ _BUILD = f"""
                -- ★ #47: a banded grade in a division that writes AGES is not
                --   a grade at all, and loses both spellings here, before any
                --   rule can count it. See _ageBandJoins.
-               CASE WHEN ab.result_id IS NULL THEN n.norm END     AS grade,
-               n.definite                                         AS definite,
+               --   ★ AND A NATIONAL TEAM'S (2026-10-08): see ntschool.
+               CASE WHEN ab.result_id IS NULL AND nt.school IS NULL
+                    THEN n.norm END                               AS grade,
+               CASE WHEN nt.school IS NULL THEN n.definite END    AS definite,
                -- ! THE RAW COLUMN RIDES ALONG. Rule 5b needs the FR-1/SR-4
                --   spelling normGrade folds away; carrying it costs one text
                --   column and saves re-reading 225M rows.
-               CASE WHEN ab.result_id IS NULL THEN r.grade END    AS raw_grade,
+               CASE WHEN ab.result_id IS NULL AND nt.school IS NULL
+                    THEN r.grade END                              AS raw_grade,
                meet_id, div_id, source,
                (-1)::bigint                                       AS event_key,
                -- ★ raceIdent COMPUTED ONCE, HERE. It was being evaluated in
@@ -768,6 +839,7 @@ _BUILD = f"""
         FROM   results r
         LEFT   JOIN gradenorm n ON n.raw = r.grade
         /*AGEBAND_XC*/
+        LEFT   JOIN ntschool nt ON nt.school = r.school
         -- ! A ROW THE TWIN RULES FLAGGED IS NOT EVIDENCE (2026-09-06): the
         --   same race scraped twice would vote twice in every field count.
         --   result_twin is the previous run's (04c runs after this step),
@@ -782,15 +854,18 @@ _BUILD = f"""
         SELECT person_id,
                substring(date, 1, 4)::int,
                {_ACAD},
-               CASE WHEN ab.result_id IS NULL THEN n.norm END,
-               n.definite,
-               CASE WHEN ab.result_id IS NULL THEN r.grade END,
+               CASE WHEN ab.result_id IS NULL AND nt.school IS NULL
+                    THEN n.norm END,
+               CASE WHEN nt.school IS NULL THEN n.definite END,
+               CASE WHEN ab.result_id IS NULL AND nt.school IS NULL
+                    THEN r.grade END,
                meet_id, div_id, source, COALESCE(event_id, -1),
                raceIdent(time_seconds, date, meet_id,
                          COALESCE(event_id, -1))
         FROM   results_tf r
         LEFT   JOIN gradenorm n ON n.raw = r.grade
         /*AGEBAND_TF*/
+        LEFT   JOIN ntschool nt ON nt.school = r.school
         LEFT   JOIN result_twin tw ON tw.sport = 'TF' AND tw.result_id = r.result_id
         WHERE  person_id IS NOT NULL AND date IS NOT NULL
           AND  substring(date, 1, 4)::int BETWEEN 1990 AND 2035
@@ -1585,7 +1660,10 @@ def eliteFieldSeasons(cur):
                 SELECT r.* FROM {table} r
                 WHERE  r.person_id IS NOT NULL AND r.date IS NOT NULL
                   AND  r.time_seconds > 0 {relay}
-                  AND  gradeLevel(normGrade(r.grade)) IN ('elem', 'ms');
+                  AND  gradeLevel(normGrade(r.grade)) IN ('elem', 'ms')
+                  -- ★ a national team's grade is not one (ntschool)
+                  AND  NOT EXISTS (SELECT 1 FROM {_NT_TABLE} nt
+                                   WHERE nt.school = r.school);
             ANALYZE tmp_elite_src;
             SELECT count(*) FROM tmp_elite_src;""")
         print(f"    [7] {sport}: {cur.fetchone()[0]:,} elementary/middle-school rows staged "
@@ -1884,6 +1962,8 @@ def resolve(cur, audit=False):
     # on a database that has never run 04c the table is created empty here
     from twin_flag import ensureTable as _ensureTwin
     _ensureTwin(cur)
+    # the national-team strings the build's CASEs null (see ntschool)
+    _nationalTeamSchools(cur)
     build = (_BUILD.replace(_AGE_BAND_TOKENS[0], xc_join)
                    .replace(_AGE_BAND_TOKENS[1], tf_join))
     for _tok in _AGE_BAND_TOKENS:

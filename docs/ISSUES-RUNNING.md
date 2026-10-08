@@ -5172,6 +5172,14 @@ Chromium against the old script (readout 15:00, label under the pointer
   5000 m reading. `scripts/diag_title_distance.py` lists anet XC divisions
   whose title names another distance than meets.distance, and how many of
   their results the July triage dropped.
+- **grade_sanity: a national team's grade is no evidence.** John Rivera's
+  World Indoors rows ('Puerto Rico', grade '12') were corroborated into his
+  2024 verdict. `allraces` now NULLs grade/raw_grade/definite on rows whose
+  school is a national team (`ntschool`, classified once per run by
+  pool_resolve.isNationalTeam -- no SQL copy of the list); rule 7 filters
+  them too. The race still counts as a race. A field of national teams only
+  reads as pro. Test: `tests/test_grade_sanity_national_team.py`. Next
+  grade_sanity run.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane
