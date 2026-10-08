@@ -5155,6 +5155,23 @@ Chromium against the old script (readout 15:00, label under the pointer
   later. Needs the next grade_sanity run and solve.
 - **panels._NON_SCHOOL: missing comma.** "Poland" "saucony" concatenated
   into "polandsaucony", so neither was recognised as a non-school.
+- **Home page opens on cross country in season, on the current season.**
+  `panels.pickSeason` kept last season's board until the new one was "on
+  pace" with past years, which a season still being scraped never is in
+  October, so XC showed 2025 and the home page (newer season wins) opened
+  on track. In season, the season under way is now the board as soon as it
+  has a rated row. Takes effect at the next panels build (13_panels).
+- **Athlete page record flags one width** (PR, CR, R, SR, CSR, RSR and the
+  ★ ones), centred; the word tags keep theirs.
+- **link_profile_school, owner's site-wide dry run (60,709 joins):** IESA
+  "7th Grade FAT Standard" and "8th Grade" profiles matched because the name
+  key drops digits; names that differ by a number (bracketed bibs aside) are
+  now refused, as are two members in one track race on one day.
+- **Soheib's dropped races are wrong distances, not cooked times.** The
+  amnesty retrial valued his "Men 8k" at nt 1480.5, his raw time, i.e. a
+  5000 m reading. `scripts/diag_title_distance.py` lists anet XC divisions
+  whose title names another distance than meets.distance, and how many of
+  their results the July triage dropped.
 - Open: steeple has no rating (not priced by the engine; needs its own event
   offset); John Rivera (Brooks Beasts) pooled HS grade 12 (run
   `diag_person_pool.py`); races without weather and the RunningLane

@@ -19,9 +19,18 @@ def test_late_september_xc_on_pace_is_the_current_season():
     assert got == "2026"
 
 
-def test_behind_pace_keeps_last_season():
-    got = P.pickSeason(ROWS, "XC", dt.date(2026, 9, 26), lambda yr, c: 800_000)
-    assert got == "2025"
+def test_in_season_the_current_season_wins_even_behind_pace():
+    # owner, 2026-10-08: in season, the season under way is the board,
+    # however far behind last year's pace its scraping is
+    got = P.pickSeason(ROWS, "XC", dt.date(2026, 10, 8), lambda yr, c: 800_000)
+    assert got == "2026"
+
+
+def test_in_season_an_old_newest_season_falls_to_the_old_rule():
+    # the newest season on file is not the one under way (no 2026 rows yet)
+    rows = [("2025", 90_000), ("2024", 1_000_000)]
+    got = P.pickSeason(rows, "XC", dt.date(2026, 8, 3), lambda yr, c: 800_000)
+    assert got == "2024"
 
 
 def test_out_of_season_spring_leagues_do_not_count():
@@ -32,6 +41,7 @@ def test_out_of_season_spring_leagues_do_not_count():
 
 def test_the_cutoff_is_the_same_date_in_the_busiest_season():
     seen = {}
-    P.pickSeason(ROWS, "XC", dt.date(2026, 9, 26),
+    # a newest season that is not the one under way (2027, none on file yet)
+    P.pickSeason(ROWS, "XC", dt.date(2027, 9, 26),
                  lambda yr, c: seen.setdefault("c", (yr, c)) and 1)
-    assert seen["c"] == ("2025", "2025-09-26")
+    assert seen["c"] == ("2025", "2026-09-26")

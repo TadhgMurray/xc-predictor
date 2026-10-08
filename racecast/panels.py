@@ -588,6 +588,18 @@ def pickSeason(rows, sport, today, rows_to_date):
     floor = busiest_n * SEASON_MIN_SHARE
     newest_yr, newest_n = rows[0]
     in_season = (today.month in XC_MONTHS) == (sport == "XC")
+    # ★ IN SEASON, THE SEASON UNDER WAY IS THE BOARD (owner, 2026-10-08: "XC
+    #   STILL ISNT THE CURRENT TAB ON HOME PAGE. It should have the rankings
+    #   of the current season ... rn in the year it should start on cross,
+    #   not track"). The on-pace test below kept last season's board until
+    #   the new one caught up, and a season whose new meets are still being
+    #   scraped and rated never does in October. While the sport is in
+    #   season, the season the calendar says is under way is shown as soon
+    #   as it holds a rated row; the home page's tab follows (home.html
+    #   opens on the newer season, XC on a tie).
+    if in_season and newest_n and str(newest_yr) == str(
+            seasonYearFromIso(sport, today.isoformat())):
+        return newest_yr
     if in_season and newest_n < floor and newest_yr != busiest_yr:
         shift = int(newest_yr) - int(busiest_yr)
         try:
