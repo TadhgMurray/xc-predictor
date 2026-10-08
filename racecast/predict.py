@@ -138,7 +138,10 @@ def _loadModelLocked():
         n_venues = state["venue_embedding.weight"].shape[0]
         # the width it was trained at (24 before hidden_days, 2026-10-08)
         ctx_width = state["context_query.weight"].shape[1]
-        model = XCPredictor(n_venues=n_venues, context_features=ctx_width)
+        # and the sequence width (21 before the rated time, 2026-10-08)
+        seq_width = state["input_projection.weight"].shape[1]
+        model = XCPredictor(n_venues=n_venues, context_features=ctx_width,
+                            sequence_features=seq_width)
         # ★ THE BASELINE RULE RIDES IN THE STATE DICT, so inference cannot use
         #   a different one from the weights (see transformer.BASELINE_LAST).
         #   A checkpoint trained before those buffers existed simply does not
@@ -180,6 +183,7 @@ def _loadModelLocked():
                       #   must be fed it.
                       "norm_scale": stats.get("norm_scale", "pool"),
                       "context_features": ctx_width,
+                      "sequence_features": seq_width,
                       "encoders": encoders, "vocab": vocab}
         _model = model
     except Exception as exc:                       # noqa: BLE001
@@ -952,7 +956,7 @@ def _predictTimes(cur, person_ids, target, spec=None):
 
     if batch:
         longest = max(len(s) for _i, s, _c, _v, _d in batch)
-        width = fx.SEQUENCE_FEATURES
+        width = (_artifacts or {}).get("sequence_features") or fx.SEQUENCE_FEATURES
         seqs = torch.zeros(len(batch), longest, width)
         masks = torch.zeros(len(batch), longest, dtype=torch.bool)
         vens = torch.zeros(len(batch), dtype=torch.long)
@@ -1587,6 +1591,11 @@ def _forecastExample(fx, hist, target_row, encoders, as_of=None):
         seq.append(v)
     seq = seq[-fx.MAX_SEQ_LEN:]
     prior = hist[-fx.MAX_SEQ_LEN:]
+    # ! A CHECKPOINT FROM BEFORE THE RATED TIME IS 21 WIDE: same rule as
+    #   the context width below
+    sw = (_artifacts or {}).get("sequence_features")
+    if sw:
+        seq = [v[:sw] for v in seq]
     fc, hidden = _hiddenDays(_asDate(target_row["date"]),
                              as_of or datetime.date.today())
     ctx = fx._buildContextVector(target_row, seq, prior, encoders,

@@ -136,7 +136,8 @@ SHUFFLE_SEED = 42
 #   the first nn.Linear, long after the extraction has finished writing
 #   gigabytes of chunk files. The padding row below used a hardcoded 18,
 #   which silently desyncs the moment a feature is added.
-SEQUENCE_FEATURES = 21
+# 23 since 2026-10-08: the rated time and its flag at 21-22.
+SEQUENCE_FEATURES = 23
 # 25, not 21: is_forecast sits at index 0, 2026-09-15 appended three at the
 # end -- the grade ordinal, its known-flag, and the race year -- and
 # 2026-10-08 appended hidden_days (CONTEXT_HIDDEN_INDEX). Count
@@ -366,6 +367,12 @@ _XC_SQL = f"""
                 -- Per-race features that go into the sequence.
                 r.grade,
                 r.time_seconds,
+                -- ★ THE RACE'S RATING AND ITS POOL (2026-10-08): the sequence
+                --   vector's rated time (_ratedTime). A prior race's rating
+                --   carries the race-day term the field revealed, which no
+                --   single athlete's history can.
+                r.speed_rating,
+                r.rating_pool,
                 -- ⚠ THE LATERAL READS athlete_id, WHICH tfrrs XC HAS NONE OF,
                 --   so a.gender is NULL on every tfrrs row -- and gender
                 --   feeds resolvePool, which picks the pool the target was
@@ -686,13 +693,64 @@ NORM_SCALE = ("pool" if (os.environ.get("XCP_MODEL_NORM_SCALE") or "").strip()
               .lower() == "pool" else "common5000")
 
 
+# ★ THE RACE'S RATING AS A TIME (2026-10-08, owner's backtest: the model
+#   ordered races no better than "their last race", 0.775, while the ratings
+#   ordered them at 0.874). normalized_time still carries the day: a slow
+#   course on a hot afternoon reads as a slow runner, and a model that sees
+#   one athlete at a time can never tell, because only the FIELD shows it.
+#   The race's rating already has the day term taken out, so it is handed
+#   over as a time on the same scale as normalized_time:
+#       conversions._norm_from_rating(rating, pool, 0)  = 100 * pool_mean / rating
+#   on the rating's own pool anchor, then that pool's anchorShift onto the
+#   common scale exactly as toCommonScale moves normalized_time. One
+#   constant per pool, cached: this runs once per corpus row.
+# ! THE RATING OF A PRIOR RACE ONLY. The sequence holds races before the
+#   target, so the target's own rating never reaches its example. (Its day
+#   term was fitted on a field whose abilities saw later races too: mild,
+#   diluted leakage, which the backtest on races after the model's date
+#   measures honestly.)
+_RATED_K = {}
+
+
+def _ratedTime(row, scale):
+    """The row's rating as a normalized time on `scale`, or None."""
+    rating = row.get("speed_rating")
+    pool = (row.get("rating_pool") or "").split("|")[0]
+    try:
+        rating = float(rating)
+    except (TypeError, ValueError):
+        return None
+    if not pool or not rating > 0:
+        return None
+    sport = "XC" if row.get("is_xc") else "TF"
+    key = (pool, sport, scale)
+    k = _RATED_K.get(key)
+    if k is None:
+        try:
+            _rc = os.path.join(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))), "racecast")
+            if _rc not in sys.path:
+                sys.path.insert(0, _rc)
+            from conversions import pool_mean
+            from normalize_distance import anchorShift
+            pm = pool_mean(pool, sport)
+            k = (100.0 * float(pm)
+                 * (anchorShift(pool, sport) if scale == "common5000" else 1.0)
+                 if pm else 0.0)
+        except Exception:                                # noqa: BLE001
+            k = 0.0
+        _RATED_K[key] = k
+    return k / rating if k else None
+
+
 def toCommonScale(row, scale=None):
     """The row with normalized_time on the common anchor. Pure but for the
     spline artifact; a row whose pool cannot be told keeps its value and is
     marked. `scale` overrides NORM_SCALE -- inference passes the scale the
-    loaded model was trained on."""
+    loaded model was trained on. Also sets row["rated_time"] (_ratedTime)."""
     nt = row.get("normalized_time")
     row["normalized_time_pool"] = nt
+    row["rated_time"] = _ratedTime(row, scale or NORM_SCALE)
     if (scale or NORM_SCALE) != "common5000" or nt is None:
         return row
     from normalize_distance import (normPoolFor, anchorShift,
@@ -797,6 +855,9 @@ _TF_SQL = f"""
                 r.place,
                 r.grade,
                 r.time_seconds,
+                -- the race's rating and pool (_ratedTime), as _XC_SQL
+                r.speed_rating,
+                r.rating_pool,
                 a.gender,
  
                 -- TF meets table has event-level info
@@ -1933,6 +1994,12 @@ def _buildSequenceVector(prior_result: dict, target_date_str: str,
 
         # Where that race was (indices 19-20), centred and scaled.
         *_geo(prior_result["gps_lat"], prior_result["gps_long"]),
+
+        # ★ THE RACE'S RATING AS A TIME, AND WHETHER IT HAS ONE (21-22,
+        #   2026-10-08). See _ratedTime. 0.0 and a 0 flag for an unrated
+        #   race -- "unrated" is a different statement from any time.
+        _orZero(prior_result.get("rated_time")),
+        1.0 if prior_result.get("rated_time") else 0.0,
     ]
 
 # buildAthleteExamples

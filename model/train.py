@@ -27,8 +27,10 @@ from transformer import (XCPredictor, SEQUENCE_FEATURES,
                          SEQ_NORM_TIME, SEQ_DAYS_AGO, CONTEXT_YEAR_INDEX,
                          TARGET_Z_CLAMP, CONTEXT_GAP_INDEX,
                          BASELINE_LAST, BASELINE_EWMA, BASELINE_BEST2,
+                         BASELINE_RATING, SEQ_RATED_TIME, SEQ_RATED_FLAG,
                          BASELINE_HALF_LIFE_DAYS, BASELINE_BEST_WINDOW_DAYS,
-                         baselineWeights, ewmaFromPadded, best2FromPadded)
+                         baselineWeights, ewmaFromPadded, best2FromPadded,
+                         ratedFromPadded)
 
 # ★ WHAT PREDICTIONS ARE ANCHORED ON. See transformer.BASELINE_LAST for the
 #   measurement that made this a choice: the model beats "their last race
@@ -40,7 +42,11 @@ from transformer import (XCPredictor, SEQUENCE_FEATURES,
 #   _chunkBaselines and XCPredictor.baselineSeconds both DERIVE the baseline
 #   from the sequence, and targetZ recomputes ln(target/base) on the fly. The
 #   125 GB stays where it is.
-BASELINE = BASELINE_LAST
+# ★ THE RATED FORM BY DEFAULT SINCE 2026-10-08 (transformer.BASELINE_RATING):
+#   the owner's backtest had the rating-based time ordering finished races at
+#   0.874 against the last-race-anchored model's 0.775. --baseline last
+#   trains the old rule for comparison.
+BASELINE = BASELINE_RATING
 BASELINE_HALF_LIFE = BASELINE_HALF_LIFE_DAYS
 
 # ★ THE HORIZON BANDS VALIDATION IS REPORTED IN (2026-09-16). One MAE over
@@ -700,6 +706,8 @@ def _chunkBaselines(chunk, mode=None, half_life=None):
         lengths = off[1:] - off[:-1]
         if float(mode) == BASELINE_BEST2:
             base = _best2Ragged(seqs, lengths)
+        elif float(mode) == BASELINE_RATING:
+            base = _ratedRagged(seqs, lengths, half_life)
         elif float(mode) == BASELINE_EWMA:
             base = _ewmaRagged(seqs, lengths, half_life)
         else:
@@ -713,6 +721,8 @@ def _chunkBaselines(chunk, mode=None, half_life=None):
     # ! THE MODEL'S OWN PADDED REDUCTIONS, imported rather than repeated.
     if float(mode) == BASELINE_BEST2:
         base = best2FromPadded(seqs, masks)
+    elif float(mode) == BASELINE_RATING:
+        base = ratedFromPadded(seqs, masks, half_life)
     elif float(mode) == BASELINE_EWMA:
         base = ewmaFromPadded(seqs, masks, half_life)
     else:
@@ -787,6 +797,22 @@ def _ewmaRagged(seqs, lengths, half_life):
                                     w * torch.log(t.clamp(min=1.0)))
     return torch.where(den > 0, torch.exp(num / den.clamp(min=1e-12)),
                        torch.zeros(n))
+
+
+# Purpose:   BASELINE_RATING over the RAGGED layout -- ratedFromPadded's
+#            rule: the EWMA of the rated times, else of the normalized ones.
+def _ratedRagged(seqs, lengths, half_life):
+    n = lengths.shape[0]
+    t = seqs[:, SEQ_RATED_TIME]
+    d = seqs[:, SEQ_DAYS_AGO]
+    valid = (t > 0) & (seqs[:, SEQ_RATED_FLAG] > 0)
+    w = baselineWeights(d, valid, half_life)
+    seg = torch.repeat_interleave(torch.arange(n), lengths)
+    den = torch.zeros(n).index_add_(0, seg, w)
+    num = torch.zeros(n).index_add_(0, seg,
+                                    w * torch.log(t.clamp(min=1.0)))
+    rated = torch.exp(num / den.clamp(min=1e-12))
+    return torch.where(den > 0, rated, _ewmaRagged(seqs, lengths, half_life))
 
 
 def computeStats(dataset, is_train: torch.Tensor,
@@ -1498,8 +1524,8 @@ def main():
     # ! THE LABEL NAMES THE RULE, because under --baseline ewma "ln(t/last)"
     #   and "last-race error" are both false and the number would be read as
     #   a comparison it is not.
-    _bl = {BASELINE_EWMA: "ewma", BASELINE_BEST2: "best2"}.get(
-        BASELINE, "last")
+    _bl = {BASELINE_EWMA: "ewma", BASELINE_BEST2: "best2",
+           BASELINE_RATING: "rated"}.get(BASELINE, "last")
     print(f"  stats from {stats['n_chunks']} chunks, "
           f"{stats['n_examples']:,} train examples: ln(t/{_bl}) mean "
           f"{stats['mean']:+.4f} std {stats['std']:.4f}; the baseline's own "
@@ -1666,9 +1692,11 @@ if __name__ == "__main__":
                           f"here: with 0 the GPU waits on every disk read.")
     _ap.add_argument("--amp", action="store_true",
                      help="bf16 mixed precision on CUDA. No-op on CPU.")
-    _ap.add_argument("--baseline", choices=("last", "ewma", "best2"),
+    _ap.add_argument("--baseline", choices=("rating", "last", "ewma", "best2"),
                      default=None,
-                     help="what a prediction is anchored on. 'last' is the "
+                     help="what a prediction is anchored on. 'rating' (the "
+                          "default) is the recency-weighted rated form; "
+                          "'last' is the "
                           "most recent race alone, which is what shipped; "
                           "'ewma' is a recency-weighted geometric mean; "
                           "'best2' is the two fastest recent races, which is "
@@ -1744,7 +1772,8 @@ if __name__ == "__main__":
     CHECKPOINT = _args.checkpoint
     if _args.baseline:
         BASELINE = {"ewma": BASELINE_EWMA, "best2": BASELINE_BEST2,
-                    "last": BASELINE_LAST}[_args.baseline]
+                    "last": BASELINE_LAST,
+                    "rating": BASELINE_RATING}[_args.baseline]
     if _args.baseline_half_life:
         BASELINE_HALF_LIFE = _args.baseline_half_life
 
@@ -1761,7 +1790,9 @@ if __name__ == "__main__":
     print(f"reading chunks from {DATA_DIR}")
     print(f"writing model.pt to   {MODEL_OUT}")
     print("baseline "
-          + ("ewma, half-life "
+          + (f"rated form, half-life {BASELINE_HALF_LIFE:.0f}d"
+             if BASELINE == BASELINE_RATING else
+             "ewma, half-life "
              f"{BASELINE_HALF_LIFE:.0f}d" if BASELINE == BASELINE_EWMA
              else f"best two within {BASELINE_BEST_WINDOW_DAYS:.0f}d"
              if BASELINE == BASELINE_BEST2 else "last race alone")

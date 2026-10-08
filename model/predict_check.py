@@ -73,7 +73,8 @@ def main():
     state = torch.load(T.MODEL_OUT, map_location="cpu")
     n_venues = state["venue_embedding.weight"].shape[0]
     model = XCPredictor(n_venues=n_venues,
-                        context_features=state["context_query.weight"].shape[1])
+                        context_features=state["context_query.weight"].shape[1],
+                        sequence_features=state["input_projection.weight"].shape[1])
     model.load_state_dict(state)
     model.eval()
     n_params = sum(p.numel() for p in model.parameters())

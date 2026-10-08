@@ -51,7 +51,9 @@ import torch.nn as nn
 # ------------------------------------------------------------------ #
 
 # Width of one race vector coming in from feature_extraction.py.
-SEQUENCE_FEATURES = 21
+# 23 since 2026-10-08: the race's rated time and its flag at 21-22
+# (feature_extraction._ratedTime).
+SEQUENCE_FEATURES = 23
 
 # Width of the target-race context vector (also from feature_extraction).
 # 25: is_forecast at index 0, then 2026-09-15 appended the grade ordinal,
@@ -108,6 +110,10 @@ CONTEXT_HIDDEN_INDEX = 24
 # normalized_time in seconds, index 2 is days before the target.
 SEQ_NORM_TIME = 0
 SEQ_DAYS_AGO = 2
+# The race's rating as a time on the same scale, and its has-a-rating flag
+# (2026-10-08). BASELINE_RATING anchors on these.
+SEQ_RATED_TIME = 21
+SEQ_RATED_FLAG = 22
 
 # ★ WHAT THE PREDICTION IS ANCHORED ON, AND WHY IT IS NOW A CHOICE.
 #
@@ -142,6 +148,15 @@ SEQ_DAYS_AGO = 2
 BASELINE_LAST = 0.0      # the most recent race, alone. What shipped.
 BASELINE_EWMA = 1.0      # recency-weighted geometric mean of the history.
 BASELINE_BEST2 = 2.0     # the two FASTEST recent races. LACCTiC's rule.
+# ★ THE RATED FORM (2026-10-08, owner's backtest: the site's rating-based
+#   time ordered finished races at 0.874 against the model's 0.775, with no
+#   bias, while the model ran 4.8% slow). The EWMA rule above, over each
+#   prior race's RATED time (SEQ_RATED_TIME) instead of its raw normalized
+#   time -- the same recency weights, so the network learns corrections to
+#   the rated form (trend, rust, gaps, course fit) instead of rebuilding
+#   it from day-noisy times. An athlete with no rated prior race falls
+#   back to the EWMA of their normalized times.
+BASELINE_RATING = 3.0
 
 # ★ WHY A BEST-OF AND NOT AN AVERAGE, which is the one real disagreement
 #   between this engine and LACCTiC (owner, 2026-09-17, quoting their FAQ:
@@ -218,6 +233,21 @@ def ewmaFromPadded(sequences, masks, half_life):
     out = torch.exp(num / den.clamp(min=1e-12))
     # no usable row at all -> 0, and baselineSeconds swaps in the fallback
     return torch.where(den > 0, out, torch.zeros_like(out))
+
+
+def ratedFromPadded(sequences, masks, half_life):
+    """BASELINE_RATING over the padded layout: the recency-weighted
+    geometric mean of the rated times, else ewmaFromPadded. [B]"""
+    t = sequences[:, :, SEQ_RATED_TIME].to(torch.float32)
+    d = sequences[:, :, SEQ_DAYS_AGO].to(torch.float32)
+    valid = (masks.to(torch.bool) & (t > 0)
+             & (sequences[:, :, SEQ_RATED_FLAG] > 0))
+    w = baselineWeights(d, valid, half_life)
+    den = w.sum(dim=1)
+    num = (w * torch.log(t.clamp(min=_MIN_SECONDS))).sum(dim=1)
+    rated = torch.exp(num / den.clamp(min=1e-12))
+    return torch.where(den > 0, rated,
+                       ewmaFromPadded(sequences, masks, half_life))
 
 
 def best2FromPadded(sequences, masks):
@@ -323,15 +353,17 @@ class XCPredictor(nn.Module):
                                                        to produce
     """
 
-    def __init__(self, n_venues: int = 1, context_features: int = CONTEXT_FEATURES):
+    def __init__(self, n_venues: int = 1, context_features: int = CONTEXT_FEATURES,
+                 sequence_features: int = SEQUENCE_FEATURES):
         super().__init__()
+        self.sequence_features = sequence_features
         # ! A CHECKPOINT CARRIES ITS OWN WIDTH. racecast/predict.py builds
         #   the model at the width model.pt was trained with, so a 24-wide
         #   checkpoint from before hidden_days keeps serving until the
         #   retrained one replaces it.
         self.context_features = context_features
 
-        self.input_projection = nn.Linear(SEQUENCE_FEATURES, EMBED_DIM)
+        self.input_projection = nn.Linear(sequence_features, EMBED_DIM)
 
         layer = nn.TransformerEncoderLayer(
             d_model=EMBED_DIM, nhead=N_HEADS, dim_feedforward=FF_DIM,
@@ -371,8 +403,8 @@ class XCPredictor(nn.Module):
         # ★ CALIBRATION BUFFERS. Part of the state_dict, so model.pt carries
         #   them and inference applies exactly what training applied. The
         #   defaults are the identity, so an unset model still runs.
-        self.register_buffer("seq_mean", torch.zeros(SEQUENCE_FEATURES))
-        self.register_buffer("seq_std", torch.ones(SEQUENCE_FEATURES))
+        self.register_buffer("seq_mean", torch.zeros(sequence_features))
+        self.register_buffer("seq_std", torch.ones(sequence_features))
         self.register_buffer("ctx_mean", torch.zeros(context_features))
         self.register_buffer("ctx_std", torch.ones(context_features))
         self.register_buffer("target_mean", torch.zeros(()))
@@ -440,6 +472,9 @@ class XCPredictor(nn.Module):
         """
         if float(self.baseline_mode) == BASELINE_BEST2:
             base = best2FromPadded(sequences, masks)
+        elif float(self.baseline_mode) == BASELINE_RATING:
+            base = ratedFromPadded(sequences, masks,
+                                   float(self.baseline_half_life))
         elif float(self.baseline_mode) == BASELINE_EWMA:
             base = self._ewmaBaseline(sequences, masks)
         else:

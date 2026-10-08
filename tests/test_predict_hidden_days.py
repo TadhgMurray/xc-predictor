@@ -41,7 +41,7 @@ class _Fx:
         self.calls = []
 
     def _baseVectors(self, hist, enc):
-        return [[0.0] * 21 for _ in hist]
+        return [[0.0] * 23 for _ in hist]
 
     def _parseDate(self, s):
         return D.fromisoformat(s[:10])
@@ -67,3 +67,12 @@ def test_the_example_carries_the_hidden_span_and_old_checkpoints_get_24(monkeypa
     _seq, ctx = P._forecastExample(fx, hist, {"date": "2026-10-12"}, {},
                                    as_of=D(2026, 10, 8))
     assert fx.calls[-1] == (False, 0.0)
+
+
+def test_an_old_checkpoint_gets_its_21_wide_sequence(monkeypatch):
+    fx = _Fx()
+    monkeypatch.setattr(P, "_artifacts", {"context_features": 24,
+                                          "sequence_features": 21})
+    seq, ctx = P._forecastExample(fx, [{"date": "2026-09-01"}],
+                                  {"date": "2026-10-29"}, {}, as_of=D(2026, 10, 8))
+    assert all(len(v) == 21 for v in seq) and len(ctx) == 24

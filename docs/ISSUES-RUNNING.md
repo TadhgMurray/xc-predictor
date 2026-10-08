@@ -5426,3 +5426,29 @@ Chromium against the old script (readout 15:00, label under the pointer
   each prior race's rating (as a common-scale time) into the sequence and
   anchor on the rated form (a BASELINE_RATING), so the network learns
   corrections on top of the 0.874 ordering instead of rebuilding it.
+- **✅ The race's rating in the model's inputs, and the rated form as its
+  anchor (owner: "do it all").**
+  - Corpus SQL (XC and TF) now carries r.speed_rating and r.rating_pool;
+    toCommonScale sets row["rated_time"] = 100 * pool_mean / rating on the
+    rating's pool, times that pool's anchorShift (feature_extraction
+    ._ratedTime; one cached constant per pool). The same function runs at
+    inference, so train and serve agree.
+  - Sequence vector 21 -> 23: rated time and a has-rating flag at 21-22
+    (transformer.SEQ_RATED_TIME / SEQ_RATED_FLAG).
+  - transformer.BASELINE_RATING: the 60-day-half-life EWMA over the rated
+    times, falling back to the EWMA of the raw times with no rated prior
+    race; ragged twin in train._ratedRagged. train.py's default is now
+    rating (`--baseline last` for the old rule).
+  - Leakage: prior races' ratings only; their day terms saw a field whose
+    abilities include later races (mild, diluted). The fair test stays the
+    backtest on races after model.pt's date.
+  - The live 21/24-wide model keeps serving: predict.py builds the model at
+    the checkpoint's sequence and context widths and trims both vectors.
+  - Note: at training time this model scored order 0.899 (validation)
+    against last race 0.792; live it now equals last race (0.775), which is
+    what inputs moving under a model look like (per-pool anchors 09-25,
+    college veto 09-29 came after its 09-16 training).
+  - tests: test_baseline_rule (rated rule in all layouts, fallback,
+    default; the stale _loadModel source check now reads _loadModelLocked),
+    test_context_width (rated algebra, sequence slots, old width),
+    test_predict_hidden_days (21-wide trim).

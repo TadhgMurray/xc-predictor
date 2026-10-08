@@ -373,3 +373,35 @@ def test_an_old_checkpoint_builds_at_its_own_width():
     assert m.context_query.in_features == 24
     assert m.ctx_mean.shape[0] == 24
     assert T.XCPredictor(n_venues=3).context_query.in_features == T.CONTEXT_FEATURES
+
+
+# ------------------------------------------------------------------ #
+# THE RATED TIME IN THE SEQUENCE (2026-10-08)
+# ------------------------------------------------------------------ #
+
+def test_the_rated_time_is_the_ratings_own_algebra(monkeypatch):
+    """100 * pool_mean / rating on the rating's pool, times its anchorShift
+    -- cached per pool, so seeding the cache tests the arithmetic."""
+    monkeypatch.setitem(fx._RATED_K, ("hs_m", "XC", "common5000"), 100.0 * 1200.0)
+    row = targetRow(speed_rating=120.0, rating_pool="hs_m|XC")
+    assert fx._ratedTime(row, "common5000") == pytest.approx(1000.0)
+    assert fx._ratedTime(targetRow(speed_rating=None, rating_pool="hs_m|XC"),
+                         "common5000") is None
+    assert fx._ratedTime(targetRow(speed_rating=0.0, rating_pool="hs_m|XC"),
+                         "common5000") is None
+
+
+def test_the_sequence_carries_the_rated_time_and_its_flag():
+    assert fx.SEQUENCE_FEATURES == T.SEQUENCE_FEATURES == 23
+    prior = targetRow(rated_time=987.0, is_indoor=0)
+    v = fx._buildSequenceVector(prior, "2025-10-11", [prior], encoders())
+    assert len(v) == fx.SEQUENCE_FEATURES
+    assert v[T.SEQ_RATED_TIME] == 987.0 and v[T.SEQ_RATED_FLAG] == 1.0
+    v = fx._buildSequenceVector(targetRow(rated_time=None, is_indoor=0), "2025-10-11",
+                                [prior], encoders())
+    assert v[T.SEQ_RATED_TIME] == 0.0 and v[T.SEQ_RATED_FLAG] == 0.0
+
+
+def test_an_old_checkpoint_builds_at_its_own_sequence_width():
+    m = T.XCPredictor(n_venues=3, sequence_features=21, context_features=24)
+    assert m.input_projection.in_features == 21 and m.seq_mean.shape[0] == 21

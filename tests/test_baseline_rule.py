@@ -279,11 +279,75 @@ def test_an_old_checkpoint_still_loads():
 
     src = open(os.path.join(ROOT, "racecast", "predict.py"),
                encoding="utf-8").read()
-    i = src.index("def _loadModel(")
+    # the load itself lives in _loadModelLocked since the warm-model split
+    i = src.index("def _loadModelLocked(")
     body = src[i:src.index("\ndef ", i + 10)]
     assert 'strict=False' in body, body
     assert '"baseline_mode", "baseline_half_life"' in body, body
     assert "raise RuntimeError" in body, body
+
+
+# ------------------------------------------------------------------ #
+# THE RATED FORM (2026-10-08)
+# ------------------------------------------------------------------ #
+
+def _ratedRow(norm, days, rated):
+    v = _row(norm, days)
+    if rated:
+        v[T.SEQ_RATED_TIME] = float(rated)
+        v[T.SEQ_RATED_FLAG] = 1.0
+    return v
+
+
+RATED_HIST = [
+    # a fluke slow last race whose rating says the day was slow too
+    [(1000.0, 200, 990.0), (980.0, 120, 975.0), (1060.0, 7, 985.0)],
+    # some races unrated: only the rated ones count
+    [(900.0, 300, None), (890.0, 60, 880.0), (885.0, 10, None)],
+    # nothing rated at all: the EWMA of the raw times
+    [(1200.0, 14, None), (1180.0, 40, None)],
+]
+
+
+def _ratedLayouts(hist):
+    s = max(len(h) for h in hist)
+    seqs = torch.zeros(len(hist), s, F)
+    masks = torch.zeros(len(hist), s, dtype=torch.bool)
+    rows, offs = [], [0]
+    for i, h in enumerate(hist):
+        for j, (n, d, r) in enumerate(h):
+            seqs[i, j] = torch.tensor(_ratedRow(n, d, r))
+            rows.append(_ratedRow(n, d, r))
+        masks[i, :len(h)] = True
+        offs.append(len(rows))
+    ragged = {"sequences": torch.tensor(rows, dtype=torch.float32),
+              "offsets": torch.tensor(offs, dtype=torch.long)}
+    return seqs, masks, ragged
+
+
+def test_the_rated_baseline_agrees_across_layouts():
+    seqs, masks, ragged = _ratedLayouts(RATED_HIST)
+    want = _model(T.BASELINE_RATING).baselineSeconds(seqs, masks)
+    for chunk in (ragged, {"sequences": seqs, "masks": masks}):
+        got, _r, _l = TR._chunkBaselines(chunk, T.BASELINE_RATING,
+                                         T.BASELINE_HALF_LIFE_DAYS)
+        assert torch.allclose(want, got, atol=1e-3), (want, got)
+
+
+def test_the_rated_baseline_reads_the_ratings_and_falls_back():
+    seqs, masks, _ragged_chunk = _ratedLayouts(RATED_HIST)
+    base = _model(T.BASELINE_RATING).baselineSeconds(seqs, masks)
+    # the fluke 1060 is not the anchor: the rated times (975-990) are
+    assert 975.0 <= float(base[0]) <= 990.0
+    # only the rated race counts
+    assert abs(float(base[1]) - 880.0) < 1e-3
+    # no ratings: exactly the EWMA of the raw times
+    ewma = _model(T.BASELINE_EWMA).baselineSeconds(seqs, masks)
+    assert abs(float(base[2]) - float(ewma[2])) < 1e-3
+
+
+def test_rated_is_the_training_default():
+    assert TR.BASELINE == T.BASELINE_RATING
 
 
 if __name__ == "__main__":
