@@ -5762,3 +5762,17 @@ Chromium against the old script (readout 15:00, label under the pointer
   result at the venue; the bests now look names up for the kept rows only,
   the records take gender from person_gender and names for the shown rows.
 - ✅ Record cards one per row, one line per row, all the same length.
+- ✅ TF race page: the winner line and the "Event points by school" list use
+  each school's own state too (the rows already did).
+- ✅ Venue page speed, take 2: the person_gender JOIN hashed the whole table
+  (slower than before). Records now keep each athlete's best time per event
+  spelling in SQL, look gender up by key only where the meet and the event
+  words are silent, and the built page is cached in-process for six hours
+  (the course page's cache).
+- ✅ The flash waits for the smooth scroll to end ('scrollend', fallback).
+- ✅ School PRs in the race page's shape: header (school kicker, title, meta
+  + Share, each gender's best in the first event), sport tabs + scale
+  toggle, and a sticky Events index beside the tables.
+- 🔎 Dynasty Gammage is two people (Long Beach Poly / SDSU 800m runner, and
+  a Boise State sprinter): no person_link_log row, so the join predates the
+  log -- not one of today's merges.

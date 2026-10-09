@@ -23,6 +23,7 @@
        ~ " has contested, by season and course." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
@@ -85,24 +86,38 @@
     {% endif %}
 {%- endmacro %}
 
-<main class="page-wide">
-    {# the crest, as on the school page itself (305): this is the same
-       programme's page, so it wears the same mark #}
-    <h1>{{ crest(school, data.state, px=128, size=44, cls="school-crest") }}{{ school }} <span class="dist-note">School PRs{% if data.state %} · {{ data.state }}{% endif %}</span></h1>
-    <p class="meta">Best mark per athlete, every event the school has
-       contested. A year narrows to that season's bests{% if sport == 'XC' %};
-       a course narrows to bests run there{% endif %}.
-       · <a href="{{ school_href(school, data.state, sport=sport) }}">Back to school page →</a></p>
-
-    <div class="seg">
-        {% for s in ['XC', 'TF'] %}
-          <a class="seg-btn{{ ' is-on' if s == sport }}"
-             href="/school/{{ school|urlencode }}/prs?sport={{ s }}{% if data.state %}&amp;state={{ data.state }}{% endif %}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
-        {% endfor %}
+<main class="page-wide rc">
+{# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-09: "do whatever page next you
+   want"): the school above the title as a race names its meet, a meta line
+   with Share, each gender's best in the first event as the champion line,
+   the sport as tabs, and an event index beside the tables. #}
+{% set first = data.sections[0] if data.sections else none %}
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ "Cross country" if sport == 'XC' else "Track & field" }}</span></div>
+    <div class="rc-kick">{{ crest(school, data.state) }}<a href="{{ school_href(school, data.state, sport=sport) }}">{{ school|with_state(data.state) if data.state else school }}</a></div>
+    <h1>School PRs</h1>
+    <div class="rc-meta">
+      Best mark per athlete{% if data.year %}, {{ data.year }} season{% endif %}{% if data.course %}, at <a href="/course/{{ data.course|urlencode }}">{{ data.course }}</a>{% endif %}
+      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ school ~ ' school PRs on Racecast' }}"
+            data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
     </div>
+    {% if first %}
+    <div class="rc-champs">
+      {% for g, g_label in [("M", "Boys"), ("F", "Girls")] %}
+      {% set r = first.tables[g][0] if first.tables[g] else none %}
+      {% if r %}
+      <div><span class="k">{{ g_label }} · {{ first.label }}</span>
+        <span class="rc-crow"><b class="rc-cn">{% if r.person_id %}<a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name or "Unknown" }}</a>{% else %}{{ r.name or "Unknown" }}{% endif %}</b><i>{{ r.display_mark }}</i></span></div>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div></header>
 
-    {# each namesake school has its own PR page; no "All states" view #}
-    {% if state_chips %}
+<div class="rc-w">
+{% if state_chips %}
     {% set others = state_chips|rejectattr("state", "equalto", data.state)|list %}
     {% if others %}
     <p class="meta">Different schools share this name -
@@ -111,8 +126,18 @@
     {% endif %}
     {% endif %}
 
+    <div class="rc-tbar">
+      <nav class="seg rc-tabs">
+        {% for s_ in ['XC', 'TF'] %}
+          <a class="seg-btn{{ ' is-on' if s_ == sport }}"
+             href="/school/{{ school|urlencode }}/prs?sport={{ s_ }}{% if data.state %}&amp;state={{ data.state }}{% endif %}">{{ "Cross Country" if s_ == 'XC' else "Track" }}</a>
+        {% endfor %}
+      </nav>
+      {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+    </div>
+
     {% if data.years %}
-    <div class="yearbar">
+    <div class="yearbar rc-scope">
         <a class="yb{{ ' is-on' if not data.year }}"
            href="/school/{{ school|urlencode }}/prs{{ qs(sport, None, data.course) }}">All time</a>
         {% for y in data.years %}
@@ -126,7 +151,7 @@
     {# The first few courses, the rest folded behind an expand -- a long
        program has dozens, and eight most-raced ones answer most visits.
        The picked course always shows, even from deep in the fold. #}
-    <div class="yearbar" id="course-chips">
+    <div class="yearbar rc-scope" id="course-chips">
         <a class="yb{{ ' is-on' if not data.course }}"
            href="/school/{{ school|urlencode }}/prs{{ qs(sport, data.year, None) }}">All courses</a>
         {% for c in data.courses %}
@@ -139,8 +164,6 @@
     </div>
     {% endif %}
 
-{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
-
 {% if not data.sections %}
     <p class="meta">Nothing here{% if data.year %} for {{ data.year }}{% endif %}{% if data.course %} at {{ data.course }}{% endif %}.</p>
 {% endif %}
@@ -148,8 +171,10 @@
 {# XC "All courses" shows WHERE each PR ran, and six columns at half
    width strangle names -- so those tables stack. #}
 {% set with_course = sport == 'XC' and not data.course %}
+<div class="rc-grid{% if not data.sections or data.sections|length < 3 %} rc-grid-one{% endif %}">
+<div class="rc-mainc">
 {% for sec in data.sections %}
-    <h2 class="ev-head">{{ sec.label }}{% if sec.dist_note %} <span class="dist-note">{{ sec.dist_note }}</span>{% endif %}</h2>
+    <h2 class="ev-head" id="ev-{{ loop.index }}">{{ sec.label }}{% if sec.dist_note %} <span class="dist-note">{{ sec.dist_note }}</span>{% endif %}</h2>
     {% if with_course %}
         {{ pr_table(sec, "M", True) }}
         {{ pr_table(sec, "F", True) }}
@@ -163,6 +188,24 @@
 {% if data.sections %}
     <p class="csv-link"><a href="{{ csv_href() }}" rel="nofollow" download>Download CSV</a></p>
 {% endif %}
+</div>
+{% if data.sections and data.sections|length >= 3 %}
+<aside class="rc-side rc-side-sticky">
+  <h2>Events <small>{{ data.sections|length }}</small></h2>
+  <table class="rc-tscores rc-tscores-plain">
+    <tbody>
+    {% for sec in data.sections %}
+    <tr>
+      <td class="tn"><a href="#ev-{{ loop.index }}">{{ sec.label }}</a></td>
+      <td class="n tpts">{{ (sec.tables.M|length) + (sec.tables.F|length) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</aside>
+{% endif %}
+</div>
+</div>
 
 </main>
 <script src="{{ static_v('staged.js') }}"></script>
