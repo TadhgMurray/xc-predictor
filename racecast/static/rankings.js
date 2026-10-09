@@ -1157,6 +1157,7 @@ function gradeLabel(grade, pool) {
   const college = level === "college" || level === "pro";
   const m = /^(FR|SO|JR|SR)-?([1-6])$/i.exec(g);
   if (m) return (college || level === "") ? `${m[1].toUpperCase()}-${m[2]}` : (_WORD_HS[m[1].toLowerCase()] || g);
+  if (/^(19|20)\d\d$/.test(g)) return `Class of ${g}`;   // a graduation year
   const low = g.toLowerCase().replace(/\.$/, "").trim();
   const om = /^0*(\d{1,2})(st|nd|rd|th)?\.?$/i.exec(g);
   const num = om ? String(parseInt(om[1], 10)) : null;

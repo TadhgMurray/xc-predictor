@@ -43,6 +43,11 @@ def gradeLabel(grade, pool=None):
     if m:
         return f"{m.group(1).upper()}-{m.group(2)}" if college or level == "" \
             else _WORD_HS.get(m.group(1).lower(), g)
+    # ★ A GRADUATION YEAR IS NOT A GRADE (owner, 2026-10-09: Dynasty
+    #   Gammage's 2007-08 seasons read "Grade 2011"): some feeds write the
+    #   class year in the grade column
+    if re.fullmatch(r"(19|20)\d\d", g):
+        return f"Class of {g}"
     low = g.lower().rstrip(".").strip()
     om = _ORDINAL.match(g)
     num = str(int(om.group(1))) if om else None
