@@ -278,3 +278,14 @@ main.rc .h2h-pick { margin: 1.1rem 0 .4rem; }
    gives a double-barrelled name its line back */
 main.rc.proj-page .rc-tscores-plain td.tpts { width: 3.2rem; }
 main.rc.proj-page .rc-tscores-plain td.tp { width: 1.5rem; }
+/* ---- What it takes in the race shape (owner, 2026-10-09) ---------------- */
+/* beside the 280px side card the three state-meet cards stay on one row */
+main.rc.wit-page .wit-cards { grid-template-columns: repeat(auto-fill, minmax(14.5rem, 1fr)); }
+main.rc.wit-page .wit-h2 { margin-top: 0; }
+main.rc.wit-page .rc-panel > .p2-note:first-child { margin-top: .3rem; }
+@media (max-width: 640px) { main.rc.wit-page .wit-cards { grid-template-columns: 1fr; } }
+/* beside the side card (and on a phone) a long final's name and its
+   "80% of its advancers" line wrap instead of pushing the table under it */
+main.rc.wit-page .wit-sec-tbl td:first-child, main.rc.wit-page .wit-oth-tbl td:first-child { white-space: normal; min-width: 10rem; }
+main.rc.wit-page .wit-sec-tbl .num .p2-row-sub { white-space: normal; }
+main.rc.wit-page .wit-sec-tbl .wit-yr { display: inline-block; }
