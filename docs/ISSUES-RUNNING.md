@@ -5776,3 +5776,15 @@ Chromium against the old script (readout 15:00, label under the pointer
 - 🔎 Dynasty Gammage is two people (Long Beach Poly / SDSU 800m runner, and
   a Boise State sprinter): no person_link_log row, so the join predates the
   log -- not one of today's merges.
+- ✅ **Event names fold for PRs and venue records** (tf_points.eventFamily):
+  "s 100 Hurdles" / "100m Hurdles", "High Jump Championship/Invitational/
+  University", "Pole Vault Division 1", "60 M Hurdles", "3ksteeple" /
+  "3000 Steeplechase", "Javelin Throw" each read as one event.
+  canonicalEvent (the scoring key) is unchanged: flights still score apart.
+- ✅ School PRs: the champion line is each gender's best performance by the
+  shown rating across the rated events (it was the first section's #1 --
+  the 55m); clicking anywhere on an Events row jumps there and the heading
+  flashes.
+- ✅ Compare page in the race page's shape: "A vs B" title, the record on
+  the meta line with Share, the two athletes as the champion line, the
+  chart, then Meetings / Season by season / Best performances tabs.
