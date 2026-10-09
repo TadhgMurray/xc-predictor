@@ -272,6 +272,12 @@ main.rc .rc-champs .rc-csub { display: block; font-size: .82rem; color: var(--mu
 main.rc .rc-champs .h2h-dot { margin-right: .35rem; }
 main.rc .h2h-pick { margin: 1.1rem 0 .4rem; }
 .landing-page .landing-list-h { margin: 0; font-size: 1.1rem; }
+/* the list and the Schools card start level (owner, 2026-10-09: "I would
+   really like for these tables to be level"): both headings are the same
+   height box, whatever sits in the list's bar (the scale toggle or nothing) */
+main.rc.landing-page .rc-tbar, main.rc.landing-page .rc-side > h2 { height: 2.4rem; margin: 0 0 .5rem; align-items: center; }
+main.rc.landing-page .rc-side > h2 { font-size: 1.1rem; }
+main.rc.landing-page .landing-list .landing-tbl { margin-top: 0; }
 .landing-page > .landing-states { margin-top: 2rem; }
 /* ---- projections in the race shape (owner, 2026-10-09) ----------------
    the side card holds a rating, not a team score: a narrower number column

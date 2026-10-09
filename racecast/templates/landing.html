@@ -22,16 +22,17 @@
 {% include "_topbar.html" %}
 
 <main class="page-wide landing-page rc">
-  {# the Rankings board tabs, Ability lit: this page is the Ability board
-     for one state (owner, 2026-10-09: no separate By state tab) #}
+  {# the Rankings board tabs, By state lit: this page is one of the boards
+     (owner, 2026-10-06), reached from the By state tab #}
   {% set _bq = "&sport=" ~ sport|upper ~ "&pool=" ~ (pool_key or "") %}
   <div class="board-strip" role="navigation" aria-label="Rankings boards">
-    <a class="is-on" href="/rankings?board=ability{{ _bq }}{{ '&state=' ~ state if state }}" aria-current="page">Ability</a>
+    <a href="/rankings?board=ability{{ _bq }}">Ability</a>
     <a href="/rankings?board=performance{{ _bq }}">Performances</a>
     <a href="/rankings?board=pr{{ _bq }}">Best times/marks</a>
     <a href="/rankings?board=teams{{ _bq }}">Teams</a>
     <a href="/rankings?board=courses">Courses</a>
     <a href="/breakouts">Breakouts</a>
+    <a class="is-on" href="{{ national_path }}" aria-current="page">By state</a>
   </div>
   {# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-09: "do another page"): the
      title, the season and Share on the meta line, the No. 1 as the
