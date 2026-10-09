@@ -116,15 +116,15 @@
                 {% for r in ev.rows %}
                 <tr>
                     <td>{{ loop.index }}</td>
-                    <td><a href="/athlete/{{ r.person_id }}?r={{ r.result_id }}">{{ r.name or "Unknown" }}</a></td>
+                    <td title="{{ r.name or 'Unknown' }}"><a href="/athlete/{{ r.person_id }}?r={{ r.result_id }}">{{ r.name or "Unknown" }}</a></td>
                     <td class="no-break"><a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}?r={{ r.result_id }}" title="{{ r.meet_name }}">{{ r.display_result }}</a></td>
-                    <td>{% if r.school and r.school|is_team %}<a href="{{ school_href(r.school, none) }}">{{ r.school|school_label }}</a>{% else %}{{ r.school or " - " }}{% endif %}</td>
+                    <td title="{{ r.school or '' }}">{% if r.school and r.school|is_team %}<a href="{{ school_href(r.school, none) }}">{{ r.school|school_label }}</a>{% else %}{{ r.school or " - " }}{% endif %}</td>
                     <td class="no-break">{{ r.date|mdy }}</td>
                 </tr>
                 {% endfor %}
                 </tbody>
             </table>
-            {% if ev.n_athletes > ev.rows|length %}<p class="meta">{{ "{:,}".format(ev.n_athletes) }} athletes have run it here.</p>{% endif %}
+            {% if ev.n_athletes > ev.rows|length %}<p class="meta">{{ "{:,}".format(ev.n_athletes) }} athletes have a mark here.</p>{% endif %}
         </div>
     {% endfor %}
     </div>

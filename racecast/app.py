@@ -5162,6 +5162,18 @@ def race_tf(meet_id, event_id, div_id):
                 stampRecordFlags(cur, "TF", results, dist,
                                  results[0].get("date"))
                 stampRatingFlags(cur, "TF", results, results[0].get("date"))
+            # ★ EACH RUNNER'S OWN SCHOOL STATE, as the XC race page (owner,
+            #   2026-10-09: Zarian Rodriguez of Hamilton AZ read "Hamilton
+            #   (CA)" at the Arcadia Invitational -- this page labelled
+            #   every school with the meet's state)
+            if results:
+                from meet_compile import stampSchoolStates as _sss
+                try:
+                    cur.execute("SAVEPOINT tf_school_states")
+                    _sss(cur, results)
+                    cur.execute("RELEASE SAVEPOINT tf_school_states")
+                except psycopg2.Error:
+                    cur.execute("ROLLBACK TO SAVEPOINT tf_school_states")
             day_effect = raceDayEffect(cur, "TF", header,
                                        results[0].get("date") if results else None)
             # ★ THE VENUE BY NAME (owner, 2026-10-07: "tf race shouldn't
@@ -7461,6 +7473,9 @@ def get_tf_venue_bests(cur, location_id, is_indoor, limit=25):
       union of each pool's own top `limit`."""
     pool_col = _ratingPoolCol(cur, 'results_tf')
     pool_expr = pool_col.split(" AS ")[0]
+    # ! THE NAME LOOKUP ONLY FOR THE ROWS KEPT (owner, 2026-10-09: "venue
+    #   page loads too slow"). The athletes lateral inside the window ran
+    #   once per result at the venue; ranked first, it runs per kept row.
     cur.execute(f"""
         WITH venue_meets AS (
             SELECT meet_id, div_id, event_id, meet_name
@@ -7468,11 +7483,11 @@ def get_tf_venue_bests(cur, location_id, is_indoor, limit=25):
             WHERE  location_id = %(loc)s
               AND  COALESCE(is_indoor, 0) = %(indoor)s
         ), ranked AS (
-            SELECT r.result_id, r.person_id, r.time_seconds, r.mark, r.is_field,
+            SELECT r.result_id, r.person_id, r.athlete_id, r.athlete_name,
+                   r.time_seconds, r.mark, r.is_field,
                    r.date, r.grade, r.school, r.speed_rating, r.event_short,
                    {pool_col},
                    vm.meet_id, vm.div_id, vm.event_id, vm.meet_name,
-                   {_name_sql('r')} AS name,
                    row_number() OVER (PARTITION BY COALESCE({pool_expr}, '?')
                                       ORDER BY r.speed_rating DESC) AS pool_rank
             FROM   venue_meets vm
@@ -7480,11 +7495,12 @@ def get_tf_venue_bests(cur, location_id, is_indoor, limit=25):
                    ON r.meet_id  = vm.meet_id
                   AND r.div_id   = vm.div_id
                   AND r.event_id = vm.event_id
-            {_athlete_lateral('r')}
             WHERE  r.speed_rating IS NOT NULL
         )
-        SELECT * FROM ranked WHERE pool_rank <= %(limit)s
-        ORDER  BY speed_rating DESC
+        SELECT r.*, {_name_sql('r')} AS name
+        FROM   (SELECT * FROM ranked WHERE pool_rank <= %(limit)s) r
+        {_athlete_lateral('r')}
+        ORDER  BY r.speed_rating DESC
     """, {"loc": location_id, "indoor": 1 if is_indoor else 0, "limit": limit})
     return cur.fetchall()
 
@@ -7596,6 +7612,14 @@ def get_tf_venue_individual_records(cur, location_id, is_indoor, per_event=5,
       is not a record board. Gender as the relays take it: the athlete,
       the meet, the event's words; unknown stays apart."""
     from tf_points import canonicalEvent, displayEvent, eventDistance, parseMark
+    # ! NO ATHLETES LATERAL HERE (owner, 2026-10-09: "venue page loads too
+    #   slow"): it ran per result at the venue. Gender comes from
+    #   person_gender (one PK probe), the names only for the kept rows.
+    cur.execute("SELECT to_regclass('person_gender') IS NOT NULL AS ok")
+    has_pg = bool(cur.fetchone()["ok"])
+    pg_join = ("LEFT JOIN person_gender pg ON pg.person_id = r.person_id"
+               if has_pg else "")
+    pg_col = "CASE WHEN pg.gender IN ('M', 'F') THEN pg.gender END," if has_pg else ""
     cur.execute(f"""
         WITH venue_meets AS (
             SELECT meet_id, div_id, event_id, meet_name
@@ -7605,9 +7629,9 @@ def get_tf_venue_individual_records(cur, location_id, is_indoor, per_event=5,
         )
         SELECT r.result_id, r.person_id, r.school, r.time_seconds, r.mark,
                r.is_field, r.date, r.event_short, r.grade, vm.meet_id,
-               vm.div_id, vm.event_id, vm.meet_name, a.name,
+               vm.div_id, vm.event_id, vm.meet_name,
                COALESCE(
-                   CASE WHEN a.gender IN ('M', 'F') THEN a.gender END,
+                   {pg_col}
                    CASE WHEN mm.gender IN ('M', 'F') THEN mm.gender END,
                    CASE WHEN r.event_short ~* '(^|[^a-z])(boys|men|mens|men''s)([^a-z]|$)' THEN 'M'
                         WHEN r.event_short ~* '(^|[^a-z])(girls|women|womens|women''s)([^a-z]|$)' THEN 'F'
@@ -7617,7 +7641,7 @@ def get_tf_venue_individual_records(cur, location_id, is_indoor, per_event=5,
                ON r.meet_id = vm.meet_id AND r.div_id = vm.div_id
               AND r.event_id = vm.event_id
         LEFT   JOIN meets_tf_meta mm ON mm.meet_id = vm.meet_id
-        {_athlete_lateral('r')}
+        {pg_join}
         WHERE  COALESCE(r.is_relay, 0) = 0
           AND  r.person_id IS NOT NULL
           AND  NULLIF(btrim(r.event_short), '') IS NOT NULL
@@ -7664,6 +7688,20 @@ def get_tf_venue_individual_records(cur, location_id, is_indoor, per_event=5,
             x["display_result"] = (x["mark"] if x["is_field"] else format_time(x["time_seconds"]))
         out.append({"event": ev["label"], "gender": g, "kind": kind,
                     "rows": rows[:per_event], "n_athletes": len(rows)})
+    # the names, for the rows shown only
+    pids = sorted({x["person_id"] for ev in out for x in ev["rows"]})
+    if pids:
+        cur.execute("""
+            SELECT DISTINCT ON (a.person_id) a.person_id,
+                   concat_ws(' ', btrim(a.first_name), btrim(a.last_name)) AS name
+            FROM   athletes a
+            WHERE  a.person_id = ANY(%s)
+              AND  NULLIF(btrim(concat_ws(' ', a.first_name, a.last_name)), '') IS NOT NULL
+            ORDER  BY a.person_id, (a.athlete_id = a.person_id) DESC, a.athlete_id""", (pids,))
+        names = {r["person_id"]: r["name"] for r in cur.fetchall()}
+        for ev in out:
+            for x in ev["rows"]:
+                x["name"] = names.get(x["person_id"])
     return out
 
 

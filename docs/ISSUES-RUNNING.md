@@ -5749,3 +5749,16 @@ Chromium against the old script (readout 15:00, label under the pointer
   school_athlete_state row, person_home_state is used where a school of the
   name exists in that state.
 - ✅ XC meet, school and compiled pages: one-column header, Share as a link.
+- ✅ **The highlight, take 3 -- the real cause.** The athlete page's "Best
+  race" and best-mark links are same-page #race-<id> anchors; the browser
+  jumped the row to the top edge and link-flash.js only ran on load. It now
+  handles clicks on in-page anchors to result rows (and back/forward):
+  centred and flashed. Browser-tested on a stub page: centred, flashed.
+- ✅ **TF race page labelled every school with the meet's state** (Zarian
+  Rodriguez, Hamilton AZ, read "Hamilton (CA)" at Arcadia, though
+  school_athlete_state says AZ): the route now runs stampSchoolStates as the
+  XC race page does, and the template uses row.school_state.
+- ✅ **Venue page speed.** Both new queries ran the athletes lateral per
+  result at the venue; the bests now look names up for the kept rows only,
+  the records take gender from person_gender and names for the shown rows.
+- ✅ Record cards one per row, one line per row, all the same length.

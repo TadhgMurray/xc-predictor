@@ -77,6 +77,31 @@
     }, 900);
   }
 
+  // ★ A LINK ON THE SAME PAGE TOO (owner, 2026-10-09: the athlete page's
+  //   "Best race" -- "it should show it in the middle of the screen and it
+  //   should flash"). Those are #race-<id> anchors: the browser jumped the
+  //   row to the top edge and nothing ran. A click on an in-page anchor to
+  //   a result row centres it and flashes it; back/forward does the same.
+  function isRow(el) {
+    return el && (el.tagName === "TR" || el.tagName === "LI" ||
+                  /^(r|race-)\d+$/.test(el.id));
+  }
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest('a[href^="#"]');
+    if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey) return;
+    var id = a.getAttribute("href").slice(1);
+    var el = id && document.getElementById(id);
+    if (!isRow(el)) return;
+    e.preventDefault();
+    history.pushState(null, "", "#" + id);
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    flash(el);
+  });
+  window.addEventListener("hashchange", function () {
+    var el = document.getElementById(location.hash.slice(1));
+    if (isRow(el)) { el.scrollIntoView({ block: "center" }); flash(el); }
+  });
+
   if (document.readyState === "complete") {
     go();
   } else {

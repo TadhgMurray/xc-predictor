@@ -246,3 +246,13 @@ main.rc .rc-tscores-plain { width: 100%; table-layout: fixed; }
 main.rc .rc-tscores-plain td.tn, main.rc .rc-tscores-plain td.tn a { white-space: normal; overflow-wrap: anywhere; }
 main.rc .rc-tscores-plain td.tp { width: 2rem; }
 main.rc .rc-tscores-plain td.tpts { width: 4.2rem; }
+/* ★ RECORD CARDS THE SAME LENGTH (owner, 2026-10-09: "I'd like to keep each
+   table the same length"): one line per row, so five rows are five lines
+   in every card and cards side by side line up; a long name ends in an
+   ellipsis and reads whole on hover (title). */
+main.rc .relay-card table { table-layout: fixed; width: 100%; }
+main.rc .relay-card th, main.rc .relay-card td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+main.rc .relay-card th:first-child, main.rc .relay-card td:first-child { width: 2rem; }
+main.rc .relay-card th:nth-child(3), main.rc .relay-card td:nth-child(3) { width: 5.2rem; }
+main.rc .relay-card th:last-child, main.rc .relay-card td:last-child { width: 7.2rem; }
+main.rc .relay-grid { grid-template-columns: minmax(0, 1fr); align-items: start; }
