@@ -11029,6 +11029,18 @@ def rankings_landing(sport, pool, state=None):
     # page, so an HS page stamps x1.0 and shows no toggle.
     has_hs_view = stampBoardRows(rows, rating_keys=("rating",),
                                  pool=pool_key, sport=L.SPORTS[sport])
+    # the side card: schools with two or more runners on the list, most
+    # first, then the higher best placing (owner, 2026-10-09: race-page shape)
+    from panels import isTeamName
+    by_school = {}
+    for i, r in enumerate(rows, 1):
+        if r.get("school") and isTeamName(r["school"]):
+            t = by_school.setdefault((r["school"], r.get("state")),
+                                     {"school": r["school"], "state": r.get("state"),
+                                      "n": 0, "best_rank": i})
+            t["n"] += 1
+    top_schools = sorted((t for t in by_school.values() if t["n"] >= 2),
+                         key=lambda t: (-t["n"], t["best_rank"]))[:8]
     other_sport = "tf" if sport == "xc" else "xc"
     board = {"board": "ability", "sport": L.SPORTS[sport], "pool": pool_key}
     if state:
@@ -11047,7 +11059,7 @@ def rankings_landing(sport, pool, state=None):
         pool=pool, pool_words=pool_words, pool_key=pool_key,
         pool_level="college" if pool_key.startswith("college") else "hs",
         state=state, state_name=L.STATE_NAMES.get(state or "", ""),
-        year=year, rows=rows, has_hs_view=has_hs_view,
+        year=year, rows=rows, has_hs_view=has_hs_view, top_schools=top_schools,
         board_url="/rankings?" + urlencode(board),
         pool_links=[(slug, words, L.landingPath(sport, slug, state))
                     for slug, (_k, words) in L.POOLS.items()],

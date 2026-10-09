@@ -4,6 +4,7 @@ diag_venue_speed.py -- where a track venue page spends its time. READ ONLY.
 
     /srv/venv/bin/python scripts/diag_venue_speed.py 1234 out
     /srv/venv/bin/python scripts/diag_venue_speed.py 1234 out --explain
+    /srv/venv/bin/python scripts/diag_venue_speed.py --explain   # the busiest venue
 
 ★ WHY (owner, 2026-10-09: "venue page still slow" after the one-pass temp
   table). Runs the route's steps in its order, on one transaction as the
@@ -27,11 +28,14 @@ for sub in ("racecast", "scripts", "engine"):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("location_id", type=int)
-    ap.add_argument("indoor", choices=("in", "out"))
+    ap.add_argument("location_id", type=int, nargs="?",
+                    help="default: the venue with the most meets (the slowest page)")
+    ap.add_argument("indoor", choices=("in", "out"), nargs="?", default="out")
     ap.add_argument("--explain", action="store_true")
     a = ap.parse_args()
     is_indoor = a.indoor == "in"
+    if a.location_id is not None and a.location_id <= 0:
+        ap.error("location_id is the number in the venue page's URL")
 
     import psycopg2.extras
     import app as A
@@ -50,6 +54,15 @@ def main():
     with getConn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SET statement_timeout = '600s'")
+        if a.location_id is None:
+            cur.execute("""
+                SELECT location_id, count(*) AS n FROM meets_tf
+                WHERE  location_id IS NOT NULL AND COALESCE(is_indoor, 0) = %s
+                GROUP  BY location_id ORDER BY n DESC LIMIT 1""", (1 if is_indoor else 0,))
+            row = cur.fetchone()
+            a.location_id = row["location_id"]
+            print(f"busiest venue: /venue/tf/{a.location_id}/{a.indoor} "
+                  f"({row['n']:,} meet events)")
         out = {}
         total = time.time()
         for name, fn in steps:

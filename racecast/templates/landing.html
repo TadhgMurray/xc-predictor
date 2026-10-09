@@ -7,6 +7,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 {% set meta_title = title %}
 {% set meta_description = description %}
 {% set meta_path = path %}
@@ -20,7 +21,7 @@
 <body>
 {% include "_topbar.html" %}
 
-<main class="page-wide landing-page">
+<main class="page-wide landing-page rc">
   {# the Rankings board tabs, By state lit: this page is one of the boards
      (owner, 2026-10-06), reached from the By state tab #}
   {% set _bq = "&sport=" ~ sport|upper ~ "&pool=" ~ (pool_key or "") %}
@@ -33,16 +34,32 @@
     <a href="/breakouts">Breakouts</a>
     <a class="is-on" href="{{ national_path }}" aria-current="page">By state</a>
   </div>
-  <div class="hdr-row">
-    <h1>{{ title }}</h1>
-    {% with share_title=title ~ " on Racecast", share_url=site_origin ~ path %}{% include "_share.html" %}{% endwith %}
-  </div>
-  <p class="meta">
-    {{ pool_words }} ranked by season speed rating{% if year %}, {{ year }} season{% endif %}.
-    A rating puts every result on one scale across courses, distances and weather;
-    <a href="/about">how it works</a>. Open the same list on the
-    <a href="{{ board_url }}">full board</a> to filter by grade, school, league or division.
-  </p>
+  {# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-09: "do another page"): the
+     title, the season and Share on the meta line, the No. 1 as the
+     champion line; the list and the state index as tabs, the schools with
+     the most ranked runners as the side card. #}
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport }}">{{ pool_words }} {{ sport_words|lower }}</span></div>
+      <h1>{{ title }}</h1>
+      <div class="rc-meta">
+        {% if year %}{{ year }} season · {% endif %}ranked by season speed rating
+        · <a href="/about">how it works</a>
+        · <button type="button" class="share-btn rc-share-link" data-share-title="{{ title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ path }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      {% if rows %}{% set r0 = rows[0] %}
+      <div class="rc-champs">
+        <div><span class="k">No. 1</span>
+          <span class="rc-crow">{% if r0.school and r0.school|is_team %}{{ crest(r0.school, r0.state, pool=pool_level) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ r0.person_id }}">{{ r0.name }}</a></b><i>{{ rv(r0.rating, r0.hs_rating) }}{% if r0.school %} · {{ r0.school|school_label_for(pool_level, r0.state) }}{% endif %}</i></span></div>
+        {% if top_schools %}{% set t0 = top_schools[0] %}
+        <div><span class="k">Most ranked</span>
+          <span class="rc-crow">{{ crest(t0.school, t0.state, pool=pool_level) }}<b class="rc-cn"><a href="{{ school_href(t0.school, t0.state, pool=pool_level) }}">{{ t0.school|school_label_for(pool_level, t0.state) }}</a></b><i>{{ t0.n }} in the top {{ rows|length }}</i></span></div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div></header>
 
   {# ★ ONE FILTER CARD, THE SITE'S CONTROLS (owner, 2026-10-06: "idk abt
      this new ui"). Sport as the joined tabs, the pool as chips, the state
@@ -76,8 +93,18 @@
     </div>
   </div>
 
+  <div class="rc-grid{% if not top_schools %} rc-grid-one{% endif %}">
+  <div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#list" data-tab="list">Rankings{% if rows %}<span class="n">{{ rows|length }}</span>{% endif %}</a>
+      <a class="seg-btn" href="#states" data-tab="states">By state</a>
+    </nav>
+    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+  </div>
+
+  <section class="rc-panel" id="list" data-panel="list">
   {% if rows %}
-  {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
   <table class="landing-tbl" data-scale-sort="5">
     <thead>
       <tr><th class="rk">#</th><th>Athlete</th><th>School</th><th>Grade</th><th class="num">Rating</th><th class="num">Races</th></tr>
@@ -95,18 +122,43 @@
       {% endfor %}
     </tbody>
   </table>
+  <p class="meta landing-foot">A rating puts every result on one scale across courses, distances and weather.
+    Open the same list on the <a href="{{ board_url }}">full board</a> to filter by grade, school, league or division.</p>
   {% else %}
   <p class="meta">No {{ pool_words|lower }} {{ sport_words|lower }} season with three or more
      rated races here{% if year %} in {{ year }}{% endif %} yet.</p>
   {% endif %}
+  </section>
 
+  {# the state index stays in the page for crawlers, one tab over #}
+  <section class="rc-panel" id="states" data-panel="states">
   <h2 class="landing-h2">{{ pool_words }} {{ sport_words|lower }} rankings by state</h2>
   <p class="landing-states">
     <a href="{{ national_path }}"{% if not state %} class="is-on"{% endif %}>National</a>
     {% for code, name, href in state_links %} · <a href="{{ href }}"{% if code == state %} class="is-on"{% endif %}>{{ name }}</a>{% endfor %}
   </p>
+  </section>
+  </div>
+  {% if top_schools %}
+  <aside class="rc-side">
+    <h2>Most ranked <small>top {{ rows|length }}</small></h2>
+    <table class="rc-tscores rc-tscores-plain">
+      <tbody>
+      {% for t in top_schools %}
+      <tr>
+        <td class="tn">{{ crest(t.school, t.state, pool=pool_level) }}<a href="{{ school_href(t.school, t.state, pool=pool_level) }}">{{ t.school|school_label_for(pool_level, t.state) }}</a>
+          <span class="sp">best #{{ t.best_rank }}</span></td>
+        <td class="n tpts">{{ t.n }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </aside>
+  {% endif %}
+  </div>
 </main>
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>
