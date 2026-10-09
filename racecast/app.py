@@ -5789,6 +5789,34 @@ def meet_tf(meet_id):
             seen[k] = seen.get(k, 0) + 1
             e["dup_ix"] = seen[k]
 
+    # ★ EACH EVENT'S WINNER, AS THE RACE PAGE LEADS WITH ITS (owner,
+    #   2026-10-09: the TF meet page "more like the race page"). From the
+    #   rows already loaded for scoring: per listed (div, event), the best
+    #   time, or the best mark for a field event or multi; a relay is its
+    #   school. A row with no usable time or mark never wins.
+    winners = {}
+    for r in scoring_rows:
+        k = (r.get("div_id"), r.get("event_id"))
+        field = r.get("is_field") or r.get("result_kind") in ("field", "combined")
+        if field:
+            try:
+                key = -float(r.get("mark"))
+            except (TypeError, ValueError):
+                continue
+        else:
+            t = r.get("time_seconds")
+            if t is None or t <= 0 or _isSentinelTime(t):
+                continue
+            key = float(t)
+        if k not in winners or key < winners[k][0]:
+            winners[k] = (key, r)
+    for e in events:
+        w = winners.get((e["div_id"], e["event_id"]))
+        if w:
+            row = dict(w[1])
+            _stamp_tf_display([row])
+            e["winner"] = row
+
     return render_template("meet_tf.html", header=header, events=events,
                            school=school, school_events=school_events,
                            loose=loose, anchor=anchor,

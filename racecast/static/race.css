@@ -231,3 +231,8 @@ main.rc .rc-hone .rc-story { max-width: 46rem; }
 main.rc .rc-share-link { display: inline-flex; align-items: center; gap: .3rem; background: none; border: 0;
   padding: 0; font: inherit; font-weight: 600; font-size: inherit; color: var(--link); cursor: pointer; white-space: nowrap; }
 main.rc .rc-share-link:hover span { text-decoration: underline; }
+/* the TF meet page (owner, 2026-10-09): each event's winner, and the team
+   card's rows are links, not team-lighting buttons */
+main.rc .rc-win .mk { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: .25rem; white-space: nowrap; }
+main.rc .rc-tscores-plain tr { cursor: default; }
+main.rc .rc-side .rec-gender { margin: .8rem 0 .3rem; }
