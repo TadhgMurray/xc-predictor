@@ -7362,7 +7362,34 @@ def _courseHistory(cur, course_name, ctx):
 # ===================================================================== #
 
 def get_tf_venue_label(cur, location_id, is_indoor):
-    """Most common meet name at this venue - our stand-in for a venue name."""
+    """The venue's own name, else the most common meet name held there.
+
+    ★ THE FEED'S VENUE NAME FIRST (owner, 2026-10-09: the race page reads
+      "Arcadia HS" now and the venue page still said "Arcadia Invitational").
+      meets_tf_meta carries a venue name and city per meet; the most common
+      one across the venue's meets is the venue's, with its city when the
+      name does not already say it. The meet name stays the fallback."""
+    try:
+        cur.execute("SAVEPOINT venue_label")
+        cur.execute("""
+            SELECT NULLIF(btrim(t.venue_name), '') AS venue_name,
+                   mode() WITHIN GROUP (ORDER BY NULLIF(btrim(t.city), '')) AS city
+            FROM   meets_tf_meta t
+            WHERE  t.meet_id IN (SELECT DISTINCT m.meet_id FROM meets_tf m
+                                 WHERE m.location_id = %(loc)s
+                                   AND COALESCE(m.is_indoor, 0) = %(indoor)s)
+              AND  NULLIF(btrim(t.venue_name), '') IS NOT NULL
+            GROUP  BY 1
+            ORDER  BY count(*) DESC
+            LIMIT  1""", {"loc": location_id, "indoor": 1 if is_indoor else 0})
+        vrow = cur.fetchone()
+        cur.execute("RELEASE SAVEPOINT venue_label")
+        if vrow and vrow["venue_name"]:
+            name, city = vrow["venue_name"], vrow["city"]
+            return (f"{name}, {city}" if city and city.lower() not in name.lower()
+                    else name)
+    except psycopg2.Error:
+        cur.execute("ROLLBACK TO SAVEPOINT venue_label")
     cur.execute("""
         SELECT m.meet_name
         FROM meets_tf m

@@ -22,8 +22,12 @@
       try { el = document.getElementById(decodeURIComponent(h)); } catch (e) { el = null; }
       if (el) return el;
     }
+    // ?r=<result id>: a results table's row is r<id>, the athlete page's
+    // season row is race-<id> (owner, 2026-10-09: "doesn't work on an
+    // athlete page")
     var m = /[?&]r=(\d+)/.exec(location.search);
-    return m ? document.getElementById("r" + m[1]) : null;
+    return m ? (document.getElementById("r" + m[1]) ||
+                document.getElementById("race-" + m[1])) : null;
   }
 
   function go() {
@@ -31,7 +35,7 @@
     if (!el || el.classList.contains("rc-flash")) return;
     // ! RESULT ROWS ONLY: a section anchor (#track, #reports) is a place
     //   to scroll to, not a result to point at
-    if (!(el.tagName === "TR" || el.tagName === "LI" || /^r\d+$/.test(el.id))) return;
+    if (!(el.tagName === "TR" || el.tagName === "LI" || /^(r|race-)\d+$/.test(el.id))) return;
     // a row is the thing to centre; anything else keeps the browser's own
     // fragment scroll
     if (el.tagName === "TR" || !location.hash) {

@@ -240,3 +240,9 @@ main.rc .rc-side .rec-gender { margin: .8rem 0 .3rem; }
    track tab: the grid goes to one column instead of an empty sidebar */
 main.rc.rc-on-track .rc-grid:has(> .rc-side:not(:has(.rc-conv))) { grid-template-columns: minmax(0, 1fr); }
 main.rc.rc-on-track .rc-side:not(:has(.rc-conv)) { display: none; }
+/* the plain sidebar cards (course, venue, TF meet): long meet names wrap
+   inside the 280px column instead of pushing past it */
+main.rc .rc-tscores-plain { width: 100%; table-layout: fixed; }
+main.rc .rc-tscores-plain td.tn, main.rc .rc-tscores-plain td.tn a { white-space: normal; overflow-wrap: anywhere; }
+main.rc .rc-tscores-plain td.tp { width: 2rem; }
+main.rc .rc-tscores-plain td.tpts { width: 4.2rem; }

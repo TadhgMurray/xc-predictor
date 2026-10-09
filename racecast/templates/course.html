@@ -81,7 +81,7 @@
       {% set r = lead[g][0] if lead[g] else none %}
       {% if r %}{% set sst = r.school_state or header.state %}
       <div><span class="k">{{ g_label }} {{ "record" if sel_dist else "best" }}</span>
-        <span class="rc-crow">{% if r.school and r.school|is_team %}{{ crest(r.school, sst, trusted=r.school_state) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></b><i>{% if sel_dist %}{{ r.display_time }}{% else %}{{ rv(r.speed_rating, r.hs_rating) }}{% endif %}</i></span></div>
+        <span class="rc-crow">{% if r.school and r.school|is_team %}{{ crest(r.school, sst, trusted=r.school_state) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name or "Unknown" }}</a></b><i>{% if sel_dist %}{{ r.display_time }}{% else %}{{ rv(r.speed_rating, r.hs_rating) }}{% endif %}</i></span></div>
       {% endif %}
       {% endfor %}
     </div>
@@ -161,7 +161,7 @@
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
-                        <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
+                        <td><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ r.distance }}m</td>
@@ -231,7 +231,7 @@
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
-                        <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
+                        <td><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td>{{ r.grade|grade_label(r.rating_pool or r.label_pool) if r.grade else " - " }}</td>
@@ -303,7 +303,7 @@
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
-                        <td><a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
+                        <td><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ r.grade|grade_label(r.rating_pool or r.label_pool) if r.grade else " - " }}</td>

@@ -12,6 +12,7 @@
     {% set meta_image_alt = (label if label else "Venue " ~ location_id) ~ ": track difficulty and the best marks here" %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
     <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
 </head>
 {# the search box's script, missing here: the topbar rendered but did not
@@ -19,24 +20,88 @@
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
-<main class="page-wide">
-    <div class="hdr-row">
-      <h1>{{ label if label else "Venue " ~ location_id }}</h1>
-      {% with share_title=(label if label else "Venue " ~ location_id) ~ " on Racecast", share_url=site_origin ~ "/venue/tf/" ~ location_id ~ "/" ~ ("in" if is_indoor else "out") %}{% include "_share.html" %}{% endwith %}
+<main class="page-wide rc">
+{# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-09: "can you also do the tf venue
+   page too?"): a one-column header with the facts and the best mark here,
+   tabs for best marks, team records and meets, and the latest meets beside
+   them. race.css carries the layout, race-page.js the tabs. #}
+{% set vname = label if label else "Venue " ~ location_id %}
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--tf">{{ "Indoor track" if is_indoor else "Outdoor track" }}</span></div>
+    <h1>{{ vname }}</h1>
+    <div class="rc-meta">
+      {{ "Indoor" if is_indoor else "Outdoor" }} · {% if venue_meets %}{{ venue_meets|length }} meets · {% endif %}<button type="button" class="share-btn rc-share-link" data-share-title="{{ vname ~ ' on Racecast' }}"
+            data-share-url="{{ site_origin ~ '/venue/tf/' ~ location_id ~ '/' ~ ('in' if is_indoor else 'out') }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
     </div>
-    <p class="meta">
-        {{ "Indoor" if is_indoor else "Outdoor" }} ·
-        Difficulty:
-        {{ dv(difficulty.difficulty if difficulty else none, "TF") }}{{ difficulty_i("TF") }}
-        {% if difficulty %}
-            · {{ "{:,}".format(difficulty.n_results) }} results
-            · {{ "{:,}".format(difficulty.n_athletes) }} athletes
-        {% endif %}
-    </p>
+    <div class="rc-facts">
+      <span>Difficulty{{ difficulty_i("TF") }} <b>{{ dv(difficulty.difficulty if difficulty else none, "TF") }}</b></span>
+      {% if difficulty %}
+      <span>Results <b>{{ "{:,}".format(difficulty.n_results) }}</b></span>
+      <span>Athletes <b>{{ "{:,}".format(difficulty.n_athletes) }}</b></span>
+      {% endif %}
+    </div>
+    {% if bests %}{% set b0 = bests[0] %}
+    <div class="rc-champs">
+      <div><span class="k">Best mark here</span>
+        <span class="rc-crow"><b class="rc-cn">{% if b0.person_id %}<a href="/athlete/{{ b0.person_id }}{% if b0.result_id %}?r={{ b0.result_id }}{% endif %}">{{ b0.name or "Unknown" }}</a>{% else %}{{ b0.name or "Unknown" }}{% endif %}</b><i>{{ b0.event_short or "" }} {{ b0.display_result }} · {{ rv(b0.speed_rating, b0.hs_rating) }}</i></span></div>
+    </div>
+    {% endif %}
+  </div>
+</div></header>
 
-    {# ★ TEAM RECORDS ARE THE RELAYS (owner, 2026-09-26): each relay's
-       fastest squads here, best time per school. app.get_tf_venue_relay_records #}
-    <h2>Team records</h2>
+<div class="rc-w rc-grid{% if not venue_meets %} rc-grid-one{% endif %}">
+<div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#best" data-tab="best">Best performances</a>
+      <a class="seg-btn" href="#teams" data-tab="teams">Team records{% if relays %}<span class="n">{{ relays|length }}</span>{% endif %}</a>
+      <a class="seg-btn" href="#meets" data-tab="meets">Meets{% if venue_meets %}<span class="n">{{ venue_meets|length }}</span>{% endif %}</a>
+    </nav>
+    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+  </div>
+
+  <section class="rc-panel" id="best" data-panel="best">
+    <table class="rc-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Athlete</th>
+                <th>Event</th>
+                <th>Result</th>
+                <th>Grade</th>
+                <th>School</th>
+                <th>Meet</th>
+                <th>Date</th>
+                <th>Rating{{ rating_i() }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in bests %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>
+                    {% if row.person_id %}
+                        <a href="/athlete/{{ row.person_id }}{% if row.result_id %}?r={{ row.result_id }}{% endif %}">{{ row.name if row.name else "Unknown" }}</a>
+                    {% else %}
+                        {{ row.name if row.name else "Unknown" }}
+                    {% endif %}
+                </td>
+                <td>{{ row.event_short if row.event_short else " - " }}</td>
+                <td>{{ row.display_result }}</td>
+                <td>{{ row.grade|grade_label(row.rating_pool or row.label_pool) if row.grade else " - " }}</td>
+                <td>{{ row.school if row.school else " - " }}</td>
+                <td><a href="/race/tf/{{ row.meet_id }}/{{ row.event_id }}/{{ row.div_id }}{% if row.result_id %}?r={{ row.result_id }}{% endif %}">{{ row.meet_name }}</a></td>
+                <td class="no-break">{{ row.date|mdy }}</td>
+                <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+  </section>
+
+  <section class="rc-panel" id="teams" data-panel="teams">
     {% if relays %}
     <div class="relay-grid">
     {% for ev in relays %}
@@ -64,8 +129,10 @@
     <p class="meta">No relay results are recorded at this venue.</p>
     {% endif %}
 
-    <h2>Meets held here</h2>
-    <table>
+  </section>
+
+  <section class="rc-panel" id="meets" data-panel="meets">
+    <table class="rc-table">
         <thead><tr><th>Meet</th><th>Last held</th><th>Results</th></tr></thead>
         <tbody>
             {% for m in venue_meets %}
@@ -78,47 +145,29 @@
         </tbody>
     </table>
 
-{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
-        <h2>Best performances</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>#</th>
-                <th>Athlete</th>
-                <th>Event</th>
-                <th>Result</th>
-                <th>Grade</th>
-                <th>School</th>
-                <th>Meet</th>
-                <th>Date</th>
-                <th>Rating{{ rating_i() }}</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for row in bests %}
-            <tr>
-                <td>{{ loop.index }}</td>
-                <td>
-                    {% if row.person_id %}
-                        <a href="/athlete/{{ row.person_id }}">{{ row.name if row.name else "Unknown" }}</a>
-                    {% else %}
-                        {{ row.name if row.name else "Unknown" }}
-                    {% endif %}
-                </td>
-                <td>{{ row.event_short if row.event_short else " - " }}</td>
-                <td>{{ row.display_result }}</td>
-                <td>{{ row.grade|grade_label(row.rating_pool or row.label_pool) if row.grade else " - " }}</td>
-                <td>{{ row.school if row.school else " - " }}</td>
-                <td><a href="/race/tf/{{ row.meet_id }}/{{ row.event_id }}/{{ row.div_id }}{% if row.result_id %}?r={{ row.result_id }}{% endif %}">{{ row.meet_name }}</a></td>
-                <td class="no-break">{{ row.date|mdy }}</td>
-                <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-
+  </section>
+</div>
+{% if venue_meets %}
+<aside class="rc-side">
+  <h2>Recent meets <small>{{ venue_meets|length }} here</small></h2>
+  <table class="rc-tscores rc-tscores-plain">
+    <tbody>
+    {% for m in (venue_meets|sort(attribute='last_date', reverse=True))[:6] %}
+    <tr>
+      <td class="tn"><a href="/meet/tf/{{ m.meet_id }}">{{ m.meet_name }}</a>
+        <span class="sp">{{ m.last_date|mdy }}</span></td>
+      <td class="n tpts">{{ "{:,}".format(m.n_results) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <a class="rc-more" href="#meets" data-tab="meets">All meets</a>
+</aside>
+{% endif %}
+</div>
 </main>
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

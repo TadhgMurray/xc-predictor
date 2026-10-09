@@ -144,7 +144,7 @@
     {% for r in breakouts %}
       <tr>
         <td class="num">{{ loop.index }}</td>
-        <td><a href="/athlete/{{ r.person_id }}">{{ r.name }}</a>
+        <td><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name }}</a>
           <span class="p2-row-sub">{{ r.grade|grade_label(plevel) if r.grade }}{% if r.school %}<span class="p2-narrow"> &middot; {{ r.school }}</span>{% endif %}</span></td>
         <td class="p2-wide">{% if r.school and r.school|is_team %}{{ crest(r.school, r.state, pool=plevel) }}<a href="{{ school_href(r.school, r.state, pool=plevel) }}">{{ r.school|school_label_for(plevel, r.state) }}</a>{% elif r.school %}{{ r.school }}{% endif %}</td>
         <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}
@@ -183,7 +183,7 @@
     {% for r in prs %}
       <tr>
         <td class="num">{{ loop.index }}</td>
-        <td><a href="/athlete/{{ r.person_id }}">{{ r.name }}</a>
+        <td><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name }}</a>
           <span class="p2-row-sub">{{ r.grade|grade_label(plevel) if r.grade }}{% if r.school %}<span class="p2-narrow"> &middot; {{ r.school }}</span>{% endif %}</span></td>
         <td class="p2-wide">{% if r.school and r.school|is_team %}{{ crest(r.school, r.state, pool=plevel) }}<a href="{{ school_href(r.school, r.state, pool=plevel) }}">{{ r.school|school_label_for(plevel, r.state) }}</a>{% elif r.school %}{{ r.school }}{% endif %}</td>
         <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}

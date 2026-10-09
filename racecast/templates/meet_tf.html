@@ -122,7 +122,7 @@
                 </td>
                 <td>{{ "Boys" if e.gender == "M" else "Girls" if e.gender == "F" else " - " }}</td>
                 {# the event's winner and mark (app.meet_tf: best time or mark) #}
-                <td class="rc-win">{% set w = e.winner %}{% if w %}{% if w.is_relay %}{{ w.school|school_label_for('college' if college else none, header.state) if w.school else "Relay" }}{% elif w.person_id %}<a href="/athlete/{{ w.person_id }}">{{ w.athlete_name or "Unknown" }}</a>{% else %}{{ w.athlete_name or "Unknown" }}{% endif %} <span class="mk">{{ w.display_result }}</span>{% else %} - {% endif %}</td>
+                <td class="rc-win">{% set w = e.winner %}{% if w %}{% if w.is_relay %}{{ w.school|school_label_for('college' if college else none, header.state) if w.school else "Relay" }}{% elif w.person_id %}<a href="/athlete/{{ w.person_id }}{% if w.result_id %}?r={{ w.result_id }}{% endif %}">{{ w.athlete_name or "Unknown" }}</a>{% else %}{{ w.athlete_name or "Unknown" }}{% endif %} <span class="mk">{{ w.display_result }}</span>{% else %} - {% endif %}</td>
                 <td class="rc-wide">{{ e.division if e.division else " - " }}</td>
                 <td class="n">{{ e.n_results }}</td>
             </tr>
@@ -145,7 +145,7 @@
             {% for r in ev.rows %}
             <tr id="r{{ r.result_id }}">
                 <td class="pl{% if r.row_place|string in ['1','2','3'] %} rc-m{{ r.row_place }}{% endif %}"><span>{{ r.row_place }}</span></td>
-                <td class="nm">{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.athlete_name or " - " }}</a>{% else %}{{ r.athlete_name or " - " }}{% endif %}</td>
+                <td class="nm">{% if r.person_id %}<a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.athlete_name or " - " }}</a>{% else %}{{ r.athlete_name or " - " }}{% endif %}</td>
                 <td class="rc-wide">{{ r.grade|grade_label('college' if college else 'hs') if r.grade else " - " }}</td>
                 <td class="rc-wide">{% if r.school and r.school|is_team %}{{ crest(r.school, header.state, pool='college' if college else none) }}<a href="{{ school_href(r.school, header.state, pool='college' if college else none) }}">{{ r.school|school_label_for('college' if college else none, header.state) }}</a>{% elif r.school %}{{ r.school|school_label_for('college' if college else none, header.state) }}{% else %} - {% endif %}</td>
                 <td class="n">{{ r.display_result }}</td>

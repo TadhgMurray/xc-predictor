@@ -5722,3 +5722,13 @@ Chromium against the old script (readout 15:00, label under the pointer
   page): the row named by #fragment or ?r=<result id> scrolls to centre and
   flashes the race page's gold. Course records, school bests, school PRs and
   venue bests now link with ?r= so their rows are found.
+- ✅ **Linked result on the athlete page.** Links from result pages (race,
+  TF race, compiled, course, TF meet, school PRs, venue, breakouts) to an
+  athlete carry ?r=<result id>; link-flash.js finds the athlete page's
+  race-<id> row and flashes it.
+- ✅ **TF venue title is the venue's name.** get_tf_venue_label prefers the
+  most common meets_tf_meta venue name (with city) over the most common meet
+  name ("Arcadia HS, Arcadia", not "Arcadia Invitational"); the card follows.
+- ✅ **TF venue page in the race page's shape**: one-column header (facts,
+  Share on the meta line, best mark here), tabs Best performances / Team
+  records / Meets, Recent meets card. Sidebar cards wrap long meet names.

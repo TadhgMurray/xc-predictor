@@ -88,7 +88,7 @@
       <tr id="r{{ row.result_id }}" data-team="{{ row.school or '' }}">
         <td class="pl"><span>{{ loop.index }}</span></td>
         <td class="nm">
-          {% if row.person_id %}<a href="/athlete/{{ row.person_id }}">{{ row.name if row.name else "Unknown" }}</a>{% else %}{{ row.name if row.name else "Unknown" }}{% endif %}
+          {% if row.person_id %}<a href="/athlete/{{ row.person_id }}{% if row.result_id %}?r={{ row.result_id }}{% endif %}">{{ row.name if row.name else "Unknown" }}</a>{% else %}{{ row.name if row.name else "Unknown" }}{% endif %}
           <span class="rc-subline">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}{% endif %}{{ row.school|school_label_in(header.state) if row.school else "" }}{% if row.grade %} · {{ row.grade|grade_label(row.rating_pool or row.label_pool) }}{% endif %}</span>
         </td>
         <td class="sch rc-wide">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}<a href="{{ school_href(row.school, header.state) }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label }}{% else %} - {% endif %}{% if row.grade %}<span class="gr">{{ row.grade|grade_label(row.rating_pool or row.label_pool) }}</span>{% endif %}</td>
@@ -119,7 +119,7 @@
         {# 6 and 7 are greyed: they do not score, but they DO displace #}
         {% for i in range(7) %}
           {% set r = t.runners[i] if t.runners|length > i else none %}
-          <td{{ ' class="displacer"'|safe if i >= 5 }}>{% if r %}<a href="/athlete/{{ r.person_id }}" title="{{ r.name }}">{{ r.score_place }}</a>{% else %} - {% endif %}</td>
+          <td{{ ' class="displacer"'|safe if i >= 5 }}>{% if r %}<a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}" title="{{ r.name }}">{{ r.score_place }}</a>{% else %} - {% endif %}</td>
         {% endfor %}
       </tr>
       {% endfor %}
