@@ -13,6 +13,13 @@
     runners, or on schools the data files in another division, is marked
     THIN in plain sight (owner, 2026-10-05: some assignments are wrong right
     now) -- it should look thin, not authoritative.
+
+  ★ THE RACE PAGE'S SHAPE (owner, 2026-10-09): every view opens with the
+    race page's header (tag, title, a meta line ending in Share); the
+    division view puts its latest marks on the champion line, keeps the
+    pickers under the header, and splits the state meet, the section round,
+    the other finals and the explanation into tabs, with every division's
+    make-state mark as the side card.
 ===================================================================== #}
 <!DOCTYPE html>
 <html lang="en">
@@ -21,6 +28,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 <link rel="stylesheet" href="{{ static_v('pages2.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 {% from "_scale.html" import rv, scale_toggle %}
 {% set pct = (100 * mark_q)|round|int if mark_q is defined else 10 %}
 {% if mode == "division" %}
@@ -61,33 +69,70 @@
   {%- if c.thin -%}<span class="p2-thin" title="{{ c.thin_reasons|join('; ') }}">thin</span>{%- endif -%}
 {%- endmacro %}
 
-<main class="page-wide p2-page wit-page">
+{# the race page's text Share button, as on breakouts.html #}
+{% macro share_link(title, url) -%}
+<button type="button" class="share-btn rc-share-link" data-share-title="{{ title }}"
+        data-share-url="{{ url }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+{%- endmacro %}
+
+<main class="page-wide p2-page wit-page rc">
 
 {% if mode == "index" %}
-  <h1>What it takes</h1>
-  <p class="p2-lead">
-    The season rating it took to get out of the section, to make the state meet,
-    to finish top 25 and to finish top 8, in every state and division, read off
-    the runners who were actually there in the last three seasons. Pick a state.
-  </p>
-  <ul class="p2-states">
-    {% for code, name in states %}
-    <li><a href="/what-it-takes/{{ code|lower }}">{{ name }}</a></li>
-    {% endfor %}
-  </ul>
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--xc">High school cross country</span></div>
+      <h1>What it takes</h1>
+      <div class="rc-meta">
+        {{ states|length }} states
+        · {{ share_link("What it takes on Racecast", site_origin ~ "/what-it-takes") }}
+      </div>
+      <p class="rc-story">
+        The season rating it took to get out of the section, to make the state meet,
+        to finish top 25 and to finish top 8, in every state and division, read off
+        the runners who were actually there in the last three seasons. Pick a state.
+      </p>
+    </div>
+  </div></header>
+
+  <div class="rc-grid rc-grid-one">
+  <div class="rc-mainc">
+    <h2 class="p2-h2 wit-h2">States</h2>
+    <ul class="p2-states">
+      {% for code, name in states %}
+      <li><a href="/what-it-takes/{{ code|lower }}">{{ name }}</a></li>
+      {% endfor %}
+    </ul>
+  </div>
+  </div>
 
 {% elif mode == "state" %}
-  <p class="p2-crumbs"><a href="/what-it-takes">All states</a></p>
-  <h1>What it takes in {{ state_name }}</h1>
-  <p class="p2-lead">
-    The season rating it took to make the {{ state_name }} state cross country meet,
-    division by division. The mark is the rating {{ 100 - pct }}% of the state meet's
-    runners had reached that season. Open a division for the top-25 and top-8 marks,
-    the section round, and the times.
-  </p>
   {% set gs = data.genders %}
   {% set slugs = [] %}
   {% for g in ("boys", "girls") %}{% for c in (gs.get(g) or {}).get("divisions", []) %}{% if c.slug not in slugs %}{% set _ = slugs.append(c.slug) %}{% endif %}{% endfor %}{% endfor %}
+  {% set n_sec = (gs.get("boys") or {}).get("sections", [])|length + (gs.get("girls") or {}).get("sections", [])|length %}
+  <p class="p2-crumbs"><a href="/what-it-takes">All states</a></p>
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--xc">High school cross country</span></div>
+      <h1>What it takes in {{ state_name }}</h1>
+      <div class="rc-meta">
+        {% if slugs %}{{ slugs|length }} division{{ "s" if slugs|length != 1 }} · {% endif %}
+        {% if n_sec %}{{ n_sec }} section final{{ "s" if n_sec != 1 }} · {% endif %}
+        <span class="p2-muted">computed {{ data.computed_at|ago_words }}</span>
+        · {{ share_link("What it takes in " ~ state_name ~ " on Racecast", site_origin ~ "/what-it-takes/" ~ state|lower) }}
+      </div>
+      <p class="rc-story">
+        The season rating it took to make the {{ state_name }} state cross country meet,
+        division by division. The mark is the rating {{ 100 - pct }}% of the state meet's
+        runners had reached that season. Open a division for the top-25 and top-8 marks,
+        the section round, and the times.
+      </p>
+    </div>
+  </div></header>
+
+  <div class="rc-grid rc-grid-one">
+  <div class="rc-mainc">
+  <h2 class="p2-h2 wit-h2">To make state, by division</h2>
   {% if slugs %}
   <table class="p2-tbl wit-state-tbl">
     <thead><tr>
@@ -119,20 +164,49 @@
     The marks are read off the state meet's own results, so a state whose championship is not in the
     results this site holds has none here.</p>
   {% endif %}
-  {% set n_sec = (gs.get("boys") or {}).get("sections", [])|length + (gs.get("girls") or {}).get("sections", [])|length %}
   {% if slugs %}<p class="p2-note">{% if n_sec %}{{ n_sec }} section and regional final{{ "s" if n_sec != 1 }} on record feed these divisions; each division's page shows what it took to get out of them.{% else %}No section or regional finals are on record for {{ state_name }}, so these are the state meet's marks alone.{% endif %}</p>{% endif %}
   {% if data.unplaced %}<p class="p2-foot">{{ data.unplaced }} championship race{{ "s" if data.unplaced != 1 }} could not be placed in a division or gender (no division in the race title and no majority among its schools) and {{ "are" if data.unplaced != 1 else "is" }} left out.</p>{% endif %}
   <p class="p2-foot">computed {{ data.computed_at|ago_words }}</p>
+  </div>
+  </div>
 
 {% else %}
   {% set g = data.genders.get(gender) or {} %}
+  {% set s0 = cell.latest if cell else none %}
+  {% set others = all_sections|rejectattr("feeds", "equalto", division_slug)|list %}
+  {# the state meet's lines: make state, then each place line #}
+  {% set lines = [("qualify", "Make state", "of the state meet's runners", 0)] %}
+  {% for key, n, label in place_lines %}{% set _ = lines.append((key, label, "of its top " ~ n ~ " finishers", n)) %}{% endfor %}
   <p class="p2-crumbs"><a href="/what-it-takes">All states</a> &rsaquo;
      <a href="/what-it-takes/{{ state|lower }}">{{ state_name }}</a></p>
-  <div class="hdr-row">
-    <h1>What it takes: {{ dlabel }} <span class="p2-sub">{{ gender_words }}</span></h1>
-    {% with share_title="What it takes: " ~ dlabel ~ " " ~ gender_words ~ " on Racecast",
-            share_url=site_origin ~ meta_path %}{% include "_share.html" %}{% endwith %}
-  </div>
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--xc">High school {{ gender_words|lower }} cross country</span></div>
+      <h1>What it takes: {{ dlabel }} <span class="p2-sub">{{ gender_words }}</span></h1>
+      <div class="rc-meta">
+        Season ratings of the runners who were actually there{% if cell %}, {{ cell.seasons|map(attribute='year')|join(', ') }}{% endif %}
+        · <span class="p2-muted">computed {{ data.computed_at|ago_words }}</span>
+        · {{ share_link("What it takes: " ~ dlabel ~ " " ~ gender_words ~ " on Racecast", site_origin ~ meta_path) }}
+      </div>
+      {# the latest season's marks, the page's headline facts #}
+      {% if s0 %}
+      <div class="rc-champs">
+        {% for key, title, whose, n in lines %}{% set ln = s0.lines.get(key) %}{% if ln %}
+        <div><span class="k">{{ title }} · {{ s0.year }}</span>
+          <span class="rc-crow"><b class="rc-cn">{{ rv(ln.mark, ln.mark) }}</b>{% if ln.t_state %}<i>{{ ln.t_state|wit_time }} at the state course</i>{% elif ln.t_typical %}<i>{{ ln.t_typical|wit_time }} typical course</i>{% endif %}</span></div>
+        {% endif %}{% endfor %}
+      </div>
+      {% endif %}
+      <p class="rc-story wit-times-line">
+        {% if not g.has_times %}<span class="p2-muted">Ratings only: no time conversion is available just now.</span>
+        {% elif venue %}Times at <a href="/course/{{ venue.course_name|urlencode }}">{{ venue.course_name }}</a>{% if time_distance %}, {{ "%.0f"|format(time_distance) }} m{% endif %}
+          <span class="p2-muted">(the state meet's usual course, {{ venue.editions }} editions){% if venue.difficulty is none %}; its difficulty is not rated, so only the typical-course time is shown{% endif %}</span>
+          and on a typical course.
+        {% else %}Times on a typical course{% if time_distance %} over {{ "%.0f"|format(time_distance) }} m{% endif %}
+          <span class="p2-muted">(no regular state-meet venue on record)</span>.{% endif %}
+      </p>
+    </div>
+  </div></header>
 
   <nav class="p2-toggles" aria-label="Division options">
     <span class="p2-seg" role="group" aria-label="Gender">
@@ -154,71 +228,34 @@
     </form>
   </nav>
 
-  <p class="p2-meta">
-    Season ratings of the runners who were actually there{% if cell %}, {{ cell.seasons|map(attribute='year')|join(', ') }}{% endif %}
-    &middot; {% if not g.has_times %}<span class="p2-muted">ratings only: no time conversion is available just now</span>
-    {% elif venue %}times at <a href="/course/{{ venue.course_name|urlencode }}">{{ venue.course_name }}</a>{% if time_distance %}, {{ "%.0f"|format(time_distance) }} m{% endif %}
-      <span class="p2-muted">(the state meet's usual course, {{ venue.editions }} editions){% if venue.difficulty is none %}; its difficulty is not rated, so only the typical-course time is shown{% endif %}</span>
-      and on a typical course
-    {% else %}times on a typical course{% if time_distance %} over {{ "%.0f"|format(time_distance) }} m{% endif %}
-      <span class="p2-muted">(no regular state-meet venue on record)</span>{% endif %}
-    &middot; <span class="p2-muted">computed {{ data.computed_at|ago_words }}</span>
-  </p>
-  {{ scale_toggle(same=True) }}
-
-  {% if not cell %}
-  <p class="p2-note">No {{ gender_words|lower }} state meet race for {{ dlabel }} is on record.
-    The {{ "girls'" if gender == "boys" else "boys'" }} page may have one:
-    <a href="/what-it-takes/{{ state|lower }}/{{ division_slug }}{{ '?g=girls' if gender == 'boys' }}">{{ "Girls" if gender == "boys" else "Boys" }}</a>.</p>
-  {% else %}
-
-  {% if cell.thin %}
+  {% if cell and cell.thin %}
   <div class="p2-banner" role="note">
     <strong>Thin data.</strong> {{ cell.thin_reasons|join("; ")|capitalize }}.
     Read these marks as a rough guide, not a line.
   </div>
   {% endif %}
 
-  {# ---- 1. out of the section ------------------------------------- #}
-  <h2 class="p2-h2">{% if sections %}1. Getting out of the section{% else %}The section round{% endif %}</h2>
-  {% if sections %}
-  <p class="p2-note">The season rating {{ 100 - pct }}% of each section final's <em>advancers</em> had:
-    its finishers who went on to run the state meet that season.</p>
-  <table class="p2-tbl wit-sec-tbl">
-    <thead><tr>
-      <th>Section final</th>
-      <th class="num">Mark</th>
-      <th class="num p2-wide">Typical course</th>
-      <th class="num">Advanced</th>
-      <th class="p2-wide">By season</th>
-      <th class="num p2-wide">Trend</th>
-    </tr></thead>
-    <tbody>
-    {% for c in sections %}{% set s = c.latest %}{% set ln = s.lines.advance %}
-      <tr>
-        <td>{{ c.label }} {{ thin_tag(c) }}
-          <span class="p2-row-sub">{{ s.year }}{% if s.feeds_share and s.feeds_share < 1 %} &middot; {{ (100 * s.feeds_share)|round|int }}% of its advancers ran this division{% endif %}</span></td>
-        <td class="num">{% if ln %}{{ rv(ln.mark, ln.mark) }}<span class="p2-row-sub">slowest {{ ln.slowest }}</span>{% endif %}</td>
-        <td class="num p2-wide">{% if ln and ln.t_typical %}{{ ln.t_typical|wit_time }} <span class="p2-muted">{{ "%.0f"|format(ln.t_distance) }} m</span>{% endif %}</td>
-        <td class="num">{{ s.n_advanced }} of {{ s.n_finishers }}
-          <span class="p2-row-sub">{{ s.n_schools }} schools{% if s.deepest_place %} &middot; as deep as {{ s.deepest_place|wit_ord }}{% endif %}</span></td>
-        <td class="p2-wide">{{ mark_years(c, "advance") }}</td>
-        <td class="num p2-wide">{{ trend_words(c.trend.advance) }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="p2-note">No section or regional final on record feeds {{ dlabel }} {{ gender_words|lower }},
-    so this is the state meet alone.{% if all_sections %} Other rounds in {{ state_name }} are listed at the foot of the page.{% endif %}</p>
-  {% endif %}
+  {% set side = divisions|length > 1 %}
+  <div class="rc-grid{% if not side %} rc-grid-one{% endif %}">
+  <div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#state" data-tab="state">State meet</a>
+      {% if cell %}<a class="seg-btn" href="#section" data-tab="section">Section round{% if sections %}<span class="n">{{ sections|length }}</span>{% endif %}</a>{% endif %}
+      {% if others %}<a class="seg-btn" href="#others" data-tab="others">Other finals<span class="n">{{ others|length }}</span></a>{% endif %}
+      <a class="seg-btn" href="#how" data-tab="how">How it's read</a>
+    </nav>
+    <div class="rc-tbar-end">{{ scale_toggle(same=True) }}</div>
+  </div>
 
-  {# ---- 2. at the state meet ------------------------------------------- #}
-  <h2 class="p2-h2">{% if sections %}2. {% endif %}At the state meet</h2>
-  {% set s0 = cell.latest %}
+  {# ---- the state meet ------------------------------------------------ #}
+  <section class="rc-panel" id="state" data-panel="state">
+  {% if not cell %}
+  <p class="p2-note">No {{ gender_words|lower }} state meet race for {{ dlabel }} is on record.
+    The {{ "girls'" if gender == "boys" else "boys'" }} page may have one:
+    <a href="/what-it-takes/{{ state|lower }}/{{ division_slug }}{{ '?g=girls' if gender == 'boys' }}">{{ "Girls" if gender == "boys" else "Boys" }}</a>.</p>
+  {% else %}
   <div class="wit-cards">
-    {% set lines = [("qualify", "Make state", "of the state meet's runners", 0)] %}
-    {% for key, n, label in place_lines %}{% set _ = lines.append((key, label, "of its top " ~ n ~ " finishers", n)) %}{% endfor %}
     {% for key, title, whose, n in lines %}
     {% set ln = s0.lines.get(key) %}
     <section class="wit-card">
@@ -251,12 +288,49 @@
     {%- if s0.flags %} &middot; <span class="wit-flag">{{ s0.flags|join("; ") }}</span>{% endif %}
   </p>
   {% endif %}
+  </section>
 
-  {% set others = all_sections|rejectattr("feeds", "equalto", division_slug)|list %}
+  {# ---- out of the section ------------------------------------------- #}
+  {% if cell %}
+  <section class="rc-panel" id="section" data-panel="section">
+  {% if sections %}
+  <p class="p2-note rc-lead"><strong>Getting out of the section.</strong> The season rating {{ 100 - pct }}% of each section final's <em>advancers</em> had:
+    its finishers who went on to run the state meet that season.</p>
+  <table class="p2-tbl wit-sec-tbl">
+    <thead><tr>
+      <th>Section final</th>
+      <th class="num">Mark</th>
+      <th class="num p2-wide">Typical course</th>
+      <th class="num">Advanced</th>
+      <th class="p2-wide">By season</th>
+      <th class="num p2-wide">Trend</th>
+    </tr></thead>
+    <tbody>
+    {% for c in sections %}{% set s = c.latest %}{% set ln = s.lines.advance %}
+      <tr>
+        <td>{{ c.label }} {{ thin_tag(c) }}
+          <span class="p2-row-sub">{{ s.year }}{% if s.feeds_share and s.feeds_share < 1 %} &middot; {{ (100 * s.feeds_share)|round|int }}% of its advancers ran this division{% endif %}</span></td>
+        <td class="num">{% if ln %}{{ rv(ln.mark, ln.mark) }}<span class="p2-row-sub">slowest {{ ln.slowest }}</span>{% endif %}</td>
+        <td class="num p2-wide">{% if ln and ln.t_typical %}{{ ln.t_typical|wit_time }} <span class="p2-muted">{{ "%.0f"|format(ln.t_distance) }} m</span>{% endif %}</td>
+        <td class="num">{{ s.n_advanced }} of {{ s.n_finishers }}
+          <span class="p2-row-sub">{{ s.n_schools }} schools{% if s.deepest_place %} &middot; as deep as {{ s.deepest_place|wit_ord }}{% endif %}</span></td>
+        <td class="p2-wide">{{ mark_years(c, "advance") }}</td>
+        <td class="num p2-wide">{{ trend_words(c.trend.advance) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="p2-note">No section or regional final on record feeds {{ dlabel }} {{ gender_words|lower }},
+    so this is the state meet alone.{% if all_sections %} Other rounds in {{ state_name }} are listed under Other finals.{% endif %}</p>
+  {% endif %}
+  </section>
+  {% endif %}
+
   {% if others %}
-  <details class="wit-others">
-    <summary>Every other section and regional final in {{ state_name }} ({{ others|length }})</summary>
-    <table class="p2-tbl">
+  <section class="rc-panel wit-others" id="others" data-panel="others">
+    <p class="p2-note rc-lead">Every other section and regional final in {{ state_name }} ({{ others|length }}).</p>
+    <table class="p2-tbl wit-oth-tbl">
       <thead><tr><th>Final</th><th class="num">Mark</th><th class="num">Advanced</th><th class="p2-wide">Mostly to</th></tr></thead>
       <tbody>
       {% for c in others %}{% set s = c.latest %}
@@ -269,11 +343,10 @@
       {% endfor %}
       </tbody>
     </table>
-  </details>
+  </section>
   {% endif %}
 
-  <section class="p2-how">
-    <h2 class="p2-h2">How these marks are read</h2>
+  <section class="rc-panel p2-how" id="how" data-panel="how">
     <ul>
       <li><strong>Who qualified</strong> is whoever ran the state final: the runners in that
         race's own results. Nothing here knows the qualifying rules; it reads who got there.</li>
@@ -304,9 +377,31 @@
       <li>Divisions change: a school moved up this year is judged against the marks of the division it is in now.</li>
     </ul>
   </section>
+  </div>
+
+  {# ★ EVERY DIVISION'S MAKE-STATE MARK (owner, 2026-10-09): the side card
+     reads the same `divisions` the chips do; this one is lit. #}
+  {% if side %}
+  <aside class="rc-side">
+    <h2>Make state <small>{{ gender_words|lower }}, by division</small></h2>
+    <table class="rc-tscores rc-tscores-plain">
+      <tbody>
+      {% for d in divisions %}{% set q = d.latest.lines.qualify if d.latest else none %}
+      <tr{% if d.slug == division_slug %} class="rc-lit"{% endif %}>
+        <td class="tn"><a href="/what-it-takes/{{ state|lower }}/{{ d.slug }}{{ '?g=girls' if gender == 'girls' }}">{{ d.short }}</a>
+          {% if q %}<span class="sp">{{ d.latest.year }} · {{ q.n }} runners{% if d.thin %} · thin{% endif %}</span>{% endif %}</td>
+        <td class="n tpts">{% if q %}{{ rv(q.mark, q.mark) }}{% else %}<span class="p2-muted">&ndash;</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </aside>
+  {% endif %}
+  </div>
 {% endif %}
 </main>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
+{% if mode == "division" %}<script src="{{ static_v('race-page.js') }}"></script>{% endif %}
 </body>
 </html>
