@@ -913,9 +913,20 @@ _FAM_NOISE = re.compile(
     r"run|dash|race|meters?|metres?|event|[abcd])\b", re.I)
 
 
+# the feeds' abbreviations, as whole names (owner, 2026-10-09: "Hj", "Lj",
+# "Pv", "Shot", "Tj" beside their full names on a school's PR page)
+_FAM_ABBR = {"hj": "high jump", "lj": "long jump", "tj": "triple jump",
+             "pv": "pole vault", "sp": "shot put", "shot": "shot put",
+             "dt": "discus", "jt": "javelin", "ht": "hammer",
+             "wt": "weight throw", "weight": "weight throw"}
+
+
 def eventFamily(event_short):
     """The record-list key: '' for an empty name."""
     s = " " + (event_short or "").lower().replace("-", " ").replace("_", " ") + " "
+    s = re.sub(r"\bf\s*/\s*s\b", " ", s)               # "F/S": frosh-soph
+    s = re.sub(r"[/()\[\],.]", " ", s)
+    s = re.sub(r"(\d+)\s*m?\s*h\b", r"\1 hurdles", s)   # 55mh, 300mh, 110 h
     s = _FAM_GENDER.sub(" ", s)
     s = re.sub(r"^\s*s\s+", " ", s)                     # "Men's" -> "s"
     s = _FAM_NOISE.sub(" ", s)
@@ -925,7 +936,7 @@ def eventFamily(event_short):
     s = re.sub(r"hurdles?\b", "hurdles", s)
     s = re.sub(r"\b(javelin|discus|hammer)\s+throw\b", r"\1", s)   # weight throw keeps it
     s = re.sub(r"\s+", " ", s).strip()
-    return s
+    return _FAM_ABBR.get(s, s)
 
 
 def familyLabel(family):

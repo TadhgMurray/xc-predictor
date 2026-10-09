@@ -24,3 +24,13 @@ def test_labels():
     assert familyLabel(eventFamily("Indoor Pentathlon INVITE")) == "Pentathlon"
     assert familyLabel(eventFamily("Weight Throw")) == "Weight Throw"
     assert eventFamily("100m Hurdles") != eventFamily("110m Hurdles")
+
+
+def test_abbreviations_fold_too():
+    """Owner, 2026-10-09, a second school: Hj / Lj / Pv / Shot / Tj and the
+    "55mh", "300mh", "300 Hurdles /" spellings."""
+    for group in [("Hj", "High Jump"), ("Lj", "Long Jump"), ("Pv", "Pole Vault"),
+                  ("Shot", "Shot Put"), ("Tj", "Triple Jump"),
+                  ("55mh", "55m Hurdles", "55 Hurdles F/s"),
+                  ("300mh", "300 Hurdles /", "300m Hurdles"), ("110mh", "110m Hurdles")]:
+        assert len({eventFamily(e) for e in group}) == 1, group

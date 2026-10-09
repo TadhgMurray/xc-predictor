@@ -7130,7 +7130,6 @@ def get_course_cell_difficulties(cur, course_name):
 _COURSE_CACHE = {}
 _COURSE_TTL = 6 * 3600
 _COURSE_MAX = 64
-_VENUE_CACHE = {}
 
 
 def loadCourseBoard(cur, course_name, picked):
@@ -7471,6 +7470,43 @@ def get_tf_venue_difficulty(cur, location_id, is_indoor):
     return cur.fetchone()
 
 
+# ★ ONE PASS OVER THE VENUE (owner, 2026-10-09: "venue page shouldn't need
+#   cache, is there some way to make it faster generally?"). The best marks,
+#   the records, the relays and the meet list each joined meets_tf to
+#   results_tf for the venue again -- four index-driven passes over every
+#   result run there. The first caller in a transaction copies the venue's
+#   rows (with the meet name and the meet's gender) into a temp table, and
+#   all four read that instead. ON COMMIT DROP and a transaction-local tag
+#   (rc.venue_rows) keep a pooled connection from reading another venue's.
+def _ensureVenueRows(cur, location_id, is_indoor):
+    tag = f"{int(location_id)}:{1 if is_indoor else 0}"
+    cur.execute("SELECT current_setting('rc.venue_rows', true) AS t")
+    row = cur.fetchone()
+    have = row["t"] if isinstance(row, dict) else row[0]
+    if have == tag:
+        return
+    pool_col = _ratingPoolCol(cur, 'results_tf')
+    cur.execute("DROP TABLE IF EXISTS venue_rows")
+    cur.execute(f"""
+        CREATE TEMP TABLE venue_rows ON COMMIT DROP AS
+        SELECT r.result_id, r.person_id, r.athlete_id, r.athlete_name,
+               r.school, r.time_seconds, r.mark, r.is_field,
+               COALESCE(r.is_relay, 0) AS is_relay, r.date, r.grade,
+               r.speed_rating, {pool_col}, r.event_short,
+               m.meet_id, m.div_id, m.event_id, m.meet_name,
+               CASE WHEN mm.gender IN ('M', 'F') THEN mm.gender END AS meet_gender
+        FROM   meets_tf m
+        JOIN   results_tf r
+               ON r.meet_id = m.meet_id AND r.div_id = m.div_id
+              AND r.event_id = m.event_id
+        LEFT   JOIN meets_tf_meta mm ON mm.meet_id = m.meet_id
+        WHERE  m.location_id = %(loc)s
+          AND  COALESCE(m.is_indoor, 0) = %(indoor)s
+    """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
+    cur.execute("ANALYZE venue_rows")
+    cur.execute("SELECT set_config('rc.venue_rows', %s, true)", (tag,))
+
+
 def get_tf_venue_bests(cur, location_id, is_indoor, limit=25):
     """Best-rated performances at this venue. Filters meets by location FIRST,
     so we never scan all of results_tf.
@@ -7482,37 +7518,22 @@ def get_tf_venue_bests(cur, location_id, is_indoor, limit=25):
       ranks on the HS-equivalent instead (rankByHs, after stampRowsHs). The
       HS factor is one number per pool, so the HS top `limit` is inside the
       union of each pool's own top `limit`."""
-    pool_col = _ratingPoolCol(cur, 'results_tf')
-    pool_expr = pool_col.split(" AS ")[0]
-    # ! THE NAME LOOKUP ONLY FOR THE ROWS KEPT (owner, 2026-10-09: "venue
-    #   page loads too slow"). The athletes lateral inside the window ran
-    #   once per result at the venue; ranked first, it runs per kept row.
+    _ensureVenueRows(cur, location_id, is_indoor)
+    # ! THE NAME LOOKUP ONLY FOR THE ROWS KEPT: ranked first, the athletes
+    #   lateral runs per kept row, not per result at the venue.
     cur.execute(f"""
-        WITH venue_meets AS (
-            SELECT meet_id, div_id, event_id, meet_name
-            FROM   meets_tf
-            WHERE  location_id = %(loc)s
-              AND  COALESCE(is_indoor, 0) = %(indoor)s
-        ), ranked AS (
-            SELECT r.result_id, r.person_id, r.athlete_id, r.athlete_name,
-                   r.time_seconds, r.mark, r.is_field,
-                   r.date, r.grade, r.school, r.speed_rating, r.event_short,
-                   {pool_col},
-                   vm.meet_id, vm.div_id, vm.event_id, vm.meet_name,
-                   row_number() OVER (PARTITION BY COALESCE({pool_expr}, '?')
+        WITH ranked AS (
+            SELECT r.*,
+                   row_number() OVER (PARTITION BY COALESCE(r.rating_pool, '?')
                                       ORDER BY r.speed_rating DESC) AS pool_rank
-            FROM   venue_meets vm
-            JOIN   results_tf r
-                   ON r.meet_id  = vm.meet_id
-                  AND r.div_id   = vm.div_id
-                  AND r.event_id = vm.event_id
+            FROM   venue_rows r
             WHERE  r.speed_rating IS NOT NULL
         )
         SELECT r.*, {_name_sql('r')} AS name
         FROM   (SELECT * FROM ranked WHERE pool_rank <= %(limit)s) r
         {_athlete_lateral('r')}
         ORDER  BY r.speed_rating DESC
-    """, {"loc": location_id, "indoor": 1 if is_indoor else 0, "limit": limit})
+    """, {"limit": limit})
     return cur.fetchall()
 
 
@@ -7551,35 +7572,24 @@ def get_tf_venue_relay_records(cur, location_id, is_indoor, per_event=5):
       names itself. A squad still unknown is listed apart rather than
       guessed into a gender.
     """
+    _ensureVenueRows(cur, location_id, is_indoor)
     cur.execute(f"""
-        WITH venue_meets AS (
-            SELECT meet_id, div_id, event_id, meet_name
-            FROM   meets_tf
-            WHERE  location_id = %(loc)s
-              AND  COALESCE(is_indoor, 0) = %(indoor)s
-        ), rel AS (
-            SELECT r.result_id, r.school, r.time_seconds, r.date,
-                   r.event_short, vm.meet_id, vm.meet_name,
-                   regexp_replace(lower(COALESCE(r.event_short, '')),
-                                  '[^a-z0-9]', '', 'g') AS ekey,
-                   COALESCE(
-                       CASE WHEN a.gender IN ('M', 'F') THEN a.gender END,
-                       CASE WHEN mm.gender IN ('M', 'F') THEN mm.gender END,
-                       CASE WHEN r.event_short ~* '(^|[^a-z])(boys|men|mens|men''s)([^a-z]|$)' THEN 'M'
-                            WHEN r.event_short ~* '(^|[^a-z])(girls|women|womens|women''s)([^a-z]|$)' THEN 'F'
-                       END) AS gender
-            FROM   venue_meets vm
-            JOIN   results_tf r
-                   ON r.meet_id = vm.meet_id AND r.div_id = vm.div_id
-                  AND r.event_id = vm.event_id
-            LEFT   JOIN meets_tf_meta mm ON mm.meet_id = vm.meet_id
-            {_athlete_lateral('r')}
-            WHERE  COALESCE(r.is_relay, 0) = 1
-              AND  r.time_seconds > 0 AND r.time_seconds < 19999
-              AND  NULLIF(btrim(r.school), '') IS NOT NULL
-        )
-        SELECT * FROM rel
-    """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
+        SELECT r.result_id, r.school, r.time_seconds, r.date,
+               r.event_short, r.meet_id, r.meet_name,
+               regexp_replace(lower(COALESCE(r.event_short, '')),
+                              '[^a-z0-9]', '', 'g') AS ekey,
+               COALESCE(
+                   CASE WHEN a.gender IN ('M', 'F') THEN a.gender END,
+                   r.meet_gender,
+                   CASE WHEN r.event_short ~* '(^|[^a-z])(boys|men|mens|men''s)([^a-z]|$)' THEN 'M'
+                        WHEN r.event_short ~* '(^|[^a-z])(girls|women|womens|women''s)([^a-z]|$)' THEN 'F'
+                   END) AS gender
+        FROM   venue_rows r
+        {_athlete_lateral('r')}
+        WHERE  r.is_relay = 1
+          AND  r.time_seconds > 0 AND r.time_seconds < 19999
+          AND  NULLIF(btrim(r.school), '') IS NOT NULL
+    """)
     import re as _re
     keyed = {}
     for r in cur.fetchall():
@@ -7628,51 +7638,28 @@ def get_tf_venue_individual_records(cur, location_id, is_indoor, per_event=5,
     #   table; an athletes lateral ran per result. SQL keeps each athlete's
     #   best TIME per event spelling (field rows as they are: the mark is
     #   text), and gender is a primary-key lookup for the athletes left.
+    _ensureVenueRows(cur, location_id, is_indoor)
     cur.execute("""
-        WITH venue_meets AS (
-            SELECT meet_id, div_id, event_id, meet_name
-            FROM   meets_tf
-            WHERE  location_id = %(loc)s
-              AND  COALESCE(is_indoor, 0) = %(indoor)s
-        ), rows_ AS (
-            SELECT r.result_id, r.person_id, r.school, r.time_seconds, r.mark,
-                   r.is_field, r.date, r.event_short, r.grade, vm.meet_id,
-                   vm.div_id, vm.event_id, vm.meet_name,
-                   COALESCE(
-                       CASE WHEN mm.gender IN ('M', 'F') THEN mm.gender END,
-                       CASE WHEN r.event_short ~* '(^|[^a-z])(boys|men|mens|men''s)([^a-z]|$)' THEN 'M'
-                            WHEN r.event_short ~* '(^|[^a-z])(girls|women|womens|women''s)([^a-z]|$)' THEN 'F'
-                       END) AS ev_gender
-            FROM   venue_meets vm
-            JOIN   results_tf r
-                   ON r.meet_id = vm.meet_id AND r.div_id = vm.div_id
-                  AND r.event_id = vm.event_id
-            LEFT   JOIN meets_tf_meta mm ON mm.meet_id = vm.meet_id
-            WHERE  COALESCE(r.is_relay, 0) = 0
-              AND  r.person_id IS NOT NULL
-              AND  NULLIF(btrim(r.event_short), '') IS NOT NULL
-        )
-        SELECT DISTINCT ON (person_id, lower(event_short)) *
-        FROM   rows_
-        WHERE  NOT COALESCE(is_field, 0)::boolean
+        SELECT DISTINCT ON (person_id, lower(event_short)) *,
+               COALESCE(meet_gender,
+                   CASE WHEN event_short ~* '(^|[^a-z])(boys|men|mens|men''s)([^a-z]|$)' THEN 'M'
+                        WHEN event_short ~* '(^|[^a-z])(girls|women|womens|women''s)([^a-z]|$)' THEN 'F'
+                   END) AS ev_gender
+        FROM   venue_rows
+        WHERE  is_relay = 0 AND NOT COALESCE(is_field, 0)::boolean
+          AND  person_id IS NOT NULL
+          AND  NULLIF(btrim(event_short), '') IS NOT NULL
           AND  time_seconds > 0 AND time_seconds < 19999
         ORDER  BY person_id, lower(event_short), time_seconds
-    """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
+    """)
     rows = [dict(r) for r in cur.fetchall()]
     cur.execute("""
-        SELECT r.result_id, r.person_id, r.school, r.time_seconds, r.mark,
-               r.is_field, r.date, r.event_short, r.grade, vm.meet_id,
-               vm.div_id, vm.event_id, vm.meet_name,
-               CASE WHEN mm.gender IN ('M', 'F') THEN mm.gender END AS ev_gender
-        FROM   meets_tf vm
-        JOIN   results_tf r
-               ON r.meet_id = vm.meet_id AND r.div_id = vm.div_id
-              AND r.event_id = vm.event_id
-        LEFT   JOIN meets_tf_meta mm ON mm.meet_id = vm.meet_id
-        WHERE  vm.location_id = %(loc)s AND COALESCE(vm.is_indoor, 0) = %(indoor)s
-          AND  COALESCE(r.is_relay, 0) = 0 AND COALESCE(r.is_field, 0) = 1
-          AND  r.person_id IS NOT NULL AND r.mark IS NOT NULL
-    """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
+        SELECT *, meet_gender AS ev_gender
+        FROM   venue_rows
+        WHERE  is_relay = 0 AND COALESCE(is_field, 0) = 1
+          AND  person_id IS NOT NULL AND mark IS NOT NULL
+          AND  NULLIF(btrim(event_short), '') IS NOT NULL
+    """)
     rows += [dict(r) for r in cur.fetchall()]
     # the person's gender where the meet and the event's words are silent
     need = sorted({r["person_id"] for r in rows if not r.get("ev_gender")})
@@ -7749,35 +7736,21 @@ def get_tf_venue_individual_records(cur, location_id, is_indoor, per_event=5,
 
 def get_tf_venue_meets(cur, location_id, is_indoor, limit=50):
     """Meets held at this venue, newest first."""
+    _ensureVenueRows(cur, location_id, is_indoor)
     cur.execute("""
-        SELECT m.meet_id,
-               MAX(m.meet_name) AS meet_name,
-               MAX(r.date)      AS last_date,
-               COUNT(*)         AS n_results
-        FROM   meets_tf m
-        JOIN   results_tf r
-               ON r.meet_id = m.meet_id AND r.div_id = m.div_id
-              AND r.event_id = m.event_id
-        WHERE  m.location_id = %(loc)s
-          AND  COALESCE(m.is_indoor,0) = %(indoor)s
-        GROUP  BY m.meet_id
-        ORDER  BY MAX(r.date) DESC
+        SELECT meet_id, MAX(meet_name) AS meet_name, MAX(date) AS last_date,
+               COUNT(*) AS n_results
+        FROM   venue_rows
+        GROUP  BY meet_id
+        ORDER  BY MAX(date) DESC
         LIMIT  %(limit)s
-    """, {"loc": location_id, "indoor": 1 if is_indoor else 0, "limit": limit})
+    """, {"limit": limit})
     return cur.fetchall()
 
 
 @app.route("/venue/tf/<int:location_id>/<indoor>")
 def venue_tf(location_id, indoor):
     is_indoor = (indoor == "in")
-    # ★ THE BUILT PAGE, KEPT (owner, 2026-10-09: "venue page loads too
-    #   slow"): a busy venue's records read every result run there, so the
-    #   course page's in-process cache applies here too, same lifetime.
-    key = (location_id, is_indoor)
-    hit = _VENUE_CACHE.get(key)
-    if hit and time.time() - hit[0] < _COURSE_TTL:
-        return render_template("venue_tf.html", **hit[1])
-
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             label      = get_tf_venue_label(cur, location_id, is_indoor)
@@ -7820,9 +7793,6 @@ def venue_tf(location_id, indoor):
                            individual=individual,
                            relays=relays,
                            venue_meets=venue_meets)
-    _VENUE_CACHE[key] = (time.time(), ctx)
-    if len(_VENUE_CACHE) > _COURSE_MAX:
-        _VENUE_CACHE.pop(min(_VENUE_CACHE, key=lambda k: _VENUE_CACHE[k][0]), None)
     return render_template("venue_tf.html", **ctx)
 
 def pad_pool_pairs(panels):

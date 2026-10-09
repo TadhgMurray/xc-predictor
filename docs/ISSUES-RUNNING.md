@@ -5788,3 +5788,10 @@ Chromium against the old script (readout 15:00, label under the pointer
 - ✅ Compare page in the race page's shape: "A vs B" title, the record on
   the meta line with Share, the two athletes as the champion line, the
   chart, then Meetings / Season by season / Best performances tabs.
+- ✅ **Venue page, no cache: one pass.** The best marks, records, relays and
+  meet list each joined meets_tf to results_tf for the venue again; the
+  first of them now copies the venue's rows into a transaction-local temp
+  table (_ensureVenueRows) and all four read that. The in-process cache is
+  gone.
+- ✅ eventFamily folds the abbreviations too: Hj, Lj, Tj, Pv, Shot/SP, DT,
+  JT, HT, WT; "55mh" / "300mh" / "110 h"; "F/s" and stray punctuation.
