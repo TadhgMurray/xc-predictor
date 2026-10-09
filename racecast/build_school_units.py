@@ -40,6 +40,11 @@ import psycopg2.extras                                  # noqa: E402
 
 from database import getConn                            # noqa: E402
 from dbfast import swapTable                            # noqa: E402
+# ★ "UNATTACHED" IS NOT A SCHOOL (owner, 2026-10-09: an unattached former
+#   Furman runner on the DIII board). Its rows at DIII meets voted the
+#   string a DIII division, and every unattached season took it. The team
+#   test the boards use (meet_compile.isTeam) keeps such names out.
+from meet_compile import isTeam                          # noqa: E402
 import check_school_units as C                          # noqa: E402
 import school_unit_overrides as OV                      # noqa: E402
 
@@ -232,6 +237,8 @@ def main():
             votes, _seasons, _eg, (st_, _h, _m) = C.buildVotes(cur, sport)
             n_ok = n_clash = 0
             for (school, st), kinds in votes.items():
+                if not isTeam(school):
+                    continue
                 row = _rowFor(school, st, kinds)
                 if row is None:
                     continue

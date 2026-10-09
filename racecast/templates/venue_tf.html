@@ -109,7 +109,7 @@
                 <td>{{ row.display_result }}</td>
                 <td>{{ row.grade|grade_label(row.rating_pool or row.label_pool) if row.grade else " - " }}</td>
                 <td>{{ row.school if row.school else " - " }}</td>
-                <td><a href="/race/tf/{{ row.meet_id }}/{{ row.event_id }}/{{ row.div_id }}">{{ row.meet_name }}</a></td>
+                <td><a href="/race/tf/{{ row.meet_id }}/{{ row.event_id }}/{{ row.div_id }}{% if row.result_id %}?r={{ row.result_id }}{% endif %}">{{ row.meet_name }}</a></td>
                 <td class="no-break">{{ row.date|mdy }}</td>
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
             </tr>

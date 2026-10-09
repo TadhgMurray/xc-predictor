@@ -5712,3 +5712,13 @@ Chromium against the old script (readout 15:00, label under the pointer
   its existing note); HS-only pages (projections, recruiting) where own ==
   HS. tests/test_scale_sort's "a scale flip refetches" check was already
   failing before this (it looks 600 characters past the first mention).
+- ✅ **Unattached runner on the DIII board (owner: Bryn Woodall, ex-Furman).**
+  school_unit gave the string "Unattached" a division from the DIII meets its
+  rows ran at, and every unattached season took it. build_school_units skips
+  names that are not teams (meet_compile.isTeam); build_ranking_results'
+  _unitsOf returns none for them and the season stamp clears them, so the
+  next run is clean before school_unit (10b) rebuilds.
+- ✅ **A linked result lights up.** static/link-flash.js (from _topbar, every
+  page): the row named by #fragment or ?r=<result id> scrolls to centre and
+  flashes the race page's gold. Course records, school bests, school PRs and
+  venue bests now link with ?r= so their rows are found.

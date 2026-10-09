@@ -149,7 +149,7 @@
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ r.distance }}m</td>
                         <td>{% set sst = r.school_state or header.state %}{% set sok = r.school_state %}{% if r.school and r.school|is_team %}{{ crest(r.school, sst, trusted=sok) }}<a href="{{ school_href(r.school, sst, trusted=sok) }}" title="{{ r.school }}">{{ r.school|school_label_in(sst, sok) }}</a>{% elif r.school %}{{ r.school|school_label_in(sst, sok) }}{% else %} - {% endif %}</td>
-                        <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a></td>
+                        <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}
                     {{ more_row(rows, 7) }}
@@ -219,7 +219,7 @@
                         <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
                         <td>{{ r.grade|grade_label(r.rating_pool or r.label_pool) if r.grade else " - " }}</td>
                         <td>{% set sst = r.school_state or header.state %}{% set sok = r.school_state %}{% if r.school and r.school|is_team %}{{ crest(r.school, sst, trusted=sok) }}<a href="{{ school_href(r.school, sst, trusted=sok) }}" title="{{ r.school }}">{{ r.school|school_label_in(sst, sok) }}</a>{% elif r.school %}{{ r.school|school_label_in(sst, sok) }}{% else %} - {% endif %}</td>
-                        <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a></td>
+                        <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}
                     {{ more_row(rows, 7) }}
@@ -291,7 +291,7 @@
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ r.grade|grade_label(r.rating_pool or r.label_pool) if r.grade else " - " }}</td>
                         <td>{% set sst = r.school_state or header.state %}{% set sok = r.school_state %}{% if r.school and r.school|is_team %}{{ crest(r.school, sst, trusted=sok) }}<a href="{{ school_href(r.school, sst, trusted=sok) }}" title="{{ r.school }}">{{ r.school|school_label_in(sst, sok) }}</a>{% elif r.school %}{{ r.school|school_label_in(sst, sok) }}{% else %} - {% endif %}</td>
-                        <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}">{{ r.date|mdy }}</a></td>
+                        <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}
                     {{ more_row(rows, 7) }}

@@ -920,6 +920,20 @@ def _isCollegePool(pool):
     return bool(pool) and str(pool).split("|")[0].startswith("college")
 
 
+_TEAM_CACHE = {}
+
+
+def _isTeamName(school):
+    """meet_compile.isTeam, cached per string: 'Unattached', 'N/A' and the
+    like carry no units (owner, 2026-10-09, an unattached runner on the
+    DIII board via school_unit's 'Unattached' entry)."""
+    got = _TEAM_CACHE.get(school)
+    if got is None:
+        from meet_compile import isTeam
+        got = _TEAM_CACHE[school] = isTeam(school)
+    return got
+
+
 def _unitsOf(school, state, pool=None):
     """The unit values for a row, or Nones.
 
@@ -934,7 +948,7 @@ def _unitsOf(school, state, pool=None):
     A school_unit with no is_college column keys every row under None,
     which both levels fall back to -- the old, level-blind behaviour."""
     none = (None,) * len(_UNIT_COLS)
-    if not school:
+    if not school or not _isTeamName(school):
         return none
     college = _isCollegePool(pool)
     by_key, by_school = _UNITS["by_key"], _UNITS["by_school"]
@@ -3216,9 +3230,20 @@ def _stampSeasonUnits(conn, season_table):
                                       AND NOT COALESCE({'x.is_college' if 'is_college' in have else 'false'}, false)) = 1)
             """)
             n2 = cur.rowcount
+            # ! AND NONE FOR A NAME THAT IS NOT A TEAM (_isTeamName): an
+            #   older school_unit still holds 'Unattached' and the like
+            cur.execute(f"SELECT DISTINCT school FROM {season_table} WHERE school IS NOT NULL")
+            not_team = [sch for (sch,) in cur.fetchall() if not _isTeamName(sch)]
+            n3 = 0
+            if not_team:
+                nulls = ", ".join(f'"{c}" = NULL' for c in cols)
+                cur.execute(f"UPDATE {season_table} SET {nulls} WHERE school = ANY(%s)",
+                            (not_team,))
+                n3 = cur.rowcount
             conn.commit()
             print(f"    [{time.time() - t0:7.1f}s] season units: {n0:,} colleges by campus, "
-                  f"{n1:,} by (school, state), {n2:,} by school")
+                  f"{n1:,} by (school, state), {n2:,} by school; {n3:,} cleared "
+                  f"(not a team)")
         except Exception as exc:                        # noqa: BLE001
             conn.rollback()
             print(f"    season units not stamped ({exc})")

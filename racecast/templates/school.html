@@ -300,8 +300,8 @@
                 <td>{{ b.grade|grade_label(b.pool) if b.grade else "" }}</td>
                 <td>{{ rv(b.rating, b.hs_rating) }}</td>
                 <td>{{ b.year }}</td>
-                <td>{% if sport == 'XC' %}<a href="/race/xc/{{ b.meet_id }}/{{ b.div_id }}">{{ b.race_date|mdy }}</a>
-                    {% elif b.event_id %}<a href="/race/tf/{{ b.meet_id }}/{{ b.event_id }}/{{ b.div_id }}">{{ b.race_date|mdy }}</a>
+                <td>{% if sport == 'XC' %}<a href="/race/xc/{{ b.meet_id }}/{{ b.div_id }}{% if b.result_id %}?r={{ b.result_id }}{% endif %}">{{ b.race_date|mdy }}</a>
+                    {% elif b.event_id %}<a href="/race/tf/{{ b.meet_id }}/{{ b.event_id }}/{{ b.div_id }}{% if b.result_id %}?r={{ b.result_id }}{% endif %}">{{ b.race_date|mdy }}</a>
                     {% else %}{{ b.race_date|mdy }}{% endif %}</td>
             </tr>
             {% endfor %}

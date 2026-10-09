@@ -5894,3 +5894,10 @@ td.pl.rc-m3 > span { background: var(--m3); }
    race pages: set on every .flag it also changed the athlete page's badges,
    which the owner wanted left as they were. */
 main.rc .flag { line-height: 13px; vertical-align: 1px; }
+
+/* ★ THE LINKED ROW LIGHTS UP (owner, 2026-10-09; static/link-flash.js),
+   the same pale gold as the race page's rc-flash and the athlete chart's
+   race-flash. On a row the cells carry the colour (a tr background is
+   hidden under cells with their own). */
+.link-flash, tr.link-flash > td { animation: link-flash 1.6s ease-out; }
+@keyframes link-flash { 0% { background: #fdeeb5; } 100% { background: transparent; } }
