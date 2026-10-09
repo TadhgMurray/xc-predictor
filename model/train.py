@@ -248,6 +248,45 @@ GRAD_CLIP = 1.0
 # is_available() returns True; if it ever doesn't, we fall back to CPU.
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# ★ SEVERAL GPUS, ONE PROCESS EACH (owner, 2026-10-09: "add multi-gpu
+#   support"). Launched as
+#       torchrun --nproc_per_node=2 model/train.py --data ... --workers 6
+#   torchrun sets these; a plain `python train.py` sees WORLD 1 and every
+#   line below behaves exactly as before. Each process trains on its own
+#   share of the batches and DistributedDataParallel averages the gradients
+#   after every backward, so N GPUs take one optimizer step on N batches:
+#   the effective batch is --batch x N (scale --lr with it, as --batch says).
+#   Rank 0 alone prints and writes files; --workers is PER PROCESS, so the
+#   pod's vCPUs are shared N ways.
+WORLD = int(os.environ.get("WORLD_SIZE", "1"))
+RANK = int(os.environ.get("RANK", "0"))
+LOCAL_RANK = int(os.environ.get("LOCAL_RANK", "0"))
+
+
+def _allReduce(t, op="sum"):
+    """t summed (or maxed) over every process, in place; a no-op alone."""
+    if WORLD > 1:
+        import torch.distributed as dist
+        dist.all_reduce(t, op=dist.ReduceOp.MAX if op == "max"
+                        else dist.ReduceOp.SUM)
+    return t
+
+
+class _DistStep(nn.Module):
+    """forwardDist as a forward(), for DistributedDataParallel.
+
+    ! DDP ONLY SYNCS GRADIENTS FOR CALLS THROUGH ITS OWN forward(). The loop
+      calls model.forwardDist; calling it on the unwrapped model under DDP
+      would train N diverging copies with no error. This shim makes the
+      wrapped call the same method."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, sequences, masks, context, venues=None):
+        return self.model.forwardDist(sequences, masks, context, venues)
+
 
 # _autocast
 # Purpose:  the mixed-precision context, or a no-op.
@@ -531,6 +570,12 @@ class ChunkAwareBatchSampler:
         self.chunk_size = base.chunk_size
         self.batch_size = batch_size
         self.shuffle = shuffle
+        # ★ ONE SHARE OF THE BATCHES PER PROCESS under torchrun (WORLD > 1):
+        #   every process builds the same list in the same order (a seeded
+        #   RNG, stepped per epoch) and takes every WORLD-th batch from its
+        #   RANK. Batches stay whole, so each still sits inside one chunk.
+        self.rank, self.world = RANK, WORLD
+        self.epoch = 0
 
         # ⚠ YIELD POSITIONS, NOT GLOBAL INDICES. DataLoader hands whatever a
         #   batch_sampler yields straight to dataset[i] -- and when `dataset`
@@ -574,6 +619,9 @@ class ChunkAwareBatchSampler:
 
     def __iter__(self):
         import random
+        if self.world > 1:
+            random = random.Random(SEED + self.epoch)   # the same on every rank
+        self.epoch += 1
         chunk_ids = list(self.by_chunk)
         if self.shuffle:
             random.shuffle(chunk_ids)
@@ -590,13 +638,30 @@ class ChunkAwareBatchSampler:
                 batches.append(rows[start:start + self.batch_size])
         if self.shuffle and self.bucketed:
             random.shuffle(batches)
-        yield from batches
+        yield from self._share(batches)
+
+    def _share(self, batches):
+        if self.world == 1:
+            return batches
+        # ⚠ TRAINING SHARES MUST BE THE SAME LENGTH. Every backward is a
+        #   collective; a process with one batch more waits forever for the
+        #   others. The remainder (under WORLD batches, reshuffled each
+        #   epoch) is left out. Validation runs no collective per batch, so
+        #   it keeps every batch.
+        if self.shuffle:
+            batches = batches[:len(batches) // self.world * self.world]
+        return batches[self.rank::self.world]
 
     def __len__(self) -> int:
         # Number of BATCHES, not examples -- DataLoader reports this as
         # len(loader), and a wrong value here silently truncates an epoch.
-        return sum((len(v) + self.batch_size - 1) // self.batch_size
-                   for v in self.by_chunk.values())
+        total = sum((len(v) + self.batch_size - 1) // self.batch_size
+                    for v in self.by_chunk.values())
+        if self.world == 1:
+            return total
+        if self.shuffle:
+            return total // self.world
+        return len(range(self.rank, total, self.world))
 
 
 # buildDataLoader
@@ -1141,7 +1206,10 @@ def splitTrainVal(dataset):
 #           criterion: HuberLoss on the z-scored log ratio
 #           scheduler: the warmup/cosine LR schedule, stepped per batch
 # Output:  (average training loss, throughput dict)
-def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None):
+def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None,
+                   fwd=None):
+    # fwd: the DistributedDataParallel-wrapped forwardDist under torchrun
+    fwd = fwd or model.forwardDist
 
     # Flips model into training mode, dropout on.
     model.train()
@@ -1182,8 +1250,8 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None):
 
         optimizer.zero_grad()                      # 1. clear old gradients
         with _autocast():
-            mu, logvar = model.forwardDist(sequences, masks, context,
-                                           venues)             # 2. forward
+            mu, logvar = fwd(sequences, masks, context,
+                             venues)                           # 2. forward
         # The likelihood in fp32: exp(logvar) under bf16 is too coarse.
         loss = criterion(mu.to(torch.float32), z_true,
                          torch.exp(logvar.to(torch.float32)) + VAR_EPS)
@@ -1194,7 +1262,12 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None):
         #   and the checkpoint written at the end of it is worthless. The
         #   clamp above should mean this never fires; if it does, the batch
         #   is dropped and counted rather than allowed to end the run.
-        if not torch.isfinite(loss):
+        # ! AND EVERY PROCESS DROPS IT TOGETHER: one skipping a backward the
+        #   others run would leave them waiting on its gradients forever.
+        finite = torch.isfinite(loss.detach()).to(torch.float32).reshape(1)
+        if WORLD > 1:
+            finite = 1.0 - _allReduce(1.0 - finite, op="max")
+        if not bool(finite.item()):
             n_bad += 1
             optimizer.zero_grad(set_to_none=True)
             if scheduler is not None:
@@ -1213,7 +1286,8 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None):
         _t_batch = time.time()
 
     elapsed = max(time.time() - t_start, 1e-9)
-    stats = {"examples_per_s": n_examples / elapsed,
+    # every process ran an equal share, so the run's rate is WORLD times this one's
+    stats = {"examples_per_s": n_examples * WORLD / elapsed,
              "steps_per_s": n_batches / elapsed,
              "clamped": n_clamped,
              "bad_batches": n_bad,
@@ -1366,6 +1440,21 @@ def _validateOneEpoch(model, loader, criterion):
             total_loss += loss.item()
             n_batches  += 1
 
+    # ★ EACH PROCESS SCORED ITS OWN SHARE; the sums are pooled so every rank
+    #   reports -- and early-stops on -- the same whole-set numbers.
+    if WORLD > 1:
+        nb = len(GAP_BANDS)
+        acc = torch.tensor([total_loss, n_batches, err_model, err_base, sq_err,
+                            sq_sig, inside, n_ex, pair_model, pair_base, pair_n]
+                           + band_err + band_base + band_n,
+                           dtype=torch.float64, device=DEVICE)
+        acc = _allReduce(acc).tolist()
+        (total_loss, n_batches, err_model, err_base, sq_err, sq_sig, inside,
+         n_ex, pair_model, pair_base, pair_n) = acc[:11]
+        band_err = acc[11:11 + nb]
+        band_base = acc[11 + nb:11 + 2 * nb]
+        band_n = [int(x) for x in acc[11 + 2 * nb:]]
+        pair_n = int(pair_n)
     n_ex = max(n_ex, 1)
     bands = [{"label": lab, "n": band_n[b],
               "model_pct": 100.0 * band_err[b] / max(band_n[b], 1),
@@ -1525,8 +1614,9 @@ def main():
     # 3. Input and target stats from the TRAIN side of a chunk prefix, saved
     #    beside the model and stamped into the model's buffers.
     is_train = _trainSideMask(dataset, train_subset)
-    stats = computeStats(dataset, is_train)
-    saveTargetStats(stats, STATS_OUT)
+    stats = computeStats(dataset, is_train)      # every rank: the same numbers
+    if RANK == 0:
+        saveTargetStats(stats, STATS_OUT)
     # ! THE LABEL NAMES THE RULE, because under --baseline ewma "ln(t/last)"
     #   and "last-race error" are both false and the number would be read as
     #   a comparison it is not.
@@ -1587,15 +1677,31 @@ def main():
     #   file, multiplies by a std that is close but not equal, and every
     #   prediction comes back slightly wrong forever. Two sources of truth
     #   for one number, so the model's own buffers are made the only one.
-    if start_epoch > 0:
+    if start_epoch > 0 and RANK == 0:
         saveTargetStats(_statsFromModel(model, stats), STATS_OUT)
         print(f"  target_stats.pkl rewritten from the checkpoint: "
               f"mean {float(model.target_mean):+.4f} "
               f"std {float(model.target_std):.4f}")
 
+    # ★ WRAPPED AFTER THE RESUME, so DDP's start-up broadcast sends rank 0's
+    #   loaded weights (every rank loaded the same checkpoint anyway).
+    #   Buffers -- the feature and target stats -- are identical on every
+    #   rank and never trained, so they are not re-broadcast each step.
+    fwd = None
+    if WORLD > 1:
+        import warnings
+        from torch.nn.parallel import DistributedDataParallel
+        # newer torch renames broadcast_buffers but keeps it working; the
+        # rename's replacement still syncs at init, which is not wanted here
+        warnings.filterwarnings("ignore", message=".*broadcast_buffers.*")
+        fwd = DistributedDataParallel(
+            _DistStep(model),
+            device_ids=[LOCAL_RANK] if DEVICE.type == "cuda" else None,
+            broadcast_buffers=False)
+
     for epoch in range(start_epoch, EPOCHS):
         train_loss, st = _trainOneEpoch(model, train_loader, optimizer,
-                                        criterion, scheduler)
+                                        criterion, scheduler, fwd)
         val_loss, pct_model, pct_base, cal = _validateOneEpoch(
             model, val_loader, criterion)
 
@@ -1635,7 +1741,8 @@ def main():
         if val_loss < best_val_loss - MIN_DELTA:
             best_val_loss = val_loss
             bad_epochs = 0
-            _saveModel(model, MODEL_OUT)
+            if RANK == 0:
+                _saveModel(model, MODEL_OUT)
             print(f"  ↳ new best, saved to {MODEL_OUT}")
         else:
             bad_epochs += 1
@@ -1643,7 +1750,7 @@ def main():
 
         # ! EVERY EPOCH, IMPROVED OR NOT. An epoch that got worse is still an
         #   epoch you do not want to pay for twice.
-        if CHECKPOINT:
+        if CHECKPOINT and RANK == 0:
             _saveCheckpoint(CHECKPOINT, model, optimizer, epoch + 1,
                             best_val_loss, bad_epochs, scheduler)
 
@@ -1730,6 +1837,18 @@ if __name__ == "__main__":
                           "optimizer state.")
     _args = _ap.parse_args()
 
+    if WORLD > 1:
+        import torch.distributed as _dist
+        if torch.cuda.is_available():
+            torch.cuda.set_device(LOCAL_RANK)
+            DEVICE = torch.device("cuda", LOCAL_RANK)
+        _dist.init_process_group("nccl" if DEVICE.type == "cuda" else "gloo")
+        # ! ONE LOG, NOT N: the other ranks' prints are dropped. Their
+        #   numbers are pooled into rank 0's lines anyway.
+        if RANK != 0:
+            def print(*_a, **_k):
+                pass
+
     # ⚠ FIRST, because MODEL_OUT and STATS_OUT are derived from it.
     if _args.data:
         DATA_DIR = _args.data
@@ -1753,7 +1872,7 @@ if __name__ == "__main__":
         for _name in ("encoders.pkl", "venue_vocab.pkl"):
             _src = os.path.join(DATA_DIR, _name)
             _dst = os.path.join(OUT_DIR, _name)
-            if os.path.exists(_src) and not os.path.exists(_dst):
+            if RANK == 0 and os.path.exists(_src) and not os.path.exists(_dst):
                 _shutil.copy2(_src, _dst)
                 print(f"  copied {_name} -> {OUT_DIR}")
     if _args.max_chunks:
@@ -1787,7 +1906,9 @@ if __name__ == "__main__":
     #   invisible in the log and two windows' epochs read as one run.
     print(f"device {DEVICE}  batch {BATCH_SIZE}  lr {LEARNING_RATE}  "
           f"workers {NUM_WORKERS}  amp {USE_AMP}  "
-          f"epochs<={EPOCHS} patience {PATIENCE}"
+          + (f"processes {WORLD} (effective batch {BATCH_SIZE * WORLD}, "
+             f"workers per process)  " if WORLD > 1 else "")
+          + f"epochs<={EPOCHS} patience {PATIENCE}"
           + (f"  checkpoint {CHECKPOINT}" if CHECKPOINT else
              "  NO CHECKPOINT -- an interrupted run starts over"))
     # ⚠ NAMED TOO, because two runs over the same chunks with different
@@ -1804,3 +1925,6 @@ if __name__ == "__main__":
              if BASELINE == BASELINE_BEST2 else "last race alone")
           + "  (a retrain, not a re-extraction -- see transformer.BASELINE_LAST)")
     main()
+    if WORLD > 1:
+        _dist.barrier()
+        _dist.destroy_process_group()
