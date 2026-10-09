@@ -10,6 +10,11 @@
 
   ★ THE SCORE IS COMPUTED, NOT OFFICIAL. The note under "Team points"
     says exactly how it was scored.
+
+  ★ THE RACE PAGE'S SHAPE (owner, 2026-10-09), as compiled.html and
+    meet_tf.html: a one-column header with the team winners as the
+    champion line, Events | Team points as tabs, and each gender's top
+    five beside them. race.css carries the layout, race-page.js the tabs.
 ===================================================================== #}
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
@@ -23,35 +28,71 @@
        "points and each event's individual scores on one page." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
-<main class="page-wide">
+<main class="page-wide rc ctf-page">
+{# the division whose standings head the page: the first one scored. The
+   champion line and the side card read the same standings the Team points
+   tab shows -- official where the block shows official, ?score=computed
+   honoured -- so the three never disagree. #}
+{% set official_on = request.args.get('score') != 'computed' %}
+{% set d0 = scored.divisions|selectattr('teams')|first %}
+{% set has_teams = d0 and (d0.teams.M or d0.teams.F) %}
+{% set ns = namespace(n_events=0) %}
+{% for div in scored.divisions %}{% set ns.n_events = ns.n_events + div.events|length %}{% endfor %}
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--tf">{{ "Indoor track" if header.is_indoor == 1 else "Outdoor track" }} · compiled</span></div>
+    <div class="rc-kick"><a href="/meet/tf/{{ header.meet_id }}{{ ('?alt=' ~ alt_idx) if alt_idx }}">View full meet →</a></div>
     <h1>{{ header.meet_name }}</h1>
-    <p class="meta">
-        {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }}
-        {% if meet_date %} · {{ meet_date|mdy }}{% endif %}
-        {% if header.state %} · {{ header.state }}{% endif %}
-        · Compiled results
-    </p>
-    <p><a class="meet-link" href="/meet/tf/{{ header.meet_id }}{{ ('?alt=' ~ alt_idx) if alt_idx }}">View full meet →</a></p>
-
-    {% if other_sources %}
-    {# Same collision note as meet_tf.html: one id, two real-world meets.
-       No feed names, in the text or the URL. #}
-    <p class="meta source-split-note">
-        Two different meets share this page address.
-        {% for o in other_sources %}
-        <a href="?alt={{ o.alt }}">View the other meet</a>{{ ", " if not loop.last }}
-        {% endfor %}
-    </p>
+    <div class="rc-meta">
+      {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }}
+      {%- if meet_date %} · {{ meet_date|mdy }}{% endif %}
+      {%- if header.state %} · {{ header.state }}{% endif %}
+      · Compiled results
+      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name ~ ' compiled results on Racecast' }}"
+            data-share-url="{{ site_origin ~ '/meet/tf/' ~ header.meet_id ~ '/compiled' ~ ('?alt=' ~ alt_idx if alt_idx else '') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+    </div>
+    {% if has_teams %}
+    <div class="rc-champs">
+      {% for g, g_label in [("M", "Boys"), ("F", "Girls")] %}
+      {% set st = (official_on and d0.official and d0.official[g]) or d0.teams[g] %}
+      {% if st %}{% set t = st[0] %}
+      <div><span class="k">{{ g_label }} team</span>
+        <span class="rc-crow">{% if (t.link_school or t.school)|is_team %}{{ crest(t.link_school or t.school, t.link_state) }}{% endif %}<b class="rc-cn">{% if (t.link_school or t.school)|is_team %}<a href="{{ school_href(t.link_school or t.school, t.link_state) }}">{{ t.school|school_label }}</a>{% else %}{{ t.school|school_label }}{% endif %}</b><i>{{ t.display }} pts</i></span></div>
+      {% endif %}
+      {% endfor %}
+    </div>
     {% endif %}
+  </div>
+</div></header>
 
-    {{ tf_team_block(scored.divisions) }}
+{% if other_sources %}
+{# Same collision note as meet_tf.html: one id, two real-world meets.
+   No feed names, in the text or the URL. #}
+<p class="meta source-split-note">
+    Two different meets share this page address.
+    {% for o in other_sources %}
+    <a href="?alt={{ o.alt }}">View the other meet</a>{{ ", " if not loop.last }}
+    {% endfor %}
+</p>
+{% endif %}
 
-{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+<div class="rc-w rc-grid{% if not has_teams %} rc-grid-one{% endif %}">
+<div class="rc-mainc">
+  <div class="rc-tbar">
+    {# one section without team points: no tab bar, the events stand alone #}
+    {% if has_teams %}<nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#events" data-tab="events">Events<span class="n">{{ ns.n_events }}</span></a>
+      <a class="seg-btn" href="#teams" data-tab="teams">Team points</a>
+    </nav>{% endif %}
+    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+  </div>
 
+  <section class="rc-panel" id="events" data-panel="events">
 {% for div in scored.divisions %}
 {% for ev in div.events %}
     {% set g_label = "Boys" if ev.gender == 'M' else "Girls" if ev.gender == 'F' else "" %}
@@ -64,42 +105,83 @@
             {{- " · Best marks, finals scored" if ev.scored_finals -}}
             {{- " · Not scored" if not ev.scored -}}
         </span></h2>
-    <table>
+    {# ★ THE RACE TABLE'S PHONE FOLD: on a phone the school drops under the
+       athlete's name (.rc-subline) and the School column hides (.rc-wide);
+       a relay keeps its School column, it is the only name the row has. #}
+    <table class="rc-table">
         <thead><tr>
             <th>Place</th>
             {% if not ev.is_relay %}<th>Athlete</th>{% endif %}
-            <th>School</th>
-            <th>{{ "Mark" if ev.is_field else "Time" }}</th>
+            <th{% if not ev.is_relay %} class="rc-wide"{% endif %}>School</th>
+            <th class="n">{{ "Mark" if ev.is_field else "Time" }}</th>
             {# Relays have no per-athlete rating; field marks have none either. #}
-            {% if not ev.is_field and not ev.is_relay %}<th>Rating</th>{% endif %}
-            <th>Points</th>
+            {% if not ev.is_field and not ev.is_relay %}<th class="n">Rating</th>{% endif %}
+            <th class="n">Points</th>
         </tr></thead>
         <tbody>
             {% for row in ev.rows %}
             <tr>
-                <td>{{ row.place_label }}</td>
+                <td class="pl">{{ row.place_label }}</td>
                 {% if not ev.is_relay %}
-                <td>
+                <td class="nm">
                     {% if row.person_id %}
                         <a href="/athlete/{{ row.person_id }}{% if row.result_id %}?r={{ row.result_id }}{% endif %}">{{ row.athlete_name if row.athlete_name else "Unknown" }}</a>
                     {% else %}
                         {{ row.athlete_name if row.athlete_name else "Unknown" }}
                     {% endif %}
+                    {% if row.school %}<span class="rc-subline">{% if row.school|is_team %}{{ crest(row.school, header.state) }}{{ row.school|school_label_in(header.state) }}{% else %}{{ row.school|school_label }}{% endif %}</span>{% endif %}
                 </td>
                 {% endif %}
-                <td>{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}<a href="{{ school_href(row.school, header.state) }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label }}{% else %} - {% endif %}</td>
-                <td class="no-break">{{ row.display_result }}</td>
-                {% if not ev.is_field and not ev.is_relay %}<td>{{ rv(row.speed_rating, row.hs_rating) }}</td>{% endif %}
-                {% if row.points %}<td class="pts">{{ row.points }}</td>{% else %}<td></td>{% endif %}
+                <td class="sch{% if not ev.is_relay %} rc-wide{% endif %}">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}<a href="{{ school_href(row.school, header.state) }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label }}{% else %} - {% endif %}</td>
+                <td class="n no-break">{{ row.display_result }}</td>
+                {% if not ev.is_field and not ev.is_relay %}<td class="n">{{ rv(row.speed_rating, row.hs_rating) }}</td>{% endif %}
+                {% if row.points %}<td class="n pts">{{ row.points }}</td>{% else %}<td></td>{% endif %}
             </tr>
             {% endfor %}
         </tbody>
     </table>
 {% endfor %}
 {% endfor %}
+  </section>
+
+  {% if has_teams %}
+  <section class="rc-panel" id="teams" data-panel="teams">
+    {{ tf_team_block(scored.divisions) }}
+  </section>
+  {% endif %}
+</div>
+{% if has_teams %}
+{# ★ THE TEAM FIGHT BESIDE THE EVENTS, as meet_tf.html's card: the first
+   scored division's top five per gender; "All team points" opens the tab
+   with every division and team. #}
+<aside class="rc-side">
+  <h2>Team points <small>{{ d0.name if d0.name and d0.name != "All divisions" else "top 5" }}</small></h2>
+  {% for g, g_label in [("M", "Boys"), ("F", "Girls")] %}
+  {% set st = (official_on and d0.official and d0.official[g]) or d0.teams[g] %}
+  {% if st %}
+  <h4 class="rec-gender">{{ g_label }}</h4>
+  <table class="rc-tscores rc-tscores-plain">
+    <tbody>
+    {% for t in st[:5] %}
+    <tr>
+      <td class="tp">{{ t.place_label }}</td>
+      <td class="tn">{% if (t.link_school or t.school)|is_team %}{{ crest(t.link_school or t.school, t.link_state) }}<a href="{{ school_href(t.link_school or t.school, t.link_state) }}">{{ t.school|school_label }}</a>{% else %}{{ t.school|school_label }}{% endif %}</td>
+      <td class="n tpts">{{ t.display }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% endfor %}
+  <a class="rc-more" href="#teams" data-tab="teams">All team points</a>
+</aside>
+{% endif %}
+</div>
 
 </main>
+<script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('staged.js') }}"></script>
+{% if has_teams %}<script src="{{ static_v('race-page.js') }}"></script>{% endif %}
 </body>
 </html>
