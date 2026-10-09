@@ -236,3 +236,7 @@ main.rc .rc-share-link:hover span { text-decoration: underline; }
 main.rc .rc-win .mk { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: .25rem; white-space: nowrap; }
 main.rc .rc-tscores-plain tr { cursor: default; }
 main.rc .rc-side .rec-gender { margin: .8rem 0 .3rem; }
+/* the course page's Recent meets card has no conversion to swap in on the
+   track tab: the grid goes to one column instead of an empty sidebar */
+main.rc.rc-on-track .rc-grid:has(> .rc-side:not(:has(.rc-conv))) { grid-template-columns: minmax(0, 1fr); }
+main.rc.rc-on-track .rc-side:not(:has(.rc-conv)) { display: none; }

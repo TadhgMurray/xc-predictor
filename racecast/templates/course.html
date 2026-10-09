@@ -45,10 +45,16 @@
 {# ★ THE RACE PAGE'S ARRANGEMENT (owner, 2026-10-07: "I like the new race
    page ... emulate that in other places"): header with the facts, then a
    tab bar and one table at a time. race.css carries the layout. #}
-<header class="rc-hd"><div class="rc-w rc-hgrid">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div class="rc-left">
     <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country course</span></div>
     <h1>{{ course_name }}</h1>
+    {# ★ A META LINE AND SHARE ON IT, as the race page (owner, 2026-10-09:
+       the top-right block "looks out of place") #}
+    <div class="rc-meta">
+      {% if header and header.state %}{{ header.state }} · {% endif %}{% if sel_dist %}{{ sel_dist }}&nbsp;m{% elif primary_dist %}usually {{ primary_dist }}&nbsp;m{% endif %}{% if (header and header.state) or sel_dist or primary_dist %} · {% endif %}<button type="button" class="share-btn rc-share-link" data-share-title="{{ course_name ~ ' on Racecast' }}"
+            data-share-url="{{ site_origin ~ '/course/' ~ (course_name|urlencode) }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+    </div>
     {# ★ THE HEADER FOLLOWS THE VIEW. On the overview the difficulty is
        the usual distance's, and says which -- a course is a different
        course at 2 miles and at 5K, and one bare number silently
@@ -66,9 +72,20 @@
       <span>Athletes <b>{{ "{:,}".format(header.n_athletes) }}</b></span>
       {% endif %}
     </div>
-  </div>
-  <div class="rc-right rc-right-end">
-    {% with share_title=course_name ~ " on Racecast", share_url=site_origin ~ "/course/" ~ (course_name|urlencode) %}{% include "_share.html" %}{% endwith %}
+    {# ★ THE COURSE'S BEST, as the race page's champion line: the record at
+       the selected distance, or the best rating over all of them #}
+    {% set lead = records if sel_dist else rating_bests %}
+    {% if lead and (lead.M or lead.F) %}
+    <div class="rc-champs">
+      {% for g, g_label in [("M", "Boys"), ("F", "Girls")] %}
+      {% set r = lead[g][0] if lead[g] else none %}
+      {% if r %}{% set sst = r.school_state or header.state %}
+      <div><span class="k">{{ g_label }} {{ "record" if sel_dist else "best" }}</span>
+        <span class="rc-crow">{% if r.school and r.school|is_team %}{{ crest(r.school, sst, trusted=r.school_state) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></b><i>{% if sel_dist %}{{ r.display_time }}{% else %}{{ rv(r.speed_rating, r.hs_rating) }}{% endif %}</i></span></div>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
   </div>
 </div></header>
 
@@ -86,7 +103,7 @@
 {% set eq_dist = sel_dist or primary_dist %}
 {% set has_track = eq_dist and dist_table %}
 {% set has_hist = course_history and course_history.seasons %}
-<div class="rc-w rc-grid rc-grid-one">
+<div class="rc-w rc-grid{% if not meets %} rc-grid-one{% endif %}">
 <div class="rc-mainc">
   <div class="rc-tbar">
     <nav class="seg rc-tabs" role="tablist">
@@ -340,6 +357,25 @@
     </section>
     {% endif %}
 </div>
+{% if meets %}
+{# ★ THE COURSE'S LATEST MEETS BESIDE THE TABLES, as the race page's Team
+   scores card (owner, 2026-10-09); "All meets" opens the tab #}
+<aside class="rc-side">
+  <h2>Recent meets <small>{{ meets|length }} here</small></h2>
+  <table class="rc-tscores rc-tscores-plain">
+    <tbody>
+    {% for m in (meets|sort(attribute='last_date', reverse=True))[:6] %}
+    <tr>
+      <td class="tn"><a href="/meet/xc/{{ m.meet_id }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a>
+        <span class="sp">{{ m.last_date|mdy }}{% if m.distances %} · {{ m.distances|map("int")|join(", ") }}&nbsp;m{% endif %}</span></td>
+      <td class="n tpts">{{ "{:,}".format(m.n_results) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <a class="rc-more" href="#meets" data-tab="meets">All meets</a>
+</aside>
+{% endif %}
 </div>
 </main>
 <script src="{{ static_v('share.js') }}"></script>
