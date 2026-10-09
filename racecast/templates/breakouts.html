@@ -15,6 +15,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 <link rel="stylesheet" href="{{ static_v('pages2.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 {% set sport_words = "cross country" if sport == "XC" else "track" %}
 {% set where = state_name if state else "the country" %}
 {% set plevel = level.split('-')[0] %}
@@ -37,7 +38,7 @@
 {% set unit_fields = [('division', 'Division'), ('region', 'Region'), ('conference', 'Conference')] if college
    else [('state_div', 'State division / class'), ('section', 'Section'), ('section_div', 'Section division'), ('area', 'Area'), ('league', 'League')] %}
 
-<main class="page-wide p2-page brk-page">
+<main class="page-wide p2-page brk-page rc">
   {# Breakouts is one of the Rankings boards (owner, 2026-10-05): the same tab
      strip, the others linking back to /rankings on that board #}
   <div class="board-strip" role="navigation" aria-label="Rankings boards">
@@ -49,14 +50,34 @@
     <a class="is-on" href="/breakouts" aria-current="page">Breakouts</a>
     <a href="/rankings/xc/hs-boys">By state</a>
   </div>
-  <div class="hdr-row">
-    <h1>Breakouts</h1>
-    {% with share_title="Breakouts this week on Racecast", share_url=site_origin ~ qs() %}{% include "_share.html" %}{% endwith %}
-  </div>
-  <p class="p2-lead">
-    Who ran well above their own usual, and who set a new PR, at the newest
-    {{ sport_words }} meets{{ " in " ~ state_name if state }}.
-  </p>
+  {# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-09: "do another page"): title,
+     the window and Share on the meta line, the week's biggest jump and
+     biggest PR as the champion line, the two lists as tabs below the
+     filters. #}
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ level_words }} {{ sport_words }}</span></div>
+      <h1>Breakouts{{ " in " ~ state_name if state }}</h1>
+      <div class="rc-meta">
+        {% if data.anchor %}Races {{ data.window_lo|mdy }} to {{ data.anchor|mdy }}{% else %}No rated races yet this season{% endif %}
+        · <span class="p2-muted">computed {{ data.computed_at|ago_words }}</span>
+        · <button type="button" class="share-btn rc-share-link" data-share-title="Breakouts this week on Racecast"
+              data-share-url="{{ site_origin ~ qs() }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      {% if breakouts or prs %}
+      <div class="rc-champs">
+        {% if breakouts %}{% set b0 = breakouts[0] %}
+        <div><span class="k">Biggest jump</span>
+          <span class="rc-crow">{% if b0.school and b0.school|is_team %}{{ crest(b0.school, b0.state, pool=plevel) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ b0.person_id }}{% if b0.result_id %}?r={{ b0.result_id }}{% endif %}">{{ b0.name }}</a></b><i>+{{ rv(b0.jump, b0.hs_jump) }} to {{ rv(b0.speed_rating, b0.hs_speed_rating) }}</i></span></div>
+        {% endif %}
+        {% if prs %}{% set p0 = prs[0] %}
+        <div><span class="k">Biggest PR · {{ "%.0f"|format(p0.std) }} m</span>
+          <span class="rc-crow">{% if p0.school and p0.school|is_team %}{{ crest(p0.school, p0.state, pool=plevel) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ p0.person_id }}{% if p0.result_id %}?r={{ p0.result_id }}{% endif %}">{{ p0.name }}</a></b><i>{{ p0.time_seconds|proj_time }} · {{ "%.1f"|format(100 * p0.gain) }}% faster</i></span></div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div></header>
 
   <nav class="p2-toggles" aria-label="Breakout options">
     <span class="p2-chips" role="group" aria-label="Level">
@@ -117,23 +138,22 @@
     nightly Breakouts build; until it has run, the lists below are unfiltered.</div>
   {% endif %}
 
-  <p class="p2-meta">
-    {% if data.anchor %}
-      {{ level_words }} {{ sport_words }}, races {{ data.window_lo|mdy }} to {{ data.anchor|mdy }}
-      <span class="p2-muted">(the {{ days }} days up to the newest race on file)</span>
-    {% else %}
-      No rated {{ level_words }} {{ sport_words }} races on file for the {{ data.year }} season yet.
-    {% endif %}
-    &middot; <span class="p2-muted">computed {{ data.computed_at|ago_words }}</span>
-  </p>
 
   {% if data.error %}
   <div class="p2-banner" role="note">This list could not be computed just now ({{ data.error }}). It will be tried again in a few minutes.</div>
   {% endif %}
 
-  <h2 class="p2-h2">Biggest rating jumps</h2>
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#jumps" data-tab="jumps">Rating jumps{% if breakouts %}<span class="n">{{ breakouts|length }}</span>{% endif %}</a>
+      <a class="seg-btn" href="#prs" data-tab="prs">New PRs{% if prs %}<span class="n">{{ prs|length }}</span>{% endif %}</a>
+      <a class="seg-btn" href="#how" data-tab="how">What counts</a>
+    </nav>
+    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+  </div>
+
+  <section class="rc-panel" id="jumps" data-panel="jumps">
   {% if breakouts %}
-  {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
   <table class="p2-tbl p2-brk">
     <thead><tr>
       <th class="num">#</th><th>Athlete</th><th class="p2-wide">School</th><th>Race</th>
@@ -169,7 +189,9 @@
     {{ "%.0f"|format(min_jump) }} point or more{{ " in " ~ state_name if state }} (among athletes with {{ min_prior }}+ earlier rated races this season).</p>
   {% endif %}
 
-  <h2 class="p2-h2">New PRs at standard distances</h2>
+  </section>
+
+  <section class="rc-panel" id="prs" data-panel="prs">
   {% if data.pr_error %}
   <p class="p2-note">The PR list could not be computed just now ({{ data.pr_error }}); it will be tried again in a few minutes.</p>
   {% elif prs %}
@@ -202,8 +224,9 @@
   <p class="p2-note">No new PRs over an earlier time at a standard distance in this window{{ " in " ~ state_name if state }}.</p>
   {% endif %}
 
-  <section class="p2-how">
-    <h2 class="p2-h2">What counts</h2>
+  </section>
+
+  <section class="rc-panel p2-how" id="how" data-panel="how">
     <ul>
       <li><strong>A rating jump</strong> is a race whose speed rating beats the <em>median</em> of that
         athlete's earlier rated races this season (same level, same sport). Only athletes with
@@ -223,6 +246,7 @@
 </main>
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 <script>
 // unit boxes: suggestions from /api/units (the rankings pickers' source)
 document.querySelectorAll("input[data-unit]").forEach(function (inp) {

@@ -5795,3 +5795,4 @@ Chromium against the old script (readout 15:00, label under the pointer
   gone.
 - ✅ eventFamily folds the abbreviations too: Hj, Lj, Tj, Pv, Shot/SP, DT,
   JT, HT, WT; "55mh" / "300mh" / "110 h"; "F/s" and stray punctuation.
+- ✅ Breakouts in the race page's shape: header (window + Share on the meta line, biggest jump and biggest PR as the champion line), Rating jumps / New PRs / What counts as tabs.
