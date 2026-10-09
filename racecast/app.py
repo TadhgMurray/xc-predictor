@@ -1140,6 +1140,7 @@ def compare_page():
     Query builders live in compare.py; this route only assembles and
     stamps the HS-equivalent values."""
     from compare import (athleteCard, meetings, record, seasonRows,
+                         stampEdgeHs,
                          bestRows, bestRatingRows, ratingSeries, chartPoints)
 
     a = request.args.get("a", type=int)
@@ -1208,6 +1209,7 @@ def compare_page():
                              if c.get(s)]
                     has_hs = stampBoardRows(cells, rating_keys=("rating",)) \
                              or has_hs
+                    stampEdgeHs(seasons)
                     head_cells = []
                     for card in (card_a, card_b):
                         if card["season_rating"] is not None:
@@ -5694,6 +5696,12 @@ def meet_tf(meet_id):
             events.sort(key=lambda e: ((e.get("division") or ""),
                                        eventSortKey(e.get("event_short"))))
             loose.sort(key=lambda g: eventSortKey(g.get("name")))
+            # HS-equivalent view for the loose rows (owner, 2026-10-09):
+            # no event ids, so the event string is the distance.
+            has_hs_view = (stampRowsHs(cur, "TF",
+                                       [r for g in loose for r in g["rows"]],
+                                       event_key="event_short")
+                           if loose else False)
             # ?r= (the profile row the reader clicked) also picks the
             # SCROLL TARGET: their exact row on a loose page, their
             # event's row on an events page.
@@ -5784,6 +5792,7 @@ def meet_tf(meet_id):
     return render_template("meet_tf.html", header=header, events=events,
                            school=school, school_events=school_events,
                            loose=loose, anchor=anchor,
+                           has_hs_view=has_hs_view,
                            meet_date=meet_date, scored=scored,
                            alt_idx=alt_idx, other_sources=other_sources,
                            # a tfrrs meet is a college meet: its schools are
@@ -6264,6 +6273,12 @@ def school_page(school_name):
     has_hs_view = stampBoardRows(roster, rating_keys=("mean_rating",
                                                       "best_rating"),
                                  sport=sport) or has_hs_view
+    # The meets table carries its own HS twins (schoolMeets, owner,
+    # 2026-10-09); a move there shows the toggle too.
+    has_hs_view = has_hs_view or any(
+        m.get("hs_best_rating") is not None
+        and abs(m["hs_best_rating"] - float(m["best_rating"])) > 0.05
+        for m in (meets or []))
     # ★ THE RANK IS THE ROW ORDER, so order on the number the page shows.
     #   A college school page mixes college_m and college_f, whose HS factors
     #   differ, and read unsorted in the HS-equivalent view (owner,
@@ -10742,6 +10757,10 @@ def rankings_landing(sport, pool, state=None):
                 conn.rollback()
                 rows = []
     pool_key, pool_words = L.POOLS[pool]
+    # HS-equivalent view, the board's own (owner, 2026-10-09). One pool per
+    # page, so an HS page stamps x1.0 and shows no toggle.
+    has_hs_view = stampBoardRows(rows, rating_keys=("rating",),
+                                 pool=pool_key, sport=L.SPORTS[sport])
     other_sport = "tf" if sport == "xc" else "xc"
     board = {"board": "ability", "sport": L.SPORTS[sport], "pool": pool_key}
     if state:
@@ -10760,7 +10779,7 @@ def rankings_landing(sport, pool, state=None):
         pool=pool, pool_words=pool_words, pool_key=pool_key,
         pool_level="college" if pool_key.startswith("college") else "hs",
         state=state, state_name=L.STATE_NAMES.get(state or "", ""),
-        year=year, rows=rows,
+        year=year, rows=rows, has_hs_view=has_hs_view,
         board_url="/rankings?" + urlencode(board),
         pool_links=[(slug, words, L.landingPath(sport, slug, state))
                     for slug, (_k, words) in L.POOLS.items()],

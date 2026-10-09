@@ -122,6 +122,12 @@ def _hsEquivalent(value, pool, sport):
     return float(value) * f if f else float(value)
 
 
+def _hsOrOwn(row, key="speed_rating"):
+    """A stamped row's hs_rating, else its own `key` (no factor, no stamp)."""
+    v = row.get("hs_rating")
+    return v if v is not None else row.get(key)
+
+
 def _careerCounts(cur, person_id):
     """(races, seasons, blocks, school) as the page's stat strip counts
     them: every deduped race of any event, seasons as distinct labels, each
@@ -690,13 +696,23 @@ def raceCardData(cur, sport, meet_id, div_id, event_id=None):
             what = header.get("event_short") or ""
         where = header.get("venue_name") or header.get("state") or ""
     sub = " · ".join(x for x in [what, header.get("division") or "", where, date] if x)
+    # ★ HS-EQUIVALENT, THE PAGE'S DEFAULT (owner, 2026-10-09): a PNG cannot
+    #   toggle. Stamped as the race page stamps, over every row for the mode.
+    rows = [dict(r) for r in rows]
+    try:
+        from pool_view import stampRowsHs
+        stampRowsHs(cur, sport, rows,
+                    distance=header.get("distance" if sport == "XC" else "distance_meters"),
+                    event_key=None if sport == "XC" else "event_short")
+    except Exception:                              # noqa: BLE001
+        cur.connection.rollback()
     top = []
     for r in rows[:7]:
         top.append({
             "name": (r.get("name") or r.get("athlete_name") or "Unknown").strip(),
             "school": schoolLabel(r.get("school")) if r.get("school") else "",
             "time": _clock(r.get("time_seconds")) if r.get("time_seconds") is not None else (str(r.get("mark") or "")),
-            "rating": r.get("speed_rating"),
+            "rating": _hsOrOwn(r),
         })
     return {"title": header.get("meet_name") or "Race", "sub": sub, "top": top,
             "n": len(rows), "difficulty": header.get("difficulty")}
@@ -798,6 +814,9 @@ def schoolCardData(cur, school, state=None):
     top = rows[:7]
     five = [float(r["mean_rating"]) for r in top[:5]]
     team = sum(five) / len(five) if len(five) == 5 else None
+    # HS-equivalent, the page's default (owner, 2026-10-09). One pool on
+    # the card, so one factor: the order and the top five are unchanged.
+    team = _hsEquivalent(team, pool, sport)
     label = year + 1 if sport == "TF" else year
     from grade_label import gradeLabel
     ranks = teamRanks(cur, school, state, sport, year, top[0]["pool"] if top else None)
@@ -810,7 +829,8 @@ def schoolCardData(cur, school, state=None):
             "team": team, "athletes": len(rows),
             "top": [{"name": (r.get("name") or "").strip() or "Unknown",
                      "grade": gradeLabel(r.get("grade"), r.get("pool")) or "",
-                     "rating": float(r["mean_rating"]), "races": r.get("n_races") or 0,
+                     "rating": _hsEquivalent(r["mean_rating"], r.get("pool"), sport),
+                     "races": r.get("n_races") or 0,
                      "pool": r.get("pool")}
                     for r in top]}
 
@@ -937,7 +957,8 @@ def cachedRaceCard(cur, sport, meet_id, div_id, event_id=None):
 def cachedSchoolCard(cur, school, state=None):
     import hashlib
     # v2 (2026-09-29): one pool per card; a new name so the mixed ones redraw
-    key = hashlib.sha1(f"v2|{school}|{state or ''}".encode("utf-8")).hexdigest()[:16]
+    # v3: HS-equivalent numbers (2026-10-09)
+    key = hashlib.sha1(f"v3|{school}|{state or ''}".encode("utf-8")).hexdigest()[:16]
     def build():
         d = schoolCardData(cur, school, state)
         return renderSchoolCard(d) if d else None
@@ -962,6 +983,15 @@ def meetCardData(cur, meet_id):
     if not rows:
         return None
     teams = scoreRows([dict(r) for r in rows])
+    # the winner's rating on the HS-equivalent scale, the page's default
+    # (owner, 2026-10-09); every row stamped so an unranked winner takes
+    # the race's modal pool, as on the race page
+    rows = [dict(r) for r in rows]
+    try:
+        from pool_view import stampRowsHs
+        stampRowsHs(cur, "XC", rows, distance=div.get("distance"))
+    except Exception:                              # noqa: BLE001
+        cur.connection.rollback()
     date = _when(rows[0].get("date")) if rows[0].get("date") else ""
     sub = " · ".join(x for x in [header.get("course_name") or "", date,
                                  f"{len(divs)} races" if len(divs) > 1 else ""] if x)
@@ -973,7 +1003,7 @@ def meetCardData(cur, meet_id):
             "winner": {"name": (winner.get("name") or "Unknown").strip(),
                        "school": schoolLabel(winner.get("school")) if winner.get("school") else "",
                        "time": _clock(winner.get("time_seconds")),
-                       "rating": winner.get("speed_rating")}}
+                       "rating": _hsOrOwn(winner)}}
 
 
 def renderMeetCard(d):
@@ -1267,7 +1297,9 @@ def boardCardData(cur, sport, pool, state, year=None):
         out.append({"name": (r.get("name") or "Unknown").strip(),
                     "school": schoolLabelFor(r["school"], pool_key, r.get("state")) if r.get("school") else "",
                     "grade": r.get("grade") or "",
-                    "rating": f"{float(r['rating']):.1f}" if r.get("rating") is not None else "-"})
+                    # HS-equivalent, the landing page's default (owner, 2026-10-09)
+                    "rating": (f"{_hsEquivalent(r['rating'], pool_key, L.SPORTS[sport]):.1f}"
+                               if r.get("rating") is not None else "-")})
     return {"title": f"{_POOL_SHORT.get(pool, pool)} {sport_word} · {where}",
             "sub": (f"{year} season · " if year else "") + "top ten by season rating",
             "rows": out}
@@ -1302,15 +1334,25 @@ def meetTfCardData(cur, meet_id, src=None, kind="teams"):
                    WHERE meet_id = %(m)s AND (%(src)s::text IS NULL OR source = %(src)s)""",
                 {"m": meet_id, "src": src})
     n_events = (cur.fetchone() or {}).get("n") or 0
-    cur.execute(f"""SELECT r.person_id, r.school, r.event_short, r.mark, r.is_field,
+    cur.execute(f"""SELECT r.result_id, r.person_id, r.school, r.event_short, r.mark, r.is_field,
                            r.time_seconds, r.speed_rating, {_name_sql('r')} AS name
                     FROM results_tf r
                     {_athlete_lateral('r')}
                     WHERE r.meet_id = %(m)s AND (%(src)s::text IS NULL OR r.source = %(src)s)
                       AND r.speed_rating IS NOT NULL
                     ORDER BY r.speed_rating DESC LIMIT 60""", {"m": meet_id, "src": src})
+    # ★ RANKED AND SHOWN ON THE HS-EQUIVALENT (owner, 2026-10-09), the
+    #   course card's rule: a college meet mixes men and women, whose
+    #   factors differ, so the own-pool order is not the order shown.
+    marks = [dict(r) for r in cur.fetchall()]
+    try:
+        from pool_view import stampRowsHs
+        stampRowsHs(cur, "TF", marks, event_key="event_short")
+    except Exception:                              # noqa: BLE001
+        cur.connection.rollback()
+    marks.sort(key=lambda r: -float(_hsOrOwn(r) or 0))
     rows, seen = [], set()
-    for r in cur.fetchall():
+    for r in marks:
         key = r.get("person_id") or (r.get("name"), r.get("school"))
         if key in seen:
             continue
@@ -1320,7 +1362,7 @@ def meetTfCardData(cur, meet_id, src=None, kind="teams"):
         rows.append({"name": (r.get("name") or "Unknown").strip(),
                      "school": schoolLabel(r["school"]) if r.get("school") else "",
                      "event": prettyEventName(r.get("event_short") or "") or "",
-                     "mark": mark, "rating": f"{float(r['speed_rating']):.1f}"})
+                     "mark": mark, "rating": f"{float(_hsOrOwn(r)):.1f}"})
         if len(rows) == 7:
             break
     if not rows and not teams:
@@ -1452,6 +1494,15 @@ def venueCardData(cur, location_id, is_indoor):
                    FROM meets_tf WHERE location_id = %s AND COALESCE(is_indoor, 0) = %s""",
                 (location_id, 1 if is_indoor else 0))
     m = cur.fetchone() or {}
+    # HS-equivalent, ranked and shown (owner, 2026-10-09): the meet card's
+    # rule, stamped as the venue page stamps.
+    bests = [dict(r) for r in bests]
+    try:
+        from pool_view import stampRowsHs
+        stampRowsHs(cur, "TF", bests, event_key="event_short")
+    except Exception:                              # noqa: BLE001
+        cur.connection.rollback()
+    bests.sort(key=lambda r: -float(_hsOrOwn(r) or 0))
     rows, seen = [], set()
     for r in bests:
         key = r.get("person_id") or (r.get("name"), r.get("school"))
@@ -1463,7 +1514,7 @@ def venueCardData(cur, location_id, is_indoor):
         rows.append({"name": (r.get("name") or "Unknown").strip(),
                      "school": schoolLabel(r["school"]) if r.get("school") else "",
                      "event": prettyEventName(r.get("event_short") or "") or "",
-                     "mark": mark, "rating": f"{float(r['speed_rating']):.1f}"})
+                     "mark": mark, "rating": f"{float(_hsOrOwn(r)):.1f}"})
         if len(rows) == 7:
             break
     stats = [("TRACK DIFFICULTY", _pct(diff.get("difficulty"), "TF") or "-"),

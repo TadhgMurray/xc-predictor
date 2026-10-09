@@ -153,8 +153,19 @@ def breakouts_page():
                 prs = B.pickRows(data["prs"], "gain", st)
             else:
                 breakouts, prs = data["breakouts"], data["prs"]
+    # ★ BOTH SCALES (owner, 2026-10-09). One level is one pool, so one
+    #   factor covers every number in the jumps list; differences scale by
+    #   it too. No factor: the HS twins stay None and rv() shows own.
+    from pool_view import repFactor
+    factor = repFactor(B.LEVELS[level][0], sport)
+    for r in breakouts:
+        for key in ("speed_rating", "jump", "prev_best", "base"):
+            v = r.get(key)
+            r["hs_" + key] = (round(float(v) * factor, 1)
+                              if v is not None and factor is not None else None)
+    has_hs_view = factor is not None and abs(factor - 1.0) > 0.005
     return render_template(
-        "breakouts.html", data=data, level=level,
+        "breakouts.html", data=data, level=level, has_hs_view=has_hs_view,
         level_words=B.LEVELS[level][1], levels=B.LEVELS,
         sport=sport, state=st, state_name=names.get(st or "", ""),
         states=states, days=days, window_choices=B.WINDOW_CHOICES,

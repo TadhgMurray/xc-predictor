@@ -292,6 +292,13 @@ def athleteCard(cur, pid):
         rated = headerSeason(seasons)
     best = max((float(s["best_rating"]) for s in seasons
                 if s.get("best_rating") is not None), default=None)
+    # ★ THE HS BEST IS ITS OWN MAX (owner, 2026-10-09): seasons span pools,
+    #   so the best race on the HS scale need not be the own-pool best.
+    from pool_view import repFactor
+    best_hs = max((float(s["best_rating"])
+                   * (repFactor(s.get("pool"), s["sport"]) or 1.0)
+                   for s in seasons if s.get("best_rating") is not None),
+                  default=None)
 
     school = (current or {}).get("school")
     grade = (current or {}).get("grade")
@@ -331,6 +338,7 @@ def athleteCard(cur, pid):
                           else None),
         "season_races": int(rated["n_races"]) if rated else 0,
         "best_rating": best,
+        "best_rating_hs": round(best_hs, 1) if best_hs is not None else None,
         "seasons": seasons,
     }
 
@@ -449,6 +457,29 @@ def seasonRows(card_a, card_b):
         if ra is not None and rb is not None and abs(ra - rb) > 1e-9:
             r["edge"] = "a" if ra > rb else "b"
             r["edge_by"] = abs(ra - rb)
+    return rows
+
+
+def stampEdgeHs(rows):
+    """row["hs_edge_by"]: the season edge on the HS scale, from the stamped
+    cells. Call after stampBoardRows has stamped s.a / s.b.
+
+    ! NONE WHEN THE HS VIEW WOULD FLIP THE LEADER (owner, 2026-10-09). Two
+      pools in one season (a college man against a college woman) can trade
+      places on the HS scale, and the cell names the own-pool leader; a
+      negative "+X" under his name would be wrong, so rv() keeps own.
+    """
+    for r in rows:
+        r["hs_edge_by"] = None
+        if not r.get("edge"):
+            continue
+        ha = (r.get("a") or {}).get("hs_rating")
+        hb = (r.get("b") or {}).get("hs_rating")
+        if ha is None or hb is None:
+            continue
+        d = ha - hb if r["edge"] == "a" else hb - ha
+        if d > 0:
+            r["hs_edge_by"] = round(d, 1)
     return rows
 
 

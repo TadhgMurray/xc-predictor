@@ -5701,3 +5701,14 @@ Chromium against the old script (readout 15:00, label under the pointer
   open-season exemption. Takes effect at the next 10_rankings / team build.
 - ✅ Team board: a "Best runner" column (name + season rating, HS-aware),
   from team_season.best_person_id (new; NULL and rating-only until rebuilt).
+- ✅ **Ratings that ignored the scale toggle (owner, 2026-10-09 sweep).** Now
+  HS-aware: school page meets table (average/best, per result's own pool),
+  embed widget roster, /rankings/<sport>/<pool> landing pages, breakouts
+  (rating, jump, usual, base), loose TF meet results, compare (best race;
+  season edge, own when the HS view would flip the leader), the athlete
+  meta description, the race/school/meet/board/TF-meet/venue share cards
+  (HS, as the athlete card), and the CSV's "Best rating (HS equivalent)".
+  Left on purpose: the "How this was rated" popup's steps (own scale, with
+  its existing note); HS-only pages (projections, recruiting) where own ==
+  HS. tests/test_scale_sort's "a scale flip refetches" check was already
+  failing before this (it looks 600 characters past the first mention).

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 {% from "_tf_points.html" import tf_team_block %}
+{% from "_scale.html" import rv, scale_toggle %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -115,6 +116,7 @@
     {# No event ids exist for this meet, so there are no race pages to
        link -- the results themselves render here, grouped by each row's
        own event name. #}
+    {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
     {% for ev in loose %}
     <h2>{{ ev.name }}</h2>
     <table class="rc-table">
@@ -130,7 +132,7 @@
                 <td class="rc-wide">{{ r.grade|grade_label('college' if college else 'hs') if r.grade else " - " }}</td>
                 <td class="rc-wide">{% if r.school and r.school|is_team %}{{ crest(r.school, header.state, pool='college' if college else none) }}<a href="{{ school_href(r.school, header.state, pool='college' if college else none) }}">{{ r.school|school_label_for('college' if college else none, header.state) }}</a>{% elif r.school %}{{ r.school|school_label_for('college' if college else none, header.state) }}{% else %} - {% endif %}</td>
                 <td class="n">{{ r.display_result }}</td>
-                <td class="n">{{ "%.1f"|format(r.speed_rating) if r.speed_rating else " - " }}</td>
+                <td class="n">{{ rv(r.speed_rating, r.hs_rating) if r.speed_rating else " - " }}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -161,6 +163,7 @@
 
 </main>
 <script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('staged.js') }}"></script>
 <script src="{{ static_v('race-page.js') }}"></script>
 </body>

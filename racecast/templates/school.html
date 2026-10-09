@@ -356,8 +356,10 @@
                 <td>{{ m.distance_labels|join(", ") if m.distance_labels else " - " }}</td>
                 <td>{{ m.runners }}</td>
 
-                <td>{{ m.avg_rating if m.avg_rating is not none else "" }}</td>
-                <td>{{ m.best_rating if m.best_rating is not none else "" }}</td>
+                {# Both scales (owner, 2026-10-09): schoolMeets stamps the HS
+                   twins per result, since one meet can mix pools. #}
+                <td>{% if m.avg_rating is not none %}{{ rv(m.avg_rating, m.hs_avg_rating) }}{% endif %}</td>
+                <td>{% if m.best_rating is not none %}{{ rv(m.best_rating, m.hs_best_rating) }}{% endif %}</td>
             </tr>
             {% endfor %}
             {% if meets|length > 15 %}

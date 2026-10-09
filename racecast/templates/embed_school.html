@@ -60,7 +60,10 @@
   <tr><td class="n">{{ loop.index }}</td>
       <td class="a"><a href="{{ site_origin }}/athlete/{{ r.person_id }}">{{ r.name.strip() if r.name and r.name.strip() else "Unknown" }}</a></td>
       <td class="g">{{ r.grade|grade_label(r.pool) if r.grade else "" }}</td>
-      <td class="r">{% if r.mean_rating is not none %}{{ "%.1f"|format(r.mean_rating) }}{% endif %}</td></tr>
+      {# HS-equivalent, the site default (owner, 2026-10-09): an embed has
+         no toggle, so it shows the number the full page opens on. #}
+      {% set shown = r.hs_mean_rating if r.hs_mean_rating is not none else r.mean_rating %}
+      <td class="r">{% if shown is not none %}{{ "%.1f"|format(shown) }}{% endif %}</td></tr>
   {% endfor %}
 </table>
 {% else %}

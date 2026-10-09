@@ -116,6 +116,7 @@ def rankingColumns(board, origin, offset=0):
         body = [("Rating", lambda r: _num(r.get("rating"))),
                 ("Rating (HS equivalent)", lambda r: _num(r.get("hs_rating"))),
                 ("Best rating", lambda r: _num(r.get("best_rating"))),
+                ("Best rating (HS equivalent)", lambda r: _num(r.get("hs_best_rating"))),
                 ("Races", lambda r: r.get("n_races")),
                 ("First race", lambda r: r.get("first_race")),
                 ("Last race", lambda r: r.get("last_race"))]

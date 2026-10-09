@@ -426,6 +426,10 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
                    count(DISTINCT rr.div_id)                    AS divisions,
                    round(avg(rr.speed_rating)::numeric, 1)      AS avg_rating,
                    round(max(rr.speed_rating)::numeric, 1)      AS best_rating,
+                   array_agg(rr.pool ORDER BY rr.result_id)
+                       FILTER (WHERE rr.speed_rating IS NOT NULL) AS r_pools,
+                   array_agg(rr.speed_rating ORDER BY rr.result_id)
+                       FILTER (WHERE rr.speed_rating IS NOT NULL) AS r_ratings,
                    array_agg(DISTINCT round(rr.distance)::int)
                        FILTER (WHERE rr.distance > 0)           AS distances
             FROM   ranking_results rr
@@ -436,7 +440,7 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
             GROUP  BY rr.meet_id
         )
         SELECT g.meet_id, g.date, g.runners, g.divisions, g.avg_rating,
-               g.best_rating, g.distances, n.meet_name
+               g.best_rating, g.r_pools, g.r_ratings, g.distances, n.meet_name
         FROM   g
         LEFT JOIN LATERAL ({name_sql}) n ON TRUE
         ORDER  BY g.date DESC
@@ -447,7 +451,29 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
     rows = fetchCapped(cur, limit)
     for r in rows:
         r["distance_labels"] = [distLabel(d) for d in sorted(r.get("distances") or [])]
+        _stampMeetHs(r, sport)
     return rows
+
+
+def _stampMeetHs(row, sport):
+    """hs_avg_rating / hs_best_rating for one schoolMeets row.
+
+    ★ PER RESULT, NOT PER ROW (owner, 2026-10-09). One meet can mix pools
+      (boys and girls, or a K-12 school's middle and high schoolers), so
+      each rating takes ITS pool's factor before the average. A rating with
+      no factor keeps its own number, as rv() does.
+    """
+    from pool_view import repFactor
+    pools = row.pop("r_pools", None) or []
+    ratings = row.pop("r_ratings", None) or []
+    hs = []
+    for p, v in zip(pools, ratings):
+        if v is None:
+            continue
+        f = repFactor(p, sport)
+        hs.append(float(v) * f if f is not None else float(v))
+    row["hs_avg_rating"] = round(sum(hs) / len(hs), 1) if hs else None
+    row["hs_best_rating"] = round(max(hs), 1) if hs else None
 
 
 # The imperial distances, said the way the people who ran them say them

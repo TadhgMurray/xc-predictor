@@ -15,9 +15,12 @@
     {% set meta_title = athlete.name
        ~ ((" – " ~ (athlete.school|school_label)) if athlete.school else "")
        ~ " · XC & Track Results, Speed Rating, PRs" %}
+    {# The HS-equivalent, the site default (owner, 2026-10-09): a meta
+       description cannot toggle, so it quotes the number the page opens on. #}
+    {% set _meta_rating = athlete.rating_hs if athlete.rating_hs else athlete.rating %}
     {% set meta_description = athlete.name ~ "'s cross country and track results"
        ~ ((" for " ~ (athlete.school|school_label)) if athlete.school else "")
-       ~ ((": speed rating " ~ ("%.1f"|format(athlete.rating))) if athlete.rating else "")
+       ~ ((": speed rating " ~ ("%.1f"|format(_meta_rating))) if athlete.rating else "")
        ~ ((" (" ~ athlete.percentile ~ " of " ~ athlete.pool_words ~ ")") if athlete.percentile and athlete.pool_words else "")
        ~ ((", about a " ~ athlete.equiv_time ~ " " ~ (athlete.equiv_dist or "5K")) if athlete.equiv_time else "")
        ~ ". Every race, personal records and season ratings on one comparable scale." %}

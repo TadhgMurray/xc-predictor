@@ -23,6 +23,7 @@
      ~ " from the latest meets in " ~ where ~ ", measured against each athlete's own season." %}
 {% set meta_crumbs = [("Rankings", "/rankings"), ("Breakouts", none)] %}
 {% include "_meta.html" %}
+{% from "_scale.html" import rv, scale_toggle %}
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
@@ -132,6 +133,7 @@
 
   <h2 class="p2-h2">Biggest rating jumps</h2>
   {% if breakouts %}
+  {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
   <table class="p2-tbl p2-brk">
     <thead><tr>
       <th class="num">#</th><th>Athlete</th><th class="p2-wide">School</th><th>Race</th>
@@ -147,15 +149,17 @@
         <td class="p2-wide">{% if r.school and r.school|is_team %}{{ crest(r.school, r.state, pool=plevel) }}<a href="{{ school_href(r.school, r.state, pool=plevel) }}">{{ r.school|school_label_for(plevel, r.state) }}</a>{% elif r.school %}{{ r.school }}{% endif %}</td>
         <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}
           <span class="p2-row-sub">{{ r.race_date|mdy }}{% if r.time_seconds %} &middot; {{ r.time_seconds|proj_time }}{% endif %}{% if r.distance %} &middot; {{ "%.0f"|format(r.distance) }} m{% endif %}</span></td>
-        <td class="num">{{ "%.1f"|format(r.speed_rating) }}</td>
-        <td class="num p2-up">+{{ "%.1f"|format(r.jump) }}
+        <td class="num">{{ rv(r.speed_rating, r.hs_speed_rating) }}</td>
+        <td class="num p2-up">+{{ rv(r.jump, r.hs_jump) }}
           {% if r.beat_best %}<span class="flag flag--rsr" tabindex="0" data-title="Season Best rating"
-            data-blurb="Above every earlier race this season (previous best {{ '%.1f'|format(r.prev_best) }})."
+            {# ! A BLURB CANNOT TOGGLE, so it says the default scale's number
+                 (owner, 2026-10-09). #}
+            data-blurb="Above every earlier race this season (previous best {{ '%.1f'|format(r.hs_prev_best if r.hs_prev_best is not none else r.prev_best) }})."
             aria-label="Season best rating">SB</span>{% endif %}
           {% if r.check %}<span class="flag flag--warn" tabindex="0" data-title="Worth checking"
             data-blurb="A jump of {{ check_jump|int }}+ points is usually a mislabelled distance or two athletes merged into one. Open the race before trusting it."
             aria-label="Worth checking: a jump this large is usually a data error">?</span>{% endif %}</td>
-        <td class="num p2-wide">{{ "%.1f"|format(r.base) }} <span class="p2-muted">({{ r.n_prior }})</span></td>
+        <td class="num p2-wide">{{ rv(r.base, r.hs_base) }} <span class="p2-muted">({{ r.n_prior }})</span></td>
       </tr>
     {% endfor %}
     </tbody>
@@ -218,6 +222,7 @@
   </section>
 </main>
 <script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
 <script>
 // unit boxes: suggestions from /api/units (the rankings pickers' source)
 document.querySelectorAll("input[data-unit]").forEach(function (inp) {

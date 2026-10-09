@@ -80,7 +80,7 @@
             <div class="big"><span class="lbl">{{ card_a.season_label }} rating</span>
                 {{ rv(card_a.season_rating, card_a.season_rating_hs) }}</div>
             <div class="sub">{{ card_a.season_races }} races
-                {%- if card_a.best_rating %} · best race {{ "%.1f"|format(card_a.best_rating) }}{% endif %}</div>
+                {%- if card_a.best_rating %} · best race {{ rv(card_a.best_rating, card_a.best_rating_hs) }}{% endif %}</div>
             {% endif %}
         </div>
         <div class="h2h-rec">
@@ -104,7 +104,7 @@
             <div class="big"><span class="lbl">{{ card_b.season_label }} rating</span>
                 {{ rv(card_b.season_rating, card_b.season_rating_hs) }}</div>
             <div class="sub">{{ card_b.season_races }} races
-                {%- if card_b.best_rating %} · best race {{ "%.1f"|format(card_b.best_rating) }}{% endif %}</div>
+                {%- if card_b.best_rating %} · best race {{ rv(card_b.best_rating, card_b.best_rating_hs) }}{% endif %}</div>
             {% endif %}
         </div>
     </div>
@@ -154,8 +154,8 @@
                     {% if s.a %}{{ rv(s.a.rating, s.a.hs_rating) }} ({{ s.a.races }}){% else %} - {% endif %}</td>
                 <td{{ ' class="win"'|safe if s.edge == "b" }}>
                     {% if s.b %}{{ rv(s.b.rating, s.b.hs_rating) }} ({{ s.b.races }}){% else %} - {% endif %}</td>
-                {% if s.edge == "a" %}<td class="margin-a">{{ card_a.short }} +{{ "%.1f"|format(s.edge_by) }}</td>
-                {% elif s.edge == "b" %}<td class="margin-b">{{ card_b.short }} +{{ "%.1f"|format(s.edge_by) }}</td>
+                {% if s.edge == "a" %}<td class="margin-a">{{ card_a.short }} +{{ rv(s.edge_by, s.hs_edge_by) }}</td>
+                {% elif s.edge == "b" %}<td class="margin-b">{{ card_b.short }} +{{ rv(s.edge_by, s.hs_edge_by) }}</td>
                 {% else %}<td> - </td>{% endif %}
             </tr>
             {% endfor %}
