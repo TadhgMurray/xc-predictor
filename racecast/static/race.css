@@ -223,3 +223,11 @@ main.rc .rc-conv-list i { font-style: normal; font-variant-numeric: tabular-nums
   main.rc.rc-on-track .rc-grid.rc-conv-only { grid-template-columns: minmax(0, 1fr); }
   main.rc .rc-conv-list { max-height: 50vh; }
 }
+/* ★ ONE-COLUMN HEADER (owner, 2026-10-09: the top-right block "looks out of
+   place"): the day's facts and summary under the title, Share at the end of
+   the meta line. */
+main.rc .rc-hgrid.rc-hone { grid-template-columns: minmax(0, 1fr); }
+main.rc .rc-hone .rc-story { max-width: 46rem; }
+main.rc .rc-share-link { display: inline-flex; align-items: center; gap: .3rem; background: none; border: 0;
+  padding: 0; font: inherit; font-weight: 600; font-size: inherit; color: var(--link); cursor: pointer; white-space: nowrap; }
+main.rc .rc-share-link:hover span { text-decoration: underline; }

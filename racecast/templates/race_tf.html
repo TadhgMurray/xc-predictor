@@ -44,7 +44,7 @@
 {% set has_pts = results | selectattr("points") | list | length > 0 %}
 {% import "_above_level.html" as al %}
 <main class="page-wide rc">
-<header class="rc-hd"><div class="rc-w rc-hgrid">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div>
     <div class="rc-sport"><span class="sport-tag sport-tag--tf">Track &amp; field</span></div>
     <div class="rc-kick"><a href="/meet/tf/{{ header.meet_id }}">{{ header.meet_name|with_year(race_date) }}</a></div>
@@ -54,26 +54,27 @@
          plain "Venue page" link rather than the bare word #}
       {% if header.location_id %}<a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">{% if header.venue_name %}{{ header.venue_name }}{% if header.venue_city and header.venue_city|lower not in header.venue_name|lower %}, {{ header.venue_city }}{% endif %}{% else %}Venue page{% endif %}</a> · {% elif header.venue_name %}{{ header.venue_name }} · {% endif %}
       {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }} · {{ race_date|mdy if race_date else " - " }}{% if header.state %} · {{ header.state }}{% endif %}
+      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"
+            data-share-url="{{ site_origin }}/race/tf/{{ meet_id }}/{{ event_id }}/{{ div_id }}" title="Share this page; the preview is its card">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <span>Share</span>
+    </button>
     </div>
+    {# ★ THE DAY UNDER THE TITLE, NOT BESIDE IT (owner, 2026-10-09: the
+       top-right block "just looks out of place"): course/day facts and
+       the summary line follow the meta; Share ends the meta line. #}
+    <div class="rc-facts">
+      <span>Venue <b>{{ dv(header.difficulty, "TF", day_effect) }}</b>{{ difficulty_i("TF") }}</span>
+      {% if day_effect is not none %}<span>Day <b>{{ day_effect|dayword }}{% if (day_effect|dayword) != 'level' %} · {{ day_effect|dayabs }}{% endif %}</b></span>{% endif %}
+      {% if has_wind %}<span>Wind <b>on the sheet</b></span>{% endif %}
+    </div>
+    {% if story %}<p class="rc-story">{% for s in story %}{{ s }}{% if not loop.last %} {% endif %}{% endfor %}</p>{% endif %}
     {% if tf_champ %}
     <div class="rc-champs">
       <div><span class="k">{{ "Winner" if tf_how == "won" else "Best mark" }}</span>
         <span class="rc-crow">{% if tf_champ.school and tf_champ.school|is_team %}{{ crest(tf_champ.school, header.state, pool=pool_lv) }}{% endif %}<b class="rc-cn">{% if tf_champ.is_relay %}{{ tf_champ.school|school_label_for(pool_lv, header.state) if tf_champ.school else "Relay" }}{% elif tf_champ.person_id %}<a href="/athlete/{{ tf_champ.person_id }}">{{ tf_champ.athlete_name or "Unknown" }}</a>{% else %}{{ tf_champ.athlete_name or "Unknown" }}{% endif %}</b><i>{{ tf_champ.display_result }}</i></span></div>
     </div>
     {% endif %}
-  </div>
-  <div class="rc-right">
-    {% if story %}<p class="rc-story">{% for s in story %}{{ s }}{% if not loop.last %} {% endif %}{% endfor %}</p>{% endif %}
-    <div class="rc-facts">
-      <span>Venue <b>{{ dv(header.difficulty, "TF", day_effect) }}</b>{{ difficulty_i("TF") }}</span>
-      {% if day_effect is not none %}<span>Day <b>{{ day_effect|dayword }}{% if (day_effect|dayword) != 'level' %} · {{ day_effect|dayabs }}{% endif %}</b></span>{% endif %}
-      {% if has_wind %}<span>Wind <b>on the sheet</b></span>{% endif %}
-    </div>
-    <button type="button" class="share-box share-btn rc-share" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"
-            data-share-url="{{ site_origin }}/race/tf/{{ meet_id }}/{{ event_id }}/{{ div_id }}" title="Share this page; the preview is its card">
-      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
-      <span>Share</span>
-    </button>
   </div>
 </div></header>
 

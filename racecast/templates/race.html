@@ -41,7 +41,7 @@
 {% set tchamp = scores.teams[0] if scores and scores.teams and scores.teams[0].points is not none else none %}
 {% set title = race_title(header.division, header.gender, results) %}
 <main class="page-wide rc">
-<header class="rc-hd"><div class="rc-w rc-hgrid">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div>
     {# ★ THE ONE LINK TO THE MEET (owner, 2026-10-07: "try not to have
        duplicated things"): the meet's name, above the title #}
@@ -55,7 +55,21 @@
       <a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a> ·
       {{ header.distance|int if header.distance else " - " }}&nbsp;m{% if corrected %}<span class="dist-note" tabindex="0" aria-label="Distance corrected. This race was listed at {{ header.listed_distance|int }} meters; a verified correction rates it at {{ header.distance|int }} meters.">★<span class="dist-tip"><span class="dist-tip-box"><b>Distance corrected.</b> This race was listed at {{ header.listed_distance|int }}&thinsp;m; times are rated at the verified {{ header.distance|int }}&thinsp;m. <a href="/report?about={{ request.path|urlencode }}&kind=meet">Is the correction wrong? Report it →</a></span></span></span>{% endif %}
       · {{ race_date|mdy if race_date else " - " }}{% if header.state %} · {{ header.state }}{% endif %}
+      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"
+            data-share-url="{{ site_origin }}/race/xc/{{ header.meet_id }}/{{ header.div_id }}" title="Share this page; the preview is its card">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <span>Share</span>
+    </button>
     </div>
+    {# ★ THE DAY UNDER THE TITLE, NOT BESIDE IT (owner, 2026-10-09: the
+       top-right block "just looks out of place"): course/day facts and
+       the summary line follow the meta; Share ends the meta line. #}
+    <div class="rc-facts">
+      <span>Course <b>{{ dv(header.difficulty, "XC", day_effect) }}</b>{{ difficulty_i("XC") }}</span>
+      {% if day_effect is not none %}<span>Day <b>{{ day_effect|dayword }}{% if (day_effect|dayword) != 'level' %} · {{ day_effect|dayabs }}{% endif %}</b></span>{% endif %}
+      {% if extras and extras.weather %}<span>Weather <b>{{ extras.weather.temp_f }}°F{% if extras.weather.wind_mph is not none %} · wind {{ extras.weather.wind_mph }}{% endif %}{% if extras.weather.humidity is not none %} · {{ extras.weather.humidity }}%&nbsp;hum{% endif %}{% if extras.weather.rain %} · rain{% endif %}</b></span>{% endif %}
+    </div>
+    {% if story %}<p class="rc-story">{% for s in story %}{{ s }}{% if not loop.last %} {% endif %}{% endfor %}</p>{% endif %}
     {% if champ %}
     <div class="rc-champs">
       {% if champ %}
@@ -68,19 +82,6 @@
       {% endif %}
     </div>
     {% endif %}
-  </div>
-  <div class="rc-right">
-    {% if story %}<p class="rc-story">{% for s in story %}{{ s }}{% if not loop.last %} {% endif %}{% endfor %}</p>{% endif %}
-    <div class="rc-facts">
-      <span>Course <b>{{ dv(header.difficulty, "XC", day_effect) }}</b>{{ difficulty_i("XC") }}</span>
-      {% if day_effect is not none %}<span>Day <b>{{ day_effect|dayword }}{% if (day_effect|dayword) != 'level' %} · {{ day_effect|dayabs }}{% endif %}</b></span>{% endif %}
-      {% if extras and extras.weather %}<span>Weather <b>{{ extras.weather.temp_f }}°F{% if extras.weather.wind_mph is not none %} · wind {{ extras.weather.wind_mph }}{% endif %}{% if extras.weather.humidity is not none %} · {{ extras.weather.humidity }}%&nbsp;hum{% endif %}{% if extras.weather.rain %} · rain{% endif %}</b></span>{% endif %}
-    </div>
-    <button type="button" class="share-box share-btn rc-share" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"
-            data-share-url="{{ site_origin }}/race/xc/{{ header.meet_id }}/{{ header.div_id }}" title="Share this page; the preview is its card">
-      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
-      <span>Share</span>
-    </button>
   </div>
 </div></header>
 
