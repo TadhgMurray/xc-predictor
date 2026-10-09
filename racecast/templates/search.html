@@ -41,6 +41,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Search: {{ q }} - Racecast</title>
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
     {# the favicon rides in _meta.html on every other page; this head does
        not include that partial, so the tag is here by hand (issue 149) #}
     <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
@@ -49,8 +50,26 @@
 <body>
 {% include "_topbar.html" %}
 
-<section class="search-page">
-    <h1 class="search-heading">Results for "{{ q }}"</h1>
+<main class="page-wide search-page rc">
+    {# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-09: other pages "like the race
+       page"): the query as the title, the match count and Share on the
+       meta line, the box under the header, the kinds as the tab strip with
+       the year beside it. The tabs are still links back to /search (each
+       kind is its own query), so no data-tab and no race-page.js. #}
+    {% set tab_list = [('all','All'), ('athlete','Athletes'),
+                       ('meet','Meets'), ('course','Courses'),
+                       ('venue','Venues'), ('school','Schools')] %}
+    {% set n_all = counts.values()|sum %}
+    <header class="rc-hd"><div class="rc-hgrid rc-hone">
+      <div class="rc-left">
+        <h1 class="search-heading">Results for "{{ q }}"</h1>
+        <div class="rc-meta">
+          {{ (count_cap|string ~ '+') if n_all > count_cap else "{:,}".format(n_all) }} match{{ "" if n_all == 1 else "es" }}{% if year %} · {{ year }}{% endif %}
+          · <button type="button" class="share-btn rc-share-link" data-share-title="{{ 'Search: ' ~ q ~ ' on Racecast' }}"
+                data-share-url="{{ site_origin ~ '/search?q=' ~ q|urlencode ~ ('&kind=' ~ kind if kind != 'all' else '') ~ ('&year=' ~ year if year else '') }}" title="Share this search"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+        </div>
+      </div>
+    </div></header>
 
     {# ★ A SEARCH BAR ON THE PAGE, PRE-FILLED WITH WHAT WAS ASKED. The topbar
        carries one on every page, but it renders EMPTY, so on the one page
@@ -70,27 +89,25 @@
         <button type="submit">Search</button>
     </form>
 
+    <div class="rc-grid rc-grid-one">
+    <div class="rc-mainc">
+    <div class="rc-tbar">
     {# TABS: each links back to /search with a different kind. 'all' has no
-       count of its own -- sum the rest. current tab gets .is-active. #}
-    <nav class="search-tabs">
-        {% set tab_list = [('all','All'), ('athlete','Athletes'),
-                           ('meet','Meets'), ('course','Courses'),
-                           ('venue','Venues'), ('school','Schools')] %}
+       count of its own -- sum the rest. current tab gets .is-on. #}
+    <nav class="seg rc-tabs search-tabs" aria-label="Kind of result">
         {# The counts are CAPPED -- see SEARCH_COUNT_CAP in app.py. A tab is a
            worth-clicking signal, not a statistic, and an exact count has to
            walk the whole match set while the results stop at 30. #}
         {% for key, lbl in tab_list %}
-            {% set n = counts.values()|sum if key == 'all' else counts.get(key, 0) %}
+            {% set n = n_all if key == 'all' else counts.get(key, 0) %}
             {% set shown = (count_cap|string) ~ '+' if n > count_cap else n %}
-            <a class="search-tab {{ 'is-active' if kind == key else '' }}"
-               href="/search?q={{ q|urlencode }}{% if year %}&year={{ year }}{% endif %}&kind={{ key }}">
-                {{ lbl }} <span class="tab-count">{{ shown }}</span>
-            </a>
+            <a class="seg-btn{{ ' is-on' if kind == key }}"{% if kind == key %} aria-current="page"{% endif %}
+               href="/search?q={{ q|urlencode }}{% if year %}&year={{ year }}{% endif %}&kind={{ key }}">{{ lbl }}<span class="n">{{ shown }}</span></a>
         {% endfor %}
     </nav>
 
     {# YEAR dropdown: reloads with ?year=. 'onchange' submits immediately. #}
-    <form class="year-filter" method="get" action="/search">
+    <form class="year-filter rc-tbar-end" method="get" action="/search">
         <input type="hidden" name="q" value="{{ q }}">
         <input type="hidden" name="kind" value="{{ kind }}">
         <label>Year:
@@ -102,6 +119,9 @@
             </select>
         </label>
     </form>
+    </div>
+
+    <section class="rc-panel" data-panel="{{ kind }}">
 
     <table class="results-table">
         <thead>
@@ -140,8 +160,12 @@
     {% if not results %}
         <p class="no-results">No results for "{{ q }}".</p>
     {% endif %}
-</section>
+    </section>
+    </div>
+    </div>
+</main>
 
+<script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('search.js') }}"></script>
 </body>
 </html>
