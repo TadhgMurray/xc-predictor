@@ -273,3 +273,8 @@ main.rc .rc-champs .h2h-dot { margin-right: .35rem; }
 main.rc .h2h-pick { margin: 1.1rem 0 .4rem; }
 .landing-page .landing-list-h { margin: 0; font-size: 1.1rem; }
 .landing-page > .landing-states { margin-top: 2rem; }
+/* ---- projections in the race shape (owner, 2026-10-09) ----------------
+   the side card holds a rating, not a team score: a narrower number column
+   gives a double-barrelled name its line back */
+main.rc.proj-page .rc-tscores-plain td.tpts { width: 3.2rem; }
+main.rc.proj-page .rc-tscores-plain td.tp { width: 1.5rem; }
