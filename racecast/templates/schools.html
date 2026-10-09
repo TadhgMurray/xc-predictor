@@ -5,6 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 {% set meta_title = title %}
 {% set meta_description = description %}
 {% set meta_path = "/schools" ~ ("/" ~ state|lower if state else "") %}
@@ -15,22 +16,64 @@
 <body>
 {% include "_topbar.html" %}
 
-<main class="page-wide schools-page">
-  <h1>{{ title }}</h1>
+<main class="page-wide schools-page rc">
+  {# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-09: other pages "like the race
+     page"): the title, the counts and Share on the meta line, the
+     rankings as the header's links; a state's colleges, its schools and
+     the other states as tabs, the biggest programmes as the side card.
+     Every list stays in the page (a tab only hides it), so the crawl path
+     is the same. #}
+  {% set ns = namespace(n_col=0, n_oth=0, n_all=0) %}
+  {% for r in colleges if r.school|is_team %}{% set ns.n_col = ns.n_col + 1 %}{% endfor %}
+  {% for r in others if r.school|is_team %}{% set ns.n_oth = ns.n_oth + 1 %}{% endfor %}
+  {% for c, n, k in counts %}{% set ns.n_all = ns.n_all + k %}{% endfor %}
+  {# the side card: a state's biggest programmes (colleges and schools
+     together, by athletes in the results); the index's busiest states #}
+  {% set biggest = ((colleges + others)|selectattr("n_athletes")|sort(attribute="n_athletes", reverse=True))[:8] if state else [] %}
+  {% set busiest = (counts|sort(attribute="2", reverse=True))[:8] if not state else [] %}
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <h1>{{ title }}</h1>
+      <div class="rc-meta">
+        {% if state %}{% if ns.n_col %}{{ ns.n_col }} college{{ "" if ns.n_col == 1 else "s" }} · {% endif %}{{ "{:,}".format(ns.n_oth) }} high school{{ "" if ns.n_oth == 1 else "s" }}, middle schools and clubs
+        {% else %}{{ counts|length }} states · {{ "{:,}".format(ns.n_all) }} teams{% endif %}
+        · <button type="button" class="share-btn rc-share-link" data-share-title="{{ title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ meta_path }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      {% if state %}
+      <p class="rc-story">Every team with three or more athletes in the results, biggest programme first.
+         A team's page has its roster by season, its best athletes and performances, and every meet it raced.</p>
+      <div class="rc-links"><span class="k">Rankings:</span> <a href="/rankings/xc/hs-boys/{{ state|lower }}">HS boys XC</a>
+        <a href="/rankings/xc/hs-girls/{{ state|lower }}">HS girls XC</a>
+        <a href="/rankings/tf/hs-boys/{{ state|lower }}">HS boys track</a>
+        <a href="/rankings/tf/hs-girls/{{ state|lower }}">HS girls track</a></div>
+      {% else %}
+      <p class="rc-story">Pick a state. Each page lists every college, high school, middle school and club
+         there with results on Racecast, and links to its rosters, best athletes and meets.</p>
+      {% endif %}
+    </div>
+  </div></header>
+
+  <div class="rc-grid{% if not (biggest or busiest) %} rc-grid-one{% endif %}">
+  <div class="rc-mainc">
   {% if state %}
-  <p class="meta">Every team with three or more athletes in the results, biggest programme first.
-     A team's page has its roster by season, its best athletes and performances, and every meet it raced.
-     Rankings: <a href="/rankings/xc/hs-boys/{{ state|lower }}">HS boys XC</a> ·
-     <a href="/rankings/xc/hs-girls/{{ state|lower }}">HS girls XC</a> ·
-     <a href="/rankings/tf/hs-boys/{{ state|lower }}">HS boys track</a> ·
-     <a href="/rankings/tf/hs-girls/{{ state|lower }}">HS girls track</a>.</p>
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      {% if colleges %}<a class="seg-btn is-on" href="#colleges" data-tab="colleges">Colleges<span class="n">{{ ns.n_col }}</span></a>{% endif %}
+      <a class="seg-btn{{ ' is-on' if not colleges }}" href="#schools" data-tab="schools">High schools &amp; clubs{% if ns.n_oth %}<span class="n">{{ "{:,}".format(ns.n_oth) }}</span>{% endif %}</a>
+      <a class="seg-btn" href="#states" data-tab="states">Other states</a>
+    </nav>
+  </div>
 
   {% if colleges %}
+  <section class="rc-panel" id="colleges" data-panel="colleges">
   <h2 class="dir-h2">Colleges</h2>
   <ul class="dir-list">
     {% for r in colleges if r.school|is_team %}<li>{{ crest(r.school, state) }}<a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a></li>{% endfor %}
   </ul>
+  </section>
   {% endif %}
+  <section class="rc-panel" id="schools" data-panel="schools">
   <h2 class="dir-h2">High schools, middle schools and clubs</h2>
   {% if others %}
   <ul class="dir-list">
@@ -39,16 +82,51 @@
   {% else %}
   <p class="meta">None yet.</p>
   {% endif %}
+  </section>
 
+  <section class="rc-panel" id="states" data-panel="states">
   <h2 class="dir-h2">Other states</h2>
   <p class="landing-states">{% for c, n in state_links %}<a href="/schools/{{ c|lower }}"{% if c == state %} class="is-on"{% endif %}>{{ n }}</a>{{ " · " if not loop.last }}{% endfor %}</p>
+  </section>
   {% else %}
-  <p class="meta">Pick a state. Each page lists every college, high school, middle school and club
-     there with results on Racecast, and links to its rosters, best athletes and meets.</p>
+  <h2 class="dir-h2">States</h2>
   <ul class="dir-list dir-states">
     {% for c, n, k in counts %}<li><a href="/schools/{{ c|lower }}">{{ n }}</a> <span class="dir-n">{{ k }}</span></li>{% endfor %}
   </ul>
   {% endif %}
+  </div>
+  {% if biggest %}
+  <aside class="rc-side">
+    <h2>Biggest teams <small>athletes</small></h2>
+    <table class="rc-tscores rc-tscores-plain">
+      <tbody>
+      {% for r in biggest if r.school|is_team %}
+      <tr>
+        <td class="tn">{% if r.school|is_team %}{{ crest(r.school, state) }}<a href="/school/{{ r.school|urlencode }}">{{ r.school }}</a>{% endif %}</td>
+        <td class="n tpts">{{ "{:,}".format(r.n_athletes) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </aside>
+  {% elif busiest %}
+  <aside class="rc-side">
+    <h2>Most teams <small>by state</small></h2>
+    <table class="rc-tscores rc-tscores-plain">
+      <tbody>
+      {% for c, n, k in busiest %}
+      <tr>
+        <td class="tn"><a href="/schools/{{ c|lower }}">{{ n }}</a></td>
+        <td class="n tpts">{{ "{:,}".format(k) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </aside>
+  {% endif %}
+  </div>
 </main>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

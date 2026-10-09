@@ -289,3 +289,19 @@ main.rc.wit-page .rc-panel > .p2-note:first-child { margin-top: .3rem; }
 main.rc.wit-page .wit-sec-tbl td:first-child, main.rc.wit-page .wit-oth-tbl td:first-child { white-space: normal; min-width: 10rem; }
 main.rc.wit-page .wit-sec-tbl .num .p2-row-sub { white-space: normal; }
 main.rc.wit-page .wit-sec-tbl .wit-yr { display: inline-block; }
+/* ---- /meets, /schools and /search in the race shape (owner, 2026-10-09) --
+   only what the shape needs on top of the pages' own style.css rules */
+/* the Upcoming tables sit beside the side card now: the meet's name wraps
+   (style.css keeps every first cell on one line) instead of pushing the
+   Predict column under the card */
+main.meets-page.rc .cu-table td:first-child { white-space: normal; }
+main.meets-page.rc .rc-panel > .month-head:first-child,
+main.meets-page.rc .rc-panel > .coming-up:first-child > .meet-filters:first-child { margin-top: .6rem; }
+/* the rankings links: "Rankings:" reads as their label, not a fifth link */
+main.schools-page.rc .rc-links .k { font-weight: 400; color: var(--muted); }
+/* the year picker sits on the tab strip's line; the search page's own
+   full-width rule (style.css, body > .search-page) would otherwise make
+   it narrower than every other .page-wide page */
+main.search-page.rc { box-sizing: content-box; }
+main.search-page.rc .year-filter { margin: 0 0 0 auto; font-size: .9rem; }
+main.search-page.rc .search-page-form { margin-top: 1rem; }

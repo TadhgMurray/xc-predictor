@@ -28,21 +28,39 @@
               "with results and speed ratings on one comparable scale.")) %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
-<main class="page-wide meets-page">
+<main class="page-wide meets-page rc">
+{# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-09: other pages "like the race
+   page"): the title, the list's facts and Share on the meta line, the
+   filters under the header, Results | Upcoming as the tab strip with the
+   sport beside it, and the other view's meets as the side card. The two
+   tabs are still two server views (?view=upcoming), so they are plain
+   links: no data-tab, no race-page.js. #}
 {% if course %}
     {# The course view-all: every meet ever, by year, no results floor.
        Distance and results describe the whole meet, same as the course
        page's own table. #}
-    <h1>Meets at {{ course }}</h1>
-    <p class="meta">Every meet held at
-       <a href="/course/{{ course|urlencode }}">{{ course }}</a>,
-       newest first · {{ "{:,}".format(n_meets) }}
-       meet{{ "" if n_meets == 1 else "s" }}.</p>
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country</span></div>
+      <h1>Meets at {{ course }}</h1>
+      <div class="rc-meta">Every meet held at
+         <a href="/course/{{ course|urlencode }}">{{ course }}</a>,
+         newest first · {{ "{:,}".format(n_meets) }}
+         meet{{ "" if n_meets == 1 else "s" }}
+         · <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+    </div>
+  </div></header>
 
+  <div class="rc-grid rc-grid-one">
+  <div class="rc-mainc">
+  <section class="rc-panel" data-panel="meets">
     {% if not months %}
     <p class="meta">No meets recorded at this course.</p>
     {% endif %}
@@ -65,6 +83,9 @@
         </tbody>
     </table>
     {% endfor %}
+  </section>
+  </div>
+  </div>
 {% else %}
     {# ★ ONE HEADING AND ONE TABLE FOR BOTH THE RECENT LIST AND A FILTERED
        VIEW. They differ in what fills `months` and in the sentence under the
@@ -72,45 +93,57 @@
        different page would hide that the filters are just a narrowing of the
        list you were already reading. #}
     {% set filtering = filters and filters.active %}
+    {% set ns = namespace(n_recent=0, n_coming=0) %}
+    {% for label, rows in months %}{% set ns.n_recent = ns.n_recent + rows|length %}{% endfor %}
+    {% for d in coming or [] %}{% set ns.n_coming = ns.n_coming + d.meets|length %}{% endfor %}
+    {# the side card is the other view's meets. Results: the week's biggest
+       (each day is biggest first, so the week is re-sorted). Upcoming: the
+       newest results (app.meets_page `latest`). A filtered view has none. #}
+    {% set side_coming = [] %}
+    {% if not upcoming and not filtering %}
+      {% for d in coming or [] %}{% for m in d.meets %}{% set _ = side_coming.append({"m": m, "day": d.label, "n": m.n_races}) %}{% endfor %}{% endfor %}
+    {% endif %}
+    {% set side_coming = (side_coming|sort(attribute="n", reverse=True))[:6] %}
+    {% set side_latest = latest if (upcoming and latest) else [] %}
+    {% set has_side = side_coming or side_latest %}
     {# ★ RESULTS | UPCOMING (owner, 2026-10-05: past and future "on same
        page" was not obvious). Two views of /meets, ?view=upcoming. #}
-    <h1>{{ "Meets" if filtering else ("Upcoming meets" if upcoming else "Recent meets") }}</h1>
-    {% if not filtering %}
-    <div class="seg meets-view">
-      <a class="seg-btn{{ ' is-on' if not upcoming }}" href="/meets?sport={{ sport }}">Results</a>
-      <a class="seg-btn{{ ' is-on' if upcoming }}" href="/meets?view=upcoming&amp;sport={{ sport }}">Upcoming</a>
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ "Cross country" if sport == 'XC' else "Track" }}</span></div>
+      <h1>{{ "Meets" if filtering else ("Upcoming meets" if upcoming else "Recent meets") }}</h1>
+      {% if upcoming %}
+      <div class="rc-meta">Next seven days · {{ ns.n_coming }} meet{{ "" if ns.n_coming == 1 else "s" }}
+         · <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      {# ! WHAT THE PREDICTION ACTUALLY DOES (2026-10-06): the field is the
+           teams from the meet's last edition, with this season's squads
+           (last_edition.py) -- not "the teams that race the course now",
+           which nothing computed. #}
+      <p class="rc-story">Meets posted for the next seven days, biggest first. No entries
+         are posted yet, so a prediction builds the field from the teams at the
+         meet's last running, with this season's squads.</p>
+      {% elif filtering %}
+      <div class="rc-meta">
+         {{ "{:,}".format(n_meets) }} meet{{ "" if n_meets == 1 else "s" }}
+         {{ filter_text }}, newest first
+         {% if capped %}
+         · <strong>Showing the newest {{ max_meets }}</strong> - narrow by season
+         to see further back
+         {% endif %}
+         · <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      {% else %}
+      <div class="rc-meta">Meets from the last year with real fields
+         ({{ min_results }}+ results), newest first · {{ "{:,}".format(ns.n_recent) }} meets
+         · <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      {% endif %}
     </div>
-    {% endif %}
-    {% if upcoming %}
-    {# ! WHAT THE PREDICTION ACTUALLY DOES (2026-10-06): the field is the
-         teams from the meet's last edition, with this season's squads
-         (last_edition.py) -- not "the teams that race the course now",
-         which nothing computed. #}
-    <p class="meta">Meets posted for the next seven days, biggest first. No entries
-       are posted yet, so a prediction builds the field from the teams at the
-       meet's last running, with this season's squads.</p>
-    {% elif filtering %}
-    <p class="meta">
-       {{ "{:,}".format(n_meets) }} meet{{ "" if n_meets == 1 else "s" }}
-       {{ filter_text }}, newest first.
-       {% if capped %}
-       <strong>Showing the newest {{ max_meets }}</strong> - narrow by season
-       to see further back.
-       {% endif %}
-    </p>
-    {% else %}
-    <p class="meta">Meets from the last year with real fields
-       ({{ min_results }}+ results), newest first.</p>
-    {% endif %}
-
-    <div class="seg">
-        {% for s in ['XC', 'TF'] %}
-          {# The sport keeps whatever filter is applied -- switching sport is
-             not a reason to lose the school you came here to look at. #}
-          <a class="seg-btn{{ ' is-on' if s == sport }}"
-             href="/meets?sport={{ s }}{% if upcoming %}&amp;view=upcoming{% endif %}{% if filters %}{% if filters.state %}&amp;state={{ filters.state }}{% endif %}{% if filters.school %}&amp;school={{ filters.school|urlencode }}{% endif %}{% if filters.q %}&amp;q={{ filters.q|urlencode }}{% endif %}{% if filters.year_label is not none %}&amp;year={{ filters.year_label }}{% endif %}{% endif %}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
-        {% endfor %}
-    </div>
+  </div></header>
 
     {# ★ A PLAIN GET FORM, NOT A JS FILTER BAR. Every control here is a real
        server-side filter, so the URL that results is shareable, bookmarkable
@@ -254,144 +287,201 @@
     })();
     </script>
     {% endif %}
-
-    {# ★ COMING UP (weekend.py): the meets the feeds have posted for the next
-       seven days, this sport, biggest first, each a link into predictions.
-       The recent list only, never a filtered or course view. #}
-    {% if upcoming and not coming %}
-    <p class="meta">No {{ "cross country" if sport == "XC" else "track" }} meet has been
-       posted for the next seven days yet.</p>
-    {% endif %}
-    {% if upcoming and coming %}
-    <section class="coming-up" id="coming-up">
-      {# ★ THE RESULTS VIEW'S FILTER CARD (owner, 2026-10-06: the state
-         filter here "looks very out of place"). Same .meet-filters card, the
-         same label-over-select fields; it filters the list in place, so no
-         button. #}
-      <div class="meet-filters cu-filters" role="search">
-        <div class="field">
-          <label for="cu-state">State</label>
-          <select id="cu-state"><option value="">All states</option>
-            {% for st in states %}<option>{{ st }}</option>{% endfor %}
-          </select>
-        </div>
-        <div class="field">
-          <label for="cu-level">Level</label>
-          <select id="cu-level">
-            <option value="">Any level</option>
-            <option value="HS">High school</option>
-            <option value="College">College</option>
-          </select>
-        </div>
-      </div>
-      {% for d in coming %}
-      <h2 class="month-head cu-day">{{ d.label }}</h2>
-      <table class="cu-table">
-        <thead>
-          <tr><th>Meet</th><th>{{ "Course" if sport == 'XC' else "Setting" }}</th>
-              <th>State</th><th>Level</th><th>Races</th><th></th></tr>
-        </thead>
-        <tbody>
-        {% for m in d.meets %}
-          <tr data-state="{{ m.state or '' }}" data-level="{{ m.level }}"{% if loop.index > 15 %} class="cu-more" hidden{% endif %}>
-            <td>{{ m.name }}</td>
-            <td>{{ m.venue or " - " }}</td>
-            <td>{{ m.state or " - " }}</td>
-            <td>{{ m.level or " - " }}</td>
-            <td>{{ m.n_races }}</td>
-            <td><a href="{{ m.predict_href }}">Predict</a></td>
-          </tr>
+  <div class="rc-grid{% if not has_side %} rc-grid-one{% endif %}">
+  <div class="rc-mainc">
+    <div class="rc-tbar">
+      {% if not filtering %}
+      <nav class="seg rc-tabs meets-view" aria-label="Results or upcoming">
+        <a class="seg-btn{{ ' is-on' if not upcoming }}" href="/meets?sport={{ sport }}"{% if not upcoming %} aria-current="page"{% endif %}>Results{% if not upcoming %}<span class="n">{{ "{:,}".format(ns.n_recent) }}</span>{% endif %}</a>
+        <a class="seg-btn{{ ' is-on' if upcoming }}" href="/meets?view=upcoming&amp;sport={{ sport }}"{% if upcoming %} aria-current="page"{% endif %}>Upcoming{% if ns.n_coming %}<span class="n">{{ ns.n_coming }}</span>{% endif %}</a>
+      </nav>
+      {% endif %}
+      <div class="rc-tbar-end">
+      <div class="seg" role="group" aria-label="Sport">
+        {% for s in ['XC', 'TF'] %}
+          {# The sport keeps whatever filter is applied -- switching sport is
+             not a reason to lose the school you came here to look at. #}
+          <a class="seg-btn{{ ' is-on' if s == sport }}"
+             href="/meets?sport={{ s }}{% if upcoming %}&amp;view=upcoming{% endif %}{% if filters %}{% if filters.state %}&amp;state={{ filters.state }}{% endif %}{% if filters.school %}&amp;school={{ filters.school|urlencode }}{% endif %}{% if filters.q %}&amp;q={{ filters.q|urlencode }}{% endif %}{% if filters.year_label is not none %}&amp;year={{ filters.year_label }}{% endif %}{% endif %}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
         {% endfor %}
-        </tbody>
-      </table>
-      {% if d.meets | length > 15 %}
-      <button type="button" class="cu-all" data-n="{{ d.meets | length }}">Show all {{ d.meets | length }}</button>
+      </div>
+      </div>
+    </div>
+
+    <section class="rc-panel" data-panel="{{ 'upcoming' if upcoming else 'results' }}">
+      {# ★ COMING UP (weekend.py): the meets the feeds have posted for the next
+         seven days, this sport, biggest first, each a link into predictions.
+         The recent list only, never a filtered or course view. #}
+      {% if upcoming and not coming %}
+      <p class="meta">No {{ "cross country" if sport == "XC" else "track" }} meet has been
+         posted for the next seven days yet.</p>
       {% endif %}
-      {% endfor %}
-    </section>
-    <script>
-    // Coming up: "Show all" per day, and a state filter that shows every
-    // meet in that state (no cap -- one state's week is short).
-    (function () {
-      var box = document.getElementById("coming-up");
-      if (!box) return;
-      var sel = document.getElementById("cu-state");
-      var lvl = document.getElementById("cu-level");
-      function apply() {
-        var st = sel.value, lv = lvl.value, narrowed = !!(st || lv);
-        box.querySelectorAll(".cu-table").forEach(function (t) {
-          var open = t.dataset.open === "1", n = 0;
-          t.querySelectorAll("tbody tr").forEach(function (tr) {
-            // "HS & college" is both
-            var ok = (!st || tr.dataset.state === st)
-                  && (!lv || tr.dataset.level.indexOf(lv === "HS" ? "HS" : "ollege") >= 0);
-            if (ok) n++;
-            tr.hidden = !ok || (!narrowed && !open && tr.classList.contains("cu-more"));
+      {% if upcoming and coming %}
+      <section class="coming-up" id="coming-up">
+        {# ★ THE RESULTS VIEW'S FILTER CARD (owner, 2026-10-06: the state
+           filter here "looks very out of place"). Same .meet-filters card, the
+           same label-over-select fields; it filters the list in place, so no
+           button. #}
+        <div class="meet-filters cu-filters" role="search">
+          <div class="field">
+            <label for="cu-state">State</label>
+            <select id="cu-state"><option value="">All states</option>
+              {% for st in states %}<option>{{ st }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="cu-level">Level</label>
+            <select id="cu-level">
+              <option value="">Any level</option>
+              <option value="HS">High school</option>
+              <option value="College">College</option>
+            </select>
+          </div>
+        </div>
+        {% for d in coming %}
+        <h2 class="month-head cu-day">{{ d.label }}</h2>
+        <table class="cu-table">
+          <thead>
+            <tr><th>Meet</th><th>{{ "Course" if sport == 'XC' else "Setting" }}</th>
+                <th>State</th><th>Level</th><th>Races</th><th></th></tr>
+          </thead>
+          <tbody>
+          {% for m in d.meets %}
+            <tr data-state="{{ m.state or '' }}" data-level="{{ m.level }}"{% if loop.index > 15 %} class="cu-more" hidden{% endif %}>
+              <td>{{ m.name }}</td>
+              <td>{{ m.venue or " - " }}</td>
+              <td>{{ m.state or " - " }}</td>
+              <td>{{ m.level or " - " }}</td>
+              <td>{{ m.n_races }}</td>
+              <td><a href="{{ m.predict_href }}">Predict</a></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% if d.meets | length > 15 %}
+        <button type="button" class="cu-all" data-n="{{ d.meets | length }}">Show all {{ d.meets | length }}</button>
+        {% endif %}
+        {% endfor %}
+      </section>
+      <script>
+      // Coming up: "Show all" per day, and a state filter that shows every
+      // meet in that state (no cap -- one state's week is short).
+      (function () {
+        var box = document.getElementById("coming-up");
+        if (!box) return;
+        var sel = document.getElementById("cu-state");
+        var lvl = document.getElementById("cu-level");
+        function apply() {
+          var st = sel.value, lv = lvl.value, narrowed = !!(st || lv);
+          box.querySelectorAll(".cu-table").forEach(function (t) {
+            var open = t.dataset.open === "1", n = 0;
+            t.querySelectorAll("tbody tr").forEach(function (tr) {
+              // "HS & college" is both
+              var ok = (!st || tr.dataset.state === st)
+                    && (!lv || tr.dataset.level.indexOf(lv === "HS" ? "HS" : "ollege") >= 0);
+              if (ok) n++;
+              tr.hidden = !ok || (!narrowed && !open && tr.classList.contains("cu-more"));
+            });
+            var day = t.previousElementSibling, btn = t.nextElementSibling;
+            if (day) day.hidden = n === 0;
+            t.hidden = n === 0;
+            if (btn && btn.classList.contains("cu-all")) btn.hidden = narrowed || open || n === 0;
           });
-          var day = t.previousElementSibling, btn = t.nextElementSibling;
-          if (day) day.hidden = n === 0;
-          t.hidden = n === 0;
-          if (btn && btn.classList.contains("cu-all")) btn.hidden = narrowed || open || n === 0;
+        }
+        box.addEventListener("click", function (e) {
+          if (!e.target.classList.contains("cu-all")) return;
+          e.target.previousElementSibling.dataset.open = "1";
+          apply();
         });
-      }
-      box.addEventListener("click", function (e) {
-        if (!e.target.classList.contains("cu-all")) return;
-        e.target.previousElementSibling.dataset.open = "1";
-        apply();
-      });
-      sel.addEventListener("change", apply);
-      lvl.addEventListener("change", apply);
-    })();
-    </script>
-    {% endif %}
-
-    {% if not upcoming %}
-    {% if not months %}
-      {% if filtering %}
-    <p class="meta">No {{ sport }} meet matches {{ filter_text }}. The school
-       name has to match how the results spell it - the school page's own
-       title is the exact form.</p>
-      {% else %}
-    <p class="meta">Nothing here yet. The list is rebuilt with the
-       homepage boards; if those are up to date, no {{ sport }} meet in the
-       window cleared the results floor.</p>
+        sel.addEventListener("change", apply);
+        lvl.addEventListener("change", apply);
+      })();
+      </script>
       {% endif %}
-    {% endif %}
+      {% if not upcoming %}
+      {% if not months %}
+        {% if filtering %}
+      <p class="meta">No {{ sport }} meet matches {{ filter_text }}. The school
+         name has to match how the results spell it - the school page's own
+         title is the exact form.</p>
+        {% else %}
+      <p class="meta">Nothing here yet. The list is rebuilt with the
+         homepage boards; if those are up to date, no {{ sport }} meet in the
+         window cleared the results floor.</p>
+        {% endif %}
+      {% endif %}
 
-    {% for label, rows in months %}
-    <h2 class="month-head">{{ label }}</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Date</th>
-                <th>Meet</th>
-                <th>{{ "Course" if sport == 'XC' else "Setting" }}</th>
-                <th>State</th>
-                {% if filters and filters.champ %}<th>Championship of</th>{% endif %}
-                <th>Results</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for m in rows %}
-            <tr>
-                <td class="no-break">{{ m.date|mdy }}</td>
-                <td><a href="/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}">{{ m.meet_name }}</a></td>
-                <td>
-                    {% if sport == 'XC' and m.course_name %}
-                        <a href="/course/{{ m.course_name|urlencode }}">{{ m.course_name }}</a>
-                    {% else %}{{ m.course_name or " - " }}{% endif %}
-                </td>
-                <td>{{ m.state or " - " }}</td>
-                {% if filters and filters.champ %}<td>{{ m.units or " - " }}</td>{% endif %}
-                <td>{{ m.n_results }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
+      {% for label, rows in months %}
+      <h2 class="month-head">{{ label }}</h2>
+      <table>
+          <thead>
+              <tr>
+                  <th>Date</th>
+                  <th>Meet</th>
+                  <th>{{ "Course" if sport == 'XC' else "Setting" }}</th>
+                  <th>State</th>
+                  {% if filters and filters.champ %}<th>Championship of</th>{% endif %}
+                  <th>Results</th>
+              </tr>
+          </thead>
+          <tbody>
+              {% for m in rows %}
+              <tr>
+                  <td class="no-break">{{ m.date|mdy }}</td>
+                  <td><a href="/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}">{{ m.meet_name }}</a></td>
+                  <td>
+                      {% if sport == 'XC' and m.course_name %}
+                          <a href="/course/{{ m.course_name|urlencode }}">{{ m.course_name }}</a>
+                      {% else %}{{ m.course_name or " - " }}{% endif %}
+                  </td>
+                  <td>{{ m.state or " - " }}</td>
+                  {% if filters and filters.champ %}<td>{{ m.units or " - " }}</td>{% endif %}
+                  <td>{{ m.n_results }}</td>
+              </tr>
+              {% endfor %}
+          </tbody>
+      </table>
+      {% endfor %}
+      {% endif %}{# not upcoming #}
+    </section>
+  </div>
+  {% if has_side %}
+  <aside class="rc-side">
+    {% if side_coming %}
+    <h2>Coming up <small>next 7 days</small></h2>
+    <table class="rc-tscores rc-tscores-plain">
+      <tbody>
+      {% for c in side_coming %}
+      <tr>
+        <td class="tn"><a href="{{ c.m.predict_href }}">{{ c.m.name }}</a>
+          <span class="sp">{{ c.day }} · {{ c.m.n_races }} race{{ "" if c.m.n_races == 1 else "s" }}</span></td>
+        <td class="n tpts">{{ c.m.state or " - " }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
     </table>
-    {% endfor %}
-    {% endif %}{# not upcoming #}
+    <a class="rc-more" href="/meets?view=upcoming&amp;sport={{ sport }}">All {{ ns.n_coming }} upcoming</a>
+    {% else %}
+    <h2>Latest results <small>{{ "cross country" if sport == "XC" else "track" }}</small></h2>
+    <table class="rc-tscores rc-tscores-plain">
+      <tbody>
+      {% for m in side_latest %}
+      <tr>
+        <td class="tn"><a href="/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}">{{ m.meet_name }}</a>
+          <span class="sp">{{ m.date|mdy }}{% if m.state %} · {{ m.state }}{% endif %}</span></td>
+        <td class="n tpts">{{ m.n_results }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <a class="rc-more" href="/meets?sport={{ sport }}">All results</a>
+    {% endif %}
+  </aside>
+  {% endif %}
+  </div>
 {% endif %}
 
 </main>
+<script src="{{ static_v('share.js') }}"></script>
 </body>
 </html>

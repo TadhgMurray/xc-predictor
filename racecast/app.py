@@ -1099,16 +1099,19 @@ def meets_page():
     # ★ ?view=upcoming: the meets posted for the coming week (weekend.py),
     #   its own view of the page rather than a block on top of the results
     upcoming = (request.args.get("view") or "").lower() == "upcoming"
-    coming = []
-    if upcoming:
-        from weekend import comingUpCached
-        coming = [{**d, "meets": [m for m in d["meets"] if m["sport"] == sport]}
-                  for d in comingUpCached(getConn)]
-        coming = [d for d in coming if d["meets"]]
+    # ★ BOTH VIEWS READ THE WEEK (owner, 2026-10-09: the race page's shape):
+    #   the Results view's side card is the biggest meets coming up, the
+    #   Upcoming view's is the latest results. comingUpCached is one compute
+    #   per day per worker and renders [] on a failure.
+    from weekend import comingUpCached
+    coming = [{**d, "meets": [m for m in d["meets"] if m["sport"] == sport]}
+              for d in comingUpCached(getConn)]
+    coming = [d for d in coming if d["meets"]]
     return render_template("meets.html", sport=sport, months=[] if upcoming else months,
                            filters=f, states=US_STATES, kinds=kinds, unit_kinds=UNIT_KINDS,
                            min_results=RECENT_MIN_RESULTS, coming=coming,
-                           upcoming=upcoming)
+                           upcoming=upcoming,
+                           latest=recent.get(sport, [])[:6] if upcoming else [])
 
 
 @app.route("/api/meet-units")
