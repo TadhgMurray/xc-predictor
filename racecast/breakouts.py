@@ -66,11 +66,11 @@ MIN_PRIOR = 2          # earlier rated races this season, for a breakout
 MIN_JUMP = 1.0         # points over the median; less is noise
 CHECK_JUMP = 20.0      # build_ranking_results._SEASON_OUTLIER_PTS, the fast side
 CHECK_GAIN = 0.10      # a PR 10% under the old one is usually a distance error
-NATIONAL_N = 50
-STATE_N = 25
+NATIONAL_N = 100
+STATE_N = 50
 # rows the SQL returns per level, before the per-person fold
-_SQL_NAT = 200
-_SQL_STATE = 40
+_SQL_NAT = 300
+_SQL_STATE = 80
 
 # Standard distances, metres. Exact metric/imperial pairs are DIFFERENT
 # distances (1600 v 1609, 3200 v 3218), as on the PR board.

@@ -114,6 +114,10 @@
 .p2-page .p2-filters button { font: inherit; padding: .3rem .8rem; border: 1px solid var(--sel, #111418);
   background: var(--sel, #111418); color: #fff; border-radius: 5px; cursor: pointer; align-self: flex-end; }
 .p2-page .p2-filters > a { align-self: flex-end; padding-bottom: .35rem; }
+.p2-page .p2-units { align-self: flex-end; }
+/* open, the unit boxes take their own line so the closed summary can sit on
+   the inputs' baseline (owner, 2026-10-09: "way too high") */
+.p2-page .p2-units[open] { flex-basis: 100%; align-self: auto; }
 .p2-page .p2-units summary { cursor: pointer; color: var(--link, #14477d); padding: .35rem 0; }
 .p2-page .p2-unit-row { display: flex; flex-wrap: wrap; gap: .5rem .8rem; margin-top: .3rem; }
 .p2-page .p2-unit-row input { min-width: 9rem !important; }
