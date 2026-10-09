@@ -1430,30 +1430,51 @@ class Design:
         if self.pool_row is not None and free.size:
             class_pool[self.e_base[free]] = self.pool_row[free]
 
+        # ★ ONE SLICE PER CLASS (2026-10-09, 08_golive: ~520 s per outer
+        #   after the solve, x5). The chain below asks for thousands of
+        #   (class, class) pairs; each used to mask every free row and fill
+        #   two arrays the size of every athlete-season. A stable sort by
+        #   class keeps each class's rows in (athlete, random) order, so a
+        #   class is a contiguous slice and its bests a reduceat; the
+        #   numbers are the same.
+        f_cls = f_key % nb
+        by_cls = np.argsort(f_cls, kind="stable")
+        bounds = np.searchsorted(f_cls[by_cls], np.arange(nb + 1))
+        F_rows, F_ath, F_pos = f_rows[by_cls], (f_key // nb)[by_cls], f_pos[by_cls]
+
         def _side(c):
             """(rows, athlete, position-in-group, count per athlete) of one
-            side of a pair: the reference event (c < 0) or free class c."""
+            side of a pair: the reference event (c < 0) or free class c.
+            Rows come ordered by athlete."""
             if c < 0:
                 return r_rows, r_ath, r_pos, n_ref
-            sel = f_key % nb == c
-            return f_rows[sel], f_key[sel] // nb, f_pos[sel], n_y[c::nb]
+            s = slice(bounds[c], bounds[c + 1])
+            return F_rows[s], F_ath[s], F_pos[s], n_y[c::nb]
+
+        def _best(rows, ath, m):
+            """(athletes, best y) over the rows m keeps; ath sorted."""
+            a = ath[m]
+            idx = np.flatnonzero(np.r_[True, a[1:] != a[:-1]])
+            return a[idx], np.minimum.reduceat(y[rows[m]], idx)
 
         def _pairs(c, z):
             """Per athlete-season with both sides: log(best at c) - log(best
-            at z), count-matched; and the athletes."""
+            at z), count-matched; and the athletes (ascending)."""
             rc, ac, pc, ncnt = _side(c)
             rz, az, pz, nz = _side(z)
-            k = np.minimum(ncnt, nz)
-            if not (k > 0).any():
+            if not rc.size or not rz.size:
                 return None, None
-            best_c = np.full(self.n_ath, np.inf)
-            m = pc < k[ac]
-            np.minimum.at(best_c, ac[m], y[rc[m]])
-            best_z = np.full(self.n_ath, np.inf)
-            m = pz < k[az]
-            np.minimum.at(best_z, az[m], y[rz[m]])
-            ath = np.flatnonzero(np.isfinite(best_c) & np.isfinite(best_z))
-            return best_c[ath] - best_z[ath], ath
+            mc = pc < np.minimum(ncnt[ac], nz[ac])
+            mz = pz < np.minimum(ncnt[az], nz[az])
+            if not mc.any() or not mz.any():
+                return None, None
+            ua, ba = _best(rc, ac, mc)
+            uz, bz = _best(rz, az, mz)
+            ath, ia, iz = np.intersect1d(ua, uz, assume_unique=True,
+                                         return_indices=True)
+            if not ath.size:
+                return None, None
+            return ba[ia] - bz[iz], ath
 
         n_cal = 0
         for c in range(nb):
@@ -3447,6 +3468,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         if div_off is not None:
             y_fit = y_fit - h * div_off
         div_used = div_last
+        t_solve = time.time()
         # the last outer carries the published numbers; see CG_TOL_OUTER
         theta, iters = conjugateGradient(
             op.rhs(y_fit), op.matvec, diag, max_iter=cg_max_iter, x0=theta,
@@ -3457,6 +3479,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
             b, bbar = recentreSportOffset(b, D, w, delta=sport_gap_delta)
         b = recentreLevels(b, D, merge=merge_sports)
         theta = _pack(b, D)
+        t_post = time.time()
+        t_solve = t_post - t_solve
 
         resid = y_fit - rowPrediction(b, D, h, amp)
 
@@ -3645,6 +3669,9 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
             if getattr(D, "n_ind", 0):
                 extra += f", indoor {np.round(b['ind'], 4)} per pool"
 
+            # ★ WHERE THE PASS WENT (2026-10-09): the solve, and the
+            #   variances, weights and calibration after it
+            extra += f", {t_solve:.0f}s solve + {time.time() - t_post:.0f}s after"
             print(f"  [joint] outer {outer + 1}/{n_outer}: cg {iters} iters, "
                   f"sigma {np.sqrt(sigma2):.5f}, sigma_u "
                   f"{np.round(np.sqrt(sigma_u2), 5)}, "

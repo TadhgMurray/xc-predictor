@@ -2021,7 +2021,9 @@ def resolve(cur, audit=False):
     # The academic-year verdicts, in precedence order.
     acad = {}
 
+    _tq = time.time()
     cur.execute(_CORROBORATED_SQL, {"minc": MIN_CORROBORATION})
+    print(f"    [2] corroborated grades read ({time.time() - _tq:.0f}s)", flush=True)
     for pid, ay, grade, n in cur.fetchall():
         acad[(int(pid), int(ay))] = {"grade": grade, "level": None,
                                      "method": "corroborated"}
@@ -2030,7 +2032,9 @@ def resolve(cur, audit=False):
     # ! RULE 2c, BETWEEN 2 AND 4 ON PURPOSE. It rewrites grades rule 4 is
     #   about to read as field evidence; running it afterwards would leave
     #   every ungraded athlete in those fields pooled off the wrong mode.
+    _tq = time.time()
     cur.execute(_BARE_CLASS_SQL)
+    print(f"    [2c] bare class words read ({time.time() - _tq:.0f}s)", flush=True)
     n_bare = _resolveBareClass(
         acad, [(int(p), int(a)) for p, a in cur.fetchall()])
 
@@ -2040,15 +2044,18 @@ def resolve(cur, audit=False):
     #   80% line before their pockets were fixed.
     n_bare_field = 0
     for _round in (1, 2):
+        _tq = time.time()
         cur.execute(_BARE_FIELD_SQL, {"minf": MIN_FIELD_GRADED,
                                       "share": _FIELD_SCHOOL_SHARE})
         got = _resolveBareClassByField(acad, cur.fetchall())
         n_bare_field += got
+        _tw = time.time()
         # The last write-back also stands for rule 4, which reads the field
         # after this loop.
         moved = _writeBackBareClass(cur, acad)
         print(f"    [2c round {_round}] {got:,} seasons, "
-              f"{moved:,} rows relabelled in the field")
+              f"{moved:,} rows relabelled in the field "
+              f"({_tw - _tq:.0f}s field, {time.time() - _tw:.0f}s write-back)", flush=True)
         if not got:
             break
 
@@ -2058,7 +2065,9 @@ def resolve(cur, audit=False):
     #   mode over evidence, while 'not one entrant anywhere carried a grade'
     #   is the absence of school-ness. Only the second can emit 'pro', so the
     #   level identifies its own origin and the two stay countable apart.
+    _tq = time.time()
     cur.execute(_FIELD_SQL, {"minc": MIN_CORROBORATION})
+    print(f"    [4] field levels read ({time.time() - _tq:.0f}s)", flush=True)
     n_nograde = 0
     for pid, ay, level in cur.fetchall():
         key = (int(pid), int(ay))
@@ -2069,7 +2078,9 @@ def resolve(cur, audit=False):
         acad[key] = {"grade": None, "level": level, "method": method}
     n_field = len(acad) - n_corr - n_nograde
 
+    _tq = time.time()
     cur.execute(_STALE_SQL, {"maxy": MAX_YEARS_AT_GRADE})
+    print(f"    [5] stale grades read ({time.time() - _tq:.0f}s)", flush=True)
     stale = {(int(p), int(a)) for p, a in cur.fetchall()}
     n_stale = 0
     for key in stale:

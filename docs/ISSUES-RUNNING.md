@@ -5674,3 +5674,21 @@ Chromium against the old script (readout 15:00, label under the pointer
   "Abe" -> "Abraham Alvarado", Aaron Ahl -> a nameless career), and not when
   every key they share is a country alone ('canada', 'united states',
   'mexico'). Stray joins are unchanged.
+- **Owner's writes (2026-10-08).** link_feed_twins --write: 10,629 persons,
+  27,723 XC + 4,197 TF rows moved, 2 TF copies kept back. link_profile_school
+  --careers --write: 71,648 profiles (5,506 career groups), 137,400 XC +
+  346,643 TF rows moved, nothing kept back.
+- ✅ **08_golive, ~520 s after every solve pass (x5).** log_gaps on run
+  20261008_122036: each outer = ~650-900 s of CG + ~520 s between the day
+  guard and the outer line. The post-solve work is all vectorised except
+  Design.calibrateDist's chain, which asked for thousands of (class, class)
+  pairs and per pair masked every free track row and filled two arrays the
+  size of every athlete-season. Now each class is one slice (stable sort by
+  class) and its bests a reduceat; identical e_mean / e_cal_n / e_cal_via on
+  a synthetic design with chained classes. The outer line now prints
+  "Ns solve + Ns after" so the next run shows what is left.
+- 🔎 04_grade_sanity: [2c] rounds 742 s + 959 s and the 830 s before round 1
+  had no timing; the 2c, 4 and 5 queries now print their seconds.
+- ✅ The boards' JS grade label still read a 9-12 in a college pool as the
+  number (the Python one has said FR-1..SR-4 since 25544b1); the mirror test
+  caught it. Fixed in rankings.js.

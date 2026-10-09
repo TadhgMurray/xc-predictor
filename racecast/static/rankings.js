@@ -1140,7 +1140,8 @@ const _CLASS = {fr: 0, fresh: 0, freshman: 0, freshmen: 0,
 const _WORD_HS = Object.fromEntries(Object.entries(_CLASS).map(([w, i]) => [w, String(9 + i)]));
 const _WORD_COL = Object.fromEntries(Object.entries(_CLASS).map(
   ([w, i]) => [w, ["FR-1", "SO-2", "JR-3", "SR-4"][i]]));
-const _NUM_COL = {"13": "FR-1", "14": "SO-2", "15": "JR-3", "16": "SR-4"};
+const _NUM_COL = {"13": "FR-1", "14": "SO-2", "15": "JR-3", "16": "SR-4",
+                  "9": "FR-1", "10": "SO-2", "11": "JR-3", "12": "SR-4"};
 function poolNow() {
   const el = document.getElementById("pool");
   return el ? el.value : "";
