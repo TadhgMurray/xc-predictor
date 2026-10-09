@@ -7673,30 +7673,46 @@ def get_tf_venue_individual_records(cur, location_id, is_indoor, per_event=5,
                   if r["gender"] in ("M", "F")}
     for r in rows:
         r["gender"] = r.get("ev_gender") or pg.get(r["person_id"])
+    # ! ONE PARSE PER SPELLING (owner, 2026-10-09, diag_venue_speed: 2.6 s
+    #   of a 3.2 s page here). The busiest venue holds 123k rows but a few
+    #   hundred event spellings and marks; the regex folds ran per row.
+    ev_memo, mark_memo = {}, {}
+
+    def _classify(ev, field):
+        k = (ev, field)
+        if k not in ev_memo:
+            low = ev.lower()
+            if field:
+                key = eventFamily(ev)
+                ev_memo[k] = (2, key, familyLabel(key))
+            elif "hurdle" in low or "steeple" in low or "walk" in low:
+                key = eventFamily(ev)
+                ev_memo[k] = (1, key, familyLabel(key))
+            else:
+                d = eventDistance(ev)
+                ev_memo[k] = (0, d, "Mile" if 1600 < d < 1620 else f"{int(d)}m") if d else None
+        return ev_memo[k]
+
     keyed = {}
     for r in rows:
         ev = r["event_short"]
-        low = ev.lower()
         if r["is_field"]:
-            v = parseMark(r["mark"])
+            m = r["mark"]
+            if m not in mark_memo:
+                mark_memo[m] = parseMark(m)
+            v = mark_memo[m]
             if v is None or v <= 0:
                 continue
-            key = eventFamily(ev)
-            kind, label = 2, familyLabel(key)
+            kind, key, label = _classify(ev, True)
             better = v
         else:
             t = r["time_seconds"]
             if t is None or t <= 0 or t >= 19999 or _isSentinelTime(t):
                 continue
-            if "hurdle" in low or "steeple" in low or "walk" in low:
-                key = eventFamily(ev)
-                kind, label = 1, familyLabel(key)
-            else:
-                d = eventDistance(ev)
-                if not d:
-                    continue
-                kind, key = 0, d
-                label = "Mile" if 1600 < d < 1620 else f"{int(d)}m"
+            c = _classify(ev, False)
+            if c is None:
+                continue
+            kind, key, label = c
             better = -t
         g = r["gender"] or "?"
         best = keyed.setdefault((g, kind, key), {"label": label, "rows": {}})

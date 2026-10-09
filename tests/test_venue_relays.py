@@ -36,6 +36,10 @@ class Cur:
     def fetchall(self):
         return self.rows
 
+    def fetchone(self):
+        # _ensureVenueRows' tag check: venue 5 outdoor is already built
+        return {"t": "5:0"}
+
 
 @unittest.skipUnless(_HAVE, "flask not installed")
 class Relays(unittest.TestCase):

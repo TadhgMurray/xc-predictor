@@ -22,17 +22,16 @@
 {% include "_topbar.html" %}
 
 <main class="page-wide landing-page rc">
-  {# the Rankings board tabs, By state lit: this page is one of the boards
-     (owner, 2026-10-06), reached from the By state tab #}
+  {# the Rankings board tabs, Ability lit: this page is the Ability board
+     for one state (owner, 2026-10-09: no separate By state tab) #}
   {% set _bq = "&sport=" ~ sport|upper ~ "&pool=" ~ (pool_key or "") %}
   <div class="board-strip" role="navigation" aria-label="Rankings boards">
-    <a href="/rankings?board=ability{{ _bq }}">Ability</a>
+    <a class="is-on" href="/rankings?board=ability{{ _bq }}{{ '&state=' ~ state if state }}" aria-current="page">Ability</a>
     <a href="/rankings?board=performance{{ _bq }}">Performances</a>
     <a href="/rankings?board=pr{{ _bq }}">Best times/marks</a>
     <a href="/rankings?board=teams{{ _bq }}">Teams</a>
     <a href="/rankings?board=courses">Courses</a>
     <a href="/breakouts">Breakouts</a>
-    <a class="is-on" href="{{ national_path }}" aria-current="page">By state</a>
   </div>
   {# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-09: "do another page"): the
      title, the season and Share on the meta line, the No. 1 as the
@@ -53,8 +52,8 @@
         <div><span class="k">No. 1</span>
           <span class="rc-crow">{% if r0.school and r0.school|is_team %}{{ crest(r0.school, r0.state, pool=pool_level) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ r0.person_id }}">{{ r0.name }}</a></b><i>{{ rv(r0.rating, r0.hs_rating) }}{% if r0.school %} · {{ r0.school|school_label_for(pool_level, r0.state) }}{% endif %}</i></span></div>
         {% if top_schools %}{% set t0 = top_schools[0] %}
-        <div><span class="k">Most ranked</span>
-          <span class="rc-crow">{{ crest(t0.school, t0.state, pool=pool_level) }}<b class="rc-cn"><a href="{{ school_href(t0.school, t0.state, pool=pool_level) }}">{{ t0.school|school_label_for(pool_level, t0.state) }}</a></b><i>{{ t0.n }} in the top {{ rows|length }}</i></span></div>
+        <div><span class="k">Most runners in the top {{ rows|length }}</span>
+          <span class="rc-crow">{{ crest(t0.school, t0.state, pool=pool_level) }}<b class="rc-cn"><a href="{{ school_href(t0.school, t0.state, pool=pool_level) }}">{{ t0.school|school_label_for(pool_level, t0.state) }}</a></b><i>{{ t0.n }}</i></span></div>
         {% endif %}
       </div>
       {% endif %}
@@ -96,14 +95,11 @@
   <div class="rc-grid{% if not top_schools %} rc-grid-one{% endif %}">
   <div class="rc-mainc">
   <div class="rc-tbar">
-    <nav class="seg rc-tabs" role="tablist">
-      <a class="seg-btn is-on" href="#list" data-tab="list">Rankings{% if rows %}<span class="n">{{ rows|length }}</span>{% endif %}</a>
-      <a class="seg-btn" href="#states" data-tab="states">By state</a>
-    </nav>
+    <h2 class="landing-list-h">{{ state_name or "National" }} top {{ rows|length if rows else "" }}</h2>
     {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
   </div>
 
-  <section class="rc-panel" id="list" data-panel="list">
+  <section class="landing-list">
   {% if rows %}
   <table class="landing-tbl" data-scale-sort="5">
     <thead>
@@ -130,18 +126,10 @@
   {% endif %}
   </section>
 
-  {# the state index stays in the page for crawlers, one tab over #}
-  <section class="rc-panel" id="states" data-panel="states">
-  <h2 class="landing-h2">{{ pool_words }} {{ sport_words|lower }} rankings by state</h2>
-  <p class="landing-states">
-    <a href="{{ national_path }}"{% if not state %} class="is-on"{% endif %}>National</a>
-    {% for code, name, href in state_links %} · <a href="{{ href }}"{% if code == state %} class="is-on"{% endif %}>{{ name }}</a>{% endfor %}
-  </p>
-  </section>
   </div>
   {% if top_schools %}
   <aside class="rc-side">
-    <h2>Most ranked <small>top {{ rows|length }}</small></h2>
+    <h2>Schools <small>runners in the top {{ rows|length }}</small></h2>
     <table class="rc-tscores rc-tscores-plain">
       <tbody>
       {% for t in top_schools %}
@@ -156,9 +144,15 @@
   </aside>
   {% endif %}
   </div>
+
+  {# every state's page as a plain link, for crawlers and for anyone
+     scrolling past the list; the State picker above does the same #}
+  <p class="landing-states">
+    <a href="{{ national_path }}"{% if not state %} class="is-on"{% endif %}>National</a>
+    {% for code, name, href in state_links %} · <a href="{{ href }}"{% if code == state %} class="is-on"{% endif %}>{{ name }}</a>{% endfor %}
+  </p>
 </main>
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
-<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

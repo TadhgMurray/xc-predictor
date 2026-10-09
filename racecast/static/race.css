@@ -271,3 +271,5 @@ main.rc .h2h-vs { font-weight: 400; color: var(--muted); font-size: .7em; margin
 main.rc .rc-champs .rc-csub { display: block; font-size: .82rem; color: var(--muted); margin-top: .1rem; }
 main.rc .rc-champs .h2h-dot { margin-right: .35rem; }
 main.rc .h2h-pick { margin: 1.1rem 0 .4rem; }
+.landing-page .landing-list-h { margin: 0; font-size: 1.1rem; }
+.landing-page > .landing-states { margin-top: 2rem; }
