@@ -95,8 +95,27 @@
     e.preventDefault();
     history.pushState(null, "", "#" + id);
     el.scrollIntoView({ block: "center", behavior: "smooth" });
-    flash(el);
+    flashAfterScroll(el);
   });
+
+  // ★ THE FLASH WAITS FOR THE SCROLL (owner, 2026-10-09: "if it scrolls down
+  //   a lot it's hard to see bcs it starts going as soon as you click"). A
+  //   smooth scroll of a long page outlasts most of the 1.6s flash; start
+  //   it when the scroll ends ('scrollend'), or after a fallback for
+  //   browsers without that event, or at once when nothing needs to move.
+  function flashAfterScroll(el) {
+    var r = el.getBoundingClientRect();
+    var centred = Math.abs((r.top + r.bottom) / 2 - window.innerHeight / 2) < 40;
+    if (centred) { flash(el); return; }
+    var done = false;
+    function go2() { if (done) return; done = true; flash(el); }
+    if ("onscrollend" in window) {
+      window.addEventListener("scrollend", go2, { once: true });
+      setTimeout(go2, 2500);               // a scroll that never ends
+    } else {
+      setTimeout(go2, 700);
+    }
+  }
   window.addEventListener("hashchange", function () {
     var el = document.getElementById(location.hash.slice(1));
     if (isRow(el)) { el.scrollIntoView({ block: "center" }); flash(el); }

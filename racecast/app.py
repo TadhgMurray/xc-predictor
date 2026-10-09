@@ -5277,7 +5277,17 @@ def race_tf(meet_id, event_id, div_id):
         if p_ and r.get("school"):
             pts_by[r["school"]] = pts_by.get(r["school"], 0.0) + p_
     school_points = sorted(pts_by.items(), key=lambda kv: (-kv[1], kv[0]))
+    # ★ EACH SCHOOL'S OWN STATE IN THE POINTS LIST (owner, 2026-10-09:
+    #   "Hamilton (CA)" there while the row read Hamilton (AZ)): the most
+    #   common school_state its runners on this page were stamped with
+    from collections import Counter as _Ctr
+    _st = {}
+    for r in results:
+        if r.get("school") and r.get("school_state"):
+            _st.setdefault(r["school"], _Ctr())[r["school_state"]] += 1
+    school_states = {k: c.most_common(1)[0][0] for k, c in _st.items()}
     return render_template("race_tf.html", hl_school=hl_school,
+                           school_states=school_states,
                            state_teams=school_identity.isStateTeamRace(r.get("school") for r in results),
                            story=story, tf_champ=tf_champ, tf_is_field=tf_is_field, tf_how=tf_how,
                            school_points=school_points,
@@ -7120,6 +7130,7 @@ def get_course_cell_difficulties(cur, course_name):
 _COURSE_CACHE = {}
 _COURSE_TTL = 6 * 3600
 _COURSE_MAX = 64
+_VENUE_CACHE = {}
 
 
 def loadCourseBoard(cur, course_name, picked):
@@ -7612,42 +7623,71 @@ def get_tf_venue_individual_records(cur, location_id, is_indoor, per_event=5,
       is not a record board. Gender as the relays take it: the athlete,
       the meet, the event's words; unknown stays apart."""
     from tf_points import canonicalEvent, displayEvent, eventDistance, parseMark
-    # ! NO ATHLETES LATERAL HERE (owner, 2026-10-09: "venue page loads too
-    #   slow"): it ran per result at the venue. Gender comes from
-    #   person_gender (one PK probe), the names only for the kept rows.
-    cur.execute("SELECT to_regclass('person_gender') IS NOT NULL AS ok")
-    has_pg = bool(cur.fetchone()["ok"])
-    pg_join = ("LEFT JOIN person_gender pg ON pg.person_id = r.person_id"
-               if has_pg else "")
-    pg_col = "CASE WHEN pg.gender IN ('M', 'F') THEN pg.gender END," if has_pg else ""
-    cur.execute(f"""
+    # ! SMALL ROWS FIRST, GENDER BY KEY AFTER (owner, 2026-10-09: "venue
+    #   page even slower now"). A join to person_gender hashed the whole
+    #   table; an athletes lateral ran per result. SQL keeps each athlete's
+    #   best TIME per event spelling (field rows as they are: the mark is
+    #   text), and gender is a primary-key lookup for the athletes left.
+    cur.execute("""
         WITH venue_meets AS (
             SELECT meet_id, div_id, event_id, meet_name
             FROM   meets_tf
             WHERE  location_id = %(loc)s
               AND  COALESCE(is_indoor, 0) = %(indoor)s
+        ), rows_ AS (
+            SELECT r.result_id, r.person_id, r.school, r.time_seconds, r.mark,
+                   r.is_field, r.date, r.event_short, r.grade, vm.meet_id,
+                   vm.div_id, vm.event_id, vm.meet_name,
+                   COALESCE(
+                       CASE WHEN mm.gender IN ('M', 'F') THEN mm.gender END,
+                       CASE WHEN r.event_short ~* '(^|[^a-z])(boys|men|mens|men''s)([^a-z]|$)' THEN 'M'
+                            WHEN r.event_short ~* '(^|[^a-z])(girls|women|womens|women''s)([^a-z]|$)' THEN 'F'
+                       END) AS ev_gender
+            FROM   venue_meets vm
+            JOIN   results_tf r
+                   ON r.meet_id = vm.meet_id AND r.div_id = vm.div_id
+                  AND r.event_id = vm.event_id
+            LEFT   JOIN meets_tf_meta mm ON mm.meet_id = vm.meet_id
+            WHERE  COALESCE(r.is_relay, 0) = 0
+              AND  r.person_id IS NOT NULL
+              AND  NULLIF(btrim(r.event_short), '') IS NOT NULL
         )
+        SELECT DISTINCT ON (person_id, lower(event_short)) *
+        FROM   rows_
+        WHERE  NOT COALESCE(is_field, 0)::boolean
+          AND  time_seconds > 0 AND time_seconds < 19999
+        ORDER  BY person_id, lower(event_short), time_seconds
+    """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
+    rows = [dict(r) for r in cur.fetchall()]
+    cur.execute("""
         SELECT r.result_id, r.person_id, r.school, r.time_seconds, r.mark,
                r.is_field, r.date, r.event_short, r.grade, vm.meet_id,
                vm.div_id, vm.event_id, vm.meet_name,
-               COALESCE(
-                   {pg_col}
-                   CASE WHEN mm.gender IN ('M', 'F') THEN mm.gender END,
-                   CASE WHEN r.event_short ~* '(^|[^a-z])(boys|men|mens|men''s)([^a-z]|$)' THEN 'M'
-                        WHEN r.event_short ~* '(^|[^a-z])(girls|women|womens|women''s)([^a-z]|$)' THEN 'F'
-                   END) AS gender
-        FROM   venue_meets vm
+               CASE WHEN mm.gender IN ('M', 'F') THEN mm.gender END AS ev_gender
+        FROM   meets_tf vm
         JOIN   results_tf r
                ON r.meet_id = vm.meet_id AND r.div_id = vm.div_id
               AND r.event_id = vm.event_id
         LEFT   JOIN meets_tf_meta mm ON mm.meet_id = vm.meet_id
-        {pg_join}
-        WHERE  COALESCE(r.is_relay, 0) = 0
-          AND  r.person_id IS NOT NULL
-          AND  NULLIF(btrim(r.event_short), '') IS NOT NULL
+        WHERE  vm.location_id = %(loc)s AND COALESCE(vm.is_indoor, 0) = %(indoor)s
+          AND  COALESCE(r.is_relay, 0) = 0 AND COALESCE(r.is_field, 0) = 1
+          AND  r.person_id IS NOT NULL AND r.mark IS NOT NULL
     """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
+    rows += [dict(r) for r in cur.fetchall()]
+    # the person's gender where the meet and the event's words are silent
+    need = sorted({r["person_id"] for r in rows if not r.get("ev_gender")})
+    pg = {}
+    if need:
+        cur.execute("SELECT to_regclass('person_gender') IS NOT NULL AS ok")
+        if cur.fetchone()["ok"]:
+            cur.execute("SELECT person_id, gender FROM person_gender "
+                        "WHERE person_id = ANY(%s)", (need,))
+            pg = {r["person_id"]: r["gender"] for r in cur.fetchall()
+                  if r["gender"] in ("M", "F")}
+    for r in rows:
+        r["gender"] = r.get("ev_gender") or pg.get(r["person_id"])
     keyed = {}
-    for r in cur.fetchall():
+    for r in rows:
         ev = r["event_short"]
         low = ev.lower()
         if r["is_field"]:
@@ -7728,6 +7768,13 @@ def get_tf_venue_meets(cur, location_id, is_indoor, limit=50):
 @app.route("/venue/tf/<int:location_id>/<indoor>")
 def venue_tf(location_id, indoor):
     is_indoor = (indoor == "in")
+    # ★ THE BUILT PAGE, KEPT (owner, 2026-10-09: "venue page loads too
+    #   slow"): a busy venue's records read every result run there, so the
+    #   course page's in-process cache applies here too, same lifetime.
+    key = (location_id, is_indoor)
+    hit = _VENUE_CACHE.get(key)
+    if hit and time.time() - hit[0] < _COURSE_TTL:
+        return render_template("venue_tf.html", **hit[1])
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -7762,8 +7809,7 @@ def venue_tf(location_id, indoor):
         else:
             row["display_result"] = " - "
 
-    return render_template("venue_tf.html",
-                           has_hs_view=has_hs_view,
+    ctx = dict(has_hs_view=has_hs_view,
                            label=label,
                            location_id=location_id,
                            is_indoor=is_indoor,
@@ -7772,6 +7818,10 @@ def venue_tf(location_id, indoor):
                            individual=individual,
                            relays=relays,
                            venue_meets=venue_meets)
+    _VENUE_CACHE[key] = (time.time(), ctx)
+    if len(_VENUE_CACHE) > _COURSE_MAX:
+        _VENUE_CACHE.pop(min(_VENUE_CACHE, key=lambda k: _VENUE_CACHE[k][0]), None)
+    return render_template("venue_tf.html", **ctx)
 
 def pad_pool_pairs(panels):
     """For each (sport, scope, pool), make the athlete and performance lists

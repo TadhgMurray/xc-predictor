@@ -72,7 +72,7 @@
     {% if tf_champ %}
     <div class="rc-champs">
       <div><span class="k">{{ "Winner" if tf_how == "won" else "Best mark" }}</span>
-        <span class="rc-crow">{% if tf_champ.school and tf_champ.school|is_team %}{{ crest(tf_champ.school, header.state, pool=pool_lv) }}{% endif %}<b class="rc-cn">{% if tf_champ.is_relay %}{{ tf_champ.school|school_label_for(pool_lv, header.state) if tf_champ.school else "Relay" }}{% elif tf_champ.person_id %}<a href="/athlete/{{ tf_champ.person_id }}{% if tf_champ.result_id %}?r={{ tf_champ.result_id }}{% endif %}">{{ tf_champ.athlete_name or "Unknown" }}</a>{% else %}{{ tf_champ.athlete_name or "Unknown" }}{% endif %}</b><i>{{ tf_champ.display_result }}</i></span></div>
+        <span class="rc-crow">{% set cst = tf_champ.school_state or header.state %}{% if tf_champ.school and tf_champ.school|is_team %}{{ crest(tf_champ.school, cst, pool=pool_lv) }}{% endif %}<b class="rc-cn">{% if tf_champ.is_relay %}{{ tf_champ.school|school_label_for(pool_lv, cst) if tf_champ.school else "Relay" }}{% elif tf_champ.person_id %}<a href="/athlete/{{ tf_champ.person_id }}{% if tf_champ.result_id %}?r={{ tf_champ.result_id }}{% endif %}">{{ tf_champ.athlete_name or "Unknown" }}</a>{% else %}{{ tf_champ.athlete_name or "Unknown" }}{% endif %}</b><i>{{ tf_champ.display_result }}</i></span></div>
     </div>
     {% endif %}
   </div>
@@ -150,7 +150,7 @@
     {% for sch, pts in school_points[:10] %}
     <tr data-team="{{ sch }}" data-rids="" tabindex="0" title="Light {{ sch }}'s athletes in the results">
       <td class="tp">{{ loop.index }}</td>
-      <td class="tn">{% if sch|is_team %}{{ crest(sch, header.state, pool=pool_lv) }}{% endif %}{{ sch|school_label_for(pool_lv, header.state) }}</td>
+      {% set pst = (school_states or {}).get(sch) or header.state %}<td class="tn">{% if sch|is_team %}{{ crest(sch, pst, pool=pool_lv) }}{% endif %}{{ sch|school_label_for(pool_lv, pst) }}</td>
       <td class="n tpts">{{ "%g"|format(pts) }}</td>
     </tr>
     {% endfor %}
