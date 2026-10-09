@@ -439,7 +439,7 @@
 
     <div class="page-layout">
 
-        <main class="main-col">
+        <main class="main-col"{% if flash_rid %} data-flash-id="race-{{ flash_rid }}"{% endif %}>
 
             {#
               CAREER CHART -- every rated race, both sports, in date order.

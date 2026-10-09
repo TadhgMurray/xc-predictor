@@ -38,7 +38,7 @@
    page, compared to the old one. Maybe just try to emulate that in other
    places"). Header, then a tab bar -- Races | Compiled, the predict link,
    a finder -- and the table first. race.css carries the layout. #}
-<header class="rc-hd"><div class="rc-w rc-hgrid">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div class="rc-left">
     <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country</span></div>
     <h1>{{ header.meet_name }}</h1>
@@ -47,6 +47,11 @@
       {% if header.course_name %}<a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a>{% else %} - {% endif %}
       {% if meet_date %} · {{ meet_date|mdy }}{% endif %}
       {% if header.state %} · {{ header.state }}{% endif %}
+      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name|with_year(meet_date) }} on Racecast"
+            data-share-url="{{ site_origin }}/meet/xc/{{ header.meet_id }}" title="Share this page; the preview is its card">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <span>Share</span>
+    </button>
     </div>
     {% set n_run = divisions|sum(attribute='n_results') %}
     <div class="rc-facts">
@@ -54,13 +59,6 @@
       <span>Finishers <b>{{ "{:,}".format(n_run) }}</b></span>
       {% if compiled %}<span>Compiled <b>{{ compiled|length }}</b></span>{% endif %}
     </div>
-  </div>
-  <div class="rc-right rc-right-end">
-    <button type="button" class="share-box share-btn rc-share" data-share-title="{{ header.meet_name|with_year(meet_date) }} on Racecast"
-            data-share-url="{{ site_origin }}/meet/xc/{{ header.meet_id }}" title="Share this page; the preview is its card">
-      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
-      <span>Share</span>
-    </button>
   </div>
 </div></header>
 

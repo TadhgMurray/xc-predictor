@@ -5732,3 +5732,20 @@ Chromium against the old script (readout 15:00, label under the pointer
 - ✅ **TF venue page in the race page's shape**: one-column header (facts,
   Share on the meta line, best mark here), tabs Best performances / Team
   records / Meets, Recent meets card. Sidebar cards wrap long meet names.
+- ✅ **Link highlight, take 2.** The athlete page's charts draw in after load
+  and pushed the flashed row off-screen; link-flash.js now runs after load
+  and re-centres once the layout settles (unless the reader scrolls). A
+  race page of the other feed links its own copy, which the athlete page
+  hides as a twin: the route maps ?r= to the shown row of the same day and
+  time (data-flash-id).
+- ✅ **TF venue: individual records** (get_tf_venue_individual_records):
+  each event's top five here per gender, best per athlete, flat races keyed
+  by distance, hurdles/field by folded name, events with 5+ athletes.
+- ✅ **Venue best performances ranked on the HS-equivalent** (top 25 of each
+  pool, stamped, then rankByHs) -- a grade-5 own-pool 129 no longer sits
+  above a senior's 148. The course page already ranked this way.
+- ✅ **A runner's school state: home state before the meet's** (Zarian
+  Rodriguez, Hamilton AZ, read "Hamilton (CA)" at Arcadia): with no
+  school_athlete_state row, person_home_state is used where a school of the
+  name exists in that state.
+- ✅ XC meet, school and compiled pages: one-column header, Share as a link.

@@ -2307,6 +2307,37 @@ def athlete(person_id):
 
     chart_data = build_chart_data(races)
 
+    # ★ THE ROW A LINK POINTED AT (owner, 2026-10-09: the highlight "still
+    #   not working" on the athlete page). ?r= names the result the reader
+    #   clicked; a race page of the other feed links its own copy, which
+    #   this page hides as a twin, so that id has no row here. The shown row
+    #   of the same day and time stands in; link-flash.js reads it off
+    #   <main data-flash-id>.
+    flash_rid = None
+    want = request.args.get("r", type=int)
+    if want:
+        shown = {r.get("result_id") for r in races}
+        if want in shown:
+            flash_rid = want
+        else:
+            hit = None
+            with getConn() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    for tbl in ("results", "results_tf"):
+                        cur.execute(f"""SELECT left(date, 10) AS d, time_seconds AS t
+                                        FROM {tbl} WHERE result_id = %s AND person_id = %s""",
+                                    (want, person_id))
+                        hit = cur.fetchone()
+                        if hit:
+                            break
+            if hit and hit["t"]:
+                for r in races:
+                    if (str(r.get("date") or "")[:10] == hit["d"]
+                            and r.get("time_seconds") is not None
+                            and abs(float(r["time_seconds"]) - float(hit["t"])) < 1.0):
+                        flash_rid = r.get("result_id")
+                        break
+
     # ! ITS OWN CONNECTION SCOPE. The block above closed the cursor it opened;
     #   reopening for one small query keeps this out of the long-lived one.
     with getConn() as conn:
@@ -2338,6 +2369,7 @@ def athlete(person_id):
                            alltime=alltime,
                            season_bests=season_best_list,
                            has_hs_view=has_hs_view,
+                           flash_rid=flash_rid,
                            chart_data=chart_data)
 
 
@@ -7418,30 +7450,55 @@ def get_tf_venue_difficulty(cur, location_id, is_indoor):
 
 def get_tf_venue_bests(cur, location_id, is_indoor, limit=25):
     """Best-rated performances at this venue. Filters meets by location FIRST,
-    so we never scan all of results_tf."""
+    so we never scan all of results_tf.
+
+    ★ THE TOP `limit` OF EACH RATING POOL (owner, 2026-10-09: "a lot of the
+      tables are ordered by own pool rating, and I actually want everything
+      converted to hs-equivalent"). An own-pool rating is not comparable
+      across pools -- a fifth grader's 129 is not a senior's -- so the page
+      ranks on the HS-equivalent instead (rankByHs, after stampRowsHs). The
+      HS factor is one number per pool, so the HS top `limit` is inside the
+      union of each pool's own top `limit`."""
+    pool_col = _ratingPoolCol(cur, 'results_tf')
+    pool_expr = pool_col.split(" AS ")[0]
     cur.execute(f"""
         WITH venue_meets AS (
             SELECT meet_id, div_id, event_id, meet_name
             FROM   meets_tf
             WHERE  location_id = %(loc)s
               AND  COALESCE(is_indoor, 0) = %(indoor)s
+        ), ranked AS (
+            SELECT r.result_id, r.person_id, r.time_seconds, r.mark, r.is_field,
+                   r.date, r.grade, r.school, r.speed_rating, r.event_short,
+                   {pool_col},
+                   vm.meet_id, vm.div_id, vm.event_id, vm.meet_name,
+                   {_name_sql('r')} AS name,
+                   row_number() OVER (PARTITION BY COALESCE({pool_expr}, '?')
+                                      ORDER BY r.speed_rating DESC) AS pool_rank
+            FROM   venue_meets vm
+            JOIN   results_tf r
+                   ON r.meet_id  = vm.meet_id
+                  AND r.div_id   = vm.div_id
+                  AND r.event_id = vm.event_id
+            {_athlete_lateral('r')}
+            WHERE  r.speed_rating IS NOT NULL
         )
-        SELECT r.result_id, r.person_id, r.time_seconds, r.mark, r.is_field,
-               r.date, r.grade, r.school, r.speed_rating, r.event_short,
-               {_ratingPoolCol(cur, 'results_tf')},
-               vm.meet_id, vm.div_id, vm.event_id, vm.meet_name,
-               {_name_sql('r')} AS name
-        FROM   venue_meets vm
-        JOIN   results_tf r
-               ON r.meet_id  = vm.meet_id
-              AND r.div_id   = vm.div_id
-              AND r.event_id = vm.event_id
-        {_athlete_lateral('r')}
-        WHERE  r.speed_rating IS NOT NULL
-        ORDER  BY r.speed_rating DESC
-        LIMIT  %(limit)s
+        SELECT * FROM ranked WHERE pool_rank <= %(limit)s
+        ORDER  BY speed_rating DESC
     """, {"loc": location_id, "indoor": 1 if is_indoor else 0, "limit": limit})
     return cur.fetchall()
+
+
+def rankByHs(rows, limit=None, key="speed_rating", hs_key="hs_rating"):
+    """Rows sorted best-first on the HS-equivalent (own number where a row
+    has none), cut to `limit`. Call after stampRowsHs / stampBoardRows."""
+    def val(r):
+        v = r.get(hs_key)
+        if v is None:
+            v = r.get(key)
+        return float(v) if v is not None else float("-inf")
+    out = sorted(rows, key=val, reverse=True)
+    return out[:limit] if limit else out
 
 # The relay events a venue's team records cover, as (key, label, sort):
 # the key is event_short lower-cased with spaces, dashes and "m"s removed.
@@ -7523,6 +7580,93 @@ def get_tf_venue_relay_records(cur, location_id, is_indoor, per_event=5):
     return out
 
 
+def get_tf_venue_individual_records(cur, location_id, is_indoor, per_event=5,
+                                    min_athletes=5):
+    """The individual records at a track venue: each event's best marks here,
+    best per athlete, by event and gender (owner, 2026-10-09: "shouldn't
+    there also be indiv records?").
+
+    ★ ONE EVENT, HOWEVER IT WAS SPELLED. A flat race is keyed by its
+      distance ("1600 Meters", "1600m" and "Boys 1600" are one event); a
+      hurdle or steeple race and a field event by the name tf_points
+      already folds (canonicalEvent: gender words and round noise off).
+    ! A FIELD MARK IS PARSED, NOT COMPARED AS TEXT (tf_points.parseMark);
+      one that will not parse is left out. An event with fewer than
+      `min_athletes` athletes here is left out -- one heat of a rare event
+      is not a record board. Gender as the relays take it: the athlete,
+      the meet, the event's words; unknown stays apart."""
+    from tf_points import canonicalEvent, displayEvent, eventDistance, parseMark
+    cur.execute(f"""
+        WITH venue_meets AS (
+            SELECT meet_id, div_id, event_id, meet_name
+            FROM   meets_tf
+            WHERE  location_id = %(loc)s
+              AND  COALESCE(is_indoor, 0) = %(indoor)s
+        )
+        SELECT r.result_id, r.person_id, r.school, r.time_seconds, r.mark,
+               r.is_field, r.date, r.event_short, r.grade, vm.meet_id,
+               vm.div_id, vm.event_id, vm.meet_name, a.name,
+               COALESCE(
+                   CASE WHEN a.gender IN ('M', 'F') THEN a.gender END,
+                   CASE WHEN mm.gender IN ('M', 'F') THEN mm.gender END,
+                   CASE WHEN r.event_short ~* '(^|[^a-z])(boys|men|mens|men''s)([^a-z]|$)' THEN 'M'
+                        WHEN r.event_short ~* '(^|[^a-z])(girls|women|womens|women''s)([^a-z]|$)' THEN 'F'
+                   END) AS gender
+        FROM   venue_meets vm
+        JOIN   results_tf r
+               ON r.meet_id = vm.meet_id AND r.div_id = vm.div_id
+              AND r.event_id = vm.event_id
+        LEFT   JOIN meets_tf_meta mm ON mm.meet_id = vm.meet_id
+        {_athlete_lateral('r')}
+        WHERE  COALESCE(r.is_relay, 0) = 0
+          AND  r.person_id IS NOT NULL
+          AND  NULLIF(btrim(r.event_short), '') IS NOT NULL
+    """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
+    keyed = {}
+    for r in cur.fetchall():
+        ev = r["event_short"]
+        low = ev.lower()
+        if r["is_field"]:
+            v = parseMark(r["mark"])
+            if v is None or v <= 0:
+                continue
+            kind, key, label = 2, canonicalEvent(ev), displayEvent(ev)
+            better = v
+        else:
+            t = r["time_seconds"]
+            if t is None or t <= 0 or t >= 19999 or _isSentinelTime(t):
+                continue
+            if "hurdle" in low or "steeple" in low or "walk" in low:
+                kind, key, label = 1, canonicalEvent(ev), displayEvent(ev)
+            else:
+                d = eventDistance(ev)
+                if not d:
+                    continue
+                kind, key = 0, d
+                label = "Mile" if 1600 < d < 1620 else f"{int(d)}m"
+            better = -t
+        g = r["gender"] or "?"
+        best = keyed.setdefault((g, kind, key), {"label": label, "rows": {}})
+        cur_b = best["rows"].get(r["person_id"])
+        if cur_b is None or better > cur_b["_v"]:
+            row = dict(r)
+            row["_v"] = better
+            best["rows"][r["person_id"]] = row
+    out = []
+    for (g, kind, key), ev in sorted(
+            keyed.items(), key=lambda kv: ({"M": 0, "F": 1}.get(kv[0][0], 2), kv[0][1],
+                                           kv[0][2] if kv[0][1] == 0 else 0,
+                                           str(kv[0][2]))):
+        rows = sorted(ev["rows"].values(), key=lambda x: -x["_v"])
+        if len(rows) < min_athletes:
+            continue
+        for x in rows[:per_event]:
+            x["display_result"] = (x["mark"] if x["is_field"] else format_time(x["time_seconds"]))
+        out.append({"event": ev["label"], "gender": g, "kind": kind,
+                    "rows": rows[:per_event], "n_athletes": len(rows)})
+    return out
+
+
 def get_tf_venue_meets(cur, location_id, is_indoor, limit=50):
     """Meets held at this venue, newest first."""
     cur.execute("""
@@ -7554,6 +7698,13 @@ def venue_tf(location_id, indoor):
             bests      = get_tf_venue_bests(cur, location_id, is_indoor)
             venue_meets = get_tf_venue_meets(cur, location_id, is_indoor)
             try:
+                individual = get_tf_venue_individual_records(cur, location_id, is_indoor)
+            except Exception:                           # noqa: BLE001
+                app.logger.exception("individual records failed for venue %s",
+                                     location_id)
+                conn.rollback()
+                individual = []
+            try:
                 relays = get_tf_venue_relay_records(cur, location_id, is_indoor)
             except Exception:                           # noqa: BLE001
                 app.logger.exception("relay records failed for venue %s",
@@ -7563,6 +7714,7 @@ def venue_tf(location_id, indoor):
             # HS-equivalent view: distance parsed from each row's event.
             has_hs_view = stampRowsHs(cur, "TF", bests,
                                       event_key="event_short")
+            bests = rankByHs(bests, 25)
 
     for row in bests:
         if row["is_field"]:
@@ -7579,6 +7731,7 @@ def venue_tf(location_id, indoor):
                            is_indoor=is_indoor,
                            difficulty=difficulty,
                            bests=bests,
+                           individual=individual,
                            relays=relays,
                            venue_meets=venue_meets)
 

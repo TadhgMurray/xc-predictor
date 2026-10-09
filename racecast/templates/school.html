@@ -60,7 +60,7 @@
 {# ★ THE RACE PAGE'S ARRANGEMENT (owner, 2026-10-07: "emulate that in other
    places"): header with the school's facts, the sport and season pickers,
    then a tab bar and one table at a time. race.css carries the layout. #}
-<header class="rc-hd"><div class="rc-w rc-hgrid">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div class="rc-left">
     <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ "Cross country" if sport == 'XC' else "Track & field" }}</span></div>
     {# the crest (305): INSIDE the h1, so it stays with the name when the
@@ -85,14 +85,12 @@
       {% if units and (units|selectattr("kind", "in", ["division", "conference"])|list) %}
       <a href="/recruiting/school/{{ school|urlencode }}?{% if state %}state={{ state }}{% endif %}">Recruiting →</a>
       {% endif %}
-    </div>
-  </div>
-  <div class="rc-right rc-right-end">
-    <button type="button" class="share-box share-btn rc-share" data-share-title="{{ school }} on Racecast"
+      <button type="button" class="share-btn rc-share-link" data-share-title="{{ school }} on Racecast"
             data-share-url="{{ site_origin }}{{ meta_path }}" title="Share this page; the preview is its card">
-      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
       <span>Share</span>
     </button>
+    </div>
   </div>
 </div></header>
 

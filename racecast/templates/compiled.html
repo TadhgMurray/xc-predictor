@@ -33,7 +33,7 @@
 {% include "_topbar.html" %}
 <main class="page-wide rc">
 {% set g_label = "Boys" if group.gender == 'M' else "Girls" if group.gender == 'F' else "All" %}
-<header class="rc-hd"><div class="rc-w rc-hgrid">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div class="rc-left">
     <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country · compiled</span></div>
     <div class="rc-kick"><a href="/meet/xc/{{ header.meet_id }}">{{ header.meet_name }}</a></div>
@@ -46,8 +46,6 @@
       <span>Divisions <b>{{ group.divisions|length }}</b></span>
       {% if group.scores.teams %}<span>Teams scored <b>{{ group.scores.teams|length }}</b></span>{% endif %}
     </div>
-  </div>
-  <div class="rc-right">
     {# Not a footnote: someone arriving from a link has no other way to know
        these runners were not on the line together. It stands where the race
        page's summary does. #}

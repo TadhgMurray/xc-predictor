@@ -55,6 +55,7 @@
   <div class="rc-tbar">
     <nav class="seg rc-tabs" role="tablist">
       <a class="seg-btn is-on" href="#best" data-tab="best">Best performances</a>
+      {% if individual %}<a class="seg-btn" href="#records" data-tab="records">Records<span class="n">{{ individual|length }}</span></a>{% endif %}
       <a class="seg-btn" href="#teams" data-tab="teams">Team records{% if relays %}<span class="n">{{ relays|length }}</span>{% endif %}</a>
       <a class="seg-btn" href="#meets" data-tab="meets">Meets{% if venue_meets %}<span class="n">{{ venue_meets|length }}</span>{% endif %}</a>
     </nav>
@@ -100,6 +101,35 @@
     </table>
 
   </section>
+
+  {% if individual %}
+  {# ★ EACH EVENT'S BEST HERE, BY GENDER (owner, 2026-10-09: "shouldn't
+     there also be indiv records?"): app.get_tf_venue_individual_records #}
+  <section class="rc-panel" id="records" data-panel="records">
+    <div class="relay-grid">
+    {% for ev in individual %}
+        <div class="relay-card">
+            <h3>{{ {"M": "Boys / Men", "F": "Girls / Women"}.get(ev.gender, "Gender not recorded") }} · {{ ev.event }}</h3>
+            <table>
+                <thead><tr><th>#</th><th>Athlete</th><th>Mark</th><th>School</th><th>Date</th></tr></thead>
+                <tbody>
+                {% for r in ev.rows %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td><a href="/athlete/{{ r.person_id }}?r={{ r.result_id }}">{{ r.name or "Unknown" }}</a></td>
+                    <td class="no-break"><a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}?r={{ r.result_id }}" title="{{ r.meet_name }}">{{ r.display_result }}</a></td>
+                    <td>{% if r.school and r.school|is_team %}<a href="{{ school_href(r.school, none) }}">{{ r.school|school_label }}</a>{% else %}{{ r.school or " - " }}{% endif %}</td>
+                    <td class="no-break">{{ r.date|mdy }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% if ev.n_athletes > ev.rows|length %}<p class="meta">{{ "{:,}".format(ev.n_athletes) }} athletes have run it here.</p>{% endif %}
+        </div>
+    {% endfor %}
+    </div>
+  </section>
+  {% endif %}
 
   <section class="rc-panel" id="teams" data-panel="teams">
     {% if relays %}

@@ -619,6 +619,43 @@ def stampSchoolStates(cur, rows):
         st = seen.get((r.get("school"), r.get("person_id")))
         if st:
             r["school_state"] = st
+    # ★ THE RUNNER'S HOME STATE BEFORE THE MEET'S (owner, 2026-10-09: Zarian
+    #   Rodriguez of Hamilton, Chandler AZ, read "Hamilton (CA)" at the
+    #   Arcadia Invitational). A runner with no school_athlete_state row
+    #   fell to the race's state at the page. person_home_state is the state
+    #   they race in most; it is used only where a school of THIS name
+    #   exists in that state (school_identity), so a club or a transfer is
+    #   not moved to a state its name was never seen in.
+    left = {r["person_id"]: r for r in rows
+            if not r.get("school_state") and r.get("school") and r.get("person_id")}
+    if left:
+        try:
+            cur.execute("SAVEPOINT home_state")
+            cur.execute("""
+                SELECT h.person_id, h.state FROM person_home_state h
+                WHERE  h.person_id = ANY(%s)""", (sorted(left),))
+            home = {}
+            for row in cur.fetchall():
+                pid, st = ((row["person_id"], row["state"]) if isinstance(row, dict)
+                           else (row[0], row[1]))
+                home[pid] = st
+            pairs = sorted({(r["school"], home[pid]) for pid, r in left.items() if home.get(pid)})
+            if pairs:
+                cur.execute("""
+                    SELECT DISTINCT school, state FROM school_identity
+                    WHERE  (school, state) IN (SELECT * FROM unnest(%s::text[], %s::text[]))""",
+                            ([p[0] for p in pairs], [p[1] for p in pairs]))
+                known = {((row["school"], row["state"]) if isinstance(row, dict)
+                          else (row[0], row[1])) for row in cur.fetchall()}
+                for r in rows:
+                    if r.get("school_state") or not r.get("person_id"):
+                        continue
+                    st = home.get(r["person_id"])
+                    if st and (r.get("school"), st) in known:
+                        r["school_state"] = st
+            cur.execute("RELEASE SAVEPOINT home_state")
+        except Exception:                                # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT home_state")
     # ★ THE TEAM ID OUTRANKS THE INFERENCE (teamStates)
     by_team = teamStates(cur, rows)
     for r in rows:
