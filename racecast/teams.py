@@ -396,6 +396,41 @@ def _where(f, params):
     return _fieldWhere(f, params) + _subjectWhere(f, params)
 
 
+# ★ THE BEST RUNNER (owner, 2026-10-09: "maybe add a best runner
+#   section?"). team_season stores the id (build_team_season); a table built
+#   before that has no column, so it is probed and read as NULL until the
+#   next build. The name is looked up for the page's rows only.
+def _bestCol(cur):
+    cur.execute("""SELECT 1 FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = 'team_season'
+                     AND column_name = 'best_person_id'""")
+    return ", t.best_person_id" if cur.fetchone() else ", NULL::bigint AS best_person_id"
+
+
+def fillBestRunner(cur, rows):
+    """Stamp best_name on rows carrying best_person_id and no name yet."""
+    want = sorted({r.get("best_person_id") for r in rows
+                   if r.get("best_person_id") and not r.get("best_name")})
+    if not want:
+        return rows
+    cur.execute("""
+        SELECT DISTINCT ON (a.person_id) a.person_id,
+               concat_ws(' ', btrim(a.first_name), btrim(a.last_name)) AS name
+        FROM   athletes a
+        WHERE  a.person_id = ANY(%s)
+          AND  NULLIF(btrim(concat_ws(' ', a.first_name, a.last_name)), '') IS NOT NULL
+        ORDER  BY a.person_id, (a.athlete_id = a.person_id) DESC, a.athlete_id""",
+                (want,))
+    names = {}
+    for r in cur.fetchall():
+        pid, name = (r["person_id"], r["name"]) if isinstance(r, dict) else r
+        names[pid] = name
+    for r in rows:
+        if r.get("best_person_id") and not r.get("best_name"):
+            r["best_name"] = names.get(r["best_person_id"])
+    return rows
+
+
 def getTeamRankings(cur, f):
     """One page of a team board."""
     params = {"limit": f["limit"], "offset": f["offset"]}
@@ -416,7 +451,7 @@ def getTeamRankings(cur, f):
         SELECT t.school, t.state, t.pool, t.sport,
                t.year,
                t.scope, t.rank, t.points, t.n_athletes,
-               t.top5_mean, t.fifth_rating, t.best_rating
+               t.top5_mean, t.fifth_rating, t.best_rating{_bestCol(cur)}
         FROM   team_season t
         WHERE  TRUE {where}
         ORDER  BY {order}
@@ -481,7 +516,7 @@ def getTeamField(cur, f):
         SELECT t.school, t.state, t.pool, t.sport,
                t.year,
                t.scope, t.rank, t.points, t.n_athletes,
-               t.top5_mean, t.fifth_rating, t.best_rating, t.ratings
+               t.top5_mean, t.fifth_rating, t.best_rating, t.ratings{_bestCol(cur)}
         {_FIELD_SQL_TAIL.format(where=where)}
         LIMIT %(cap)s
     """, params)
@@ -625,10 +660,13 @@ def _athleteFieldWhere(f, params):
     athlete_season -- which is where the grades are."""
     parts = [" AND s.pool = %(pool)s", " AND s.sport = %(sport)s",
              " AND s.mean_rating IS NOT NULL",
-             " AND s.n_races >= %(min_races)s"]
+             " AND (s.n_races >= %(min_races)s OR s.year >= %(open_from)s)"]
     params["pool"] = f["pool"]
     params["sport"] = f["sport"]
     params["min_races"] = TEAM_MIN_RACES
+    # the open-season exemption build_team_season applies (season_floor)
+    from season_floor import OPEN_FROM
+    params["open_from"] = OPEN_FROM
 
     # ! ONE YEAR, ALWAYS. parseFilters refuses the filter without one --
     #   "next year's team" is a question about a season, and an all-time
@@ -783,6 +821,14 @@ def raceReturning(cur, f):
 
 
 def serveBoard(cur, f):
+    """One page of the team board -- see _serveBoard -- with each row's best
+    runner named."""
+    rows, info = _serveBoard(cur, f)
+    rows = [dict(r) for r in rows]
+    return fillBestRunner(cur, rows), info
+
+
+def _serveBoard(cur, f):
     """One page of the team board, raced if the field fits. -> (rows, info)
 
     ★ THE DECISION LIVES HERE AND NOWHERE ELSE, so the route cannot serve a

@@ -156,6 +156,10 @@ def rankTeams(athletes):
             "top5_mean": round(sum(top5) / len(top5), 2) if top5 else None,
             "fifth_rating": round(top5[-1], 2) if len(top5) == SCORERS else None,
             "best_rating": round(top5[0], 2) if top5 else None,
+            # ★ WHO THAT IS (owner, 2026-10-09: "maybe add a best runner
+            #   section?"): the board shows the name beside the rating
+            "best_person_id": members[0].get("person_id") if members else None,
+            "best_name": members[0].get("name") if members else None,
             # ★ THE SEVEN RATINGS THAT ENTERED THE MEET, kept so the board can
             #   be RE-raced later against a different field -- several seasons
             #   at once, say. Seven and not more because an eighth runner

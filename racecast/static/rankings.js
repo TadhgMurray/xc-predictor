@@ -1046,6 +1046,9 @@ const COLUMNS = {
     { key: "points",   label: "Points" },
     { key: "rating",   label: "Top 5 avg" },
     { key: "fifth",    label: "5th runner" },
+    /* ★ WHO LEADS THE SQUAD (owner, 2026-10-09: "maybe add a best runner
+       section?"), sorted on the best runner's season rating */
+    { key: "best",     label: "Best runner" },
     { key: "athletes", label: "Runners" }
   ],
   /* The Teams tab with a course picked: single races at one venue, served
@@ -1452,6 +1455,15 @@ function renderCourses(rows) {
  * The rank is served, not computed from the page position -- see COLUMNS.
  * The school links to its own page, which is already the team's page.
  */
+/* The best runner: the name (linked) and the season rating; a board built
+   before the name was stored shows the rating alone. */
+function bestRunnerCell(r) {
+  const rating = fmtRating(rval(r, "best_rating"));
+  if (!r.best_person_id || !r.best_name) return rating;
+  return `<a href="/athlete/${r.best_person_id}">${esc(r.best_name)}</a> ` +
+    `(${rating})`;
+}
+
 function renderTeams(rows, span) {
   /* ⚠ THE LABEL DEPENDS ON WHICH BOARD THE ROW CAME FROM. board_rank is the
      rank it carried BEFORE this race -- that is a season finish when one Year
@@ -1470,6 +1482,7 @@ function renderTeams(rows, span) {
       <td class="rating">${r.points}</td>
       <td>${fmtRating(rval(r, "top5_mean"))}</td>
       <td>${fmtRating(rval(r, "fifth_rating"))}</td>
+      <td>${bestRunnerCell(r)}</td>
       <td>${r.n_athletes}</td>
     </tr>`).join("");
 

@@ -74,6 +74,13 @@ from pool_ceiling import withinPool, POOL_CEILING
 #   runner be among their team's seven", and a transfer with three races is
 #   still on the team.
 MIN_RACES = 2
+# ★ AN OPEN SEASON HAS NO FLOOR, AS ON THE ATHLETE BOARD (owner, 2026-10-09,
+#   Wartburg: "these guys are on for indiv but off for team board" -- its
+#   top eight had raced once each, so the board scored its 9th-15th). The
+#   athlete board exempts open seasons (season_floor.OPEN_FROM: a roster is
+#   a roster from its first meet); the team board now does too, so the two
+#   boards rank the same runners. Settled seasons keep MIN_RACES.
+from season_floor import OPEN_FROM
 
 # ★ ONE SHAPE, WRITTEN ONCE, USED FOR BOTH THE REAL TABLE AND THE SHADOW.
 #   The shadow used to be built with `LIKE team_season INCLUDING ALL`, which
@@ -113,6 +120,9 @@ CREATE TABLE IF NOT EXISTS {name} (
     --   is to hold another meet. See team_rank.raceStored and teams.py.
     --   Seven because an eighth runner cannot affect any score.
     ratings      real[],
+    -- ★ THE TEAM'S BEST RUNNER (owner, 2026-10-09), named on the board;
+    --   the page looks the name up for the rows it shows
+    best_person_id bigint,
     -- ★ THE TEAM'S OWN UNITS, STAMPED (owner, 2026-09-08: "DI school in
     --   DIII filter: Washington WA ... NCAA DI"). The team board's unit
     --   filter used to resolve a division to a list of school NAMES and
@@ -145,7 +155,7 @@ UNIT_COLS = ("division", "region", "conference", "league",
 
 _COLUMNS = ("span", "scope", "school", "state", "pool", "sport", "year",
             "rank", "points", "n_athletes", "top5_mean", "fifth_rating",
-            "best_rating", "ratings") + UNIT_COLS
+            "best_rating", "ratings", "best_person_id") + UNIT_COLS
 
 # ! ORDERED BY THE GROUP so one pass can be cut into boards without holding
 #   the whole table. mean_rating is the athlete's season average -- the same
@@ -172,7 +182,7 @@ _SOURCE_SQL = """
            "section"
     FROM   athlete_season
     WHERE  mean_rating IS NOT NULL
-      AND  n_races >= %(min_races)s
+      AND  (n_races >= %(min_races)s OR year >= %(open_from)s)
       AND  pool = ANY(%(pools)s)
       AND  state = ANY(%(states)s)
       AND  year >= %(since)s
@@ -331,7 +341,7 @@ def toRows(board):
         yield (("season", scope, t["school"], t["state"], pool, sport, year,
                 t["rank"], t["points"], t["n_athletes"],
                 t["top5_mean"], t["fifth_rating"], t["best_rating"],
-                arrayLiteral(t["ratings"]))
+                arrayLiteral(t["ratings"]), t.get("best_person_id"))
                + _unitTuple(t))
 
 
@@ -342,7 +352,7 @@ def toRows(board):
 #   second pass costs one sequential scan.
 _ALLTIME_SQL = """
     SELECT scope, pool, sport, school, state, year, ratings, n_athletes,
-           top5_mean, fifth_rating, best_rating,
+           top5_mean, fifth_rating, best_rating, best_person_id,
            -- ! THE UNITS RIDE INTO PASS TWO AS WELL, or the all-time board
            --   answers a division filter with nothing while the season
            --   boards answer it correctly -- and the all-time board is the
@@ -395,7 +405,7 @@ def toAlltimeRows(board):
         yield (("alltime", scope, t["school"], t["state"], pool, sport,
                 t["year"], t["rank"], t["points"], t["n_athletes"],
                 t["top5_mean"], t["fifth_rating"], t["best_rating"],
-                arrayLiteral(t["ratings"]))
+                arrayLiteral(t["ratings"]), t.get("best_person_id"))
                + _unitTuple(t))
 
 
@@ -418,7 +428,7 @@ def build(conn, sport, since):
         cur.execute(_DDL.format(name="team_season_new"))
     conn.commit()
 
-    params = {"min_races": MIN_RACES, "pools": sorted(POOLS),
+    params = {"min_races": MIN_RACES, "open_from": OPEN_FROM, "pools": sorted(POOLS),
               "states": list(US_STATES), "since": since, "sport": sport}
 
     # ★ A PLAIN CURSOR, TURNED INTO DICTS BY dbfast.dictRows. team_rank takes
@@ -497,7 +507,8 @@ def build(conn, sport, since):
     years = (f"{min(stats['years'])}-{max(stats['years'])}"
              if stats["years"] else "none")
     print(f"  read      {stats['read']:,} athlete-seasons "
-          f"(n_races >= {MIN_RACES}, US states, rankable pools)")
+          f"(n_races >= {MIN_RACES} or an open season from {OPEN_FROM}, "
+          f"US states, rankable pools)")
     # ! LOUD, because a zero here is the failure mode. resolvedStates
     #   degrades silently when school_identity is missing or empty -- every
     #   row keeps its venue state and the teams split again -- and that is

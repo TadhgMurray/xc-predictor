@@ -5692,3 +5692,12 @@ Chromium against the old script (readout 15:00, label under the pointer
 - ✅ The boards' JS grade label still read a 9-12 in a college pool as the
   number (the Python one has said FR-1..SR-4 since 25544b1); the mirror test
   caught it. Fixed in rankings.js.
+- ✅ **Team board left out a team's best runners (owner, Wartburg).** Its top
+  eight had raced once each this season (10-03), and the team board's
+  MIN_RACES = 2 dropped them while the athlete board, which exempts open
+  seasons (season_floor.OPEN_FROM), ranked them -- so Wartburg was scored on
+  its 9th-15th (108.8 own pool, 130.4 HS-equivalent; the real top five ~114 /
+  ~137). build_team_season and teams._athleteFieldWhere now take the same
+  open-season exemption. Takes effect at the next 10_rankings / team build.
+- ✅ Team board: a "Best runner" column (name + season rating, HS-aware),
+  from team_season.best_person_id (new; NULL and rating-only until rebuilt).
