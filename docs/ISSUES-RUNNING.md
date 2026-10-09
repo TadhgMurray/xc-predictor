@@ -5796,3 +5796,4 @@ Chromium against the old script (readout 15:00, label under the pointer
 - ✅ eventFamily folds the abbreviations too: Hj, Lj, Tj, Pv, Shot/SP, DT,
   JT, HT, WT; "55mh" / "300mh" / "110 h"; "F/s" and stray punctuation.
 - ✅ Breakouts in the race page's shape: header (window + Share on the meta line, biggest jump and biggest PR as the champion line), Rating jumps / New PRs / What counts as tabs.
+- ✅ Venue page: meets_tf (14M rows) had no location_id index -- every venue page seq-scanned it twice. add_page_indexes.py now builds idx_meets_tf_location (CONCURRENTLY). scripts/diag_venue_speed.py times each step and EXPLAINs the pass.

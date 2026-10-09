@@ -227,6 +227,12 @@ WANTED = [
     #   Same for the anet `meets` table, which every XC meet lookup probes.
     ("meets_tf",        "meet_id", "idx_meets_tf_meet", None),
     ("meets",           "meet_id", "idx_meets_meet", None),
+    # ★ THE VENUE PAGE (owner, 2026-10-09: "venue page still slow"). Every
+    #   track venue page reads meets_tf BY location_id -- its name, and the
+    #   one pass that copies the venue's results (app._ensureVenueRows) --
+    #   and nothing location_id-leading served it: a 14M-row sequential
+    #   scan per page view, twice.
+    ("meets_tf",        "location_id", "idx_meets_tf_location", None),
 
     ("results",         "meet_id", "idx_results_meet", None),
 ]
