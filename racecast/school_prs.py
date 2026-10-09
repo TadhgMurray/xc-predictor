@@ -28,6 +28,7 @@ anyway.
 from rankings import PR_DISTANCES, PR_DISTANCE_TOL
 from school import seasonLabel, storedYear
 from tf_points import (canonicalEvent, displayEvent, eventDistance,
+                       eventFamily, familyLabel,
                        genderOf, parseMark)
 
 # ranking_results stores metres as the meet recorded them; label the
@@ -360,7 +361,9 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
     # view-all link -- the standing rule for off-board sections.
     h_groups = {}
     for r in hurdles:
-        canon = (canonicalEvent(r.get("event_short")) or
+        # ★ THE EVENT FAMILY, NOT THE SCORING KEY (owner, 2026-10-09:
+        #   "s 100 Hurdles" beside "100m Hurdles"): tf_points.eventFamily
+        canon = (eventFamily(r.get("event_short")) or
                  f"#{r.get('event_id')}")
         h_groups.setdefault(canon, []).append(r)
     h_sections = []
@@ -384,7 +387,7 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
         name_src = next((r.get("event_short") for r in rows_g
                          if r.get("event_short")), None)
         h_sections.append({
-            "label": (displayEvent(name_src) if name_src
+            "label": (familyLabel(canon) if not canon.startswith("#")
                       else f"Event {rows_g[0].get('event_id')}"),
             "dist_note": "", "kind": "hurdles",
             "distance": eventDistance(name_src) if name_src else None,
@@ -396,7 +399,7 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
     # ---- field sections (TF): canonical event, best mark ------------- #
     f_groups = {}
     for r in field:
-        canon = (canonicalEvent(r.get("event_short")) or
+        canon = (eventFamily(r.get("event_short")) or
                  f"#{r.get('event_id')}")
         f_groups.setdefault(canon, []).append(r)
     f_sections = []
@@ -420,7 +423,7 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
         name_src = next((r.get("event_short") for r in rows_g
                          if r.get("event_short")), None)
         f_sections.append({
-            "label": (displayEvent(name_src) if name_src
+            "label": (familyLabel(canon) if not canon.startswith("#")
                       else f"Event {rows_g[0].get('event_id')}"),
             "dist_note": "", "kind": "field", "distance": None,
             "on_board": False, "n": len(rows_g),

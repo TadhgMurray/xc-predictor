@@ -889,3 +889,48 @@ def eventSortKey(name):
     base = " ".join(_ROUND_RX.sub(" ", s).split()).lower()
     return (base, rank, s.lower())
 
+
+
+# ------------------------------------------------------------------ #
+#  EVENT FAMILY -- one name per event for record and PR lists
+# ------------------------------------------------------------------ #
+# ★ ONE EVENT, HOWEVER THE MEET LABELLED IT (owner, 2026-10-09, a school's
+#   PR page: "s 100 Hurdles" beside "100m Hurdles", "High Jump" twice plus
+#   "High Jump Championship / Invitational / University", "Pole Vault
+#   Division 2", "60 M Hurdles", "3ksteeple" beside "s 3000 Steeplechase").
+#   canonicalEvent is the SCORING key: it keeps flights and sections apart
+#   on purpose (an Invite flight and an Open flight score separately), so
+#   it stays as it is. This is the coarser key for "best mark in the
+#   event": gender words (and the stray "s" of a stripped "Men's"), flight
+#   and level words, units and filler go; hurdles and steeples keep their
+#   distance; a multi keeps its name.
+_FAM_GENDER = re.compile(r"\b(?:wo)?men'?s?\b|\bboys?'?\b|\bgirls?'?\b|\bmixed\b", re.I)
+_FAM_NOISE = re.compile(
+    r"\b(?:invitational|invite|inv|open|championships?|champs?|university|"
+    r"college|collegiate|high\s*school|hs|varsity|jv|junior\s+varsity|frosh|"
+    r"soph|seeded|unseeded|elite|section|heat|flight|finals?|prelims?|"
+    r"semis?|semifinals?|qualifying|division\s*\w+|div\s*\w+|indoor|outdoor|"
+    r"run|dash|race|meters?|metres?|event|[abcd])\b", re.I)
+
+
+def eventFamily(event_short):
+    """The record-list key: '' for an empty name."""
+    s = " " + (event_short or "").lower().replace("-", " ").replace("_", " ") + " "
+    s = _FAM_GENDER.sub(" ", s)
+    s = re.sub(r"^\s*s\s+", " ", s)                     # "Men's" -> "s"
+    s = _FAM_NOISE.sub(" ", s)
+    s = re.sub(r"(\d+)\s*k\s*(?=steeple)", lambda m: str(int(m.group(1)) * 1000) + " ", s)
+    s = re.sub(r"(\d)\s*m\b", r"\1", s)                 # 60 m / 60m -> 60
+    s = re.sub(r"steeple\w*", "steeple", s)
+    s = re.sub(r"hurdles?\b", "hurdles", s)
+    s = re.sub(r"\b(javelin|discus|hammer)\s+throw\b", r"\1", s)   # weight throw keeps it
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def familyLabel(family):
+    """The reader's name for an eventFamily key."""
+    m = re.match(r"^(\d+) (hurdles|steeple)$", family or "")
+    if m:
+        return f"{m.group(1)}m " + ("Hurdles" if m.group(2) == "hurdles" else "Steeplechase")
+    return " ".join(w.capitalize() for w in (family or "").split()) or "Event"

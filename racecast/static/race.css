@@ -264,3 +264,5 @@ main.rc .ev-head { scroll-margin-top: 1rem; }
 main.rc .rc-hd + .rc-w > .rc-tbar { margin-top: 1.2rem; }
 main.rc .prs-course th:last-child, main.rc .prs-course td:last-child { width: 7.4rem; }
 main.rc .prs-course th:nth-child(1) { width: 2.2rem; }
+main.rc tr.rc-jump { cursor: pointer; }
+main.rc tr.rc-jump:hover td { background: var(--hover, #f3f4f6); }

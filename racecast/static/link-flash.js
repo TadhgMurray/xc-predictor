@@ -84,7 +84,8 @@
   //   a result row centres it and flashes it; back/forward does the same.
   function isRow(el) {
     return el && (el.tagName === "TR" || el.tagName === "LI" ||
-                  /^(r|race-)\d+$/.test(el.id));
+                  /^(r|race-)\d+$/.test(el.id) ||
+                  el.classList.contains("ev-head"));   // a School PRs event
   }
   document.addEventListener("click", function (e) {
     var a = e.target.closest && e.target.closest('a[href^="#"]');
@@ -94,7 +95,9 @@
     if (!isRow(el)) return;
     e.preventDefault();
     history.pushState(null, "", "#" + id);
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    // an event heading leads its table: to the top, not the middle
+    el.scrollIntoView({ block: el.classList.contains("ev-head") ? "start" : "center",
+                        behavior: "smooth" });
     flashAfterScroll(el);
   });
 

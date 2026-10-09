@@ -7616,13 +7616,13 @@ def get_tf_venue_individual_records(cur, location_id, is_indoor, per_event=5,
     ★ ONE EVENT, HOWEVER IT WAS SPELLED. A flat race is keyed by its
       distance ("1600 Meters", "1600m" and "Boys 1600" are one event); a
       hurdle or steeple race and a field event by the name tf_points
-      already folds (canonicalEvent: gender words and round noise off).
+      folds for record lists (eventFamily: gender, flight and level words off).
     ! A FIELD MARK IS PARSED, NOT COMPARED AS TEXT (tf_points.parseMark);
       one that will not parse is left out. An event with fewer than
       `min_athletes` athletes here is left out -- one heat of a rare event
       is not a record board. Gender as the relays take it: the athlete,
       the meet, the event's words; unknown stays apart."""
-    from tf_points import canonicalEvent, displayEvent, eventDistance, parseMark
+    from tf_points import eventFamily, familyLabel, eventDistance, parseMark
     # ! SMALL ROWS FIRST, GENDER BY KEY AFTER (owner, 2026-10-09: "venue
     #   page even slower now"). A join to person_gender hashed the whole
     #   table; an athletes lateral ran per result. SQL keeps each athlete's
@@ -7694,14 +7694,16 @@ def get_tf_venue_individual_records(cur, location_id, is_indoor, per_event=5,
             v = parseMark(r["mark"])
             if v is None or v <= 0:
                 continue
-            kind, key, label = 2, canonicalEvent(ev), displayEvent(ev)
+            key = eventFamily(ev)
+            kind, label = 2, familyLabel(key)
             better = v
         else:
             t = r["time_seconds"]
             if t is None or t <= 0 or t >= 19999 or _isSentinelTime(t):
                 continue
             if "hurdle" in low or "steeple" in low or "walk" in low:
-                kind, key, label = 1, canonicalEvent(ev), displayEvent(ev)
+                key = eventFamily(ev)
+                kind, label = 1, familyLabel(key)
             else:
                 d = eventDistance(ev)
                 if not d:

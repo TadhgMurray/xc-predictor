@@ -102,13 +102,25 @@
       · <button type="button" class="share-btn rc-share-link" data-share-title="{{ school ~ ' school PRs on Racecast' }}"
             data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
     </div>
-    {% if first %}
+    {# ★ EACH GENDER'S BEST PERFORMANCE, NOT THE FIRST EVENT'S #1 (owner,
+       2026-10-09: "how does it choose this part?" -- it was the 55m): the
+       highest rating on the shown scale (HS-equivalent where there is one)
+       across every rated event, with the event named #}
+    {% set best = {"M": none, "F": none} %}
+    {% for sec in data.sections if sec.kind == "running" %}
+      {% for g in ["M", "F"] %}
+        {% for r in sec.tables[g] if (r.hs_speed_rating or r.speed_rating) %}
+          {% set v = r.hs_speed_rating or r.speed_rating %}
+          {% if best[g] is none or v > best[g][0] %}{% set _ = best.update({g: (v, r, sec.label)}) %}{% endif %}
+        {% endfor %}
+      {% endfor %}
+    {% endfor %}
+    {% if best.M or best.F %}
     <div class="rc-champs">
       {% for g, g_label in [("M", "Boys"), ("F", "Girls")] %}
-      {% set r = first.tables[g][0] if first.tables[g] else none %}
-      {% if r %}
-      <div><span class="k">{{ g_label }} · {{ first.label }}</span>
-        <span class="rc-crow"><b class="rc-cn">{% if r.person_id %}<a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name or "Unknown" }}</a>{% else %}{{ r.name or "Unknown" }}{% endif %}</b><i>{{ r.display_mark }}</i></span></div>
+      {% if best[g] %}{% set v, r, ev = best[g] %}
+      <div><span class="k">{{ g_label }} best · {{ ev }}</span>
+        <span class="rc-crow"><b class="rc-cn">{% if r.person_id %}<a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name or "Unknown" }}</a>{% else %}{{ r.name or "Unknown" }}{% endif %}</b><i>{{ r.display_mark }} · {{ rv(r.speed_rating, r.hs_speed_rating) }}</i></span></div>
       {% endif %}
       {% endfor %}
     </div>
@@ -195,7 +207,7 @@
   <table class="rc-tscores rc-tscores-plain">
     <tbody>
     {% for sec in data.sections %}
-    <tr>
+    <tr class="rc-jump" data-href="#ev-{{ loop.index }}">
       <td class="tn"><a href="#ev-{{ loop.index }}">{{ sec.label }}</a></td>
       <td class="n tpts">{{ (sec.tables.M|length) + (sec.tables.F|length) }}</td>
     </tr>
@@ -210,6 +222,15 @@
 </main>
 <script src="{{ static_v('staged.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
+<script>
+// The whole event row jumps, not just its name (owner, 2026-10-09).
+document.querySelectorAll("tr.rc-jump").forEach(function (tr) {
+  tr.addEventListener("click", function (e) {
+    if (e.target.closest("a")) return;
+    var a = tr.querySelector("a"); if (a) a.click();
+  });
+});
+</script>
 <script>
 // Course-chip expand: one press shows every course, no round trip.
 (function () {
