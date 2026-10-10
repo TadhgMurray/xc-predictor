@@ -113,7 +113,7 @@ def test_rows_are_hs_numbers_converted_on_the_own_scale():
     assert set(top["times"]) == {"800", "1500", "mile", "5000", "xc8k"}
     # the landmarks name the row they fall in (140 x 1.2 = 168 -> the 165 row)
     marks = {r["hs"]: r["mark"] for r in t["rows"] if r["mark"]}
-    assert marks == {165: "No. 100 nationally", 120: "middle of the board"}
+    assert marks == {165: "Top 100", 120: "Median"}
 
 
 def test_no_board_no_rows():

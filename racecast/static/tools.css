@@ -6,24 +6,43 @@
    colours, no new type, nothing louder than the page around it. */
 
 /* ---- /scale ------------------------------------------------------------ */
-.scale-page .scale-nav { margin: 0.6rem 0 0.4rem; }
-.scale-page .scale-tbl { max-width: 44rem; }
-/* the rating is the row's name: ink, not the rank-number grey .p2-tbl gives
-   a first column */
-.scale-page .scale-tbl td.scale-r { color: var(--ink, #111418); font-weight: 600; width: auto; }
-/* ★ LANDMARK ROWS (2026-10-10): the No. 100 and the middle of the board,
-   named under the rating and the row lightly tinted -- a signpost, not a
-   badge */
-.scale-page .scale-tbl tr.scale-lm td { background: var(--sel-bg, #f1f2f4); }
-.scale-page .scale-tbl .scale-mark { display: block; font-size: 0.72rem; font-weight: 500;
-  color: var(--muted, #6b7280); white-space: nowrap; }
-.scale-page .scale-wrap { max-width: 100%; overflow-x: auto; }
-/* every tenth point ruled, so a long column reads in blocks of two */
-.scale-page .scale-tbl tr.scale-ten td { border-top: 1px solid var(--line-2, #cbd0d6); }
+.scale-page .scale-nav { margin: 0.6rem 0 0.8rem; }
+/* ★ THE RACE PAGE'S TABLE, COMPACT AND BALANCED (owner, 2026-10-10: "looks
+   off"). A fixed layout: the rating a bold first column of modest width on
+   the left, every time column the same width, right-aligned tabular
+   numerals; the whole table as wide as its content wants and no wider than
+   a readable 720px. The header row sticks while the rows scroll. */
+.scale-page table.scale-tbl { width: 100%; max-width: 720px; table-layout: fixed;
+  border-collapse: separate; border-spacing: 0; border: 1px solid var(--line, #e5e7eb);
+  border-radius: 6px; font-variant-numeric: tabular-nums; }
+.scale-page .scale-tbl th, .scale-page .scale-tbl td { padding: 0.42rem 0.75rem; border: 0;
+  border-bottom: 1px solid var(--line, #e5e7eb); text-align: right; white-space: nowrap; }
+.scale-page .scale-tbl tbody tr:last-child td { border-bottom: 0; }
+.scale-page .scale-tbl col.scale-rc { width: 10.5rem; }
+.scale-page .scale-tbl thead th { position: sticky; top: 0; z-index: 1; background: #f5f5f5;
+  color: var(--ink, #111418); font-size: 0.86rem; font-weight: 600; text-transform: none;
+  letter-spacing: 0; border-bottom: 1px solid var(--line-2, #cbd0d6); }
+.scale-page .scale-tbl thead th:first-child { border-top-left-radius: 6px; }
+.scale-page .scale-tbl thead th:last-child { border-top-right-radius: 6px; }
+.scale-page .scale-tbl th.scale-r, .scale-page .scale-tbl td.scale-r { text-align: left; }
+.scale-page .scale-tbl td.scale-r { font-weight: 700; color: var(--ink, #111418); }
+.scale-page .scale-tbl tbody tr:nth-child(even) td { background: #fafbfc; }
+/* ★ LANDMARK ROWS: the No. 100 and the middle of the board -- a subtle tint
+   and a small tag beside the rating, a signpost, not a second line */
+.scale-page .scale-tbl tbody tr.scale-lm td { background: var(--sel-bg, #f1f2f4); }
+.scale-page .scale-tbl .scale-mark { display: inline-block; margin-left: 0.45rem; padding: 0.05rem 0.45rem;
+  border: 1px solid var(--line-2, #cbd0d6); border-radius: 999px; background: #fff;
+  font-size: 0.72rem; font-weight: 500; color: var(--muted, #6b7280); vertical-align: 0.08em; }
 .scale-page .scale-pool + .scale-pool { margin-top: 1.6rem; }
+.scale-page .scale-pool .p2-foot { max-width: 720px; }
 .scale-page .scale-print { font: inherit; }
 @media (max-width: 640px) {
-  .scale-page .scale-tbl th, .scale-page .scale-tbl td { padding: 0.4rem 0.35rem; }
+  .scale-page table.scale-tbl { font-size: 0.88rem; }
+  .scale-page .scale-tbl th, .scale-page .scale-tbl td { padding: 0.42rem 0.3rem; }
+  .scale-page .scale-tbl th.scale-r, .scale-page .scale-tbl td.scale-r { padding-left: 0.55rem; }
+  .scale-page .scale-tbl col.scale-rc { width: 6.6rem; }
+  .scale-page .scale-tbl.scale-cols-5 col.scale-rc { width: 6.2rem; }
+  .scale-page .scale-tbl .scale-mark { margin-left: 0.25rem; padding: 0 0.35rem; font-size: 0.66rem; }
 }
 
 /* ★ PRINTABLE (owner: "Printable"): the table and its one-line footnote, no
@@ -35,6 +54,7 @@
   .scale-page { padding: 0; }
   .scale-page .scale-tbl { max-width: none; font-size: 10pt; }
   .scale-page .scale-tbl th, .scale-page .scale-tbl td { padding: 0.12rem 0.5rem; }
+  .scale-page .scale-tbl thead th { position: static; }
   .scale-page .scale-pool + .scale-pool { break-before: page; }
 }
 

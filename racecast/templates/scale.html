@@ -61,20 +61,21 @@
   <section class="scale-pool" id="{{ t.pool }}">
     {% if tables|length > 1 %}<h2 class="p2-h2">{{ t.label }}</h2>{% endif %}
     {% if t.rows %}
-    <div class="scale-wrap"><table class="p2-tbl scale-tbl">
+    <table class="rc-table scale-tbl scale-cols-{{ t.columns|length }}">
+      <colgroup><col class="scale-rc">{% for c in t.columns %}<col>{% endfor %}</colgroup>
       <thead><tr>
-        <th class="num">Rating</th>
-        {% for c in t.columns %}<th class="num">{{ c.label }}</th>{% endfor %}
+        <th class="scale-r">Rating</th>
+        {% for c in t.columns %}<th>{{ c.label }}</th>{% endfor %}
       </tr></thead>
       <tbody>
       {% for r in t.rows %}
-        <tr class="{{ 'scale-ten' if r.hs % 10 == 0 }}{{ ' scale-lm' if r.mark }}">
-          <td class="num scale-r">{{ r.hs }}{% if r.mark %}<span class="scale-mark">{{ r.mark }}</span>{% endif %}</td>
-          {% for c in t.columns %}<td class="num">{{ r.times.get(c.key)|scale_time or "–" }}</td>{% endfor %}
+        <tr{% if r.mark %} class="scale-lm"{% endif %}>
+          <td class="scale-r">{{ r.hs }}{% if r.mark %}<span class="scale-mark" title="{{ r.mark_words }}">{{ r.mark }}</span>{% endif %}</td>
+          {% for c in t.columns %}<td>{{ r.times.get(c.key)|scale_time or "–" }}</td>{% endfor %}
         </tr>
       {% endfor %}
       </tbody>
-    </table></div>
+    </table>
     <p class="p2-foot">
       From this season's No. 1 down to the slowest 1 in 100 on the {{ t.words }} board.
       Track times are on a typical outdoor track, cross country on a typical course; a hilly

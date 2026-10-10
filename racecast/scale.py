@@ -197,11 +197,12 @@ def buildTable(pool, ends, factor, step=STEP, convert=cellTime):
     # each landmark marks the row it falls in: the row whose rating is at or
     # under it, within one step
     marks = {}
-    for key, words in (("top100", f"No. {TOP_N} nationally"),
-                       ("median", "middle of the board")):
+    # (key, the tag beside the rating, its full words for the hover)
+    for key, tag, words in (("top100", f"Top {TOP_N}", f"No. {TOP_N} nationally"),
+                            ("median", "Median", "The middle of the board")):
         v = (info or {}).get(key)
         if v is not None:
-            marks.setdefault(int(math.floor(v * f / step) * step), []).append(words)
+            marks.setdefault(int(math.floor(v * f / step) * step), []).append((tag, words))
     span = roundedSpan(lo * f, hi * f, step)
     if not span:
         return out
@@ -212,7 +213,8 @@ def buildTable(pool, ends, factor, step=STEP, convert=cellTime):
         if not any(times.values()):
             continue
         out["rows"].append({"hs": hs, "own": round(own, 1), "times": times,
-                            "mark": ", ".join(marks.get(hs, []))})
+                            "mark": " · ".join(t for t, _w in marks.get(hs, [])),
+                            "mark_words": "; ".join(w for _t, w in marks.get(hs, []))})
     return out
 
 
