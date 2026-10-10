@@ -1394,7 +1394,7 @@ step 12b_finish       "$PY" -u racecast/build_course_boards.py --finish
 #   books rebuild only where a school's results moved (XCP_RECORD_SCHOOLS a
 #   run, biggest first). ! AFTER 11b and 12b on purpose: CREATE INDEX
 #   CONCURRENTLY waits on every older open transaction (see 10f2 above).
-bgstep 13h_record_books "$PY" -u racecast/build_record_books.py --max-schools "${XCP_RECORD_SCHOOLS:-4000}"
+if [ "${XCP_RECORD_BOOKS:-0}" = "1" ]; then bgstep 13j_record_books "$PY" -u racecast/build_record_books.py --max-schools "${XCP_RECORD_SCHOOLS:-4000}"; fi
 # the two sports' full passes side by side (14 minutes for both in one
 # process on run12); each writes only its own sport's panels
 steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC" \
