@@ -1153,7 +1153,7 @@ def compare_page():
     Query builders live in compare.py; this route only assembles and
     stamps the HS-equivalent values."""
     from compare import (athleteCard, meetings, record, seasonRows,
-                         stampEdgeHs,
+                         stampEdgeHs, bestRatingEdge, fmtMargin, shortNames,
                          bestRows, bestRatingRows, ratingSeries, chartPoints)
 
     a = request.args.get("a", type=int)
@@ -1240,26 +1240,39 @@ def compare_page():
 
                     # The chart speaks the athlete page's own point shape,
                     # drawn by athlete-charts.js (drawCompareChart).
+                    short_a, short_b = shortNames(card_a["name"], card_b["name"])
                     chart = {"series": [
-                        {"name": card_a["name"].split()[-1],
+                        {"name": short_a,
                          "colour": "#14477d",
                          "points": chartPoints(series_a)},
-                        {"name": card_b["name"].split()[-1],
+                        {"name": short_b,
                          "colour": "#b45309",
                          "points": chartPoints(series_b)},
                     ]}
                     ctx.update(card_a=card_a, card_b=card_b,
                                meetings=mtgs, wins_a=wa, wins_b=wb,
                                ties=ties, avg_margin=avg,
+                               # ! two decimals under a minute; None when
+                               #   the average rounds to a dead heat
+                               avg_margin_label=(fmtMargin(avg)
+                                                 if round(abs(avg), 2) > 0
+                                                 else None),
                                seasons=seasons, bests=bests, brate=brate,
+                               # ! the highlight on the default (HS) scale
+                               brate_edge=bestRatingEdge(brate),
                                chart=chart, has_hs_view=has_hs)
 
     # Short names for the margin and edge labels: the last word carries
     # the identity in almost every real name.
-    for key in ("card_a", "card_b"):
-        card = ctx.get(key)
-        if card:
-            card["short"] = card["name"].split()[-1]
+    # ! AND FIRST INITIAL + SURNAME WHEN THE SURNAMES MATCH (sweep
+    #   2026-10-10), or two Smiths read "Smith 3-1 Smith".
+    ca, cb = ctx.get("card_a"), ctx.get("card_b")
+    if ca and cb:
+        ca["short"], cb["short"] = shortNames(ca["name"], cb["name"])
+    else:
+        for card in (ca, cb):
+            if card:
+                card["short"] = card["name"].split()[-1]
     return render_template("compare.html", **ctx)
 
 

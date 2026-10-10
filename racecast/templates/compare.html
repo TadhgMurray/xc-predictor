@@ -43,7 +43,7 @@
       <b>{{ card_a.short }} {{ wins_a }}&ndash;{{ wins_b }} {{ card_b.short }}</b>
       · {{ meetings|length }} meeting{{ "" if meetings|length == 1 else "s" }}{% if ties %} · {{ ties }} dead heat{{ "" if ties == 1 else "s" }}{% endif %}
       {%- if meetings %} · last met {{ meetings[0].date|mdy }}{% endif %}
-      {%- if meetings and avg_margin > 0.05 %} · avg margin {{ "%.1f"|format(avg_margin) }}s to {{ card_a.short }}{% elif meetings and avg_margin < -0.05 %} · avg margin {{ "%.1f"|format(-avg_margin) }}s to {{ card_b.short }}{% endif %}
+      {%- if meetings and avg_margin_label and avg_margin > 0 %} · avg margin {{ avg_margin_label }} to {{ card_a.short }}{% elif meetings and avg_margin_label and avg_margin < 0 %} · avg margin {{ avg_margin_label }} to {{ card_b.short }}{% endif %}
       · <button type="button" class="share-btn rc-share-link" data-share-title="{{ card_a.name ~ ' vs ' ~ card_b.name ~ ' on Racecast' }}"
             data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
     </div>
@@ -134,8 +134,8 @@
                 <td>{{ m.event or " - " }}{{ " · TF" if m.sport == "TF" }}</td>
                 <td{{ ' class="win"'|safe if m.winner == "a" }}>{{ m.time_a }}</td>
                 <td{{ ' class="win"'|safe if m.winner == "b" }}>{{ m.time_b }}</td>
-                {% if m.winner == "a" %}<td class="margin-a">+{{ "%.1f"|format(m.margin) }}s {{ card_a.short }}</td>
-                {% elif m.winner == "b" %}<td class="margin-b">+{{ "%.1f"|format(m.margin) }}s {{ card_b.short }}</td>
+                {% if m.winner == "a" %}<td class="margin-a">+{{ m.margin_label }} {{ card_a.short }}</td>
+                {% elif m.winner == "b" %}<td class="margin-b">+{{ m.margin_label }} {{ card_b.short }}</td>
                 {% else %}<td>dead heat</td>{% endif %}
             </tr>
             {% endfor %}
@@ -189,9 +189,9 @@
             <tr>
                 <td>Best speed rating</td>
                 {% set ba = brate.get("a") %}{% set bb = brate.get("b") %}
-                <td{{ ' class="win"'|safe if ba and bb and ba.speed_rating > bb.speed_rating }}>
+                <td{{ ' class="win"'|safe if brate_edge == "a" }}>
                     {% if ba %}{{ rv(ba.speed_rating, ba.hs_speed_rating) }}{% else %} - {% endif %}</td>
-                <td{{ ' class="win"'|safe if ba and bb and bb.speed_rating > ba.speed_rating }}>
+                <td{{ ' class="win"'|safe if brate_edge == "b" }}>
                     {% if bb %}{{ rv(bb.speed_rating, bb.hs_speed_rating) }}{% else %} - {% endif %}</td>
             </tr>
             {% endif %}

@@ -342,3 +342,55 @@ def test_course_team_rating_bests_leave_out_non_teams(A, monkeypatch):
     cur = StubCursor([lambda sql, p: rows[:p["limit"]]] * 3)
     got = A.get_course_team_rating_bests(cur, "Hidden Valley", limit=1)
     assert [r["school"] for r in got] == ["Dublin"]
+
+
+# ---- 10. /compare ---------------------------------------------------------- #
+
+def test_compare_bests_are_flat_races_only(monkeypatch):
+    import compare as C
+    import rankings
+    monkeypatch.setattr(rankings, "_hasEventKind", lambda cur=None: True)
+    cur = StubCursor([[], []])
+    C.bestRows(cur, 1, 2)
+    assert all("event_kind IS NULL" in sql for sql, _p in cur.sql)
+    monkeypatch.setattr(rankings, "_hasEventKind", lambda cur=None: False)
+    cur = StubCursor([[], []])
+    C.bestRows(cur, 1, 2)
+    assert not any("event_kind" in sql for sql, _p in cur.sql)
+
+
+@pytest.mark.parametrize("sec,want", [
+    (0.04, "0.04s"), (12.3, "12.30s"), (59.994, "59.99s"),
+    (59.996, "1:00"), (75.5, "1:15.5")])
+def test_compare_margins(sec, want):
+    import compare as C
+    assert C.fmtMargin(sec) == want
+
+
+@pytest.mark.parametrize("a,b,want", [
+    ("Jane Smith", "Kate Smith", ("J. Smith", "K. Smith")),
+    ("Jane Smith", "Kate Jones", ("Smith", "Jones")),
+    ("Jane Smith", "June Smith", ("Jane Smith", "June Smith")),
+])
+def test_compare_short_names(a, b, want):
+    import compare as C
+    assert C.shortNames(a, b) == want
+
+
+def test_compare_edges_follow_the_default_hs_scale():
+    import compare as C
+    # own pools: A leads 120 vs 118; HS: B leads 104 vs 110
+    rows = [{"a": {"rating": 120.0, "hs_rating": 104.0},
+             "b": {"rating": 118.0, "hs_rating": 110.0},
+             "edge": "a", "edge_by": 2.0}]
+    C.stampEdgeHs(rows)
+    assert rows[0]["edge"] == "b" and rows[0]["hs_edge_by"] == 6.0
+    assert rows[0]["edge_by"] == 6.0          # never a negative "+X"
+    brate = {"a": {"speed_rating": 120.0, "hs_speed_rating": 104.0},
+             "b": {"speed_rating": 118.0, "hs_speed_rating": 110.0}}
+    assert C.bestRatingEdge(brate) == "b"
+    brate["b"]["hs_speed_rating"] = None      # no HS on one side: own scale
+    assert C.bestRatingEdge(brate) == "a"
+    src = _tpl("compare.html")
+    assert 'brate_edge == "a"' in src and "m.margin_label" in src
+    assert '"%.1f"|format(m.margin)' not in src
