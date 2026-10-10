@@ -128,12 +128,69 @@ def racesRun(cur, schools, sport, year):
     return {r["school"]: int(r["n"]) for r in cur.fetchall()}
 
 
-def carryingSchools(cur, schools, sport, year):
+# ★ THE WINDOW COUNTS THE A TEAM'S MEETS, NOT EVERY MEET (owner,
+#   2026-10-10: NYU "heavily underrated because they haven't run their A
+#   team yet this season" -- the meet the varsity was entered in was
+#   cancelled, the B team ran three, and the window closed on a roster whose
+#   top seven had not raced once). A meet counts toward CARRY_RACES only if
+#   one of last season's top VARSITY_N returners raced in it for the school.
+#   VARSITY_N is a scoring team: 5 score, 2 displace (predict.TEAM_SCORERS +
+#   TEAM_DISPLACERS). A school with no rated returners last season (a new
+#   programme) falls back to every meet, the old rule.
+# ! THE A TEAM HAVING RACED THREE TIMES STILL CLOSES IT: a top returner
+#   missing all three is out, exactly as before.
+VARSITY_N = 7
+
+
+def carryingSchools(cur, schools, sport, year, gender=None):
     """Of `schools`, the ones whose roster still carries last season's
-    returners: fewer than CARRY_RACES races run this season.
+    returners: fewer than CARRY_RACES of the A team's meets run this season
+    (see VARSITY_N).
 
     A school with no meets at all is carrying -- that is the preseason case
     the carry-forward was written for in the first place.
+    gender: "M"/"F" -- whose top returners decide it (a women's A team that
+    has raced says nothing about the men's).
     """
-    run = racesRun(cur, schools, sport, year)
-    return {s for s in schools if s and run.get(s, 0) < CARRY_RACES}
+    schools = sorted({s for s in schools if s})
+    if not schools or year is None:
+        return set()
+    from rankings import gradeKeySql
+    gclause = ("AND upper(right(s.pool, 1)) = %(gender)s"
+               if gender in ("M", "F") else "")
+    cur.execute(f"""
+        WITH top AS (
+            SELECT school, person_id FROM (
+                SELECT s.school, s.person_id,
+                       row_number() OVER (PARTITION BY s.school, s.pool
+                                          ORDER BY s.mean_rating DESC NULLS LAST,
+                                                   s.person_id) AS rn
+                FROM   athlete_season s
+                WHERE  s.school = ANY(%(schools)s) AND s.sport = %(sport)s
+                  AND  s.year = %(prev)s AND s.mean_rating IS NOT NULL
+                  {gclause}
+                  AND (s.grade IS NULL OR BTRIM(s.grade) = ''
+                       OR {gradeKeySql("s")} <> ALL(%(term_keys)s))
+            ) t WHERE rn <= %(top_n)s),
+        has AS (SELECT DISTINCT school FROM top)
+        SELECT rr.school, count(DISTINCT rr.meet_id) AS n,
+               count(DISTINCT rr.meet_id)
+                   FILTER (WHERE tp.person_id IS NOT NULL) AS n_top,
+               bool_or(h.school IS NOT NULL) AS has_top
+        FROM   ranking_results rr
+        LEFT   JOIN top tp ON tp.school = rr.school AND tp.person_id = rr.person_id
+        LEFT   JOIN has h ON h.school = rr.school
+        WHERE  rr.school = ANY(%(schools)s)
+          AND  rr.sport  = %(sport)s
+          AND  rr.year   = %(year)s
+        GROUP  BY rr.school
+    """, {"schools": schools, "sport": sport, "year": year, "prev": year - 1,
+          "gender": gender, "term_keys": list(TERMINAL_KEYS), "top_n": VARSITY_N})
+    out = set(schools)
+    for r in cur.fetchall():
+        counted = (r.get("n_top") if r.get("has_top") else None)
+        if counted is None:
+            counted = r.get("n") or 0
+        if int(counted) >= CARRY_RACES:
+            out.discard(r["school"])
+    return out

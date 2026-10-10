@@ -3472,7 +3472,8 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
     #   one-year note above).
     from roster import carryingSchools
     carrying = ([] if stale or as_ran
-                else sorted(carryingSchools(cur, schools, sport, season_year)))
+                else sorted(carryingSchools(cur, schools, sport, season_year,
+                                            gender=gender)))
     if carrying:
         prev = _squadsForYear(cur, carrying, sport, season_year - 1,
                               exclude_terminal=True,

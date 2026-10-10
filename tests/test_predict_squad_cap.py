@@ -291,7 +291,10 @@ def test_schoolSquad_filters_too():
     #   roster.racesRun how many meets the school has run before deciding
     #   whether to carry, and that one counts ranking_results -- it has no
     #   athlete and no gender to filter on.
-    squad_queries = [(q, p) for q, p in cur.queries if "athlete_season" in q]
+    # (the window query reads athlete_season too since 2026-10-10 -- for last
+    #  season's top returners -- but it is the ranking_results count)
+    squad_queries = [(q, p) for q, p in cur.queries
+                     if "athlete_season" in q and "ranking_results" not in q]
     first_sql, first_params = squad_queries[0]
     assert "upper(right(s.pool, 1)) = %(gender)s" in first_sql, first_sql
     assert first_params["gender"] == "M"

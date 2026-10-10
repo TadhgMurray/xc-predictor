@@ -286,3 +286,37 @@ def test_the_floor_still_rejects_one_corrupt_row():
     then asked for season 2223: 396 teams, 0 runners, no error anywhere."""
     cur = SeasonCursor({}, years=set())          # no year clears the floor
     assert predict._currentSeasonUncached(cur, "XC") == LIVE
+
+
+class _WindowCursor:
+    """Answers carryingSchools' one query with scripted per-school counts."""
+    def __init__(self, rows):
+        self.rows = rows
+        self.sql = ""
+
+    def execute(self, sql, params=None):
+        self.sql = sql
+        self.params = params
+
+    def fetchall(self):
+        return self.rows
+
+
+def test_the_b_team_racing_does_not_close_the_a_teams_window():
+    """Owner, 2026-10-10, NYU: the varsity's meet was cancelled, the B team
+    ran three, and the window closed on a roster whose top seven had not
+    raced. Only meets with one of last season's top returners count."""
+    cur = _WindowCursor([
+        # B team ran 4 meets, no top returner in any: still carrying
+        {"school": "NYU", "n": 4, "n_top": 0, "has_top": True},
+        # A team ran 3: closed, as before
+        {"school": "Tufts", "n": 5, "n_top": 3, "has_top": True},
+        # a new programme (no rated returners): every meet counts, old rule
+        {"school": "New U", "n": 3, "n_top": 0, "has_top": False},
+    ])
+    got = roster.carryingSchools(cur, ["NYU", "Tufts", "New U", "Idle"], "XC", LIVE,
+                                 gender="M")
+    assert got == {"NYU", "Idle"}, got
+    assert cur.params["top_n"] == roster.VARSITY_N == 7
+    assert cur.params["prev"] == LIVE - 1
+    assert "upper(right(s.pool, 1)) = %(gender)s" in cur.sql
