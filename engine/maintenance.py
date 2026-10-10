@@ -92,3 +92,62 @@ def siteMaintenance(why=""):
             os.remove(FLAG)
         except OSError:
             pass
+
+
+# ★★ QUIET FIRST, FLAG LAST (sweep 2026-10-10, D5/D6). Every swap used to
+#    raise the flag BEFORE its first try and hold it through every retry --
+#    so a pipeline swap behind one slow reader 503'd the whole site for
+#    minutes (ranking_results: up to 20 tries x 15 s; merge_column's siege:
+#    ~11 min), when most swaps take the lock on the first try in
+#    milliseconds and need no flag at all. And the plain swaps (dbfast)
+#    waited 5 s per try: exactly the site's lock_timeout
+#    (deploy/server_setup.sh XCP_DB_LOCK_TIMEOUT_MS=5000), so a page that
+#    queued behind a waiting swap failed at the same moment the swap gave
+#    up -- the swap's patience was spent as the site's errors.
+#
+#  ★ NOW: many short tries with the site UP, and the flag only as the
+#    fallback. Each quiet try waits QUIET_LOCK_MS for the lock -- a fifth of
+#    the site's 5 s, so a page queued behind it is delayed at most a second
+#    and never reaches its own timeout -- and between tries the swap holds
+#    nothing for QUIET_PAUSE_S, so the queue drains. QUIET_TRIES of them is
+#    ~4.5 minutes of looking for a gap; a busy table almost always has one.
+#    Only when it never does is the flag raised and the caller's old,
+#    patient path run under it (new page requests then stop at the 503 and
+#    stop arriving at the table, which is what lets that path win).
+#
+#  ! ALL-OR-NOTHING PER TRY STAYS THE CALLER'S JOB: try_once does one whole
+#    swap in ONE transaction under SET LOCAL lock_timeout = <ms> and commits
+#    it; LockNotAvailable or DeadlockDetected out of it means "a reader was
+#    in the way" (the two are the same event, see test_pipeline_failures),
+#    and this rolls back and tries again.
+QUIET_LOCK_MS = int(os.environ.get("XCP_SWAP_QUIET_LOCK_MS", "1000"))
+QUIET_TRIES = int(os.environ.get("XCP_SWAP_QUIET_TRIES", "90"))
+QUIET_PAUSE_S = float(os.environ.get("XCP_SWAP_QUIET_PAUSE_S", "2"))
+
+
+def swapQuietlyFirst(conn, try_once, label, flagged, tries=None,
+                     lock_ms=None, pause=None, log=print, sleep=time.sleep):
+    """Run try_once(lock_ms) up to `tries` times with the site up; return
+    its result on the first win. When every try loses to a reader, raise
+    the maintenance flag and return flagged() -- the caller's old path --
+    with the flag held for exactly that long."""
+    import psycopg2.errors as _pge
+    busy = (_pge.LockNotAvailable, _pge.DeadlockDetected)
+    tries = QUIET_TRIES if tries is None else tries
+    lock_ms = QUIET_LOCK_MS if lock_ms is None else lock_ms
+    pause = QUIET_PAUSE_S if pause is None else pause
+    for attempt in range(1, tries + 1):
+        try:
+            return try_once(lock_ms)
+        except busy:
+            conn.rollback()
+            # ! A LINE NOW AND THEN, NOT NINETY. The tries are short on
+            #   purpose; the log should say a swap is waiting, not scroll.
+            if attempt == 1 or attempt % 15 == 0:
+                log(f"  {label}: being read; quiet try {attempt}/{tries} "
+                    f"(site up, {lock_ms}ms per try)", flush=True)
+            sleep(pause)
+    log(f"  {label}: {tries} quiet tries lost to readers -- raising the "
+        f"maintenance flag for the rest of the swap", flush=True)
+    with siteMaintenance(f"swap {label}"):
+        return flagged()

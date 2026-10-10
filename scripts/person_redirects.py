@@ -55,9 +55,12 @@ CREATE TABLE person_probe_new AS
                unnest(ARRAY[min(result_id), max(result_id)])
           FROM results_tf WHERE person_id IS NOT NULL GROUP BY person_id) x;
 CREATE INDEX ON person_probe_new (sport, result_id);
-DROP TABLE IF EXISTS person_probe;
-ALTER TABLE person_probe_new RENAME TO person_probe;
 """
+# ★ THE SWAP IS NOT IN THE SNAPSHOT ANY MORE (sweep 2026-10-10, D16). A bare
+#   DROP + RENAME in a connection without lock_timeout waits for ever behind
+#   any reader of person_probe and queues everything after it; it goes live
+#   through dbfast.swapTable instead (short quiet tries, the maintenance
+#   flag only as a fallback) -- see snapshot().
 
 # the probes whose row now belongs to someone else, and that someone
 MOVED = """
@@ -130,6 +133,10 @@ def snapshot():
     with getConn() as conn, conn.cursor() as cur:
         cur.execute(PLAN)
         cur.execute(SNAPSHOT)
+        conn.commit()
+        sys.path.insert(0, "racecast")
+        from dbfast import swapTable
+        swapTable(conn, "person_probe")
         cur.execute("SELECT count(*), count(DISTINCT person_id) FROM person_probe")
         n, p = cur.fetchone()
         conn.commit()

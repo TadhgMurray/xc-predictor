@@ -173,7 +173,8 @@ def main():
         for i, cname in enumerate(courses):
             try:
                 ctx = buildCourseCtx(cur, cname, None)
-                if not ctx.get("header"):
+                # None: no results at all (app.buildCourseCtx, D10)
+                if not ctx or not ctx.get("header"):
                     skipped += 1
                     continue
                 batch.append((cname, 0, _json(ctx)))

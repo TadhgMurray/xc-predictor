@@ -138,9 +138,16 @@ def _write(rows):
         cur.executemany(
             "INSERT INTO group_scale_new VALUES (%s, %s, %s, %s, %s, %s, %s)",
             [(k, p, g, n, o, h, today) for k, p, g, n, o, h in rows])
-        cur.execute("DROP TABLE IF EXISTS group_scale")
-        cur.execute("ALTER TABLE group_scale_new RENAME TO group_scale")
         conn.commit()
+        # ★ NOT A BARE DROP + RENAME (sweep 2026-10-10, D16). This
+        #   connection has no lock_timeout, so the DROP waited for ever
+        #   behind any page reading group_scale (pool_view reads it on every
+        #   HS view) -- and every page after it queued behind the DROP and
+        #   failed at the site's 5 s. dbfast.swapTable: short quiet tries,
+        #   the maintenance flag only as a fallback.
+        from dbfast import swapTable
+        swapTable(conn, "group_scale",
+                  renames=[("group_scale_new_pkey", "group_scale_pkey")])
     with open(OUT_JSON + ".tmp", "w") as f:
         json.dump({"rows": rows, "written": today}, f)
     os.replace(OUT_JSON + ".tmp", OUT_JSON)

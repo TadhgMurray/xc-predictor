@@ -27,14 +27,22 @@
     if (h) {
       var el = null;
       try { el = document.getElementById(decodeURIComponent(h)); } catch (e) { el = null; }
-      if (el) return el;
+      if (el) return rowOf(el);
     }
     // ?r=<result id>: a results table's row is r<id>, the athlete page's
     // season row is race-<id> (owner, 2026-10-09: "doesn't work on an
-    // athlete page")
-    var m = /[?&]r=(\d+)/.exec(location.search);
-    return m ? (document.getElementById("r" + m[1]) ||
-                document.getElementById("race-" + m[1])) : null;
+    // athlete page"). ! -? : tfrrs result ids are negative.
+    var m = /[?&]r=(-?\d+)/.exec(location.search);
+    return m ? rowOf(document.getElementById("r" + m[1]) ||
+                     document.getElementById("race-" + m[1])) : null;
+  }
+
+  // ★ AN ALIAS ANCHOR IS ITS ROW (sweep 2026-10-10, D2). Race pages link
+  //   #race-<id> now, and the id may be a copy the athlete page folded into
+  //   another row; that row carries a hidden span.race-alias with the id.
+  function rowOf(el) {
+    return el && el.classList && el.classList.contains("race-alias")
+      ? (el.closest("tr") || el) : el;
   }
 
   // ★ AFTER THE PAGE SETTLES (owner, 2026-10-09: "still not working" on the
@@ -66,7 +74,7 @@
     if (!el || el.classList.contains("rc-flash")) return;
     // ! RESULT ROWS ONLY: a section anchor (#track, #reports) is a place
     //   to scroll to, not a result to point at
-    if (!(el.tagName === "TR" || el.tagName === "LI" || /^(r|race-)\d+$/.test(el.id))) return;
+    if (!(el.tagName === "TR" || el.tagName === "LI" || /^(r|race-)-?\d+$/.test(el.id))) return;
     centre(el);
     flash(el);
     var top = el.getBoundingClientRect().top;
@@ -84,7 +92,7 @@
   //   a result row centres it and flashes it; back/forward does the same.
   function isRow(el) {
     return el && (el.tagName === "TR" || el.tagName === "LI" ||
-                  /^(r|race-)\d+$/.test(el.id) ||
+                  /^(r|race-)-?\d+$/.test(el.id) ||
                   el.classList.contains("ev-head"));   // a School PRs event
   }
   document.addEventListener("click", function (e) {
@@ -120,7 +128,7 @@
     }
   }
   window.addEventListener("hashchange", function () {
-    var el = document.getElementById(location.hash.slice(1));
+    var el = rowOf(document.getElementById(location.hash.slice(1)));
     if (isRow(el)) { el.scrollIntoView({ block: "center" }); flash(el); }
   });
 

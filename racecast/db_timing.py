@@ -111,10 +111,109 @@ class _TimedConn:
         return getattr(self._conn, name)
 
 
+# ★★ ONE CONNECTION PER REQUEST, NOT ONE PER BLOCK (sweep 2026-10-10, D14).
+#    An athlete view opens `with getConn()` four or more times, and each one
+#    was a pool checkout plus database.getConn's liveness probe (SELECT 1,
+#    a round trip) plus a putconn -- for a request a sync gunicorn worker
+#    serves alone, start to finish. Now the first block of a request checks
+#    a connection out and parks it on flask.g; later blocks of the same
+#    request reuse it; teardown (releaseRequestConn, registered by app.py)
+#    puts it back.
+#
+#  ! WHAT EACH BLOCK SEES IS UNCHANGED. Every block still ends in a
+#    rollback (as database.getConn's own exit did), so no transaction, SET
+#    LOCAL or savepoint leaks from one block into the next. The site sets no
+#    session-level state (no bare SET, no autocommit), so nothing else could.
+#  ! ONLY WHEN IT IS FREE. A block opened INSIDE another (school_identity's
+#    lookups, the race page's second connection) gets its own pool
+#    connection, exactly as before: sharing would let the inner block's
+#    rollback undo the outer one's work. Same for another thread (an
+#    executor inside a request), which never sees the parked one.
+#  ! A BROKEN ONE IS NOT KEPT. InterfaceError/OperationalError inside a
+#    block hands the exception to database.getConn's own exit, which closes
+#    the connection rather than pooling it, and the slot is emptied -- so
+#    app._db_blip's retry draws a fresh, probed connection.
+#  ! XCP_DB_REQUEST_CONN=0 turns it off (every block straight to the pool).
+_REQUEST_CONN = os.environ.get("XCP_DB_REQUEST_CONN", "1") != "0"
+
+
+def _requestSlot():
+    """This request's connection slot when this block may use it, else
+    None (no request, turned off, held by an outer block, other thread)."""
+    if not _REQUEST_CONN:
+        return None
+    try:
+        from flask import g, has_request_context
+        if not has_request_context():
+            return None
+    except Exception:                    # noqa: BLE001 -- outside flask
+        return None
+    import threading
+    slot = g.get("_db_slot")
+    if slot is None:
+        slot = {"cm": None, "conn": None, "busy": False,
+                "tid": threading.get_ident()}
+        g._db_slot = slot
+    if slot["busy"] or slot["tid"] != threading.get_ident():
+        return None
+    return slot
+
+
+def _dropSlot(slot, exc_info=(None, None, None)):
+    """Hand the parked connection back through database.getConn's exit
+    (which rolls back, or closes it when exc_info says it broke)."""
+    cm, slot["cm"], slot["conn"] = slot["cm"], None, None
+    if cm is not None:
+        try:
+            cm.__exit__(*exc_info)
+        except Exception:                # noqa: BLE001 -- it re-raises exc
+            pass
+
+
+def releaseRequestConn(_exc=None):
+    """teardown_appcontext: the request's connection goes back to the pool."""
+    try:
+        from flask import g
+        slot = g.pop("_db_slot", None)
+    except Exception:                    # noqa: BLE001
+        return
+    if slot:
+        _dropSlot(slot)
+
+
 @contextmanager
 def getConn():
-    with _REAL_GETCONN() as conn:
+    slot = _requestSlot()
+    if slot is None:
+        with _REAL_GETCONN() as conn:
+            yield _TimedConn(conn)
+        return
+    import sys
+    import psycopg2
+    if slot["conn"] is None:
+        cm = _REAL_GETCONN()
+        slot["conn"] = cm.__enter__()
+        slot["cm"] = cm
+    conn = slot["conn"]
+    slot["busy"] = True
+    try:
         yield _TimedConn(conn)
+    except (psycopg2.InterfaceError, psycopg2.OperationalError):
+        _dropSlot(slot, sys.exc_info())
+        raise
+    except BaseException:
+        try:
+            conn.rollback()          # the caller raised: leave no open txn
+        except Exception:            # noqa: BLE001
+            _dropSlot(slot, sys.exc_info())
+        raise
+    else:
+        try:
+            conn.rollback()          # as database.getConn's exit always did
+        except Exception:            # noqa: BLE001
+            _dropSlot(slot, sys.exc_info())
+    finally:
+        slot["busy"] = False
 
 
 def summary(limit=40):

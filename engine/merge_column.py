@@ -460,11 +460,24 @@ _SIEGE_WAIT_S = 30
 
 
 def _swapSiege(conn, table, cap):
-    # the site answers 503 with Retry-After while the swap holds or waits
-    # for the lock (issue 300), instead of queueing pages behind it
-    from maintenance import siteMaintenance
-    with siteMaintenance(f"swap {table}"):
-        return _swapSiegeRounds(conn, table, cap)
+    # ★ QUIET TRIES FIRST, THE SIEGE ONLY AS THE FALLBACK (sweep 2026-10-10,
+    #   D5). The flag used to go up before round 1 and stay up through all
+    #   twenty -- ~11 minutes of 503 on `results` behind one slow reader, for
+    #   a rename that takes milliseconds once it has the lock. Now
+    #   maintenance.swapQuietlyFirst makes many 1 s tries with the site up
+    #   (under the site's 5 s lock_timeout, so a page queued behind a try
+    #   never fails on it); only when every one loses does the site answer
+    #   503 (issue 300) for the siege below, terminations and all.
+    from maintenance import swapQuietlyFirst
+
+    def once(lock_ms):
+        with conn.cursor() as cur:
+            cur.execute(f"SET LOCAL lock_timeout = '{int(lock_ms)}ms'")
+            _swap(cur, table, cap)
+        conn.commit()
+
+    return swapQuietlyFirst(conn, once, table,
+                            lambda: _swapSiegeRounds(conn, table, cap))
 
 
 def _swapSiegeRounds(conn, table, cap):
@@ -488,7 +501,10 @@ def _swapSiegeRounds(conn, table, cap):
         try:
             with conn.cursor() as cur:
                 # per-ROUND timeout; short, because the retry is the patience
-                cur.execute("SET LOCAL lock_timeout = '10s'")
+                # ! 3 s, UNDER THE SITE'S 5 s (D6, 2026-10-10): it was 10 s,
+                #   so a page already in flight when the flag went up and
+                #   queued behind this round failed at its own timeout first
+                cur.execute("SET LOCAL lock_timeout = '3s'")
                 _swap(cur, table, cap)
             conn.commit()
             return

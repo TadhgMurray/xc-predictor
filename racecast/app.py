@@ -265,6 +265,10 @@ app = Flask(__name__)
 #   multipart upload before accounts' 8 MB photo check ran; the largest
 #   thing anyone posts is that photo.
 app.config["MAX_CONTENT_LENGTH"] = 9 * 1024 * 1024
+# ★ THE REQUEST'S ONE CONNECTION GOES BACK TO THE POOL HERE (sweep
+#   2026-10-10, D14): getConn parks it on flask.g for the request's later
+#   blocks; see db_timing.getConn.
+app.teardown_appcontext(db_timing.releaseRequestConn)
 
 # ★ TRACEBACKS SURVIVE THE SCROLLBACK. A 500's stack trace used to exist
 #   only in the console window running the server -- gone by the time
@@ -2811,6 +2815,24 @@ def _fill_blanks(winner, loser):
     return winner
 
 
+# ★ THE FOLDED COPY'S ID STAYS FINDABLE (sweep 2026-10-10, D2). Race pages
+#   now point at a row by #race-<result id> instead of ?r=, and the copy a
+#   race page links may be the one folded away here. The survivor carries
+#   the ids it absorbed (alias_ids); athlete.html leaves an anchor for each
+#   inside the survivor's row, so the fragment still lands on it.
+# ! NOT A LINK FIELD, AND NOT LEFT TO _fill_blanks: that only fills a blank,
+#   and a survivor that already absorbed one copy would drop the next.
+def _absorbId(winner, loser):
+    """winner, with loser's result_id (and anything loser had absorbed)
+    added to winner["alias_ids"]."""
+    ids = list(winner.get("alias_ids") or [])
+    for x in [loser.get("result_id")] + list(loser.get("alias_ids") or []):
+        if x is not None and x != winner.get("result_id") and x not in ids:
+            ids.append(x)
+    winner["alias_ids"] = ids
+    return winner
+
+
 def _merge_by_canon(races):
     """Collapse cross-source duplicates. Must run BEFORE the PR/SR walk."""
     best = {}              # identity -> the winning copy so far
@@ -2826,9 +2848,9 @@ def _merge_by_canon(races):
         if current is None:
             best[key] = dict(race)                 # copy: we mutate it below
         elif _race_quality(race) > _race_quality(current):
-            best[key] = _fill_blanks(dict(race), current)
+            best[key] = _absorbId(_fill_blanks(dict(race), current), current)
         else:
-            _fill_blanks(current, race)
+            _absorbId(_fill_blanks(current, race), race)
 
     merged = unmergeable + list(best.values())
     return merged
@@ -3574,9 +3596,10 @@ def _collapse_group(group):
         if twin is None:
             kept.append(dict(race))                      # first of its kind
         elif _race_quality(race) > _race_quality(twin):
-            kept[kept.index(twin)] = _fill_blanks(dict(race), twin)
+            kept[kept.index(twin)] = _absorbId(_fill_blanks(dict(race), twin),
+                                               twin)
         else:
-            _fill_blanks(twin, race)                     # incumbent wins
+            _absorbId(_fill_blanks(twin, race), race)    # incumbent wins
     return kept
 
 
@@ -4183,6 +4206,7 @@ def race_xc(meet_id, div_id):
     from meet_compile import (scoreRows, publishedScores, annotateScoring,
                               splitCollisionTeams, unsplitTeams,
                               stampSchoolStates)
+    from flask import g
 
     # ?school= highlights this school's rows (from the meet page)
     hl_school = (request.args.get("school") or "").strip() or None
@@ -4194,10 +4218,21 @@ def race_xc(meet_id, div_id):
             #   and not on the colliding one's rows merged in (2026-09-13)
             src, alt_idx, other_sources = _xc_meet_sources(
                 cur, meet_id, request.args, div_id)
+            # ★ A PIN THAT PINS NOTHING IS A REDIRECT (D2, see athleteHref):
+            #   when the bare URL would serve the same meet, ?r= only split
+            #   the edge cache. Old ?r= links still land, flashed by #r<id>.
+            _rid = _ridArg(request.args)
+            if _rid is not None:
+                _plain = {k: v for k, v in request.args.items() if k != "r"}
+                if _xc_meet_sources(cur, meet_id, _plain, div_id)[0] == src:
+                    return _dropUselessPin(_rid)
             header  = get_race_header(cur, meet_id, div_id, source=src)
             results = get_race_results(cur, meet_id, div_id, source=src)
             results = [dict(r) for r in results]
             _borrowTwins(cur, results, "results", meet_id, src)
+            # which rows' athlete links still need ?r= (athleteHref)
+            g.rid_pins = _twinFlaggedIds(
+                cur, "XC", [r.get("result_id") for r in results])
             # ★ WHICH school each row MEANS, from the athlete's own
             #   assignment rather than from the meet's state: see
             #   meet_compile.stampSchoolStates. The template falls back to
@@ -4574,6 +4609,89 @@ def _ridArg(args):
     if rid and re.fullmatch(r"-?\d+", rid):
         return int(rid)
     return None
+
+
+# ★★ ?r= IS A CACHE KEY, SO IT IS ONLY SENT WHERE IT DOES WORK (sweep
+#    2026-10-10, D2). Every athlete<->race link carried ?r=<result id>, and
+#    the edge caches by the whole URL: a race of 300 finishers was 300 cold
+#    copies of one page, one per athlete page that linked to it, and each
+#    athlete page one cold copy per race of theirs. The highlight never
+#    needed the server -- the fragment does it (link-flash.js, race-page.js)
+#    and a fragment never reaches the cache.
+#
+#  ! WHERE ?r= STILL CARRIES MEANING it stays, and old links keep working:
+#    - race -> athlete: the athlete page hides a result_twin-flagged copy,
+#      and only the server can name the shown row standing in for it
+#      (athlete_page, data-flash-id). athleteHref keeps ?r= for exactly
+#      those ids (the page puts them in g.rid_pins); every other row gets
+#      #race-<id>. A row the athlete page folds in Python (dedupe_races)
+#      leaves an alias anchor on its survivor, so #race-<that id> lands.
+#    - athlete -> race: ?r= PINS THE FEED (the id spaces collide). The race
+#      page answers a ?r= that pins nothing different from the bare URL
+#      with a redirect to the bare URL and #r<id> (_dropUselessPin); only a
+#      pin that changes which meet is served renders under its own URL.
+def athleteHref(person_id, result_id=None):
+    """/athlete/<id> plus the way to point at one of its rows: #race-<rid>
+    normally, ?r=<rid> when the row needs the server's stand-in (see above),
+    and ?r= for every row on a page that did not compute its pins."""
+    from flask import g, has_request_context
+    # ! TOLERANT LIKE THE TEMPLATES IT REPLACED: a relay leg has no
+    #   result_id at all (jinja Undefined), and `{% if x.result_id %}` was
+    #   the old test -- so anything that is not an int id is "no row".
+    base = f"/athlete/{person_id}"
+    try:
+        rid = int(result_id) if result_id else None
+    except (TypeError, ValueError):
+        rid = None
+    if rid is None:
+        return base
+    pins = getattr(g, "rid_pins", None) if has_request_context() else None
+    if pins is None or rid in pins:
+        return f"{base}?r={rid}"
+    return f"{base}#race-{rid}"
+
+
+app.jinja_env.globals["athlete_href"] = athleteHref
+
+
+def _twinFlaggedIds(cur, sport, ids):
+    """The ids among `ids` that result_twin hides from athlete pages, as a
+    frozenset; None when that cannot be told (athleteHref then keeps ?r= on
+    every row -- the old behaviour, never a broken highlight)."""
+    ids = sorted({int(i) for i in ids if i is not None})
+    if not ids:
+        return frozenset()
+    try:
+        if not _hasResultTwin(cur):
+            return frozenset()
+        cur.execute("SAVEPOINT twin_pins")
+        cur.execute("SELECT result_id FROM result_twin "
+                    "WHERE sport = %s AND result_id = ANY(%s)", (sport, ids))
+        rows = cur.fetchall()
+        cur.execute("RELEASE SAVEPOINT twin_pins")
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"twin pins: {type(exc).__name__}: {exc}", flush=True)
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT twin_pins")
+        except Exception:                                     # noqa: BLE001
+            cur.connection.rollback()
+        return None
+    return frozenset(int(r["result_id"] if isinstance(r, dict) else r[0])
+                     for r in rows)
+
+
+def _dropUselessPin(rid):
+    """The redirect for a race page reached with a ?r= that pins nothing:
+    the same URL without r, every other argument kept, and #r<rid> so the
+    row still lights up. Public like a page: it is a function of the URL and
+    the corpus only, and the target is the one shared, cached copy."""
+    from urllib.parse import urlencode
+    rest = [(k, v) for k, v in request.args.items(multi=True) if k != "r"]
+    url = request.path + (("?" + urlencode(rest)) if rest else "") + f"#r{rid}"
+    resp = redirect(url, code=302)
+    resp.headers["Cache-Control"] = (f"public, max-age={PAGE_MAX_AGE}, "
+                                     f"s-maxage={PAGE_S_MAXAGE}")
+    return resp
 
 
 def _tfSourceList(cur, meet_id):
@@ -5116,6 +5234,7 @@ def _tf_seed_points_cache(meet_id, source, rows, scored):
 @app.route("/race/tf/<int:meet_id>/<int:event_id>/<int:div_id>")
 def race_tf(meet_id, event_id, div_id):
     from tf_points import prettyEventName
+    from flask import g
 
     # ?school= highlights this school's rows (from the meet page)
     hl_school = (request.args.get("school") or "").strip() or None
@@ -5136,7 +5255,8 @@ def race_tf(meet_id, event_id, div_id):
                             (rid, meet_id))
                 pin = cur.fetchone()
                 race_src = pin["source"] if pin else None
-            if race_src is None:
+            modal_src = None
+            if race_src is None or rid is not None:
                 cur.execute("""
                     SELECT source FROM results_tf
                     WHERE meet_id = %(meet)s AND div_id = %(div)s
@@ -5144,7 +5264,13 @@ def race_tf(meet_id, event_id, div_id):
                     GROUP BY source ORDER BY count(*) DESC LIMIT 1
                 """, {"meet": meet_id, "div": div_id, "event": event_id})
                 srow = cur.fetchone()
-                race_src = srow["source"] if srow else None
+                modal_src = srow["source"] if srow else None
+            # ★ A PIN THAT PINS NOTHING IS A REDIRECT (D2, see athleteHref):
+            #   the clicked row is from the feed the bare URL serves anyway.
+            if rid is not None and race_src in (None, modal_src):
+                return _dropUselessPin(rid)
+            if race_src is None:
+                race_src = modal_src
             header  = get_tf_race_header(cur, meet_id, div_id, event_id,
                                          source=race_src)
             results = get_tf_race_results(cur, meet_id, div_id, event_id,
@@ -5152,6 +5278,9 @@ def race_tf(meet_id, event_id, div_id):
             results = [dict(r) for r in results]
             _borrowTwins(cur, results, "results_tf", meet_id, race_src,
                          name_key="athlete_name")
+            # which rows' athlete links still need ?r= (athleteHref, D2)
+            g.rid_pins = _twinFlaggedIds(
+                cur, "TF", [r.get("result_id") for r in results])
             # a relay row is a team: its runners, not "Unknown"
             if any(r.get("is_relay") for r in results):
                 relay_legs = _tf_relay_legs(cur, meet_id)
@@ -7181,6 +7310,15 @@ def buildCourseCtx(cur, course_name, picked):
     ONE code path, so the precomputed page can never drift from the live
     one. Returns None for a course with no results."""
     distances = get_course_distances(cur, course_name)
+    # ★ AND IT DOES NOW (sweep 2026-10-10, D10). The docstring promised
+    #   None, the code went on and built an empty page, so /course/<any
+    #   string at all> answered 200 -- a soft 404 that crawlers index and
+    #   the edge caches, one per invented name. No raced distance AND no
+    #   result at all is no course; the route turns None into a 404.
+    # ! THE HEADER TOO, not distances alone: a course whose rows all lack a
+    #   distance still has results to list, and stays a page.
+    if not distances and get_course_header(cur, course_name, None) is None:
+        return None
 
     # ★ THE SELECTED DISTANCE, None = the overview. Chips come from
     #   the distances the course actually raced, most-run first; a
@@ -7291,6 +7429,8 @@ def course(course_name):
                         oldest = min(_COURSE_CACHE,
                                      key=lambda k: _COURSE_CACHE[k][0])
                         _COURSE_CACHE.pop(oldest, None)
+            if ctx is None:
+                abort(404)          # no such course (D10, buildCourseCtx)
             history = _courseHistory(cur, course_name, ctx)
             _stampCourseSchoolStates(cur, ctx)
 
@@ -9103,7 +9243,101 @@ from rankings import (UNIT_COLUMNS, parseFilters, getPerformanceRankings, getPrR
 from season_floor import floorFor, floorLabel, poolWords, percentileWords, clockFor
 
 
+# ★★ THE BOARD APIS ARE PUBLIC, AND CACHED (sweep 2026-10-10, D1). Every
+#    filter click on /rankings is a fetch of /api/rankings (or /api/teams,
+#    /api/courses, /api/rankings/rank), and every one of those went out
+#    `no-store` because /api/ is in _PRIVATE_PREFIXES -- so a board viewed by
+#    a hundred people ran the same query over the 61M-row ranking_results a
+#    hundred times, at every layer: browser, Cloudflare, worker.
+#
+#  ★ WHY THEY MAY BE CACHED AT ALL. Each answer is a function of the query
+#    string and the corpus, and of nothing else: no session, no cookie, no
+#    account (rankings.py, teams.py, courses.py, school_units.py and the
+#    stampers read no flask state -- tests/test_board_api_cache.py holds
+#    the routes to that). So the same URL is the same body for everybody,
+#    which is exactly what a shared cache needs.
+#
+#  ★ HOW LONG, AND WHY THESE NUMBERS. The corpus under these boards changes
+#    once a night, when a pipeline run goes live; between go-lives every
+#    answer is identical, so the only cost of holding one is how stale it is
+#    in the minutes after a go-live. The board PAGE that frames these rows
+#    already accepts PAGE_MAX_AGE in the browser and PAGE_S_MAXAGE at the
+#    edge for exactly that reason, and the rows use the SAME two numbers so
+#    a go-live reaches the page and its data together rather than showing
+#    last night's rows under tonight's page. The worker's own copy keeps
+#    them for PAGE_S_MAXAGE too, so the worst case after a go-live is
+#    worker + edge + browser = 900 + 900 + 300 s, about 35 minutes, against
+#    ~24 hours between changes: >97% of a day served from a cache.
+#
+#  ! 200 ONLY, AND NOT IN THE WORKER WHEN IT IS LARGE. An error (400 for a
+#    bad filter, 500 for a failed board) is never stored anywhere -- the
+#    after_request fallback already gives it no-store -- and ttlcache does
+#    not keep a compute that raises. A body over _BOARD_CACHE_MAX_BYTES (a
+#    whole-board CSV, ?all=1) still gets the public header, but the worker
+#    does not hold it: 2000 keys of that size is a worker's memory.
+#
+#  ! THE EDGE NEEDS A CACHE RULE. Cloudflare does not cache /api/ on this
+#    header alone (it caches by file extension); the owner adds a rule for
+#    these four paths -- see the sweep doc / commit message for its text.
+#    Without it, the browser and the worker layers still work.
+_BOARD_API_TTL = float(os.environ.get("XCP_BOARD_API_TTL", str(PAGE_S_MAXAGE)))
+_BOARD_CACHE_MAX_BYTES = 512 * 1024
+_BOARD_CACHE_CONTROL = (f"public, max-age={PAGE_MAX_AGE}, "
+                        f"s-maxage={PAGE_S_MAXAGE}")
+
+
+class _UncachedBoard(Exception):
+    """Carries a response ttlcache must not keep (non-200, or too big)."""
+
+    def __init__(self, resp):
+        super().__init__("uncached board response")
+        self.resp = resp
+
+
+def _boardKey(name, args):
+    """The worker-cache key for one board request: the endpoint plus the
+    query string's pairs SORTED, so ?a=1&b=2 and ?b=2&a=1 are one entry.
+    Repeated keys keep every value (sorted with them)."""
+    return ("board-api", name,
+            tuple(sorted((str(k), str(v)) for k, v in args.items(multi=True))))
+
+
+def _publicBoard(name):
+    """Decorator for a board API: serve a fresh copy from ttlcache when
+    there is one, compute (and keep) it when not, and mark a 200 public."""
+    import functools
+    import ttlcache
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*a, **kw):
+            def compute():
+                resp = make_response(fn(*a, **kw))
+                if resp.status_code != 200 or resp.direct_passthrough:
+                    raise _UncachedBoard(resp)
+                body = resp.get_data()
+                if len(body) > _BOARD_CACHE_MAX_BYTES:
+                    raise _UncachedBoard(resp)
+                return (body, resp.mimetype,
+                        resp.headers.get("Content-Disposition"))
+            try:
+                (body, mimetype, disp), _stamp = ttlcache.get(
+                    _boardKey(name, request.args), compute,
+                    ttl=_BOARD_API_TTL)
+                resp = app.response_class(body, mimetype=mimetype)
+                if disp:
+                    resp.headers["Content-Disposition"] = disp
+            except _UncachedBoard as unc:
+                resp = unc.resp
+            if resp.status_code == 200:
+                resp.headers["Cache-Control"] = _BOARD_CACHE_CONTROL
+            return resp
+        return wrapper
+    return deco
+
+
 @app.route("/api/rankings")
+@_publicBoard("rankings")
 def api_rankings():
     f, err = parseFilters(request.args)
     if err:
@@ -9148,7 +9382,14 @@ def api_rankings():
                     n = countRows(cur, f)
                 except Exception as exc:                # noqa: BLE001
                     conn.rollback()
-                    return jsonify({"error": f"count failed: {exc}"}), 400
+                    # ! THE EXCEPTION GOES TO THE LOG, NOT THE PAGE (sweep
+                    #   2026-10-10, D17). Its text is Postgres's own -- table
+                    #   and column names, sometimes the SQL -- which a reader
+                    #   cannot act on and a prober can.
+                    print(f"rankings count failed: {type(exc).__name__}: {exc}",
+                          flush=True)
+                    return jsonify({"error": "Could not count this board. "
+                                             "Narrow it, or use Next."}), 400
                 return jsonify({"filters": f, "total": n,
                                 "reason": (None if n is not None else
                                            "This board is too long to count "
@@ -9215,6 +9456,7 @@ def api_rankings():
                     "rows": rows})
 
 @app.route("/api/teams")
+@_publicBoard("teams")
 def api_teams():
     """One page of a team board.
 
@@ -9359,6 +9601,7 @@ def api_teams():
 
 
 @app.route("/api/courses")
+@_publicBoard("courses")
 def api_courses():
     """One page of the course board.
 
@@ -9411,6 +9654,7 @@ def api_courses():
 
 
 @app.route("/api/rankings/rank")
+@_publicBoard("rankings-rank")
 def api_rankings_rank():
     """Which page of the CURRENT board is this athlete on?
 
@@ -9495,6 +9739,35 @@ _SHARE_DDL = """CREATE TABLE IF NOT EXISTS shared_prediction (
                     last_open  timestamptz)"""
 
 
+# ★ TABLE DDL ONCE PER WORKER, NOT ONCE PER REQUEST (sweep 2026-10-10, D17).
+#   /api/predict/share and /api/report ran CREATE TABLE / CREATE INDEX IF NOT
+#   EXISTS on every call. On a table that exists that is not free: CREATE
+#   INDEX IF NOT EXISTS takes its SHARE lock on the table BEFORE it finds the
+#   index already there, so every report queued behind any writer and every
+#   writer behind it. Now: a catalogue read (to_regclass, no lock) the first
+#   time a worker needs the table, the DDL only when it is missing, under a
+#   short lock_timeout in a transaction of its own -- and never again in
+#   that worker.
+_TABLES_READY = set()
+
+
+def _ensureTable(conn, table, ddl):
+    """Create `table` from `ddl` (one or more statements) if it is missing,
+    once per process. Commits; call it before the request's own work."""
+    if table in _TABLES_READY:
+        return
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+        row = cur.fetchone()
+        missing = (row[0] if not isinstance(row, dict)
+                   else list(row.values())[0]) is None
+        if missing:
+            cur.execute("SET LOCAL lock_timeout = '3s'")
+            cur.execute(ddl)
+    conn.commit()
+    _TABLES_READY.add(table)
+
+
 def _shareId(query):
     import base64
     import hashlib
@@ -9555,6 +9828,14 @@ def predictions_page():
 def api_predict_share():
     """Save a prediction request; {"id", "url"}. Body: {"query": the
     query string the page sent, "extra": {"names": {person_id: name}}}."""
+    # ★ FROM THIS SITE ONLY (sweep 2026-10-10, D17). It writes a row; any
+    #   page on the web could otherwise POST here from a visitor's browser
+    #   and fill the table. The same check the account forms use
+    #   (accounts.sameOrigin: Origin, else Referer, else refused) -- fetch()
+    #   sends Origin on every POST, so the page's own Share is unaffected.
+    if not _accounts.sameOrigin():
+        return jsonify({"error": "That request did not come from this "
+                                 "site."}), 403
     body = request.get_json(silent=True) or {}
     query = str(body.get("query") or "").lstrip("?")
     if not query or len(query) > _SHARE_MAX:
@@ -9572,8 +9853,8 @@ def api_predict_share():
     sid = _shareId(query)
     try:
         with getConn() as conn:
+            _ensureTable(conn, "shared_prediction", _SHARE_DDL)
             with conn.cursor() as cur:
-                cur.execute(_SHARE_DDL)
                 cur.execute("""INSERT INTO shared_prediction
                                    (share_id, query, extra)
                                VALUES (%s, %s, %s)
@@ -11181,6 +11462,21 @@ def about_page():
 # it exists so one bored person cannot fill the table faster than you can read
 # it. A real rate limiter belongs in nginx.
 _REPORT_HITS = {}
+# the table above, as the site creates it (_ensureTable, api_report)
+_REPORT_DDL = """
+    CREATE TABLE IF NOT EXISTS issue_reports (
+        report_id   bigserial PRIMARY KEY,
+        created_at  timestamptz NOT NULL DEFAULT now(),
+        kind        text NOT NULL,
+        page        text,
+        detail      text NOT NULL,
+        email       text,
+        remote_ip   inet,
+        user_agent  text,
+        resolved    boolean NOT NULL DEFAULT false,
+        note        text);
+    CREATE INDEX IF NOT EXISTS idx_issue_reports_open
+        ON issue_reports (created_at DESC) WHERE NOT resolved"""
 _REPORT_WINDOW = 3600          # seconds
 _REPORT_MAX = 10               # per window, per IP
 
@@ -11255,24 +11551,11 @@ def api_report():
 
     try:
         with getConn() as conn:
+            # ★ THE TABLE IS CREATED BY THE SITE, ONCE (2026-09-06: its DDL
+            #   sat in a comment as a migration nobody ran, and every report
+            #   was lost) -- once per worker since 2026-10-10 (_ensureTable)
+            _ensureTable(conn, "issue_reports", _REPORT_DDL)
             with conn.cursor() as cur:
-                # ★ THE TABLE IS CREATED HERE, ONCE (2026-09-06). Its DDL sat
-                #   in a comment above as a migration nobody ran, so every
-                #   report ever sent got "Could not save that" and was lost.
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS issue_reports (
-                        report_id   bigserial PRIMARY KEY,
-                        created_at  timestamptz NOT NULL DEFAULT now(),
-                        kind        text NOT NULL,
-                        page        text,
-                        detail      text NOT NULL,
-                        email       text,
-                        remote_ip   inet,
-                        user_agent  text,
-                        resolved    boolean NOT NULL DEFAULT false,
-                        note        text)""")
-                cur.execute("""CREATE INDEX IF NOT EXISTS idx_issue_reports_open
-                               ON issue_reports (created_at DESC) WHERE NOT resolved""")
                 cur.execute("""
                     INSERT INTO issue_reports
                         (kind, page, detail, email, remote_ip, user_agent)

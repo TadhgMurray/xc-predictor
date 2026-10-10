@@ -90,7 +90,7 @@
       try { el = document.getElementById(decodeURIComponent(h)); } catch (e) { el = null; }
       if (el) return el;
     }
-    var m = /[?&]r=(\d+)/.exec(location.search);
+    var m = /[?&]r=(-?\d+)/.exec(location.search);
     return m ? (document.getElementById("r" + m[1]) ||
                 document.getElementById("race-" + m[1])) : null;
   }
@@ -517,7 +517,7 @@
   if (main.classList.contains("rc-on-track")) fillConv();
 
   // ---- arriving at #r<result id> (from the meet page's finder): that row
-  if (/^#r\d+$/.test(location.hash)) {
+  if (/^#r-?\d+$/.test(location.hash)) {           // -? : tfrrs ids are negative
     var target = document.getElementById(location.hash.slice(1));
     if (target) {
       target.scrollIntoView({ block: "center" });
