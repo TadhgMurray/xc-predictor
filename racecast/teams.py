@@ -201,8 +201,24 @@ def parseFilters(args, default_year=None):
     #   mean anyway -- and `year_defaulted` tells the page to show which
     #   season it landed on, so the answer is never silently about a year
     #   nobody chose.
+    # ★ THE PROJECTED BOARD (owner, 2026-10-10): the live season with last
+    #   season's unraced returners carried in -- span='projected', built by
+    #   build_team_season.projectedRows. Off unless asked, and the key is
+    #   only SET when asked, so the default response is byte-for-byte the
+    #   board it always was.
+    # ! ONE SEASON, LIKE THE GRADE AND EVENT BOARDS: a projection is about
+    #   the season in progress, so no Year means the current one
+    #   (year_defaulted says so) and several Years is refused.
+    if (args.get("projected") or "").strip().lower() in ("1", "true", "on",
+                                                          "yes"):
+        if len(f["year"] or ()) > 1:
+            return None, ("the projected board is one season - the current "
+                          "one - so select a single Year")
+        f["projected"] = True
+
     needs_one_year = (f["dist_min"] is not None or f["dist_max"] is not None
-                      or bool(f["exclude_grade"]) or bool(f.get("grade")))
+                      or bool(f["exclude_grade"]) or bool(f.get("grade"))
+                      or bool(f.get("projected")))
     if needs_one_year and len(f["year"] or ()) != 1:
         if len(f["year"] or ()) > 1:
             return None, ("an event or grade filter needs ONE season "
@@ -407,6 +423,35 @@ def _bestCol(cur):
     return ", t.best_person_id" if cur.fetchone() else ", NULL::bigint AS best_person_id"
 
 
+# ★ THE PROJECTION COLUMNS, NAMED ONLY ON THE PROJECTED SPAN. They arrive
+#   with the build that writes span='projected' rows (build_team_season.
+#   PROJECTED_COLS), so a span='projected' row existing proves they exist --
+#   and every other board selects exactly what it always did.
+def _projCols(f):
+    if f.get("span") != "projected":
+        return ""
+    return ", t.n_projected, t.projected_flags, t.best_projected"
+
+
+def projectedAvailable(cur, f):
+    """Is there a projected board for this pool, sport and season?
+
+    ! ASKED OF THE BOARD, NOT OF THE FILTERS. A state or division that
+      happens to select no projected team is still a projected board with
+      nobody in it; only a season the build never projected (a finished
+      one) falls back to the raced board -- and says so.
+    """
+    cur.execute("""SELECT EXISTS (SELECT 1 FROM team_season t
+                                  WHERE t.span = 'projected'
+                                    AND t.pool = %(pool)s
+                                    AND t.sport = %(sport)s
+                                    AND t.year = ANY(%(year)s)) AS ok""",
+                {"pool": f["pool"], "sport": f["sport"],
+                 "year": list(f["year"] or [])})
+    row = cur.fetchone()
+    return bool(row["ok"] if isinstance(row, dict) else row[0])
+
+
 def fillBestRunner(cur, rows):
     """Stamp best_name on rows carrying best_person_id and no name yet."""
     want = sorted({r.get("best_person_id") for r in rows
@@ -451,7 +496,7 @@ def getTeamRankings(cur, f):
         SELECT t.school, t.state, t.pool, t.sport,
                t.year,
                t.scope, t.rank, t.points, t.n_athletes,
-               t.top5_mean, t.fifth_rating, t.best_rating{_bestCol(cur)}
+               t.top5_mean, t.fifth_rating, t.best_rating{_bestCol(cur)}{_projCols(f)}
         FROM   team_season t
         WHERE  TRUE {where}
         ORDER  BY {order}
@@ -516,7 +561,7 @@ def getTeamField(cur, f):
         SELECT t.school, t.state, t.pool, t.sport,
                t.year,
                t.scope, t.rank, t.points, t.n_athletes,
-               t.top5_mean, t.fifth_rating, t.best_rating, t.ratings{_bestCol(cur)}
+               t.top5_mean, t.fifth_rating, t.best_rating, t.ratings{_bestCol(cur)}{_projCols(f)}
         {_FIELD_SQL_TAIL.format(where=where)}
         LIMIT %(cap)s
     """, params)
@@ -823,8 +868,26 @@ def raceReturning(cur, f):
 def serveBoard(cur, f):
     """One page of the team board -- see _serveBoard -- with each row's best
     runner named."""
+    # ★ THE PROJECTED SPAN IS CHOSEN HERE, BEFORE ANYTHING READS f["span"]
+    #   (owner, 2026-10-10). Everything downstream -- the count, the live
+    #   race, the stored slice -- then runs on it unchanged: a projected
+    #   board is ranked and sliced exactly as the real one is.
+    # ! THE GRADE AND EVENT BOARDS ARE RACED FROM athlete_season, which has
+    #   no carried runners in it, so they cannot be projected; the page is
+    #   told rather than shown a raced board under a "projected" banner.
+    asked = bool(f.get("projected"))
+    served = (asked and not gradeExcluded(f) and not eventRestricted(f)
+              and projectedAvailable(cur, f))
+    if served:
+        f["span"] = "projected"
     rows, info = _serveBoard(cur, f)
     rows = [dict(r) for r in rows]
+    if asked:
+        info["projected"] = served
+        if not served:
+            info["projected_reason"] = (
+                "filters" if gradeExcluded(f) or eventRestricted(f)
+                else "season")
     return fillBestRunner(cur, rows), info
 
 

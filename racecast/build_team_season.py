@@ -15,6 +15,9 @@ athlete_season comes from. Reads athlete_season, writes team_season.
 ★ TWO SCOPES PER TEAM, AND THAT IS THE WHOLE STORAGE COST. A team sits in
   exactly one state, so it appears in its own state's meet and in the
   national one -- two rows per (team, pool, sport, year), never more.
+  (Per span: the live season also gets a span='projected' copy -- last
+  season's unraced returners carried in, roster.py's rule -- which is the
+  same two rows again for one season. See projectedRows.)
 
 ⚠ POINTS ARE ONLY COMPARABLE WITHIN ONE BOARD. They are a finishing score
   against a particular field: the same squad scores differently in Ohio's
@@ -35,6 +38,7 @@ import time
 import argparse
 
 sys.path.insert(0, "scripts")
+sys.path.insert(0, "engine")      # season_year: the projection's live season
 sys.path.insert(0, "racecast")
 from database import getConn
 from team_rank import rankTeams, raceStored, SQUAD
@@ -100,6 +104,13 @@ CREATE TABLE IF NOT EXISTS {name} (
     --   ⚠ BOTH ARE TRUE AND NEITHER REPLACES THE OTHER. Mixing them in one
     --     query is what put thirty first places on the same screen, so every
     --     query names a span; teams.py picks which.
+    --     'projected' the CURRENT season only, raced again with last
+    --                season's unraced returners carried in (owner,
+    --                2026-10-10). Served behind the board's "Include
+    --                returners who haven't raced" toggle; see
+    --                projectedRows. Same key as a 'season' row, different
+    --                span -- and every query names one, so neither leaks
+    --                into the other.
     span         text    NOT NULL DEFAULT 'season',
     scope        text    NOT NULL,
     school       text    NOT NULL,
@@ -144,6 +155,16 @@ CREATE TABLE IF NOT EXISTS {name} (
     "class"      text,
     area         text,
     section      text,
+    -- ★ HOW MUCH OF A PROJECTED ROW IS PROJECTED (owner, 2026-10-10).
+    --   NULL on 'season' and 'alltime' rows, which project nothing.
+    --     n_projected      of the runners entered (the top SQUAD), how
+    --                      many have not raced this season
+    --     projected_flags  one per entry of `ratings`, in its order: true
+    --                      where that rating is last season's, carried
+    --     best_projected   the best runner (best_person_id) is one of them
+    n_projected     int,
+    projected_flags boolean[],
+    best_projected  boolean,
     PRIMARY KEY (span, scope, school, state, pool, sport, year)
 );
 """
@@ -153,9 +174,14 @@ CREATE TABLE IF NOT EXISTS {name} (
 UNIT_COLS = ("division", "region", "conference", "league",
              "state_div", "section_div", "class", "area", "section")
 
+# ! THE PROJECTION COLUMNS COME LAST and are NULL on every row but a
+#   span='projected' one -- see toRows.
+PROJECTED_COLS = ("n_projected", "projected_flags", "best_projected")
+
 _COLUMNS = ("span", "scope", "school", "state", "pool", "sport", "year",
             "rank", "points", "n_athletes", "top5_mean", "fifth_rating",
-            "best_rating", "ratings", "best_person_id") + UNIT_COLS
+            "best_rating", "ratings", "best_person_id") + UNIT_COLS \
+    + PROJECTED_COLS
 
 # ! ORDERED BY THE GROUP so one pass can be cut into boards without holding
 #   the whole table. mean_rating is the athlete's season average -- the same
@@ -335,14 +361,51 @@ def _unitTuple(team):
     return tuple(src.get(c) for c in UNIT_COLS)
 
 
-def toRows(board):
+def boolArrayLiteral(values):
+    """[True, False] -> '{t,f}', the TEXT form COPY wants for a boolean[]."""
+    return "{" + ",".join("t" if v else "f" for v in values) + "}"
+
+
+_NOT_PROJECTED = (None,) * len(PROJECTED_COLS)
+
+
+def projectedMarks(team, pool, carried):
+    """(n_projected, flags, best_projected) for one ranked team.
+
+    `carried` is the set of (pool, person_id) brought in from last season.
+    The entered runners are rankTeams' `scorers` -- the same top SQUAD whose
+    ratings fill `ratings` -- re-sorted best-first so the flags line up with
+    `ratings` entry for entry.
+
+    ! TWO RUNNERS ON ONE RATING may swap flags between them. The two numbers
+      are equal, so which of the pair is marked cannot change what the row
+      says, and the count is exact either way.
+    """
+    entered = sorted(team.get("scorers") or [],
+                     key=lambda r: -float(r["rating"]))
+    flags = [(r.get("pool") or pool, r.get("person_id")) in carried
+             for r in entered]
+    best = team.get("best_person_id")
+    return (sum(flags), flags,
+            best is not None and (pool, best) in carried)
+
+
+def toRows(board, span="season", carried=None):
+    """COPY tuples for one board. `carried` is given for span='projected'
+    only -- the (pool, person_id) of the returners carried in, see
+    projectedRows -- and leaves the projection columns NULL otherwise."""
     scope, pool, sport, year, teams = board
     for t in teams:
-        yield (("season", scope, t["school"], t["state"], pool, sport, year,
+        if carried is None:
+            marks = _NOT_PROJECTED
+        else:
+            n, flags, best = projectedMarks(t, pool, carried)
+            marks = (n, boolArrayLiteral(flags), "t" if best else "f")
+        yield ((span, scope, t["school"], t["state"], pool, sport, year,
                 t["rank"], t["points"], t["n_athletes"],
                 t["top5_mean"], t["fifth_rating"], t["best_rating"],
                 arrayLiteral(t["ratings"]), t.get("best_person_id"))
-               + _unitTuple(t))
+               + _unitTuple(t) + marks)
 
 
 # ! READ BACK FROM THE SHADOW, NOT ACCUMULATED IN MEMORY DURING PASS ONE.
@@ -406,7 +469,204 @@ def toAlltimeRows(board):
                 t["year"], t["rank"], t["points"], t["n_athletes"],
                 t["top5_mean"], t["fifth_rating"], t["best_rating"],
                 arrayLiteral(t["ratings"]), t.get("best_person_id"))
-               + _unitTuple(t))
+               + _unitTuple(t) + _NOT_PROJECTED)
+
+
+# ------------------------------------------------------------------ #
+#  THE PROJECTED BOARD -- the current season with unraced returners in
+# ------------------------------------------------------------------ #
+#
+# ★ WHY (owner, 2026-10-10): NYU sat far down the team board because its A
+#   team had not raced -- the meet the varsity was entered in was cancelled
+#   and only the B team had run. The board counts athlete_season rows, and
+#   an athlete has one only once they have raced, so the varsity was simply
+#   not on it.
+#
+# ! THE ROSTER RULE IS roster.py's, NOT A SECOND ONE. Predictions already
+#   answer "who is on this team before they have raced" (predict.
+#   _currentSquads): last season's roster, minus the graduating class
+#   (graduatedClause), minus anyone racing for another school
+#   (transferredClause), carried only while the school is inside the window
+#   (carryingSchools: fewer than CARRY_RACES meets run by its A team, last
+#   season's top VARSITY_N). A carried runner's number is last season's
+#   mean_rating -- the number predictions race them on. Two rules for one
+#   roster would be two answers to "is NYU's varsity on the team".
+#
+# ★ THEN THE BOARD IS RACED EXACTLY AS THE REAL ONE: boards() -> rankTeams,
+#   the same seven, the same scoring. The only thing that differs is who is
+#   in the field.
+#
+# ⚠ A PROJECTION, NOT A RESULT, AND STORED APART: span='projected', never
+#   'season', so nothing that reads the season board (the all-time pass,
+#   school pages, cards) can pick a carried runner up by accident. The page
+#   serves it only behind its toggle, under a banner that says so.
+
+# ! THE CARRIED RUNNERS' OWN SEASON, read with the same eligibility the
+#   season board applies to that year (_SOURCE_SQL's floor, pools, states),
+#   so a returner counts here only if they would have counted last season.
+_RETURNERS_SQL = """
+    SELECT s.sport, s.year, s.pool,
+           upper(btrim(s.state)) AS state,
+           btrim(s.school)       AS school,
+           s.person_id,
+           s.mean_rating AS rating,
+           s."division", s."region", s."conference", s."league",
+           s."state_div", s."section_div", s."class", s."area", s."section"
+    FROM   athlete_season s
+    WHERE  s.mean_rating IS NOT NULL
+      AND  (s.n_races >= %(min_races)s OR s.year >= %(open_from)s)
+      AND  s.pool = ANY(%(pools)s)
+      AND  s.state = ANY(%(states)s)
+      AND  s.year = %(prev)s
+      AND  s.sport = %(sport)s
+      AND  upper(right(s.pool, 1)) = %(gender)s
+      AND  s.school = ANY(%(carrying)s)
+      {graduated}
+      {transferred}
+      -- ! AND NOT ALREADY RACING HERE. Anyone with a row at this school
+      --   this season is in the field on their own account, at this
+      --   season's rating; the carried row would enter them twice.
+      AND  NOT EXISTS (SELECT 1 FROM athlete_season c
+                       WHERE c.person_id = s.person_id
+                         AND c.year  = %(active_yr)s
+                         AND c.sport = %(sport)s)
+"""
+
+
+def mergeCarried(current, carried):
+    """Current-season athlete rows + last season's returners -> one field.
+
+    Pure. Each carried row is flagged carried=True and stamped with the
+    CURRENT year, so rankTeams files it under this season's team. A carried
+    row whose person already has a current row in that pool is dropped --
+    merged, not replaced, as in predict._currentSquads. The result is
+    ordered by (sport, year, pool), which boards() requires.
+    """
+    rows = [dict(r) for r in current]
+    have = {(r["pool"], r["person_id"]) for r in rows}
+    for r in carried:
+        if (r["pool"], r["person_id"]) in have:
+            continue
+        r = dict(r)
+        r["carried"] = True
+        # last season's row, filed under the season it is carried INTO
+        r["year"] = r.pop("active_year", None) or r["year"] + 1
+        have.add((r["pool"], r["person_id"]))
+        rows.append(r)
+    rows.sort(key=lambda r: (r["sport"], r["year"], r["pool"]))
+    return rows
+
+
+def projectedRows(current, carried):
+    """The span='projected' COPY tuples for one sport's current season.
+
+    Pure: current and carried rows in, rows out. Ranking is boards(), the
+    same call the season board makes -- see the section note above.
+    """
+    field = mergeCarried(current, carried)
+    marked = {(r["pool"], r["person_id"]) for r in field if r.get("carried")}
+    for board in boards(field):
+        yield from toRows(board, span="projected", carried=marked)
+
+
+def liveSeason(cur, sport):
+    """The stored year of `sport`'s live season, or None.
+
+    ★ ONLY A SEASON THAT HAS STARTED AND IS STILL ON. The carry-forward is a
+      rule for the season in progress -- predict._currentSquads skips it for
+      a finished ("stale") season -- so the projection is built only when the
+      newest stored year is the academic year we are in. In October that is
+      XC; track's newest year is last spring's, and carrying into a finished
+      season would put graduates' juniors on a board that already happened.
+    """
+    # ! EXISTENCE OF THE ACADEMIC YEAR, NOT max(year): one corrupt future
+    #   row would make max() name a season nobody is running (the 2223 that
+    #   took predictions down, predict._currentSeasonUncached).
+    from season_year import academicYear
+    import datetime
+    now = academicYear(datetime.date.today())
+    cur.execute("""SELECT EXISTS (SELECT 1 FROM athlete_season
+                                  WHERE sport = %s AND year = %s) AS live""",
+                (sport, now))
+    row = cur.fetchone()
+    live = row["live"] if isinstance(row, dict) else row[0]
+    return now if live else None
+
+
+def _carriedFor(cur, sport, year, params, stats):
+    """Last season's eligible returners for every school still carrying.
+
+    Per gender, because carryingSchools is: a women's A team that has raced
+    says nothing about the men's.
+    """
+    import roster
+    # the stored spelling, untrimmed: carryingSchools and _RETURNERS_SQL
+    # both match it with an equality on the raw column
+    cur.execute("""SELECT DISTINCT school
+                   FROM athlete_season
+                   WHERE year = %s AND sport = %s AND pool = ANY(%s)
+                     AND mean_rating IS NOT NULL""",
+                (year - 1, sport, params["pools"]))
+    schools = [r["school"] for r in cur.fetchall() if r["school"]]
+    out = []
+    for gender in ("M", "F"):
+        if not any(p.upper().endswith("_" + gender) for p in params["pools"]):
+            continue
+        carrying = sorted(roster.carryingSchools(cur, schools, sport, year,
+                                                 gender=gender))
+        stats["carrying"][f"{sport} {gender}"] = len(carrying)
+        if not carrying:
+            continue
+        sql = _RETURNERS_SQL.format(
+            graduated=roster.graduatedClause("s"),
+            transferred=roster.transferredClause("s"))
+        cur.execute(sql, {**params, "sport": sport, "prev": year - 1,
+                          "gender": gender, "carrying": carrying,
+                          "active_yr": year,
+                          "term_keys": list(roster.TERMINAL_KEYS)})
+        for r in cur.fetchall():
+            r = dict(r)
+            r["active_year"] = year
+            out.append(r)
+    return out
+
+
+def buildProjected(conn, sport, since, params, flush):
+    """Write span='projected' for each live season. -> stats dict."""
+    import psycopg2.extras
+    stats = {"seasons": [], "current": 0, "carried": 0, "rows": 0,
+             "carrying": {}}
+    sports = ["XC", "TF"] if sport == "both" else [sport]
+    for sp in sports:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            year = liveSeason(cur, sp)
+            if year is None or year < since:
+                continue
+            carried = list(resolvedStates(
+                _carriedFor(cur, sp, year, params, stats), {"restated": 0}))
+        conn.commit()
+        # ! THE CURRENT HALF IS THE SEASON BOARD'S OWN QUERY, narrowed to
+        #   this sport and season -- not a second reading of who has raced.
+        read = conn.cursor("team_proj_src")
+        read.itersize = 50000
+        read.execute(_SOURCE_SQL, {**params, "since": year, "sport": sp})
+        current = list(resolvedStates(dictRows(read), {"restated": 0}))
+        read.close()
+        stats["seasons"].append(f"{sp} {year}")
+        stats["current"] += len(current)
+        stats["carried"] += len(carried)
+        buf = io.StringIO()
+        for row in projectedRows(current, carried):
+            buf.write("\t".join(map(copyField, row)))
+            buf.write("\n")
+            stats["rows"] += 1
+            if buf.tell() > (8 << 20):
+                flush(buf)
+                buf = io.StringIO()
+        if buf.tell():
+            flush(buf)
+        conn.commit()
+    return stats
 
 
 def build(conn, sport, since):
@@ -475,6 +735,13 @@ def build(conn, sport, since):
         flush(buf)
     conn.commit()
 
+    # ---- the projected board: the live season, returners carried in --- #
+    # ★ BEFORE THE SWAP, INTO THE SAME SHADOW, so the projection and the
+    #   board it projects are always from the same run. See projectedRows.
+    pj_started = time.time()
+    pj = buildProjected(conn, sport, since, params, flush)
+    pj_took = time.time() - pj_started
+
     # ---- pass two: every season in one field -------------------------- #
     # ★ THE BOARD THE SITE OPENS ON. Without it "all seasons" can only be
     #   served as thirty stacked per-season boards, each with its own first
@@ -535,6 +802,18 @@ def build(conn, sport, since):
               "either the pools are clean or the ceilings are too high")
     print(f"  alltime   {at_boards:,} boards, {at_rows:,} rows "
           f"({at_took:.0f}s) -- every season of a pool in one field")
+    # ! A LIVE SEASON WITH NOTHING CARRIED is worth reading twice: either
+    #   every A team has raced CARRY_RACES meets, or last season is missing.
+    if pj["seasons"]:
+        carrying = ", ".join(f"{g} {n:,}" for g, n in
+                             sorted(pj["carrying"].items()))
+        print(f"  projected {', '.join(pj['seasons'])}: {pj['rows']:,} rows, "
+              f"{pj['current']:,} raced + {pj['carried']:,} carried returners "
+              f"(schools still carrying: {carrying or 'none'}) "
+              f"({pj_took:.0f}s)")
+    else:
+        print("  projected none -- no live season (the academic year has no "
+              "athlete_season rows yet)")
     print(f"  took      {time.time() - started:.0f}s")
     # ⚠ COMPARE `read` WITH `SELECT count(*) FROM athlete_season`. A large gap
     #   is the filters doing their job -- or doing too much of it. The state

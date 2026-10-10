@@ -372,6 +372,10 @@ function buildQuery() {
          into a link somebody opens in a year. */
     if (!state.sortTouched) { q.delete("sort"); q.delete("dir"); }
     q.set("min_athletes", $("min_athletes").value || 5);
+    /* ★ THE PROJECTED BOARD (owner, 2026-10-10), sent only when ticked so
+       the ordinary board's URL is the one it always was. */
+    const proj = $("projected");
+    if (proj && proj.checked) q.set("projected", "1");
     return q;
   }
 
@@ -1329,6 +1333,9 @@ function ordinal(n) {
  *   no note at all.
  */
 function teamsNote(data) {
+  /* the projected banner is written from the same response; style.css shows
+     it on the Teams board only, so leaving the tab needs no call */
+  projectedBanner(data);
   const note = $("teams-note");
   if (!note) return;
 
@@ -1388,6 +1395,12 @@ function teamsNote(data) {
       + `all ${n} of them, raced when the board was built and scored the `
       + "ordinary way. One first place. A squad's year is its own; filter "
       + "to a single Year to rank that season on its own instead.";
+
+  } else if (data.span === "projected") {
+    note.innerHTML =
+      "<strong>This season's projected meet</strong> - every squad, with "
+      + `its returners who have not raced yet, all ${n} of them, scored `
+      + "against each other. Untick the projection for raced results only.";
 
   } else {
     note.innerHTML =
@@ -1458,11 +1471,57 @@ function renderCourses(rows) {
  */
 /* The best runner: the name (linked) and the season rating; a board built
    before the name was stored shows the rating alone. */
+/* ★ PROJECTED RUNNERS ARE MARKED WHERE THEY STAND (owner, 2026-10-10): a
+   returner who has not raced this season is on the projected board at last
+   season's rating, and the row says so rather than letting the number pass
+   for a result. */
+const PROJ_RUNNER_TITLE = "Has not raced this season - counted at last season's rating";
+
 function bestRunnerCell(r) {
   const rating = fmtRating(rval(r, "best_rating"));
-  if (!r.best_person_id || !r.best_name) return rating;
+  const mark = r.best_projected
+    ? `<span class="proj-tag" title="${PROJ_RUNNER_TITLE}">projected</span>` : "";
+  if (!r.best_person_id || !r.best_name) return rating + mark;
   return `<a href="/athlete/${r.best_person_id}">${esc(r.best_name)}</a> ` +
-    `(${rating})`;
+    `(${rating})${mark}`;
+}
+
+function projectedTag(r) {
+  const n = Number(r.n_projected) || 0;
+  if (!n) return "";
+  return `<span class="proj-tag" title="${n} of this team's top seven ` +
+    `${n === 1 ? "has" : "have"} not raced this season and ` +
+    `${n === 1 ? "is" : "are"} counted at last season's rating">` +
+    `${n} projected</span>`;
+}
+
+/* The banner over a projected board -- and, when the projection was asked
+   for and could not be served, one plain line saying why, so a ticked box
+   never sits over the ordinary board without a word. */
+const PROJECTED_DISCLAIMER =
+  "<strong>Projected - not results.</strong> These rankings include "
+  + "returning runners who have not raced yet this season, at last "
+  + "season's ratings. Teams whose top runners have not raced (a cancelled "
+  + "meet, rest, injury) move up; anyone injured, transferred or quit is "
+  + "still counted until their team has raced three meets with its top "
+  + "runners.";
+
+function projectedBanner(data) {
+  const el = $("projected-banner");
+  if (!el) return;
+  const asked = data && data.projected !== undefined && !data.course_mode;
+  el.classList.toggle("show", Boolean(asked));
+  el.classList.toggle("is-off", Boolean(asked) && !data.projected);
+  if (!asked) { el.innerHTML = ""; return; }
+  if (data.projected) {
+    el.innerHTML = PROJECTED_DISCLAIMER;
+  } else if (data.projected_reason === "filters") {
+    el.innerHTML = "The projection cannot be combined with a grade or event "
+      + "filter - showing raced results only.";
+  } else {
+    el.innerHTML = "No projection for this season - it is built for the "
+      + "season in progress only. Showing raced results.";
+  }
 }
 
 function renderTeams(rows, span) {
@@ -1471,13 +1530,15 @@ function renderTeams(rows, span) {
      is selected and an all-time placing otherwise, and calling the second one
      a season finish would be a confident lie in a tooltip. */
   const where = (r) => span === "season"
-    ? `in the ${academicLabel(r.year)} season` : "all-time";
+    ? `in the ${academicLabel(r.year)} season`
+    : span === "projected"
+      ? `in the ${academicLabel(r.year)} season, projected` : "all-time";
   const body = rows.map((r) => `
     <tr>
       <td class="rank${r.rank <= 3 ? " top3" : ""}"${r.board_rank
         ? ` title="${ordinal(r.board_rank)} ${where(r)}, ` +
           `on ${r.board_points} points"` : ""}>${r.rank}</td>
-      <td>${crestMark(r.crest)}<a href="${schoolHref(r.school, r.state)}">${esc(r.school)}</a></td>
+      <td>${crestMark(r.crest)}<a href="${schoolHref(r.school, r.state)}">${esc(r.school)}</a>${projectedTag(r)}</td>
       <td><span class="state">${esc(r.state)}</span></td>
       <td>${academicLabel(r.year)}</td>
       <td class="rating">${r.points}</td>
@@ -2136,6 +2197,10 @@ $("min_races").addEventListener("input", (e) => {
   e.target.dataset.touched = "1";
 });
 $("min_races").addEventListener("change", applyNow);
+/* the projected team board is a different board, not a page of this one */
+if ($("projected")) {
+  $("projected").addEventListener("change", () => { state.offset = 0; applyNow(); });
+}
 $("sport").addEventListener("change", () => { syncMinRaces(); applyNow(); });
 
 /* Once touched, the pool is the user's and syncBoard stops overriding it. */
@@ -2344,6 +2409,8 @@ function applyUrlFilters(params) {
   setInputFromUrl("min_races", askedMin);
   if (askedMin) $("min_races").dataset.touched = "1";
   syncMinRaces();
+  /* the projected team board rides the URL like every other control */
+  if ($("projected")) $("projected").checked = params.get("projected") === "1";
   setInputFromUrl("date_from", params.get("date_from"));
   setInputFromUrl("date_to",   params.get("date_to"));
 }
