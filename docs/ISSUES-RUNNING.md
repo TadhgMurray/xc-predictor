@@ -5822,4 +5822,19 @@ Chromium against the old script (readout 15:00, label under the pointer
   2026-10-09; not yet checked on live data.
 - 🔎 **Check What it takes** (/what-it-takes, a state, a division) -- same:
   agent-converted, not yet checked on live data.
+- ✅ **New model (2x5090, epoch 1 of a 3e-4 run, 2026-10-10)**: val 4.32%
+  vs baseline 8.82%, close-pair 75.6% vs 48.8%. Backtest, 40 XC races
+  2026-09-17..10-05 (flattered: these races were in its training data):
+  0w model 3.10% bias +0.77% order 0.898 (old model 5.70% / +4.93% /
+  0.856; rating 4.09% / +2.69% / 0.899); 3w model 3.81% vs rating 5.23%.
+  Switched on as RACECAST_MODEL=/srv/models/new/model.pt with
+  XCP_PREDICT_BASIS=guard. Epoch 2 at the same LR went backwards (7.36%,
+  221 non-finite-gradient steps skipped): the LR schedule needs to decay
+  within the run.
+- 🔴 **Clean backtest still owed** on races after 2026-10-10 (this weekend
+  on) -- the only fair test of the new model.
+- 🔴 **25 backtest runners with no race-time conversion** ("?" conversion
+  group: model/base +47-50% off) -- the normalized time is served
+  unconverted when no clock resolves. The guard falls back to the rating
+  for them (gap > 8%), but the cause is unfound.
 
