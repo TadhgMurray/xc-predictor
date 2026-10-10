@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 {% from "_tf_points.html" import tf_team_block %}
-{% from "_scale.html" import rv, scale_toggle, fk_th, fk %}
+{% from "_scale.html" import rv, fk_th, fk %}
 {# ★ THE EVENT LINKS CARRY THE FEED (sweep 2026-10-10), as meet.html's
    race_q: without ?alt= the race page opened the colliding OTHER meet. #}
 {% macro race_q() %}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}{% endif %}{% if school %}{% set _ = _q.append('school=' ~ (school|urlencode)) %}{% endif %}{% if _q %}?{{ _q|join('&') }}{% endif %}{% endmacro %}

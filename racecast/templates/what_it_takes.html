@@ -29,7 +29,7 @@
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 <link rel="stylesheet" href="{{ static_v('pages2.css') }}">
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
-{% from "_scale.html" import rv, scale_toggle, fk_inline %}
+{% from "_scale.html" import rv, fk_inline %}
 {# ★ A MARK IS AN HS SEASON RATING, so its 5K (owner, 2026-10-10) reads
    on the same-gender HS pool: a muted "≈ 16:05" after each mark #}
 {% set wpool = "hs_f" if gender == "girls" else "hs_m" %}
