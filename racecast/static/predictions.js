@@ -2546,7 +2546,9 @@ function teamScoreTable(d, opts) {
               esc(r.name || "")} – ${fmtTime(r.seconds)}">${n}</a>`
           : " - "}</td>`);
     }
-    return `<tr>
+    return `<tr data-find="${esc(findKey([t.school_label
+        || schoolWithState(t.team, t.state), t.team,
+        ...runners.map((r) => r.name)]))}">
       <td>${i + 1}</td>
       <td>${schoolCell(t.team, t.state, t.school_href, t.school_label,
                        t.crest)}${
@@ -2667,7 +2669,8 @@ function finishTable(d) {
   // the r marker only means something when the field mixes the two bases
   const mixed = runners.some((r) => r.basis === "rating")
              && runners.some((r) => r.basis !== "rating");
-  const rows = runners.map((r) => `<tr>
+  const rows = runners.map((r) => `<tr data-find="${esc(findKey([r.name,
+        r.school_label || schoolWithState(r.school, r.school_state)]))}">
       <td>${r.place}</td>
       <td>${r.person_id
             ? `<a href="/athlete/${encodeURIComponent(r.person_id)}">${
@@ -2728,11 +2731,59 @@ function renderTeam(d) {
           <a class="seg-btn" href="#teams" data-tab="teams">Teams<span class="n">${nTeams}</span></a>
         </nav>
         <div class="rc-tbar-end">${note}</div>
+        <input class="rc-find pred-find" type="search" autocomplete="off"
+               placeholder="Find a runner or school"
+               aria-label="Find a runner or school in this prediction">
       </div>
+      <p class="meta pred-find-none" hidden></p>
       <section class="rc-panel" data-panel="results">${finishTable(d)}</section>
       <section class="rc-panel" data-panel="teams" hidden>${teamScoreTable(d)}</section>
     </div>${side}
   </div>`;
+}
+
+/* ★ THE FINDER (owner, 2026-10-10): the race page's "Find a runner or
+     school" box, in the predicted race's own tab bar. Typing hides the rows
+     of BOTH tabs that do not match -- a finisher by name or school, a team
+     by its name or any runner on it -- and nothing else: places, points
+     and scores are the prediction's and stay exactly as drawn, so a hidden
+     row is a gap in the numbering, not a re-ranking.
+   ! ONLY THE TWO TABLES THE TABS SHOW, not .team-tool-out. A dual meet or a
+     best seven opened under Teams is an answer of its own and keeps its
+     rows; the side card is the summary and stays whole, as on race.html.
+   ! ONE BOX PER PREDICTED RACE: several races on the page are several
+     .team-result roots, and each box filters its own. */
+function findKey(parts) {
+  return parts.filter(Boolean).join(" ").normalize("NFD")
+    .replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+/* Every word typed must appear somewhere in the row's key: "jesuit owen"
+   finds Owen at Jesuit, and an empty box matches everything. */
+function findMatches(key, q) {
+  const words = findKey([q]).split(/\s+/).filter(Boolean);
+  return words.every((w) => String(key || "").includes(w));
+}
+
+function filterPredicted(input) {
+  const root = input.closest(".team-result") || $("output");
+  const q = input.value.trim();
+  let shown = 0, total = 0;
+  /* ! NOT ".rc-panel > table": on a phone the table sits in a .tscroll
+       wrapper (the sideways-scroll box), and the selector found nothing */
+  root.querySelectorAll(".rc-panel tr[data-find]").forEach((tr) => {
+      if (tr.closest(".team-tool-out")) return;
+      const hit = findMatches(tr.dataset.find, q);
+      tr.hidden = !hit;
+      total += 1;
+      if (hit) shown += 1;
+    });
+  const none = root.querySelector(".pred-find-none");
+  if (none) {
+    none.hidden = !(q && total && !shown);
+    none.textContent = none.hidden ? ""
+      : `No runner or school in this race matches “${q}”.`;
+  }
 }
 
 /* The side card: place, team, the five scoring places under the name, the
@@ -3031,6 +3082,19 @@ function applyLineup(btn) {
   btn.textContent = "On the card - press Predict to score it";
 }
 
+
+$("output").addEventListener("input", (e) => {
+  if (e.target.classList && e.target.classList.contains("pred-find")) {
+    filterPredicted(e.target);
+  }
+});
+$("output").addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && e.target.classList
+      && e.target.classList.contains("pred-find")) {
+    e.target.value = "";
+    filterPredicted(e.target);
+  }
+});
 
 $("output").addEventListener("click", (e) => {
   const b = e.target.closest && e.target.closest("button");

@@ -615,8 +615,14 @@ main.pred-page.rc #output .rc-lead { margin: 0 0 .5rem; }
    rc-on-teams on the race's own .team-result, not on <main>) */
 main.pred-page.rc .team-result.rc-on-teams .rc-side { display: none; }
 main.pred-page.rc .team-result.rc-on-teams .rc-grid { grid-template-columns: minmax(0, 1fr); }
+/* the finder (2026-10-10): race.html's box, ending the tab bar after the
+   scoring line, a step narrower so the bar stays one line beside the card */
+main.pred-page.rc #output .rc-tbar .pred-find { margin-left: 0; width: 190px; }
+main.pred-page.rc #output tr[hidden], main.pred-page.rc #output .pred-find-none[hidden] { display: none; }
+main.pred-page.rc #output .pred-find-none { margin: 0 0 .6rem; }
 @media (max-width: 760px) {
   main.pred-page.rc.predict2 { padding: 1.2rem 1rem 3rem; }
+  main.pred-page.rc #output .rc-tbar .pred-find { width: 100%; }
   main.pred-page.rc #output .rc-panel table { display: block; overflow-x: auto; }
   main.pred-page.rc #output .rc-side > h2 { min-height: 0; }
 }
@@ -652,6 +658,9 @@ main.ath-page.rc .ath-head { display: block; }
 main.ath-page.rc h1.ath-name { margin: .15rem 0 .3rem; }
 main.ath-page.rc .rc-meta .unit { vertical-align: 1px; }
 main.ath-page.rc .stat-strip { margin: .8rem 0 .2rem; }
+/* the rating as a time (2026-10-10): a muted line under the rating, the
+   s-sub's own size and colour, never a stat of its own */
+main.ath-page.rc .stat-strip .s-clock { display: block; margin: .15rem 0 0; }
 main.ath-page.rc .rank-line, main.ath-page.rc .paces-link { margin: .45rem 0 0; }
 /* the tables and the side cards start level */
 main.ath-page.rc .rc-tbar { flex-wrap: nowrap; }

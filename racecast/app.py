@@ -984,6 +984,11 @@ def home():
     # HS-equivalent view: each panel row carries its board's pool + sport;
     # season means and career bests take the representative factor.
     has_hs_view = stampBoardRows(rows, rating_keys=("rating",))
+    # ★ THE RATING AS A TIME, ON HOVER (owner, 2026-10-10): each rating
+    #   cell's title, "≈ 14:39 5K on a typical course" -- one table read per
+    #   pool, no request of its own (conversions.stampBoardClocks)
+    from conversions import stampBoardClocks
+    stampBoardClocks(rows)
 
     panels = group_panels(rows)
     panels = pad_pool_pairs(panels)      # equalize lengths for the grid
@@ -1685,6 +1690,33 @@ class _NoRatedSeason(Exception):
     """The header season has no rating: the equivalent line is left out
     (an expected state, not an error -- see the athlete page)."""
 
+
+# ★ THE TRACK ATHLETE'S OWN EVENT (owner, 2026-10-10: the time next to the
+#   rating). A track rating has no one distance, so the header says it at
+#   the flat event 800 m to 10,000 m this athlete raced most in the header
+#   season (`label`, the page's season label), ties to the one rated
+#   highest. None -- the level's mile-ish race, conversions.readerDistance
+#   -- when the season holds no such race.
+# ! SPRINTS, HURDLES, STEEPLE AND RELAYS DO NOT COUNT: the conversion has no
+#   honest sentence for "your 400 as a 400" off a distance rating.
+def _mainTrackDistance(races, label):
+    from normalize_distance import parseEventShort
+    counts = {}
+    for r in races or ():
+        if r.get("sport") != "TF" or str(r.get("season_label")) != str(label):
+            continue
+        ev = parseEventShort(r.get("event"))
+        m = ev.get("meters")
+        if ev.get("kind") != "flat" or not m or not 800.0 <= m <= 10000.0:
+            continue
+        m = round(float(m), 2)
+        n, best = counts.get(m, (0, 0.0))
+        counts[m] = (n + 1, max(best, float(r.get("speed_rating") or 0.0)))
+    if not counts:
+        return None
+    return max(counts, key=lambda m: counts[m])
+
+
 @app.route("/athlete/<int:person_id>")
 def athlete(person_id):
     with getConn() as conn:                # reuse the engine's connection
@@ -2149,24 +2181,29 @@ def athlete(person_id):
             #   a time at the POOL'S anchor distance (normalize_distance.
             #   targetFor: 5000 hs, 8000 college men, 6000 college women,
             #   3200 middle school), so the label says which.
-            from conversions import _norm_from_rating, normalized_to_time
-            from normalize_distance import targetFor
+            # ★ AND AT THE DISTANCE A READER EXPECTS (owner, 2026-10-10:
+            #   the time is back in the header, one muted line under the
+            #   rating). Cross country at the level's own race -- 5K in high
+            #   school, 8K for college men, 6K for college women -- and
+            #   track at the athlete's main event that season, so a miler
+            #   reads a 1600 and a 3200 runner a 3200 (_mainTrackDistance).
+            #   The anchor (targetFor) is 5000 m for every pool by ability:
+            #   right for the scale, a strange sentence for an 8K runner.
+            from conversions import ratingClock
             _pool, _sport = season_rating["pool"], season_rating["sport"]
-            _dist = float(targetFor(_pool, _sport))
-            _norm = _norm_from_rating(float(athlete["rating"]), _pool, 0.0, _sport)
-            _secs = (normalized_to_time(_norm, {"distance": _dist, "pool": _pool,
-                                                "sport": _sport})
-                     if _norm else None)
-            athlete["equiv_time"] = clockFor(_secs)
-            athlete["equiv_dist"] = (f"{int(round(_dist / 1000.0))}K"
-                                     if abs(_dist / 1000.0 - round(_dist / 1000.0)) < 1e-6
-                                     else f"{int(round(_dist))}m")
+            _dist = (_mainTrackDistance(races, label) if _sport == "TF"
+                     else None)
+            _clk = ratingClock(athlete["rating"], _pool, _sport, _dist)
+            athlete["equiv_time"] = _clk["time"] if _clk else None
+            athlete["equiv_dist"] = _clk["dist"] if _clk else None
+            athlete["equiv_where"] = _clk["where"] if _clk else None
         except Exception as exc:         # noqa: BLE001 -- a phrase, not a page
             if not isinstance(exc, _NoRatedSeason):
                 print(f"athlete: equiv time failed ({type(exc).__name__}: {exc})",
                       flush=True)
             athlete["equiv_time"] = None
             athlete["equiv_dist"] = None
+            athlete["equiv_where"] = None
         nation = next((e for e in (rank_line or [])
                        if e.get("label") == "Nation"), None)
         athlete["percentile"] = (percentileWords(nation["rank"],
@@ -2247,7 +2284,7 @@ def athlete(person_id):
         athlete["rating_hs"] = _pblk["rating_hs"]
         athlete["rating_note"] = f"{_plabel} {_psport} season · professional"
         athlete["percentile"] = None
-        athlete["equiv_time"] = athlete["equiv_dist"] = None
+        athlete["equiv_time"] = athlete["equiv_dist"] = athlete["equiv_where"] = None
         athlete["rank_floor"] = None
         athlete["grade"] = None
         athlete["pro_header"] = True
@@ -9183,6 +9220,10 @@ def api_rankings():
     # boards, distance). Display-only -- the ORDER stays the server's, so on
     # a pool=all board the hs column can read unsorted; rankings.js says so.
     hs_movable = stampBoardRows(rows, rating_keys=("rating", "best_rating"))
+    # ★ rating_clock: the rating cell's hover title, the same time the
+    #   athlete header prints under its rating (owner, 2026-10-10)
+    from conversions import stampBoardClocks
+    stampBoardClocks(rows)
 
     # ★ THE SCHOOL'S HOME STATE, BESIDE THE RESULT'S STATE, NOT INSTEAD OF IT.
     #   ranking_results.state says where the RACE was, which is the right

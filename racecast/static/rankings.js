@@ -133,10 +133,20 @@ function raceHref(r) {
 
 /* A cell that links only when there is somewhere to link to -- a dead href is
    worse than plain text, because it looks live. */
-function maybeLink(href, inner, cls) {
-  const c = cls ? ` class="${cls}"` : "";
+function maybeLink(href, inner, cls, attrs) {
+  const c = (cls ? ` class="${cls}"` : "") + (attrs || "");
   return href ? `<td${c}><a href="${href}">${inner}</a></td>`
               : `<td${c}>${inner}</td>`;
+}
+
+/* ★ THE RATING AS A TIME, ON HOVER (owner, 2026-10-10: "124.6 means
+   nothing to parents"). The API stamps r.rating_clock -- "≈ 14:39 5K on a
+   typical course", conversions.stampBoardClocks -- and the rating cell
+   carries it as its title. No request of its own, and the same words the
+   athlete header prints under its rating.
+   ! THE SAME IN BOTH SCALES: the clock is the athlete's, not the number's. */
+function clockAttr(r) {
+  return r && r.rating_clock ? ` title="${esc(r.rating_clock)}"` : "";
 }
 
 /* ★ THE CREST COMES FROM THE ROW, NOT FROM A GUESS (305). The browser
@@ -1223,7 +1233,7 @@ function renderAbility(rows) {
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(r.sport)}</td>
       <td>${academicLabel(r.year)}</td>
-      <td class="rating"><a href="/athlete/${r.person_id}">${fmtRating(rval(r, "rating"))}</a></td>
+      <td class="rating"${clockAttr(r)}><a href="/athlete/${r.person_id}">${fmtRating(rval(r, "rating"))}</a></td>
       <td>${fmtRating(rval(r, "best_rating"))}</td>
       <td>${r.n_races === null || r.n_races === undefined ? "" : r.n_races}</td>
     </tr>`).join("");
@@ -1257,7 +1267,7 @@ function renderPerformance(rows) {
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(r.sport)}</td>
       ${maybeLink(href, esc(r.race_date))}
-      ${maybeLink(href, fmtRating(rval(r, "rating")), "rating")}
+      ${maybeLink(href, fmtRating(rval(r, "rating")), "rating", clockAttr(r))}
     </tr>`;
   }).join("");
 
@@ -1303,7 +1313,7 @@ function renderPr(rows) {
           ? maybeLink(href, fmtMark(r.mark), "time mark")
           : maybeLink(href, fmtTime(r.time_seconds),
                       "time" + (isNoTime(r.time_seconds) ? " dnf" : ""))}
-      ${maybeLink(href, fmtRating(rval(r, "rating")), "rating")}
+      ${maybeLink(href, fmtRating(rval(r, "rating")), "rating", clockAttr(r))}
     </tr>`;
   }).join("");
 
