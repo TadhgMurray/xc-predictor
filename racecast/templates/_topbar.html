@@ -122,3 +122,7 @@
 <link rel="stylesheet" href="{{ static_v('features.css') }}">
 <script src="{{ static_v('rating-explain.js') }}" defer></script>
 <script src="{{ static_v('link-flash.js') }}" defer></script>
+{# ★ usage counts + JS error reports (2026-10-10): no cookies, nothing sent
+   under Do Not Track / GPC. data-tpl is the route's TEMPLATE, the same for
+   every reader of this URL, so the page stays cacheable. See usage.js. #}
+<script src="{{ static_v('usage.js') }}" defer data-tpl="{{ request.url_rule.rule if request.url_rule else '' }}"></script>

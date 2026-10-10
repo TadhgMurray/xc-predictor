@@ -140,6 +140,7 @@
       var btn = e.target.closest("button[data-scale]");
       if (!btn || btn.dataset.scale === window.rcScale.mode) return;
       window.rcScale.mode = btn.dataset.scale;
+      window.rcUse && rcUse(btn.dataset.scale === "pool" ? "scale:advanced" : "scale:hs");   // ★ usage (2026-10-10)
       try {
         localStorage.setItem(SCALE_KEY, window.rcScale.mode);
       } catch (err) { /* private mode: the choice just won't persist */ }

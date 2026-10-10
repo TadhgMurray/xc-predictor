@@ -2289,7 +2289,7 @@ $("results").addEventListener("click", (e) => {
    edit -- change fires on blur, Enter or a spinner click, never per
    keystroke, so nobody queries for "1" while typing "15". offset resets
    because the new board is a different length. */
-function applyNow() { state.offset = 0; load(); }
+function applyNow() { state.offset = 0; window.rcUse && rcUse("rankings:filter"); load(); }
 
 $("scope").addEventListener("change", applyNow);
 

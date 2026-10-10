@@ -2310,6 +2310,7 @@ async function predict() {
   const missing = whatIsMissing();
   if (missing) { setStatus(missing, true); return; }
   if (state.busy) return;
+  window.rcUse && rcUse("predict:run");   // ★ usage count (2026-10-10)
 
   state.busy = true;
   $("predict").disabled = true;
