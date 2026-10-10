@@ -116,7 +116,7 @@ class ANonFiniteGradientIsSkipped(unittest.TestCase):
             base = nn.GaussianNLLLoss(eps=T.VAR_EPS)
             calls = {"n": 0}
 
-            def criterion(mu, z, var):
+            def criterion(mu, z, var, weights=None):
                 calls["n"] += 1
                 if calls["n"] == 2:
                     # the loss stays finite; its gradient comes back nan

@@ -8,6 +8,7 @@
 #          real seconds at inference time.
 
 import contextlib
+import math
 import os
 import pickle
 import time
@@ -30,7 +31,7 @@ from transformer import (XCPredictor, SEQUENCE_FEATURES,
                          BASELINE_RATING, SEQ_RATED_TIME, SEQ_RATED_FLAG,
                          BASELINE_HALF_LIFE_DAYS, BASELINE_BEST_WINDOW_DAYS,
                          baselineWeights, ewmaFromPadded, best2FromPadded,
-                         ratedFromPadded)
+                         ratedFromPadded, DERIVED_FEATURES)
 
 # ★ WHAT PREDICTIONS ARE ANCHORED ON. See transformer.BASELINE_LAST for the
 #   measurement that made this a choice: the model beats "their last race
@@ -217,6 +218,38 @@ STATS_OUT = os.path.join(DATA_DIR, "target_stats.pkl")
 #   same protection Huber gave, and the band it learns is a real output.
 #   GaussianNLLLoss takes the variance, not its log; VAR_EPS keeps it off 0.
 VAR_EPS = 1e-6
+
+# ★ THREE CHANGES TO WHAT TRAINING REWARDS (owner, 2026-10-10: "it
+#   overestimates people who take long breaks", and data cleaning is "hard
+#   asf"). Each is a flag with the new behaviour as the default; the old
+#   behaviour is one flag away for an A/B.
+#
+#   LOSS ("student", --loss gaussian for the old one). Student-t negative
+#     log-likelihood with a learned nu (transformer.XCPredictor.tailNu): an
+#     example the model cannot explain costs log(error) instead of error^2,
+#     so wrong-person merges and mislabelled distances stop pulling the fit.
+#     The head still outputs the VARIANCE, so bands mean what they meant.
+#
+#   BETA (0.5, --beta 0 for plain NLL). beta-NLL (Seitzer et al., ICLR 2022,
+#     "On the Pitfalls of Heteroscedastic Uncertainty Estimation"; 0.5 is
+#     their recommended setting): each example's loss is scaled by its own
+#     predicted variance^beta, held constant. Plain NLL lets the model answer
+#     a hard example by WIDENING its band instead of MOVING its mean -- for a
+#     comeback after a long break, "I'm not sure" was cheaper than "slower".
+#
+#   BALANCE ("sqrt", --balance-breaks none / full). Examples are weighted by
+#     how rare their real time away is (BREAK_BANDS). The corpus is
+#     overwhelmingly races a week or two apart, so a long break barely moved
+#     the gradient. "full" would weight each band equally; "sqrt" goes half
+#     way (in log terms), because full weighting lets ~1% of examples carry a
+#     fifth of the gradient and the rare bands are the noisiest.
+LOSS = "student"
+BETA = 0.5
+BALANCE_BREAKS = "sqrt"
+BREAK_FEATURES = True       # transformer.DERIVED_FEATURES, --no-break-features
+BREAK_W = None              # per-band weights, set in main() from the stats
+# real days away (gap minus the hidden stretch), the backtest's bands
+BREAK_BANDS = (14.0, 42.0, 120.0, 365.0)
 
 # ★ FEATURE AND TARGET STATS COME FROM A CHUNK PREFIX, not the whole corpus.
 #   Chunks are corpus-wide shuffles, so the first STATS_CHUNKS (2M examples)
@@ -935,6 +968,62 @@ def _ratedRagged(seqs, lengths, half_life):
     return torch.where(den > 0, rated, _ewmaRagged(seqs, lengths, half_life))
 
 
+def _breakBand(ctx) -> torch.Tensor:
+    """Band index (0..len(BREAK_BANDS)) of each example's REAL time away:
+    days since the last visible race less the hidden stretch."""
+    from transformer import CONTEXT_HIDDEN_INDEX
+    gap = ctx[:, CONTEXT_GAP_INDEX].to(torch.float32).clamp(min=0.0)
+    hidden = (ctx[:, CONTEXT_HIDDEN_INDEX].to(torch.float32).clamp(min=0.0)
+              if ctx.shape[1] > CONTEXT_HIDDEN_INDEX else torch.zeros_like(gap))
+    idle = (gap - torch.minimum(hidden, gap)).contiguous()
+    edges = torch.tensor(BREAK_BANDS, dtype=idle.dtype, device=idle.device)
+    return torch.bucketize(idle, edges, right=False)
+
+
+def breakWeights(band_n, mode=None) -> torch.Tensor:
+    """Per-band example weights, mean 1 over the training distribution.
+    full: 1/share (every band counts equally); sqrt: 1/sqrt(share)."""
+    mode = mode or BALANCE_BREAKS
+    n = torch.tensor(band_n, dtype=torch.float64).clamp(min=1.0)
+    share = n / n.sum()
+    if mode == "none":
+        w = torch.ones_like(share)
+    elif mode == "full":
+        w = 1.0 / share
+    else:
+        w = share.rsqrt()
+    w = w / (w * share).sum()           # the average example still weighs 1
+    return w.to(torch.float32)
+
+
+class Likelihood(nn.Module):
+    """The training loss: Gaussian or Student-t NLL on z, from the head's
+    VARIANCE; optional per-example weights (beta-NLL x break balance).
+
+    ! VALIDATION CALLS IT WITHOUT WEIGHTS: early stopping and the printed
+      val loss score the honest likelihood, not the reweighted one."""
+
+    def __init__(self, model, kind="student"):
+        super().__init__()
+        self.model = model if kind == "student" else None
+        self.kind = kind
+
+    def forward(self, mu, z, var, weights=None):
+        r2 = (z - mu) ** 2
+        if self.kind == "student":
+            nu = self.model.tailNu().to(var.dtype)
+            s2 = var * (nu - 2.0) / nu            # the t's scale^2 for var
+            nll = (0.5 * torch.log(s2)
+                   + 0.5 * (nu + 1.0) * torch.log1p(r2 / (nu * s2))
+                   + torch.lgamma(nu / 2.0) - torch.lgamma((nu + 1.0) / 2.0)
+                   + 0.5 * torch.log(nu * math.pi))
+        else:
+            nll = 0.5 * (torch.log(var) + r2 / var)
+        if weights is not None:
+            nll = nll * weights
+        return nll.mean()
+
+
 def computeStats(dataset, is_train: torch.Tensor,
                  max_chunks: int = STATS_CHUNKS) -> dict:
     """Per-feature mean/std of the inputs, and mean/std of the log-ratio
@@ -957,6 +1046,7 @@ def computeStats(dataset, is_train: torch.Tensor,
     raw_sum = 0.0
     raw_n = 0
     max_year = 0.0
+    band_n = [0] * (len(BREAK_BANDS) + 1)   # train examples per break band
 
     # ! _loadChunk TAKES A GLOBAL CHUNK NUMBER (2026-10-08 audit). Under
     #   --chunk-range the window's first chunk is base_index // chunk_size;
@@ -989,6 +1079,9 @@ def computeStats(dataset, is_train: torch.Tensor,
         ctx_sum += ctx.sum(dim=0)
         ctx_sq += (ctx * ctx).sum(dim=0)
         ctx_n += ctx.shape[0]
+        for b, k in enumerate(torch.bincount(_breakBand(ctx),
+                                             minlength=len(band_n)).tolist()):
+            band_n[b] += int(k)
         # ★ THE NEWEST YEAR THESE WEIGHTS EVER SAW, carried into
         #   target_stats.pkl so inference can clamp to it. The year feature
         #   is the only one whose value at inference can sit outside the
@@ -1027,7 +1120,8 @@ def computeStats(dataset, is_train: torch.Tensor,
             # 0.0 means "no year feature in these chunks"; predict.py treats
             # a falsy ceiling as no clamp, which is the old behaviour.
             "max_year": max_year,
-            "n_examples": lr_n, "n_rows": seq_n, "n_chunks": n_chunks}
+            "n_examples": lr_n, "n_rows": seq_n, "n_chunks": n_chunks,
+            "break_band_n": band_n}
 
 
 def zScore(values: torch.Tensor, mean: float, std: float) -> torch.Tensor:
@@ -1309,8 +1403,14 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None,
             mu, logvar = fwd(sequences, masks, context,
                              venues)                           # 2. forward
         # The likelihood in fp32: exp(logvar) under bf16 is too coarse.
-        loss = criterion(mu.to(torch.float32), z_true,
-                         torch.exp(logvar.to(torch.float32)) + VAR_EPS)
+        var = torch.exp(logvar.to(torch.float32)) + VAR_EPS
+        w = None
+        if BETA:
+            w = var.detach() ** BETA
+        if BREAK_W is not None:
+            bw = BREAK_W.to(var.device)[_breakBand(context)]
+            w = bw if w is None else w * bw
+        loss = criterion(mu.to(torch.float32), z_true, var, w)
 
         # ⚠ A NON-FINITE LOSS IS NOT A SMALL PROBLEM TO AVERAGE AWAY. One
         #   inf or nan backpropagates into EVERY weight, and from then on
@@ -1638,6 +1738,45 @@ def _loadCheckpoint(path, model, optimizer, scheduler=None):
     return ck["epoch"], ck["best_val_loss"], ck.get("bad_epochs", 0)
 
 
+def _initFrom(model, state):
+    """Pour a saved model.pt into `model`, which may be WIDER: the 2026-10-10
+    break features add input columns to context_query and the head's first
+    layer. Old columns are copied, new ones start at ZERO -- so the widened
+    model begins as exactly the old one and learns how much to use the new
+    inputs. Anything else that does not match is an error, not a skip."""
+    own = model.state_dict()
+    out = {}
+    for k, v in state.items():
+        if k not in own:
+            if k == "nu_raw":            # a Student-t checkpoint into Gaussian
+                continue
+            raise RuntimeError(f"--init: {k} is not in this model")
+        t = own[k]
+        if v.shape == t.shape:
+            out[k] = v
+        elif (v.dim() == 2 and t.dim() == 2 and v.shape[0] == t.shape[0]
+              and v.shape[1] < t.shape[1]):
+            w = torch.zeros_like(t)
+            w[:, :v.shape[1]] = v
+            out[k] = w
+            print(f"  --init: {k} widened {tuple(v.shape)} -> {tuple(t.shape)}, "
+                  f"new inputs start at zero")
+        else:
+            raise RuntimeError(f"--init: {k} is {tuple(v.shape)}, "
+                               f"this model has {tuple(t.shape)}")
+    # ! THE BREAK-FEATURE COLUMNS IN context_query/head SIT AFTER THE OLD
+    #   CONTEXT, which is where _forwardRaw concatenates them -- so the
+    #   copied columns keep their meaning.
+    missing = [k for k in own if k not in out]
+    ok = {"n_derived", "nu_raw", "baseline_mode", "baseline_half_life"}
+    if set(missing) - ok:
+        raise RuntimeError("--init: missing " + ", ".join(sorted(set(missing) - ok)))
+    n_derived = own["n_derived"].clone() if "n_derived" in own else None
+    model.load_state_dict(out, strict=False)
+    if n_derived is not None:            # the old file says 0 or nothing
+        model.n_derived.copy_(n_derived)
+
+
 def _buildScheduler(optimizer, steps_per_epoch: int):
     """Linear warmup over WARMUP_STEPS, then cosine to LR_FLOOR_FRAC of the
     peak over the remaining EPOCHS * steps_per_epoch steps. Stepped once per
@@ -1715,7 +1854,9 @@ def main():
         n_venues = 1
         print("  venue_vocab.pkl not found -- venue embedding disabled")
 
-    model = XCPredictor(n_venues=n_venues)
+    model = XCPredictor(n_venues=n_venues,
+                        derived_features=DERIVED_FEATURES if BREAK_FEATURES else 0,
+                        student_t=(LOSS == "student"))
     # ⚠ BEFORE setTargetStats, AND WITH THE SAME VALUES computeStats USED.
     #   The target is ln(target/baseline), so the stats below are properties
     #   of the rule; measuring under one and un-z-scoring under another puts
@@ -1728,13 +1869,27 @@ def main():
     model = model.to(DEVICE)
 
     # 6. AdamW + warmup/cosine schedule. See the constants.
-    optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE,
-                                  weight_decay=WEIGHT_DECAY)
+    # ! THE TAIL'S nu IS NOT DECAYED: weight decay pulls a parameter toward
+    #   0, and nu_raw = 0 is nu ~2.7 -- the decay alone would make the tails
+    #   heavier every step, whatever the data said.
+    decayed = [p for n, p in model.named_parameters() if n != "nu_raw"]
+    groups = [{"params": decayed, "weight_decay": WEIGHT_DECAY}]
+    if hasattr(model, "nu_raw"):
+        groups.append({"params": [model.nu_raw], "weight_decay": 0.0})
+    optimizer = torch.optim.AdamW(groups, lr=LEARNING_RATE)
     scheduler = _buildScheduler(optimizer, len(train_loader))
 
     # 7. Gaussian NLL on the z-scored log ratio with the learned variance.
     #    See VAR_EPS. reduction='mean' over the batch, as MSE was.
-    criterion = nn.GaussianNLLLoss(eps=VAR_EPS)
+    criterion = Likelihood(model, LOSS)
+    global BREAK_W
+    BREAK_W = (breakWeights(stats["break_band_n"])
+               if BALANCE_BREAKS != "none" and stats.get("break_band_n") else None)
+    print(f"  loss {LOSS}" + (f", beta-NLL {BETA}" if BETA else "")
+          + (f", break weights ({BALANCE_BREAKS}) "
+             + " ".join(f"{w:.2f}" for w in BREAK_W.tolist())
+             if BREAK_W is not None else "")
+          + (", break features in the model" if BREAK_FEATURES else ""))
 
     start_epoch, best_val_loss, bad_epochs = _loadCheckpoint(
         CHECKPOINT, model, optimizer, scheduler)
@@ -1747,7 +1902,7 @@ def main():
     #   start fresh, as they should at a new rate. Ignored when a
     #   checkpoint resumed -- that run already has its own weights.
     if INIT and start_epoch == 0:
-        model.load_state_dict(torch.load(INIT, map_location=DEVICE))
+        _initFrom(model, torch.load(INIT, map_location=DEVICE))
         print(f"  weights from {INIT} (fine-tuning; optimizer and schedule fresh)")
         # ! THE BAR IS THE STARTING MODEL, not infinity: an epoch that does
         #   not beat what --init already scores is not saved, so a fine-tune
@@ -1811,6 +1966,8 @@ def main():
               + (f"close-pair {cal['pair_model']:.1f}% vs "
                  f"{cal['pair_base']:.1f}% (n={cal['pair_n']:,})  "
                  if cal["pair_n"] else "")
+              + (f"nu {float(model.tailNu().detach()):.1f}  "
+                 if hasattr(model, "nu_raw") else "")
               + f"{st['examples_per_s']:,.0f} ex/s  "
               f"{st['steps_per_s']:.1f} steps/s  "
               f"waiting {st['waiting'] * 100:.0f}%  "
@@ -1940,6 +2097,16 @@ if __name__ == "__main__":
                           "every epoch. REQUIRED for spot instances: "
                           "model.pt alone cannot resume, it has no "
                           "optimizer state.")
+    _ap.add_argument("--loss", choices=("student", "gaussian"), default=None,
+                     help=f"likelihood (default {LOSS}); see LOSS")
+    _ap.add_argument("--beta", type=float, default=None,
+                     help=f"beta-NLL exponent (default {BETA}; 0 = plain NLL)")
+    _ap.add_argument("--balance-breaks", choices=("sqrt", "full", "none"),
+                     default=None,
+                     help=f"weight examples by how rare their time away is "
+                          f"(default {BALANCE_BREAKS})")
+    _ap.add_argument("--no-break-features", action="store_true",
+                     help="build the model without the in-model break features")
     _ap.add_argument("--init", default=None, metavar="MODEL_PT",
                      help="start from this model.pt's weights instead of "
                           "random ones (fine-tuning at a new --lr). The "
@@ -2005,6 +2172,14 @@ if __name__ == "__main__":
     USE_AMP = _args.amp
     CHECKPOINT = _args.checkpoint
     INIT = _args.init
+    if _args.loss:
+        LOSS = _args.loss
+    if _args.beta is not None:
+        BETA = _args.beta
+    if _args.balance_breaks:
+        BALANCE_BREAKS = _args.balance_breaks
+    if _args.no_break_features:
+        BREAK_FEATURES = False
     if _args.baseline:
         BASELINE = {"ewma": BASELINE_EWMA, "best2": BASELINE_BEST2,
                     "last": BASELINE_LAST,

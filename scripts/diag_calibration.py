@@ -80,7 +80,7 @@ SPREAD_FLOOR = 0.75
 # the two keys a valid older checkpoint may be short of, and nothing else;
 # see predict._loadModel -- the baseline rule rides in the state dict and a
 # file trained before those buffers existed was trained under the default.
-TOLERATED_MISSING = ("baseline_mode", "baseline_half_life")
+TOLERATED_MISSING = ("baseline_mode", "baseline_half_life", "n_derived")
 
 
 # contiguous runs at this many offsets across the split; see sampleIndices
@@ -273,7 +273,7 @@ def main():
         os.path.join(data_dir, "model.pt")
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     state = unwrapState(torch.load(model_path, map_location=dev))
-    model = XCPredictor(n_venues=venueCount(state))
+    model = XCPredictor.fromState(state)     # the checkpoint's own shape
     missing, unexpected = model.load_state_dict(state, strict=False)
     bad = surpriseKeys(missing, unexpected)
     if bad:

@@ -19,7 +19,9 @@ been run. READ ONLY.
     --weeks 0  history up to the day before (a "this weekend" prediction)
     --weeks 3  history up to three weeks before (a forecast; hidden_days
                and is_forecast are set from that cut, as on the site)
-  and prints, per basis and lead time:
+  and prints, per basis and lead time (within-race: the median miss once
+  each race's own shift -- weather, footing, a long course -- is taken out,
+  i.e. the part a better model could still win):
     median |error| %     the typical miss on a runner's time
     bias %               + = predicted too slow, - = too fast
     order                mean Spearman correlation, predicted vs actual
@@ -175,9 +177,16 @@ def main():
                         continue
                     pred = [float(got[p]["seconds"]) for p in both]
                     s = acc.setdefault((basis, lead), {"err": [], "order": [], "races": 0,
-                                                       "rows": []})
+                                                       "rows": [], "within": []})
                     errs = [100.0 * math.log(x / y) for x, y in zip(pred, act)]
                     s["err"] += errs
+                    # ★ THE RACE'S OWN SHIFT TAKEN OUT (owner, 2026-10-10):
+                    #   heat, mud, a long course move the whole field
+                    #   together and nothing before the gun knows it. What is
+                    #   left after subtracting the race's median miss is the
+                    #   part a better model could still win.
+                    shift = statistics.median(errs)
+                    s["within"] += [e - shift for e in errs]
                     s["rows"] += [(e, dict(facts[p], clock=(model[p].get("time_basis") or "?")))
                                   for e, p in zip(errs, both)]
                     rho = _spearman(pred, act)
@@ -188,15 +197,16 @@ def main():
                   f"div {race['div_id']} ({race['source']}) {len(ids)} runners", flush=True)
 
     print(f"\n{'basis':7} {'lead':>5} {'races':>6} {'runners':>8} "
-          f"{'median |err|':>13} {'bias':>7} {'order':>6}")
+          f"{'median |err|':>13} {'bias':>7} {'order':>6} {'within-race':>12}")
     for (basis, lead), s in sorted(acc.items(), key=lambda kv: (kv[0][1], kv[0][0])):
         if not s["err"]:
             continue
         med = statistics.median(abs(e) for e in s["err"])
         bias = statistics.median(s["err"])
         order = statistics.fmean(s["order"]) if s["order"] else float("nan")
+        within = statistics.median(abs(e) for e in s["within"]) if s["within"] else float("nan")
         print(f"{basis:7} {lead:>4}w {s['races']:>6} {len(s['err']):>8} "
-              f"{med:>12.2f}% {bias:>+6.2f}% {order:>6.3f}")
+              f"{med:>12.2f}% {bias:>+6.2f}% {order:>6.3f} {within:>11.2f}%")
     if a.breakdown:
         _breakdown(acc)
 

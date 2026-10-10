@@ -71,14 +71,12 @@ def main():
         print(f"target stats: mean {mean:.1f}s, std {std:.1f}s")
 
     state = torch.load(T.MODEL_OUT, map_location="cpu")
-    n_venues = state["venue_embedding.weight"].shape[0]
-    model = XCPredictor(n_venues=n_venues,
-                        context_features=state["context_query.weight"].shape[1],
-                        sequence_features=state["input_projection.weight"].shape[1])
+    model = XCPredictor.fromState(state)     # the checkpoint's own shape
     model.load_state_dict(state)
     model.eval()
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"loaded: {n_params:,} parameters, {n_venues:,} venue rows")
+    print(f"loaded: {n_params:,} parameters, "
+          f"{model.venue_embedding.weight.shape[0]:,} venue rows")
 
     # a couple of chunks is plenty for a smoke read
     T.MAX_CHUNKS = max(1, (args.n // 4096) + 1)

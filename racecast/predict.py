@@ -135,13 +135,15 @@ def _loadModelLocked():
         # train.py saves a bare state_dict; an older wrapper dict still loads
         state = blob["state_dict"] if isinstance(blob, dict) and \
             "state_dict" in blob else blob
-        n_venues = state["venue_embedding.weight"].shape[0]
-        # the width it was trained at (24 before hidden_days, 2026-10-08)
-        ctx_width = state["context_query.weight"].shape[1]
-        # and the sequence width (21 before the rated time, 2026-10-08)
-        seq_width = state["input_projection.weight"].shape[1]
-        model = XCPredictor(n_venues=n_venues, context_features=ctx_width,
-                            sequence_features=seq_width)
+        # ★ THE SHAPE COMES OFF THE CHECKPOINT (XCPredictor.fromState): the
+        #   venue count, the context width it was trained at (24 before
+        #   hidden_days), the sequence width (21 before the rated time), and
+        #   since 2026-10-10 the in-model break features and the Student-t
+        #   tail. ctx_width is what EXTRACTION builds -- the derived features
+        #   are made inside the model, so they are not part of it.
+        model = XCPredictor.fromState(state)
+        ctx_width = model.context_features
+        seq_width = model.sequence_features
         # ★ THE BASELINE RULE RIDES IN THE STATE DICT, so inference cannot use
         #   a different one from the weights (see transformer.BASELINE_LAST).
         #   A checkpoint trained before those buffers existed simply does not
@@ -152,7 +154,8 @@ def _loadModelLocked():
         #   would let a genuinely broken checkpoint load and predict noise;
         #   these two are the only ones a valid older file can be short of.
         missing, unexpected = model.load_state_dict(state, strict=False)
-        surprise = (set(missing) - {"baseline_mode", "baseline_half_life"}) \
+        surprise = (set(missing) - {"baseline_mode", "baseline_half_life",
+                                    "n_derived"}) \
             | set(unexpected)
         if surprise:
             raise RuntimeError(

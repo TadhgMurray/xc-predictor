@@ -150,8 +150,9 @@ class TheTrainingLoopRuns(unittest.TestCase):
                                  CONTEXT_FEATURES)
         out = self._run()
         sd = torch.load(os.path.join(out, "model.pt"), weights_only=False)
-        n_venues = sd["venue_embedding.weight"].shape[0]
-        m = XCPredictor(n_venues=n_venues)
+        # the site's own load (predict._loadModelLocked): the shape --
+        # venues, widths, break features, tail -- comes off the checkpoint
+        m = XCPredictor.fromState(sd)
         m.load_state_dict(sd)
         m.eval()
         seq = torch.randn(2, 5, SEQUENCE_FEATURES).abs() * 100 + 900

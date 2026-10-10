@@ -180,7 +180,8 @@ def test_the_venue_count_comes_from_the_checkpoint_not_the_default():
     assert C.venueCount({"venue_embedding.weight": Fake()}) == 36_571
     src = open(os.path.join(_ROOT, "scripts", "diag_calibration.py")).read()
     assert "XCPredictor()" not in src
-    assert "XCPredictor(n_venues=venueCount(state))" in src
+    # fromState reads the venue count (and every width) off the checkpoint
+    assert "XCPredictor.fromState(state)" in src
 
 
 def test_it_unwraps_every_spelling_train_and_predict_write():

@@ -105,6 +105,25 @@ CONTEXT_GAP_INDEX = 4          # days_since_last_race, raw days
 #   a year of improvement credited to someone who did not train or race.
 CONTEXT_HIDDEN_INDEX = 24
 
+# ★ BREAK FEATURES, DERIVED IN THE MODEL (owner, 2026-10-10: "it
+#   overestimates people who take long breaks" -- and "figure out how to
+#   tell them apart, should be easy with dates"). Three numbers made from
+#   what every example already carries, so no re-extraction and inference
+#   gets them for free:
+#     0  real time away: log1p(gap - hidden) / log(366). The days the athlete
+#        genuinely did not race -- a forecast twin's hidden stretch is racing
+#        we are not showing, not rest.
+#     1  how much they USUALLY race in that stretch of the calendar: their
+#        prior-year races whose day of year falls inside the break, per
+#        year of history (log1p). Off-season breaks score ~0 (nobody races
+#        then); an absence through a stretch they always race -- injury,
+#        illness, quitting -- scores high.
+#     2  how much prior-year history that count rests on, 0..1 (one full
+#        year or more = 1): a first-year runner's 0 in feature 1 means
+#        "unknown", not "off-season".
+DERIVED_FEATURES = 3
+_YEAR_DAYS = 365.25
+
 # Positions inside a sequence row that this file reads by NAME. Mirror
 # _buildSequenceVector in feature_extraction.py: index 0 is the prior race's
 # normalized_time in seconds, index 2 is days before the target.
@@ -354,8 +373,13 @@ class XCPredictor(nn.Module):
     """
 
     def __init__(self, n_venues: int = 1, context_features: int = CONTEXT_FEATURES,
-                 sequence_features: int = SEQUENCE_FEATURES):
+                 sequence_features: int = SEQUENCE_FEATURES,
+                 derived_features: int = 0, student_t: bool = False):
         super().__init__()
+        # ★ 0 / False BUILD THE MODEL EVERY OLDER CHECKPOINT WAS TRAINED AS;
+        #   fromState() reads both off a state_dict, so a file always loads
+        #   into the shape it was trained in.
+        self.derived_features = int(derived_features)
         self.sequence_features = sequence_features
         # ! A CHECKPOINT CARRIES ITS OWN WIDTH. racecast/predict.py builds
         #   the model at the width model.pt was trained with, so a 24-wide
@@ -383,7 +407,8 @@ class XCPredictor(nn.Module):
 
         # The question the target race asks of the history: one query vector
         # made from the context, attending over the encoded races.
-        self.context_query = nn.Linear(context_features, EMBED_DIM)
+        q_width = context_features + self.derived_features
+        self.context_query = nn.Linear(q_width, EMBED_DIM)
         self.pool_attention = nn.MultiheadAttention(
             EMBED_DIM, N_HEADS, dropout=DROPOUT, batch_first=True)
 
@@ -395,7 +420,7 @@ class XCPredictor(nn.Module):
         #   the mean, so every existing caller is unchanged; forwardDist()
         #   returns both.
         self.head = nn.Sequential(
-            nn.Linear(2 * EMBED_DIM + context_features + VENUE_EMBED_DIM, 64),
+            nn.Linear(2 * EMBED_DIM + q_width + VENUE_EMBED_DIM, 64),
             nn.ReLU(),
             nn.Linear(64, 2),
         )
@@ -418,6 +443,35 @@ class XCPredictor(nn.Module):
         self.register_buffer("baseline_mode", torch.full((), BASELINE_LAST))
         self.register_buffer("baseline_half_life",
                              torch.full((), BASELINE_HALF_LIFE_DAYS))
+        self.register_buffer("n_derived",
+                             torch.full((), float(self.derived_features)))
+        # ★ THE TAIL, LEARNED (owner, 2026-10-10: "cleaning the data is
+        #   hard"). Under a Student-t likelihood a row the model cannot
+        #   explain -- two athletes merged, a 5K filed as a 3K -- costs
+        #   log(error), not error^2, so it stops dragging the fit. nu is
+        #   learned: the data says how heavy its own tails are. Started near
+        #   Gaussian (nu ~30) so the first steps behave like the old loss.
+        #   Only training reads it; the head's second output stays the
+        #   VARIANCE, so every band at inference is unchanged in meaning.
+        if student_t:
+            self.nu_raw = nn.Parameter(torch.tensor(28.0))
+
+    @classmethod
+    def fromState(cls, state, **kw):
+        """A model shaped like the checkpoint `state` (a state_dict): its
+        venue count, input widths, derived features and tail, read off the
+        tensors -- so any model.pt loads into the architecture it was
+        trained in."""
+        derived = int(float(state["n_derived"])) if "n_derived" in state else 0
+        return cls(n_venues=state["venue_embedding.weight"].shape[0],
+                   context_features=state["context_query.weight"].shape[1] - derived,
+                   sequence_features=state["input_projection.weight"].shape[1],
+                   derived_features=derived,
+                   student_t="nu_raw" in state, **kw)
+
+    def tailNu(self):
+        """Student-t degrees of freedom, > 2 so the variance exists."""
+        return 2.0 + nn.functional.softplus(self.nu_raw) + 1e-3
 
     # ---- calibration ----------------------------------------------- #
 
@@ -525,6 +579,9 @@ class XCPredictor(nn.Module):
                     venues: torch.Tensor = None) -> torch.Tensor:
         x = (sequences.to(torch.float32) - self.seq_mean) / self.seq_std
         ctx = (context.to(torch.float32) - self.ctx_mean) / self.ctx_std
+        if self.derived_features:
+            ctx = torch.cat([ctx, self.breakFeatures(sequences, masks,
+                                                     context)], dim=1)
 
         x = self.input_projection(x)                     # [B,S,21] -> [B,S,256]
         x = self._encode(x, masks)                        # [B,S,256]
@@ -539,6 +596,35 @@ class XCPredictor(nn.Module):
 
         combined = torch.cat([attended, pooled, ctx, venue_vec], dim=1)
         return self.head(combined)                         # [B,2]
+
+    def breakFeatures(self, sequences, masks, context) -> torch.Tensor:
+        """[B, DERIVED_FEATURES] from the RAW tensors -- see DERIVED_FEATURES."""
+        ctx = context.to(torch.float32)
+        gap = ctx[:, CONTEXT_GAP_INDEX].clamp(min=0.0)
+        hidden = (ctx[:, CONTEXT_HIDDEN_INDEX].clamp(min=0.0)
+                  if ctx.shape[1] > CONTEXT_HIDDEN_INDEX
+                  else torch.zeros_like(gap))
+        lo = torch.minimum(hidden, gap)               # the break: days before
+        hi = gap                                      # the target, lo..hi
+        idle = hi - lo
+        away = torch.log1p(idle) / torch.log(torch.tensor(366.0))
+
+        days = sequences[..., SEQ_DAYS_AGO].to(torch.float32)      # [B,S]
+        real = masks & (days > 0)
+        # a race from an EARLIER year landing in the same stretch of the
+        # calendar: its offset within its own year falls inside lo..hi.
+        # A break of a year or more covers the whole calendar.
+        prior = real & (days >= _YEAR_DAYS)
+        off = torch.remainder(days, _YEAR_DAYS)
+        whole = (idle >= _YEAR_DAYS).unsqueeze(1)
+        inside = (off > lo.unsqueeze(1)) & (off <= hi.unsqueeze(1))
+        hits = (prior & (inside | whole)).sum(dim=1).to(torch.float32)
+        span = (torch.where(real, days, torch.zeros_like(days)).amax(dim=1)
+                - _YEAR_DAYS).clamp(min=0.0)
+        years = (span / _YEAR_DAYS).clamp(min=1.0)
+        usual = torch.log1p(hits / years)
+        known = (span / _YEAR_DAYS).clamp(max=1.0)
+        return torch.stack([away, usual, known], dim=1)
 
     def forwardDist(self, sequences, masks, context, venues=None):
         """(mu, logvar), both [B], in z units of the log ratio.
