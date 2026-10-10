@@ -418,3 +418,33 @@ def test_scoring_still_reads_a_semi_as_not_the_final():
     assert tf_points.rowRound({"round": "S"}, fine=True) == "semi"
     assert tf_points.rowRound({"round": "Q"}, fine=True) == "quarter"
     assert tf_points.rowRound({"round": "F"}, fine=True) == "final"
+
+
+# ---- 12. PR/SR flags: same event kind, same-day earlier rounds ---------- #
+
+def test_record_flags_match_the_event_kind(A, monkeypatch):
+    import rankings
+    monkeypatch.setattr(rankings, "_hasEventKind", lambda cur=None: True)
+    rows = [{"person_id": 1, "result_id": 10, "time_seconds": 40.0, "round": "F"}]
+    cur = StubCursor([[], []])
+    A.stampRecordFlags(cur, "TF", rows, 300, "2026-05-01", event_kind="hurdles")
+    assert all("rr.event_kind = %(kind)s" in sql for sql, _p in cur.sql)
+    assert cur.sql[0][1]["kind"] == "hurdles"
+    cur = StubCursor([[], []])
+    A.stampRecordFlags(cur, "TF", rows, 400, "2026-05-01")
+    assert all("rr.event_kind IS NULL" in sql for sql, _p in cur.sql)
+
+
+def test_a_final_slower_than_that_mornings_prelim_is_no_pr(A, monkeypatch):
+    import rankings
+    monkeypatch.setattr(rankings, "_hasEventKind", lambda cur=None: False)
+    rows = [{"person_id": 1, "result_id": 20, "time_seconds": 50.5, "round": "F"},
+            {"person_id": 1, "result_id": 30, "time_seconds": 50.1, "round": "P"}]
+    same_day = [{"person_id": 1, "result_id": 20, "time_seconds": 50.5, "round": "F"},
+                {"person_id": 1, "result_id": 30, "time_seconds": 50.1, "round": "P"}]
+    prior = [{"person_id": 1, "best_before": 51.0, "season_best_before": 51.0}]
+    cur = StubCursor([prior, same_day])
+    A.stampRecordFlags(cur, "TF", rows, 400, "2026-05-01")
+    final, prelim = rows
+    assert prelim["is_pr"] is True             # the morning's run was the PR
+    assert final["is_pr"] is False and final["is_sr"] is False

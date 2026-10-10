@@ -3910,7 +3910,11 @@ def get_race_results(cur, meet_id, div_id, source=None):
 _REC_DIST_TOL = 0.0025
 
 
-def stampRecordFlags(cur, sport, rows, distance, race_date):
+# The order rounds are run in, for the same-day rule in stampRecordFlags.
+_ROUND_RUN_ORDER = {"prelim": 0, "quarter": 1, "semi": 2, "final": 3}
+
+
+def stampRecordFlags(cur, sport, rows, distance, race_date, event_kind=None):
     """Stamp is_pr / is_sr onto race result rows, anet-style.
 
     A row is a PR when no earlier rated race by that athlete at this
@@ -3924,6 +3928,16 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
     indexed). An athlete with no earlier rated race at the distance gets
     the PR badge -- a debut at a distance is that athlete's best at it,
     which is how every results site treats it.
+
+    ★ THE SAME EVENT, NOT ONLY THE SAME DISTANCE (sweep 2026-10-10). A 400m
+      hurdles page measured its runners against their flat 400s, so no
+      hurdler ever read PR. event_kind (TF, when ranking_results has the
+      column): None is a flat race, 'hurdles' / 'steeple' a timed non-flat
+      one -- build_ranking_results.timedEventKind, the rule that wrote it.
+    ★ AND THE SAME DAY'S EARLIER ROUND. "Strictly before this date" let a
+      final slower than that morning's prelim read PR. A same-day row counts
+      as earlier when its round was run earlier (prelim, quarter, semi,
+      final), and by result id when the rounds do not say.
     """
     if not distance or not race_date:
         return
@@ -3933,8 +3947,19 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
     if not pids:
         return
     yr = seasonYearFromIso(sport, race_date)
+    kind_sql = ""
+    if sport == "TF":
+        from rankings import _hasEventKind
+        if _hasEventKind():
+            kind_sql = ("AND rr.event_kind IS NULL" if event_kind is None
+                        else "AND rr.event_kind = %(kind)s")
+    params = {"sport": sport, "pids": pids, "day": race_date, "yr": yr,
+              "kind": event_kind,
+              "lo": float(distance) * (1 - _REC_DIST_TOL),
+              "hi": float(distance) * (1 + _REC_DIST_TOL)}
+    same_day = {}
     try:
-        cur.execute("""
+        cur.execute(f"""
             SELECT person_id,
                    min(time_seconds) FILTER (
                        WHERE distance BETWEEN %(lo)s AND %(hi)s)
@@ -3943,21 +3968,46 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
                        WHERE distance BETWEEN %(lo)s AND %(hi)s
                          AND year = %(yr)s)
                        AS season_best_before
-            FROM   ranking_results
+            FROM   ranking_results rr
             WHERE  sport = %(sport)s
               AND  person_id = ANY(%(pids)s)
               AND  race_date < %(day)s
               AND  time_seconds > 0 AND time_seconds < 999999
+              {kind_sql}
             GROUP  BY person_id
-        """, {"sport": sport, "pids": pids, "day": race_date, "yr": yr,
-              "lo": float(distance) * (1 - _REC_DIST_TOL),
-              "hi": float(distance) * (1 + _REC_DIST_TOL)})
+        """, params)
         prior = {r["person_id"]: r for r in cur.fetchall()}
+        if sport == "TF":
+            cur.execute(f"""
+                SELECT rr.person_id, rr.result_id, rr.time_seconds, rt.round
+                FROM   ranking_results rr
+                LEFT   JOIN results_tf rt ON rt.result_id = rr.result_id
+                WHERE  rr.sport = 'TF'
+                  AND  rr.person_id = ANY(%(pids)s)
+                  AND  rr.race_date = %(day)s
+                  AND  rr.distance BETWEEN %(lo)s AND %(hi)s
+                  AND  rr.time_seconds > 0 AND rr.time_seconds < 999999
+                  {kind_sql}
+            """, params)
+            for r in cur.fetchall():
+                same_day.setdefault(r["person_id"], []).append(r)
     except Exception as exc:             # noqa: BLE001 -- UndefinedTable et al.
         cur.connection.rollback()
         print(f"stampRecordFlags: {sport} {race_date} skipped: "
               f"{type(exc).__name__}: {exc}", flush=True)
         return
+
+    from tf_points import rowRound
+
+    def ran_before(other, row):
+        a = _ROUND_RUN_ORDER.get(rowRound(other, fine=True))
+        b = _ROUND_RUN_ORDER.get(rowRound(row, fine=True))
+        if a is not None and b is not None and a != b:
+            return a < b
+        try:
+            return int(other["result_id"]) < int(row["result_id"])
+        except (TypeError, ValueError, KeyError):
+            return False
 
     for row in rows:
         t = row.get("time_seconds")
@@ -3966,6 +4016,13 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
         p = prior.get(row["person_id"])
         best = p["best_before"] if p else None
         season = p["season_best_before"] if p else None
+        earlier = [float(o["time_seconds"]) for o in same_day.get(row["person_id"], ())
+                   if o["result_id"] != row.get("result_id") and ran_before(o, row)]
+        if earlier:
+            # same day is the same season
+            best = min([float(best)] + earlier) if best is not None else min(earlier)
+            season = (min([float(season)] + earlier) if season is not None
+                      else min(earlier))
         row["is_pr"] = best is None or float(t) < float(best)
         row["is_sr"] = (not row["is_pr"]
                         and (season is None or float(t) < float(season)))
@@ -5184,8 +5241,15 @@ def race_tf(meet_id, event_id, div_id):
                 if not dist:
                     from normalize_distance import parseEventShort
                     dist = parseEventShort(header.get("event_short")).get("meters")
+                # ! the event's kind, as ranking_results stores it (sweep
+                #   2026-10-10): hurdlers measured against hurdles
+                try:
+                    from build_ranking_results import timedEventKind
+                    ev_kind = timedEventKind(header.get("event_short"))[0]
+                except ImportError:
+                    ev_kind = None
                 stampRecordFlags(cur, "TF", results, dist,
-                                 results[0].get("date"))
+                                 results[0].get("date"), event_kind=ev_kind)
                 stampRatingFlags(cur, "TF", results, results[0].get("date"))
             # ★ EACH RUNNER'S OWN SCHOOL STATE, as the XC race page (owner,
             #   2026-10-09: Zarian Rodriguez of Hamilton AZ read "Hamilton
