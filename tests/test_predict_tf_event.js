@@ -31,6 +31,9 @@ const ok = (cond, msg) => {
   if (!cond) fails++;
 };
 
+// predictions.js's fmtTime delegates to the shared formatter (fmt-time.js)
+const { rcFmtTime } = require("../racecast/static/fmt-time.js");
+
 const sb = eval(`(() => {
   const state = { meet: null, perTeam: null };
   const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")

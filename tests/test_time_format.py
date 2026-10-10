@@ -8,6 +8,9 @@ compiled.html and compare.py split off the minutes and then rounded, so
 import os
 import sys
 
+# panels imports config, which resolves a connection at import. Never used.
+os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _d in ("racecast", "scripts"):
     sys.path.insert(0, os.path.join(_ROOT, _d))

@@ -468,8 +468,9 @@ def test_race_template_places_from_pl_and_links_only_people():
     src = _tpl("race.html")
     assert "{{ row.pl if row.pl else row.pl_status }}" in src
     assert "<span>{{ loop.index }}</span></td>\n        <td class=\"nm\">" not in src
-    for t in ("race.html", "compiled.html"):
-        assert "{% if r and r.person_id %}<a href=\"/athlete/{{ r.person_id }}" in _tpl(t)
+    # race.html links through athlete_href (D2); compiled.html still by ?r=
+    assert "{% if r and r.person_id %}<a href=\"{{ athlete_href(r.person_id" in src
+    assert "{% if r and r.person_id %}<a href=\"/athlete/{{ r.person_id }}" in _tpl("compiled.html")
 
 
 def test_meet_winner_is_never_a_dq_and_carries_its_state(A, monkeypatch):
