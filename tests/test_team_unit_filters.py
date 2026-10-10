@@ -64,106 +64,112 @@ class _Args(dict):
         return [v] if v is not None else []
 
 
-f, err = teams.parseFilters(_Args(sport="XC", pool="college_m",
-                                  division="NCAA DIII"))
-ok(err is None, f"parseFilters rejected a division: {err}")
-ok(f is not None and f.get("division") == ["NCAA DIII"],
-   f"division not parsed: {f.get('division') if f else None}")
-for key in UNIT_FILTERS:
-    ok(f is not None and key in f, f"parseFilters drops the {key} filter")
+def test_team_unit_filters():
+    f, err = teams.parseFilters(_Args(sport="XC", pool="college_m",
+                                      division="NCAA DIII"))
+    ok(err is None, f"parseFilters rejected a division: {err}")
+    ok(f is not None and f.get("division") == ["NCAA DIII"],
+       f"division not parsed: {f.get('division') if f else None}")
+    for key in UNIT_FILTERS:
+        ok(f is not None and key in f, f"parseFilters drops the {key} filter")
 
 
-# ---- 2. a division narrows the FIELD ---------------------------------- #
-params = {}
-where = teams._fieldWhere(_filters(division=["NCAA DIII"]), params)
-ok('t."division" = ANY(%(division_vals)s)' in where,
-   "a division must narrow the field, so raceStored races only those teams")
-ok(params.get("division_vals") == ["NCAA DIII"],
-   "the value must be bound, not interpolated")
+    # ---- 2. a division narrows the FIELD ---------------------------------- #
+    params = {}
+    where = teams._fieldWhere(_filters(division=["NCAA DIII"]), params)
+    ok('t."division" = ANY(%(division_vals)s)' in where,
+       "a division must narrow the field, so raceStored races only those teams")
+    ok(params.get("division_vals") == ["NCAA DIII"],
+       "the value must be bound, not interpolated")
 
-# ⚠ THE REGRESSION: on the TEAM'S OWN stamped column, never on a list of
-#   school names. Owner, 2026-09-08: "DI school in DIII filter: Washington
-#   WA ... NCAA DI". "Washington" is DI in WA and DIII in MO, so a name
-#   match pulled the DI team into a DIII board -- the same class of error
-#   the (school, state) team key exists to prevent.
-ok("_schools" not in where and "t.school = ANY" not in where,
-   "a unit filter must not match by school NAME: shared names put a DI "
-   "school in the DIII field")
+    # ⚠ THE REGRESSION: on the TEAM'S OWN stamped column, never on a list of
+    #   school names. Owner, 2026-09-08: "DI school in DIII filter: Washington
+    #   WA ... NCAA DI". "Washington" is DI in WA and DIII in MO, so a name
+    #   match pulled the DI team into a DIII board -- the same class of error
+    #   the (school, state) team key exists to prevent.
+    ok("_schools" not in where and "t.school = ANY" not in where,
+       "a unit filter must not match by school NAME: shared names put a DI "
+       "school in the DIII field")
 
-# every unit filter team_season stores reaches the field, not just division
-for key in UNIT_FILTERS:
+    # every unit filter team_season stores reaches the field, not just division
+    for key in UNIT_FILTERS:
+        p = {}
+        w = teams._fieldWhere(_filters(**{key: ["X"]}), p)
+        cols = [c for c in __import__("rankings").UNIT_COLUMNS[key]
+                if c in teams.TEAM_UNIT_COLS]
+        if cols:
+            ok(f"%({key}_vals)s" in w,
+               f"the {key} filter never reaches the field")
+        else:
+            ok(f"%({key}_vals)s" not in w,
+               f"{key} is not stored on team_season and must be skipped, not "
+               f"matched against a column that is not there")
+
+
+    # ---- 3. a school stays a SUBJECT -------------------------------------- #
+    #   The distinction is the whole point: race the school filter and every
+    #   filtered squad comes first. _fieldWhere must not touch it.
     p = {}
-    w = teams._fieldWhere(_filters(**{key: ["X"]}), p)
-    cols = [c for c in __import__("rankings").UNIT_COLUMNS[key]
-            if c in teams.TEAM_UNIT_COLS]
-    if cols:
-        ok(f"%({key}_vals)s" in w,
-           f"the {key} filter never reaches the field")
-    else:
-        ok(f"%({key}_vals)s" not in w,
-           f"{key} is not stored on team_season and must be skipped, not "
-           f"matched against a column that is not there")
+    w = teams._fieldWhere(_filters(school=["Amherst"]), p)
+    ok("school" not in w,
+       "a school name must not narrow the field -- see _fieldWhere's docstring")
+    p2 = {}
+    w2 = teams._subjectWhere(_filters(school=["Amherst"]), p2)
+    ok("lower(btrim(t.school))" in w2, "a school is still a subject filter")
 
 
-# ---- 3. a school stays a SUBJECT -------------------------------------- #
-#   The distinction is the whole point: race the school filter and every
-#   filtered squad comes first. _fieldWhere must not touch it.
-p = {}
-w = teams._fieldWhere(_filters(school=["Amherst"]), p)
-ok("school" not in w,
-   "a school name must not narrow the field -- see _fieldWhere's docstring")
-p2 = {}
-w2 = teams._subjectWhere(_filters(school=["Amherst"]), p2)
-ok("lower(btrim(t.school))" in w2, "a school is still a subject filter")
+    # ---- 4. no filter set adds no clause ---------------------------------- #
+    p3 = {}
+    w3 = teams._fieldWhere(_filters(), p3)
+    for key in UNIT_FILTERS:
+        ok(f"{key}_vals" not in p3,
+           f"an unset {key} filter must add no bind (it would kill the index)")
 
 
-# ---- 4. no filter set adds no clause ---------------------------------- #
-p3 = {}
-w3 = teams._fieldWhere(_filters(), p3)
-for key in UNIT_FILTERS:
-    ok(f"{key}_vals" not in p3,
-       f"an unset {key} filter must add no bind (it would kill the index)")
+    # ---- 5. the stored columns match what the build writes ---------------- #
+    #   Three lists have to agree or a filter binds a column that is not there:
+    #   the DDL, build_team_season.UNIT_COLS, and teams.TEAM_UNIT_COLS.
+    BTS = io.open(os.path.join(ROOT, "racecast", "build_team_season.py"),
+                  encoding="utf-8").read()
+    import re as _re
+    _build_units = _re.search(r"UNIT_COLS = \((.*?)\)", BTS, _re.S).group(1)
+    _build_units = tuple(_re.findall(r'"([a-z_]+)"', _build_units))
+    ok(set(_build_units) == set(teams.TEAM_UNIT_COLS),
+       f"build writes {sorted(_build_units)} but teams filters "
+       f"{sorted(teams.TEAM_UNIT_COLS)}")
+    _ddl = BTS[BTS.index("_DDL = "):BTS.index("_COLUMNS = ")]
+    for c in _build_units:
+        ok(f'{c}' in _ddl, f"team_season DDL has no {c} column")
+    # and both passes stamp them -- the all-time board is the one the site opens
+    ok(BTS.count("_unitTuple(t)") == 2,
+       "both toRows and toAlltimeRows must stamp the units")
 
 
-# ---- 5. the stored columns match what the build writes ---------------- #
-#   Three lists have to agree or a filter binds a column that is not there:
-#   the DDL, build_team_season.UNIT_COLS, and teams.TEAM_UNIT_COLS.
-BTS = io.open(os.path.join(ROOT, "racecast", "build_team_season.py"),
-              encoding="utf-8").read()
-import re as _re
-_build_units = _re.search(r"UNIT_COLS = \((.*?)\)", BTS, _re.S).group(1)
-_build_units = tuple(_re.findall(r'"([a-z_]+)"', _build_units))
-ok(set(_build_units) == set(teams.TEAM_UNIT_COLS),
-   f"build writes {sorted(_build_units)} but teams filters "
-   f"{sorted(teams.TEAM_UNIT_COLS)}")
-_ddl = BTS[BTS.index("_DDL = "):BTS.index("_COLUMNS = ")]
-for c in _build_units:
-    ok(f'{c}' in _ddl, f"team_season DDL has no {c} column")
-# and both passes stamp them -- the all-time board is the one the site opens
-ok(BTS.count("_unitTuple(t)") == 2,
-   "both toRows and toAlltimeRows must stamp the units")
+    # ---- 6. and the numbering is NOT hand-rolled -------------------------- #
+    #   If a later change renumbers a sliced board instead of racing it, the
+    #   module's own argument is being ignored.
+    TE = io.open(os.path.join(ROOT, "racecast", "teams.py"), encoding="utf-8").read()
+    ok("raceStored(getTeamField(cur, f))" in TE,
+       "serveBoard must still race the field it selected")
+    # ! SCOPED TO THE TEAM-BOARD FUNCTIONS. getCoursePerformances further down
+    #   uses row_number() for its own per-race dedup, which is a different
+    #   board and a different question.
+    _team_half = TE[TE.index("def getTeamRankings("):TE.index("#  SINGLE RACES")]
+    ok("row_number()" not in _team_half,
+       "the team board must not renumber a sliced board -- hold the meet "
+       "instead (see the module docstring)")
+    ok("row_number()" in TE[TE.index("#  SINGLE RACES"):],
+       "the course board's own row_number should still be there -- if this "
+       "fails the slice above is looking at the wrong half of the file")
 
-
-# ---- 6. and the numbering is NOT hand-rolled -------------------------- #
-#   If a later change renumbers a sliced board instead of racing it, the
-#   module's own argument is being ignored.
-TE = io.open(os.path.join(ROOT, "racecast", "teams.py"), encoding="utf-8").read()
-ok("raceStored(getTeamField(cur, f))" in TE,
-   "serveBoard must still race the field it selected")
-# ! SCOPED TO THE TEAM-BOARD FUNCTIONS. getCoursePerformances further down
-#   uses row_number() for its own per-race dedup, which is a different
-#   board and a different question.
-_team_half = TE[TE.index("def getTeamRankings("):TE.index("#  SINGLE RACES")]
-ok("row_number()" not in _team_half,
-   "the team board must not renumber a sliced board -- hold the meet "
-   "instead (see the module docstring)")
-ok("row_number()" in TE[TE.index("#  SINGLE RACES"):],
-   "the course board's own row_number should still be there -- if this "
-   "fails the slice above is looking at the wrong half of the file")
+    assert not failed, "\n".join(failed)
 
 
 if __name__ == "__main__":
-    for m in failed:
-        print("FAIL:", m)
-    print(f"\n{'FAILED' if failed else 'ok'}: {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)
+    try:
+        test_team_unit_filters()
+    except AssertionError as e:
+        print("FAILED:")
+        print("  - " + str(e).replace("\n", "\n  - "))
+        sys.exit(1)
+    print("test_team_unit_filters: all checks passed")

@@ -41,93 +41,90 @@ def body(src, name):
     return src[i:min(ends)] if ends else src[i:]
 
 
-# ---- 1. ONE DEFINITION OF THE TARGET, AND IT LIVES IN THE MODEL. ---- #
-ok("def baselineSeconds(" in TF and "def targetZ(" in TF
-   and "def predictSeconds(" in TF,
-   "the model defines the baseline, the training target and the inversion")
-ok("model.targetZ(sequences, masks, targets)" in body(TR, "_trainOneEpoch")
-   and "model.targetZ(sequences, masks, targets)" in body(TR, "_validateOneEpoch"),
-   "training and validation both take the target from the model, not from a "
-   "hand-rolled z-score")
-ok("targetZ" in TF and "* self.target_std" in body(TF, "predictSeconds")
-   and "torch.exp(" in body(TF, "predictSeconds"),
-   "predictSeconds inverts exactly what targetZ built: exp(z*std + mean) "
-   "times the baseline")
-ok("SEQ_NORM_TIME" in body(TF, "baselineSeconds")
-   and "SEQ_NORM_TIME" in body(TR, "_chunkBaselines"),
-   "both baseline readers use the named feature index, not a literal 0")
+def test_model_contract():
+    # ---- 1. ONE DEFINITION OF THE TARGET, AND IT LIVES IN THE MODEL. ---- #
+    ok("def baselineSeconds(" in TF and "def targetZ(" in TF
+       and "def predictSeconds(" in TF,
+       "the model defines the baseline, the training target and the inversion")
+    ok("model.targetZ(sequences, masks, targets)" in body(TR, "_trainOneEpoch")
+       and "model.targetZ(sequences, masks, targets)" in body(TR, "_validateOneEpoch"),
+       "training and validation both take the target from the model, not from a "
+       "hand-rolled z-score")
+    ok("targetZ" in TF and "* self.target_std" in body(TF, "predictSeconds")
+       and "torch.exp(" in body(TF, "predictSeconds"),
+       "predictSeconds inverts exactly what targetZ built: exp(z*std + mean) "
+       "times the baseline")
+    ok("SEQ_NORM_TIME" in body(TF, "baselineSeconds")
+       and "SEQ_NORM_TIME" in body(TR, "_chunkBaselines"),
+       "both baseline readers use the named feature index, not a literal 0")
 
-# ---- 2. THE INPUTS ARE STANDARDISED, AND THE STATS RIDE IN model.pt. ---- #
-for buf in ("seq_mean", "seq_std", "ctx_mean", "ctx_std",
-            "target_mean", "target_std", "fallback_seconds"):
-    ok(f'register_buffer("{buf}"' in TF,
-       f"{buf} is a registered buffer, so it is saved with the weights")
-ok("- self.seq_mean) / self.seq_std" in TF
-   and "- self.ctx_mean) / self.ctx_std" in TF,
-   "forward standardises both inputs before the first Linear")
-ok("model.setFeatureStats(" in TR and "model.setTargetStats(" in TR,
-   "main stamps the training stats into the model")
-ok("_trainSideMask(" in body(TR, "main"),
-   "stats are computed on the TRAIN side only")
+    # ---- 2. THE INPUTS ARE STANDARDISED, AND THE STATS RIDE IN model.pt. ---- #
+    for buf in ("seq_mean", "seq_std", "ctx_mean", "ctx_std",
+                "target_mean", "target_std", "fallback_seconds"):
+        ok(f'register_buffer("{buf}"' in TF,
+           f"{buf} is a registered buffer, so it is saved with the weights")
+    ok("- self.seq_mean) / self.seq_std" in TF
+       and "- self.ctx_mean) / self.ctx_std" in TF,
+       "forward standardises both inputs before the first Linear")
+    ok("model.setFeatureStats(" in TR and "model.setTargetStats(" in TR,
+       "main stamps the training stats into the model")
+    ok("_trainSideMask(" in body(TR, "main"),
+       "stats are computed on the TRAIN side only")
 
-# ---- 3. THE TARGET RACE QUERIES THE HISTORY. ---- #
-ok("nn.MultiheadAttention(" in TF and "self.context_query" in TF,
-   "one attention query built from the context reads the encoded history")
-ok("key_padding_mask=~masks" in body(TF, "_askHistory"),
-   "and padding is masked out of that query")
-ok("norm_first=True" in TF, "pre-norm encoder layers")
+    # ---- 3. THE TARGET RACE QUERIES THE HISTORY. ---- #
+    ok("nn.MultiheadAttention(" in TF and "self.context_query" in TF,
+       "one attention query built from the context reads the encoded history")
+    ok("key_padding_mask=~masks" in body(TF, "_askHistory"),
+       "and padding is masked out of that query")
+    ok("norm_first=True" in TF, "pre-norm encoder layers")
 
-# ---- 4. OPTIMISER HYGIENE. ---- #
-ok("torch.optim.AdamW(" in TR and "weight_decay=WEIGHT_DECAY" in TR,
-   "AdamW with decoupled weight decay")
-ok("clip_grad_norm_(model.parameters(), GRAD_CLIP)" in body(TR, "_trainOneEpoch"),
-   "gradients are clipped between backward and step")
-ok("scheduler.step()" in body(TR, "_trainOneEpoch"),
-   "the LR schedule advances once per optimizer step")
-ok("nn.GaussianNLLLoss(" in TR and "model.forwardDist(" in body(TR, "_trainOneEpoch"),
-   "Gaussian NLL with the learned variance, not MSE")
-ok("def forwardDist(" in TF and "def predictInterval(" in TF
-   and "nn.Linear(64, 2)" in TF, "the head predicts a mean and a log-variance")
-ok("clamp(min=LOGVAR_MIN, max=LOGVAR_MAX)" in body(TF, "forwardDist"),
-   "the log-variance is clamped")
-ok("inside_1s" in body(TR, "_validateOneEpoch") and "sigma_pct" in body(TR, "main"),
-   "calibration is printed every epoch")
-ok("model.predictInterval(" in PR and '"sigma_pct"' in PR,
-   "predict.py returns the band")
-ok('"scheduler": (scheduler.state_dict()' in body(TR, "_saveCheckpoint")
-   and 'scheduler.load_state_dict(ck["scheduler"])' in body(TR, "_loadCheckpoint"),
-   "the schedule resumes with the run")
-for c in ("VAR_EPS", "WEIGHT_DECAY", "WARMUP_STEPS", "LR_FLOOR_FRAC",
-          "GRAD_CLIP", "STATS_CHUNKS"):
-    ok(re.search(rf"^{c} = ", TR, re.M) is not None, f"{c} is a named constant")
+    # ---- 4. OPTIMISER HYGIENE. ---- #
+    # ! PARAM GROUPS since 8b2008d: the Student-t tail's nu_raw is exempt
+    #   from decay, so WEIGHT_DECAY rides on the decayed group, not a kwarg.
+    ok("torch.optim.AdamW(" in TR and '"weight_decay": WEIGHT_DECAY' in TR,
+       "AdamW with decoupled weight decay")
+    ok("clip_grad_norm_(model.parameters(), GRAD_CLIP)" in body(TR, "_trainOneEpoch"),
+       "gradients are clipped between backward and step")
+    ok("scheduler.step()" in body(TR, "_trainOneEpoch"),
+       "the LR schedule advances once per optimizer step")
+    # ! THE LOSS IS train.Likelihood since 8b2008d (Gaussian or Student-t
+    #   NLL on z, from the head's variance); nn.GaussianNLLLoss is gone. The
+    #   epoch reaches forwardDist through `fwd` (the DDP wrapper under torchrun).
+    ok("class Likelihood(nn.Module)" in TR and "criterion = Likelihood(" in TR
+       and "0.5 * (torch.log(var) + r2 / var)"
+       in TR[TR.index("class Likelihood("):]
+       and "fwd = fwd or model.forwardDist" in body(TR, "_trainOneEpoch"),
+       "Gaussian NLL with the learned variance, not MSE")
+    ok("def forwardDist(" in TF and "def predictInterval(" in TF
+       and "nn.Linear(64, 2)" in TF, "the head predicts a mean and a log-variance")
+    ok("clamp(min=LOGVAR_MIN, max=LOGVAR_MAX)" in body(TF, "forwardDist"),
+       "the log-variance is clamped")
+    ok("inside_1s" in body(TR, "_validateOneEpoch") and "sigma_pct" in body(TR, "main"),
+       "calibration is printed every epoch")
+    ok("model.predictInterval(" in PR and '"sigma_pct"' in PR,
+       "predict.py returns the band")
+    ok('"scheduler": (scheduler.state_dict()' in body(TR, "_saveCheckpoint")
+       and 'scheduler.load_state_dict(ck["scheduler"])' in body(TR, "_loadCheckpoint"),
+       "the schedule resumes with the run")
+    for c in ("VAR_EPS", "WEIGHT_DECAY", "WARMUP_STEPS", "LR_FLOOR_FRAC",
+              "GRAD_CLIP", "STATS_CHUNKS"):
+        ok(re.search(rf"^{c} = ", TR, re.M) is not None, f"{c} is a named constant")
 
-# ---- 5. THE BASELINE IS PRINTED BESIDE THE MODEL. ---- #
-ok("last-race" in body(TR, "main") and "pct_base" in body(TR, "main"),
-   "every epoch prints the last-race error beside the model's")
+    # ---- 5. THE BASELINE IS PRINTED BESIDE THE MODEL. ---- #
+    ok("last-race" in body(TR, "main") and "pct_base" in body(TR, "main"),
+       "every epoch prints the last-race error beside the model's")
 
-# ---- 6. THE SITE INVERTS WITH THE MODEL, AND READS EITHER KEY. ---- #
-ok("predictInterval" in PR,
-   "predict.py inverts through the model for a log-ratio model")
-ok('stats.get("mean", stats.get("target_mean"))' in PR,
-   "predict.py reads either spelling of the stats keys")
-ok('"mean": float(stats["mean"])' in body(TR, "saveTargetStats")
-   and '"target_mean": float(stats["mean"])' in body(TR, "saveTargetStats"),
-   "train.py writes both spellings")
-ok("predictInterval" in PC, "predict_check inverts with the model too")
+    # ---- 6. THE SITE INVERTS WITH THE MODEL, AND READS EITHER KEY. ---- #
+    ok("predictInterval" in PR,
+       "predict.py inverts through the model for a log-ratio model")
+    ok('stats.get("mean", stats.get("target_mean"))' in PR,
+       "predict.py reads either spelling of the stats keys")
+    ok('"mean": float(stats["mean"])' in body(TR, "saveTargetStats")
+       and '"target_mean": float(stats["mean"])' in body(TR, "saveTargetStats"),
+       "train.py writes both spellings")
+    ok("predictInterval" in PC, "predict_check inverts with the model too")
 
-if failed:
-    for f in failed:
-        print("  FAIL " + f)
-    print(f"\n{len(failed)} check(s) failed")
-    sys.exit(1)
-
-print("  one target definition, owned by the model ......... OK")
-print("  inputs standardised, stats saved with the weights .. OK")
-print("  the target race queries the history ................ OK")
-print("  AdamW, clipping, warmup/cosine, NLL+variance, resumable OK")
-print("  last-race baseline printed every epoch ............. OK")
-print("  the site inverts with the model .................... OK")
-print("\nall model-contract checks passed")
+    assert not failed, "\n".join(failed)
 
 
 def test_a_corrupt_time_cannot_end_a_run():
@@ -178,3 +175,13 @@ def test_the_clamp_lives_on_the_model_so_inference_shares_it():
     from transformer import XCPredictor
     src = inspect.getsource(XCPredictor.targetZ)
     assert "clamp" in src, src
+
+
+if __name__ == "__main__":
+    try:
+        test_model_contract()
+    except AssertionError as e:
+        print("FAILED:")
+        print("  - " + str(e).replace("\n", "\n  - "))
+        sys.exit(1)
+    print("test_model_contract: all checks passed")

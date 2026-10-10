@@ -39,4 +39,8 @@ def test_search_index_swaps():
     # through dbfast.swapTable since the sweep of 2026-10-10 (D5/D6)
     assert 'swapTable(conn, "search_index", renames=[' in src
     assert '("idx_search_new_prefix", "idx_search_prefix")' in src
-    assert src.index("DROP TABLE IF EXISTS search_index_new") < src.index("_LOADERS[args.only](conn)")
+    # the loaders run in one loop now (each prints its own time; --only
+    # skips the rest), and the shadow is dropped before that loop starts
+    main = src[src.index("def main("):]
+    assert (main.index("DROP TABLE IF EXISTS search_index_new")
+            < main.index("for key, fn in _LOADERS.items():"))

@@ -97,9 +97,9 @@ def test_the_actual_comes_off_the_uncut_history():
     what the comparison is looking for."""
     fn = body("_predictTimes")
     i = fn.index('if target.get("mode") in ("rerun", "rerun_exact")')
-    # ! 2400, not 900 (2026-10-10): the track-predictions merge put the
-    #   this-event's-row filter between the `full` read and the raw time
-    block = fn[i:i + 2400]
+    # the whole rerun branch, not 900 characters: the track meet's
+    # same-event match (2026-10-10) sits between the cut and the time now
+    block = fn[i:fn.index("\n    if batch:", i)]
     assert "for r in full" in block, block
     # and it is the RAW time they ran, not its normalized form: the
     # prediction beside it is a race time now

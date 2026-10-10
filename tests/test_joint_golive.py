@@ -33,7 +33,7 @@ def synthetic_pack(seed=11):
     return out, D, cols, keep, truth, raw
 
 
-def main():
+def test_build_live():
     out, D, cols, keep, truth, raw = synthetic_pack()
     live = jg.buildLive(out, D, cols, keep)
     jg.report(live)
@@ -123,9 +123,15 @@ def main():
     for k in ("difficulty", "difficulty_raw", "solved", "degree", "weight",
               "cell_var", "course_keys"):
         assert k in live["npz"], k
-    assert abs(np.average(live["npz"]["difficulty"][live["npz"]["solved"]],
-                          weights=live["npz"]["degree"][live["npz"]["solved"]])
-               ) < 0.01
+    # ★ THE ZERO IS THE AVERAGE TRACK (owner, 2026-09-10: "the average tf
+    #   course will have difficulty 0.0 and be the baseline"): the UNWEIGHTED
+    #   mean over solved outdoor track cells, not a degree-weighted mean over
+    #   every cell -- cross country sits off zero by the grass cost on purpose.
+    npz = live["npz"]
+    tf = npz["solved"] & np.array([str(k).startswith("TF:")
+                                   for k in npz["course_keys"]])
+    assert tf.any()
+    assert abs(np.mean(np.log1p(npz["difficulty"][tf]))) < 1e-6
     print("  pair_difficulty.npz shape, anchored ................... OK")
 
     # athlete_ratings keyed (person_id, pool), one row per pair
@@ -135,7 +141,7 @@ def main():
     print("\nall joint_golive tests passed")
 
 
-def per_sport_day_term():
+def test_per_sport_day_term():
     """The race-day term applies per sport (owner, 2026-09-06): XC only
     by default in run_joint; here both, XC only, and none."""
     out, D, cols, keep, truth, raw = synthetic_pack()
@@ -156,7 +162,7 @@ def per_sport_day_term():
     print("  race-day term per sport: XC keeps it, TF drops it, default none  OK")
 
 
-def fast_day_only():
+def test_fast_day_only():
     """'XC:fast' (owner, 2026-09-28): a fast XC day reaches the rating, a
     slow one does not; TF untouched."""
     out, D, cols, keep, truth, raw = synthetic_pack()
@@ -176,7 +182,7 @@ def fast_day_only():
     print("  race-day term, XC fast days only ...................... OK")
 
 
-def winter_gain_paths():
+def test_winter_gain_paths():
     """The winter gain by LEVEL, by BAND, by both and by neither.
 
     ⚠ THE RUN THAT CRASHED (2026-09-15). --sport-level-pools without
@@ -218,7 +224,7 @@ def winter_gain_paths():
 
 
 if __name__ == "__main__":
-    main()
-    per_sport_day_term()
-    fast_day_only()
-    winter_gain_paths()
+    test_build_live()
+    test_per_sport_day_term()
+    test_fast_day_only()
+    test_winter_gain_paths()

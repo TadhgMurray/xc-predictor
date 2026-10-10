@@ -40,46 +40,52 @@ def ok(cond, msg):
     return cond
 
 
-# ---- 1. both sports, or half the training set keeps them --------------- #
-ok(SRC.count("FROM wheelchair_person wp") == 2,
-   f"both the XC and TF queries must exclude chair athletes, found "
-   f"{SRC.count('FROM wheelchair_person wp')}")
+def test_model_excludes_chairs():
+    # ---- 1. both sports, or half the training set keeps them --------------- #
+    ok(SRC.count("FROM wheelchair_person wp") == 2,
+       f"both the XC and TF queries must exclude chair athletes, found "
+       f"{SRC.count('FROM wheelchair_person wp')}")
 
-# ⚠ PERSON, NOT athlete_id. The list is kept per person_id because one
-#   athlete_id is one (name, school) pairing and a person can have several;
-#   keying the exclusion on athlete_id would leak every chair athlete who
-#   ever changed schools.
-ok(SRC.count("wp.person_id = r.person_id") == 2,
-   "both must key on person_id -- an athlete_id is one (name, school) "
-   "pairing and a person can hold several")
+    # ⚠ PERSON, NOT athlete_id. The list is kept per person_id because one
+    #   athlete_id is one (name, school) pairing and a person can have several;
+    #   keying the exclusion on athlete_id would leak every chair athlete who
+    #   ever changed schools.
+    ok(SRC.count("wp.person_id = r.person_id") == 2,
+       "both must key on person_id -- an athlete_id is one (name, school) "
+       "pairing and a person can hold several")
 
-# ! NOT EXISTS, NOT A JOIN. A join to a list would drop rows whose person_id
-#   is NULL as a side effect, silently changing the sample.
-ok(SRC.count("NOT EXISTS (SELECT 1 FROM wheelchair_person") == 2,
-   "an anti-join, so a NULL person_id is kept rather than quietly dropped")
-
-
-# ---- 2. it sits with the other row filters ----------------------------- #
-for marker in ("_XC_SQL", "_TF_SQL"):
-    i = SRC.index(marker)
-    j = SRC.index("_ORDER_BY", i)
-    ok("wheelchair_person" in SRC[i:j],
-       f"{marker} must carry the exclusion inside its own WHERE, not rely "
-       f"on a caller filtering afterwards")
+    # ! NOT EXISTS, NOT A JOIN. A join to a list would drop rows whose person_id
+    #   is NULL as a side effect, silently changing the sample.
+    ok(SRC.count("NOT EXISTS (SELECT 1 FROM wheelchair_person") == 2,
+       "an anti-join, so a NULL person_id is kept rather than quietly dropped")
 
 
-# ---- 3. the same table the engine reads -------------------------------- #
-#   If the model ever grew its own chair list, the two would drift and
-#   nothing would say which was right.
-ENG = io.open(os.path.join(ROOT, "engine", "speed_ratings_db.py"),
-              encoding="utf-8").read()
-ok("wheelchair_person" in ENG,
-   "the engine must still read the same table -- if this ever moves, the "
-   "model's filter has to move with it")
+    # ---- 2. it sits with the other row filters ----------------------------- #
+    for marker in ("_XC_SQL", "_TF_SQL"):
+        i = SRC.index(marker)
+        j = SRC.index("_ORDER_BY", i)
+        ok("wheelchair_person" in SRC[i:j],
+           f"{marker} must carry the exclusion inside its own WHERE, not rely "
+           f"on a caller filtering afterwards")
+
+
+    # ---- 3. the same table the engine reads -------------------------------- #
+    #   If the model ever grew its own chair list, the two would drift and
+    #   nothing would say which was right.
+    ENG = io.open(os.path.join(ROOT, "engine", "speed_ratings_db.py"),
+                  encoding="utf-8").read()
+    ok("wheelchair_person" in ENG,
+       "the engine must still read the same table -- if this ever moves, the "
+       "model's filter has to move with it")
+
+    assert not failed, "\n".join(failed)
 
 
 if __name__ == "__main__":
-    for m in failed:
-        print("FAIL:", m)
-    print(f"\n{'FAILED' if failed else 'ok'}: {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)
+    try:
+        test_model_excludes_chairs()
+    except AssertionError as e:
+        print("FAILED:")
+        print("  - " + str(e).replace("\n", "\n  - "))
+        sys.exit(1)
+    print("test_model_excludes_chairs: all checks passed")

@@ -74,8 +74,13 @@ class ReturningUnits(unittest.TestCase):
     def test_removing_grades_still_demands_one_year(self):
         """Unchanged, and correct: an all-time board with the seniors
         removed is a field of squads from thirty seasons."""
-        self.assertIn("removing grades needs exactly one year selected",
-                      self.src)
+        # ★ STILL ONE YEAR, NOW FILLED IN RATHER THAN REFUSED (owner,
+        #   2026-09-15: "choosing events still causes an error. same with
+        #   graduating"): no Year defaults to the current season, and only
+        #   SEVERAL years is refused -- with the reworded message.
+        self.assertIn('or bool(f["exclude_grade"])', self.src)
+        self.assertIn("an event or grade filter needs ONE season", self.src)
+        self.assertIn('f["year_defaulted"] = True', self.src)
 
 
 if __name__ == "__main__":

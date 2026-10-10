@@ -2,6 +2,7 @@
 #
 # Install:  /srv/venv/bin/pip install -r requirements-scrape.txt -r requirements-site.txt
 flask
+jinja2                   # racecast/app.py imports it directly (@jinja2.pass_context)
 werkzeug
 markupsafe
 numpy

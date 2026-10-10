@@ -105,10 +105,8 @@
       </p>
       <div class="mp-links"><a href="{{ nx.next.predict_href }}">Open the prediction →</a>
         {% if nx.meets|length > 1 %}<span class="dist-note">{{ nx.meets|length - 1 }} more likely meet{{ "s" if nx.meets|length > 2 }} this season</span>{% endif %}
-        {# ! url_for and is_team (2026-10-10): the merge brought this in as a
-           bare /school/ link, which test_school_logos fails; the route itself
-           404s a non-team name, so a guard here only drops a dead link #}
-        {% if s.school and s.school|is_team %}<a href="{{ url_for('team_meets.school_meets_ics', school_name=s.school, sport=nx.next.sport, state=(s.state or none)) }}">Calendar (.ics)</a>{% endif %}</div>
+        {#- ! is_team: the .ics route 404s a name that is no team (Unattached) -#}
+        {% if s.school and s.school|is_team %}<a href="{{ cal_href(s.school, s.state, sport=nx.next.sport) }}">Calendar (.ics)</a>{% endif %}</div>
       {% endcall %}
     {% else %}
     <p class="mp-empty">No meet on the calendar that {{ c.school_label or "their team" }} ran last time. Meets appear here once their hosts post them.</p>

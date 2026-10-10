@@ -64,7 +64,9 @@ def test_the_per_reader_block_rides_the_topbar_s_one_request():
     assert "replace(/%2F/g, '/')" in js
     # and the failure path must still fire, or this block waits forever
     top = read("racecast", "static", "topbar-search.js")
-    catch = top.split(".catch(", 1)[1]
+    # the /api/me request's catch -- the search box above it has its own
+    # .catch( since 59e6c3a (friendly load errors), so not the first one
+    catch = top[top.index("/api/me"):].split(".catch(", 1)[1]
     assert "xcp:me" in catch.split("})", 1)[0] + catch[:400]
 
 

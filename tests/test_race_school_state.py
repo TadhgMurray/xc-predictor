@@ -101,7 +101,9 @@ def test_the_template_prefers_it_and_falls_back_to_the_meet():
     #   the phone line under the athlete's name (crest, label) and the
     #   School column (crest, href, label). Both read the one answer.
     cell = html[html.index("{% set sst = row.school_state"):]
-    cell = cell[:cell.index('<td class="n tm">')]
+    # (the time cell carries data-t for the sort since the results-first
+    # page, so it no longer closes right after its class)
+    cell = cell[:cell.index('<td class="n tm"')]
     # the set, then six readers: subline crest + label, column crest +
     # href + label + the unlinked label -- school_identity.contextState's
     # "a mention resolves ONCE"
@@ -122,7 +124,9 @@ def test_the_race_route_stamps_before_it_renders():
 
 def test_the_scoring_split_prefers_the_assignment_over_the_home_state():
     src = open(os.path.join(_ROOT, "racecast", "meet_compile.py")).read()
-    body = src[src.index("def splitCollisionTeams(cur, rows):"):]
+    # (it takes meet_state= and published_names= too since the compiled
+    # meet pages, so match the name, not the old two-argument signature)
+    body = src[src.index("def splitCollisionTeams(cur, rows"):]
     assert 'if pids and _has("school_athlete_state"):' in body
     # the assignment is tried first, and only then the home state and alias
     i_assigned = body.index('st = assigned.get((s, r.get("person_id")))')

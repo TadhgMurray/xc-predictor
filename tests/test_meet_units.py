@@ -80,4 +80,12 @@ def test_pipeline_and_template_carry_the_feature():
     sh = read("deploy", "run_pipeline.sh")
     assert "10e_meet_units" in sh and "13c_search_index" in sh
     tpl = read("racecast", "templates", "meets.html")
-    assert 'name="champ"' in tpl and 'name="unit"' in tpl and "Championship of" in tpl
+    # ★ ONE BOX PER KIND (owner, 2026-09-06: "it should just be a filter
+    #   thing like in the rankings board"): the single name="unit" box and the
+    #   championships checkbox became one input per unit kind, and a filled
+    #   box means "the championship OF that unit" (meets_filter: a unit alone
+    #   implies championships). The old ?unit= / ?champ= links still parse --
+    #   test_meets_filter_reads_champ_and_unit holds that.
+    assert 'name="{{ k }}"' in tpl and 'data-kind="{{ k }}"' in tpl
+    assert 'A box\n           filled means "the championship OF that unit"' in tpl
+    assert "Championship of" in tpl and "filters.champ" in tpl

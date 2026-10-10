@@ -56,7 +56,11 @@ const ok = (c, m) => { if (!c) { console.error("  FAIL " + m); failed++; } };
        paying an UNBOUNDED scan for it is not. With no LIMIT inside, the
        DISTINCT ON had to materialise every athlete-season matching the name
        before anything could be cut -- over an unindexed ILIKE '%tok%'. */
-  ok(/ORDER {2}BY s\.person_id, s\.year DESC\n\s+--[\s\S]*?LIMIT {2}200/
+  /* ! THE SQL COMMENT THAT USED TO SIT BETWEEN THEM MOVED OUT of the query
+       (a `--` comment inside it carried a bare % and broke psycopg2's
+       parameter parsing; see the note above api_predict_athletes), so a
+       comment there is allowed, not required. */
+  ok(/ORDER {2}BY s\.person_id, s\.year DESC\s*(?:--[^\n]*\n\s*)*LIMIT {2}200/
        .test(body),
      "the inner query keeps a LIMIT, so the scan can stop");
   const order = body.lastIndexOf("ORDER  BY (CASE WHEN lower(name)");

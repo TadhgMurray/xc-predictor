@@ -164,6 +164,12 @@ def test_the_page_queries_carry_rating_pool():
                "def get_tf_venue_bests("):
         i = src.index(fn)
         body = src[i:src.index("\ndef ", i + 10)]
+        # ! THE VENUE PAGE READS ITS ROWS ONCE (955d0bd): get_tf_venue_bests
+        #   selects r.* from the venue_rows temp table, and the column is
+        #   brought in where that table is built.
+        if "_ensureVenueRows(cur" in body:
+            j = src.index("def _ensureVenueRows(")
+            body += src[j:src.index("\ndef ", j + 10)]
         assert "_ratingPoolCol(cur" in body or "rp_xc" in body, fn
     mc = open(os.path.join(_ROOT, "racecast", "meet_compile.py"),
               encoding="utf-8").read()

@@ -11,7 +11,8 @@ for sub in ("backfill", "engine", "scripts"):
 os.environ.setdefault("XCP_DB_PASSWORD", "x")
 if "corrections" not in sys.modules:            # 165 MB, not in git
     _c = types.ModuleType("corrections")
-    _c.__getattr__ = lambda name: {}
+    _c.__getattr__ = lambda name: (  # not dunders: see test_model_one_scale
+        {} if not name.startswith("__") else getattr(object(), name))
     sys.modules["corrections"] = _c
 # the real database module, not another test's stand-in (see
 # test_backfill_merge_speed.py)

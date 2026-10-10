@@ -311,6 +311,12 @@ def calHref(school, state=None, level=None, sport="XC"):
     return f"/school/{quote(school, safe='/')}/meets.ics?{urlencode(q)}"
 
 
+# ! A TEMPLATE GLOBAL TOO, so a page holding only a season row (my_page's
+#   athlete card) builds the calendar link through this one spelling rather
+#   than hand-writing /school/... (tests/test_school_logos.py OneHref).
+bp.add_app_template_global(calHref, "cal_href")
+
+
 @bp.route("/school/<path:school_name>/meets.ics")
 def school_meets_ics(school_name):
     """The team's likely meets as a calendar. Public and cacheable like the

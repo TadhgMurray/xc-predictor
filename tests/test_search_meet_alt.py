@@ -65,12 +65,12 @@ def test_the_page_side_ranks_the_same_way_and_the_race_page_carries_alt():
     # the race links carry ?alt= through meet.html's race_q() macro
     assert "{% macro race_q() %}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}" in meet
     assert "/race/xc/{{ header.meet_id }}/{{ d.div_id }}{{ race_q() }}" in meet
-    # ! since the compiled level split (2026-10-10) the primary level's link
-    #   carries race_q() through _rq, and every other level appends it to
-    #   its ?level=
+    # ★ EACH LEVEL COMPILES APART since e485bc3: the compiled link reads
+    #   race_q() once into _rq and joins it to ?level= on a non-primary group
     assert "{% set _rq = race_q()|string %}" in meet
-    assert "/compiled/{{ g.distance }}/{{ g.gender|urlencode }}{% if g.primary %}{{ _rq }}" in meet
-    assert "?level={{ g.level|urlencode }}{% if _rq %}&amp;{{ _rq[1:] }}" in meet
+    assert ("/compiled/{{ g.distance }}/{{ g.gender|urlencode }}"
+            "{% if g.primary %}{{ _rq }}{% else %}?level={{ g.level|urlencode }}"
+            "{% if _rq %}&amp;{{ _rq[1:] }}{% endif %}{% endif %}") in meet
     race = _src("racecast", "templates", "race.html")
     assert '/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}' in race
     sm = _src("racecast", "build_sitemap.py")

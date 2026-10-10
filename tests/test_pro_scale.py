@@ -72,92 +72,98 @@ def _run(names, ability, pool, season=None):
     return poolMeanPerGroup(ability, attrs, np.ones(pool.size, bool))
 
 
-NAMES = ["hs_m", "college_m", "pro_m", "college_f", "pro_f"]
-ABILITY = [1.30, 1.00, 0.95, 1.05, 0.80, 0.78]
-POOL = [0, 1, 1, 1, 2, 2]
+def test_pro_scale():
+    NAMES = ["hs_m", "college_m", "pro_m", "college_f", "pro_f"]
+    ABILITY = [1.30, 1.00, 0.95, 1.05, 0.80, 0.78]
+    POOL = [0, 1, 1, 1, 2, 2]
 
-career, seasonal = _run(NAMES, ABILITY, POOL)
-ab = np.array(ABILITY)
-pl = np.array(POOL)
-college_mean = ab[pl == 1].mean()
-pro_mean = ab[pl == 2].mean()
+    career, seasonal = _run(NAMES, ABILITY, POOL)
+    ab = np.array(ABILITY)
+    pl = np.array(POOL)
+    college_mean = ab[pl == 1].mean()
+    pro_mean = ab[pl == 2].mean()
 
-# ---- 1. a pro is anchored on the college mean ------------------------- #
-ok(np.allclose(career[pl == 2], college_mean),
-   f"pro rows anchor on {career[pl == 2]}, want the college mean "
-   f"{college_mean}")
-ok(np.allclose(seasonal[pl == 2], college_mean),
-   "the seasonal half must redirect too, or the athlete page and the race "
-   "row disagree about what 100 means")
+    # ---- 1. a pro is anchored on the college mean ------------------------- #
+    ok(np.allclose(career[pl == 2], college_mean),
+       f"pro rows anchor on {career[pl == 2]}, want the college mean "
+       f"{college_mean}")
+    ok(np.allclose(seasonal[pl == 2], college_mean),
+       "the seasonal half must redirect too, or the athlete page and the race "
+       "row disagree about what 100 means")
 
-# ---- 2. and the college mean is NOT moved by them --------------------- #
-#   The whole reason the anchor moves rather than the pool.
-ok(np.allclose(career[pl == 1], college_mean),
-   "college rows must still be anchored on collegians alone")
-ok(not np.isclose(college_mean, pro_mean),
-   "the fixture is pointless if the two means are equal")
+    # ---- 2. and the college mean is NOT moved by them --------------------- #
+    #   The whole reason the anchor moves rather than the pool.
+    ok(np.allclose(career[pl == 1], college_mean),
+       "college rows must still be anchored on collegians alone")
+    ok(not np.isclose(college_mean, pro_mean),
+       "the fixture is pointless if the two means are equal")
 
-# ---- 3. the ratings actually rise ------------------------------------- #
-before = 100.0 * pro_mean / ab[pl == 2]
-after = 100.0 * career[pl == 2] / ab[pl == 2]
-ok((after > before).all(),
-   f"pro ratings did not rise: {np.round(before,1)} -> {np.round(after,1)}")
-college_ratings = 100.0 * college_mean / ab[pl == 1]
-ok(after.min() > college_ratings.max(),
-   f"a pro faster than every collegian should out-rate them all: "
-   f"pro {np.round(after,1)} vs college {np.round(college_ratings,1)}")
+    # ---- 3. the ratings actually rise ------------------------------------- #
+    before = 100.0 * pro_mean / ab[pl == 2]
+    after = 100.0 * career[pl == 2] / ab[pl == 2]
+    ok((after > before).all(),
+       f"pro ratings did not rise: {np.round(before,1)} -> {np.round(after,1)}")
+    college_ratings = 100.0 * college_mean / ab[pl == 1]
+    ok(after.min() > college_ratings.max(),
+       f"a pro faster than every collegian should out-rate them all: "
+       f"pro {np.round(after,1)} vs college {np.round(college_ratings,1)}")
 
-# ---- 4. other pools are untouched ------------------------------------- #
-ok(np.allclose(career[pl == 0], ab[pl == 0].mean()),
-   "the high-school pool must keep its own anchor")
-
-
-# ---- 5. the map itself -------------------------------------------------#
-m = _proScaleMap(NAMES)
-ok(m[NAMES.index("pro_m")] == NAMES.index("college_m"), "pro_m -> college_m")
-ok(m[NAMES.index("pro_f")] == NAMES.index("college_f"), "pro_f -> college_f")
-for keep in ("hs_m", "college_m", "college_f"):
-    ok(m[NAMES.index(keep)] == NAMES.index(keep),
-       f"{keep} must map to itself")
-
-# ⚠ NO COLLEGE POOL OF THAT GENDER: keep the pro's own anchor rather than
-#   rating against a pool that is not there.
-only = ["pro_m"]
-ok(_proScaleMap(only)[0] == 0,
-   "with no college pool present a pro keeps its own anchor")
-c2, _ = _run(only, [0.80, 0.78], [0, 0])
-ok(np.allclose(c2, np.mean([0.80, 0.78])),
-   "and the arithmetic still works in that case")
+    # ---- 4. other pools are untouched ------------------------------------- #
+    ok(np.allclose(career[pl == 0], ab[pl == 0].mean()),
+       "the high-school pool must keep its own anchor")
 
 
-# ---- 6. a season with no collegians keeps its own anchor -------------- #
-#   The seasonal redirect is a lookup, not an index remap: the (college,
-#   season) code may simply not exist.
-names = ["college_m", "pro_m"]
-ability = [1.00, 1.10, 0.80, 0.78]
-pool = [0, 0, 1, 1]
-season = [2025, 2025, 2024, 2024]        # pros race a year the college did not
-c3, s3 = _run(names, ability, pool, season)
-ab3 = np.array(ability, float)
-pl3 = np.array(pool)
-ok(np.allclose(s3[pl3 == 1], ab3[pl3 == 1].mean()),
-   "a pro season with no college season of the same year must fall back to "
-   "its own seasonal mean, not to a code that does not exist")
-ok(np.allclose(c3[pl3 == 1], ab3[pl3 == 0].mean()),
-   "the CAREER anchor still redirects: it is per pool, not per season")
+    # ---- 5. the map itself -------------------------------------------------#
+    m = _proScaleMap(NAMES)
+    ok(m[NAMES.index("pro_m")] == NAMES.index("college_m"), "pro_m -> college_m")
+    ok(m[NAMES.index("pro_f")] == NAMES.index("college_f"), "pro_f -> college_f")
+    for keep in ("hs_m", "college_m", "college_f"):
+        ok(m[NAMES.index(keep)] == NAMES.index(keep),
+           f"{keep} must map to itself")
+
+    # ⚠ NO COLLEGE POOL OF THAT GENDER: keep the pro's own anchor rather than
+    #   rating against a pool that is not there.
+    only = ["pro_m"]
+    ok(_proScaleMap(only)[0] == 0,
+       "with no college pool present a pro keeps its own anchor")
+    c2, _ = _run(only, [0.80, 0.78], [0, 0])
+    ok(np.allclose(c2, np.mean([0.80, 0.78])),
+       "and the arithmetic still works in that case")
 
 
-# ---- 7. pros are still not on a board -------------------------------- #
-sys.path.insert(0, os.path.join(ROOT, "racecast"))
-sys.path.insert(0, os.path.join(ROOT, "scripts"))
-from rankings import POOLS                                       # noqa: E402
-ok(not any(p.startswith("pro") for p in POOLS),
-   "rated on the college scale, NOT ranked as college -- a pro pool must "
-   "not become board-eligible")
+    # ---- 6. a season with no collegians keeps its own anchor -------------- #
+    #   The seasonal redirect is a lookup, not an index remap: the (college,
+    #   season) code may simply not exist.
+    names = ["college_m", "pro_m"]
+    ability = [1.00, 1.10, 0.80, 0.78]
+    pool = [0, 0, 1, 1]
+    season = [2025, 2025, 2024, 2024]        # pros race a year the college did not
+    c3, s3 = _run(names, ability, pool, season)
+    ab3 = np.array(ability, float)
+    pl3 = np.array(pool)
+    ok(np.allclose(s3[pl3 == 1], ab3[pl3 == 1].mean()),
+       "a pro season with no college season of the same year must fall back to "
+       "its own seasonal mean, not to a code that does not exist")
+    ok(np.allclose(c3[pl3 == 1], ab3[pl3 == 0].mean()),
+       "the CAREER anchor still redirects: it is per pool, not per season")
+
+
+    # ---- 7. pros are still not on a board -------------------------------- #
+    sys.path.insert(0, os.path.join(ROOT, "racecast"))
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from rankings import POOLS                                       # noqa: E402
+    ok(not any(p.startswith("pro") for p in POOLS),
+       "rated on the college scale, NOT ranked as college -- a pro pool must "
+       "not become board-eligible")
+
+    assert not failed, "\n".join(failed)
 
 
 if __name__ == "__main__":
-    for msg in failed:
-        print("FAIL:", msg)
-    print(f"\n{'FAILED' if failed else 'ok'}: {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)
+    try:
+        test_pro_scale()
+    except AssertionError as e:
+        print("FAILED:")
+        print("  - " + str(e).replace("\n", "\n  - "))
+        sys.exit(1)
+    print("test_pro_scale: all checks passed")

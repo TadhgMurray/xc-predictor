@@ -290,7 +290,10 @@ class TheOpaqueRegion(unittest.TestCase):
         src = open(os.path.join(_ROOT, "scripts",
                                 "scrape_school_logos.py")).read()
         i = src.index("def regroundAll(")
-        j = src.index("def main():", i)
+        # ! TO THE NEXT FUNCTION, NOT TO main(): rekeyAll and setLogo now sit
+        #   between them, and they FETCH on purpose (re-keying damaged crests
+        #   from source, pinning an override URL) -- they are not the repair.
+        j = src.index("\ndef ", i + 1)
         body = src[i:j]
         for banned in ("requests", "urlopen", "fetch(", "source_url", "http"):
             self.assertNotIn(banned, body, f"{banned} in the repair pass")
