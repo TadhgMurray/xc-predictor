@@ -1371,7 +1371,8 @@ step 11_teams         "$PY" -u racecast/build_team_season.py
 #   at-large selection and nationals, simulated for D1/D2/D3 men and women,
 #   one stored row per board per week (build_ncaa_projection.py). Reads
 #   athlete_season and the season's tfrrs results; /ncaa reads its table.
-step 11c_ncaa         "$PY" -u racecast/build_ncaa_projection.py
+#   OFF until XCP_NCAA=1: run it by hand once first.
+if [ "${XCP_NCAA:-0}" = "1" ]; then step 11c_ncaa "$PY" -u racecast/build_ncaa_projection.py; fi
 # ! THE PAGE INDEXES COME BEFORE THE COURSE PAGES. They ran AFTER them
 #   (step 14), so every course page of a first run was built without the
 #   indexes the course queries need; 12b took 41,047 s on 2026-09-02.

@@ -202,7 +202,11 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
         step 10g2_rank_snapshot "$PY" -u racecast/build_rank_snapshot.py
         # ★ the NCAA projection (build_ncaa_projection.py, 2026-10-10): the
         #   week's row rewritten with tonight's results; off the chain too
-        step 11c_ncaa "$PY" -u racecast/build_ncaa_projection.py
+        #   OFF until XCP_NCAA=1: run it by hand once first (never run on
+        #   the real tables yet)
+        if [ "${XCP_NCAA:-0}" = "1" ]; then
+          step 11c_ncaa "$PY" -u racecast/build_ncaa_projection.py
+        fi
       fi
       # ★ THE HOME PAGE AND /meets READ panels.py's tables (homepage_recent:
       #   "Latest results"), so without this a meet scraped tonight had a
