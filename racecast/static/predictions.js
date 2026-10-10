@@ -2896,9 +2896,32 @@ function timeBasisNote(runners) {
     equivalent because their level or this distance has no conversion.</p>`;
 }
 
+/* ★ THE 5K COLUMN (owner, 2026-10-10: "add [a 5K column] to all pages with
+   ratings"). The API stamps r.rating_5k (m:ss) and r.rating_5k_dist ("5K",
+   or "3200m" in middle school) -- conversions.stampFiveK, the track 5K the
+   row's own-pool rating is worth. One clock for both scale views. The
+   header names the distance every row shares, else "Track ≈" and each cell
+   names its own; .fk-sm drops it on a phone, where the predicted time is
+   the clock that matters. */
+const FK_TITLE = "The track 5K this rating is worth";
+
+function fkHead(rows) {
+  const ds = new Set();
+  (rows || []).forEach((r) => { if (r && r.rating_5k_dist) ds.add(r.rating_5k_dist); });
+  if (ds.size > 1) return "Track \u2248";
+  return ds.size === 1 && !ds.has("5K") ? Array.from(ds)[0] : "5K";
+}
+
+function fkCell(r, head) {
+  if (!r || !r.rating_5k) return '<td class="fk fk-sm"><span class="fk-none">-</span></td>';
+  const d = r.rating_5k_dist;
+  return `<td class="fk fk-sm">${esc(r.rating_5k)}${d && d !== head ? ` <span class="fk-d">${esc(d)}</span>` : ""}</td>`;
+}
+
 function finishTable(d) {
   const runners = d.runners || [];
   if (!runners.length) return "";
+  const fk = fkHead(runners);
   // a track event's Points are event points (predict._eventPoints)
   const points = d.scoring === "points";
   // the r marker only means something when the field mixes the two bases
@@ -2924,13 +2947,14 @@ function finishTable(d) {
           ? `<span class="pred-band">${fmtRaceTime(r.lo)}–${
               fmtRaceTime(r.hi)}</span>` : ""}</td>
       <td class="no-break">${rv(r.rating, r.hs_rating) || " - "}</td>
+      ${fkCell(r, fk)}
       <td>${(points ? r.points : r.score_place) || " - "}</td>
     </tr>`).join("");
   return `<h2>Predicted results</h2>
     <table>
       <thead><tr>
         <th>Place</th><th>Athlete</th><th>Grade</th><th>School</th>
-        <th>Time</th><th>Rating</th><th>Points</th>
+        <th>Time</th><th>Rating</th><th class="fk fk-sm" title="${FK_TITLE}">${esc(fk)}</th><th>Points</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
@@ -3267,6 +3291,7 @@ function lineupPanel(d, label, onCard, nowSim, objective, idx) {
   const ins = [...best].filter((id) => !onCard.has(id));
   const outs = [...onCard].filter((id) => !best.has(id));
   const pts = (x) => (x == null ? " - " : x.toFixed(1));
+  const fk = fkHead(rows);
 
   const line = (r, tag) => `<tr>
       <td>${r.person_id ? `<a href="/athlete/${encodeURIComponent(r.person_id)}">${
@@ -3274,6 +3299,7 @@ function lineupPanel(d, label, onCard, nowSim, objective, idx) {
       <td>${esc(r.grade_label || " - ")}</td>
       <td class="no-break">${fmtTime(r.seconds)}</td>
       <td class="no-break">${rv(r.rating, r.hs_rating) || " - "}</td>
+      ${fkCell(r, fk)}
       <td class="bl-tag">${tag}</td></tr>`;
   const lineupRows = (d.lineup || []).map((r) => line(r,
     onCard.has(String(r.person_id)) ? "" : "<b>in</b>")).join("");
@@ -3304,9 +3330,9 @@ function lineupPanel(d, label, onCard, nowSim, objective, idx) {
         ? ` <em>(card: ${pts(nowSim.score_mean)})</em>` : ""}</span></p>
     <p>${change}</p>
     <table class="bl-table">
-      <thead><tr><th>Runs</th><th>Grade</th><th>Time</th><th>Rating</th><th></th></tr></thead>
+      <thead><tr><th>Runs</th><th>Grade</th><th>Time</th><th>Rating</th><th class="fk fk-sm" title="${FK_TITLE}">${esc(fk)}</th><th></th></tr></thead>
       <tbody>${lineupRows}</tbody>
-      ${benchRows ? `<thead><tr><th colspan="5">Rests</th></tr></thead>
+      ${benchRows ? `<thead><tr><th colspan="6">Rests</th></tr></thead>
         <tbody class="bl-bench">${benchRows}</tbody>` : ""}
     </table>
     ${alts ? `<p class="meta">Close behind:</p><ul class="bl-alts">${alts}</ul>` : ""}

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_inline %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -49,11 +49,11 @@
     </div>
     <div class="rc-champs">
       <div><span class="k">{{ card_a.season_label ~ " rating" if card_a.season_rating is not none else "Athlete" }}</span>
-        <span class="rc-crow">{% if card_a.school and card_a.school|is_team %}{{ crest(card_a.school, card_a.state, pool=card_a.pool) }}{% endif %}<b class="rc-cn"><span class="h2h-dot dot-a"></span><a href="/athlete/{{ card_a.person_id }}">{{ card_a.name }}</a></b><i>{% if card_a.season_rating is not none %}{{ rv(card_a.season_rating, card_a.season_rating_hs) }}{% endif %}</i></span>
-        <span class="rc-csub">{% if card_a.school %}{{ card_a.school|school_label_for(card_a.pool, card_a.state) }}{% endif %}{% if card_a.grade %} · {{ card_a.grade|grade_label(card_a.pool) }}{% endif %}{% if card_a.best_rating %} · best race {{ rv(card_a.best_rating, card_a.best_rating_hs) }}{% endif %}</span></div>
+        <span class="rc-crow">{% if card_a.school and card_a.school|is_team %}{{ crest(card_a.school, card_a.state, pool=card_a.pool) }}{% endif %}<b class="rc-cn"><span class="h2h-dot dot-a"></span><a href="/athlete/{{ card_a.person_id }}">{{ card_a.name }}</a></b><i>{% if card_a.season_rating is not none %}{{ rv(card_a.season_rating, card_a.season_rating_hs) }}{{ fk_inline(five_k(card_a.season_rating, card_a.season_pool, card_a.season_sport, card_a.season_rating_hs)) }}{% endif %}</i></span>
+        <span class="rc-csub">{% if card_a.school %}{{ card_a.school|school_label_for(card_a.pool, card_a.state) }}{% endif %}{% if card_a.grade %} · {{ card_a.grade|grade_label(card_a.pool) }}{% endif %}{% if card_a.best_rating %} · best race {{ rv(card_a.best_rating, card_a.best_rating_hs) }}{{ fk_inline(card_a.best_5k) }}{% endif %}</span></div>
       <div><span class="k">{{ card_b.season_label ~ " rating" if card_b.season_rating is not none else "Athlete" }}</span>
-        <span class="rc-crow">{% if card_b.school and card_b.school|is_team %}{{ crest(card_b.school, card_b.state, pool=card_b.pool) }}{% endif %}<b class="rc-cn"><span class="h2h-dot dot-b"></span><a href="/athlete/{{ card_b.person_id }}">{{ card_b.name }}</a></b><i>{% if card_b.season_rating is not none %}{{ rv(card_b.season_rating, card_b.season_rating_hs) }}{% endif %}</i></span>
-        <span class="rc-csub">{% if card_b.school %}{{ card_b.school|school_label_for(card_b.pool, card_b.state) }}{% endif %}{% if card_b.grade %} · {{ card_b.grade|grade_label(card_b.pool) }}{% endif %}{% if card_b.best_rating %} · best race {{ rv(card_b.best_rating, card_b.best_rating_hs) }}{% endif %}</span></div>
+        <span class="rc-crow">{% if card_b.school and card_b.school|is_team %}{{ crest(card_b.school, card_b.state, pool=card_b.pool) }}{% endif %}<b class="rc-cn"><span class="h2h-dot dot-b"></span><a href="/athlete/{{ card_b.person_id }}">{{ card_b.name }}</a></b><i>{% if card_b.season_rating is not none %}{{ rv(card_b.season_rating, card_b.season_rating_hs) }}{{ fk_inline(five_k(card_b.season_rating, card_b.season_pool, card_b.season_sport, card_b.season_rating_hs)) }}{% endif %}</i></span>
+        <span class="rc-csub">{% if card_b.school %}{{ card_b.school|school_label_for(card_b.pool, card_b.state) }}{% endif %}{% if card_b.grade %} · {{ card_b.grade|grade_label(card_b.pool) }}{% endif %}{% if card_b.best_rating %} · best race {{ rv(card_b.best_rating, card_b.best_rating_hs) }}{{ fk_inline(card_b.best_5k) }}{% endif %}</span></div>
     </div>
     {% endif %}
   </div>
@@ -159,9 +159,9 @@
             <tr>
                 <td>{{ s.year }} {{ s.sport|sport_short }}</td>
                 <td{{ ' class="win"'|safe if s.edge == "a" }}>
-                    {% if s.a %}{{ rv(s.a.rating, s.a.hs_rating) }} ({{ s.a.races }}){% else %} - {% endif %}</td>
+                    {% if s.a %}{{ rv(s.a.rating, s.a.hs_rating) }} ({{ s.a.races }}){{ fk_inline(five_k(s.a.rating, s.a.pool, s.a.sport, s.a.hs_rating)) }}{% else %} - {% endif %}</td>
                 <td{{ ' class="win"'|safe if s.edge == "b" }}>
-                    {% if s.b %}{{ rv(s.b.rating, s.b.hs_rating) }} ({{ s.b.races }}){% else %} - {% endif %}</td>
+                    {% if s.b %}{{ rv(s.b.rating, s.b.hs_rating) }} ({{ s.b.races }}){{ fk_inline(five_k(s.b.rating, s.b.pool, s.b.sport, s.b.hs_rating)) }}{% else %} - {% endif %}</td>
                 {% if s.edge == "a" %}<td class="margin-a">{{ card_a.short }} +{{ rv(s.edge_by, s.hs_edge_by) }}</td>
                 {% elif s.edge == "b" %}<td class="margin-b">{{ card_b.short }} +{{ rv(s.edge_by, s.hs_edge_by) }}</td>
                 {% else %}<td> - </td>{% endif %}
@@ -190,9 +190,9 @@
                 <td>Best speed rating</td>
                 {% set ba = brate.get("a") %}{% set bb = brate.get("b") %}
                 <td{{ ' class="win"'|safe if brate_edge == "a" }}>
-                    {% if ba %}{{ rv(ba.speed_rating, ba.hs_speed_rating) }}{% else %} - {% endif %}</td>
+                    {% if ba %}{{ rv(ba.speed_rating, ba.hs_speed_rating) }}{{ fk_inline(five_k(ba.speed_rating, ba.pool, ba.sport, ba.hs_speed_rating)) }}{% else %} - {% endif %}</td>
                 <td{{ ' class="win"'|safe if brate_edge == "b" }}>
-                    {% if bb %}{{ rv(bb.speed_rating, bb.hs_speed_rating) }}{% else %} - {% endif %}</td>
+                    {% if bb %}{{ rv(bb.speed_rating, bb.hs_speed_rating) }}{{ fk_inline(five_k(bb.speed_rating, bb.pool, bb.sport, bb.hs_speed_rating)) }}{% else %} - {% endif %}</td>
             </tr>
             {% endif %}
         </tbody>

@@ -12,6 +12,8 @@
                    switch that does nothing reads as broken. Pages must also
                    load static/scale-view.js, which wires this by its id.
 
+   fk_th / fk_td / fk / fk_inline  the 5K column (below).
+
    Import with:  {% from "_scale.html" import rv, scale_toggle %}
    ===================================================================== #}
 
@@ -19,6 +21,38 @@
     {%- if value is not none -%}
     <span class="rv"{% if hs is not none %} data-hs="{{ "%.1f"|format(hs) }}"{% endif %}>{{ "%.1f"|format(value) }}</span>
     {%- else -%} - {%- endif -%}
+{%- endmacro %}
+
+{# ★ THE 5K COLUMN (owner, 2026-10-10: "add [a 5K column] to all pages with
+   ratings"). Beside a rating, the track 5K it is worth (3200 m in middle
+   school) -- app's five_k global, off conversions' per-pool clock tables.
+   ONE clock for both scale views: the own-pool and HS-equivalent numbers
+   are one athlete, so scale-view.js leaves these cells alone.
+
+   fk_th(label)          the header; label from five_k_label(pools) --
+                         '5K', '3200m', or 'Track ≈' for a mix of levels
+   fk_td(c, label)       one cell; c = five_k(rating, pool, sport, hs). The
+                         distance is written in the cell only under 'Track ≈'
+   fk(r, pool, sp, hs, label)   five_k + fk_td in one
+   fk_inline(c)          for a card or list with no column: a muted
+                         "≈ 15:02" (and "3200m" when it is not a 5K)
+   `cls` adds classes, e.g. 'fk-sm' to drop the column under 700 px on a
+   page whose table would otherwise scroll sideways, 'fk-l' to start it at
+   its left edge in a table whose every column is left-aligned. #}
+{% macro fk_th(label="5K", cls="") -%}
+    <th class="n fk{% if cls %} {{ cls }}{% endif %}" title="The track 5K this rating is worth">{{ label or "5K" }}</th>
+{%- endmacro %}
+
+{% macro fk_td(c, label="5K", cls="") -%}
+    <td class="n fk{% if cls %} {{ cls }}{% endif %}">{% if c %}{{ c.time }}{% if c.dist != label %} <span class="fk-d">{{ c.dist }}</span>{% endif %}{% else %}<span class="fk-none">-</span>{% endif %}</td>
+{%- endmacro %}
+
+{% macro fk(r, pool, sport="XC", hs=none, label="5K", cls="") -%}
+    {{ fk_td(five_k(r, pool, sport, hs), label, cls) }}
+{%- endmacro %}
+
+{% macro fk_inline(c) -%}
+    {%- if c %}<span class="fk-i" title="The track 5K this rating is worth">&asymp;&nbsp;{{ c.time }}{% if c.dist != "5K" %}&nbsp;{{ c.dist }}{% endif %}</span>{% endif -%}
 {%- endmacro %}
 
 {# hidden=True starts the control display:none for pages whose boards load

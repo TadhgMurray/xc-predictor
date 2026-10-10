@@ -24,7 +24,9 @@
      ~ " from the latest meets in " ~ where ~ ", measured against each athlete's own season." %}
 {% set meta_crumbs = [("Rankings", "/rankings"), ("Breakouts", none)] %}
 {% include "_meta.html" %}
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_th, fk, fk_inline %}
+{# ★ one level is one pool: the 5K column reads every rating on it (2026-10-10) #}
+{% set bpool = levels[level][0] %}
 <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
 <body>
@@ -68,7 +70,7 @@
       <div class="rc-champs">
         {% if breakouts %}{% set b0 = breakouts[0] %}
         <div><span class="k">Biggest jump</span>
-          <span class="rc-crow">{% if b0.school and b0.school|is_team %}{{ crest(b0.school, b0.state, pool=plevel) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ b0.person_id }}{% if b0.result_id %}?r={{ b0.result_id }}{% endif %}">{{ b0.name }}</a></b><i>+{{ rv(b0.jump, b0.hs_jump) }} to {{ rv(b0.speed_rating, b0.hs_speed_rating) }}</i></span></div>
+          <span class="rc-crow">{% if b0.school and b0.school|is_team %}{{ crest(b0.school, b0.state, pool=plevel) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ b0.person_id }}{% if b0.result_id %}?r={{ b0.result_id }}{% endif %}">{{ b0.name }}</a></b><i>+{{ rv(b0.jump, b0.hs_jump) }} to {{ rv(b0.speed_rating, b0.hs_speed_rating) }}{{ fk_inline(five_k(b0.speed_rating, bpool, sport, b0.hs_speed_rating)) }}</i></span></div>
         {% endif %}
         {% if prs %}{% set p0 = prs[0] %}
         <div><span class="k">Biggest PR · {{ "%.0f"|format(p0.std) }} m</span>
@@ -157,7 +159,7 @@
   <table class="p2-tbl p2-brk">
     <thead><tr>
       <th class="num">#</th><th>Athlete</th><th class="p2-wide">School</th><th>Race</th>
-      <th class="num">Rating</th><th class="num" title="Points above the median of their earlier races this season">Jump</th>
+      <th class="num">Rating</th>{{ fk_th(five_k_label([bpool]), "fk-sm") }}<th class="num" title="Points above the median of their earlier races this season">Jump</th>
       <th class="num p2-wide" title="Median of their earlier rated races this season (how many)">Usual</th>
     </tr></thead>
     <tbody>
@@ -170,6 +172,7 @@
         <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}
           <span class="p2-row-sub">{{ r.race_date|mdy }}{% if r.time_seconds %} &middot; {{ r.time_seconds|proj_time }}{% endif %}{% if r.distance %} &middot; {{ "%.0f"|format(r.distance) }} m{% endif %}</span></td>
         <td class="num">{{ rv(r.speed_rating, r.hs_speed_rating) }}</td>
+        {{ fk(r.speed_rating, bpool, sport, r.hs_speed_rating, five_k_label([bpool]), "fk-sm") }}
         <td class="num p2-up">+{{ rv(r.jump, r.hs_jump) }}
           {% if r.beat_best %}<span class="flag flag--rsr" tabindex="0" data-title="Season Best rating"
             {# ! A BLURB CANNOT TOGGLE, so it says the default scale's number

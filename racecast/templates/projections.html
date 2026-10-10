@@ -41,6 +41,10 @@
   {% set meta_crumbs = [("Projections", none)] %}
 {% endif %}
 {% include "_meta.html" %}
+{# ★ THE 5K COLUMN (owner, 2026-10-10): a projection is high-school cross
+   country, so every season rating here reads on hs_m / hs_f #}
+{% from "_scale.html" import fk_th, fk, fk_inline %}
+{% set ppool = "hs_f" if gender == "girls" else "hs_m" %}
 <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
 <body>
@@ -189,7 +193,7 @@
         {% endif %}
         {% if p.individuals %}{% set r0 = p.individuals[0] %}
         <div><span class="k">Projected individual</span>
-          <span class="rc-crow">{% if r0.school %}{{ crest(r0.school, r0.school_state, pool='hs') }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ r0.person_id }}">{{ r0.name }}</a></b><i>{{ "%.1f"|format(r0.rating) }}{% if r0.est_seconds %} · {{ r0.est_seconds|proj_time }}{% endif %}</i></span></div>
+          <span class="rc-crow">{% if r0.school %}{{ crest(r0.school, r0.school_state, pool='hs') }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ r0.person_id }}">{{ r0.name }}</a></b><i>{{ "%.1f"|format(r0.rating) }}{{ fk_inline(five_k(r0.rating, ppool, "XC")) }}{% if r0.est_seconds %} · {{ r0.est_seconds|proj_time }}{% endif %}</i></span></div>
         {% endif %}
       </div>
       {% endif %}
@@ -260,13 +264,13 @@
             <ol class="p2-lineup">
               {% for ru in t.runners %}
               <li><a href="/athlete/{{ ru.person_id }}">{{ ru.name }}</a>
-                <span class="p2-muted">{{ ru.grade|grade_label('hs') if ru.grade }} &middot; {{ "%.1f"|format(ru.rating) if ru.rating is not none }} &middot; {{ ru.n_races }} race{{ "s" if ru.n_races != 1 }}</span>{% if ru.thin %} <span class="p2-thin">thin</span>{% endif %}
+                <span class="p2-muted">{{ ru.grade|grade_label('hs') if ru.grade }} &middot; {{ "%.1f"|format(ru.rating) if ru.rating is not none }}{% if ru.rating is not none %}{{ fk_inline(five_k(ru.rating, ppool, "XC")) }}{% endif %} &middot; {{ ru.n_races }} race{{ "s" if ru.n_races != 1 }}</span>{% if ru.thin %} <span class="p2-thin">thin</span>{% endif %}
                 <span class="p2-muted">&middot; finishes {{ ru.place }}{% if ru.score_place and ru.score_place != ru.place %}, scores {{ ru.score_place }}{% elif not ru.score_place %}, past the seventh{% endif %}</span></li>
               {% endfor %}
             </ol>
           </details>
         </td>
-        <td class="num p2-wide">{{ "%.1f"|format(t.top5) if t.top5 is not none }}</td>
+        <td class="num p2-wide">{% if t.top5 is not none %}{{ "%.1f"|format(t.top5) }}{{ fk_inline(five_k(t.top5, ppool, "XC")) }}{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -282,7 +286,7 @@
     <thead><tr>
       <th class="num">#</th><th>Athlete</th><th>School</th>
       <th class="p2-wide">Grade</th>
-      <th class="num">Rating</th><th class="num">Races</th>
+      <th class="num">Rating</th>{{ fk_th("5K", "fk-sm") }}<th class="num">Races</th>
       {% if p.individuals and p.individuals[0].est_seconds %}<th class="num p2-wide" title="The season rating as a time at the state course">Est. time</th>{% endif %}
     </tr></thead>
     <tbody>
@@ -293,6 +297,7 @@
         <td>{% if r.school %}{{ crest(r.school, r.school_state, pool='hs') }}<a href="{{ school_href(r.school, r.school_state, pool='hs') }}">{{ r.school|school_label_for('hs', r.school_state) }}</a>{% else %}<span class="p2-muted">unattached</span>{% endif %}</td>
         <td class="p2-wide">{{ r.grade|grade_label('hs') if r.grade else "" }}</td>
         <td class="num">{{ "%.1f"|format(r.rating) }}</td>
+        {{ fk(r.rating, ppool, "XC", none, "5K", "fk-sm") }}
         <td class="num">{{ r.n_races }}{% if r.thin %} <span class="p2-thin" title="{{ r.n_races }} rated race{{ 's' if r.n_races != 1 }} this season">thin</span>{% endif %}</td>
         {% if p.individuals[0].est_seconds %}<td class="num p2-wide">{{ r.est_seconds|proj_time }}</td>{% endif %}
       </tr>
@@ -344,7 +349,7 @@
         <td class="tp">{{ r.place }}</td>
         <td class="tn"><a href="/athlete/{{ r.person_id }}">{{ r.name }}</a>
           <span class="sp">{% if r.school %}{{ r.school|school_label_for('hs', r.school_state) }}{% else %}unattached{% endif %}{% if r.thin %} · thin{% endif %}</span></td>
-        <td class="n tpts">{{ "%.1f"|format(r.rating) }}</td>
+        <td class="n tpts">{{ "%.1f"|format(r.rating) }}{{ fk_inline(five_k(r.rating, ppool, "XC")) }}</td>
       </tr>
       {% endfor %}
       </tbody>

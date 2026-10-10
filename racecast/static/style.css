@@ -5985,3 +5985,28 @@ main.rc .flag { line-height: 13px; vertical-align: 1px; }
   .topbar .topnav a, .topbar .topnav-more > summary { display: inline-flex; align-items: center; min-height: 24px; }
   .topbar .viewswitch a { display: inline-flex; align-items: center; box-sizing: border-box; min-height: 24px; }
 }
+
+/* ★ THE 5K COLUMN (owner, 2026-10-10: "add [a 5K column] to all pages with
+     ratings"; _scale.html's fk_th / fk_td / fk_inline, and rankings.js and
+     the other board scripts draw the same classes). Narrow, muted, right-
+     aligned, tabular: a gloss on the rating beside it, never a second
+     headline. .fk-sm drops the column under 700 px where the table would
+     otherwise scroll sideways; the race and athlete pages keep it. */
+/* ! right-aligned EVERYWHERE: the boards left-align every header with a
+     page-scoped rule (.rankings-page table.rk th) that a class cannot outrank */
+th.fk, td.fk { text-align: right !important; white-space: nowrap; font-variant-numeric: tabular-nums; width: 1%; }
+td.fk { color: var(--muted, #6b7280); font-size: .85em; font-weight: 400; }
+th.fk { cursor: help; }
+/* ! .fk-l: a table whose every column is left-aligned and sized by the
+     page (the school tables) spread a right-aligned 5K against the NEXT
+     column, where it read as that column's. There it starts at its own
+     left edge, beside the rating it glosses. */
+th.fk.fk-l, td.fk.fk-l { text-align: left !important; }
+.fk .fk-d { font-size: .78em; }
+.fk .fk-none { opacity: .5; }
+.fk-i { color: var(--muted, #6b7280); font-size: .8em; font-weight: 400; margin-left: .35em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* a side card's figure column is narrow: the 5K goes under the rating */
+.rc-tscores-plain td.tpts .fk-i { display: block; margin-left: 0; line-height: 1.2; }
+@media (max-width: 699px) {
+  .fk-sm { display: none; }
+}

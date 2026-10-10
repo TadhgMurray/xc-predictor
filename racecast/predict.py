@@ -711,6 +711,13 @@ def _decorate(rows, sport):
             # No conversion available for this pool -- the raw rating shows,
             # which is what the column did before the toggle existed.
             pass
+        # ★ rating_5k / rating_5k_dist: the 5K column (owner, 2026-10-10),
+        #   the track 5K the row's own-pool rating is worth (predictions.js)
+        try:
+            from conversions import stampFiveK
+            stampFiveK(rated, "rating", sport=sport)
+        except Exception:                               # noqa: BLE001
+            pass
 
 
 def _fromDivs(from_div, team):

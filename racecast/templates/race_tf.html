@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_th, fk %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
 {% from "_equiv_line.html" import equiv_line %}
 {% from "_recflag.html" import recflag, ratflag %}
@@ -97,10 +97,15 @@
         <th class="n">Result</th>
         {% if has_wind %}<th class="n rc-wide">Wind</th>{% endif %}
         <th class="n">Rating{{ rating_i() }}{% if above_spec %}<span class="vs-level-h rc-sub">vs level{{ al.level_i() }}</span>{% endif %}</th>
+        {# ★ every track rating as the same track 5K (3200 m in middle
+           school) the cross country pages show (owner, 2026-10-10) -- not
+           this event's distance: one column, one reference #}
+        {% set fk_label = five_k_label(results|map(attribute="label_pool")) %}
+        {{ fk_th(fk_label) }}
         {% if has_pts %}<th class="n rc-wide">Pts</th>{% endif %}
       </tr></thead>
       <tbody>
-      {% set n_cols = 5 + (1 if has_wind else 0) + (1 if has_pts else 0) %}
+      {% set n_cols = 6 + (1 if has_wind else 0) + (1 if has_pts else 0) %}
       {% for sec in sections %}
       {% if sec.label %}<tr class="heat-row rc-heat"><td colspan="{{ n_cols }}">{{ sec.label }}</td></tr>{% endif %}
       {% for row in sec.rows %}
@@ -121,6 +126,7 @@
         <td class="n tm"{% if row.time_seconds and not row.is_field and not row.is_relay %} data-t="{{ row.time_seconds }}"{% endif %}>{{ row.display_result }}{{ recflag(row) }}</td>
         {% if has_wind %}<td class="n rc-wide wind">{{ "%+.1f"|format(row.wind) if row.wind is not none else " - " }}</td>{% endif %}
         <td class="n rt" data-rx="tf:{{ row.result_id }}"><span class="rc-rv">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</span>{% if above_spec %}<span class="vs-level" data-rid="{{ row.result_id }}"></span>{% endif %}</td>
+        {{ fk(row.speed_rating, row.rating_pool or row.label_pool, "TF", row.hs_rating, fk_label) }}
         {% if has_pts %}<td class="n pts rc-wide">{{ row.points if row.points else "" }}</td>{% endif %}
       </tr>
       {% endfor %}

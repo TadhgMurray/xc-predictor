@@ -243,6 +243,30 @@ def _empty_sport():
             "_hs_sum": 0.0, "_hs_n": 0}
 
 
+# ★ THE AVERAGE'S 5K (owner, 2026-10-10: a 5K beside every rating). An
+#   average over ONE pool is a rating on that pool's scale and reads off it
+#   like any other; an average across pools (high school then college) is a
+#   mix of scales no clock belongs to, so it is read as its HS-equivalent on
+#   the same-gender HS pool -- the number the page opens on. None when
+#   neither can be said; never raises (a bests card without its gloss is
+#   still a bests card).
+def _avgFiveK(bucket, races, sport):
+    pools = {r.get("pool") for r in races
+             if r.get("sport") == sport and r.get("speed_rating") is not None}
+    try:
+        from conversions import fiveK
+        if len(pools) == 1 and None not in pools and bucket.get("avg_rating"):
+            got = fiveK(bucket["avg_rating"], next(iter(pools)), sport)
+            if got:
+                return got
+        genders = {str(p).partition("_")[2][:1] for p in pools if p}
+        if len(genders) == 1 and bucket.get("avg_rating_hs"):
+            return fiveK(bucket["avg_rating_hs"], "hs_" + genders.pop(), sport)
+    except Exception:                                   # noqa: BLE001
+        return None
+    return None
+
+
 def all_time_bests(races):
     """
     Career bests, split by sport.
@@ -321,6 +345,7 @@ def all_time_bests(races):
             bucket["avg_rating"] = bucket["_rating_sum"] / bucket["_rating_n"]
         if bucket["_hs_n"]:
             bucket["avg_rating_hs"] = bucket["_hs_sum"] / bucket["_hs_n"]
+        bucket["avg_5k"] = _avgFiveK(bucket, races, sport)
 
         del bucket["_rating_sum"], bucket["_rating_n"]
         del bucket["_hs_sum"], bucket["_hs_n"]
@@ -406,6 +431,11 @@ def season_bests_flat(races, seasons):
         bucket["season_rating_hs"] = (
             season.get("rating_hs") if isinstance(season, dict) else
             getattr(season, "rating_hs", None)
+        )
+        # the scale the season rating is on, for its 5K (2026-10-10)
+        bucket["season_pool"] = (
+            season.get("pool") if isinstance(season, dict) else
+            getattr(season, "pool", None)
         )
 
     return sorted(buckets.items(), reverse=True)

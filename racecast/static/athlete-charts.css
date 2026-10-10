@@ -484,11 +484,11 @@
 .season table th:nth-child(4),
 .season table th:nth-child(5),
 .season table th:nth-child(6),
-.season table th:nth-child(7),
+.season table th:nth-child(8),
 .season table td:nth-child(4),
 .season table td:nth-child(5),
 .season table td:nth-child(6),
-.season table td:nth-child(7) {
+.season table td:nth-child(8) {
   text-align: left;
   /* Fixed-width digits, so 149.3 and 15:01.1 still line up column-wise once
      the right edge is no longer doing that job. */
@@ -525,13 +525,14 @@
      instead of the last column silently collapsing to zero width, which is
      exactly how this table broke twice. */
 .season table th:nth-child(1) { width: 6.6rem; } /* Date: rem, not %. Ten fixed characters; at the 720px minimum an 11% share was 70px and the date ran into the meet cell (issue 130) */
-.season table th:nth-child(2) { width: 18%; }   /* Meet        */
+.season table th:nth-child(2) { width: 16%; }   /* Meet        */
 .season table th:nth-child(3) { width:  7%; }   /* Event       */
 .season table th:nth-child(4) { width:  9%; }   /* Result      */
-.season table th:nth-child(5) { width: 10%; }   /* Place       */
+.season table th:nth-child(5) { width:  9%; }   /* Place       */
 .season table th:nth-child(6) { width:  9%; }   /* Rating + i  */
-.season table th:nth-child(7) { width: 12%; }   /* Difficulty + i */
-/* th:nth-child(8) Flags -- NO width: the auto column, absorbs the rest. */
+.season table th:nth-child(7) { width:  6%; }   /* 5K (2026-10-10), right-aligned by .fk */
+.season table th:nth-child(8) { width: 12%; }   /* Difficulty + i */
+/* th:nth-child(9) Flags -- NO width: the auto column, absorbs the rest. */
 
 /* ⚠ NO ELLIPSIS ON A HEADER. The old rule ellipsized a squeezed header, and
    once the "i" explainer joined the label the columns were squeezed at
@@ -609,7 +610,7 @@
 
 /* Flags wrap to a second line on narrow screens rather than overflowing. A row
    with six badges is the widest case and ~18% will not always hold it. */
-.season table td:nth-child(8) {
+.season table td:nth-child(9) {
   white-space: normal;
   line-height: 1.9;
 }

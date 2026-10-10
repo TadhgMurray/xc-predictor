@@ -14,6 +14,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% from "_explain.html" import rating_i %}
+{# ★ THE 5K COLUMN (owner, 2026-10-10): "recruited at" is on the
+   high-school scale, so its track 5K reads on hs_<gender> #}
+{% from "_scale.html" import fk_th, fk %}
 {% from "_units.html" import unit_chips %}
 {% set who = "Men" if gender == "m" else "Women" %}
 {% set meta_title = school ~ " " ~ who ~ " · Recruiting" %}
@@ -115,7 +118,7 @@
   {% endif %}
 
   <div class="r-scroll"><table class="recruit-tbl r-list">
-    <thead><tr><th>Class</th><th>Recruit</th><th>High school</th><th class="num">Recruited at</th><th class="num">HS season</th><th class="num">First college season</th><th>Year</th></tr></thead>
+    <thead><tr><th>Class</th><th>Recruit</th><th>High school</th><th class="num">Recruited at</th>{{ fk_th("5K") }}<th class="num">HS season</th><th class="num">First college season</th><th>Year</th></tr></thead>
     <tbody>
     {% for r in b.recruits %}
       <tr>
@@ -123,6 +126,7 @@
         <td><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
         <td>{% if r.hs_school and r.hs_school|is_team %}<a href="{{ school_href(r.hs_school, r.hs_state) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% else %} - {% endif %}</td>
         <td class="num"><strong>{{ "%.1f"|format(r.recruit_rating) }}</strong>{% if r.source != "hs" %} <span class="dist-note" title="No high-school season linked: the first college season, on the high-school scale, less the measured freshman gain">est.</span>{% endif %}</td>
+        {{ fk(r.recruit_rating, "hs_" ~ gender, b.sport, none, "5K") }}
         <td class="num">{{ ("%.1f"|format(r.hs_rating)) if r.hs_rating is not none else " - " }}</td>
         <td class="num">{{ "%.1f"|format(r.first_rating) }}<span class="dist-note-quiet"> college scale</span></td>
         <td>{{ r.grade_label or " - " }}</td>

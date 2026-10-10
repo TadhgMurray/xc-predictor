@@ -27,6 +27,9 @@
   {%- else %}<span class="mp-move flat">no change</span>{% endif -%}
   {%- endif -%}
 {%- endmacro %}
+{# ★ THE 5K COLUMN (owner, 2026-10-10): a followed athlete's ratings as
+   the track 5K they are worth, on the season's own pool #}
+{% from "_scale.html" import fk_th, fk, fk_inline %}
 {% macro rmove(v) -%}
   {%- if v is not none -%}
   {%- if v > 0 %}<span class="mp-move up">+{{ "%.1f"|format(v) }}</span>
@@ -78,7 +81,7 @@
       <span class="mp-tag">{{ "You" if c.claimed else "Following" }}</span></h2>
     <p class="mp-sub">{{ c.season_label }} {{ "cross country" if s.sport == "XC" else "track" }} · {{ s.n_races }} race{{ "s" if s.n_races != 1 }}</p>
     <div class="mp-stats">
-      <div><span class="k">Season rating</span><span class="v">{{ "%.1f"|format(s.mean_rating) }}</span>{{ rmove(c.move.rating if c.move else none) }}</div>
+      <div><span class="k">Season rating</span><span class="v">{{ "%.1f"|format(s.mean_rating) }}{{ fk_inline(five_k(s.mean_rating, s.pool, s.sport)) }}</span>{{ rmove(c.move.rating if c.move else none) }}</div>
       {% if c.ranks.nation %}<div><span class="k">National</span><span class="v">#{{ c.ranks.nation }}</span>{{ move(c.move.nation if c.move else none) }}</div>{% endif %}
       {% if c.ranks.state_rank %}<div><span class="k">{{ s.state }}</span><span class="v">#{{ c.ranks.state_rank }}</span>{{ move(c.move.state if c.move else none) }}</div>{% endif %}
     </div>
@@ -111,14 +114,15 @@
     <h3 class="mp-h3">This season</h3>
     {% if c.races %}
     <table class="mp-table">
-      <thead><tr><th>Date</th><th>Meet</th><th class="n rc-wide">Distance</th><th class="n">Time</th><th class="n">Rating</th></tr></thead>
+      <thead><tr><th>Date</th><th>Meet</th><th class="n rc-wide">Distance</th><th class="n">Time</th><th class="n">Rating</th>{{ fk_th(five_k_label([s.pool])) }}</tr></thead>
       <tbody>
       {% for r in c.races %}
       <tr><td class="d">{{ day(r.race_date) }}</td>
           <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}</td>
           <td class="n rc-wide">{{ "%.0f"|format(r.distance) ~ " m" if r.distance else "" }}</td>
           <td class="n">{{ fmt_time(r.time_seconds, s.sport != "XC") }}</td>
-          <td class="n"><b>{{ "%.1f"|format(r.speed_rating) }}</b></td></tr>
+          <td class="n"><b>{{ "%.1f"|format(r.speed_rating) }}</b></td>
+          {{ fk(r.speed_rating, s.pool, s.sport, none, five_k_label([s.pool])) }}</tr>
       {% endfor %}
       </tbody>
     </table>

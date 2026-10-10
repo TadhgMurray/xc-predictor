@@ -390,11 +390,14 @@
         nm.textContent = (tr.querySelector("td.nm").firstChild.textContent || "").trim();
       }
       var pts = cellText(tr, "td.pts");
+      /* ★ the 5K column rides along (owner, 2026-10-10), from the row's own
+         td.fk -- the same cell, so the two can never disagree */
+      var fk = cellText(tr, "td.fk");
       [cellText(tr, "td.pl"), nm, cellText(tr, "td.tm"), cellText(tr, "td.rt .rc-rv"),
-       pts === "-" ? "" : pts].forEach(function (v, i) {
+       fk === "-" ? "" : fk, pts === "-" ? "" : pts].forEach(function (v, i) {
         var td = v instanceof Node ? v : document.createElement("td");
         if (!(v instanceof Node)) td.textContent = v;
-        if (i >= 2) td.className = "n";
+        if (i >= 2) td.className = i === 4 ? "n fk" : "n";
         out.appendChild(td);
       });
       body.appendChild(out);

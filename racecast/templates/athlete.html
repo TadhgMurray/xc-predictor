@@ -174,7 +174,7 @@
 {%- endmacro %}
 
 {# The shared rating-value + toggle macros; scale-view.js does the swap. #}
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_th, fk, fk_inline %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
 
 {% macro season_block(year, sport, season) %}
@@ -184,7 +184,7 @@
            showing the same figure. #}
         <h3 class="season-head">
             {{ year }} {{ sport|sport_short }}
-            <span class="season-rating">{{ rv(season.rating, season.rating_hs) }}</span>
+            <span class="season-rating">{{ rv(season.rating, season.rating_hs) }}{{ fk_inline(five_k(season.rating, season.pool, sport, season.rating_hs)) }}</span>
         </h3>
         <p class="season-meta">{% if season.school|is_team %}{{ crest(season.school, season.state, pool=season.pool) }}<a href="{{ school_href(season.school, season.state, pool=season.pool) }}">{{ season.school|school_label_for(season.pool, season.state) }}</a>{% else %}{{ season.school|school_label_for(season.pool, season.state) }}{% endif %}{% if season.pro_verdict or (season.pool and (season.pool|string).startswith('pro_')) %} · Professional{% elif season.grade %}{% set gl = season.grade|grade_label(season.pool) %} · {{ gl if gl.startswith("Class of") else "Grade " ~ gl }}{% endif %}{% if gender_mixed and season.gender %} · {{ "Boys" if season.gender == "m" else "Girls" }}{% endif %}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
         <table>
@@ -196,6 +196,12 @@
                     <th>Result</th>
                     <th>Place</th>
                     <th>Rating{{ rating_i() }}</th>
+                    {# ★ THE 5K COLUMN (owner, 2026-10-10): every race, XC
+                       or track, as the track 5K its rating is worth (3200 m
+                       in middle school). Kept on phones -- the season block
+                       scrolls inside itself, never the page. #}
+                    {% set fk_label = five_k_label(season.races|map(attribute="pool")) %}
+                    {{ fk_th(fk_label) }}
                     <th>Difficulty{{ difficulty_i(sport if sport is defined else "XC") }}</th>
                     <th>PR/SR Flags</th>
                 </tr>
@@ -269,6 +275,7 @@
                     {% else %}
                     <td data-rx="{{ race.sport|lower }}:{{ race.result_id }}">{{ rv(race.speed_rating, race.hs_rating) }}</td>
                     {% endif %}
+                    {{ fk(race.speed_rating, race.pool, race.sport, race.hs_rating, fk_label) }}
                     <td>{{ dv(race.difficulty, race.sport, race.day_effect) }}</td>
                     {# Same nine conditions as before -- only the rendering moved
                        into the flag() macro, so each badge now carries its own
@@ -349,7 +356,7 @@
         <div>
             <span class="s-lab">Best race</span>
             <span class="s-val"><a href="#race-{{ alltime.rating.result_id }}">{{ rv(alltime.rating.speed_rating, alltime.rating.hs_rating) }}</a></span>
-            <span class="s-sub">{{ alltime.rating.sport|sport_name }}</span>
+            <span class="s-sub">{{ alltime.rating.sport|sport_name }}{{ fk_inline(five_k(alltime.rating.speed_rating, alltime.rating.pool, alltime.rating.sport, alltime.rating.hs_rating)) }}</span>
         </div>
         {% endif %}
         {# Guarded like the others: a caller that does not set this should
@@ -559,11 +566,11 @@
     <tbody>
     {% if bucket.rating %}
     <tr class="is-rating"><td class="tn">Best rating</td>
-      <td class="n tpts"><a href="#race-{{ bucket.rating.result_id }}">{{ rv(bucket.rating.speed_rating, bucket.rating.hs_rating) }}</a></td></tr>
+      <td class="n tpts"><a href="#race-{{ bucket.rating.result_id }}">{{ rv(bucket.rating.speed_rating, bucket.rating.hs_rating) }}</a>{{ fk_inline(five_k(bucket.rating.speed_rating, bucket.rating.pool, sport, bucket.rating.hs_rating)) }}</td></tr>
     {% endif %}
     {% if bucket.avg_rating %}
     <tr class="is-rating"><td class="tn">Average rating</td>
-      <td class="n tpts">{{ rv(bucket.avg_rating, bucket.avg_rating_hs) }}</td></tr>
+      <td class="n tpts">{{ rv(bucket.avg_rating, bucket.avg_rating_hs) }}{{ fk_inline(bucket.avg_5k) }}</td></tr>
     {% endif %}
     {% for event, race in bucket.events.items() %}
     <tr><td class="tn">{{ event|event_label }}</td>
@@ -586,7 +593,7 @@
     <tr>
       <td class="tn"><a href="#{{ year }}-{{ sport }}">{{ year }} {{ sport|sport_short }}</a>
         <span class="sp">{% if bests.rating %}best <a href="#race-{{ bests.rating.result_id }}"><b>{{ rv(bests.rating.speed_rating, bests.rating.hs_rating) }}</b></a>{% endif %}{% for event, race in bests.events.items() %} · {{ event|event_label }} <a href="#race-{{ race.result_id }}">{{ race.result }}</a>{% endfor %}</span></td>
-      <td class="n tpts">{{ rv(bests.season_rating, bests.season_rating_hs) }}</td>
+      <td class="n tpts">{{ rv(bests.season_rating, bests.season_rating_hs) }}{{ fk_inline(five_k(bests.season_rating, bests.season_pool, sport, bests.season_rating_hs)) }}</td>
     </tr>
     {% endfor %}
     </tbody>

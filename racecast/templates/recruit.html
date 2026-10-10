@@ -7,6 +7,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {% from "_explain.html" import rating_i %}
+{# ★ THE 5K COLUMN (owner, 2026-10-10): each season's rating as the track
+   5K it is worth, on that season's own pool #}
+{% from "_scale.html" import fk_th, fk, fk_inline %}
 {% set meta_title = p.name ~ " · Recruiting Profile" %}
 {% set meta_description = p.name ~ ((" (" ~ p.school_label ~ ")") if p.school_label else "") ~ ": season by season speed ratings, year-over-year gain, graduation year and where their rating would rank in each college division." %}
 {% set meta_crumbs = [("Recruiting", "/recruiting"), (p.name, none)] %}
@@ -45,7 +48,7 @@
         {% set ss = p.seasons|selectattr("sport", "equalto", sp)|list %}
         {% if ss %}{% set s = ss[-1] %}{% if s.mean_rating is not none %}
         <div><span class="k">{{ s.label }} {{ word }}{% if s.grade_label %} · {{ s.grade_label }}{% endif %}</span>
-          <span class="rc-crow"><b class="rc-cn">{{ "%.1f"|format(s.mean_rating) }}</b>{% if s.gain is not none %}<i>{{ "%+.1f"|format(s.gain) }} on the year</i>{% endif %}</span></div>
+          <span class="rc-crow"><b class="rc-cn">{{ "%.1f"|format(s.mean_rating) }}{{ fk_inline(five_k(s.mean_rating, s.pool or p.pool, s.sport)) }}</b>{% if s.gain is not none %}<i>{{ "%+.1f"|format(s.gain) }} on the year</i>{% endif %}</span></div>
         {% endif %}{% endif %}
         {% endfor %}
       </div>
@@ -68,13 +71,14 @@
   <section class="rc-panel" id="seasons" data-panel="seasons">
   {% if not tabbed %}<h2>Seasons</h2>{% endif %}
   <table class="recruit-tbl">
-    <thead><tr><th>Season</th><th>Grade</th><th class="num">Rating{{ rating_i() }}</th><th class="num">Gain</th><th class="num">Best race</th><th class="num">Races</th></tr></thead>
+    <thead><tr><th>Season</th><th>Grade</th><th class="num">Rating{{ rating_i() }}</th>{{ fk_th(five_k_label(p.seasons|map(attribute="pool"))) }}<th class="num">Gain</th><th class="num">Best race</th><th class="num">Races</th></tr></thead>
     <tbody>
     {% for s in p.seasons|reverse %}
       <tr>
         <td>{{ s.label }} {{ s.sport|sport_short }}</td>
         <td>{{ s.grade_label or " - " }}</td>
         <td class="num">{{ "%.1f"|format(s.mean_rating) if s.mean_rating is not none else " - " }}</td>
+        {{ fk(s.mean_rating, s.pool or p.pool, s.sport, none, five_k_label(p.seasons|map(attribute="pool"))) }}
         <td class="num {{ 'gain-up' if s.gain is not none and s.gain > 0 else ('gain-down' if s.gain is not none and s.gain < 0 else '') }}">{{ ("%+.1f"|format(s.gain)) if s.gain is not none else " - " }}</td>
         <td class="num">{{ "%.1f"|format(s.best_rating) if s.best_rating is not none else " - " }}</td>
         <td class="num">{{ s.n_races }}</td>
@@ -143,7 +147,7 @@
       <tr><td><a href="/athlete/{{ e.person_id }}">{{ e.name or "Unknown" }}</a>
               {% if e.school %}<span class="comps-sch">{{ e.school }}</span>{% endif %}</td>
           <td class="no-break">{{ e.grade_label }} {{ e.label }}</td>
-          <td class="num">{{ "%.1f"|format(e.rating) }}</td>
+          <td class="num">{{ "%.1f"|format(e.rating) }}{{ fk_inline(five_k(e.rating, p.pool, sj.sport)) }}</td>
           {% if sj.grade < 12 %}<td class="num">{{ "%.1f"|format(e.senior_rating) if e.senior_rating is not none else " - " }}</td>{% endif %}
           <td>{{ e.college or " - " }}{% if e.college_division %} <span class="comps-sch">{{ e.college_division }}</span>{% endif %}</td></tr>
     {% endfor %}

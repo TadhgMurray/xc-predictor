@@ -36,6 +36,10 @@
   td.a { width: 100%; }
   td.r { text-align: right; white-space: nowrap; }
   td.g { color: var(--muted); white-space: nowrap; }
+  /* ★ the track 5K the rating is worth (owner, 2026-10-10): muted, after
+     the rating; the site's .fk rules are not loaded in a widget */
+  td.k { text-align: right; white-space: nowrap; color: var(--muted); font-size: 12px; }
+  td.k .kd { font-size: 10px; }
   .meets td.d { color: var(--muted); white-space: nowrap; width: 5.5em; }
   .ft { margin-top: 10px; font-size: 12px; color: var(--muted); display: flex;
         justify-content: space-between; gap: 8px; flex-wrap: wrap; }
@@ -63,7 +67,10 @@
       {# HS-equivalent, the site default (owner, 2026-10-09): an embed has
          no toggle, so it shows the number the full page opens on. #}
       {% set shown = r.hs_mean_rating if r.hs_mean_rating is not none else r.mean_rating %}
-      <td class="r">{% if shown is not none %}{{ "%.1f"|format(shown) }}{% endif %}</td></tr>
+      <td class="r">{% if shown is not none %}{{ "%.1f"|format(shown) }}{% endif %}</td>
+      {# one clock for either scale: the own-pool rating on its own pool #}
+      {% set c = five_k(r.mean_rating, r.pool, sport, r.hs_mean_rating) %}
+      <td class="k" title="{{ FIVE_K_TITLE }}">{% if c %}&asymp;&nbsp;{{ c.time }}{% if c.dist != "5K" %} <span class="kd">{{ c.dist }}</span>{% endif %}{% endif %}</td></tr>
   {% endfor %}
 </table>
 {% else %}
@@ -82,7 +89,7 @@
 
 {# ! the numbers above are HS-equivalent (`shown`), so the footer says so
    (sweep 2026-10-10); it described the own-pool scale #}
-<div class="ft"><span>Season ratings on the high-school scale · 100 = an average high school runner</span>
+<div class="ft"><span>Season ratings on the high-school scale · 100 = an average high school runner · &asymp; the track 5K it is worth</span>
   <a href="{{ page_url }}">Full team on Racecast →</a></div>
 </body>
 </html>

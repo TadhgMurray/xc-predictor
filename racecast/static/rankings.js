@@ -149,6 +149,30 @@ function clockAttr(r) {
   return r && r.rating_clock ? ` title="${esc(r.rating_clock)}"` : "";
 }
 
+/* ★ THE 5K COLUMN (owner, 2026-10-10: "add [a 5K column] to all pages with
+   ratings"). The API stamps r.<key>_5k -- the track 5K the row's own-pool
+   rating is worth, m:ss -- and r.<key>_5k_dist ("5K", or "3200m" in middle
+   school); conversions.stampFiveK. One clock serves both scale views (the
+   own-pool and HS-equivalent numbers are one athlete), so a scale flip
+   redraws it unchanged. The header says the distance every row shares, or
+   "Track ≈" over a mix, and then each cell names its own. */
+const FK_TITLE = "The track 5K this rating is worth";
+let fkHead = "5K";
+
+function fkLabelFor(rows, key) {
+  const ds = new Set();
+  (rows || []).forEach((r) => { if (r && r[key + "_5k_dist"]) ds.add(r[key + "_5k_dist"]); });
+  if (ds.size > 1) return "Track \u2248";
+  return ds.size === 1 && !ds.has("5K") ? Array.from(ds)[0] : "5K";
+}
+
+function fkCell(r, key) {
+  const t = r && r[key + "_5k"];
+  if (!t) return '<td class="fk"><span class="fk-none">-</span></td>';
+  const d = r[key + "_5k_dist"];
+  return `<td class="fk">${esc(t)}${d && d !== fkHead ? ` <span class="fk-d">${esc(d)}</span>` : ""}</td>`;
+}
+
 /* ★ THE CREST COMES FROM THE ROW, NOT FROM A GUESS (305). The browser
    cannot ask whether a crest exists without fetching it, and a broken
    <img> on every school without one is worse than no crests at all -- so
@@ -1047,6 +1071,9 @@ const COLUMNS = {
     { key: null,     label: "Sport" },
     { key: "year",   label: "Year" },
     { key: "rating", label: "Rating" },
+    /* ★ the track 5K the rating is worth (owner, 2026-10-10): not a sort
+       key -- it orders exactly as the rating beside it */
+    { key: null,     label: "5K", fk: true },
     { key: "best",   label: "Best" },
     { key: "races",  label: "Races" }
   ],
@@ -1057,7 +1084,10 @@ const COLUMNS = {
     { key: "grade",  label: "Grade" },
     { key: null,     label: "Sport" },
     { key: "date",   label: "Date" },
-    { key: "rating", label: "Rating" }
+    { key: "rating", label: "Rating" },
+    /* ★ the track 5K the rating is worth (owner, 2026-10-10): not a sort
+       key -- it orders exactly as the rating beside it */
+    { key: null,     label: "5K", fk: true }
   ],
   /* ★ THE ONLY BOARD THAT RANKS A GROUP. The other three rank a number
      each row already carries; this one ranks the finish order of a
@@ -1092,6 +1122,9 @@ const COLUMNS = {
     { key: "year",     label: "Year" },
     { key: "points",   label: "Points" },
     { key: "rating",   label: "Top 5 avg" },
+    /* ★ the track 5K the rating is worth (owner, 2026-10-10): not a sort
+       key -- it orders exactly as the rating beside it */
+    { key: null,       label: "5K", fk: true },
     { key: "fifth",    label: "5th runner" },
     /* ★ WHO LEADS THE SQUAD (owner, 2026-10-09: "maybe add a best runner
        section?"), sorted on the best runner's season rating */
@@ -1106,6 +1139,7 @@ const COLUMNS = {
     { key: null, label: "#" },
     { key: null, label: "Team" },
     { key: null, label: "Top 5 avg" },
+    { key: null, label: "5K", fk: true },
     { key: null, label: "Distance" },
     { key: null, label: "Meet" },
     { key: null, label: "Date" }
@@ -1124,7 +1158,10 @@ const COLUMNS = {
     /* One column for both: a time on a running board, a mark on a field
        board. The sort key stays "time"; the API maps it onto the mark. */
     { key: "time",   label: "Time / Mark" },
-    { key: "rating", label: "Rating" }
+    { key: "rating", label: "Rating" },
+    /* ★ the track 5K the rating is worth (owner, 2026-10-10): not a sort
+       key -- it orders exactly as the rating beside it */
+    { key: null,     label: "5K", fk: true }
   ]
 };
 
@@ -1153,6 +1190,7 @@ const POOL_LABEL = {
  */
 function renderHead(board) {
   return "<thead><tr>" + COLUMNS[board].map((c) => {
+    if (c.fk) return `<th class="fk" title="${FK_TITLE}">${esc(fkHead)}</th>`;
     if (!c.key) return `<th>${c.label}</th>`;
     const active = state.sort === c.key;
     const dir = active ? (effectiveDir(board, c.key) === "asc" ? "asc" : "desc") : "";
@@ -1268,6 +1306,7 @@ function renderAbility(rows) {
       <td>${esc(SPORT_SHORT[r.sport] || r.sport)}</td>
       <td>${academicLabel(r.year)}</td>
       <td class="rating"${clockAttr(r)}><a href="/athlete/${r.person_id}">${fmtRating(rval(r, "rating"))}</a></td>
+      ${fkCell(r, "rating")}
       <td>${fmtRating(rval(r, "best_rating"))}</td>
       <td>${r.n_races === null || r.n_races === undefined ? "" : r.n_races}</td>
     </tr>`).join("");
@@ -1302,6 +1341,7 @@ function renderPerformance(rows) {
       <td>${esc(SPORT_SHORT[r.sport] || r.sport)}</td>
       ${maybeLink(href, esc(fmtDate(r.race_date)))}
       ${maybeLink(href, fmtRating(rval(r, "rating")), "rating", clockAttr(r))}
+      ${fkCell(r, "rating")}
     </tr>`;
   }).join("");
 
@@ -1348,6 +1388,7 @@ function renderPr(rows) {
           : maybeLink(href, fmtTime(r.time_seconds),
                       "time" + (isNoTime(r.time_seconds) ? " dnf" : ""))}
       ${maybeLink(href, fmtRating(rval(r, "rating")), "rating", clockAttr(r))}
+      ${fkCell(r, "rating")}
     </tr>`;
   }).join("");
 
@@ -1587,6 +1628,7 @@ function renderTeams(rows, span) {
       <td>${academicLabel(r.year)}</td>
       <td class="rating">${r.points}</td>
       <td>${fmtRating(rval(r, "top5_mean"))}</td>
+      ${fkCell(r, "top5_mean")}
       <td>${fmtRating(rval(r, "fifth_rating"))}</td>
       <td>${bestRunnerCell(r)}</td>
       <td>${r.n_athletes}</td>
@@ -1609,6 +1651,7 @@ function renderTeamsCourse(rows) {
       <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
       <td>${crestMark(r.crest)}<a href="${schoolHref(r.school, r.state)}">${esc(r.school)}</a></td>
       <td class="rating">${fmtRating(rval(r, "top5_mean"))}</td>
+      ${fkCell(r, "top5_mean")}
       <td>${r.distance}m</td>
       <td><a href="/race/xc/${r.meet_id}/${r.div_id}">${esc(r.meet_name || ("Meet " + r.meet_id))}</a></td>
       <td>${r.date ? esc(fmtDate(r.date)) : " - "}</td>
@@ -1697,11 +1740,14 @@ function leadColumnUp(host) {
   const from = ths.findIndex((th) => th.dataset.key === key);
   const to = ths.findIndex((th) => th.dataset.key === "name") + 1;
   if (from < 0 || to <= 0 || from <= to) return;
+  // ★ the 5K beside the rating goes up with it (2026-10-10)
+  const fk = key === "rating" && ths[from + 1] && ths[from + 1].classList.contains("fk");
   table.querySelectorAll("tr").forEach((tr) => {
     const cells = tr.children;
     // ! only rows laid out like the header: a note row spanning columns stays put
     if (cells.length !== ths.length) return;
     tr.insertBefore(cells[from], cells[to]);
+    if (fk) tr.insertBefore(cells[from + 1], cells[to + 1]);
   });
 }
 
@@ -1768,6 +1814,10 @@ function syncBoardHeader(rows, data) {
     num = board !== "pr" ? fmtRating(rval(r, "rating"))
         : r.mark !== null && r.mark !== undefined ? fmtMark(r.mark)
         : fmtTime(r.time_seconds);
+    if (board !== "pr" && r.rating_5k) {
+      num += ` <span class="fk-i" title="${FK_TITLE}">\u2248\u00a0${esc(r.rating_5k)}`
+           + `${r.rating_5k_dist && r.rating_5k_dist !== "5K" ? "\u00a0" + esc(r.rating_5k_dist) : ""}</span>`;
+    }
     if (r.school) school = ` · ${esc(r.school)}`;
   }
   champs.innerHTML = '<div><span class="k">No. 1 on this board</span>'
@@ -1777,6 +1827,7 @@ function syncBoardHeader(rows, data) {
 }
 
 function renderBoard(rows, data) {
+  fkHead = fkLabelFor(rows, state.board === "teams" ? "top5_mean" : "rating");
   return state.board === "ability"    ? renderAbility(rows)
        : state.board === "pr"         ? renderPr(rows)
        : state.board === "courses"    ? renderCourses(rows)
