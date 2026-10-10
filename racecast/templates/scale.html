@@ -18,8 +18,7 @@
 <link rel="stylesheet" href="{{ static_v('tools.css') }}">
 {% set one = tables[0] if tables|length == 1 else none %}
 {% set meta_title = ("Rating to time: " ~ one.label) if one else "Rating to time: every pool" %}
-{% set meta_description = "What a Racecast rating means as a time: ratings from the top of the boards to the bottom against the 1600, the 3200 and the cross country 5K"
-     ~ (", 6K and 8K" if not one or one.pool.startswith('college') else "") ~ ", on a typical track and course." %}
+{% set meta_description = "What a Racecast rating means in time: every rating on the boards as an 800, a 1600, a 3200 and a cross country 5K (college: 800, 1500, mile, 5000 and the 6K or 8K), on a typical track and course." %}
 {% set meta_path = "/scale" ~ ("?pool=" ~ want if want != "hs_m" else "") %}
 {% set meta_crumbs = [("About", "/about"), ("Rating to time", none)] %}
 {% include "_meta.html" %}
@@ -27,9 +26,7 @@
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
-{% macro qs(pool, st) -%}
-  /scale?pool={{ pool }}{% if st != default_step %}&amp;step={{ st }}{% endif %}
-{%- endmacro %}
+{% macro qs(pool) -%}/scale?pool={{ pool }}{%- endmacro %}
 
 <main class="page-wide p2-page rc scale-page">
   <header class="rc-hd"><div class="rc-hgrid rc-hone">
@@ -37,30 +34,24 @@
       <div class="rc-sport"><span class="sport-tag">Ratings</span></div>
       <h1>Rating to time{% if one %} <span class="p2-sub">{{ one.label }}</span>{% endif %}</h1>
       <div class="rc-meta">
-        {{ step }} points a row
-        · <a href="/about#rating">What a rating is</a>
+        <a href="/about#rating">What a rating is</a>
         · <a href="/conversions">Any time, any course</a>
         · <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title }} on Racecast"
             data-share-url="{{ site_origin ~ meta_path }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
         · <button type="button" class="rc-share-link scale-print" onclick="window.print()">Print</button>
       </div>
+      {# ★ IN A PARENT'S WORDS (owner, 2026-10-10) #}
       <p class="rc-story">
-        What a rating means as a clock: each rating against the 1600 and 3200 on a typical
-        outdoor track and the cross country 5K{% if not one or one.pool.startswith('college') %}
-        (and the college 6K and 8K){% endif %} on a typical course. The rows run from the top
-        of this season's boards to the bottom. Ratings are on the high-school scale, the one
-        the site shows by default; the pool's own number is beside it.
+        What a rating means in time. Find a rating on the left to see the time it is worth in
+        each event, on a typical track or cross country course.
       </p>
     </div>
   </div></header>
 
-  <nav class="p2-toggles scale-nav" aria-label="Pool">
-    <span class="p2-seg" role="group" aria-label="Pool">
-      {% for p, label in pools %}<a href="{{ qs(p, step) }}" class="{{ 'is-on' if want == p }}">{{ label }}</a>{% endfor %}
-      <a href="{{ qs('all', step) }}" class="{{ 'is-on' if want == 'all' }}">All</a>
-    </span>
-    <span class="p2-chips" role="group" aria-label="Points a row">
-      {% for st in steps %}<a href="{{ qs(want, st) }}" class="{{ 'is-on' if st == step }}">{{ st }} pt{{ "s" if st != 1 }}</a>{% endfor %}
+  <nav class="p2-toggles scale-nav" aria-label="Group">
+    <span class="p2-seg" role="group" aria-label="Group">
+      {% for p, label in pools %}<a href="{{ qs(p) }}" class="{{ 'is-on' if want == p }}">{{ label }}</a>{% endfor %}
+      <a href="{{ qs('all') }}" class="{{ 'is-on' if want == 'all' }}">All</a>
     </span>
   </nav>
 
@@ -70,39 +61,35 @@
   <section class="scale-pool" id="{{ t.pool }}">
     {% if tables|length > 1 %}<h2 class="p2-h2">{{ t.label }}</h2>{% endif %}
     {% if t.rows %}
-    {% set show_own = t.factor and (t.factor - 1.0)|abs > 0.0005 %}
-    <table class="p2-tbl scale-tbl">
+    <div class="scale-wrap"><table class="p2-tbl scale-tbl">
       <thead><tr>
         <th class="num">Rating</th>
-        {% if show_own %}<th class="num scale-own">Own pool</th>{% endif %}
         {% for c in t.columns %}<th class="num">{{ c.label }}</th>{% endfor %}
       </tr></thead>
       <tbody>
       {% for r in t.rows %}
-        <tr{% if r.hs % 10 == 0 %} class="scale-ten"{% endif %}>
-          <td class="num scale-r">{{ r.hs }}</td>
-          {% if show_own %}<td class="num scale-own">{{ "%.1f"|format(r.own) }}</td>{% endif %}
+        <tr class="{{ 'scale-ten' if r.hs % 10 == 0 }}{{ ' scale-lm' if r.mark }}">
+          <td class="num scale-r">{{ r.hs }}{% if r.mark %}<span class="scale-mark">{{ r.mark }}</span>{% endif %}</td>
           {% for c in t.columns %}<td class="num">{{ r.times.get(c.key)|scale_time or "–" }}</td>{% endfor %}
         </tr>
       {% endfor %}
       </tbody>
-    </table>
+    </table></div>
     <p class="p2-foot">
-      This season's {{ t.words }} boards run from {{ "%.1f"|format(t.lo) }} to {{ "%.1f"|format(t.hi) }}
-      on the high-school scale{% if show_own %} (the pool's own number &times; {{ "%.3f"|format(t.factor) }}){% endif %}.
-      Track times on a typical outdoor track; cross country on a typical course. A hilly
-      course or a fast track moves the clock; the rating already allows for both.
+      From this season's No. 1 down to the slowest 1 in 100 on the {{ t.words }} board.
+      Track times are on a typical outdoor track, cross country on a typical course; a hilly
+      course or a fast track moves the clock, and the rating already allows for both.
+      {% if not t.pool.startswith("hs_") %}Ratings are on the high-school scale, as the rest of the site shows them.{% endif %}
       <span class="p2-muted">Computed {{ t.computed_at|ago_words if t.computed_at else "just now" }}.</span>
     </p>
     {% else %}
-    <p class="p2-note">The {{ t.words }} boards could not be read just now, so this table is empty. Try again in a few minutes.</p>
+    <p class="p2-note">The {{ t.words }} board could not be read just now, so this table is empty. Try again in a few minutes.</p>
     {% endif %}
   </section>
   {% endfor %}
   <p class="p2-foot scale-how">
-    Every time here comes from the same arithmetic as the <a href="/conversions">conversions page</a>:
-    the rating back to the race it stands for, then that race at the distance and venue named.
-    A rating is 100 for the pool's average runner, and 1% of the rating is about 1% of the race.
+    Every time here comes from the same arithmetic as the <a href="/conversions">conversions page</a>.
+    A rating of 100 is the group's average runner, and 1% of the rating is about 1% of the race.
   </p>
   </div>
   </div>

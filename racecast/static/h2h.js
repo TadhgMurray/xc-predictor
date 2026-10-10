@@ -66,6 +66,13 @@
     }).join("");
   }
 
+  /* "Oct 10, 2026", the site's date (app._mdy), never the ISO text */
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function mdy(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || "");
+    return m ? MONTHS[Number(m[2]) - 1] + " " + Number(m[3]) + ", " + m[1] : iso;
+  }
+
   function today() {
     var d = new Date();
     var p = function (n) { return (n < 10 ? "0" : "") + n; };
@@ -146,9 +153,8 @@
       return;
     }
     var pa = list[0], pb = list[1];
-    var html = '<table class="h2h-pred-tbl"><thead><tr><th>Athlete</th><th>Predicted</th>' +
-               '<th class="h2h-band">Likely range</th></tr></thead><tbody>' +
-               row(a, "dot-a", pa) + row(b, "dot-b", pb) + "</tbody></table>";
+    // ★ THE MARGIN IS THE HEADLINE (owner, 2026-10-10): above the table
+    var html = "";
     if (pa && pb && pa.seconds != null && pb.seconds != null) {
       var d = pb.seconds - pa.seconds;
       var lead = Math.abs(d) < 0.05 ? null : d > 0 ? a : b;
@@ -157,6 +163,9 @@
         : "<b>Dead even</b>") +
         ' <span class="h2h-muted">' + esc(ctx) + "</span></p>";
     }
+    html += '<table class="h2h-meet h2h-pred-tbl"><thead><tr><th>Athlete</th><th>Predicted</th>' +
+            '<th>Likely range</th></tr></thead><tbody>' +
+            row(a, "dot-a", pa) + row(b, "dot-b", pb) + "</tbody></table>";
     out.innerHTML = html;
   }
 
@@ -168,7 +177,7 @@
     });
     var where = "typical " + (s === "TF" ? "track" : "course");
     if (s === "XC" && picked) { q.set("course", picked.name); where = picked.name; }
-    var ctx = distLabel(m) + " · " + where + " · " + (date.value || today());
+    var ctx = distLabel(m) + " · " + where + " · " + mdy(date.value || today());
     out.innerHTML = '<p class="meta">Predicting&hellip;</p>';
     go.disabled = true;
     fetch("/api/predict/individual?" + q.toString())

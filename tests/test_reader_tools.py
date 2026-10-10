@@ -87,11 +87,12 @@ def test_rows_span_the_board_rounded_outward():
     assert S.roundedSpan(None, 10, 5) is None
 
 
-def test_college_gets_its_championship_distance():
+def test_each_level_gets_the_events_it_races():
     keys = lambda p: [c[0] for c in S.columnsFor(p)]   # noqa: E731
-    assert keys("hs_m") == ["1600", "3200", "xc5k"]
-    assert keys("college_m")[-1] == "xc8k" and keys("college_f")[-1] == "xc6k"
-    assert keys("ms_f") == ["1600", "3200", "xc5k"]
+    assert keys("hs_m") == ["800", "1600", "3200", "xc5k"]
+    assert keys("ms_f") == ["800", "1600", "3200", "xc5k"]
+    assert keys("college_m") == ["800", "1500", "mile", "5000", "xc8k"]
+    assert keys("college_f") == ["800", "1500", "mile", "5000", "xc6k"]
 
 
 def test_rows_are_hs_numbers_converted_on_the_own_scale():
@@ -101,31 +102,36 @@ def test_rows_are_hs_numbers_converted_on_the_own_scale():
         seen.append((own, pool, d, sport))
         return 1000.0 * d / own          # faster rating -> shorter time
 
-    t = S.buildTable("college_m", (61.0, 158.9, {"XC": 2026}), 1.2, 5, convert=conv)
+    info = {"year": 2026, "n": 5000, "top100": 140.0, "median": 100.0}
+    t = S.buildTable("college_m", (61.0, 158.9, info), 1.2, 5, convert=conv)
     hs = [r["hs"] for r in t["rows"]]
     assert hs[0] == 195 and hs[-1] == 70 and hs == sorted(hs, reverse=True)
     assert all(b - a == -5 for a, b in zip(hs, hs[1:]))
     top = t["rows"][0]
-    assert top["own"] == round(195 / 1.2, 1)
     # converted on the pool's own number, not the HS one
     assert seen[0][0] == pytest.approx(195 / 1.2) and seen[0][1] == "college_m"
-    assert set(top["times"]) == {"1600", "3200", "xc5k", "xc8k"}
-    assert t["lo"] == round(61.0 * 1.2, 1) and t["hi"] == round(158.9 * 1.2, 1)
+    assert set(top["times"]) == {"800", "1500", "mile", "5000", "xc8k"}
+    # the landmarks name the row they fall in (140 x 1.2 = 168 -> the 165 row)
+    marks = {r["hs"]: r["mark"] for r in t["rows"] if r["mark"]}
+    assert marks == {165: "No. 100 nationally", 120: "middle of the board"}
 
 
 def test_no_board_no_rows():
     assert S.buildTable("hs_m", None, 1.0)["rows"] == []
 
 
-def test_board_ends_read_the_boards_filters():
-    cur = Cur([[{"y": 2026}], [{"r": 171.2}], [{"r": 38.4}],
-               [{"y": 2025}], [{"r": 168.0}], [{"r": 41.0}]])
-    lo, hi, years = S.boardEnds(cur, "hs_m")
-    assert (lo, hi) == (38.4, 171.2) and years == {"XC": 2026, "TF": 2025}
-    ends = [s for s, _ in cur.sql if "ORDER BY mean_rating" in s]
-    assert len(ends) == 4 and all("LIMIT 1" in s for s in ends)
-    assert all("(n_races >= %(floor)s OR year >= %(open)s)" in s
-               and "state = ANY(%(us)s)" in s for s in ends)
+def test_board_runs_from_the_leader_to_the_1st_percentile():
+    cur = Cur([[{"y": 2026}], [{"n": 1000}], [{"r": 171.2}], [{"r": 68.0}],
+               [{"r": 158.4}], [{"r": 112.3}]])
+    lo, hi, info = S.boardEnds(cur, "hs_m")
+    assert (lo, hi) == (68.0, 171.2)
+    assert info == {"year": 2026, "n": 1000, "top100": 158.4, "median": 112.3}
+    reads = [(sql, prm) for sql, prm in cur.sql if "OFFSET" in sql]
+    # the leader, the 1st percentile from the bottom (990 of 1000), No. 100, the middle
+    assert [prm["o"] for _, prm in reads] == [0, 989, 99, 500]
+    assert all("(n_races >= %(floor)s OR year >= %(open)s)" in sql
+               and "state = ANY(%(us)s)" in sql and "LIMIT 1" in sql for sql, _ in reads)
+    assert S.LOW_Q == 0.01 and S.STEP == 5
 
 
 @pytest.fixture
@@ -141,12 +147,14 @@ def client(monkeypatch):
 
 def test_scale_page_renders_and_prints(client, monkeypatch):
     monkeypatch.setattr(S, "tableFor", lambda cur, p, step=5: dict(
-        S.buildTable(p, (60.0, 150.0, {}), 1.0, step, convert=lambda *a: 300.0),
+        S.buildTable(p, (60.0, 150.0, {"n": 10}), 1.0, step, convert=lambda *a: 300.0),
         computed_at=None))
     r = client.get("/scale?pool=hs_f")
     assert r.status_code == 200
     body = r.get_data(as_text=True)
     assert "Rating to time" in body and "tools.css" in body and "window.print()" in body
+    assert "pts" not in body and "points a row" not in body and "Own pool" not in body
+    assert ">800<" in body
     assert client.get("/scale?pool=all").status_code == 200
     assert client.get("/scale?pool=nope").status_code == 404
 
@@ -246,6 +254,9 @@ def test_compare_has_the_predicted_tab(monkeypatch):
     assert "81%" in html and "h2h.js" in html
     js = read("racecast", "static", "h2h.js")
     assert 'mode: "manual"' in js and "/api/predict/individual" in js
+    # the margin heads the table; the date reads "Oct 10, 2026"
+    assert js.index("h2h-margin") < js.index("<table class=\"h2h-meet h2h-pred-tbl\"")
+    assert "mdy(date.value" in js
 
 
 # ------------------------------------------------------------------ #

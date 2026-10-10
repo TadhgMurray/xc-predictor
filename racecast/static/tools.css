@@ -11,13 +11,19 @@
 /* the rating is the row's name: ink, not the rank-number grey .p2-tbl gives
    a first column */
 .scale-page .scale-tbl td.scale-r { color: var(--ink, #111418); font-weight: 600; width: auto; }
-.scale-page .scale-tbl .scale-own { color: var(--muted, #6b7280); }
+/* ★ LANDMARK ROWS (2026-10-10): the No. 100 and the middle of the board,
+   named under the rating and the row lightly tinted -- a signpost, not a
+   badge */
+.scale-page .scale-tbl tr.scale-lm td { background: var(--sel-bg, #f1f2f4); }
+.scale-page .scale-tbl .scale-mark { display: block; font-size: 0.72rem; font-weight: 500;
+  color: var(--muted, #6b7280); white-space: nowrap; }
+.scale-page .scale-wrap { max-width: 100%; overflow-x: auto; }
 /* every tenth point ruled, so a long column reads in blocks of two */
 .scale-page .scale-tbl tr.scale-ten td { border-top: 1px solid var(--line-2, #cbd0d6); }
 .scale-page .scale-pool + .scale-pool { margin-top: 1.6rem; }
 .scale-page .scale-print { font: inherit; }
 @media (max-width: 640px) {
-  .scale-page .scale-tbl .scale-own { display: none; }
+  .scale-page .scale-tbl th, .scale-page .scale-tbl td { padding: 0.4rem 0.35rem; }
 }
 
 /* ★ PRINTABLE (owner: "Printable"): the table and its one-line footnote, no
@@ -30,7 +36,6 @@
   .scale-page .scale-tbl { max-width: none; font-size: 10pt; }
   .scale-page .scale-tbl th, .scale-page .scale-tbl td { padding: 0.12rem 0.5rem; }
   .scale-page .scale-pool + .scale-pool { break-before: page; }
-  .scale-page .scale-tbl .scale-own { display: table-cell; }
 }
 
 /* ---- /compare: the Predicted tab (_h2h_predict.html, h2h.js) ----------- */
@@ -40,17 +45,19 @@
   border-radius: 4px; font: inherit; font-size: 0.9rem; background: #fff; }
 .h2h-pred .h2h-course-field input { min-width: 15rem; }
 .h2h-pred .h2h-pred-out { margin: 0.8rem 0 0.4rem; }
-.h2h-pred .h2h-pred-tbl { width: auto; min-width: 20rem; }
-.h2h-pred .h2h-pred-tbl th, .h2h-pred .h2h-pred-tbl td { padding: 0.4rem 0.9rem 0.4rem 0; text-align: left; }
+/* ★ THE MEETINGS TABLE'S OWN LOOK (owner, 2026-10-10: "make it a full-width
+   table in the race-page table style"): the site's table rules do the
+   width, the boxes and the padding; only the numbers' weight is added. */
 .h2h-pred .h2h-pred-tbl .h2h-t { font-weight: 700; font-variant-numeric: tabular-nums; }
 .h2h-pred .h2h-pred-tbl .h2h-band { color: var(--muted, #6b7280); font-variant-numeric: tabular-nums; }
 .h2h-pred .h2h-pred-tbl .h2h-none { color: var(--muted, #6b7280); }
-.h2h-pred .h2h-margin { margin: 0.5rem 0 0; font-size: 1rem; }
+.h2h-pred .h2h-pred-tbl .h2h-dot { margin-right: 0.35rem; }
+/* the margin is the headline, above the table */
+.h2h-pred .h2h-margin { margin: 0 0 0.5rem; font-size: 1.1rem; }
 .h2h-pred .h2h-muted, .h2h-acc .h2h-muted { color: var(--muted, #6b7280); font-size: 0.85em; }
 .h2h-pred .h2h-acc { margin-top: 0.8rem; max-width: 46rem; }
 @media (max-width: 640px) {
   .h2h-pred .h2h-course-field, .h2h-pred .h2h-course-field input { min-width: 0; width: 100%; }
-  .h2h-pred .h2h-pred-tbl { min-width: 0; width: 100%; }
 }
 
 /* ---- /goal (goal.html, goal.js) ---------------------------------------- */
