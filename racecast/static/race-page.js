@@ -137,6 +137,11 @@
     var h = location.hash.slice(1);
     var el = null;
     try { el = h && document.getElementById(decodeURIComponent(h)); } catch (err) { el = null; }
+    // an old anchor naming a tab (data-opens, as on arrival)
+    if (el && el.dataset.opens && !el.hasAttribute("data-panel")) {
+      var tab = document.getElementById(el.dataset.opens);
+      if (tab && tab.hasAttribute("data-panel")) el = tab;
+    }
     if (el && el.hasAttribute("data-panel")) {
       roots.forEach(function (r) {
         if (Array.prototype.indexOf.call(r.panels, el) >= 0) r.show(el.dataset.panel);
