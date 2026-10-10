@@ -448,3 +448,59 @@ def test_a_final_slower_than_that_mornings_prelim_is_no_pr(A, monkeypatch):
     final, prelim = rows
     assert prelim["is_pr"] is True             # the morning's run was the PR
     assert final["is_pr"] is False and final["is_sr"] is False
+
+
+# ---- 13 / 14 / 16. XC DQ/DNF places, the meet page's winners ------------ #
+
+def test_xc_places_skip_dq_and_non_finishers(A):
+    rows = [{"time_seconds": 900.0, "status": None},
+            {"time_seconds": 901.0, "status": "DQ"},
+            {"time_seconds": 902.0, "status": "FS"},
+            {"time_seconds": 903.0, "status": None},
+            {"time_seconds": 999999, "status": "DNF"},
+            {"time_seconds": 999999, "status": None}]
+    A._stampXcPlaces(rows)
+    assert [r["pl"] for r in rows] == [1, None, None, 2, None, None]
+    assert [r["pl_status"] for r in rows] == [None, "DQ", "FS", None, "DNF", " - "]
+
+
+def test_race_template_places_from_pl_and_links_only_people():
+    src = _tpl("race.html")
+    assert "{{ row.pl if row.pl else row.pl_status }}" in src
+    assert "<span>{{ loop.index }}</span></td>\n        <td class=\"nm\">" not in src
+    for t in ("race.html", "compiled.html"):
+        assert "{% if r and r.person_id %}<a href=\"/athlete/{{ r.person_id }}" in _tpl(t)
+
+
+def test_meet_winner_is_never_a_dq_and_carries_its_state(A, monkeypatch):
+    import meet_compile
+    monkeypatch.setattr(A, "_hasResultsStatus", lambda cur, table="results": True)
+
+    def stamp(cur, rows):
+        for r in rows:
+            r["school_state"] = "AZ"
+    monkeypatch.setattr(meet_compile, "stampSchoolStates", stamp)
+    split = []
+    monkeypatch.setattr(meet_compile, "splitCollisionTeams",
+                        lambda cur, rows, **k: split.append(k))
+    rows = [{"div_id": 1, "person_id": 9, "time_seconds": 880.0, "school": "Dq HS",
+             "status": "DQ", "name": "Dq Runner", "team_id": None}]
+    rows += [{"div_id": 1, "person_id": i, "time_seconds": 900.0 + i,
+              "school": "Hamilton", "status": None, "name": f"R{i}", "team_id": None}
+             for i in range(1, 6)]
+    cur = StubCursor([rows])
+    got = A.meetWinners(cur, 7, [{"div_id": 1, "gender": "M"}], meet_state="CA")
+    w = got[1]["winner"]
+    assert w["name"] == "R1" and w["school_state"] == "AZ"
+    assert got[1]["team"]["school"] == "Hamilton"
+    assert split and split[0]["meet_state"] == "CA"
+    src = _tpl("meet.html")
+    assert "w.winner.school_state or header.state" in src
+    assert "d.n_finishers" in src
+
+
+def test_meet_divisions_count_finishers(A, monkeypatch):
+    monkeypatch.setattr(A, "_hasResultsStatus", lambda cur, table="results": True)
+    cur = StubCursor([[]])
+    A.get_meet_divisions(cur, 7)
+    assert "AS n_finishers" in cur.sql[-1][0] and "'DNF'" in cur.sql[-1][0]

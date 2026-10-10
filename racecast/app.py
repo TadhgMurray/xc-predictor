@@ -4254,10 +4254,19 @@ def race_xc(meet_id, div_id):
             day_effect = raceDayEffect(cur, "XC", header,
                                        results[0].get("date") if results else None)
 
+    # ★ A PLACE IS A FINISHER'S (sweep 2026-10-10). loop.index numbered
+    #   every row, so a DNF read "41st" and a DQ -- whose TIME stands but
+    #   whose PLACE is void -- took a place and moved everyone behind it
+    #   down one, in the table and in the team scores. _stampXcPlaces gives
+    #   finishers their place and everyone else their status.
+    _stampXcPlaces(results)
+
     # Stamp score_place / team_place on the rendered rows themselves --
     # scoreRows below runs on `ranked` COPIES, so its stamps never reach
-    # the table.
-    annotateScoring(results)
+    # the table. ! Finishers only: a DQ neither scores nor displaces.
+    for r in results:
+        r["team_place"] = r["score_place"] = None
+    annotateScoring([r for r in results if r["pl"]])
 
     if header is None:
         abort(404)
@@ -4279,9 +4288,7 @@ def race_xc(meet_id, div_id):
     #   within-division finishing position -- a division of nine carries values
     #   running past 60. Scoring has to use the same numbers the reader sees,
     #   or the scorers listed will not match the places in the table.
-    ranked = [{**r, "place": i}
-              for i, r in enumerate(results, start=1)
-              if r.get("time_seconds") is not None]
+    ranked = [{**r, "place": r["pl"]} for r in results if r["pl"]]
 
     # ★ IDENTITY-SPLIT COLLIDING NAMES BEFORE SCORING (NXN 2025: two
     #   Jesuits, two Lincolns under one string each). Scoring the string
@@ -4368,8 +4375,7 @@ def race_xc(meet_id, div_id):
     #   query it adds -- its own connection, bounded inside priorTitles.
     import race_story
     story_titles = 0
-    _fin = [r for r in results if r.get("time_seconds") is not None
-            and not (float(r["time_seconds"]) >= 100_000 or _isSentinelTime(r["time_seconds"]))]
+    _fin = [r for r in results if r["pl"]]          # placed finishers, no DQ
     if _fin and _fin[0].get("person_id") and race_date:
         try:
             with getConn() as _conn, _conn.cursor(
@@ -4462,7 +4468,34 @@ def get_meet_date(cur, table, meet_id, source=None):
     return row["date"] if row else None
 
 
-def meetWinners(cur, meet_id, divisions, source=None, published=None):
+def _xcPlaced(row):
+    """A finisher who keeps a place: not a DNF/DNS, and not a DQ (status DQ
+    or FS -- the time is real, the place is void). result_status.kind is
+    the one rule; the sentinel is its fallback for rows with no status."""
+    from result_status import kind
+    return kind(row.get("status"), row.get("time_seconds")) == "ok"
+
+
+def _stampXcPlaces(rows):
+    """row["pl"]: the place among placed finishers, in order; None for the
+    rest, which get row["pl_status"] ('DQ', 'DNF', 'DNS' -- the feed's own
+    letters when it sent them). In place."""
+    from result_status import normalise
+    n = 0
+    for r in rows:
+        if _xcPlaced(r):
+            n += 1
+            r["pl"], r["pl_status"] = n, None
+        else:
+            r["pl"] = None
+            # ! the feed's letters, or a dash: the bare sentinel cannot say
+            #   whether it was a DNF or a DNS
+            r["pl_status"] = normalise(r.get("status")) or " - "
+    return rows
+
+
+def meetWinners(cur, meet_id, divisions, source=None, published=None,
+                meet_state=None):
     """{div_id: {"winner": {...}, "team": {...}}} for the meet page's race
     rows (owner, 2026-09-26: a meet page listed only gender, division,
     distance and a count -- not who won).
@@ -4476,9 +4509,11 @@ def meetWinners(cur, meet_id, divisions, source=None, published=None):
     ! ONE QUERY FOR THE WHOLE MEET, grouped here: a meet page must not run a
       query per division.
     """
-    from meet_compile import scoreRows
+    from meet_compile import (scoreRows, splitCollisionTeams, unsplitTeams,
+                              stampSchoolStates)
     cur.execute(f"""
-        SELECT r.div_id, r.person_id, r.time_seconds, r.school,
+        SELECT r.div_id, r.person_id, r.time_seconds, r.school, r.team_id,
+               {"r.status" if _hasResultsStatus(cur) else "NULL::text"} AS status,
                {_name_sql('r')} AS name
         FROM   results r
         {_athlete_lateral('r')}
@@ -4489,7 +4524,16 @@ def meetWinners(cur, meet_id, divisions, source=None, published=None):
     """, {"meet": meet_id, "src": source})
     by_div = {}
     for row in cur.fetchall():
-        by_div.setdefault(row["div_id"], []).append(dict(row))
+        # ! A DQ NEVER WINS (sweep 2026-10-10): its time is real, its
+        #   place is void -- the race page's rule (_xcPlaced)
+        if _xcPlaced(row):
+            by_div.setdefault(row["div_id"], []).append(dict(row))
+    # ★ THE WINNER'S OWN SCHOOL STATE, as the race page's rows (sweep
+    #   2026-10-10): labelled with the meet's state, an Arizona winner at a
+    #   California meet read as the California namesake.
+    leaders = [rows[0] for rows in by_div.values()]
+    if leaders:
+        stampSchoolStates(cur, leaders)
     out = {}
     for d in divisions:
         rows = by_div.get(d["div_id"]) or []
@@ -4499,7 +4543,8 @@ def meetWinners(cur, meet_id, divisions, source=None, published=None):
         got = {"winner": {"person_id": w.get("person_id"),
                           "name": w.get("name") or "Unknown",
                           "time": format_time(w.get("time_seconds")),
-                          "school": w.get("school")}}
+                          "school": w.get("school"),
+                          "school_state": w.get("school_state")}}
         pub = ((published or {}).get((d["div_id"], d.get("gender")))
                or (published or {}).get((d["div_id"], None)))
         if pub:
@@ -4510,12 +4555,27 @@ def meetWinners(cur, meet_id, divisions, source=None, published=None):
                            "points": first.get("points")}
         else:
             ranked = [{**r, "place": i} for i, r in enumerate(rows, 1)]
-            teams = scoreRows(ranked).get("teams") or []
+            # ★ SPLIT COLLIDING NAMES FIRST, as the race page (sweep
+            #   2026-10-10): two Jesuits scored as one team topped this
+            #   column with a team the race page does not have
+            splitCollisionTeams(cur, ranked, meet_state=meet_state,
+                                source=source)
+            teams = unsplitTeams(scoreRows(ranked)).get("teams") or []
             if teams:
                 got["team"] = {"school": teams[0]["school"],
-                               "points": teams[0]["points"]}
+                               "points": teams[0]["points"],
+                               "state": teams[0].get("state")}
         out[d["div_id"]] = got
     return out
+
+
+def _finishedSqlFor(cur):
+    """result_status.finishedSql when results carries status, else the
+    sentinel test (a DQ counts: it finished)."""
+    if _hasResultsStatus(cur):
+        from result_status import finishedSql
+        return finishedSql("r")
+    return "r.time_seconds < 999999"
 
 
 def get_meet_divisions(cur, meet_id, source=None):
@@ -4532,6 +4592,10 @@ def get_meet_divisions(cur, meet_id, source=None):
                                                      AS division,
                {_xc_distance_sql('r')}               AS distance,
                count(r.result_id)                    AS n_results,
+               -- ★ THE FINISHERS COLUMN (sweep 2026-10-10): n_results
+               --   counted the DNF/DNS rows the race page lists last
+               count(r.result_id) FILTER (WHERE {_finishedSqlFor(cur)})
+                                                     AS n_finishers,
                mode() WITHIN GROUP (ORDER BY a.gender)
                    FILTER (WHERE a.gender IN ('M', 'F')) AS gender
         FROM results r
@@ -4724,7 +4788,8 @@ def meet_xc(meet_id):
             # who won each race, and which team (meetWinners)
             try:
                 winners = meetWinners(cur, meet_id, divisions, source=src,
-                                      published=publishedScores(cur, meet_id))
+                                      published=publishedScores(cur, meet_id),
+                                      meet_state=(header or {}).get("state"))
             except Exception:                           # noqa: BLE001
                 # the table still renders without the two columns
                 app.logger.exception("meetWinners failed for %s", meet_id)
