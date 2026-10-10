@@ -243,8 +243,10 @@ step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
 #   racecast/build_meet_forecasts.py.
 # ! OFF THE && CHAIN AND AFTER THE BOARDS: it reads the ratings as they
 #   stand, publishes nothing the boards need, and a failure only says so in
-#   the summary. XCP_FORECASTS=0 in the env file turns it off.
-if [ "${XCP_FORECASTS:-1}" = "1" ]; then
+#   the summary. OFF until XCP_FORECASTS=1 is in the env file: run it by
+#   hand once first (the catch-up predicts every posted meet) to see its
+#   time on the server.
+if [ "${XCP_FORECASTS:-0}" = "1" ]; then
   step 13h_meet_forecasts "$PY" -u racecast/build_meet_forecasts.py
 fi
 

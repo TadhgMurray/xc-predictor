@@ -1414,9 +1414,9 @@ fi
 #   week's posted XC forecasts stored, the run meets scored, for /meet/recap
 #   and /recaps. Incremental -- a forecast already frozen is never redone --
 #   so after the nightly update it is usually a no-op here. Off the chain:
-#   nothing after it reads the table. XCP_FORECASTS=0 turns it off.
+#   nothing after it reads the table. OFF until XCP_FORECASTS=1 (run it by hand once first).
 #   See racecast/build_meet_forecasts.py.
-if [ "${XCP_FORECASTS:-1}" = "1" ]; then
+if [ "${XCP_FORECASTS:-0}" = "1" ]; then
   step 13h_meet_forecasts "$PY" -u racecast/build_meet_forecasts.py
 fi
 
