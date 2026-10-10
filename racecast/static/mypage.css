@@ -1,0 +1,85 @@
+/* mypage.css -- My page and the shortlist comparison (owner, 2026-10-10).
+   The Follow / Save button's few rules ride in follow.js, so the pages it
+   sits on need no stylesheet of their own. ★ THE SITE'S LOOK (race.css's rule): no
+   fonts, colours or bands of its own -- the hairline cards of Settings, the
+   race page's header and sidebar, style.css's tables and tokens. Scoped to
+   main.rc page classes and the two button classes. */
+
+/* ---- My page ------------------------------------------------------------- */
+main.rc.my-page .rc-hd .acct-notice, main.rc.my-page .rc-hd .error { margin-top: .6rem; }
+main.rc.my-page .mp-card { border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1.1rem 1rem; margin: 0 0 1.2rem;
+  scroll-margin-top: 1rem; }
+main.rc.my-page .mp-card > h2 { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .6rem; }
+main.rc.my-page .mp-card > h2 .dist-note { font-size: .85rem; font-weight: 400; }
+main.rc.my-page .mp-tag { font-size: .7rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 0 .5rem; }
+main.rc.my-page .mp-sub { margin: .2rem 0 0; font-size: .9rem; color: var(--muted); }
+main.rc.my-page .mp-stats { display: flex; flex-wrap: wrap; gap: .6rem 2rem; margin: .8rem 0 .2rem; }
+main.rc.my-page .mp-stats .k { display: block; font-size: .7rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+main.rc.my-page .mp-stats .v { font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+main.rc.my-page .mp-move { font-size: .82rem; font-weight: 600; margin-left: .3rem; font-variant-numeric: tabular-nums; }
+main.rc.my-page .mp-move.up { color: #1a7f37; }
+main.rc.my-page .mp-move.down { color: #a32d2d; }
+main.rc.my-page .mp-move.flat { color: var(--muted); font-weight: 400; }
+main.rc.my-page .mp-since { font-size: .8rem; color: var(--muted); margin: 0 0 .2rem; }
+main.rc.my-page .mp-h3 { font-size: .75rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted);
+  margin: 1.1rem 0 .35rem; }
+main.rc.my-page .mp-next { border-left: 3px solid var(--gold); background: #fdf7e6; padding: .55rem .8rem; border-radius: 0 6px 6px 0; }
+main.rc.my-page .mp-next .mp-meet { font-weight: 700; }
+main.rc.my-page .mp-next .mp-when { color: #374151; }
+main.rc.my-page .mp-pred { margin: .35rem 0 0; }
+main.rc.my-page .mp-pred b { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+main.rc.my-page .mp-pred .dist-note { margin-left: .3rem; }
+main.rc.my-page .mp-why { font-size: .8rem; color: var(--muted); margin: .3rem 0 0; }
+main.rc.my-page .mp-links { display: flex; flex-wrap: wrap; gap: .2rem 1.1rem; margin: .45rem 0 0; font-weight: 600; font-size: .9rem; }
+main.rc.my-page .mp-table { width: 100%; font-size: .92rem; }
+main.rc.my-page .mp-table td.n, main.rc.my-page .mp-table th.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+main.rc.my-page .mp-table td.d { white-space: nowrap; color: var(--muted); width: 5.5rem; }
+main.rc.my-page .mp-flag { display: inline-block; font-size: .7rem; font-weight: 700; padding: 0 .35rem; border-radius: 3px;
+  background: var(--sel-bg); color: var(--ink); margin-left: .3rem; vertical-align: .1em; }
+main.rc.my-page .mp-empty { color: var(--muted); font-size: .92rem; margin: .4rem 0 0; }
+main.rc.my-page .mp-squad td.nm { font-weight: 600; }
+main.rc.my-page .rank-line { margin: .7rem 0 0; }
+/* the sidebar: the alert setting and the follow list */
+main.rc.my-page .rc-side > h2 { font-size: 1.05rem; margin-top: 0; }
+main.rc.my-page .rc-side h2 + .mp-side-card { margin-top: 0; }
+main.rc.my-page .mp-side-card { border: 1px solid var(--line); border-radius: 10px; padding: .8rem 1rem .9rem; margin: 0 0 1.2rem; font-size: .9rem;
+  scroll-margin-top: 1rem; }
+main.rc.my-page .mp-side-card h2 { font-size: 1.05rem; margin: 0 0 .4rem; }
+main.rc.my-page .mp-cadence label { display: flex; gap: .45rem; align-items: baseline; padding: .2rem 0; cursor: pointer; }
+main.rc.my-page .mp-cadence .meta { margin: .4rem 0 0; font-size: .8rem; }
+main.rc.my-page .mp-follows { list-style: none; margin: 0; padding: 0; }
+main.rc.my-page .mp-follows li { display: flex; align-items: baseline; gap: .4rem; padding: .35rem 0; border-bottom: 1px solid var(--line); }
+main.rc.my-page .mp-follows li:last-child { border-bottom: 0; }
+main.rc.my-page .mp-follows a { font-weight: 600; }
+main.rc.my-page .mp-follows form { margin-left: auto; }
+main.rc.my-page .acct-x { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: .82rem; text-decoration: underline; padding: 0; }
+main.rc.my-page .go { padding: .4rem .9rem; font: inherit; font-weight: 600; border: 0; border-radius: 6px; background: var(--ink); color: #fff; cursor: pointer; }
+@media (max-width: 760px) {
+  main.rc.my-page .mp-card { padding: .8rem .85rem .9rem; }
+  main.rc.my-page .mp-stats { gap: .5rem 1.4rem; }
+  main.rc.my-page .mp-table .rc-wide { display: none; }
+  /* the sidebar after the cards on a phone: the cards are what the page is
+     for, the setting and the list are changed now and then */
+  main.rc.my-page .rc-grid { display: flex; flex-direction: column; }
+  main.rc.my-page .rc-side { order: 2; }
+}
+
+/* ---- the shortlist comparison ------------------------------------------- */
+main.rc.shortlist-page .sl-scroll { overflow-x: auto; margin: 0 0 1rem; }
+main.rc.shortlist-page table.sl-table { width: 100%; min-width: 34rem; table-layout: fixed; font-size: .92rem; }
+main.rc.shortlist-page .sl-table th[scope=row] { width: 11rem; font-weight: 600; color: var(--muted); font-size: .78rem;
+  letter-spacing: .04em; text-transform: uppercase; vertical-align: top; }
+main.rc.shortlist-page .sl-table thead th { vertical-align: bottom; font-size: 1rem; text-transform: none; letter-spacing: 0; }
+main.rc.shortlist-page .sl-table thead th a { font-weight: 700; }
+main.rc.shortlist-page .sl-table td { vertical-align: top; font-variant-numeric: tabular-nums; }
+main.rc.shortlist-page .sl-table td b { font-size: 1.05rem; }
+main.rc.shortlist-page .sl-table .sub { display: block; font-size: .8rem; color: var(--muted); }
+main.rc.shortlist-page .sl-table td.best b { color: #1a7f37; }
+main.rc.shortlist-page .sl-table tr.sl-sec th { padding-top: 1rem; color: var(--ink); font-size: .8rem; border-bottom: 1px solid var(--line-2); }
+main.rc.shortlist-page .sl-rm { margin-top: .3rem; }
+main.rc.shortlist-page .acct-x { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: .8rem; text-decoration: underline; padding: 0; }
+main.rc.shortlist-page .sl-note { font-size: .85rem; color: var(--muted); max-width: 46rem; }
+@media (max-width: 760px) {
+  main.rc.shortlist-page .sl-table th[scope=row] { width: 7.5rem; }
+}

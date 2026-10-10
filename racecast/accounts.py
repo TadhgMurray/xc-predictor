@@ -375,25 +375,32 @@ def _http(url, data=None, headers=None, form=False, timeout=10):
     return json.loads(raw) if raw.strip() else {}
 
 
-def sendMail(to, subject, text):
+def sendMail(to, subject, text, headers=None, log_as=None):
     """True when a provider accepted the message. Resend and Postmark are
-    one JSON POST each; nothing else is wired."""
+    one JSON POST each; nothing else is wired.
+
+    ★ headers (2026-10-10, the follow digest): extra mail headers, e.g.
+      List-Unsubscribe; each provider's own field for them.
+    ! log_as: what a failure line names instead of the address (the digest
+      passes "account <id>": no address in a log)."""
     provider, key = _env("XCP_MAIL_PROVIDER").lower(), _env("XCP_MAIL_KEY")
     sender = _env("XCP_MAIL_FROM", "Racecast <login@racecast.co>")
     try:
         if provider == "resend":
-            _http("https://api.resend.com/emails",
-                  {"from": sender, "to": [to], "subject": subject, "text": text},
-                  {"Authorization": f"Bearer {key}"})
+            body = {"from": sender, "to": [to], "subject": subject, "text": text}
+            if headers:
+                body["headers"] = dict(headers)
+            _http("https://api.resend.com/emails", body, {"Authorization": f"Bearer {key}"})
             return True
         if provider == "postmark":
-            _http("https://api.postmarkapp.com/email",
-                  {"From": sender, "To": to, "Subject": subject, "TextBody": text,
-                   "MessageStream": _env("XCP_MAIL_STREAM", "outbound")},
-                  {"X-Postmark-Server-Token": key})
+            body = {"From": sender, "To": to, "Subject": subject, "TextBody": text,
+                    "MessageStream": _env("XCP_MAIL_STREAM", "outbound")}
+            if headers:
+                body["Headers"] = [{"Name": k, "Value": v} for k, v in headers.items()]
+            _http("https://api.postmarkapp.com/email", body, {"X-Postmark-Server-Token": key})
             return True
     except Exception as exc:                            # noqa: BLE001
-        print(f"[accounts] mail to {to} failed ({type(exc).__name__}: {exc})", flush=True)
+        print(f"[accounts] mail to {log_as or to} failed ({type(exc).__name__}: {exc})", flush=True)
         return False
     return False
 

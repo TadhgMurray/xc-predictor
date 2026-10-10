@@ -1,0 +1,45 @@
+{# unsubscribe.html -- the link in every alert digest (follows.py). GET
+   shows one button, so a mail scanner that opens the link changes nothing;
+   the POST turns the alert mail off. The page names no address. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Alert emails" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('mypage.css') }}">
+<script src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc my-page">
+  <header class="rc-hd"><div class="rc-hgrid rc-hone"><div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Your account</span></div>
+    <h1>Alert emails</h1>
+  </div></div></header>
+  <div class="rc-grid rc-grid-one"><div class="rc-mainc">
+  <section class="mp-card">
+    {% if done %}
+    <h2>Done</h2>
+    <p>You will get no more alert emails. You still follow everyone you followed; turn the emails back on from <a href="/account/me#alerts">My page</a>.</p>
+    {% elif valid %}
+    <h2>Stop the alert emails?</h2>
+    <p>The digests of new races for the athletes and teams you follow. Sign-in links still arrive when you ask for one.</p>
+    {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+    <form method="post" action="/account/unsubscribe">
+      <input type="hidden" name="a" value="{{ a }}"><input type="hidden" name="t" value="{{ t }}">
+      <button type="submit" class="go">Stop the emails</button>
+    </form>
+    {% else %}
+    <h2>That link did not work</h2>
+    <p>It may have been cut short by your mail app. Change the setting on <a href="/account/me#alerts">My page</a> instead.</p>
+    {% endif %}
+  </section>
+  </div></div>
+</main>
+</body>
+</html>

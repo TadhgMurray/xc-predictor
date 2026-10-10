@@ -1,0 +1,110 @@
+{# shortlist.html -- the saved college shortlist, side by side (owner,
+   2026-10-10): what each program recruits, how its recruits develop, how
+   strong its conference and division are. shortlist.py reads every number
+   off the recruiting tables; this only lays them out, one column a program.
+   ★ THE RACE PAGE'S SHAPE: header with the sport and gender switches, one
+     table, the explanation under it. A phone scrolls the table sideways
+     inside itself, never the page. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "College shortlist" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('mypage.css') }}">
+<script src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+{% set who = "men" if gender == "m" else "women" %}
+{% set have = cols|selectattr("summary")|list %}
+{% set best_median = have|map(attribute="summary.median")|reject("none")|max if have else none %}
+{% set best_p75 = have|map(attribute="summary.p75")|reject("none")|max if have else none %}
+{% macro q(g, s) %}?gender={{ g }}&amp;sport={{ s }}{% endmacro %}
+<main class="page-wide rc shortlist-page">
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--site">Your account</span></div>
+      <h1>College shortlist</h1>
+      <div class="rc-meta">{{ n }} of {{ max_n }} saved · <a href="/recruiting">Find programs</a> · <a href="/account/me">My page</a></div>
+      <div class="rc-scope-row rc-scope">
+        <nav class="seg" aria-label="Gender">
+          <a class="seg-btn{{ ' is-on' if gender == 'm' }}" href="{{ q('m', sport) }}">Men</a><a class="seg-btn{{ ' is-on' if gender == 'f' }}" href="{{ q('f', sport) }}">Women</a>
+        </nav>
+        <nav class="seg" aria-label="Sport">
+          <a class="seg-btn{{ ' is-on' if sport == 'XC' }}" href="{{ q(gender, 'XC') }}">Cross country</a><a class="seg-btn{{ ' is-on' if sport == 'TF' }}" href="{{ q(gender, 'TF') }}">Track</a>
+        </nav>
+      </div>
+      {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
+      {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+    </div>
+  </div></header>
+
+  <div class="rc-grid rc-grid-one">
+  <div class="rc-mainc">
+  {% if not ready %}
+  <p class="predict-status show error">The shortlist is not set up on this server yet (racecast/follows.py --init).</p>
+  {% elif not cols %}
+  <p class="meta">Nothing saved yet. Open a college from <a href="/recruiting">Recruiting</a> and press <b>Save to shortlist</b>; save {{ min_n }} to {{ max_n }} programs to see them side by side.</p>
+  {% else %}
+  {% if n < min_n %}<p class="meta">Save at least one more program to compare: open one from <a href="/recruiting">Recruiting</a> and press <b>Save to shortlist</b>.</p>{% endif %}
+  {% if not built %}<p class="meta">The recruiting tables are not built on this server yet, so the numbers are missing (pipeline step 10f).</p>{% endif %}
+  <div class="sl-scroll">
+  <table class="sl-table">
+    <thead><tr><th scope="col"></th>
+      {% for c in cols %}
+      <th scope="col">{{ crest(c.school, c.state or none, px=64, size=22) }}<a href="{{ c.href }}">{{ c.summary.label if c.summary else c.school }}</a>
+        <form method="post" action="/api/shortlist" class="sl-rm"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="school" value="{{ c.school }}"><input type="hidden" name="state" value="{{ c.state }}"><input type="hidden" name="action" value="remove"><button type="submit" class="acct-x">remove</button></form></th>
+      {% endfor %}</tr></thead>
+    <tbody>
+    <tr class="sl-sec"><th scope="row" colspan="{{ cols|length + 1 }}">What they recruit ({{ who }}'s {{ "cross country" if sport == "XC" else "track" }}, high-school scale)</th></tr>
+    <tr><th scope="row">Typical recruit</th>
+      {% for c in cols %}{% set s = c.summary %}
+      <td class="{{ 'best' if s and s.median is not none and s.median == best_median and have|length > 1 }}">{% if s and s.median is not none %}<b>{{ "%.1f"|format(s.median) }}</b>{% if s.times.median and s.times.median["5k"] %}<span class="sub">{{ fmt_time(s.times.median["5k"]) }} 5K</span>{% endif %}{% else %}<span class="sub">No {{ who }}'s recruits on file</span>{% endif %}</td>
+      {% endfor %}</tr>
+    <tr><th scope="row">Middle half</th>
+      {% for c in cols %}{% set s = c.summary %}
+      <td>{% if s and s.p25 is not none %}{{ "%.1f"|format(s.p25) }} to {{ "%.1f"|format(s.p75) }}{% if s.times.p25 and s.times.p25["5k"] %}<span class="sub">{{ fmt_time(s.times.p75["5k"]) }} to {{ fmt_time(s.times.p25["5k"]) }} 5K</span>{% endif %}{% endif %}</td>
+      {% endfor %}</tr>
+    <tr><th scope="row">Top quarter from</th>
+      {% for c in cols %}{% set s = c.summary %}
+      <td class="{{ 'best' if s and s.p75 is not none and s.p75 == best_p75 and have|length > 1 }}">{% if s and s.p75 is not none %}<b>{{ "%.1f"|format(s.p75) }}</b>{% endif %}</td>
+      {% endfor %}</tr>
+    <tr><th scope="row">Recruits on file</th>
+      {% for c in cols %}{% set s = c.summary %}
+      <td>{% if s %}{{ s.n }}<span class="sub">classes {{ s.classes }}; {{ s.n_hs }} linked to a high-school season</span>{% endif %}</td>
+      {% endfor %}</tr>
+
+    <tr class="sl-sec"><th scope="row" colspan="{{ cols|length + 1 }}">How their recruits develop</th></tr>
+    <tr><th scope="row">After arriving</th>
+      {% for c in cols %}{% set d = c.after %}
+      <td>{% if d %}<b>{{ "%+.1f"|format(d.median_pct) }}%</b><span class="sub">median, first college season to latest there ({{ "%+.1f"|format(d.median_gain) }} pts); {{ d.n }} recruit{{ "s" if d.n != 1 }}</span>{% elif c.summary %}<span class="sub">No recruit with a later season yet</span>{% endif %}</td>
+      {% endfor %}</tr>
+    <tr><th scope="row">The model expected</th>
+      {% for c in cols %}{% set d = c.expected %}
+      <td>{% if d %}<b>{{ "%+.1f"|format(d.median_pct) }}%</b><span class="sub">median projected year-one gain out of high school; {{ d.n }} recruit{{ "s" if d.n != 1 }}</span>{% elif c.summary %}<span class="sub">No projection on file</span>{% endif %}</td>
+      {% endfor %}</tr>
+
+    <tr class="sl-sec"><th scope="row" colspan="{{ cols|length + 1 }}">Conference and division</th></tr>
+    <tr><th scope="row">Conference</th>
+      {% for c in cols %}{% set k = c.conference %}
+      <td>{% if k %}{{ k.name }}<span class="sub">#{{ k.rank }} of {{ k.of }} by typical recruit; the conference's typical program {{ "%.1f"|format(k.median) }}</span>{% endif %}</td>
+      {% endfor %}</tr>
+    <tr><th scope="row">Division</th>
+      {% for c in cols %}{% set k = c.division %}
+      <td>{% if k %}{{ k.name }}<span class="sub">#{{ k.rank }} of {{ k.of }}; typical program {{ "%.1f"|format(k.median) }}</span>{% endif %}</td>
+      {% endfor %}</tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="sl-note">Ratings are on the high-school scale, so your own rating reads straight across. A rating gain is a time gain of about the same share of the race, which is why development is shown in percent. "After arriving" is measured; "the model expected" is what the prediction model projected for the same recruits a year out of high school. Neither is the other's scale, so they are not subtracted. Rank in conference compares typical recruits across the programs Racecast has on file.</p>
+  {% endif %}
+  </div>
+  </div>
+</main>
+</body>
+</html>

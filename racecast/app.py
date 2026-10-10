@@ -9533,6 +9533,15 @@ app.register_blueprint(_pages2.bp)
 # ★ "WHAT IT TAKES" (owner, 2026-10-05): its own blueprint too, see cuts.py.
 import cuts as _cuts                                           # noqa: E402
 app.register_blueprint(_cuts.bp)
+# ★ FOLLOWS, MY PAGE, TEAM CALENDARS, THE SHORTLIST (owner, 2026-10-10):
+#   their own modules and blueprints. The public pages stay anonymous; every
+#   route that reads a session is under /account or /api/ (private above).
+import follows as _follows                                     # noqa: E402
+import my_page as _my_page                                     # noqa: E402
+import shortlist as _shortlist                                 # noqa: E402
+import team_meets as _team_meets                               # noqa: E402
+for _bp in (_follows.bp, _my_page.bp, _shortlist.bp, _team_meets.bp):
+    app.register_blueprint(_bp)
 
 
 @app.route("/predictions")

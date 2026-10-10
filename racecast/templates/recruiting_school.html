@@ -144,5 +144,7 @@
 </main>
 <script src="{{ static_v('share.js') }}"></script>
 {% if tabbed %}<script src="{{ static_v('race-page.js') }}"></script>{% endif %}
+{# Save to shortlist (owner, 2026-10-10): drawn after load by follow.js #}
+<script src="{{ static_v('follow.js') }}" data-shortlist="1" data-school="{{ school }}" data-state="{{ state or '' }}" data-mount=".rc-hd .rc-meta" data-sep=" · "></script>
 </body>
 </html>
