@@ -657,7 +657,6 @@ main.pred-page.rc.predict2 { max-width: 1080px; padding: 1.6rem 1.5rem 3rem; }
 main.pred-page.rc h1 { font-size: inherit; }
 main.pred-page.rc .rc-hd h1 { font-size: 2em; }
 main.pred-page.rc .rc-story { margin: .35rem 0 0; color: var(--muted); max-width: 46rem; }
-main.pred-page.rc .predict-views { margin: 1.1rem 0 0; }
 main.pred-page.rc .rc-champs[hidden] { display: none; }
 main.pred-page.rc .step:first-of-type { margin-top: 1.2rem; }
 main.pred-page.rc #output .rc-grid { margin-top: 1.2rem; }
@@ -777,3 +776,53 @@ main.rc.pred-page .per-team[hidden] { display: none; }
 main.rc.pred-page .per-team input { width: 4.2rem; font: inherit; color: var(--ink, #111418);
   padding: .2rem .4rem; border: 1px solid var(--line-2, #cbd0d6); border-radius: 5px; }
 
+
+/* ★ THE PREDICTIONS OPENING (owner, 2026-10-10: the approved design):
+   this week's meets beside "Who wins state?", then "Re-run a past race",
+   then the steps. All of it keys on #meet-search.hidden -- set by every
+   way a meet arrives (a pick, a Predict link, a shared link, a restored
+   session) -- so predictions.js did not have to learn about any of it. */
+main.rc.pred-page .pred-open { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1.6rem; align-items: start; margin-top: 1.3rem; }
+main.rc.pred-page .pred-open h2 { margin: .2rem 0 .5rem; font-size: 1.25rem; display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
+main.rc.pred-page .pred-open h2 small { font-size: .8rem; font-weight: 400; color: var(--muted); }
+main.rc.pred-page .pred-week-t td.go-c { width: 7rem; text-align: right; white-space: nowrap; }
+main.rc.pred-page .pred-week-t td.go-c a { font-weight: 600; font-size: .9rem; }
+main.rc.pred-page .pred-week .rc-more { display: inline-block; margin-top: .6rem; }
+main.rc.pred-page .pred-state { border: 1px solid var(--line); border-radius: 4px; padding: .9rem 1rem 1rem; background: #fff; }
+main.rc.pred-page .pred-state h2 { margin-top: 0; }
+main.rc.pred-page .pred-state p { margin: 0 0 .7rem; font-size: .9rem; color: #374151; line-height: 1.45; }
+main.rc.pred-page .pred-state-row { display: flex; gap: .5rem; margin: 0; }
+main.rc.pred-page .pred-state-row select { flex: 1 1 0; min-width: 0; font: inherit; font-size: .92rem; padding: .45rem .5rem;
+  border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+main.rc.pred-page .pred-state-row .go { flex: none; padding: .5rem 1rem; font-size: .92rem; }
+main.rc.pred-page .pred-state .pred-state-links { margin: .7rem 0 0; font-size: .85rem; }
+main.rc.pred-page .pred-state-links a { font-weight: 600; }
+main.rc.pred-page .pred-rerun-h { margin: 0 0 .6rem; font-size: 1.25rem; }
+main.rc.pred-page .pred-rerun-h small { font-size: .85rem; font-weight: 400; color: var(--muted); margin-left: .4rem; }
+main.rc.pred-page .step[data-step="meet"]:not(:has(#meet-search.hidden)) .step-head { display: none; }
+main.rc.pred-page .step[data-step="meet"]:has(#meet-search.hidden) .pred-rerun-h { display: none; }
+main.rc.pred-page:has(#meet-search.hidden) .pred-open { display: none; }
+/* the road ahead stays out of sight until there is a meet: under the week
+   and the state card, two greyed steps were a third thing to read */
+main.rc.pred-page .step.pending { display: none; }
+/* the options fold: date, course, team size */
+main.rc.pred-page .pred-opts { margin: .2rem 0 .4rem; }
+main.rc.pred-page .pred-opts > summary { cursor: pointer; font-weight: 600; font-size: .93rem; color: var(--ink); list-style: none; display: inline-block; padding: .2rem 0; }
+main.rc.pred-page .pred-opts > summary::-webkit-details-marker { display: none; }
+main.rc.pred-page .pred-opts > summary::before { content: ""; display: inline-block; width: .38em; height: .38em; margin-right: .55em;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-.15em) rotate(-45deg); }
+main.rc.pred-page .pred-opts[open] > summary::before { transform: translateY(-.2em) rotate(45deg); }
+main.rc.pred-page .pred-opts-in { margin: .7rem 0 0 .2rem; padding-left: 1rem; border-left: 2px solid var(--line); display: grid;
+  grid-template-columns: 11rem minmax(0, 22rem) 10rem; gap: .9rem 1.2rem; align-items: start; }
+main.rc.pred-page .pred-opts-in .pred-opt[hidden] { display: none; }
+main.rc.pred-page .pred-opts-in label { display: block; font-size: .78rem; font-weight: 600; color: #374151; margin-bottom: .25rem; }
+main.rc.pred-page .pred-opts-in input { width: 100%; box-sizing: border-box; }
+main.rc.pred-page .pred-opts-in .hint { font-size: .78rem; margin: .3rem 0 0; }
+main.rc.pred-page .pred-opts-in .per-team { display: block; white-space: normal; color: #374151; font-size: .78rem; }
+main.rc.pred-page .pred-opts-in .per-team span { display: block; margin-bottom: .25rem; }
+main.rc.pred-page .pred-opts-in .per-team input { width: 100%; font-size: .92rem; padding: .45rem .5rem; }
+@media (max-width: 760px) {
+  main.rc.pred-page .pred-open { grid-template-columns: minmax(0, 1fr); gap: 1.3rem; }
+  main.rc.pred-page .pred-week-t td.go-c { width: 5.6rem; }
+  main.rc.pred-page .pred-opts-in { grid-template-columns: minmax(0, 1fr); }
+}

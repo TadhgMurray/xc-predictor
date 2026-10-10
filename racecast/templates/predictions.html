@@ -21,6 +21,12 @@
                 shows the real result beside the prediction. It is the only way
                 to find out whether the model is any good before trusting it.
 
+  ★ AND NOW IT OPENS ON THE WEEK (owner, 2026-10-10: the approved
+    predictions design). Posted meets ARE read forward now (weekend.py), so
+    the page leads with this week's meets and "Who wins state?", and
+    re-running a past race comes third. The date, the course swap and the
+    team size fold under one "Change date, course or team size".
+
   ★ INDIVIDUAL AND TEAM ARE SEPARATE PANELS, NOT ONE FORM WITH FIELDS HIDDEN.
     They ask different questions and need different inputs -- one wants a
     person, the other wants a roster you can edit. Sharing a form made both
@@ -71,8 +77,8 @@
       <span>Share</span>
     </button></span>
     </div>
-    <p class="rc-story">Pick a race that has already happened. Predict what would happen if it were
-      run again - or check the model against what actually did.</p>
+    <p class="rc-story">This week's meets, the state championships, or any race that has already
+      happened - run it again, or test the model against what actually did.</p>
     {# filled once a prediction is on the page, as the race page names its
        winners (predictions.js showChamps) #}
     <div class="rc-champs" id="pred-champs" hidden>
@@ -81,11 +87,61 @@
     </div>
   </div>
 </div></header>
-  {# State meets lives under Predictions (owner, 2026-10-05) #}
-  <div class="seg predict-views">
-    <a class="seg-btn is-on" href="{{ url_for('predictions_page') }}">Any race</a>
-    <a class="seg-btn" href="/projections">State meets</a>
+  {# ★ THE OPENING (owner, 2026-10-10): this week's meets beside "Who wins
+     state?", which replaces the Any race / State meets switch. Hidden once a
+     meet is chosen -- race.css keys it on #meet-search.hidden, the one
+     signal every way in (a pick, a Predict link, a shared link, a restored
+     session) already sets, so predictions.js did not need to learn it. #}
+  <div class="pred-open" id="pred-open">
+    <section class="pred-week" aria-labelledby="pred-week-h">
+      <h2 id="pred-week-h">This week's meets <small>next 7 days</small></h2>
+      {% if week %}
+      <table class="rc-tscores rc-tscores-plain pred-week-t"><tbody>
+        {% for m in week %}
+        <tr>
+          <td class="tn"><a href="{{ m.predict_href }}">{{ m.name }}</a>
+            <span class="sp">{{ m.when }}{% if m.venue %} · {{ m.venue }}{% endif %}{% if m.state %} · {{ m.state }}{% endif %}{% if m.sport == 'TF' %} · track{% endif %}</span></td>
+          <td class="go-c"><a href="{{ m.predict_href }}" aria-label="Predict {{ m.name }}">Predict &rarr;</a></td>
+        </tr>
+        {% endfor %}
+      </tbody></table>
+      <a class="rc-more" href="/meets?view=upcoming">All {{ "{:,}".format(week_n) }} meet{{ "" if week_n == 1 else "s" }} this week &rarr;</a>
+      {% else %}
+      <p class="hint">No meet has been posted for the next seven days yet.
+        <a href="/meets?view=upcoming">Upcoming meets &rarr;</a></p>
+      {% endif %}
+    </section>
+    {# the state-meets mode (/projections, pages2.py): each state's
+       championship run on paper. A form, so it works with no script --
+       the plain GET lands on the index of states; the script below goes
+       straight to the state picked. #}
+    <aside class="pred-state" aria-labelledby="pred-state-h">
+      <h2 id="pred-state-h">Who wins state?</h2>
+      <p>Each state championship run on paper from this season's ratings: team scores,
+        each team's chance to win, and the individual podium.</p>
+      <form class="pred-state-row" id="pred-state-form" action="{{ url_for('pages2.projections_index') }}" method="get">
+        <select id="pred-state-sel" aria-label="State">
+          <option value="">Pick a state</option>
+          {% for code, name in pred_states %}<option value="{{ code|lower }}">{{ name }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="go">Predict</button>
+      </form>
+      <p class="pred-state-links">Popular:
+        {% for code, name in pred_popular %}<a href="{{ url_for('pages2.projections_state', state=code|lower) }}">{{ name }}</a> · {% endfor %}<a href="{{ url_for('pages2.projections_index') }}">all states &rarr;</a></p>
+    </aside>
   </div>
+  <script>
+  (function () {
+    var f = document.getElementById("pred-state-form");
+    if (!f) return;
+    f.addEventListener("submit", function (e) {
+      var st = document.getElementById("pred-state-sel").value;
+      if (!st) return;
+      e.preventDefault();
+      location.href = "/projections/" + encodeURIComponent(st);
+    });
+  })();
+  </script>
 
   {# ---------------- 1. THE MEET ----------------
 
@@ -96,6 +152,11 @@
        it. A step that has been answered should show its answer in place --
        that is what the number is for. #}
   <section class="step" data-step="meet">
+    {# ★ TWO HEADS, ONE SHOWN (2026-10-10): "Re-run a past race" while the
+       search is open, under the week and the state card; "1 Which meet"
+       once a meet is chosen from anywhere, as the steps' first answer
+       (race.css, on #meet-search.hidden) #}
+    <h2 class="pred-rerun-h">Re-run a past race <small>or test the model against what happened</small></h2>
     <div class="step-head"><span class="step-n">1</span> Which meet</div>
 
     <div class="meet-search" id="meet-search">
@@ -123,16 +184,28 @@
         <span class="card-d">Same course, same weekend, whoever is racing now</span>
       </button>
       <button class="card" aria-pressed="false" data-when="asran">
-        <span class="card-t">As it actually ran</span>
+        {# renamed 2026-10-10: what the mode is for, not how it works #}
+        <span class="card-t">Test the model on a past race</span>
         <span class="card-d">That year, that field - scored against the real result</span>
       </button>
     </div>
 
+    {# ★ THE OPTIONS FOLD (owner, 2026-10-10): the date, the course swap and
+       the team size are what a reader changes least, so they sit under one
+       closed "Change date, course or team size" instead of three open
+       fields. predictions.js (openOpts) opens it when a shared link or a
+       restored session has set any of them, so a prediction never arrives
+       with what made it different hidden. Every id is kept. #}
     <div class="when-pane" data-pane="thisyear">
+    <details class="pred-opts" id="pred-opts">
+      <summary>Change date, course or team size</summary>
+      <div class="pred-opts-in">
+      <div class="pred-opt">
       <label for="t-date">Date</label>
       <input id="t-date" type="date">
       <p class="hint">Defaults to the weekday this meet was run on, in this
         year. Change it if the meet has moved.</p>
+      </div>
 
       {# ★ THE COURSE IS NOT THE MEET (owner, 2026-09-01). "What would these
          teams run at the state course" was reachable only through a manual
@@ -140,7 +213,7 @@
          date. Here it swaps the venue and changes nothing else. #}
       {# ! HIDDEN FOR TRACK (2026-10-10): _applyCourse is cross country only
          -- a track meet's venue is not a course to swap (applySportUI) #}
-      <div id="course-box">
+      <div id="course-box" class="pred-opt">
       <label for="t-course">Course</label>
       <div class="pick-wrap">
         <input id="t-course" type="search" autocomplete="off"
@@ -150,6 +223,23 @@
       <p class="hint" id="t-course-hint">Defaults to the course this meet was
         run on. Pick another to run this same field somewhere else.</p>
       </div>
+
+      {# ★ RUNNERS PER TEAM (owner, 2026-10-10): a conference meet runs
+         ten or more a team; blank is the rulebook seven. Scoring still
+         takes seven -- the rest finish and displace nobody.
+         ★ TRACK (2026-10-10): "Entries per team" -- one event's entries
+         per school, blank is what each school entered (applySportUI).
+         ! MOVED HERE FROM THE FIELD'S HEAD (2026-10-10) with the other two;
+           as it ran hides this whole pane, as showWhen hid the box. #}
+      <div class="pred-opt">
+      <label class="per-team" id="per-team-box"><span id="per-team-label">Runners per team</span>
+        <input type="number" id="per-team" min="7" max="99" step="1"
+               inputmode="numeric" placeholder="7"
+               title="How many of each team's runners to put in the race. Blank is seven; a conference meet often runs ten. Only seven score.">
+      </label>
+      </div>
+      </div>
+    </details>
     </div>
 
     <div class="when-pane hidden" data-pane="asran">
@@ -198,16 +288,6 @@
         {# whole squads for every team: this race, and every race of a
            grouped meet (owner, 2026-09-06) #}
         <span class="squad-boxes" id="squad-boxes"></span>
-        {# ★ RUNNERS PER TEAM (owner, 2026-10-10): a conference meet runs
-           ten or more a team; blank is the rulebook seven. Scoring still
-           takes seven -- the rest finish and displace nobody. #}
-        {# ★ TRACK (2026-10-10): "Entries per team" -- one event's entries
-           per school, blank is what each school entered (applySportUI) #}
-        <label class="per-team" id="per-team-box"><span id="per-team-label">Runners per team</span>
-          <input type="number" id="per-team" min="7" max="99" step="1"
-                 inputmode="numeric" placeholder="7"
-                 title="How many of each team's runners to put in the race. Blank is seven; a conference meet often runs ten. Only seven score.">
-        </label>
       </div>
 
       {# Every team from that meet, seven runners each, editable. Athletes who

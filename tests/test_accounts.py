@@ -244,7 +244,11 @@ def _flowApp(monkeypatch, tokens, ages, made):
     app.register_blueprint(AC.bp)
     # login.html carries the site's topbar (owner, 2026-10-10), which
     # url_for()s these site pages; stand-ins so the links can be built
-    for ep in ("predictions_page", "about_page", "report_page"):
+    # (the Tools menu's too, 2026-10-10: blueprint endpoints keep their dot)
+    for ep in ("predictions_page", "about_page", "report_page", "compare_page",
+               "schools_directory", "conversions_page", "coaches_page",
+               "cuts.wit_index", "pages2.projections_index",
+               "pages2.breakouts_page", "scale.scale_page", "goal.goal_page"):
         app.add_url_rule("/" + ep, ep, lambda: "")
 
     class Conn:

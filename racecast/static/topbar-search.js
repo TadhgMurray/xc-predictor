@@ -212,49 +212,15 @@ function escAttr(s) {
   else whoami();
 })();
 
-/* ★ THE EDITION STICKS, AND SIGN IN COMES BACK HERE (sweep 2026-10-10,
-     B3 + B17). Both run on the cached, signed-out HTML, in the browser only.
-
-   Edition: _topbar.html renders both link sets and shows the one the path
-   picks (/coaches -> coach). A coach who clicked Rankings from /coaches used
-   to land back in the athlete edition; this tab now remembers the last
-   edition chosen (sessionStorage: per tab, gone when the tab closes) and
-   re-applies it. /coaches sets it; the Athletes side of the switch clears
-   it. In the coach edition the mark leads to the coach home.
-
-   Sign in: the link carries ?next=<this page>, so signing in from the bar
-   lands where you were, not on Settings. */
+/* ★ SIGN IN COMES BACK HERE (sweep 2026-10-10, B17). Runs on the cached,
+     signed-out HTML, in the browser only: the link carries ?next=<this
+     page>, so signing in from the bar lands where you were, not on Settings.
+   ! THE EDITION MEMORY THAT USED TO SHARE THIS BLOCK IS GONE (2026-10-10):
+     the bar is one nav for everyone now (_topbar.html), so there is no
+     second link set to re-apply and nothing kept in sessionStorage. */
 (function () {
-  var KEY = 'rc-edition';
-  function store(v) {
-    try { if (v) sessionStorage.setItem(KEY, v); else sessionStorage.removeItem(KEY); } catch (e) { /* private mode */ }
-  }
-  function stored() {
-    try { return sessionStorage.getItem(KEY); } catch (e) { return null; }
-  }
-  function apply(ed) {
-    var bar = document.querySelector('.topbar');
-    if (!bar) return;
-    var sets = bar.querySelectorAll('.topnav-ed, .topnav-menu [data-ed]');
-    for (var i = 0; i < sets.length; i++) sets[i].hidden = sets[i].getAttribute('data-ed') !== ed;
-    var sw = bar.querySelectorAll('.viewswitch a[data-ed]');
-    for (var k = 0; k < sw.length; k++) {
-      var on = sw[k].getAttribute('data-ed') === ed;
-      sw[k].classList.toggle('is-on', on);
-      if (on) sw[k].setAttribute('aria-current', 'true'); else sw[k].removeAttribute('aria-current');
-    }
-    var mark = bar.querySelector('a.brand');
-    if (mark) mark.setAttribute('href', ed === 'coach' ? '/coaches' : '/');
-  }
   function init() {
     var path = location.pathname;
-    if (path === '/coaches' || path.indexOf('/coaches/') === 0) { store('coach'); apply('coach'); }
-    else if (stored() === 'coach') apply('coach');
-    var ath = document.querySelector('.topbar .viewswitch a[data-ed="athlete"]');
-    if (ath) ath.addEventListener('click', function () { store(null); });
-    var coach = document.querySelector('.topbar .viewswitch a[data-ed="coach"]');
-    if (coach) coach.addEventListener('click', function () { store('coach'); });
-
     var signin = document.querySelector('#topbar-account .tb-signin');
     if (signin && path.indexOf('/login') !== 0) {
       /* read when used, not only at load: rankings and recruiting rewrite
@@ -273,19 +239,60 @@ function escAttr(s) {
   else init();
 })();
 
-/* ★ THE TOPBAR'S "MORE" MENU CLOSES LIKE A MENU (ui pass, 2026-10-04). It is
-   a <details>, so it opens and works with no script at all; this only shuts
-   it on a click anywhere else, or Escape, instead of leaving it hanging
-   open over the page. */
+/* ★ THE TOPBAR'S TOOLS MENU CLOSES LIKE A MENU (ui pass, 2026-10-04; was
+   "More" until 2026-10-10). It is a <details>, so it opens and works with no
+   script at all; this only shuts it on a click anywhere else, or Escape,
+   instead of leaving it hanging open over the page.
+   ★ AND THE PHONE MENU BUTTON (2026-10-10). Under 700px the sections fold
+   behind .nav-toggle; it flips aria-expanded and .nav-open on the bar (the
+   CSS shows the panel), and Escape or a click outside the bar closes it,
+   handing focus back to the button when the focus was inside the panel. */
 (function () {
   function shut(except) {
     var open = document.querySelectorAll('.topnav-more[open]');
     for (var i = 0; i < open.length; i++) if (open[i] !== except) open[i].removeAttribute('open');
   }
+  function setMenu(btn, on) {
+    var bar = btn.closest('.topbar');
+    btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    if (bar) bar.classList.toggle('nav-open', on);
+    /* the panel lists Tools' items, not a dropdown inside a dropdown */
+    var tools = bar && bar.querySelector('.topnav-tools');
+    if (tools) { if (on) tools.setAttribute('open', ''); else tools.removeAttribute('open'); }
+  }
+  function toggles() { return document.querySelectorAll('.topbar .nav-toggle'); }
   document.addEventListener('click', function (e) {
-    shut(e.target.closest ? e.target.closest('.topnav-more') : null);
+    var t = e.target;
+    shut(t.closest ? t.closest('.topnav-more') : null);
+    var btn = t.closest ? t.closest('.nav-toggle') : null;
+    if (btn) { setMenu(btn, btn.getAttribute('aria-expanded') !== 'true'); return; }
+    var all = toggles();
+    for (var i = 0; i < all.length; i++) {
+      var bar = all[i].closest('.topbar');
+      if (bar && !bar.contains(t)) setMenu(all[i], false);
+    }
   });
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') shut(null);
+    if (e.key !== 'Escape') return;
+    /* the phone panel first: it closes whole, Tools with it, and the
+       focus goes back to its button if it was inside */
+    var all = toggles(), closed = false;
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].getAttribute('aria-expanded') !== 'true') continue;
+      var nav = document.getElementById(all[i].getAttribute('aria-controls'));
+      var inside = nav && nav.contains(document.activeElement);
+      setMenu(all[i], false);
+      if (inside) all[i].focus();
+      closed = true;
+    }
+    if (closed) return;
+    // then the desktop Tools menu, focus back on its summary
+    var tools = document.querySelector('.topnav-more[open]');
+    if (tools) {
+      var hadFocus = tools.contains(document.activeElement);
+      shut(null);
+      var sum = tools.querySelector('summary');
+      if (hadFocus && sum) sum.focus();
+    }
   });
 })();
