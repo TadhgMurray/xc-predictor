@@ -145,6 +145,13 @@ main.rc .rec-pair td.rt, main.rc .rec-pair td .rv { font-weight: 600; }
 main.rc .rc-scope-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; }
 main.rc .rc-scope-row .seg { margin: 0; }
 main.rc .rc-scope-row .yearbar { margin: 0; }
+
+/* ---- the compiled page's level bar (2026-10-10): Varsity | JV | F-S ------ */
+/* plain links, one compiled race per level; wraps rather than scrolls -- a
+   meet has a handful of levels at most */
+main.rc .rc-levels { margin: .7rem 0 0; flex-wrap: wrap; }
+main.rc .rc-levels .seg-btn { white-space: nowrap; }
+main.rc .rc-levels .n { margin-left: .35rem; opacity: .65; font-variant-numeric: tabular-nums; }
 main.rc .rc-links { display: flex; flex-wrap: wrap; gap: .3rem 1.2rem; margin-top: .55rem; font-weight: 600; font-size: .92rem; }
 main.rc h1 .school-crest { vertical-align: middle; margin-right: .5rem; }
 main.rc td .rv { font-weight: 600; }

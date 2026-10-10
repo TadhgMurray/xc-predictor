@@ -4540,30 +4540,22 @@ def get_meet_date(cur, table, meet_id, source=None):
     return row["date"] if row else None
 
 
+# ★ THE RULE LIVES IN meet_compile NOW (sweep 2026-10-10), so the compiled
+#   page -- which cannot import this module -- places, scores and shows a DQ
+#   exactly as the race page does. These names stay for their callers.
 def _xcPlaced(row):
     """A finisher who keeps a place: not a DNF/DNS, and not a DQ (status DQ
-    or FS -- the time is real, the place is void). result_status.kind is
-    the one rule; the sentinel is its fallback for rows with no status."""
-    from result_status import kind
-    return kind(row.get("status"), row.get("time_seconds")) == "ok"
+    or FS -- the time is real, the place is void). meet_compile.xcPlaced."""
+    from meet_compile import xcPlaced
+    return xcPlaced(row)
 
 
 def _stampXcPlaces(rows):
     """row["pl"]: the place among placed finishers, in order; None for the
     rest, which get row["pl_status"] ('DQ', 'DNF', 'DNS' -- the feed's own
-    letters when it sent them). In place."""
-    from result_status import normalise
-    n = 0
-    for r in rows:
-        if _xcPlaced(r):
-            n += 1
-            r["pl"], r["pl_status"] = n, None
-        else:
-            r["pl"] = None
-            # ! the feed's letters, or a dash: the bare sentinel cannot say
-            #   whether it was a DNF or a DNS
-            r["pl_status"] = normalise(r.get("status")) or " - "
-    return rows
+    letters when it sent them). In place. meet_compile.stampXcPlaces."""
+    from meet_compile import stampXcPlaces
+    return stampXcPlaces(rows)
 
 
 def meetWinners(cur, meet_id, divisions, source=None, published=None,
@@ -5081,18 +5073,43 @@ def compiled_race(meet_id, distance, gender):
             group = next((g for g in groups
                           if g["distance"] == distance
                           and g["gender"] == gender), None)
+            level = _compiledLevel(group, request.args.get("level"))
             # HS-equivalent view -- inside the block, the stamp needs the
             # cursor for the pools-by-result lookup.
-            has_hs_view = (stampRowsHs(cur, "XC", group["results"],
+            has_hs_view = (stampRowsHs(cur, "XC", level["results"],
                                        distance=group["distance"])
-                           if group else False)
+                           if level else False)
 
-    if header is None or group is None:
+    if header is None or group is None or level is None:
         abort(404)
 
+    # the other query args (?alt=) ride along on the level links
+    keep_qs = urllib.parse.urlencode(
+        [(k, v) for k, v in request.args.items(multi=True) if k != "level"])
     return render_template("compiled.html", header=header, group=group,
-                           state_teams=school_identity.isStateTeamRace(r.get("school") for r in group["results"]),
+                           level=level, keep_qs=keep_qs,
+                           state_teams=school_identity.isStateTeamRace(r.get("school") for r in level["results"]),
                            has_hs_view=has_hs_view)
+
+
+def _compiledLevel(group, want):
+    """The level a compiled URL asks for (?level=jv), from a compiledResults
+    group.
+
+    ★ BACKWARD COMPATIBLE (owner, 2026-10-10). Every compiled link made
+      before the level split carries no ?level=, and lands on the PRIMARY
+      level -- varsity whenever the group has one, which is what such a
+      link meant. ?level=varsity on a group with no varsity level does the
+      same rather than 404, so a hand-made link still lands somewhere.
+    ! Any other level the group does not have is a 404: a JV link must not
+      quietly show the varsity race under a JV heading."""
+    if group is None:
+        return None
+    want = (want or "").strip().lower()
+    if not want or want == "varsity":
+        return next((lv for lv in group["levels"] if lv["level"] == "varsity"),
+                    group["levels"][0])
+    return next((lv for lv in group["levels"] if lv["level"] == want), None)
 
 
 # ===================================================================== #

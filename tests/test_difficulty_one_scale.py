@@ -89,7 +89,7 @@ print("test_difficulty_one_scale: all checks passed")
 
 # the meet page lists its compiled races from one aggregate, not a compile
 mc = read("racecast", "meet_compile.py")
-ok("def compiledIndex(" in mc and "HAVING count(*) >= 5" in mc,
+ok("def compiledIndex(" in mc and "k >= SCORERS and isTeam(sc)" in mc,
    "compiledIndex exists and counts scoring teams in SQL")
 meet_route = app[app.index('@app.route("/meet/xc/<int:meet_id>")'):
                  app.index('@app.route("/race/xc/<int:meet_id>/compiled')]
