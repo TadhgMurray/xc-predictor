@@ -45,6 +45,8 @@ database -- the compare/teams convention.
 import math
 import re
 
+from division_group import divisionGroup, groupRank, groupLabel, VARSITY
+
 TABLE = (10.0, 8.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0)
 
 _FINAL = re.compile(r"\bfinals?\b", re.IGNORECASE)
@@ -730,9 +732,22 @@ def scoreMeet(rows):
                 relay_gender[ekey] = "M" if em < ef else "F"
 
     # ---- group into canonical events ---------------------------------- #
+    # ★ KEYED ON THE DIVISION'S STANDINGS GROUP, NOT ITS STRING (owner,
+    #   sweep 2026-10-10, A11). Keyed per raw string, a meet that filed its
+    #   varsity events under "Varsity" and "Open" -- or "Seeded" and
+    #   "Unseeded", "Section 1" and "Section 2" -- printed several partial
+    #   standings and no meet score. division_group.divisionGroup is the
+    #   decided rule: varsity-level labels are ONE field (an event run in
+    #   two of them ranks as one timed final, so one school cannot take two
+    #   event wins in one event); JV, Frosh-Soph, Middle school and Para
+    #   keep their own; an unrecognised label stays its own group.
+    # ! THE GENDER INFERENCE ABOVE STAYS PER RAW DIVISION (relay pairing and
+    #   the pace references): it is a property of the raw events, and a
+    #   merged group would hand the pairing four relays where it expects two.
     groups = {}
     for r in rows:
         div = (r.get("division") or "").strip()
+        dgroup = divisionGroup(div)
         # Nameless events must NOT merge on their empty canonical name;
         # each keeps its own identity by id.
         canon = (canonicalEvent(r.get("event_short")) or
@@ -741,9 +756,11 @@ def scoreMeet(rows):
         g = (genderOf(r.get("event_short")) or r.get("gender") or
              majority.get(ekey) or relay_gender.get(ekey) or
              shuttleGender(r.get("event_short")) or "?")
-        key = (div.lower(), canon, g)
-        grp = groups.setdefault(key, {"division": div, "gender": g,
+        key = (dgroup, canon, g)
+        grp = groups.setdefault(key, {"division": div, "group": dgroup,
+                                      "labels": set(), "gender": g,
                                       "canon": canon, "rows": []})
+        grp["labels"].add(div)
         grp["rows"].append(r)
 
     divisions = {}
@@ -778,7 +795,7 @@ def scoreMeet(rows):
         # An EnRoute division's rows are split reads inside other races:
         # display them, score nothing -- points here would double-count
         # the athlete's real event in the parent division.
-        enroute = bool(_ENROUTE.search(grp["division"] or ""))
+        enroute = any(_ENROUTE.search(lab or "") for lab in grp["labels"])
         scoreable = gendered and not enroute
         if not scoreable:
             awarded = [(label, 0.0, False, row)
@@ -829,9 +846,10 @@ def scoreMeet(rows):
         name_src = finals[0] if finals else rows_g[0]
         dist = eventDistance(name_src.get("event_short"),
                              name_src.get("distance_meters"))
-        div = divisions.setdefault(grp["division"].lower(), {
-            "name": grp["division"] or "All divisions",
-            "teams": {}, "events": []})
+        div = divisions.setdefault(grp["group"], {
+            "group": grp["group"], "primary": grp["group"] == VARSITY,
+            "labels": set(), "teams": {}, "events": []})
+        div["labels"] |= grp["labels"]
         # A nameless running event with a stored distance can at least be
         # called "60m"; only truly unknowable ones stay "Event N".
         if name_src.get("event_short"):
@@ -912,8 +930,22 @@ def scoreMeet(rows):
             off[grp["gender"]]["gaps"] += 1
 
     out_divs = []
-    for dkey in sorted(divisions):
+    # ★ THE VARSITY STANDINGS FIRST (owner, 2026-10-10): it is the meet's
+    #   primary score -- the meet page headline and the compiled page's top
+    #   table read the first division -- then JV, Frosh-Soph, Middle school,
+    #   Para, then unrecognised labels alphabetically.
+    for dkey in sorted(divisions, key=lambda k: (groupRank(k), k)):
         div = divisions[dkey]
+        # the name: the one label the group was filed under ("Varsity",
+        # "Open", blank -> "All divisions"); several labels rolled together
+        # take the group's own name ("Varsity" for "Seeded" + "Unseeded")
+        named = sorted({lab for lab in div["labels"] if lab},
+                       key=str.lower)
+        distinct = {lab.lower() for lab in named}
+        div["name"] = (named[0] if len(distinct) == 1 else
+                       (groupLabel(dkey) or named[0]) if named else
+                       "All divisions")
+        div["labels"] = named
         off = div.pop("_official", None)
         div["official"] = {"M": None, "F": None}
         for g in ("M", "F"):

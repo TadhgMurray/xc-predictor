@@ -1620,12 +1620,21 @@ def meetTfTeams(cur, meet_id, src=None):
     stamp_home_states(cur, rows)
     scored = scoreMeet(rows)
     best = None
+    # ★ THE VARSITY STANDINGS IS THE MEET'S SCORE (owner, sweep 2026-10-10,
+    #   A11): tf_points marks it `primary` and the card takes it whenever it
+    #   has teams. The biggest division is only the fallback for a meet
+    #   with no varsity-level division at all (a JV-only or middle-school
+    #   meet) -- "biggest" used to win outright, so a large JV field could
+    #   headline a meet's card over its varsity score.
     for div in scored.get("divisions") or []:
         teams = {}
         for g in ("M", "F"):
             off = (div.get("official") or {}).get(g)
             teams[g] = off if off else (div.get("teams") or {}).get(g) or []
         n = len(teams["M"]) + len(teams["F"])
+        if n and div.get("primary"):
+            best = (n, div.get("name") or "", teams)
+            break
         if n and (best is None or n > best[0]):
             best = (n, div.get("name") or "", teams)
     if not best:
