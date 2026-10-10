@@ -204,7 +204,11 @@
             <tbody>
                 {% for race in season.races %}
                 <tr id="race-{{ race.result_id }}">
-                    <td class="no-break">{{ race.date|mdy }}</td>
+                    {# ★ THE COPIES FOLDED INTO THIS ROW (dedupe_races, D2
+                       2026-10-10): a race page links #race-<its own id>,
+                       which may be one of these; link-flash.js and
+                       race-page.js resolve the anchor to this row. #}
+                    <td class="no-break">{% for a in race.alias_ids or [] %}<span id="race-{{ a }}" class="race-alias" hidden></span>{% endfor %}{{ race.date|mdy }}</td>
                     <td class="meet-cell">
                         {# EVERY race with a meet_id links somewhere real:
                            the race page when the division ids exist, the

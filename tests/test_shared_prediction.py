@@ -78,6 +78,8 @@ class Share(unittest.TestCase):
         A.getConn = lambda: Conn()
         STORE.clear()
         self.c = A.app.test_client()
+        # the page's own fetch() sends Origin on a POST (sweep 2026-10-10)
+        self.c.environ_base["HTTP_ORIGIN"] = "http://localhost"
 
     def tearDown(self):
         self.A.getConn = self._saved
@@ -107,6 +109,15 @@ class Share(unittest.TestCase):
                           json={"query": QUERY}).get_json()["id"]
         html = self.c.get(f"/predictions?s={sid}").get_data(as_text=True)
         self.assertIn(f"/card/predict.png?s={sid}", html)
+
+    def test_another_site_cannot_save_one(self):
+        """D17 (sweep 2026-10-10): a POST from a page elsewhere, or with no
+        Origin and no Referer at all, writes nothing."""
+        for hdrs in ({"Origin": "https://evil.example"}, {}):
+            c = self.A.app.test_client()
+            r = c.post("/api/predict/share", json={"query": QUERY}, headers=hdrs)
+            self.assertEqual(r.status_code, 403, hdrs)
+        self.assertEqual(STORE, {})
 
     def test_an_unknown_id_is_a_404_not_a_crash(self):
         self.assertEqual(self.c.get("/api/predict/share/zzzzzzzzzzzz").status_code, 404)

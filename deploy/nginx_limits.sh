@@ -40,6 +40,12 @@ cat > "$OUT" <<'CONF'
 map $request_uri $xcp_lim_api {
     ~^/api/predict/(team|individual|lineup)  "";   # stricter zone below
     ~^/api/          $binary_remote_addr;
+    # ★ AND /search (sweep 2026-10-10, D8): /search and /search/api take
+    #   free text, are never edge-cached (_PRIVATE_PREFIXES), and each one
+    #   runs a database search -- the cheapest way to keep every worker busy.
+    #   The typeahead fires one per keystroke, so it shares the generous
+    #   /api/ allowance rather than a zone of its own.
+    ~^/search        $binary_remote_addr;
     default          "";
 }
 # only the three that run the model; squad, athlete and weather lookups

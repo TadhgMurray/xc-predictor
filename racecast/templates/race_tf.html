@@ -72,7 +72,7 @@
     {% if tf_champ %}
     <div class="rc-champs">
       <div><span class="k">{{ "Winner" if tf_how == "won" else "Best mark" }}</span>
-        <span class="rc-crow">{% set cst = tf_champ.school_state or header.state %}{% if tf_champ.school and tf_champ.school|is_team %}{{ crest(tf_champ.school, cst, pool=pool_lv) }}{% endif %}<b class="rc-cn">{% if tf_champ.is_relay %}{{ tf_champ.school|school_label_for(pool_lv, cst) if tf_champ.school else "Relay" }}{% elif tf_champ.person_id %}<a href="/athlete/{{ tf_champ.person_id }}{% if tf_champ.result_id %}?r={{ tf_champ.result_id }}{% endif %}">{{ tf_champ.athlete_name or "Unknown" }}</a>{% else %}{{ tf_champ.athlete_name or "Unknown" }}{% endif %}</b><i>{{ tf_champ.display_result }}</i></span></div>
+        <span class="rc-crow">{% set cst = tf_champ.school_state or header.state %}{% if tf_champ.school and tf_champ.school|is_team %}{{ crest(tf_champ.school, cst, pool=pool_lv) }}{% endif %}<b class="rc-cn">{% if tf_champ.is_relay %}{{ tf_champ.school|school_label_for(pool_lv, cst) if tf_champ.school else "Relay" }}{% elif tf_champ.person_id %}<a href="{{ athlete_href(tf_champ.person_id, tf_champ.result_id) }}">{{ tf_champ.athlete_name or "Unknown" }}</a>{% else %}{{ tf_champ.athlete_name or "Unknown" }}{% endif %}</b><i>{{ tf_champ.display_result }}</i></span></div>
     </div>
     {% endif %}
   </div>
@@ -111,9 +111,9 @@
             {# a relay row is a team: the squad, then its runners #}
             <span class="relay-team">{{ row.school|school_label_for(pool_lv, header.state) if row.school else "Relay" }}</span>
             {% set legs = row.relay_legs|selectattr("name")|list if row.relay_legs else [] %}
-            {% if legs %}<span class="relay-legs">{% for leg in legs %}<a href="/athlete/{{ leg.person_id }}{% if leg.result_id %}?r={{ leg.result_id }}{% endif %}">{{ leg.name }}</a>{{ ", " if not loop.last }}{% endfor %}</span>
+            {% if legs %}<span class="relay-legs">{% for leg in legs %}<a href="{{ athlete_href(leg.person_id, leg.result_id) }}">{{ leg.name }}</a>{{ ", " if not loop.last }}{% endfor %}</span>
             {% elif row.athlete_name and row.athlete_name != "Unknown" %}<span class="relay-legs">{{ row.athlete_name }}</span>{% endif %}
-          {% elif row.person_id %}<a href="/athlete/{{ row.person_id }}{% if row.result_id %}?r={{ row.result_id }}{% endif %}">{{ row.athlete_name if row.athlete_name else "Unknown" }}</a>
+          {% elif row.person_id %}<a href="{{ athlete_href(row.person_id, row.result_id) }}">{{ row.athlete_name if row.athlete_name else "Unknown" }}</a>
           {% else %}{{ row.athlete_name if row.athlete_name else "Unknown" }}{% endif %}
           {% if not row.is_relay %}{% set sst = row.school_state or header.state %}<span class="rc-subline">{% if row.school and row.school|is_team %}{{ crest(row.school, sst, pool=pool_lv) }}{% endif %}{{ row.school|school_label_for(pool_lv, sst) if row.school else "" }}{% if row.grade %} · {{ row.grade|grade_label(row.rating_pool) }}{% endif %}</span>{% endif %}
         </td>

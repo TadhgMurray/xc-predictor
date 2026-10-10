@@ -143,6 +143,17 @@
     var slot = document.getElementById('topbar-account');
     if (!slot) return;
     function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    /* ★ NOT A REQUEST ON EVERY PAGE FOR EVERYONE (sweep 2026-10-10, D15).
+         rc_si is the server's hint (accounts.setHint): 1 signed in, 0 known
+         signed out. On 0 the answer is already known; absent (a first
+         visit, a session from before the hint) still asks, and that
+         answer sets it. Listeners read window.xcpMe first, so a
+         synchronous answer reaches them too. */
+    if (/(?:^|;\s*)rc_si=0(?:;|$)/.test(document.cookie)) {
+        window.xcpMe = { signed_in: false };
+        document.dispatchEvent(new CustomEvent('xcp:me', { detail: window.xcpMe }));
+        return;
+    }
     fetch('/api/me', { credentials: 'same-origin' })
         .then(function (r) { return r.json(); })
         .then(function (me) {

@@ -94,6 +94,18 @@ PHOTO_URL = "/static/photos/"
 PHOTO_SIZE = 512
 PHOTO_W = PHOTO_H = PHOTO_SIZE
 MAX_PHOTO_BYTES = 8 * 1024 * 1024
+# ★ AND A PIXEL CAP DERIVED FROM IT (sweep 2026-10-10, D17). Pillow's own
+#   decompression-bomb guard warns at ~89M pixels and refuses only at
+#   ~179M -- a PNG of a few hundred KB can hold that, and decoding it is ~540 MB of
+#   RGB in a gunicorn worker. A real photo spends at least ~1 bit per pixel
+#   (phone JPEG/HEIF/WebP run 2-4), so an 8 MB file holds at most
+#   8 MB x 8 bits = 67M pixels of real picture: a 48 MP phone shot fits,
+#   and anything declaring more is compressing better than any camera does,
+#   which is the signature of a bomb. Checked on the header, BEFORE the
+#   decode, and for this upload only -- not by lowering the process-wide
+#   Image.MAX_IMAGE_PIXELS, which cards.py and school_logo.py also live
+#   under.
+MAX_PHOTO_PIXELS = MAX_PHOTO_BYTES * 8
 NAME_MAX = 60
 
 DDL = """
@@ -568,13 +580,36 @@ def openSession(cur, account_id):
     return raw
 
 
+# ★ THE SIGNED-IN HINT (sweep 2026-10-10, D15). Every page asked /api/me,
+#   signed in or not -- a request per view reaching gunicorn for an answer
+#   that is "no" for nearly every visitor. rc_si tells the topbar script
+#   (static/topbar-search.js) what it would hear: 1 signed in, 0 known
+#   signed out, absent unknown (it asks, and the answer sets it).
+# ! A HINT, NOT A CREDENTIAL, so it is readable by script on purpose: it
+#   only decides whether to ASK. Every answer still comes from the session
+#   row behind the httponly cookie; a forged rc_si=1 buys one /api/me that
+#   says no, a forged rc_si=0 hides the account link from yourself.
+# ! 0 ONLY WHEN THERE IS NO SESSION COOKIE AT ALL. currentSession() also
+#   says None when its lookup fails; reading that as "signed out" would
+#   hide a real session behind rc_si=0 until the next sign-in.
+HINT_COOKIE = "rc_si"
+
+
+def setHint(resp, signed_in):
+    resp.set_cookie(HINT_COOKIE, "1" if signed_in else "0",
+                    max_age=(SESSION_DAYS if signed_in else 365) * 86400,
+                    httponly=False, secure=isSecure(), samesite="Lax", path="/")
+
+
 def setCookie(resp, raw):
     resp.set_cookie(COOKIE, raw, max_age=SESSION_DAYS * 86400, httponly=True,
                     secure=isSecure(), samesite="Lax", path="/")
+    setHint(resp, True)
 
 
 def clearCookie(resp):
     resp.delete_cookie(COOKIE, path="/")
+    setHint(resp, False)
 
 
 def loadSession(cur):
@@ -710,7 +745,14 @@ def processPhoto(data):
     except ImportError:
         raise AccountsError("Pictures are not enabled on this server (Pillow is missing).")
     try:
-        img = Image.open(_io.BytesIO(data))
+        img = Image.open(_io.BytesIO(data))      # the header only
+    except Exception:                                   # noqa: BLE001
+        raise AccountsError("That file is not a picture we can read (JPEG, PNG, WebP or HEIC-free HEIF).")
+    if img.width * img.height > MAX_PHOTO_PIXELS:
+        raise AccountsError("That picture is too many pixels for its size "
+                            f"(over {MAX_PHOTO_PIXELS // 1_000_000} million). "
+                            "Try a smaller one.")
+    try:
         img.load()
         img = ImageOps.exif_transpose(img)
     except Exception:                                   # noqa: BLE001
@@ -1166,7 +1208,11 @@ def api_me():
     Under /api/, so app._headers marks it no-store."""
     sess = currentSession()
     if not sess:
-        return jsonify({"signed_in": False})
+        resp = jsonify({"signed_in": False})
+        # the hint (setHint): 0 only when no session cookie was sent at all
+        if not request.cookies.get(COOKIE) and request.cookies.get(HINT_COOKIE) != "0":
+            setHint(resp, False)
+        return resp
     a = sess["account"]
     photo = None
     try:
@@ -1177,7 +1223,7 @@ def api_me():
     except Exception as exc:                            # noqa: BLE001
         print(f"[accounts] claims failed ({type(exc).__name__}: {exc})", flush=True)
         claims = []
-    return jsonify({
+    resp = jsonify({
         "signed_in": True, "email": a["email"], "name": a.get("name") or "",
         "photo": photo["url"] if photo else None,
         "label": a.get("name") or a["email"].split("@", 1)[0],
@@ -1191,6 +1237,10 @@ def api_me():
                    "label": c["school_label"], "status": c["status"]}
                   for c in claims if c["kind"] == "coach_team"],
     })
+    # a session from before the hint existed learns it here (setHint)
+    if request.cookies.get(HINT_COOKIE) != "1":
+        setHint(resp, True)
+    return resp
 
 
 # ---- command line ------------------------------------------------------

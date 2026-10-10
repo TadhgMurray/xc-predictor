@@ -36,6 +36,7 @@ def test_course_boards_cli_modes():
 def test_search_index_swaps():
     src = read("racecast", "search_index.py")
     assert 'INSERT INTO {_TARGET}' in src
-    assert 'ALTER TABLE search_index_new RENAME TO search_index' in src
-    assert 'ALTER INDEX idx_search_new_prefix RENAME TO idx_search_prefix' in src
+    # through dbfast.swapTable since the sweep of 2026-10-10 (D5/D6)
+    assert 'swapTable(conn, "search_index", renames=[' in src
+    assert '("idx_search_new_prefix", "idx_search_prefix")' in src
     assert src.index("DROP TABLE IF EXISTS search_index_new") < src.index("_LOADERS[args.only](conn)")

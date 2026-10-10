@@ -707,27 +707,16 @@ def main():
                                           prefix="idx_search_new"))
                 conn.commit()
                 print(f"  indexes: {time.time() - t0:.0f}s", flush=True)
-                # ! THE SWAP WAITS FIVE SECONDS AT A TIME, NOT FOREVER: DROP
-                #   needs ACCESS EXCLUSIVE and a search in flight holds
-                #   ACCESS SHARE (issue 300's lock family).
-                for attempt in range(1, 25):
-                    try:
-                        cur.execute("SET LOCAL lock_timeout = '5s'")
-                        cur.execute("DROP TABLE IF EXISTS search_index")
-                        cur.execute("ALTER TABLE search_index_new RENAME TO search_index")
-                        cur.execute("ALTER INDEX idx_search_new_prefix RENAME TO idx_search_prefix")
-                        cur.execute("ALTER INDEX idx_search_new_trgm RENAME TO idx_search_trgm")
-                        cur.execute("ALTER INDEX idx_search_new_school_label RENAME TO idx_search_school_label")
-                        conn.commit()
-                        break
-                    except psycopg2.errors.LockNotAvailable:
-                        conn.rollback()
-                        print(f"  swap try {attempt}/24: search_index is being read; retrying", flush=True)
-                        time.sleep(5)
-                else:
-                    raise RuntimeError("search_index swap: could not take the lock in two minutes; "
-                                       "search_index_new is built, rerun to swap")
-                cur.execute("ANALYZE search_index")
+            # ★ THROUGH dbfast.swapTable (sweep 2026-10-10, D5/D6). This had
+            #   its own loop of 5 s waits -- the site's own lock_timeout, so a
+            #   search queued behind a waiting DROP failed as the DROP gave
+            #   up. swapTable tries quietly (1 s, site up) many times first
+            #   and raises the maintenance flag only as the fallback; it
+            #   ANALYZEs the shadow before the lock, not after.
+            swapTable(conn, "search_index", renames=[
+                ("idx_search_new_prefix", "idx_search_prefix"),
+                ("idx_search_new_trgm", "idx_search_trgm"),
+                ("idx_search_new_school_label", "idx_search_school_label")])
             conn.commit()
             print("search_index: swapped in", flush=True)
 

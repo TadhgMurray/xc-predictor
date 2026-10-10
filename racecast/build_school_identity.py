@@ -1319,51 +1319,68 @@ def main():
         # ⚠ ALL OF IT IN ONE TRANSACTION. Half a swap leaves school_identity
         #   dropped with nothing in its place, and every page that renders a
         #   school label 500s.
-        for attempt in range(1, _SWAP_ATTEMPTS + 1):
-            try:
-                cur.execute("BEGIN")
-                cur.execute(f"SET LOCAL lock_timeout = '{_SWAP_LOCK_TIMEOUT}'")
-                cur.execute("LOCK TABLE person_home_state, school_identity "
-                            "IN ACCESS EXCLUSIVE MODE")
-                cur.execute("DROP TABLE IF EXISTS school_state_alias")
-                for t in ("person_home_state", "school_identity",
-                          "school_state_alias", "school_level",
-                          # ! IN THE SAME TRANSACTION AS school_identity. The
-                          #   counts and the membership are one answer; a page
-                          #   reading the new clusters against the old
-                          #   assignments would show a roster that does not
-                          #   add up to the chip beside it.
-                          "school_athlete_state"):
-                    cur.execute(f"DROP TABLE IF EXISTS {t}")
-                    cur.execute(f"ALTER TABLE {t}_new RENAME TO {t}")
-                cur.execute("ALTER INDEX school_identity_new_school_idx "
-                            "RENAME TO school_identity_school_idx")
-                cur.execute("ALTER INDEX school_level_new_idx "
-                            "RENAME TO school_level_idx")
-                cur.execute("ALTER TABLE school_athlete_state RENAME CONSTRAINT "
-                            "school_athlete_state_new_pkey TO "
-                            "school_athlete_state_pkey")
-                cur.execute("ALTER INDEX school_athlete_state_new_person_idx "
-                            "RENAME TO school_athlete_state_person_idx")
-                cur.execute("ALTER TABLE person_home_state RENAME CONSTRAINT "
-                            "person_home_state_new_pkey TO "
-                            "person_home_state_pkey")
-                conn.commit()
-                break
-            except (psycopg2.errors.LockNotAvailable,
-                    psycopg2.errors.DeadlockDetected):
-                conn.rollback()
-                if attempt == _SWAP_ATTEMPTS:
-                    # ! THE _new TABLES SURVIVE, so a rerun redoes the build
-                    #   rather than leaving the site without these tables.
-                    raise RuntimeError(
-                        "school_identity swap: could not take ACCESS "
-                        f"EXCLUSIVE in {_SWAP_ATTEMPTS} attempts. Check "
-                        "pg_stat_activity for a long read.")
-                print(f"  readers hold the tables, attempt {attempt}"
-                      f"/{_SWAP_ATTEMPTS} -- retrying in {_SWAP_BACKOFF}s",
-                      flush=True)
-                time.sleep(_SWAP_BACKOFF)
+        # ★ QUIET TRIES FIRST, AND A FLAG ONLY AS THE FALLBACK (sweep
+        #   2026-10-10, D5/D6). This swap had no flag at all: twenty tries of
+        #   3 s each with the site up, every page that renders a school label
+        #   queueing behind each one. Now maintenance.swapQuietlyFirst makes
+        #   many 1 s tries (a fifth of the site's 5 s lock_timeout, so a page
+        #   queued behind a try never fails on it); only when every one loses
+        #   does the site answer 503 for the patient loop below.
+        sys.path.insert(0, "engine")
+        from maintenance import swapQuietlyFirst, heartbeat
+
+        def _swapOnce(lock_ms):
+            cur.execute("BEGIN")
+            cur.execute(f"SET LOCAL lock_timeout = '{int(lock_ms)}ms'")
+            cur.execute("LOCK TABLE person_home_state, school_identity "
+                        "IN ACCESS EXCLUSIVE MODE")
+            cur.execute("DROP TABLE IF EXISTS school_state_alias")
+            for t in ("person_home_state", "school_identity",
+                      "school_state_alias", "school_level",
+                      # ! IN THE SAME TRANSACTION AS school_identity. The
+                      #   counts and the membership are one answer; a page
+                      #   reading the new clusters against the old
+                      #   assignments would show a roster that does not
+                      #   add up to the chip beside it.
+                      "school_athlete_state"):
+                cur.execute(f"DROP TABLE IF EXISTS {t}")
+                cur.execute(f"ALTER TABLE {t}_new RENAME TO {t}")
+            cur.execute("ALTER INDEX school_identity_new_school_idx "
+                        "RENAME TO school_identity_school_idx")
+            cur.execute("ALTER INDEX school_level_new_idx "
+                        "RENAME TO school_level_idx")
+            cur.execute("ALTER TABLE school_athlete_state RENAME CONSTRAINT "
+                        "school_athlete_state_new_pkey TO "
+                        "school_athlete_state_pkey")
+            cur.execute("ALTER INDEX school_athlete_state_new_person_idx "
+                        "RENAME TO school_athlete_state_person_idx")
+            cur.execute("ALTER TABLE person_home_state RENAME CONSTRAINT "
+                        "person_home_state_new_pkey TO "
+                        "person_home_state_pkey")
+            conn.commit()
+
+        def _swapFlagged():
+            for attempt in range(1, _SWAP_ATTEMPTS + 1):
+                heartbeat()
+                try:
+                    _swapOnce(int(_SWAP_LOCK_TIMEOUT[:-1]) * 1000)
+                    return
+                except (psycopg2.errors.LockNotAvailable,
+                        psycopg2.errors.DeadlockDetected):
+                    conn.rollback()
+                    if attempt == _SWAP_ATTEMPTS:
+                        # ! THE _new TABLES SURVIVE, so a rerun redoes the build
+                        #   rather than leaving the site without these tables.
+                        raise RuntimeError(
+                            "school_identity swap: could not take ACCESS "
+                            f"EXCLUSIVE in {_SWAP_ATTEMPTS} attempts. Check "
+                            "pg_stat_activity for a long read.")
+                    print(f"  readers hold the tables, attempt {attempt}"
+                          f"/{_SWAP_ATTEMPTS} -- retrying in {_SWAP_BACKOFF}s",
+                          flush=True)
+                    time.sleep(_SWAP_BACKOFF)
+
+        swapQuietlyFirst(conn, _swapOnce, "school_identity", _swapFlagged)
 
         # ANALYZE after the commit, not inside it: it takes no exclusive lock
         # and holding the swap open for it would defeat the point.

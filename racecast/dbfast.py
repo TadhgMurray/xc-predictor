@@ -141,42 +141,86 @@ def tuneSession(conn, quiet=False):
 #   live table and rename the shadow in -- milliseconds under the lock --
 #   retrying while a reader is in flight, so a reader that holds the table
 #   delays the swap instead of the swap delaying every reader.
+#
+# ★ AND QUIETLY FIRST (sweep 2026-10-10, D5/D6): maintenance.swapQuietlyFirst
+#   runs many 1 s tries with the site up and raises the maintenance flag
+#   only when every one of them lost to a reader; the tries below are that
+#   flagged fallback.
+# ! wait IS 3 s, NOT 5 (D6). 5 s was the site's own lock_timeout, so a page
+#   queued behind a waiting swap failed at the instant the swap gave up.
+#   Under the flag new pages stop at the 503 anyway; 3 s keeps an in-flight
+#   one under its timeout too.
 SWAP_TRIES = 24
-SWAP_WAIT_S = 5.0
+SWAP_WAIT_S = 3.0
+
+
+def _maintenance():
+    """engine/maintenance.py, from a racecast script whose path may not
+    carry engine/ (the builders here are run as `python racecast/x.py`)."""
+    try:
+        import maintenance
+    except ImportError:
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "engine"))
+        import maintenance
+    return maintenance
 
 
 def swapTable(conn, name, new=None, renames=(), tries=SWAP_TRIES, wait=SWAP_WAIT_S,
-              analyze=True, quiet=False):
+              analyze=True, quiet=False, quiet_tries=None, quiet_lock_ms=None,
+              quiet_pause=None):
     """Replace `name` with `new` (default `<name>_new`): ANALYZE the shadow
     (outside the lock), then DROP the live table, RENAME the shadow in and
     rename its indexes (`renames`: (old, new) pairs), all in one short
-    transaction that waits at most `wait` seconds for the lock, `tries`
-    times. Raises RuntimeError when the lock never came; the shadow is
-    left built for a rerun."""
+    transaction. Quiet tries first (site up, maintenance.swapQuietlyFirst);
+    only if they all lose, `tries` tries of `wait` seconds under the
+    maintenance flag. Returns the number of tries used. Raises RuntimeError
+    when the lock never came; the shadow is left built for a rerun."""
     import time
     import psycopg2
+    import psycopg2.errors
+    busy = (psycopg2.errors.LockNotAvailable, psycopg2.errors.DeadlockDetected)
+    m = _maintenance()
     new = new or f"{name}_new"
     with conn.cursor() as cur:
         if analyze:
             cur.execute(f"ANALYZE {new}")
         conn.commit()
+    used = {"n": 0}
+
+    def once(lock_ms):
+        used["n"] += 1
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL lock_timeout = %s", (f"{int(lock_ms)}ms",))
+            cur.execute(f"DROP TABLE IF EXISTS {name}")
+            cur.execute(f"ALTER TABLE {new} RENAME TO {name}")
+            for old_ix, new_ix in renames:
+                cur.execute(f"ALTER INDEX IF EXISTS {old_ix} RENAME TO {new_ix}")
+        conn.commit()
+        return used["n"]
+
+    def flagged():
         for attempt in range(1, tries + 1):
+            m.heartbeat()
             try:
-                cur.execute("SET LOCAL lock_timeout = %s", (f"{int(wait * 1000)}ms",))
-                cur.execute(f"DROP TABLE IF EXISTS {name}")
-                cur.execute(f"ALTER TABLE {new} RENAME TO {name}")
-                for old_ix, new_ix in renames:
-                    cur.execute(f"ALTER INDEX IF EXISTS {old_ix} RENAME TO {new_ix}")
-                conn.commit()
-                return attempt
-            except psycopg2.errors.LockNotAvailable:
+                return once(wait * 1000)
+            except busy:
                 conn.rollback()
                 if not quiet:
-                    print(f"  {name}: swap try {attempt}/{tries} -- being read; "
-                          f"retrying in {wait:g}s", flush=True)
+                    print(f"  {name}: swap try {attempt}/{tries} (site in "
+                          f"maintenance) -- being read; retrying in {wait:g}s",
+                          flush=True)
                 time.sleep(wait)
-    raise RuntimeError(f"{name}: could not take the lock for the swap in "
-                       f"{tries * wait:.0f}s; {new} is built, rerun to swap")
+        raise RuntimeError(f"{name}: could not take the lock for the swap; "
+                           f"{new} is built, rerun to swap")
+
+    return m.swapQuietlyFirst(
+        conn, once, name, flagged, tries=quiet_tries, lock_ms=quiet_lock_ms,
+        pause=quiet_pause,
+        log=(lambda *a, **k: None) if quiet else print)
 
 
 # ------------------------------------------------------------------ #

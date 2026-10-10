@@ -744,7 +744,9 @@ _SQL = {
 
 
 # The swap's patience. See the comment at the rename below.
-_SWAP_LOCK_TIMEOUT = "3s"
+# ! 3 s, UNDER THE SITE'S 5 s lock_timeout (D6): a page queued behind a
+#   waiting rename gives up after the rename does, not before it.
+_SWAP_LOCK_TIMEOUT_MS = 3000
 _SWAP_ATTEMPTS = 20
 _SWAP_BACKOFF = 15
 
@@ -1916,13 +1918,16 @@ def _migrateLive(conn, like):
     for attempt in range(6):
         try:
             with conn.cursor() as cur:
-                cur.execute("SET LOCAL lock_timeout = '5s'")
+                # ! 3 s, NOT 5 (sweep 2026-10-10, D6): 5 s was the site's own
+                #   lock_timeout, so a page queued behind this ALTER failed
+                #   at the moment the ALTER gave up
+                cur.execute("SET LOCAL lock_timeout = '3s'")
                 for ddl in todo:
                     cur.execute(ddl)
             conn.commit()
             print(f"[rankings] {like}: {len(todo)} schema migration(s) applied", flush=True)
             return
-        except psycopg2.errors.LockNotAvailable:
+        except (psycopg2.errors.LockNotAvailable, psycopg2.errors.DeadlockDetected):
             conn.rollback()
             print(f"[rankings] {like}: migration waited on a lock (try {attempt + 1}/6)", flush=True)
             time.sleep(10)
@@ -2659,33 +2664,49 @@ def swapIn(conn):
         #   renamed away with nothing in its place, and every page 500s. A
         #   timeout rolls the whole thing back, which is what makes the retry
         #   safe to simply start over.
-        from maintenance import siteMaintenance
-        # the site answers 503 while the rename waits for or holds the lock (300)
-        with siteMaintenance("swap ranking_results"):
+        #
+        # ★ QUIET TRIES FIRST, THE FLAG ONLY AS THE FALLBACK (sweep 2026-10-10,
+        #   D5). The flag used to go up before the first try and stay up
+        #   through all twenty: one slow board query in the way and the whole
+        #   site answered 503 for up to five minutes, for a rename that takes
+        #   milliseconds once it has the lock. maintenance.swapQuietlyFirst
+        #   makes many 1 s tries with the site up (a fifth of the site's 5 s
+        #   lock_timeout, so a page queued behind a try never fails on it),
+        #   and only if every one loses raises the flag and runs the old
+        #   patient loop below.
+        from maintenance import swapQuietlyFirst, heartbeat
+
+        def _swapOnce(lock_ms):
+            cur.execute("BEGIN")
+            cur.execute(f"SET LOCAL lock_timeout = '{int(lock_ms)}ms'")
+            # ⚠ BOTH TABLES UP FRONT, IN ONE STATEMENT, AND THIS IS WHAT
+            #   THE DEADLOCK WAS. The renames took ACCESS EXCLUSIVE on
+            #   ranking_results first and asked for athlete_season second;
+            #   a page reading athlete_season and then ranking_results
+            #   holds those two in the OPPOSITE order. Classic ABBA, and
+            #   lock_timeout does not save you from it -- Postgres's
+            #   deadlock detector fires at deadlock_timeout (1s by
+            #   default), well before a 3s lock_timeout, so the build died
+            #   with DeadlockDetected after six hours of work.
+            #
+            # ! TAKING THEM TOGETHER MAKES THE TIMEOUT THE FAILURE MODE
+            #   AGAIN, which is the one the retry below was written for.
+            cur.execute("LOCK TABLE ranking_results, athlete_season "
+                        "IN ACCESS EXCLUSIVE MODE")
+            cur.execute("ALTER TABLE ranking_results RENAME TO ranking_results_old")
+            cur.execute("ALTER TABLE athlete_season  RENAME TO athlete_season_old")
+            cur.execute(f"ALTER TABLE {_LOAD_TABLE}  RENAME TO ranking_results")
+            cur.execute(f"ALTER TABLE {_LOAD_SEASON} RENAME TO athlete_season")
+            conn.commit()
+
+        def _swapFlagged():
+            # the site answers 503 while the rename waits for or holds the
+            # lock (300) -- only reached when the quiet tries all lost
             for attempt in range(1, _SWAP_ATTEMPTS + 1):
+                heartbeat()
                 try:
-                    cur.execute("BEGIN")
-                    cur.execute(f"SET LOCAL lock_timeout = '{_SWAP_LOCK_TIMEOUT}'")
-                    # ⚠ BOTH TABLES UP FRONT, IN ONE STATEMENT, AND THIS IS WHAT
-                    #   THE DEADLOCK WAS. The renames took ACCESS EXCLUSIVE on
-                    #   ranking_results first and asked for athlete_season second;
-                    #   a page reading athlete_season and then ranking_results
-                    #   holds those two in the OPPOSITE order. Classic ABBA, and
-                    #   lock_timeout does not save you from it -- Postgres's
-                    #   deadlock detector fires at deadlock_timeout (1s by
-                    #   default), well before a 3s lock_timeout, so the build died
-                    #   with DeadlockDetected after six hours of work.
-                    #
-                    # ! TAKING THEM TOGETHER MAKES THE TIMEOUT THE FAILURE MODE
-                    #   AGAIN, which is the one the retry below was written for.
-                    cur.execute("LOCK TABLE ranking_results, athlete_season "
-                                "IN ACCESS EXCLUSIVE MODE")
-                    cur.execute("ALTER TABLE ranking_results RENAME TO ranking_results_old")
-                    cur.execute("ALTER TABLE athlete_season  RENAME TO athlete_season_old")
-                    cur.execute(f"ALTER TABLE {_LOAD_TABLE}  RENAME TO ranking_results")
-                    cur.execute(f"ALTER TABLE {_LOAD_SEASON} RENAME TO athlete_season")
-                    conn.commit()
-                    break
+                    _swapOnce(_SWAP_LOCK_TIMEOUT_MS)
+                    return
                 # ⚠ DEADLOCK IS THE SIBLING OF TIMEOUT, NOT A DIFFERENT
                 #   PROBLEM, and catching only one of them is why a six-hour
                 #   build threw its work away. Both mean "a reader was in the
@@ -2707,6 +2728,8 @@ def swapIn(conn):
                     print(f"    readers hold the tables, attempt {attempt}"
                           f"/{_SWAP_ATTEMPTS} -- retrying in {_SWAP_BACKOFF}s")
                     time.sleep(_SWAP_BACKOFF)
+
+        swapQuietlyFirst(conn, _swapOnce, "ranking_results", _swapFlagged)
     print("  swapped. dropping the old copies...")
 
     # The old ranking_results is ~23GB. Timed because a drop that size is not
