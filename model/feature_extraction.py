@@ -2169,6 +2169,85 @@ def _horizonLongTwin(prior_results, target_result, full_sequence, rng):
                     kind="horizon_long")
 
 
+# ------------------------------------------------------------------ #
+# SILENT AND DROPOUT TWINS (owner, 2026-10-10: "can we create more data")
+# ------------------------------------------------------------------ #
+
+# ★ SILENT TWINS: A HIDDEN STRETCH WITH NO RACING IN IT. Every forecast and
+#   horizon twin is made by hiding races the athlete RAN, so in training the
+#   hidden stretch always held racing -- and the model learned "hidden time
+#   means they kept racing and improving". On the site the stretch between
+#   today and the race is just as often empty: an injury, a quit, an athlete
+#   who simply is not entered anywhere. A silent twin takes a target whose
+#   real gap is long (they raced in March, next in October) and asks it from
+#   a date INSIDE the gap: the whole history visible, the last stretch before
+#   the target hidden, and nothing in that stretch. Exactly the live case.
+#   The hidden stretch is drawn like a forecast twin's (2-40 weeks, skewed
+#   short), inside the gap, never longer than it.
+SILENT_TWIN_RATE = 1.0           # every eligible target: long gaps are scarce
+SILENT_MIN_GAP_WEEKS = 6.0       # the 2-6wk break band and up (train.BREAK_BANDS)
+
+# ★ DROPOUT TWINS: A HISTORY WITH HOLES. Real histories miss races -- a meet
+#   never scraped, a result filed under another name. A dropout twin deletes
+#   each prior race with probability DROPOUT_RACE_P (keeping at least
+#   MIN_KEPT_RACES), so the model learns not to read a missing race as a
+#   missing athlete -- and not to lean on any one race.
+# ! THE KEPT ROWS ARE NOT REBUILT: a row's altitude delta is measured against
+#   every race before it, deleted ones included. That is the only feature
+#   with a trace of the deleted races, and it is a median -- one race moves
+#   it little. Rebuilding costs O(L^2) per twin over ~100M examples.
+DROPOUT_TWIN_RATE = 0.25
+DROPOUT_RACE_P = 0.25
+
+
+def _silentTwin(prior_results, target_result, full_sequence, rng):
+    """The full history, with the end of a long real gap hidden. Or None."""
+    if not prior_results:
+        return None
+    target_date = _asDate(target_result.get("date"))
+    last = _asDate(prior_results[-1].get("date"))
+    if target_date is None or last is None:
+        return None
+    gap_weeks = (target_date - last).days / 7.0
+    if gap_weeks < SILENT_MIN_GAP_WEEKS:
+        return None
+    lo = FORECAST_GAP_MIN_WEEKS
+    hi = min(gap_weeks, FORECAST_GAP_MAX_WEEKS)
+    if hi <= lo:
+        return None
+    weeks = lo + (rng.random() ** FORECAST_GAP_SKEW) * (hi - lo)
+    return {
+        "sequence": [v.copy() for v in full_sequence],
+        "prior_results": prior_results,
+        "target_result": target_result,
+        "target": float(target_result["normalized_time"]),
+        "venue_row": target_result,
+        "is_forecast": True,
+        "n_hidden": 0,                  # nothing hidden -- that is the point
+        "gap_weeks": round(weeks, 1),
+        "hidden_days": float(round(weeks * 7.0)),
+        "kind": "silent",
+    }
+
+
+def _dropoutTwin(prior_results, target_result, full_sequence, rng):
+    """The same example with random prior races deleted. Or None."""
+    keep = [j for j in range(len(prior_results))
+            if rng.random() >= DROPOUT_RACE_P]
+    if len(keep) < MIN_KEPT_RACES or len(keep) == len(prior_results):
+        return None
+    return {
+        "sequence": [full_sequence[j].copy() for j in keep],
+        "prior_results": [prior_results[j] for j in keep],
+        "target_result": target_result,
+        "target": float(target_result["normalized_time"]),
+        "venue_row": target_result,
+        "is_forecast": False,
+        "n_hidden": len(prior_results) - len(keep),
+        "kind": "dropout",
+    }
+
+
 def _baseVectors(athlete_results: list[dict], encoders: dict) -> list:
     """One sequence vector per race, with days_ago (index 2) left at 0.
 
@@ -2266,6 +2345,18 @@ def buildAthleteExamples(athlete_results: list[dict], encoders: dict,
                                        sequence, rng)
             if further is not None:
                 examples.append(further)
+
+        # ★ AND THE 2026-10-10 PAIR: a long real gap asked from inside it
+        #   (see SILENT_TWIN_RATE), and the history with holes in it (see
+        #   DROPOUT_TWIN_RATE).
+        if rng is not None and rng.random() < SILENT_TWIN_RATE:
+            quiet = _silentTwin(prior_results, target_result, sequence, rng)
+            if quiet is not None:
+                examples.append(quiet)
+        if rng is not None and rng.random() < DROPOUT_TWIN_RATE:
+            holes = _dropoutTwin(prior_results, target_result, sequence, rng)
+            if holes is not None:
+                examples.append(holes)
 
     return examples
 
