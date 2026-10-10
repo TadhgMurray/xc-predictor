@@ -168,6 +168,10 @@
 
 {% else %}
   {% set p = proj %}
+  {# ★ STATE ODDS (2026-10-10, state_odds.py): the nightly simulation's team
+     chances beside the projected scores, when it is built for this
+     division; nothing changes when it is not. #}
+  {% set so_p = state_odds_projection(state, division_slug, gender) %}
   <header class="rc-hd"><div class="rc-hgrid rc-hone">
     <div class="rc-left">
       <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country · state projection</span></div>
@@ -182,6 +186,7 @@
         {% else %}on a neutral course <span class="p2-muted">(no regular state-meet venue on record)</span>{% endif %}
         · <span class="p2-muted">computed {{ p.computed_at|ago_words }}</span>
         · <a href="/what-it-takes/{{ state|lower }}{{ '/' ~ division_slug if division else '' }}{{ '?g=girls' if gender == 'girls' and division }}">What it took in past seasons</a>
+        {% if so_p %}· <a href="/state-odds/{{ state|lower }}?division={{ division_slug }}&amp;gender={{ gender }}">Chances to {{ "qualify, place and win" if so_p.mode == "qualifying" else "place and win" }}</a>{% endif %}
         · {{ share_link("Who wins " ~ division_label ~ " " ~ gender_words ~ "? on Racecast",
                         site_origin ~ "/projections/" ~ state|lower ~ "/" ~ division_slug ~ ("?g=girls" if gender == "girls" else "")) }}
       </div>
@@ -249,6 +254,7 @@
       <th class="num">#</th><th>Team</th><th class="num">Pts</th>
       <th>Scorers <span class="p2-muted">(6, 7)</span></th>
       <th class="num p2-wide" title="Mean season rating of the five scorers">Top 5</th>
+      {% if so_p %}<th class="num" title="Model estimate: the chance to win state{{ ' if they make state' if so_p.mode != 'qualifying' }}, from the nightly simulation"><a href="/state-odds/{{ state|lower }}?division={{ division_slug }}&amp;gender={{ gender }}">Win</a></th>{% endif %}
     </tr></thead>
     <tbody>
     {% for t in p.teams %}
@@ -271,6 +277,7 @@
           </details>
         </td>
         <td class="num p2-wide">{% if t.top5 is not none %}{{ "%.1f"|format(t.top5) }}{{ fk_inline(five_k(t.top5, ppool, "XC")) }}{% endif %}</td>
+        {% if so_p %}<td class="num">{{ (so_p.teams.get(t.team) or {}).get('p_win')|odds_pct }}</td>{% endif %}
       </tr>
     {% endfor %}
     </tbody>

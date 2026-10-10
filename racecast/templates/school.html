@@ -104,6 +104,7 @@
   {% set nr_track = [] %}
   {% for p in hs_pools %}{% set _ = nr_track.append(("/school/" ~ (school|urlencode) ~ "/season?pool=" ~ p ~ ("&state=" ~ header.state if header.state else ""), "Boys" if p == "hs_m" else "Girls")) %}{% endfor %}
   {% include "_next_race.html" %}
+  {% include "_state_odds_team.html" %}{# ★ team state odds, 2026-10-10 (state_odds.py) #}
 {% endif %}
 
     {# Same name and state, DIFFERENT INSTITUTIONS: Amherst (MA) is a

@@ -1,0 +1,42 @@
+/* =======================================================================
+ * state-odds.css -- /state-odds/<st> (state_odds.py, owner 2026-10-10).
+ *
+ * ★ ONLY WHAT pages2.css DOES NOT ALREADY HAVE. The page wears .p2-page
+ *   (the projections' header, toggles, chips and tables); this adds the
+ *   disclaimer, the mode note and the sortable headers, scoped under
+ *   .so-page so nothing leaks.
+ * ======================================================================= */
+
+/* ★ THE DISCLAIMER IS BIG ON PURPOSE (owner: "big clear disclaimer"): a
+ *   probability reads as a fact unless the page says, first and plainly,
+ *   that it is a model's estimate. */
+.so-page .so-disclaimer { border: 2px solid #b45309; background: #fffbeb; color: #78350f;
+                          padding: 0.75rem 0.95rem; margin: 0.9rem 0 0.6rem;
+                          font-size: 1rem; line-height: 1.5; }
+.so-page .so-disclaimer strong { display: block; font-size: 1.12rem; color: #7c2d12;
+                                 margin-bottom: 0.15rem; }
+.so-page .so-mode { border-left: 4px solid var(--line-2, #cbd0d6); padding: 0.45rem 0.8rem;
+                    margin: 0.6rem 0 0.4rem; font-size: 0.92rem; color: #374151;
+                    background: var(--zebra, #fafbfc); line-height: 1.5; }
+.so-page .so-mode.is-qual { border-left-color: #15803d; }
+.so-page .so-mode.is-state { border-left-color: #b45309; }
+.so-page .so-mode ul { margin: 0.25rem 0 0; padding-left: 1.2rem; }
+.so-page .so-if { display: inline-block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+                  letter-spacing: 0.03em; color: #92400e; border: 1px solid #f5d98a; background: #fef3c7;
+                  padding: 0 0.3rem; line-height: 1.45; vertical-align: 0.1em; white-space: nowrap; }
+
+/* sortable headers: a real <button> in each th, so the keyboard sorts too */
+.so-page .so-tbl th button { font: inherit; font-weight: 700; color: inherit; background: none;
+                             border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
+.so-page .so-tbl th button::after { content: ""; display: inline-block; width: 0.9em; color: var(--muted, #6b7280); }
+.so-page .so-tbl th[aria-sort="descending"] button::after { content: " \2193"; }
+.so-page .so-tbl th[aria-sort="ascending"] button::after { content: " \2191"; }
+.so-page .so-tbl td.num.so-p { font-weight: 700; color: var(--ink, #111418); }
+.so-page .so-tbl td.so-lo { color: var(--muted, #6b7280); font-weight: 400; }
+.so-page .so-section { margin-top: 1.4rem; }
+.so-page .so-section h2 { font-size: 1.15rem; margin: 0 0 0.3rem; }
+
+@media (max-width: 640px) {
+  .so-page .so-disclaimer { font-size: 0.94rem; padding: 0.65rem 0.75rem; }
+  .so-page .so-tbl { font-size: 0.88rem; }
+}

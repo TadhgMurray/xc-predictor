@@ -10228,6 +10228,10 @@ app.register_blueprint(_pages2.bp)
 # ★ "WHAT IT TAKES" (owner, 2026-10-05): its own blueprint too, see cuts.py.
 import cuts as _cuts                                           # noqa: E402
 app.register_blueprint(_cuts.bp)
+# ★ STATE ODDS (owner, 2026-10-10): /state-odds/<st> and the template
+#   globals the athlete, school and projection pages read; state_odds.py.
+import state_odds as _state_odds                               # noqa: E402
+app.register_blueprint(_state_odds.bp)
 # ★ FOLLOWS, MY PAGE, TEAM CALENDARS, THE SHORTLIST (owner, 2026-10-10):
 #   their own modules and blueprints. The public pages stay anonymous; every
 #   route that reads a session is under /account or /api/ (private above).
