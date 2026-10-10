@@ -106,7 +106,7 @@ for _p in (_HERE, _ROOT, os.path.join(_ROOT, "engine")):
 #   no-team string is would each find "matches" the other refuses.
 from link_freshmen import LOG_DDL, normName                     # noqa: E402
 from link_teamless import (CLASS_SLACK, NO_TEAM_EXACT, US_STATES,  # noqa: E402
-                           _g, _numGrade, classYear, hometownState,
+                           _day, _g, _numGrade, classYear, hometownState,
                            nameKeySql)
 
 RULE = "profile_school"
@@ -154,7 +154,108 @@ def schoolKey(school):
 #  THE DECISION -- pure
 # ------------------------------------------------------------------ #
 # meet/event: two members in one track race on one day are two runners
-Row = namedtuple("Row", "date sport grade meet event", defaults=(None, None))
+# school: the row's own school string (the era check reads the rows at the
+#   group's key school)
+Row = namedtuple("Row", "date sport grade meet event school",
+                 defaults=(None, None, None))
+
+
+# ------------------------------------------------------------------ #
+#  THE ERA OF A COLLEGE OR UNGRADED CAREER (sweep 2026-10-10, A6)
+# ------------------------------------------------------------------ #
+# ★ THE GENERATION TEST WAS HIGH-SCHOOL ONLY. link_teamless.classYear reads
+#   a numeric grade 1-12 and nothing else, so two COLLEGE careers -- or two
+#   with no grade at all -- under one (name, school) key had no era check:
+#   --careers joined a 1998 "Mike Johnson, Stanford" to a 2019 one on the
+#   strength of the string. Two additions, each derived from how long one
+#   athlete can be at one school, not picked:
+#
+# 1. COLLEGE CLASS READ. The tfrrs eligibility spelling "FR-1" .. "SR-4",
+#    "SR-5", "JR-3" is unambiguously college; its number is the season of
+#    competition, so in the academic year ending E the athlete finished high
+#    school in E - n (FR-1 in 2025-26 -> the high-school class of 2025), the
+#    same high-school-class scale classYear speaks, so one median compares
+#    both. A BARE "Fr"/"Sr" IS NOT READ: a high-school feed writes Fr for
+#    grade 9 too (grade_label's _WORD_HS), and the two readings sit four
+#    years apart -- a guess that size would decide merges.
+#    ! THE COLLEGE NUMBER CAN LAG THE CALENDAR by the seasons an athlete is
+#      enrolled without one counting: a redshirt year (the NCAA's five-year
+#      clock for four seasons) and the 2020-21 COVID blanket waiver -- at
+#      most COLLEGE_DRIFT = 2, the gap between six enrolled seasons and the
+#      four the class words count. A comparison with a college reading on
+#      either side gets that much more slack than CLASS_SLACK.
+_COLLEGE_ELIG = re.compile(r"^(FR|SO|JR|SR)-?([1-6])$", re.IGNORECASE)
+COLLEGE_DRIFT = 2
+#
+# 2. THE ACTIVE YEARS AT THE SHARED SCHOOL. The careers share a profile
+#    school, so a merge claims ONE athlete raced for that school across
+#    every season either career did. Nobody competes for one school longer
+#    than MAX_SEASONS_AT_ONE_SCHOOL academic years: a college athlete has
+#    five years of eligibility, six with a redshirt and the COVID year
+#    (the same two seasons as COLLEGE_DRIFT, on a four-season base); a high
+#    school is four grades, six at a combined 7-12 school. Six covers both,
+#    so a combined span longer than that is two athletes -- or a coach, an
+#    alumnus, a namesake a generation on -- and is refused.
+#    ! ONLY THE ROWS AT THE KEY SCHOOL COUNT where the rows carry one: a
+#      runner's high-school seasons and college seasons are at two schools,
+#      and together they legitimately span ten years. A career with no row
+#      at the key school (its results filed under another spelling) is
+#      measured by its college and ungraded rows -- the ones the generation
+#      test cannot see; its high-school rows are classYear's already.
+#    ! CAREERS ONLY (--careers): a stray is one lone profile, usually one
+#      race, and the generation test already covers it.
+MAX_SEASONS_AT_ONE_SCHOOL = 6
+
+
+def collegeClassYear(date, grade):
+    """The high-school class a college eligibility grade implies ('FR-1' in
+    the academic year ending 2026 -> 2025), or None: no date, or a grade
+    that is not the college FR-n .. SR-n spelling."""
+    d = _day(date)
+    m = _COLLEGE_ELIG.match(str(grade or "").strip())
+    if d is None or not m:
+        return None
+    ay_end = d.year + 1 if d.month >= 8 else d.year
+    return ay_end - int(m.group(2))
+
+
+def _rowClass(r):
+    """(class, is_college) for one row: the high-school class its grade
+    implies, numeric (classYear) or college (collegeClassYear); (None, False)
+    when it reads neither."""
+    c = classYear(r.date, r.grade)
+    if c is not None:
+        return c, False
+    c = collegeClassYear(r.date, r.grade)
+    return (c, True) if c is not None else (None, False)
+
+
+def _season(date):
+    """The academic year (August seam) a race date falls in, by its opening
+    calendar year; None for no date."""
+    d = _day(date)
+    if d is None:
+        return None
+    return d.year if d.month >= 8 else d.year - 1
+
+
+def _eraRows(m, key_schools):
+    """The rows a career's era is measured by: those at the key school(s)
+    when any carry it; else its rows with no high-school numeric grade."""
+    at = [r for r in m.rows
+          if r.school and r.school.strip().lower() in key_schools]
+    if at:
+        return at
+    return [r for r in m.rows if classYear(r.date, r.grade) is None]
+
+
+def careerSpan(careers, key_schools):
+    """(first season, last season) of the careers' era rows together, or
+    None when no row has a date."""
+    seasons = [s for m in careers for s in
+               (_season(r.date) for r in _eraRows(m, key_schools))
+               if s is not None]
+    return (min(seasons), max(seasons)) if seasons else None
 # lone: an anet profile on its own seed with nothing else under its id
 Member = namedtuple("Member", "pid name gender lone rows")
 Verdict = namedtuple("Verdict", "target movers reason", defaults=((), ""))
@@ -244,16 +345,29 @@ def decideGroup(members, allow_careers=False, keys=()):
                 return Verdict(None, (), "same track race: two runners")
             tf_races[k] = m.pid
 
-    t_cls = [c for c in (classYear(r.date, r.grade) for r in target.rows) if c]
+    # ★ THE GENERATION TEST READS COLLEGE CLASSES TOO (sweep 2026-10-10,
+    #   A6): numeric 1-12 as before, and the FR-1 .. SR-n eligibility
+    #   spelling, both on the high-school-class scale -- see _rowClass.
+    t_read = [_rowClass(r) for r in target.rows]
+    t_cls = [c for c, _col in t_read if c]
     t_med = statistics.median(t_cls) if t_cls else None
+    t_college = any(col for c, col in t_read if c)
     for m in movers:
         for r in m.rows:
             g = _numGrade(r.grade)
             if g is not None and g > 12:
                 return Verdict(None, (), "grade reads as an age")
-            cy = classYear(r.date, r.grade)
-            if cy is not None and t_med is not None and abs(cy - t_med) > CLASS_SLACK:
+            cy, college = _rowClass(r)
+            slack = CLASS_SLACK + (COLLEGE_DRIFT if college or t_college else 0)
+            if cy is not None and t_med is not None and abs(cy - t_med) > slack:
                 return Verdict(None, (), "generation mismatch")
+
+    # ★ AND TWO CAREERS MUST FIT ONE ATHLETE'S YEARS AT THE SCHOOL (A6) --
+    #   MAX_SEASONS_AT_ONE_SCHOOL, derived above.
+    if len(careers) > 1:
+        span = careerSpan(careers, {sk for _nm, sk in keys})
+        if span and span[1] - span[0] + 1 > MAX_SEASONS_AT_ONE_SCHOOL:
+            return Verdict(None, (), "careers too far apart")
     return Verdict(target.pid, tuple(sorted(m.pid for m in movers)), MATCH)
 
 
@@ -369,15 +483,18 @@ def gather(cur, person=None):
     facts = {p: (g or [], nm, bool(lone)) for p, g, nm, lone in cur.fetchall()}
     rows = defaultdict(list)
     cur.execute("""
-        SELECT 'XC', r.person_id, r.date, r.grade, NULL::bigint, NULL::text FROM results r
+        SELECT 'XC', r.person_id, r.date, r.grade, NULL::bigint, NULL::text,
+               r.school
+        FROM results r
         JOIN ps_mp m ON m.person_id = r.person_id
         UNION ALL
-        SELECT 'TF', r.person_id, r.date, r.grade, r.meet_id, lower(btrim(r.event_short))
+        SELECT 'TF', r.person_id, r.date, r.grade, r.meet_id, lower(btrim(r.event_short)),
+               r.school
         FROM results_tf r
         JOIN ps_mp m ON m.person_id = r.person_id
     """)
-    for sport, p, d, g, meet, ev in cur.fetchall():
-        rows[p].append(Row(d, sport, g, meet, ev))
+    for sport, p, d, g, meet, ev, sch in cur.fetchall():
+        rows[p].append(Row(d, sport, g, meet, ev, sch))
     out_m, out_k = {}, {}
     for i, (members, gkeys) in enumerate(groups):
         out_m[i] = [Member(p, facts[p][1], facts[p][0], facts[p][2],

@@ -64,15 +64,55 @@ def gradeLabel(grade, pool=None):
     return g
 
 
-def advanceGrade(grade, years, pool=None):
+# ★ A GRADUATION YEAR, READ FOR ONE SEASON (sweep 2026-10-10, A12). The
+#   class of G are seniors in the academic year that ENDS in G, so in the
+#   season that opens in calendar year `season` (season_year.academicYear,
+#   the stored athlete_season.year) they are in grade 12 - (G - (season+1))
+#   = 13 + season - G. Mirrors rankings.gradeKeySql's class-year branch.
+_CLASS_YEAR = re.compile(r"^(19|20)\d\d$")
+
+
+def isClassYear(grade):
+    return grade is not None and bool(_CLASS_YEAR.match(str(grade).strip()))
+
+
+def classYearGrade(grade, season, pool=None):
+    """A class-year grade ("2026") as the grade it is in `season` (an
+    academic year's opening calendar year), spelled for the pool: '12' /
+    'SR-4' in its senior season, '11' / 'JR-3' the year before. None when
+    the season is past it (graduated -- the season opening in G is the first
+    without them), when it is not a class year, or when no grade fits: a
+    college class more than four years out (FR-1 is three years out) or a
+    school grade below 1."""
+    if not isClassYear(grade) or season is None:
+        return None
+    left = int(str(grade).strip()) - (int(season) + 1)   # years to graduation
+    if left < 0:
+        return None
+    level = (pool or "").split("|")[0].split("_")[0].lower()
+    if level in ("college", "pro"):
+        return ("SR-4", "JR-3", "SO-2", "FR-1")[left] if left <= 3 else None
+    n = 12 - left
+    return str(n) if n >= 1 else None
+
+
+def advanceGrade(grade, years, pool=None, season=None):
     """A stored grade `years` seasons on, spelled for the page (owner,
     2026-09-25: a runner who has not raced yet this season showed a blank
     grade; "it should just increment grade by whatever from their last
     year"). '10' +1 -> '11'; 'JR-3' +1 -> 'SR-4'; 'SR-4' +1 -> 'SR-5' (a
     fifth year); 'So' in a high-school pool +1 -> '11'. A school grade past
-    12 has graduated and comes back None, as does anything unreadable."""
+    12 has graduated and comes back None, as does anything unreadable.
+
+    ★ A CLASS YEAR ("2026") DOES NOT ADVANCE, IT IS READ (sweep 2026-10-10,
+      A12): the graduation year is the same every season, so `years` says
+      nothing -- `season`, the academic year it is wanted for, says which
+      grade it is (classYearGrade), and None once that season is past it.
+      With no season it is unreadable here, as before."""
     if grade is None or years is None:
         return None
+    if isClassYear(grade):
+        return classYearGrade(grade, season, pool)
     label = gradeLabel(grade, pool)
     if not label:
         return None

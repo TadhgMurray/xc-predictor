@@ -1339,14 +1339,29 @@ def _ratingToSeconds(rating, pool, spec, season):
     norm = conversions._norm_from_rating(rating, pool, 0.0, sport)
     if not norm:
         return None
-    return _raceSeconds(norm, {
+    return _raceSeconds(norm, _venueContext(spec, {
         "distance": float(dist), "pool": pool, "sport": sport,
         "season": season,
-        "difficulty": spec.get("course_difficulty"),
-        "canonical_id": spec.get("canonical_id"),
-        "location_id": spec.get("location_id"),
-        "is_indoor": spec.get("is_indoor"),
-        "course": spec.get("course_name")})
+        "course": spec.get("course_name")}))
+
+
+# Purpose:   the venue half of a clock-conversion context, one rule for
+#            _ratingToSeconds and _denormContext (they must convert alike, or
+#            the rating basis and the model basis disagree by the venue).
+# ★ FLAG OFF, EXACTLY THE OLD KEYS. Flag on: _contextDifficulty's cell or
+#   no-venue default, and for track the geometry (A4) -- see
+#   _venueDifficultyOn.
+def _venueContext(spec, ctx):
+    diff, cid = _contextDifficulty(spec)
+    ctx.update({"difficulty": diff,
+                "canonical_id": cid,
+                "location_id": spec.get("location_id"),
+                "is_indoor": spec.get("is_indoor")})
+    if _venueDifficultyOn(spec.get("sport")) \
+            and (spec.get("sport") or "XC").upper() == "TF":
+        ctx["track_length"] = spec.get("track_length")
+        ctx["track_type"] = spec.get("track_type")
+    return ctx
 
 
 # ★ THE RATING A PREDICTED TIME IS WORTH ON THIS COURSE (owner, 2026-10-08:
@@ -1600,14 +1615,11 @@ def _denormContext(spec, last_row):
     if _normScale() == "common5000":
         from normalize_distance import anchorShift
         shift = anchorShift(pool, spec.get("sport"))
-    return {"distance": float(dist), "pool": pool, "scale_shift": shift,
-            "sport": spec.get("sport"),
-            "season": date.year if date else None,
-            "difficulty": spec.get("course_difficulty"),
-            "canonical_id": spec.get("canonical_id"),
-            "location_id": spec.get("location_id"),
-            "is_indoor": spec.get("is_indoor"),
-            "course": spec.get("course_name")}
+    return _venueContext(spec, {
+        "distance": float(dist), "pool": pool, "scale_shift": shift,
+        "sport": spec.get("sport"),
+        "season": date.year if date else None,
+        "course": spec.get("course_name")})
 
 
 # Purpose:   a date out of whatever the row or the request is carrying.
@@ -1807,6 +1819,118 @@ def _normScale():
     return (_artifacts or {}).get("norm_scale", "pool")
 
 
+# ★ THE HAND-VERIFIED DISTANCES, IN THE TARGET TOO (sweep 2026-10-10, A2).
+#   feature_extraction, the fitter and the backfill all read a division's
+#   distance through corrections.distanceOverrideSQL -- the 12,000+ corrected
+#   divisions -- but the target spec read the raw m.distance. A rerun or a
+#   backtest of a corrected division was predicted at the scraped label (a
+#   "5000" that was really 2735) and difficulty-looked-up at the wrong cell,
+#   while every training row of that same race carried the corrected one.
+#   Same helper, same clamp: stored_expr is each query's own raw distance,
+#   so an override can only LOWER it (corrections' downward-only policy).
+# ! THE JOIN KEYS ON <alias>.meet_id / <alias>.div_id (dist_override's whole
+#   key). `meets` and `meets_tf` carry both; a tfrrs XC target has no row
+#   that does, so its query builds one (`ovk`, below).
+# ⚠ ESCAPED. The generated text is pasted into queries that take NAMED
+#   params; a bare `%` in it would be a format slot (feature_extraction's
+#   escapeLiteralPercent, the same guard the corpus queries use).
+# ! BUILT ON FIRST USE, NOT AT IMPORT: corrections.py is a 51 MB dict
+#   literal, and the pages that import predict without predicting should
+#   not pay for parsing it (_fx's own reason).
+_SPEC_OVERRIDE_CACHE = {}
+
+
+def _specOverride(alias, sport, stored_expr):
+    """(join, coalesce_prefix) for the target spec's distance override.
+    ("", "") when corrections.py is absent -- a checkout without the
+    generated file predicts exactly as before rather than not at all."""
+    key = (alias, sport, stored_expr)
+    if key not in _SPEC_OVERRIDE_CACHE:
+        import sys
+        eng = os.path.join(_ROOT, "engine")
+        if eng not in sys.path:
+            sys.path.insert(0, eng)
+        try:
+            from corrections import distanceOverrideSQL
+        except ImportError:
+            _SPEC_OVERRIDE_CACHE[key] = ("", "")
+            return _SPEC_OVERRIDE_CACHE[key]
+        fx = _fx()                  # escapeLiteralPercent; only once found
+        join, coal = distanceOverrideSQL(alias, sport, stored_expr=stored_expr)
+        _SPEC_OVERRIDE_CACHE[key] = (fx.escapeLiteralPercent(join or ""),
+                                     fx.escapeLiteralPercent(coal or ""))
+    return _SPEC_OVERRIDE_CACHE[key]
+
+
+# ★ VENUE DIFFICULTY IN PREDICTIONS -- BEHIND A FLAG (sweep 2026-10-10, A4/A5).
+#   XCP_PREDICT_VENUE_DIFFICULTY = "" / 0 (default: off, the served behaviour)
+#                                  "tf" | "xc" | "tf,xc" | 1 / all (both)
+#   Off, every prediction is what it was. It is a flag and not a fix because
+#   each half moves EVERY prediction of its sport, and the owner wants the
+#   backtest to say so first.
+#
+#   TF ("tf"). The spec hard-coded `0.0 AS course_difficulty`, so a track
+#   prediction never saw its venue: an indoor 200 m banked track and an
+#   outdoor 400 m were the same race. On:
+#     - the MODEL feature is the venue's fitted cell, 'TF:loc:<id>:<in|out>',
+#       COALESCE 0.0 with the 0-sentinel guard -- the join feature_extraction's
+#       _TF_SQL trains on, so this REMOVES a train/serve skew rather than
+#       adding one;
+#     - the CONVERSION back to a clock time (_denormContext) gets that cell
+#       (no cell -> 0.0, conversions.venueEffect's own "average outdoor
+#       track") and the track geometry, track_length/track_type, which
+#       _forward_factor takes and nothing passed -- meets_tf's own columns,
+#       else the tfrrs propagation stamp (tfrrs_meet_geometry), the
+#       COALESCE fit_era_corrections reads them through.
+#   XC ("xc"). A course with no fitted cell was COALESCEd to 0.0 and handed
+#   to the conversion as an EXPLICIT 0.0, which venueEffect reads as "this
+#   venue, fitted at exactly average" instead of "no venue known -> the
+#   sport's median race" (conversions.chosen_difficulty / venueEffect). On,
+#   the conversion gets None for a cell that does not exist, and the median
+#   applies.
+#     ! THE MODEL FEATURE STAYS COALESCE(cd.difficulty, 0.0) EITHER WAY: the
+#       corpus (_XC_SQL) trained on exactly that, so 0.0 is what "no cell"
+#       means to the network. Only the clock conversion changes.
+#     ! canonical_id IS DROPPED FROM THE CONVERSION CONTEXT WHEN THERE IS NO
+#       CELL, so chosen_difficulty answers "no venue" without a DB lookup
+#       per call -- _secondsToRating bisects forty times per runner.
+#
+#   BACKTEST (XC; scripts/backtest_predictions.py is XC-only, it samples
+#   `results`). Same seed and window, flag off then on, compare the tables:
+#     XCP_PREDICT_VENUE_DIFFICULTY=0  /srv/venv/bin/python scripts/backtest_predictions.py --from 2026-09-01 --to 2026-10-05 --divs 60 --seed 1 2>&1 | tee -a backtest_venue_off.txt
+#     XCP_PREDICT_VENUE_DIFFICULTY=xc /srv/venv/bin/python scripts/backtest_predictions.py --from 2026-09-01 --to 2026-10-05 --divs 60 --seed 1 2>&1 | tee -a backtest_venue_xc.txt
+#   Both bases convert through _denormContext/_ratingToSeconds, so "rating"
+#   and "model" both move; "within-race" takes each race's median miss out,
+#   and a venue constant is mostly such a shift, so the honest read is the
+#   median |error| and the bias columns.
+#   ⚠ TF HAS NO BACKTEST HARNESS: that script only samples XC races. "tf"
+#   needs a track mode there (results_tf, sport "TF") before it can be
+#   judged the same way.
+#   ⚠ A9 STILL APPLIES: the fitted cells include the race being backtested,
+#   so both runs are equally flattered; the on/off DIFFERENCE is the read.
+def _venueDifficultyOn(sport):
+    raw = (os.environ.get("XCP_PREDICT_VENUE_DIFFICULTY") or "").strip().lower()
+    if raw in ("", "0", "off", "false", "no"):
+        return False
+    if raw in ("1", "on", "true", "yes", "all"):
+        return True
+    return (sport or "XC").lower() in {t.strip() for t in raw.split(",")}
+
+
+def _contextDifficulty(spec):
+    """(difficulty, canonical_id) for the clock conversion's context.
+    Flag off: the spec's own course_difficulty and canonical_id, as ever.
+    Flag on: the venue's fitted cell, or the sport's no-venue default
+    (TF 0.0, XC None -> the median race) -- see _venueDifficultyOn."""
+    sport = (spec.get("sport") or "XC").upper()
+    if not _venueDifficultyOn(sport):
+        return spec.get("course_difficulty"), spec.get("canonical_id")
+    cell = spec.get("venue_cell")
+    if cell is not None:
+        return float(cell), spec.get("canonical_id")
+    return (0.0 if sport == "TF" else None), None
+
+
 # The target spec of a tfrrs XC meet (see _targetSpec): its own row in
 # meets_tfrrs, columns named as the anet branch names them.
 # ! THE DISTANCE IS THE DIVISION'S, from the blob; with no division named, the
@@ -1814,13 +1938,23 @@ def _normScale():
 # ⚠ THE KEY IS CAST TO TEXT. `jsonb -> NULL` is ambiguous between the
 #   jsonb -> text and jsonb -> int operators, and a str() key is what the blob
 #   is keyed by (app._blob: an int key silently finds nothing).
-_TFRRS_XC_SPEC_SQL = """
+# ★ AND THE DIVISION IT CHOSE IS NAMED (sweep 2026-10-10, A2): `ovk` carries
+#   (meet_id, div_id, source) so the distance override joins the division
+#   whose distance this is -- the named one, else the blob's first. A key
+#   that is not an integer joins nothing (no override), never an error.
+# ! venue_cell is the RAW cell (NULL when the course has none), for
+#   _contextDifficulty; course_difficulty stays the model's COALESCE.
+def _tfrrsXcSpecSql():
+    ov_join, ov_coal = _specOverride("ovk", "XC", "d.dist")
+    dist = f"COALESCE({ov_coal} d.dist)"
+    return """
     SELECT mt.venue_name AS course_name,
-           d.dist AS distance_meters,
+           @DIST@ AS distance_meters,
            mt.gps_lat, mt.gps_long,
            NULL::real AS altitude_meters,
            cc.canonical_id,
            COALESCE(cd.difficulty, 0.0) AS course_difficulty,
+           cd.difficulty AS venue_cell,
            COALESCE((SELECT min(r.date) FROM results r
                      WHERE r.meet_id = mt.meet_id AND r.source = 'tfrrs'),
                     substr(mt.date::text, 1, 10)) AS date
@@ -1834,18 +1968,32 @@ _TFRRS_XC_SPEC_SQL = """
                                     THEN mt.division_distances END) e
              WHERE  %(divtext)s::text IS NULL
                AND  e.value ->> 'distance' IS NOT NULL
-             ORDER  BY e.key LIMIT 1)) AS dist
+             ORDER  BY e.key LIMIT 1)) AS dist,
+               COALESCE(
+            %(divtext)s::text,
+            (SELECT e.key
+             FROM   jsonb_each(CASE WHEN jsonb_typeof(mt.division_distances)
+                                         = 'object'
+                                    THEN mt.division_distances END) e
+             WHERE  e.value ->> 'distance' IS NOT NULL
+             ORDER  BY e.key LIMIT 1)) AS div_key
     ) d
+    CROSS JOIN LATERAL (
+        SELECT mt.meet_id, 'tfrrs'::text AS source,
+               CASE WHEN d.div_key ~ '^[0-9]+$'
+                    THEN d.div_key::bigint END AS div_id
+    ) ovk
+@OVJOIN@
     LEFT JOIN course_canonical cc
            ON cc.course_name = mt.venue_name
           AND round(cc.gps_lat::numeric, 5) = round(mt.gps_lat::numeric, 5)
           AND round(cc.gps_long::numeric, 5) = round(mt.gps_long::numeric, 5)
     LEFT JOIN course_difficulties cd
            ON cd.canonical_id = cc.canonical_id
-          AND cd.distance_m = (round(d.dist / 100.0) * 100)::int
+          AND cd.distance_m = (round(@DIST@ / 100.0) * 100)::int
     WHERE mt.meet_id = %(meet)s AND mt.sport = 'XC'
     LIMIT 1
-"""
+""".replace("@DIST@", dist).replace("@OVJOIN@", ov_join)
 
 
 def _meetDate(cur, meet_id, sport, source=None):
@@ -1896,6 +2044,64 @@ def _meetDate(cur, meet_id, sport, source=None):
     return str(d)[:10] if d else None
 
 
+# The target spec of a track meet (see _targetSpec), as SQL.
+# ★ FLAG OFF IS THE OLD QUERY: `0.0 AS course_difficulty`, no geometry.
+# ★ FLAG ON (XCP_PREDICT_VENUE_DIFFICULTY has "tf", sweep 2026-10-10, A4):
+#   - course_difficulty: the venue's fitted cell, byte-for-byte the corpus
+#     join (feature_extraction _TF_SQL): 'TF:loc:<id>:<in|out>', location 0
+#     and NULL excluded (0 is "not known", not a place), COALESCE 0.0;
+#   - venue_cell: the same cell un-COALESCEd, for the clock conversion;
+#   - track_length / track_type: meets_tf's own, else the tfrrs stamp
+#     (tfrrs_meet_geometry, tfrrs rows only -- its id space is tfrrs'),
+#     the COALESCE fit_era_corrections normalizes through. location_id and
+#     is_indoor stay meets_tf's: the model feature and the cell key are read
+#     off those in training, and a target described otherwise is a skew.
+def _tfSpecSql(tf_dist, ov_join, venue):
+    if venue:
+        cols = """COALESCE(cd.difficulty, 0.0) AS course_difficulty,
+                       cd.difficulty AS venue_cell,
+                       COALESCE(m.track_length, tg.track_length)
+                           AS track_length,
+                       COALESCE(m.track_type, tg.track_type) AS track_type,"""
+        joins = """
+                LEFT JOIN tfrrs_meet_geometry tg
+                       ON m.source = 'tfrrs'
+                      AND tg.meet_id = m.meet_id
+                      AND tg.sport = 'TF'
+                LEFT JOIN course_difficulties cd
+                       ON m.location_id IS NOT NULL
+                      AND m.location_id <> 0
+                      AND cd.course_name = 'TF:loc:' || m.location_id || ':'
+                          || CASE WHEN COALESCE(m.is_indoor, 0) = 1
+                                  THEN 'in' ELSE 'out' END"""
+    else:
+        cols = "0.0 AS course_difficulty,"
+        joins = ""
+    return """
+                SELECT NULL AS course_name, @DIST@ AS distance_meters,
+                       NULL AS gps_lat, NULL AS gps_long,
+                       NULL AS altitude_meters,
+                       NULL AS canonical_id, @COLS@
+                       m.location_id, m.is_indoor,
+                       COALESCE((SELECT min(r.date) FROM results_tf r
+                                 WHERE r.meet_id = m.meet_id
+                                   AND r.source = m.source),
+                                -- meets_tf_meta is anet's own meet row
+                                (SELECT substr(t.meet_date::text, 1, 10)
+                                 FROM meets_tf_meta t
+                                 WHERE t.meet_id = m.meet_id
+                                   AND m.source = 'anet' LIMIT 1)) AS date
+                FROM meets_tf m
+@OVJOIN@@JOINS@
+                WHERE m.meet_id = %(meet)s
+                  AND (%(div)s::bigint IS NULL OR m.div_id = %(div)s)
+                  AND (%(src)s::text IS NULL OR m.source = %(src)s)
+                  AND @DIST@ IS NOT NULL
+                LIMIT 1
+            """.replace("@COLS@", cols).replace("@JOINS@", joins) \
+               .replace("@OVJOIN@", ov_join).replace("@DIST@", tf_dist)
+
+
 def _targetSpec(cur, target):
     """The target race's own features, resolved once for the whole
     field: date, distance, venue identity, difficulty, geography.
@@ -1930,20 +2136,29 @@ def _targetSpec(cur, target):
             #   and the per-division distance in its jsonb blob -- read the
             #   way feature_extraction's corpus row reads it, so the target
             #   is described in the same terms the model trained on.
-            cur.execute(_TFRRS_XC_SPEC_SQL,
+            cur.execute(_tfrrsXcSpecSql(),
                         {"meet": meet_id,
                          "divtext": str(div) if div is not None else None})
         elif sport == "XC":
+            # ★ THE OVERRIDDEN DISTANCE, in the SELECT and the difficulty
+            #   join both (sweep 2026-10-10, A2) -- one expression, as
+            #   feature_extraction's _XC_DIST, so the two cannot disagree.
+            #   The join is keyed off `m` itself: meets carries meet_id and
+            #   div_id, dist_override's whole key.
+            ov_join, ov_coal = _specOverride("m", "XC", "m.distance")
+            xc_dist = f"COALESCE({ov_coal} m.distance)"
             cur.execute("""
-                SELECT m.course_name, m.distance AS distance_meters,
+                SELECT m.course_name, @DIST@ AS distance_meters,
                        m.gps_lat, m.gps_long, m.altitude_meters,
                        cc.canonical_id,
                        COALESCE(cd.difficulty, 0.0) AS course_difficulty,
+                       cd.difficulty AS venue_cell,
                        COALESCE((SELECT min(r.date) FROM results r
                                  WHERE r.meet_id = m.meet_id
                                    AND r.source = m.source),
                                 substr(m.meet_date::text, 1, 10)) AS date
                 FROM meets m
+@OVJOIN@
                 LEFT JOIN course_canonical cc
                        ON cc.course_name = m.course_name
                       AND round(cc.gps_lat::numeric, 5)
@@ -1953,34 +2168,23 @@ def _targetSpec(cur, target):
                 LEFT JOIN course_difficulties cd
                        ON cd.canonical_id = cc.canonical_id
                       AND cd.distance_m =
-                          (round(m.distance / 100.0) * 100)::int
+                          (round(@DIST@ / 100.0) * 100)::int
                 WHERE m.meet_id = %(meet)s
                   AND (%(div)s::bigint IS NULL OR m.div_id = %(div)s)
                   AND (%(src)s::text IS NULL OR m.source = %(src)s)
                 LIMIT 1
-            """, {"meet": meet_id, "div": div, "src": src})
+            """.replace("@DIST@", xc_dist).replace("@OVJOIN@", ov_join),
+                        {"meet": meet_id, "div": div, "src": src})
         else:
-            cur.execute("""
-                SELECT NULL AS course_name, m.distance_meters,
-                       NULL AS gps_lat, NULL AS gps_long,
-                       NULL AS altitude_meters,
-                       NULL AS canonical_id, 0.0 AS course_difficulty,
-                       m.location_id, m.is_indoor,
-                       COALESCE((SELECT min(r.date) FROM results_tf r
-                                 WHERE r.meet_id = m.meet_id
-                                   AND r.source = m.source),
-                                -- meets_tf_meta is anet's own meet row
-                                (SELECT substr(t.meet_date::text, 1, 10)
-                                 FROM meets_tf_meta t
-                                 WHERE t.meet_id = m.meet_id
-                                   AND m.source = 'anet' LIMIT 1)) AS date
-                FROM meets_tf m
-                WHERE m.meet_id = %(meet)s
-                  AND (%(div)s::bigint IS NULL OR m.div_id = %(div)s)
-                  AND (%(src)s::text IS NULL OR m.source = %(src)s)
-                  AND m.distance_meters IS NOT NULL
-                LIMIT 1
-            """, {"meet": meet_id, "div": div, "src": src})
+            # ★ THE OVERRIDE HERE TOO (A2). corrections' TF dict is empty
+            #   today, so this is "" and the query is what it was -- the day
+            #   a track override lands, the target picks it up, as the
+            #   corpus (_TF_SQL) already does.
+            ov_join, ov_coal = _specOverride("m", "TF", "m.distance_meters")
+            tf_dist = f"COALESCE({ov_coal} m.distance_meters)"
+            cur.execute(_tfSpecSql(tf_dist, ov_join,
+                                   _venueDifficultyOn("TF")),
+                        {"meet": meet_id, "div": div, "src": src})
         row = cur.fetchone()
         if row:
             spec.update(dict(row))
@@ -2058,7 +2262,8 @@ def _applyCourse(cur, spec, course_name, sport):
     cur.execute("""
         SELECT m.course_name, m.gps_lat, m.gps_long,
                m.altitude_meters, cc.canonical_id,
-               COALESCE(cd.difficulty, 0.0) AS course_difficulty
+               COALESCE(cd.difficulty, 0.0) AS course_difficulty,
+               cd.difficulty AS venue_cell
         FROM meets m
         LEFT JOIN course_canonical cc
                ON cc.course_name = m.course_name
@@ -2076,7 +2281,12 @@ def _applyCourse(cur, spec, course_name, sport):
     """, {"course": course, "dist": spec.get("distance_meters") or 5000.0})
     row = cur.fetchone()
     if row:
-        spec.update({k: v for k, v in dict(row).items() if v is not None})
+        row = dict(row)
+        spec.update({k: v for k, v in row.items() if v is not None})
+        # ! THE NEW COURSE'S CELL, EVEN WHEN IT HAS NONE (sweep 2026-10-10,
+        #   A5): a NULL left the MEET's cell in place, and the swapped-in
+        #   course would convert at the old course's difficulty.
+        spec["venue_cell"] = row.get("venue_cell")
 
 
 # every corpus column the vector builders touch; the athlete's own
@@ -2108,6 +2318,10 @@ def _targetRow(spec, last_row, weather=None):
                - (academicYearOfDate(last_row.get("date")) or 0))
         if yrs > 0 and academicYearOfDate(last_row.get("date")) \
                 and row.get("grade") not in (None, ""):
+            # ! NO season FOR A CLASS YEAR HERE (A12): training reads the
+            #   target race's own STORED grade, and a feed that writes
+            #   "2026" wrote it on that row too -- a mapped "11" would be a
+            #   grade the network never saw on such a runner.
             row["grade"] = _advanced(row["grade"], yrs,
                                      getPool(row["grade"], row.get("gender")))
     except Exception:                                   # noqa: BLE001
@@ -3495,7 +3709,7 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
         for rows in squads.values():
             for r in rows:
                 r["grade"] = _advanced(r.get("grade"), now - season_year,
-                                       r.get("pool"))
+                                       r.get("pool"), season=now)
 
     # ★ THE CARRY-FORWARD IS PER SCHOOL AND PER RACE NOW, NOT ALL-OR-NOTHING
     #   (owner, 2026-09-15: "keep everybody else on the roster until they
@@ -3533,7 +3747,8 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
             for r in add:
                 r["carried"] = True   # last season's roster, aged forward
                 # ...and a year older on the page, like the roster itself
-                r["grade"] = _advanced(r.get("grade"), 1, r.get("pool"))
+                r["grade"] = _advanced(r.get("grade"), 1, r.get("pool"),
+                                       season=season_year)
             if add:
                 # ⚠ SORTED EXPLICITLY FIRST. _bestFirst only REORDERS a squad
                 #   that spans pools -- with one pool it hands the list back
@@ -3892,11 +4107,19 @@ def _inferCollegeGrades(cur, entries, year, levels=None):
             e["grade_inferred"] = True
 
 
-def _advanced(grade, years, pool):
+def _advanced(grade, years, pool, season=None):
     """grade_label.advanceGrade, keeping the stored value when it cannot
-    read it (an unknown spelling is still better than a blank)."""
+    read it (an unknown spelling is still better than a blank).
+
+    ★ season: the academic year (opening calendar year) the grade is wanted
+      FOR (sweep 2026-10-10, A12). A class-year grade ("2026") cannot be
+      advanced by a count -- it is read against the season: '11' the year
+      before its senior year. Past it, advanceGrade says None and the stored
+      "2026" stays (it prints "Class of 2026", which is true); the squads
+      never get that far, because roster.graduatedClause already dropped
+      them through rankings.gradeKeySql's class-year branch."""
     from grade_label import advanceGrade
-    return advanceGrade(grade, years, pool) or grade
+    return advanceGrade(grade, years, pool, season=season) or grade
 
 
 def _rollback(cur):
@@ -4147,7 +4370,8 @@ def _athleteEntries(cur, person_ids, sport, season_year):
             seen.add(r["person_id"])
             age = max(0, now_year - int(season_year))
             out.append({"person_id": r["person_id"], "school": r["school"],
-                        "grade": ((advanceGrade(r["grade"], age, r["pool"])
+                        "grade": ((advanceGrade(r["grade"], age, r["pool"],
+                                                season=now_year)
                                    or r["grade"]) if age else r["grade"]),
                         "pool": r["pool"],
                         # ⚠ ROUNDED, LIKE EVERY OTHER RATING ON THE SITE
@@ -4186,7 +4410,9 @@ def _athleteEntries(cur, person_ids, sport, season_year):
                         "grade": advanceGrade(r["grade"],
                                               max(season_year, now_year)
                                               - int(r["year"]),
-                                              r["pool"]),
+                                              r["pool"],
+                                              season=max(season_year,
+                                                         now_year)),
                         "pool": r["pool"],
                         "rating": (round(float(r["rating"]), 1)
                                    if r["rating"] is not None else None),

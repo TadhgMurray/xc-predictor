@@ -90,7 +90,17 @@ _YARD = 0.9144
 # 2400, 3000, 3200, 5000 -- is a ROUND METRIC NUMBER with the wrong unit typed
 # after it, and the NUMBER is the truth while the unit is the typo.
 # (100/220/440 are below the 800m floor and never survive the range gate.)
-_YARD_DISTANCES = frozenset({440, 600, 660, 880, 1000, 1320, 1760})
+# ★ AND THE SPRINT YARDS (sweep 2026-10-10, A7). That note stopped being true
+#   when sprintDistanceFromEventShort lowered the floor to 50 m: "300 yd" and
+#   "100 Yard Dash" were filed as 300 m and 100 m on the time-only boards.
+#   Added: the indoor/imperial sprint schedule -- 50, 60, 70 and 300 yd
+#   (indoor dashes), 100 and 220 yd (the outdoor dashes 100 m and 200 m
+#   replaced), 500 yd (indoor). Each is a distance the imperial schedule
+#   actually ran; 200 and 400 are NOT in it (the yard races were 220 and
+#   440), so "400 Yards" stays the 400 m it almost certainly is. Every
+#   addition is under 600 m, so the RATED parser's output is unchanged.
+_YARD_DISTANCES = frozenset({50, 60, 70, 100, 220, 300, 440, 500, 600,
+                             660, 880, 1000, 1320, 1760})
 # ...and the ones no metric race is ever run at, so a bare number means yards
 _BARE_YARD_ONLY = frozenset({660, 880, 1320, 1760})
 

@@ -45,6 +45,8 @@ database -- the compare/teams convention.
 import math
 import re
 
+from division_group import divisionGroup, groupRank, groupLabel, VARSITY
+
 TABLE = (10.0, 8.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0)
 
 _FINAL = re.compile(r"\bfinals?\b", re.IGNORECASE)
@@ -173,12 +175,103 @@ def prettyEventName(event_short):
 
 
 def eventDistance(event_short, stored=None):
-    """Sort distance in metres: the stored column, else the number the
-    name leads with. None when neither answers (fields, relays, codes)."""
+    """Sort distance in metres: the stored column, else the distance the
+    name states (eventDistanceKey). None when neither answers (fields,
+    relays, codes)."""
+    got = eventDistanceKey(event_short, stored)
+    return got[0] if got else None
+
+
+# ★ THE NAME'S UNIT IS READ, NOT JUST ITS LEADING NUMBER (sweep 2026-10-10,
+#   A7). eventDistance used to be `_LEAD_NUM` alone: "Mile" / "1 Mile" have
+#   no two-digit lead and came back None -- every Mile was dropped from the
+#   venue records and sorted last on the meet page -- and "440 Yard Dash",
+#   "300 yd", "880y" came back 440 / 300 / 880 METRES, filed beside (and
+#   competing with) the 400 m, 300 m and 800 m. The engine's parser already
+#   reads units (event_parse: miles, the imperial yard schedule, km, the
+#   "1600 Yards" typo rule), so a flat race takes its answer from there --
+#   the rated parser at 600 m and up, the sprint one below -- one reading of
+#   a name for the boards and the pages.
+# ! THE FALLBACK IS THE OLD LEADING NUMBER, for everything the engine
+#   parser refuses on purpose (hurdles, steeple, walks: it prices only flat
+#   races) and when the engine tree is not importable (a standalone test).
+#   So a name the parser does not read sorts exactly as it did.
+# ! THE LABEL KEEPS YARDS AND MILES APART FROM METRES: 440 yd is 402.336 m,
+#   which is not 400 m, and a record list that merged them would rank a
+#   1950s 440 against a modern 400. The metres keep them apart as keys; the
+#   label says which unit the race was run in ("440y", "Mile", "800m").
+_YD = 0.9144
+_MI = 1609.344
+# A whole number of metres within a millimetre (the yard and mile products
+# are exact, and 70 yd = 64.008 m sits 8 mm off a whole metre, so the metre
+# test must be tighter than that); a mile or yard multiple within a
+# centimetre, so a stored column rounded to two places (1609.34) still
+# reads as the Mile it is.
+_UNIT_TOL = 1e-3
+_IMPERIAL_TOL = 1e-2
+
+try:
+    from event_parse import (distanceFromEventShort as _ratedDistance,
+                             sprintDistanceFromEventShort as _sprintDistance)
+except Exception:                                       # noqa: BLE001
+    _ratedDistance = _sprintDistance = None
+
+
+def _unitLabel(metres):
+    """(metres, label): '800m', '440y', 'Mile', '2 Mile' -- the unit the
+    distance is a whole number of, and the distance SNAPPED to that unit's
+    exact product. Metres first: a whole number of metres is a metric race.
+    ! SNAPPED because the readers disagree in the last digits: the engine's
+      exact-key table says '1mile' is 1609.34, its parser says "Mile" is
+      1609.344 -- two keys, two Mile record lists at one venue."""
+    if abs(metres - round(metres)) < _UNIT_TOL:
+        return float(round(metres)), f"{int(round(metres))}m"
+    miles = metres / _MI
+    if abs(miles - round(miles)) * _MI < _IMPERIAL_TOL and round(miles) >= 1:
+        n = int(round(miles))
+        return n * _MI, ("Mile" if n == 1 else f"{n} Mile")
+    yards = metres / _YD
+    if abs(yards - round(yards)) * _YD < _IMPERIAL_TOL:
+        n = int(round(yards))
+        return n * _YD, f"{n}y"
+    return metres, f"{metres:g}m"
+
+
+# A yard unit after the leading number, for the fallback reading (hurdles,
+# and sprints under the engine's 50 m floor): "60 yd hurdles", "50 Yard Dash".
+_YARD_UNIT = re.compile(r"^\d{2,5}\s*(?:y|yd|yds|yard|yards)\b", re.IGNORECASE)
+
+
+def eventDistanceKey(event_short, stored=None):
+    """(metres, label) for a running event, or None.
+
+    stored -- a stored distance_meters column, trusted first as before.
+    '1600 Meters' -> (1600.0, '1600m'); "Men's Mile" -> (1609.344, 'Mile');
+    '440 Yard Dash' -> (402.336, '440y'); '300 yd' -> (274.32, '300y');
+    '110m Hurdles' -> (110.0, '110m') by the leading number."""
     if stored:
-        return float(stored)
-    m = _LEAD_NUM.match(canonicalEvent(event_short))
-    return float(m.group(1)) if m else None
+        return _unitLabel(float(stored))
+    if not event_short:
+        return None
+    d = None
+    if _ratedDistance is not None:
+        try:
+            d = (_ratedDistance(event_short)[0]
+                 or _sprintDistance(event_short)[0])
+        except Exception:                               # noqa: BLE001
+            d = None
+    if d is None:
+        canon = canonicalEvent(event_short)
+        m = _LEAD_NUM.match(canon)
+        d = float(m.group(1)) if m else None
+        # ! A YARD NAME STAYS YARDS here too: the engine refuses hurdles
+        #   and anything under its 50 m floor, and "60 yd hurdles" read by
+        #   its number alone would file beside the 60 m hurdles again
+        if d and _ratedDistance is not None and _YARD_UNIT.match(canon):
+            d *= _YD
+    if not d:
+        return None
+    return _unitLabel(float(d))
 
 
 _RELAY_NXM = re.compile(r"(\d)\s*x\s*(\d{2,5})", re.IGNORECASE)
@@ -639,9 +732,22 @@ def scoreMeet(rows):
                 relay_gender[ekey] = "M" if em < ef else "F"
 
     # ---- group into canonical events ---------------------------------- #
+    # ★ KEYED ON THE DIVISION'S STANDINGS GROUP, NOT ITS STRING (owner,
+    #   sweep 2026-10-10, A11). Keyed per raw string, a meet that filed its
+    #   varsity events under "Varsity" and "Open" -- or "Seeded" and
+    #   "Unseeded", "Section 1" and "Section 2" -- printed several partial
+    #   standings and no meet score. division_group.divisionGroup is the
+    #   decided rule: varsity-level labels are ONE field (an event run in
+    #   two of them ranks as one timed final, so one school cannot take two
+    #   event wins in one event); JV, Frosh-Soph, Middle school and Para
+    #   keep their own; an unrecognised label stays its own group.
+    # ! THE GENDER INFERENCE ABOVE STAYS PER RAW DIVISION (relay pairing and
+    #   the pace references): it is a property of the raw events, and a
+    #   merged group would hand the pairing four relays where it expects two.
     groups = {}
     for r in rows:
         div = (r.get("division") or "").strip()
+        dgroup = divisionGroup(div)
         # Nameless events must NOT merge on their empty canonical name;
         # each keeps its own identity by id.
         canon = (canonicalEvent(r.get("event_short")) or
@@ -650,9 +756,11 @@ def scoreMeet(rows):
         g = (genderOf(r.get("event_short")) or r.get("gender") or
              majority.get(ekey) or relay_gender.get(ekey) or
              shuttleGender(r.get("event_short")) or "?")
-        key = (div.lower(), canon, g)
-        grp = groups.setdefault(key, {"division": div, "gender": g,
+        key = (dgroup, canon, g)
+        grp = groups.setdefault(key, {"division": div, "group": dgroup,
+                                      "labels": set(), "gender": g,
                                       "canon": canon, "rows": []})
+        grp["labels"].add(div)
         grp["rows"].append(r)
 
     divisions = {}
@@ -687,7 +795,7 @@ def scoreMeet(rows):
         # An EnRoute division's rows are split reads inside other races:
         # display them, score nothing -- points here would double-count
         # the athlete's real event in the parent division.
-        enroute = bool(_ENROUTE.search(grp["division"] or ""))
+        enroute = any(_ENROUTE.search(lab or "") for lab in grp["labels"])
         scoreable = gendered and not enroute
         if not scoreable:
             awarded = [(label, 0.0, False, row)
@@ -738,9 +846,10 @@ def scoreMeet(rows):
         name_src = finals[0] if finals else rows_g[0]
         dist = eventDistance(name_src.get("event_short"),
                              name_src.get("distance_meters"))
-        div = divisions.setdefault(grp["division"].lower(), {
-            "name": grp["division"] or "All divisions",
-            "teams": {}, "events": []})
+        div = divisions.setdefault(grp["group"], {
+            "group": grp["group"], "primary": grp["group"] == VARSITY,
+            "labels": set(), "teams": {}, "events": []})
+        div["labels"] |= grp["labels"]
         # A nameless running event with a stored distance can at least be
         # called "60m"; only truly unknowable ones stay "Event N".
         if name_src.get("event_short"):
@@ -821,8 +930,22 @@ def scoreMeet(rows):
             off[grp["gender"]]["gaps"] += 1
 
     out_divs = []
-    for dkey in sorted(divisions):
+    # ★ THE VARSITY STANDINGS FIRST (owner, 2026-10-10): it is the meet's
+    #   primary score -- the meet page headline and the compiled page's top
+    #   table read the first division -- then JV, Frosh-Soph, Middle school,
+    #   Para, then unrecognised labels alphabetically.
+    for dkey in sorted(divisions, key=lambda k: (groupRank(k), k)):
         div = divisions[dkey]
+        # the name: the one label the group was filed under ("Varsity",
+        # "Open", blank -> "All divisions"); several labels rolled together
+        # take the group's own name ("Varsity" for "Seeded" + "Unseeded")
+        named = sorted({lab for lab in div["labels"] if lab},
+                       key=str.lower)
+        distinct = {lab.lower() for lab in named}
+        div["name"] = (named[0] if len(distinct) == 1 else
+                       (groupLabel(dkey) or named[0]) if named else
+                       "All divisions")
+        div["labels"] = named
         off = div.pop("_official", None)
         div["official"] = {"M": None, "F": None}
         for g in ("M", "F"):
