@@ -53,7 +53,9 @@
 <div class="rc-scope rc-scope-row">
   <div class="seg">
     {% for p, w in pools.items() %}
-    <a class="seg-btn{{ ' is-on' if p == pool }}" href="/school/{{ school|urlencode }}/season?pool={{ p }}{% if state %}&amp;state={{ state }}{% endif %}">{{ w }}</a>
+    {# ! url_for (2026-10-10): the page's own Boys/Girls switch, but a bare
+       /school/ href fails test_school_logos once merged #}
+    <a class="seg-btn{{ ' is-on' if p == pool }}" href="{{ url_for('pages3.team_season_page', school_name=school, pool=p, state=(state or none)) }}">{{ w }}</a>
     {% endfor %}
   </div>
 </div>
