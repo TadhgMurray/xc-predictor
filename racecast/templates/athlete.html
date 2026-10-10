@@ -196,8 +196,10 @@
                     <th>Result</th>
                     <th>Place</th>
                     <th>Rating{{ rating_i() }}</th>
-                    <th>Difficulty{{ difficulty_i(sport if sport is defined else "XC") }}</th>
-                    <th>PR/SR Flags</th>
+                    {# ★ COURSE, IN A WORD; RECORDS, THE THREE A PARENT
+                       KNOWS (header redesign B, 2026-10-10). See the cells. #}
+                    <th>Course</th>
+                    <th>Records</th>
                 </tr>
             </thead>
             <tbody>
@@ -269,17 +271,30 @@
                     {% else %}
                     <td data-rx="{{ race.sport|lower }}:{{ race.result_id }}">{{ rv(race.speed_rating, race.hs_rating) }}</td>
                     {% endif %}
+                    {# ★ THE COURSE IN ONE WORD -- Fast / Typical / Hard / Very
+                       hard -- against the sport's own spread of courses, the %
+                       in the tooltip (difficulty_view.courseWord: the cut-offs
+                       are the quartiles and top tenth of course_difficulties,
+                       not typed in). No cut-offs read yet = the old % cell. #}
+                    {% if race.course_word %}
+                    {% set _cw = race.course_word %}{% set _where = 'cross country course' if race.sport == 'XC' else 'track' %}
+                    <td><span class="flag cw cw--{{ _cw|replace(' ', '-')|lower }}" tabindex="0"
+                          data-title="{{ _cw }} course · {{ race.course_pct }}"
+                          data-blurb="Times here run {{ race.course_pct }} against a typical {{ _where }}. The rating already adjusts for it."><span aria-hidden="true">{{ _cw }}</span><span class="sr-only">{{ _cw }} course, {{ race.course_pct }}. Times here run {{ race.course_pct }} against a typical {{ _where }}. The rating already adjusts for it.</span></span></td>
+                    {% else %}
                     <td>{{ dv(race.difficulty, race.sport, race.day_effect) }}</td>
-                    {# Same nine conditions as before -- only the rendering moved
-                       into the flag() macro, so each badge now carries its own
-                       explanation. #}
+                    {% endif %}
+                    {# ★ RECORDS: PR, SR AND CR ONLY (header redesign B,
+                       2026-10-10). The rating records (R, RSR) and the course
+                       season record (CSR) were three more badges and a legend
+                       under every table to decode them; the rating record
+                       still picks the header's Best race (all_time_bests), and
+                       each badge left keeps its tooltip. The outlier marks are
+                       not records but why a number is greyed, so they stay. #}
                     <td class="flags">
                         {% if race.is_pr %}{{ flag('pr', race.is_star_pr) }}{% endif %}
-                        {% if race.is_course_pr and race.sport == 'XC' %}{{ flag('cpr', race.is_star_course) }}{% endif %}
-                        {% if race.is_rating_pr %}{{ flag('rpr', race.is_star_rating) }}{% endif %}
                         {% if race.is_sr %}{{ flag('sr') }}{% endif %}
-                        {% if race.is_course_sr and race.sport == 'XC' %}{{ flag('csr') }}{% endif %}
-                        {% if race.is_rating_sr %}{{ flag('rsr') }}{% endif %}
+                        {% if race.is_course_pr and race.sport == 'XC' %}{{ flag('cpr', race.is_star_course) }}{% endif %}
                         {% if race.rank_outlier == 'slow' %}<span class="flag flag--out" tabindex="0" data-title="Not counted" data-blurb="Far slower than this athlete's neighbouring races -- a jog, a race run easy, a bad day. It stays here with its rating, but counts toward no season number, ranking or prediction." aria-label="Not counted: far off this athlete's neighbouring races">not counted</span>{% elif race.rank_outlier %}<span class="flag flag--out" tabindex="0" data-title="Not ranked" data-blurb="Far faster than this athlete's neighbouring races -- usually a wrong distance, a wrong time, or two people's results under one name. It keeps its rating here but stays off the rankings and out of predictions until it is checked." aria-label="Not ranked: far faster than this athlete's neighbouring races">not ranked</span>{% endif %}
                         {% if race.season_outlier %}<span class="flag flag--out" tabindex="0" data-title="Left out of season averages" data-blurb="More than twenty points under this season's median: not a run at the right distance on the right day, so it does not count toward the season's numbers." aria-label="Left out of season averages">out</span>{% endif %}
                     </td>
@@ -287,9 +302,11 @@
                 {% endfor %}
             </tbody>
         </table>
-        {# The badges, spelled out once per table (survey, 2026-09-02): the
-           hover blurbs stay, but a legend reads without a hover. #}
-        <p class="flag-legend"><b>PR</b> personal record &middot; <b>SR</b> season record &middot; <b>CR</b> course record &middot; <b>CSR</b> course season record &middot; <b>R</b> rating record &middot; <b>RSR</b> rating season record &middot; &#9733; still standing</p>
+        {# ! NO LEGEND UNDER EVERY TABLE ANY MORE (header redesign B,
+           2026-10-10): it spelled out six badges once per season, and three
+           of them are gone from the column. PR, SR and CR are words a
+           runner's family already reads, and each badge keeps its tooltip
+           (hover, tap or focus). #}
     </div>
 {% endmacro %}
 
@@ -315,25 +332,27 @@
        athletic.net draws it: the meta line and the numbers below start
        at the page's own left edge, not behind the avatar. #}
     <h1 class="ath-name"><span class="ath-portrait{% if not athlete.photo %} ath-avatar-empty{% endif %}" id="ath-avatar"{% if not athlete.photo %} hidden{% endif %}>{% if athlete.photo %}<img src="{{ athlete.photo }}" alt="" width="44" height="44">{% endif %}</span>{{ athlete.name }}</h1>
-    {# Share (281) ends the meta line now, as on the race page (owner,
-       2026-10-10); it was the boxed button at the right of the name row #}
-    <div class="rc-meta" data-person-id="{{ athlete.person_id }}">{% if athlete.school and athlete.school|is_team %}{{ crest(athlete.school, athlete.team_state, px=128, size=24, pool=athlete.team_pool) }}<a href="{{ school_href(athlete.school, athlete.team_state, pool=athlete.team_pool) }}">{{ athlete.school|school_label_for(athlete.team_pool, athlete.team_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.team_pool, athlete.team_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.grade_pool) if athlete.grade else ("Professional" if athlete.pro_header else " - ") }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a>{% if athlete.team_pool and (athlete.team_pool|string).startswith('hs_') %} · <a href="/recruiting?athlete={{ athlete.person_id }}">Recruiting: where you'd fit</a> · <a href="/recruit/{{ athlete.person_id }}#like">Runners like you</a>{% endif %}
-      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ athlete.name }} on Racecast"
-            data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}" title="Share this page; the preview is the athlete's card">
-      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
-      <span>Share</span>
-    </button></span></div>
+    {# ★ FOLLOW SHARES THE NAME'S ROW (header redesign B, 2026-10-10):
+       follow.js wraps this h1 in .rc-namerow and draws the button at its
+       right; nothing of it is in this template but the script tag below.
+       race.css keeps it on the right on a phone too, on this page only. #}
+    {# ★ THE META LINE IS WHO THEY ARE, NOTHING ELSE (header redesign B,
+       2026-10-10): school · grade · league and division chips. Compare,
+       the recruiting links and Share were links in this line; they are the
+       one row of buttons that closes the header now (.ath-actions). #}
+    <div class="rc-meta" data-person-id="{{ athlete.person_id }}">{% if athlete.school and athlete.school|is_team %}{{ crest(athlete.school, athlete.team_state, px=128, size=24, pool=athlete.team_pool) }}<a href="{{ school_href(athlete.school, athlete.team_state, pool=athlete.team_pool) }}">{{ athlete.school|school_label_for(athlete.team_pool, athlete.team_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.team_pool, athlete.team_state) }}{% else %} - {% endif %} · {% if athlete.grade %}{% set _gl = athlete.grade|grade_label(athlete.grade_pool) %}{{ "Grade " ~ _gl if (_gl|string).isdigit() else _gl }}{% else %}{{ "Professional" if athlete.pro_header else " - " }}{% endif %}{% if units %} · {{ unit_chips(units) }}{% endif %}</div>
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the
        page did not say. Each figure links where it can: the best race
        scrolls to its own row. #}
-    <div class="stat-strip">
+    {# ★ EACH NUMBER SAYS WHAT IT IS UNDER IT (header redesign B,
+       2026-10-10): the season rides in the rating's label ("Athlete rating
+       · 2026 Track"), the rating as a time and the grade rank under it, the
+       best race's sport and date under it, the seasons' years under them. #}
+    <div class="stat-strip ath-ss">
         <div>
-            <span class="s-lab">Athlete rating{{ rating_i() }}</span>
+            <span class="s-lab">Athlete rating{{ rating_i() }}{% if athlete.rating_note %} <span class="s-when">&middot; {{ athlete.rating_note|replace(" season", "")|replace(" TF", " " ~ "TF"|sport_short)|replace(" XC", " " ~ "XC"|sport_short) }}</span>{% endif %}</span>
             <span class="s-val">{{ rv(athlete.rating, athlete.rating_hs) }}</span>
-            {# the percentile rides with the season (owner, 2026-09-07): "2026 TF
-               season · top 1.3% of HS boys" #}
-            {% if athlete.rating_note or athlete.percentile %}<span class="s-sub">{{ (athlete.rating_note or "")|replace(" TF season", " " ~ "TF"|sport_short ~ " season") }}{% if athlete.rating_note and athlete.percentile %} &middot; {% endif %}{% if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif %}</span>{% endif %}
             {# ★ THE RATING AS A TIME, BACK UNDER IT (owner, 2026-10-10: "124.6
                means nothing to parents"). The old "≈ 15:47 5K · top 1%" line
                left the strip in the phone pass (issue 88, 2026-09-02) for
@@ -345,12 +364,15 @@
                (conversions.ratingClock). #}
             {% if athlete.equiv_time %}<span class="s-sub s-clock" title="The rating as a time: a cross country rating as a 5K on a track, a track rating at the athlete's main event. The conversions page does any other course or distance.">&asymp; {{ athlete.equiv_time }} {{ athlete.equiv_dist }} {{ athlete.equiv_where or "on a typical course" }}</span>{% endif %}
             {% include "_grade_rank.html" %}
+            {# the percentile stays only where no grade line says it (that
+               line carries its own "top 3.1%") #}
+            {% if athlete.percentile and not athlete.grade_rank %}<span class="s-sub s-pct">{{ athlete.percentile }} of {{ athlete.pool_words }}</span>{% endif %}
         </div>
         {% if alltime.rating %}
         <div>
             <span class="s-lab">Best race</span>
             <span class="s-val"><a href="#race-{{ alltime.rating.result_id }}">{{ rv(alltime.rating.speed_rating, alltime.rating.hs_rating) }}</a></span>
-            <span class="s-sub">{{ alltime.rating.sport|sport_name }}</span>
+            <span class="s-sub s-under">{{ alltime.rating.sport|sport_name }}{% if alltime.rating.date %}, {{ alltime.rating.date|mdy }}{% endif %}</span>
         </div>
         {% endif %}
         {# Guarded like the others: a caller that does not set this should
@@ -365,7 +387,7 @@
         <div>
             <span class="s-lab">Seasons</span>
             <span class="s-val">{{ athlete.n_seasons }}</span>
-            {% if athlete.season_span %}<span class="s-sub">{{ athlete.season_span }}</span>{% endif %}
+            {% if athlete.season_span %}<span class="s-sub s-under">{{ athlete.season_span|replace(" - ", "–")|replace(" to ", "–") }}</span>{% endif %}
         </div>
         {% endif %}
     </div>
@@ -397,46 +419,41 @@
 
     {# ★ WHAT IT TAKES (2026-10-05): this season's rating against last
        season's marks for the athlete's own state division (cuts.lineFor).
-       Absent whenever the marks are thin, unknown or not yet cached. #}
-    {% if wit_line %}
-    <p class="rank-line wit-line">
-        <span class="rl-lab">What it takes</span>
-        {% if wit_line.kind == "off" -%}
-        <strong>{{ "%.1f"|format(wit_line.gap) }}</strong> points{% if wit_line.gap_pct %} ({{ "%.1f"|format(wit_line.gap_pct) }}%){% endif %} off {{ wit_line.text }}
-        ({{ wit_line.label }}, {{ rv(wit_line.mark, wit_line.mark) }}){% if wit_line.cleared %}; clears {{ wit_line.cleared }}{% endif %}
-        {%- else -%}
-        <strong>{{ "%.1f"|format(wit_line.gap) }}</strong> points{% if wit_line.gap_pct %} ({{ "%.1f"|format(wit_line.gap_pct) }}%){% endif %} above {{ wit_line.text }}
-        ({{ wit_line.label }}, {{ rv(wit_line.mark, wit_line.mark) }})
-        {%- endif %}
-        <span class="sep">·</span><a href="{{ wit_line.href }}">Past marks</a>
-        <span class="sep">·</span><a href="/goal?athlete={{ athlete.person_id }}">Any goal, any course</a>
-        {# goal times: the mark as a clock where this athlete actually races,
-           and at the round's championship course (cuts.goalTimes) #}
-        {%- if wit_line.times %}
-        <span class="wit-goal" style="display:block;margin-top:0.25rem"><span class="rl-lab">That mark is</span>
-        {%- for t in wit_line.times %}{% if not loop.first %}<span class="sep">·</span>{% endif %}
-            <span class="rk"><strong>{{ t.seconds|wit_time }}</strong> {% if t.course_name %}at {{ t.course_name }}{% else %}on a typical course{% endif %} <span class="rl-floor">{{ "%.0f"|format(t.distance) }} m{% if t.champ %}, {{ "the section final" if wit_line.rung.where == "section" else "the state course" }}{% endif %}</span></span>
-        {%- endfor %}
-        <span class="sep">·</span><a href="{{ wit_line.conv_href }}">Other courses</a></span>
-        {%- elif wit_line.conv_href %}
-        <span class="sep">·</span><a href="{{ wit_line.conv_href }}">As a time</a>
-        {%- endif %}
-    </p>
-    {% endif %}
+       Absent whenever the marks are thin, unknown or not yet cached. In
+       plain English since header redesign B (2026-10-10): _wit_line.html. #}
+    {% include "_wit_line.html" %}
 
-    {# ★ A HANDOFF, NOT A PANEL. Training paces are a TOOL's output, and the
-       tool is /conversions -- this page is a record of what somebody ran.
-       The link carries the athlete so the tool arrives already filled in. #}
-    {% if training and training.paces %}
-    <p class="paces-link">
-        <a href="/conversions?athlete={{ athlete.person_id }}">Training paces
-        &amp; VO<sub>2</sub>max &rarr;</a>
-        <span class="s-sub">critical speed
-        {{ training.paces[1].per_mile if training.paces|length > 1
-           else training.paces[0].per_mile }}/mi, fitted from
-        {{ training.n_races }} races in {{ training.year }}</span>
-    </p>
-    {% endif %}
+    {# ★ ONE ROW OF QUIET BUTTONS CLOSES THE HEADER (header redesign B,
+       2026-10-10): the tools that were links in the meta line, the Share
+       button that ended it and the training-paces handoff below the
+       lines, after a thin rule, so the facts read first and the doing
+       comes last. Same destinations as before:
+         Compare           /compare?a=            (any athlete)
+         College fit       /recruiting?athlete=   (high school only)
+         Similar runners   /recruit/<id>#like     (high school only)
+         Training paces    /conversions?athlete=  (when paces were fitted)
+         Share             share.js's .share-btn
+       ★ A HANDOFF, NOT A PANEL, still: training paces are a TOOL's output,
+       and the tool is /conversions; the button carries the athlete so the
+       tool arrives filled in, its fit in the title. #}
+    {% set _hs = athlete.team_pool and (athlete.team_pool|string).startswith('hs_') %}
+    <nav class="ath-actions" aria-label="Athlete tools">
+      <a class="ath-act" href="/compare?a={{ athlete.person_id }}" title="Put this runner side by side with anyone else">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h11l-3-3M17 17H6l3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Compare</a>
+      {% if _hs %}
+      <a class="ath-act" href="/recruiting?athlete={{ athlete.person_id }}" title="Which college teams this rating would fit on">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 9l10-5 10 5-10 5zM6 11v5c3 2 9 2 12 0v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>College fit</a>
+      <a class="ath-act" href="/recruit/{{ athlete.person_id }}#like" title="Runners with a similar rating and progression">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 20c.6-3.4 3-5 6-5s5.4 1.6 6 5M16 5.2a3 3 0 010 5.6M18 15c1.8.6 2.8 2.2 3 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Similar runners</a>
+      {% endif %}
+      {% if training and training.paces %}
+      <a class="ath-act" href="/conversions?athlete={{ athlete.person_id }}" title="Workout paces and VO2max: critical speed {{ training.paces[1].per_mile if training.paces|length > 1 else training.paces[0].per_mile }}/mi, fitted from {{ training.n_races }} races in {{ training.year }}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 13V9M10 2h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Training paces</a>
+      {% endif %}
+      <button type="button" class="ath-act share-btn" data-share-title="{{ athlete.name }} on Racecast"
+              data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}" title="Share this page; the preview is the athlete's card">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+    </nav>
   </div>
 </div></header>
 {# ★ NEXT RACE (2026-10-10, upcoming_preview.py): filled client-side from a cached API #}

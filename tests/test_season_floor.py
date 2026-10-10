@@ -86,9 +86,11 @@ ok('dataset.touched' in js.split("min_races", 1)[1][:3000]
 tpl = read("racecast", "templates", "athlete.html")
 # the 5K-equivalent line left the page on 2026-09-07 (owner); the
 # percentile rides with the season note under the rating instead
-ok('class="flag-legend"' in tpl and 'class="rl-floor"' in tpl
+# ! the per-table badge legend left on 2026-10-10 (header redesign B: three
+#   badges, each with its tooltip, need no key under every season)
+ok('class="flag-legend"' not in tpl and 'class="rl-floor"' in tpl
    and 's-equiv' not in tpl and 'athlete.percentile }} of {{ athlete.pool_words' in tpl,
-   "athlete page carries legend, floor label, percentile beside the season")
+   "athlete page carries floor label and percentile, no per-table legend")
 ab = read("racecast", "templates", "about.html")
 ok('id="glossary"' in ab and "<dt>Difficulty</dt>" in ab, "about glossary")
 css = read("racecast", "static", "style.css")

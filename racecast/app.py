@@ -2146,6 +2146,10 @@ def athlete(person_id):
                                           (sp, rids))
                             flagged.update({(sp, r["result_id"]): r["side"] or "fast"
                                             for r in _ocur.fetchall()})
+                    # the course words' cut-offs ride this short connection:
+                    # one read per process per hour, a cache hit otherwise
+                    # (difficulty_view.courseCutoffs, 2026-10-10)
+                    difficulty_view.courseCutoffs(_ocur)
                     _oconn.rollback()
         if flagged:
             for race in races:
@@ -2161,6 +2165,16 @@ def athlete(person_id):
     except Exception as exc:                         # noqa: BLE001
         print(f"athlete {person_id}: outlier marks skipped: "
               f"{type(exc).__name__}: {exc}", flush=True)
+
+    # ★ THE COURSE IN ONE WORD (header redesign B, 2026-10-10): Fast /
+    #   Typical / Hard / Very hard against the sport's own distribution of
+    #   course difficulties, the % in the tooltip (difficulty_view.courseWord
+    #   holds the cut-offs' derivation). No cut-offs = no word, and the row
+    #   shows the old percentage.
+    _cw_cuts = difficulty_view.courseCutoffs()
+    for race in races:
+        race["course_word"], race["course_pct"] = difficulty_view.courseWord(
+            race.get("difficulty"), race.get("sport"), _cw_cuts)
 
     # 5. group/enrich/sort
     seasons = group_into_seasons(races)
