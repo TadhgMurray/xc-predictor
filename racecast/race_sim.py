@@ -215,6 +215,14 @@ def scoreDraw(times, team, full, cap, n_teams):
 _CHUNK_CELLS = 1_500_000
 
 
+# ★ `team` MAY BE [draws, n] AS WELL AS [n] (2026-10-10, the state odds,
+#   state_odds.py). A season simulation decides who REACHES the state meet
+#   inside each draw: a school whose team did not qualify sends only its
+#   individual qualifiers, and they race unattached -- they take a place but
+#   no team points. So the runner-to-team map changes from draw to draw, and
+#   it is passed per draw rather than scored by a second, hand-copied scorer
+#   ("ONE SCORER, NOT TWO" above). A 1-D `team` is the old call, unchanged:
+#   the 2-D path only swaps `team[order]` for its row-wise gather.
 def _scoreDraws(times, team, full, cap, n_teams):
     n_draws, n = times.shape
     scores = np.full((n_draws, n_teams), np.nan)
@@ -227,6 +235,7 @@ def _scoreDraws(times, team, full, cap, n_teams):
     # a small integer type lets the stable sort below be a radix sort
     small = np.int16 if n_teams < np.iinfo(np.int16).max else np.int64
     slot_of = np.where(team >= 0, team, n_teams).astype(small)
+    per_draw = team.ndim == 2
     # how many places each team may take: `cap` when it is full, none when
     # it is not, and none for the unattached bucket -- the three conditions
     # of scoreDraw's `eligible`, folded into one number per team
@@ -235,8 +244,12 @@ def _scoreDraws(times, team, full, cap, n_teams):
         hi = min(n_draws, lo + step)
         rows = hi - lo
         order = np.argsort(times[lo:hi], axis=1, kind="stable")
-        t_ord = team[order]
-        slot = slot_of[order]
+        if per_draw:
+            t_ord = np.take_along_axis(team[lo:hi], order, axis=1)
+            slot = np.take_along_axis(slot_of[lo:hi], order, axis=1)
+        else:
+            t_ord = team[order]
+            slot = slot_of[order]
         by_team = np.argsort(slot, axis=1, kind="stable")
         st = np.take_along_axis(slot, by_team, axis=1)
         start = np.ones(st.shape, dtype=bool)

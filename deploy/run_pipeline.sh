@@ -1392,6 +1392,10 @@ steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC" \
        13_panels_tf "$PY -u racecast/panels.py --sport TF"
 # Breakouts, precomputed: reads ranking_results and the panels' newest dates
 step 13f_breakouts    "$PY" -u racecast/build_breakouts.py
+# ★ STATE ODDS (owner, 2026-10-10): each state's season simulated into
+#   state_odds_* (racecast/build_state_odds.py). After the boards and units
+#   it reads; its own line, not chained, so a failure costs nothing else.
+step 13h_state_odds   "$PY" -u racecast/build_state_odds.py
 step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 # ★ THE SEARCH INDEX, REBUILT EVERY RUN (issue 140). It was never in the
 #   pipeline, so new athletes and meets stayed unsearchable until someone

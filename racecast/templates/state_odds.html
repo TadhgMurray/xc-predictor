@@ -1,0 +1,224 @@
+{# =====================================================================
+  state_odds.html -- /state-odds/<st>?division=&gender= (state_odds.py,
+  owner 2026-10-10). Each athlete's chance to qualify for state and to
+  finish top 25 / top 8 / first there; each team's chance to qualify as a
+  team, finish top 3 and win. Read from the nightly tables, never
+  simulated on a view.
+
+  ★ THE DISCLAIMER FIRST AND BIG: these are a model's estimates, from
+    current form and last season's fields, and the page says so before it
+    shows a single number.
+  ★ THE MODE IS SAID OUT LOUD. "qualifying": the rounds before state were
+    simulated from last season's advancement (which rounds, how many teams
+    and individuals each sent). "state_only": no route to state is on
+    record, so every number is IF THEY MAKE STATE and the qualify column
+    is not shown at all -- never a made-up qualifying rule.
+  ! SORTABLE WITHOUT A FRAMEWORK: each th holds a <button>; the inline
+    script below sorts the tbody on the cells' data-v. Works as a plain
+    table without the script (rows arrive ordered by top-8 chance).
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('pages2.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('state-odds.css') }}">
+{% set label = meta.division_label if meta else state_name %}
+{% set qual = meta and meta.mode == MODE_QUAL %}
+{% set meta_title = "State odds: " ~ label ~ " " ~ gender_words ~ " cross country" %}
+{% set meta_description = "Model estimates of each " ~ state_name ~ " high school " ~ gender_words|lower ~ " cross country runner's and team's chance to qualify for state, finish top 25, top 8 or win (" ~ label ~ ")." %}
+{% set meta_path = "/state-odds/" ~ state|lower ~ ("?division=" ~ division ~ "&gender=" ~ gender if division else "") %}
+{% set meta_crumbs = [("Projections", "/projections"), (state_name, "/projections/" ~ state|lower), ("State odds", none)] %}
+{% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide p2-page so-page rc">
+  <div class="seg predict-views">
+    <a class="seg-btn" href="/predictions">Any race</a>
+    <a class="seg-btn is-on" href="/projections">State meets</a>
+  </div>
+
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country · state odds</span></div>
+      <div class="rc-kick p2-crumbs"><a href="/projections">All states</a> &rsaquo;
+        <a href="/projections/{{ state|lower }}">{{ state_name }}</a></div>
+      <h1>State odds: {{ label }} <span class="p2-sub">{{ gender_words }}</span></h1>
+      {% if meta %}
+      <div class="rc-meta">
+        {{ meta.year }} season · {{ meta.n_field }} athletes in the projected field
+        {% if meta.as_of %}· newest race {{ meta.as_of|mdy }}{% endif %}
+        · <a href="/projections/{{ state|lower }}/{{ division }}{{ '?g=girls' if gender == 'girls' }}">The projected meet</a>
+        · <a href="/what-it-takes/{{ state|lower }}{{ '/' ~ division if division != 'all' else '' }}{{ '?g=girls' if gender == 'girls' }}">What it took last season</a>
+      </div>
+      {% endif %}
+    </div>
+  </div></header>
+
+  <div class="so-disclaimer" role="note">
+    <strong>Model estimates, not predictions of who will be there.</strong>
+    Based on each runner's current form (this season's rating and how much it
+    varies race to race) and last season's fields. The model does not know
+    entries, injuries, rest, or rule changes, and early-season ratings rest on
+    very few races. Read these as rough chances.
+  </div>
+
+  {% if divisions %}
+  <nav class="p2-toggles" aria-label="Odds options">
+    <span class="p2-seg" role="group" aria-label="Gender">
+      <a href="/state-odds/{{ state|lower }}?division={{ division }}&amp;gender=boys" class="{{ 'is-on' if gender == 'boys' }}">Boys</a>
+      <a href="/state-odds/{{ state|lower }}?division={{ division }}&amp;gender=girls" class="{{ 'is-on' if gender == 'girls' }}">Girls</a>
+    </span>
+    {% if divisions|length > 1 %}
+    <span class="p2-chips" role="group" aria-label="Division">
+      {% for d in divisions %}
+      <a href="/state-odds/{{ state|lower }}?division={{ d.slug }}&amp;gender={{ gender }}"
+         class="{{ 'is-on' if d.slug == division }}">{{ d.label|replace(state ~ ' ', '') }}</a>
+      {% endfor %}
+    </span>
+    {% endif %}
+  </nav>
+  {% endif %}
+
+  {% if not meta %}
+  <p class="p2-note">No state odds have been built for {{ state_name }}{% if divisions %} {{ gender_words|lower }} in this division{% endif %} yet.
+    They are computed overnight from the season ratings; the
+    <a href="/projections/{{ state|lower }}">projected state meets</a> are available now.</p>
+  {% else %}
+
+  {% if qual %}
+  <div class="so-mode is-qual">
+    <strong>Qualifying is simulated.</strong> Each round before state sends as many teams and
+    individuals as it sent last season (counted from who actually ran both races), then the state
+    meet is run with whoever got through.
+    <ul>{% for w in rounds_words %}<li>{{ w }}</li>{% endfor %}</ul>
+    {% if n_no_path %}<span class="p2-muted">{{ n_no_path }} runner{{ "s" if n_no_path != 1 }} without a team {{ "have" if n_no_path != 1 else "has" }} no round on record and {{ "are" if n_no_path != 1 else "is" }} left out.</span>{% endif %}
+  </div>
+  {% else %}
+  <div class="so-mode is-state">
+    <span class="so-if">If they make state</span>
+    <strong>How runners qualify here is not on record</strong>{% if meta.why %} ({{ meta.why|replace('.', '') }}){% endif %}.
+    So there are no qualifying odds: every number below is the chance <em>if they make state</em>,
+    with every school's top seven in the race.
+  </div>
+  {% endif %}
+
+  <section class="so-section" id="teams">
+    <h2>Teams</h2>
+    {% if teams %}
+    <table class="p2-tbl so-tbl" data-sortable>
+      <thead><tr>
+        <th class="num">#</th>
+        <th><button type="button" data-k="name">Team</button></th>
+        {% if qual %}<th class="num"><button type="button" data-k="q">Qualify</button></th>{% endif %}
+        <th class="num"><button type="button" data-k="t3">Top {{ team_top }}</button></th>
+        <th class="num" aria-sort="descending"><button type="button" data-k="w">Win</button></th>
+        <th class="num p2-wide" title="Average team score in the seasons it scored at state"><button type="button" data-k="sc" data-asc>Avg score</button></th>
+      </tr></thead>
+      <tbody>
+      {% for t in teams %}
+        <tr>
+          <td class="num">{{ loop.index }}</td>
+          <td data-v="{{ t.school }}" class="p2-team">{% if t.school|is_team %}{{ crest(t.school, t.school_state, pool='hs') }}<a href="{{ school_href(t.school, t.school_state, pool='hs') }}">{{ t.school|school_label_for('hs', t.school_state) }}</a>{% else %}{{ t.school }}{% endif %}</td>
+          {% if qual %}<td class="num so-p{{ ' so-lo' if (t.p_qualify or 0) < display_step / 2 }}" data-v="{{ t.p_qualify or 0 }}">{{ t.p_qualify|odds_pct }}</td>{% endif %}
+          <td class="num so-p{{ ' so-lo' if (t.p_top3 or 0) < display_step / 2 }}" data-v="{{ t.p_top3 or 0 }}">{{ t.p_top3|odds_pct }}</td>
+          <td class="num so-p{{ ' so-lo' if (t.p_win or 0) < display_step / 2 }}" data-v="{{ t.p_win or 0 }}">{{ t.p_win|odds_pct }}</td>
+          <td class="num p2-wide" data-v="{{ t.score_mean if t.score_mean is not none else 99999 }}">{{ "%.0f"|format(t.score_mean) if t.score_mean is not none else "" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="p2-note">No school has five rated runners in this field yet, so no team can score.</p>
+    {% endif %}
+  </section>
+
+  <section class="so-section" id="athletes">
+    <h2>Athletes</h2>
+    <table class="p2-tbl so-tbl" data-sortable>
+      <thead><tr>
+        <th class="num">#</th>
+        <th><button type="button" data-k="name">Athlete</button></th>
+        <th class="num p2-wide"><button type="button" data-k="r">Rating</button></th>
+        {% if qual %}<th class="num"><button type="button" data-k="q">Qualify</button></th>{% endif %}
+        <th class="num"><button type="button" data-k="top">{{ top_label }}</button></th>
+        <th class="num" aria-sort="descending"><button type="button" data-k="pod">{{ podium_label }}</button></th>
+        <th class="num"><button type="button" data-k="w">Win</button></th>
+      </tr></thead>
+      <tbody>
+      {% for a in athletes %}
+        <tr>
+          <td class="num">{{ loop.index }}</td>
+          <td data-v="{{ a.name }}"><a href="/athlete/{{ a.person_id }}">{{ a.name }}</a>
+            <span class="p2-row-sub">{% if a.school and a.school|is_team %}{{ a.school|school_label_for('hs', a.school_state) }}{% else %}unattached{% endif %}{% if a.grade %} · {{ a.grade|grade_label('hs') }}{% endif %}<span class="p2-narrow"> · {{ "%.1f"|format(a.rating) }}</span></span></td>
+          <td class="num p2-wide" data-v="{{ a.rating }}">{{ "%.1f"|format(a.rating) }}</td>
+          {% if qual %}<td class="num so-p{{ ' so-lo' if (a.p_qualify or 0) < display_step / 2 }}" data-v="{{ a.p_qualify if a.p_qualify is not none else -1 }}">{{ a.p_qualify|odds_pct if a.path != 'none' else '—' }}</td>{% endif %}
+          <td class="num so-p{{ ' so-lo' if (a.p_top or 0) < display_step / 2 }}" data-v="{{ a.p_top or 0 }}">{{ a.p_top|odds_pct }}</td>
+          <td class="num so-p{{ ' so-lo' if (a.p_podium or 0) < display_step / 2 }}" data-v="{{ a.p_podium or 0 }}">{{ a.p_podium|odds_pct }}</td>
+          <td class="num so-p{{ ' so-lo' if (a.p_win or 0) < display_step / 2 }}" data-v="{{ a.p_win or 0 }}">{{ a.p_win|odds_pct }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if n_folded %}<p class="p2-foot">{{ n_folded }} more athlete{{ "s" if n_folded != 1 }} in the field read under 1% on every column and are not listed.</p>{% endif %}
+  </section>
+
+  <section class="p2-how" id="how">
+    <h2 class="p2-h2">How these are worked out</h2>
+    <ul>
+      <li><strong>The field</strong> is the one the <a href="/projections/{{ state|lower }}/{{ division }}{{ '?g=girls' if gender == 'girls' }}">projected state meet</a> uses:
+        every school's best seven {{ gender_words|lower }} by this season's rating, plus runners without a team.</li>
+      <li><strong>Each race is run {{ "{:,}".format(draws) }} times.</strong> On each run every athlete's day is drawn around
+        their season rating, as widely as their own races this season have varied (the same band the race
+        predictions show), and the race is scored with the usual rules: five scorers, two displacers.
+        With {{ "{:,}".format(draws) }} runs, a chance shown here is within about half a percentage point of what
+        the model would say with unlimited runs, so the whole percents are not rounding noise.</li>
+      {% if qual %}
+      <li><strong>Qualifying</strong> follows last season's record: in each section or regional final, the top
+        teams by score go as teams, then the next fastest runners not on those teams go as individuals, as many
+        of each as went last season. A qualifier whose team did not get through runs state on their own and scores no team points.</li>
+      {% endif %}
+      <li><strong>{{ top_label }} and {{ podium_label }}</strong> are the place lines <a href="/what-it-takes/{{ state|lower }}">What it takes</a> uses;
+        a state's own medal count may differ.</li>
+      <li><strong>Never 0% or 100%.</strong> Under half a percent prints as &lt;1%, over 99.5% as &gt;99%.</li>
+    </ul>
+    <p class="p2-foot">Built {{ meta.built_at|mdy }}; rebuilt overnight whenever the field's ratings move.</p>
+  </section>
+  {% endif %}
+</main>
+<script>
+(function () {
+  document.querySelectorAll("table[data-sortable]").forEach(function (tbl) {
+    var body = tbl.tBodies[0];
+    if (!body) return;
+    tbl.querySelectorAll("th button").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var th = btn.parentNode, col = Array.prototype.indexOf.call(th.parentNode.children, th);
+        var cur = th.getAttribute("aria-sort");
+        var text = btn.dataset.k === "name";
+        // the first click sorts the way the column reads best: names A-Z,
+        // scores low-first, chances high-first; the second click reverses
+        var first = (text || btn.hasAttribute("data-asc")) ? "ascending" : "descending";
+        var dir = cur === first ? (first === "ascending" ? "descending" : "ascending") : first;
+        th.parentNode.querySelectorAll("th").forEach(function (o) { o.removeAttribute("aria-sort"); });
+        th.setAttribute("aria-sort", dir);
+        var rows = Array.prototype.slice.call(body.rows);
+        rows.sort(function (a, b) {
+          var x = a.cells[col].dataset.v, y = b.cells[col].dataset.v, c;
+          if (text) c = String(x).localeCompare(String(y));
+          else c = parseFloat(x) - parseFloat(y);
+          return dir === "ascending" ? c : -c;
+        });
+        rows.forEach(function (r, i) { r.cells[0].textContent = i + 1; body.appendChild(r); });
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{# =====================================================================
+  _state_odds_line.html -- the athlete page's state-odds line (state_odds.py,
+  owner 2026-10-10), included once under "What it takes".
+
+      State  94% to qualify · 31% to finish top 8  (OR Class 6A, model estimate)
+
+  ★ READ FROM THE NIGHTLY TABLE through the state_odds_athlete global, which
+    caches briefly and returns None on any failure -- so this include needs
+    nothing from the athlete route and shows nothing when the odds are not
+    built. Where qualifying is not on record the line says "if they make
+    state" instead of printing a qualifying chance.
+===================================================================== #}
+{% set so = state_odds_athlete(athlete.person_id) %}
+{% if so %}
+<p class="rank-line so-line"><span class="rl-lab">State</span>
+  {% if so.qualify %}<strong>{{ so.qualify }}</strong> to qualify<span class="sep">·</span>{% else %}if they make it, {% endif %}<strong>{{ so.podium }}</strong> to finish top {{ so.podium_n }}
+  <span class="rl-floor">(<a href="{{ so.href }}">{{ so.label }}</a>, model estimate)</span>
+</p>
+{% endif %}

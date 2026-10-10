@@ -425,6 +425,31 @@ def _hardFlags(season):
     return [f for f in season.get("flags", []) if not f.startswith(_PROVENANCE)]
 
 
+# ★ HOW A ROUND'S ADVANCERS SPLIT, READ OFF WHO WENT (2026-10-10, for the
+#   state odds -- state_odds.py). A school that took at least TEAM_SCORERS
+#   of its runners from this race to state went as a TEAM: no school sends
+#   five individuals, and five is the fewest a team can score with
+#   (predict.TEAM_SCORERS, the scoring's own number). Everyone else who went
+#   went as an INDIVIDUAL. Still "who was actually there", never a rule book:
+#   the counts are last season's facts, and a state that changes its rule
+#   moves its own counts the next season.
+# ⚠ ONLY RATED FINISHERS ARE ON RECORD HERE (_finishers joins the boards), so
+#   a team whose fifth runner is unrated reads as individuals. The section's
+#   own flags (_flags: share of unrated advancers) are what say so.
+def advancerSplit(adv):
+    """(teams, individuals) among a round's advancers [{school, ...}]."""
+    from meet_compile import isTeam
+    from predict import TEAM_SCORERS
+    per = {}
+    for r in adv:
+        s = r.get("school")
+        if s and isTeam(s):
+            per[s] = per.get(s, 0) + 1
+    teams = {s for s, n in per.items() if n >= TEAM_SCORERS}
+    ind = sum(1 for r in adv if r.get("school") not in teams)
+    return len(teams), ind
+
+
 def _sectionCells(state, placed, gender, pool, ratings, ran_state):
     """The rounds before state: per (kind, unit, division), per season, the
     finishers who went on to run that season's state meet."""
@@ -452,8 +477,10 @@ def _sectionCells(state, placed, gender, pool, ratings, ran_state):
         adv_r = [_seasonRating(r, pool, ratings) for r in adv]
         have = [v for v in adv_r if v is not None]
         feeds, feed_share, _n = majority([went[r["person_id"]] for r in adv])
+        teams_adv, ind_adv = advancerSplit(adv)
         season = {"year": year, "n_finishers": len(rows),
                   "n_advanced": len(adv), "n_rated": len(have),
+                  "teams_advanced": teams_adv, "individuals_advanced": ind_adv,
                   "n_schools": race["n_schools"], "agree": race["agree"],
                   "div_from": race["div_from"],
                   "deepest_place": max((r.get("place") or 0) for r in adv),

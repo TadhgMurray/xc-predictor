@@ -218,6 +218,13 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
       # Breakouts, precomputed (build_breakouts.py): reads the boards and
       # homepage_recent's newest dates, so after both
       step 13f_breakouts "$PY" -u racecast/build_breakouts.py
+      # ★ STATE ODDS (owner, 2026-10-10; racecast/build_state_odds.py): the
+      #   season simulated per state/division/gender into state_odds_*.
+      #   Reads the boards (athlete_season, school_unit, meet_unit), so it
+      #   runs after them -- and OFF the && chain: a failed state leaves
+      #   yesterday's odds standing and costs nothing else. Incremental: a
+      #   division whose field has not moved is skipped.
+      step 13h_state_odds "$PY" -u racecast/build_state_odds.py
       # ★ THE FOLLOW DIGEST (owner, 2026-10-10), OPTIONAL: off unless
       #   XCP_ALERTS=1 in the env file. After the breakouts it reads; mails
       #   one digest per follower who is due, fills My page's next-meet
