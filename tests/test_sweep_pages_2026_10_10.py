@@ -525,3 +525,12 @@ def test_projection_field_partitions_non_teams_per_person():
     assert params["not_teams"] == ["Unattached"]
     assert "s.school = ANY(%(not_teams)s)" in sql
     assert "THEN 'p:' || s.person_id::text" in sql
+
+
+# ---- 19. course names with a slash -------------------------------------- #
+
+def test_course_route_takes_a_slash(A):
+    adapter = A.app.url_map.bind("racecast.co")
+    endpoint, args = adapter.match("/course/North Park/East Loop")
+    assert endpoint == "course" and args == {"course_name": "North Park/East Loop"}
+    assert adapter.match("/card/course/North Park.png")[0] != "course"

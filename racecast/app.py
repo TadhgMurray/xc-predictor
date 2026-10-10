@@ -7501,7 +7501,10 @@ def buildCourseCtx(cur, course_name, picked):
                 meets=meets)
 
 
-@app.route("/course/<course_name>")
+# ! <path:>, AS /school/ (sweep 2026-10-10): course names are free text and
+#   can carry a slash, which the default converter stops at -- a 404, while
+#   the course's card route (/card/course/<path:>) already took the path
+@app.route("/course/<path:course_name>")
 def course(course_name):
     picked = request.args.get("dist", type=int)
 
