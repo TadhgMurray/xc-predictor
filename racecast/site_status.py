@@ -288,6 +288,16 @@ def loadSnapshot(conn):
     return got[0], got[1]
 
 
+def watchdogSummary(conn):
+    """★ (2026-10-10) The data watchdog's open and new items, for the
+    headline and the link to /account/status/watchdog; None before its
+    first run. Two counts on a small table."""
+    def run(cur):
+        import watchdog
+        return watchdog.summaryCounts(cur)
+    return _block(conn, run)
+
+
 def gather(conn, log_root=LOG_ROOT, live_heavy=False):
     """Everything the page shows. live_heavy counts the slow blocks now
     (with no time limit) instead of reading the last snapshot."""
@@ -297,6 +307,7 @@ def gather(conn, log_root=LOG_ROOT, live_heavy=False):
            "pipeline": pipeline(log_root),
            "queries": activeQueries(conn),
            "reports": openReports(conn),
+           "watchdog": watchdogSummary(conn),
            "snapshot_at": None}
     if live_heavy:
         out.update(heavy(conn, ay))

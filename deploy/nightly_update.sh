@@ -236,6 +236,19 @@ fi
 #   redirects for good: every id merged away tonight would 404.
 step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
 
+# ★ THE DATA WATCHDOG (owner, 2026-10-10), LAST AND OFF THE && CHAIN: it
+#   reads what tonight changed -- rows scraped, rows a linker moved, the
+#   boards as swapped (or not) -- and reports; it fixes nothing. It runs
+#   whatever publishing did, because a failed night is exactly when its
+#   pipeline section matters. Mails the admins only on NEW items, and only
+#   when no step failed (then notify_owner's mail carries WATCHDOG.txt).
+#   --ensure-indexes builds its three BRIN scope indexes once. XCP_WATCHDOG=0
+#   turns it off. See racecast/watchdog.py.
+if [ "${XCP_WATCHDOG:-1}" != "0" ]; then
+  step 13h_watchdog "$PY" -u racecast/watchdog.py --log-dir "$LOGDIR" --kind nightly \
+       --step-name 13h_watchdog --failed "$FAILED" --send --ensure-indexes
+fi
+
 # ---- summary ------------------------------------------------------------ #
 TOTAL=$(( $(date +%s) - T_START ))
 echo ""

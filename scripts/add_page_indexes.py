@@ -235,6 +235,16 @@ WANTED = [
     ("meets_tf",        "location_id", "idx_meets_tf_location", None),
 
     ("results",         "meet_id", "idx_results_meet", None),
+    # ★ THE DATA WATCHDOG'S SCOPE (2026-10-10): "rows scraped since the last
+    #   run" (racecast/watchdog.py). BRIN, not B-tree: scraped_at follows
+    #   the heap's append order, so a block-range summary of a few KB finds
+    #   tonight's rows, and inserts pay almost nothing to keep it. The
+    #   watchdog builds the same two (and person_link_log's) itself with
+    #   --ensure-indexes; listed here so a full run keeps them.
+    # ! THE SPEC STARTS WITH USING, so fits() compares access methods only:
+    #   any valid index on scraped_at satisfies it, which is right.
+    ("results",         "scraped_at", "idx_results_scraped_brin", "USING brin (scraped_at)"),
+    ("results_tf",      "scraped_at", "idx_results_tf_scraped_brin", "USING brin (scraped_at)"),
 ]
 
 

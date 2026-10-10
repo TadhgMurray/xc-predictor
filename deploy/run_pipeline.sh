@@ -1443,6 +1443,17 @@ if [ "${XCP_LACCTIC:-1}" != "0" ]; then
       --race "${XCP_LACCTIC_RACES:-12194,12158,11632}" --runners 150 || true
 fi
 step 17c_report       "$PY" -u scripts/run_report.py --log-dir "$LOGDIR" || true
+# ★ THE DATA WATCHDOG (owner, 2026-10-10): after the boards swap and every
+#   step that writes what readers see, before the vacuum. Report only; its
+#   board churn and row counts are judged against FULL runs' own history
+#   (--kind full), since a full run re-rates every row. It also names
+#   10a_board_sanity's cause class when 10a failed (racecast/watchdog.py
+#   classify10a). Mails only on new items and only when nothing FAILED --
+#   otherwise summarise()'s notify_owner mail carries WATCHDOG.txt.
+if [ "${XCP_WATCHDOG:-1}" != "0" ]; then
+  step 17d_watchdog   "$PY" -u racecast/watchdog.py --log-dir "$LOGDIR" --kind full \
+                      --step-name 17d_watchdog --failed "$FAILED" --send --ensure-indexes
+fi
 
 # ---- the gentle vacuum, last ----------------------------------------- #
 # the boards tables are built with autovacuum off (createShadow); this is

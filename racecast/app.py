@@ -12113,6 +12113,24 @@ def status_page():
                            done=request.args.get("done", "")[:40])
 
 
+# ★ THE DATA WATCHDOG'S PAGE (owner, 2026-10-10): every open item of
+#   racecast/watchdog.py, new ones first, with how long each has been open,
+#   and the last fortnight's resolved ones. Read-only: the watchdog fixes
+#   nothing, and neither does this page. Same admin gate as /account/status.
+@app.route("/account/status/watchdog")
+def status_watchdog():
+    import datetime
+    import site_status
+    import watchdog
+    _sess, go = _statusAdmin()
+    if go:
+        return go
+    with getConn() as conn:
+        wd = site_status._block(conn, watchdog.recent)
+    return render_template("watchdog.html", wd=wd, ago=site_status.ago,
+                           now=datetime.datetime.now(datetime.timezone.utc))
+
+
 @app.route("/account/status/resolve", methods=["POST"])
 def status_resolve():
     import site_status

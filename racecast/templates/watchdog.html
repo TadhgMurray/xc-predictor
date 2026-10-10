@@ -1,0 +1,76 @@
+{# watchdog.html -- the data watchdog's items (racecast/watchdog.py), admins
+   only, under /account/status. ★ (owner, 2026-10-10) New items first, then
+   the ones still open with how long, then the last fortnight's resolved.
+   ! READ ONLY: the watchdog fixes nothing; every link goes to the page the
+     item is about. Same shape as status.html (.page-wide, rc header). #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Data watchdog" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc status-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Admin · private</span></div>
+    <h1>Data watchdog</h1>
+    <div class="rc-meta"><a href="/account/status">Site status</a> · report only: nothing here changes data</div>
+    {% if wd and not wd.error %}
+      {% set last = wd.runs[0] if wd.runs else none %}
+      {% set open_items = wd["items"]|selectattr("still_open")|list %}
+      <p class="st-head {{ 'st-head-bad' if last and last.n_new else 'st-head-ok' }}">
+        {% if last %}{{ last.n_new or 0 }} new on the last run ({{ last.kind }}{% if last.started_at %}, {{ ago((now - last.started_at).total_seconds()) }} ago{% endif %}) · {% endif %}{{ open_items|length }} open</p>
+    {% endif %}
+  </div>
+</div></header>
+<div class="rc-grid">
+<div class="rc-mainc">
+{% if not wd %}
+  <p class="meta">The watchdog has not run yet (pipeline step 13h nightly, 17d in the full run).</p>
+{% elif wd.error %}
+  <p class="st-err">Could not read this: {{ wd.error }}</p>
+{% else %}
+  {% set last_start = wd.runs[0].started_at if wd.runs else none %}
+  {% for check in wd.order %}
+    {% set rows = wd["items"]|selectattr("check_name", "equalto", check)|list %}
+    {% if rows %}
+    <h2 id="{{ check }}">{{ wd.titles[check] }}</h2>
+    <table class="st-reports"><thead><tr><th>Item</th><th>Open</th><th>Pages</th></tr></thead><tbody>
+    {% for f in rows|sort(attribute="still_open", reverse=true) %}
+      {% set is_new = f.still_open and last_start and f.first_seen >= last_start %}
+      <tr{% if not f.still_open %} class="meta"{% endif %}>
+        <td>{% if is_new %}<span class="st-warn">NEW</span> {% endif %}<b>{{ f.title }}</b>
+          {% if f.detail %}<br><span class="meta">{{ f.detail }}</span>{% endif %}</td>
+        <td class="no-break">{% if f.still_open %}{{ ago((now - f.first_seen).total_seconds()) }}
+            <span class="meta">({{ f.nights }} run{{ "s" if f.nights != 1 }})</span>
+          {% else %}<span class="st-ok">resolved</span> {{ ago((now - f.resolved).total_seconds()) }} ago{% endif %}</td>
+        <td>{% for l in f.links or [] %}{% if l[1] %}<a href="{{ l[1] }}">{{ l[0] }}</a>{% if not loop.last %} · {% endif %}{% endif %}{% endfor %}</td>
+      </tr>
+    {% endfor %}
+    </tbody></table>
+    {% endif %}
+  {% endfor %}
+  {% if not wd["items"] %}<p class="st-ok">Nothing open.</p>{% endif %}
+
+  <h2 id="runs">Runs</h2>
+  <table class="st-recent"><thead><tr><th>Started</th><th>Kind</th><th>New</th><th>Open</th><th>Resolved</th></tr></thead><tbody>
+  {% for r in wd.runs %}
+    <tr><td>{{ r.started_at.strftime("%Y-%m-%d %H:%M") if r.started_at else "" }}{% if not r.finished_at %} <span class="st-warn">(did not finish)</span>{% endif %}</td>
+      <td>{{ r.kind }}</td><td>{{ r.n_new if r.n_new is not none else " - " }}</td>
+      <td>{{ r.n_open if r.n_open is not none else " - " }}</td><td>{{ r.n_resolved if r.n_resolved is not none else " - " }}</td></tr>
+  {% endfor %}
+  </tbody></table>
+{% endif %}
+</div>
+</div>
+</main>
+</body>
+</html>

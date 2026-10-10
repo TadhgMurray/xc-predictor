@@ -34,6 +34,7 @@
   {% if st.reports.open %}{% set _ = flags.append((st.reports.open|string) ~ " open report" ~ ("s" if st.reports.open > 1 else "")) %}{% endif %}
   {% if st.blank.blank %}{% set _ = flags.append("{:,}".format(st.blank.blank) ~ " blank athletes") %}{% endif %}
   {% if st.queries is sequence and st.queries is not mapping and st.queries|selectattr("seconds", "gt", 600)|list %}{% set _ = flags.append("queries over 10 minutes") %}{% endif %}
+  {% if st.watchdog and not st.watchdog.error and st.watchdog.new %}{% set _ = flags.append((st.watchdog.new|string) ~ " new watchdog item" ~ ("s" if st.watchdog.new > 1 else "")) %}{% endif %}
   <p class="st-head {{ 'st-head-bad' if flags else 'st-head-ok' }}">{{ flags|join(" · ") if flags else "Nothing needs you." }}</p>
   </div>
 </div></header>
@@ -83,6 +84,18 @@
     {% endfor %}
     </tbody></table>
   {% endif %}
+  {% endif %}
+
+  {# ---------------------------------------------------------------- #}
+  {# ★ THE DATA WATCHDOG (2026-10-10): its own page, its counts here. #}
+  <h2 id="watchdog">Data watchdog</h2>
+  {% set wd = st.watchdog %}
+  {% if wd and wd.error %}{{ err(wd) }}
+  {% elif not wd %}<p class="meta">Not run yet: pipeline step 13h (nightly) / 17d (full), <code>racecast/watchdog.py</code>.</p>
+  {% else %}
+  <p>{% if wd.new %}<span class="st-warn">{{ wd.new }} new</span>{% else %}<span class="st-ok">nothing new</span>{% endif %}
+    on the last run{% if wd.at %} ({{ ago((st.now.astimezone() - wd.at).total_seconds()) if wd.at.tzinfo else wd.at }} ago){% endif %}
+    · {{ wd.open }} open · <a href="/account/status/watchdog">every item</a></p>
   {% endif %}
 
   {# ---------------------------------------------------------------- #}
@@ -176,6 +189,9 @@
     {% elif run.failed %}{{ sumrow("pipeline", "Pipeline", "st-bad", (run.failed|length) ~ " failed") }}
     {% elif run.open %}{{ sumrow("pipeline", "Pipeline", "st-warn", "running") }}
     {% else %}{{ sumrow("pipeline", "Pipeline", "st-ok", "ok") }}{% endif %}
+    {% if st.watchdog and st.watchdog.error %}{{ sumrow("watchdog", "Data watchdog", "st-bad", "unread") }}
+    {% elif not st.watchdog %}{{ sumrow("watchdog", "Data watchdog", "", "not run") }}
+    {% else %}{{ sumrow("watchdog", "Data watchdog", "st-warn" if st.watchdog.new else "st-ok", (st.watchdog.new ~ " new") if st.watchdog.new else (st.watchdog.open ~ " open")) }}{% endif %}
     {# the lowest share across the table's rows: the one worth a look #}
     {% if st.identity.error %}{{ sumrow("identity", "tfrrs rows tied", "st-bad", "unread") }}
     {% else %}{% set lo = namespace(v=100, seen=false) %}{% for r in st.identity if r.rows %}{% set lo.v = [lo.v, (100 * r.person / r.rows)|round|int]|min %}{% set lo.seen = true %}{% endfor %}
