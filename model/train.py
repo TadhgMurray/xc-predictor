@@ -1271,6 +1271,7 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None,
     n_batches = 0
     n_clamped = 0    # examples whose target hit the +-TARGET_Z_CLAMP bound
     n_bad = 0        # batches dropped for a non-finite loss
+    n_bad_grad = 0   # steps skipped for a non-finite gradient
 
     # ★ THROUGHPUT, MEASURED RATHER THAN GUESSED. `waiting` is the share of
     #   wall clock spent BLOCKED ON THE LOADER rather than computing: if it
@@ -1326,10 +1327,26 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None,
             optimizer.zero_grad(set_to_none=True)
             if scheduler is not None:
                 scheduler.step()
+            _t_batch = time.time()      # or the skip counts as loader wait
             continue
 
         loss.backward()                            # 4a. compute gradients
-        torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+        # ⚠ A FINITE LOSS CAN STILL HAVE AN INFINITE GRADIENT (owner,
+        #   2026-10-10: the first full 2x5090 run). clip_grad_norm_ cannot
+        #   rescue it -- an inf/nan norm scales every gradient to nan -- and
+        #   the optimizer then writes nan into EVERY weight: from that step
+        #   on each batch's loss was nan and dropped (85,027 of ~107k in
+        #   epoch 1, all of them after). The step is skipped instead. Under
+        #   DDP the gradients were already averaged, so every process sees
+        #   the same norm and skips together.
+        gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+        if not torch.isfinite(gnorm):
+            n_bad_grad += 1
+            optimizer.zero_grad(set_to_none=True)
+            if scheduler is not None:
+                scheduler.step()
+            _t_batch = time.time()
+            continue
         optimizer.step()                           # 4b. apply the update
         if scheduler is not None:
             scheduler.step()                       # 4c. move the LR along
@@ -1345,6 +1362,7 @@ def _trainOneEpoch(model, loader, optimizer, criterion, scheduler=None,
              "steps_per_s": n_batches / elapsed,
              "clamped": n_clamped,
              "bad_batches": n_bad,
+             "bad_grads": n_bad_grad,
              "waiting": t_wait / elapsed,
              "elapsed": elapsed}
     return total_loss / max(n_batches, 1), stats
@@ -1777,6 +1795,8 @@ def main():
               f"{st['steps_per_s']:.1f} steps/s  "
               f"waiting {st['waiting'] * 100:.0f}%  "
               + (f"clamped {st['clamped']:,}  " if st.get("clamped") else "")
+              + (f"SKIPPED {st['bad_grads']} non-finite gradient steps  "
+                 if st.get("bad_grads") else "")
               + (f"DROPPED {st['bad_batches']} non-finite batches  "
                  if st.get("bad_batches") else "")
               + f"({st['elapsed'] / 60:.1f} min)")
@@ -1788,6 +1808,17 @@ def main():
             print("           by horizon:  " + "   ".join(
                 f"{b['label']} {b['model_pct']:.2f}% vs {b['base_pct']:.2f}%"
                 f" (n={b['n']:,})" for b in cal["bands"]))
+
+        # ⚠ A NAN VALIDATION LOSS MEANS THE WEIGHTS ARE GONE, and nothing
+        #   after it can improve: the 2026-10-10 run spent two more 39-minute
+        #   epochs dropping every batch. Stop now, keep model.pt as it was,
+        #   and do NOT write the checkpoint -- resuming from it would resume
+        #   the nan. Every process holds the same pooled val_loss, so all stop.
+        if not (val_loss == val_loss and abs(val_loss) != float("inf")):
+            print(f"\nstopping: validation loss is {val_loss} -- the weights "
+                  f"diverged this epoch. model.pt and the checkpoint are left "
+                  f"as the last good epoch wrote them. Lower --lr and rerun.")
+            break
 
         # ⚠ MIN_DELTA, NOT `<`. An improvement of 1e-9 is not an improvement;
         #   without a threshold it resets the patience counter forever and

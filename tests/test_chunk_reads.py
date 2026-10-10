@@ -89,3 +89,44 @@ class OneReadPerChunk(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(_HAVE_TORCH, "torch not installed")
+class ANonFiniteGradientIsSkipped(unittest.TestCase):
+    """A finite loss with a nan gradient must not reach the weights
+    (owner, 2026-10-10: one such step turned every weight to nan)."""
+
+    def test_weights_stay_finite(self):
+        import torch
+        import torch.nn as nn
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([sys.executable, os.path.join(_ROOT, "model", "fake_chunks.py"),
+                            "--out", d, "--chunks", "4", "--chunk-size", "200"],
+                           check=True, capture_output=True)
+            import train as T
+            T.DATA_DIR = d
+            ds = T.ChunkedRaceDataset(d)
+            tr, _va = T.splitTrainVal(ds)
+            stats = T.computeStats(ds, T._trainSideMask(ds, tr))
+            m = T.XCPredictor(n_venues=64)
+            m.setFeatureStats(stats["seq_mean"], stats["seq_std"],
+                              stats["ctx_mean"], stats["ctx_std"])
+            m.setTargetStats(stats["mean"], stats["std"], stats["fallback_seconds"])
+            opt = torch.optim.AdamW(m.parameters(), lr=1e-3)
+            base = nn.GaussianNLLLoss(eps=T.VAR_EPS)
+            calls = {"n": 0}
+
+            def criterion(mu, z, var):
+                calls["n"] += 1
+                if calls["n"] == 2:
+                    # the loss stays finite; its gradient comes back nan
+                    mu.register_hook(lambda g: g * float("nan"))
+                return base(mu, z, var)
+
+            _loss, st = T._trainOneEpoch(m, T.buildDataLoader(tr, shuffle=True),
+                                         opt, criterion)
+            self.assertEqual(st["bad_grads"], 1)
+            self.assertEqual(st["bad_batches"], 0)
+            for p in m.parameters():
+                self.assertTrue(torch.isfinite(p).all())
+            self.assertLess(st["waiting"], 1.0)
