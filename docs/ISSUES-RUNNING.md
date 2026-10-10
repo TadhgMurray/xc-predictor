@@ -5838,3 +5838,30 @@ Chromium against the old script (readout 15:00, label under the pointer
   unconverted when no clock resolves. The guard falls back to the rating
   for them (gap > 8%), but the cause is unfound.
 
+
+## 2026-10-10 — the nightly data watchdog (racecast/watchdog.py); 10a's cause class
+
+- **Owner-approved, report only.** Pipeline step `13k_watchdog` (nightly, last, off the && chain)
+  and `17d_watchdog` (full run, after 17c, before 18_vacuum). Reads what changed since its last
+  run -- rows scraped since (BRIN on results/results_tf `scraped_at`), persons a linker moved
+  (BRIN on person_link_log `linked_at`), and its own open items -- and reports seven checks:
+  impossible/out-of-band performances (impossible_race.judge, poolBandFor) and breakouts'
+  "check" PRs; rating jumps (rating_outliers' last calibration, breakouts.CHECK_JUMP); likely
+  duplicates (link_profile_school.decideGroup on same name/school/season, plus one finish
+  under two ids that result_twin missed); careers that fail link_profile_school's own checks
+  on themselves; broken meets (no distance / -1, one time for every finisher, places past
+  the rows, both sexes); board churn against measured history; pipeline health (failed,
+  NOT RUN, missing steps; table sizes and new-row counts against history).
+- Findings kept in `watchdog_finding` (first_seen, last_seen, still_open, resolved, nights);
+  page `/account/status/watchdog`; headline + section on `/account/status`. Mail: the summary
+  is in notify_owner's failure email (WATCHDOG.txt); on a night with no failure the watchdog
+  mails the admins itself, only when there are NEW items. XCP_WATCHDOG=0 / XCP_WATCHDOG_MAIL=0.
+- **10a_board_sanity (run 20261006_120609) -- open item.** The log is on the server only, so
+  its cause is still unread here. The watchdog now classifies every failed 10a from its log
+  (`classify10a`: stale boards / crash / rows: pool|anchor|pace / level / tilt / strict) and
+  keeps it open, with the run count, until a full run's 10a passes. To read that run now:
+  `/srv/venv/bin/python racecast/watchdog.py --classify-10a logs/20261006_120609`.
+  Earlier failures, by class: 20261001 stale boards (10_rankings_finish failed), 20261002
+  tilt + level.
+- Tests: tests/test_watchdog.py (stub rows per check, a stub database for the whole pass,
+  the page, the email, the pipelines' order).

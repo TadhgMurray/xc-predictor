@@ -43,6 +43,16 @@ def _tail(path, n=TAIL):
         return ["(no log)"]
 
 
+def _head(path, n):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return ["(no file)"]
+    return lines[:n] + ([f"... {len(lines) - n} more lines in {os.path.basename(path)}"]
+                        if len(lines) > n else [])
+
+
 def message(logdir, steps):
     run = os.path.basename(os.path.normpath(logdir))
     host = socket.gethostname()
@@ -52,9 +62,20 @@ def message(logdir, steps):
     for s in steps:
         lines += [f"== {s} -- last {TAIL} lines of {s}.log ==",
                   *_tail(os.path.join(logdir, s + ".log")), ""]
-    lines += ["== summary.log ==", *_tail(os.path.join(logdir, "summary.log"), 60),
+    # ★ THE DATA WATCHDOG'S SUMMARY TOO (2026-10-10): racecast/watchdog.py
+    #   writes WATCHDOG.txt into the run's log dir and, on a night with a
+    #   failed step, leaves the mail to this one -- one email, not two.
+    wd = os.path.join(logdir, "WATCHDOG.txt")
+    if os.path.isfile(wd):
+        lines += ["== data watchdog (WATCHDOG.txt) ==", *_head(wd, 60), ""]
+    # the nightly writes SUMMARY.txt, the full run summary.log
+    summ = next((p for p in (os.path.join(logdir, "summary.log"),
+                             os.path.join(logdir, "SUMMARY.txt")) if os.path.isfile(p)),
+                os.path.join(logdir, "summary.log"))
+    lines += [f"== {os.path.basename(summ)} ==", *_tail(summ, 60),
               "", f"logs: {logdir}",
-              "status: /account/status (or scripts/print_status.py)"]
+              "status: /account/status (or scripts/print_status.py)",
+              "watchdog: /account/status/watchdog"]
     return subject, "\n".join(lines) + "\n"
 
 

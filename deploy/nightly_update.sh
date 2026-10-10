@@ -269,6 +269,20 @@ fi
 step 13d_sitemap "$PY" -u racecast/build_sitemap.py
 step 13e_indexnow "$PY" -u scripts/indexnow_submit.py
 
+
+# ★ THE DATA WATCHDOG (owner, 2026-10-10), LAST AND OFF THE && CHAIN: it
+#   reads what tonight changed -- rows scraped, rows a linker moved, the
+#   boards as swapped (or not) -- and reports; it fixes nothing. It runs
+#   whatever publishing did, because a failed night is exactly when its
+#   pipeline section matters. Mails the admins only on NEW items, and only
+#   when no step failed (then notify_owner's mail carries WATCHDOG.txt).
+#   --ensure-indexes builds its three BRIN scope indexes once. XCP_WATCHDOG=0
+#   turns it off. See racecast/watchdog.py.
+if [ "${XCP_WATCHDOG:-1}" != "0" ]; then
+  step 13k_watchdog "$PY" -u racecast/watchdog.py --log-dir "$LOGDIR" --kind nightly \
+       --step-name 13k_watchdog --failed "$FAILED" --send --ensure-indexes
+fi
+
 # ---- summary ------------------------------------------------------------ #
 TOTAL=$(( $(date +%s) - T_START ))
 echo ""
