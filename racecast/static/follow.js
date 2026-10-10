@@ -140,6 +140,7 @@
     wrap.innerHTML = html;
     var btn = wrap.querySelector('button');
     btn.addEventListener('click', function () {
+      window.rcUse && rcUse(shortlist ? 'shortlist:click' : 'follow:click');   // ★ usage (2026-10-10)
       btn.disabled = true;
       var body = Object.assign({}, subject);
       body.action = shortlist ? (on ? 'remove' : 'save') : (on ? 'unfollow' : 'follow');

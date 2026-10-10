@@ -39,6 +39,7 @@ cat > "$OUT" <<'CONF'
 # for everything else
 map $request_uri $xcp_lim_api {
     ~^/api/predict/(team|individual|lineup)  "";   # stricter zone below
+    ~^/api/b(\?|$)   "";                           # the beacon: its own zone below
     ~^/api/          $binary_remote_addr;
     # ★ AND /search (sweep 2026-10-10, D8): /search and /search/api take
     #   free text, are never edge-cached (_PRIVATE_PREFIXES), and each one
@@ -58,6 +59,15 @@ map $request_uri $xcp_lim_card {
     ~^/card/         $binary_remote_addr;
     default          "";
 }
+# ★ THE USAGE / ERROR BEACON (2026-10-10, racecast/monitor.py). A reader
+#   sends one per page view plus one batch of feature events, so 30 a
+#   minute with a burst of 20 is far above any person reading pages and
+#   keeps a script from minting counts or error groups. A refused beacon is
+#   a 429 nobody sees: sendBeacon never reports back to the page.
+map $request_uri $xcp_lim_beacon {
+    ~^/api/b(\?|$)   $binary_remote_addr;
+    default          "";
+}
 map $request_uri $xcp_lim_login {
     ~^/(login|auth/) $binary_remote_addr;
     ~^/api/report    $binary_remote_addr;
@@ -71,11 +81,13 @@ limit_req_zone $xcp_lim_api     zone=xcp_api:10m     rate=10r/s;
 limit_req_zone $xcp_lim_predict zone=xcp_predict:10m rate=30r/m;
 limit_req_zone $xcp_lim_card    zone=xcp_card:10m    rate=2r/s;
 limit_req_zone $xcp_lim_login   zone=xcp_login:10m   rate=10r/m;
+limit_req_zone $xcp_lim_beacon  zone=xcp_beacon:10m  rate=30r/m;
 
 limit_req zone=xcp_api     burst=40 nodelay;
 limit_req zone=xcp_predict burst=10 nodelay;
 limit_req zone=xcp_card    burst=10 nodelay;
 limit_req zone=xcp_login   burst=5  nodelay;
+limit_req zone=xcp_beacon  burst=20 nodelay;
 limit_req_status 429;
 CONF
 

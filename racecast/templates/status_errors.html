@@ -1,0 +1,75 @@
+{# status_errors.html -- error groups (monitor.errors_page, app_errors).
+   Admins only. ★ (2026-10-10) one row per fingerprint, newest first; the
+   traceback is the last one seen, trimmed and scrubbed. Same shell as
+   status.html. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Errors" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+<style>
+  .er-row { border-top: 1px solid #e5e7eb; padding: .7rem 0; }
+  .er-row h3 { font-size: .95rem; margin: 0 0 .2rem; word-break: break-word; }
+  .er-row .meta { font-size: .82rem; }
+  .er-row form { display: inline; margin-left: .4rem; }
+  .status-page .er-row pre { max-height: 22rem; }
+</style>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc status-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Admin · private</span></div>
+    <h1>Errors</h1>
+    <div class="rc-meta"><a href="/account/status">Site status</a> · <a href="/account/status/usage">Usage</a> ·
+      {% if resolved %}<a href="/account/status/errors">Open</a> · <b>Resolved</b>{% else %}<b>Open</b> · <a href="?show=resolved">Resolved</a>{% endif %}</div>
+    {% if data %}
+    <p class="st-head {{ 'st-head-bad' if data.open else 'st-head-ok' }}">{{ (data.open|string ~ " open group" ~ ("s" if data.open != 1 else "")) if data.open else "Nothing open." }}</p>
+    {% endif %}
+    <p class="meta">Unhandled exceptions, requests slower than {{ slow_s|round(1) }} s (half the database
+      statement timeout), and errors in the site's own scripts in readers' browsers. A new group, or a
+      resolved one that comes back, is emailed to the admins, at most once every {{ window_min }} minutes.</p>
+  </div>
+</div></header>
+<div class="rc-grid">
+<div class="rc-mainc">
+{% if done %}<p class="predict-status show acct-notice">Marked resolved. It will email again if it comes back.</p>{% endif %}
+{% if error %}
+  <p class="st-err">Could not read this: {{ error }}. Run <code>python racecast/monitor.py --init</code> if the table is not there yet.</p>
+{% elif not data.rows %}
+  <p class="st-ok">{{ "No resolved groups." if resolved else "None open." }}</p>
+{% else %}
+  {% if resolved and data.resolved > data.rows|length %}<p class="meta">Newest {{ data.rows|length }} of {{ data.resolved }} shown.</p>{% endif %}
+  {% for r in data.rows %}
+  <div class="er-row" id="e{{ r.fingerprint }}">
+    <h3><span class="st-kind">{{ {"py": "exception", "slow": "slow", "js": "browser"}[r.kind] or r.kind }}</span>
+      {{ r.title }}{% if r.reopened_at and not resolved %} <span class="st-warn">(back after resolved)</span>{% endif %}</h3>
+    <div class="meta">
+      <b{% if r.count >= 100 %} class="st-bad"{% endif %}>{{ "{:,}".format(r.count) }}×</b>
+      · last {{ r.last_seen.strftime("%Y-%m-%d %H:%M") }} on <code>{{ r.last_path or "-" }}</code>
+      · first {{ r.first_seen.strftime("%Y-%m-%d %H:%M") }}
+      {% if resolved %}· resolved {{ r.resolved_at.strftime("%Y-%m-%d %H:%M") }}
+      {% elif r.notify_pending %}· <span class="st-warn">not emailed yet</span>{% endif %}
+      {% if not resolved %}
+      <form method="post" action="/account/status/errors/resolve">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="fingerprint" value="{{ r.fingerprint }}">
+        <button type="submit" class="st-btn">Resolve</button></form>
+      {% endif %}
+    </div>
+    {% if r.last_traceback %}<details class="st-steps"{% if loop.first and not resolved %} open{% endif %}><summary>{{ "Slowest statements" if r.kind == "slow" else "Last traceback" }}</summary><pre>{{ r.last_traceback }}</pre></details>{% endif %}
+  </div>
+  {% endfor %}
+{% endif %}
+</div>
+</div>
+</main>
+</body>
+</html>

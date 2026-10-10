@@ -1,0 +1,107 @@
+{# status_usage.html -- usage counts (monitor.usage_page, usage.report).
+   Admins only. ★ (2026-10-10) aggregate counts only: no visitor, no
+   session, no IP behind any number on this page. Same shell as status.html. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Usage" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+<style>
+  .us-chart { width: 100%; height: auto; display: block; margin: .4rem 0 .2rem; }
+  .us-chart .bar { fill: #1f2a44; }
+  .us-chart .bar:hover { fill: #4b5b85; }
+  .us-chart .hit { fill: transparent; }
+  .us-chart .axis { stroke: #e5e7eb; stroke-width: 1; }
+  .us-chart text { font-size: 11px; fill: #6b7280; }
+  .us-tabs a { margin-right: .8rem; }
+  .us-tabs a.is-on { font-weight: 700; color: #111418; text-decoration: none; }
+  .us-split { display: flex; height: 10px; border-radius: 3px; overflow: hidden; background: #e5e7eb; margin: .3rem 0; max-width: 28rem; }
+  .us-split span { background: #1f2a44; }
+  .status-page td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+</style>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc status-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Admin · private</span></div>
+    <h1>Usage</h1>
+    <div class="rc-meta"><a href="/account/status">Site status</a> · <a href="/account/status/errors">Errors</a> ·
+      <span class="us-tabs"><a href="?days=7" class="{{ 'is-on' if days == 7 }}">7 days</a><a href="?days=30" class="{{ 'is-on' if days == 30 }}">30 days</a></span></div>
+    <p class="meta">Page views and feature use counted by a beacon after each page loads: no cookies, no
+      personal data, nothing sent under Do Not Track or Global Privacy Control, bots dropped. Counts only,
+      per day; each server process writes its tally every minute{% if held %} ({{ held }} key{{ 's' if held != 1 }} waiting in this one){% endif %}.</p>
+  </div>
+</div></header>
+{% macro n(x) %}{{ "{:,}".format(x) }}{% endmacro %}
+<div class="rc-grid">
+<div class="rc-mainc">
+{% if error %}
+  <p class="st-err">Could not read this: {{ error }}. Run <code>python racecast/monitor.py --init</code> if the table is not there yet.</p>
+{% else %}
+  <h2 id="daily">Page views per day</h2>
+  {% set W, H, pad = 720, 160, 18 %}
+  {% set bw = (W / rep.daily|length) %}
+  <svg class="us-chart" viewBox="0 0 {{ W }} {{ H + pad }}" role="img"
+       aria-label="Page views per day, last {{ rep.days }} days, {{ n(rep.views) }} in all">
+    <line class="axis" x1="0" y1="{{ H }}" x2="{{ W }}" y2="{{ H }}"></line>
+    {% for day, v in rep.daily %}
+      {% set h = (v / rep.peak * (H - 14)) if v else 0 %}
+      {% set x = loop.index0 * bw %}
+      <g><title>{{ day.strftime("%a %b ") ~ day.day }}: {{ n(v) }} views</title>
+        <rect class="hit" x="{{ x }}" y="0" width="{{ bw }}" height="{{ H }}"></rect>
+        {% if h %}{% set r = [4, h, (bw - 2) / 2]|min %}<path class="bar" d="M{{ x + 1 }},{{ H }} V{{ H - h + r }} q0,-{{ r }} {{ r }},-{{ r }} H{{ x + bw - 1 - r }} q{{ r }},0 {{ r }},{{ r }} V{{ H }} Z"></path>{% endif %}
+      </g>
+      {% if loop.first or loop.last or (rep.days == 30 and loop.index0 % 7 == 0) or rep.days == 7 %}
+      <text x="{{ x + bw / 2 }}" y="{{ H + 13 }}" text-anchor="middle">{{ day.strftime("%b ") ~ day.day }}</text>{% endif %}
+    {% endfor %}
+    <text x="0" y="10">peak {{ n(rep.peak) }}</text>
+  </svg>
+  <p class="meta">{{ n(rep.views) }} views since {{ rep.since.strftime("%b ") ~ rep.since.day }}.</p>
+  <details class="st-steps"><summary>As a table</summary>
+    <table><thead><tr><th>Day</th><th class="n">Views</th></tr></thead><tbody>
+    {% for day, v in rep.daily|reverse %}<tr><td>{{ day.strftime("%a %b ") ~ day.day }}</td><td class="n">{{ n(v) }}</td></tr>{% endfor %}
+    </tbody></table>
+  </details>
+
+  <h2 id="screens">Phone or desktop</h2>
+  {% set tot = rep.phone + rep.desktop %}
+  {% if tot %}
+  <div class="us-split" role="img" aria-label="{{ rep.phone_pct }}% phone"><span style="width: {{ rep.phone_pct }}%"></span></div>
+  <p>Phone {{ rep.phone_pct }}% ({{ n(rep.phone) }}) · desktop {{ 100 - rep.phone_pct }}% ({{ n(rep.desktop) }}). <span class="meta">Phone = a screen 700px wide or less.</span></p>
+  {% else %}<p class="meta">No views yet.</p>{% endif %}
+
+  <h2 id="pages">Top pages</h2>
+  {% if rep.pages %}
+  <table><thead><tr><th>Page (route)</th><th class="n">Views</th><th class="n">Share</th></tr></thead><tbody>
+  {% for p, v in rep.pages %}<tr><td><code>{{ p }}</code></td><td class="n">{{ n(v) }}</td><td class="n">{{ (100 * v / rep.views)|round(1) if rep.views else 0 }}%</td></tr>{% endfor %}
+  </tbody></table>
+  {% else %}<p class="meta">None yet.</p>{% endif %}
+
+  <h2 id="events">Features used</h2>
+  {% if rep.events %}
+  <table><thead><tr><th>Event</th><th class="n">Times</th></tr></thead><tbody>
+  {% for e, v in rep.events %}<tr><td><code>{{ e }}</code></td><td class="n">{{ n(v) }}</td></tr>{% endfor %}
+  </tbody></table>
+  {% else %}<p class="meta">None yet.</p>{% endif %}
+
+  <h2 id="refs">Referring sites</h2>
+  {% if rep.refs %}
+  <table><thead><tr><th>Site</th><th class="n">Arrivals</th></tr></thead><tbody>
+  {% for h, v in rep.refs %}<tr><td>{{ h }}</td><td class="n">{{ n(v) }}</td></tr>{% endfor %}
+  </tbody></table>
+  {% else %}<p class="meta">None yet.</p>{% endif %}
+  <p class="meta">The referrer's site only, never the page. Arrivals with no referrer (typed, bookmarked, an app) are not listed.</p>
+{% endif %}
+</div>
+</div>
+</main>
+</body>
+</html>

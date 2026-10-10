@@ -124,6 +124,7 @@ function escAttr(s) {
                 } else {
                     /* No highlight -> the full results page, as before. */
                     var q = input.value.trim();
+                    if (q && window.rcUse) rcUse('search:submit');   // ★ usage (2026-10-10)
                     if (q) window.location = '/search?q=' + encodeURIComponent(q);
                 }
             } else if (e.key === 'Escape') {

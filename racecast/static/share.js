@@ -7,6 +7,7 @@ document.addEventListener("click", function (e) {
   if (!b) return;
   var url = b.dataset.shareUrl, title = b.dataset.shareTitle;
   if (!url) return;
+  window.rcUse && rcUse("share:click");   // ★ usage (2026-10-10)
   if (navigator.share) { navigator.share({title: title, url: url}).catch(function () {}); return; }
   var done = function () {
     var sp = b.querySelector("span"), was = sp ? sp.textContent : "";

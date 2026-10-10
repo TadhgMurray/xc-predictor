@@ -12216,5 +12216,14 @@ def status_resolve():
                                   or None)
     return redirect("/account/status?done=" + rid + "#reports")
 
+
+# ★ USAGE COUNTS AND ERROR MONITORING (owner, 2026-10-10): POST /api/b (the
+#   beacon), /account/status/usage and /account/status/errors behind the
+#   same admin gate as the status page, and the unhandled-exception and
+#   slow-request hooks. Tables: python racecast/monitor.py --init. See
+#   monitor.py, usage.py, app_errors.py.
+import monitor as _monitor                                       # noqa: E402
+_monitor.install(app, _statusAdmin)
+
 if __name__ == "__main__":
     app.run(debug=True)

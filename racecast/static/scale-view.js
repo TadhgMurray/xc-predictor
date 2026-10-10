@@ -158,6 +158,7 @@
     function choose(mode) {
       if (mode === window.rcScale.mode) return;
       window.rcScale.mode = mode;
+      window.rcUse && rcUse(mode === "pool" ? "scale:advanced" : "scale:hs");   // ★ usage (2026-10-10)
       try {
         localStorage.setItem(SCALE_KEY, window.rcScale.mode);
       } catch (err) { /* private mode: the choice just won't persist */ }
