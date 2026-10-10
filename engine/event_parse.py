@@ -125,6 +125,12 @@ _REJECT_WORDS = re.compile(
     r"\bjump\b|\bthrow\b|\bput\b|\bpentathlon\b|\bheptathlon\b|\bdecathlon\b|"
     r"\bhept\b|\bpent\b|\bdec\b|\blj\b|\btj\b|\bhj\b|\bpv\b|\bsp\b"
 )
+# ★ STEEPLE ABBREVIATED (sweep 2026-10-10). "3000 S/C", "3000m SC", "3000 Meter
+#   S/C", anet's glued "3000msc": the word 'steeple' is nowhere, so each read
+#   as a FLAT 3000 and a barrier race was rated on the flat curve. Bounded on
+#   the left by a space, a digit, a digit's 'm' or the string start, so
+#   'misc' and 'disc' never match.
+_STEEPLE_ABBR = re.compile(r"(?:^|(?<=[\s\d\-])|(?<=\dm))s\s*/?\s*c\b")
 # Relay shorthand: 4x400, 4 x 400, 4X800m, and -- the one a digit-only rule
 # missed -- '4xmile'. `\w` after the x, not `\d`.
 _RELAY_SHORTHAND = re.compile(r"\d\s*[x\u00d7]\s*\w")
@@ -148,6 +154,39 @@ _TRAILING_NOISE = re.compile(
     r"varsity|jv|frosh|freshman|sophomore|novice|"
     r"unseeded|seeded|fast|slow|small|large|\#)\b.*$",
     re.IGNORECASE)
+
+# ★ LEVEL NOISE AT THE FRONT (sweep 2026-10-10). _TRAILING_NOISE strips from
+#   its word to the END, so "Open 3200m", "Varsity 1600", "JV 800" and
+#   "Freshman 1600m" lost the whole name and returned None. The same words
+#   at the start are dropped alone (with any separator after them), before
+#   the trailing pass ever sees them.
+_LEADING_NOISE = re.compile(
+    r"^(?:(?:open|varsity|jv|frosh|freshman|sophomore|novice|"
+    r"invite|invitational|championship|unseeded|seeded)\b[\s\-:/]*)+")
+
+# ★ A GRADE ORDINAL IS NOISE, NOT A REJECT (sweep 2026-10-10). "2 Mile Run
+#   7th Grade" and "1500 meter run 7th & 8th" were thrown out by the
+#   \d+(st|nd|rd|th) reject that exists for '2007th Boys'. One or two digits
+#   is a school grade and never a distance; it is stripped when it names a
+#   grade or when it trails a number already read (the event came first).
+#   '2007th' stays rejected: \b cannot sit inside 2007, so this never
+#   matches it.
+_GRADE_ORDINAL = (r"\d{1,2}(?:st|nd|rd|th)\b"
+                  r"(?:\s*(?:&|and|/|-|,)\s*\d{1,2}(?:st|nd|rd|th)\b)*")
+_GRADE_NAMED = re.compile(r"\b" + _GRADE_ORDINAL + r"\s*grades?\b")
+_GRADE_TRAILING = re.compile(r"(?<=\d)(\D*?)\s*\b" + _GRADE_ORDINAL
+                             + r"(?:\s*grades?\b)?\s*$")
+
+# ★ A NUMBER WRITTEN AS A WORD (sweep 2026-10-10). "Two Mile" and "Two Miles"
+#   had no digit, so the bare-"Mile" rule priced them at 1609; "Half Mile"
+#   likewise, for an 804.67 m race. Only before a unit word, so 'one' in
+#   prose is left alone.
+_WORD_NUMBERS = {"half": "0.5", "one": "1", "two": "2", "three": "3",
+                 "four": "4", "five": "5", "six": "6", "seven": "7",
+                 "eight": "8", "nine": "9", "ten": "10"}
+_WORD_NUMBER = re.compile(
+    r"\b(" + "|".join(_WORD_NUMBERS) + r")(?=[\s\-]*(?:miles?|mi|k|km|"
+    r"kilomet\w*)\b)")
 
 # A grade range: 'Boys 5-8 1 Mile Run' means grades 5 through 8. Both sides must
 # be 1-2 digits, so this can never eat '10-km' (digit-dash-LETTER).
@@ -183,8 +222,23 @@ def _stripGender(s):
 # Purpose : the reject gate. Must run BEFORE any number is read.
 def _isNotARace(s):
     return bool(_REJECT_WORDS.search(s)
+                or _STEEPLE_ABBR.search(s)
                 or _RELAY_SHORTHAND.search(s)
                 or _HURDLE_SHORTHAND.search(s))
+
+
+# _stripLevelNoise
+# Purpose : drop leading level words, grade ordinals and word numbers into
+#           digits (sweep 2026-10-10; see _LEADING_NOISE, _GRADE_*,
+#           _WORD_NUMBER). Leading noise can sit either side of the gender
+#           prefix ("Varsity Boys 1600", "Boys Varsity 1600"), so the caller
+#           runs it before and after _stripGender.
+def _stripLevelNoise(s):
+    s = _LEADING_NOISE.sub("", s)
+    s = _GRADE_NAMED.sub(" ", s)
+    s = _GRADE_TRAILING.sub(r"\1", s)
+    s = _WORD_NUMBER.sub(lambda m: _WORD_NUMBERS[m.group(1)], s)
+    return " ".join(s.split())
 
 
 # _deglue
@@ -303,7 +357,9 @@ def _distanceFromEventShort(ev, lo, hi):
         return exact, None
 
     s = " ".join(ev.lower().split())                # collapse runs of whitespace
+    s = _stripLevelNoise(s)                         # "Varsity Boys 1600"
     s, gender = _stripGender(s)
+    s = _stripLevelNoise(s)                         # "Boys Varsity 1600"
     s = _TRAILING_NOISE.sub("", s).strip()
     s = _GRADE_RANGE.sub(" ", s).strip()
 

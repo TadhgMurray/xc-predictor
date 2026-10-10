@@ -29,6 +29,7 @@
 import os
 import sys
 import heapq
+from bisect import bisect_left
 import pickle
 import zlib
 import torch
@@ -47,6 +48,19 @@ from database import initPool, closePool, getConn
 # ★ THE ENGINE'S POOLING DECISION, IMPORTED. buildPool below explains
 #   what it replaces and why a fifth reimplementation was the bug.
 from pool_resolve import resolvePool
+
+# ★ sweep 2026-10-10: THE SEASON KEY FOR grade_fix / pro_athlete_season, from
+#   the one clock (engine/season_year.py). Both tables are academic-year keyed.
+from season_year import seasonYearSqlInt
+_SEASON_INT = seasonYearSqlInt(None, "r.date")
+
+# ★ sweep 2026-10-10: NO RESULT FROM THE FUTURE. Rows dated 2221/2222 (typos
+#   in the scraped date) reached the corpus and train.computeStats took 2222 as
+#   max_year. Evaluated by Postgres at query time, so the long-running site
+#   (personResultsSql) is never frozen at an import-time date. The +1 day is
+#   the date line: a meet dated in a timezone ahead of the server's can carry
+#   tomorrow's server date legitimately.
+_DATE_NOT_FUTURE = "r.date <= to_char(CURRENT_DATE + 1, 'YYYY-MM-DD')"
 
 # ★ THE HAND-VERIFIED DISTANCES, SAME AS THE FITTER AND THE BACKFILL. The
 #   target (normalized_time) is computed at the OVERRIDDEN distance, so the
@@ -184,6 +198,15 @@ VAL_FRACTION_PERMILLE = 100          # 10.0% of ATHLETES -> validation
 def _isValAthlete(identity) -> bool:
     return (zlib.crc32(repr(identity).encode())
             % 1000) < VAL_FRACTION_PERMILLE
+
+
+def isValPerson(person_id) -> bool:
+    """_isValAthlete for a person-keyed career, keyed EXACTLY as _identity
+    keys it. ★ sweep 2026-10-10: the backtest kept its own copy hashing
+    (False, pid) while this side hashed ("p", pid) -- two different 10%s,
+    so --val-only scored athletes the model had trained on. One function,
+    imported there, so the two cannot drift again."""
+    return _isValAthlete(("p", int(person_id)))
 
 # ★ THE TWO WIDTHS DIFFER ON PURPOSE, AND THE DIFFERENCE IS `place`.
 #   A prior race's finishing position is field context the model cannot get
@@ -585,14 +608,19 @@ _XC_SQL = f"""
               --   2025, then 2025-12-13 as Fr -- one calendar year, and the
               --   majority handed his first collegiate race grade 12.
               --
-              -- ! THE XC RULE, BAKED IN, because this query reads
-              --   `results`. The TF query below uses the TF rule: they roll on
-              --   different months and a shared literal would be wrong for one
-              --   of them, silently.
-              AND gu.season = ((CASE WHEN substring(r.date, 6, 2) <= '02' THEN (substring(r.date, 1, 4)::int - 1)::text ELSE substring(r.date, 1, 4) END))::int
+              -- ★ sweep 2026-10-10: THE AUGUST SEAM, FROM season_year. This
+              --   was the old per-sport clock (XC rolled at March, TF at
+              --   October) while grade_sanity writes grade_fix on the
+              --   academic year -- every Aug-Feb XC race and every Aug-Sep TF
+              --   race looked up the wrong season's verdict.
+              AND gu.season = {_SEASON_INT}
         LEFT JOIN pro_athlete_season pas
                ON pas.person_id = r.person_id
-              AND pas.season = substring(r.date, 1, 4)::int
+              -- ★ sweep 2026-10-10: ACADEMIC, NOT CALENDAR. pro_flag writes
+              --   this table on the academic year (build_ranking_results and
+              --   panels already join it so); substring(date,1,4) handed
+              --   every autumn race the previous spring's pro verdict.
+              AND pas.season = {_SEASON_INT}
         LEFT JOIN college_first_season cfs ON cfs.person_id = r.person_id
         LEFT JOIN upperclass_first_season ufs ON ufs.person_id = r.person_id
         -- ! AND IT MUST HAVE A DISTANCE. The override COALESCE can
@@ -609,6 +637,7 @@ _XC_SQL = f"""
         AND   r.normalized_time > %s
         AND   r.date IS NOT NULL
         AND   r.date != ''
+        AND   {_DATE_NOT_FUTURE}
         -- Drop profile-less meet entries (AAU/junior/user-uploaded) saved
         -- with NULL athlete_id — they have no stable identity, can't be
         -- tracked across races, and are useless/polluting to a per-athlete
@@ -772,6 +801,58 @@ def rowPool(row):
                            row.get("college_first")))
 
 
+def storedPool(row):
+    """The pool a corpus row's STORED normalized_time is on, or None.
+
+    ★ sweep 2026-10-10: THE RATED POOL FIRST. engine/anchor_repair (pipeline
+      step 05b) moves every row whose backfill pool disagrees with the pool
+      it is rated in onto the RATED pool's scale (stored x factor(rated) /
+      factor(backfill)), so after 05b rowPool -- the backfill's resolver --
+      names the scale the row WAS on, not the one it is on. Undoing the
+      anchor with the backfill pool shifted exactly the cross-level athletes
+      05b exists for by the gap between two pools' anchors.
+
+    ⚠ BUT NOT EVERY RATED ROW HAS BEEN REPAIRED. 05b reads the rating_pool
+      a PREVIOUS go-live wrote, so a row whose pool changed in the last
+      solve, or a row the nightly normalised and fill_ratings rated since
+      the last full run, still sits on the backfill pool. So when the two
+      pools disagree the row itself decides: whichever pool's bare distance
+      factor reproduces the stored value (anchor_check.mismatch, the test
+      05b itself uses) is the one it is on. Real pool scales are 30-60%
+      apart and the corrections baked into a stored value a few percent, so
+      the nearer one is not a close call.
+    ! A row with no rating_pool (unrated) was never touched by 05b: the
+      backfill pool, as before."""
+    from normalize_distance import ratedScalePool
+    # ! THE SCALE OF THE RATED POOL, not its name: a pro pool sits on its
+    #   college twin's anchor (ratedScalePool, the backfill's and the
+    #   engine's own answer).
+    rated = ratedScalePool((row.get("rating_pool") or "").split("|")[0]
+                           or None)
+    if rated == "unknown_level":
+        rated = None
+    backfill = rowPool(row)
+    if rated is None or backfill is None or rated == backfill:
+        return rated or backfill
+    sport = "XC" if row.get("is_xc") else "TF"
+    try:
+        from anchor_check import mismatch
+        offs = {}
+        for p in (rated, backfill):
+            _bad, _exp, ratio = mismatch(row.get("time_seconds"),
+                                         row.get("distance_meters"),
+                                         row.get("normalized_time"), p, sport)
+            if ratio is not None:
+                offs[p] = abs(ratio - 1.0)
+        if len(offs) == 2:
+            # ties go to the rated pool: that is where 05b leaves a row
+            return backfill if offs[backfill] < offs[rated] else rated
+    except Exception:                                    # noqa: BLE001
+        pass
+    # ! UNCHECKABLE (no time or distance): the steady state after 05b.
+    return rated
+
+
 def toCommonScale(row, scale=None):
     """The row with normalized_time on the common anchor. Pure but for the
     spline artifact; a row whose pool cannot be told keeps its value and is
@@ -783,7 +864,9 @@ def toCommonScale(row, scale=None):
     if (scale or NORM_SCALE) != "common5000" or nt is None:
         return row
     from normalize_distance import anchorShift
-    pool = rowPool(row)
+    # ★ sweep 2026-10-10: the pool the STORED value is on (storedPool), not
+    #   the backfill's -- 05b has moved repaired rows onto the rated pool.
+    pool = storedPool(row)
     if pool is None:
         row["norm_unshifted"] = True
         return row
@@ -1013,12 +1096,19 @@ _TF_SQL = f"""
                   --   2025, then 2025-12-13 as Fr -- one calendar year, and the
                   --   majority handed his first collegiate race grade 12.
                   --
-                  -- ! THE TF RULE, BAKED IN, because this query reads
-                  --   `results_tf`. TF rolls at October and XC at March.
-                  AND gu.season = ((CASE WHEN substring(r.date, 6, 2) >= '10' THEN (substring(r.date, 1, 4)::int + 1)::text ELSE substring(r.date, 1, 4) END))::int
+                  -- ★ sweep 2026-10-10: THE AUGUST SEAM, FROM season_year. This
+              --   was the old per-sport clock (XC rolled at March, TF at
+              --   October) while grade_sanity writes grade_fix on the
+              --   academic year -- every Aug-Feb XC race and every Aug-Sep TF
+              --   race looked up the wrong season's verdict.
+              AND gu.season = {_SEASON_INT}
             LEFT JOIN pro_athlete_season pas
                    ON pas.person_id = r.person_id
-                  AND pas.season = substring(r.date, 1, 4)::int
+                  -- ★ sweep 2026-10-10: ACADEMIC, NOT CALENDAR. pro_flag writes
+              --   this table on the academic year (build_ranking_results and
+              --   panels already join it so); substring(date,1,4) handed
+              --   every autumn race the previous spring's pro verdict.
+              AND pas.season = {_SEASON_INT}
             LEFT JOIN college_first_season cfs ON cfs.person_id = r.person_id
             LEFT JOIN upperclass_first_season ufs ON ufs.person_id = r.person_id
             -- ! same distance guard as the XC stream above
@@ -1027,6 +1117,7 @@ _TF_SQL = f"""
             AND   r.normalized_time > %s
             AND   r.date IS NOT NULL
             AND   r.date != ''
+            AND   {_DATE_NOT_FUTURE}
             AND   r.is_relay = 0
             -- Drop NULL-athlete_id profile-less entries (see XC note above).
             AND   r.athlete_id IS NOT NULL
@@ -2240,8 +2331,20 @@ def _silentTwin(prior_results, target_result, full_sequence, rng):
 
 def _dropoutTwin(prior_results, target_result, full_sequence, rng):
     """The same example with random prior races deleted. Or None."""
-    keep = [j for j in range(len(prior_results))
-            if rng.random() >= DROPOUT_RACE_P]
+    # ★ THE LAST PRIOR RACE IS NEVER DELETED (sweep 2026-10-10). This twin
+    #   says hidden_days 0 -- "the history runs right up to the target" --
+    #   and days_since_last_race - hidden_days is the athlete's own idle
+    #   time (see _gapTwin). Deleting the last race made that idle time a
+    #   lie: an athlete who raced last week read as one who had been away
+    #   for months, with nothing hidden. Holes BEHIND the last race are the
+    #   real-world shape (a meet never scraped); a missing most-recent race
+    #   with a stated gap is what the forecast and silent twins already
+    #   teach, with an honest hidden_days.
+    if not prior_results:
+        return None
+    last = len(prior_results) - 1
+    keep = [j for j in range(last)
+            if rng.random() >= DROPOUT_RACE_P] + [last]
     if len(keep) < MIN_KEPT_RACES or len(keep) == len(prior_results):
         return None
     return {
@@ -2288,17 +2391,26 @@ def buildAthleteExamples(athlete_results: list[dict], encoders: dict,
 
         # Gets the result we're predicting
         target_result = athlete_results[i]
+        target_date = dates[i]
 
-        # Gets all the prior results to build the training example.
-        # Slicing: everything from index 0 up to (but not including) i.
-        prior_results = athlete_results[:i]
+        # ★ THE RACES BEFORE THE TARGET'S DAY, NOT BEFORE ITS INDEX (sweep
+        #   2026-10-10). athlete_results[:i] kept a same-day race -- a track
+        #   double, a prelim before its final -- in the history at
+        #   days_ago 0, which inference never shows (predict._before keeps
+        #   only date < cut). The model learned to lean on a same-day
+        #   result that is never there when it is asked. Chronological, so
+        #   bisect_left is the count dated strictly before the target; the
+        #   twins below take the same prefix.
+        n_prior = bisect_left(dates, target_date, 0, i)
+        if n_prior == 0:
+            continue
+        prior_results = athlete_results[:n_prior]
 
         # Each prior's vector = its base row with days_ago filled in for
         # THIS target. Copy first -- the base rows are shared across every
         # example this athlete produces.
-        target_date = dates[i]
         sequence = []
-        for j in range(i):
+        for j in range(n_prior):
             v = base[j].copy()
             v[2] = float((target_date - dates[j]).days)
             sequence.append(v)
@@ -2932,6 +3044,9 @@ def _saveMetadata(max_len: int, total_examples: int,
             "chunk_size":     CHUNK_SIZE,
             # which scale normalized_time was on (toCommonScale)
             "norm_scale":     NORM_SCALE,
+            # ★ sweep 2026-10-10: the day the corpus was read, so train's
+            #   computeStats can refuse a year later than it (max_year).
+            "extracted_on":   date.today().isoformat(),
         }, f)
     print(f"  Saved {path}")
 

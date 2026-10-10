@@ -614,6 +614,36 @@ else
   echo "  04f_weather_fit skipped (XCP_WEATHER_FIT=1 to refit)" | tee -a "$SUMMARY"
 fi
 
+# ⚠⚠ A FAILED PEOPLE STEP STOPS THE RUN BEFORE THE BACKFILL (sweep
+#    2026-10-10). 03_pro_flag, 03b_age_bands, 04_grade_sanity, 04b_wheelchair,
+#    04c_twins and 04d_gender each write a table the backfill and the pack
+#    read to decide WHO a row is and WHICH pool it sits in -- and a failure
+#    only logged, so 05 normalised every row on last run's verdicts (or on
+#    none: a half-written grade_fix) and the solve published them. Same
+#    shape as the 05_backfill gate below. XCP_IGNORE_PEOPLE_FAIL=1 carries
+#    on anyway -- only when you have read the log and last run's tables are
+#    the ones you want.
+_PEOPLE_FAILED=""
+for _s in 03_pro_flag 03b_age_bands 04_grade_sanity 04b_wheelchair 04c_twins 04d_gender; do
+  failed "$_s" && _PEOPLE_FAILED="$_PEOPLE_FAILED $_s"
+done
+if [ "$DRY" -eq 0 ] && [ -n "$_PEOPLE_FAILED" ]; then
+  if [ "${XCP_IGNORE_PEOPLE_FAIL:-0}" = "1" ]; then
+    echo "  ⚠ FAILED:$_PEOPLE_FAILED, and XCP_IGNORE_PEOPLE_FAIL=1 --" \
+         "continuing on the tables the PREVIOUS run wrote." | tee -a "$SUMMARY"
+  else
+    echo "" | tee -a "$SUMMARY"
+    echo "  ABORTING:$_PEOPLE_FAILED failed, so the backfill and the pack" \
+         "would read stale or half-written people tables." | tee -a "$SUMMARY"
+    for _s in $_PEOPLE_FAILED; do
+      echo "  read: $LOGDIR/$_s.log" | tee -a "$SUMMARY"
+    done
+    echo "  then: rerun from the failed step, or" \
+         "XCP_IGNORE_PEOPLE_FAIL=1 ... to continue on last run's tables" | tee -a "$SUMMARY"
+    summarise 1
+  fi
+fi
+
 # ! THE BACKFILL RUNS AFTER grade_sanity, NOT BEFORE -- it resolves pools from
 #   grade_fix, and a disagreement writes normalized_time on the wrong SCALE
 #   (measured at a 64% rating error, frozen into the row).

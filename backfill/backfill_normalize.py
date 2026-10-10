@@ -782,17 +782,32 @@ def _loadGenders(cur):
     #   profile majority. Person level only here: the normalisation pool is
     #   one per person, and a split person's second pool is the engine's
     #   and the boards' business.
+    # ★ sweep 2026-10-10: UNDER ITS OWN KEY, ("pg", person_id), and LOOKED UP
+    #   FIRST (_rowGender). It was written over out[person_id] -- the same
+    #   slot as the profile of the athlete whose id became the person id --
+    #   and the row lookup tried row.athlete_id before person_id, so any
+    #   row whose own profile id is not the canonical one (a merged profile,
+    #   a re-keyed person) took its PROFILE gender over the verdict the
+    #   rows had reached. The comment above says the rows outrank the
+    #   profiles; now the lookup does too.
     cur.execute("SELECT to_regclass('public.person_gender')")
     if cur.fetchone()[0] is not None:
         cur.execute("SELECT person_id, gender FROM person_gender")
         n = 0
         for pid, g in cur:
             if g in ("M", "F"):
-                out[pid] = g
+                out[("pg", pid)] = g
                 n += 1
         print(f"  genders: {n:,} from person_gender (the rows), the rest "
               f"from the profiles")
     return out
+
+
+def _rowGender(genders, athlete_id, person_id):
+    """The gender a row's people facts give it, or None: the person_gender
+    verdict, then the row's own profile, then the canonical profile."""
+    return (genders.get(("pg", person_id)) if person_id is not None else None) \
+        or genders.get(athlete_id) or genders.get(person_id)
 
 
 # ---- canon dedup pre-pass (uses the dedup layer's person_id + canon_meet_id) --
@@ -2026,7 +2041,7 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         #    only fills gaps the override table didn't cover.
         if row[_SRC] == "anet" and row[_CANON] is not None \
                 and (distance is None or not _distanceSane(distance)):
-            anet_gender = genders.get(row[_AID])     # anet gender for the match
+            anet_gender = _rowGender(genders, row[_AID], row[_PERSON])
             borrowed = _borrowCanonDistance(canon_distances, row[_CANON],
                                             anet_gender)
             if borrowed is not None:
@@ -2108,11 +2123,11 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         #   5000m in the blob. Four of the top eight College (M) performances
         #   came out of div 1, at 143-155 off ordinary 15:00-16:06 runs.
         #
-        # ! ORDER MATTERS: athlete_id first, then person_id, then the title.
-        #   An anet row's own athlete gender is the most specific fact
-        #   available; person_id only answers when the row has no athlete of
-        #   its own.
-        gender = (genders.get(row[_AID]) or genders.get(row[_PERSON])
+        # ! ORDER MATTERS: the person_gender verdict first (the rows outrank
+        #   the profiles, issue 164 -- sweep 2026-10-10, it used to come
+        #   after the row's own profile), then the row's own athlete
+        #   profile, then the canonical profile, then the title.
+        gender = (_rowGender(genders, row[_AID], row[_PERSON])
                   or blob_gender or _blobGender(row, tfrrs_distances))
         gender = gender_ov.get((row[_MEET], row[_DIV]), gender)  # force if mislabeled
         _ro = result_ov.get(row[_ID])                # per-result gender pin (mixed div)

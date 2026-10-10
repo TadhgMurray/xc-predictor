@@ -375,6 +375,9 @@ class ChunkedRaceDataset(Dataset):
         #   metadata.pkl from before the key existed is the pool mixture.
         global NORM_SCALE_SEEN
         NORM_SCALE_SEEN = meta.get("norm_scale", "pool")
+        # ★ sweep 2026-10-10: the extraction's own date (computeStats'
+        #   max_year ceiling); None from a metadata.pkl written before it.
+        self.extracted_on = meta.get("extracted_on")
         self.num_chunks = meta["num_chunks"]
 
         # ★ WHICH CHUNKS THIS RUN SEES. --max-chunks N is the prefix 0:N,
@@ -1025,6 +1028,18 @@ class Likelihood(nn.Module):
         return nll.mean()
 
 
+def _yearCeiling(extracted_on):
+    """The latest calendar year a real row can carry: the extraction's year
+    (today's for chunks that did not record it), one day on -- the same
+    date-line allowance as feature_extraction._DATE_NOT_FUTURE."""
+    import datetime as _dt
+    try:
+        day = _dt.date.fromisoformat(str(extracted_on)[:10])
+    except (TypeError, ValueError):
+        day = _dt.date.today()
+    return float((day + _dt.timedelta(days=1)).year)
+
+
 def computeStats(dataset, is_train: torch.Tensor,
                  max_chunks: int = STATS_CHUNKS) -> dict:
     """Per-feature mean/std of the inputs, and mean/std of the log-ratio
@@ -1048,6 +1063,7 @@ def computeStats(dataset, is_train: torch.Tensor,
     raw_n = 0
     max_year = 0.0
     band_n = [0] * (len(BREAK_BANDS) + 1)   # train examples per break band
+    year_ceiling = _yearCeiling(getattr(dataset, "extracted_on", None))
 
     # ! _loadChunk TAKES A GLOBAL CHUNK NUMBER (2026-10-08 audit). Under
     #   --chunk-range the window's first chunk is base_index // chunk_size;
@@ -1090,9 +1106,17 @@ def computeStats(dataset, is_train: torch.Tensor,
         #   here by definition -- and a linear layer on a z-scored year
         #   extrapolates whatever trend it found. Guarded on the width so a
         #   chunk set written before the feature existed still trains.
-        if ctx.shape[1] > CONTEXT_YEAR_INDEX:
-            yr = float(ctx[:, CONTEXT_YEAR_INDEX].max()) if ctx.shape[0] else 0.0
-            max_year = max(max_year, yr)
+        #
+        # ! A YEAR AFTER THE EXTRACTION IS A TYPO, NOT A RACE (sweep
+        #   2026-10-10). Rows dated 2221/2222 reached the corpus and this max
+        #   became 2222 -- a ceiling that clamps nothing. The extraction now
+        #   refuses them (feature_extraction._DATE_NOT_FUTURE); this refuses
+        #   them too, for chunks written before it did.
+        if ctx.shape[1] > CONTEXT_YEAR_INDEX and ctx.shape[0]:
+            years = ctx[:, CONTEXT_YEAR_INDEX]
+            years = years[years <= year_ceiling]
+            if years.numel():
+                max_year = max(max_year, float(years.max()))
 
         t = targets[keep]
         b = base[keep]

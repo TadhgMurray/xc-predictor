@@ -119,10 +119,19 @@ def main():
         cur.execute("SET statement_timeout = '600s'")
         cur.execute("""
             SELECT meet_id, div_id, source, left(date, 10) AS day, count(*) AS n
-            FROM   results
+            FROM   results r
             WHERE  date >= %s AND date <= %s
               AND  person_id IS NOT NULL
               AND  time_seconds > 0 AND time_seconds < 19999
+              -- ★ ONE RACE, ONE SAMPLE (sweep 2026-10-10). A race stored in
+              --   both feeds (anet and tfrrs) is two (meet, div, source)
+              --   groups, so it could be drawn twice and weigh double in
+              --   every average. result_twin is the verdict the corpus, the
+              --   engine and the boards all anti-join; the flagged copy's
+              --   rows vanish here and its group falls under --min-field.
+              AND  NOT EXISTS (SELECT 1 FROM result_twin x
+                               WHERE x.sport = 'XC'
+                                 AND x.result_id = r.result_id)
             GROUP  BY 1, 2, 3, 4 HAVING count(*) >= %s""",
                     (a.lo, a.hi + "~", a.min_field))
         races = cur.fetchall()
@@ -135,9 +144,12 @@ def main():
         for i, race in enumerate(races, 1):
             day = datetime.date.fromisoformat(race["day"])
             cur.execute("""SELECT DISTINCT ON (person_id) person_id, time_seconds
-                           FROM results WHERE meet_id = %s AND div_id = %s
+                           FROM results r WHERE meet_id = %s AND div_id = %s
                              AND source = %s AND person_id IS NOT NULL
                              AND time_seconds > 0 AND time_seconds < 19999
+                             AND NOT EXISTS (SELECT 1 FROM result_twin x
+                                             WHERE x.sport = 'XC'
+                                               AND x.result_id = r.result_id)
                            ORDER BY person_id, time_seconds""",
                         (race["meet_id"], race["div_id"], race["source"]))
             actual = {r["person_id"]: float(r["time_seconds"]) for r in cur.fetchall()}
@@ -240,13 +252,14 @@ def _facts(cur, ids, cut, rated):
 
 
 def _isValAthlete(person_id):
-    """feature_extraction._isValAthlete for a person-keyed career: the
-    identity there is (person_id is None, person_id). Kept as a copy so this
-    script does not import the extraction (and its database settings).
+    """feature_extraction.isValPerson -- IMPORTED, not copied (sweep
+    2026-10-10). The copy hashed repr((False, pid)) while extraction hashes
+    ("p", pid): a different 10%, so --val-only was scoring athletes the model
+    trained on. predict already imports the extraction to predict at all.
     ! A person merged or re-keyed since the extraction may hash to the other
       side; the share that moves is small and only blurs, never flatters."""
-    import zlib
-    return zlib.crc32(repr((False, int(person_id))).encode()) % 1000 < 100
+    from feature_extraction import isValPerson
+    return isValPerson(person_id)
 
 
 # ★ BREAKS IN WEEKS A COACH WOULD NAME (owner, 2026-10-10: "it overestimates

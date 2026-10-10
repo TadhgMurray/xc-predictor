@@ -145,7 +145,27 @@ step 06b_course_canonical "$PY" -u scripts/build_course_canonical.py --increment
 # ---- 3. price the new rows ---------------------------------------------- #
 # ! A FAILED NORMALISATION STOPS HERE: pricing and publishing half a night is
 #   worse than publishing yesterday's boards again.
-if step 05_normalize_new "$PY" -u backfill/backfill_normalize.py --sport both --apply --new-only \
+# ⚠ AND SO DOES A FAILED PEOPLE STEP (sweep 2026-10-10). 04a/04a2 decide whose
+#   row a new result is, 04b who is a chair athlete, 04c which copy of a race
+#   is the twin -- and the normaliser resolves each new row's pool from the
+#   person it belongs to. A failure there only logged, and 05 priced the
+#   night's rows on unlinked persons and unflagged twins. A step turned off
+#   (XCP_LINK_TFRRS=0 / XCP_LINK_TEAMLESS=0) is not a failure.
+#   XCP_IGNORE_PEOPLE_FAIL=1 prices anyway.
+PEOPLE_OK=1
+for _s in 04a_link_tfrrs 04a2_link_teamless 04b_wheelchair 04c_twins; do
+  case " $FAILED " in *" $_s "*) PEOPLE_OK=0 ;; esac
+done
+if [ "$PEOPLE_OK" -eq 0 ]; then
+  if [ "${XCP_IGNORE_PEOPLE_FAIL:-0}" = "1" ]; then
+    echo "  ⚠ a people step FAILED, and XCP_IGNORE_PEOPLE_FAIL=1 -- pricing anyway" | tee -a "$SUMMARY"
+    PEOPLE_OK=1
+  else
+    echo "  05_normalize_new NOT RUN: a people step failed (see above); yesterday's" \
+         "boards stay up. XCP_IGNORE_PEOPLE_FAIL=1 to price anyway." | tee -a "$SUMMARY"
+  fi
+fi
+if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_normalize.py --sport both --apply --new-only \
    && step 09b_fill_venue "$PY" -u engine/fill_ratings.py --venue; then
 
   # ---- 4. publish: boards, rank lines, teams, search -------------------- #
@@ -168,11 +188,15 @@ if step 05_normalize_new "$PY" -u backfill/backfill_normalize.py --sport both --
     # ! the swap only over four complete streams: a missing half is a board
     #   missing half its rows
     if [ "${STREAMS_OK:-1}" -eq 1 ]; then
-      step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finish \
-        && step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py \
-        && step 11_teams "$PY" -u racecast/build_team_season.py
-      step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
-      step 13c_search_index "$PY" -u racecast/search_index.py
+      # ★ 13c ONLY OVER A SWAPPED BOARD (sweep 2026-10-10), the order
+      #   run_pipeline.sh keeps (13c after 10): after a failed finish the
+      #   site still serves yesterday's boards, and a search index built for
+      #   tonight's ids would list athletes those boards do not have.
+      if step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finish; then
+        step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py \
+          && step 11_teams "$PY" -u racecast/build_team_season.py
+        step 13c_search_index "$PY" -u racecast/search_index.py
+      fi
       # ★ THE HOME PAGE AND /meets READ panels.py's tables (homepage_recent:
       #   "Latest results"), so without this a meet scraped tonight had a
       #   page but was on no list until the next full run. Both sports side
@@ -193,6 +217,13 @@ if step 05_normalize_new "$PY" -u backfill/backfill_normalize.py --sport both --
     fi
   fi
 fi
+
+# ★ 13c0 RUNS WHATEVER PUBLISHING DID (sweep 2026-10-10). Its only inputs are
+#   tonight's 01a probe and the result rows' person ids -- 04a/04a2/04c moved
+#   them whether or not anything was priced or published -- and tomorrow's
+#   01a OVERWRITES the probe. Gated on the boards, a failed night lost its
+#   redirects for good: every id merged away tonight would 404.
+step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
 
 # ---- summary ------------------------------------------------------------ #
 TOTAL=$(( $(date +%s) - T_START ))
