@@ -1,0 +1,50 @@
+{# The athlete header's WHAT IT TAKES line (athlete.html; cuts.athleteLine).
+   Its own file so the sentence can be rendered and pinned on its own
+   (tests/test_athlete_header_b.py). Needs `wit_line` and `athlete`.
+
+   ★ IN PLAIN ENGLISH (header redesign B, 2026-10-10): what the athlete is
+     fast enough FOR, or how far short of it in points AND seconds over a
+     track 5K, then the mark as a clock and where they are:
+       above  "Fast enough for the OR Class 6A state podium — last year's
+               top 8 needed 117.8 (about a 15:40 5K on a track); Owen is at
+               124.6."
+       below  "About 2.1 points (≈ 12 s over 5K) short of the OR Class 6A
+               state podium mark: last year's top 8 needed ..."
+     The nouns are cuts.plainWords', the clocks cuts.stampClocks'
+     (conversions' own maths, never a typed-in seconds-per-point); a line
+     without them (an unkeyed rung) keeps the old words. #}
+{% from "_scale.html" import rv %}
+{% if wit_line %}
+{% set _first = (athlete.name or "").split()[0] if athlete.name else "This athlete" %}
+{% set _is = wit_line.rating if wit_line.rating is not none else athlete.rating %}
+<p class="rank-line wit-line{% if wit_line.goal %} wit-plain{% endif %}">
+    <span class="rl-lab">What it takes</span>
+    {% if wit_line.goal -%}
+    {% set _needed %}{{ wit_line.who }} needed {{ "%.1f"|format(wit_line.mark) }}{% if wit_line.mark_time %} (about a {{ wit_line.mark_time }} 5K on a track){% endif %}; {{ _first }} is at {{ "%.1f"|format(_is) }}.{% endset %}
+    {% if wit_line.kind == "off" -%}
+    <span class="wit-gap">About {{ "%.1f"|format(wit_line.gap) }} points{% if wit_line.gap_secs %} (&asymp; {{ wit_line.gap_secs }} s over 5K){% endif %} short</span> of {{ wit_line.goal_mark }}: {{ _needed }}
+    {%- else -%}
+    <span class="wit-ok">Fast enough {{ wit_line.goal }}</span> &mdash; {{ _needed }}
+    {%- endif %}
+    {%- elif wit_line.kind == "off" -%}
+    <strong>{{ "%.1f"|format(wit_line.gap) }}</strong> points{% if wit_line.gap_pct %} ({{ "%.1f"|format(wit_line.gap_pct) }}%){% endif %} off {{ wit_line.text }}
+    ({{ wit_line.label }}, {{ rv(wit_line.mark, wit_line.mark) }}){% if wit_line.cleared %}; clears {{ wit_line.cleared }}{% endif %}
+    {%- else -%}
+    <strong>{{ "%.1f"|format(wit_line.gap) }}</strong> points{% if wit_line.gap_pct %} ({{ "%.1f"|format(wit_line.gap_pct) }}%){% endif %} above {{ wit_line.text }}
+    ({{ wit_line.label }}, {{ rv(wit_line.mark, wit_line.mark) }})
+    {%- endif %}
+    <span class="sep">·</span><a href="{{ wit_line.href }}">Past marks</a>
+    <span class="sep">·</span><a href="/goal?athlete={{ athlete.person_id }}">Any goal, any course</a>
+    {# goal times: the mark as a clock where this athlete actually races,
+       and at the round's championship course (cuts.goalTimes) #}
+    {%- if wit_line.times %}
+    <span class="wit-goal" style="display:block;margin-top:0.25rem"><span class="rl-lab">That mark is</span>
+    {%- for t in wit_line.times %}{% if not loop.first %}<span class="sep">·</span>{% endif %}
+        <span class="rk"><strong>{{ t.seconds|wit_time }}</strong> {% if t.course_name %}at {{ t.course_name }}{% else %}on a typical course{% endif %} <span class="rl-floor">{{ "%.0f"|format(t.distance) }} m{% if t.champ %}, {{ "the section final" if wit_line.rung.where == "section" else "the state course" }}{% endif %}</span></span>
+    {%- endfor %}
+    <span class="sep">·</span><a href="{{ wit_line.conv_href }}">Other courses</a></span>
+    {%- elif wit_line.conv_href %}
+    <span class="sep">·</span><a href="{{ wit_line.conv_href }}">As a time</a>
+    {%- endif %}
+</p>
+{% endif %}

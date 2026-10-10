@@ -723,6 +723,33 @@ main.ath-page.rc .stat-strip { margin: .8rem 0 .2rem; }
    s-sub's own size and colour, never a stat of its own */
 main.ath-page.rc .stat-strip .s-clock { display: block; margin: .15rem 0 0; }
 main.ath-page.rc .rank-line, main.ath-page.rc .paces-link { margin: .45rem 0 0; }
+/* ★ HEADER REDESIGN B (owner, 2026-10-10). Each number says what it is
+   under it (.s-under), the season in the rating's label (.s-when), the
+   what-it-takes line in plain words (green when the mark is met, amber when
+   short, both muted), and one row of quiet outlined buttons after a thin
+   rule closes the header (.ath-actions). */
+main.ath-page.rc .stat-strip.ath-ss { align-items: flex-start; }
+main.ath-page.rc .stat-strip.ath-ss > div { min-width: 0; }
+main.ath-page.rc .stat-strip.ath-ss .s-val { display: inline-block; }
+main.ath-page.rc .stat-strip.ath-ss .s-sub.s-under,
+main.ath-page.rc .stat-strip.ath-ss .s-sub.s-pct { display: block; margin: .15rem 0 0; }
+main.ath-page.rc .stat-strip.ath-ss .s-lab .s-when { text-transform: none; letter-spacing: 0; }
+main.ath-page.rc .wit-line.wit-plain { line-height: 1.45; }
+main.ath-page.rc .wit-line .wit-ok { color: #1f6f3f; font-weight: 600; }
+main.ath-page.rc .wit-line .wit-gap { color: #92400e; font-weight: 600; }
+main.ath-page.rc .ath-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin: .9rem 0 0; padding-top: .8rem; border-top: 1px solid var(--line); }
+main.ath-page.rc .ath-act { display: inline-flex; align-items: center; gap: .35rem; padding: .28rem .65rem; min-height: 24px;
+  border: 1px solid var(--line-2); border-radius: 4px; background: #fff; color: #374151; font: inherit; font-size: .84rem;
+  font-weight: 500; line-height: 1.4; text-decoration: none; cursor: pointer; white-space: nowrap; }
+main.ath-page.rc .ath-act svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
+main.ath-page.rc .ath-act:hover { border-color: #9ca3af; color: var(--ink); text-decoration: none; }
+/* the course word (difficulty_view.courseWord): a quiet word with a dotted
+   underline that opens its tooltip, coloured only off "Typical" */
+main.ath-page.rc .flag.cw { background: none; color: #374151; font-weight: 500; font-size: .88rem; padding: 0;
+  border-radius: 0; border-bottom: 1px dotted #9ca3af; white-space: nowrap; --tip: #374151; }
+main.ath-page.rc .flag.cw--fast { color: #1f6f3f; }
+main.ath-page.rc .flag.cw--hard { color: #92400e; }
+main.ath-page.rc .flag.cw--very-hard { color: #9a1c1c; font-weight: 600; }
 /* the tables and the side cards start level */
 main.ath-page.rc .rc-tbar { flex-wrap: nowrap; }
 main.ath-page.rc .rc-tbar .seg-btn, main.ath-page.rc .rc-tbar-end .scale-toggle > * { white-space: nowrap; }
@@ -770,6 +797,15 @@ main.ath-page.rc .tf-dist-h { font-size: 1rem; margin: 1.4rem 0 .2rem; }
   /* a season table scrolls inside its season block, never the page */
   main.ath-page.rc .season { overflow-x: auto; }
   main.ath-page.rc .season table { min-width: 640px; }
+  /* B on a phone: Follow stays at the name's right (follow.js stacks it
+     under the name elsewhere); the rating takes the strip's first row, the
+     other three share the second */
+  main.ath-page.rc .rc-namerow { flex-direction: row; align-items: flex-start; gap: .4rem .8rem; }
+  main.ath-page.rc .rc-namerow .rc-follow-box { align-items: flex-end; text-align: right; margin: .3rem 0 0; max-width: 45%; }
+  main.ath-page.rc .rc-follow { padding: .25rem .65rem; font-size: .85rem; }
+  main.ath-page.rc .stat-strip.ath-ss { grid-template-columns: 1.5fr .8fr 1fr; gap: .8rem .9rem; }
+  main.ath-page.rc .stat-strip.ath-ss > div:first-child { grid-column: 1 / -1; }
+  main.ath-page.rc .ath-act { font-size: .8rem; padding: .25rem .55rem; }
 }
 /* runners per team (owner, 2026-10-10): a number box in the field's head */
 main.rc.pred-page .per-team { display: inline-flex; align-items: center; gap: .4rem;

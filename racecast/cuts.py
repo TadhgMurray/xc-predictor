@@ -904,7 +904,8 @@ def lineFor(season, data, current_year):
             ln = sc["latest"]["lines"].get("advance")
             if ln:
                 s = sc["latest"]
-                rungs.append({"what": f"mark to advance from {sc['label']}",
+                rungs.append({"key": "advance",
+                              "what": f"mark to advance from {sc['label']}",
                               "short": f"{sc['label']} advancing",
                               "mark": ln["mark"], "year": s["year"],
                               "where": "section", "where_label": sc["label"],
@@ -921,7 +922,8 @@ def lineFor(season, data, current_year):
     for key in ("qualify", "top", "podium"):
         ln = latest["lines"].get(key)
         if ln:
-            rungs.append({"what": f"{words[key]}", "short": words[key],
+            rungs.append({"key": key,
+                          "what": f"{words[key]}", "short": words[key],
                           "mark": ln["mark"], "year": latest["year"],
                           "where": "state"})
     if not rungs:
@@ -950,7 +952,72 @@ def lineFor(season, data, current_year):
     #   little to a parent; a rating is inverse to time, so 1.6% of the
     #   rating is about 1.6% of the race -- fifteen seconds over 5K at 16:00.
     out["gap_pct"] = round(100.0 * out["gap"] / rating, 1) if rating else None
+    out.update(plainWords(out["rung"], label, current_year))
     return out
+
+
+# ★ THE LINE IN PLAIN ENGLISH (owner, 2026-10-10, header redesign B): "6.8
+#   points above the top-8 mark (OR Class 6A, 117.8)" asked a parent to know
+#   what a mark and a point are. The page now says what the athlete is fast
+#   enough FOR, or how far short of it, in words and seconds:
+#     above  "Fast enough for the OR Class 6A state podium -- last year's
+#             top 8 needed 117.8 (about a 15:40 5K on a track); Owen is at
+#             124.6."
+#     below  "About 2.1 points (≈ 12 s over 5K) short of the OR Class 6A
+#             state podium mark: last year's top 8 needed 126.7 (...); ..."
+#   The template assembles the sentence (athlete.html); these are its nouns.
+#   ! "needed" is the mark as this file's header defines it -- nine in ten
+#     of that group had at least this season rating (MARK_Q) -- and the Past
+#     marks link beside the line shows the slowest and the median too.
+#   The clocks are not put on here: stampClocks does, through conversions.
+_PLAIN = {
+    # key: (fast enough ..., the ... mark, who needed it)
+    "advance": ("to advance from {sec}", "{sec} advancing mark", "advancers"),
+    "qualify": ("to make the {div} state meet", "{div} state qualifying mark",
+                "state qualifiers"),
+    "top": ("for the {div} state top 25", "{div} state top-25 mark", "top 25"),
+    "podium": ("for the {div} state podium", "{div} state podium mark",
+               "top 8"),
+}
+
+
+def plainWords(rung, label, current_year):
+    """{'goal', 'goal_mark', 'who'} for one rung: 'for the OR Class 6A state
+    podium', 'the OR Class 6A state podium mark', "last year's top 8". Empty
+    for a rung without a key (the template keeps the old words then)."""
+    p = _PLAIN.get((rung or {}).get("key"))
+    if not p:
+        return {}
+    names = {"sec": rung.get("where_label") or "the section", "div": label}
+    return {"goal": p[0].format(**names),
+            "goal_mark": "the " + p[1].format(**names),
+            "who": f"{_whose(rung.get('year'), current_year)} {p[2]}"}
+
+
+def stampClocks(line, seconds=None):
+    """The line's mark as a track 5K (line['mark_time'], '15:40') and the gap
+    as seconds over 5K (line['gap_secs']) -- both through
+    conversions.ratingSeconds at FIVE_K_M on a typical track, the maths of
+    the header's own "≈ 15:02 5K on a track" (conversions.ratingClock /
+    track5k), never a typed-in seconds-per-point. `seconds(rating, pool)`
+    is injectable for tests. A failed conversion leaves the field None and
+    the sentence drops that bracket."""
+    from season_floor import clockFor
+    if seconds is None:
+        import conversions as Cv
+
+        def seconds(r, pool):
+            return Cv.ratingSeconds(r, pool, "TF", Cv.FIVE_K_M)
+    pool = line.get("pool")
+    try:
+        t_mark = seconds(line.get("mark"), pool)
+        t_me = seconds(line.get("rating"), pool)
+    except Exception:                                   # noqa: BLE001
+        t_mark = t_me = None
+    line["mark_time"] = clockFor(t_mark) if t_mark else None
+    line["gap_secs"] = (int(round(abs(t_me - t_mark)))
+                        if t_mark and t_me else None)
+    return line
 
 
 # ------------------------------------------------------------------ #
@@ -1139,6 +1206,7 @@ def athleteLine(cur, person_id):
         line = lineFor(season, data, year)
         if line:
             line["times"] = _lineTimes(cur, person_id, year, line, data)
+            stampClocks(line)
             line["conv_href"] = f"/conversions?athlete={int(person_id)}"
         return line
     except Exception:                                   # noqa: BLE001
