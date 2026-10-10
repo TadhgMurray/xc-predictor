@@ -1,0 +1,98 @@
+{# =====================================================================
+  recaps.html -- the week's recaps (meet_recap.weekRecaps, owner
+  2026-10-10): /recaps?week=YYYY-MM-DD[&state=XX]
+
+  One row a meet whose forecast we stored, Monday to Sunday: its races
+  scored, winners picked, median miss and top ten named; the week's
+  numbers on top. ! The week's numbers leave out fields under the
+  backtest's floor; each meet's own row counts every race it scored.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set s = data.summary %}
+{% set where = (" in " ~ state_name) if state else "" %}
+{% set meta_title = "How our forecasts did" ~ where ~ ", week of " ~ data.label %}
+{% set meta_description = "Every cross country meet we forecast" ~ where ~ " the week of " ~ data.label
+   ~ ", scored against the results: winners picked, the median miss and the top ten named." %}
+{% set meta_path = "/recaps?week=" ~ data.week.isoformat() ~ ("&state=" ~ state if state else "") %}
+{% set meta_crumbs = [("Meets", "/meets"), ("Recaps", none)] %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('previews.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+{% macro qs(week=data.week.isoformat(), st=state) -%}
+/recaps?week={{ week }}{% if st %}&amp;state={{ st }}{% endif %}
+{%- endmacro %}
+<main class="page-wide rc rp-page">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  <div>
+    <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country</span> <span class="pv-tag">How we did</span></div>
+    <h1>Our forecasts{{ where }}, {{ data.label }}</h1>
+    <div class="rc-meta">
+      <a href="{{ qs(week=prev_week) }}">← Week before</a>
+      {% if next_week %} · <a href="{{ qs(week=next_week) }}">Week after →</a>{% endif %}
+      · <form class="rp-state" method="get" action="/recaps">
+          <input type="hidden" name="week" value="{{ data.week.isoformat() }}">
+          <label for="rp-st">State</label>
+          <select id="rp-st" name="state" onchange="this.form.submit()">
+            <option value="">All states</option>
+            {% for code, name in states %}<option value="{{ code }}"{{ ' selected' if code == state }}>{{ name }}</option>{% endfor %}
+          </select>
+          <noscript><button type="submit">Go</button></noscript>
+        </form>
+    </div>
+    {% if s %}
+    <div class="rc-facts">
+      <span>Races <b>{{ "{:,}".format(s.races) }}</b></span>
+      {% if s.median_pct is not none %}<span>Median miss <b>{{ "%.1f"|format(s.median_pct) }}%</b></span>{% endif %}
+      <span>Winner picked <b>{{ "%.0f"|format(s.picked_pct) }}%</b></span>
+      {% if s.top_n %}<span>Top {{ top_n }} named <b>{{ "%.0f"|format(100.0 * s.top_hits / s.top_n) }}%</b></span>{% endif %}
+      {% if s.team_races %}<span>Team winner picked <b>{{ "%.0f"|format(100.0 * s.team_picked / s.team_races) }}%</b></span>{% endif %}
+    </div>
+    {% endif %}
+    <p class="pv-basis">Every forecast here was saved before its meet and scored against the posted results.
+      The week's numbers count races with at least {{ min_field }} finishers{% if s and s.small %}
+      ({{ s.small }} smaller race{{ "" if s.small == 1 else "s" }} left out){% endif %}; the median miss is over
+      every runner we predicted who finished.</p>
+  </div>
+</div></header>
+
+<div class="rc-w">
+  {% if data.meets %}
+  <div class="table-scroll">
+  <table class="rc-table rp-week">
+    <thead><tr><th>Meet</th><th class="rc-wide">Date</th><th class="n">Races</th><th class="n">Winners</th>
+      <th class="n">Median miss</th><th class="n">Top {{ top_n }}</th></tr></thead>
+    <tbody>
+    {% for m in data.meets %}{% set ms = m.summary %}
+    <tr><td class="nm"><a href="{{ m.href }}">{{ m.name }}</a>
+        <span class="rc-subline">{{ m.date|mdy }}{% if m.venue %} · {{ m.venue }}{% endif %}{% if m.state %} · {{ m.state }}{% endif %}</span></td>
+      <td class="rc-wide">{{ m.date|mdy }}</td>
+      <td class="n">{{ m.n_scored }}{% if m.n_scored != m.races %} <span class="meta">of {{ m.races }}</span>{% endif %}</td>
+      {% if ms %}
+      <td class="n">{{ ms.picked }} of {{ ms.races }}</td>
+      <td class="n">{{ "%.1f"|format(ms.median_pct) ~ "%" if ms.median_pct is not none else "-" }}</td>
+      <td class="n">{{ ms.top_hits }} of {{ ms.top_n }}</td>
+      {% else %}
+      <td class="n meta" colspan="3">{{ "results not posted yet" if not m.n_scored else "no predicted runner finished" }}</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="meta rp-empty">No forecasts were stored for meets{{ where }} this week. Forecasts are saved for the
+    posted meets of the coming week; the first scored week appears here after its meets run.</p>
+  {% endif %}
+</div>
+</main>
+</body>
+</html>

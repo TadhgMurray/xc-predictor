@@ -1,0 +1,184 @@
+{# =====================================================================
+  meet_recap.html -- how the stored forecast did (meet_recap.py, owner
+  2026-10-10): /meet/recap/xc/<id>[?src=tfrrs]
+
+  ★ THE PREVIEW'S SHAPE, AFTER THE GUN. Header: the meet, the day, and the
+    meet's numbers (winners picked, the median miss, the top ten named);
+    body: the races as tabs, each one's plain sentences, its biggest
+    surprises both ways, the teams that moved, and the forecast beside the
+    result runner by runner. race-page.js drives the tabs.
+
+  ! THE FORECAST IS THE STORED ONE. Nothing here is re-predicted; the note
+    under the header says when it was saved, and the side card says what
+    it was made with.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set s = rc.summary %}
+{% set meta_title = rc.name ~ ": how our forecast did" %}
+{% set meta_description = "Our forecast for " ~ rc.name
+   ~ (", " ~ (rc.date|mdy) if rc.date else "")
+   ~ ", against the results: "
+   ~ ((s.picked ~ " of " ~ s.races ~ " winners picked, median miss " ~ ("%.1f"|format(s.median_pct)) ~ "%") if s and s.median_pct is not none else "race by race")
+   ~ ", the biggest surprises and every runner's predicted and actual time." %}
+{% set meta_path = "/meet/recap/xc/" ~ rc.meet_id ~ ("?src=tfrrs" if src else "") %}
+{% set meta_image = site_origin ~ "/card/recap/xc/" ~ rc.meet_id ~ ".png" ~ ("?src=tfrrs" if src else "") %}
+{% set meta_image_alt = rc.name ~ ": winners picked, median miss and the top five against our forecast" %}
+{% set meta_crumbs = [("Recaps", "/recaps?week=" ~ rc.week), ("Recap", none)] %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('previews.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+{% macro sec(v) %}{{ v|proj_time if v is not none else "-" }}{% endmacro %}
+{% macro diff(v) %}{% if v is none %}-{% else %}<span class="{{ 'rp-up' if v < 0 else 'rp-down' if v > 0 else '' }}">{{ "%+.1f"|format(v) }}%</span>{% endif %}{% endmacro %}
+{% macro who(r) %}<a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a>{% if r.school %}<span class="rp-sub">{{ r.school }}</span>{% endif %}{% endmacro %}
+<main class="page-wide rc rp-page">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  <div>
+    <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country</span> <span class="pv-tag">How we did</span></div>
+    <h1>{{ rc.name }}</h1>
+    <div class="rc-meta">
+      {{ rc.date|mdy }}
+      {% if rc.venue %} · <a href="/course/{{ rc.venue|urlencode }}">{{ rc.venue }}</a>{% endif %}
+      {% if rc.state %} · {{ rc.state }}{% endif %}
+      · <a href="/meet/xc/{{ rc.meet_id }}">Results</a>
+      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ rc.name }}: how our forecast did"
+            data-share-url="{{ site_origin }}{{ meta_path }}" title="Share this recap; the card is the meet's numbers">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <span>Share</span></button>
+    </div>
+    {% if s %}
+    <div class="rc-facts">
+      <span>Winners picked <b>{{ s.picked }} of {{ s.races }}</b></span>
+      {% if s.median_pct is not none %}<span>Median miss <b>{{ "%.1f"|format(s.median_pct) }}%</b></span>{% endif %}
+      <span>Top {{ top_n }} named <b>{{ s.top_hits }} of {{ s.top_n }}</b></span>
+      {% if s.team_races %}<span>Team winners picked <b>{{ s.team_picked }} of {{ s.team_races }}</b></span>{% endif %}
+    </div>
+    {% endif %}
+    <p class="pv-basis">This is the forecast we published before the meet, saved {{ rc.made_on|mdy }} and not changed
+      after{% if rc.edition %}: the field was the teams at <a href="/meet/xc/{{ rc.edition.meet_id }}{% if src %}?src=tfrrs{% endif %}">the last edition</a>
+      ({{ rc.edition.date|mdy }}), each with that week's top seven by rating{% endif %}. Each race below is that
+      forecast against the posted results.{% if not rc.n_scored %} No results are posted for these races yet.{% endif %}</p>
+  </div>
+</div></header>
+
+<div class="rc-w rc-grid">
+<div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist" aria-label="Races">
+      {% for r in rc.races %}
+      {% set lw = (r.label or "")|lower %}
+      <a class="seg-btn{{ ' is-on' if loop.first }}" href="#race-{{ r.div_id }}" data-tab="race-{{ r.div_id }}">{{ r.label or "Race" }}{% if r.gender and not ('boy' in lw or 'girl' in lw or 'men' in lw) %} · {{ "Boys" if r.gender == "M" else "Girls" }}{% endif %}{% if r.recap %}<span class="n">{{ r.recap.top_hits }}/{{ r.recap.top_n }}</span>{% endif %}</a>
+      {% endfor %}
+    </nav>
+  </div>
+
+  {% for r in rc.races %}{% set x = r.recap %}
+  <section class="rc-panel rp-race" data-panel="race-{{ r.div_id }}" id="race-{{ r.div_id }}">
+    {% if not x %}
+    <p class="pv-status">No results are posted for this race yet. The forecast is kept; this page scores it when they are.</p>
+    {% else %}
+    <ul class="rp-words">{% for w in r.words %}<li>{{ w }}</li>{% endfor %}</ul>
+    <p class="rp-count">{{ x.n_finish }} finishers; we predicted {{ x.n_pred }}, of whom {{ x.n_matched }} finished
+      {%- if x.n_dnr %} and {{ x.n_dnr }} did not run or did not finish{% endif %}.
+      {% if r.small %}A field under {{ min_field }} is shown here but not counted in the week's numbers.{% endif %}</p>
+
+    {% if x.beat or x.short %}
+    <div class="rp-pair">
+      <div>
+        <h2 class="pv-h">Beat our forecast the most</h2>
+        {% if x.beat %}<table class="rc-table rp-sur">
+          <thead><tr><th>Athlete</th><th class="n">Had</th><th class="n">Ran</th><th class="n">Diff</th></tr></thead>
+          <tbody>{% for p in x.beat %}<tr><td class="nm">{{ who(p) }}</td>
+            <td class="n">{{ sec(p.pred_seconds) }}<span class="rp-sub">{{ p.pred_place|ordinal }}</span></td>
+            <td class="n">{{ p.act_seconds|clock }}<span class="rp-sub">{{ p.act_place|ordinal }}</span></td>
+            <td class="n">{{ diff(p.diff_pct) }}</td></tr>{% endfor %}</tbody>
+        </table>{% else %}<p class="meta">Nobody ran faster than we had them.</p>{% endif %}
+      </div>
+      <div>
+        <h2 class="pv-h">Fell short of it the most</h2>
+        {% if x.short %}<table class="rc-table rp-sur">
+          <thead><tr><th>Athlete</th><th class="n">Had</th><th class="n">Ran</th><th class="n">Diff</th></tr></thead>
+          <tbody>{% for p in x.short %}<tr><td class="nm">{{ who(p) }}</td>
+            <td class="n">{{ sec(p.pred_seconds) }}<span class="rp-sub">{{ p.pred_place|ordinal }}</span></td>
+            <td class="n">{{ p.act_seconds|clock }}<span class="rp-sub">{{ p.act_place|ordinal }}</span></td>
+            <td class="n">{{ diff(p.diff_pct) }}</td></tr>{% endfor %}</tbody>
+        </table>{% else %}<p class="meta">Nobody ran slower than we had them.</p>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if x.teams_up or x.teams_down %}
+    <div class="rp-pair">
+      <div>
+        <h2 class="pv-h">Teams that placed higher than we had them</h2>
+        {% if x.teams_up %}<table class="rc-table rp-sur">
+          <thead><tr><th>Team</th><th class="n">Had</th><th class="n">Placed</th></tr></thead>
+          <tbody>{% for t in x.teams_up %}<tr><td class="nm">{% if t.href %}<a href="{{ t.href }}">{{ t.team }}</a>{% else %}{{ t.team }}{% endif %}</td>
+            <td class="n">{{ t.pred_place|ordinal }}<span class="rp-sub">{{ t.pred_score }} pts</span></td>
+            <td class="n">{{ t.act_place|ordinal }}<span class="rp-sub">{{ t.act_score }} pts</span></td></tr>{% endfor %}</tbody>
+        </table>{% else %}<p class="meta">No team placed higher than we had it.</p>{% endif %}
+      </div>
+      <div>
+        <h2 class="pv-h">Teams that placed lower</h2>
+        {% if x.teams_down %}<table class="rc-table rp-sur">
+          <thead><tr><th>Team</th><th class="n">Had</th><th class="n">Placed</th></tr></thead>
+          <tbody>{% for t in x.teams_down %}<tr><td class="nm">{% if t.href %}<a href="{{ t.href }}">{{ t.team }}</a>{% else %}{{ t.team }}{% endif %}</td>
+            <td class="n">{{ t.pred_place|ordinal }}<span class="rp-sub">{{ t.pred_score }} pts</span></td>
+            <td class="n">{{ t.act_place|ordinal }}<span class="rp-sub">{{ t.act_score }} pts</span></td></tr>{% endfor %}</tbody>
+        </table>{% else %}<p class="meta">No team placed lower than we had it.</p>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if x.outside %}
+    <h2 class="pv-h">In the top {{ x.top_n }}, not in our field</h2>
+    <p class="rp-out">{% for o in x.outside %}<a href="/athlete/{{ o.person_id }}">{{ o.name }}</a>{% if o.school %} ({{ o.school }}){% endif %}, {{ o.place|ordinal }} in {{ o.seconds|clock }}{% if not loop.last %} · {% endif %}{% endfor %}.
+      Their teams did not run the last edition, so the forecast had no place for them.</p>
+    {% endif %}
+
+    <h2 class="pv-h">Forecast against the result <small>in predicted order</small></h2>
+    {% macro row(p) %}<tr><td class="pl">{{ p.pred_place or "-" }}</td><td class="nm">{{ who(p) }}</td>
+      <td class="n">{{ sec(p.pred_seconds) }}</td>
+      <td class="n">{{ p.act_place or "-" }}</td>
+      <td class="n">{% if p.act_seconds is not none %}{{ p.act_seconds|clock }}{% else %}<span class="meta">did not run</span>{% endif %}</td>
+      <td class="n">{{ diff(p.diff_pct) }}</td></tr>{% endmacro %}
+    {% set head %}<thead><tr><th>Had</th><th>Athlete</th><th class="n">Predicted</th><th class="n">Placed</th><th class="n">Ran</th><th class="n">Diff</th></tr></thead>{% endset %}
+    <div class="table-scroll"><table class="rc-table rp-tbl">{{ head }}
+      <tbody>{% for p in x.rows[:shown] %}{{ row(p) }}{% endfor %}</tbody></table></div>
+    {% if x.rows|length > shown %}
+    <details class="rp-more"><summary>Every predicted runner ({{ x.rows|length }})</summary>
+      <div class="table-scroll"><table class="rc-table rp-tbl">{{ head }}
+        <tbody>{% for p in x.rows[shown:] %}{{ row(p) }}{% endfor %}</tbody></table></div>
+    </details>
+    {% endif %}
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+
+<aside class="rc-side">
+  <h2>How this is scored</h2>
+  <p class="rc-tip"><b>Median miss</b>: half the runners we predicted finished within this much of our time
+    (the gap as a share of their real time). <b>Top {{ top_n }} named</b>: how many of the real top {{ top_n }} were
+    in our top {{ top_n }}. <b>Winner picked</b>: our first place won. Runners who did not run are left out of the
+    miss; finishers we did not predict are listed, not hidden.</p>
+  <h2 class="pv-side-h">The forecast</h2>
+  <p class="rc-tip">Saved {{ rc.made_on|mdy }}, before the meet's day, and never changed after.
+    {% set r0 = rc.races[0] %}{% if r0.model_basis %}Times on the "{{ r0.model_basis }}" basis{% if r0.model_version %}, model {{ r0.model_version }}{% endif %}.{% endif %}
+    Team scores use five scorers and two displacers, as the meet scores them.</p>
+  <a class="rc-more" href="/recaps?week={{ rc.week }}{% if rc.state %}&state={{ rc.state }}{% endif %}">Every recap that week{% if rc.state %} in {{ rc.state }}{% endif %} →</a>
+</aside>
+</div>
+</main>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
+</body>
+</html>

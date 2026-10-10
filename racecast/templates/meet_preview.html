@@ -63,7 +63,9 @@
     <p class="pv-basis">{% if pv.edition %}No entries are posted, so the field is the teams that ran
       <a href="/meet/xc/{{ pv.edition.meet_id }}{% if src %}?src=tfrrs{% endif %}">the last edition</a>
       ({{ pv.edition.date|mdy }}), each with this season's top seven by rating.{% else %}No entries are posted and no earlier
-      running of this meet is on file, so there is no field to project yet.{% endif %}</p>
+      running of this meet is on file, so there is no field to project yet.{% endif %}
+      {%- if pv.frozen %} This forecast was saved {{ pv.frozen.made_on|mdy }} and will not change before the meet;
+      after it, the <a href="/recaps">recap</a> scores it against the results.{% endif %}</p>
   </div>
 </div></header>
 
@@ -89,7 +91,9 @@
       </table>
       <h2 class="pv-h">Projected top runners <small class="pv-nf"></small></h2>
       <table class="rc-table pv-runners">
-        <thead><tr><th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th><th class="n">Time</th></tr></thead>
+        {# ★ THE 5K COLUMN (owner, 2026-10-10): the track 5K each runner's rating is worth;
+           meet-preview.js fills the header from the race's pools (fk_label) #}
+        <thead><tr><th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th><th class="n">Time</th><th class="n fk fk-sm pv-fk" title="The track 5K this rating is worth">5K</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>

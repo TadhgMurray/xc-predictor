@@ -58,6 +58,8 @@
       <span>Races <b>{{ divisions|length }}</b></span>
       <span>Finishers <b>{{ "{:,}".format(n_run) }}</b></span>
       {% if compiled %}<span>Compiled <b>{{ compiled|length }}</b></span>{% endif %}
+      {# ★ HOW OUR FORECAST DID (2026-10-10): when one was stored before the meet #}
+      {% set rh = recap_href(header.meet_id, recap_src) %}{% if rh %}<span>Our forecast <b><a class="rp-link" href="{{ rh }}">How we did →</a></b></span>{% endif %}
     </div>
   </div>
 </div></header>

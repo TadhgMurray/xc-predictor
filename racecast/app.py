@@ -5030,7 +5030,7 @@ def meet_xc(meet_id):
                            school=school, school_divs=school_divs,
 
                            compiled=compiled_index, meet_date=meet_date,
-                           winners=winners,
+                           winners=winners, recap_src=src,
                            alt_idx=alt_idx, other_sources=other_sources)
 
 
@@ -11936,7 +11936,10 @@ def about_page():
     except Exception as exc:                                    # noqa: BLE001
         app.logger.warning("about: accuracy unavailable (%s)", exc)
         accuracy = None
-    return render_template("about.html", meta=meta, accuracy=accuracy)
+    # ★ THE WEEK'S FORECASTS AGAINST THE RESULTS (2026-10-10, meet_recap)
+    from accuracy import weeklyForecastLine
+    weekly = weeklyForecastLine(getConn)
+    return render_template("about.html", meta=meta, accuracy=accuracy, weekly=weekly)
 
 
 # ------------------------------------------------------------------ #

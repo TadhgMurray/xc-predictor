@@ -1642,3 +1642,71 @@ def meetTfTeams(cur, meet_id, src=None):
     _n, name, teams = best
     pack = lambda ts: [{"school": schoolLabel(t["school"]), "points": t.get("display") or t.get("points")} for t in ts[:7]]
     return {"division": name if name != "All divisions" else "", "boys": pack(teams["M"]), "girls": pack(teams["F"])}
+
+
+# ------------------------------------------------------- the recap card
+# ★ HOW OUR FORECAST DID (owner, 2026-10-10, the weekly "how we did" loop).
+#   The course card's shape: three numbers across the top -- winners picked,
+#   the median miss, the top ten named -- and the lead race's real top five
+#   as rows, each with the place the stored forecast had them at. Read from
+#   meet_recap.meetRecap, the page's own data, so card and page agree.
+RECAP_ROWS = 5          # the prediction card's top five, the other way round
+
+
+def recapCardData(cur, meet_id, source=None):
+    import meet_recap as R
+    from school_identity import schoolLabel
+    rc = R.meetRecap(cur, meet_id, source)
+    if not rc or not rc.get("n_scored"):
+        return None
+    races = [r["recap"] for r in rc["races"] if r["recap"]]
+    lead = next(r for r in rc["races"] if r["recap"])
+    fin = lead["recap"]
+    # ★ THE SAME SUMS AS THE PAGE'S HEADER: every scored race, small or not
+    s = rc.get("summary")
+    if not s:
+        return None
+    stats = [("WINNERS PICKED", f"{s['picked']} of {s['races']}"),
+             ("MEDIAN MISS", R.pct(s.get("median_pct"))),
+             (f"TOP {R.TOP_N} NAMED", f"{s['top_hits']} of {s['top_n']}")]
+    # the real top five in finish order: the predicted runners who finished
+    # there, and anyone outside the projected field who did
+    top = [(r["act_place"], r["name"], r["school"], r["act_seconds"], f"had {r['pred_place']}")
+           for r in fin["rows"] if r["act_place"] and r["act_place"] <= RECAP_ROWS]
+    top += [(o["place"], o["name"], o["school"], o["seconds"], "not in field")
+            for o in fin["outside"] if o["place"] <= RECAP_ROWS]
+    rows = [{"name": (n or "Unknown").strip(), "school": schoolLabel(sc) if sc else "",
+             "time": _clock(sec), "had": had} for _p, n, sc, sec, had in sorted(top)]
+    bits = ["How our forecast did", _when(rc["date"]) if rc.get("date") else "", rc.get("venue") or ""]
+    return {"title": rc.get("name") or "Meet recap", "sub": " · ".join(b for b in bits if b),
+            "stats": stats, "rows": rows, "lead": lead.get("label") or "Lead race",
+            "n_races": len(races)}
+
+
+def renderRecapCard(d):
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (CARD_W, CARD_H), DARK)
+    dr = ImageDraw.Draw(img)
+    M = 64
+    y = _frame(d["title"], d["sub"], dr, img)
+    xs = (M, M + 340, M + 640)
+    for x, (lab, val) in zip(xs, d["stats"]):
+        _bigStat(dr, x, y - 10, lab, val)
+    y += 106
+    _colLabel(dr, M, y - 30, f"{d['lead'].upper()}: THE TOP {RECAP_ROWS}")
+    _colLabel(dr, CARD_W - M, y - 30, "WE HAD", "r")
+    cols = [{"key": "name", "x": M + 52, "bold": True, "w": 360},
+            {"key": "school", "x": M + 430, "dsize": -6, "fill": DARK_MUTED, "w": 300},
+            {"key": "time", "x": CARD_W - M - 200, "bold": True, "align": "r", "w": 140},
+            {"key": "had", "x": CARD_W - M, "bold": True, "fill": GOLD, "align": "r", "w": 180}]
+    _table(dr, y, d["rows"], cols, CARD_H - 36, max_row=44)
+    return _png(img)
+
+
+def cachedRecapCard(cur, meet_id, source=None):
+    src = "tfrrs" if source == "tfrrs" else "anet"
+
+    def build():
+        d = recapCardData(cur, meet_id, source)
+        return renderRecapCard(d) if d else None
+    return _cached(f"recap-xc-{src}-{int(meet_id)}.png", build)

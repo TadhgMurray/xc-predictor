@@ -115,8 +115,18 @@
     </li>
   </ol>
 
-  {% if accuracy %}
+  {% if accuracy or weekly %}
   <h2 class="rc-sec" id="accuracy">How accurate is it</h2>
+  {% if weekly %}
+  {# ★ THE WEEK'S PUBLISHED FORECASTS, SCORED (2026-10-10, accuracy.weeklyForecastLine) #}
+  <p class="acc-week">
+    Before each posted cross country meet we save the forecast, then score it
+    against the results. {{ weekly.text }}
+    <a href="{{ weekly.href }}">Every meet that week →</a>
+  </p>
+  {% endif %}
+  {% endif %}
+  {% if accuracy %}
   <p>
     Every rebuild is scored on results it was not allowed to see. These are
     the latest run's numbers{% if accuracy.as_of %}
@@ -223,7 +233,7 @@
   <table class="rc-tscores rc-tscores-plain">
     <tbody>
     {% set toc = [("rating", "What a rating is"), ("how", "How a result becomes a rating")]
-       + ([("accuracy", "How accurate is it")] if accuracy else [])
+       + ([("accuracy", "How accurate is it")] if accuracy or weekly else [])
        + [("limits", "Where it is still wrong"), ("data", "The data"),
           ("glossary", "Glossary"), ("report", "Found something wrong?")] %}
     {% for id, label in toc %}
