@@ -461,6 +461,8 @@
               data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}" title="Share this page; the preview is the athlete's card">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
     </nav>
+    {# ★ SUGGEST A FIX (2026-10-10, fixes.py): shown only to the claimant #}
+    {% include "_suggest_fix.html" %}
   </div>
 </div></header>
 {# ★ NEXT RACE (2026-10-10, upcoming_preview.py): filled client-side from a cached API #}

@@ -92,6 +92,8 @@
       {% endif %}
       {# ★ THE TEAM'S LIKELY MEETS AS A CALENDAR (owner, 2026-10-10): team_meets.py #}
       <a href="/school/{{ school|urlencode }}/meets.ics?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}{% if level_chips and level %}&amp;level={{ level }}{% endif %}" title="Subscribe in your calendar app: this season's meets this team ran last time, posted again">Meet calendar (.ics)</a>
+      {# ★ ADD MISSING RESULTS (2026-10-10, uploads.py): a meet this team ran that is not here #}
+      <a href="/account/uploads/new?sport={{ sport }}&amp;school={{ school|urlencode }}" title="A meet this team ran that is not on Racecast: upload the results file">Add missing results</a>
       <button type="button" class="share-btn rc-share-link" data-share-title="{{ school }} on Racecast"
             data-share-url="{{ site_origin }}{{ meta_path }}" title="Share this page; the preview is its card">
       <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
