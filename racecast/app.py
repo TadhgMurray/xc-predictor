@@ -9703,6 +9703,22 @@ MAX_FIELD_TEAMS = 400
 MAX_FIELD_RUNNERS = 3000
 
 
+def _perTeam(args):
+    """?per_team=10 / ?per_team=all -> how many of each team's squad run
+    (predict.squadCap); None (absent, or 7 or fewer) is the rulebook seven.
+    ! ONLY ABOVE SEVEN: the per-school cap below seven already follows what
+      each school brought, and a smaller number would field no team."""
+    from predict import MAX_PER_TEAM, PER_TEAM_ALL
+    raw = (args.get("per_team") or "").strip().lower()
+    if raw == "all":
+        return PER_TEAM_ALL
+    try:
+        n = int(raw)
+    except ValueError:
+        return None
+    return min(n, PER_TEAM_ALL) if n > MAX_PER_TEAM else None
+
+
 def _target(args):
     """The target race, from the request. See predict.py for the three modes.
 
@@ -10575,22 +10591,6 @@ def api_predict_team():
     resp.headers["Server-Timing"] = ", ".join(
         f"{n};dur={ms:.0f}" for n, ms in _predict.stagesRows())
     return resp
-
-
-def _perTeam(args):
-    """?per_team=10 / ?per_team=all -> how many of each team's squad run
-    (predict.squadCap); None (absent, or 7 or fewer) is the rulebook seven.
-    ! ONLY ABOVE SEVEN: the per-school cap below seven already follows what
-      each school brought, and a smaller number would field no team."""
-    from predict import MAX_PER_TEAM, PER_TEAM_ALL
-    raw = (args.get("per_team") or "").strip().lower()
-    if raw == "all":
-        return PER_TEAM_ALL
-    try:
-        n = int(raw)
-    except ValueError:
-        return None
-    return min(n, PER_TEAM_ALL) if n > MAX_PER_TEAM else None
 
 
 # ! THE SQUAD SIZES COME FROM predict.py, which owns the scoring rules; a
