@@ -1,0 +1,275 @@
+{# =====================================================================
+  ncaa.html -- the NCAA championships projection (ncaa_pages.py, owner
+  approved 2026-10-10). /ncaa lists the six boards; /ncaa/<div>/<gender>
+  draws one stored projection (build_ncaa_projection.py, step 11c):
+    Regions      each region's projected finish, automatic qualifiers,
+                 the individuals
+    At-large     the selection, berth by berth, and the wins it counted
+    Nationals    the projected field and each team's odds
+    How it works the rules, their sources, and what is modeled
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% if division %}
+{% set board_words = "NCAA " ~ labels[division] ~ " " ~ gender_word ~ "'s cross country" %}
+{% set meta_title = board_words ~ ": projected nationals field" %}
+{% set meta_description = "Projected regional finishes, automatic qualifiers, the at-large board and each team's odds for the " ~ board_words ~ " championships, updated weekly. Unofficial." %}
+{% set meta_path = "/ncaa/" ~ division ~ "/" ~ gender %}
+{% if d %}{% set meta_image = site_origin ~ "/card/ncaa/" ~ division ~ "/" ~ gender ~ ".png" %}{% endif %}
+{% set meta_crumbs = [("NCAA projections", "/ncaa"), (labels[division] ~ " " ~ gender_word, none)] %}
+{% else %}
+{% set meta_title = "NCAA cross country: projected championships fields" %}
+{% set meta_description = "Who makes NCAA cross country nationals? Projected regional finishes, at-large bids and nationals odds for Divisions I, II and III, men and women, updated weekly. Unofficial." %}
+{% set meta_path = "/ncaa" %}
+{% set meta_crumbs = [("NCAA projections", none)] %}
+{% endif %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('pages2.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('previews.css') }}">
+<link rel="stylesheet" href="{{ static_v('ncaa.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+{% macro team(t, sub=true) -%}
+<a href="{{ t.href }}">{{ t.school }}</a>{% if sub %}<span class="p2-row-sub">{{ t.region or "region unknown" }}{% if t.conference %} · {{ t.conference|title }}{% endif %}</span>{% endif %}
+{%- endmacro %}
+{% macro status(t) -%}
+{% if t.proj == "auto" %}<span class="nc-st nc-st--auto">In · auto</span>
+{%- elif t.proj == "at-large" %}<span class="nc-st nc-st--al">In · at-large</span>
+{%- elif t.proj == "pushed" %}<span class="nc-st nc-st--al">In · pushed</span>
+{%- elif t.bubble %}<span class="nc-st nc-st--bub">Bubble</span>
+{%- else %}<span class="nc-st nc-st--out">Out</span>{% endif %}
+{%- endmacro %}
+{% macro pct(v) -%}
+{%- if v is none %}-{% elif v >= 99.5 %}&gt;99%{% elif v > 0 and v < 1 %}&lt;1%{% else %}{{ "%.0f"|format(v) }}%{% endif -%}
+{%- endmacro %}
+{% macro delta(v) -%}
+{%- if v is none %}<span class="p2-muted">new</span>{% elif v >= 0.5 %}<span class="p2-up">+{{ "%.0f"|format(v) }}</span>{% elif v <= -0.5 %}<span class="nc-down">{{ "%.0f"|format(v) }}</span>{% else %}<span class="p2-muted">0</span>{% endif -%}
+{%- endmacro %}
+<main class="page-wide p2-page rc nc-page">
+  <header class="rc-hd"><div class="rc-hgrid rc-hone"><div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--xc">NCAA cross country{% if division %} · {{ labels[division] }} · {{ gender_word }}{% endif %}</span> <span class="pv-tag">Projection</span></div>
+    <h1>{% if division %}{{ labels[division] }} {{ gender_word }}: who makes nationals{% else %}NCAA cross country: who makes nationals{% endif %}</h1>
+    {% if d %}
+    <div class="rc-meta">
+      Week of {{ d.week|mdy }} · results through {{ d.p.asof|mdy }}
+      · {{ "{:,}".format(d.p.draws) }} simulated regionals and nationals
+      · <span class="p2-muted">computed {{ d.computed_at|ago_words }}</span>
+      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ board_words }}: projected nationals field on Racecast"
+              data-share-url="{{ site_origin ~ meta_path }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+    </div>
+    {% endif %}
+  </div></div></header>
+
+  <p class="nc-disclaimer" role="note"><strong>Unofficial.</strong> A projection from season ratings and the
+    selection rules in the NCAA's championship manuals. The NCAA selects the field after the regionals; this
+    site is not affiliated with the NCAA.</p>
+
+  <nav class="p2-toggles" aria-label="Board">
+    <span class="p2-seg" role="group" aria-label="Division">
+      {% for dv in ("d1", "d2", "d3") %}<a href="/ncaa/{{ dv }}/{{ gender or 'men' }}" class="{{ 'is-on' if dv == division }}">{{ labels[dv]|replace("Division ", "D") }}</a>{% endfor %}
+    </span>
+    <span class="p2-seg" role="group" aria-label="Gender">
+      {% for g, w in (("men", "Men"), ("women", "Women")) %}<a href="/ncaa/{{ division or 'd1' }}/{{ g }}" class="{{ 'is-on' if g == gender }}">{{ w }}</a>{% endfor %}
+    </span>
+  </nav>
+
+  {% if not division %}
+  <div class="p2-divs">
+    {% for dv, dl, g, gw in boards %}
+    <div class="p2-div"><span class="p2-div-name">{{ dl }} {{ gw }}</span>
+      <span class="p2-div-n">{{ rules[dv].teams_total }} teams · {{ rules[dv].regions|length }} regions</span>
+      <span class="p2-div-go"><a href="/ncaa/{{ dv }}/{{ g }}">Open</a></span></div>
+    {% endfor %}
+  </div>
+  {% elif not d %}
+  <div class="p2-banner" role="note">This projection has not been computed yet. It is built once a week by the
+    pipeline; the first run will appear here.</div>
+  {% else %}
+  {% set R = d.p.rules %}
+  <section class="nc-lede">
+    <p class="rc-story">If the regionals were run today, <strong>{{ d.auto|length }}</strong> teams would qualify
+      automatically ({{ R.auto_per_region }} from each region) and <strong>{{ d.at_large|length + d.pushed|length }}</strong>
+      at large, for a field of {{ R.teams_total }}.
+      {% if d.rounds %}{% set last = d.rounds[-1] %}Last in: <a href="{{ last.pick.href }}">{{ last.pick.school }}</a>.{% endif %}
+      {% set first_out = d.teams|selectattr("bubble")|sort(attribute="p_qual", reverse=true)|list %}
+      {% if first_out %}First out: <a href="{{ first_out[0].href }}">{{ first_out[0].school }}</a>.{% endif %}
+      {% if d.prev_week %}
+        {% if d.moved_in %}New in the field since {{ d.prev_week|mdy }}: {% for t in d.moved_in %}<a href="{{ t.href }}">{{ t.school }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
+        {% if d.moved_out %}Dropped out: {% for t in d.moved_out %}<a href="{{ t.href }}">{{ t.school }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
+        {% if not d.moved_in and not d.moved_out %}The projected field is the same as the week of {{ d.prev_week|mdy }}.{% endif %}
+      {% endif %}
+    </p>
+    {% if rule.confidence != "manual" or R.dates_confidence %}
+    <p class="p2-banner">These {{ labels[division] }} rules come from the {{ R.source }}. The NCAA had not published
+      a {{ rule.season }}-{{ (rule.season + 1) % 100 }} edition we could find, so check the counts and dates against the current one.{% if R.dates_confidence %}
+      The regional and championship dates are worked out from the manual's date formula.{% endif %}</p>
+    {% endif %}
+  </section>
+
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#regions" data-tab="regions">Regions<span class="n">{{ d.regions|length }}</span></a>
+      <a class="seg-btn" href="#atlarge" data-tab="atlarge">At-large<span class="n">{{ d.at_large|length + d.pushed|length }}</span></a>
+      <a class="seg-btn" href="#nationals" data-tab="nationals">Nationals<span class="n">{{ d.field|length }}</span></a>
+      <a class="seg-btn" href="#how" data-tab="how">How selection works</a>
+    </nav>
+  </div>
+
+  {# ------------------------------------------------------------ regions #}
+  <section class="rc-panel" id="regions" data-panel="regions">
+    <p class="p2-note">Each region's teams in their projected order at the regional on {{ d.p.regional_date|mdy }}. The top
+      {{ R.auto_per_region }} qualify automatically. <em>Avg place</em> and the odds come from the simulated regionals;
+      <em>Wk</em> is the change in the chance to qualify since last week.</p>
+    <nav class="nc-jump" aria-label="Regions">{% for reg in d.regions %}<a href="#reg-{{ loop.index }}">{{ reg.name }}</a>{% endfor %}</nav>
+    {% for reg in d.regions %}
+    <h2 class="nc-h" id="reg-{{ loop.index }}">{{ reg.name }} <small>{{ reg.rows|length }} teams</small></h2>
+    {% if reg.rows %}
+    {% set live = reg.rows|selectattr("p_qual", "gt", 0)|list %}
+    {% set rest = reg.rows|rejectattr("p_qual", "gt", 0)|list %}
+    <table class="p2-tbl nc-tbl">
+      <thead><tr><th class="num">#</th><th>Team</th><th class="num p2-wide">Avg place</th><th class="num">Auto</th><th class="num">Qualify</th><th>Projected</th><th class="num p2-wide">Wk</th></tr></thead>
+      <tbody>{% for t in live %}<tr class="{{ 'nc-cut' if t.proj_place == R.auto_per_region }}">
+        <td class="num">{{ t.proj_place }}</td><td class="p2-team">{{ team(t, false) }}<span class="p2-row-sub">{{ t.conference|title if t.conference else "" }}<span class="p2-narrow"> · avg place {{ t.reg_place }}</span></span></td>
+        <td class="num p2-wide">{{ t.reg_place }}</td><td class="num">{{ pct(t.p_auto) }}</td><td class="num"><strong>{{ pct(t.p_qual) }}</strong></td>
+        <td>{{ status(t) }}</td><td class="num p2-wide">{{ delta(t.d_qual) }}</td>
+      </tr>{% endfor %}</tbody>
+    </table>
+    {% if rest %}<details class="nc-more"><summary>{{ rest|length }} more {{ "team" if rest|length == 1 else "teams" }} that did not qualify in any simulation</summary>
+      <p class="p2-note">{% for t in rest %}<a href="{{ t.href }}">{{ t.school }}</a> <span class="p2-muted">{{ t.proj_place }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</p></details>{% endif %}
+    {% else %}<p class="p2-note">No team placed in this region yet.</p>{% endif %}
+    {% if reg.individuals %}
+    <p class="nc-ind"><span class="nc-ind-h">Projected individual qualifiers</span>
+      {% for i in reg.individuals %}<a href="/athlete/{{ i.pid }}">{{ i.name }}</a> <span class="p2-muted">{{ i.team_row.school }}{% if i.kind == "at-large" %}, at-large{% endif %}</span>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+    {% endif %}
+    {% if reg.odds %}
+    <details class="nc-more"><summary>Individual odds in {{ reg.name }} ({{ reg.odds|length }} runners not on a qualifying team in some simulations)</summary>
+      <table class="p2-tbl nc-tbl"><thead><tr><th class="num">#</th><th>Runner</th><th class="num">Avg place</th><th class="num">Qualifies</th></tr></thead>
+      <tbody>{% for i in reg.odds %}<tr><td class="num">{{ loop.index }}</td><td><a href="/athlete/{{ i.pid }}">{{ i.name }}</a><span class="p2-row-sub">{{ i.team_row.school }}</span></td><td class="num">{{ i.place }}</td><td class="num">{{ pct(i.p_ind) }}</td></tr>{% endfor %}</tbody></table>
+    </details>
+    {% endif %}
+    {% endfor %}
+  </section>
+
+  {# ----------------------------------------------------------- at-large #}
+  <section class="rc-panel" id="atlarge" data-panel="atlarge">
+    <div class="nc-explain">
+      <h2 class="nc-h">How the {{ R.at_large_teams }} at-large teams are chosen</h2>
+      <ul>{% for n in rule.notes %}<li>{{ n }}</li>{% endfor %}</ul>
+      <p class="p2-note">Below is the selection run on the projected regional order, one berth at a time. Wins
+        count from races since {{ d.p.window[0]|mdy }} on courses of at least {{ "{:,}".format(d.p.min_distance|int) }} m
+        that have already been run, plus each team's projected wins at its regional{% if R.a_team_min_starters %}, and only
+        against a team that started {{ R.a_team_min_starters }} or more of its regional seven{% endif %}.
+        Races still to come will add wins.</p>
+    </div>
+    {% if d.rounds %}
+    <ol class="nc-rounds">
+      {% for rd in d.rounds %}
+      <li class="nc-round"><div class="nc-round-h"><span class="nc-berth">Berth {{ rd.n }}{% if rd.pushed %}-{{ rd.n + 1 }}{% endif %}</span>
+        {% if rd.pushed %}<a href="{{ rd.pushed.href }}">{{ rd.pushed.school }}</a> and {% endif %}<a href="{{ rd.pick.href }}"><strong>{{ rd.pick.school }}</strong></a>
+        <span class="p2-muted">{{ rd.pick.region }}</span></div>
+        <div class="nc-why">{{ rd.why }}</div>
+        <div class="nc-cands" aria-label="Under consideration">{% for t, pts, picked in rd.candidates %}<span class="nc-cand{{ ' is-pick' if picked }}">{{ t.school }} <b>{{ pts }}</b></span>{% endfor %}</div>
+      </li>
+      {% endfor %}
+    </ol>
+    <p class="p2-foot">The number beside each team is its wins over teams already in the field at that moment.</p>
+    {% endif %}
+    {% if d.wins %}
+    <h2 class="nc-h">The wins that count{% if rule.method == "kolas" %} (Kolas points){% endif %}</h2>
+    <table class="p2-tbl nc-tbl">
+      <thead><tr><th class="num">#</th><th>Team</th><th class="num">Season</th><th class="num p2-wide">Regional</th><th>Over</th></tr></thead>
+      <tbody>{% for w in d.wins %}<tr>
+        <td class="num">{{ loop.index }}</td><td class="p2-team">{{ team(w.team) }}</td>
+        <td class="num"><strong>{{ w.season }}</strong></td><td class="num p2-wide">{{ w.regional }}</td>
+        <td class="nc-over">{% for o, ns, nr in w.detail %}{{ o.school }}{% if ns > 1 %} ×{{ ns }}{% endif %}{% if nr %} <span class="p2-muted">(regional)</span>{% endif %}{% if not loop.last %}, {% endif %}{% else %}<span class="p2-muted">none yet</span>{% endfor %}</td>
+      </tr>{% endfor %}</tbody>
+    </table>
+    <p class="p2-foot">Wins over the projected field only: the {{ d.auto|length }} automatic qualifiers and the
+      at-large teams above. <em>Season</em> counts races already run; <em>Regional</em> the projected regional.</p>
+    {% endif %}
+  </section>
+
+  {# ---------------------------------------------------------- nationals #}
+  <section class="rc-panel" id="nationals" data-panel="nationals">
+    <p class="p2-note">The projected field for {{ d.p.nationals_date|mdy }}{% if R.nationals_site %} at the {{ R.nationals_site }}{% endif %},
+      ordered by the chance to win the team title. Each simulation runs the regionals, picks the field, and then
+      runs nationals with that field.</p>
+    <table class="p2-tbl nc-tbl">
+      <thead><tr><th class="num">#</th><th>Team</th><th class="p2-wide">Bid</th><th class="num">Win</th><th class="num">Top 3</th><th class="num p2-wide">Avg place</th><th class="num">Qualify</th></tr></thead>
+      <tbody>{% for t in d.field %}<tr>
+        <td class="num">{{ loop.index }}</td><td class="p2-team">{{ team(t) }}</td>
+        <td class="p2-wide">{{ status(t) }}</td>
+        <td class="num"><strong>{{ pct(t.p_win) }}</strong></td><td class="num">{{ pct(t.p_top3) }}</td>
+        <td class="num p2-wide">{{ t.nat_place if t.nat_place is not none else "-" }}</td><td class="num">{{ pct(t.p_qual) }}</td>
+      </tr>{% endfor %}</tbody>
+    </table>
+    {% if d.next_in %}
+    <h2 class="nc-h">Next in line</h2>
+    <table class="p2-tbl nc-tbl">
+      <thead><tr><th class="num">#</th><th>Team</th><th class="num">Qualify</th><th class="num p2-wide">Win</th><th class="num p2-wide">Wk</th></tr></thead>
+      <tbody>{% for t in d.next_in %}<tr><td class="num">{{ loop.index }}</td><td class="p2-team">{{ team(t) }}</td>
+        <td class="num"><strong>{{ pct(t.p_qual) }}</strong></td><td class="num p2-wide">{{ pct(t.p_win) }}</td><td class="num p2-wide">{{ delta(t.d_qual) }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+    {% if d.individuals %}
+    <h2 class="nc-h">Projected individual qualifiers <small>{{ d.individuals|length }}</small></h2>
+    <p class="p2-note">{% for i in d.individuals %}<a href="/athlete/{{ i.pid }}">{{ i.name }}</a> <span class="p2-muted">{{ d.teams[i.team].school }}</span>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+    {% endif %}
+  </section>
+
+  {# ---------------------------------------------------------------- how #}
+  <section class="rc-panel p2-how" id="how" data-panel="how">
+    <h2 class="nc-h">How {{ labels[division] }} selection works</h2>
+    <ul>
+      <li><strong>The field:</strong> {{ R.teams_total }} teams{% if R.ind_total %} and {{ R.ind_total }} individuals{% endif %}.
+        The top {{ R.auto_per_region }} {{ "team" if R.auto_per_region == 1 else "teams" }} at each of the {{ rule.regions|length }}
+        regionals qualify automatically; the committee adds {{ R.at_large_teams }} at large.</li>
+      {% for n in rule.notes %}<li>{{ n }}</li>{% endfor %}
+      <li><strong>Individuals:</strong>
+        {% if R.ind_method == "d1" %}the first {{ R.ind_auto_per_region }} finishers at each regional who are not on a qualifying team, if they finish in the top {{ R.ind_auto_top }}; then {{ R.ind_at_large }} at large, the highest such finishers left (also top {{ R.ind_auto_top }}).
+        {% elif R.ind_method == "d2" %}the top {{ R.ind_auto_per_region }} at each regional not on a qualifying team, plus anyone in the top {{ R.ind_auto_top_all }} not on one; then {{ R.ind_at_large }} at large, ranked by teams the region sends divided by regional place.
+        {% else %}the top {{ R.ind_auto_per_region }} at each regional once the qualifying teams' runners are taken out.{% endif %}</li>
+    </ul>
+    <h2 class="nc-h">How this projection works</h2>
+    <ul>
+      <li>Each team runs its seven best by season rating. Every regional is run {{ "{:,}".format(d.p.draws) }} times,
+        each runner's day drawn from the measured race-to-race spread ({{ "%.1f"|format(d.p.race_sigma * 100) }}%), and
+        scored by the cross country rules: five score, seven displace.</li>
+      <li>Each simulated regional is fed through the selection rules above, and nationals is then run with the field
+        that came out. <em>Qualify</em>, <em>Win</em> and <em>Top 3</em> are how often that happened.</li>
+      <li>The tables on the other tabs are one run of the rules on the projected regional order (each region's teams
+        by average place), so they can disagree with the percentages for a team on the edge.</li>
+      <li>Head-to-head results are read from the results already in: {{ "{:,}".format(d.p.counts.races) }} races,
+        {{ "{:,}".format(d.p.counts.wins) }} counted wins.{% if rule.method == "d2" %} {{ labels[division] }} compares two
+        teams as a dual meet, as the manual does when other divisions' teams were in the race.{% endif %}</li>
+      <li>Where the manual leaves a decision to the committee, the projection uses a stated stand-in, and the at-large
+        log says when one decided a berth.</li>
+      <li>Not seen: races still to come, injuries and redshirts, and teammates having good or bad days together.</li>
+    </ul>
+    <h2 class="nc-h">Rules used, and where they come from</h2>
+    <p class="p2-note">{{ R.source }}{% if rule.confidence == "manual" %}, read on Oct. 10, 2026{% endif %}.
+      Regionals {{ d.p.regional_date|mdy }}; championships {{ d.p.nationals_date|mdy }}{% if R.dates_confidence %} (from the manual's date formula){% endif %}.
+      Results count from {{ d.p.window[0]|mdy }} to the regionals.</p>
+    <h2 class="nc-h">Region membership</h2>
+    <p class="p2-note">{% set src = d.p.counts.region_src %}{{ d.p.counts.placed }} of {{ d.p.counts.teams }} teams placed:
+      {{ src.manual }} from the NCAA manual's region lists, {{ src.data }} from the regionals they ran in past seasons,
+      {{ src.override }} by hand.
+      {% if d.unplaced %}These teams with five or more rated runners could not be placed in a region and are left out of
+      the projection:{% endif %}</p>
+    {% if d.unplaced %}<p class="p2-note nc-unplaced">{% for t in d.unplaced %}<a href="{{ t.href }}">{{ t.school }}</a>{% if t.state %} <span class="p2-muted">{{ t.state }}</span>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+    <p class="nc-disclaimer">Unofficial projection. The NCAA Division I, II and III Cross Country Committees select the
+      championship fields after the regional meets, using official results. Nothing here is from the NCAA or endorsed by it.</p>
+  </section>
+  {% endif %}
+</main>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
+</body>
+</html>

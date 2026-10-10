@@ -353,6 +353,7 @@ Step "10c_gap"         { python scripts\measure_sport_gap.py --emit }
 #   about, and fix it in engine\school_unit_overrides.py.
 Step "10d_school_units" { python racecast\build_school_units.py }
 Step "11_teams"        { python racecast\build_team_season.py }
+Step "11c_ncaa"        { python racecast\build_ncaa_projection.py }
 # ! READS course_difficulties, WHICH THE SOLVE WROTE AT 07_pack. Nothing after
 #   that step touches it, so this only has to be after the pack -- but it sits
 #   here with the other board builders because that is where somebody looks

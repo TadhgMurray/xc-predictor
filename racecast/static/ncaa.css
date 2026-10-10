@@ -1,0 +1,56 @@
+/* ncaa.css -- the NCAA championships projection (ncaa.html, 2026-10-10).
+ *
+ * ★ ONLY WHAT THE PAGE ADDS. The header, tabs and tables are race.css's and
+ *   pages2.css's; this is the status pills, the region jump bar, the
+ *   at-large berth log and the disclaimer. Colours are style.css's :root
+ *   tokens with the same fallbacks pages2.css uses.
+ */
+main.nc-page .nc-disclaimer { font-size: .84rem; color: var(--muted, #6b7280); max-width: 52rem;
+  line-height: 1.5; margin: .2rem 0 .6rem; }
+main.nc-page .nc-lede { max-width: 52rem; }
+main.nc-page .nc-h { font-size: 1.05rem; margin: 1.4rem 0 .35rem; display: flex; align-items: baseline; gap: .6rem; }
+main.nc-page .nc-h small { font-size: .8rem; font-weight: 400; color: var(--muted, #6b7280); }
+
+/* ---- status ---------------------------------------------------------- */
+main.nc-page .nc-st { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .02em;
+  padding: .05rem .4rem; border-radius: 3px; white-space: nowrap; border: 1px solid transparent; }
+main.nc-page .nc-st--auto { color: #14532d; background: #dcfce7; border-color: #bbf7d0; }
+main.nc-page .nc-st--al { color: #1e3a8a; background: #e0e7ff; border-color: #c7d2fe; }
+main.nc-page .nc-st--bub { color: #78350f; background: #fef3c7; border-color: #f5d98a; }
+main.nc-page .nc-st--out { color: var(--muted, #6b7280); border-color: var(--line, #e5e7eb); }
+main.nc-page .nc-down { color: #b91c1c; font-weight: 700; }
+/* the line under the last automatic qualifier */
+main.nc-page .nc-tbl tr.nc-cut td { border-bottom: 2px solid var(--ink, #111418); }
+
+/* ---- regions --------------------------------------------------------- */
+main.nc-page .nc-jump { display: flex; flex-wrap: wrap; gap: .3rem; margin: .5rem 0 .2rem; }
+main.nc-page .nc-jump a { font-size: .82rem; padding: .15rem .55rem; border: 1px solid var(--line, #e5e7eb);
+  text-decoration: none; color: #374151; white-space: nowrap; }
+main.nc-page .nc-jump a:hover { background: var(--hover, #f3f6fa); }
+main.nc-page .nc-ind { font-size: .88rem; line-height: 1.6; margin: .5rem 0 .2rem; }
+main.nc-page .nc-ind-h { display: block; font-size: .74rem; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted, #6b7280); }
+main.nc-page .nc-more { margin: .3rem 0 .6rem; font-size: .88rem; }
+main.nc-page .nc-more summary { cursor: pointer; color: var(--link, #14477d); padding: .25rem 0; }
+
+/* ---- at-large -------------------------------------------------------- */
+main.nc-page .nc-explain { max-width: 52rem; }
+main.nc-page .nc-explain ul { padding-left: 1.2rem; margin: .3rem 0; font-size: .92rem; line-height: 1.55; }
+main.nc-page .nc-rounds { list-style: none; padding: 0; margin: .8rem 0 0; display: grid; gap: .5rem; }
+main.nc-page .nc-round { border: 1px solid var(--line, #e5e7eb); background: #fff; padding: .55rem .75rem; }
+main.nc-page .nc-round-h { font-size: .95rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .5rem; }
+main.nc-page .nc-berth { font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted, #6b7280); min-width: 4.6rem; }
+main.nc-page .nc-why { font-size: .84rem; color: #374151; margin: .15rem 0 .35rem; }
+main.nc-page .nc-cands { display: flex; flex-wrap: wrap; gap: .25rem; }
+main.nc-page .nc-cand { font-size: .78rem; padding: .05rem .4rem; border: 1px solid var(--line, #e5e7eb);
+  color: #374151; white-space: nowrap; }
+main.nc-page .nc-cand b { font-variant-numeric: tabular-nums; }
+main.nc-page .nc-cand.is-pick { border-color: var(--ink, #111418); color: var(--ink, #111418); font-weight: 700; }
+main.nc-page .nc-over { font-size: .84rem; line-height: 1.45; }
+main.nc-page .nc-unplaced { line-height: 1.7; }
+
+@media (max-width: 640px) {
+  main.nc-page .nc-berth { min-width: 0; }
+  main.nc-page .nc-over { min-width: 9rem; }
+}
