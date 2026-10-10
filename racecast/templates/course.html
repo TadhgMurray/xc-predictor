@@ -336,7 +336,7 @@
         <tbody>
             {% for m in meets %}
             <tr{{ hid(loop.index0) }}>
-                <td><a href="/meet/xc/{{ m.meet_id }}" title="{{ m.meet_name }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td>
+                <td><a href="/meet/xc/{{ m.meet_id }}{% if m.pin_rid %}?r={{ m.pin_rid }}{% endif %}" title="{{ m.meet_name }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td>
                 <td class="no-break">{{ m.last_date|mdy }}</td>
                 <td>{{ m.distances|map("int")|join(", ") if m.distances else " - " }}</td>
                 <td>{{ "{:,}".format(m.n_results) }}</td>
@@ -366,7 +366,7 @@
     <tbody>
     {% for m in (meets|sort(attribute='last_date', reverse=True))[:6] %}
     <tr>
-      <td class="tn"><a href="/meet/xc/{{ m.meet_id }}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a>
+      <td class="tn"><a href="/meet/xc/{{ m.meet_id }}{% if m.pin_rid %}?r={{ m.pin_rid }}{% endif %}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a>
         <span class="sp">{{ m.last_date|mdy }}{% if m.distances %} · {{ m.distances|map("int")|join(", ") }}&nbsp;m{% endif %}</span></td>
       <td class="n tpts">{{ "{:,}".format(m.n_results) }}</td>
     </tr>

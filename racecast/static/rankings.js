@@ -1097,18 +1097,12 @@ const COLUMNS = {
 
 
 /* Seconds -> m:ss.d, or h:mm:ss for anything past an hour. A leaderboard of
-   "1183.4" is a leaderboard nobody can read. */
+   "1183.4" is a leaderboard nobody can read. ! The clock itself is
+   static/fmt-time.js (round first, then split -- sweep 2026-10-10). */
 function fmtTime(sec) {
   /* ! THE SENTINEL PRINTS AS DNF, NOT AS 277:46.6. See DNF_SENTINEL. */
   if (isNoTime(sec)) return "DNF";
-  const s = Number(sec);
-  if (!isFinite(s)) return " - ";
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const rest = s - h * 3600 - m * 60;
-  const pad = (n) => String(n).padStart(2, "0");
-  if (h) return `${h}:${pad(m)}:${pad(Math.round(rest))}`;
-  return `${m}:${rest < 10 ? "0" : ""}${rest.toFixed(1)}`;
+  return rcFmtTime(sec);
 }
 
 const POOL_LABEL = {

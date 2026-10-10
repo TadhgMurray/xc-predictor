@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 {% from "_tf_points.html" import tf_team_block %}
 {% from "_scale.html" import rv, scale_toggle %}
+{# ★ THE EVENT LINKS CARRY THE FEED (sweep 2026-10-10), as meet.html's
+   race_q: without ?alt= the race page opened the colliding OTHER meet. #}
+{% macro race_q() %}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}{% endif %}{% if school %}{% set _ = _q.append('school=' ~ (school|urlencode)) %}{% endif %}{% if _q %}?{{ _q|join('&') }}{% endif %}{% endmacro %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -115,7 +118,7 @@
             {% for e in events %}
             <tr id="ev-{{ e.div_id }}-{{ e.event_id }}">
                 <td class="nm">
-                    <a href="/race/tf/{{ header.meet_id }}/{{ e.event_id }}/{{ e.div_id }}{% if school %}?school={{ school|urlencode }}{% endif %}">
+                    <a href="/race/tf/{{ header.meet_id }}/{{ e.event_id }}/{{ e.div_id }}{{ race_q() }}">
                         {{ e.display_name }}{% if e.dup_ix %} <span class="dist-note">· {{ e.dup_ix }}</span>{% endif %}
                     </a>
                     {% if school and (e.div_id, e.event_id) in school_events %}<span class="school-ran" title="{{ school }} entered this event">· {{ school|school_label }}</span>{% endif %}

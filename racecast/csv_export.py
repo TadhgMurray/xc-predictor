@@ -134,7 +134,11 @@ def raceXcColumns(origin):
     """race_xc's results, in finish order."""
     place = {"i": 0}
 
-    def _place(_r):
+    def _place(r):
+        # ! the page's own place when the route stamped it (app._stampXcPlaces,
+        #   sweep 2026-10-10): a DQ/DNF row carries its status, not a number
+        if "pl" in r:
+            return r["pl"] if r["pl"] else (r.get("pl_status") or "").strip()
         place["i"] += 1
         return place["i"]
     return [("Place", _place),

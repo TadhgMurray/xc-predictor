@@ -26,7 +26,7 @@ anyway.
 """
 
 from rankings import PR_DISTANCES, PR_DISTANCE_TOL
-from school import seasonLabel, storedYear
+from school import seasonLabel, storedYear, _fillRowNames
 from tf_points import (canonicalEvent, displayEvent, eventDistance,
                        eventFamily, familyLabel,
                        genderOf, parseMark)
@@ -285,6 +285,9 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
             a = info.get(r.get("person_id") or r.get("athlete_id"), {})
             r["name"] = a.get("name")
             r["gender"] = genderOf(r.get("event_short")) or a.get("gender")
+        # ! AND THE FEED'S OWN NAME where no profile has one (sweep
+        #   2026-10-10: college pages read "Unknown"), school.py's rule
+        _fillRowNames(cur, field + hurdles)
 
     # year bar and course chips come from the UNFILTERED rows
     years = sorted({seasonLabel(sport, r["year"]) for r in running
@@ -447,6 +450,8 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
             nm = info.get(pid, {}).get("name")
             for r in need_rows:
                 r["name"] = nm
+        # ! the feed's own name where no profile has one (sweep 2026-10-10)
+        _fillRowNames(cur, [r for rows in need.values() for r in rows])
 
     return {"sections": sections, "years": years, "courses": courses,
             "pools": pools, "year": year_label, "course": course,

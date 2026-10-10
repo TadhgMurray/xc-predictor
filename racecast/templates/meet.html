@@ -117,12 +117,12 @@
           <span class="cell-sub">{{ d.distance|int if d.distance else " - " }}m</span>
         </td>
         <td>{% if w.winner %}<span class="mw-medal" aria-hidden="true"></span>{% if w.winner.person_id %}<a href="/athlete/{{ w.winner.person_id }}">{{ w.winner.name }}</a>{% else %}{{ w.winner.name }}{% endif %}
-            <span class="cell-sub">{{ w.winner.time }}{% if w.winner.school %} · {{ w.winner.school|school_label_in(header.state) }}{% endif %}</span>
-            {% if w.team %}<span class="cell-sub rc-subline">Team: {{ w.team.school|school_label_in(header.state) }}{% if w.team.points is not none %} · {{ w.team.points }} pts{% endif %}</span>{% endif %}
+            <span class="cell-sub">{{ w.winner.time }}{% if w.winner.school %} · {{ w.winner.school|school_label_in(w.winner.school_state or header.state) }}{% endif %}</span>
+            {% if w.team %}<span class="cell-sub rc-subline">Team: {{ w.team.school|school_label_in(w.team.state or header.state) }}{% if w.team.points is not none %} · {{ w.team.points }} pts{% endif %}</span>{% endif %}
             {% else %} - {% endif %}</td>
-        <td class="rc-wide">{% if w.team %}{% if w.team.school|is_team %}{{ crest(w.team.school, header.state) }}<a href="{{ school_href(w.team.school, header.state) }}">{{ w.team.school|school_label_in(header.state) }}</a>{% else %}{{ w.team.school }}{% endif %}
+        <td class="rc-wide">{% if w.team %}{% set tst = w.team.state or header.state %}{% if w.team.school|is_team %}{{ crest(w.team.school, tst) }}<a href="{{ school_href(w.team.school, tst) }}">{{ w.team.school|school_label_in(tst) }}</a>{% else %}{{ w.team.school }}{% endif %}
             {% if w.team.points is not none %}<span class="cell-sub">{{ w.team.points }} pts</span>{% endif %}{% else %} - {% endif %}</td>
-        <td class="n">{{ "{:,}".format(d.n_results) }}</td>
+        <td class="n">{{ "{:,}".format(d.n_finishers if d.n_finishers is defined else d.n_results) }}</td>
       </tr>
       {% endfor %}
       </tbody>

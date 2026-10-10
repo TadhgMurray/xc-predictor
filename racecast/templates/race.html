@@ -131,7 +131,9 @@
       {% for row in results %}
       {% set sst = row.school_state or header.state %}{% set sok = row.school_state is defined and row.school_state %}
       <tr id="r{{ row.result_id }}"{{ al.attrs(above_spec, row) }} data-team="{{ row.school or '' }}"{% if hl_school and row.school == hl_school %} class="hl-school"{% endif %}>
-        <td class="pl{% if loop.index <= 3 and row.display_time != ' - ' and row.time_seconds %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
+        {# ★ the finisher's place, or their status: a DNF is not "41st" and a
+           DQ's place is void (app._stampXcPlaces, sweep 2026-10-10) #}
+        <td class="pl{% if row.pl and row.pl <= 3 %} rc-m{{ row.pl }}{% endif %}"><span>{{ row.pl if row.pl else row.pl_status }}</span></td>
         <td class="nm">
           {% if row.person_id %}<a href="{{ athlete_href(row.person_id, row.result_id) }}">{{ row.name if row.name else "Unknown" }}</a>{% else %}{{ row.name if row.name else "Unknown" }}{% endif %}
           <span class="rc-subline">{% if row.school and row.school|is_team %}{{ crest(row.school, sst, trusted=sok) }}{% endif %}{{ row.school|school_label_in(sst, sok) if row.school else "" }}{% if row.grade %} · {{ row.grade|grade_label(row.rating_pool) }}{% endif %}</span>
@@ -167,7 +169,7 @@
         <td class="n"><b>{{ t.points if t.points is not none else " - " }}</b></td>
         {% for i in range(7) %}
           {% set r = t.runners[i] if t.runners and t.runners|length > i else none %}
-          <td{{ ' class="displacer"'|safe if i >= 5 }}>{% if r %}<a href="{{ athlete_href(r.person_id, r.result_id) }}" title="{{ r.name }}">{{ r.score_place }}</a>{% else %} - {% endif %}</td>
+          <td{{ ' class="displacer"'|safe if i >= 5 }}>{% if r and r.person_id %}<a href="{{ athlete_href(r.person_id, r.result_id) }}" title="{{ r.name }}">{{ r.score_place }}</a>{% elif r %}<span title="{{ r.name }}">{{ r.score_place }}</span>{% else %} - {% endif %}</td>
         {% endfor %}
       </tr>
       {% endfor %}

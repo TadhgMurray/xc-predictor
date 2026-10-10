@@ -966,6 +966,30 @@ def schoolRecruits(cur, school, state, gender, sport):
     return summary, recruits
 
 
+def hasRecruits(cur, school, state, gender):
+    """Does this college have ANY recruit of `gender`, in any sport?
+
+    ★ THE "OTHER GENDER" LINK'S QUESTION, ASKED AS ONE (sweep 2026-10-10).
+      The college page answered it with schoolRecruits for both sports --
+      the weighted aggregate and the whole recruit list, twice -- only to
+      test truthiness. schoolRecruits' summary exists exactly when one row
+      does (min_n is 1), so an EXISTS answers it."""
+    if not _tableExists(cur, "college_recruit"):
+        return False
+    params = {"gender": gender, "school": school, "sports": list(SPORTS)}
+    extra = ""
+    if state:
+        params["state"] = state
+        extra = " AND state = %(state)s"
+    cur.execute(f"""
+        SELECT 1 AS hit FROM college_recruit
+        WHERE  gender = %(gender)s AND school = %(school)s
+          AND  sport = ANY(%(sports)s){extra}
+        LIMIT  1
+    """, params)
+    return cur.fetchone() is not None
+
+
 # ---- the subject: you ------------------------------------------------- #
 
 def _athleteSubject(cur, person_id):

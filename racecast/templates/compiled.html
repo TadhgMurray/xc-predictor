@@ -90,7 +90,7 @@
           <span class="rc-subline">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}{% endif %}{{ row.school|school_label_in(header.state) if row.school else "" }}{% if row.grade %} · {{ row.grade|grade_label(row.rating_pool or row.label_pool) }}{% endif %}</span>
         </td>
         <td class="sch rc-wide">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}<a href="{{ school_href(row.school, header.state) }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label }}{% else %} - {% endif %}{% if row.grade %}<span class="gr">{{ row.grade|grade_label(row.rating_pool or row.label_pool) }}</span>{% endif %}</td>
-        <td class="n tm">{{ "%d:%04.1f"|format(row.time_seconds // 60, row.time_seconds % 60) }}</td>
+        <td class="n tm">{{ row.time_seconds|clock }}</td>
         <td class="n rt"><span class="rc-rv">{{ rv(row.speed_rating, row.hs_rating) }}</span></td>
         <td class="n pts rc-wide">{{ row.score_place if row.score_place else " - " }}</td>
         <td class="n"><a href="/race/xc/{{ header.meet_id }}/{{ row.div_id }}#r{{ row.result_id }}" title="Their place in the race they ran">{{ row.division_place }}</a></td>
@@ -117,7 +117,7 @@
         {# 6 and 7 are greyed: they do not score, but they DO displace #}
         {% for i in range(7) %}
           {% set r = t.runners[i] if t.runners|length > i else none %}
-          <td{{ ' class="displacer"'|safe if i >= 5 }}>{% if r %}<a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}" title="{{ r.name }}">{{ r.score_place }}</a>{% else %} - {% endif %}</td>
+          <td{{ ' class="displacer"'|safe if i >= 5 }}>{% if r and r.person_id %}<a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}" title="{{ r.name }}">{{ r.score_place }}</a>{% elif r %}<span title="{{ r.name }}">{{ r.score_place }}</span>{% else %} - {% endif %}</td>
         {% endfor %}
       </tr>
       {% endfor %}

@@ -27,6 +27,8 @@ thin, the SQL lives here, every value is bound.
 
 import datetime
 
+from time_format import format_time
+
 try:                                    # scripts/ is on the site's path
     from result_status import isSentinelTime
 except ImportError:                     # standalone use: no sentinel rule
@@ -194,6 +196,9 @@ def _hasTwinTable(cur):
         cur.connection.rollback()
         return False
 
+# ! FLAT RACES ONLY (sweep 2026-10-10): ranking_results carries hurdle and
+#   steeple rows at their distance once event_kind exists, and a 3000m
+#   steeple took the 3000m PR row -- school_prs.runningSql's same filter.
 _BESTS_SQL = """
     SELECT sport, round(distance)::int AS dist,
            min(time_seconds) AS best
@@ -201,6 +206,7 @@ _BESTS_SQL = """
     WHERE  person_id = %(pid)s
       AND  time_seconds > 0
       AND  distance > 0
+      {flat_only}
     GROUP  BY sport, round(distance)::int
 """
 
@@ -254,14 +260,50 @@ _BEST_RUNGS = (400, 800, 1500, 1600, 3000, 3200, 5000, 10000)
 
 
 def fmtTime(seconds):
+    """! time_format.format_time, the site's one formatter (sweep 2026-10-10):
+    the old m:ss.s here split before rounding and printed 959.96 as 15:60.0."""
     if seconds is None:
         return None
-    s = float(seconds)
-    m, rem = divmod(s, 60.0)
-    if m >= 60:
-        h, m = divmod(int(m), 60)
-        return f"{h}:{m:02d}:{rem:04.1f}"
-    return f"{int(m)}:{rem:04.1f}"
+    return format_time(seconds)
+
+
+def fmtMargin(seconds):
+    """A margin as the page prints it: '0.04s' under a minute, a clock past.
+
+    ! TWO DECIMALS UNDER 60 s (sweep 2026-10-10). "%.1f" printed a 100m
+      won by 0.04 as "+0.0s", and the average line hid anything under a
+      twentieth; past a minute the margin is a clock (format_time)."""
+    if seconds is None:
+        return None
+    s = abs(float(seconds))
+    return f"{s:.2f}s" if round(s, 2) < 60 else format_time(s)
+
+
+def shortNames(name_a, name_b):
+    """(label_a, label_b): the surnames, or first initial + surname when the
+    surnames match (sweep 2026-10-10: two Smiths read "Smith 3-1 Smith").
+    Initials that match too keep the full names."""
+    pa, pb = (name_a or "").split(), (name_b or "").split()
+    sa, sb = (pa[-1] if pa else ""), (pb[-1] if pb else "")
+    if not sa or sa.lower() != sb.lower():
+        return sa, sb
+    if len(pa) > 1 and len(pb) > 1 and pa[0][0].lower() != pb[0][0].lower():
+        return f"{pa[0][0]}. {sa}", f"{pb[0][0]}. {sb}"
+    return name_a, name_b
+
+
+def bestRatingEdge(brate):
+    """'a' | 'b' | None for the best-rating row, on the scale the page shows
+    by default: HS-equivalent when both sides have it, else their own."""
+    ra, rb = brate.get("a"), brate.get("b")
+    if not ra or not rb:
+        return None
+    va, vb = ra.get("hs_speed_rating"), rb.get("hs_speed_rating")
+    if va is None or vb is None:
+        va, vb = ra["speed_rating"], rb["speed_rating"]
+    if abs(va - vb) <= 1e-9:
+        return None
+    return "a" if va > vb else "b"
 
 
 def displayYear(sport, year):
@@ -394,6 +436,7 @@ def meetings(cur, a, b):
                 # precision. margin always positive, labelled by the template.
                 "winner": "a" if t_a < t_b else ("b" if t_b < t_a else None),
                 "margin": abs(t_a - t_b),
+                "margin_label": fmtMargin(abs(t_a - t_b)),
             })
     rows.sort(key=lambda r: r["date"], reverse=True)
     return rows
@@ -464,30 +507,45 @@ def stampEdgeHs(rows):
     """row["hs_edge_by"]: the season edge on the HS scale, from the stamped
     cells. Call after stampBoardRows has stamped s.a / s.b.
 
-    ! NONE WHEN THE HS VIEW WOULD FLIP THE LEADER (owner, 2026-10-09). Two
-      pools in one season (a college man against a college woman) can trade
-      places on the HS scale, and the cell names the own-pool leader; a
-      negative "+X" under his name would be wrong, so rv() keeps own.
+    ★ THE LEADER IS THE HS SCALE'S WHEN BOTH SIDES HAVE ONE (sweep
+      2026-10-10). HS-equivalent is the page's default view, and the edge
+      was decided on the own-pool numbers: a college man against a college
+      woman could be highlighted as the leader while the numbers on screen
+      said otherwise. Two pools in one season can trade places across the
+      scales; then the edge, the highlight and the margin follow the HS
+      scale, and the own view shows that same margin rather than a
+      negative "+X" under the leader's name.
     """
     for r in rows:
         r["hs_edge_by"] = None
-        if not r.get("edge"):
-            continue
         ha = (r.get("a") or {}).get("hs_rating")
         hb = (r.get("b") or {}).get("hs_rating")
         if ha is None or hb is None:
             continue
-        d = ha - hb if r["edge"] == "a" else hb - ha
-        if d > 0:
-            r["hs_edge_by"] = round(d, 1)
+        if abs(ha - hb) <= 1e-9:
+            r.pop("edge", None)
+            r.pop("edge_by", None)
+            continue
+        edge = "a" if ha > hb else "b"
+        d = abs(ha - hb)
+        ra, rb = r["a"]["rating"], r["b"]["rating"]
+        own = ra - rb if edge == "a" else rb - ra
+        r["edge"] = edge
+        r["edge_by"] = own if own > 0 else round(d, 1)
+        r["hs_edge_by"] = round(d, 1)
     return rows
 
 
 def bestRows(cur, a, b):
     """PR table: TF rungs either athlete owns, then the fastest XC 5K."""
     bests = {}
+    try:
+        from rankings import _hasEventKind
+        flat = "AND  event_kind IS NULL" if _hasEventKind() else ""
+    except ImportError:                     # standalone use: no column probe
+        flat = ""
     for side, pid in (("a", a), ("b", b)):
-        cur.execute(_BESTS_SQL, {"pid": pid})
+        cur.execute(_BESTS_SQL.format(flat_only=flat), {"pid": pid})
         for r in cur.fetchall():
             bests.setdefault((r["sport"], int(r["dist"])), {})[side] = \
                 float(r["best"])

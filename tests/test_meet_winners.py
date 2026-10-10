@@ -19,14 +19,24 @@ except ImportError:
 
 
 class Cur:
+    """Answers the winners query with `rows`; the probes meetWinners makes
+    since sweep 2026-10-10 (results.status, school_athlete_state, the
+    collision split) see no table and nothing to split."""
+    connection = None
+
     def __init__(self, rows):
-        self.rows, self.sql = rows, None
+        self.rows, self.sql, self._last = rows, None, ""
 
     def execute(self, sql, params=None):
-        self.sql = sql
+        self._last = sql
+        if "ORDER  BY r.div_id" in sql:
+            self.sql = sql
+
+    def fetchone(self):
+        return {"ok": False, "present": False}
 
     def fetchall(self):
-        return self.rows
+        return self.rows if "ORDER  BY r.div_id" in self._last else []
 
 
 def _rows():

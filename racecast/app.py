@@ -1162,7 +1162,7 @@ def compare_page():
     Query builders live in compare.py; this route only assembles and
     stamps the HS-equivalent values."""
     from compare import (athleteCard, meetings, record, seasonRows,
-                         stampEdgeHs,
+                         stampEdgeHs, bestRatingEdge, fmtMargin, shortNames,
                          bestRows, bestRatingRows, ratingSeries, chartPoints)
 
     a = request.args.get("a", type=int)
@@ -1249,26 +1249,39 @@ def compare_page():
 
                     # The chart speaks the athlete page's own point shape,
                     # drawn by athlete-charts.js (drawCompareChart).
+                    short_a, short_b = shortNames(card_a["name"], card_b["name"])
                     chart = {"series": [
-                        {"name": card_a["name"].split()[-1],
+                        {"name": short_a,
                          "colour": "#14477d",
                          "points": chartPoints(series_a)},
-                        {"name": card_b["name"].split()[-1],
+                        {"name": short_b,
                          "colour": "#b45309",
                          "points": chartPoints(series_b)},
                     ]}
                     ctx.update(card_a=card_a, card_b=card_b,
                                meetings=mtgs, wins_a=wa, wins_b=wb,
                                ties=ties, avg_margin=avg,
+                               # ! two decimals under a minute; None when
+                               #   the average rounds to a dead heat
+                               avg_margin_label=(fmtMargin(avg)
+                                                 if round(abs(avg), 2) > 0
+                                                 else None),
                                seasons=seasons, bests=bests, brate=brate,
+                               # ! the highlight on the default (HS) scale
+                               brate_edge=bestRatingEdge(brate),
                                chart=chart, has_hs_view=has_hs)
 
     # Short names for the margin and edge labels: the last word carries
     # the identity in almost every real name.
-    for key in ("card_a", "card_b"):
-        card = ctx.get(key)
-        if card:
-            card["short"] = card["name"].split()[-1]
+    # ! AND FIRST INITIAL + SURNAME WHEN THE SURNAMES MATCH (sweep
+    #   2026-10-10), or two Smiths read "Smith 3-1 Smith".
+    ca, cb = ctx.get("card_a"), ctx.get("card_b")
+    if ca and cb:
+        ca["short"], cb["short"] = shortNames(ca["name"], cb["name"])
+    else:
+        for card in (ca, cb):
+            if card:
+                card["short"] = card["name"].split()[-1]
     return render_template("compare.html", **ctx)
 
 
@@ -2954,54 +2967,11 @@ from result_status import isSentinelTime as _isSentinelTime   # noqa: E402
 _TF_SENTINEL_SQL = "r.time_seconds BETWEEN 19999 AND 20001"
 
 
-def format_time(seconds):
-    """Format raw seconds for display, keeping whatever precision the data has.
-
-       11.24 -> '11.24'    14:58.2 -> '14:58.2'    1:05:03 -> '1:05:03'
-
-    Precision is NOT fixed at two places. Printing '19:57.60' on a value stored
-    as 1197.6 would claim hundredth accuracy the scrape never captured. We show
-    the decimals that exist and nothing more.
-
-    ! SENTINELS ARE NOT TIMES. DNF/DNS/DQ are stored as huge values
-      (999999 and friends); one leaked onto a page as '277:46:39'
-      (2026-08-27, Walters State Opener). Same line the backfill draws:
-      nothing past 100,000 seconds is a running time.
-    """
-    seconds = float(seconds)
-    # ! and anet TF's 20,000 s (5:33:20) -- result_status.TF_SENTINEL
-    if seconds >= 100_000 or abs(seconds - _TF_SENTINEL) < 1.0:
-        return " - "
-    whole   = int(seconds)                       # truncate, never round
-    frac    = seconds - whole
-
-    tail = _format_fraction(frac)                # '', '.6', or '.24'
-
-    if seconds < 60:
-        return f"{whole}{tail}"                  # sprint: '11.24'
-
-    hours   = whole // 3600
-    minutes = (whole % 3600) // 60
-    secs    = whole % 60
-
-    if hours > 0:
-        return f"{hours}:{minutes:02d}:{secs:02d}{tail}"
-    return f"{minutes}:{secs:02d}{tail}"
-
-
-def _format_fraction(frac):
-    """The decimal tail, at the precision the value actually carries.
-
-    Rounded to 2dp first because `real` is a 4-byte float: a mark entered as
-    11.24 can be stored as 11.239999771, and testing that raw would report
-    false precision on effectively every row.
-    """
-    hundredths = round(frac * 100)
-    if hundredths == 0:
-        return ""                                # whole second -> no tail
-    if hundredths % 10 == 0:
-        return f".{hundredths // 10}"            # tenth  -> '.6'
-    return f".{hundredths:02d}"                  # hundredth -> '.24'
+# ★ ONE FORMATTER (sweep 2026-10-10): time_format.format_time is shared with
+#   compare.py and panels.py, and rounds before it splits -- 959.96 had printed
+#   "15:60.0" on compiled races and a 0.996 tail ".10" here.
+from time_format import format_time                              # noqa: E402
+app.template_filter("clock")(format_time)
 
 
 def season_label(sport, date_text):
@@ -4000,7 +3970,11 @@ def get_race_results(cur, meet_id, div_id, source=None):
 _REC_DIST_TOL = 0.0025
 
 
-def stampRecordFlags(cur, sport, rows, distance, race_date):
+# The order rounds are run in, for the same-day rule in stampRecordFlags.
+_ROUND_RUN_ORDER = {"prelim": 0, "quarter": 1, "semi": 2, "final": 3}
+
+
+def stampRecordFlags(cur, sport, rows, distance, race_date, event_kind=None):
     """Stamp is_pr / is_sr onto race result rows, anet-style.
 
     A row is a PR when no earlier rated race by that athlete at this
@@ -4014,6 +3988,16 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
     indexed). An athlete with no earlier rated race at the distance gets
     the PR badge -- a debut at a distance is that athlete's best at it,
     which is how every results site treats it.
+
+    ★ THE SAME EVENT, NOT ONLY THE SAME DISTANCE (sweep 2026-10-10). A 400m
+      hurdles page measured its runners against their flat 400s, so no
+      hurdler ever read PR. event_kind (TF, when ranking_results has the
+      column): None is a flat race, 'hurdles' / 'steeple' a timed non-flat
+      one -- build_ranking_results.timedEventKind, the rule that wrote it.
+    ★ AND THE SAME DAY'S EARLIER ROUND. "Strictly before this date" let a
+      final slower than that morning's prelim read PR. A same-day row counts
+      as earlier when its round was run earlier (prelim, quarter, semi,
+      final), and by result id when the rounds do not say.
     """
     if not distance or not race_date:
         return
@@ -4023,8 +4007,19 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
     if not pids:
         return
     yr = seasonYearFromIso(sport, race_date)
+    kind_sql = ""
+    if sport == "TF":
+        from rankings import _hasEventKind
+        if _hasEventKind():
+            kind_sql = ("AND rr.event_kind IS NULL" if event_kind is None
+                        else "AND rr.event_kind = %(kind)s")
+    params = {"sport": sport, "pids": pids, "day": race_date, "yr": yr,
+              "kind": event_kind,
+              "lo": float(distance) * (1 - _REC_DIST_TOL),
+              "hi": float(distance) * (1 + _REC_DIST_TOL)}
+    same_day = {}
     try:
-        cur.execute("""
+        cur.execute(f"""
             SELECT person_id,
                    min(time_seconds) FILTER (
                        WHERE distance BETWEEN %(lo)s AND %(hi)s)
@@ -4033,21 +4028,46 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
                        WHERE distance BETWEEN %(lo)s AND %(hi)s
                          AND year = %(yr)s)
                        AS season_best_before
-            FROM   ranking_results
+            FROM   ranking_results rr
             WHERE  sport = %(sport)s
               AND  person_id = ANY(%(pids)s)
               AND  race_date < %(day)s
               AND  time_seconds > 0 AND time_seconds < 999999
+              {kind_sql}
             GROUP  BY person_id
-        """, {"sport": sport, "pids": pids, "day": race_date, "yr": yr,
-              "lo": float(distance) * (1 - _REC_DIST_TOL),
-              "hi": float(distance) * (1 + _REC_DIST_TOL)})
+        """, params)
         prior = {r["person_id"]: r for r in cur.fetchall()}
+        if sport == "TF":
+            cur.execute(f"""
+                SELECT rr.person_id, rr.result_id, rr.time_seconds, rt.round
+                FROM   ranking_results rr
+                LEFT   JOIN results_tf rt ON rt.result_id = rr.result_id
+                WHERE  rr.sport = 'TF'
+                  AND  rr.person_id = ANY(%(pids)s)
+                  AND  rr.race_date = %(day)s
+                  AND  rr.distance BETWEEN %(lo)s AND %(hi)s
+                  AND  rr.time_seconds > 0 AND rr.time_seconds < 999999
+                  {kind_sql}
+            """, params)
+            for r in cur.fetchall():
+                same_day.setdefault(r["person_id"], []).append(r)
     except Exception as exc:             # noqa: BLE001 -- UndefinedTable et al.
         cur.connection.rollback()
         print(f"stampRecordFlags: {sport} {race_date} skipped: "
               f"{type(exc).__name__}: {exc}", flush=True)
         return
+
+    from tf_points import rowRound
+
+    def ran_before(other, row):
+        a = _ROUND_RUN_ORDER.get(rowRound(other, fine=True))
+        b = _ROUND_RUN_ORDER.get(rowRound(row, fine=True))
+        if a is not None and b is not None and a != b:
+            return a < b
+        try:
+            return int(other["result_id"]) < int(row["result_id"])
+        except (TypeError, ValueError, KeyError):
+            return False
 
     for row in rows:
         t = row.get("time_seconds")
@@ -4056,6 +4076,13 @@ def stampRecordFlags(cur, sport, rows, distance, race_date):
         p = prior.get(row["person_id"])
         best = p["best_before"] if p else None
         season = p["season_best_before"] if p else None
+        earlier = [float(o["time_seconds"]) for o in same_day.get(row["person_id"], ())
+                   if o["result_id"] != row.get("result_id") and ran_before(o, row)]
+        if earlier:
+            # same day is the same season
+            best = min([float(best)] + earlier) if best is not None else min(earlier)
+            season = (min([float(season)] + earlier) if season is not None
+                      else min(earlier))
         row["is_pr"] = best is None or float(t) < float(best)
         row["is_sr"] = (not row["is_pr"]
                         and (season is None or float(t) < float(season)))
@@ -4299,10 +4326,19 @@ def race_xc(meet_id, div_id):
             day_effect = raceDayEffect(cur, "XC", header,
                                        results[0].get("date") if results else None)
 
+    # ★ A PLACE IS A FINISHER'S (sweep 2026-10-10). loop.index numbered
+    #   every row, so a DNF read "41st" and a DQ -- whose TIME stands but
+    #   whose PLACE is void -- took a place and moved everyone behind it
+    #   down one, in the table and in the team scores. _stampXcPlaces gives
+    #   finishers their place and everyone else their status.
+    _stampXcPlaces(results)
+
     # Stamp score_place / team_place on the rendered rows themselves --
     # scoreRows below runs on `ranked` COPIES, so its stamps never reach
-    # the table.
-    annotateScoring(results)
+    # the table. ! Finishers only: a DQ neither scores nor displaces.
+    for r in results:
+        r["team_place"] = r["score_place"] = None
+    annotateScoring([r for r in results if r["pl"]])
 
     if header is None:
         abort(404)
@@ -4324,9 +4360,7 @@ def race_xc(meet_id, div_id):
     #   within-division finishing position -- a division of nine carries values
     #   running past 60. Scoring has to use the same numbers the reader sees,
     #   or the scorers listed will not match the places in the table.
-    ranked = [{**r, "place": i}
-              for i, r in enumerate(results, start=1)
-              if r.get("time_seconds") is not None]
+    ranked = [{**r, "place": r["pl"]} for r in results if r["pl"]]
 
     # ★ IDENTITY-SPLIT COLLIDING NAMES BEFORE SCORING (NXN 2025: two
     #   Jesuits, two Lincolns under one string each). Scoring the string
@@ -4413,8 +4447,7 @@ def race_xc(meet_id, div_id):
     #   query it adds -- its own connection, bounded inside priorTitles.
     import race_story
     story_titles = 0
-    _fin = [r for r in results if r.get("time_seconds") is not None
-            and not (float(r["time_seconds"]) >= 100_000 or _isSentinelTime(r["time_seconds"]))]
+    _fin = [r for r in results if r["pl"]]          # placed finishers, no DQ
     if _fin and _fin[0].get("person_id") and race_date:
         try:
             with getConn() as _conn, _conn.cursor(
@@ -4507,7 +4540,34 @@ def get_meet_date(cur, table, meet_id, source=None):
     return row["date"] if row else None
 
 
-def meetWinners(cur, meet_id, divisions, source=None, published=None):
+def _xcPlaced(row):
+    """A finisher who keeps a place: not a DNF/DNS, and not a DQ (status DQ
+    or FS -- the time is real, the place is void). result_status.kind is
+    the one rule; the sentinel is its fallback for rows with no status."""
+    from result_status import kind
+    return kind(row.get("status"), row.get("time_seconds")) == "ok"
+
+
+def _stampXcPlaces(rows):
+    """row["pl"]: the place among placed finishers, in order; None for the
+    rest, which get row["pl_status"] ('DQ', 'DNF', 'DNS' -- the feed's own
+    letters when it sent them). In place."""
+    from result_status import normalise
+    n = 0
+    for r in rows:
+        if _xcPlaced(r):
+            n += 1
+            r["pl"], r["pl_status"] = n, None
+        else:
+            r["pl"] = None
+            # ! the feed's letters, or a dash: the bare sentinel cannot say
+            #   whether it was a DNF or a DNS
+            r["pl_status"] = normalise(r.get("status")) or " - "
+    return rows
+
+
+def meetWinners(cur, meet_id, divisions, source=None, published=None,
+                meet_state=None):
     """{div_id: {"winner": {...}, "team": {...}}} for the meet page's race
     rows (owner, 2026-09-26: a meet page listed only gender, division,
     distance and a count -- not who won).
@@ -4521,9 +4581,11 @@ def meetWinners(cur, meet_id, divisions, source=None, published=None):
     ! ONE QUERY FOR THE WHOLE MEET, grouped here: a meet page must not run a
       query per division.
     """
-    from meet_compile import scoreRows
+    from meet_compile import (scoreRows, splitCollisionTeams, unsplitTeams,
+                              stampSchoolStates)
     cur.execute(f"""
-        SELECT r.div_id, r.person_id, r.time_seconds, r.school,
+        SELECT r.div_id, r.person_id, r.time_seconds, r.school, r.team_id,
+               {"r.status" if _hasResultsStatus(cur) else "NULL::text"} AS status,
                {_name_sql('r')} AS name
         FROM   results r
         {_athlete_lateral('r')}
@@ -4534,7 +4596,16 @@ def meetWinners(cur, meet_id, divisions, source=None, published=None):
     """, {"meet": meet_id, "src": source})
     by_div = {}
     for row in cur.fetchall():
-        by_div.setdefault(row["div_id"], []).append(dict(row))
+        # ! A DQ NEVER WINS (sweep 2026-10-10): its time is real, its
+        #   place is void -- the race page's rule (_xcPlaced)
+        if _xcPlaced(row):
+            by_div.setdefault(row["div_id"], []).append(dict(row))
+    # ★ THE WINNER'S OWN SCHOOL STATE, as the race page's rows (sweep
+    #   2026-10-10): labelled with the meet's state, an Arizona winner at a
+    #   California meet read as the California namesake.
+    leaders = [rows[0] for rows in by_div.values()]
+    if leaders:
+        stampSchoolStates(cur, leaders)
     out = {}
     for d in divisions:
         rows = by_div.get(d["div_id"]) or []
@@ -4544,7 +4615,8 @@ def meetWinners(cur, meet_id, divisions, source=None, published=None):
         got = {"winner": {"person_id": w.get("person_id"),
                           "name": w.get("name") or "Unknown",
                           "time": format_time(w.get("time_seconds")),
-                          "school": w.get("school")}}
+                          "school": w.get("school"),
+                          "school_state": w.get("school_state")}}
         pub = ((published or {}).get((d["div_id"], d.get("gender")))
                or (published or {}).get((d["div_id"], None)))
         if pub:
@@ -4555,12 +4627,27 @@ def meetWinners(cur, meet_id, divisions, source=None, published=None):
                            "points": first.get("points")}
         else:
             ranked = [{**r, "place": i} for i, r in enumerate(rows, 1)]
-            teams = scoreRows(ranked).get("teams") or []
+            # ★ SPLIT COLLIDING NAMES FIRST, as the race page (sweep
+            #   2026-10-10): two Jesuits scored as one team topped this
+            #   column with a team the race page does not have
+            splitCollisionTeams(cur, ranked, meet_state=meet_state,
+                                source=source)
+            teams = unsplitTeams(scoreRows(ranked)).get("teams") or []
             if teams:
                 got["team"] = {"school": teams[0]["school"],
-                               "points": teams[0]["points"]}
+                               "points": teams[0]["points"],
+                               "state": teams[0].get("state")}
         out[d["div_id"]] = got
     return out
+
+
+def _finishedSqlFor(cur):
+    """result_status.finishedSql when results carries status, else the
+    sentinel test (a DQ counts: it finished)."""
+    if _hasResultsStatus(cur):
+        from result_status import finishedSql
+        return finishedSql("r")
+    return "r.time_seconds < 999999"
 
 
 def get_meet_divisions(cur, meet_id, source=None):
@@ -4577,6 +4664,10 @@ def get_meet_divisions(cur, meet_id, source=None):
                                                      AS division,
                {_xc_distance_sql('r')}               AS distance,
                count(r.result_id)                    AS n_results,
+               -- ★ THE FINISHERS COLUMN (sweep 2026-10-10): n_results
+               --   counted the DNF/DNS rows the race page lists last
+               count(r.result_id) FILTER (WHERE {_finishedSqlFor(cur)})
+                                                     AS n_finishers,
                mode() WITHIN GROUP (ORDER BY a.gender)
                    FILTER (WHERE a.gender IN ('M', 'F')) AS gender
         FROM results r
@@ -4852,7 +4943,8 @@ def meet_xc(meet_id):
             # who won each race, and which team (meetWinners)
             try:
                 winners = meetWinners(cur, meet_id, divisions, source=src,
-                                      published=publishedScores(cur, meet_id))
+                                      published=publishedScores(cur, meet_id),
+                                      meet_state=(header or {}).get("state"))
             except Exception:                           # noqa: BLE001
                 # the table still renders without the two columns
                 app.logger.exception("meetWinners failed for %s", meet_id)
@@ -5160,7 +5252,10 @@ def _tf_heat_sections(results, is_field):
         except ValueError:
             return 0
 
-    rounds = {rowRound(r) for r in results}
+    # ★ SEMIS AND QUARTERS ARE ROUNDS OF THEIR OWN (sweep 2026-10-10):
+    #   rowRound folds them into "prelim" for scoring, which merged a
+    #   semifinal's heats into the prelims' numbering on this page.
+    rounds = {rowRound(r, fine=True) for r in results}
     multi_round = len(rounds) > 1
     word = "Flight" if is_field else "Heat"
 
@@ -5172,17 +5267,35 @@ def _tf_heat_sections(results, is_field):
         t = r.get("time_seconds")
         return (t is None, t or 0)
 
-    # round groups first, finals on top
+    def tie_key(r):
+        """Rows that share this (not None) share a place."""
+        if is_field:
+            mk = parseMark(r.get("mark"))
+            return None if mk is None else (r.get("place"), mk)
+        t = r.get("time_seconds")
+        return None if t is None else round(float(t), 2)
+
+    def place_rows(rows):
+        # ! A TIE IS ONE PLACE (sweep 2026-10-10): 1, 2, 2, 4 -- not 1, 2, 3
+        prev = None
+        for i, r in enumerate(rows):
+            k = tie_key(r)
+            r["sec_place"] = (prev["sec_place"] if prev is not None and k is not None
+                              and tie_key(prev) == k else i + 1)
+            prev = r
+
+    # round groups first, finals on top, then the order rounds are run in
+    order = {"final": 0, None: 1, "semi": 2, "quarter": 3, "prelim": 4}
     by_round = {}
     for r in results:
-        rd = rowRound(r)
-        by_round.setdefault({"final": 0, None: 1,
-                             "prelim": 2}.get(rd, 2), []).append(r)
+        rd = rowRound(r, fine=True)
+        by_round.setdefault(order.get(rd, order["prelim"]), []).append(r)
 
     sections = []
     for rk in sorted(by_round):
         r_rows = by_round[rk]
-        r_label = ({0: "Finals", 2: "Prelims"}.get(rk, "")
+        r_label = ({0: "Finals", 2: "Semifinals", 3: "Quarterfinals",
+                    4: "Prelims"}.get(rk, "")
                    if multi_round else "")
 
         # explicit heat numbers when the feed filled them...
@@ -5192,8 +5305,7 @@ def _tf_heat_sections(results, is_field):
         if len(heats) > 1:
             for hn in sorted(heats):
                 rows = sorted(heats[hn], key=sort_in)
-                for i, r in enumerate(rows):
-                    r["sec_place"] = i + 1
+                place_rows(rows)
                 hl = f"{word} {hn}" if hn else ""
                 label = " · ".join(x for x in (r_label, hl) if x)
                 sections.append({"label": label, "rows": rows})
@@ -5211,8 +5323,7 @@ def _tf_heat_sections(results, is_field):
             continue
 
         rows = sorted(r_rows, key=sort_in)
-        for i, r in enumerate(rows):
-            r["sec_place"] = i + 1
+        place_rows(rows)
         sections.append({"label": r_label, "rows": rows})
     return sections
 
@@ -5268,6 +5379,51 @@ def _tf_seed_points_cache(meet_id, source, rows, scored):
         _time.time(), scored["points_by_result"], names)
 
 
+def _tfRaceSource(cur, meet_id, div_id, event_id, args):
+    """(race_src, alt_idx, other_sources) for a TF race page: ?r= first,
+    then ?alt= when that feed ran this triple, then the triple's biggest feed.
+    """
+    # ★ RESOLVE THE SOURCE FIRST. The anet and tfrrs id spaces
+    #   collide on (meet, div, event) too -- a source-blind lookup
+    #   can serve the OTHER feed's event under this URL.
+    #   ?r=<result_id> pins the clicked row's source exactly
+    #   (opaque -- no feed names in URLs); without it the modal
+    #   source of the triple decides, as the points cache always
+    #   did.
+    race_src = None
+    rid = _ridArg(args)
+    if rid is not None:
+        cur.execute("SELECT source FROM results_tf "
+                    "WHERE result_id = %s AND meet_id = %s LIMIT 1",
+                    (rid, meet_id))
+        pin = cur.fetchone()
+        race_src = pin["source"] if pin else None
+    # ★ AND ?alt=, AS THE XC RACE PAGE (sweep 2026-10-10). The meet
+    #   page's "other meet" toggle is an index into the meet's feed
+    #   list; its event links carried no ?alt=, so the race page fell
+    #   back to the triple's biggest feed -- the OTHER meet. The alt
+    #   is honoured only when that feed ran this triple.
+    meet_srcs = _tfSourceList(cur, meet_id)
+    if race_src is None:
+        cur.execute("""
+            SELECT source FROM results_tf
+            WHERE meet_id = %(meet)s AND div_id = %(div)s
+              AND event_id = %(event)s AND source IS NOT NULL
+            GROUP BY source ORDER BY count(*) DESC
+        """, {"meet": meet_id, "div": div_id, "event": event_id})
+        ran = [srow["source"] for srow in cur.fetchall()]
+        want = (pick_source(meet_srcs, args.get("alt"))[0]
+                if args.get("alt") is not None else None)
+        race_src = (want if want in ran
+                    else ran[0] if ran else None)
+    src_names = [s_["source"] for s_ in meet_srcs]
+    alt_idx = (src_names.index(race_src)
+               if race_src in src_names else 0)
+    other_sources = [{"alt": i, "n": s_["n"]}
+                     for i, s_ in enumerate(meet_srcs) if i != alt_idx]
+    return race_src, alt_idx, other_sources
+
+
 @app.route("/race/tf/<int:meet_id>/<int:event_id>/<int:div_id>")
 def race_tf(meet_id, event_id, div_id):
     from tf_points import prettyEventName
@@ -5277,23 +5433,12 @@ def race_tf(meet_id, event_id, div_id):
     hl_school = (request.args.get("school") or "").strip() or None
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # ★ RESOLVE THE SOURCE FIRST. The anet and tfrrs id spaces
-            #   collide on (meet, div, event) too -- a source-blind lookup
-            #   can serve the OTHER feed's event under this URL.
-            #   ?r=<result_id> pins the clicked row's source exactly
-            #   (opaque -- no feed names in URLs); without it the modal
-            #   source of the triple decides, as the points cache always
-            #   did.
-            race_src = None
+            race_src, alt_idx, other_sources = _tfRaceSource(
+                cur, meet_id, div_id, event_id, request.args)
+            # ★ A PIN THAT PINS NOTHING IS A REDIRECT (D2, see athleteHref):
+            #   the clicked row is from the feed the bare URL serves anyway.
             rid = _ridArg(request.args)
-            if rid is not None:
-                cur.execute("SELECT source FROM results_tf "
-                            "WHERE result_id = %s AND meet_id = %s LIMIT 1",
-                            (rid, meet_id))
-                pin = cur.fetchone()
-                race_src = pin["source"] if pin else None
-            modal_src = None
-            if race_src is None or rid is not None:
+            if rid is not None and request.args.get("alt") is None:
                 cur.execute("""
                     SELECT source FROM results_tf
                     WHERE meet_id = %(meet)s AND div_id = %(div)s
@@ -5301,13 +5446,8 @@ def race_tf(meet_id, event_id, div_id):
                     GROUP BY source ORDER BY count(*) DESC LIMIT 1
                 """, {"meet": meet_id, "div": div_id, "event": event_id})
                 srow = cur.fetchone()
-                modal_src = srow["source"] if srow else None
-            # ★ A PIN THAT PINS NOTHING IS A REDIRECT (D2, see athleteHref):
-            #   the clicked row is from the feed the bare URL serves anyway.
-            if rid is not None and race_src in (None, modal_src):
-                return _dropUselessPin(rid)
-            if race_src is None:
-                race_src = modal_src
+                if race_src is None or race_src == (srow["source"] if srow else None):
+                    return _dropUselessPin(rid)
             header  = get_tf_race_header(cur, meet_id, div_id, event_id,
                                          source=race_src)
             results = get_tf_race_results(cur, meet_id, div_id, event_id,
@@ -5338,8 +5478,15 @@ def race_tf(meet_id, event_id, div_id):
                 if not dist:
                     from normalize_distance import parseEventShort
                     dist = parseEventShort(header.get("event_short")).get("meters")
+                # ! the event's kind, as ranking_results stores it (sweep
+                #   2026-10-10): hurdlers measured against hurdles
+                try:
+                    from build_ranking_results import timedEventKind
+                    ev_kind = timedEventKind(header.get("event_short"))[0]
+                except ImportError:
+                    ev_kind = None
                 stampRecordFlags(cur, "TF", results, dist,
-                                 results[0].get("date"))
+                                 results[0].get("date"), event_kind=ev_kind)
                 stampRatingFlags(cur, "TF", results, results[0].get("date"))
             # ★ EACH RUNNER'S OWN SCHOOL STATE, as the XC race page (owner,
             #   2026-10-09: Zarian Rodriguez of Hamilton AZ read "Hamilton
@@ -5475,6 +5622,7 @@ def race_tf(meet_id, event_id, div_id):
                            equiv_dist=equiv_dist, equiv_pool=equiv_pool,
                            equiv_lo=equiv_lo, equiv_hi=equiv_hi,
                            college=(race_src == "tfrrs"),
+                           alt_idx=alt_idx, other_sources=other_sources,
                            meet_id=meet_id, event_id=event_id, div_id=div_id,
                            header=header,
                            results=results,
@@ -5567,10 +5715,14 @@ def get_tf_meet_events(cur, meet_id, source=None):
                m.distance_meters,
                count(r.result_id) AS n_results
         FROM meets_tf m
+        -- ! THE RESULTS OF THIS FEED (sweep 2026-10-10): the id spaces
+        --   collide on (meet, div, event), and an unscoped join counted the
+        --   other feed's rows into this meet's events
         LEFT JOIN results_tf r
                ON r.meet_id  = m.meet_id
               AND r.div_id   = m.div_id
               AND r.event_id = m.event_id
+              AND (m.source IS NULL OR r.source = m.source)
         WHERE m.meet_id = %(meet)s
           AND (%(src)s::text IS NULL OR m.source = %(src)s)
         GROUP BY m.div_id, m.event_id, m.event_short, m.division, m.distance_meters
@@ -5911,6 +6063,41 @@ def _stamp_tf_display(rows):
             r["display_result"] = r.get("status") or r.get("mark") or " - "
 
 
+def _tfEventWinners(rows):
+    """{(div_id, event_id): winning row} for the TF meet page's Winner column.
+
+    ★ THE RACE PAGE'S RULE, race_story.tfWinner (sweep 2026-10-10). The
+      column took the best raw float(mark) -- "5-10" and "15.24m" are not
+      floats, so imperial field events had no winner -- and the fastest time
+      in ANY round, so a prelim heat winner or a DQ'd runner could head an
+      event that had a final. Now: final rows only when the event has any,
+      no DQ (its place is void), marks through tf_points.parseMark.
+    """
+    import race_story
+    from tf_points import rowRound
+    from result_status import kind as _statusKind
+    by_event = {}
+    for r in rows:
+        if _statusKind(r.get("status") or r.get("mark"),
+                       r.get("time_seconds")) == "dq":
+            continue
+        t = r.get("time_seconds")
+        if t is not None and _isSentinelTime(t):
+            r = dict(r, time_seconds=None)
+        by_event.setdefault((r.get("div_id"), r.get("event_id")), []).append(r)
+    out = {}
+    for k, ev in by_event.items():
+        field = any(r.get("is_field") or r.get("result_kind") in ("field", "combined")
+                    for r in ev)
+        finals = [r for r in ev if rowRound(r) == "final"]
+        sections = ([{"label": "Finals", "rows": finals}] if finals
+                    else [{"label": "", "rows": ev}])
+        w = race_story.tfWinner(sections, field)[0]
+        if w is not None:
+            out[k] = w
+    return out
+
+
 @app.route("/meet/tf/<int:meet_id>")
 def meet_tf(meet_id):
     from tf_points import scoreMeet, genderOf, prettyEventName, eventDistance
@@ -5959,10 +6146,12 @@ def meet_tf(meet_id):
             school = (request.args.get("school") or "").strip() or None
             school_events = set()
             if school:
+                # ! this feed's rows only (sweep 2026-10-10), as meet_xc
                 cur.execute("""
                     SELECT DISTINCT div_id, event_id FROM results_tf
                     WHERE  meet_id = %(meet)s AND school = %(school)s
-                """, {"meet": meet_id, "school": school})
+                      AND  (%(src)s::text IS NULL OR source = %(src)s)
+                """, {"meet": meet_id, "school": school, "src": src})
                 school_events = {(r["div_id"], r["event_id"])
                                  for r in cur.fetchall()}
             stamp_home_states(cur, scoring_rows)
@@ -6027,26 +6216,11 @@ def meet_tf(meet_id):
     #   rows already loaded for scoring: per listed (div, event), the best
     #   time, or the best mark for a field event or multi; a relay is its
     #   school. A row with no usable time or mark never wins.
-    winners = {}
-    for r in scoring_rows:
-        k = (r.get("div_id"), r.get("event_id"))
-        field = r.get("is_field") or r.get("result_kind") in ("field", "combined")
-        if field:
-            try:
-                key = -float(r.get("mark"))
-            except (TypeError, ValueError):
-                continue
-        else:
-            t = r.get("time_seconds")
-            if t is None or t <= 0 or _isSentinelTime(t):
-                continue
-            key = float(t)
-        if k not in winners or key < winners[k][0]:
-            winners[k] = (key, r)
+    winners = _tfEventWinners(scoring_rows)
     for e in events:
         w = winners.get((e["div_id"], e["event_id"]))
         if w:
-            row = dict(w[1])
+            row = dict(w)
             _stamp_tf_display([row])
             e["winner"] = row
 
@@ -6130,7 +6304,7 @@ def compiled_tf(meet_id):
 # ! ONE DEFINITION, SEVEN QUERIES. The bodies select from `course_rows` and
 #   never name `meets` or `meets_tfrrs` again, so a course page cannot
 #   disagree with itself about which races were held on it.
-def _courseRowsCte(pool_col=None):
+def _courseRowsCte(pool_col=None, drop=False):
     """A CTE named course_rows: every result raced on %(course)s, either feed.
 
     Columns are named so the existing bodies keep working: the results
@@ -6140,36 +6314,59 @@ def _courseRowsCte(pool_col=None):
     pool_col: _ratingPoolCol(cur, "results")'s answer, for a caller that
     needs the pool each rating was computed in (the HS-equivalent ranking).
     None leaves the CTE exactly as every other caller has always had it.
+
+    ★ THE CORRECTED DISTANCE (sweep 2026-10-10). The race page reads
+      _xc_distance_sql -- dist_override first -- and this CTE read the
+      scrape, so an overridden division sat on the course page under the
+      distance the corpus had rejected: wrong chip, wrong records table.
+    drop: True (the caller checked _hasDistDrop) leaves out the divisions
+      dist_drop withholds -- their distance is unknown, so their times
+      cannot be records at any distance.
     """
     pool = f"\n               {pool_col}," if pool_col else ""
+    no_drop = ("""
+          AND NOT EXISTS (SELECT 1 FROM dist_drop dd
+                          WHERE dd.sport = 'XC' AND dd.meet_id = r.meet_id
+                            AND dd.div_id = r.div_id)""" if drop else "")
     return f"""
     course_rows AS (
         SELECT r.person_id, r.athlete_id, r.athlete_name, r.result_id,
                r.time_seconds, r.date, r.grade, r.school, r.speed_rating,
                r.div_id, r.meet_id, r.source,{pool}
-               m.distance::real AS distance,
+               COALESCE(dov.distance::real, m.distance::real) AS distance,
                m.meet_name      AS meet_name,
                m.state          AS state
         FROM   meets m
         JOIN   results r
                ON r.div_id = m.div_id AND r.source = m.source
-        WHERE  m.course_name = %(course)s
+        {_dist_override_join('r')}
+        WHERE  m.course_name = %(course)s{no_drop}
         UNION ALL
         -- the tfrrs half: keyed on meet_id, with the per-division distance
         -- inside the jsonb blob (see _blob) rather than a column
         SELECT r.person_id, r.athlete_id, r.athlete_name, r.result_id,
                r.time_seconds, r.date, r.grade, r.school, r.speed_rating,
                r.div_id, r.meet_id, r.source,{pool}
-               (mt.division_distances -> r.div_id::text
-                   ->> 'distance')::real AS distance,
+               COALESCE(dov.distance::real,
+                        (mt.division_distances -> r.div_id::text
+                            ->> 'distance')::real) AS distance,
                mt.meet_name     AS meet_name,
                mt.state         AS state
         FROM   meets_tfrrs mt
         JOIN   results r
                ON r.meet_id = mt.meet_id AND r.source = 'tfrrs'
-        WHERE  mt.sport = 'XC' AND mt.venue_name = %(course)s
+        {_dist_override_join('r')}
+        WHERE  mt.sport = 'XC' AND mt.venue_name = %(course)s{no_drop}
     )
     """
+
+
+def _hasDistDrop(cur):
+    """True once dist_drop exists (it arrives with a dump_overrides run;
+    raceExtras degrades the same way)."""
+    cur.execute("SELECT to_regclass('dist_drop') AS d")
+    row = cur.fetchone()
+    return bool(row and (row["d"] if isinstance(row, dict) else row[0]))
 
 
 def get_course_header(cur, course_name, dist=None):
@@ -6297,7 +6494,7 @@ def get_course_team_rating_bests(cur, course_name, limit=60):
       priced by the majority, which is the whole approximation.
     """
     pool_col = _ratingPoolCol(cur, "results")
-    cur.execute(f"""
+    sql = f"""
         WITH {_courseRowsCte(pool_col)},
         finishers AS (
             SELECT r.meet_id, r.div_id, r.source, r.school, r.speed_rating,
@@ -6342,8 +6539,12 @@ def get_course_team_rating_bests(cur, course_name, limit=60):
         )
         SELECT * FROM ranked WHERE rn <= %(limit)s
         ORDER BY gender, avg5 DESC
-    """, {"course": course_name, "limit": limit})
-    rows = cur.fetchall()
+    """
+
+    def run(cap):
+        cur.execute(sql, {"course": course_name, "limit": cap})
+        return cur.fetchall()
+    rows = _teamsOnly(run, limit, lambda r: (r.get("gender"), r.get("pool")))
     stampBoardRows(rows, rating_keys=("avg5",), sport="XC")
     return bestByShown(rows, limit, key="avg5", person="school",
                        hs_key="hs_avg5")
@@ -6360,6 +6561,10 @@ def get_course_meets(cur, course_name, dist=None, limit=200):
         WITH {_courseRowsCte()}
         SELECT r.meet_id,
                r.meet_name,
+               -- ★ THE PIN (sweep 2026-10-10): a result id of this feed's
+               --   meet, so the link (?r=) opens it and not the other
+               --   feed's meet under the same id; grouped per feed for it
+               min(r.result_id) AS pin_rid,
                -- DISTINCT so a distance run by six divisions appears once.
                -- ORDER BY so the list is stable between page loads.
                -- FILTER drops NULLs, which would otherwise become a literal
@@ -6370,7 +6575,7 @@ def get_course_meets(cur, course_name, dist=None, limit=200):
                max(r.date)  AS last_date,
                count(*)     AS n_results
         FROM course_rows r
-        GROUP BY r.meet_id, r.meet_name
+        GROUP BY r.meet_id, r.meet_name, (r.result_id < 0)
         -- dist picks WHICH meets appear (those that ran the selected
         -- distance) but not what a row says about them: the distances
         -- and result counts stay the whole meet's. A HAVING, not a
@@ -6430,10 +6635,6 @@ def school_page(school_name):
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            header = schoolHeader(cur, school_name)
-            if header is None:
-                abort(404)
-
             # same name, two schools: state chips scope every table to
             # one home-state cluster (see school_identity.py)
             # `include=`: the state the visitor asked for, so a cluster the
@@ -6450,6 +6651,11 @@ def school_page(school_name):
             #   Massachusetts kids -- no longer exists.
             if chips and not state:
                 state = primary_state
+            # ! AFTER THE CHIP, so the span is this school's and not every
+            #   namesake's (sweep 2026-10-10)
+            header = schoolHeader(cur, school_name, state, primary_state)
+            if header is None:
+                abort(404)
             # long form here: this line is not shared with a grade and a
             # compare link, so "Sac-Joaquin Section" fits where SJS had to.
             # Computed AFTER the identity is settled, so the units belong
@@ -6486,7 +6692,7 @@ def school_page(school_name):
             if lchips and not level:
                 level = lchips[0]["level"]
 
-            years = schoolYears(cur, school_name)
+            years = schoolYears(cur, school_name, state, primary_state)
 
             # ★ THE SCHOOL NAME LANDS ON THE HISTORY, NOT ON A YEAR. With no
             #   ?year the page is the whole programme, with the CURRENT roster
@@ -6502,7 +6708,8 @@ def school_page(school_name):
             picked = int(raw) if raw and raw.isdigit() else None
             picked_stored = storedYear(sport, picked)
 
-            year   = picked_stored or currentSeason(cur, school_name, sport)
+            year   = picked_stored or currentSeason(cur, school_name, sport,
+                                                 state, primary_state)
             roster = (schoolRoster(cur, school_name, year, sport,
                                    state=state, primary=primary_state)
                       if year else [])
@@ -6688,21 +6895,22 @@ def embed_school(school_name):
         sport = "XC"
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            header = schoolHeader(cur, school_name)
-            if header is None:
-                abort(404)
             state = (request.args.get("state") or "").strip().upper() or None
             chips, primary_state = stateChips(cur, school_name, include=state)
             if state and not any(c["state"] == state for c in chips):
                 state = None
             state = state or primary_state or school_identity.primaryState(school_name)
+            # ! scoped to the state, as the school page (sweep 2026-10-10)
+            header = schoolHeader(cur, school_name, state, primary_state)
+            if header is None:
+                abort(404)
             lchips = levelChips(cur, school_name, state)
             level = (request.args.get("level") or "").strip().lower() or None
             if level and not any(c["level"] == level for c in lchips):
                 level = None
             if lchips and not level:
                 level = lchips[0]["level"]
-            year = currentSeason(cur, school_name, sport)
+            year = currentSeason(cur, school_name, sport, state, primary_state)
             roster = (schoolRoster(cur, school_name, year, sport,
                                    state=state, primary=primary_state) if year else [])
             meets = schoolMeets(cur, school_name, sport, limit=3,
@@ -7169,7 +7377,7 @@ def get_course_records(cur, course_name, dist, limit=60):
     uses; rows without a linked person or a gender stay off the records
     (they remain in the rating table below)."""
     cur.execute(f"""
-        WITH {_courseRowsCte()},
+        WITH {_courseRowsCte(drop=_hasDistDrop(cur))},
         rows AS (
             SELECT r.person_id, r.result_id, r.time_seconds, r.date,
                    r.grade, r.school, r.speed_rating,
@@ -7201,8 +7409,8 @@ def get_course_team_records(cur, course_name, dist, limit=60):
     """Fastest team performances at one distance: top-5 time total within
     ONE race, best race per school, top `limit` per gender. Ranked by the
     total; the average is displayed alongside for readability."""
-    cur.execute(f"""
-        WITH {_courseRowsCte()},
+    sql = f"""
+        WITH {_courseRowsCte(drop=_hasDistDrop(cur))},
         finishers AS (
             SELECT r.meet_id, r.div_id, r.source, r.school, r.time_seconds,
                    r.date, r.meet_name, a.gender,
@@ -7242,8 +7450,43 @@ def get_course_team_records(cur, course_name, dist, limit=60):
         )
         SELECT * FROM ranked WHERE rn <= %(limit)s
         ORDER BY gender, total ASC
-    """, {"course": course_name, "dist": int(dist), "limit": limit})
-    return cur.fetchall()
+    """
+
+    def run(cap):
+        cur.execute(sql, {"course": course_name, "dist": int(dist), "limit": cap})
+        return cur.fetchall()
+    return _teamsOnly(run, limit, lambda r: r.get("gender"))
+
+
+def _teamsOnly(fetch, limit, part):
+    """fetch(cap)'s rows with the non-teams taken out, `limit` per partition.
+
+    ★ UNATTACHED IS NOT A TEAM (sweep 2026-10-10). The course team records
+      ranked every school STRING with five finishers, so five unattached
+      runners in one race -- no team at all -- could top a course's list.
+      meet_compile.isTeam is the rule the race pages score by; it is a
+      Python regex, so the filter runs here, and a partition the filter
+      left short is fetched again with that many more rows, until it is
+      full or the query has nothing more to give.
+    """
+    from meet_compile import isTeam
+    cap = limit
+    while True:
+        rows = fetch(cap)
+        raw, kept, out = {}, {}, []
+        for r in rows:
+            k = part(r)
+            raw[k] = raw.get(k, 0) + 1
+            if not isTeam(r.get("school")):
+                continue
+            if kept.get(k, 0) < limit:
+                out.append(r)
+            kept[k] = kept.get(k, 0) + 1
+        short = [limit - kept.get(k, 0) for k, n in raw.items()
+                 if n >= cap and kept.get(k, 0) < limit]
+        if not short:
+            return out
+        cap += max(short)
 
 
 def get_course_cell_difficulties(cur, course_name):
@@ -7445,7 +7688,10 @@ def buildCourseCtx(cur, course_name, picked):
                 meets=meets)
 
 
-@app.route("/course/<course_name>")
+# ! <path:>, AS /school/ (sweep 2026-10-10): course names are free text and
+#   can carry a slash, which the default converter stops at -- a 404, while
+#   the course's card route (/card/course/<path:>) already took the path
+@app.route("/course/<path:course_name>")
 def course(course_name):
     picked = request.args.get("dist", type=int)
 
@@ -8322,7 +8568,10 @@ def _searchTerms(raw, prefix="t"):
     "arcadia-loup" all tokenise the same. Six tokens is the cap -- past that
     the AND is narrow enough that more only costs time.
     """
-    tokens = [t for t in re.split(r"[^a-z0-9]+", (raw or "").lower()) if t][:6]
+    # ! search_index.searchFold, the fold the index is stored in (sweep
+    #   2026-10-10): accents dropped, apostrophes deleted -- "o'brien" is
+    #   one token "obrien", as the stored text now is, not "o" + "brien"
+    tokens = search_index.searchFold(raw).split()[:6]
     if not tokens:
         return None
 
@@ -8483,6 +8732,12 @@ def _run_search(q, kind, year_filter, offset):
     """Returns (results, per_kind_counts, available_years)."""
     # a year typed in the box acts as a filter too
     typed_year, q_clean = _parse_year(q)
+    # ★ A LONE YEAR IS THE QUERY, NOT A FILTER ON NOTHING (sweep 2026-10-10).
+    #   "2025" stripped to an empty needle and the page answered nothing,
+    #   while the dropdown -- which never strips -- listed every meet with
+    #   2025 in its name. Kept as the search word, it reads as the dropdown.
+    if typed_year and not q_clean.strip():
+        typed_year, q_clean = None, q
     year = year_filter or typed_year
     needle = q_clean.lower().strip()
 
@@ -11243,8 +11498,8 @@ def recruiting_school_page(school_name):
                                "tier": R.tierFor(rating, summary, summary.get("division"))
                                if rating is not None else None})
             other = "f" if gender == "m" else "m"
-            has_other = any(R.schoolRecruits(cur, school_name, state, other, sp)[0]
-                            for sp in R.SPORTS)
+            # ! one EXISTS, not two more full schoolRecruits (sweep 2026-10-10)
+            has_other = R.hasRecruits(cur, school_name, state, other)
     # ★ THE THRESHOLDS IN THE READER'S OWN EVENTS (owner, 2026-10-05): the
     #   events the athlete has a PR in, or the one they typed; 5K / 1600 /
     #   3200 when nobody is named.

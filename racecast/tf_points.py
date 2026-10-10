@@ -334,13 +334,20 @@ def roundOf(event_short):
 # appears ('P' prelim, and defensively S/Q/H for semis/quarters/heats).
 _ROUND_CODES = {"F": "final", "P": "prelim", "S": "prelim",
                 "Q": "prelim", "H": "prelim"}
+# ! THE RACE PAGE'S OWN ROUNDS (sweep 2026-10-10). For scoring a semi is
+#   just "not the final"; on the race page it is its own round, and folding
+#   semis and quarters into "Prelims" numbered their heats as one round.
+_FINE_ROUNDS = {"S": "semi", "Q": "quarter"}
 
 
-def rowRound(row):
+def rowRound(row, fine=False):
     """'final' | 'prelim' | None for one RESULT: the round column the
     feed stamped on it when present (the truth -- prelims and finals can
-    share one event_id), else the event name's word."""
+    share one event_id), else the event name's word. fine=True keeps
+    'semi' and 'quarter' apart (the race page's sections)."""
     code = (row.get("round") or "").strip().upper()[:1]
+    if fine and code in _FINE_ROUNDS:
+        return _FINE_ROUNDS[code]
     if code in _ROUND_CODES:
         return _ROUND_CODES[code]
     return roundOf(row.get("event_short"))
