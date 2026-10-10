@@ -1,7 +1,13 @@
 {# account.html -- settings (283): your picture and name, who you are, the
    athlete pages you are, the teams you coach, and the exits. Every change
    is a POST with the session's CSRF token; the pickers are the site's own
-   typeahead. #}
+   typeahead.
+   ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10): header, the cards in the
+     main column and a Summary card beside them, every value a link to the
+     card that changes it (hidden on a phone, where the cards are right
+     under it). It reads only what the route already passes. The page keeps
+     .account-page, so style.css's .acct-* rules still apply.
+   ! EVERY FORM ACTION, FIELD NAME, CSRF INPUT AND data-role IS AS IT WAS. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,19 +17,27 @@
 {% include "_meta.html" %}
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 <script src="{{ static_v('topbar-search.js') }}"></script>
 </head>
 <body>
 {% include "_topbar.html" %}
-<main class="page account-page" data-role="{{ account.role }}">
-  <h1>Settings</h1>
-  <p class="meta">{{ account.email }}{% if account.google_sub %} · signed in with Google{% endif %}{% if admin %} · admin · <a href="/account/status">Site status</a>{% endif %}</p>
-  {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
-  {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
-
+<main class="page-wide rc account-page" data-role="{{ account.role }}">
   {% set athletes = claims|selectattr("kind", "equalto", "athlete")|list %}
   {% set selves = claims|selectattr("kind", "equalto", "coach_self")|list %}
   {% set teams = claims|selectattr("kind", "equalto", "coach_team")|list %}
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--site">Your account</span></div>
+      <h1>Settings</h1>
+      <div class="rc-meta">{{ account.email }}{% if account.google_sub %} · signed in with Google{% endif %}{% if admin %} · admin · <a href="/account/status">Site status</a>{% endif %}</div>
+      {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
+      {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+    </div>
+  </div></header>
+
+  <div class="rc-grid">
+  <div class="rc-mainc">
 
   <section class="acct-block acct-profile" id="photo">
     <div class="acct-photo-row">
@@ -54,7 +68,7 @@
     </div>
   </section>
 
-  <section class="acct-block">
+  <section class="acct-block" id="role">
     <h2>I am</h2>
     <form method="post" action="/account/role" class="acct-roles">
       <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -65,7 +79,7 @@
     </form>
   </section>
 
-  <section class="acct-block acct-athlete">
+  <section class="acct-block acct-athlete" id="athlete">
     <h2>Your athlete page{{ "s" if athletes|length > 1 }}</h2>
     <p class="meta">Link the page that is you. If you appear twice on Racecast (it happens), link both; that also tells us they are one person.</p>
     {% if athletes %}
@@ -90,7 +104,7 @@
     </form>
   </section>
 
-  <section class="acct-block acct-coach">
+  <section class="acct-block acct-coach" id="coach">
     <h2>Teams you coach</h2>
     <p class="meta">Choose the team you represent. Verification (a school email, or the site owner) comes later; for now a team claim is a statement, and it does not open anything about other people.</p>
     {% if teams %}
@@ -140,7 +154,7 @@
 
   {# the exits, apart from each other: signing out is routine, deleting is
      not, and the two sat in one box a thumb's width apart (2026-10-03) #}
-  <section class="acct-block acct-exits">
+  <section class="acct-block acct-exits" id="sessions">
     <h2>Sessions</h2>
     <p class="meta">"Everywhere" signs out every phone and computer this account is signed in on.</p>
     <div class="acct-row">
@@ -149,7 +163,7 @@
     </div>
   </section>
 
-  <section class="acct-block acct-danger">
+  <section class="acct-block acct-danger" id="delete">
     <h2>Delete this account</h2>
     <p class="meta">Removes the account, its picture, its sessions and its links. Results on the site are the public record and stay.</p>
     <form method="post" action="/account/delete" class="acct-row">
@@ -158,6 +172,27 @@
       <button type="submit" class="go danger">Delete account</button>
     </form>
   </section>
+  </div>
+  {# the account at a glance; every value is a link to the card that changes it #}
+  <aside class="rc-side">
+    <h2>Summary</h2>
+    <div class="acct-sum">
+      <div class="acct-sum-who">
+        <span class="acct-sum-av">{% if photo %}<img src="{{ photo.url }}" alt="" width="44" height="44">{% else %}<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0 2c-4 0-8 2-8 5v2h16v-2c0-3-4-5-8-5z"/></svg>{% endif %}</span>
+        <span><b>{{ account.name or "No name yet" }}</b><small>{{ "Picture set" if photo else "No picture" }}</small></span>
+      </div>
+      <dl>
+        <dt>I am</dt><dd><a href="#role">{{ {"athlete": "An athlete", "coach": "A coach", "neither": "Just looking"}.get(account.role, "Not set") }}</a></dd>
+        <dt>Athlete pages</dt><dd><a href="#athlete">{% set nv = athletes|selectattr("status", "equalto", "verified")|list|length %}{{ athletes|length }}{% if athletes and nv == athletes|length %}, verified{% elif athletes %} · {{ nv }} verified{% endif %}</a></dd>
+        <dt>Teams</dt><dd><a href="#coach">{{ teams|length }}</a></dd>
+        <dt>Coaching self</dt><dd><a href="#coach">{{ "Yes" if selves else "No" }}</a></dd>
+      </dl>
+      <ul class="acct-jump">
+        <li><a href="#photo">Picture</a></li><li><a href="#sessions">Sign out</a></li><li class="is-danger"><a href="#delete">Delete</a></li>
+      </ul>
+    </div>
+  </aside>
+  </div>
 </main>
 <script src="{{ static_v('account.js') }}"></script>
 </body>

@@ -403,7 +403,6 @@ main.rc.rankings-page #results { overflow-x: auto; }
   main.rc.rankings-page .rc-side .findme { order: -1; margin: 0 0 .4rem; width: 100%; }
   main.rc.rankings-page .rk-states-card { order: 2; margin-top: 1.4rem; width: 100%; }
 }
-=======
 /* ======================================================================
    ★ RECRUITING, THE COACH SEARCH, THE RECRUIT PROFILE AND /coaches IN THE
    RACE SHAPE (owner, 2026-10-10: "lgtm" on the proposals). Only what the
@@ -466,3 +465,122 @@ main.rc.coach-home .coach-mine-note { font-size: .85rem; }
 main.rc.coach-home .coach-next-list { margin-top: .3rem; }
 main.rc.coach-home .coach-foot { margin-top: 1.4rem; }
 /* ---- end of the recruiting / coaches block ----------------------------- */
+=======
+/* =======================================================================
+   ★ ABOUT, REPORT, ACCOUNT, SIGN IN, 404, ERROR AND STATUS IN THE RACE
+     SHAPE (owner, 2026-10-10). Each page's <main> is .page-wide.rc plus
+     its own class (.about-page, .report-page, .account-page, .login-page,
+     .nf-rc for 404 and error.html, .status-page), and every rule below is
+     scoped to one of those, so no race, school or board page moves.
+     Only what the shape needs on top of style.css's own page rules.
+   ======================================================================= */
+
+/* ---- shared: the kicker, the side card's heading, section headings ---- */
+/* the kicker on a page with no sport: muted, sport-neutral; an error in
+   amber (error.html, a 500) */
+main.rc.about-page .rc-sport .sport-tag--site, main.rc.report-page .rc-sport .sport-tag--site,
+main.rc.account-page .rc-sport .sport-tag--site, main.rc.login-page .rc-sport .sport-tag--site,
+main.rc.nf-rc .rc-sport .sport-tag--site, main.rc.status-page .rc-sport .sport-tag--site { color: var(--muted); }
+main.rc.nf-rc .rc-sport .sport-tag--warn { color: #b45309; }
+main.rc.about-page .rc-side > h2, main.rc.report-page .rc-side > h2, main.rc.account-page .rc-side > h2,
+main.rc.login-page .rc-side > h2, main.rc.status-page .rc-side > h2 { font-size: 1.15rem; margin-top: 0; }
+/* a section heading with a hairline above it, like the race page's blocks */
+main.rc.about-page .rc-sec, main.rc.report-page .rc-sec { font-size: 1.15rem; margin: 2.1rem 0 .55rem; padding-top: .7rem;
+  border-top: 1px solid var(--line); scroll-margin-top: 1rem; }
+main.rc.about-page .rc-mainc > .rc-sec:first-child,
+main.rc.report-page .rc-mainc > .rc-sec:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+/* a bordered side card holding a few lines of guidance (Report, Sign in) */
+main.rc.report-page .rc-side-card, main.rc.login-page .rc-side-card { border: 1px solid var(--line); border-radius: 6px;
+  padding: .75rem .95rem .8rem; font-size: .9rem; }
+
+/* ---- About: prose in the main column, Contents beside it ---------------- */
+main.rc.about-page .rc-prose { line-height: 1.65; }
+main.rc.about-page .rc-prose p, main.rc.about-page .rc-prose .page-steps, main.rc.about-page .rc-prose dl { max-width: 44rem; }
+main.rc.about-page .rc-prose p { margin: 0 0 .9rem; }
+main.rc.about-page .rc-prose h3 { font-size: 1rem; margin: 1.4rem 0 .35rem; }
+main.rc.about-page .rc-champs .rc-cv { font-size: 1.1rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+main.rc.about-page .rc-side .rc-side-foot { font-size: .85rem; color: var(--muted); margin: .7rem 0 0; }
+main.rc.about-page .rc-side .rc-tscores-plain td.tn a { font-weight: 600; }
+/* on a phone the Contents card comes up under the header, not sticky */
+@media (max-width: 760px) {
+  main.rc.about-page .rc-grid { display: flex; flex-direction: column; }
+  main.rc.about-page .rc-side.rc-side-sticky { position: static; max-height: none; order: -1; }
+}
+
+/* ---- Report an issue ---------------------------------------------------- */
+main.rc.report-page .rc-form { max-width: 36rem; }
+main.rc.report-page .rc-form .about-chip { margin: 0 0 1.1rem; }
+main.rc.report-page .rc-side-card ol, main.rc.report-page .rc-side-card ul { margin: .2rem 0 .4rem; padding-left: 1.1rem; }
+main.rc.report-page .rc-side-card li { margin: .25rem 0; }
+main.rc.report-page .rc-side-card p { margin: .5rem 0 0; color: var(--muted); }
+/* ! "Send report" WAS A BARE BROWSER BUTTON: .go is only styled inside other
+     pages (.account-page, .rankings-page). The site's black button, as on
+     Settings, a little roomier as the page's one action. */
+main.rc.report-page button.go { padding: .55rem 1.2rem; font: inherit; font-weight: 600; border: 0; border-radius: 6px;
+  background: var(--ink); color: #fff; cursor: pointer; }
+main.rc.report-page button.go:hover:not([disabled]) { background: #000; }
+main.rc.report-page button.go[disabled] { opacity: .5; cursor: default; }
+
+/* ---- Settings: the cards, and the Summary card beside them -------------- */
+main.rc.account-page .rc-mainc > .acct-block:first-child { margin-top: 0; }
+main.rc.account-page .rc-hd .acct-notice, main.rc.account-page .rc-hd .error { margin-top: .6rem; }
+main.rc.account-page .acct-block { scroll-margin-top: 1rem; }
+main.rc.account-page .acct-sum { border: 1px solid var(--line); border-radius: 10px; padding: .85rem 1rem .9rem; font-size: .9rem; }
+main.rc.account-page .acct-sum-who { display: flex; align-items: center; gap: .65rem; padding-bottom: .7rem; border-bottom: 1px solid var(--line); }
+main.rc.account-page .acct-sum-av { width: 44px; height: 44px; border-radius: 50%; background: #eceef1; color: #9aa1ab;
+  display: flex; align-items: center; justify-content: center; overflow: hidden; flex: none; }
+main.rc.account-page .acct-sum-av img { width: 100%; height: 100%; object-fit: cover; }
+main.rc.account-page .acct-sum-who b { display: block; font-size: 1rem; }
+main.rc.account-page .acct-sum-who small { display: block; color: var(--muted); font-size: .8rem; }
+main.rc.account-page .acct-sum dl { display: grid; grid-template-columns: auto 1fr; gap: .35rem .8rem; margin: .7rem 0 0; }
+main.rc.account-page .acct-sum dt { color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .05em;
+  text-transform: uppercase; padding-top: .15rem; }
+main.rc.account-page .acct-sum dd { margin: 0; font-weight: 600; text-align: right; }
+main.rc.account-page .acct-sum dd a { font-weight: 600; }
+main.rc.account-page .acct-jump { list-style: none; margin: .8rem 0 0; padding: .6rem 0 0; border-top: 1px solid var(--line);
+  display: flex; flex-wrap: wrap; gap: .25rem .9rem; }
+main.rc.account-page .acct-jump a { font-weight: 600; font-size: .88rem; }
+main.rc.account-page .acct-jump .is-danger a { color: #a32d2d; }
+/* on a phone the summary would only repeat the cards right under it */
+@media (max-width: 760px) { main.rc.account-page .rc-side { display: none; } }
+
+/* ---- Sign in: the card on the light page -------------------------------- */
+main.rc.login-page .rc-grid { grid-template-columns: minmax(0, 27rem) 280px; gap: 2.5rem; }
+main.rc.login-page .rc-grid.rc-grid-one { grid-template-columns: minmax(0, 27rem); }
+/* the site's hairline, not the dark shell's drop shadow */
+main.rc.login-page .auth-card { border: 1px solid var(--line); box-shadow: none; border-radius: 10px; padding: 1.4rem 1.5rem; }
+main.rc.login-page .auth-card > .auth-lead:first-child { margin-top: 0; }
+main.rc.login-page .auth-back { margin: 1rem 0 0; }
+main.rc.login-page .auth-back a { color: var(--link); text-decoration: none; font-weight: 600; }
+main.rc.login-page .auth-back a:hover { color: var(--link); text-decoration: underline; }
+main.rc.login-page .rc-side-card .auth-small { margin: 0; font-size: .88rem; line-height: 1.55; color: #374151; }
+@media (max-width: 760px) { main.rc.login-page .rc-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---- 404 and error: one column, two short sections ---------------------- */
+main.rc.nf-rc .rc-mainc { max-width: 36rem; }
+main.rc.nf-rc .rc-sec { font-size: 1.15rem; margin: 0 0 .55rem; }
+main.rc.nf-rc .nf-search { justify-content: flex-start; margin: 0 0 1.4rem; }
+main.rc.nf-rc .nf-search input { max-width: none; }
+main.rc.nf-rc .nf-go { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+main.rc.nf-rc .nf-go li { border-bottom: 1px solid var(--line); }
+main.rc.nf-rc .nf-go a { display: flex; justify-content: space-between; gap: 1rem; padding: .55rem .2rem; text-decoration: none; font-weight: 600; }
+main.rc.nf-rc .nf-go a:hover { background: var(--hover); }
+main.rc.nf-rc .nf-report { margin-top: 1.6rem; text-align: left; }
+
+/* ---- Site status: the tables at full width, Sections beside them -------- */
+main.rc.status-page .rc-hd .st-head { margin: .7rem 0 0; }
+main.rc.status-page .rc-mainc > h2 { font-size: 1.15rem; margin: 2rem 0 .55rem; padding-top: .7rem;
+  border-top: 1px solid var(--line); scroll-margin-top: 1rem; }
+main.rc.status-page .rc-mainc > h2:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+main.rc.status-page .rc-mainc > .st-snap { margin-top: 1.6rem; }
+main.rc.status-page .st-sum td.tpts { width: 6.2rem; font-weight: 600; font-size: .85rem; }
+main.rc.status-page .st-sum td.tn a { font-weight: 600; }
+main.rc.status-page .st-sum-note { font-size: .82rem; margin: .6rem 0 0; }
+main.rc.status-page .st-reports .st-btn { white-space: nowrap; }
+/* on a phone the headline covers the card, and a wide table scrolls inside
+   itself instead of the page */
+@media (max-width: 760px) {
+  main.rc.status-page .rc-mainc table { display: block; overflow-x: auto; }
+  main.rc.status-page .rc-side { display: none; }
+}
+/* ======================= end of the 2026-10-10 pages ===================== */

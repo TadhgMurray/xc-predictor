@@ -6,6 +6,10 @@
    the site's recovery path, so the box is front and center; the report
    line feeds the existing /report form, because a 404 reached from one
    of OUR links is a bug somebody should hear about.
+
+   ★ THE RACE PAGE'S HEADER (owner, 2026-10-10), left on the site's gutter
+     rather than centred: the code in the kicker, then "Search for it" and
+     "Or start from" as two short sections. error.html is the same shape.
 ===================================================================== #}
 <!DOCTYPE html>
 <html lang="en">
@@ -15,6 +19,7 @@
     <title>Page not found - Racecast</title>
     <meta name="robots" content="noindex">
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
     {# the favicon rides in _meta.html on every other page; this head does
        not include that partial, so the tag is here by hand (issue 149) #}
     <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
@@ -22,23 +27,34 @@
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
-<main class="nf-page">
-    <div class="nf-code">404</div>
+<main class="page-wide rc nf-rc">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Error 404 · not found</span></div>
     <h1>This page doesn't exist</h1>
-    <p class="meta">The link may be stale, or what it pointed at may have
-       moved during a data rebuild.</p>
+    <div class="rc-meta">The link may be stale, or what it pointed at may have
+       moved during a data rebuild.</div>
+  </div>
+</div></header>
+<div class="rc-grid rc-grid-one">
+<div class="rc-mainc">
+    <h2 class="rc-sec">Search for it</h2>
     <form class="nf-search" action="/search" method="get" role="search">
         <input type="search" name="q" autofocus autocomplete="off"
                placeholder="Search athletes, meets, courses…"
                aria-label="Search">
         <button type="submit">Search</button>
     </form>
-    <p class="nf-links">
-        <a href="/">Home</a> · <a href="/rankings">Rankings</a> ·
-        <a href="/conversions">Conversions</a>
-    </p>
+    <h2 class="rc-sec">Or start from</h2>
+    <ul class="nf-links nf-go">
+        <li><a href="/">Home</a></li>
+        <li><a href="/rankings">Rankings</a></li>
+        <li><a href="/conversions">Conversions</a></li>
+    </ul>
     <p class="nf-report">If a link on this site brought you here,
        <a href="/report">report it</a> and it gets fixed.</p>
+</div>
+</div>
 </main>
 </body>
 </html>

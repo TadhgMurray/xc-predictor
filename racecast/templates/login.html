@@ -1,6 +1,13 @@
-{# login.html -- sign in (283). Its own shell, not a section of the site:
-   the dark ground the home page uses, the wordmark, one card. No topbar,
-   no search. mode: form | sent | continue | expired. No passwords. #}
+{# login.html -- sign in (283). mode: form | sent | continue | expired.
+   No passwords.
+   ★ IN THE SITE'S SHELL NOW (owner, 2026-10-10), not the dark one of its
+     own: the topbar, the race page's header (the h1 follows the mode, as
+     the card's own h1 did, so the page has one) and the card beside a
+     "What an account does" card on the sign-in form. _topbar.html leaves
+     out its own "Sign in" button on /login.
+   ! EVERY FORM, FIELD NAME, ACTION AND ID IS AS IT WAS: #auth-form, next,
+     provider=google (formnovalidate), email, the turnstile div,
+     /login/t/<token> and age_ok. The busy-button script below is untouched. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,18 +18,35 @@
 {% include "_meta.html" %}
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 {% if turnstile and mode == "form" %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
+<script src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<body class="auth-body">
-<main class="auth">
-  <a class="auth-brand" href="/" aria-label="Racecast"><img src="{{ static_v('logo.svg') }}" alt="Racecast" width="230" height="84"></a>
+<body>
+{% include "_topbar.html" %}
+{# the heading, from the same conditions the card used for its own h1 #}
+{% if mode == "sent" %}{% set heading = "No email was sent" if unsent in ("failed", "nomail") else "Check your email" %}
+{% elif mode == "continue" %}{% set heading = "One last step" if via_google else "Almost there" %}
+{% elif mode == "expired" %}{% set heading = "That link has expired" %}
+{% else %}{% set heading = "Sign in" %}{% endif %}
+{% set on_form = mode not in ("sent", "continue", "expired") and (google or mail) %}
+<main class="page-wide rc login-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Racecast account</span></div>
+    <h1>{{ heading }}</h1>
+    <div class="rc-meta">{% if mode in ("sent", "continue", "expired") %}Sign-in links work once and last 15 minutes{% elif google and mail %}Google or an emailed link{% elif google %}With Google{% elif mail %}With an emailed link{% else %}Not switched on yet{% endif %}
+      · everything on Racecast is open without an account</div>
+  </div>
+</div></header>
 
+<div class="rc-grid{{ ' rc-grid-one' if not on_form }}">
+<div class="rc-mainc">
   <div class="auth-card">
   {% if mode == "sent" %}
     {# ! THE HEADING TELLS THE TRUTH TOO (owner, 2026-10-04: "I don't think
        the non-google sign in actually works"): "Check your email" above
        "no link went out" read as a success with small print. #}
-    <h1>{% if unsent in ("failed", "nomail") %}No email was sent{% else %}Check your email{% endif %}</h1>
     {% if unsent == "failed" %}
     <p class="auth-lead">The mail service refused the message, so no link went out. The reason is in the server log; try again in a minute.</p>
     {% elif unsent == "slow" %}
@@ -36,7 +60,6 @@
     {% endif %}
 
   {% elif mode == "continue" %}
-    <h1>{% if via_google %}One last step{% else %}Almost there{% endif %}</h1>
     {% if via_google %}
     <p class="auth-lead">Google confirmed your email. Racecast accounts are for people 13 or older, so confirm that once and you are in.</p>
     {% elif need_age %}
@@ -56,12 +79,10 @@
     </form>
 
   {% elif mode == "expired" %}
-    <h1>That link has expired</h1>
     <p class="auth-lead">Sign-in links work once and last 15 minutes.</p>
     <a class="auth-btn auth-primary" href="/login">Get a new link</a>
 
   {% else %}
-    <h1>Sign in</h1>
     {% if google or mail %}
     <p class="auth-lead">No password to remember. {% if google and mail %}Continue with Google, or we email you a link.{% elif google %}Continue with your Google account.{% else %}We email you a link.{% endif %}</p>
     {% else %}
@@ -92,12 +113,21 @@
       {% endif %}
     </form>
     {% if google and not mail %}<p class="auth-note">Email sign-in links are switched off for now, so Google is the way in.</p>{% endif %}
-    <p class="auth-small">An account links your athlete page, lets you represent a team, and places you on the recruiting boards. Your email is for signing in and nothing else until you ask. Accounts are for people 13 or older (you confirm it once, on your first sign-in); you can delete yours any time.</p>
     {% endif %}
   {% endif %}
   </div>
 
   <p class="auth-back"><a href="{{ next if next and next != '/account' else '/' }}">← Back to Racecast</a></p>
+</div>
+{% if on_form %}
+<aside class="rc-side">
+  <h2>What an account does</h2>
+  <div class="rc-side-card">
+    <p class="auth-small">An account links your athlete page, lets you represent a team, and places you on the recruiting boards. Your email is for signing in and nothing else until you ask. Accounts are for people 13 or older (you confirm it once, on your first sign-in); you can delete yours any time.</p>
+  </div>
+</aside>
+{% endif %}
+</div>
 </main>
 {# ★ THE BUTTON SAYS IT IS WORKING (owner, 2026-10-03: "the sign in page
    can hang"). Sending the link is a call to the mail provider and can

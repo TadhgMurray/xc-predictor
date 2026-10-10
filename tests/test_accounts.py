@@ -242,6 +242,10 @@ def _flowApp(monkeypatch, tokens, ages, made):
     app.jinja_env.globals["static_v"] = lambda f: "/static/" + f
     app.jinja_env.globals["site_origin"] = "https://racecast.co"
     app.register_blueprint(AC.bp)
+    # login.html carries the site's topbar (owner, 2026-10-10), which
+    # url_for()s these site pages; stand-ins so the links can be built
+    for ep in ("predictions_page", "about_page", "report_page"):
+        app.add_url_rule("/" + ep, ep, lambda: "")
 
     class Conn:
         def commit(self):

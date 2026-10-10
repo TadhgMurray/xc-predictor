@@ -1,5 +1,9 @@
 {# status.html -- the owner's status page (site_status.py). Admins only;
-   every block renders its own error rather than failing the page. #}
+   every block renders its own error rather than failing the page.
+   ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10): .page-wide, so the tables
+     get the width the 68ch column took from them ("Resolve" no longer
+     breaks into three lines), and a sticky Sections card beside them
+     (hidden on a phone, where the headline covers it). #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,14 +13,18 @@
 {% include "_meta.html" %}
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
-<main class="page status-page">
-  <h1>Site status</h1>
-  <p class="meta">{{ st.now.strftime("%Y-%m-%d %H:%M") }} server time · season {{ st.season }} ·
-    <a href="/account">Settings</a></p>
+<main class="page-wide rc status-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Admin · private</span></div>
+    <h1>Site status</h1>
+    <div class="rc-meta">{{ st.now.strftime("%Y-%m-%d %H:%M") }} server time · season {{ st.season }} ·
+      <a href="/account">Settings</a></div>
 
   {# ★ THE HEADLINE FIRST: everything that needs the owner, in one line,
        so a glance says whether to scroll. #}
@@ -27,12 +35,16 @@
   {% if st.blank.blank %}{% set _ = flags.append("{:,}".format(st.blank.blank) ~ " blank athletes") %}{% endif %}
   {% if st.queries is sequence and st.queries is not mapping and st.queries|selectattr("seconds", "gt", 600)|list %}{% set _ = flags.append("queries over 10 minutes") %}{% endif %}
   <p class="st-head {{ 'st-head-bad' if flags else 'st-head-ok' }}">{{ flags|join(" · ") if flags else "Nothing needs you." }}</p>
+  </div>
+</div></header>
+<div class="rc-grid">
+<div class="rc-mainc">
 
   {% macro err(block) %}<p class="st-err">Could not read this: {{ block.error }}</p>{% endmacro %}
   {% macro n(x) %}{{ "{:,}".format(x) if x is not none else " - " }}{% endmacro %}
 
   {# ---------------------------------------------------------------- #}
-  <h2>Pipeline</h2>
+  <h2 id="pipeline">Pipeline</h2>
   {% set pl = st.pipeline %}
   {% if pl.error %}{{ err(pl) }}{% else %}
   {% set run = pl.latest %}
@@ -78,7 +90,7 @@
     {{ ago((st.now.astimezone() - st.snapshot_at).total_seconds()) if st.snapshot_at.tzinfo else st.snapshot_at }} ago;
     {% else %}The three sections below have not been counted yet;
     {% endif %}<code>scripts/print_status.py</code> counts them again (a few minutes).</p>
-  <h2>tfrrs rows tied to a person</h2>
+  <h2 id="identity">tfrrs rows tied to a person</h2>
   {% if st.identity.error %}{{ err(st.identity) }}{% else %}
   <table><thead><tr><th>Sport</th><th>Season</th><th>Rows</th><th>Person</th>
     <th>tfrrs id only</th><th>Normalized</th><th>Rated</th></tr></thead><tbody>
@@ -95,7 +107,7 @@
   {% endif %}
 
   {# ---------------------------------------------------------------- #}
-  <h2>This season's rated rows</h2>
+  <h2 id="rated">This season's rated rows</h2>
   {% if st.rated.error %}{{ err(st.rated) }}{% else %}
   <table><thead><tr><th>Sport</th><th>Source</th><th>Rows</th><th>Rated</th><th>Latest result</th></tr></thead><tbody>
   {% for r in st.rated %}
@@ -107,7 +119,7 @@
   {% endif %}
 
   {# ---------------------------------------------------------------- #}
-  <h2>Blank athletes</h2>
+  <h2 id="blank">Blank athletes</h2>
   {% if st.blank.error %}{{ err(st.blank) }}{% else %}
   <p>{% if st.blank.blank %}<span class="st-warn">{{ n(st.blank.blank) }}</span>{% else %}<span class="st-ok">0</span>{% endif %}
     anet athletes with no name on any row · {{ n(st.blank.queued_meets) }} anet meets waiting to be scraped.</p>
@@ -116,7 +128,7 @@
   {% endif %}
 
   {# ---------------------------------------------------------------- #}
-  <h2>Queries running over 5 seconds</h2>
+  <h2 id="queries">Queries running over 5 seconds</h2>
   {% if st.queries.error %}{{ err(st.queries) }}
   {% elif not st.queries %}<p class="st-ok">None.</p>
   {% else %}
@@ -149,6 +161,39 @@
   {% endfor %}
   </tbody></table>
   {% endif %}
+</div>
+{# ★ EVERY SECTION'S ONE-WORD STATE, A JUMP TO IT (owner, 2026-10-10); the
+     headline says the same in a sentence. Worked out here from `st`, so
+     site_status.py did not change.
+   ! A TABLE WITH NO ROWS READS "none", not "low 100%": the share starts at
+     100 and only a row can lower it. #}
+{% macro sumrow(id, label, cls, word) %}<tr class="rc-jump"><td class="tn"><a href="#{{ id }}">{{ label }}</a></td><td class="n tpts {{ cls }}">{{ word }}</td></tr>{% endmacro %}
+<aside class="rc-side rc-side-sticky">
+  <h2>Sections</h2>
+  <table class="rc-tscores rc-tscores-plain st-sum"><tbody>
+    {% set run = st.pipeline.latest %}
+    {% if st.pipeline.error %}{{ sumrow("pipeline", "Pipeline", "st-bad", "unread") }}
+    {% elif run.failed %}{{ sumrow("pipeline", "Pipeline", "st-bad", (run.failed|length) ~ " failed") }}
+    {% elif run.open %}{{ sumrow("pipeline", "Pipeline", "st-warn", "running") }}
+    {% else %}{{ sumrow("pipeline", "Pipeline", "st-ok", "ok") }}{% endif %}
+    {# the lowest share across the table's rows: the one worth a look #}
+    {% if st.identity.error %}{{ sumrow("identity", "tfrrs rows tied", "st-bad", "unread") }}
+    {% else %}{% set lo = namespace(v=100, seen=false) %}{% for r in st.identity if r.rows %}{% set lo.v = [lo.v, (100 * r.person / r.rows)|round|int]|min %}{% set lo.seen = true %}{% endfor %}
+    {{ sumrow("identity", "tfrrs rows tied", "st-warn" if lo.v < 90 else "st-ok", ("low " ~ lo.v ~ "%") if lo.seen else "none") }}{% endif %}
+    {% if st.rated.error %}{{ sumrow("rated", "Rated rows", "st-bad", "unread") }}
+    {% else %}{% set lo = namespace(v=100, seen=false) %}{% for r in st.rated if r.rows %}{% set lo.v = [lo.v, (100 * r.rated / r.rows)|round|int]|min %}{% set lo.seen = true %}{% endfor %}
+    {{ sumrow("rated", "Rated rows", "st-warn" if lo.v < 90 else "st-ok", ("low " ~ lo.v ~ "%") if lo.seen else "none") }}{% endif %}
+    {% if st.blank.error %}{{ sumrow("blank", "Blank athletes", "st-bad", "unread") }}
+    {% else %}{{ sumrow("blank", "Blank athletes", "st-warn" if st.blank.blank else "st-ok", n(st.blank.blank) if st.blank.blank else "0") }}{% endif %}
+    {% if st.queries.error %}{{ sumrow("queries", "Slow queries", "st-bad", "unread") }}
+    {% else %}{{ sumrow("queries", "Slow queries", "st-warn" if st.queries else "st-ok", (st.queries|length|string) if st.queries else "none") }}{% endif %}
+    {% if st.reports.error %}{{ sumrow("reports", "Open reports", "st-bad", "unread") }}
+    {% else %}{{ sumrow("reports", "Open reports", "st-bad" if st.reports.open else "st-ok", (st.reports.open|string) if st.reports.open else "none") }}{% endif %}
+  </tbody></table>
+  <p class="meta st-sum-note">The middle three are from the last snapshot; their figure is the lowest share across the table.</p>
+</aside>
+</div>
 </main>
+<script src="{{ static_v('rc-jump.js') }}"></script>
 </body>
 </html>

@@ -5,6 +5,10 @@
    a way on; a crawler gets the right status. A 503 carries Retry-After so
    search engines keep the page indexed and come back, which a bare 500
    repeated across crawls would not.
+
+   ★ THE SAME SHAPE AS 404.html (owner, 2026-10-10). The kicker carries the
+     code: a 500 in amber, a 503 in the neutral grey, since a rebuild is
+     not a fault.
 ===================================================================== #}
 <!DOCTYPE html>
 <html lang="en">
@@ -14,34 +18,46 @@
     <title>{{ "Back in a moment" if code == 503 else "Something went wrong" }} - Racecast</title>
     <meta name="robots" content="noindex">
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
     <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
-<main class="nf-page">
-    <div class="nf-code">{{ code }}</div>
+<main class="page-wide rc nf-rc">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag {{ 'sport-tag--site' if code == 503 else 'sport-tag--warn' }}">Error {{ code }} · {{ "rebuilding" if code == 503 else "server error" }}</span></div>
     {% if code == 503 %}
     <h1>Back in a moment</h1>
-    <p class="meta">The data is being rebuilt. This page will work again in a
-       minute or two; nothing is lost.</p>
+    <div class="rc-meta">The data is being rebuilt. This page will work again in a
+       minute or two; nothing is lost.</div>
     {% else %}
     <h1>Something went wrong</h1>
-    <p class="meta">This page failed to load. It has been logged. Try it again,
-       or search for what you were after.</p>
+    <div class="rc-meta">This page failed to load. It has been logged. Try it again,
+       or search for what you were after.</div>
     {% endif %}
+  </div>
+</div></header>
+<div class="rc-grid rc-grid-one">
+<div class="rc-mainc">
+    <h2 class="rc-sec">Search for it</h2>
     <form class="nf-search" action="/search" method="get" role="search">
         <input type="search" name="q" autocomplete="off"
                placeholder="Search athletes, meets, courses…" aria-label="Search">
         <button type="submit">Search</button>
     </form>
-    <p class="nf-links">
-        <a href="/">Home</a> · <a href="/rankings">Rankings</a> ·
-        <a href="/conversions">Conversions</a>
-    </p>
+    <h2 class="rc-sec">Or start from</h2>
+    <ul class="nf-links nf-go">
+        <li><a href="/">Home</a></li>
+        <li><a href="/rankings">Rankings</a></li>
+        <li><a href="/conversions">Conversions</a></li>
+    </ul>
     {% if code != 503 %}
     <p class="nf-report">If this keeps happening, <a href="/report">report it</a>.</p>
     {% endif %}
+</div>
+</div>
 </main>
 </body>
 </html>
