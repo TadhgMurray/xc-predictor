@@ -5886,3 +5886,25 @@ Chromium against the old script (readout 15:00, label under the pointer
 - **Possible fixes (not done):** run predictions as a background job the page polls;
   serve /api/predict* from a separate gunicorn with more threads and a longer timeout;
   cap or cache very large fields; tell the reader "this is a big field, about N s".
+
+## 2026-10-10 — 🔎 Athlete page: course difficulty still missing for some races (logged, not fixed)
+
+- **Symptom (owner):** on athlete pages, the difficulty for some races is still blank
+  (since header redesign B the column reads "Course" and shows Fast / Typical / Hard /
+  Very hard, falling back to the old % when no cut-offs are loaded).
+- **Places to look:**
+  - Races whose course has no fitted cell (new or unmatched courses, a course name the
+    canonical match missed, a distance that rounds to a cell that doesn't exist) -- the
+    race page had the same class of bug before (task "Race pages missing difficulty when
+    the course has one").
+  - tfrrs races / meet-id collisions joining the wrong meets row; uploads (source
+    'upload') which have no course match yet.
+  - Track rows: the TF venue cell (TF:loc:<id>:<in|out>) only exists where location_id
+    is set; and the word cut-offs need >= 10 cells per sport (difficulty_view.courseWord).
+  - The difficulty cut-off read failing on the athlete route's connection, which falls
+    back to the % -- check that a blank isn't the fallback printing nothing.
+- **To check:** a few example athlete URLs with blank cells, then for each race:
+  `SELECT m.course_name, m.distance, cc.canonical_id, cd.difficulty FROM meets m
+   LEFT JOIN course_canonical cc ON cc.course_name = m.course_name
+   LEFT JOIN course_difficulties cd ON cd.canonical_id = cc.canonical_id
+   WHERE m.meet_id = <id> AND m.div_id = <div>;`
