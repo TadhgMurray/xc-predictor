@@ -48,7 +48,11 @@ class VarianceComponentsAreArrays(unittest.TestCase):
     # ! engine/pair_engine.py IS EXEMPT ON PURPOSE. That is the LEGACY
     #   pair engine, whose tau2 is a genuine scalar -- one method-of-moments
     #   estimate over every cell, no groups. Its `:.5f` is correct.
-    _EXEMPT = ("engine/pair_engine.py",)
+    # ! AND engine/fit_weather_correction.py (2026-10-02): its tau2 is the
+    #   mud-sensitivity prior's variance -- one float, 0.25 stated or the
+    #   measured method-of-moments value -- not the joint solve's per-group
+    #   array. Same name, a genuine scalar, correctly printed with :.4g.
+    _EXEMPT = ("engine/pair_engine.py", "engine/fit_weather_correction.py")
 
     def test_no_scalar_format_of_the_per_group_components(self):
         bad = []

@@ -44,6 +44,26 @@ def read(*p):
         return fh.read()
 
 
+def _upTo(path, n):
+    """The template's text through line n."""
+    with io.open(path, encoding="utf-8") as fh:
+        return "".join(fh.readlines()[:n])
+
+
+def _labelContext(label_args, prior):
+    """The variable a label's state context was resolved into earlier in the
+    template (`{% set sst = r.school_state or header.state %}` ...
+    school_label_in(sst, sok)), or None. Only a variable SET FROM A STATE, at
+    or above this line, counts -- so a crest or href handed that same name
+    has exactly the label's context."""
+    import re
+    for arg in (a.strip() for a in label_args.split(",")):
+        if re.fullmatch(r"[A-Za-z_]\w*", arg) and re.search(
+                r"\{%-?\s*set\s+" + arg + r"\s*=[^%]*state", prior):
+            return arg
+    return None
+
+
 # ===================================================================== #
 #  WHICH ICON A PAGE MEANS                                              #
 # ===================================================================== #
@@ -1795,7 +1815,8 @@ class NoDeadLinks(unittest.TestCase):
         for f in sorted(glob.glob(os.path.join(_ROOT, "racecast", "templates",
                                                "*.html"))):
             name = os.path.basename(f)
-            if name in ("school.html", "school_prs.html"):
+            if name in ("school.html", "school_prs.html",
+                        "team_season.html"):  # /school/<name>/season (a4f1b08)
                 continue           # its own page: navigation, not a mention
             with io.open(f, encoding="utf-8") as fh:
                 for n, line in enumerate(fh, 1):
@@ -2121,7 +2142,9 @@ class OneResolver(unittest.TestCase):
         si = read("racecast", "school_identity.py")
         self.assertIn("def contextState(", si)
         i = si.index("def schoolLabelIn(")
-        self.assertIn("contextState(school, state)", si[i:i + 500],
+        # (the call carries `trusted` too now -- a row's own school state)
+        body = si[i:si.index("\ndef ", i + 1)]
+        self.assertIn("st = contextState(school, state", body,
                       "the label must not have its own copy of the rule")
         sl = read("racecast", "school_logo.py")
         self.assertIn("from school_identity import contextState, teamState", sl)
@@ -2131,7 +2154,9 @@ class OneResolver(unittest.TestCase):
         athletes' home states -- which is exactly what teamState is for."""
         sl = read("racecast", "school_logo.py")
         i = sl.index("def crestState(")
-        self.assertIn("teamState(school, pool, state) if pool", sl[i:i + 900])
+        # the whole function, not 900 characters: its docstring grew
+        self.assertIn("teamState(school, pool, state) if pool",
+                      sl[i:sl.index("\ndef ", i + 1)])
 
     def test_no_context_state_leaks_in_as_an_identity(self):
         """A row's state is the VENUE's. An unplaceable name must come back
@@ -2185,6 +2210,14 @@ class OneResolver(unittest.TestCase):
                 # the crest may be MORE specific than the label -- a
                 # collision-split team row knows its own state where the
                 # label only has the meet's -- but never less
+                # ! OR THE VERY SAME CONTEXT, NAMED: race.html and course.html
+                #   resolve it once into a variable (`{% set sst =
+                #   r.school_state or header.state %}`) and hand that one
+                #   name to the crest, the href and the label alike.
+                ctx = _labelContext(m.group(1), _upTo(f, n))
+                if ctx and re.search(r"(^|[\s,(])" + re.escape(ctx) + r"\b",
+                                     crest):
+                    continue
                 self.assertRegex(crest, r"[._]state\b|state=",
                                  f"{where}: the label has a context and the "
                                  f"crest does not")
@@ -2226,9 +2259,13 @@ class Wiring(unittest.TestCase):
                 self.assertIn("r.crest", html, os.path.basename(f))
 
     def test_the_school_pages_wear_their_own_crest(self):
-        for name in ("school.html", "school_prs.html"):
-            html = read("racecast", "templates", name)
-            self.assertIn('cls="school-crest"', html, name)
+        self.assertIn('cls="school-crest"',
+                      read("racecast", "templates", "school.html"))
+        # ★ THE PRs PAGE TOOK THE RACE PAGE'S SHAPE (acda72d): its own crest
+        #   now sits in the rc-kick header line beside the school's name,
+        #   at that line's size, rather than as the big .school-crest badge
+        prs = read("racecast", "templates", "school_prs.html")
+        self.assertIn('<div class="rc-kick">{{ crest(school, data.state) }}', prs)
         css = read("racecast", "static", "style.css")
         self.assertIn(".school-crest", css)
         self.assertIn(".school-mark", css)
@@ -2710,7 +2747,10 @@ class OneHref(unittest.TestCase):
         school page's own navigation (tabs, years, the state chips) is
         exempt: it already holds the identity."""
         import glob
-        allowed = {"school.html", "schools.html", "school_prs.html"}
+        # team_season.html is /school/<name>/season (a4f1b08): its pool
+        # toggles are the page's own navigation, under an identity it holds
+        allowed = {"school.html", "schools.html", "school_prs.html",
+                   "team_season.html"}
         for f in sorted(glob.glob(os.path.join(_ROOT, "racecast",
                                                "templates", "*.html"))):
             if os.path.basename(f) in allowed:
@@ -2732,6 +2772,13 @@ class OneHref(unittest.TestCase):
                 if not _re.search(r"school_label_(?:in|for)\(", line):
                     continue
                 href = _re.search(r"school_href\(([^)]*)\)", line).group(1)
+                # the same named context as the label's counts (see
+                # OneResolver.test_every_crest_gets_the_context_its_label_gets)
+                lab = _re.search(r"school_label_(?:in|for)\(([^)]*)\)", line)
+                ctx = _labelContext(lab.group(1), _upTo(f, n))
+                if ctx and _re.search(r"(^|[\s,(])" + _re.escape(ctx) + r"\b",
+                                      href):
+                    continue
                 self.assertRegex(
                     href, r"[._]state\b|state=",
                     f"{os.path.basename(f)}:{n}: the label has a context "
@@ -2897,9 +2944,17 @@ class TwoBars(unittest.TestCase):
 
     def test_both_school_routes_pass_the_asked_for_state(self):
         app = read("racecast", "app.py")
-        self.assertEqual(
-            app.count("stateChips(cur, school_name, include=state)"), 2,
-            "the school page and the PRs page must resolve the same school")
+        # ! BY ROUTE, NOT BY COUNT: the embed widget (599caaf) and the
+        #   recruiting school page resolve the asked-for state the same way
+        #   now, so the call appears four times. These two must agree.
+        for route in ('@app.route("/school/<path:school_name>")',
+                      '@app.route("/school/<path:school_name>/prs")'):
+            i = app.index(route)
+            body = app[i:app.index("\n@app.route", i + 1)]
+            self.assertIn(
+                "stateChips(cur, school_name, include=state)", body,
+                f"{route}: the school page and the PRs page must resolve "
+                f"the same school")
         self.assertNotIn("stateChips(cur, school_name)\n", app)
 
 

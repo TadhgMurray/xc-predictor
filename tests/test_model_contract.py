@@ -79,13 +79,21 @@ def test_model_contract():
     ok("norm_first=True" in TF, "pre-norm encoder layers")
 
     # ---- 4. OPTIMISER HYGIENE. ---- #
-    ok("torch.optim.AdamW(" in TR and "weight_decay=WEIGHT_DECAY" in TR,
+    # ! PARAM GROUPS since 8b2008d: the Student-t tail's nu_raw is exempt
+    #   from decay, so WEIGHT_DECAY rides on the decayed group, not a kwarg.
+    ok("torch.optim.AdamW(" in TR and '"weight_decay": WEIGHT_DECAY' in TR,
        "AdamW with decoupled weight decay")
     ok("clip_grad_norm_(model.parameters(), GRAD_CLIP)" in body(TR, "_trainOneEpoch"),
        "gradients are clipped between backward and step")
     ok("scheduler.step()" in body(TR, "_trainOneEpoch"),
        "the LR schedule advances once per optimizer step")
-    ok("nn.GaussianNLLLoss(" in TR and "model.forwardDist(" in body(TR, "_trainOneEpoch"),
+    # ! THE LOSS IS train.Likelihood since 8b2008d (Gaussian or Student-t
+    #   NLL on z, from the head's variance); nn.GaussianNLLLoss is gone. The
+    #   epoch reaches forwardDist through `fwd` (the DDP wrapper under torchrun).
+    ok("class Likelihood(nn.Module)" in TR and "criterion = Likelihood(" in TR
+       and "0.5 * (torch.log(var) + r2 / var)"
+       in TR[TR.index("class Likelihood("):]
+       and "fwd = fwd or model.forwardDist" in body(TR, "_trainOneEpoch"),
        "Gaussian NLL with the learned variance, not MSE")
     ok("def forwardDist(" in TF and "def predictInterval(" in TF
        and "nn.Linear(64, 2)" in TF, "the head predicts a mean and a log-variance")

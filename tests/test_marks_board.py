@@ -74,19 +74,26 @@ def test_marks_board():
     src = read("racecast", "build_ranking_results.py")
     body = src[src.index("if row.speed_rating is None:"):
                src.index("# ★ AND A RATING OUTSIDE ITS OWN POOL")]
-    ok(body.count("*_unitsOf(school, row.state)") == 3,
+    # ! _unitsOf TAKES THE POOL since 124cf70 (shared school names: units by
+    #   level, not by name), so every return spells it with the pool.
+    ok(body.count("*_unitsOf(school, row.state, pool)") == 3,
        "field, hurdle/steeple and sprint returns all carry the units")
     rated_tail = src[src.index("# ★ AND A RATING OUTSIDE ITS OWN POOL"):]
-    ok(rated_tail.count("*_unitsOf(school, row.state)") == 1
+    ok(rated_tail.count("*_unitsOf(school, row.state, pool)") == 1
        and "None, None)" in rated_tail, "and so does the rated return")
     ok("key, float(metres))" in body and "kind, None)" in body
        and "None, None)" in body,
        "every return ends with (event_kind, mark) in that order")
     ok("saneMark(key, metres)" in body and '"field_refused"' in body,
        "a mark outside its event's range is refused and counted")
-    ok("ADD COLUMN IF NOT EXISTS event_kind text" in src
-       and "ADD COLUMN IF NOT EXISTS mark real" in src
-       and "ALTER COLUMN time_seconds DROP NOT NULL" in src,
+    # ! THE MIGRATIONS ARE A TABLE NOW (_migrateLive, issue 300): each one
+    #   is probed first, so the DDL is written once with {col} {typ}.
+    mig = src[src.index("def _migrateLive("):src.index("def createShadow(")]
+    ok('("event_kind", "text"), ("mark", "real")' in mig
+       and "ADD COLUMN IF NOT EXISTS {col} {typ}" in mig
+       and 'for col in ("speed_rating", "time_seconds")' in mig
+       and "ALTER COLUMN {col} DROP NOT NULL" in mig
+       and "_migrateLive(conn, like)" in src[src.index("def createShadow("):],
        "the live table is migrated before the shadow is shaped from it")
     ok("OR COALESCE(r.is_field, 0) = 1)" in src and
        "AND COALESCE(r.is_field, 0) = 0\n" not in src[src.index('"TF": f"""'):],

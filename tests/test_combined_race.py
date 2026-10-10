@@ -38,11 +38,16 @@ def _install(per_div, labels, gender="M"):
     return undo
 
 
+# ! KEYED BY THE INT DIVISION ID. Since bb08037 (a race is meet, division,
+#   event) _combinedRoster splits each page key ("1", or "1-345" on track)
+#   with splitRaceKey and hands the helpers an int div_id, so a fixture keyed
+#   by the page's strings answered KeyError. The page still sends strings --
+#   the calls below keep passing ["1", "2"].
 PER_DIV = {
-    "1": [_e(1, "Cabell Midland"), _e(2, "Cabell Midland"), _e(3, "Alpha")],
-    "2": [_e(4, "Cabell Midland"), _e(5, "Cabell Midland"), _e(6, "Beta")],
+    1: [_e(1, "Cabell Midland"), _e(2, "Cabell Midland"), _e(3, "Alpha")],
+    2: [_e(4, "Cabell Midland"), _e(5, "Cabell Midland"), _e(6, "Beta")],
 }
-LABELS = {"1": "Varsity", "2": "JV"}
+LABELS = {1: "Varsity", 2: "JV"}
 
 
 def test_a_school_in_two_divisions_becomes_two_labelled_teams():
@@ -75,7 +80,7 @@ def test_coalesce_keeps_the_bare_name():
 
 def test_one_row_per_person():
     """An athlete entered in two divisions must not run twice in one race."""
-    dup = {"1": [_e(1, "Alpha")], "2": [_e(1, "Alpha"), _e(2, "Alpha")]}
+    dup = {1: [_e(1, "Alpha")], 2: [_e(1, "Alpha"), _e(2, "Alpha")]}
     undo = _install(dup, LABELS)
     try:
         out = predict._combinedRoster(

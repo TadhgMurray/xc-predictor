@@ -40,7 +40,11 @@ def test_scale_sort():
     ok("not _scaleActive(f)" in body(R, "rankOf"),
        "the count shortcut is skipped when the board is scaled")
     ok('scale:  hsMode() ? "hs" : "pool"' in J, "rankings.js sends the scale")
-    ok("_lastBoard.data.hs_movable" in J and "load();" in J[J.index("rc-scale-change"):J.index("rc-scale-change") + 600],
+    # the whole handler, not a fixed 600 characters: its comments grew (the
+    # stale-board guard, 2026-09-14) and pushed load() past the window
+    _h = J.index('addEventListener("rc-scale-change"')
+    handler = J[_h:J.index("\n});", _h)]
+    ok("_lastBoard.data.hs_movable" in handler and "load();" in handler,
        "a scale flip refetches a board whose rows move")
 
     assert not fails, "\n".join(fails)

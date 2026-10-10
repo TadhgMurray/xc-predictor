@@ -64,5 +64,10 @@ def test_athlete_page_blanks_difficulty_on_a_corrected_division():
     src = read("racecast", "app.py")
     i = src.index("-- ================= XC half: results + meets")
     body = src[i:src.index("-- ================= TF half", i)]
-    assert "THEN NULL" in body and "ELSE cd.difficulty END   AS difficulty" in body
+    # the ELSE reads the championship course / era cell first since 345ac52
+    # (a Foot Locker race shows its championship course's difficulty); the
+    # corrected-division blank is the THEN NULL in front of it
+    assert "THEN NULL" in body
+    assert "ELSE COALESCE(cdc.difficulty, {era_col}, cd.difficulty) END   AS difficulty" in body
+    assert body.index("THEN NULL") < body.index("ELSE COALESCE(cdc.difficulty")
     assert "abs(dov.distance::real" in body

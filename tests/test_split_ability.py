@@ -81,9 +81,22 @@ def test_split_ability():
     # ! EVERY DESIGN, INCLUDING THE HOLDOUT'S TWO. A holdout scored on a
     #   differently-keyed ability is scoring a different model from the one that
     #   goes live.
-    ok(RJ.count("split_ability=args.split_ability") == 3,
+    # ★ ONE SPELLING SINCE 97c9952: every design's kwargs come from
+    #   designKwargs(args), so the flag is passed there once and each
+    #   buildDesign call site must take its kwargs from it.
+    import re as _re
+    _dk = RJ[RJ.index("def designKwargs("):RJ.index("\ndef ", RJ.index("def designKwargs(") + 1)]
+    ok("split_ability=args.split_ability" in _dk,
+       "designKwargs passes split_ability")
+    _calls = [ln.strip() for ln in RJ.splitlines()
+              if _re.search(r"\bbuildDesign\(", ln) and "def buildDesign(" not in ln
+              and not ln.strip().startswith("#")]
+    _bound = [c for c in _calls if "**dkw" in c or "**dict(dkw" in c
+              or "**designKwargs(args)" in c]
+    ok(len(_calls) == 3 and _bound == _calls,
        f"all three buildDesign call sites must pass it, found "
-       f"{RJ.count('split_ability=args.split_ability')}")
+       f"{len(_bound)} of {len(_calls)}: {_calls}")
+    ok("dkw = designKwargs(args)" in RJ, "the holdout's dkw is designKwargs")
     _sig = RJ[RJ.index("def buildDesign("):RJ.index('"""', RJ.index("def buildDesign("))]
     ok("split_ability=False" in _sig,
        "buildDesign must take it as a parameter -- args is not in scope inside "

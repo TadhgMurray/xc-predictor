@@ -49,12 +49,31 @@ def topLevelParts(select_list):
     return parts
 
 
+# ! FILES THAT ONLY EVER READ TUPLE CURSORS, named with the reason, like the
+#   build_*.py exclusion above. A bare aggregate is a hazard only under a
+#   dict cursor; these open their own cursors and unpack by position.
+TUPLE_CURSOR_ONLY = {
+    # every block runs in _block(), which opens conn.cursor() (the default
+    # tuple cursor) itself; rows are unpacked `n, wp, ... = cur.fetchone()`
+    "site_status.py",
+}
+
+
+def _insideInsert(src, at):
+    """Is the SELECT at `at` the source of an INSERT ... SELECT? Its rows go
+    straight into a table and never reach a cursor, so names cannot collide."""
+    start = max(src.rfind('"' * 3, 0, at), src.rfind("'" * 3, 0, at))
+    return re.search(r"\bINSERT\s+INTO\b", src[start:at], re.I) is not None
+
+
 def unaliasedAggregates(path):
     src = io.open(path, encoding="utf-8").read()
     out = []
     for m in re.finditer(r"SELECT\b(.*?)\bFROM\b", src, re.S | re.I):
         sel = m.group(1)
         if len(sel) > 1500:                 # not a literal column list
+            continue
+        if _insideInsert(src, m.start()):
             continue
         bare = [p.strip() for p in topLevelParts(sel)
                 if AGG.search(p)
@@ -69,6 +88,8 @@ def test_no_request_path_query_selects_two_bare_aggregates():
     d = os.path.join(ROOT, "racecast")
     for name in sorted(os.listdir(d)):
         if not name.endswith(".py") or name.startswith("build_"):
+            continue
+        if name in TUPLE_CURSOR_ONLY:
             continue
         for line, n, first in unaliasedAggregates(os.path.join(d, name)):
             bad.append(f"{name}:{line} has {n} unaliased aggregates ({first!r})")

@@ -103,9 +103,15 @@ def test_capped():
     ok(".more-row" not in js or "remove()" not in js,
        "the footer is no longer removed -- removing it is what made 'more' "
        "one-way, with nothing left to press")
-    ok("revealed.push" in js and "revealed.forEach" in js,
-       "collapse re-hides exactly what was revealed, rather than re-deriving "
-       "the fold and drifting from whatever the template chose")
+    # ★ THE FOLD IS NOW REMEMBERED AS A COUNT, NOT AS ROWS (staged.js header):
+    #   scale-view.js re-orders rows when the scale flips, so re-hiding the
+    #   exact rows it revealed punched holes in the top of the table. What
+    #   must still hold is that the fold comes from what the TEMPLATE drew
+    #   (the rows it left visible), not from a number baked into the script.
+    ok('var fold = table.querySelectorAll("tbody tr:not(.row-hidden)' in js
+       and 'tr.classList.toggle("row-hidden", i >= fold)' in js,
+       "collapse folds back to the template's own fold, by position, rather "
+       "than re-deriving it and drifting from whatever the template chose")
 
     # ---- 6. one spelling (point 4) ------------------------------------------ #
     for t in ("course.html", "school.html", "school_prs.html"):

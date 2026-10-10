@@ -59,10 +59,26 @@ def test_difficulty_one_scale():
            for m in __import__("re").finditer(r'data-blurb="([^"]*)"', html)),
        "no entity inside a blurb's Jinja string: autoescape printed it verbatim")
     import re as _re
-    for m in _re.finditer(r'data-blurb="([^"]*)"', html):
-        ok(len(m.group(1)) <= 170, f"a blurb is short: {len(m.group(1))} chars")
+    # ! THE EXPLAINER "i"s, AS A READER SEES THEM. This used to measure every
+    #   data-blurb's Jinja SOURCE, which counted `{{ pool_label if pool_label
+    #   else '...' }}` as 50 characters of tooltip and swept in dv's race-day
+    #   hover -- a per-race sentence assembled from {% if %} branches, not an
+    #   explainer, and over 170 since the file was imported. Each `{{ }}` is
+    #   measured as the longest literal it can print.
+    def _rendered(blurb):
+        def lit(m):
+            words = _re.findall(r"'([^']*)'", m.group(1))
+            return max(words, key=len) if words else "XX"
+        return _re.sub(r"\{\{(.*?)\}\}", lit, blurb)
+    for m in _re.finditer(r'class="flag info-i"[^>]*?data-blurb="([^"]*)"',
+                          html, _re.S):
+        ok(len(_rendered(m.group(1))) <= 170,
+           f"a blurb is short: {len(_rendered(m.group(1)))} chars")
+    ok(len(_re.findall(r'class="flag info-i"', html)) >= 2,
+       "both explainers are still found by the length check")
     css = read("racecast", "static", "style.css")
-    i = css.index(".info-i {")
+    # the bare rule, not `.board-grid .head .info-i {` (a later, scoped one)
+    i = css.index("\n.info-i {") + 1
     block = css[i:css.index("}", i)]
     ok("border: 1px solid #9ca3af" in block and "opacity: 0.8" in block,
        "the glyph is quiet: thin grey ring, faded until hovered")

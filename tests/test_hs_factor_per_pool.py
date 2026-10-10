@@ -89,4 +89,8 @@ def test_the_source_no_longer_prices_by_distance():
     src = io.open(os.path.join(ROOT, "racecast", "pool_view.py"), encoding="utf-8").read()
     body = src[src.index("def hsFactor("):src.index("def _raceDistance(")]
     assert "_REP_DIST[sp]" in body and "np.log(ratios)" in body
-    assert "distance_m" not in body.split('"""')[2], "the distance argument is not read"
+    # ! ONE PASS-THROUGH IS ALLOWED: a pool rated on another pool's scale
+    #   returns that pool's factor (5355aa6, ratedScalePool), and the
+    #   recursive call hands the argument on untouched. Nothing PRICES by it.
+    code = body.split('"""')[2].replace("hsFactor(scale, sport, distance_m)", "")
+    assert "distance_m" not in code, "the distance argument is not read"

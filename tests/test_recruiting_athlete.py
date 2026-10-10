@@ -186,14 +186,17 @@ def test_school_table_reads_the_recruit_table_and_stamps_labels():
          "min": 150.0, "p25": 158.0, "median": 163.5, "p75": 168.0, "max": 175.0, "first_year": 2021, "last_year": 2021},
     ]
     cur = FakeCur([("to_regclass", [{"to_regclass": "college_recruit"}]),
-                   ("percentile_cont(0.25)", agg)])
+                   # weighted quantiles, not percentile_cont: each class
+                   # decays by RECENCY_HALF_LIFE (_AGG_SQL's own comment)
+                   ("FILTER (WHERE cum >= 0.25 * tot)", agg)])
     rows = R.schoolTable(cur, "m", "TF")
     assert [r["school"] for r in rows] == ["Stanford", "Tufts"]     # typical recruit, fastest first
     assert rows[1]["min"] == 128.0 and rows[1]["classes"] == "2023 to 2026"   # TF label years
     assert rows[0]["classes"] == "2022"
     assert set(rows[0]["times"]) == {"p25", "median", "p75"}
     assert "gender = %(gender)s AND sport = %(sport)s" in cur.sql[-1]
-    assert cur.params[-1] == {"gender": "m", "sport": "TF", "min_n": R.MIN_RECRUITS}
+    assert cur.params[-1] == {"gender": "m", "sport": "TF", "min_n": R.MIN_RECRUITS,
+                              "half_life": float(R.RECENCY_HALF_LIFE)}
     # cached: a second call asks the database nothing
     n = len(cur.sql)
     assert R.schoolTable(cur, "m", "TF") is rows and len(cur.sql) == n
@@ -225,7 +228,9 @@ def test_builder_keeps_recruits_and_measures_the_freshman_gain():
     raw.append(dict(raw[0], person_id=101, grade="SR-4"))
     raw.append(dict(raw[0], person_id=102, school="Unattached"))
     rows, dropped, gains = B.shapeRows(raw, {"college_m": 1.25, "college_f": None})
-    assert dropped == {"grade": 1, "school": 1, "no_scale": 0} and len(rows) == 61
+    # (two more reasons are counted now, and neither applies to these rows)
+    assert dropped == {"grade": 1, "school": 1, "not_college": 0, "foreign": 0,
+                       "no_scale": 0} and len(rows) == 61
     # 120 * 1.25 = 150 on the HS scale against 147 as seniors: a gain of 3
     assert gains[("m", "XC")] == (3.0, 60) and gains[("f", "TF")] == (0.0, 0)
     linked = next(r for r in rows if r["person_id"] == 0)

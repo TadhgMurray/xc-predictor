@@ -123,9 +123,15 @@ def test_build_live():
     for k in ("difficulty", "difficulty_raw", "solved", "degree", "weight",
               "cell_var", "course_keys"):
         assert k in live["npz"], k
-    assert abs(np.average(live["npz"]["difficulty"][live["npz"]["solved"]],
-                          weights=live["npz"]["degree"][live["npz"]["solved"]])
-               ) < 0.01
+    # ★ THE ZERO IS THE AVERAGE TRACK (owner, 2026-09-10: "the average tf
+    #   course will have difficulty 0.0 and be the baseline"): the UNWEIGHTED
+    #   mean over solved outdoor track cells, not a degree-weighted mean over
+    #   every cell -- cross country sits off zero by the grass cost on purpose.
+    npz = live["npz"]
+    tf = npz["solved"] & np.array([str(k).startswith("TF:")
+                                   for k in npz["course_keys"]])
+    assert tf.any()
+    assert abs(np.mean(np.log1p(npz["difficulty"][tf]))) < 1e-6
     print("  pair_difficulty.npz shape, anchored ................... OK")
 
     # athlete_ratings keyed (person_id, pool), one row per pair

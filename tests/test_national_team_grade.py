@@ -141,7 +141,10 @@ def test_the_season_line_says_professional():
     path = os.path.join(_ROOT, "racecast", "templates", "athlete.html")
     src = open(path, encoding="utf-8").read()
     assert "{% if season.pro_verdict or" in src and " · Professional" in src
-    assert "{% elif season.grade %} · Grade" in src            # no "Grade None"
+    # no "Grade None": the grade only prints under `elif season.grade`; since
+    # 4e83e7d a graduation year reads "Class of YYYY", not "Grade 2011"
+    assert "{% elif season.grade %}{% set gl = season.grade|grade_label(season.pool) %}" in src
+    assert '{{ gl if gl.startswith("Class of") else "Grade " ~ gl }}' in src
 
 
 def test_the_chart_band_names_the_club():

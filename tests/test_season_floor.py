@@ -76,7 +76,11 @@ def test_season_floor():
     ok('"min_races_explicit"' in rk, "parseFilters records whether it was typed")
     app = read("racecast", "app.py")
     ok("floorFor(season[\"year\"])" in app, "the rank line is held to the same floor")
-    ok("percentileWords(" in app and "clockFor(" in app, "header phrases built")
+    # the header's time moved to conversions.ratingClock (a2c6acc), which
+    # still formats through season_floor.clockFor
+    ok("percentileWords(" in app and "ratingClock(" in app
+       and "clockFor(" in read("racecast", "conversions.py"),
+       "header phrases built")
     pn = read("racecast", "panels.py")
     ok("OR s.year >= %(open_from)s" in pn, "home panels exempt open seasons in SQL")
     ok("floorFor(" in pn, "and in the python gate")

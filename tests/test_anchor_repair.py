@@ -121,8 +121,10 @@ def test_anchor_repair():
     # ★★ ORDER IS THE WHOLE VALUE. After the backfill, or 05 overwrites the
     #    repair with the same mismatch. Before the pack, or THIS run's solve
     #    reads the old times and the fix is permanently one run behind.
-    i_back = PIPE.index("05_backfill_tf")
-    i_fix = PIPE.index("05b_anchor_repair")
+    # ! THE STEPS, NOT THEIR FIRST MENTIONS: the --from-7 note (_ALWAYS, near
+    #   the top of the file) names 05b_anchor_repair long before it runs.
+    i_back = PIPE.index('05_backfill_tf "')
+    i_fix = PIPE.index("steps2 05b_anchor_repair")
     i_pack = PIPE.index("---- pack and solve")
     ok(i_back < i_fix < i_pack,
        f"the repair must sit between the backfill and the pack "

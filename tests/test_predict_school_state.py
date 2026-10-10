@@ -62,7 +62,10 @@ def test_predict_school_state():
     #    reach an href, a data- attribute, or a lookup.
     ok("function schoolWithState(" in JS, "the client has one composer")
     card = JS[JS.index('<details class="team-card"'):JS.index('</details>')]
-    ok('href="/school/${encodeURIComponent(t.school)}"' in card,
+    # ! THE STATE RIDES AS ?state= since 21a8581 (Jesuit (CA) no longer opens
+    #   Jesuit (LA)) -- a query parameter, never composed into the path.
+    ok('href="/school/${encodeURIComponent(t.school)}${' in card
+       and "?state=${encodeURIComponent(t.state)}" in card,
        "the link still uses the BARE name")
     ok('data-team="${esc(t.school)}"' in card, "and so does the card's key")
     ok('data-squad="${esc(t.school)}"' in card, "and the squad button")

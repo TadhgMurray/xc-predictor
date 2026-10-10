@@ -31,7 +31,10 @@ def test_search_index_builds_both_meet_aggregates():
     assert lm.index("_ensure_meet_agg(conn)") < lm.index('_meet_rows("meet_agg_xc"')
     agg = s[s.index("_MEET_AGG = {"):s.index("def _ensure_meet_agg(")]
     # single-table aggregates joined small: no results-to-meets join
-    assert "FROM   results_tf\n" in agg and "FROM   meets_tf\n" in agg
+    # (results_tf is aliased since ce07a8e: one copy per race, twins dropped
+    # through a LEFT JOIN on result_twin -- still a single-table aggregate)
+    assert "FROM   results_tf r\n" in agg and "FROM   meets_tf\n" in agg
+    assert "LEFT   JOIN result_twin x ON x.sport = 'TF'" in agg
     assert "JOIN   meets_tf m" not in agg
     # the swap goes through dbfast.swapTable: a bounded lock, never a queue
     assert "swapTable(conn, table" in s
@@ -65,5 +68,7 @@ def test_board_build_streams_the_sports_in_parallel():
     assert 'stepsN 10_rankings_xc_a' in s and "--stage stream --sport TF --since" in s
     assert "--until" in s, "each sport streams in two halves on a date seam (2026-09-06)"
     b = _src("racecast", "build_ranking_results.py")
-    assert 'choices=["prepare", "stream", "finish"]' in b
+    # a fourth stage, restamp (issue 304), refreshes the season table's unit
+    # columns in place
+    assert 'choices=["prepare", "stream", "finish", "restamp"]' in b
     assert 'if stage == "prepare":' in b and 'if stage == "stream":' in b

@@ -75,11 +75,16 @@ def test_sprint_boards():
     ok(timed is not None, "the time-only return starts with the same five columns")
     # three unrated returns now -- field mark, hurdle/steeple, sprint -- and
     # every one carries the same unit spread in the same place
-    ok(pr.count("*_unitsOf(school, row.state)") == 3,
+    # (_unitsOf takes the row's pool since 124cf70: units by level)
+    ok(pr.count("*_unitsOf(school, row.state, pool)") == 3,
        "and every published tuple carries the same unit spread")
 
     # ---- 3. the column must accept NULL ------------------------------------- #
-    ok("ALTER COLUMN speed_rating DROP NOT NULL" in BR,
+    # ! THE MIGRATION IS A TABLE IN _migrateLive NOW (issue 300), one DROP NOT
+    #   NULL spelled over ("speed_rating", "time_seconds").
+    mig = BR[BR.index("def _migrateLive("):BR.index("def createShadow(")]
+    ok('for col in ("speed_rating", "time_seconds")' in mig
+       and "ALTER COLUMN {col} DROP NOT NULL" in mig,
        "the shadow is built LIKE the live table, so the constraint has to go "
        "there first or the first sprint fails the COPY")
 

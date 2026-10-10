@@ -24,13 +24,18 @@ def read(*p):
 def _statusHelper():
     """database.py imports config, which refuses to load without a
     password; lift the two pure definitions out of its source instead."""
+    # ! THE VOCABULARY MOVED to scripts/result_status.py (fromFields), which
+    #   database.py imports as _statusFields; _statusOf is now the four
+    #   fields anet may use, handed to it. Lift the def and give it the real
+    #   rule, so the letters below are still checked end to end.
     import re
+    import result_status
     src = read("scripts", "database.py")
-    vocab = re.search(r"^_STATUS_VOCAB = \{.*?\}\n", src, re.S | re.M).group(0)
-    fn = re.search(r"^def _statusOf\(resultData: dict\):\n(?:    .*\n|\n)+?    return None\n",
+    assert "from result_status import fromFields as _statusFields" in src
+    fn = re.search(r"^def _statusOf\(resultData: dict\):\n(?:    .*\n|\n)+?(?=\S)",
                    src, re.M).group(0)
-    ns = {}
-    exec(vocab + "\n" + fn, ns)
+    ns = {"_statusFields": result_status.fromFields}
+    exec(fn, ns)
     return types.SimpleNamespace(_statusOf=ns["_statusOf"])
 
 

@@ -49,8 +49,14 @@ def test_track_anchor():
              GL.index("difficulty = np.where(solved")]
     ok("ref = solved & is_tf" in blk,
        "the anchor must be the TF cells, not every solved cell")
-    ok("np.average(raw[ref], weights=w[ref])" in blk,
-       "and it must still be results-weighted within them")
+    # ★ NO LONGER RESULTS-WEIGHTED (owner, 2026-09-10, in joint_golive: "the
+    #   average tf course will have difficulty 0.0 and be the baseline"). The
+    #   UNWEIGHTED mean over the track cells -- the average COURSE, not the
+    #   average RESULT, so a few enormous championship ovals cannot define the
+    #   zero.
+    ok("anchor_used = float(np.mean(raw[ref]))" in blk
+       and "np.average(raw[ref]" not in blk,
+       "and it must be the unweighted mean within them (the average course)")
     # ⚠ A CELL BELONGS TO ONE SPORT, but it has to be derived from the rows that
     #   raced there -- there is no sport column on a cell.
     ok("tf_rows" in blk and "rows_per_cell * 0.5" in blk,
@@ -127,7 +133,9 @@ def test_track_anchor():
     ok("--pct 1" in PIPE,
        "and sampled -- the full scan is a per-row recomputation over 191M rows")
     # ⚠ A DIAGNOSTIC MUST NEVER FAIL THE RUN.
-    i = PIPE.index("08c_anchor_check")
+    # the STEP, not the first mention (a comment above the evidence chain
+    # names it first since the chain went to the background)
+    i = PIPE.index("step 08c_anchor_check")
     ok("|| true" in PIPE[i:i + 260],
        "a report that can abort the pipeline is a gate, and this is not one")
 
