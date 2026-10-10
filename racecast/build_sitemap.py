@@ -13,11 +13,13 @@ directly; app.py serves /sitemap.xml (the index) and /robots.txt.
   sitemap-schools-N.xml.gz       /school/<name>?state=ST, one per cluster
                                  the site treats as its own school
   sitemap-courses-N.xml          /course/<name>
-  sitemap-meets-N.xml            /meet/xc/<id> and /meet/tf/<id>
+  sitemap-meets-N.xml            /meet/xc/<id> and /meet/tf/<id>, newest
+                                 race as lastmod
   sitemap-races-N.xml            /race/xc/<meet>/<div> and /race/tf/<meet>/<event>/<div>,
                                  every race with a result, race date as lastmod
   sitemap-athletes-N.xml         /athlete/<id>, every athlete with a rated
-                                 race, newest
+                                 race (canonical ids: none person_redirect
+                                 sends elsewhere), newest
                                  season's last race as lastmod
 
 50,000 URLs per file is the protocol's cap; MAX_PER_FILE stays under it.
@@ -142,7 +144,38 @@ def _exists(cur, name):
     return cur.fetchone()[0] is not None
 
 
-def collect(conn):
+def raceSince(years, today=None):
+    """The first day a race must reach to be listed, for a window of
+    `years` seasons (0 or None: every race). A season opens in August, so
+    a window of 2 on 2026-10-10 starts 2025-08-01."""
+    import datetime as dt
+    if not years:
+        return None
+    today = today or dt.date.today()
+    start = today.year - int(years) + (1 if today.month >= 8 else 0)
+    return f"{start:04d}-08-01"
+
+
+def raceWanted(day, since):
+    """Is a race dated `day` inside the window? Undated races are kept only
+    when there is no window."""
+    if since is None:
+        return True
+    return bool(day) and day >= since
+
+
+# ★ RACE PAGES: EVERY RACE, OR RECENT SEASONS ONLY (2026-10-10). The owner
+#   chose "every race" on 2026-09-05; the SEO pass of 2026-10-10 asked for
+#   race pages of recent seasons, and sitemap_budget.py shows Google
+#   declining most of a 3.5M-URL ask. Both are one setting: the default
+#   keeps every race (no change), XCP_SITEMAP_RACE_YEARS=N or --race-years N
+#   lists the last N seasons' races. Old race pages still exist, render and
+#   are linked from every athlete page; they just are not in the sitemap.
+RACE_YEARS = int(os.environ.get("XCP_SITEMAP_RACE_YEARS", "0") or 0)
+
+
+def collect(conn, race_years=None):
+    race_since = raceSince(RACE_YEARS if race_years is None else race_years)
     # the state ranking landing pages (landing.py, 2026-09-06): 12 national
     # and one per state, sport and pool; they change with every run
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -204,7 +237,7 @@ def collect(conn):
             seen = {courseDisplayName(r[0]) for r in cur.fetchall()}
             by_kind["courses"] = [("/course/" + quote(n, safe=""), None)
                                   for n in sorted(seen) if n]
-        meets = []
+        meet_rows = []
         # ★ BOTH MEETS UNDER A COLLIDING ID (2026-09-13): the aggregates
         #   are keyed (meet_id, source) and the second meet lives at ?alt=N,
         #   the index the page resolves it under (search_index.meetAltIndex)
@@ -223,10 +256,10 @@ def collect(conn):
                          "n_ath": r[3], "n_twin": r[4]}
                         for r in cur.fetchall()]
                 alt_of = meetAltIndex(rows)
-                meets += [(meetLink(fmt, r["meet_id"], alt_of[(r["meet_id"], r["source"])]), None)
-                          for r in rows if not isTwinCopy(r)]
-        if meets:
-            by_kind["meets"] = meets
+                sport = "xc" if table.endswith("_xc") else "tf"
+                meet_rows += [(sport, r["meet_id"],
+                               meetLink(fmt, r["meet_id"], alt_of[(r["meet_id"], r["source"])]))
+                              for r in rows if not isTwinCopy(r)]
         # ★ RACE PAGES TOO (owner, 2026-09-05): a race page is where a
         #   person's result is found, and yesterday's Search Console had
         #   race pages at the best click rate on the site. Every XC
@@ -234,6 +267,14 @@ def collect(conn):
         #   date as lastmod so Google fetches the recent ones first.
         races = []
         t0 = time.time()
+        # ★ A MEET'S lastmod IS ITS NEWEST RACE (2026-10-10), read off the
+        #   race rows this step already groups -- no extra scan. Without one,
+        #   indexnow_submit treated every meet as changed every night.
+        meet_day = {}
+
+        def _note(sport, mid, day):
+            if day and day > meet_day.get((sport, mid), ""):
+                meet_day[(sport, mid)] = day
         if _exists(cur, "results"):
             cur.execute("""
                 SELECT meet_id, div_id, max(date)
@@ -241,7 +282,11 @@ def collect(conn):
                 WHERE  meet_id IS NOT NULL AND div_id IS NOT NULL
                 GROUP  BY meet_id, div_id
             """)
-            races += [(f"/race/xc/{m}/{d}", _day(lm)) for m, d, lm in cur.fetchall()]
+            for m, d, lm in cur.fetchall():
+                day = _day(lm)
+                _note("xc", m, day)
+                if raceWanted(day, race_since):
+                    races.append((f"/race/xc/{m}/{d}", day))
         if _exists(cur, "results_tf"):
             cur.execute("""
                 SELECT meet_id, event_id, div_id, max(date)
@@ -250,10 +295,16 @@ def collect(conn):
                   AND  event_id IS NOT NULL AND div_id IS NOT NULL
                 GROUP  BY meet_id, event_id, div_id
             """)
-            races += [(f"/race/tf/{m}/{e}/{d}", _day(lm))
-                      for m, e, d, lm in cur.fetchall()]
+            for m, e, d, lm in cur.fetchall():
+                day = _day(lm)
+                _note("tf", m, day)
+                if raceWanted(day, race_since):
+                    races.append((f"/race/tf/{m}/{e}/{d}", day))
         if races:
             by_kind["races"] = races
+        if meet_rows:
+            by_kind["meets"] = [(link, meet_day.get((sport, mid)))
+                                for sport, mid, link in meet_rows]
         print(f"  races: {len(races):,} pages in {time.time() - t0:.0f}s", flush=True)
         t0 = time.time()
         if _exists(cur, "athlete_season"):
@@ -261,11 +312,18 @@ def collect(conn):
             # season on the boards. lastmod tells it which pages moved.
             # every athlete with a rated race (owner, 2026-09-05: "it
             # should be all athletes"); the three-race floor is gone
-            cur.execute("""
-                SELECT person_id, to_char(max(last_race), 'YYYY-MM-DD')
-                FROM   athlete_season
-                WHERE  n_races >= 1
-                GROUP  BY person_id
+            # ★ CANONICAL IDS ONLY (2026-10-10): an id person_redirect sends
+            #   elsewhere answers 301, and a sitemap URL that redirects is
+            #   one the crawler drops and holds against the file. The table
+            #   is small (merged-away ids), so the anti-join is cheap.
+            redirect_sql = ("AND NOT EXISTS (SELECT 1 FROM person_redirect pr "
+                            "WHERE pr.old_id = s.person_id)"
+                            if _exists(cur, "person_redirect") else "")
+            cur.execute(f"""
+                SELECT s.person_id, to_char(max(s.last_race), 'YYYY-MM-DD')
+                FROM   athlete_season s
+                WHERE  s.n_races >= 1 {redirect_sql}
+                GROUP  BY s.person_id
             """)
             by_kind["athletes"] = [(f"/athlete/{pid}", lm) for pid, lm in cur.fetchall()]
             print(f"  athletes: {len(by_kind['athletes']):,} pages in {time.time() - t0:.0f}s", flush=True)
@@ -277,10 +335,13 @@ def main():
     ap.add_argument("--origin", default=os.environ.get("XCP_SITE_ORIGIN",
                                                        "https://racecast.co"))
     ap.add_argument("--out", default=OUT_DIR)
+    ap.add_argument("--race-years", type=int, default=None,
+                    help="list race pages of the last N seasons only "
+                         "(default XCP_SITEMAP_RACE_YEARS, 0 = every race)")
     args = ap.parse_args()
     from database import getConn
     with getConn() as conn:
-        by_kind = collect(conn)
+        by_kind = collect(conn, args.race_years)
     files = writeSitemaps(by_kind, args.out, args.origin.rstrip("/"))
     for kind, entries in by_kind.items():
         print(f"  {kind:<9} {len(entries):>10,} urls")

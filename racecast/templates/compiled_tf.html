@@ -26,6 +26,9 @@
     {% set meta_title = header.meet_name ~ " - Compiled" %}
     {% set meta_description = "Every event at this meet with computed team "
        "points and each event's individual scores on one page." %}
+    {% set meta_crumbs = [("Meets", "/meets"),
+                          (header.meet_name, "/meet/tf/" ~ header.meet_id ~ (("?alt=" ~ alt_idx) if alt_idx else "")),
+                          ("Compiled", none)] %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">

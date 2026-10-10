@@ -22,8 +22,8 @@
 {% set meta_path = "/scale" ~ ("?pool=" ~ want if want != "hs_m" else "") %}
 {% set meta_crumbs = [("About", "/about"), ("Rating to time", none)] %}
 {% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 {% macro qs(pool) -%}/scale?pool={{ pool }}{%- endmacro %}

@@ -748,6 +748,31 @@ def _headers(resp):
 SITE_ORIGIN = os.environ.get("XCP_SITE_ORIGIN", "https://racecast.co").rstrip("/")
 app.jinja_env.globals["site_origin"] = SITE_ORIGIN
 
+# ★ SEARCH RULES IN ONE MODULE (SEO pass, 2026-10-10): canonical arguments,
+#   titles, breadcrumbs and JSON-LD for every <head> (see seo.py).
+import seo as _seo
+_seo.install(app, SITE_ORIGIN)
+
+
+# ★ ONE SPELLING PER PAGE: NO TRAILING SLASH (2026-10-10). No route but "/"
+#   ends in a slash, so /athlete/123/ was a 404 -- a shared link with a slash
+#   typed on was a dead result. A slashed path that names a real route is a
+#   301 to the bare one, query kept; anything else falls through to the
+#   ordinary 404.
+@app.before_request
+def _strip_trailing_slash():
+    p = request.path
+    if (len(p) < 2 or not p.endswith("/") or request.method not in ("GET", "HEAD")
+            or p.startswith("/static/")):
+        return None
+    bare = p.rstrip("/") or "/"
+    try:
+        app.url_map.bind("").match(bare, method="GET")
+    except Exception:                                    # noqa: BLE001
+        return None
+    qs = request.query_string.decode("utf-8", "replace")
+    return redirect(bare + ("?" + qs if qs else ""), code=301)
+
 # ★ ACCOUNTS (283): logins and claims live in their own module and
 #   blueprint; the pages stay anonymous (see accounts.py) and only
 #   these routes read the session cookie.
@@ -2515,6 +2540,11 @@ def athlete(person_id):
             photo = _accounts.photoFor(cur, person_id)
     athlete["person_id"] = person_id
     athlete["photo"] = photo
+    # ★ "Class of 2027" for the meta description (seo.athleteSeo, 2026-10-10):
+    #   the header class read against the season it came from
+    athlete["class_of"] = _seo.classOf(
+        athlete.get("grade"), (class_season or {}).get("year"),
+        athlete.get("grade_pool"))
     # ★ NO NAME ANYWHERE IS NOT A NAME CALLED "None" (2026-10-02). These pages
     #   were titled "None – Adams State (CO)" and indexed that way. Shown as
     #   an unnamed athlete and kept out of search until a name arrives
@@ -4382,6 +4412,14 @@ def race_xc(meet_id, div_id):
             #   and not on the colliding one's rows merged in (2026-09-13)
             src, alt_idx, other_sources = _xc_meet_sources(
                 cur, meet_id, request.args, div_id)
+            # ★ THE CANONICAL CARRIES ?alt= ONLY WHEN THE BARE URL WOULD
+            #   SERVE ANOTHER MEET (seo.canonicalPath, 2026-10-10). Index 0,
+            #   or the source the bare URL falls back to anyway, is the bare
+            #   page; the extra lookup runs only for a non-zero index.
+            g.canonical_alt = None
+            if alt_idx:
+                _bare = _xc_meet_sources(cur, meet_id, {}, div_id)[0]
+                g.canonical_alt = None if _bare == src else alt_idx
             # ★ A PIN THAT PINS NOTHING IS A REDIRECT (D2, see athleteHref):
             #   when the bare URL would serve the same meet, ?r= only split
             #   the edge cache. Old ?r= links still land, flashed by #r<id>.
@@ -5010,6 +5048,9 @@ def meet_xc(meet_id):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             src, alt_idx, other_sources = _xc_meet_sources(
                 cur, meet_id, request.args)
+            # the bare meet URL is source 0 (seo.canonicalPath, 2026-10-10)
+            from flask import g as _g
+            _g.canonical_alt = alt_idx or None
             header    = get_meet_header(cur, meet_id, source=src)
             divisions = get_meet_divisions(cur, meet_id, source=src)
             # ★ ?school= (from the school page's meets table): the
@@ -5552,6 +5593,13 @@ def race_tf(meet_id, event_id, div_id):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             race_src, alt_idx, other_sources = _tfRaceSource(
                 cur, meet_id, div_id, event_id, request.args)
+            # ★ ?alt= IN THE CANONICAL ONLY WHEN THE BARE URL WOULD SERVE
+            #   ANOTHER FEED (seo.canonicalPath, 2026-10-10): the bare URL
+            #   serves the triple's biggest feed, whatever its index.
+            g.canonical_alt = None
+            if alt_idx:
+                _bare = _tfRaceSource(cur, meet_id, div_id, event_id, {})[0]
+                g.canonical_alt = None if _bare == race_src else alt_idx
             # ★ A PIN THAT PINS NOTHING IS A REDIRECT (D2, see athleteHref):
             #   the clicked row is from the feed the bare URL serves anyway.
             rid = _ridArg(request.args)
@@ -6223,6 +6271,9 @@ def meet_tf(meet_id):
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             src, alt_idx, other_sources = _tf_meet_sources(
                 cur, meet_id, request.args)
+            # the bare meet URL is source 0 (seo.canonicalPath, 2026-10-10)
+            from flask import g as _g
+            _g.canonical_alt = alt_idx or None
             header = get_tf_meet_header(cur, meet_id, source=src)
             events = get_tf_meet_events(cur, meet_id, source=src)
             # no linkable events at all -> list the results themselves

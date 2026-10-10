@@ -90,7 +90,10 @@ def test_app_serves_robots_canonical_and_the_index():
     assert '@app.route("/sitemap.xml")' in app
     assert 'app.jinja_env.globals["site_origin"]' in app
     meta = read("racecast", "templates", "_meta.html")
-    assert '<link rel="canonical" href="{{ site_origin ~ (meta_path | default(request.path)) }}">' in meta
+    # ★ the canonical goes through seo.canonicalPath now (2026-10-10, ?alt=);
+    #   tests/test_seo.py covers the rules
+    assert '<link rel="canonical" href="{{ _canon }}">' in meta
+    assert "site_origin ~ (meta_path if (meta_path is defined and meta_path) else canonical_path())" in meta
     assert "request.url_root" not in meta
     sh = read("deploy", "run_pipeline.sh")
     assert "13d_sitemap" in sh and sh.index("13c_search_index") < sh.index("13d_sitemap")

@@ -46,6 +46,10 @@
                       "url": site_origin ~ meta_path,
                       "address": ({"@type": "PostalAddress", "addressRegion": state,
                                    "addressCountry": "US"} if state else none)} %}
+    {# the trail (2026-10-10): Schools > the state's directory > this school #}
+    {% set meta_crumbs = [("Schools", "/schools")]
+       + ([(state, "/schools/" ~ state|lower)] if state else [])
+       + [(school, none)] %}
     {% set meta_image = site_origin ~ "/card/school/" ~ (school|urlencode) ~ ".png" ~ ("?state=" ~ state if state else "") %}
     {% set meta_image_alt = school ~ " on Racecast: the top seven and the team rating" %}
     {% include "_meta.html" %}

@@ -257,6 +257,18 @@ if [ "${XCP_FORECASTS:-0}" = "1" ]; then
   step 13h_meet_forecasts "$PY" -u racecast/build_meet_forecasts.py
 fi
 
+# ★ THE SITEMAP AND INDEXNOW, NIGHTLY TOO (SEO pass, 2026-10-10). Until now
+#   only the full pipeline rebuilt them, so a meet scraped tonight had a page
+#   but no sitemap line and no IndexNow ping for days. OFF THE && CHAIN, and
+#   after 13c0 on purpose: the sitemap lists canonical ids only (it skips
+#   every id person_redirect sends elsewhere), and it reads whatever boards
+#   are live -- tonight's after a good publish, yesterday's after a failed
+#   one, a correct list either way. The files are written beside the old
+#   ones and swapped (build_sitemap.writeSitemaps), so nginx never serves a
+#   half-built set. 13e posts only what changed (indexnow_submit.pick).
+step 13d_sitemap "$PY" -u racecast/build_sitemap.py
+step 13e_indexnow "$PY" -u scripts/indexnow_submit.py
+
 # ---- summary ------------------------------------------------------------ #
 TOTAL=$(( $(date +%s) - T_START ))
 echo ""

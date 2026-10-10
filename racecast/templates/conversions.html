@@ -4,12 +4,17 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Conversions - Racecast</title>
+    {# ★ THE SHARED HEAD (SEO pass, 2026-10-10): /conversions is in the
+       sitemap and had no canonical, description or card. _meta.html emits
+       the <title> and the favicon. ?athlete= and ?course= deep links
+       canonicalise to the bare tool. #}
+    {% set meta_title = "Cross Country & Track Time Conversions" %}
+    {% set meta_description = "Convert a cross country or track time between courses, "
+       "distances and events on one comparable scale: what your 5K is worth on "
+       "another course, or as a 1600 or 3200." %}
+    {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
-    {# the favicon rides in _meta.html on every other page; this head does
-       not include that partial, so the tag is here by hand (issue 149) #}
-    <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
     <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
 <body>
