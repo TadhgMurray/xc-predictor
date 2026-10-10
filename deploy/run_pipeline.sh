@@ -1410,6 +1410,15 @@ step 13e_indexnow     "$PY" -u scripts/indexnow_submit.py
 if [ "${XCP_ALERTS:-0}" = "1" ]; then
   step 13g_follow_alerts "$PY" -u racecast/follow_alerts.py --send --prewarm
 fi
+# ★ "WHAT WE SAID" BEFORE EACH MEET, SCORED AFTER (owner, 2026-10-10): the
+#   week's posted XC forecasts stored, the run meets scored, for /meet/recap
+#   and /recaps. Incremental -- a forecast already frozen is never redone --
+#   so after the nightly update it is usually a no-op here. Off the chain:
+#   nothing after it reads the table. XCP_FORECASTS=0 turns it off.
+#   See racecast/build_meet_forecasts.py.
+if [ "${XCP_FORECASTS:-1}" = "1" ]; then
+  step 13h_meet_forecasts "$PY" -u racecast/build_meet_forecasts.py
+fi
 
 # ---- rowguard ------------------------------------------------------- #
 # 2000-row rail; anything past it diverts to .OVER-CAP for a human.

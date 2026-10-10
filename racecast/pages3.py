@@ -10,6 +10,9 @@
 #     /school/<name>/season            the coach's season tracker
 #     /api/runners-like-you/<id>       the chart's next-season fan
 #     /athlete/<id>/profile            the recruiting one-pager
+#     /meet/recap/xc/<id>              how the stored forecast did (2026-10-10)
+#     /recaps?week=&state=             the week's recaps, one line a meet
+#     /card/recap/xc/<id>.png          the recap's share card
 #
 # ★ A BLUEPRINT, AS pages2.py IS. app.py is eleven thousand lines with
 #   several people in it at once; this file needs only the connection pool
@@ -75,7 +78,43 @@ def _previewHelpers():
             return None
         top = max(meets, key=lambda m: (m["n_races"], -len(m["date"] or "")))
         return dict(top, preview_href=meetPreviewHref(top))
-    return {"meet_preview_href": meetPreviewHref, "coming_top": comingTop}
+    def recapHref(meet_id, source=None):
+        """/meet/recap/xc/<id> when a forecast was stored for this meet and
+        its day has come, else None (meet_forecast.recapKeys, cached)."""
+        try:
+            keys = _recapKeys()
+            mid = int(meet_id)
+        except Exception:                               # noqa: BLE001
+            return None
+        from meet_recap import recapHref as href
+        src = "tfrrs" if source == "tfrrs" else "anet"
+        if (src, mid) in keys:
+            return href(mid, src)
+        # ! a row with no feed named (the home page's Latest results): anet
+        #   first, as upcomingMeet reads it, then tfrrs
+        if source is None and ("tfrrs", mid) in keys:
+            return href(mid, "tfrrs")
+        return None
+    return {"meet_preview_href": meetPreviewHref, "coming_top": comingTop,
+            "recap_href": recapHref}
+
+
+# ★ ONE READ PER WORKER PER TTL for every link to a recap on every page: the
+#   set of (source, meet_id) with a stored forecast whose day has come
+_RECAP_KEYS_TTL = 3600.0
+
+
+def _recapKeys():
+    import meet_forecast as MF
+
+    def compute():
+        with getConn() as conn:
+            with _cursor(conn) as cur:
+                out = MF.recapKeys(cur, _today())
+                conn.rollback()
+                return out
+    return ttlcache.get(("recap_keys", _today().isoformat()), compute,
+                        ttl=_RECAP_KEYS_TTL)[0]
 
 
 # ------------------------------------------------------------------ #
@@ -147,8 +186,12 @@ def meet_preview(meet_id):
             conn.rollback()
     if pv is None:
         abort(404)
-    # ! A MEET THAT HAS RUN IS NOT A PREVIEW: its results page is the answer
+    # ! A MEET THAT HAS RUN IS NOT A PREVIEW: its results page is the answer,
+    #   or, when its forecast was stored, the recap of that forecast
     if pv.get("date") and str(pv["date"])[:10] < _today().isoformat():
+        if pv.get("frozen"):
+            from meet_recap import recapHref
+            return redirect(recapHref(meet_id, pv["source"]), code=302)
         return redirect(f"/meet/xc/{meet_id}", code=302)
     card = f"meet_id={meet_id}&sport=XC"
     if pv.get("lead_div") is not None:
@@ -175,6 +218,11 @@ def api_meet_preview_race(meet_id, div_id):
         return _publicJson({"available": False, "reason": pred.get("reason")})
     teams = [dict(t, place=i + 1) for i, t in
              enumerate(t for t in pred["teams"] if t.get("score") is not None)]
+    # ★ THE 5K COLUMN (owner, 2026-10-10): each projected runner's rating as
+    #   the track 5K it is worth, and the header for the field's pools
+    from conversions import fiveKLabel
+    shown = pred["runners"][:RUNNERS_SHOWN]
+    fks = [U.fiveKOf(r.get("rating"), r.get("pool")) for r in shown]
     out = {"available": True, "n_field": pred["n_field"],
            "teams": [{"team": t["team"], "label": t.get("school_label") or t["team"],
                       "href": t.get("school_href"), "state": t.get("state"),
@@ -185,8 +233,11 @@ def api_meet_preview_race(meet_id, div_id):
            "runners": [{"person_id": r["person_id"], "name": r.get("name"),
                         "school": r.get("school_label") or r.get("school"),
                         "href": r.get("school_href"), "grade": r.get("grade_label"),
-                        "place": r.get("place"), "time": U.clock(r.get("seconds"))}
-                       for r in pred["runners"][:RUNNERS_SHOWN]],
+                        "place": r.get("place"), "time": U.clock(r.get("seconds")),
+                        "five_k": fk}
+                       for r, fk in zip(shown, fks)],
+           "fk_label": fiveKLabel([r.get("pool") for r, fk in zip(shown, fks) if fk]),
+           "frozen": (pred.get("frozen") or {}).get("made_on"),
            "predict_href": U.predictHref(meet_id, div_id, src)}
     return _publicJson(out)
 
@@ -311,3 +362,65 @@ def athlete_profile(person_id):
     if p is None:
         abort(404)
     return render_template("athlete_profile.html", p=p)
+
+
+# ------------------------------------------------------------------ #
+#  12. how we did: the recap of a stored forecast (2026-10-10)
+# ------------------------------------------------------------------ #
+
+@bp.route("/meet/recap/xc/<int:meet_id>")
+def meet_recap(meet_id):
+    import meet_recap as R
+    src = _src()
+
+    def compute():
+        with getConn() as conn:
+            with _cursor(conn) as cur:
+                out = R.meetRecap(cur, meet_id, src)
+                conn.rollback()
+                return out or {"none": True}
+    rc, _ = ttlcache.get(("recap", src, meet_id, _today().isoformat()), compute,
+                         ttl=R.TTL, ttl_of=lambda v: _FAIL_TTL if v.get("none") else R.TTL)
+    if rc.get("none"):
+        abort(404)
+    # ! NOT RUN YET: the forecast is the preview's to show
+    if rc.get("date") and rc["date"] > _today().isoformat():
+        from upcoming_preview import previewHref
+        return redirect(previewHref(meet_id, rc["source"]), code=302)
+    return render_template("meet_recap.html", rc=rc,
+                           src=rc["source"] if rc["source"] == "tfrrs" else None,
+                           shown=R.TABLE_SHOWN, top_n=R.TOP_N, min_field=R._minField())
+
+
+@bp.route("/recaps")
+def recaps_page():
+    import meet_forecast as MF
+    import meet_recap as R
+    states, names = _stateNames()
+    st = (request.args.get("state") or "").strip().upper() or None
+    if st and st not in names:
+        st = None
+    with getConn() as conn:
+        with _cursor(conn) as cur:
+            # ★ NO WEEK ASKED: the newest week with a scored race, so the
+            #   page opens on results rather than on an empty week
+            default = MF.latestScoredDate(cur) or _today()
+            week = R.parseWeek(request.args.get("week"), default)
+            data = R.weekRecaps(cur, week, st)
+            conn.rollback()
+    one = datetime.timedelta(days=7)
+    nxt = week + one
+    return render_template("recaps.html", data=data, state=st,
+                           state_name=names.get(st or "", ""), states=states,
+                           prev_week=(week - one).isoformat(),
+                           next_week=nxt.isoformat() if nxt <= _today() else None,
+                           min_field=R._minField(), top_n=R.TOP_N)
+
+
+@bp.route("/card/recap/xc/<int:meet_id>.png")
+def card_recap(meet_id):
+    import cards
+    from app import _serveCard
+    src = _src()
+    return _serveCard(f"recap xc {meet_id}",
+                      lambda cur: cards.cachedRecapCard(cur, meet_id, src))

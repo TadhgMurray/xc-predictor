@@ -122,6 +122,19 @@ def predictHref(meet_id, div_id, source):
     return href + ("&src=tfrrs" if source == "tfrrs" else "")
 
 
+def fiveKOf(rating, pool):
+    """★ THE 5K COLUMN (owner, 2026-10-10): the track 5K a rating is worth,
+    {"time", "dist"} (conversions.fiveK, 3200 m in middle school), or None.
+    The rating is the one the prediction used, on its own pool's scale."""
+    if rating is None or not pool:
+        return None
+    try:
+        from conversions import fiveK
+        return fiveK(rating, pool, "XC")
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
 def _snap(distance):
     try:
         return int(round(float(distance) / 100.0) * 100) if distance else None
@@ -225,29 +238,47 @@ def _target(meet_id, div_id, source):
     return t
 
 
+def livePrediction(cur, meet_id, div_id, source=None):
+    """predict.predictTeam for one race, now, uncached: {"available",
+    "teams", "runners", "n_field"} or {"available": False, "reason"}. The
+    forecast step (build_meet_forecasts.py) stores this; pages read it
+    through racePrediction."""
+    from app import _withSource
+    from predict import predictTeam
+    try:
+        cur.execute("SAVEPOINT up_pred")
+        target = _withSource(cur, _target(meet_id, div_id, source))
+        out = predictTeam(cur, [], target)
+        cur.execute("RELEASE SAVEPOINT up_pred")
+    except NotImplementedError:
+        cur.execute("ROLLBACK TO SAVEPOINT up_pred")
+        return {"available": False, "reason": "The prediction model is not loaded."}
+    except Exception as exc:                            # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT up_pred")
+        print(f"upcoming prediction {meet_id}/{div_id}: {type(exc).__name__}: {exc}",
+              flush=True)
+        return {"available": False, "reason": "The prediction could not be made."}
+    if not out.get("available"):
+        return {"available": False, "reason": out.get("reason")}
+    return _trim(out, target)
+
+
 def racePrediction(cur, meet_id, div_id, source=None):
     """{"available", "teams": [...], "runners": [...], "n_field"} for one
     race, cached TTL per race. A failure is {"available": False, reason}
-    and is kept FAIL_TTL."""
+    and is kept FAIL_TTL.
+
+    ★ THE STORED FORECAST FIRST (meet_forecast.py, 2026-10-10). Once the
+      pipeline has frozen a race, every page that reads it -- the preview,
+      the next-race lines -- shows the stored numbers, with "frozen" saying
+      when they were made, so what a reader saw is what the recap scores."""
     def compute():
-        from app import _withSource
-        from predict import predictTeam
-        try:
-            cur.execute("SAVEPOINT up_pred")
-            target = _withSource(cur, _target(meet_id, div_id, source))
-            out = predictTeam(cur, [], target)
-            cur.execute("RELEASE SAVEPOINT up_pred")
-        except NotImplementedError:
-            cur.execute("ROLLBACK TO SAVEPOINT up_pred")
-            return {"available": False, "reason": "The prediction model is not loaded."}
-        except Exception as exc:                        # noqa: BLE001
-            cur.execute("ROLLBACK TO SAVEPOINT up_pred")
-            print(f"upcoming prediction {meet_id}/{div_id}: {type(exc).__name__}: {exc}",
-                  flush=True)
-            return {"available": False, "reason": "The prediction could not be made."}
-        if not out.get("available"):
-            return {"available": False, "reason": out.get("reason")}
-        return _trim(out, target)
+        import meet_forecast as MF
+        if div_id is not None:
+            stored = MF.loadRace(cur, meet_id, div_id, source)
+            if stored:
+                return stored
+        return livePrediction(cur, meet_id, div_id, source)
     val, _ = ttlcache.get(("up_pred", source, int(meet_id), div_id), compute, ttl=TTL,
                           ttl_of=lambda v: TTL if v.get("available") else FAIL_TTL)
     return val
@@ -454,6 +485,7 @@ def athleteNextRace(cur, getConn, person_id, today=None):
         me = next((x for x in pred["runners"] if x["person_id"] == person_id), None)
         if me is not None:
             seconds, lo, hi, place = me.get("seconds"), me.get("lo"), me.get("hi"), me.get("place")
+            rating, rpool = me.get("rating"), me.get("pool")
         else:
             # ★ NOT IN THE PREDICTED SEVEN: their own prediction, placed
             #   against the same field's predicted times
@@ -476,13 +508,17 @@ def athleteNextRace(cur, getConn, person_id, today=None):
                 continue
             seconds, lo, hi = got.get("seconds"), got.get("lo"), got.get("hi")
             place = placeAmong(seconds, [x.get("seconds") for x in pred["runners"]])
+            rating, rpool = None, None
+        if rating is None:
+            rating, rpool = season.get("mean_rating"), season.get("pool")
         cond = conditions(cur, m["meet_id"], race["div_id"], m["source"],
                           m.get("venue"), race.get("distance"))
         row = _meetBits(m, plan, race, cond)
         row.update({"seconds": seconds, "time": clock(seconds),
                     "lo_time": clock(lo), "hi_time": clock(hi),
                     "place": place, "place_word": ordinal(place) if place else None,
-                    "n_field": pred["n_field"], "in_field": me is not None})
+                    "n_field": pred["n_field"], "in_field": me is not None,
+                    "five_k": fiveKOf(rating, rpool)})
         found.append(row)
     return {"available": bool(found), "school": season["school"],
             "state": season.get("state"), "races": found}
@@ -513,7 +549,8 @@ def schoolNextRaces(cur, getConn, school, state, today=None):
             row.update({"team_place": place, "team_place_word": ordinal(place) if place else None,
                         "score": score, "n_teams": n_teams,
                         "top": [{"person_id": x["person_id"], "name": x["name"],
-                                 "time": clock(x.get("seconds")), "place": x.get("place")}
+                                 "time": clock(x.get("seconds")), "place": x.get("place"),
+                                 "five_k": fiveKOf(x.get("rating"), x.get("pool"))}
                                 for x in mine[:1]],
                         "n_field": pred["n_field"]})
             found.append(row)
@@ -549,7 +586,12 @@ def meetPreview(cur, meet_id, source=None):
     cond = (conditions(cur, meet_id, lead["div_id"], plan["source"], plan.get("venue"), dist)
             if lead else {})
     records = courseRecords(cur, plan.get("venue"), dist)
-    return {"meet_id": meet_id, "source": plan["source"], "name": plan["name"],
+    # ★ THE FROZEN FORECAST, when the pipeline has stored one (meet_forecast)
+    import meet_forecast as MF
+    stored = MF.loadMeet(cur, meet_id, plan["source"])
+    made = sorted({r["made_on"] for r in stored if r.get("made_on")})
+    return {"frozen": ({"made_on": made[-1], "n_races": len(stored)} if made else None),
+            "meet_id": meet_id, "source": plan["source"], "name": plan["name"],
             "date": plan["date"], "date_label": dateLabel(plan["date"]),
             "venue": plan.get("venue"), "state": plan.get("state"),
             "edition": plan.get("edition"), "races": races,

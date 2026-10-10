@@ -32,6 +32,14 @@
     })[c]);
   }
 
+  /* "Oct 16, 2026" from an ISO date, built from the string (no UTC shift) */
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function mdy(iso) {
+    const [y, m, d] = String(iso || "").slice(0, 10).split("-");
+    return y && m && d ? `${MONTHS[Number(m) - 1]} ${Number(d)}, ${y}` : "";
+  }
+
   function team(t) {
     const name = t.href ? `<a href="${esc(t.href)}">${esc(t.label)}</a>` : esc(t.label);
     const sc = (t.scorers || []).map((p) => `<i>${p == null ? "-" : esc(p)}</i>`).join("");
@@ -46,7 +54,16 @@
       `<td class="nm"><a href="/athlete/${esc(r.person_id)}">${esc(r.name)}</a>` +
       `<span class="rc-subline">${esc(r.school || "")}${r.grade ? " · " + esc(r.grade) : ""}</span></td>` +
       `<td class="sch rc-wide">${school}${r.grade ? `<span class="gr">${esc(r.grade)}</span>` : ""}</td>` +
-      `<td class="n tm">${esc(r.time || "")}</td></tr>`;
+      `<td class="n tm">${esc(r.time || "")}</td>` + fk(r.five_k) + `</tr>`;
+  }
+
+  /* ★ THE 5K COLUMN (owner, 2026-10-10): _scale.html's fk_td, in JS. The
+     distance is written in the cell only when the header says "Track ≈". */
+  let fkLabel = "5K";
+  function fk(c) {
+    if (!c) return `<td class="n fk fk-sm"><span class="fk-none">-</span></td>`;
+    const d = c.dist !== fkLabel ? ` <span class="fk-d">${esc(c.dist)}</span>` : "";
+    return `<td class="n fk fk-sm">${esc(c.time)}${d}</td>`;
   }
 
   function draw(d) {
@@ -57,12 +74,16 @@
       champs.hidden = true;
       return;
     }
+    fkLabel = d.fk_label || "5K";
+    const fkTh = body.querySelector(".pv-fk");
+    if (fkTh) fkTh.textContent = fkLabel;
     body.querySelector(".pv-teams tbody").innerHTML = d.teams.map(team).join("") ||
       `<tr><td colspan="4" class="meta">No team brings five runners.</td></tr>`;
     body.querySelector(".pv-runners tbody").innerHTML = d.runners.map(runner).join("");
     body.querySelector(".pv-nt").textContent =
       d.n_teams > d.teams.length ? `top ${d.teams.length} of ${d.n_teams}` : `${d.n_teams} teams`;
-    body.querySelector(".pv-nf").textContent = `of ${d.n_field} projected starters`;
+    body.querySelector(".pv-nf").textContent = `of ${d.n_field} projected starters` +
+      (d.frozen ? `, saved ${mdy(d.frozen)}` : "");
     status.hidden = true;
     body.hidden = false;
     const t0 = d.teams[0], r0 = d.runners[0];

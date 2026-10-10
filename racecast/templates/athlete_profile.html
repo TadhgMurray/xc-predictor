@@ -13,6 +13,8 @@
 ===================================================================== #}
 <!DOCTYPE html>
 {% from "_explain.html" import rating_i %}
+{# ★ THE 5K COLUMN (owner, 2026-10-10): beside each rating, the track 5K it is worth #}
+{% from "_scale.html" import fk_th, fk, fk_inline %}
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -45,7 +47,7 @@
     <div class="rc-meta">{% if p.school %}{{ crest(p.school, p.state, pool=p.pool) }}{{ p.school_label or p.school }}{% endif %}
       {% if p.grad_year %} · Class of {{ p.grad_year }}{% endif %} · {{ p.pool_words }}</div>
     <div class="rc-facts rc-facts-lead">
-      {% if L %}<span>Rating{{ rating_i() }} <b>{{ "%.1f"|format(L.mean_rating) }}</b> <span class="dist-note-quiet">{{ L.label }} {{ L.sport }} season</span></span>{% endif %}
+      {% if L %}<span>Rating{{ rating_i() }} <b>{{ "%.1f"|format(L.mean_rating) }}</b>{{ fk_inline(five_k(L.mean_rating, L.pool, L.sport)) }} <span class="dist-note-quiet">{{ L.label }} {{ L.sport }} season</span></span>{% endif %}
       {% if p.percentile %}<span>Standing <b>{{ p.percentile }}</b> <span class="dist-note-quiet">of {{ p.pool_words }}</span></span>{% endif %}
     </div>
     {% if p.ranks %}
@@ -71,7 +73,7 @@
     <table class="rc-tscores rc-tscores-plain pf-tbl">
       <tbody>{% for s in p.seasons|reverse %}
       <tr><td class="tn">{{ s.label }} {{ s.sport }}<span class="sp">{{ s.school or "" }}{% if s.grade_num %} · grade {{ s.grade_num }}{% endif %} · {{ s.n_races }} race{{ "" if s.n_races == 1 else "s" }}</span></td>
-        <td class="n tpts">{{ "%.1f"|format(s.mean_rating) if s.mean_rating is not none else "-" }}{% if s.gain is not none %} <span class="dist-note-quiet">{{ "%+.1f"|format(s.gain) }}</span>{% endif %}</td></tr>
+        <td class="n tpts">{{ "%.1f"|format(s.mean_rating) if s.mean_rating is not none else "-" }}{% if s.gain is not none %} <span class="dist-note-quiet">{{ "%+.1f"|format(s.gain) }}</span>{% endif %}{{ fk_inline(five_k(s.mean_rating, s.pool, s.sport)) }}</td></tr>
       {% endfor %}</tbody>
     </table>
   </section>
@@ -88,12 +90,13 @@
   <p class="meta pf-lead">The {{ rows|length }} programmes with the fastest recent recruits where this rating is in their recruit range or better
     (at or above their 25th-percentile recruit), from <a href="/recruiting?athlete={{ p.person_id }}">Recruiting</a>.</p>
   <table class="rc-table pf-fit">
-    <thead><tr><th>#</th><th>Programme</th><th class="rc-wide">Division</th><th class="n">Median recruit</th><th>Fit</th></tr></thead>
+    <thead><tr><th>#</th><th>Programme</th><th class="rc-wide">Division</th><th class="n">Median recruit</th>{% set fk_pool = "hs_" ~ (p.pool or "hs_m")[-1:] %}{% set fk_label = five_k_label([fk_pool]) %}{{ fk_th(fk_label, "fk-sm") }}<th>Fit</th></tr></thead>
     <tbody>{% for r in rows %}
     <tr><td class="pl">{{ loop.index }}</td>
       <td class="nm"><a href="/recruiting/school/{{ r.school|urlencode }}{% if r.state %}?state={{ r.state }}{% endif %}">{{ r.label or r.school }}</a><span class="rc-subline">{{ r.division or "" }}</span></td>
       <td class="rc-wide">{{ r.division or "-" }}{% if r.conference %} <span class="dist-note-quiet">{{ r.conference }}</span>{% endif %}</td>
       <td class="n">{{ "%.1f"|format(r.median) if r.median is not none else "-" }}</td>
+      {{ fk(r.median, fk_pool, sport, none, fk_label, "fk-sm") }}
       <td><span class="r-pill r-pill-{{ r.tier.key }}">{{ r.tier.label }}</span></td></tr>
     {% endfor %}</tbody>
   </table>

@@ -108,3 +108,25 @@ def latestByKey(path=HISTORY):
         if label in by_label:
             out[key] = by_label[label]
     return out
+
+
+# ★ AND THE WEEK'S FORECASTS, SCORED (owner, 2026-10-10: the weekly "how we
+#   did" loop). The tests above score the ratings on hidden results; this is
+#   the other half, the forecasts we published before real meets against
+#   what happened: "Week of Oct 5 to 11: 312 races, median miss 2.1%,
+#   winner picked 61%." Read from the stored scores (meet_forecast.py,
+#   meet_recap.weekLine), never computed on the page.
+def weeklyForecastLine(getConn, today=None):
+    """{"text", "href", "week", "summary"} or None. Never raises: no table,
+    no scored week or a database error is simply no line."""
+    try:
+        import psycopg2.extras
+        from meet_recap import weekLine
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                out = weekLine(cur, today)
+                conn.rollback()
+                return out
+    except Exception as exc:                                    # noqa: BLE001
+        print(f"weekly forecast line: {type(exc).__name__}: {exc}", flush=True)
+        return None

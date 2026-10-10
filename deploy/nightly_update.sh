@@ -236,6 +236,18 @@ fi
 #   redirects for good: every id merged away tonight would 404.
 step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
 
+# ★ "WHAT WE SAID", FROZEN BEFORE EACH MEET, AND SCORED AFTER (owner,
+#   2026-10-10: the weekly "how we did" loop). The week's posted XC meets
+#   get their forecast stored (once, refreshed the night before), and every
+#   stored meet that has run is scored for /meet/recap and /recaps. See
+#   racecast/build_meet_forecasts.py.
+# ! OFF THE && CHAIN AND AFTER THE BOARDS: it reads the ratings as they
+#   stand, publishes nothing the boards need, and a failure only says so in
+#   the summary. XCP_FORECASTS=0 in the env file turns it off.
+if [ "${XCP_FORECASTS:-1}" = "1" ]; then
+  step 13h_meet_forecasts "$PY" -u racecast/build_meet_forecasts.py
+fi
+
 # ---- summary ------------------------------------------------------------ #
 TOTAL=$(( $(date +%s) - T_START ))
 echo ""

@@ -50,10 +50,18 @@
       `data-blurb="${esc(blurb)}" aria-label="${esc(blurb)}">?</span>`;
   }
 
+  /* ★ THE 5K COLUMN'S INLINE FORM (owner, 2026-10-10; _scale.html fk_inline):
+     the track 5K the rating behind the prediction is worth */
+  function fk(c) {
+    if (!c) return "";
+    return ` <span class="fk-i" title="The track 5K this rating is worth">rating ≈ ${esc(c.time)}` +
+      `${c.dist !== "5K" ? " " + esc(c.dist) : ""} on the track</span>`;
+  }
+
   function athleteRow(r) {
     const place = r.place ? `, about <strong>${esc(r.place_word)}</strong> of ${esc(r.n_field)}` : "";
     return `<span class="rk"><a href="${esc(r.preview_href)}">${esc(r.name)}</a>, ${esc(r.date_label)}</span>: ` +
-      `predicted <strong>~${esc(r.time)}</strong>${place} ` +
+      `predicted <strong>~${esc(r.time)}</strong>${place}${fk(r.five_k)} ` +
       `<span class="rl-floor">${conditions(r)}</span> ${basis(r)}`;
   }
 
@@ -63,7 +71,8 @@
       ? `projected <strong>${esc(r.team_place_word)}</strong> of ${esc(r.n_teams)} teams (${esc(r.score)} pts)`
       : "no projected team score (fewer than five runners)";
     const top = (r.top && r.top[0])
-      ? `, led by <a href="/athlete/${esc(r.top[0].person_id)}">${esc(r.top[0].name)}</a> ~${esc(r.top[0].time)}` : "";
+      ? `, led by <a href="/athlete/${esc(r.top[0].person_id)}">${esc(r.top[0].name)}</a> ~${esc(r.top[0].time)}` +
+        fk(r.top[0].five_k) : "";
     return `<span class="rk"><a href="${esc(r.preview_href)}">${esc(r.name)}</a>, ${esc(r.date_label)}</span>: ` +
       `<span class="nr-g">${g}</span> ${place}${top} ` +
       `<span class="rl-floor">${conditions(Object.assign({}, r, { race: null, gender: null }))}</span> ${basis(r)}`;

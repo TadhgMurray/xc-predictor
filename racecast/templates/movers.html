@@ -27,6 +27,10 @@
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
+{# ★ THE 5K COLUMN (owner, 2026-10-10): every rating here is on the page's
+   one pool and sport, so one header and one conversion per row #}
+{% from "_scale.html" import fk_th, fk %}
+{% set fk_label = five_k_label([pool]) %}
 {% macro qs(st=state, pl=pool, sp=sport) -%}
 /movers?{% if st %}state={{ st }}&{% endif %}pool={{ pl }}&sport={{ sp|lower }}
 {%- endmacro %}
@@ -105,11 +109,12 @@
   <section class="rc-panel" id="risers" data-panel="risers">
   {% if d.risers %}
   <table class="p2-tbl">
-    <thead><tr><th class="num">Now</th><th>Athlete</th><th class="num">Was</th><th class="num">Change</th><th class="num p2-wide">Rating</th></tr></thead>
+    <thead><tr><th class="num">Now</th><th>Athlete</th><th class="num">Was</th><th class="num">Change</th><th class="num p2-wide">Rating</th>{{ fk_th(fk_label, "fk-sm") }}</tr></thead>
     <tbody>{% for r in d.risers %}<tr>
       <td class="num">{{ r.now }}</td><td>{{ who(r) }}</td><td class="num">{{ r.prev }}</td>
       <td class="num p2-up">+{{ r.change }}</td>
       <td class="num p2-wide">{{ "%.1f"|format(r.rating) if r.rating is not none }}{% if r.prev_rating is not none and r.rating is not none %} <span class="p2-muted">({{ "%+.1f"|format(r.rating - r.prev_rating) }})</span>{% endif %}</td>
+      {{ fk(r.rating, pool, sport, none, fk_label, "fk-sm") }}
     </tr>{% endfor %}</tbody>
   </table>
   {% else %}<p class="p2-note">Nobody in the top {{ d.window }} moved up this week.</p>{% endif %}
@@ -122,11 +127,12 @@
   <section class="rc-panel" id="fallers" data-panel="fallers">
   {% if d.fallers %}
   <table class="p2-tbl">
-    <thead><tr><th class="num">Was</th><th>Athlete</th><th class="num">Now</th><th class="num">Change</th><th class="num p2-wide">Rating</th></tr></thead>
+    <thead><tr><th class="num">Was</th><th>Athlete</th><th class="num">Now</th><th class="num">Change</th><th class="num p2-wide">Rating</th>{{ fk_th(fk_label, "fk-sm") }}</tr></thead>
     <tbody>{% for r in d.fallers %}<tr>
       <td class="num">{{ r.prev }}</td><td>{{ who(r) }}</td><td class="num">{{ r.now if r.now else "off" }}</td>
       <td class="num">{{ ("-" ~ r.change) if r.change else "-" }}</td>
       <td class="num p2-wide">{{ "%.1f"|format(r.rating) if r.rating is not none else "-" }}</td>
+      {{ fk(r.rating, pool, sport, none, fk_label, "fk-sm") }}
     </tr>{% endfor %}</tbody>
   </table>
   {% else %}<p class="p2-note">Nobody in last week's top {{ d.window }} moved down.</p>{% endif %}
@@ -136,11 +142,11 @@
   <section class="rc-panel" id="breakouts" data-panel="breakouts">
   {% if d.breakouts %}
   <table class="p2-tbl">
-    <thead><tr><th class="num">#</th><th>Athlete</th><th>Race</th><th class="num">Rating</th><th class="num">Jump</th></tr></thead>
+    <thead><tr><th class="num">#</th><th>Athlete</th><th>Race</th><th class="num">Rating</th>{{ fk_th(fk_label, "fk-sm") }}<th class="num">Jump</th></tr></thead>
     <tbody>{% for r in d.breakouts %}<tr>
       <td class="num">{{ loop.index }}</td><td>{{ who(r) }}</td>
       <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}<span class="p2-row-sub">{{ r.race_date|mdy }}</span></td>
-      <td class="num">{{ "%.1f"|format(r.speed_rating) }}</td><td class="num p2-up">+{{ "%.1f"|format(r.jump) }}</td>
+      <td class="num">{{ "%.1f"|format(r.speed_rating) }}</td>{{ fk(r.speed_rating, pool, sport, none, fk_label, "fk-sm") }}<td class="num p2-up">+{{ "%.1f"|format(r.jump) }}</td>
     </tr>{% endfor %}</tbody>
   </table>
   <a class="rc-more" href="/breakouts?level={{ level }}&state={{ state }}&sport={{ sport|lower }}">All breakouts in {{ state_name }} →</a>
@@ -150,11 +156,12 @@
   <section class="rc-panel" id="above" data-panel="above">
   {% if d.above %}
   <table class="p2-tbl">
-    <thead><tr><th class="num">#</th><th>Athlete</th><th>Race</th><th class="num">Rating</th><th class="num" title="Percent over the level they brought into the race">Over level</th></tr></thead>
+    <thead><tr><th class="num">#</th><th>Athlete</th><th>Race</th><th class="num">Rating</th>{{ fk_th(fk_label, "fk-sm") }}<th class="num" title="Percent over the level they brought into the race">Over level</th></tr></thead>
     <tbody>{% for r in d.above %}<tr>
       <td class="num">{{ loop.index }}</td><td>{{ who(r) }}</td>
       <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}<span class="p2-row-sub">{{ r.day|mdy }}</span></td>
       <td class="num">{{ "%.1f"|format(r.rating) }} <span class="p2-row-sub">level {{ "%.1f"|format(r.level) }}</span></td>
+      {{ fk(r.rating, pool, sport, none, fk_label, "fk-sm") }}
       <td class="num p2-up">+{{ "%.1f"|format(r.vs_level) }}%</td>
     </tr>{% endfor %}</tbody>
   </table>
