@@ -39,6 +39,7 @@ def test_rules_key_on_the_right_things():
     assert "min(result_id) AS keep" in dup_xc and "r.result_id <> k.keep" in dup_xc, \
         "the lowest result_id survives, every later copy goes"
     assert [r for r, _ in TF.RULES] == ["twin_race", "twin_person", "twin_same_day",
+                                        "twin_upload",
                                         "dup_same_feed",
                                         "dup_cross_date", "dup_race_copy",
                                         "dup_same_day", "dup_adjacent_day",
@@ -80,6 +81,9 @@ _EXPECTED = {
     # 9032 is level_conflict's "one race in both feeds" (6004), a twin.
     ("XC", "twin_same_day"):  [721, 9032],
     ("TF", "twin_same_day"):  [1901],
+    # 2026-10-10: the fixtures hold no uploaded row
+    ("XC", "twin_upload"):    [],
+    ("TF", "twin_upload"):    [],
     ("XC", "dup_same_feed"):  [502],
     ("XC", "dup_cross_date"): [401, 402, 502],
     ("XC", "dup_race_copy"):  [201, 202, 203, 204, 205, 206, 207, 208],

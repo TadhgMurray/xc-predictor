@@ -246,8 +246,9 @@ summarise() {
 #   XCP_LINK_TFRRS=0 turns it off; every stamp is logged in person_link_log
 #   and `scripts/link_tfrrs_rows.py --undo fanout|freshman|mint` reverses it.
 # ★ 04a2_link_teamless TOO, for the same reason: it moves ids (2026-09-29).
+# ★ 04a3_pins TOO: it keeps the owner's detaches where he put them (2026-10-10).
 # ★ 00_integrity TOO: a damaged page is damaged whichever step reads it first.
-_ALWAYS="00_integrity 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
+_ALWAYS="00_integrity 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a3_pins 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
 step() {
   name="$1"; shift
@@ -558,6 +559,15 @@ step 04a_link_tfrrs   "$PY" -u scripts/link_tfrrs_rows.py --apply
 #   XCP_LINK_TEAMLESS=0 turns it off; every move is in person_link_log rule
 #   'teamless'; `scripts/link_teamless.py --undo <id>|all` reverses it.
 step 04a2_link_teamless "$PY" -u scripts/link_teamless.py --apply
+# ★ THE OWNER'S DETACHES, AFTER EVERY LINKER (2026-10-10). A result an
+#   athlete reported "not mine" and the owner approved (racecast/fixes.py)
+#   sits on a fresh person (result_detach, scripts/person_pins.py). The
+#   linkers skip it; this re-applies each decision, so a re-scrape or a
+#   relink can never put the row back. Logged in person_link_log rule
+#   'detach'; `scripts/person_pins.py --undo-detach <result id>|all`. The
+#   grade and school pins need no step: grade_sanity (next) and
+#   build_ranking_results read them themselves.
+step 04a3_pins        "$PY" -u scripts/person_pins.py --apply
 step 04_grade_sanity  "$PY" -u engine/grade_sanity.py --write
 
 # ⚠ THIS STEP WAS MISSING, AND THAT IS HOW CHAIR ATHLETES CAME BACK (owner,

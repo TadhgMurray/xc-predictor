@@ -137,6 +137,8 @@ step 03b_age_bands    "$PY" -u engine/age_band_grades.py --write
   step 04a_link_tfrrs "$PY" -u scripts/link_tfrrs_rows.py --apply
 [ "${XCP_LINK_TEAMLESS:-1}" = "0" ] || \
   step 04a2_link_teamless "$PY" -u scripts/link_teamless.py --apply
+# the owner's "not mine" detaches, after the linkers (run_pipeline.sh says why)
+step 04a3_pins        "$PY" -u scripts/person_pins.py --apply
 step 04b_wheelchair   "$PY" -u engine/wheelchair_flag.py --write
 step 04c_twins        "$PY" -u engine/twin_flag.py --write
 step 06_tfrrs_meets   "$PY" -u scripts/land_tfrrs_meet_names.py --apply
@@ -153,7 +155,7 @@ step 06b_course_canonical "$PY" -u scripts/build_course_canonical.py --increment
 #   (XCP_LINK_TFRRS=0 / XCP_LINK_TEAMLESS=0) is not a failure.
 #   XCP_IGNORE_PEOPLE_FAIL=1 prices anyway.
 PEOPLE_OK=1
-for _s in 04a_link_tfrrs 04a2_link_teamless 04b_wheelchair 04c_twins; do
+for _s in 04a_link_tfrrs 04a2_link_teamless 04a3_pins 04b_wheelchair 04c_twins; do
   case " $FAILED " in *" $_s "*) PEOPLE_OK=0 ;; esac
 done
 if [ "$PEOPLE_OK" -eq 0 ]; then

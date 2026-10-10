@@ -27,17 +27,23 @@
 #   a negative content hash like tfrrs's mint, so a re-approved upload
 #   cannot write a row twice.
 #
-# ⚠ WHAT THE PIPELINE DOES WITH THEM TODAY. The rows carry the name, grade
-#   and school as written, and NO person_id: like a fresh tfrrs row, an
-#   uploaded result belongs to no athlete page until an identity pass links
-#   it, and no linker reads source = 'upload' yet (link_tfrrs_rows and
-#   link_idless_by_name are pinned to 'tfrrs'). 05_backfill normalises any
-#   source it does not name as anet-shaped, so the XC distance resolves
-#   through meets.div_id and the track distance through event_short; the
-#   XC gender comes from the athletes join, which these rows do not have.
-#   So: in the database and reviewable after Approve; rated once the
-#   identity step learns the source (said in the report and in
-#   PIPELINE_GAPS below, not hidden).
+# ★ WHAT THE PIPELINE DOES WITH THEM (2026-10-10, the gaps closed). The rows
+#   carry the name, grade and school as written, and NO person_id. Then:
+#     04a  scripts/link_uploads.py (pass 4 of link_tfrrs_rows) links each to
+#          an existing person by name + school + generation -- the teamless
+#          and profile_school linkers' rules -- or makes a new person where
+#          no namesake could be him; doubtful rows are REPORT-ONLY, in
+#          upload_link_report, shown on the upload's admin page. Logged in
+#          person_link_log ('upload' / 'upload_mint'), --undo.
+#     04c  engine/twin_flag.py's twin_upload: an uploaded race a feed later
+#          scrapes is flagged on the upload's side (the feed's copy stays).
+#     04d  person_gender reads the uploaded division's gender word.
+#     05   backfill_normalize: anet-shaped (distance through meets.div_id,
+#          track through event_short), and the XC gender from the
+#          division ("Girls Varsity") when the person gives none.
+#     07+  rated, on the boards and the athlete page like any feed's row.
+#   PIPELINE_GAPS below is empty now; PIPELINE_STEPS says the above on the
+#   admin page.
 #
 # ★ A MEET WE ALREADY HAVE IS FLAGGED, NOT WRITTEN (dupesFor). Same date
 #   (or inside the upload's date range) and a name or venue that reads the
@@ -86,12 +92,16 @@ SPORTS = ("XC", "TF")
 
 # ★ SAID, NOT HIDDEN: what the nightly pipeline still needs before an
 #   approved upload is RATED (see the header). Shown on the admin page.
-PIPELINE_GAPS = (
-    "Identity: no linker reads source = 'upload' yet, so uploaded rows have no "
-    "person_id and appear on no athlete page (link_tfrrs_rows / "
-    "link_idless_by_name are pinned to 'tfrrs').",
-    "Cross country gender: 05_backfill reads an anet-shaped row's gender from the "
-    "athletes join; uploaded XC rows carry it only in meets.division.",
+#   ★ 2026-10-10: both gaps closed (identity: scripts/link_uploads.py; XC
+#   gender: backfill_normalize._UPLOAD_DIV_GENDER, person_gender's label).
+PIPELINE_GAPS = ()
+PIPELINE_STEPS = (
+    "04a links each row to an existing athlete by name + school + grade (the teamless and "
+    "profile_school linkers' rules), or makes a new athlete where no namesake could be them. "
+    "Doubtful rows stay unlinked and are listed on the upload's page (upload_link_report).",
+    "04c flags the upload's copy if a feed later scrapes the same race (twin_upload).",
+    "05 normalises them (the cross country gender from the division title), and the solve "
+    "rates them; the boards and athlete pages show them like any other row.",
 )
 
 DDL = """
@@ -430,6 +440,23 @@ def dupesFor(cur, up):
     for r in cur.fetchall():
         cands.append(dict(r, where=f"upload #{r['id']}"))
     return matchMeets(up.get("meet_name"), up.get("location"), cands)
+
+
+def linkStatus(cur, up):
+    """After Approve: how many of the upload's rows the nightly linker gave
+    an athlete (scripts/link_uploads.py, pipeline 04a), and the doubtful
+    ones it left for the owner (upload_link_report) -- the report-only half
+    of the owner's rule, shown where the upload is reviewed."""
+    table = "results" if up.get("sport") == "XC" else "results_tf"
+    cur.execute(f"""SELECT count(*) AS n, count(person_id) AS linked FROM {table}
+                    WHERE meet_id = %s AND source = %s""", (meetIdFor(up["id"]), SOURCE))
+    c = AC._one(cur) or {}
+    out = {"n": int(c.get("n") or 0), "linked": int(c.get("linked") or 0), "doubtful": []}
+    if _regclass(cur, "upload_link_report"):
+        cur.execute("""SELECT result_id, name, school, reason, touched FROM upload_link_report
+                       WHERE upload_id = %s ORDER BY reason, name LIMIT 200""", (up["id"],))
+        out["doubtful"] = [dict(r) for r in cur.fetchall()]
+    return out
 
 
 def applyUpload(cur, up, rows, events):
@@ -784,7 +811,7 @@ def admin_uploads():
         decided = [dict(r) for r in cur.fetchall()]
         conn.commit()
     return _page("admin_uploads.html", mode="queue", waiting=waiting, decided=decided, csrf=sess["csrf"],
-                 gaps=PIPELINE_GAPS, notice=request.args.get("notice", "")[:200],
+                 gaps=PIPELINE_GAPS, steps=PIPELINE_STEPS, notice=request.args.get("notice", "")[:200],
                  error=request.args.get("error", "")[:200])
 
 
@@ -800,6 +827,12 @@ def admin_upload(uid):
         if up is None:
             abort(404)
         rows = loadRows(cur, uid, 2000)
+        linking = None
+        if up["status"] == "approved":
+            try:
+                linking = linkStatus(cur, up)
+            except Exception:                           # noqa: BLE001
+                conn.rollback()
         dupes = up.get("dupes") or []
         if up["status"] in ("submitted", "draft"):
             try:
@@ -810,7 +843,8 @@ def admin_upload(uid):
         conn.commit()
     events = up.get("events") or []
     return _page("admin_uploads.html", mode="one", up=up, rows=rows, events=events, dupes=dupes,
-                 csrf=sess["csrf"], gaps=PIPELINE_GAPS, apply_gaps=readyToApply(up, events),
+                 csrf=sess["csrf"], gaps=PIPELINE_GAPS, steps=PIPELINE_STEPS, linking=linking,
+                 apply_gaps=readyToApply(up, events),
                  raw=(up.get("raw_text") or "")[:60000],
                  notice=request.args.get("notice", "")[:200], error=request.args.get("error", "")[:200])
 

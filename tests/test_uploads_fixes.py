@@ -574,18 +574,62 @@ def fixRow(kind, detail, **kw):
     return f
 
 
-@pytest.mark.parametrize("kind,detail", [("grade", {"season": 2025, "grade": "11"}),
-                                         ("school", {"season": 2025, "school": "Jesuit"}),
-                                         ("not_mine", {"sport": "XC", "result_id": 555})])
-def test_approving_a_kind_with_no_mechanism_records_it_and_touches_nothing(kind, detail):
-    cur = Cur([(r"FROM fix_request WHERE id = %s FOR UPDATE", [fixRow(kind, detail)])])
+# ★ 2026-10-10: grade, school and not_mine are APPLIED now, as the pins of
+#   scripts/person_pins.py (they used to be "recorded only").
+_NO_TOUCH = (r"\b(UPDATE|INSERT INTO|DELETE FROM)\s+(results|results_tf|athletes|meet_queue|"
+             r"profile_school_merge)\b")
+
+
+def test_approving_a_grade_pins_it_logged_with_its_undo():
+    cur = Cur([(r"FROM fix_request WHERE id = %s FOR UPDATE", [fixRow("grade", {"season": 2025, "grade": "11"})])])
     status, err, outcome = FX.decide(Conn(), cur, 3, "approve", "owner@racecast.co", "ok")
-    assert (status, err) == ("approved", None) and "Recorded" in outcome
-    upd = cur.ran(r"UPDATE fix_request SET status = 'approved'")[0]
-    assert upd[3]["missing_support"] == FX.MISSING_SUPPORT[kind] and upd[3]["applied"] is None
-    for s, _p in cur.sql:
-        assert not re.search(r"\b(UPDATE|INSERT INTO|DELETE FROM)\s+(results|results_tf|athletes|meet_queue|"
-                             r"person_link_log|profile_school_merge)\b", s)
+    assert (status, err) == ("approved", None) and "set to 11" in outcome
+    assert cur.ran(r"INSERT INTO grade_pin")[0] == (7, 2025, "11", None, 3, "owner@racecast.co")
+    assert cur.ran(r"INSERT INTO person_pin_log")[0][:2] == ("grade", "pin")
+    ap = cur.ran(r"UPDATE fix_request SET status = 'approved'")[0][3]
+    assert ap["missing_support"] is None and ap["applied"]["mechanism"] == "grade_pin"
+    assert ap["applied"]["undo"] == "python scripts/person_pins.py --unpin grade 7 2025"
+    assert not any(re.search(_NO_TOUCH, s) for s, _p in cur.sql), "a pin never edits a result"
+    # a class year pins the grade it implies that season; one implying none is recorded only
+    cur = Cur([(r"FOR UPDATE", [fixRow("grade", {"season": 2025, "grade": None, "class_year": 2027})])])
+    FX.decide(Conn(), cur, 3, "approve", "o@x")
+    assert cur.ran(r"INSERT INTO grade_pin")[0][2] == "11"
+    cur = Cur([(r"FOR UPDATE", [fixRow("grade", {"season": 2025, "grade": None, "class_year": 2040})])])
+    status, err, outcome = FX.decide(Conn(), cur, 3, "approve", "o@x")
+    assert status == "approved" and "Recorded" in outcome and not cur.ran("INSERT INTO grade_pin")
+    assert cur.ran("UPDATE fix_request")[0][3]["missing_support"] == FX.MISSING_SUPPORT["grade_class"]
+
+
+def test_approving_a_school_pins_the_owners_spelling():
+    f = fixRow("school", {"season": 2025, "school": "jesuit hs", "sport": "XC", "state": "OR"})
+    cur = Cur([(r"FOR UPDATE", [f])])
+    status, err, outcome = FX.decide(Conn(), cur, 3, "approve", "o@x", None, None, "Jesuit")
+    assert status == "approved" and "Jesuit" in outcome
+    assert cur.ran(r"INSERT INTO school_pin")[0] == (7, 2025, "XC", "Jesuit", "OR", 3, "o@x")
+    ap = cur.ran(r"UPDATE fix_request SET status = 'approved'")[0][3]["applied"]
+    assert ap["undo"] == "python scripts/person_pins.py --unpin school 7 2025 XC"
+    assert not any(re.search(_NO_TOUCH, s) for s, _p in cur.sql)
+
+
+def test_approving_not_mine_detaches_the_row_now_and_logs_it(monkeypatch):
+    f = fixRow("not_mine", {"sport": "XC", "result_id": 555})
+    cur = Cur([(r"SELECT person_id FROM results WHERE result_id", [{"person_id": 7}]), (r"FOR UPDATE", [f]),
+               (r"to_regclass", [{"t": "x"}]), (r"GREATEST", [{"top": 2000000041}])])
+    status, err, outcome = FX.decide(Conn(), cur, 3, "approve", "o@x")
+    assert (status, err) == ("approved", None) and "taken off your page" in outcome
+    assert cur.ran(r"pg_advisory_xact_lock"), "fresh ids are drawn under the lock"
+    assert cur.ran(r"INSERT INTO result_detach")[0] == ("XC", 555, 7, 2000000042, 3, "o@x")
+    log = [s for s, _p in cur.sql if "INSERT INTO person_link_log" in s][0]
+    assert "COALESCE(r.person_id, 0), d.to_person, %(rule)s" in log
+    upd = [(s, p) for s, p in cur.sql if re.search(r"UPDATE results r SET person_id = d.to_person", s)][0]
+    assert "r.person_id IS NULL OR r.person_id = d.from_person" in upd[0] and upd[1]["rid"] == 555
+    ap = cur.ran(r"UPDATE fix_request SET status = 'approved'")[0][3]["applied"]
+    assert ap["to_person"] == 2000000042 and ap["undo"] == "python scripts/person_pins.py --undo-detach 555"
+    # the row left the page since the request: nothing written, the request stays open
+    cur = Cur([(r"SELECT person_id FROM results WHERE result_id", [{"person_id": 99}]), (r"FOR UPDATE", [f])])
+    status, err, outcome = FX.decide(Conn(), cur, 3, "approve", "o@x")
+    assert err and "nothing was changed" in err and not cur.ran("INSERT INTO result_detach")
+    assert not cur.ran("UPDATE fix_request")
 
 
 def test_approving_a_missing_feed_meet_queues_it_like_find_meet():
@@ -723,14 +767,31 @@ def test_the_templates_render(monkeypatch):
                             events=parsed["events"], dupes=[{"where": "anet XC", "name": "Lakeside", "venue": "",
                                                              "date": "2025-10-04", "meet_id": 1, "name_sim": 0.8,
                                                              "venue_sim": 0.0}],
-                            csrf="t", gaps=UP.PIPELINE_GAPS, apply_gaps=[], raw="x", notice="", error="",
-                            status_words=UP.STATUS_WORDS),
+                            csrf="t", gaps=UP.PIPELINE_GAPS, steps=UP.PIPELINE_STEPS, apply_gaps=[], raw="x",
+                            notice="", error="", status_words=UP.STATUS_WORDS,
+                            linking={"n": 22, "linked": 20, "doubtful": [
+                                {"result_id": -5, "name": "Ann Doe", "school": "Lakeside",
+                                 "reason": "ambiguous: namesakes at the school", "touched": [11, 12]}]}),
             render_template("fixes.html", mode="new", person_id=7, snap=snap, results=[], kind="grade",
                             kinds=FX.KINDS, kind_words=FX.KIND_WORDS, grades=FX.GRADES, csrf="t", note_max=1000,
                             error=""),
-            render_template("admin_fixes.html", open_=[fx], decided=[], csrf="t", kind_words=FX.KIND_WORDS,
-                            missing=FX.MISSING_SUPPORT, notice="", error=""),
+            render_template("admin_fixes.html", open_=[fx, dict(fx, kind="school", id=4,
+                                                                 detail={"kind": "school", "season": 2025,
+                                                                         "school": "Jesuit"})],
+                            decided=[dict(fx, kind="not_mine", status="approved", decided_by="o@x",
+                                          decided_at=datetime.datetime(2026, 10, 10), summary="x",
+                                          applied={"missing_support": None, "applied": {
+                                              "mechanism": "result_detach", "result_id": 555,
+                                              "to_person": 2000000042,
+                                              "undo": "python scripts/person_pins.py --undo-detach 555"}})],
+                            csrf="t", kind_words=FX.KIND_WORDS, missing=FX.MISSING_SUPPORT,
+                            applies=FX.APPLIES, notice="", error=""),
         ]
     assert "Lakeside Cross Country Invitational" in pages[2] and "Ann Doe" in pages[2]
     assert 'name="csrf" value="t"' in pages[3] and "Approve" in pages[3]
     assert "link_profile_school" in pages[5] and "keep #31559611" in pages[5]
+    # 2026-10-10: the pins -- the owner's spelling field, "applied" and its undo on a decided card
+    assert 'name="school"' in pages[5] and "school_pin" in pages[5]
+    assert "applied</span> result_detach" in pages[5] and "--undo-detach 555" in pages[5]
+    assert "Recorded only" not in pages[5]
+    assert "20 of 22 results belong to an athlete" in pages[3] and "#12" in pages[3]

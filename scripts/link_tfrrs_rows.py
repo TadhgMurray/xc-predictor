@@ -51,6 +51,20 @@ THREE PASSES, IN THIS ORDER, EACH SAFE TO RE-RUN
 ! LOGGED AND REVERSIBLE. Every stamped row goes to person_link_log (rule
   'fanout' / 'mint'; the freshman pass logs 'freshman') with from_person 0,
   and --undo <rule> puts exactly those rows back to NULL.
+
+★ 4. UPLOADS (owner, 2026-10-10). An approved results upload
+  (racecast/uploads.py) lands with source = 'upload' and no person; pass 4
+  is scripts/link_uploads.py -- name + school + generation, the teamless and
+  profile_school linkers' rules, doubtful rows report-only -- so the step
+  that gives tfrrs rows a person gives uploaded rows one too.
+  XCP_LINK_UPLOADS=0 or --no-uploads skips it; --undo upload|upload_mint
+  takes it back.
+
+! A DETACHED ROW IS NEVER RE-LINKED (2026-10-10). A result the owner moved
+  off a person on an athlete's "not mine" (scripts/person_pins.py,
+  result_detach) is left out of every pass here -- and out of the fan-out's
+  "one person per tfrrs id" count, where its fresh person would otherwise
+  read as a second person and stop the id fanning out at all.
 """
 import argparse
 import datetime
@@ -90,7 +104,15 @@ def _log(cur):
     cur.execute(LOG_DDL)
 
 
+def _skips(cur):
+    """{sport: the not-detached clause for alias r} (person_pins.skipSql)."""
+    import person_pins as PP
+    on = PP.present(cur, "result_detach")
+    return {s: PP.skipSql(s, "r", on) for s, _t in TABLES}
+
+
 def fanout(cur, apply):
+    sk = _skips(cur)
     cur.execute("SET LOCAL work_mem = '1GB'")
     cur.execute("DROP TABLE IF EXISTS tl_nat")
     _step(cur, "tfrrs ids and the ONE person their stamped rows agree on", f"""
@@ -99,11 +121,11 @@ def fanout(cur, apply):
         FROM (
             SELECT {_sys('XC')} AS sys, r.native_id, r.person_id FROM results r
             WHERE  r.source = 'tfrrs' AND r.native_id IS NOT NULL
-              AND  r.person_id IS NOT NULL
+              AND  r.person_id IS NOT NULL {sk['XC']}
             UNION ALL
             SELECT {_sys('TF')}, r.native_id, r.person_id FROM results_tf r
             WHERE  r.source = 'tfrrs' AND r.native_id IS NOT NULL
-              AND  r.person_id IS NOT NULL
+              AND  r.person_id IS NOT NULL {sk['TF']}
         ) x
         GROUP  BY sys, native_id
         HAVING count(DISTINCT person_id) = 1
@@ -115,7 +137,7 @@ def fanout(cur, apply):
             _step(cur, f"{sport}: rows that would be stamped", f"""
                 SELECT count(*) FROM {table} r JOIN tl_nat n
                   ON n.native_id = r.native_id AND n.sys = {_sys(sport)}
-                WHERE r.source = 'tfrrs' AND r.person_id IS NULL
+                WHERE r.source = 'tfrrs' AND r.person_id IS NULL {sk[sport]}
             """)
             n = cur.fetchone()[0]
             print(f"[tfrrs-link]     {n:,}")
@@ -127,19 +149,20 @@ def fanout(cur, apply):
             SELECT %s, r.result_id, 0, n.person_id, 'fanout'
             FROM   {table} r JOIN tl_nat n
                    ON n.native_id = r.native_id AND n.sys = {_sys(sport)}
-            WHERE  r.source = 'tfrrs' AND r.person_id IS NULL
+            WHERE  r.source = 'tfrrs' AND r.person_id IS NULL {sk[sport]}
             ON CONFLICT DO NOTHING
         """, (sport,))
         total += _step(cur, f"{sport}: stamping", f"""
             UPDATE {table} r SET person_id = n.person_id
             FROM   tl_nat n
-            WHERE  r.source = 'tfrrs' AND r.person_id IS NULL
+            WHERE  r.source = 'tfrrs' AND r.person_id IS NULL {sk[sport]}
               AND  n.native_id = r.native_id AND n.sys = {_sys(sport)}
         """)
     return total
 
 
 def mint(cur, apply, seasons):
+    sk = _skips(cur)
     today = datetime.date.today()
     ay = today.year if today.month >= 8 else today.year - 1
     since = f"{ay - seasons + 1}-08-01"
@@ -170,7 +193,7 @@ def mint(cur, apply, seasons):
             _step(cur, f"{sport}: rows that would get a minted person", f"""
                 SELECT count(*) FROM {table} r JOIN tl_new n
                   ON n.native_id = r.native_id AND n.sys = {_sys(sport)}
-                WHERE r.source = 'tfrrs' AND r.person_id IS NULL
+                WHERE r.source = 'tfrrs' AND r.person_id IS NULL {sk[sport]}
             """)
             n = cur.fetchone()[0]
             print(f"[tfrrs-link]     {n:,}")
@@ -182,13 +205,13 @@ def mint(cur, apply, seasons):
             SELECT %s, r.result_id, 0, {case}, 'mint'
             FROM   {table} r JOIN tl_new n
                    ON n.native_id = r.native_id AND n.sys = {_sys(sport)}
-            WHERE  r.source = 'tfrrs' AND r.person_id IS NULL
+            WHERE  r.source = 'tfrrs' AND r.person_id IS NULL {sk[sport]}
             ON CONFLICT DO NOTHING
         """, (sport,))
         total += _step(cur, f"{sport}: minting", f"""
             UPDATE {table} r SET person_id = {case}
             FROM   tl_new n
-            WHERE  r.source = 'tfrrs' AND r.person_id IS NULL
+            WHERE  r.source = 'tfrrs' AND r.person_id IS NULL {sk[sport]}
               AND  n.native_id = r.native_id AND n.sys = {_sys(sport)}
         """)
     return total
@@ -215,7 +238,9 @@ def main():
     ap.add_argument("--mint-seasons", type=int, default=1)
     ap.add_argument("--no-freshmen", action="store_true")
     ap.add_argument("--no-mint", action="store_true")
-    ap.add_argument("--undo", choices=("fanout", "mint", "freshman"))
+    ap.add_argument("--no-uploads", action="store_true",
+                    help="skip pass 4, the uploaded rows (scripts/link_uploads.py)")
+    ap.add_argument("--undo", choices=("fanout", "mint", "freshman", "upload", "upload_mint"))
     a = ap.parse_args()
     if os.environ.get("XCP_LINK_TFRRS", "1") in ("0", "false"):
         print("[tfrrs-link] XCP_LINK_TFRRS=0 -- skipped")
@@ -258,6 +283,11 @@ def main():
                 n = mint(cur, a.apply, a.mint_seasons)
                 print(f"[tfrrs-link] pass 3, mint: {n:,} rows")
             conn.commit() if a.apply else conn.rollback()
+        # ★ PASS 4, THE UPLOADS (2026-10-10): its own rules, its own log
+        #   rules ('upload' / 'upload_mint'), the same --undo
+        if not a.no_uploads and os.environ.get("XCP_LINK_UPLOADS", "1") not in ("0", "false"):
+            import link_uploads as LU
+            LU.run(conn, a.apply)
         if not a.apply:
             print("[tfrrs-link] dry run -- nothing written; --apply to link")
 

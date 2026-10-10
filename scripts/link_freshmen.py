@@ -176,6 +176,13 @@ def freshmen(cur, years):
     _step(cur, "keeping only college freshmen",
           "DELETE FROM lf_t WHERE NOT (COALESCE(freshman, false) "
           "AND COALESCE(college, false))")
+    # ! A DETACHED ROW'S PERSON IS NOBODY'S FRESHMAN (2026-10-10). The owner
+    #   moved that row off a career on the athlete's "not mine"
+    #   (person_pins.py, result_detach); joining its fresh person to a
+    #   senior of the same name would weld it straight back.
+    if _hasTable(cur, "result_detach"):
+        from person_pins import detachedPersonsSql
+        cur.execute(f"DELETE FROM lf_t WHERE person_id IN ({detachedPersonsSql()})")
     cur.execute("CREATE INDEX ON lf_t (person_id)")
     cur.execute("ALTER TABLE lf_t ADD COLUMN y int")
     cur.execute("""UPDATE lf_t SET y = CASE WHEN substring(first, 6, 2) >= '08'
