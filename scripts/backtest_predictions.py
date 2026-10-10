@@ -95,6 +95,10 @@ def main():
     ap.add_argument("--min-field", type=int, default=20)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--no-breakdown", dest="breakdown", action="store_false")
+    ap.add_argument("--val-only", action="store_true",
+                    help="only runners on the model's VALIDATION side (the "
+                         "10%% of athletes train.py never trained on): an "
+                         "unflattered score on races the model saw")
     a = ap.parse_args()
     leads = [int(w) for w in a.weeks.split(",") if w.strip()]
 
@@ -154,11 +158,14 @@ def main():
                 conn.rollback()
                 both = [p for p in ids
                         if (rated.get(p) or {}).get("seconds")
-                        and (model.get(p) or {}).get("seconds")]
+                        and (model.get(p) or {}).get("seconds")
+                        and (not a.val_only or _isValAthlete(p))]
                 if len(both) < 3:
                     continue
                 act = [actual[p] for p in both]
                 facts = _facts(cur, both, cut, rated)
+                for p in both:
+                    facts[p]["difficulty"] = spec.get("course_difficulty")
                 conn.rollback()
                 base = {p: {"seconds": model[p].get("baseline_race"),
                             "time_basis": model[p].get("time_basis")}
@@ -222,6 +229,33 @@ def _facts(cur, ids, cut, rated):
     return out
 
 
+def _isValAthlete(person_id):
+    """feature_extraction._isValAthlete for a person-keyed career: the
+    identity there is (person_id is None, person_id). Kept as a copy so this
+    script does not import the extraction (and its database settings).
+    ! A person merged or re-keyed since the extraction may hash to the other
+      side; the share that moves is small and only blurs, never flatters."""
+    import zlib
+    return zlib.crc32(repr((False, int(person_id))).encode()) % 1000 < 100
+
+
+# ★ BREAKS IN WEEKS A COACH WOULD NAME (owner, 2026-10-10: "it overestimates
+#   people who take long breaks"). Quartiles of this run put every break
+#   over ~4 months in one band; these split the season's rhythm from an
+#   off-season and from a year or more away.
+_BREAKS = ((14, "<=2wk"), (42, "2-6wk"), (120, "6wk-4mo"), (365, "4-12mo"),
+           (None, ">1yr"))
+
+
+def _breakBand(gap):
+    if gap is None:
+        return "?"
+    for hi, label in _BREAKS:
+        if hi is None or gap <= hi:
+            return label
+    return "?"
+
+
 def _quartileBand(values):
     """value -> 'lo-hi' by this run's own quartiles."""
     vs = sorted(v for v in values if v is not None)
@@ -246,9 +280,17 @@ def _breakdown(acc):
             continue
         gap_band = _quartileBand([f["gap"] for _, f in rows])
         n_band = _quartileBand([f["n"] for _, f in rows])
+        # course difficulty by quartile of the RACES' values (each race's
+        # runners share one), so a band is a set of courses, not of runners
+        d_band = _quartileBand([round(f["difficulty"], 3) for _, f in rows
+                                if f.get("difficulty") is not None])
         print(f"\n{basis} {lead}w by group (median bias, median |err|, runners)")
         for title, key in (("level", lambda f: f["level"]),
                            ("days since last race", lambda f: gap_band(f["gap"])),
+                           ("break before race", lambda f: _breakBand(f["gap"])),
+                           ("course difficulty", lambda f: d_band(
+                               round(f["difficulty"], 3)
+                               if f.get("difficulty") is not None else None)),
                            ("last race sport", lambda f: f["sport"]),
                            ("prior races", lambda f: n_band(f["n"])),
                            ("model's conversion", lambda f: f["clock"])):
