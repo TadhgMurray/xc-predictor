@@ -53,7 +53,7 @@ KINDS = ("athlete", "team")
 #   found something, one a week, or none. 'daily' is the default -- a person
 #   who pressed Follow asked to hear.
 CADENCES = ("daily", "weekly", "off")
-CADENCE_WORDS = {"daily": "After each nightly update", "weekly": "Once a week",
+CADENCE_WORDS = {"daily": "After each meet (the next morning)", "weekly": "Once a week",
                  "off": "Off"}
 DEFAULT_CADENCE = "daily"
 # the signed-in hint the pages read before asking the server anything

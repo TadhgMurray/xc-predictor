@@ -83,3 +83,19 @@ main.rc.shortlist-page .sl-note { font-size: .85rem; color: var(--muted); max-wi
 @media (max-width: 760px) {
   main.rc.shortlist-page .sl-table th[scope=row] { width: 7.5rem; }
 }
+/* the shortlist's purpose line and "Where you'd fit" (owner, 2026-10-10) */
+main.rc.shortlist-page .sl-purpose { margin: .1rem 0 .5rem; font-size: 1rem; color: #374151; max-width: 42rem; }
+main.rc.shortlist-page tr.sl-fitrow td, main.rc.shortlist-page tr.sl-fitrow th { background: #fdf7e6; }
+main.rc.shortlist-page tr.sl-fitrow th { box-shadow: inset 3px 0 0 var(--gold); }
+main.rc.shortlist-page .sl-fit { font-weight: 700; }
+main.rc.shortlist-page .sl-fit-top { color: #1a7f37; }
+main.rc.shortlist-page .sl-fit-below { color: #a32d2d; }
+main.rc.shortlist-page .sl-i { color: var(--muted); cursor: help; font-size: .9rem; }
+/* ! THE CELLS WRAP: style.css keeps phone table cells on one line, which in
+     a fixed layout ran each column's text into the next. Each program
+     column keeps a readable width and the table scrolls inside .sl-scroll. */
+main.rc.shortlist-page .sl-table th, main.rc.shortlist-page .sl-table td,
+main.rc.shortlist-page .sl-table td * { white-space: normal; overflow-wrap: break-word; }
+@media (max-width: 760px) {
+  main.rc.shortlist-page table.sl-table { display: table; min-width: calc(7.5rem + var(--sl-n, 3) * 12rem); }
+}

@@ -409,6 +409,6 @@
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('race-page.js') }}"></script>
 {# Follow (owner, 2026-10-10): drawn after load by follow.js #}
-<script src="{{ static_v('follow.js') }}" data-follow="team" data-school="{{ school }}" data-state="{{ state or '' }}" data-level="{{ level if (level_chips and level) else '' }}" data-mount=".rc-hd .rc-links"></script>
+<script src="{{ static_v('follow.js') }}" data-follow="team" data-school="{{ school }}" data-state="{{ state or '' }}" data-level="{{ level if (level_chips and level) else '' }}" data-name="{{ school }}"></script>
 </body>
 </html>

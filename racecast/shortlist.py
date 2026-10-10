@@ -108,6 +108,40 @@ def conferenceOf(rows, school, state, key="conference"):
             "rank": rank, "of": len(members)}
 
 
+def fitOf(rating, summary):
+    """Where a high-school rating sits among a program's recruits (owner,
+    2026-10-10: "that's the point" of the list) -- {key, words}:
+      top    at or above their top quarter (p75)
+      in     inside the range they recruit (their slowest recruit up)
+      below  under their slowest recruit
+    The recruiting page's own quartiles; None when either side is missing."""
+    if rating is None or not summary or summary.get("p75") is None or summary.get("min") is None:
+        return None
+    r = float(rating)
+    if r >= float(summary["p75"]):
+        return {"key": "top", "words": "top quarter of their recruits"}
+    if summary.get("p25") is not None and r >= float(summary["p25"]):
+        return {"key": "in", "words": "in range: the middle of their recruits"}
+    if r >= float(summary["min"]):
+        return {"key": "in", "words": "in range, toward the bottom"}
+    return {"key": "below", "words": "below range"}
+
+
+def youFrom(cur, claims, sport):
+    """The signed-in athlete as a recruiting subject: their claimed athlete
+    page's latest high-school season (recruiting._athleteSubject, the
+    recruiting page's own subject) -- {name, rating, gender} or None."""
+    import recruiting as R
+    for c in claims:
+        if c["kind"] in ("athlete", "coach_self") and c.get("person_id"):
+            subj = R._athleteSubject(cur, int(c["person_id"]))
+            rating = R.subjectRating(subj, sport) if subj else None
+            if rating is not None:
+                return {"name": subj.get("name"), "rating": float(rating), "gender": subj.get("gender"),
+                        "person_id": int(c["person_id"])}
+    return None
+
+
 # ---- database ------------------------------------------------------------
 
 def listFor(cur, account_id):
@@ -250,19 +284,30 @@ def shortlist_page():
     sess, go = AC._requireSession()
     if go:
         return go
-    gender = (request.args.get("gender") or "m").strip().lower()
-    if gender not in R.GENDERS:
-        gender = "m"
     sport = (request.args.get("sport") or "XC").strip().upper()
     if sport not in R.SPORTS:
         sport = "XC"
-    cols, ready, built = [], True, True
+    cols, ready, built, you = [], True, True, None
     with AC._db() as (conn, cur):
         ready = F.tablesReady(cur)
         programs = listFor(cur, sess["account"]["id"]) if ready else []
         built = R._tableExists(cur, "college_recruit")
+        # ★ WHERE YOU'D FIT: the claimed athlete's own rating, and their
+        #   gender picks the recruits unless the reader switched it
+        try:
+            you = youFrom(cur, AC.claimsFor(cur, sess["account"]["id"]), sport) if built else None
+        except Exception as exc:                        # noqa: BLE001
+            conn.rollback()
+            print(f"[shortlist] subject failed ({type(exc).__name__}: {exc})", flush=True)
+        gender = (request.args.get("gender") or (you or {}).get("gender") or "m").strip().lower()
+        if gender not in R.GENDERS:
+            gender = "m"
         if programs and built:
             cols = comparison(cur, programs, gender, sport)
+            for c in cols:
+                # ! only against recruits of the athlete's own gender
+                c["fit"] = (fitOf(you["rating"], c.get("summary"))
+                            if you and you.get("gender") == gender else None)
         elif programs:
             # ! THE SAVED NAMES STILL SHOW (and can be removed) before the
             #   recruiting table is built; the numbers say they are coming
@@ -271,7 +316,7 @@ def shortlist_page():
                     for p in programs]
         conn.commit()
     return render_template("shortlist.html", cols=cols, gender=gender, sport=sport,
-                           ready=ready, built=built, csrf=sess["csrf"],
+                           ready=ready, built=built, csrf=sess["csrf"], you=you,
                            n=len(cols), min_n=MIN_PROGRAMS, max_n=MAX_PROGRAMS,
                            fmt_time=R.fmtTime,
                            notice=request.args.get("notice", "")[:200],

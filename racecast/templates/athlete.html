@@ -585,6 +585,6 @@
 <script src="{{ static_v('race-page.js') }}"></script>
 {# Follow (owner, 2026-10-10): drawn after load by follow.js from
    /api/follow/state, so this page stays edge-cacheable #}
-<script src="{{ static_v('follow.js') }}" data-follow="athlete" data-person-id="{{ athlete.person_id }}" data-mount=".rc-hd [data-person-id]" data-sep=" · "></script>
+<script src="{{ static_v('follow.js') }}" data-follow="athlete" data-person-id="{{ athlete.person_id }}" data-first="{{ athlete.name.split()[0] if athlete.name else '' }}"></script>
 </body>
 </html>

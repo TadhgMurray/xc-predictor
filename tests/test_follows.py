@@ -266,8 +266,15 @@ def test_race_items_carry_pr_season_best_and_breakout():
     key, p = FA.raceItem(r, {("XC", 9): {"prev_best": 958.1}}, {("XC", 9): {"jump": 4.13}}, {9})
     assert key == "race:XC:9"
     assert p["flags"] == {"pr": {"prev": 958.1}, "sr": True, "jump": 4.1} and p["rating"] == 123.5
-    line = FA.raceLine(p)
-    assert "Nike Portland XC" in line and "PR (was 15:58)" in line and "season best" in line and "+4.1" in line
+    import alert_email as E
+    line = E.raceSentence(p, datetime.date(2026, 9, 29))
+    # ★ a sentence a person would write (owner, 2026-10-10): no rating jargon, no "+4.1"
+    assert line == ("Owen ran 15:42 at Nike Portland XC on Sunday \u2014 a new PR by 16 seconds, "
+                    "his best race of the season, and a breakout race, well above his usual level.")
+    assert "4.1" not in line and "rating" not in line
+    # older than the reader's week: a date, not a weekday; a girl's race says "her"
+    p2 = dict(p, pool="hs_f", flags={"sr": True})
+    assert E.raceSentence(p2, datetime.date(2026, 10, 10)).endswith("on Sep 27 \u2014 her best race of the season.")
 
 
 def test_team_items_are_one_per_meet():
@@ -289,15 +296,51 @@ def test_due_daily_weekly_off():
     assert not FA.isDue("off", None, now)
 
 
-def test_digest_names_no_address_and_carries_the_unsubscribe():
-    p = FA.raceItem(_rr(9, 7, "2026-09-27", 123.5, t=942.3), {}, {}, set())[1]
-    subject, text = FA.digest([("Owen Castellano", "/athlete/7", [p])], "https://racecast.co",
-                              "https://racecast.co/account/unsubscribe?a=41&t=x")
-    assert subject == "Racecast: Owen Castellano at Meet 9"
-    assert "https://racecast.co/athlete/7" in text and "Unsubscribe: https://racecast.co/account/unsubscribe" in text
-    assert "@" not in text
-    subject, _ = FA.digest([("A", "/a", [p, p]), ("B", "/b", [p])], "o", "u")
-    assert subject == "Racecast: 3 new results for who you follow"
+def test_digest_is_personal_html_with_a_text_twin():
+    p = FA.raceItem(_rr(9, 7, "2026-09-27", 123.5, t=942.3, mn="Nike Portland XC", name="Ezra Goldfarb"),
+                    {("XC", 9): {"prev_best": 955.0}}, {}, set())[1]
+    unsub = "https://racecast.co/account/unsubscribe?a=41&t=x"
+    subject, text, html = FA.digest([("Ezra Goldfarb", "/athlete/7", [p], "athlete")], "https://racecast.co",
+                                    unsub, "Tadhg Murray", datetime.date(2026, 9, 29))
+    assert subject == "Ezra Goldfarb ran a PR at Nike Portland XC"
+    assert text.startswith("Hi Tadhg,") and "Hi Tadhg," in html
+    assert "https://racecast.co/athlete/7" in text and f"Unsubscribe: {unsub}" in text
+    # ★ buttons, never a raw URL as the visible text of the HTML
+    visible = re.sub(r"<[^>]+>", " ", html)
+    assert "https://" not in visible and "See Ezra&#x27;s page" in html and "See the race" in html
+    assert "You&#x27;re getting this because you follow Ezra Goldfarb on Racecast." in html
+    assert "@" not in text and "@" not in html
+    _s, text2, _h = FA.digest([("Ezra", "/a", [p], "athlete")], "o", "u", None, None)
+    assert text2.startswith("Hi,\n")
+    team = {"type": "team", "sport": "XC", "meet_id": 5, "date": "2026-09-27", "meet_name": "Nike Portland XC",
+            "n_rated": 7, "best": {"name": "Owen Castellano", "time": 902.0, "rating": 123.5}, "n_pr": 2,
+            "n_jump": 0, "href": "/race/xc/5/1"}
+    subject, text, _h = FA.digest([("Ezra Goldfarb", "/athlete/7", [p, p], "athlete"),
+                                   ("Jesuit", "/school/Jesuit", [team], "team")], "o", "u", "Tadhg",
+                                  datetime.date(2026, 9, 29))
+    assert subject == "3 updates: Ezra Goldfarb PR, Jesuit at Nike Portland XC"
+    assert ("Jesuit ran at Nike Portland XC on Sunday: 7 runners, led by Owen Castellano (15:02), "
+            "with 2 PRs.") in text
+
+
+def test_long_subjects_stop_at_a_label():
+    import alert_email as E
+    p = {"type": "race", "flags": {"pr": {}}, "meet_name": "M", "date": "2026-09-27"}
+    groups = [(f"Athlete Number {i}", "/a", [p], "athlete") for i in range(8)]
+    s = E.subjectLine(groups)
+    assert s.endswith(" and more") and len(s) <= E.SUBJECT_MAX + len(" and more")
+
+
+def test_send_mail_sends_html_and_text_together(monkeypatch):
+    monkeypatch.setenv("XCP_MAIL_KEY", "k")
+    sent = []
+    monkeypatch.setattr(AC, "_http", lambda url, body, hdrs: sent.append(body) or {})
+    for prov in ("resend", "postmark"):
+        monkeypatch.setenv("XCP_MAIL_PROVIDER", prov)
+        assert AC.sendMail("a@b.co", "s", "plain", html="<p>rich</p>", headers={"List-Unsubscribe": "<u>"})
+    assert sent[0]["text"] == "plain" and sent[0]["html"] == "<p>rich</p>" and sent[0]["headers"]
+    assert sent[1]["TextBody"] == "plain" and sent[1]["HtmlBody"] == "<p>rich</p>"
+    assert sent[1]["Headers"] == [{"Name": "List-Unsubscribe", "Value": "<u>"}]
 
 
 def test_items_record_once_quiet_for_new_follows_and_muted_accounts():
@@ -325,7 +368,7 @@ def test_send_marks_sent_before_mailing_and_rolls_back_on_failure(monkeypatch):
         cur = Cur([(r"FROM\s+alert_item i", pending)])
         sent_box = {}
 
-        def fake_send(to, subject, text, headers=None, log_as=None, ok=ok, cur=cur):
+        def fake_send(to, subject, text, headers=None, log_as=None, html=None, ok=ok, cur=cur):
             # ★ at the moment of sending, the items are already marked sent
             order.append(any("SET status = 'sent'" in s for s, _ in cur.sql))
             sent_box.update(to=to, headers=headers, log_as=log_as)
@@ -548,3 +591,19 @@ def test_button_asks_nothing_without_the_hint_cookie():
     init = js[js.index("function init()"):]
     assert init.index("if (!signedIn()) { drawSignedOut(wrap); return; }") < init.index("fetch(")
     assert "rc_si=1" in js and "'X-CSRF': st.csrf" in js and "credentials: 'same-origin'" in js
+
+
+def test_where_youd_fit_reads_their_quartiles():
+    s = {"min": 104.5, "p25": 110.2, "p75": 117.1}
+    assert SL.fitOf(118.2, s)["key"] == "top" and SL.fitOf(117.1, s)["words"] == "top quarter of their recruits"
+    assert SL.fitOf(112.0, s)["key"] == "in" and SL.fitOf(105.0, s)["key"] == "in"
+    assert SL.fitOf(101.0, s) == {"key": "below", "words": "below range"}
+    assert SL.fitOf(None, s) is None and SL.fitOf(110, None) is None
+
+
+def test_follow_button_sits_beside_the_name_and_says_what_it_does():
+    js = read("racecast", "static", "follow.js")
+    assert "rc-namerow" in js and "querySelector('.rc-hd h1')" in js
+    assert "' races, sets a PR or breaks out.'" in js and "'Get an email after each '" in js
+    assert "Email me: " in js and "#alerts" in js
+    assert "data-first=" in read("racecast", "templates", "athlete.html")

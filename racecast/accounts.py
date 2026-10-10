@@ -375,12 +375,15 @@ def _http(url, data=None, headers=None, form=False, timeout=10):
     return json.loads(raw) if raw.strip() else {}
 
 
-def sendMail(to, subject, text, headers=None, log_as=None):
+def sendMail(to, subject, text, headers=None, log_as=None, html=None):
     """True when a provider accepted the message. Resend and Postmark are
     one JSON POST each; nothing else is wired.
 
     ★ headers (2026-10-10, the follow digest): extra mail headers, e.g.
       List-Unsubscribe; each provider's own field for them.
+    ★ html: an HTML body sent WITH `text` -- both providers build the
+      multipart/alternative message from the two fields (Resend html+text,
+      Postmark HtmlBody+TextBody), so a text-only client gets the text.
     ! log_as: what a failure line names instead of the address (the digest
       passes "account <id>": no address in a log)."""
     provider, key = _env("XCP_MAIL_PROVIDER").lower(), _env("XCP_MAIL_KEY")
@@ -388,6 +391,8 @@ def sendMail(to, subject, text, headers=None, log_as=None):
     try:
         if provider == "resend":
             body = {"from": sender, "to": [to], "subject": subject, "text": text}
+            if html:
+                body["html"] = html
             if headers:
                 body["headers"] = dict(headers)
             _http("https://api.resend.com/emails", body, {"Authorization": f"Bearer {key}"})
@@ -395,6 +400,8 @@ def sendMail(to, subject, text, headers=None, log_as=None):
         if provider == "postmark":
             body = {"From": sender, "To": to, "Subject": subject, "TextBody": text,
                     "MessageStream": _env("XCP_MAIL_STREAM", "outbound")}
+            if html:
+                body["HtmlBody"] = html
             if headers:
                 body["Headers"] = [{"Name": k, "Value": v} for k, v in headers.items()]
             _http("https://api.postmarkapp.com/email", body, {"X-Postmark-Server-Token": key})

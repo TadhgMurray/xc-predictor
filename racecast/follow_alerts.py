@@ -107,7 +107,7 @@ def raceItem(r, prs, jumps, sbs):
     if jp and jp.get("jump") is not None:
         flags["jump"] = round(float(jp["jump"]), 1)
     payload = {"type": "race", "sport": r["sport"], "person_id": r["person_id"],
-               "name": r.get("name"), "date": str(r["race_date"])[:10],
+               "name": r.get("name"), "pool": r.get("pool"), "date": str(r["race_date"])[:10],
                "meet_name": r.get("meet_name"), "distance": r.get("distance"),
                "time": r.get("time_seconds"), "rating": round(float(r["speed_rating"]), 1),
                "href": r.get("race_href"), "flags": flags}
@@ -130,6 +130,7 @@ def teamItems(subject, rows, prs, jumps):
         payload = {"type": "team", "sport": sport, "meet_id": meet_id, "date": day,
                    "meet_name": best.get("meet_name"), "n_rated": len({r["person_id"] for r in rs}),
                    "best": {"person_id": best["person_id"], "name": best.get("name"),
+                            "time": best.get("time_seconds"),
                             "rating": round(float(best["speed_rating"]), 1)},
                    "n_pr": n_pr, "n_jump": n_jump, "href": best.get("race_href")}
         out.append((f"{subject}:{sport}:{meet_id}", payload))
@@ -147,69 +148,11 @@ def isDue(cadence, last_sent_at, now):
     return last_sent_at.date() < now.date()
 
 
-def _fmtTime(sec):
-    from recruiting import fmtTime
-    return fmtTime(float(sec)) if sec else ""
-
-
-def _dist(m):
-    from school import distLabel
-    return distLabel(m) if m else ""
-
-
-def _day(iso):
-    d = datetime.date.fromisoformat(str(iso)[:10])
-    return d.strftime("%b ") + str(d.day)
-
-
-def raceLine(p):
-    bits = [f"{_day(p['date'])}  {p.get('meet_name') or 'Race'}"]
-    if p.get("distance"):
-        bits[0] += f", {_dist(p['distance'])}"
-    t = _fmtTime(p.get("time"))
-    bits.append(f"{t}  rating {p['rating']:.1f}" if t else f"rating {p['rating']:.1f}")
-    fl = p.get("flags") or {}
-    if "pr" in fl:
-        prev = _fmtTime(fl["pr"].get("prev"))
-        bits.append(f"PR (was {prev})" if prev else "PR")
-    if fl.get("sr"):
-        bits.append("season best")
-    if "jump" in fl:
-        bits.append(f"breakout +{fl['jump']:.1f} on their usual")
-    return "  " + " · ".join(bits)
-
-
-def teamLine(p):
-    s = (f"  {_day(p['date'])}  {p.get('meet_name') or 'Meet'}: {p['n_rated']} rated; "
-         f"best {p['best'].get('name') or 'runner'} {p['best']['rating']:.1f}")
-    extra = []
-    if p.get("n_pr"):
-        extra.append(f"{p['n_pr']} PR{'s' if p['n_pr'] != 1 else ''}")
-    if p.get("n_jump"):
-        extra.append(f"{p['n_jump']} breakout{'s' if p['n_jump'] != 1 else ''}")
-    return s + ("; " + ", ".join(extra) if extra else "")
-
-
-def digest(groups, origin, unsub):
-    """(subject, text) for one account. groups: [(title, href, [payload])],
-    in the order the account followed them."""
-    n = sum(len(items) for _t, _h, items in groups)
-    if len(groups) == 1 and n == 1:
-        p = groups[0][2][0]
-        what = p.get("meet_name") or "a race"
-        subject = f"Racecast: {groups[0][0]} at {what}"
-    else:
-        subject = f"Racecast: {n} new result{'s' if n != 1 else ''} for who you follow"
-    lines = ["New on Racecast for the athletes and teams you follow.", ""]
-    for title, href, items in groups:
-        lines.append(title)
-        for p in sorted(items, key=lambda p: (p["date"], p.get("meet_name") or "")):
-            lines.append(raceLine(p) if p["type"] == "race" else teamLine(p))
-        lines += [f"  {origin}{href}", ""]
-    lines += [f"Your page: {origin}/account/me",
-              f"How often these come: {origin}/account/me#alerts",
-              f"Unsubscribe: {unsub}", ""]
-    return subject, "\n".join(lines)
+def digest(groups, origin, unsub, account_name=None, today=None):
+    """(subject, text, html) for one account: alert_email.compose, the
+    sentences a person would write. groups: [(title, href, [payload], kind)]."""
+    import alert_email
+    return alert_email.compose(groups, origin, unsub, account_name, today)
 
 
 # ------------------------------------------------------------------ #
@@ -360,7 +303,7 @@ def sendDigests(cur, conn, follows, now, origin, send=True, log=print):
     order = {}
     for f in follows:
         order.setdefault(f["account_id"], []).append(F.subjectKey(f))
-    cur.execute("""SELECT i.account_id, i.item_key, i.subject, i.payload, a.email,
+    cur.execute("""SELECT i.account_id, i.item_key, i.subject, i.payload, a.email, a.name AS account_name,
                           COALESCE(p.cadence, %s) AS cadence, p.last_sent_at
                    FROM   alert_item i
                    JOIN   account a ON a.id = i.account_id AND a.deleted_at IS NULL
@@ -378,12 +321,14 @@ def sendDigests(cur, conn, follows, now, origin, send=True, log=print):
         groups = []
         for subj in order.get(aid, []) + sorted({i["subject"] for i in items}):
             mine = [i for i in items if i["subject"] == subj]
-            if not mine or any(g[3] == subj for g in groups):
+            if not mine or any(g[4] == subj for g in groups):
                 continue
             title, href = titles.get(subj, (subj.split(":", 1)[-1], "/account/me"))
             groups.append((title, href, [i["payload"] if isinstance(i["payload"], dict)
-                                         else json.loads(i["payload"]) for i in mine], subj))
-        subject, text = digest([g[:3] for g in groups], origin, F.unsubUrl(aid, origin))
+                                         else json.loads(i["payload"]) for i in mine],
+                           subj.split(":", 1)[0], subj))
+        subject, text, html = digest([g[:4] for g in groups], origin, F.unsubUrl(aid, origin),
+                                     items[0].get("account_name"), now.date())
         keys = [i["item_key"] for i in items]
         if not send:
             log(f"  account {aid}: would send '{subject}' ({len(keys)} items)")
@@ -393,7 +338,7 @@ def sendDigests(cur, conn, follows, now, origin, send=True, log=print):
                        WHERE account_id = %s AND item_key = ANY(%s) AND status = 'pending'""", (aid, keys))
         conn.commit()
         unsub = F.unsubUrl(aid, origin)
-        ok = AC.sendMail(items[0]["email"], subject, text, log_as=f"account {aid}",
+        ok = AC.sendMail(items[0]["email"], subject, text, log_as=f"account {aid}", html=html,
                          headers={"List-Unsubscribe": f"<{unsub}>",
                                   "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"})
         if ok:
