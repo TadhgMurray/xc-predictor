@@ -17,19 +17,29 @@ i = SRC.index("def createShadow(")
 body = SRC[i:SRC.index("\ndef ", i + 1)]
 guard = 'if like == "ranking_results":'
 fails = []
-if guard not in body:
-    fails.append("createShadow has no ranking_results guard")
-else:
-    g = body.index(guard)
-    for stmt in ("ADD COLUMN IF NOT EXISTS distance",
-                 "ALTER COLUMN speed_rating DROP NOT NULL",
-                 'ADD COLUMN IF NOT EXISTS "{_u}"'):
-        if body.find(stmt) < g:
-            fails.append(f"{stmt!r} runs before the guard")
-    if body.index("DROP TABLE IF EXISTS {name}") < g:
-        fails.append("the shadow DROP sits inside the guard")
-for f in fails:
-    print("  FAIL " + f)
-if fails:
-    sys.exit(1)
-print("  ranking_results migrations never touch athlete_season ... OK")
+
+
+def test_shadow_migration():
+    if guard not in body:
+        fails.append("createShadow has no ranking_results guard")
+    else:
+        g = body.index(guard)
+        for stmt in ("ADD COLUMN IF NOT EXISTS distance",
+                     "ALTER COLUMN speed_rating DROP NOT NULL",
+                     'ADD COLUMN IF NOT EXISTS "{_u}"'):
+            if body.find(stmt) < g:
+                fails.append(f"{stmt!r} runs before the guard")
+        if body.index("DROP TABLE IF EXISTS {name}") < g:
+            fails.append("the shadow DROP sits inside the guard")
+
+    assert not fails, "\n".join(fails)
+
+
+if __name__ == "__main__":
+    try:
+        test_shadow_migration()
+    except AssertionError as e:
+        print("FAILED:")
+        print("  - " + str(e).replace("\n", "\n  - "))
+        sys.exit(1)
+    print("test_shadow_migration: all checks passed")

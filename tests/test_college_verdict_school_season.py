@@ -28,7 +28,8 @@ os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
 os.environ.setdefault("XCP_DB_QUIET", "1")
 if "corrections" not in sys.modules:            # 165 MB, not in git
     _c = types.ModuleType("corrections")
-    _c.__getattr__ = lambda name: {}
+    _c.__getattr__ = lambda name: (  # not dunders: see test_model_one_scale
+        {} if not name.startswith("__") else getattr(object(), name))
     sys.modules["corrections"] = _c
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in ("backfill", "racecast", "scripts", "engine"):

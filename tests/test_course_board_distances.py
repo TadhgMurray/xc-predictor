@@ -36,81 +36,87 @@ def ok(cond, msg):
     return cond
 
 
-bare = "\n".join(ln.split("--")[0] for ln in SRC.splitlines())
+def test_course_board_distances():
+    bare = "\n".join(ln.split("--")[0] for ln in SRC.splitlines())
 
-# ---- 1. distance is in the de-dup key --------------------------------- #
-m = re.search(r"DISTINCT ON \((.*?)\)\s*\n", bare, re.S)
-ok(m is not None, "the DISTINCT ON is gone entirely -- the guard still has a "
-                  "job, it just must not eat distances")
-if m:
-    key = " ".join(m.group(1).split())
-    ok("key_distance" in key,
-       f"the distance must be part of the de-dup key, got: {key}")
-    ok("canonical_id" in key,
-       "...and the canonical id must still be, or two venues sharing a name "
-       "collapse")
+    # ---- 1. distance is in the de-dup key --------------------------------- #
+    m = re.search(r"DISTINCT ON \((.*?)\)\s*\n", bare, re.S)
+    ok(m is not None, "the DISTINCT ON is gone entirely -- the guard still has a "
+                      "job, it just must not eat distances")
+    if m:
+        key = " ".join(m.group(1).split())
+        ok("key_distance" in key,
+           f"the distance must be part of the de-dup key, got: {key}")
+        ok("canonical_id" in key,
+           "...and the canonical id must still be, or two venues sharing a name "
+           "collapse")
 
-# ! THE ORDER BY MUST LEAD WITH THE SAME KEY or Postgres rejects the query
-#   outright -- DISTINCT ON requires it.
-o = bare[bare.rindex("ORDER  BY"):]
-ok("key_distance" in o.split("n_results")[0],
-   "ORDER BY must lead with the DISTINCT ON key, distance included, or "
-   "Postgres refuses the statement")
+    # ! THE ORDER BY MUST LEAD WITH THE SAME KEY or Postgres rejects the query
+    #   outright -- DISTINCT ON requires it.
+    o = bare[bare.rindex("ORDER  BY"):]
+    ok("key_distance" in o.split("n_results")[0],
+       "ORDER BY must lead with the DISTINCT ON key, distance included, or "
+       "Postgres refuses the statement")
 
-# ---- 2. and the emitted key is unique per (course, distance) ----------- #
-#   ⚠ course_key goes into a KEYED table. Leaving it canonical-id-only while
-#     emitting one row per distance would collide three ways on Mt. SAC and
-#     abort the build.
-ok("':d' ||" in bare or "':d'||" in bare,
-   "course_key must carry the distance too, or the rows it now emits "
-   "collide in the keyed table")
-
-
-# ---- 3. the venue page no longer hides a missing column ---------------- #
-#   ⚠ get_course_cell_difficulties joins course_difficulties.canonical_id,
-#     which is a MIGRATION rather than part of the base DDL, and the bare
-#     except turned that into "-" on every distance of every course page
-#     with nothing in the log.
-i = APP.index("def get_course_cell_difficulties")
-blk = APP[i:i + 3000]
-ok("except Exception as e" in blk,
-   "the exception must be captured, not discarded")
-ok("app.logger" in blk or "print(" in blk,
-   "a query that silently returns {} renders '-' everywhere and says "
-   "nothing -- it has to report")
-# ! STILL NOT FATAL. A course page without its difficulty is worth rendering.
-ok("return {}" in blk, "but it must still degrade rather than 500")
+    # ---- 2. and the emitted key is unique per (course, distance) ----------- #
+    #   ⚠ course_key goes into a KEYED table. Leaving it canonical-id-only while
+    #     emitting one row per distance would collide three ways on Mt. SAC and
+    #     abort the build.
+    ok("':d' ||" in bare or "':d'||" in bare,
+       "course_key must carry the distance too, or the rows it now emits "
+       "collide in the keyed table")
 
 
-# ---- 4. and the key it returns is the key the caller asks for ---------- #
-#   ⚠⚠ THIS WAS THE ACTUAL CAUSE OF THE "-", not a missing column:
-#      canonical_id and distance_m both exist. The caller looks up
-#      int(round(d / 100) * 100) -- 4828m becomes 4800 -- while the dict was
-#      built on the RAW distance_m. 4828 in, 4800 asked for, miss, every
-#      distance on every course page.
-ok("round(d / 100.0) * 100" in blk,
-   "the returned dict must also carry the rounded key the caller uses")
-ok("out[int(d)] = val" in blk,
-   "...and the raw one, because some cells are stored already rounded")
-ok("setdefault" in blk,
-   "the raw spelling must win a collision rather than being overwritten by "
-   "a rounded neighbour")
+    # ---- 3. the venue page no longer hides a missing column ---------------- #
+    #   ⚠ get_course_cell_difficulties joins course_difficulties.canonical_id,
+    #     which is a MIGRATION rather than part of the base DDL, and the bare
+    #     except turned that into "-" on every distance of every course page
+    #     with nothing in the log.
+    i = APP.index("def get_course_cell_difficulties")
+    blk = APP[i:i + 3000]
+    ok("except Exception as e" in blk,
+       "the exception must be captured, not discarded")
+    ok("app.logger" in blk or "print(" in blk,
+       "a query that silently returns {} renders '-' everywhere and says "
+       "nothing -- it has to report")
+    # ! STILL NOT FATAL. A course page without its difficulty is worth rendering.
+    ok("return {}" in blk, "but it must still degrade rather than 500")
 
 
-# ---- 5. the anchor repair survives --from 7 ---------------------------- #
-#   ⚠⚠ run20: "05b_anchor_repair_xc + 05b_anchor_repair_tf skipped
-#      (--from 7)". --from 7 is the standard recipe, so a fix placed at step
-#      5 was a fix that never ran. _ALWAYS is the pipeline's own mechanism
-#      for a step that must run on every --from.
-PIPE = io.open(os.path.join(ROOT, "deploy", "run_pipeline.sh"),
-               encoding="utf-8").read()
-always = re.search(r'_ALWAYS="([^"]*)"', PIPE).group(1)
-ok("05b_anchor_repair_xc" in always and "05b_anchor_repair_tf" in always,
-   f"both repair steps must be in _ALWAYS or --from 7 skips them: {always}")
+    # ---- 4. and the key it returns is the key the caller asks for ---------- #
+    #   ⚠⚠ THIS WAS THE ACTUAL CAUSE OF THE "-", not a missing column:
+    #      canonical_id and distance_m both exist. The caller looks up
+    #      int(round(d / 100) * 100) -- 4828m becomes 4800 -- while the dict was
+    #      built on the RAW distance_m. 4828 in, 4800 asked for, miss, every
+    #      distance on every course page.
+    ok("round(d / 100.0) * 100" in blk,
+       "the returned dict must also carry the rounded key the caller uses")
+    ok("out[int(d)] = val" in blk,
+       "...and the raw one, because some cells are stored already rounded")
+    ok("setdefault" in blk,
+       "the raw spelling must win a collision rather than being overwritten by "
+       "a rounded neighbour")
+
+
+    # ---- 5. the anchor repair survives --from 7 ---------------------------- #
+    #   ⚠⚠ run20: "05b_anchor_repair_xc + 05b_anchor_repair_tf skipped
+    #      (--from 7)". --from 7 is the standard recipe, so a fix placed at step
+    #      5 was a fix that never ran. _ALWAYS is the pipeline's own mechanism
+    #      for a step that must run on every --from.
+    PIPE = io.open(os.path.join(ROOT, "deploy", "run_pipeline.sh"),
+                   encoding="utf-8").read()
+    always = re.search(r'_ALWAYS="([^"]*)"', PIPE).group(1)
+    ok("05b_anchor_repair_xc" in always and "05b_anchor_repair_tf" in always,
+       f"both repair steps must be in _ALWAYS or --from 7 skips them: {always}")
+
+    assert not failed, "\n".join(failed)
 
 
 if __name__ == "__main__":
-    for msg in failed:
-        print("FAIL:", msg)
-    print(f"\n{'FAILED' if failed else 'ok'}: {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)
+    try:
+        test_course_board_distances()
+    except AssertionError as e:
+        print("FAILED:")
+        print("  - " + str(e).replace("\n", "\n  - "))
+        sys.exit(1)
+    print("test_course_board_distances: all checks passed")

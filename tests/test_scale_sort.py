@@ -24,25 +24,33 @@ def ok(c, m):
     if not c:
         fails.append(m)
 
-ok('"scale": ("hs"' in body(R, "parseFilters"), "parseFilters reads scale")
-ok("_scaleExpr(f, expr)" in body(R, "_orderBy")
-   and "_scaleExpr(f, tb_col)" in body(R, "_orderBy"),
-   "_orderBy scales the sort column AND the tiebreak")
-ok('f.get("pool") == "all"' in body(R, "_scaleActive"),
-   "scaling only on pool=all, where two factors can interleave")
-ok("repFactor(pool, sport)" in body(R, "_hsScaleCase"),
-   "the CASE uses the same representative factor stampBoardRows uses")
-ok("cmp = _scaleExpr(f, col)" in body(R, "_rankInResults")
-   and "({cmp} {beats} %(target)s" in body(R, "_rankInResults"),
-   "the performance rank compares on the scaled column")
-ok("not _scaleActive(f)" in body(R, "rankOf"),
-   "the count shortcut is skipped when the board is scaled")
-ok('scale:  hsMode() ? "hs" : "pool"' in J, "rankings.js sends the scale")
-ok("_lastBoard.data.hs_movable" in J and "load();" in J[J.index("rc-scale-change"):J.index("rc-scale-change") + 600],
-   "a scale flip refetches a board whose rows move")
 
-for f in fails:
-    print("  FAIL " + f)
-if fails:
-    sys.exit(1)
-print("  HS-equivalent boards order on what they show .... OK")
+def test_scale_sort():
+    ok('"scale": ("hs"' in body(R, "parseFilters"), "parseFilters reads scale")
+    ok("_scaleExpr(f, expr)" in body(R, "_orderBy")
+       and "_scaleExpr(f, tb_col)" in body(R, "_orderBy"),
+       "_orderBy scales the sort column AND the tiebreak")
+    ok('f.get("pool") == "all"' in body(R, "_scaleActive"),
+       "scaling only on pool=all, where two factors can interleave")
+    ok("repFactor(pool, sport)" in body(R, "_hsScaleCase"),
+       "the CASE uses the same representative factor stampBoardRows uses")
+    ok("cmp = _scaleExpr(f, col)" in body(R, "_rankInResults")
+       and "({cmp} {beats} %(target)s" in body(R, "_rankInResults"),
+       "the performance rank compares on the scaled column")
+    ok("not _scaleActive(f)" in body(R, "rankOf"),
+       "the count shortcut is skipped when the board is scaled")
+    ok('scale:  hsMode() ? "hs" : "pool"' in J, "rankings.js sends the scale")
+    ok("_lastBoard.data.hs_movable" in J and "load();" in J[J.index("rc-scale-change"):J.index("rc-scale-change") + 600],
+       "a scale flip refetches a board whose rows move")
+
+    assert not fails, "\n".join(fails)
+
+
+if __name__ == "__main__":
+    try:
+        test_scale_sort()
+    except AssertionError as e:
+        print("FAILED:")
+        print("  - " + str(e).replace("\n", "\n  - "))
+        sys.exit(1)
+    print("test_scale_sort: all checks passed")

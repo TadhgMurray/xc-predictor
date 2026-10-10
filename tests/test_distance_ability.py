@@ -43,7 +43,8 @@ if "corrections" not in sys.modules:            # 165 MB, not in git
     # ! THE FITTER'S TWO SQL BUILDERS ARE CALLED AT ITS IMPORT: a stub that
     #   answers them with a dict breaks every later file that imports it
     _c.distanceDropSQL = lambda *a, **k: ""
-    _c.__getattr__ = lambda name: {}
+    _c.__getattr__ = lambda name: (  # not dunders: see test_model_one_scale
+        {} if not name.startswith("__") else getattr(object(), name))
     sys.modules["corrections"] = _c
 
 import distance_ability as DA                                # noqa: E402

@@ -20,7 +20,16 @@ for _p in (_ROOT, os.path.join(_ROOT, "racecast"), os.path.join(_ROOT, "engine")
 if "corrections" not in sys.modules:            # 165 MB, not in git
     _c = types.ModuleType("corrections")
     _c.distanceOverrideSQL = lambda *a, **k: ("", "")
-    _c.__getattr__ = lambda name: {}
+    def _missing(name):
+        # ! NOT FOR DUNDERS. Answering {} for __file__ made the stub look
+        #   like a module "from {}", and torch's import walks sys.modules
+        #   through inspect.getfile -- which died on it ("<module
+        #   'corrections' from {}> is a built-in module") and left torch
+        #   half-initialised for every later test in the process.
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return {}
+    _c.__getattr__ = _missing
     sys.modules["corrections"] = _c
 
 import pytest                                                # noqa: E402

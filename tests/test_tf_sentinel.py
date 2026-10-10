@@ -48,7 +48,8 @@ def test_the_backfill_skips_it():
     if "corrections" not in sys.modules:            # 165 MB, not in git
         import types
         _c = types.ModuleType("corrections")
-        _c.__getattr__ = lambda name: {}
+        _c.__getattr__ = lambda name: (  # not dunders: see test_model_one_scale
+            {} if not name.startswith("__") else getattr(object(), name))
         sys.modules["corrections"] = _c
     import backfill_normalize as B
     assert B._isSentinelTime(20000.0)

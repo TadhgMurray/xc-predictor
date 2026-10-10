@@ -33,7 +33,7 @@ def synthetic_pack(seed=11):
     return out, D, cols, keep, truth, raw
 
 
-def main():
+def test_build_live():
     out, D, cols, keep, truth, raw = synthetic_pack()
     live = jg.buildLive(out, D, cols, keep)
     jg.report(live)
@@ -135,7 +135,7 @@ def main():
     print("\nall joint_golive tests passed")
 
 
-def per_sport_day_term():
+def test_per_sport_day_term():
     """The race-day term applies per sport (owner, 2026-09-06): XC only
     by default in run_joint; here both, XC only, and none."""
     out, D, cols, keep, truth, raw = synthetic_pack()
@@ -156,7 +156,7 @@ def per_sport_day_term():
     print("  race-day term per sport: XC keeps it, TF drops it, default none  OK")
 
 
-def fast_day_only():
+def test_fast_day_only():
     """'XC:fast' (owner, 2026-09-28): a fast XC day reaches the rating, a
     slow one does not; TF untouched."""
     out, D, cols, keep, truth, raw = synthetic_pack()
@@ -176,7 +176,7 @@ def fast_day_only():
     print("  race-day term, XC fast days only ...................... OK")
 
 
-def winter_gain_paths():
+def test_winter_gain_paths():
     """The winter gain by LEVEL, by BAND, by both and by neither.
 
     ⚠ THE RUN THAT CRASHED (2026-09-15). --sport-level-pools without
@@ -218,7 +218,7 @@ def winter_gain_paths():
 
 
 if __name__ == "__main__":
-    main()
-    per_sport_day_term()
-    fast_day_only()
-    winter_gain_paths()
+    test_build_live()
+    test_per_sport_day_term()
+    test_fast_day_only()
+    test_winter_gain_paths()

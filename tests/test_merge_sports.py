@@ -68,84 +68,90 @@ def _fresh():
             "a": np.zeros(3)}
 
 
-d = _D()
-normal = js.recentreLevels(_fresh(), d, merge=False)
-merged = js.recentreLevels(_fresh(), d, merge=True)
+def test_merge_sports():
+    d = _D()
+    normal = js.recentreLevels(_fresh(), d, merge=False)
+    merged = js.recentreLevels(_fresh(), d, merge=True)
 
-# ---- 1. what MUST be identical ----------------------------------------- #
-#   The whole claim is that only the between-sport level changes. If merging
-#   also moved the relative difficulties, it would be re-ranking courses
-#   rather than declining to rank sports.
-ok(np.allclose(normal["d"], merged["d"]),
-   f"relative course difficulties must be untouched: {normal['d']} vs "
-   f"{merged['d']}")
-ok(np.allclose(normal["u"], merged["u"]),
-   "per-race effects must be untouched too")
+    # ---- 1. what MUST be identical ----------------------------------------- #
+    #   The whole claim is that only the between-sport level changes. If merging
+    #   also moved the relative difficulties, it would be re-ranking courses
+    #   rather than declining to rank sports.
+    ok(np.allclose(normal["d"], merged["d"]),
+       f"relative course difficulties must be untouched: {normal['d']} vs "
+       f"{merged['d']}")
+    ok(np.allclose(normal["u"], merged["u"]),
+       "per-race effects must be untouched too")
 
-# ---- 2. and what must not ---------------------------------------------- #
-ok(np.allclose(merged["mu"], 0.0),
-   f"merged must keep NO sport level, got {merged['mu']}")
-ok(not np.allclose(normal["mu"], 0.0),
-   f"the fixture is pointless if the normal path finds no level: "
-   f"{normal['mu']}")
+    # ---- 2. and what must not ---------------------------------------------- #
+    ok(np.allclose(merged["mu"], 0.0),
+       f"merged must keep NO sport level, got {merged['mu']}")
+    ok(not np.allclose(normal["mu"], 0.0),
+       f"the fixture is pointless if the normal path finds no level: "
+       f"{normal['mu']}")
 
-# ⚠ BOTH HALVES. u is the per-race effect and its per-sport mean is a sport
-#   level by another name; the first cut guarded only the difficulty half and
-#   left mu at [0, 1.5] on a fixture built to come out [0, 0].
-i_u = JS.index('b["u"] = np.where(seen')
-tail = JS[i_u:i_u + 900]
-ok("if not merge:" in tail,
-   "the race-effect mean must be guarded by merge as well, or the sport "
-   "level comes back through the back door")
+    # ⚠ BOTH HALVES. u is the per-race effect and its per-sport mean is a sport
+    #   level by another name; the first cut guarded only the difficulty half and
+    #   left mu at [0, 1.5] on a fixture built to come out [0, 0].
+    i_u = JS.index('b["u"] = np.where(seen')
+    tail = JS[i_u:i_u + 900]
+    ok("if not merge:" in tail,
+       "the race-effect mean must be guarded by merge as well, or the sport "
+       "level comes back through the back door")
 
-# ---- 3. it is off unless asked, and it brings its implications ---------- #
-ok('"--merge-sports"' in RJ, "the flag must exist")
-ok("merge_sports=False" in JS,
-   "solveJoint must default to the old behaviour exactly")
-ok("merge=merge_sports" in JS, "and thread it to recentreLevels")
+    # ---- 3. it is off unless asked, and it brings its implications ---------- #
+    ok('"--merge-sports"' in RJ, "the flag must exist")
+    ok("merge_sports=False" in JS,
+       "solveJoint must default to the old behaviour exactly")
+    ok("merge=merge_sports" in JS, "and thread it to recentreLevels")
 
-# ! ALL FOUR TOGETHER OR NONE. A run carrying three of them is measuring
-#   something nobody can name.
-i = RJ.index("if args.merge_sports:")
-block = RJ[i:i + 1200]
-for implied in ("no_sport_offset = True", "winter_gain = 0.0",
-                "curve_gap = 0.0"):
-    ok(implied in block,
-       f"--merge-sports must also set {implied}: beta, the winter-gain pin "
-       f"and the curve-gap penalty are all the same assumption")
-ok("sport_gap_delta = 0.0" in block,
-   "--sport-gap-delta is meaningless with no sport level and must be "
-   "refused, not silently applied")
-ok("MERGED SPORTS" in RJ,
-   "a run that carries this must say so -- it produces a different board "
-   "from the same data")
+    # ! ALL FOUR TOGETHER OR NONE. A run carrying three of them is measuring
+    #   something nobody can name.
+    i = RJ.index("if args.merge_sports:")
+    block = RJ[i:i + 1200]
+    for implied in ("no_sport_offset = True", "winter_gain = 0.0",
+                    "curve_gap = 0.0"):
+        ok(implied in block,
+           f"--merge-sports must also set {implied}: beta, the winter-gain pin "
+           f"and the curve-gap penalty are all the same assumption")
+    ok("sport_gap_delta = 0.0" in block,
+       "--sport-gap-delta is meaningless with no sport level and must be "
+       "refused, not silently applied")
+    ok("MERGED SPORTS" in RJ,
+       "a run that carries this must say so -- it produces a different board "
+       "from the same data")
 
-# ---- 4. the pipeline does not turn it on by itself --------------------- #
-PIPE = io.open(os.path.join(ROOT, "deploy", "run_pipeline.sh"),
-               encoding="utf-8").read()
-# ! THE PIPELINE OFFERS IT, BUT ONLY WHEN ASKED. XCP_MERGE_SPORTS is the
-#   same ${VAR:+--flag} shape as the winter gain beside it: absent unless the
-#   operator sets it.
-ok("${XCP_MERGE_SPORTS:+--merge-sports}" in PIPE,
-   "the pipeline must expose it, or the only way to run it is by hand")
-# ! COMMENTS STRIPPED FIRST. The shell comment above the step explains what
-#   the flag does and names it; that is documentation, not an invocation.
-_cmd = "\n".join(ln.split("#")[0] for ln in PIPE.splitlines())
-ok("--merge-sports" not in _cmd.replace(
-       "${XCP_MERGE_SPORTS:+--merge-sports}", ""),
-   "and nowhere unconditionally -- it changes what a rating means")
+    # ---- 4. the pipeline does not turn it on by itself --------------------- #
+    PIPE = io.open(os.path.join(ROOT, "deploy", "run_pipeline.sh"),
+                   encoding="utf-8").read()
+    # ! THE PIPELINE OFFERS IT, BUT ONLY WHEN ASKED. XCP_MERGE_SPORTS is the
+    #   same ${VAR:+--flag} shape as the winter gain beside it: absent unless the
+    #   operator sets it.
+    ok("${XCP_MERGE_SPORTS:+--merge-sports}" in PIPE,
+       "the pipeline must expose it, or the only way to run it is by hand")
+    # ! COMMENTS STRIPPED FIRST. The shell comment above the step explains what
+    #   the flag does and names it; that is documentation, not an invocation.
+    _cmd = "\n".join(ln.split("#")[0] for ln in PIPE.splitlines())
+    ok("--merge-sports" not in _cmd.replace(
+           "${XCP_MERGE_SPORTS:+--merge-sports}", ""),
+       "and nowhere unconditionally -- it changes what a rating means")
 
-# ⚠⚠ THE FIFTH PLACE, AND IT IS NOT IN THE SOLVE. --winter-gain-bands shifts
-#    the TRACK ROWS at go-live (issue 194), which is a sport level asserted
-#    after the fit. Leaving it on would put back by hand exactly what
-#    recentreLevels(merge=True) refused.
-ok("args.winter_gain_bands = None" in block,
-   "--merge-sports must also drop the go-live band shift, or the sport "
-   "level is reinstated after the solve")
+    # ⚠⚠ THE FIFTH PLACE, AND IT IS NOT IN THE SOLVE. --winter-gain-bands shifts
+    #    the TRACK ROWS at go-live (issue 194), which is a sport level asserted
+    #    after the fit. Leaving it on would put back by hand exactly what
+    #    recentreLevels(merge=True) refused.
+    ok("args.winter_gain_bands = None" in block,
+       "--merge-sports must also drop the go-live band shift, or the sport "
+       "level is reinstated after the solve")
+
+    assert not failed, "\n".join(failed)
 
 
 if __name__ == "__main__":
-    for m in failed:
-        print("FAIL:", m)
-    print(f"\n{'FAILED' if failed else 'ok'}: {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)
+    try:
+        test_merge_sports()
+    except AssertionError as e:
+        print("FAILED:")
+        print("  - " + str(e).replace("\n", "\n  - "))
+        sys.exit(1)
+    print("test_merge_sports: all checks passed")
