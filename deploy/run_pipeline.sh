@@ -1386,6 +1386,15 @@ step 12_courses       "$PY" -u racecast/build_course_rank.py
 step 12b_prepare      "$PY" -u racecast/build_course_boards.py --prepare
 shards 12b_course_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_course_boards.py --limit 1200
 step 12b_finish       "$PY" -u racecast/build_course_boards.py --finish
+# ★ THE RECORD BOOKS (2026-10-10): state all-time lists, school record books,
+#   course records by era, "on this day" (racecast/build_record_books.py).
+#   IN THE BACKGROUND, off the main chain: only the record pages read
+#   record_books, so nothing below waits on it; bgwait collects it before 17.
+#   Incremental -- a part whose inputs did not change is skipped, and school
+#   books rebuild only where a school's results moved (XCP_RECORD_SCHOOLS a
+#   run, biggest first). ! AFTER 11b and 12b on purpose: CREATE INDEX
+#   CONCURRENTLY waits on every older open transaction (see 10f2 above).
+bgstep 13h_record_books "$PY" -u racecast/build_record_books.py --max-schools "${XCP_RECORD_SCHOOLS:-4000}"
 # the two sports' full passes side by side (14 minutes for both in one
 # process on run12); each writes only its own sport's panels
 steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC" \

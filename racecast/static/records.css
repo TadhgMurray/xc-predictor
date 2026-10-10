@@ -1,0 +1,51 @@
+/* records.css -- the record-book pages and panels (record_books.py).
+   ★ 2026-10-10. Everything else is race.css / style.css; this only adds
+   the few pieces those do not have. Colours come from the site's tokens. */
+
+.rb-era { font-size: 0.8125rem; max-width: 46rem; }
+.rb-empty { padding: 1rem 0; }
+
+main.rc .rb-tbl { width: 100%; }
+main.rc .rb-tbl td { vertical-align: top; }
+main.rc .rb-tbl .rb-g { color: var(--muted, #6b7280); font-size: 0.75rem; margin-left: 0.25rem; white-space: nowrap; }
+main.rc .rb-tbl .rb-race { white-space: nowrap; }
+main.rc .rb-tbl .rb-d { color: var(--muted, #6b7280); font-size: 0.75rem; }
+main.rc .rb-tbl .rb-m { display: block; color: var(--muted, #6b7280); font-size: 0.75rem;
+  max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+main.rc .rb-tbl .rb-gain { font-weight: 600; color: var(--good, #15803d); }
+
+.rb-h { margin: 1.4rem 0 0.4rem; font-size: 1.05rem; }
+.rb-h:first-of-type { margin-top: 0.6rem; }
+.rb-ev { border-top: 1px solid var(--line, #e5e7eb); padding: 0.35rem 0; }
+.rb-ev > summary { cursor: pointer; font-weight: 600; padding: 0.25rem 0; }
+
+/* course: the record by decade and the progression */
+main.rc .rb-dec tr.rb-dec-first td { border-top: 1px solid var(--line, #e5e7eb); }
+.rb-prog-h { margin: 0.9rem 0 0.3rem; font-size: 0.875rem; }
+.rb-prog { list-style: none; margin: 0; padding: 0 0 0 0.9rem; border-left: 2px solid var(--line, #e5e7eb); }
+.rb-prog li { position: relative; padding: 0.25rem 0 0.35rem; font-size: 0.875rem; }
+.rb-prog li::before { content: ""; position: absolute; left: -1.22rem; top: 0.62rem; width: 0.5rem; height: 0.5rem;
+  border-radius: 50%; background: var(--line, #d1d5db); }
+.rb-prog li.is-now::before { background: var(--accent, #c2410c); }
+.rb-prog .rb-pt { font-weight: 700; font-variant-numeric: tabular-nums; margin-right: 0.35rem; }
+.rb-prog .rb-ps, .rb-prog .rb-pd { color: var(--muted, #6b7280); font-size: 0.8125rem; }
+.rb-prog .rb-pd { display: block; }
+
+/* on this day */
+.rb-otd { border: 1px solid var(--line, #e5e7eb); border-radius: 8px; padding: 0.7rem 0.9rem; margin: 0 0 0.8rem;
+  background: var(--card, transparent); }
+.rb-otd-k { display: block; font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted, #6b7280); }
+.rb-otd p { margin: 0.25rem 0; line-height: 1.4; }
+.rb-otd-s { font-size: 0.75rem; color: var(--muted, #6b7280); }
+.rb-otd-wrap { max-width: 34rem; margin: 0.8rem 0; }
+.hm-otd { max-width: 1180px; margin: 0.6rem auto 0; padding: 0 16px; }
+
+.rb-states { list-style: none; padding: 0; columns: 3 16rem; column-gap: 1.5rem; }
+.rb-states li { break-inside: avoid; padding: 0.2rem 0; }
+.rb-states li a { margin-left: 0.5rem; font-size: 0.875rem; }
+
+@media (max-width: 700px) {
+  main.rc .rb-tbl .rb-sch { display: none; }
+  main.rc .rb-tbl .rb-m { max-width: 10rem; }
+}

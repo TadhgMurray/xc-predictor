@@ -81,6 +81,7 @@
     </div>
     <div class="rc-links">
       <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">School PRs →</a>
+      <a href="/school/{{ school|urlencode }}/records?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">Record book →</a>
       {# a college's recruits (282): only a school with a college unit #}
       {% if units and (units|selectattr("kind", "in", ["division", "conference"])|list) %}
       <a href="/recruiting/school/{{ school|urlencode }}?{% if state %}state={{ state }}{% endif %}">Recruiting →</a>
@@ -188,6 +189,8 @@
       {% if top %}<a class="seg-btn" href="#athletes" data-tab="athletes">Best athletes</a>{% endif %}
       {% if best %}<a class="seg-btn" href="#best" data-tab="best">Best performances</a>{% endif %}
       {% if meets %}<a class="seg-btn" href="#races" data-tab="races">{{ (picked ~ " races") if picked else "Races" }}<span class="n">{{ meets|length }}</span></a>{% endif %}
+      {# ★ the record book (2026-10-10): precomputed, shown once built #}
+      {% if record_book %}<a class="seg-btn" href="#records" data-tab="records">Record book</a>{% endif %}
     </nav>
     {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
   </div>
@@ -398,6 +401,12 @@
     <p class="view-all">
         <a href="/meets?sport={{ sport }}&amp;school={{ school|urlencode }}{% if picked %}&amp;year={{ picked }}{% endif %}">View all →</a>
     </p>
+    </section>
+{% endif %}
+{% if record_book %}
+    <section class="rc-panel" id="records" data-panel="records">
+    {% include "_record_book.html" %}
+    <p class="view-all"><a href="/school/{{ school|urlencode }}/records?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">Open the record book on its own page →</a></p>
     </section>
 {% endif %}
 </div>

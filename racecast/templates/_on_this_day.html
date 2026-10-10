@@ -1,0 +1,13 @@
+{# _on_this_day.html -- "On this day in 2014: X ran 14:12 at Y".
+   `otd` is record_books.onThisDay's pick: one precomputed row, the
+   best-rated race run on today's date in a past year (the state's, else
+   the nation's). Renders nothing without one.
+   ★ 2026-10-10 (owner: history pages; "small home/state card"). #}
+{% if otd %}
+<div class="rb-otd">
+  <span class="rb-otd-k">On this day{% if otd.race_date %} in {{ otd.race_date[:4] }}{% endif %}</span>
+  <p><a href="/athlete/{{ otd.person_id }}{% if otd.result_id %}?r={{ otd.result_id }}{% endif %}">{{ otd.name or "A runner" }}</a>{% if otd.school %} ({{ otd.school }}){% endif %}
+    ran {% if otd.result_id and otd.meet_id %}{% if otd.sport == 'TF' and otd.event_id and otd.div_id is not none %}<a href="/race/tf/{{ otd.meet_id }}/{{ otd.event_id }}/{{ otd.div_id }}?r={{ otd.result_id }}">{% elif otd.sport == 'TF' %}<a href="/meet/tf/{{ otd.meet_id }}?r={{ otd.result_id }}">{% else %}<a href="/race/xc/{{ otd.meet_id }}/{{ otd.div_id }}?r={{ otd.result_id }}">{% endif %}{{ otd.time_seconds|clock }}{% if otd.distance %} for {{ otd.distance|rb_dist }}{% endif %}</a>{% else %}{{ otd.time_seconds|clock }}{% endif %}{% if otd.meet_name %} at {{ otd.meet_name }}{% endif %}.</p>
+  <span class="rb-otd-s">Rated {{ "%.1f"|format(otd.rating) }}{% if otd.years_ago %} · {{ otd.years_ago }} year{{ "s" if otd.years_ago != 1 }} ago{% endif %}{% if otd.scope and otd.scope != "US" %} · in {{ otd.scope }}{% endif %}</span>
+</div>
+{% endif %}

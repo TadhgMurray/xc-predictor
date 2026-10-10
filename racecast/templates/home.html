@@ -227,6 +227,10 @@
   <a href="/conversions"><b>Convert a time</b><span>Between courses and track distances</span></a>
   <a href="/recruiting"><b>Where would I fit in college</b><span>The teams a rating would make</span></a>
 </nav>
+{# ★ ON THIS DAY (2026-10-10, record_books.onThisDay): renders nothing
+   until the record books are built #}
+{% if otd %}<link rel="stylesheet" href="{{ static_v('records.css') }}">
+<div class="hm-otd">{% include "_on_this_day.html" %}<a class="rb-otd-more" href="/records">All-time records by state →</a></div>{% endif %}
 
 {# ================================================================= #}
 {#  RANKINGS SNAPSHOT, in the race page's shape                      #}
