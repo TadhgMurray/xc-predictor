@@ -173,12 +173,103 @@ def prettyEventName(event_short):
 
 
 def eventDistance(event_short, stored=None):
-    """Sort distance in metres: the stored column, else the number the
-    name leads with. None when neither answers (fields, relays, codes)."""
+    """Sort distance in metres: the stored column, else the distance the
+    name states (eventDistanceKey). None when neither answers (fields,
+    relays, codes)."""
+    got = eventDistanceKey(event_short, stored)
+    return got[0] if got else None
+
+
+# ★ THE NAME'S UNIT IS READ, NOT JUST ITS LEADING NUMBER (sweep 2026-10-10,
+#   A7). eventDistance used to be `_LEAD_NUM` alone: "Mile" / "1 Mile" have
+#   no two-digit lead and came back None -- every Mile was dropped from the
+#   venue records and sorted last on the meet page -- and "440 Yard Dash",
+#   "300 yd", "880y" came back 440 / 300 / 880 METRES, filed beside (and
+#   competing with) the 400 m, 300 m and 800 m. The engine's parser already
+#   reads units (event_parse: miles, the imperial yard schedule, km, the
+#   "1600 Yards" typo rule), so a flat race takes its answer from there --
+#   the rated parser at 600 m and up, the sprint one below -- one reading of
+#   a name for the boards and the pages.
+# ! THE FALLBACK IS THE OLD LEADING NUMBER, for everything the engine
+#   parser refuses on purpose (hurdles, steeple, walks: it prices only flat
+#   races) and when the engine tree is not importable (a standalone test).
+#   So a name the parser does not read sorts exactly as it did.
+# ! THE LABEL KEEPS YARDS AND MILES APART FROM METRES: 440 yd is 402.336 m,
+#   which is not 400 m, and a record list that merged them would rank a
+#   1950s 440 against a modern 400. The metres keep them apart as keys; the
+#   label says which unit the race was run in ("440y", "Mile", "800m").
+_YD = 0.9144
+_MI = 1609.344
+# A whole number of metres within a millimetre (the yard and mile products
+# are exact, and 70 yd = 64.008 m sits 8 mm off a whole metre, so the metre
+# test must be tighter than that); a mile or yard multiple within a
+# centimetre, so a stored column rounded to two places (1609.34) still
+# reads as the Mile it is.
+_UNIT_TOL = 1e-3
+_IMPERIAL_TOL = 1e-2
+
+try:
+    from event_parse import (distanceFromEventShort as _ratedDistance,
+                             sprintDistanceFromEventShort as _sprintDistance)
+except Exception:                                       # noqa: BLE001
+    _ratedDistance = _sprintDistance = None
+
+
+def _unitLabel(metres):
+    """(metres, label): '800m', '440y', 'Mile', '2 Mile' -- the unit the
+    distance is a whole number of, and the distance SNAPPED to that unit's
+    exact product. Metres first: a whole number of metres is a metric race.
+    ! SNAPPED because the readers disagree in the last digits: the engine's
+      exact-key table says '1mile' is 1609.34, its parser says "Mile" is
+      1609.344 -- two keys, two Mile record lists at one venue."""
+    if abs(metres - round(metres)) < _UNIT_TOL:
+        return float(round(metres)), f"{int(round(metres))}m"
+    miles = metres / _MI
+    if abs(miles - round(miles)) * _MI < _IMPERIAL_TOL and round(miles) >= 1:
+        n = int(round(miles))
+        return n * _MI, ("Mile" if n == 1 else f"{n} Mile")
+    yards = metres / _YD
+    if abs(yards - round(yards)) * _YD < _IMPERIAL_TOL:
+        n = int(round(yards))
+        return n * _YD, f"{n}y"
+    return metres, f"{metres:g}m"
+
+
+# A yard unit after the leading number, for the fallback reading (hurdles,
+# and sprints under the engine's 50 m floor): "60 yd hurdles", "50 Yard Dash".
+_YARD_UNIT = re.compile(r"^\d{2,5}\s*(?:y|yd|yds|yard|yards)\b", re.IGNORECASE)
+
+
+def eventDistanceKey(event_short, stored=None):
+    """(metres, label) for a running event, or None.
+
+    stored -- a stored distance_meters column, trusted first as before.
+    '1600 Meters' -> (1600.0, '1600m'); "Men's Mile" -> (1609.344, 'Mile');
+    '440 Yard Dash' -> (402.336, '440y'); '300 yd' -> (274.32, '300y');
+    '110m Hurdles' -> (110.0, '110m') by the leading number."""
     if stored:
-        return float(stored)
-    m = _LEAD_NUM.match(canonicalEvent(event_short))
-    return float(m.group(1)) if m else None
+        return _unitLabel(float(stored))
+    if not event_short:
+        return None
+    d = None
+    if _ratedDistance is not None:
+        try:
+            d = (_ratedDistance(event_short)[0]
+                 or _sprintDistance(event_short)[0])
+        except Exception:                               # noqa: BLE001
+            d = None
+    if d is None:
+        canon = canonicalEvent(event_short)
+        m = _LEAD_NUM.match(canon)
+        d = float(m.group(1)) if m else None
+        # ! A YARD NAME STAYS YARDS here too: the engine refuses hurdles
+        #   and anything under its 50 m floor, and "60 yd hurdles" read by
+        #   its number alone would file beside the 60 m hurdles again
+        if d and _ratedDistance is not None and _YARD_UNIT.match(canon):
+            d *= _YD
+    if not d:
+        return None
+    return _unitLabel(float(d))
 
 
 _RELAY_NXM = re.compile(r"(\d)\s*x\s*(\d{2,5})", re.IGNORECASE)
