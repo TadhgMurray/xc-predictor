@@ -1,0 +1,148 @@
+{# records.html -- /records/<state>: one state's all-time lists for one
+   sport, level and gender. Precomputed (build_record_books.py, part
+   'state'); see record_books.py.
+
+   ★ 2026-10-10 (owner: "history and record books -- evergreen, shareable
+     pages"). The landing page's shape: title, filter card, four tabs (best
+     races, best seasons, by grade, teams), an "On this day" side card. #}
+{% from "_scale.html" import scale_toggle %}
+{% from "_records_macros.html" import race_table, season_table, team_table %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('records.css') }}">
+{% set meta_title = title %}
+{% set meta_description = description %}
+{% set meta_path = path %}
+{% set meta_crumbs = [("Records", "/records"), (state_name, none)] %}
+{% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+
+<main class="page-wide landing-page records-page rc">
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport }}">{{ level_words }} {{ gender_word }} · {{ sport_words|lower }}</span></div>
+      <h1>{{ title }}</h1>
+      <div class="rc-meta">
+        All time, every season on file{% if book and book.built_at %} · compiled {{ book.built_at|mdy }}{% endif %}
+        · <a href="/about#rating">how ratings work</a>
+        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ path }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
+      </div>
+      <p class="meta rb-era">{{ era_note }}</p>
+      {% if book and book.races %}{% set r0 = book.races[0] %}
+      <div class="rc-champs">
+        <div><span class="k">Best race ever</span>
+          <span class="rc-crow"><b class="rc-cn"><a href="/athlete/{{ r0.person_id }}">{{ r0.name or "Unknown" }}</a></b><i>{{ r0.rating|round(1) }}{% if r0.time_seconds %} · {{ r0.time_seconds|clock }}{% endif %} · {{ season_label(r0.sport, r0.year) }}{% if r0.school %} · {{ r0.school|school_label_for(level_pool, r0.state) }}{% endif %}</i></span></div>
+        {% if book.seasons %}{% set s0 = book.seasons[0] %}
+        <div><span class="k">Best season ever</span>
+          <span class="rc-crow"><b class="rc-cn"><a href="/athlete/{{ s0.person_id }}">{{ s0.name or "Unknown" }}</a></b><i>{{ s0.rating|round(1) }} · {{ season_label(s0.sport, s0.year) }}{% if s0.school %} · {{ s0.school|school_label_for(level_pool, s0.state) }}{% endif %}</i></span></div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div></header>
+
+  <div class="landing-filters" role="navigation" aria-label="Which records">
+    <div class="lf-field">
+      <span class="lf-label">Sport</span>
+      <div class="seg">
+        {% for s, href in sport_links %}<a class="seg-btn{{ ' is-on' if s == sport }}" href="{{ href }}">{{ s|upper|sport_name }}</a>{% endfor %}
+      </div>
+    </div>
+    <div class="lf-field">
+      <span class="lf-label">Level</span>
+      <div class="pool-chips">
+        {% for lv, words, href in level_links %}<a class="chip{{ ' is-on' if lv == level }}" href="{{ href }}">{{ words }}</a>{% endfor %}
+      </div>
+    </div>
+    <div class="lf-field">
+      <span class="lf-label">Gender</span>
+      <div class="seg">
+        {% for g, words, href in gender_links %}<a class="seg-btn{{ ' is-on' if g == gender }}" href="{{ href }}">{{ words|capitalize }}</a>{% endfor %}
+      </div>
+    </div>
+    <div class="lf-field">
+      <label class="lf-label" for="rb-state">State</label>
+      <select id="rb-state" onchange="if (this.value) location.href = this.value">
+        {% for code, name, href in state_links %}<option value="{{ href }}"{{ ' selected' if code == state }}>{{ name }}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <div class="rc-grid{% if not otd %} rc-grid-one{% endif %}">
+  <div class="rc-mainc">
+  {% if book %}
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      {% if book.races %}<a class="seg-btn" href="#races" data-tab="races">Best races<span class="n">{{ book.races|length }}</span></a>{% endif %}
+      {% if book.seasons %}<a class="seg-btn" href="#seasons" data-tab="seasons">Best seasons<span class="n">{{ book.seasons|length }}</span></a>{% endif %}
+      {% if book.grades %}<a class="seg-btn" href="#grades" data-tab="grades">By grade</a>{% endif %}
+      {% if book.teams %}<a class="seg-btn" href="#teams" data-tab="teams">Team seasons</a>{% endif %}
+    </nav>
+    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+  </div>
+
+  {% if book.races %}
+  <section class="rc-panel" id="races" data-panel="races">
+    <p class="meta rc-lead">Each athlete's best single race, by speed rating. One line per athlete.</p>
+    {{ race_table(book.races, level_pool, 25) }}
+  </section>
+  {% endif %}
+
+  {% if book.seasons %}
+  <section class="rc-panel" id="seasons" data-panel="seasons">
+    <p class="meta rc-lead">Each athlete's best season rating (three or more rated races), with that season's best race.</p>
+    {{ season_table(book.seasons, level_pool, 25) }}
+  </section>
+  {% endif %}
+
+  {% if book.grades %}
+  <section class="rc-panel" id="grades" data-panel="grades">
+    <p class="meta rc-lead">The best seasons ever run in each grade.</p>
+    {% for gk, words, rows in book.grades %}
+    <h3 class="roster-level">{{ words }} <span class="h2-note">top {{ rows|length }}</span></h3>
+    {{ season_table(rows, level_pool, 10) }}
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if book.teams %}
+  <section class="rc-panel" id="teams" data-panel="teams">
+    <p class="meta rc-lead">The best team seasons in {{ state_name }}, every squad of every season raced in one field (the team board's all-time view): top-5 mean rating.</p>
+    {{ team_table(book.teams, level_pool, 25) }}
+    <p class="view-all"><a href="/rankings?board=teams&amp;sport={{ sport|upper }}&amp;pool={{ pool }}&amp;state={{ state }}">Full team board →</a></p>
+  </section>
+  {% endif %}
+  {% else %}
+  <p class="meta rb-empty">This record book is still being compiled. It is rebuilt with the
+     site's nightly data run; until then the <a href="{{ landing_path }}">{{ state_name }} rankings</a>
+     have this season's list.</p>
+  {% endif %}
+  </div>
+
+  {% if otd %}
+  <aside class="rc-side">
+    {% include "_on_this_day.html" %}
+    <p class="meta"><a href="{{ landing_path }}">This season's {{ state_name }} rankings →</a></p>
+  </aside>
+  {% endif %}
+  </div>
+
+  <p class="landing-states">
+    {% for code, name, href in state_links %}{% if not loop.first %} · {% endif %}<a href="{{ href }}"{% if code == state %} class="is-on"{% endif %}>{{ name }}</a>{% endfor %}
+  </p>
+</main>
+<script src="{{ static_v('staged.js') }}"></script>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
+</body>
+</html>

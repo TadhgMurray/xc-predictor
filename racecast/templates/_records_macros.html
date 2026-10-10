@@ -1,0 +1,117 @@
+{# =====================================================================
+   _records_macros.html -- the record-book tables (record_books.py),
+   shared by /records/<state>, the school Record book and the course
+   record history. Rows are precomputed (build_record_books.py); every
+   macro renders what it is handed and nothing else.
+
+   ★ 2026-10-10: each row links its best race, names its season and
+     school, and carries the rating beside the track 5K it is worth
+     (_scale.html's fk_* -- the column every rated table has).
+   ===================================================================== #}
+{% from "_scale.html" import rv, fk_th, fk %}
+
+{% macro rb_hid(i, show=15) %}{{ ' class="row-hidden"'|safe if i >= show }}{% endmacro %}
+
+{% macro rb_more(rows, span, show=15) -%}
+    {%- if rows|length > show %}
+    <tr class="more-row"><td colspan="{{ span }}">
+        <button type="button" class="more-btn">
+            Show 20 more <span class="more-left">({{ rows|length - show }} left)</span>
+        </button>
+    </td></tr>
+    {% endif -%}
+{%- endmacro %}
+
+{# the race a row points at: XC by meet/div, TF by meet/event/div, a TF row
+   without an event id to its meet (school_prs.html's guard) #}
+{% macro race_link(r, text) -%}
+    {%- if not r or not r.meet_id -%}{{ text }}
+    {%- elif r.sport == 'TF' and r.event_id and r.div_id is not none -%}<a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ text }}</a>
+    {%- elif r.sport == 'TF' -%}<a href="/meet/tf/{{ r.meet_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ text }}</a>
+    {%- else -%}<a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ text }}</a>
+    {%- endif -%}
+{%- endmacro %}
+
+{% macro race_text(r) -%}
+    {%- if r and r.time_seconds %}{{ r.time_seconds|clock }}{% if r.distance %} <span class="rb-d">{{ r.distance|rb_dist }}</span>{% endif %}{% endif -%}
+{%- endmacro %}
+
+{% macro school_cell(r, level) -%}
+    {%- if r.school and r.school|is_team %}{{ crest(r.school, r.state, pool=level) }}<a href="{{ school_href(r.school, r.state, pool=level) }}">{{ r.school|school_label_for(level, r.state) }}</a>
+    {%- elif r.school %}{{ r.school }}{% else %} - {% endif -%}
+{%- endmacro %}
+
+{# ---- the best single race per athlete ---------------------------- #}
+{% macro race_table(rows, level, show=15, school_col=True) -%}
+    {% set fk_label = five_k_label(rows|map(attribute="pool")) %}
+    <table class="staged rb-tbl" data-step="20" data-scale-sort="3">
+        <thead><tr><th class="rk">#</th><th>Athlete</th><th class="num">Rating</th>{{ fk_th(fk_label, "fk-sm") }}
+            <th>Race</th>{% if school_col %}<th class="rb-sch">School</th>{% endif %}<th>Season</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr{{ rb_hid(loop.index0, show) }}>
+            <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
+            <td><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name or "Unknown" }}</a>
+                {% if r.grade %}<span class="rb-g">{{ r.grade|grade_label(r.pool) }}</span>{% endif %}</td>
+            <td class="num">{{ rv(r.rating, r.hs_rating) }}</td>
+            {{ fk(r.rating, r.pool, r.sport, r.hs_rating, fk_label, "fk-sm") }}
+            <td class="rb-race">{{ race_link(r, race_text(r) or "race") }}{% if r.meet_name %}<span class="rb-m">{{ r.meet_name }}</span>{% endif %}</td>
+            {% if school_col %}<td class="rb-sch">{{ school_cell(r, level) }}</td>{% endif %}
+            <td>{{ season_label(r.sport, r.year) }}</td>
+        </tr>
+        {% endfor %}
+        {{ rb_more(rows, 7 if school_col else 6, show) }}
+        </tbody>
+    </table>
+{%- endmacro %}
+
+{# ---- the best seasons (athlete_season), each with its best race --- #}
+{% macro season_table(rows, level, show=15, school_col=True, gain=False) -%}
+    {% set fk_label = five_k_label(rows|map(attribute="pool")) %}
+    <table class="staged rb-tbl" data-step="20">
+        <thead><tr><th class="rk">#</th><th>Athlete</th>
+            {% if gain %}<th class="num">Gain</th><th class="num">From</th>{% endif %}
+            <th class="num">Season</th>{{ fk_th(fk_label, "fk-sm") }}
+            <th>Best race</th>{% if school_col %}<th class="rb-sch">School</th>{% endif %}<th>Year</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr{{ rb_hid(loop.index0, show) }}>
+            <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
+            <td><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a>
+                {% if r.grade %}<span class="rb-g">{{ r.grade|grade_label(r.pool) }}</span>{% endif %}</td>
+            {% if gain %}<td class="num rb-gain">+{{ "%.1f"|format(r.gain) }}</td><td class="num">{{ "%.1f"|format(r.prev_rating) }}</td>{% endif %}
+            <td class="num">{{ rv(r.rating, r.hs_rating) }}</td>
+            {{ fk(r.rating, r.pool, r.sport, r.hs_rating, fk_label, "fk-sm") }}
+            <td class="rb-race">{% if r.best %}{{ race_link(r.best, race_text(r.best) or "race") }}{% if r.best.meet_name %}<span class="rb-m">{{ r.best.meet_name }}</span>{% endif %}{% else %} - {% endif %}</td>
+            {% if school_col %}<td class="rb-sch">{{ school_cell(r, level) }}</td>{% endif %}
+            <td>{{ season_label(r.sport, r.year) }}</td>
+        </tr>
+        {% endfor %}
+        {{ rb_more(rows, (7 if school_col else 6) + (2 if gain else 0), show) }}
+        </tbody>
+    </table>
+{%- endmacro %}
+
+{# ---- team seasons (team_season, the team board's all-time span) --- #}
+{% macro team_table(rows, level, show=15, school_col=True) -%}
+    {% set fk_label = five_k_label(rows|map(attribute="pool")) %}
+    <table class="staged rb-tbl" data-step="20">
+        <thead><tr><th class="rk">#</th>{% if school_col %}<th>School</th>{% endif %}<th>Season</th>
+            <th class="num" title="The mean rating of the top five">Top-5</th>{{ fk_th(fk_label, "fk-sm") }}
+            <th class="num" title="Place on the all-time board this list is cut from">All-time</th><th>Best runner</th></tr></thead>
+        <tbody>
+        {% for t in rows %}
+        <tr{{ rb_hid(loop.index0, show) }}>
+            <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
+            {% if school_col %}<td>{{ school_cell(t, level) }}</td>{% endif %}
+            <td><a href="{{ school_href(t.school, t.state, pool=level, sport=t.sport) }}&amp;year={{ season_label(t.sport, t.year) }}">{{ season_label(t.sport, t.year) }}</a></td>
+            <td class="num">{{ rv(t.top5_mean, t.hs_top5_mean) }}</td>
+            {{ fk(t.top5_mean, t.pool, t.sport, t.hs_top5_mean, fk_label, "fk-sm") }}
+            <td class="num">{{ ("#" ~ t.rank) if t.rank else " - " }}</td>
+            <td>{% if t.best_person_id %}<a href="/athlete/{{ t.best_person_id }}">{{ t.best_name or "Unknown" }}</a>{% else %} - {% endif %}</td>
+        </tr>
+        {% endfor %}
+        {{ rb_more(rows, 7 if school_col else 6, show) }}
+        </tbody>
+    </table>
+{%- endmacro %}

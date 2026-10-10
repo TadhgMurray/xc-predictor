@@ -1,0 +1,34 @@
+{# records_index.html -- /records: every state's record book, one link
+   each, for readers and crawlers. ★ 2026-10-10. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('records.css') }}">
+{% set meta_title = "All-Time Cross Country and Track Records by State" %}
+{% set meta_description = "Every state's all-time high school cross country and track lists: the best races, the best seasons, the best freshmen to seniors and the best team seasons, on one era-adjusted scale." %}
+{% set meta_path = "/records" %}
+{% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide landing-page records-page rc">
+  <header class="rc-hd"><div class="rc-hgrid rc-hone"><div class="rc-left">
+    <h1>Record books by state</h1>
+    <p class="meta rb-era">{{ era_note }}</p>
+  </div></div></header>
+  {% if otd %}<div class="rb-otd-wrap">{% include "_on_this_day.html" %}</div>{% endif %}
+  <ul class="rb-states">
+    {% for code, name in states %}
+    <li><b>{{ name }}</b>
+      <a href="/records/{{ code|lower }}?sport=xc">Cross country</a>
+      <a href="/records/{{ code|lower }}?sport=tf">Track</a></li>
+    {% endfor %}
+  </ul>
+</main>
+</body>
+</html>

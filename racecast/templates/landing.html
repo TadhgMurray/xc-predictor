@@ -45,6 +45,8 @@
       <div class="rc-meta">
         {% if year %}{{ year }} season · {% endif %}ranked by season speed rating
         · <a href="/about">how it works</a>
+        {# ★ the state's all-time lists (2026-10-10, /records) #}
+        · <a href="{{ records_path or '/records' }}">All-time records</a>
         <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ title ~ ' on Racecast' }}"
               data-share-url="{{ site_origin ~ path }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
@@ -128,6 +130,9 @@
      rated races here{% if year %} in {{ year }}{% endif %} yet.</p>
   {% endif %}
   </section>
+  {# ★ ON THIS DAY in this state (2026-10-10, record_books.onThisDay) #}
+  {% if otd %}<link rel="stylesheet" href="{{ static_v('records.css') }}">
+  <div class="rb-otd-wrap">{% include "_on_this_day.html" %}</div>{% endif %}
 
   </div>
   {% if top_schools %}

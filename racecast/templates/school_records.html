@@ -1,0 +1,63 @@
+{# school_records.html -- /school/<name>/records: the record book on a page
+   of its own, linkable and shareable. The body is _record_book.html, the
+   same include the school page's Record book tab renders.
+   ★ 2026-10-10 (owner: school record books, "linkable /school/<name>/records"). #}
+{% from "_scale.html" import scale_toggle %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+{% set meta_path = "/school/" ~ (school|urlencode) ~ "/records?sport=" ~ sport ~ ("&state=" ~ state if state else "") %}
+{% set meta_title = school ~ ((" (" ~ state ~ ")") if state else "") ~ " " ~ (sport|sport_name) ~ " Record Book" %}
+{% set meta_description = "The all-time " ~ (sport|sport_name|lower) ~ " record book of " ~ school
+   ~ ": the top ten in every event, the best team seasons, the best season in each grade and the most improved runners." %}
+{% set meta_crumbs = [(school, school_href(school, state, sport=sport)), ("Record book", none)] %}
+{% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ sport|sport_name }}</span></div>
+    <div class="rc-kick">{{ crest(school, state) }}<a href="{{ school_href(school, state, sport=sport) }}">{{ school|with_state(state) if state else school }}</a></div>
+    <h1>Record book</h1>
+    <div class="rc-meta">
+      All time
+      <span class="rc-nowrap">· <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">Every PR →</a></span>
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ school ~ ' record book on Racecast' }}"
+            data-share-url="{{ site_origin ~ meta_path }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
+    </div>
+  </div>
+</div></header>
+
+<div class="rc-scope rc-scope-row">
+  <div class="seg">
+    {% for s in ['XC', 'TF'] %}
+      <a class="seg-btn sport--{{ s|lower }}{{ ' is-on' if s == sport }}"
+         href="/school/{{ school|urlencode }}/records?sport={{ s }}{% if state %}&amp;state={{ state }}{% endif %}">{{ s|sport_name }}</a>
+    {% endfor %}
+  </div>
+  {% if has_hs_view %}{{ scale_toggle() }}{% endif %}
+</div>
+
+<div class="rc-w rc-grid rc-grid-one">
+<div class="rc-mainc">
+  {% if record_book %}
+    {% include "_record_book.html" %}
+  {% else %}
+  <p class="meta rb-empty">This school's record book is still being compiled; it is built
+     with the site's nightly data run. Meanwhile, <a href="/school/{{ school|urlencode }}/prs?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">every school PR</a>
+     is on its own page.</p>
+  {% endif %}
+</div>
+</div>
+</main>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('scale-view.js') }}"></script>
+</body>
+</html>

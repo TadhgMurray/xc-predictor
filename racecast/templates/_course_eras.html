@@ -1,0 +1,53 @@
+{# _course_eras.html -- the course page's "Record history" panel: the
+   course record by decade and the record progression (who held it when),
+   for the distance the page shows. `course_eras` is the precomputed ctx
+   (record_books.py, part 'course'); `eq_dist` the page's distance.
+
+   ★ 2026-10-10 (owner: "course records by era"). course_boards keeps each
+     athlete's best and the top 60, which cannot answer "who held the record
+     in 2008" -- a precomputed progression table can, so this is one.
+   ! Times only, never ranked across distances: one course at one distance
+     is already one scale. #}
+<link rel="stylesheet" href="{{ static_v('records.css') }}">
+{% set ce = course_eras_dist %}
+{% if ce %}
+<p class="meta rc-lead">The course record at {{ ce.label }}, decade by decade, and every time it fell.</p>
+<div class="rec-pair">
+{% for g in ["M", "F"] %}{% set gd = ce.genders.get(g) %}
+  {% if gd %}
+  <div>
+    <h4 class="rec-gender">{{ "Boys / men" if g == "M" else "Girls / women" }}</h4>
+    {% if gd.decades %}
+    <table class="rb-tbl rb-dec">
+      <thead><tr><th>Decade</th><th>Time</th><th>Athlete</th><th>School</th><th>Date</th></tr></thead>
+      <tbody>
+      {% for dec, rows in gd.decades %}{% for r in rows %}
+      <tr{% if loop.first %} class="rb-dec-first"{% endif %}>
+        <td>{% if loop.first %}<b>{{ dec }}s</b>{% endif %}</td>
+        <td class="no-break">{{ r.time_seconds|clock }}</td>
+        <td><a href="/athlete/{{ r.person_id }}?r={{ r.result_id }}">{{ r.name or "Unknown" }}</a></td>
+        <td>{{ r.school or " - " }}</td>
+        <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}?r={{ r.result_id }}">{{ r.race_date|mdy }}</a></td>
+      </tr>
+      {% endfor %}{% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if gd.progression %}
+    <h5 class="rb-prog-h">Record progression</h5>
+    <ol class="rb-prog">
+      {% for r in gd.progression|reverse %}
+      <li{% if loop.first %} class="is-now"{% endif %}>
+        <span class="rb-pt">{{ r.time_seconds|clock }}</span>
+        <a href="/athlete/{{ r.person_id }}?r={{ r.result_id }}">{{ r.name or "Unknown" }}</a>{% if r.school %} <span class="rb-ps">{{ r.school }}</span>{% endif %}
+        <span class="rb-pd"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}?r={{ r.result_id }}">{{ r.race_date|mdy }}</a>{% if r.until %} &ndash; stood until {{ r.until|mdy }}{% else %} &ndash; <b>still standing</b>{% endif %}{% if r.by %} · {{ "%.1f"|format(r.by) }}s faster{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+  </div>
+  {% endif %}
+{% endfor %}
+</div>
+<p class="meta">From the rated results on file (a race the model set aside -- a twin, a wrong distance, a time nobody can run -- is never a record).</p>
+{% endif %}

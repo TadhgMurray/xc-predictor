@@ -1,0 +1,85 @@
+{# _record_book.html -- one school's record book (record_books.py, part
+   'school'): the Record book tab on the school page and the body of
+   /school/<name>/records. `record_book` is the precomputed ctx.
+
+   ★ 2026-10-10 (owner: "school record books"). The event lists are
+     school_prs.schoolPrData cut to ten, the PR page's own rules; the rest
+     is athlete_season and team_season through the boards' filters.
+   ! STANDALONE ON PURPOSE: the school page loads this as one more panel,
+     so it brings its own stylesheet and imports. #}
+{% from "_records_macros.html" import season_table, team_table, rb_hid, rb_more, race_link %}
+{% from "_scale.html" import rv, fk_th, fk %}
+<link rel="stylesheet" href="{{ static_v('records.css') }}">
+{% set rb = record_book %}
+{% if rb %}
+<div class="rb-book">
+  <p class="meta rb-era">{{ rb_era_note }}{% if rb.built_at %} Compiled {{ rb.built_at|mdy }}.{% endif %}</p>
+
+  {% if rb.events %}
+  <h3 class="rb-h">All-time top 10 by event</h3>
+  {% for sec in rb.events %}
+  <details class="rb-ev"{% if loop.index <= 2 %} open{% endif %}>
+    <summary>{{ sec.label }}{% if sec.dist_note %} <span class="dist-note">{{ sec.dist_note }}</span>{% endif %}</summary>
+    <div class="rec-pair">
+    {% for g in ["M", "F"] %}{% set rows = sec.tables[g] %}
+      {% if rows %}
+      <div>
+        <h4 class="rec-gender">{{ rb_gender_word(rows, g) }}</h4>
+        {% set fk_label = five_k_label(rows|map(attribute="pool")) %}
+        <table class="rb-tbl rb-ev-tbl">
+          <thead><tr><th class="rk">#</th><th>Athlete</th><th>{{ "Mark" if sec.kind == "field" else "Time" }}</th>
+            {% if sec.kind == "running" %}<th class="num">Rating</th>{{ fk_th(fk_label, "fk-sm") }}{% endif %}<th>Year</th></tr></thead>
+          <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
+            <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a>{% else %}{{ r.name or "Unknown" }}{% endif %}
+              {% if r.grade %}<span class="rb-g">{{ r.grade|grade_label(r.pool) }}</span>{% endif %}</td>
+            <td class="no-break">{% if sec.kind == "running" %}{{ race_link(dict(r, sport=rb.sport), r.time_seconds|clock) }}{% elif sec.kind == "hurdles" %}{{ race_link(dict(r, sport="TF"), r.mark or (r.time_seconds|clock)) }}{% else %}{{ race_link(dict(r, sport="TF"), r.mark or " - ") }}{% endif %}</td>
+            {% if sec.kind == "running" %}<td class="num">{{ rv(r.speed_rating, r.hs_speed_rating) }}</td>{{ fk(r.speed_rating, r.pool, rb.sport, r.hs_speed_rating, fk_label, "fk-sm") }}{% endif %}
+            <td>{{ season_label(rb.sport if sec.kind == "running" else "TF", r.year) if r.year else ((r.race_date or r.date or "")[:4]) }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    {% endfor %}
+    </div>
+  </details>
+  {% endfor %}
+  {% endif %}
+
+  {% if rb.teams %}
+  <h3 class="rb-h">Best team seasons</h3>
+  {% for b in rb.teams %}
+    <h4 class="rec-gender">{{ rb_pool_words(b.pool) }}</h4>
+    {{ team_table(b.rows, b.pool, 10, school_col=False) }}
+  {% endfor %}
+  <p class="meta">Ranked in {{ rb.state or "the national" }} all-time team field: every squad of every season, raced once.</p>
+  {% endif %}
+
+  {% if rb.grades %}
+  <h3 class="rb-h">Best by grade</h3>
+  {% for b in rb.grades %}
+    {% for gk, words, rows in b.grades %}
+    <h4 class="rec-gender">{{ words }} · {{ rb_pool_words(b.pool) }}</h4>
+    {{ season_table(rows, b.pool, 5, school_col=False) }}
+    {% endfor %}
+  {% endfor %}
+  {% endif %}
+
+  {% if rb.improved %}
+  <h3 class="rb-h">Most improved seasons</h3>
+  <p class="meta">The biggest jumps in season rating from one year to the next, same level.</p>
+  {% for b in rb.improved %}
+    <h4 class="rec-gender">{{ rb_pool_words(b.pool) }}</h4>
+    {{ season_table(b.rows, b.pool, 10, school_col=False, gain=True) }}
+  {% endfor %}
+  {% endif %}
+
+  {% if not (rb.events or rb.teams or rb.grades or rb.improved) %}
+  <p class="meta">Nothing on record yet.</p>
+  {% endif %}
+</div>
+{% endif %}

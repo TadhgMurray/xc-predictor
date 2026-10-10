@@ -413,6 +413,9 @@ import conversions as _conv_fk
 app.jinja_env.globals["five_k"] = _conv_fk.fiveK
 app.jinja_env.globals["five_k_label"] = _conv_fk.fiveKLabel
 app.jinja_env.globals["FIVE_K_TITLE"] = _conv_fk.FIVE_K_TITLE
+# ★ THE RECORD BOOKS' TEMPLATE HELPERS (2026-10-10, record_pages.py)
+import record_pages as _record_pages
+_record_pages.registerJinja(app)
 stampCrests = school_logo.stampCrests
 
 
@@ -1046,6 +1049,10 @@ def home():
             #   season board's top ten per level -- one indexed read, never
             #   a race (teams.homeTopTeams)
             teams = _homeTeams(cur, meta)
+            # ★ ON THIS DAY (2026-10-10): one precomputed row, or none
+            import datetime as _dt
+            import record_books as _RB
+            otd = _RB.onThisDay(cur, _dt.date.today())
 
     # HS-equivalent view: each panel row carries its board's pool + sport;
     # season means and career bests take the representative factor.
@@ -1078,7 +1085,7 @@ def home():
             coming_n[m["sport"]] = coming_n.get(m["sport"], 0) + 1
 
     return render_template("home.html",
-                           teams=teams,
+                           teams=teams, otd=otd,
                            hero_5k=hero_5k,
                            hero_example=HERO_EXAMPLE_RATING,
                            coming_n=coming_n,
@@ -6831,6 +6838,11 @@ def school_page(school_name):
                                 state=state, primary=primary_state)
             top    = schoolTopAthletes(cur, school_name, sport, limit=100,
                                        state=state, primary=primary_state)
+            # ★ THE RECORD BOOK TAB (2026-10-10): one primary-key read of
+            #   the precomputed book (build_record_books.py); None until built
+            import record_books as _RB
+            record_book = _RB.loadBook(cur, "school",
+                                       _RB.schoolKey(school_name, state, sport))
 
     # ! SCOPED IN PYTHON, NOT IN SQL. Every row already carries its pool,
     #   so the level filter is a predicate rather than another parameter
@@ -6857,6 +6869,7 @@ def school_page(school_name):
         m.get("hs_best_rating") is not None
         and abs(m["hs_best_rating"] - float(m["best_rating"])) > 0.05
         for m in (meets or []))
+    has_hs_view = _record_pages.stampBook(record_book, stampBoardRows) or has_hs_view
     # ★ THE RANK IS THE ROW ORDER, so order on the number the page shows.
     #   A college school page mixes college_m and college_f, whose HS factors
     #   differ, and read unsorted in the HS-equivalent view (owner,
@@ -6906,7 +6919,7 @@ def school_page(school_name):
                            roster=roster, roster_groups=roster_groups,
                            meets=meets, best=best, top=top,
                            top_groups=top_groups, best_groups=best_groups,
-                           picked=picked)
+                           picked=picked, record_book=record_book)
 
 
 _LEVEL_LABEL = (("hs", "High school"), ("college", "College"),
@@ -7140,6 +7153,76 @@ def school_prs_page(school_name):
     return render_template("school_prs.html", school=school_name,
                            sport=sport, data=data, state_chips=chips,
                            board_year=board_year,
+                           has_hs_view=has_hs_view)
+
+
+# ------------------------------------------------------------------ #
+#  RECORD BOOKS (2026-10-10) -- record_books.py / build_record_books.py
+# ------------------------------------------------------------------ #
+
+# ★ EVERY PAGE HERE IS ONE PRIMARY-KEY READ of record_books, precomputed by
+#   build_record_books.py (pipeline step 13h, in the background). A book not
+#   built yet says so; nothing here scans results per view.
+
+@app.route("/records")
+def records_index():
+    import datetime as _dt
+    import landing as L
+    import record_books as RB
+    otd = None
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                otd = RB.onThisDay(cur, _dt.date.today())
+    except psycopg2.Error:
+        otd = None
+    return render_template(
+        "records_index.html", otd=otd, era_note=RB.ERA_NOTE,
+        states=[(c, L.STATE_NAMES[c]) for c in L.US_STATES if c in L.STATE_NAMES])
+
+
+@app.route("/records/<state>")
+def records_state(state):
+    """/records/<state>?sport=xc|tf&level=hs|ms|college&gender=boys|girls"""
+    import landing as L
+    st = (state or "").upper()
+    if st not in L.STATE_NAMES:
+        abort(404)
+    if state != st.lower():
+        # one spelling per page: /records/ca, never /records/CA
+        qs = request.query_string.decode()
+        return redirect(f"/records/{st.lower()}" + (f"?{qs}" if qs else ""), code=301)
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            ctx = _record_pages.statePage(cur, st, request.args, stampBoardRows, L)
+    return render_template("records.html", **ctx)
+
+
+@app.route("/school/<path:school_name>/records")
+def school_records_page(school_name):
+    """The school record book on its own page (the Record book tab's body)."""
+    import record_books as RB
+    from school_identity import stateChips
+    from panels import isTeamName
+    if not isTeamName(school_name):
+        abort(404)
+    sport = (request.args.get("sport") or "XC").strip().upper()
+    if sport not in ("XC", "TF"):
+        sport = "XC"
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # the school page's own identity rule, so the tab and this page
+            # resolve the same school (school_prs_page does the same)
+            state = (request.args.get("state") or "").strip().upper() or None
+            chips, primary_state = stateChips(cur, school_name, include=state)
+            if state and not any(c["state"] == state for c in chips):
+                state = None
+            if chips and not state:
+                state = primary_state
+            book = RB.loadBook(cur, "school", RB.schoolKey(school_name, state, sport))
+    has_hs_view = _record_pages.stampBook(book, stampBoardRows)
+    return render_template("school_records.html", school=school_name,
+                           state=state, sport=sport, record_book=book,
                            has_hs_view=has_hs_view)
 
 
@@ -7826,6 +7909,16 @@ def course(course_name):
                 abort(404)          # no such course (D10, buildCourseCtx)
             history = _courseHistory(cur, course_name, ctx)
             _stampCourseSchoolStates(cur, ctx)
+            # ★ RECORDS BY ERA (2026-10-10): the precomputed progression and
+            #   decade bests (build_record_books.py), one primary-key read;
+            #   the page's own distance, else nothing
+            import record_books as _RB
+            eras = _RB.loadBook(cur, "course", _RB.courseKey(course_name))
+            want = ctx.get("sel_dist") or ctx.get("primary_dist")
+            # ! a copy: ctx may be the in-process cache's own dict
+            ctx = dict(ctx, course_eras_dist=next(
+                (d for d in (eras or {}).get("dists") or []
+                 if d.get("dist") == want), None))
 
     return render_template("course.html", course_history=history, **ctx)
 
@@ -11948,7 +12041,17 @@ def rankings_landing(sport, pool, state=None):
             except psycopg2.Error:
                 conn.rollback()
                 rows = []
+            # ★ THE STATE'S HISTORY (2026-10-10): its record book's link and
+            #   the "On this day" card, one precomputed row
+            otd = None
+            if state:
+                import datetime as _dt
+                import record_books as _RB
+                otd = _RB.onThisDay(cur, _dt.date.today(), state)
     pool_key, pool_words = L.POOLS[pool]
+    _lv, _, _g = pool_key.partition("_")
+    records_path = (_record_pages.recordsPath(state, sport, _lv, _g)
+                    if state else "/records")
     # HS-equivalent view, the board's own (owner, 2026-10-09). One pool per
     # page, so an HS page stamps x1.0 and shows no toggle.
     has_hs_view = stampBoardRows(rows, rating_keys=("rating",),
@@ -11974,7 +12077,7 @@ def rankings_landing(sport, pool, state=None):
         board["year"] = str(L.boardYearFor(L.SPORTS[sport], year))
     from urllib.parse import urlencode
     return render_template(
-        "landing.html",
+        "landing.html", otd=otd, records_path=records_path,
         title=L.landingTitle(sport, pool, state, year),
         description=L.landingDescription(sport, pool, state, year, len(rows)),
         path=L.landingPath(sport, pool, state),

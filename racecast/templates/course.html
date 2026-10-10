@@ -117,6 +117,8 @@
       <a class="seg-btn" href="#best" data-tab="best">Best ratings</a>
       {% endif %}
       {% if has_hist %}<a class="seg-btn" href="#history" data-tab="history">Year by year</a>{% endif %}
+      {# ★ the record by decade and its progression (2026-10-10, _course_eras.html) #}
+      {% if course_eras_dist %}<a class="seg-btn" href="#eras" data-tab="eras">Record history</a>{% endif %}
       <a class="seg-btn" href="#meets" data-tab="meets">Meets{% if meets %}<span class="n">{{ meets|length }}</span>{% endif %}</a>
       {% if has_track %}<a class="seg-btn" href="#track" data-tab="track">On the track</a>{% endif %}
     </nav>
@@ -325,6 +327,12 @@
     {% if has_hist %}
     <section class="rc-panel" id="history" data-panel="history">
     {% include "_course_history.html" %}
+    </section>
+    {% endif %}
+
+    {% if course_eras_dist %}
+    <section class="rc-panel" id="eras" data-panel="eras">
+    {% include "_course_eras.html" %}
     </section>
     {% endif %}
 
