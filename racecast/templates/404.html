@@ -23,8 +23,8 @@
     {# the favicon rides in _meta.html on every other page; this head does
        not include that partial, so the tag is here by hand (issue 149) #}
     <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide rc nf-rc">

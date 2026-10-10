@@ -20,7 +20,7 @@
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
 {% if turnstile and mode == "form" %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
-<script src="{{ static_v('topbar-search.js') }}"></script>
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
 <body>
 {% include "_topbar.html" %}

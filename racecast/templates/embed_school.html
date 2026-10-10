@@ -48,7 +48,7 @@
   {{ crest(school, state, px=64, size=32) }}
   <div>
     <div class="nm"><a href="{{ page_url }}">{{ school }}</a>{% if state %} <span class="sub">{{ state }}</span>{% endif %}</div>
-    <div class="sub">{{ "Cross country" if sport == "XC" else "Track & field" }}{% if season %} · {{ season }} season{% endif %}</div>
+    <div class="sub">{{ sport|sport_name }}{% if season %} · {{ season }} season{% endif %}</div>
   </div>
 </div>
 

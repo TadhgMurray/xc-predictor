@@ -25,10 +25,12 @@
     for (let y = senior; y <= senior + 3; y++) {
       const b = document.createElement("button");
       b.type = "button"; b.className = "rc-chip" + (state.grad.has(String(y)) ? " is-on" : "");
+      b.setAttribute("aria-pressed", String(state.grad.has(String(y))));
       b.dataset.year = String(y); b.textContent = String(y);
       b.addEventListener("click", () => {
         if (state.grad.has(b.dataset.year)) state.grad.delete(b.dataset.year); else state.grad.add(b.dataset.year);
         b.classList.toggle("is-on");
+        b.setAttribute("aria-pressed", String(b.classList.contains("is-on")));
         offset = 0; load();
       });
       box.appendChild(b);
@@ -37,7 +39,10 @@
   }
 
   function paintSeg() {
-    document.querySelectorAll(".rc-seg-btn").forEach((b) => b.classList.toggle("is-on", state[b.dataset.set] === b.dataset.value));
+    document.querySelectorAll(".rc-seg-btn").forEach((b) => {
+      b.classList.toggle("is-on", state[b.dataset.set] === b.dataset.value);
+      b.setAttribute("aria-pressed", String(state[b.dataset.set] === b.dataset.value));
+    });
   }
 
   function query() {
@@ -69,11 +74,39 @@
     offset = parseInt(p.get("offset") || "0", 10) || 0;
   }
 
-  function status(msg, isError) {
+  /* `retry`: a server or network failure offers the same request again
+     (sweep 2026-10-10, B4); a bad filter does not, retrying it is pointless. */
+  function status(msg, isError, retry) {
     const el = $("r-status");
     el.textContent = msg || "";
     el.className = "predict-status" + (msg ? " show" : "") + (isError ? " error" : "");
+    if (retry) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "rc-retry";
+      b.textContent = "Retry";
+      b.addEventListener("click", retry);
+      el.append(" ", b);
+    }
   }
+
+/* ★ A SERVER ERROR IS NOT JSON (sweep 2026-10-10, B4). A 502 from the proxy
+       is an HTML page, and res.json() on it threw "Unexpected token '<' ...
+       is not valid JSON" -- which is what the reader was shown. This reads the
+       body as JSON only when it is JSON, and otherwise throws a sentence a
+       reader can use (err.friendly) instead. */
+  async function readJson(res) {
+    const type = (res.headers.get("content-type") || "").toLowerCase();
+    if (!type.includes("json")) {
+      const err = new Error(res.ok
+        ? "The server sent an answer this page could not read."
+        : `The server had a problem (error ${res.status}).`);
+      err.friendly = true;
+      throw err;
+    }
+    return res.json();
+  }
+
 
   function gainCell(g) {
     if (g == null) return `<td class="num"> - </td>`;
@@ -179,12 +212,13 @@
     status("Searching…", false);
     try {
       const res = await fetch("/api/recruiting?" + q.toString());
-      const d = await res.json();
-      if (!res.ok || d.error) { status(d.error || res.statusText, true); $("r-out").innerHTML = ""; $("r-pager").hidden = true; return; }
+      const d = await readJson(res);
+      if (!res.ok || d.error) { status(d.error || res.statusText || `The server had a problem (error ${res.status}).`, true, res.status >= 500 ? load : null); $("r-out").innerHTML = ""; $("r-pager").hidden = true; return; }
       status("", false);
       render(d);
     } catch (err) {
-      status("Could not reach the server: " + err.message, true);
+      status(err.friendly ? err.message : "Could not reach the server. Check your connection and try again.", true, load);
+      $("r-out").innerHTML = ""; $("r-pager").hidden = true;
     }
   }
 

@@ -29,8 +29,8 @@
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide meets-page rc">
@@ -46,14 +46,14 @@
        page's own table. #}
   <header class="rc-hd"><div class="rc-hgrid rc-hone">
     <div class="rc-left">
-      <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country</span></div>
+      <div class="rc-sport"><span class="sport-tag sport-tag--xc">{{ "XC"|sport_name }}</span></div>
       <h1>Meets at {{ course }}</h1>
       <div class="rc-meta">Every meet held at
          <a href="/course/{{ course|urlencode }}">{{ course }}</a>,
          newest first · {{ "{:,}".format(n_meets) }}
          meet{{ "" if n_meets == 1 else "s" }}
-         · <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
-              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+         <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
     </div>
   </div></header>
@@ -110,12 +110,12 @@
        page" was not obvious). Two views of /meets, ?view=upcoming. #}
   <header class="rc-hd"><div class="rc-hgrid rc-hone">
     <div class="rc-left">
-      <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ "Cross country" if sport == 'XC' else "Track" }}</span></div>
+      <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ sport|sport_name }}</span></div>
       <h1>{{ "Meets" if filtering else ("Upcoming meets" if upcoming else "Recent meets") }}</h1>
       {% if upcoming %}
       <div class="rc-meta">Next seven days · {{ ns.n_coming }} meet{{ "" if ns.n_coming == 1 else "s" }}
-         · <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
-              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+         <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {# ! WHAT THE PREDICTION ACTUALLY DOES (2026-10-06): the field is the
            teams from the meet's last edition, with this season's squads
@@ -132,14 +132,14 @@
          · <strong>Showing the newest {{ max_meets }}</strong> - narrow by season
          to see further back
          {% endif %}
-         · <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
-              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+         <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {% else %}
       <div class="rc-meta">Meets from the last year with real fields
          ({{ min_results }}+ results), newest first · {{ "{:,}".format(ns.n_recent) }} meets
-         · <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
-              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+         <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {% endif %}
     </div>
@@ -302,7 +302,7 @@
           {# The sport keeps whatever filter is applied -- switching sport is
              not a reason to lose the school you came here to look at. #}
           <a class="seg-btn{{ ' is-on' if s == sport }}"
-             href="/meets?sport={{ s }}{% if upcoming %}&amp;view=upcoming{% endif %}{% if filters %}{% if filters.state %}&amp;state={{ filters.state }}{% endif %}{% if filters.school %}&amp;school={{ filters.school|urlencode }}{% endif %}{% if filters.q %}&amp;q={{ filters.q|urlencode }}{% endif %}{% if filters.year_label is not none %}&amp;year={{ filters.year_label }}{% endif %}{% endif %}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
+             href="/meets?sport={{ s }}{% if upcoming %}&amp;view=upcoming{% endif %}{% if filters %}{% if filters.state %}&amp;state={{ filters.state }}{% endif %}{% if filters.school %}&amp;school={{ filters.school|urlencode }}{% endif %}{% if filters.q %}&amp;q={{ filters.q|urlencode }}{% endif %}{% if filters.year_label is not none %}&amp;year={{ filters.year_label }}{% endif %}{% endif %}">{{ s|sport_name }}</a>
         {% endfor %}
       </div>
       </div>
@@ -401,12 +401,12 @@
       {% if not upcoming %}
       {% if not months %}
         {% if filtering %}
-      <p class="meta">No {{ sport }} meet matches {{ filter_text }}. The school
+      <p class="meta">No {{ sport|sport_name|lower }} meet matches {{ filter_text }}. The school
          name has to match how the results spell it - the school page's own
          title is the exact form.</p>
         {% else %}
       <p class="meta">Nothing here yet. The list is rebuilt with the
-         homepage boards; if those are up to date, no {{ sport }} meet in the
+         homepage boards; if those are up to date, no {{ sport|sport_name|lower }} meet in the
          window cleared the results floor.</p>
         {% endif %}
       {% endif %}

@@ -18,7 +18,7 @@
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
-<script src="{{ static_v('topbar-search.js') }}"></script>
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
 <body>
 {% include "_topbar.html" %}
@@ -97,7 +97,7 @@
       <input type="hidden" name="kind" value="athlete">
       <input type="hidden" name="person_id" value="">
       <div class="r-combo">
-        <input type="text" class="acct-q" data-search-kind="athlete" placeholder="Type your name and pick yourself" autocomplete="off" size="32">
+        <input type="text" class="acct-q" data-search-kind="athlete" aria-label="Your name: type it and pick yourself" placeholder="Type your name and pick yourself" autocomplete="off" size="32">
         <div class="r-combo-list" hidden></div>
       </div>
       <button type="submit" class="go" disabled>Link</button>
@@ -121,10 +121,10 @@
       <input type="hidden" name="school" value="">
       <input type="hidden" name="state" value="">
       <div class="r-combo">
-        <input type="text" class="acct-q" data-search-kind="school" placeholder="Type the school and pick it" autocomplete="off" size="32">
+        <input type="text" class="acct-q" data-search-kind="school" aria-label="Your school: type it and pick it" placeholder="Type the school and pick it" autocomplete="off" size="32">
         <div class="r-combo-list" hidden></div>
       </div>
-      <select name="level">
+      <select name="level" aria-label="Level">
         {% for k, word in levels %}<option value="{{ k }}">{{ word }}</option>{% endfor %}
       </select>
       <button type="submit" class="go" disabled>Add team</button>
@@ -145,7 +145,7 @@
       <input type="hidden" name="kind" value="coach_self">
       <input type="hidden" name="person_id" value="">
       <div class="r-combo">
-        <input type="text" class="acct-q" data-search-kind="athlete" placeholder="Type your name and pick yourself" autocomplete="off" size="32">
+        <input type="text" class="acct-q" data-search-kind="athlete" aria-label="Your name: type it and pick yourself" placeholder="Type your name and pick yourself" autocomplete="off" size="32">
         <div class="r-combo-list" hidden></div>
       </div>
       <button type="submit" class="go" disabled>Add</button>

@@ -13,8 +13,8 @@
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('athlete-charts.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -44,8 +44,8 @@
       · {{ meetings|length }} meeting{{ "" if meetings|length == 1 else "s" }}{% if ties %} · {{ ties }} dead heat{{ "" if ties == 1 else "s" }}{% endif %}
       {%- if meetings %} · last met {{ meetings[0].date|mdy }}{% endif %}
       {%- if meetings and avg_margin_label and avg_margin > 0 %} · avg margin {{ avg_margin_label }} to {{ card_a.short }}{% elif meetings and avg_margin_label and avg_margin < 0 %} · avg margin {{ avg_margin_label }} to {{ card_b.short }}{% endif %}
-      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ card_a.name ~ ' vs ' ~ card_b.name ~ ' on Racecast' }}"
-            data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ card_a.name ~ ' vs ' ~ card_b.name ~ ' on Racecast' }}"
+            data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
     </div>
     <div class="rc-champs">
       <div><span class="k">{{ card_a.season_label ~ " rating" if card_a.season_rating is not none else "Athlete" }}</span>
@@ -157,7 +157,7 @@
         <tbody>
             {% for s in seasons %}
             <tr>
-                <td>{{ s.year }} {{ s.sport }}</td>
+                <td>{{ s.year }} {{ s.sport|sport_short }}</td>
                 <td{{ ' class="win"'|safe if s.edge == "a" }}>
                     {% if s.a %}{{ rv(s.a.rating, s.a.hs_rating) }} ({{ s.a.races }}){% else %} - {% endif %}</td>
                 <td{{ ' class="win"'|safe if s.edge == "b" }}>

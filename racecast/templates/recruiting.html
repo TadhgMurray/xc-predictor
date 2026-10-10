@@ -16,8 +16,8 @@
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -39,8 +39,8 @@
         Every college's recruits on the high-school scale{{ rating_i() }}
         {% if since_year %} · classes of {{ since_year }} on{% endif %}
         · <a href="/coaches/recruits">Coaches: search athletes</a>
-        · <button type="button" class="share-btn rc-share-link" data-share-title="College recruiting on Racecast"
-              data-share-url="{{ site_origin ~ '/recruiting' }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="College recruiting on Racecast"
+              data-share-url="{{ site_origin ~ '/recruiting' }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       <p class="rc-story">What each college's recruits actually ran. Find yourself or enter a time,
          and every school says where you would sit among the runners it took.</p>
@@ -57,7 +57,7 @@
       <div class="rc-you-col">
         <div class="rc-you-title">Find your page</div>
         <div class="r-combo">
-          <input id="r-athlete-q" type="text" autocomplete="off" placeholder="Type your name and pick yourself" class="rc-input rc-input-lg">
+          <input id="r-athlete-q" type="text" aria-label="Your name: type it and pick yourself" autocomplete="off" placeholder="Type your name and pick yourself" class="rc-input rc-input-lg">
           <input id="r-athlete" type="hidden" value="{{ prefill_athlete or '' }}">
           <div class="r-combo-list" id="r-athlete-list" hidden></div>
         </div>
@@ -67,11 +67,11 @@
       <div class="rc-you-col">
         <div class="rc-you-title">Enter a time</div>
         <div class="rc-you-row">
-          <input id="r-time" type="text" inputmode="decimal" placeholder="16:32" class="rc-input rc-time">
-          <select id="r-event" class="rc-input">
+          <input id="r-time" type="text" aria-label="Time" inputmode="decimal" placeholder="16:32" class="rc-input rc-time">
+          <select id="r-event" class="rc-input" aria-label="Event">
             {% for key, ev in events.items() %}<option value="{{ key }}">{{ ev[2] }}</option>{% endfor %}
           </select>
-          <select id="r-tgender" class="rc-input">
+          <select id="r-tgender" class="rc-input" aria-label="Boy or girl">
             <option value="m">boy</option>
             <option value="f">girl</option>
           </select>

@@ -23,8 +23,8 @@
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -42,8 +42,8 @@
         For cross country and track coaches
         · <a href="/coaches/recruits">Find recruits</a>
         · <a href="/recruiting">Athletes: where you'd fit</a>
-        · <button type="button" class="share-btn rc-share-link" data-share-title="Coaching tools on Racecast"
-              data-share-url="{{ site_origin ~ '/coaches' }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="Coaching tools on Racecast"
+              data-share-url="{{ site_origin ~ '/coaches' }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       <p class="rc-story">Every high school and college season in the country, on one scale that already
          accounts for the course, the conditions and the era. Nothing here needs an account &mdash; sign in
@@ -61,6 +61,10 @@
   </div>
 
   <section class="rc-panel coach-tools" id="tools" data-panel="tools">
+    {# the tab names the panel on screen; this names it in the outline, so
+       the cards' h3 sit under an h2 rather than straight under the h1
+       (sweep 2026-10-10, B21) #}
+    <h2 class="sr-only">Tools</h2>
     <div class="coach-grid">
       <a class="coach-card" href="/coaches/recruits">
         <h3>Find recruits</h3>
@@ -110,6 +114,7 @@
   {# ! NAMED AS NOT BUILT, AND NOT LINKED. A card that looks live and goes
        nowhere is worse than no card. These are plain text on purpose. #}
   <section class="rc-panel coach-next" id="next" data-panel="next">
+    <h2 class="sr-only">Being built</h2>
     <ul class="coach-next-list">
       <li><b>Recruiting projections.</b> What a high schooler is likely to run in college, as a range
           rather than a number, and who is furthest below what their times suggest.</li>

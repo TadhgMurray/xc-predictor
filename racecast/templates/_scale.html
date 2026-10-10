@@ -36,8 +36,8 @@
         {# ! HS IS THE DEFAULT (issue #50), so it starts active here too --
              scale-view.js syncs these on load, but a control that renders
              with the wrong one lit flickers on every page load. #}
-        <button type="button" data-scale="pool">Own pool</button>
-        <button type="button" data-scale="hs" class="is-active">HS-equivalent</button>
+        <button type="button" data-scale="pool" aria-pressed="false">Own pool</button>
+        <button type="button" data-scale="hs" class="is-active" aria-pressed="true">HS-equivalent</button>
         <span class="flag scale-note" tabindex="0"
               data-title="Rating scale"
               data-blurb="Each pool has its own rating scale, which means speed ratings are not comparable across pools. The HS-equivalent view (the default) rates everyone like a high schooler, which makes ratings comparable across age. Own pool shows each rating on its own pool's scale, where 100 is that pool's average -- the scale the model fitted, and the one to read when comparing an athlete against their own peers. They are still not one-to-one comparable across gender (although they are close in percentiles)."

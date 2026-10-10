@@ -29,8 +29,8 @@
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide rc">
@@ -47,10 +47,10 @@
       {% if header.location_id %} · <a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">Venue</a>{% endif %}
       {# ★ SHARE ON THE META LINE, as the race page (owner, 2026-10-09: the
          top-right block "looks out of place") #}
-      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ (header.meet_name|with_year(meet_date)) ~ ' on Racecast' }}"
-            data-share-url="{{ site_origin ~ '/meet/tf/' ~ header.meet_id ~ ('?' ~ alt_q if alt_q else '') }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
-      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ (header.meet_name|with_year(meet_date)) ~ ' best marks on Racecast' }}"
-            data-share-url="{{ site_origin ~ '/meet/tf/' ~ header.meet_id ~ '?card=marks' ~ ('&' ~ alt_q if alt_q else '') }}" title="Share the best marks; the preview is their card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share best marks</span></button>
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ (header.meet_name|with_year(meet_date)) ~ ' on Racecast' }}"
+            data-share-url="{{ site_origin ~ '/meet/tf/' ~ header.meet_id ~ ('?' ~ alt_q if alt_q else '') }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ (header.meet_name|with_year(meet_date)) ~ ' best marks on Racecast' }}"
+            data-share-url="{{ site_origin ~ '/meet/tf/' ~ header.meet_id ~ '?card=marks' ~ ('&' ~ alt_q if alt_q else '') }}" title="Share the best marks; the preview is their card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share best marks</span></button></span>
     </div>
     {% if events %}
     <div class="rc-facts">

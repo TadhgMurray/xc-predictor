@@ -16,8 +16,8 @@
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -35,8 +35,8 @@
         Every high-school season in the country on one scale{{ rating_i() }}
         {% if season_years.get('XC') %} · {{ season_years.get('XC') }} XC season{% endif %}
         · <a href="/recruiting">Athletes: where you'd fit</a>
-        · <button type="button" class="share-btn rc-share-link" data-share-title="A recruiting search on Racecast"
-              data-share-url="{{ site_origin ~ '/coaches/recruits' }}" title="Share this search"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="A recruiting search on Racecast"
+              data-share-url="{{ site_origin ~ '/coaches/recruits' }}" title="Share this search"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       <p class="rc-story">Pick the classes you recruit, set a floor, and sort by rating or by how fast they are improving. The search is the link: send it to an assistant.</p>
     </div>
@@ -52,7 +52,7 @@
         <option value="">Any state</option>
         {% for st in states %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
       </select>
-      <label class="rc-group">Rating <input id="r-min" type="text" inputmode="decimal" class="rc-input rc-input-sm" placeholder="from"> to <input id="r-max" type="text" inputmode="decimal" class="rc-input rc-input-sm" placeholder="any"></label>
+      <label class="rc-group">Rating <input id="r-min" type="text" aria-label="Rating from" inputmode="decimal" class="rc-input rc-input-sm" placeholder="from"> to <input id="r-max" type="text" aria-label="Rating up to" inputmode="decimal" class="rc-input rc-input-sm" placeholder="any"></label>
       <label class="rc-group">Gain at least <input id="r-gain" type="text" inputmode="decimal" class="rc-input rc-input-sm" placeholder="+0" title="This season's rating minus the same athlete's rating a year earlier"></label>
       <label class="rc-group">Races at least <input id="r-races" type="text" inputmode="numeric" class="rc-input rc-input-sm" placeholder="{{ default_floor }}"></label>
       <input id="r-school" type="text" class="rc-input" placeholder="School (exact name)" size="22" title="Exact school names, comma separated">

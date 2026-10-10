@@ -107,6 +107,61 @@
         {label: '8000m (XC)', m: 8000}, {label: '10,000m', m: 10000}
     ];
 
+    /* ★ EVERY DROPDOWN HERE WORKS FROM THE KEYBOARD (sweep 2026-10-10, B1).
+         They were mouse-only: arrows did nothing, Enter did nothing. Same
+         keys as the topbar search (topbar-search.js): Up/Down walk the rows
+         and wrap, Enter picks the highlighted row, Escape shuts the list.
+         The highlight resets whenever the list is repainted -- an old index
+         would point at a different row. */
+    var dropSeq = 0;
+    function dropKeys(input, drop, pick) {
+        if (!input || !drop) return;
+        var active = -1;
+        if (!drop.id) drop.id = 'drop-' + (++dropSeq);
+        drop.setAttribute('role', 'listbox');
+        input.setAttribute('role', 'combobox');
+        input.setAttribute('aria-autocomplete', 'list');
+        input.setAttribute('aria-controls', drop.id);
+        input.setAttribute('aria-expanded', 'false');
+        function items() { return drop.querySelectorAll('.drop-item'); }
+        new MutationObserver(function () {
+            active = -1;
+            var its = items();
+            for (var k = 0; k < its.length; k++) {
+                its[k].id = drop.id + '-' + k;
+                its[k].setAttribute('role', 'option');
+            }
+            input.setAttribute('aria-expanded', its.length ? 'true' : 'false');
+            input.removeAttribute('aria-activedescendant');
+        }).observe(drop, { childList: true });
+        function setActive(i) {
+            var its = items();
+            if (!its.length) { active = -1; return; }
+            active = ((i % its.length) + its.length) % its.length;
+            for (var k = 0; k < its.length; k++) {
+                its[k].classList.toggle('is-active', k === active);
+                its[k].setAttribute('aria-selected', k === active ? 'true' : 'false');
+            }
+            input.setAttribute('aria-activedescendant', its[active].id);
+            its[active].scrollIntoView({ block: 'nearest' });
+        }
+        input.addEventListener('keydown', function (e) {
+            var its = items();
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                if (!its.length) return;
+                e.preventDefault();         // keep the caret where it is
+                setActive(active + (e.key === 'ArrowDown' ? 1 : -1));
+            } else if (e.key === 'Enter') {
+                if (active >= 0 && its[active]) {
+                    e.preventDefault();
+                    pick(its[active]);
+                }
+            } else if (e.key === 'Escape') {
+                if (its.length) { e.preventDefault(); drop.innerHTML = ''; }
+            }
+        });
+    }
+
     // localTypeahead: the same shape as typeahead() below but filtering a
     // client-side list instead of fetching. Written once here and used for
     // both distance fields rather than duplicated per input.
@@ -118,9 +173,9 @@
                        String(e.m).indexOf(q) >= 0;
             });
             drop.innerHTML = hits.map(function (e) {
-                return '<div class="drop-item" data-m="' + e.m +
+                return '<div class="drop-item" data-m="' + esc(e.m) +
                        '" data-label="' + esc(e.label) + '">' + esc(e.label) +
-                       ' <span class="drop-meta">' + e.m + ' m</span></div>';
+                       ' <span class="drop-meta">' + esc(e.m) + ' m</span></div>';
             }).join('');
         }
         input.addEventListener('input', function () {
@@ -134,13 +189,17 @@
         input.addEventListener('blur', function () {
             setTimeout(function () { drop.innerHTML = ''; }, 150);
         });
+        function choose(item) {
+            onPick(item);
+            drop.innerHTML = '';
+        }
         drop.addEventListener('mousedown', function (e) {
             var item = e.target.closest('.drop-item');
             if (!item) return;
             e.preventDefault();                  // keep focus off the blur race
-            onPick(item);
-            drop.innerHTML = '';
+            choose(item);
         });
+        dropKeys(input, drop, choose);
     }
 
     localTypeahead(document.getElementById('in-distance'),
@@ -221,6 +280,7 @@
         document.querySelectorAll('.unit-btn[data-target="' +
                 b.getAttribute('data-target') + '"]').forEach(function (o) {
             o.classList.toggle('is-on', o === b);
+            o.setAttribute('aria-pressed', o === b ? 'true' : 'false');
         });
     });
 
@@ -279,7 +339,7 @@
             // input course: one row per COURSE (not per distance) -- we only
             // need its difficulty; the distance comes from the time field.
             return '<div class="drop-item" data-name="' + esc(c.name) +
-                   '" data-diff="' + c.difficulty + '">' +
+                   '" data-diff="' + esc(c.difficulty) + '">' +
                    esc(c.name) + ' <span class="drop-meta">diff ' +
                    (c.difficulty != null ? c.difficulty.toFixed(3) : '?') +
                    '</span></div>';
@@ -581,9 +641,14 @@
         }
     }
 
+    /* ★ THE ONE ESCAPE IN THIS FILE, safe in text AND in attribute values
+         (sweep 2026-10-10, D11). There used to be a second `function esc` at
+         the bottom of this IIFE -- the textContent -> innerHTML trick, which
+         leaves quotes alone -- and being declared later it was the one every
+         data-name="..." / data-label="..." here actually called. */
     function esc(t) {
-        return String(t == null ? '' : t).replace(/[&<>"]/g, function (c) {
-            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c];
+        return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) {
+            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
         });
     }
 
@@ -619,9 +684,9 @@
                    before the stale-table bug. */
                 var dd = (d.difficulty != null ? d.difficulty : c.difficulty);
                 return '<div class="drop-item" data-name="' + esc(c.name) +
-                       '" data-diff="' + dd +
-                       '" data-cid="' + (c.canonical_id == null ? '' : c.canonical_id) +
-                       '" data-dist="' + d.distance + '">' +
+                       '" data-diff="' + esc(dd) +
+                       '" data-cid="' + esc(c.canonical_id) +
+                       '" data-dist="' + esc(d.distance) + '">' +
                        esc(c.name) +
                        ' <span class="drop-meta">' + (d.distance/1000).toFixed(2) +
                        'k · ' + d.n + ' races · diff ' +
@@ -687,15 +752,25 @@
             }, 150);
         });
 
-        drop.addEventListener('click', function (e) {
-            var item = e.target.closest('.drop-item');
-            if (!item) return;
+        function choose(item) {
             seq++;                       // invalidate any in-flight fetch
             closed = true;
             clearTimeout(timer);
             onPick(item);
             drop.innerHTML = '';
+        }
+        /* ⚠ MOUSEDOWN, NOT CLICK (sweep 2026-10-10, B2). A click lands on
+             mouseup; blur fires on mousedown and empties the list 150ms
+             later, so a press held longer than that released over nothing
+             and the pick was lost. preventDefault keeps the focus (and so
+             the list) where it is -- the same as localTypeahead above. */
+        drop.addEventListener('mousedown', function (e) {
+            var item = e.target.closest('.drop-item');
+            if (!item) return;
+            e.preventDefault();
+            choose(item);
         });
+        dropKeys(input, drop, choose);
     }
 
     var chosenAthlete = { person_id: null };
@@ -707,7 +782,7 @@
         function (a) {
             // /search/api returns {label, sublabel, link, ...}; person_id is in link
             var pid = (a.link || '').split('/').pop();
-            return '<div class="drop-item" data-pid="' + pid + '" data-name="' +
+            return '<div class="drop-item" data-pid="' + esc(pid) + '" data-name="' +
                    esc(a.label) + '">' + esc(a.label) +
                    ' <span class="drop-meta">' + esc(a.sublabel || '') + '</span></div>';
         },
@@ -797,30 +872,34 @@
             return e.label.toLowerCase().indexOf(q) >= 0 || String(e.m).indexOf(q) >= 0;
         });
         distDrop.innerHTML = hits.map(function (e) {
-            return '<div class="drop-item" data-m="' + e.m + '" data-label="' +
-                   e.label + '">' + e.label + '</div>';
+            return '<div class="drop-item" data-m="' + esc(e.m) + '" data-label="' +
+                   esc(e.label) + '">' + esc(e.label) + '</div>';
         }).join('');
     });
 
-    distDrop.addEventListener('click', function (e) {
-        var item = e.target.closest('.drop-item');
-        if (!item) return;
+    function addDistance(item) {
         var tr = document.createElement('tr');
         tr.setAttribute('data-distance', item.getAttribute('data-m'));
-        tr.innerHTML = '<td>' + item.getAttribute('data-label') +
+        tr.innerHTML = '<td>' + esc(item.getAttribute('data-label')) +
                        '</td><td class="cell-time"> - </td>';
         document.getElementById('tf-body').appendChild(tr);
         distDrop.innerHTML = '';
         distInput.value = '';
         convert();
+    }
+    distDrop.addEventListener('mousedown', function (e) {
+        var item = e.target.closest('.drop-item');
+        if (!item) return;
+        e.preventDefault();
+        addDistance(item);
     });
+    dropKeys(distInput, distDrop, addDistance);
 
     sportSel.addEventListener('change', function () {
         if (typeSel.value === 'result' && chosenAthlete.person_id)
             loadRaces(chosenAthlete.person_id);
     });
 
-    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
     btn.addEventListener('click', convert);
 })();

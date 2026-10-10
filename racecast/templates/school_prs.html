@@ -24,8 +24,8 @@
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -98,13 +98,13 @@
 {% set first = data.sections[0] if data.sections else none %}
 <header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div class="rc-left">
-    <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ "Cross country" if sport == 'XC' else "Track & field" }}</span></div>
+    <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ sport|sport_name }}</span></div>
     <div class="rc-kick">{{ crest(school, data.state) }}<a href="{{ school_href(school, data.state, sport=sport) }}">{{ school|with_state(data.state) if data.state else school }}</a></div>
     <h1>School PRs</h1>
     <div class="rc-meta">
       Best mark per athlete{% if data.year %}, {{ data.year }} season{% endif %}{% if data.course %}, at <a href="/course/{{ data.course|urlencode }}">{{ data.course }}</a>{% endif %}
-      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ school ~ ' school PRs on Racecast' }}"
-            data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ school ~ ' school PRs on Racecast' }}"
+            data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
     </div>
     {# ★ EACH GENDER'S BEST PERFORMANCE, NOT THE FIRST EVENT'S #1 (owner,
        2026-10-09: "how does it choose this part?" -- it was the 55m): the
@@ -146,7 +146,7 @@
       <nav class="seg rc-tabs">
         {% for s_ in ['XC', 'TF'] %}
           <a class="seg-btn{{ ' is-on' if s_ == sport }}"
-             href="/school/{{ school|urlencode }}/prs?sport={{ s_ }}{% if data.state %}&amp;state={{ data.state }}{% endif %}">{{ "Cross Country" if s_ == 'XC' else "Track" }}</a>
+             href="/school/{{ school|urlencode }}/prs?sport={{ s_ }}{% if data.state %}&amp;state={{ data.state }}{% endif %}">{{ s_|sport_name }}</a>
         {% endfor %}
       </nav>
       {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}

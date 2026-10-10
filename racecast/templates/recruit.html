@@ -15,8 +15,8 @@
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide recruit-page rc">
@@ -36,8 +36,8 @@
         {% if p.grad_year %} · Class of {{ p.grad_year }}{% endif %}
         · <a href="/athlete/{{ p.person_id }}">Athlete page</a>
         · <a href="/compare?a={{ p.person_id }}">Compare</a>
-        · <button type="button" class="share-btn rc-share-link" data-share-title="{{ p.name ~ ' recruiting profile on Racecast' }}"
-              data-share-url="{{ site_origin ~ '/recruit/' ~ p.person_id }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ p.name ~ ' recruiting profile on Racecast' }}"
+              data-share-url="{{ site_origin ~ '/recruit/' ~ p.person_id }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {# the latest season in each sport, and its gain #}
       <div class="rc-champs">
@@ -72,7 +72,7 @@
     <tbody>
     {% for s in p.seasons|reverse %}
       <tr>
-        <td>{{ s.label }} {{ "XC" if s.sport == "XC" else "Track" }}</td>
+        <td>{{ s.label }} {{ s.sport|sport_short }}</td>
         <td>{{ s.grade_label or " - " }}</td>
         <td class="num">{{ "%.1f"|format(s.mean_rating) if s.mean_rating is not none else " - " }}</td>
         <td class="num {{ 'gain-up' if s.gain is not none and s.gain > 0 else ('gain-down' if s.gain is not none and s.gain < 0 else '') }}">{{ ("%+.1f"|format(s.gain)) if s.gain is not none else " - " }}</td>

@@ -16,8 +16,8 @@
 {% set meta_image = site_origin ~ "/card/board/" ~ sport ~ "/" ~ pool ~ ("/" ~ state|lower if state else "") ~ ".png" %}
 {% set meta_image_alt = title ~ ": the top ten" %}
 {% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -45,8 +45,8 @@
       <div class="rc-meta">
         {% if year %}{{ year }} season · {% endif %}ranked by season speed rating
         · <a href="/about">how it works</a>
-        · <button type="button" class="share-btn rc-share-link" data-share-title="{{ title ~ ' on Racecast' }}"
-              data-share-url="{{ site_origin ~ path }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ path }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {% if rows %}{% set r0 = rows[0] %}
       <div class="rc-champs">
@@ -72,9 +72,9 @@
       <span class="lf-label">Sport</span>
       <div class="seg">
         {% if sport == "xc" %}
-        <a class="seg-btn is-on" href="{{ path }}">Cross Country</a><a class="seg-btn" href="{{ other_sport_href }}">Track &amp; Field</a>
+        <a class="seg-btn is-on" href="{{ path }}">{{ "XC"|sport_name }}</a><a class="seg-btn" href="{{ other_sport_href }}">{{ "TF"|sport_name }}</a>
         {% else %}
-        <a class="seg-btn" href="{{ other_sport_href }}">Cross Country</a><a class="seg-btn is-on" href="{{ path }}">Track &amp; Field</a>
+        <a class="seg-btn" href="{{ other_sport_href }}">{{ "XC"|sport_name }}</a><a class="seg-btn is-on" href="{{ path }}">{{ "TF"|sport_name }}</a>
         {% endif %}
       </div>
     </div>

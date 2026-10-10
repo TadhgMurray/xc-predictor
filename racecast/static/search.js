@@ -11,18 +11,50 @@ document.addEventListener('DOMContentLoaded', function () {
     var btn = document.getElementById('load-more');
     if (!btn) return;
 
+    /* ★ ONE PAGE AT A TIME, AND SAY WHEN IT FAILS (sweep 2026-10-10, B19).
+         The scroll observer and a click could both fire before the first
+         answer landed, and both asked for the same offset -- the page was
+         appended twice. A failure was silent: the button just stayed. Now a
+         request in flight blocks another, a row already on the page is not
+         added again, and a failure says so and offers the same page again. */
+    var busy = false;
+    var status = document.getElementById('load-more-status');
+    function say(msg) { if (status) status.textContent = msg; }
+
     btn.addEventListener('click', function () {
+        if (busy) return;
+        busy = true;
+        btn.disabled = true;
+        btn.textContent = 'Loading\u2026';
+        say('');
         var q = btn.dataset.q, kind = btn.dataset.kind,
             year = btn.dataset.year, offset = btn.dataset.offset;
         var url = '/search?format=json&q=' + encodeURIComponent(q) +
                   '&kind=' + encodeURIComponent(kind) + '&offset=' + offset +
                   (year ? '&year=' + encodeURIComponent(year) : '');
 
-        fetch(url).then(function (r) { return r.json(); }).then(function (rows) {
+        fetch(url).then(function (r) {
+            var type = r.headers.get('content-type') || '';
+            if (!r.ok || type.indexOf('json') < 0) throw new Error(r.status);
+            return r.json();
+        }).then(function (rows) {
             var body = document.getElementById('results-body');
-            rows.forEach(function (r) { body.appendChild(buildRow(r, kind)); });
-            btn.dataset.offset = parseInt(btn.dataset.offset) + rows.length;
+            var seen = {};
+            body.querySelectorAll('.result-row').forEach(function (tr) { seen[tr.dataset.href] = 1; });
+            rows.forEach(function (r) {
+                if (r.link && seen[r.link]) return;
+                seen[r.link] = 1;
+                body.appendChild(buildRow(r, kind));
+            });
+            btn.dataset.offset = parseInt(btn.dataset.offset, 10) + rows.length;
+            btn.textContent = 'Load more';
             if (rows.length < 30) btn.style.display = 'none';
+        }).catch(function () {
+            btn.textContent = 'Retry';
+            say('More results could not load. Try again in a moment.');
+        }).then(function () {
+            busy = false;
+            btn.disabled = false;
         });
     });
 
@@ -58,14 +90,21 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         return tr;
     }
-    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
 
     // Infinite scroll: auto-click Load More when it scrolls into view.
     // IntersectionObserver fires once when the button enters the viewport,
     // instead of on every scroll pixel (which would need throttling).
     if (btn && 'IntersectionObserver' in window) {
         var observer = new IntersectionObserver(function (entries) {
-            if (entries[0].isIntersecting && btn.style.display !== 'none') {
+            // ! not after a failure: a Retry is the reader's to press, or a
+            //   button left in view would ask again on every scroll
+            if (entries[0].isIntersecting && btn.style.display !== 'none' &&
+                !busy && btn.textContent !== 'Retry') {
                 btn.click();          // reuse the existing fetch-and-append logic
             }
         }, { rootMargin: '200px' });  // fire 200px BEFORE it's visible, feels seamless

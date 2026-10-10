@@ -11,8 +11,8 @@
 {% set meta_path = "/schools" ~ ("/" ~ state|lower if state else "") %}
 {% set meta_crumbs = [("Schools", "/schools")] + ([(state_name, none)] if state else []) %}
 {% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -37,8 +37,8 @@
       <div class="rc-meta">
         {% if state %}{% if ns.n_col %}{{ ns.n_col }} college{{ "" if ns.n_col == 1 else "s" }} · {% endif %}{{ "{:,}".format(ns.n_oth) }} high school{{ "" if ns.n_oth == 1 else "s" }}, middle schools and clubs
         {% else %}{{ counts|length }} states · {{ "{:,}".format(ns.n_all) }} teams{% endif %}
-        · <button type="button" class="share-btn rc-share-link" data-share-title="{{ title ~ ' on Racecast' }}"
-              data-share-url="{{ site_origin ~ meta_path }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ title ~ ' on Racecast' }}"
+              data-share-url="{{ site_origin ~ meta_path }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {% if state %}
       <p class="rc-story">Every team with three or more athletes in the results, biggest programme first.

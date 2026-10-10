@@ -461,8 +461,10 @@ function writeState() {
    (hand-picked athletes, hand-added runners). */
 function showWhen(when) {
   state.when = when;
-  document.querySelectorAll(".card[data-when]").forEach((b) =>
-    b.classList.toggle("is-on", b.dataset.when === when));
+  document.querySelectorAll(".card[data-when]").forEach((b) => {
+    b.classList.toggle("is-on", b.dataset.when === when);
+    b.setAttribute("aria-pressed", String(b.dataset.when === when));
+  });
   document.querySelectorAll(".when-pane").forEach((pn) =>
     pn.classList.toggle("hidden", pn.dataset.pane !== when));
   // as it ran is the field that ran: no lineup size to choose
@@ -486,8 +488,10 @@ function syncPerTeam() {
 
 function showWho(who) {
   state.who = who;
-  document.querySelectorAll(".card[data-who]").forEach((b) =>
-    b.classList.toggle("is-on", b.dataset.who === who));
+  document.querySelectorAll(".card[data-who]").forEach((b) => {
+    b.classList.toggle("is-on", b.dataset.who === who);
+    b.setAttribute("aria-pressed", String(b.dataset.who === who));
+  });
   document.querySelectorAll(".who-pane").forEach((pn) =>
     pn.classList.toggle("hidden", pn.dataset.pane !== who));
 }
@@ -702,6 +706,18 @@ Object.defineProperties(state, {
                   set: (v) => { editsFor(state.meet && state.meet.div).view = v; } },
 });
 
+
+/* ★ ONE DATE SPELLING (sweep 2026-10-10, B5): "2025-09-13" -> "Sep 13, 2025",
+     the server's |mdy filter (app._mdy) and athlete-charts.js fmtDate. Built
+     from the string, not a Date, so a UTC shift cannot move a race a day;
+     anything that is not an ISO date comes back as it was. */
+function fmtDate(iso) {
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso == null ? "" : iso));
+  if (!m || +m[2] < 1 || +m[2] > 12) return iso == null ? "" : String(iso);
+  return `${MONTHS[+m[2] - 1]} ${+m[3]}, ${m[1]}`;
+}
 
 /*
  * Escape before interpolating into innerHTML.
@@ -963,11 +979,11 @@ function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
   });
   input.addEventListener("focus", () => { closed = false; });
 
-  // mousedown, not click: blur fires first and would hide the list.
-  box.addEventListener("mousedown", (e) => {
-    const opt = e.target.closest(".pick-opt");
-    if (!opt) return;
-    e.preventDefault();
+  /* ★ ONE PICK, THREE WAYS IN (sweep 2026-10-10, B1): a mouse press, Enter
+       on a highlighted row while typing, or Enter/Space on a row reached by
+       Tab. It used to be the mouse only -- the rows are buttons, but a
+       button's keyboard "click" was never listened for. */
+  function choose(opt) {
     onPick(opt.dataset);
     /* ★ CLEARING IS RIGHT FOR AN ACTION, WRONG FOR A SELECTION. Picking a
        meet, a school or an athlete DOES something and the box goes back to
@@ -978,13 +994,73 @@ function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
     closed = true;                  // and no late response may re-open it
     clearTimeout(timer);
     box.classList.add("hidden");
+    active = -1;
+  }
+
+  // mousedown, not click: blur fires first and would hide the list.
+  box.addEventListener("mousedown", (e) => {
+    const opt = e.target.closest(".pick-opt");
+    if (!opt) return;
+    e.preventDefault();
+    choose(opt);
+  });
+  /* ! KEYBOARD CLICKS ONLY. A mouse press already picked on mousedown; the
+       click that follows it has detail >= 1 and must not pick again (for an
+       athlete or a school, twice is Add then Remove). Enter/Space on a
+       focused button fires a click with detail 0. */
+  box.addEventListener("click", (e) => {
+    const opt = e.target.closest(".pick-opt");
+    if (!opt || e.detail !== 0) return;
+    e.preventDefault();
+    choose(opt);
+    input.focus();
+  });
+
+  /* Arrow keys walk the rows from the box, as in the topbar search
+     (topbar-search.js); the highlight resets when the list is repainted. */
+  let active = -1;
+  const optsOf = () => box.querySelectorAll(".pick-opt");
+  new MutationObserver(() => { active = -1; }).observe(box, { childList: true });
+  function setActive(i) {
+    const all = optsOf();
+    if (!all.length) { active = -1; return; }
+    active = ((i % all.length) + all.length) % all.length;
+    all.forEach((o, k) => o.classList.toggle("is-active", k === active));
+    all[active].scrollIntoView({ block: "nearest" });
+  }
+  input.addEventListener("keydown", (e) => {
+    const open = !box.classList.contains("hidden");
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (!open || !optsOf().length) return;
+      e.preventDefault();             // keep the caret where it is
+      setActive(active + (e.key === "ArrowDown" ? 1 : -1));
+    } else if (e.key === "Enter") {
+      const opt = optsOf()[active];
+      if (open && opt) { e.preventDefault(); choose(opt); }
+    } else if (e.key === "Escape" && open) {
+      closed = true;
+      clearTimeout(timer);
+      box.classList.add("hidden");
+    }
   });
 
   /* ! CLOSED AT ONCE, HIDDEN A MOMENT LATER. The flag has to be set
        immediately so an in-flight response is dropped; the visual hide keeps
        its delay because a pick is a mousedown and the click that follows it
-       still has to land. */
-  input.addEventListener("blur", () => {
+       still has to land.
+     ★ BUT NOT WHEN FOCUS MOVES INTO THE LIST: Tab from the box lands on the
+       first row, and hiding the list then would take the row with it. The
+       list shuts when focus leaves both. */
+  const stays = (e) => e.relatedTarget
+    && (e.relatedTarget === input || box.contains(e.relatedTarget));
+  input.addEventListener("blur", (e) => {
+    if (stays(e)) return;
+    closed = true;
+    clearTimeout(timer);
+    setTimeout(() => box.classList.add("hidden"), 150);
+  });
+  box.addEventListener("focusout", (e) => {
+    if (stays(e)) return;
     closed = true;
     clearTimeout(timer);
     setTimeout(() => box.classList.add("hidden"), 150);
@@ -1254,8 +1330,8 @@ function renderChosenMeet(bare) {
        ${state.meet.year ? `<span class="mc-year">${esc(state.meet.year)}</span>` : ""}
      </div>
      <div class="mc-sub">
-       <span id="mc-date">${state.meet.date ? `${state.meet.upcoming ? "" : "ran "}${esc(state.meet.date)} \u00b7 ` : ""}</span>
-       ${esc(state.meet.sport === "XC" ? "Cross Country" : "Track & Field")}
+       <span id="mc-date">${state.meet.date ? `${state.meet.upcoming ? "" : "ran "}${esc(fmtDate(state.meet.date))} \u00b7 ` : ""}</span>
+       ${esc(state.meet.sport === "XC" ? "Cross country" : "Track & field")}
        <span id="mc-course"></span><span id="mc-race"></span>
        <p class="hint" id="mc-basis" hidden></p>
      </div>
@@ -1342,8 +1418,8 @@ async function loadRaces() {
       /* ! A MEET NOT YET RUN DID NOT "run" (2026-10-06): its date is the
          one it is posted for */
       state.meet.upcoming = !!data.upcoming;
-      if (md) md.textContent = data.upcoming ? `${data.date} \u00b7 `
-                                             : `ran ${data.date} \u00b7 `;
+      if (md) md.textContent = data.upcoming ? `${fmtDate(data.date)} \u00b7 `
+                                             : `ran ${fmtDate(data.date)} \u00b7 `;
     }
     /* ★ NAME THE COURSE RATHER THAN DESCRIBING IT (owner, 2026-09-01).
        "the meet's own course" tells you nothing you did not already know;
@@ -1399,7 +1475,7 @@ async function loadRaces() {
     /* A picked chip wears its race's colour, so the chips and the blocks
        below them agree at a glance about which races exist. */
     const chip = (label, div, on, col) =>
-      `<button class="race-chip${on ? " is-on" : ""}" data-div="${div}"` +
+      `<button class="race-chip${on ? " is-on" : ""}" aria-pressed="${on ? "true" : "false"}" data-div="${div}"` +
       `${col ? ` style="--race:${col}"` : ""}>${esc(label)}</button>`;
     const quick = quickSets(races);
     /* A quick-select is LIT when everything it names is already picked, the
@@ -1411,6 +1487,7 @@ async function loadRaces() {
            races.length > 0 && state.divs.length === races.length) +
       quick.map((qs, i) =>
         `<button class="race-chip quick${setOn(qs.ids) ? " is-on" : ""}" ` +
+        `aria-pressed="${setOn(qs.ids) ? "true" : "false"}" ` +
         `data-set="${i}">${esc(qs.label)}</button>`).join("") +
       races.map((r) => {
         /* ★ A TRACK RACE NAMES ITS EVENT FIRST (2026-10-10): "1600m ·
@@ -1539,6 +1616,8 @@ async function loadRaces() {
                            state.divs.length > 1 && d === state.meet.div);
       });
       showRaceHead();          // the race open for editing, by name (track)
+      box.querySelectorAll(".race-chip").forEach((x) =>
+        x.setAttribute("aria-pressed", String(x.classList.contains("is-on"))));
     }
 
     box.querySelectorAll(".race-chip").forEach((b) => {
@@ -1650,7 +1729,7 @@ function defaultDate() {
   $("t-date").value = aligned || localISO(now);
 
   $("asran-hint").textContent = state.meet.date
-    ? `Predicts the ${state.meet.date} running of this meet, with the field `
+    ? `Predicts the ${fmtDate(state.meet.date)} running of this meet, with the field `
       + `that actually raced it. The real result is already known, so the `
       + `prediction is scored against it.`
     : `Predicts this meet as it ran, with the field that actually raced it.`;
@@ -1711,7 +1790,7 @@ function showBasis(blocks) {
   if (!b) { el.textContent = ""; return; }
   el.textContent = b.kind === "last_edition"
     ? `No entries posted yet \u2014 the field is the teams from the last `
-      + `running of this meet (${b.date}), with this season's squads. Edit it below.`
+      + `running of this meet (${fmtDate(b.date)}), with this season's squads. Edit it below.`
     : `No entries posted yet and no earlier edition to borrow teams from `
       + `\u2014 add teams below.`;
 }
@@ -3380,7 +3459,7 @@ async function loadWeather(div) {
                      : `<span class="wx-normal">this venue has no coordinates, so no weather</span>`);
     const fc = d.forecast_text
       ? `<span class="wx-forecast" title="Open-Meteo, fetched ${esc((d.forecast && d.forecast.fetched_at) || "")}">forecast for ${esc(d.date || "")}${when}: ${esc(d.forecast_text)}</span>`
-      : (d.date ? `<span class="wx-forecast">no forecast yet for ${esc(d.date)} (forecasts reach 16 days out)</span>` : "");
+      : (d.date ? `<span class="wx-forecast">no forecast yet for ${esc(fmtDate(d.date))} (forecasts reach 16 days out)</span>` : "");
     el.innerHTML = `<div class="wx-line">${normal}${fc}</div>`;
   } catch (err) {
     el.innerHTML = "";
@@ -4041,8 +4120,10 @@ document.querySelectorAll(".card[data-when]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const changed = state.when !== btn.dataset.when;
     state.when = btn.dataset.when;
-    document.querySelectorAll(".card[data-when]").forEach((b) =>
-      b.classList.toggle("is-on", b === btn));
+    document.querySelectorAll(".card[data-when]").forEach((b) => {
+      b.classList.toggle("is-on", b === btn);
+      b.setAttribute("aria-pressed", String(b === btn));
+    });
     document.querySelectorAll(".when-pane").forEach((p) =>
       p.classList.toggle("hidden", p.dataset.pane !== state.when));
     // The WHEN decides WHO: "as it ran" is the original field, "this
@@ -4066,8 +4147,10 @@ document.querySelectorAll(".card[data-when]").forEach((btn) => {
 document.querySelectorAll(".card[data-who]").forEach((btn) => {
   btn.addEventListener("click", () => {
     state.who = btn.dataset.who;
-    document.querySelectorAll(".card[data-who]").forEach((b) =>
-      b.classList.toggle("is-on", b === btn));
+    document.querySelectorAll(".card[data-who]").forEach((b) => {
+      b.classList.toggle("is-on", b === btn);
+      b.setAttribute("aria-pressed", String(b === btn));
+    });
     document.querySelectorAll(".who-pane").forEach((p) =>
       p.classList.toggle("hidden", p.dataset.pane !== state.who));
     clearOutput();

@@ -55,6 +55,7 @@ const sb = eval(`(() => {
   ${grab("fetchField", "async function ")}
   ${grab("squadCtx")}
   ${grab("squadParams")}
+  ${grab("fmtDate")}
   ${grab("showBasis")}
   const _divGender = new Map();
   return { state, parseMeetLink, buildQuery, fetchField, squadCtx,
@@ -96,7 +97,7 @@ const sb = eval(`(() => {
       kind: "last_edition", meet_id: 400, date: "2025-10-11",
       meet_name: "2025 Lakeside Invitational" } };
     sb.showBasis(["5001"]);
-    ok(!basisEl.hidden && /last running of this meet \(2025-10-11\)/.test(
+    ok(!basisEl.hidden && /last running of this meet \(Oct 11, 2025\)/.test(
          basisEl.textContent) && /Edit it below/.test(basisEl.textContent),
        "a borrowed field names the edition's date");
     sb.editsFor("5001").field = { teams: [], basis: { kind: "none" } };

@@ -61,14 +61,42 @@
       }, 200);
     });
 
-    sug.addEventListener("mousedown", function (e) {
-      var row = e.target.closest(".h2h-sug-row");
-      if (!row) return;
+    function choose(row) {
       input.value = row.dataset.name;
       input.dataset.pid = row.dataset.pid;
       closed = true;
       clearTimeout(timer);
       sug.classList.add("hidden");
+      active = -1;
+    }
+    sug.addEventListener("mousedown", function (e) {
+      var row = e.target.closest(".h2h-sug-row");
+      if (!row) return;
+      e.preventDefault();            // keep focus: no blur race on a slow press
+      choose(row);
+    });
+
+    /* ★ AND FROM THE KEYBOARD (sweep 2026-10-10, B1): Up/Down walk the
+         rows, Enter picks, Escape shuts -- the topbar search's keys. */
+    var active = -1;
+    function rows() { return sug.querySelectorAll(".h2h-sug-row"); }
+    new MutationObserver(function () { active = -1; }).observe(sug, { childList: true });
+    input.addEventListener("keydown", function (e) {
+      var all = rows();
+      var open = !sug.classList.contains("hidden") && all.length;
+      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && open) {
+        e.preventDefault();
+        active = active + (e.key === "ArrowDown" ? 1 : -1);
+        active = ((active % all.length) + all.length) % all.length;
+        for (var k = 0; k < all.length; k++) all[k].classList.toggle("is-active", k === active);
+        all[active].scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Enter" && open && all[active]) {
+        e.preventDefault();
+        choose(all[active]);
+      } else if (e.key === "Escape" && open) {
+        closed = true;
+        sug.classList.add("hidden");
+      }
     });
 
     input.addEventListener("blur", function () {

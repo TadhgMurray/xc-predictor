@@ -21,14 +21,14 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = header.meet_name ~ " - Compiled" %}
+    {% set meta_title = (header.meet_name|with_year(group.date)) ~ " - Compiled" %}
     {% set meta_description = "Every division merged into one field - who "
        "beats whom when the races at this meet are compiled together." %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide rc">
@@ -36,10 +36,16 @@
 <header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div class="rc-left">
     <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country · compiled</span></div>
-    <div class="rc-kick"><a href="/meet/xc/{{ header.meet_id }}">{{ header.meet_name }}</a></div>
+    <div class="rc-kick"><a href="/meet/xc/{{ header.meet_id }}{{ ('?alt=' ~ request.args.get('alt')) if request.args.get('alt') }}">{{ header.meet_name|with_year(group.date) }}</a></div>
     <h1>{{ g_label }} {{ group.distance }}m, every division</h1>
+    {# ★ THE DATE AND SHARE, AS THE TRACK COMPILED PAGE HAS THEM (sweep
+       2026-10-10, B20): the meta line had neither. #}
     <div class="rc-meta">
-      {% if header.course_name %}<a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a> · {% endif %}{{ group.distance }}&nbsp;m{% if header.state %} · {{ header.state }}{% endif %}
+      {% if header.course_name %}<a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a> · {% endif %}{{ group.distance }}&nbsp;m
+      · {{ group.date|mdy if group.date else " - " }}{% if header.state %} · {{ header.state }}{% endif %}
+      · Compiled results
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ (header.meet_name|with_year(group.date)) ~ ' compiled results on Racecast' }}"
+            data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
     </div>
     <div class="rc-facts">
       <span>Runners <b>{{ group.results|length }}</b></span>
@@ -156,6 +162,7 @@
 {% endif %}
 </div>
 </main>
+<script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('race-page.js') }}" data-light=""></script>
 </body>

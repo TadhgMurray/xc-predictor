@@ -195,6 +195,39 @@ function syncMinRaces() {
 }
 
 
+/* ★ ONE DATE SPELLING (sweep 2026-10-10, B5): "2025-09-13" -> "Sep 13, 2025",
+     the server's |mdy filter (app._mdy) and athlete-charts.js fmtDate. Built
+     from the string, not a Date, so a UTC shift cannot move a race a day;
+     anything that is not an ISO date comes back as it was. */
+function fmtDate(iso) {
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso == null ? "" : iso));
+  if (!m || +m[2] < 1 || +m[2] > 12) return iso == null ? "" : String(iso);
+  return `${MONTHS[+m[2] - 1]} ${+m[3]}, ${m[1]}`;
+}
+
+/* the short sport names (app.SPORT_SHORT): a table cell says "Track", never
+   a bare "TF" (sweep 2026-10-10, B6) */
+const SPORT_SHORT = { XC: "XC", TF: "Track" };
+
+/* ★ A SERVER ERROR IS NOT JSON (sweep 2026-10-10, B4). A 502 from the proxy
+     is an HTML page, and res.json() on it threw "Unexpected token '<' ...
+     is not valid JSON" -- which is what the reader was shown. This reads the
+     body as JSON only when it is JSON, and otherwise throws a sentence a
+     reader can use (err.friendly) instead. */
+async function readJson(res) {
+  const type = (res.headers.get("content-type") || "").toLowerCase();
+  if (!type.includes("json")) {
+    const err = new Error(res.ok
+      ? "The server sent an answer this page could not read."
+      : `The server had a problem (error ${res.status}).`);
+    err.friendly = true;
+    throw err;
+  }
+  return res.json();
+}
+
 /*
  * Escape before interpolating into innerHTML.
  *
@@ -1125,8 +1158,12 @@ function renderHead(board) {
     const dir = active ? (effectiveDir(board, c.key) === "asc" ? "asc" : "desc") : "";
     const aria = active ? ` aria-sort="${dir === "asc" ? "ascending" : "descending"}"` : "";
     const arrow = active ? (dir === "asc" ? " \u2191" : " \u2193") : "";
+    /* ★ A BUTTON INSIDE THE HEADER (sweep 2026-10-10, B11): a bare <th>
+         with a click handler could not be reached by Tab or pressed with
+         Enter. The th keeps aria-sort; the button is the control. */
     return `<th class="sortable${active ? " is-sorted" : ""}"` +
-           ` data-key="${c.key}"${aria}>${c.label}${arrow}</th>`;
+           ` data-key="${c.key}"${aria}><button type="button" class="th-sort">` +
+           `${c.label}${arrow}</button></th>`;
   }).join("") + "</tr></thead>";
 }
 
@@ -1190,7 +1227,10 @@ function effectiveDir(board, key) {
 /*
  * Click a header: sort by it, or flip it if it is already the sort.
  */
+let _refocusSort = null;
 function onHeaderClick(key) {
+  const f = document.activeElement;
+  _refocusSort = f && f.classList && f.classList.contains("th-sort") ? key : null;
   state.sortTouched = true;
   if (state.sort === key) {
     state.dir = effectiveDir(state.board, key) === "asc" ? "desc" : "asc";
@@ -1225,7 +1265,7 @@ function renderAbility(rows) {
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
       ${schoolCell(r.school, r.school_state || r.state, r.crest)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
-      <td>${esc(r.sport)}</td>
+      <td>${esc(SPORT_SHORT[r.sport] || r.sport)}</td>
       <td>${academicLabel(r.year)}</td>
       <td class="rating"${clockAttr(r)}><a href="/athlete/${r.person_id}">${fmtRating(rval(r, "rating"))}</a></td>
       <td>${fmtRating(rval(r, "best_rating"))}</td>
@@ -1259,8 +1299,8 @@ function renderPerformance(rows) {
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
       ${schoolCell(r.school, r.school_state || r.state, r.crest)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
-      <td>${esc(r.sport)}</td>
-      ${maybeLink(href, esc(r.race_date))}
+      <td>${esc(SPORT_SHORT[r.sport] || r.sport)}</td>
+      ${maybeLink(href, esc(fmtDate(r.race_date)))}
       ${maybeLink(href, fmtRating(rval(r, "rating")), "rating", clockAttr(r))}
     </tr>`;
   }).join("");
@@ -1302,7 +1342,7 @@ function renderPr(rows) {
       ${schoolCell(r.school, r.school_state || r.state, r.crest)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(POOL_LABEL[r.pool] || r.pool)}</td>
-      <td>${esc(r.race_date)}</td>
+      <td>${esc(fmtDate(r.race_date))}</td>
       ${r.mark !== null && r.mark !== undefined
           ? maybeLink(href, fmtMark(r.mark), "time mark")
           : maybeLink(href, fmtTime(r.time_seconds),
@@ -1571,7 +1611,7 @@ function renderTeamsCourse(rows) {
       <td class="rating">${fmtRating(rval(r, "top5_mean"))}</td>
       <td>${r.distance}m</td>
       <td><a href="/race/xc/${r.meet_id}/${r.div_id}">${esc(r.meet_name || ("Meet " + r.meet_id))}</a></td>
-      <td>${r.date}</td>
+      <td>${r.date ? esc(fmtDate(r.date)) : " - "}</td>
     </tr>`).join("");
 
   return `<table class="rk">${renderHead("teamscourse")}
@@ -1670,6 +1710,13 @@ function paintBoard(rows, data) {
   $("results").innerHTML = renderBoard(rows, data);
   leadColumnUp($("results"));
   syncBoardHeader(rows, data);
+  // a sort pressed from the keyboard keeps its place: the table was redrawn
+  // under the focused header button, which would drop focus to the page
+  if (_refocusSort) {
+    const btn = $("results").querySelector(`th[data-key="${_refocusSort}"] .th-sort`);
+    _refocusSort = null;
+    if (btn) btn.focus();
+  }
 }
 
 /* ★ THE HEADER FOLLOWS THE BOARD (owner, 2026-10-10: the race page's shape).
@@ -1885,15 +1932,18 @@ async function load() {
                    : state.board === "courses" ? "/api/courses"
                    : "/api/rankings";
     const res = await fetch(endpoint + "?" + query.toString());
-    const data = await res.json();
+    const data = await readJson(res);
     // the board changed while this was in flight: the queued load draws it
     if (state.board !== boardAsked) return;
 
     // A 400 carries {"error": "..."}. SHOW IT. An empty table on a bad filter
-    // is indistinguishable from an empty table on a valid one.
+    // is indistinguishable from an empty table on a valid one. A 5xx is the
+    // server's trouble, not the filter's, so it offers a retry.
     if (!res.ok) {
       $("results").innerHTML =
-        `<div class="status error">${esc(data.error || res.statusText)}</div>`;
+        `<div class="status error">${esc(data.error || res.statusText || `The server had a problem (error ${res.status}).`)}` +
+        (res.status >= 500 ? ' <button type="button" class="rc-retry">Retry</button>' : "") +
+        `</div>`;
       $("pager").classList.add("hidden");
       $("csv-wrap").classList.add("hidden");   // under the pager now, so hide it with it
       return;
@@ -1991,8 +2041,11 @@ async function load() {
     }
 
   } catch (err) {
+    if (state.board !== boardAsked) return;   // the queued load draws it
     $("results").innerHTML =
-      `<div class="status error">Request failed: ${esc(err.message)}</div>`;
+      `<div class="status error">${esc(err.friendly ? err.message
+        : "Rankings could not load. Check your connection and try again.")}` +
+      ` <button type="button" class="rc-retry">Retry</button></div>`;
     $("pager").classList.add("hidden");
     $("csv-wrap").classList.add("hidden");
   } finally {
@@ -2171,6 +2224,7 @@ document.querySelectorAll(".tab:not(.tab-link)").forEach((tab) => {
    wholesale on every load, so per-header listeners would have to be rebound
    each time and any missed rebind is a header that silently stops working. */
 $("results").addEventListener("click", (e) => {
+  if (e.target.closest(".rc-retry")) { load(); return; }
   const th = e.target.closest("th.sortable");
   if (th) onHeaderClick(th.dataset.key);
 });

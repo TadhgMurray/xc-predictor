@@ -137,6 +137,14 @@ main.rc .rec-pair td.rt, main.rc .rec-pair td .rv { font-weight: 600; }
      the page */
   main.rc .rc-tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
   main.rc .rc-tabs .seg-btn { white-space: nowrap; flex: 0 0 auto; }
+  /* more tabs past an edge: that edge fades (race-page.js fadeEdges) */
+  main.rc .rc-tabs.rc-fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+                                       mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+  main.rc .rc-tabs.rc-fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px);
+                                       mask-image: linear-gradient(to right, transparent, #000 32px); }
+  main.rc .rc-tabs.rc-fade-l.rc-fade-r {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+            mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
   main.rc .rec-pair > div, main.rc .rc-panel table.meets-table { overflow-x: auto; }
   main.rc .rec-pair table { min-width: 0; }
 }
@@ -231,6 +239,16 @@ main.rc .rc-hone .rc-story { max-width: 46rem; }
 main.rc .rc-share-link { display: inline-flex; align-items: center; gap: .3rem; background: none; border: 0;
   padding: 0; font: inherit; font-weight: 600; font-size: inherit; color: var(--link); cursor: pointer; white-space: nowrap; }
 main.rc .rc-share-link:hover span { text-decoration: underline; }
+/* "· Share" never splits across a line break (sweep 2026-10-10, B15) */
+.rc-nowrap { white-space: nowrap; }
+/* ★ PHONE TAP TARGETS, 24px AT LEAST (sweep 2026-10-10, B15). The meta
+     line's links measured 13-19px tall. Inline padding grows what a finger
+     can hit without moving the line; Share is a flex box and just gets the
+     height. */
+@media (max-width: 700px) {
+  main.rc .rc-meta a { padding-block: .4rem; }
+  main.rc .rc-share-link { min-height: 24px; }
+}
 /* the TF meet page (owner, 2026-10-09): each event's winner, and the team
    card's rows are links, not team-lighting buttons */
 main.rc .rc-win .mk { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: .25rem; white-space: nowrap; }

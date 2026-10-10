@@ -60,11 +60,11 @@
                    visible link is always the correct one -- there is no
                    state to read back at click time.
 
-                   The <a> is a SIBLING of the <h4>, not a child: nesting it
+                   The <a> is a SIBLING of the <h3>, not a child: nesting it
                    would fold "View all" into the heading's accessible name
                    ("High School (M) View all"). #}
                 <div class="pool-head">
-                    <h4 class="pool-name">{{ labels.get(pool, pool) }}</h4>
+                    <h3 class="pool-name">{{ labels.get(pool, pool) }}</h3>
                     <a class="pool-more"
                        href="{{ rankings_url(board_type, sport, pool, link_year) }}"
                        aria-label="View full rankings for {{ labels.get(pool, pool) }}">
@@ -161,8 +161,8 @@
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     {# the snapshot is in the race page's shape (owner, 2026-10-10) #}
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 {# ================================================================= #}
 {#  ONE pool -> label map. The chips and the per-pool headings both   #}
 {#  read it, so they cannot drift apart -- previously the chips had   #}
@@ -269,8 +269,8 @@
     <div class="rc-left">
       {# the kicker follows the sport toggle (race.css shows the matching one) #}
       <div class="rc-sport">
-        <span class="sport-tag sport-tag--xc hm-sp" data-sport="XC">Cross country</span>
-        <span class="sport-tag sport-tag--tf hm-sp" data-sport="TF">Track &amp; field</span>
+        <span class="sport-tag sport-tag--xc hm-sp" data-sport="XC">{{ "XC"|sport_name }}</span>
+        <span class="sport-tag sport-tag--tf hm-sp" data-sport="TF">{{ "TF"|sport_name }}</span>
       </div>
       <h1>Rankings snapshot</h1>
       {# ! THE "XC - 2026 SEASON" HEADING IS GONE (owner, 2026-10-10): the
@@ -280,8 +280,8 @@
         {% for sport in ['XC', 'TF'] %}{% for scope in ['season', 'alltime'] %}
         <span class="hm-ss" data-sport="{{ sport }}" data-scope="{{ scope }}">{% if scope == 'season' %}{{ meta.get('season_year_' ~ sport, '') }} season{% else %}All-time{% endif %}</span>{% endfor %}{% endfor %}
         · the current leaders, by level and sport
-        · <button type="button" class="share-btn rc-share-link" data-share-title="Racecast: every result on one comparable scale"
-              data-share-url="{{ site_origin }}/" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="Racecast: every result on one comparable scale"
+              data-share-url="{{ site_origin }}/" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {# ★ THE CHAMPION LINE: the No. 1 of each HS and college athlete board
            in view, one line per sport x scope. Read from the same panels the
@@ -304,8 +304,8 @@
   <div class="rank-controls">
       {# sport: default comes from panels.py's wall-clock choice #}
       <div class="toggle-group" data-toggle="sport">
-          <button data-value="XC">Cross Country</button>
-          <button data-value="TF">Track &amp; Field</button>
+          <button data-value="XC">{{ "XC"|sport_name }}</button>
+          <button data-value="TF">{{ "TF"|sport_name }}</button>
       </div>
 
       {# scope: current season vs all-time #}
@@ -320,7 +320,7 @@
           {# Order is fixed here rather than iterating the dict, because a
              dict's order is an implementation detail and HS should lead. #}
           {% for key in ['hs_m','hs_f','college_m','college_f','ms_m','ms_f'] %}
-              <button class="chip is-on" data-pool="{{ key }}">{{ POOL_LABELS[key] }}</button>
+              <button class="chip is-on" aria-pressed="true" data-pool="{{ key }}">{{ POOL_LABELS[key] }}</button>
           {% endfor %}
       </div>
   </div>
@@ -343,6 +343,9 @@
        switching is instant and needs no server round-trip. #}
     {% for tab, board_type in [('athletes', 'athlete'), ('performances', 'performance')] %}
     <section class="rc-panel" id="{{ tab }}" data-panel="{{ tab }}">
+      {# the tab names the panel on screen; this names it in the outline, so
+         the pools' h3 do not hang straight off the h1 (sweep 2026-10-10) #}
+      <h2 class="sr-only">{{ "Top athletes" if tab == "athletes" else "Best performances" }}</h2>
       {% for sport in ['XC', 'TF'] %}
         {% for scope in ['season', 'alltime'] %}
           <div class="board-pair hm-board-{{ board_type }}" data-sport="{{ sport }}" data-scope="{{ scope }}">

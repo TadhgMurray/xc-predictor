@@ -10,8 +10,8 @@
     {# the favicon rides in _meta.html on every other page; this head does
        not include that partial, so the tag is here by hand (issue 149) #}
     <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -28,11 +28,11 @@
     <h1>Conversions</h1>
     <div class="rc-meta">
       {{ xc_courses|length }} courses · {{ tf_distances|length }} track distances · any time, rating, athlete or result
-      · <button type="button" class="share-btn rc-share-link" data-share-title="Conversions on Racecast"
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="Conversions on Racecast"
             data-share-url="{{ site_origin }}{{ request.full_path.rstrip('?') }}" title="Share this page">
       <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
       <span>Share</span>
-    </button>
+    </button></span>
     </div>
     <p class="rc-story">Enter one performance - a time, a rating, an athlete, or a specific
         result - and see it projected across courses and distances.
@@ -65,8 +65,8 @@
 
             <label>Sport
                 <select id="source-sport">
-                    <option value="XC">Cross Country</option>
-                    <option value="TF">Track &amp; Field</option>
+                    <option value="XC">{{ "XC"|sport_name }}</option>
+                    <option value="TF">{{ "TF"|sport_name }}</option>
                 </select>
             </label>
         </div>
@@ -75,7 +75,7 @@
            each field applies to; JS toggles visibility. #}
         <!-- ATHLETE source: search by name -->
         <div data-for="athlete result" class="src-field">
-            <label class="field-label">Athlete <span class="req">*</span></label>
+            <label class="field-label" for="in-athlete">Athlete <span class="req">*</span></label>
             <div class="drop-anchor">
                 <input type="search" id="in-athlete" placeholder="Search athlete…" autocomplete="off">
                 <div id="athlete-drop" class="conv-drop"></div>
@@ -146,17 +146,17 @@
             <div class="conv-row">
                 <label><span class="field-label">Apparent temp
                     <span class="unit-toggle">(<button type="button"
-                        class="unit-btn is-on" data-target="in-wx-temp"
+                        class="unit-btn is-on" aria-pressed="true" data-target="in-wx-temp"
                         data-unit="C">°C</button><button type="button"
-                        class="unit-btn" data-target="in-wx-temp"
+                        class="unit-btn" aria-pressed="false" data-target="in-wx-temp"
                         data-unit="F">°F</button>)</span></span>
                     <input type="number" id="in-wx-temp" step="0.1"
                            data-unit="C"></label>
                 <label><span class="field-label">Wind
                     <span class="unit-toggle">(<button type="button"
-                        class="unit-btn is-on" data-target="in-wx-wind"
+                        class="unit-btn is-on" aria-pressed="true" data-target="in-wx-wind"
                         data-unit="ms">m/s</button><button type="button"
-                        class="unit-btn" data-target="in-wx-wind"
+                        class="unit-btn" aria-pressed="false" data-target="in-wx-wind"
                         data-unit="mph">mph</button>)</span></span>
                     <input type="number" id="in-wx-wind" step="0.1"
                            data-unit="ms"></label>
@@ -181,9 +181,9 @@
                 <div class="conv-row">
                     <label><span class="field-label">Air temp
                         <span class="unit-toggle">(<button type="button"
-                            class="unit-btn is-on" data-target="in-wx-airtemp"
+                            class="unit-btn is-on" aria-pressed="true" data-target="in-wx-airtemp"
                             data-unit="C">°C</button><button type="button"
-                            class="unit-btn" data-target="in-wx-airtemp"
+                            class="unit-btn" aria-pressed="false" data-target="in-wx-airtemp"
                             data-unit="F">°F</button>)</span></span>
                         <input type="number" id="in-wx-airtemp" step="0.1"
                                data-unit="C"></label>
@@ -209,8 +209,8 @@
 <div class="rc-mainc">
   <div class="rc-tbar">
     <nav class="seg rc-tabs" role="tablist">
-      <a class="seg-btn is-on" href="#xc" data-tab="xc">Cross country<span class="n">{{ xc_courses|length }}</span></a>
-      <a class="seg-btn" href="#tf" data-tab="tf">Track<span class="n">{{ tf_distances|length }}</span></a>
+      <a class="seg-btn is-on" href="#xc" data-tab="xc">{{ "XC"|sport_name }}<span class="n">{{ xc_courses|length }}</span></a>
+      <a class="seg-btn" href="#tf" data-tab="tf">{{ "TF"|sport_name }}<span class="n">{{ tf_distances|length }}</span></a>
       {# shown once there are paces to show (conversions.js paintPaces) #}
       <a class="seg-btn" href="#paces" data-tab="paces" id="paces-tab" hidden>Paces</a>
     </nav>
@@ -241,7 +241,7 @@
     </table>
     <div class="conv-add">
         <div class="drop-anchor">
-            <input type="search" id="add-course" placeholder="Add a course…" autocomplete="off">
+            <input type="search" id="add-course" aria-label="Add a course" placeholder="Add a course…" autocomplete="off">
             <div id="course-drop" class="conv-drop"></div>
         </div>
     </div>

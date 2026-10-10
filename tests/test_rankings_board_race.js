@@ -36,6 +36,8 @@ const ctx = {
   syncBoardHeader: () => {},
   emptyBoard: () => "empty",
   esc: (x) => String(x),
+  // a server error page is not JSON (sweep 2026-10-10): the reply here always is
+  readJson: (res) => res.json(),
   PAGE_SIZE: 50,
   renderBoard: (rows) => { drawn.push({ board: ctx.state.board, rows: rows[0].kind }); return "t"; },
   // load() draws through paintBoard (renderBoard, then the phone column order)

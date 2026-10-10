@@ -8,17 +8,20 @@
    "when this race was run" -- a mark beaten later in the season was
    still a record on the day.
 
+   ★ THE WORDS ARE TEXT, NOT aria-label (sweep 2026-10-10, B14): a label on
+     a plain <span> is skipped by several screen readers, so "PR" was read
+     as the letters P R. The code is aria-hidden and the meaning sits beside
+     it in .sr-only.
+
    Import with:  {% from "_recflag.html" import recflag %}
    ===================================================================== #}
 {% macro recflag(row) -%}
     {%- if row.is_pr %} <span class="flag flag--pr" tabindex="0"
         data-title="Personal Record"
-        data-blurb="Their fastest time at this distance when this race was run."
-        aria-label="Personal Record. Their fastest time at this distance when this race was run.">PR</span>
+        data-blurb="Their fastest time at this distance when this race was run."><span aria-hidden="true">PR</span><span class="sr-only">Personal Record. Their fastest time at this distance when this race was run.</span></span>
     {%- elif row.is_sr %} <span class="flag flag--sr" tabindex="0"
         data-title="Season Record"
-        data-blurb="Their fastest time at this distance in this season, when this race was run."
-        aria-label="Season Record. Their fastest time at this distance in this season, when this race was run.">SR</span>
+        data-blurb="Their fastest time at this distance in this season, when this race was run."><span aria-hidden="true">SR</span><span class="sr-only">Season Record. Their fastest time at this distance in this season, when this race was run.</span></span>
     {%- endif -%}
 {%- endmacro %}
 
@@ -34,11 +37,9 @@
 {% macro ratflag(row) -%}
     {%- if row.rating_pr %} <span class="flag flag--pr" tabindex="0"
         data-title="Personal Best rating"
-        data-blurb="Their highest rating in any race when this one was run."
-        aria-label="Personal Best rating. Their highest rating in any race when this one was run.">PR</span>
+        data-blurb="Their highest rating in any race when this one was run."><span aria-hidden="true">PR</span><span class="sr-only">Personal Best rating. Their highest rating in any race when this one was run.</span></span>
     {%- elif row.rating_sr %} <span class="flag flag--sr" tabindex="0"
         data-title="Season Best rating"
-        data-blurb="Their highest rating this season when this race was run."
-        aria-label="Season Best rating. Their highest rating this season when this race was run.">SR</span>
+        data-blurb="Their highest rating this season when this race was run."><span aria-hidden="true">SR</span><span class="sr-only">Season Best rating. Their highest rating this season when this race was run.</span></span>
     {%- endif -%}
 {%- endmacro %}

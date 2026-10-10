@@ -202,7 +202,7 @@ def compiledResults(cur, meet_id, source=None):
       real-world meets into one imaginary race. Callers on a colliding meet
       pass the source they are showing; None keeps the old behaviour.
 
-    Returns [{distance, gender, divisions, results:[...]}], biggest group
+    Returns [{distance, gender, divisions, date, results:[...]}], biggest group
     first -- the varsity race is almost always the one being looked for, and
     it is almost always the biggest.
     """
@@ -221,6 +221,7 @@ def compiledResults(cur, meet_id, source=None):
     cur.execute(f"""
         SELECT r.result_id, r.person_id, r.team_id, r.place, r.time_seconds,
                r.grade, r.school, r.speed_rating, r.div_id,
+               r.date                                   AS race_date,
                {_ratingPoolSql(cur)},
                (round(COALESCE(
                    dov.distance::real, m.distance,
@@ -298,8 +299,15 @@ def compiledResults(cur, meet_id, source=None):
         key = (row["distance"], row["gender"] or "?")
         g = groups.setdefault(key, {"distance": row["distance"],
                                     "gender": row["gender"] or "?",
-                                    "divisions": set(), "results": []})
+                                    "divisions": set(), "results": [],
+                                    "date": None})
         g["divisions"].add(row["div_id"])
+        # ★ THE DAY IT RAN, for the page's meta line and its Share title
+        #   (sweep 2026-10-10, B20): the earliest of the merged divisions'
+        #   dates, ISO text as results.date stores it.
+        d = row.get("race_date")
+        if d and (g["date"] is None or str(d) < g["date"]):
+            g["date"] = str(d)[:10]
         g["results"].append({
             "result_id": row["result_id"],
             "person_id": row["person_id"],

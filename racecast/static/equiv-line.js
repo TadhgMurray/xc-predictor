@@ -317,8 +317,8 @@
       if (open) { sIn.value = ""; sList.innerHTML = ""; sIn.focus(); }
     }
     function esc(t) {
-      return String(t).replace(/[&<>"]/g, function (c) {
-        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+      return String(t).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
       });
     }
     var sTimer = null, sSeq = 0;
