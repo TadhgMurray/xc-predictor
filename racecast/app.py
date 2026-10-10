@@ -8148,7 +8148,10 @@ def _searchTerms(raw, prefix="t"):
     "arcadia-loup" all tokenise the same. Six tokens is the cap -- past that
     the AND is narrow enough that more only costs time.
     """
-    tokens = [t for t in re.split(r"[^a-z0-9]+", (raw or "").lower()) if t][:6]
+    # ! search_index.searchFold, the fold the index is stored in (sweep
+    #   2026-10-10): accents dropped, apostrophes deleted -- "o'brien" is
+    #   one token "obrien", as the stored text now is, not "o" + "brien"
+    tokens = search_index.searchFold(raw).split()[:6]
     if not tokens:
         return None
 
@@ -8309,6 +8312,12 @@ def _run_search(q, kind, year_filter, offset):
     """Returns (results, per_kind_counts, available_years)."""
     # a year typed in the box acts as a filter too
     typed_year, q_clean = _parse_year(q)
+    # ★ A LONE YEAR IS THE QUERY, NOT A FILTER ON NOTHING (sweep 2026-10-10).
+    #   "2025" stripped to an empty needle and the page answered nothing,
+    #   while the dropdown -- which never strips -- listed every meet with
+    #   2025 in its name. Kept as the search word, it reads as the dropdown.
+    if typed_year and not q_clean.strip():
+        typed_year, q_clean = None, q
     year = year_filter or typed_year
     needle = q_clean.lower().strip()
 

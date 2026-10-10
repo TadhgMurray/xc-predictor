@@ -162,3 +162,78 @@ def test_compiled_races_take_the_override():
     sql = cur.sql[-1][0]
     assert "LEFT JOIN dist_override dov" in sql
     assert sql.count("dov.distance::real, m.distance") == 2
+
+
+# ---- 4. search folds accents and apostrophes, both sides ---------------- #
+
+@pytest.mark.parametrize("raw,want", [
+    ("O'Brien", "obrien"),
+    ("O’Brien", "obrien"),
+    ("Peña", "pena"),
+    ("Zoë  Smith-Jones", "zoe smith jones"),
+    ("Mt. SAC", "mt sac"),
+    ("Saint-Étienne (FR)", "saint etienne fr"),
+])
+def test_search_fold(raw, want):
+    import search_index
+    assert search_index.searchFold(raw) == want
+
+
+def test_query_and_index_fold_alike(A):
+    where, params, _ = A._searchTerms("o'brien peña")
+    assert params["t0"] == "%obrien%" and params["t1"] == "%pena%"
+    import search_index
+    seen = []
+
+    class _C:
+        def execute(self, *a, **k):
+            pass
+    import psycopg2.extras
+    orig = psycopg2.extras.execute_values
+    psycopg2.extras.execute_values = lambda cur, sql, batch, **k: seen.extend(batch)
+    try:
+        search_index._flush(_C(), [("athlete", "Liam O'Brien", "Peña HS",
+                                    "/athlete/1", "liam o'brien peña hs",
+                                    "o'brien", 2025, 3)])
+    finally:
+        psycopg2.extras.execute_values = orig
+    assert seen[0][4] == "liam obrien pena hs" and seen[0][5] == "obrien"
+
+
+# ---- 20. a lone typed year ---------------------------------------------- #
+
+class _Conn:
+    def __init__(self, cur):
+        self.cur = cur
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def cursor(self, *a, **k):
+        return self
+
+    # the cursor context manager is the conn itself
+    def execute(self, *a, **k):
+        return self.cur.execute(*a, **k)
+
+    def fetchall(self):
+        return self.cur.fetchall()
+
+    def fetchone(self):
+        return self.cur.fetchone()
+
+
+def test_a_lone_year_searches_as_the_dropdown_does(A, monkeypatch):
+    cur = StubCursor()
+    monkeypatch.setattr(A, "getConn", lambda *a, **k: _Conn(cur))
+    A._run_search("2025", "all", None, 0)
+    sql, params = cur.sql[0]
+    assert params["t0"] == "%2025%"
+    assert "sort_year = %(y)s" not in sql          # no filter on nothing
+    cur.sql.clear()
+    A._run_search("2025 arcadia", "all", None, 0)  # a year beside words filters
+    sql, params = cur.sql[0]
+    assert params["t0"] == "%arcadia%" and params["y"] == 2025

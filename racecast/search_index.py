@@ -183,9 +183,34 @@ def _stream_cursor(conn, name):
     return cur
 
 
+# ★ ONE FOLD FOR THE INDEX AND THE QUERY (sweep 2026-10-10). search_text was
+#   stored raw-lowercase while app._searchTerms split the typed words on
+#   [^a-z0-9], so "O'Brien" was stored "o'brien" and searched as "o" + "brien",
+#   and "Peña" / "Zoë" could not be found by anyone typing "pena" or "zoe".
+#   Both sides now fold the same way: accents decomposed and dropped,
+#   apostrophes deleted (o'brien -> obrien), every other punctuation a space.
+_APOSTROPHES = re.compile("['\u2019\u2018\u02bc`]")
+_NON_WORD    = re.compile(r"[^a-z0-9]+")
+
+
+def searchFold(text):
+    """Lowercase ASCII words joined by single spaces. Pure."""
+    import unicodedata
+    t = unicodedata.normalize("NFKD", text or "")
+    t = "".join(ch for ch in t if not unicodedata.combining(ch)).lower()
+    t = _APOSTROPHES.sub("", t)
+    return _NON_WORD.sub(" ", t).strip()
+
+
 def _flush(cur, batch):
     """Insert one batch. Every tuple MUST be 8 elements, in this order:
-       (kind, label, sublabel, link, search_text, search_last, sort_year, sort_count)"""
+       (kind, label, sublabel, link, search_text, search_last, sort_year, sort_count)
+
+    ! search_text and search_last are folded HERE, once for every loader
+      (searchFold), so no loader can store a form the query cannot reach."""
+    batch = [(k, lbl, sub, link, searchFold(st),
+              searchFold(sl) if sl is not None else None, yr, n)
+             for (k, lbl, sub, link, st, sl, yr, n) in batch]
     psycopg2.extras.execute_values(cur, f"""
         INSERT INTO {_TARGET}
             (kind, label, sublabel, link, search_text, search_last, sort_year, sort_count)
