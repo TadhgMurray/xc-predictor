@@ -559,7 +559,8 @@ class ChunkAwareBatchSampler:
     once per epoch automatically.
     """
 
-    def __init__(self, dataset, batch_size: int, shuffle: bool):
+    def __init__(self, dataset, batch_size: int, shuffle: bool,
+                 slots: int = 1):
         # A Subset (from random_split / the val mask) wraps the real dataset
         # and holds the global indices it owns. We need BOTH: the chunk_size
         # to group by, and the global index of every example this split may
@@ -570,12 +571,13 @@ class ChunkAwareBatchSampler:
         self.chunk_size = base.chunk_size
         self.batch_size = batch_size
         self.shuffle = shuffle
-        # ★ ONE SHARE OF THE BATCHES PER PROCESS under torchrun (WORLD > 1):
-        #   every process builds the same list in the same order (a seeded
-        #   RNG, stepped per epoch) and takes every WORLD-th batch from its
-        #   RANK. Batches stay whole, so each still sits inside one chunk.
+        # ★ ONE SHARE OF THE CHUNKS PER PROCESS under torchrun (WORLD > 1):
+        #   every process shuffles the chunk list the same way (a seeded RNG,
+        #   stepped per epoch) and takes every WORLD-th chunk from its RANK.
         self.rank, self.world = RANK, WORLD
         self.epoch = 0
+        # one slot per DataLoader worker (see _slotStream); 0 workers is one
+        self.slots = max(int(slots), 1)
 
         # ⚠ YIELD POSITIONS, NOT GLOBAL INDICES. DataLoader hands whatever a
         #   batch_sampler yields straight to dataset[i] -- and when `dataset`
@@ -617,51 +619,102 @@ class ChunkAwareBatchSampler:
                 rows.sort(key=lambda pos: int(lengths[self.globals_[pos]]))
             self.bucketed = True
 
+    # ★ ONE CHUNK READ PER CHUNK, NOT ONE PER BATCH (owner, 2026-10-10: the
+    #   first full run on a network volume sat at 0% GPU, 32% iowait).
+    #   Each DataLoader worker keeps ONE chunk in memory (_loadChunk), and
+    #   the DataLoader hands batch p to worker p % workers. The old order
+    #   shuffled every batch of the epoch together, so a worker's next batch
+    #   was almost always from another chunk: a ~12 MB file read to use 512
+    #   of its 10,000 rows -- about 20x the corpus read per epoch. Hidden on
+    #   a local disk with the files in page cache (and in a 20-chunk smoke
+    #   run); fatal on network storage.
+    #
+    #   So the epoch is laid out in SLOTS, one per worker: slot s fills
+    #   positions s, s+W, s+2W, ..., working through whole chunks -- every
+    #   batch of one chunk, in shuffled order, then the next chunk off a
+    #   shuffled queue. Worker s therefore reads each of its chunks once.
+    #   Consecutive steps still mix W different random chunks (and chunks
+    #   are corpus-wide shuffles written at extraction), so a step sees the
+    #   same kind of sample as before.
+    #   Under torchrun each process takes its own share of the CHUNKS
+    #   (chunk_ids[rank::world]) and lays them out over its own workers.
+
+    def _counts(self):
+        return {cid: (len(v) + self.batch_size - 1) // self.batch_size
+                for cid, v in self.by_chunk.items()}
+
+    def _chunkOrder(self, rng):
+        chunk_ids = sorted(self.by_chunk)
+        if self.shuffle:
+            rng.shuffle(chunk_ids)
+        return chunk_ids
+
+    def _slotStream(self, chunk_ids, rng):
+        """Batches for these chunks, laid out over self.slots worker slots."""
+        from collections import deque
+        queue = deque(chunk_ids)
+
+        def chunkBatches(cid):
+            rows = list(self.by_chunk[cid])
+            # ! ROWS ARE SHUFFLED ONLY WITHOUT A LENGTH SORT; with one,
+            #   shuffling rows would undo it -- the batches are shuffled.
+            if self.shuffle and not self.bucketed:
+                rng.shuffle(rows)
+            bs = [rows[i:i + self.batch_size]
+                  for i in range(0, len(rows), self.batch_size)]
+            if self.shuffle:
+                rng.shuffle(bs)
+            return deque(bs)
+
+        slots = [chunkBatches(queue.popleft()) if queue else deque()
+                 for _ in range(self.slots)]
+        out = []
+        live = True
+        while live:
+            live = False
+            for s in range(self.slots):
+                while not slots[s] and queue:
+                    slots[s] = chunkBatches(queue.popleft())
+                if slots[s]:
+                    out.append(slots[s].popleft())
+                    live = True
+        return out
+
     def __iter__(self):
         import random
-        if self.world > 1:
-            random = random.Random(SEED + self.epoch)   # the same on every rank
+        rng = random.Random(SEED + self.epoch) if self.world > 1 else random
         self.epoch += 1
-        chunk_ids = list(self.by_chunk)
-        if self.shuffle:
-            random.shuffle(chunk_ids)
-        # ! BATCHES ARE BUILT FIRST, THEN THEIR ORDER IS SHUFFLED. Shuffling
-        #   the rows instead would undo the length sort the constructor did.
-        #   When there are no lengths to sort on, this is the old behaviour
-        #   exactly: shuffle rows, cut into batches.
-        batches = []
-        for cid in chunk_ids:
-            rows = list(self.by_chunk[cid])
-            if self.shuffle and not self.bucketed:
-                random.shuffle(rows)
-            for start in range(0, len(rows), self.batch_size):
-                batches.append(rows[start:start + self.batch_size])
-        if self.shuffle and self.bucketed:
-            random.shuffle(batches)
-        yield from self._share(batches)
-
-    def _share(self, batches):
+        chunk_ids = self._chunkOrder(rng)
         if self.world == 1:
-            return batches
-        # ⚠ TRAINING SHARES MUST BE THE SAME LENGTH. Every backward is a
-        #   collective; a process with one batch more waits forever for the
-        #   others. The remainder (under WORLD batches, reshuffled each
-        #   epoch) is left out. Validation runs no collective per batch, so
-        #   it keeps every batch.
+            yield from self._slotStream(chunk_ids, rng)
+            return
+        mine = chunk_ids[self.rank::self.world]
+        out = self._slotStream(mine, rng)
         if self.shuffle:
-            batches = batches[:len(batches) // self.world * self.world]
-        return batches[self.rank::self.world]
+            # ⚠ TRAINING SHARES MUST BE THE SAME LENGTH: every backward is a
+            #   collective, and a process with one batch more waits forever.
+            #   Each process can count every share (the chunk order is the
+            #   same everywhere) and stops at the smallest, and never past
+            #   __len__, which the scheduler was sized from.
+            counts = self._counts()
+            n = min(sum(counts[c] for c in chunk_ids[r::self.world])
+                    for r in range(self.world))
+            out = out[:min(n, len(self))]
+        yield from out
 
     def __len__(self) -> int:
         # Number of BATCHES, not examples -- DataLoader reports this as
         # len(loader), and a wrong value here silently truncates an epoch.
-        total = sum((len(v) + self.batch_size - 1) // self.batch_size
-                    for v in self.by_chunk.values())
+        counts = self._counts()
+        total = sum(counts.values())
         if self.world == 1:
             return total
-        if self.shuffle:
-            return total // self.world
-        return len(range(self.rank, total, self.world))
+        if not self.shuffle:
+            # validation: this process's chunks in sorted order, no shuffle
+            return sum(counts[c] for c in sorted(counts)[self.rank::self.world])
+        # training: a bound every epoch's shuffle meets -- the even share
+        # less the largest chunk's batches (shares differ by at most that)
+        return max(total // self.world - max(counts.values(), default=0), 0)
 
 
 # buildDataLoader
@@ -679,7 +732,8 @@ def buildDataLoader(dataset, shuffle: bool) -> DataLoader:
         dataset,
         # ★ batch_sampler REPLACES batch_size + shuffle. Passing all three
         #   is an error in torch, so they are gone from this call.
-        batch_sampler=ChunkAwareBatchSampler(dataset, BATCH_SIZE, shuffle),
+        batch_sampler=ChunkAwareBatchSampler(dataset, BATCH_SIZE, shuffle,
+                                             slots=NUM_WORKERS),
         # ★ THE READING HAPPENS IN OTHER PROCESSES. __getitem__ torch.loads a
         #   chunk from disk, so with 0 workers the training process stops
         #   dead before every batch and the GPU idles through the read. This
@@ -1926,5 +1980,5 @@ if __name__ == "__main__":
           + "  (a retrain, not a re-extraction -- see transformer.BASELINE_LAST)")
     main()
     if WORLD > 1:
-        _dist.barrier()
+        _dist.barrier(device_ids=[LOCAL_RANK] if DEVICE.type == "cuda" else None)
         _dist.destroy_process_group()
