@@ -14,6 +14,16 @@
 
   ★ SCORES HERE ARE COMPUTED, NEVER PUBLISHED. Nothing was published for a
     race that did not run.
+
+  ★ ONE LEVEL AT A TIME (owner, 2026-10-10). Varsity-level divisions compile
+    together; JV, Frosh-Soph, MS, Para and any division the rule cannot name
+    compile apart (meet_compile.compiledResults), so a JV runner no longer
+    takes a varsity scorer's place. `level` is the one shown; the level bar
+    links the others by ?level=, and the bare URL -- every link made before
+    the split -- is the primary (varsity) level.
+
+  ! A DQ KEEPS ITS ROW AND ITS TIME, NOT A PLACE: Pl shows row.place_status
+    (stampXcPlaces, the race page's rule), and it scores nobody.
 ===================================================================== #}
 <!DOCTYPE html>
 {% from "_scale.html" import rv, scale_toggle %}
@@ -37,7 +47,7 @@
   <div class="rc-left">
     <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country · compiled</span></div>
     <div class="rc-kick"><a href="/meet/xc/{{ header.meet_id }}{{ ('?alt=' ~ request.args.get('alt')) if request.args.get('alt') }}">{{ header.meet_name|with_year(group.date) }}</a></div>
-    <h1>{{ g_label }} {{ group.distance }}m, every division</h1>
+    <h1>{{ g_label }} {{ group.distance }}m{% if group.levels|length > 1 or level.level != 'varsity' %} {{ level.label }}{% endif %}{% if not level.single %}, every {{ "varsity-level " if level.level == 'varsity' and group.levels|length > 1 }}division{% endif %}</h1>
     {# ★ THE DATE AND SHARE, AS THE TRACK COMPILED PAGE HAS THEM (sweep
        2026-10-10, B20): the meta line had neither. #}
     <div class="rc-meta">
@@ -48,25 +58,44 @@
             data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
     </div>
     <div class="rc-facts">
-      <span>Runners <b>{{ group.results|length }}</b></span>
-      <span>Divisions <b>{{ group.divisions|length }}</b></span>
-      {% if group.scores.teams %}<span>Teams scored <b>{{ group.scores.teams|length }}</b></span>{% endif %}
+      <span>Runners <b>{{ level.results|length }}</b></span>
+      <span>Divisions <b>{{ level.divisions|length }}</b></span>
+      {% if level.scores.teams %}<span>Teams scored <b>{{ level.scores.teams|length }}</b></span>{% endif %}
     </div>
+    {# ★ THE LEVELS, varsity first: plain links (not .rc-tabs -- those are
+       the hash tabs below), the site's .seg look. #}
+    {% if group.levels|length > 1 %}
+    <nav class="seg rc-levels" aria-label="Level">
+      {% for lv in group.levels %}
+      <a class="seg-btn{% if lv.level == level.level %} is-on{% endif %}"{% if lv.level == level.level %} aria-current="page"{% endif %}
+         href="/race/xc/{{ header.meet_id }}/compiled/{{ group.distance }}/{{ group.gender|urlencode }}{% if loop.first %}{% if keep_qs %}?{{ keep_qs }}{% endif %}{% else %}?level={{ lv.level|urlencode }}{% if keep_qs %}&amp;{{ keep_qs }}{% endif %}{% endif %}">{{ lv.label }}<span class="n">{{ lv.results|length }}</span></a>
+      {% endfor %}
+    </nav>
+    {% endif %}
     {# Not a footnote: someone arriving from a link has no other way to know
        these runners were not on the line together. It stands where the race
        page's summary does. #}
+    {% if level.single %}
+    {# ★ ONE DIVISION AT THIS LEVEL IS JUST THAT RACE: shown for
+       completeness, and said so -- nothing here was merged. #}
+    <p class="rc-story synthetic">Only one {{ level.label }} division ran at this distance{% if level.div_labels and level.div_labels[0] != level.label %} ({{ level.div_labels[0] }}){% endif %}, so this is
+      <a href="/race/xc/{{ header.meet_id }}/{{ level.divisions[0] }}">that race</a> on its own. Scores below are computed, not published.</p>
+    {% else %}
     <p class="rc-story synthetic">These divisions were run separately. This is how
       their times compare, not how they finished: the places and scores below
-      were never contested.</p>
+      were never contested.{% if group.levels|length > 1 %} Each level is compiled
+      on its own, so {{ "JV and underclass runners do not" if level.level == 'varsity' else "other levels' runners do not" }} take a place
+      or a score here.{% endif %}</p>
+    {% endif %}
   </div>
 </div></header>
 
-<div class="rc-w rc-grid{% if not group.scores.teams %} rc-grid-one{% endif %}">
+<div class="rc-w rc-grid{% if not level.scores.teams %} rc-grid-one{% endif %}">
 <div class="rc-mainc">
   <div class="rc-tbar">
     <nav class="seg rc-tabs" role="tablist">
-      <a class="seg-btn is-on" href="#results" data-tab="results">Results<span class="n">{{ group.results|length }}</span></a>
-      {% if group.scores.teams %}<a class="seg-btn" href="#teams" data-tab="teams">Teams<span class="n">{{ group.scores.teams|length }}</span></a>{% endif %}
+      <a class="seg-btn is-on" href="#results" data-tab="results">Results<span class="n">{{ level.results|length }}</span></a>
+      {% if level.scores.teams %}<a class="seg-btn" href="#teams" data-tab="teams">Teams<span class="n">{{ level.scores.teams|length }}</span></a>{% endif %}
     </nav>
     <a class="rc-out" href="/meet/xc/{{ header.meet_id }}">The races as run →</a>
     <input class="rc-find" type="search" placeholder="Find a runner or school" aria-label="Find a runner or school">
@@ -88,9 +117,9 @@
         <th class="n">Ran</th>
       </tr></thead>
       <tbody>
-      {% for row in group.results %}
+      {% for row in level.results %}
       <tr id="r{{ row.result_id }}" data-team="{{ row.school or '' }}">
-        <td class="pl"><span>{{ loop.index }}</span></td>
+        <td class="pl"><span>{{ row.place if row.place else row.place_status }}</span></td>
         <td class="nm">
           {% if row.person_id %}<a href="/athlete/{{ row.person_id }}{% if row.result_id %}?r={{ row.result_id }}{% endif %}">{{ row.name if row.name else "Unknown" }}</a>{% else %}{{ row.name if row.name else "Unknown" }}{% endif %}
           <span class="rc-subline">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}{% endif %}{{ row.school|school_label_in(header.state) if row.school else "" }}{% if row.grade %} · {{ row.grade|grade_label(row.rating_pool or row.label_pool) }}{% endif %}</span>
@@ -99,14 +128,14 @@
         <td class="n tm">{{ row.time_seconds|clock }}</td>
         <td class="n rt"><span class="rc-rv">{{ rv(row.speed_rating, row.hs_rating) }}</span></td>
         <td class="n pts rc-wide">{{ row.score_place if row.score_place else " - " }}</td>
-        <td class="n"><a href="/race/xc/{{ header.meet_id }}/{{ row.div_id }}#r{{ row.result_id }}" title="Their place in the race they ran">{{ row.division_place }}</a></td>
+        <td class="n"><a href="/race/xc/{{ header.meet_id }}/{{ row.div_id }}#r{{ row.result_id }}" title="Their place in the race they ran">{{ row.division_place if row.division_place else row.division_status }}</a></td>
       </tr>
       {% endfor %}
       </tbody>
     </table>
   </section>
 
-  {% if group.scores.teams %}
+  {% if level.scores.teams %}
   <section class="rc-panel" id="teams" data-panel="teams">
     {# ★ ONE COLUMN PER SCORER, and each place links to the athlete. #}
     <table class="rc-teams-full">
@@ -115,7 +144,7 @@
         <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th>
       </tr></thead>
       <tbody>
-      {% for t in group.scores.teams %}
+      {% for t in level.scores.teams %}
       <tr>
         <td>{{ t.place }}</td>
         <td>{% if t.school|is_team %}{{ crest(t.school, t.state) }}<a href="{{ school_href(t.school, t.state) }}">{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label }}{% endif %}</a>{% else %}{{ t.school|school_label }}{% endif %}</td>
@@ -129,15 +158,15 @@
       {% endfor %}
       </tbody>
     </table>
-    {% if group.scores.incomplete %}
+    {% if level.scores.incomplete %}
     <p class="meta">Not scored, fewer than five finishers:
-      {% for i in group.scores.incomplete %}{{ i.school }} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+      {% for i in level.scores.incomplete %}{{ i.school }} ({{ i.n }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
     {% endif %}
   </section>
   {% endif %}
 </div>
 
-{% if group.scores.teams %}
+{% if level.scores.teams %}
 <aside class="rc-side">
   <h2>Team scores <small>top 5, computed</small></h2>
   <table class="rc-tscores">
@@ -145,7 +174,7 @@
     {# ★ EVERY TEAM, THE ELEVENTH ON HIDDEN: "All teams" extends this list in
        place (owner, 2026-10-07: "I want all teams to extend the list on the
        right, not open the tab"). #}
-    {% for t in group.scores.teams %}
+    {% for t in level.scores.teams %}
     {% set key = t.runners[0].school if t.runners else t.school %}
     <tr{% if loop.index > 10 %} class="rc-team-more" hidden{% endif %} data-team="{{ key }}" data-rids="{% for r in t.runners or [] %}{{ r.result_id }} {% endfor %}" tabindex="0" title="Light {{ t.school }}'s runners in the results">
       <td class="tp">{{ t.place }}</td>
@@ -157,7 +186,7 @@
     </tbody>
   </table>
   <p class="rc-tip"><span class="rc-tip-lit" hidden><span class="rc-tip-name"></span>'s runners are lit in the results. </span>Tap a team to light its runners.</p>
-  {% if group.scores.teams|length > 10 %}<button type="button" class="rc-more rc-more-teams" data-all="All {{ group.scores.teams|length }} teams">All {{ group.scores.teams|length }} teams</button>{% endif %}
+  {% if level.scores.teams|length > 10 %}<button type="button" class="rc-more rc-more-teams" data-all="All {{ level.scores.teams|length }} teams">All {{ level.scores.teams|length }} teams</button>{% endif %}
 </aside>
 {% endif %}
 </div>

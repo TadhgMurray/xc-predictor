@@ -131,8 +131,8 @@
 
   {% if compiled %}
   <section class="rc-panel" id="compiled" data-panel="compiled">
-    <p class="meta">Every division at the same distance, merged and ordered by
-      time. These races were run separately; this is how they compare, not
+    <p class="meta">Every division at the same distance and level (varsity,
+      JV, frosh-soph...), merged and ordered by time. These races were run separately; this is how they compare, not
       how they finished.</p>
     <table class="rc-table">
       <thead><tr>
@@ -141,7 +141,12 @@
       <tbody>
       {% for g in compiled %}
       <tr>
-        <td class="nm"><a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender|urlencode }}{{ race_q() }}">{{ "Boys" if g.gender == 'M' else "Girls" if g.gender == 'F' else "All" }} {{ g.distance }}m</a></td>
+        {# ★ ONE ROW PER LEVEL (owner, 2026-10-10): the primary (varsity)
+           level keeps the bare URL every older link used; JV, Frosh-Soph
+           and the rest add ?level= ahead of the race_q args. A level of one
+           division is that race, re-placed -- listed, and said so. #}
+        {% set _rq = race_q()|string %}
+        <td class="nm"><a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender|urlencode }}{% if g.primary %}{{ _rq }}{% else %}?level={{ g.level|urlencode }}{% if _rq %}&amp;{{ _rq[1:] }}{% endif %}{% endif %}">{{ "Boys" if g.gender == 'M' else "Girls" if g.gender == 'F' else "All" }} {{ g.distance }}m{% if g.label and (not g.primary or g.level != 'varsity') %} · {{ g.label }}{% endif %}</a>{% if g.single %}<span class="rc-subline">one race{% if g.div_label %}: {{ g.div_label }}{% endif %}</span>{% endif %}</td>
         <td class="n">{{ "{:,}".format(g.n_results) }}</td>
         <td class="n">{{ g.n_divisions }}</td>
         <td class="n">{{ g.n_teams if g.n_teams else " - " }}</td>

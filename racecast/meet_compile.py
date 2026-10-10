@@ -36,6 +36,8 @@ import os
 import re
 import sys
 
+from division_group import divisionGroup, groupRank, groupLabel
+
 # ★ WHY THIS IS NOT level_graph._JUNK, WHICH ANSWERS THE SAME QUESTION.
 #   The engine's pattern carries `^unat` -- an unanchored PREFIX, so it also
 #   swallows Unatego Central, a real school district in New York. In the
@@ -142,16 +144,72 @@ DISPLACERS = 2
 _DIV_LABEL = "COALESCE(m.division, mt.division_distances -> r.div_id::text ->> 'div_name')"
 
 
-def _personGender():
-    """engine/person_gender, imported when first asked for: it pulls in the
-    database module, which a page import should not need."""
+def _siblingPath():
+    """engine/ and scripts/ on sys.path, for the lazy imports below."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     for sub in ("engine", "scripts"):
         d = os.path.join(root, sub)
         if d not in sys.path:
             sys.path.append(d)
+
+
+def _personGender():
+    """engine/person_gender, imported when first asked for: it pulls in the
+    database module, which a page import should not need."""
+    _siblingPath()
     import person_gender
     return person_gender
+
+
+# ------------------------------------------------------------------ #
+#  0. WHO KEEPS A PLACE
+# ------------------------------------------------------------------ #
+
+# ★ ONE RULE FOR A PLACE, FOR THE RACE PAGE AND THE COMPILED PAGE (sweep
+#   2026-10-10). This lived in app.py as _xcPlaced/_stampXcPlaces, which
+#   the race page used and the compiled page could not -- this module
+#   cannot import the app -- so a DQ took a compiled place, scored, and
+#   displaced. It lives here now and app.py's names delegate to it.
+#
+# ! A DQ IS A RESULT THAT HAPPENED: its TIME is real (it stays in the list,
+#   in time order) and its PLACE is void (no place, no points, displaces
+#   nobody). result_status.kind is the one rule; the 999999 sentinel is its
+#   fallback for rows stored before `status` existed.
+_RS = []
+
+
+def _resultStatus():
+    """scripts/result_status, imported once (pure; no database)."""
+    if not _RS:
+        _siblingPath()
+        import result_status
+        _RS.append(result_status)
+    return _RS[0]
+
+
+def xcPlaced(row):
+    """A finisher who keeps a place: not a DNF/DNS, and not a DQ (status DQ
+    or FS -- the time is real, the place is void)."""
+    return _resultStatus().kind(row.get("status"),
+                                row.get("time_seconds")) == "ok"
+
+
+def stampXcPlaces(rows, key="pl", status_key="pl_status"):
+    """row[key]: the place among placed finishers, in the rows' order; None
+    for the rest, which get row[status_key] ('DQ', 'DNF', 'DNS' -- the
+    feed's own letters when it sent them, else a dash). In place."""
+    normalise = _resultStatus().normalise
+    n = 0
+    for r in rows:
+        if xcPlaced(r):
+            n += 1
+            r[key], r[status_key] = n, None
+        else:
+            r[key] = None
+            # ! the feed's letters, or a dash: the bare sentinel cannot say
+            #   whether it was a DNF or a DNS
+            r[status_key] = normalise(r.get("status")) or " - "
+    return rows
 
 
 def rowGenderSql(athlete_gender="a.gender"):
@@ -174,23 +232,39 @@ def rowGenderSql(athlete_gender="a.gender"):
 #   pool its season USED to be in. The column arrives with the go-live
 #   (issue 171), so it is probed, never assumed: app._ratingPoolCol's rule,
 #   restated because this module cannot import the app.
-_RATING_POOL = {}
+_RESULTS_COLS = {}
 
 
-def _ratingPoolSql(cur):
-    have = _RATING_POOL.get("results")
+def _hasResultsCol(cur, col):
+    """Does `results` carry `col` yet? A "yes" is cached, a "no" asked again
+    (the column arrives with a deploy, not with a restart)."""
+    have = _RESULTS_COLS.get(col)
     if have is None:
         try:
             cur.execute("""SELECT 1 FROM information_schema.columns
                            WHERE table_name = 'results'
-                             AND column_name = 'rating_pool'""")
+                             AND column_name = %s""", (col,))
             have = cur.fetchone() is not None
         except Exception:                                # noqa: BLE001
             cur.connection.rollback()
             have = False
         if have:
-            _RATING_POOL["results"] = True    # a "no" is asked again
-    return "r.rating_pool" if have else "NULL::text AS rating_pool"
+            _RESULTS_COLS[col] = True
+    return have
+
+
+def _ratingPoolSql(cur):
+    return ("r.rating_pool" if _hasResultsCol(cur, "rating_pool")
+            else "NULL::text AS rating_pool")
+
+
+# ★ AND THE STATUS (sweep 2026-10-10), for the DQ rule (xcPlaced): a DQ row
+#   carries a real time, so without the column it reads as a finisher. The
+#   scrapers add it on their first save after deploy -- app._hasResultsStatus
+#   probes the same thing for the race page.
+def _statusSql(cur):
+    return ("r.status" if _hasResultsCol(cur, "status")
+            else "NULL::text AS status")
 
 
 def compiledResults(cur, meet_id, source=None):
@@ -202,9 +276,23 @@ def compiledResults(cur, meet_id, source=None):
       real-world meets into one imaginary race. Callers on a colliding meet
       pass the source they are showing; None keeps the old behaviour.
 
-    Returns [{distance, gender, divisions, date, results:[...]}], biggest group
-    first -- the varsity race is almost always the one being looked for, and
-    it is almost always the biggest.
+    Returns [{distance, gender, levels:[...], level, divisions, date, results,
+    scores}], biggest group first -- the varsity race is almost always the
+    one being looked for, and it is almost always the biggest.
+
+    ★ SPLIT BY LEVEL (owner, 2026-10-10). A (distance, gender) group used to
+      merge EVERY division -- and a JV runner merged into the varsity list
+      takes a varsity scorer's place and pushes every team behind him down:
+      noise in the one number the page exists for. Each group is now
+      partitioned by division_group.divisionGroup: varsity-level labels (and
+      blank) compile together, JV / Frosh-Soph / MS / Para each compile
+      apart, and an unrecognised label is its own level, never merged by
+      guess. `levels` lists them in GROUP_ORDER, each {level, label,
+      divisions, div_labels, single, results, scores}.
+    ★ THE FIRST LEVEL IS PRIMARY -- varsity whenever the group has one. Its
+      divisions/results/scores are ALSO the group's own top-level keys, so
+      every reader that wants "the" compiled race (and every link made
+      before the split) gets the varsity compile and nothing else.
     """
     # ⚠ LEFT JOIN, AND A tfrrs FALLBACK. `meets` is ANET-ONLY -- 812,079 rows,
     #   zero tfrrs -- so an INNER JOIN silently returns nothing for a tfrrs
@@ -222,7 +310,8 @@ def compiledResults(cur, meet_id, source=None):
         SELECT r.result_id, r.person_id, r.team_id, r.place, r.time_seconds,
                r.grade, r.school, r.speed_rating, r.div_id,
                r.date                                   AS race_date,
-               {_ratingPoolSql(cur)},
+               {_ratingPoolSql(cur)}, {_statusSql(cur)},
+               {_DIV_LABEL}                              AS div_label,
                (round(COALESCE(
                    dov.distance::real, m.distance,
                    (mt.division_distances -> r.div_id::text ->> 'distance')::real
@@ -299,9 +388,7 @@ def compiledResults(cur, meet_id, source=None):
         key = (row["distance"], row["gender"] or "?")
         g = groups.setdefault(key, {"distance": row["distance"],
                                     "gender": row["gender"] or "?",
-                                    "divisions": set(), "results": [],
-                                    "date": None})
-        g["divisions"].add(row["div_id"])
+                                    "results": [], "date": None})
         # ★ THE DAY IT RAN, for the page's meta line and its Share title
         #   (sweep 2026-10-10, B20): the earliest of the merged divisions'
         #   dates, ISO text as results.date stores it.
@@ -315,6 +402,8 @@ def compiledResults(cur, meet_id, source=None):
             "school": row["school"],
             "grade": row["grade"],
             "div_id": row["div_id"],
+            "div_label": (row.get("div_label") or "").strip() or None,
+            "status": row.get("status"),
             "time_seconds": float(row["time_seconds"]),
             "speed_rating": (round(float(row["speed_rating"]), 1)
                              if row["speed_rating"] is not None else None),
@@ -332,33 +421,83 @@ def compiledResults(cur, meet_id, source=None):
     #   to be counted over every row of that division, not just the ones in
     #   this (distance, gender) group, or a division split across groups would
     #   restart its numbering in each.
+    # ! PLACED FINISHERS ONLY (sweep 2026-10-10): the race page's numbering
+    #   (stampXcPlaces), so "Ran" says what the race page says -- a DQ ran
+    #   no place, and the runner behind it is not one place lower.
     by_div = {}
     for g in groups.values():
         for r in g["results"]:
             by_div.setdefault(r["div_id"], []).append(r)
     for rows in by_div.values():
-        rows.sort(key=lambda r: r["time_seconds"])
-        for i, r in enumerate(rows, start=1):
-            r["division_place"] = i
+        rows.sort(key=_compiledOrder)
+        stampXcPlaces(rows, "division_place", "division_status")
 
     out = []
     for g in groups.values():
-        # The compiled place: position in the MERGED list, which is what makes
-        # this different from the division place derived above. Sorted here
-        # too, so the order never again rests on a column number.
-        g["results"].sort(key=lambda r: r["time_seconds"])
-        for i, r in enumerate(g["results"], start=1):
-            r["place"] = i
-        g["divisions"] = sorted(g["divisions"])
-        # identity-split colliding school names for scoring, then restore
-        # the row dicts (the results table renders row.school directly)
-        splitCollisionTeams(cur, g["results"], source=source)
-        g["scores"] = unsplitTeams(scoreRows(g["results"]))
-        unstampRows(g["results"])
+        levels = {}
+        for r in g["results"]:
+            lv = divisionGroup(r["div_label"])
+            r["level"] = lv
+            levels.setdefault(lv, []).append(r)
+        g["levels"] = [_compileLevel(cur, lv, rows, source)
+                       for lv, rows in sorted(
+                           levels.items(),
+                           key=lambda kv: (groupRank(kv[0]), kv[0]))]
+        g["n_results"] = len(g["results"])
+        # the primary level IS the group to every older reader
+        first = g["levels"][0]
+        g["level"] = first["level"]
+        g["divisions"] = first["divisions"]
+        g["results"] = first["results"]
+        g["scores"] = first["scores"]
         out.append(g)
 
-    out.sort(key=lambda g: -len(g["results"]))
+    out.sort(key=lambda g: -g["n_results"])
     return out
+
+
+def _compiledOrder(r):
+    """Time order, a DNF/DNS (which carries a time only by accident) last.
+    ! A DQ STAYS IN TIME ORDER: its time is real, only its place is void."""
+    k = _resultStatus().kind(r.get("status"), r.get("time_seconds"))
+    return (k not in ("ok", "dq"), r["time_seconds"])
+
+
+def levelLabel(level, div_labels=()):
+    """'Varsity', 'JV', ...; an unrecognised level is called by the
+    division's own name -- there is no generic word for it."""
+    return (groupLabel(level)
+            or next((d for d in div_labels if d), None)
+            or level.split(":", 1)[-1].title())
+
+
+def _compileLevel(cur, level, rows, source):
+    """One level's compiled race: its places and its team scores."""
+    # The compiled place: position in THIS LEVEL's merged list, which is
+    # what makes it different from the division place. Sorted here too, so
+    # the order never again rests on a column number.
+    rows.sort(key=_compiledOrder)
+    # ★ A DQ (or a DNF with a time) KEEPS ITS ROW AND LOSES ITS PLACE: place
+    #   None, place_status its letters for the Pl column (stampXcPlaces).
+    stampXcPlaces(rows, "place", "place_status")
+    divs = sorted({r["div_id"] for r in rows})
+    labels = []
+    for r in rows:
+        if r["div_label"] and r["div_label"] not in labels:
+            labels.append(r["div_label"])
+    # identity-split colliding school names for scoring, then restore
+    # the row dicts (the results table renders row.school directly).
+    # ! The DQ rows go in too: annotateScoring's _finished leaves them
+    #   unscored and unstamped, so they score and displace nobody.
+    splitCollisionTeams(cur, rows, source=source)
+    scores = unsplitTeams(scoreRows(rows))
+    unstampRows(rows)
+    return {"level": level, "label": levelLabel(level, labels),
+            "divisions": divs, "div_labels": labels,
+            # ★ ONE DIVISION IS JUST THAT RACE, re-placed: still shown, for
+            #   completeness, but the page says so (owner, 2026-10-10)
+            "single": len(divs) == 1,
+            "results": rows, "scores": scores}
 
 
 # compiledIndex
@@ -380,10 +519,20 @@ def compiledResults(cur, meet_id, source=None):
 #   names by home state before scoring, so on a meet where two "Central"s
 #   both fielded five it can count one more team than this does. The index
 #   is a link list; the compiled page itself is still the full compile.
+#
+# ★ ONE ENTRY PER LEVEL (owner, 2026-10-10), as compiledResults splits them:
+#   {distance, gender, level, label, primary, single, div_label, n_results,
+#   n_divisions, n_teams}. The level comes from the division's label in
+#   Python (division_group is not SQL), so the query groups down to
+#   (distance, gender, division, school) and the counts are summed here --
+#   still one query, a few hundred rows on the biggest invitational. The
+#   primary level (varsity when there is one) comes first in its group and
+#   is the one the bare compiled URL lands on.
 def compiledIndex(cur, meet_id, source=None):
     cur.execute(f"""
         WITH rows AS (
             SELECT r.div_id, r.school, r.person_id,
+                   {_DIV_LABEL}                         AS div_label,
                    (round(COALESCE(
                        dov.distance::real, m.distance,
                        (mt.division_distances -> r.div_id::text ->> 'distance')::real
@@ -414,46 +563,51 @@ def compiledIndex(cur, meet_id, source=None):
                      dov.distance::real, m.distance,
                      (mt.division_distances -> r.div_id::text ->> 'distance')::real
                    ) > 0
-        ),
-        teams AS (
-            SELECT distance, COALESCE(gender, '?') AS gender, school
-            FROM   rows
-            WHERE  school IS NOT NULL
-            GROUP  BY distance, COALESCE(gender, '?'), school
-            HAVING count(*) >= 5
         )
-        SELECT g.distance, g.gender, g.n_results, g.n_divisions,
-               COALESCE(t.n_teams, 0) AS n_teams
-        FROM (
-            SELECT distance, COALESCE(gender, '?') AS gender,
-                   count(*)              AS n_results,
-                   count(DISTINCT div_id) AS n_divisions
-            FROM   rows
-            GROUP  BY distance, COALESCE(gender, '?')
-        ) g
-        LEFT JOIN (
-            SELECT distance, gender, count(*) AS n_teams
-            FROM   teams
-            GROUP  BY distance, gender
-        ) t ON t.distance = g.distance AND t.gender = g.gender
-        ORDER  BY g.n_results DESC
+        SELECT distance, COALESCE(gender, '?') AS gender, div_id, div_label,
+               school, count(*) AS n
+        FROM   rows
+        GROUP  BY distance, COALESCE(gender, '?'), div_id, div_label, school
     """, {"meet": meet_id, "src": source})
-    out = []
+    groups = {}
     for row in cur.fetchall():
-        get = row.get if isinstance(row, dict) else None
-        if get is None:
-            distance, gender, n_results, n_divisions, n_teams = row
+        if isinstance(row, dict):
+            distance, gender, div_id, div_label, school, n = (
+                row["distance"], row["gender"], row["div_id"],
+                row["div_label"], row["school"], row["n"])
         else:
-            distance, gender, n_results, n_divisions, n_teams = (
-                row["distance"], row["gender"], row["n_results"],
-                row["n_divisions"], row["n_teams"])
-        # isTeam() is the compile's own rule for what counts as a school;
-        # its non-team names (unattached, countries) cannot field a squad
-        # in the compile and are not worth a second query to exclude here.
-        out.append({"distance": int(distance), "gender": gender,
-                    "n_results": int(n_results),
-                    "n_divisions": int(n_divisions),
-                    "n_teams": int(n_teams)})
+            distance, gender, div_id, div_label, school, n = row
+        div_label = (div_label or "").strip() or None
+        lv = divisionGroup(div_label)
+        g = groups.setdefault((int(distance), gender), {})
+        e = g.setdefault(lv, {"n_results": 0, "divs": set(), "labels": [],
+                              "schools": {}})
+        e["n_results"] += int(n)
+        e["divs"].add(div_id)
+        if div_label and div_label not in e["labels"]:
+            e["labels"].append(div_label)
+        if school is not None:
+            e["schools"][school] = e["schools"].get(school, 0) + int(n)
+    out = []
+    # biggest (distance, gender) first, as before; its levels in GROUP_ORDER
+    for (distance, gender), levels in sorted(
+            groups.items(),
+            key=lambda kv: -sum(e["n_results"] for e in kv[1].values())):
+        for i, (lv, e) in enumerate(sorted(
+                levels.items(), key=lambda kv: (groupRank(kv[0]), kv[0]))):
+            out.append({
+                "distance": distance, "gender": gender,
+                "level": lv, "label": levelLabel(lv, e["labels"]),
+                "primary": i == 0,
+                "single": len(e["divs"]) == 1,
+                "div_label": e["labels"][0] if e["labels"] else None,
+                "n_results": e["n_results"],
+                "n_divisions": len(e["divs"]),
+                # the scoring rule's threshold, isTeam schools only -- the
+                # compile's own rule for what can field a squad
+                "n_teams": sum(1 for sc, k in e["schools"].items()
+                               if k >= SCORERS and isTeam(sc)),
+            })
     return out
 
 
@@ -463,7 +617,8 @@ def compiledIndex(cur, meet_id, source=None):
 
 
 def _finished(r):
-    """A row with a real time. 999999 is the DNS/DNF sentinel, not a time.
+    """A row that keeps a place: a real time (999999 is the DNS/DNF
+    sentinel, not a time) and no DQ/FS/DNF/DNS status.
 
     ⚠ A ROW WITH NO TIME COLUMN AT ALL HAS FINISHED. The team boards race a
       meet that never happened -- entrants ordered by season rating, with no
@@ -476,11 +631,11 @@ def _finished(r):
     """
     if "time_seconds" not in r:
         return True
-    t = r.get("time_seconds")
-    try:
-        return t is not None and float(t) < 999999
-    except (TypeError, ValueError):
-        return False
+    # ⚠ AND A DQ HAS NOT, FOR SCORING (sweep 2026-10-10). Its time is real,
+    #   so the old `< 999999` test let it score and displace -- on the
+    #   compiled page, which never went through the race page's filter.
+    #   xcPlaced is the race page's own rule; the status decides first.
+    return xcPlaced(r)
 
 
 def annotateScoring(rows):
