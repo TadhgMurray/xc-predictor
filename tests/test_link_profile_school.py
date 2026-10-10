@@ -347,3 +347,78 @@ def test_careers_whose_own_names_disagree_or_share_a_country_are_refused():
         "careers share only a national team"
     club = [("abe alvarado", "mexico"), ("abe alvarado", "simon fraser, mexico")]
     assert L.decideGroup([a, c], allow_careers=True, keys=club).reason == L.MATCH
+
+
+# ---- the era of college and ungraded careers (sweep 2026-10-10, A6) ------ #
+
+def test_college_class_reads_the_eligibility_spelling_only():
+    assert L.collegeClassYear("2025-10-01", "FR-1") == 2025
+    assert L.collegeClassYear("2026-04-01", "SR-4") == 2022
+    assert L.collegeClassYear("2026-04-01", "sr5") == 2021
+    assert L.collegeClassYear("2025-10-01", "JR-3") == 2023
+    # a bare class word is a high-school grade as often as a college one
+    for g in ("Fr", "Sr", "Freshman", "12", "", None, "SR-7"):
+        assert L.collegeClassYear("2025-10-01", g) is None
+
+
+def test_two_college_careers_a_generation_apart_are_refused():
+    old = M(301, "Mike Johnson", ["M"], False, [
+        R("1998-10-01", "XC", "SO-2", school="Stanford"),
+        R("1999-10-01", "XC", "JR-3", school="Stanford")])
+    new = M(302, "Mike Johnson", ["M"], False, [
+        R("2019-10-01", "XC", "FR-1", school="Stanford")])
+    v = L.decideGroup([old, new], allow_careers=True,
+                      keys=[("mike johnson", "stanford")])
+    assert v.reason == "generation mismatch"
+
+
+def test_college_drift_allows_a_redshirt_and_the_covid_year():
+    # HS class of 2020; a redshirt 2020-21 and the COVID year leave him
+    # FR-1 in 2022-23, two seasons "late" -- still one runner
+    hs = M(311, "Ana Ruiz", ["F"], False, [
+        R("2019-10-01", "XC", "12", school="Mead"),
+        R("2018-10-01", "XC", "11", school="Mead")])
+    col = M(312, "Ana Ruiz", ["F"], False, [
+        R("2022-10-01", "XC", "FR-1", school="Mead")])
+    v = L.decideGroup([hs, col], allow_careers=True, keys=[("ana ruiz", "mead")])
+    assert v.reason == L.MATCH
+    # four seasons late is beyond CLASS_SLACK + COLLEGE_DRIFT
+    late = col._replace(rows=[R("2024-10-01", "XC", "FR-1", school="Mead")])
+    assert L.decideGroup([hs, late], allow_careers=True,
+                         keys=[("ana ruiz", "mead")]).reason != L.MATCH
+
+
+def test_ungraded_careers_too_far_apart_at_one_school_are_refused():
+    a = M(321, "Pat Lee", ["M"], False, [
+        R("2010-05-01", "TF", None, school="Boston AA"),
+        R("2011-05-01", "TF", None, school="Boston AA")])
+    b = M(322, "Pat Lee", ["M"], False, [
+        R("2017-05-01", "TF", None, school="Boston AA")])
+    keys = [("pat lee", "boston aa")]
+    # 2009-10 .. 2016-17 is eight seasons: more than one athlete's six
+    assert L.decideGroup([a, b], allow_careers=True, keys=keys).reason == \
+        "careers too far apart"
+    # within six seasons: one runner
+    b2 = b._replace(rows=[R("2015-05-01", "TF", None, school="Boston AA")])
+    assert L.decideGroup([a, b2], allow_careers=True, keys=keys).reason == L.MATCH
+
+
+def test_era_counts_only_the_key_school_when_rows_name_one():
+    # a high-school career (2012-2015) and a college one (2016-2020) are ten
+    # seasons together -- at two schools; at the key school, one career
+    hs = M(331, "Sam Oak", ["M"], False, [
+        R("2012-10-01", "XC", "9", school="Oak Hill"),
+        R("2015-10-01", "XC", "12", school="Oak Hill")])
+    col = M(332, "Sam Oak", ["M"], False, [
+        R("2016-10-01", "XC", "FR-1", school="State U"),
+        R("2020-10-01", "XC", "SR-4", school="State U"),
+        R("2016-06-01", "TF", None, school="Oak Hill")])
+    v = L.decideGroup([hs, col], allow_careers=True, keys=[("sam oak", "oak hill")])
+    assert v.reason == L.MATCH
+
+
+def test_era_check_is_for_careers_only():
+    # a stray (lone) years later is the generation test's, not the span's
+    car = M(341, "Pat Lee", ["M"], False, [R("2010-05-01", "TF", None, school="Boston AA")])
+    stray = M(342, "Pat Lee", ["M"], True, [R("2020-05-01", "TF", None, school="Boston AA")])
+    assert L.decideGroup([car, stray], keys=[("pat lee", "boston aa")]).reason == L.MATCH
