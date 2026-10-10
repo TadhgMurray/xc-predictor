@@ -1138,8 +1138,9 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   LADDER_STAMP_FILE="$ROOT/engine/data/ladder_stamp"
   LADDER_STAMP=$( { cat "$ROOT"/engine/*.py "$ROOT/deploy/solve_env.sh" \
                         "$ROOT/scripts/ablation_ladder.py"
-                    # the model's settings only, not the box's plumbing
-                    env | grep '^XCP_' | grep -vE '^XCP_(DB_|MAIL|ADMIN|NICE|THREADS|LIVE|LADDER|WEATHER_FIT|STREAMS|COURSE_SHARDS|ENV|PYTHON|INDEXNOW|LACCTIC)' | sort; } \
+                    # the model's settings only, not the box's plumbing (XCP_ALERT*: the
+                    # follow digest's switch and secret, 2026-10-10)
+                    env | grep '^XCP_' | grep -vE '^XCP_(DB_|MAIL|ADMIN|NICE|THREADS|LIVE|LADDER|WEATHER_FIT|STREAMS|COURSE_SHARDS|ENV|PYTHON|INDEXNOW|LACCTIC|ALERT)' | sort; } \
                   | sha1sum | cut -c1-16)
   LADDER_RUN=1
   case "${XCP_LADDER:-auto}" in
@@ -1400,6 +1401,11 @@ step 13c_search_index "$PY" -u racecast/search_index.py
 step 13d_sitemap      "$PY" -u racecast/build_sitemap.py
 # IndexNow: the URLs that changed, to Bing and friends (needs XCP_INDEXNOW_KEY)
 step 13e_indexnow     "$PY" -u scripts/indexnow_submit.py
+# ★ THE FOLLOW DIGEST (owner, 2026-10-10), OPTIONAL: off unless XCP_ALERTS=1.
+#   After 13f (the breakouts it reads); see racecast/follow_alerts.py.
+if [ "${XCP_ALERTS:-0}" = "1" ]; then
+  step 13g_follow_alerts "$PY" -u racecast/follow_alerts.py --send --prewarm
+fi
 
 # ---- rowguard ------------------------------------------------------- #
 # 2000-row rail; anything past it diverts to .OVER-CAP for a human.

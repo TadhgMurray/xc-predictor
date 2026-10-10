@@ -1,0 +1,121 @@
+{# shortlist.html -- the saved college shortlist, side by side (owner,
+   2026-10-10). shortlist.py reads every number off the recruiting tables;
+   this only lays them out, one column a program.
+   ★ WRITTEN FOR A HIGH-SCHOOL JUNIOR (owner, 2026-10-10: "what's with the
+     shortlist?"): one line saying what it is for, "Where you'd fit" first
+     (the point of it), then four rows -- the typical recruit, their top
+     recruits, how much runners improve there, the conference rank. The
+     model's projection is a tooltip, not a row.
+   ★ THE RACE PAGE'S SHAPE: header with the gender and sport switches, one
+     table that scrolls inside itself, never the page.
+   ★ ANY NUMBER OF PROGRAMS (owner, 2026-10-10): the row labels stick to the
+     left while the programs scroll sideways, on a laptop as on a phone, and
+     the ticks above the table pick which saved programs to compare (all of
+     them by default; shortlist.py says why). #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "College shortlist" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('mypage.css') }}">
+<script src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+{% set who = "men" if gender == "m" else "women" %}
+{% set have = cols|selectattr("summary")|list %}
+{% set best_median = have|map(attribute="summary.median")|reject("none")|max if have else none %}
+{% set best_p75 = have|map(attribute="summary.p75")|reject("none")|max if have else none %}
+{% set ev = "5K" if sport == "XC" else "1600" %}
+{% set ek = "5k" if sport == "XC" else "1600" %}
+{% macro q(g, s) %}?gender={{ g }}&amp;sport={{ s }}{% endmacro %}
+<main class="page-wide rc shortlist-page">
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--site">Your account</span></div>
+      <h1>College shortlist</h1>
+      <p class="sl-purpose">Compare the colleges you're considering: what level they recruit, how much their runners improve, and where you'd fit.</p>
+      <div class="rc-meta">{{ n }} saved · <a href="/recruiting">Find colleges</a> · <a href="/account/me">My page</a></div>
+      <div class="rc-scope-row rc-scope">
+        <nav class="seg" aria-label="Gender">
+          <a class="seg-btn{{ ' is-on' if gender == 'm' }}" href="{{ q('m', sport) }}">Men</a><a class="seg-btn{{ ' is-on' if gender == 'f' }}" href="{{ q('f', sport) }}">Women</a>
+        </nav>
+        <nav class="seg" aria-label="Sport">
+          <a class="seg-btn{{ ' is-on' if sport == 'XC' }}" href="{{ q(gender, 'XC') }}">Cross country</a><a class="seg-btn{{ ' is-on' if sport == 'TF' }}" href="{{ q(gender, 'TF') }}">Track</a>
+        </nav>
+      </div>
+      {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
+      {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+    </div>
+  </div></header>
+
+  <div class="rc-grid rc-grid-one">
+  <div class="rc-mainc">
+  {% if not ready %}
+  <p class="predict-status show error">The shortlist is not set up on this server yet (racecast/follows.py --init).</p>
+  {% elif not cols %}
+  <p class="meta">Nothing saved yet. Open a college from <a href="/recruiting">Recruiting</a> and press <b>Save to shortlist</b>. Save {{ min_n }} or more to see them side by side.</p>
+  {% else %}
+  {% if n < min_n %}<p class="meta">Save one more college to compare: open one from <a href="/recruiting">Recruiting</a> and press <b>Save to shortlist</b>.</p>{% endif %}
+  {% if not built %}<p class="meta">The recruiting numbers are not built on this server yet.</p>{% endif %}
+  {% if programs|length > min_n %}
+  {# which saved programs to compare: a GET form, so the choice is a link #}
+  <form method="get" action="/account/shortlist" class="sl-pick">
+    <input type="hidden" name="gender" value="{{ gender }}"><input type="hidden" name="sport" value="{{ sport }}">
+    <span class="sl-pick-lab">Compare</span>
+    {% for p in programs %}{% set k = pick_key(p.school, p.state) %}
+    <label><input type="checkbox" name="pick" value="{{ k }}" {{ "checked" if k in picks }}> {{ p.school }}{% if p.state %} <span class="dist-note">{{ p.state }}</span>{% endif %}</label>
+    {% endfor %}
+    <button type="submit" class="sl-go">Update</button>
+  </form>
+  {% endif %}
+  <div class="sl-scroll">
+  <table class="sl-table">
+    <thead><tr><th scope="col"></th>
+      {% for c in cols %}
+      <th scope="col">{{ crest(c.school, c.state or none, px=64, size=22) }}<a href="{{ c.href }}">{{ c.summary.label if c.summary else c.school }}</a>
+        <form method="post" action="/api/shortlist" class="sl-rm"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="school" value="{{ c.school }}"><input type="hidden" name="state" value="{{ c.state }}"><input type="hidden" name="action" value="remove"><button type="submit" class="acct-x">remove</button></form></th>
+      {% endfor %}</tr></thead>
+    <tbody>
+    <tr class="sl-fitrow"><th scope="row">Where you'd fit</th>
+      {% if you and you.gender == gender %}
+      {% for c in cols %}
+      <td>{% if c.fit %}<span class="sl-fit sl-fit-{{ c.fit.key }}">{{ c.fit.words|capitalize }}</span><span class="sub">You: {{ "%.1f"|format(you.rating) }}</span>{% elif c.summary %}<span class="sub">You: {{ "%.1f"|format(you.rating) }}</span>{% endif %}</td>
+      {% endfor %}
+      {% elif you %}
+      <td colspan="{{ cols|length }}"><span class="sub">Switch to {{ "Men" if you.gender == "m" else "Women" }} to see where you'd fit.</span></td>
+      {% else %}
+      <td colspan="{{ cols|length }}"><span class="sub"><a href="/account#athlete">Link your athlete page</a> to see where your rating would fit at each college.</span></td>
+      {% endif %}
+    </tr>
+    <tr><th scope="row">Typical recruit</th>
+      {% for c in cols %}{% set s = c.summary %}
+      <td class="{{ 'best' if s and s.median is not none and s.median == best_median and have|length > 1 }}">{% if s and s.median is not none %}<b>{{ "%.1f"|format(s.median) }}</b>{% if s.times.median and s.times.median[ek] %}<span class="sub">about {{ fmt_time(s.times.median[ek]) }} {{ ev }}</span>{% endif %}{% else %}<span class="sub">No {{ who }}'s recruits on file</span>{% endif %}</td>
+      {% endfor %}</tr>
+    <tr><th scope="row">Their top recruits</th>
+      {% for c in cols %}{% set s = c.summary %}
+      <td class="{{ 'best' if s and s.p75 is not none and s.p75 == best_p75 and have|length > 1 }}">{% if s and s.p75 is not none %}<b>{{ "%.1f"|format(s.p75) }}</b> and up{% if s.times.p75 and s.times.p75[ek] %}<span class="sub">{{ fmt_time(s.times.p75[ek]) }} {{ ev }} or faster</span>{% endif %}{% endif %}</td>
+      {% endfor %}</tr>
+    <tr><th scope="row">How much runners improve</th>
+      {% for c in cols %}{% set d = c.after %}
+      <td>{% if d %}<b>{{ "%.1f"|format(d.median_pct) }}% faster</b>{% if c.expected %} <span class="sl-i" title="The prediction model expected about {{ '%.1f'|format(c.expected.median_pct) }}% from these same runners a year out of high school.">ⓘ</span>{% endif %}<span class="sub">typical runner, first college season to latest</span>{% elif c.summary %}<span class="sub">Not enough seasons yet</span>{% endif %}</td>
+      {% endfor %}</tr>
+    <tr><th scope="row">Conference rank</th>
+      {% for c in cols %}{% set k = c.conference %}
+      <td>{% if k %}<b>#{{ k.rank }}</b> of {{ k.of }}<span class="sub">in the {{ k.name }}, by typical recruit</span>{% endif %}</td>
+      {% endfor %}</tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="sl-note">Ratings are on the high-school scale, so yours compares directly.</p>
+  {% endif %}
+  </div>
+  </div>
+</main>
+</body>
+</html>

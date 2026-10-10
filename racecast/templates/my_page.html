@@ -1,0 +1,222 @@
+{# my_page.html -- My page (owner, 2026-10-10): the athletes and teams this
+   account claims and follows, one card each -- the rating and how the rank
+   moved, the what-it-takes line, the likely next meet with its automatic
+   prediction, the season's races -- and, beside them, the alert setting and
+   the follow list. my_page.py builds every card; nothing here computes.
+   ★ THE RACE PAGE'S SHAPE: header, the cards in the main column, a sidebar.
+   ! PRIVATE (under /account): it may name the account; no other page does. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "My page" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('mypage.css') }}">
+<script src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+{% macro move(v, unit="") -%}
+  {%- if v is not none -%}
+  {%- if v > 0 %}<span class="mp-move up" title="up {{ v }}{{ unit }}">▲{{ v }}</span>
+  {%- elif v < 0 %}<span class="mp-move down" title="down {{ -v }}{{ unit }}">▼{{ -v }}</span>
+  {%- else %}<span class="mp-move flat">no change</span>{% endif -%}
+  {%- endif -%}
+{%- endmacro %}
+{% macro rmove(v) -%}
+  {%- if v is not none -%}
+  {%- if v > 0 %}<span class="mp-move up">+{{ "%.1f"|format(v) }}</span>
+  {%- elif v < 0 %}<span class="mp-move down">{{ "%.1f"|format(v) }}</span>{% endif -%}
+  {%- endif -%}
+{%- endmacro %}
+{% macro next_meet(nx, who_word) -%}
+  {% set m = nx.next %}
+  <div class="mp-next">
+    <div><span class="mp-meet">{{ "Likely" if m else "" }} next: {{ m.name }}</span>
+      <span class="mp-when">· {{ day(m.date, true) }}{% if m.venue %} · {{ m.venue }}{% endif %}{% if m.state %}, {{ m.state }}{% endif %}</span></div>
+    {{ caller() if caller else "" }}
+    <p class="mp-why">Likely, not confirmed: entries are not posted. {{ who_word }} ran the last edition{% if m.edition and m.edition.date %} ({{ day(m.edition.date) }}, {{ m.edition.date[:4] }}){% endif %}.</p>
+  </div>
+{%- endmacro %}
+<main class="page-wide rc my-page">
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--site">Your account</span></div>
+      <h1>My page</h1>
+      <div class="rc-meta">{{ account.name or account.email.split("@")[0] }} · <a href="/account">Settings</a> · <a href="/account/shortlist">College shortlist</a></div>
+      {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
+      {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+      {% if not ready %}<p class="predict-status show error">Following is not set up on this server yet (racecast/follows.py --init).</p>{% endif %}
+    </div>
+  </div></header>
+
+  <div class="rc-grid">
+  <div class="rc-mainc">
+  {% if not cards %}
+  <section class="mp-card">
+    <h2>Nothing here yet</h2>
+    <p class="mp-empty">Press <b>Follow</b> on any athlete or school page, or link your own athlete page or team in <a href="/account#athlete">Settings</a>. They show up here with their ratings, their next meet and a prediction for it.</p>
+  </section>
+  {% endif %}
+
+  {% for c in cards %}
+  {% if c.missing %}
+  <section class="mp-card">
+    <h2>{% if c.kind == "athlete" %}<a href="/athlete/{{ c.person_id }}">Athlete {{ c.person_id }}</a>{% else %}<a href="{{ school_href(c.school, c.state) }}">{{ c.school }}</a>{% endif %}</h2>
+    <p class="mp-empty">No rated season on record yet.</p>
+  </section>
+
+  {% elif c.kind == "athlete" %}
+  {% set s = c.season %}
+  <section class="mp-card" id="athlete-{{ c.person_id }}">
+    <h2><a href="/athlete/{{ c.person_id }}">{{ c.name }}</a>
+      {% if c.school_label %}<span class="dist-note">{{ c.school_label }}</span>{% endif %}
+      <span class="mp-tag">{{ "You" if c.claimed else "Following" }}</span></h2>
+    <p class="mp-sub">{{ c.season_label }} {{ "cross country" if s.sport == "XC" else "track" }} · {{ s.n_races }} race{{ "s" if s.n_races != 1 }}</p>
+    <div class="mp-stats">
+      <div><span class="k">Season rating</span><span class="v">{{ "%.1f"|format(s.mean_rating) }}</span>{{ rmove(c.move.rating if c.move else none) }}</div>
+      {% if c.ranks.nation %}<div><span class="k">National</span><span class="v">#{{ c.ranks.nation }}</span>{{ move(c.move.nation if c.move else none) }}</div>{% endif %}
+      {% if c.ranks.state_rank %}<div><span class="k">{{ s.state }}</span><span class="v">#{{ c.ranks.state_rank }}</span>{{ move(c.move.state if c.move else none) }}</div>{% endif %}
+    </div>
+    {% if c.move and c.races %}<p class="mp-since">Movement: since before {{ c.races[0].meet_name }} ({{ day(c.races[0].race_date) }}).</p>{% endif %}
+
+    {% if c.wit %}{% set w = c.wit %}
+    <p class="rank-line wit-line"><span class="rl-lab">What it takes</span>
+      <strong>{{ "%.1f"|format(w.gap) }}</strong> points{% if w.gap_pct %} ({{ "%.1f"|format(w.gap_pct) }}%){% endif %} {{ "off" if w.kind == "off" else "above" }} {{ w.text }} ({{ w.label }}, {{ "%.1f"|format(w.mark) }}){% if w.kind == "off" and w.cleared %}; clears {{ w.cleared }}{% endif %}
+      <span class="sep">·</span><a href="{{ w.href }}">Past marks</a></p>
+    {% endif %}
+
+    <h3 class="mp-h3">Next meet</h3>
+    {% set nx = c.next %}
+    {% if nx and nx.next %}
+      {% call next_meet(nx, (c.school_label or "The team")) %}
+      {% set p = nx.prediction %}
+      <p class="mp-pred">
+        {% if p and p.available %}
+        Predicted <b>{{ fmt_time(p.seconds, false) }}</b>{% if p.lo and p.hi %}<span class="dist-note">likely {{ fmt_time(p.lo, false) }} to {{ fmt_time(p.hi, false) }}</span>{% endif %}{% if nx.race %} in {{ nx.race.label }}{% endif %}
+        {% elif p %}<span class="dist-note">{{ p.reason }}</span>{% endif %}
+      </p>
+      <div class="mp-links"><a href="{{ nx.next.predict_href }}">Open the prediction →</a>
+        {% if nx.meets|length > 1 %}<span class="dist-note">{{ nx.meets|length - 1 }} more likely meet{{ "s" if nx.meets|length > 2 }} this season</span>{% endif %}
+        {% if s.school %}<a href="/school/{{ s.school|urlencode }}/meets.ics?sport={{ nx.next.sport }}{% if s.state %}&amp;state={{ s.state }}{% endif %}">Calendar (.ics)</a>{% endif %}</div>
+      {% endcall %}
+    {% else %}
+    <p class="mp-empty">No meet on the calendar that {{ c.school_label or "their team" }} ran last time. Meets appear here once their hosts post them.</p>
+    {% endif %}
+
+    <h3 class="mp-h3">This season</h3>
+    {% if c.races %}
+    <table class="mp-table">
+      <thead><tr><th>Date</th><th>Meet</th><th class="n rc-wide">Distance</th><th class="n">Time</th><th class="n">Rating</th></tr></thead>
+      <tbody>
+      {% for r in c.races %}
+      <tr><td class="d">{{ day(r.race_date) }}</td>
+          <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}</td>
+          <td class="n rc-wide">{{ "%.0f"|format(r.distance) ~ " m" if r.distance else "" }}</td>
+          <td class="n">{{ fmt_time(r.time_seconds, s.sport != "XC") }}</td>
+          <td class="n"><b>{{ "%.1f"|format(r.speed_rating) }}</b></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="mp-empty">No rated race this season yet.</p>{% endif %}
+  </section>
+
+  {% else %}
+  <section class="mp-card" id="team-{{ loop.index }}">
+    <h2><a href="{{ c.href }}">{{ c.label }}</a> <span class="mp-tag">{{ "Your team" if c.claimed else "Following" }}</span></h2>
+    {% if c.boards %}
+    <div class="mp-stats">
+      {% for b in c.boards %}
+      <div><span class="k">{{ b.label }} {{ "XC" if b.sport == "XC" else "track" }}{% if b.nation %} · National{% endif %}</span>
+        <span class="v">{% if b.nation %}#{{ b.nation }}{% elif b.state_rank %}#{{ b.state_rank }}{% else %} - {% endif %}</span>{{ move((b.move.nation if b.nation else b.move.state) if b.move else none) }}
+        {% if b.nation and b.state_rank %}<span class="dist-note">{{ c.state }} #{{ b.state_rank }}{{ move(b.move.state if b.move else none) }}</span>{% endif %}</div>
+      {% endfor %}
+    </div>
+    {% else %}<p class="mp-sub">Not on a team board this season yet.</p>{% endif %}
+
+    <h3 class="mp-h3">Next meet</h3>
+    {% set nx = c.next %}
+    {% if nx and nx.next %}
+      {% call next_meet(nx, c.label) %}
+      {% for sq in nx.squads %}
+      <table class="mp-table mp-squad">
+        <thead><tr><th colspan="2">{{ sq.label }}{% if sq.race %} · {{ sq.race.label }}{% endif %}: predicted</th><th class="n">Rating</th></tr></thead>
+        <tbody>
+        {% for r in sq.runners %}{% set p = r.prediction %}
+        <tr><td class="nm"><a href="/athlete/{{ r.person_id }}">{{ r.name }}</a></td>
+            <td class="n">{% if p and p.available %}<b>{{ fmt_time(p.seconds, false) }}</b>{% else %}<span class="dist-note">{{ (p.reason if p else "") }}</span>{% endif %}</td>
+            <td class="n">{{ "%.1f"|format(r.mean_rating) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endfor %}
+      <div class="mp-links"><a href="{{ nx.next.predict_href }}">Predict the whole meet →</a></div>
+      {% endcall %}
+      {% if nx.meets|length > 1 %}
+      <h3 class="mp-h3">Likely after that</h3>
+      <table class="mp-table">
+        <tbody>
+        {% for m in nx.meets[1:] %}
+        <tr><td class="d">{{ day(m.date) }}</td><td><a href="{{ m.predict_href }}">{{ m.name }}</a></td>
+            <td class="rc-wide">{{ m.venue or "" }}{% if m.state %}, {{ m.state }}{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    {% else %}
+    <p class="mp-empty">No meet on the calendar that {{ c.label }} ran last time. Meets appear here once their hosts post them.</p>
+    {% endif %}
+    <div class="mp-links"><a href="{{ c.cal_href }}">Add the likely meets to your calendar (.ics)</a></div>
+
+    <h3 class="mp-h3">This season's meets</h3>
+    {% if c.recent %}
+    <table class="mp-table">
+      <thead><tr><th>Date</th><th>Meet</th><th class="n rc-wide">Runners</th><th class="n">Best</th></tr></thead>
+      <tbody>
+      {% for m in c.recent %}
+      <tr><td class="d">{{ day(m.date) }}</td>
+          <td><a href="/meet/{{ c.recent_sport|lower }}/{{ m.meet_id }}">{{ m.meet_name or "Meet" }}</a></td>
+          <td class="n rc-wide">{{ m.runners }}</td>
+          <td class="n">{{ "%.1f"|format(m.best_rating) if m.best_rating is not none else "" }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="mp-empty">No meets this season yet.</p>{% endif %}
+  </section>
+  {% endif %}
+  {% endfor %}
+  </div>
+
+  <aside class="rc-side">
+    <section class="mp-side-card" id="alerts">
+      <h2>Alert emails</h2>
+      <form method="post" action="/account/alerts" class="mp-cadence">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        {% for k in cadences %}
+        <label><input type="radio" name="cadence" value="{{ k }}" {{ "checked" if cadence == k }} onchange="this.form.submit()"> {{ cadence_words[k] }}</label>
+        {% endfor %}
+        <noscript><button type="submit" class="go">Save</button></noscript>
+        <p class="meta">One email with the new races, PRs, season bests and breakouts of everyone you follow. Never the same result twice.{% if not mail_on %} Email is not switched on for this site yet; your setting is kept.{% endif %}</p>
+      </form>
+    </section>
+    <section class="mp-side-card" id="following">
+      <h2>Following <small class="dist-note">{{ follows|length }}</small></h2>
+      {% if follows %}
+      <ul class="mp-follows">
+        {% for f in follows %}
+        <li>{% if f.kind == "athlete" %}<a href="/athlete/{{ f.person_id }}">{{ f.name or ("Athlete " ~ f.person_id) }}</a>
+            {% else %}<a href="{{ school_href(f.school, f.state) }}">{{ f.school_label or f.school }}</a>{% if f.level_label %} <span class="dist-note">{{ f.level_label }}</span>{% endif %}{% endif %}
+          <form method="post" action="/account/follow/remove"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ f.id }}"><button type="submit" class="acct-x">unfollow</button></form></li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="mp-empty">Nobody yet: press Follow on an athlete or school page.</p>{% endif %}
+    </section>
+  </aside>
+  </div>
+</main>
+</body>
+</html>

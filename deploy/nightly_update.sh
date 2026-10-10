@@ -214,6 +214,13 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
       # Breakouts, precomputed (build_breakouts.py): reads the boards and
       # homepage_recent's newest dates, so after both
       step 13f_breakouts "$PY" -u racecast/build_breakouts.py
+      # ★ THE FOLLOW DIGEST (owner, 2026-10-10), OPTIONAL: off unless
+      #   XCP_ALERTS=1 in the env file. After the breakouts it reads; mails
+      #   one digest per follower who is due, fills My page's next-meet
+      #   cache (--prewarm). See racecast/follow_alerts.py.
+      if [ "${XCP_ALERTS:-0}" = "1" ]; then
+        step 13g_follow_alerts "$PY" -u racecast/follow_alerts.py --send --prewarm
+      fi
     fi
   fi
 fi
