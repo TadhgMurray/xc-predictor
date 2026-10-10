@@ -5726,6 +5726,41 @@ def _stamp_tf_display(rows):
             r["display_result"] = r.get("status") or r.get("mark") or " - "
 
 
+def _tfEventWinners(rows):
+    """{(div_id, event_id): winning row} for the TF meet page's Winner column.
+
+    ★ THE RACE PAGE'S RULE, race_story.tfWinner (sweep 2026-10-10). The
+      column took the best raw float(mark) -- "5-10" and "15.24m" are not
+      floats, so imperial field events had no winner -- and the fastest time
+      in ANY round, so a prelim heat winner or a DQ'd runner could head an
+      event that had a final. Now: final rows only when the event has any,
+      no DQ (its place is void), marks through tf_points.parseMark.
+    """
+    import race_story
+    from tf_points import rowRound
+    from result_status import kind as _statusKind
+    by_event = {}
+    for r in rows:
+        if _statusKind(r.get("status") or r.get("mark"),
+                       r.get("time_seconds")) == "dq":
+            continue
+        t = r.get("time_seconds")
+        if t is not None and _isSentinelTime(t):
+            r = dict(r, time_seconds=None)
+        by_event.setdefault((r.get("div_id"), r.get("event_id")), []).append(r)
+    out = {}
+    for k, ev in by_event.items():
+        field = any(r.get("is_field") or r.get("result_kind") in ("field", "combined")
+                    for r in ev)
+        finals = [r for r in ev if rowRound(r) == "final"]
+        sections = ([{"label": "Finals", "rows": finals}] if finals
+                    else [{"label": "", "rows": ev}])
+        w = race_story.tfWinner(sections, field)[0]
+        if w is not None:
+            out[k] = w
+    return out
+
+
 @app.route("/meet/tf/<int:meet_id>")
 def meet_tf(meet_id):
     from tf_points import scoreMeet, genderOf, prettyEventName, eventDistance
@@ -5842,26 +5877,11 @@ def meet_tf(meet_id):
     #   rows already loaded for scoring: per listed (div, event), the best
     #   time, or the best mark for a field event or multi; a relay is its
     #   school. A row with no usable time or mark never wins.
-    winners = {}
-    for r in scoring_rows:
-        k = (r.get("div_id"), r.get("event_id"))
-        field = r.get("is_field") or r.get("result_kind") in ("field", "combined")
-        if field:
-            try:
-                key = -float(r.get("mark"))
-            except (TypeError, ValueError):
-                continue
-        else:
-            t = r.get("time_seconds")
-            if t is None or t <= 0 or _isSentinelTime(t):
-                continue
-            key = float(t)
-        if k not in winners or key < winners[k][0]:
-            winners[k] = (key, r)
+    winners = _tfEventWinners(scoring_rows)
     for e in events:
         w = winners.get((e["div_id"], e["event_id"]))
         if w:
-            row = dict(w[1])
+            row = dict(w)
             _stamp_tf_display([row])
             e["winner"] = row
 
@@ -6272,10 +6292,6 @@ def school_page(school_name):
 
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            header = schoolHeader(cur, school_name)
-            if header is None:
-                abort(404)
-
             # same name, two schools: state chips scope every table to
             # one home-state cluster (see school_identity.py)
             # `include=`: the state the visitor asked for, so a cluster the
@@ -6292,6 +6308,11 @@ def school_page(school_name):
             #   Massachusetts kids -- no longer exists.
             if chips and not state:
                 state = primary_state
+            # ! AFTER THE CHIP, so the span is this school's and not every
+            #   namesake's (sweep 2026-10-10)
+            header = schoolHeader(cur, school_name, state, primary_state)
+            if header is None:
+                abort(404)
             # long form here: this line is not shared with a grade and a
             # compare link, so "Sac-Joaquin Section" fits where SJS had to.
             # Computed AFTER the identity is settled, so the units belong
@@ -6328,7 +6349,7 @@ def school_page(school_name):
             if lchips and not level:
                 level = lchips[0]["level"]
 
-            years = schoolYears(cur, school_name)
+            years = schoolYears(cur, school_name, state, primary_state)
 
             # ★ THE SCHOOL NAME LANDS ON THE HISTORY, NOT ON A YEAR. With no
             #   ?year the page is the whole programme, with the CURRENT roster
@@ -6344,7 +6365,8 @@ def school_page(school_name):
             picked = int(raw) if raw and raw.isdigit() else None
             picked_stored = storedYear(sport, picked)
 
-            year   = picked_stored or currentSeason(cur, school_name, sport)
+            year   = picked_stored or currentSeason(cur, school_name, sport,
+                                                 state, primary_state)
             roster = (schoolRoster(cur, school_name, year, sport,
                                    state=state, primary=primary_state)
                       if year else [])
@@ -6530,21 +6552,22 @@ def embed_school(school_name):
         sport = "XC"
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            header = schoolHeader(cur, school_name)
-            if header is None:
-                abort(404)
             state = (request.args.get("state") or "").strip().upper() or None
             chips, primary_state = stateChips(cur, school_name, include=state)
             if state and not any(c["state"] == state for c in chips):
                 state = None
             state = state or primary_state or school_identity.primaryState(school_name)
+            # ! scoped to the state, as the school page (sweep 2026-10-10)
+            header = schoolHeader(cur, school_name, state, primary_state)
+            if header is None:
+                abort(404)
             lchips = levelChips(cur, school_name, state)
             level = (request.args.get("level") or "").strip().lower() or None
             if level and not any(c["level"] == level for c in lchips):
                 level = None
             if lchips and not level:
                 level = lchips[0]["level"]
-            year = currentSeason(cur, school_name, sport)
+            year = currentSeason(cur, school_name, sport, state, primary_state)
             roster = (schoolRoster(cur, school_name, year, sport,
                                    state=state, primary=primary_state) if year else [])
             meets = schoolMeets(cur, school_name, sport, limit=3,

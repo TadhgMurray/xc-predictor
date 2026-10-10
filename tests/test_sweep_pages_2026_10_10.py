@@ -237,3 +237,82 @@ def test_a_lone_year_searches_as_the_dropdown_does(A, monkeypatch):
     A._run_search("2025 arcadia", "all", None, 0)  # a year beside words filters
     sql, params = cur.sql[0]
     assert params["t0"] == "%arcadia%" and params["y"] == 2025
+
+
+# ---- 5. TF meet page Winner column -------------------------------------- #
+
+def test_tf_meet_winner_reads_marks_finals_and_skips_dq(A):
+    rows = [
+        # high jump in feet-inches: not a float, used to have no winner
+        {"div_id": 1, "event_id": 5, "is_field": 1, "mark": "5-10", "athlete_name": "A"},
+        {"div_id": 1, "event_id": 5, "is_field": 1, "mark": "6-02", "athlete_name": "B"},
+        # 100m: a faster prelim and a DQ'd final runner never win
+        {"div_id": 1, "event_id": 6, "time_seconds": 10.9, "round": "P", "athlete_name": "Heat"},
+        {"div_id": 1, "event_id": 6, "time_seconds": 10.8, "round": "F", "mark": "DQ",
+         "athlete_name": "Dq"},
+        {"div_id": 1, "event_id": 6, "time_seconds": 11.1, "round": "F", "athlete_name": "Champ"},
+        # the anet TF sentinel is no time
+        {"div_id": 1, "event_id": 7, "time_seconds": 20000.002, "athlete_name": "Dns"},
+        {"div_id": 1, "event_id": 7, "time_seconds": 250.0, "athlete_name": "Miler"},
+    ]
+    w = A._tfEventWinners(rows)
+    assert w[(1, 5)]["athlete_name"] == "B"
+    assert w[(1, 6)]["athlete_name"] == "Champ"
+    assert w[(1, 7)]["athlete_name"] == "Miler"
+
+
+# ---- 6 / 8. school bests: names filled, the pin selected ---------------- #
+
+def _namesFrom(name_by_pid):
+    def answer(sql, params):
+        ids = params[0]
+        return [{"person_id": p, "name": name_by_pid[p]} for p in ids
+                if p in name_by_pid]
+    return answer
+
+
+def test_school_best_selects_the_pin_and_fills_names():
+    import school
+    best = [{"person_id": 5, "name": " ", "rating": 120, "pool": "college_m",
+             "result_id": -77}]
+    cur = StubCursor([best, _namesFrom({5: "Ann Lee"}), []])
+    rows = school.schoolBest(cur, "Amherst", "XC")
+    assert "rr.result_id" in cur.sql[0][0]
+    assert rows[0]["name"] == "Ann Lee"
+
+
+def test_school_top_athletes_fill_names():
+    import school
+    top = [{"person_id": 6, "name": " ", "best": 120, "pool": "college_f"}]
+    cur = StubCursor([top, _namesFrom({6: "Bo Diaz"}), []])
+    assert school.schoolTopAthletes(cur, "Amherst", "XC")[0]["name"] == "Bo Diaz"
+
+
+def test_school_prs_fall_back_to_the_feed_name():
+    import school_prs
+    src = open(school_prs.__file__, encoding="utf-8").read()
+    assert src.count("_fillRowNames(cur,") == 2
+
+
+# ---- 7. school PRs field links ------------------------------------------ #
+
+def test_school_prs_field_rows_without_ids_link_the_meet(A):
+    src = _tpl("school_prs.html")
+    i = src.index("{% elif r.event_id and r.div_id is not none %}")
+    tail = src[i:src.index("</td>", i)]
+    assert '/meet/tf/{{ r.meet_id }}{% if r.result_id %}?r={{ r.result_id }}' in tail
+
+
+# ---- 15. header, year bar and current season follow the state chip ------ #
+
+@pytest.mark.parametrize("fn,args", [
+    ("schoolYears", ()), ("currentSeason", ("XC",)), ("schoolHeader", ())])
+def test_school_scalars_take_the_state_chip(fn, args):
+    import school
+    cur = StubCursor([[{"athletes": 3, "y": 2025}]])
+    getattr(school, fn)(cur, "Oregon", *args, "IL", "OR")
+    sql, params = cur.sql[0]
+    assert "person_home_state" in sql and params["sf_state"] == "IL"
+    cur = StubCursor([[{"athletes": 3, "y": 2025}]])
+    getattr(school, fn)(cur, "Oregon", *args)
+    assert "person_home_state" not in cur.sql[0][0]

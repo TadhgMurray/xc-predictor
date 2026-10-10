@@ -81,7 +81,8 @@ def test_the_assignment_is_written_down_so_the_page_and_the_counts_agree():
     assert '_LABELS["athlete_state"] = _tableExists(cur, "school_athlete_state")' in src
     # the four school-page queries pass the school, or the clause cannot fire
     school_py = open(os.path.join(_ROOT, "racecast", "school.py")).read()
-    assert school_py.count("stateFilterSql(") == 4          # all four queries
+    # four tables, and the header, year bar and current season (sweep 2026-10-10)
+    assert school_py.count("stateFilterSql(") == 7
     assert "stateFilterSql(\"s\", state, primary, school)" in school_py
     assert "stateFilterSql(\"rr\", state, primary, school)" in school_py
     # and it is built from si_assign AFTER the merge and the directory folded

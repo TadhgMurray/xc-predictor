@@ -55,8 +55,8 @@ class EmbedSchool(unittest.TestCase):
         self.saved = [(m, k, getattr(m, k)) for m, k in self.saved]
         A._inMaintenance = lambda: False
         A.getConn = lambda *a, **k: _Conn()
-        school.schoolHeader = lambda cur, s: {"state": "CA"}
-        school.currentSeason = lambda cur, s, sport: 2026
+        school.schoolHeader = lambda cur, s, *a: {"state": "CA"}
+        school.currentSeason = lambda cur, s, sport, *a: 2026
         school.schoolMeets = lambda cur, s, sport, **k: [
             {"meet_id": 9, "meet_name": "Clovis Invite", "date": "2026-10-03"}]
         boys = [{"person_id": i, "name": f"Boy {i}", "grade": "11", "pool": "hs_m",

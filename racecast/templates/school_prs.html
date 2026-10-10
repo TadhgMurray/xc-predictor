@@ -65,8 +65,12 @@
                     <a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.race_date|mdy }}</a>
                     {% elif sec.kind == "running" %}
                     {% if r.event_id %}<a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.race_date|mdy }}</a>{% else %}{{ r.race_date|mdy }}{% endif %}
-                    {% else %}
+                    {# ! guarded as the running row above (sweep 2026-10-10):
+                       an id-less field/hurdle row linked /race/tf/<id>/None/None #}
+                    {% elif r.event_id and r.div_id is not none %}
                     <a href="/race/tf/{{ r.meet_id }}/{{ r.event_id }}/{{ r.div_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.date|mdy }}</a>
+                    {% else %}
+                    <a href="/meet/tf/{{ r.meet_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.date|mdy }}</a>
                     {% endif %}
                 </td>
             </tr>

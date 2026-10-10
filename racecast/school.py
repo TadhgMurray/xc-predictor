@@ -74,22 +74,33 @@ def _labelSql(year_col, sport_col):
            f"ELSE {year_col} END)"
 
 
-def schoolYears(cur, school):
-    """Seasons this school has raced, newest first, with a count each."""
+def schoolYears(cur, school, state=None, primary=None):
+    """Seasons this school has raced, newest first, with a count each.
+
+    ! state/primary: the page's state chip, as every table under it
+      (sweep 2026-10-10) -- the year bar counted every namesake's seasons,
+      so the Oregon (IL) page offered Oregon (OR)'s years."""
+    sf, sfp = stateFilterSql("s", state, primary, school)
     cur.execute(f"""
         SELECT year, sport,
                {_labelSql("year", "sport")} AS label,
                count(*) AS athletes
-        FROM   athlete_season
+        FROM   athlete_season s
         WHERE  school = %(school)s
+          {sf}
         GROUP  BY year, sport
         ORDER  BY year DESC, sport
-    """, {"school": school})
+    """, {"school": school, **sfp})
     return cur.fetchall()
 
 
-def schoolHeader(cur, school):
+def schoolHeader(cur, school, state=None, primary=None):
     """State and span. None when the school has no results at all.
+
+    ! state/primary scope the athlete_season and ranking_results reads to
+      the page's state chip (sweep 2026-10-10): the span was every
+      namesake's. The raw-results fallback stays unscoped -- it answers
+      "does this school exist", which the chip cannot change.
 
     ⚠ THREE SOURCES DEEP, because athlete_season is a REBUILT table: it
       empties during a pipeline rebuild (and once emptied itself on crash
@@ -129,28 +140,31 @@ def schoolHeader(cur, school):
        plainly has results, and an unbounded query in this tree has already
        taken the site down once."""
     label = _labelSql("year", "sport")
+    sf, sfp = stateFilterSql("s", state, primary, school)
     cur.execute(f"""
         SELECT count(DISTINCT person_id)          AS athletes,
                min({label})                       AS first_year,
                max({label})                       AS last_year,
                mode() WITHIN GROUP (ORDER BY state) AS state
-        FROM   athlete_season
+        FROM   athlete_season s
         WHERE  school = %(school)s
-    """, {"school": school})
+          {sf}
+    """, {"school": school, **sfp})
     row = cur.fetchone()
     if row and row["athletes"]:
         return row
 
-    cur.execute("""
+    cur.execute(f"""
         SELECT count(DISTINCT person_id)          AS athletes,
                min(CASE WHEN sport = 'TF' THEN year + 1 ELSE year END)
                                                   AS first_year,
                max(CASE WHEN sport = 'TF' THEN year + 1 ELSE year END)
                                                   AS last_year,
                NULL::text                         AS state
-        FROM   ranking_results
+        FROM   ranking_results s
         WHERE  school = %(school)s
-    """, {"school": school})
+          {sf}
+    """, {"school": school, **sfp})
     row = cur.fetchone()
     if row and row["athletes"]:
         return row
@@ -509,17 +523,21 @@ def distLabel(metres):
 
 
 
-def currentSeason(cur, school, sport):
+def currentSeason(cur, school, sport, state=None, primary=None):
     """The newest season this school raced THIS sport, or None.
 
     ⚠ NOT max(year) OVERALL. A school whose last track season predates its
       last cross country one would otherwise show an empty roster.
+    ! AND NOT A NAMESAKE'S (sweep 2026-10-10): scoped to the state chip, or
+      a namesake's newer season left this school's roster empty.
     """
-    cur.execute("""
+    sf, sfp = stateFilterSql("s", state, primary, school)
+    cur.execute(f"""
         SELECT max(year) AS y
-        FROM   athlete_season
+        FROM   athlete_season s
         WHERE  school = %(school)s AND sport = %(sport)s
-    """, {"school": school, "sport": sport})
+          {sf}
+    """, {"school": school, "sport": sport, **sfp})
     row = cur.fetchone()
     return row["y"] if row else None
 
@@ -559,7 +577,10 @@ def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
                rr.race_date,
                rr.meet_id,
                rr.div_id,
-               rr.event_id
+               rr.event_id,
+               -- ★ THE PIN (sweep 2026-10-10): school.html links ?r= with
+               --   it, and it was never selected, so no link ever pinned
+               rr.result_id
         FROM   ranked rr
         LEFT JOIN LATERAL (
             SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
@@ -572,7 +593,11 @@ def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
         WHERE  rr.rn <= %(lim)s
         ORDER  BY rr.speed_rating DESC
     """, {"school": school, "sport": sport, "lim": limit + 1, **sfp})
-    return fetchCappedPerPool(cur, limit)
+    rows = fetchCappedPerPool(cur, limit)
+    # ! the athletes lateral has no row for most college ids: the feed's
+    #   own name, as the roster (sweep 2026-10-10: "Unknown" on college pages)
+    _fillRowNames(cur, rows)
+    return rows
 
 
 def schoolTopAthletes(cur, school, sport, limit=12,
@@ -626,4 +651,6 @@ def schoolTopAthletes(cur, school, sport, limit=12,
         WHERE  x.rn_pool <= %(lim)s
         ORDER  BY best DESC
     """, {"school": school, "sport": sport, "lim": limit + 1, **sfp})
-    return fetchCappedPerPool(cur, limit)
+    rows = fetchCappedPerPool(cur, limit)
+    _fillRowNames(cur, rows)               # as schoolBest (sweep 2026-10-10)
+    return rows
