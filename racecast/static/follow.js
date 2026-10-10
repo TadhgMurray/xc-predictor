@@ -121,7 +121,7 @@
     var on = shortlist ? st.saved : st.following;
     var html, note = '';
     if (shortlist) {
-      if (on) note = '<span class="rc-follow-note">' + esc(st.count) + ' of ' + esc(st.max) + ' · <a href="/account/shortlist">Compare</a></span>';
+      if (on) note = '<span class="rc-follow-note">' + esc(st.count) + ' saved · <a href="/account/shortlist">Compare</a></span>';
       if (st.message) note = '<span class="rc-follow-note">' + esc(st.message) + '</span>';
       html = (cfg.sep ? esc(cfg.sep) : '') + '<button type="button" class="rc-follow' + (on ? ' is-on' : '') +
         '" aria-pressed="' + (on ? 'true' : 'false') + '">' + (on ? CHECK : PLUS) + '<span>' +

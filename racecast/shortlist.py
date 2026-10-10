@@ -1,7 +1,7 @@
 # Project: xc-predictor / racecast
 # File:    shortlist.py
 # Purpose: The saved college shortlist (owner, 2026-10-10, approved): from a
-#          college's recruiting page, save it (two to four programs, stored
+#          college's recruiting page, save it (as many as you like, stored
 #          on the account), and see them side by side --
 #
 #              /account/shortlist[?gender=f&sport=TF]
@@ -34,9 +34,16 @@
 #   what their high-school trajectory said; the page says which is which and
 #   never subtracts one scale from the other.
 #
-# ! TWO TO FOUR (owner). One program is the recruiting page itself; a fifth
-#   column does not fit beside four on a laptop and is a list, not a
-#   comparison. Saving a fifth says so instead of dropping the oldest.
+# ★ NO FIXED CAP (owner, 2026-10-10: "allow MORE THAN 4"). The one bound is
+#   the recruiting table itself: a program can be saved only if
+#   college_recruit has recruits for it (programExists), so a list can never
+#   hold more than the colleges Racecast has on file, and a forged request
+#   cannot fill the table with made-up names. The comparison stays readable
+#   at any length: the row labels stick to the left and the programs scroll
+#   sideways inside the table, on a laptop as on a phone, and the reader
+#   ticks which saved programs to compare. The default is ALL of them --
+#   with the labels pinned, a tenth column is one swipe away, and leaving
+#   saved programs out by default would hide the reader's own choices.
 #
 # ! EVERY POST IS CSRF + SAME ORIGIN (accounts.csrfOk), and the page that
 #   reads the list is under /account (private, no-store, never at the edge).
@@ -51,7 +58,6 @@ import follows as F
 bp = Blueprint("shortlist", __name__)
 
 MIN_PROGRAMS = 2
-MAX_PROGRAMS = 4
 
 
 # ---- pure ----------------------------------------------------------------
@@ -142,7 +148,30 @@ def youFrom(cur, claims, sport):
     return None
 
 
+def pickKey(school, state):
+    return f"{school}|{state or ''}"
+
+
+def picked(programs, picks):
+    """The saved programs to compare: those ticked (?pick=school|state),
+    or all of them when none is -- see the header."""
+    want = {p for p in picks if p}
+    chosen = [p for p in programs if pickKey(p["school"], p.get("state")) in want]
+    return chosen or list(programs)
+
+
 # ---- database ------------------------------------------------------------
+
+def programExists(cur, school, state):
+    """Does the recruiting table have this program? The shortlist's only
+    bound (header). None when the table is not built."""
+    cur.execute("SELECT to_regclass('public.college_recruit') AS t")
+    if not (AC._one(cur) or {}).get("t"):
+        return None
+    cur.execute("""SELECT 1 AS x FROM college_recruit
+                   WHERE school = %s AND (%s = '' OR state = %s) LIMIT 1""", (school, state, state))
+    return cur.fetchone() is not None
+
 
 def listFor(cur, account_id):
     cur.execute("""SELECT school, state, added_at FROM account_shortlist
@@ -212,7 +241,7 @@ def comparison(cur, programs, gender, sport):
 
 @bp.route("/api/shortlist/state")
 def api_shortlist_state():
-    """What the Save button draws: {signed_in, saved, count, max, csrf}."""
+    """What the Save button draws: {signed_in, saved, count, csrf}."""
     sess = AC.currentSession()
     if not sess:
         return jsonify({"signed_in": False})
@@ -230,7 +259,7 @@ def api_shortlist_state():
         return jsonify({"signed_in": True, "ready": False})
     saved = any(h["school"] == prog[0] and h["state"] == prog[1] for h in have)
     return jsonify({"signed_in": True, "ready": True, "saved": saved, "count": len(have),
-                    "max": MAX_PROGRAMS, "csrf": sess["csrf"]})
+                    "csrf": sess["csrf"]})
 
 
 @bp.route("/api/shortlist", methods=["POST"])
@@ -262,10 +291,11 @@ def api_shortlist():
         have = listFor(cur, aid)
         there = any(h["school"] == prog[0] and h["state"] == prog[1] for h in have)
         if action == "save" and not there:
-            if len(have) >= MAX_PROGRAMS:
+            ok = programExists(cur, prog[0], prog[1])
+            if not ok:
                 conn.rollback()
-                return answer({"error": f"Your shortlist holds {MAX_PROGRAMS} programs. "
-                                        "Remove one to add another.", "count": len(have)}, 409)
+                return answer({"error": "Recruiting numbers are not built on this server yet." if ok is None
+                               else "That college is not in the recruiting list."}, 404 if ok is False else 503)
             cur.execute("""INSERT INTO account_shortlist (account_id, school, state)
                            VALUES (%s, %s, %s) ON CONFLICT DO NOTHING""", (aid, prog[0], prog[1]))
         elif action == "remove":
@@ -302,8 +332,9 @@ def shortlist_page():
         gender = (request.args.get("gender") or (you or {}).get("gender") or "m").strip().lower()
         if gender not in R.GENDERS:
             gender = "m"
+        chosen = picked(programs, request.args.getlist("pick"))
         if programs and built:
-            cols = comparison(cur, programs, gender, sport)
+            cols = comparison(cur, chosen, gender, sport)
             for c in cols:
                 # ! only against recruits of the athlete's own gender
                 c["fit"] = (fitOf(you["rating"], c.get("summary"))
@@ -313,11 +344,12 @@ def shortlist_page():
             #   recruiting table is built; the numbers say they are coming
             cols = [{"school": p["school"], "state": p.get("state") or "", "summary": None,
                      "href": f"/recruiting/school/{urllib.parse.quote(p['school'], safe='/')}"}
-                    for p in programs]
+                    for p in chosen]
         conn.commit()
     return render_template("shortlist.html", cols=cols, gender=gender, sport=sport,
                            ready=ready, built=built, csrf=sess["csrf"], you=you,
-                           n=len(cols), min_n=MIN_PROGRAMS, max_n=MAX_PROGRAMS,
+                           n=len(programs), min_n=MIN_PROGRAMS, programs=programs,
+                           picks={pickKey(c["school"], c.get("state")) for c in cols}, pick_key=pickKey,
                            fmt_time=R.fmtTime,
                            notice=request.args.get("notice", "")[:200],
                            error=request.args.get("error", "")[:200])

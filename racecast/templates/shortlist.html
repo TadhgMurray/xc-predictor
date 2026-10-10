@@ -7,7 +7,11 @@
      recruits, how much runners improve there, the conference rank. The
      model's projection is a tooltip, not a row.
    ★ THE RACE PAGE'S SHAPE: header with the gender and sport switches, one
-     table that scrolls inside itself on a phone, never the page. #}
+     table that scrolls inside itself, never the page.
+   ★ ANY NUMBER OF PROGRAMS (owner, 2026-10-10): the row labels stick to the
+     left while the programs scroll sideways, on a laptop as on a phone, and
+     the ticks above the table pick which saved programs to compare (all of
+     them by default; shortlist.py says why). #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -36,7 +40,7 @@
       <div class="rc-sport"><span class="sport-tag sport-tag--site">Your account</span></div>
       <h1>College shortlist</h1>
       <p class="sl-purpose">Compare the colleges you're considering: what level they recruit, how much their runners improve, and where you'd fit.</p>
-      <div class="rc-meta">{{ n }} of {{ max_n }} saved · <a href="/recruiting">Find colleges</a> · <a href="/account/me">My page</a></div>
+      <div class="rc-meta">{{ n }} saved · <a href="/recruiting">Find colleges</a> · <a href="/account/me">My page</a></div>
       <div class="rc-scope-row rc-scope">
         <nav class="seg" aria-label="Gender">
           <a class="seg-btn{{ ' is-on' if gender == 'm' }}" href="{{ q('m', sport) }}">Men</a><a class="seg-btn{{ ' is-on' if gender == 'f' }}" href="{{ q('f', sport) }}">Women</a>
@@ -55,12 +59,23 @@
   {% if not ready %}
   <p class="predict-status show error">The shortlist is not set up on this server yet (racecast/follows.py --init).</p>
   {% elif not cols %}
-  <p class="meta">Nothing saved yet. Open a college from <a href="/recruiting">Recruiting</a> and press <b>Save to shortlist</b>. Save {{ min_n }} to {{ max_n }} to see them side by side.</p>
+  <p class="meta">Nothing saved yet. Open a college from <a href="/recruiting">Recruiting</a> and press <b>Save to shortlist</b>. Save {{ min_n }} or more to see them side by side.</p>
   {% else %}
   {% if n < min_n %}<p class="meta">Save one more college to compare: open one from <a href="/recruiting">Recruiting</a> and press <b>Save to shortlist</b>.</p>{% endif %}
   {% if not built %}<p class="meta">The recruiting numbers are not built on this server yet.</p>{% endif %}
+  {% if programs|length > min_n %}
+  {# which saved programs to compare: a GET form, so the choice is a link #}
+  <form method="get" action="/account/shortlist" class="sl-pick">
+    <input type="hidden" name="gender" value="{{ gender }}"><input type="hidden" name="sport" value="{{ sport }}">
+    <span class="sl-pick-lab">Compare</span>
+    {% for p in programs %}{% set k = pick_key(p.school, p.state) %}
+    <label><input type="checkbox" name="pick" value="{{ k }}" {{ "checked" if k in picks }}> {{ p.school }}{% if p.state %} <span class="dist-note">{{ p.state }}</span>{% endif %}</label>
+    {% endfor %}
+    <button type="submit" class="sl-go">Update</button>
+  </form>
+  {% endif %}
   <div class="sl-scroll">
-  <table class="sl-table" style="--sl-n: {{ cols|length }}">
+  <table class="sl-table">
     <thead><tr><th scope="col"></th>
       {% for c in cols %}
       <th scope="col">{{ crest(c.school, c.state or none, px=64, size=22) }}<a href="{{ c.href }}">{{ c.summary.label if c.summary else c.school }}</a>

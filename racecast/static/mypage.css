@@ -67,8 +67,8 @@ main.rc.my-page .go { padding: .4rem .9rem; font: inherit; font-weight: 600; bor
 
 /* ---- the shortlist comparison ------------------------------------------- */
 main.rc.shortlist-page .sl-scroll { overflow-x: auto; margin: 0 0 1rem; }
-main.rc.shortlist-page table.sl-table { width: 100%; min-width: 34rem; table-layout: fixed; font-size: .92rem; }
-main.rc.shortlist-page .sl-table th[scope=row] { width: 11rem; font-weight: 600; color: var(--muted); font-size: .78rem;
+main.rc.shortlist-page table.sl-table { font-size: .92rem; }
+main.rc.shortlist-page .sl-table th[scope=row] { font-weight: 600; color: var(--muted); font-size: .78rem;
   letter-spacing: .04em; text-transform: uppercase; vertical-align: top; }
 main.rc.shortlist-page .sl-table thead th { vertical-align: bottom; font-size: 1rem; text-transform: none; letter-spacing: 0; }
 main.rc.shortlist-page .sl-table thead th a { font-weight: 700; }
@@ -80,22 +80,30 @@ main.rc.shortlist-page .sl-table tr.sl-sec th { padding-top: 1rem; color: var(--
 main.rc.shortlist-page .sl-rm { margin-top: .3rem; }
 main.rc.shortlist-page .acct-x { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: .8rem; text-decoration: underline; padding: 0; }
 main.rc.shortlist-page .sl-note { font-size: .85rem; color: var(--muted); max-width: 46rem; }
-@media (max-width: 760px) {
-  main.rc.shortlist-page .sl-table th[scope=row] { width: 7.5rem; }
-}
 /* the shortlist's purpose line and "Where you'd fit" (owner, 2026-10-10) */
 main.rc.shortlist-page .sl-purpose { margin: .1rem 0 .5rem; font-size: 1rem; color: #374151; max-width: 42rem; }
 main.rc.shortlist-page tr.sl-fitrow td, main.rc.shortlist-page tr.sl-fitrow th { background: #fdf7e6; }
-main.rc.shortlist-page tr.sl-fitrow th { box-shadow: inset 3px 0 0 var(--gold); }
 main.rc.shortlist-page .sl-fit { font-weight: 700; }
 main.rc.shortlist-page .sl-fit-top { color: #1a7f37; }
 main.rc.shortlist-page .sl-fit-below { color: #a32d2d; }
 main.rc.shortlist-page .sl-i { color: var(--muted); cursor: help; font-size: .9rem; }
-/* ! THE CELLS WRAP: style.css keeps phone table cells on one line, which in
-     a fixed layout ran each column's text into the next. Each program
-     column keeps a readable width and the table scrolls inside .sl-scroll. */
+/* ★ ANY NUMBER OF PROGRAMS (owner, 2026-10-10): each program column keeps a
+   readable width, the table scrolls sideways inside .sl-scroll on every
+   screen, and the row labels stay pinned on the left while it does. The
+   cells wrap: style.css keeps phone table cells on one line. */
+main.rc.shortlist-page table.sl-table { display: table; table-layout: auto; width: auto; min-width: 100%; border-collapse: separate; border-spacing: 0; }
 main.rc.shortlist-page .sl-table th, main.rc.shortlist-page .sl-table td,
 main.rc.shortlist-page .sl-table td * { white-space: normal; overflow-wrap: break-word; }
+main.rc.shortlist-page .sl-table thead th, main.rc.shortlist-page .sl-table td { min-width: 12rem; max-width: 16rem; }
+main.rc.shortlist-page .sl-table th[scope=row], main.rc.shortlist-page .sl-table thead th:first-child {
+  position: sticky; left: 0; z-index: 1; background: #fff; min-width: 9rem; max-width: 11rem; box-shadow: inset -1px 0 0 var(--line); }
+main.rc.shortlist-page .sl-table thead th:first-child { background: #f7f8fa; }
+main.rc.shortlist-page tr.sl-fitrow th[scope=row] { background: #fdf7e6; box-shadow: inset 3px 0 0 var(--gold), inset -1px 0 0 var(--line); }
+main.rc.shortlist-page .sl-pick { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem 1rem; margin: 0 0 .8rem; font-size: .92rem; }
+main.rc.shortlist-page .sl-pick-lab { font-size: .75rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+main.rc.shortlist-page .sl-pick label { display: inline-flex; align-items: center; gap: .3rem; cursor: pointer; }
+main.rc.shortlist-page .sl-go { padding: .25rem .8rem; font: inherit; font-weight: 600; border: 1px solid var(--line-2); border-radius: 6px; background: #fff; cursor: pointer; }
 @media (max-width: 760px) {
-  main.rc.shortlist-page table.sl-table { display: table; min-width: calc(7.5rem + var(--sl-n, 3) * 12rem); }
+  main.rc.shortlist-page .sl-table thead th, main.rc.shortlist-page .sl-table td { min-width: 10rem; }
+  main.rc.shortlist-page .sl-table th[scope=row], main.rc.shortlist-page .sl-table thead th:first-child { min-width: 6.5rem; max-width: 7.5rem; }
 }

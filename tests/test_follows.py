@@ -253,37 +253,57 @@ def _rr(rid, pid, day, rating, sport="XC", pool="hs_m", **kw):
             "name": kw.get("name", "Owen"), "race_href": f"/race/xc/{rid}/1"}
 
 
-def test_season_bests_need_an_earlier_day_to_beat():
-    rows = [_rr(1, 7, "2026-09-01", 110), _rr(2, 7, "2026-09-08", 112),
-            _rr(3, 7, "2026-09-08", 115),              # same day as 2: beats 110, not 112's day
-            _rr(4, 7, "2026-09-15", 114), _rr(5, 7, "2026-09-22", 116),
-            _rr(6, 8, "2026-09-01", 99)]               # one race: nothing to beat
-    assert FA.seasonBests(rows) == {2, 3, 5}
+def test_season_bests_are_times_at_the_same_distance_before_this_day():
+    rows = [_rr(1, 7, "2026-09-01", 110, t=960.0), _rr(2, 7, "2026-09-08", 112, t=950.0),
+            _rr(3, 7, "2026-09-08", 115, t=940.0),      # same day as 2: beats 960, not 950's day
+            _rr(4, 7, "2026-09-15", 114, t=945.0), _rr(5, 7, "2026-09-22", 116, t=930.0),
+            _rr(6, 7, "2026-09-29", 118, t=600.0, d=3000),   # another distance: nothing to beat
+            _rr(7, 8, "2026-09-01", 99, t=1100.0)]           # one race: nothing to beat
+    assert FA.seasonBests(rows) == {2: 960.0, 3: 960.0, 5: 940.0}
+    assert FA.priorRatings(rows)[5] == 114 and 1 not in FA.priorRatings(rows)
 
 
-def test_race_items_carry_pr_season_best_and_breakout():
-    r = _rr(9, 7, "2026-09-27", 123.46, t=942.3, mn="Nike Portland XC")
-    key, p = FA.raceItem(r, {("XC", 9): {"prev_best": 958.1}}, {("XC", 9): {"jump": 4.13}}, {9})
-    assert key == "race:XC:9"
-    assert p["flags"] == {"pr": {"prev": 958.1}, "sr": True, "jump": 4.1} and p["rating"] == 123.5
-    import alert_email as E
-    line = E.raceSentence(p, datetime.date(2026, 9, 29))
-    # ★ a sentence a person would write (owner, 2026-10-10): no rating jargon, no "+4.1"
-    assert line == ("Owen ran 15:42 at Nike Portland XC on Sunday \u2014 a new PR by 16 seconds, "
-                    "his best race of the season, and a breakout race, well above his usual level.")
-    assert "4.1" not in line and "rating" not in line
-    # older than the reader's week: a date, not a weekday; a girl's race says "her"
-    p2 = dict(p, pool="hs_f", flags={"sr": True})
-    assert E.raceSentence(p2, datetime.date(2026, 10, 10)).endswith("on Sep 27 \u2014 her best race of the season.")
+def test_race_items_carry_pr_season_best_breakout_and_the_previous_rating():
+    r = _rr(9, 7, "2026-09-27", 123.46, t=912.4, mn="Nike Portland XC")
+    key, p = FA.raceItem(r, {("XC", 9): {"prev_best": 925.0}}, {("XC", 9): {"jump": 4.13, "base": 119.3}},
+                         {9: 930.1}, {9: 122.2})
+    assert key == "race:XC:9" and p["result_id"] == 9
+    assert p["flags"] == {"pr": {"prev": 925.0}, "sr": {"prev": 930.1}, "jump": {"by": 4.1, "base": 119.3}}
+    assert p["rating"] == 123.5 and p["prev_rating"] == 122.2
 
 
-def test_team_items_are_one_per_meet():
+def test_places_share_on_ties_and_the_team_finish_is_the_race_pages_scoring():
+    rows = [{"result_id": i, "time_seconds": t, "school": s, "person_id": i, "athlete_name": f"R{i}"}
+            for i, (t, s) in enumerate([(900, "A"), (905, "B"), (905, "A"), (910, "A"), (911, "B"),
+                                        (912, "A"), (913, "B"), (914, "A"), (915, "B"), (916, "B"),
+                                        (917, "C")], start=1)]
+    assert FA.placesOf(rows)[:4] == [1, 2, 2, 4]
+    a = FA.teamResult(rows, "A")
+    assert a["place"] == 1 and a["n_teams"] == 2 and a["points"] == 1 + 3 + 4 + 6 + 8
+    assert [x["name"] for x in a["runners"]] == ["R1", "R3", "R4", "R6", "R8"]
+    assert a["runners"][1]["place"] == 2          # the race place (a tie), not the scoring place and FA.teamResult(rows, "C") is None
+
+
+def test_race_context_adds_place_field_course_and_team(monkeypatch):
+    field = [{"result_id": i, "person_id": i, "school": "A" if i % 2 else "B", "time_seconds": 900 + i,
+              "athlete_name": f"R{i}"} for i in range(1, 13)]
+    cur = Cur([(r"WHERE result_id = %s", [{"result_id": 5, "meet_id": 77, "div_id": 3, "source": "anet",
+                                           "school": "A"}]),
+               (r"ORDER  BY time_seconds", field),
+               (r"FROM meets", [{"course_name": "Blue Lake Park", "division": "Varsity Boys"}])])
+    p = FA.raceContext(FA.Races(cur), {"type": "race", "sport": "XC", "result_id": 5})
+    assert p["place"] == 5 and p["field"] == 12 and p["course"] == "Blue Lake Park"
+    assert p["team"]["school"] == "A" and p["team"]["n_teams"] == 2
+
+
+def test_team_items_are_one_per_meet_with_pr_names():
     rows = [_rr(1, 7, "2026-09-27", 120, meet=55, name="A"), _rr(2, 8, "2026-09-27", 124, meet=55, name="B"),
             _rr(3, 9, "2026-09-27", 101, meet=55, name="C"), _rr(4, 7, "2026-10-04", 121, meet=56, name="A")]
     items = dict(FA.teamItems("team:Jesuit|OR|", rows, {("XC", 3): {}}, {("XC", 1): {}, ("XC", 2): {}}))
     assert set(items) == {"team:Jesuit|OR|:XC:55", "team:Jesuit|OR|:XC:56"}
     p = items["team:Jesuit|OR|:XC:55"]
-    assert p["n_rated"] == 3 and p["best"]["name"] == "B" and p["n_pr"] == 1 and p["n_jump"] == 2
+    assert p["n_rated"] == 3 and p["pr_names"] == ["C"] and p["jump_names"] == ["A", "B"]
+    assert p["result_ids"] == [1, 2, 3]
 
 
 def test_due_daily_weekly_off():
@@ -296,31 +316,57 @@ def test_due_daily_weekly_off():
     assert not FA.isDue("off", None, now)
 
 
-def test_digest_is_personal_html_with_a_text_twin():
-    p = FA.raceItem(_rr(9, 7, "2026-09-27", 123.5, t=942.3, mn="Nike Portland XC", name="Ezra Goldfarb"),
-                    {("XC", 9): {"prev_best": 955.0}}, {}, set())[1]
+_RACE = {"type": "race", "sport": "XC", "person_id": 7, "result_id": 9, "name": "Ezra Goldfarb",
+         "pool": "hs_m", "date": "2026-10-03", "meet_name": "Nike Portland XC", "distance": 5000,
+         "time": 912.4, "rating": 118.9, "prev_rating": 117.6, "href": "/race/xc/41237/2",
+         "place": 12, "field": 184, "course": "Blue Lake Park", "division": "Varsity Boys",
+         "team": {"school": "Lincoln", "place": 3, "n_teams": 22, "points": 98},
+         "flags": {"pr": {"prev": 925.0}, "sr": {"prev": 930.1}, "jump": {"by": 4.1, "base": 114.8}}}
+_TEAM = {"type": "team", "sport": "XC", "meet_id": 41237, "date": "2026-10-03", "meet_name": "Nike Portland XC",
+         "n_rated": 7, "href": "/race/xc/41237/2", "pr_names": ["Ben Sato", "Miles Okafor"], "n_pr": 2,
+         "jump_names": [], "n_jump": 0,
+         "races": [{"division": "Boys Championship", "place": 2, "n_teams": 22, "points": 64,
+                    "runners": [{"name": "Owen Castellano", "place": 3, "time": 884.1},
+                                {"name": "Miles Okafor", "place": 9, "time": 902.3}]}]}
+
+
+def test_digest_reads_like_a_results_email():
     unsub = "https://racecast.co/account/unsubscribe?a=41&t=x"
-    subject, text, html = FA.digest([("Ezra Goldfarb", "/athlete/7", [p], "athlete")], "https://racecast.co",
-                                    unsub, "Tadhg Murray", datetime.date(2026, 9, 29))
-    assert subject == "Ezra Goldfarb ran a PR at Nike Portland XC"
-    assert text.startswith("Hi Tadhg,") and "Hi Tadhg," in html
-    assert "https://racecast.co/athlete/7" in text and f"Unsubscribe: {unsub}" in text
-    # ★ buttons, never a raw URL as the visible text of the HTML
+    nx = {"name": "Metro League Championships", "date": "2026-10-24", "venue": "Mt. Hood CC", "state": "OR"}
+    subject, text, html = FA.digest([("Ezra Goldfarb", "/athlete/7", [_RACE], "athlete", nx)],
+                                    "https://racecast.co", unsub, "Tadhg Murray")
+    assert subject == "Ezra Goldfarb: PR at Nike Portland XC (15:12.4, 12th of 184)"
+    assert text.startswith("Hi Tadhg,")
+    for line in ("Nike Portland XC, Sat, Oct 3. Blue Lake Park, Varsity Boys, 5000m.",
+                 "Place: 12th of 184", "Time: 15:12.4", "PR: previous 15:25.0, 12.6 seconds faster",
+                 "Season best: previous 15:30.1, 17.7 seconds faster",
+                 "Rating: 118.9, up 1.3 from the previous race",
+                 "Breakout: 4.1 above the median of earlier races this season",
+                 "Team: Lincoln 3rd of 22 teams, 98 points",
+                 "Next likely meet: Metro League Championships, Sat, Oct 24 (Mt. Hood CC, OR)"):
+        assert line in text, line
+    # ! no AI-isms (owner, 2026-10-10): no em dash, none of the stock phrases
+    for bad in ("\u2014", "Here's the latest", "well above", "best race of the season"):
+        assert bad not in text and bad not in html
     visible = re.sub(r"<[^>]+>", " ", html)
-    assert "https://" not in visible and "See Ezra&#x27;s page" in html and "See the race" in html
+    assert "https://" not in visible and "See the race" in html and "Ezra&#x27;s page" in html
     assert "You&#x27;re getting this because you follow Ezra Goldfarb on Racecast." in html
     assert "@" not in text and "@" not in html
-    _s, text2, _h = FA.digest([("Ezra", "/a", [p], "athlete")], "o", "u", None, None)
-    assert text2.startswith("Hi,\n")
-    team = {"type": "team", "sport": "XC", "meet_id": 5, "date": "2026-09-27", "meet_name": "Nike Portland XC",
-            "n_rated": 7, "best": {"name": "Owen Castellano", "time": 902.0, "rating": 123.5}, "n_pr": 2,
-            "n_jump": 0, "href": "/race/xc/5/1"}
-    subject, text, _h = FA.digest([("Ezra Goldfarb", "/athlete/7", [p, p], "athlete"),
-                                   ("Jesuit", "/school/Jesuit", [team], "team")], "o", "u", "Tadhg",
-                                  datetime.date(2026, 9, 29))
-    assert subject == "3 updates: Ezra Goldfarb PR, Jesuit at Nike Portland XC"
-    assert ("Jesuit ran at Nike Portland XC on Sunday: 7 runners, led by Owen Castellano (15:02), "
-            "with 2 PRs.") in text
+    assert FA.digest([("Ezra", "/a", [_RACE], "athlete", None)], "o", "u")[1].startswith("Hi,\n")
+
+
+def test_team_digest_lists_the_squad_and_the_prs():
+    subject, text, _h = FA.digest([("Jesuit", "/school/Jesuit", [_TEAM], "team", None)], "o", "u", "Tadhg")
+    assert subject == "Jesuit: 2nd of 22 teams at Nike Portland XC"
+    assert "Boys Championship: 2nd of 22 teams, 64 points" in text
+    assert "    3rd  Owen Castellano  14:44.1" in text and "PRs (2): Ben Sato, Miles Okafor" in text
+    subject, _t, _h = FA.digest([("Ezra Goldfarb", "/athlete/7", [_RACE, _RACE], "athlete", None),
+                                 ("Jesuit", "/school/Jesuit", [_TEAM], "team", None)], "o", "u")
+    assert subject == "3 results at Nike Portland XC: Ezra Goldfarb PR, Jesuit 2nd"
+    other = dict(_TEAM, meet_name="Clackamas")
+    subject, _t, _h = FA.digest([("Ezra Goldfarb", "/athlete/7", [_RACE], "athlete", None),
+                                 ("Jesuit", "/school/Jesuit", [other], "team", None)], "o", "u")
+    assert subject == "2 results: Ezra Goldfarb PR at Nike Portland XC, Jesuit 2nd at Clackamas"
 
 
 def test_long_subjects_stop_at_a_label():
@@ -564,24 +610,34 @@ def test_conference_strength_ranks_the_program_among_its_members():
     assert SL.conferenceOf(rows, "Z", "MA") is None
 
 
-def test_shortlist_holds_four_and_needs_csrf(monkeypatch):
-    four = [{"school": s, "state": "MA", "added_at": None} for s in "ABCD"]
-    cur = Cur([(r"FROM account_shortlist", four)])
+def test_shortlist_has_no_fixed_cap_only_real_programs_and_needs_csrf(monkeypatch):
+    many = [{"school": f"S{i}", "state": "MA", "added_at": None} for i in range(9)]
+    cur = Cur([(r"FROM account_shortlist", many), (r"to_regclass", [{"t": "college_recruit"}]),
+               (r"FROM college_recruit", [{"x": 1}])])
     fakeDb(monkeypatch, cur)
     c = client(monkeypatch)
     hdr = {"X-CSRF": "tok123", **ORIGIN}
     assert c.post("/api/shortlist", data={"school": "E", "state": "MA"},
                   headers={"X-CSRF": "bad", **ORIGIN}).status_code == 400
-    r = c.post("/api/shortlist", data={"school": "E", "state": "MA", "action": "save"}, headers=hdr)
-    assert r.status_code == 409 and "holds 4" in r.get_json()["error"]
-    assert not any("INSERT INTO account_shortlist" in s for s, _ in cur.sql)
-    cur.answers = [(r"FROM account_shortlist", four[:2])]
+    # ★ a tenth program saves: no cap
     r = c.post("/api/shortlist", data={"school": "E", "state": "MA", "action": "save"}, headers=hdr)
     assert r.status_code == 200 and [p for s, p in cur.sql if "INSERT INTO account_shortlist" in s] == [(41, "E", "MA")]
+    # ! but only a program the recruiting table has
+    cur.answers = [(r"FROM account_shortlist", many), (r"to_regclass", [{"t": "college_recruit"}])]
+    r = c.post("/api/shortlist", data={"school": "Made Up U", "state": "MA", "action": "save"}, headers=hdr)
+    assert r.status_code == 404 and "not in the recruiting list" in r.get_json()["error"]
     # the comparison page's own remove form: CSRF in the form, then back to the page
-    r = c.post("/api/shortlist", data={"school": "A", "state": "MA", "action": "remove", "csrf": "tok123"},
+    r = c.post("/api/shortlist", data={"school": "S1", "state": "MA", "action": "remove", "csrf": "tok123"},
                headers=ORIGIN)
     assert r.status_code == 302 and r.headers["Location"].startswith("/account/shortlist")
+    assert "MAX_PROGRAMS" not in read("racecast", "shortlist.py")
+
+
+def test_compare_picks_the_ticked_programs_or_all():
+    progs = [{"school": "A", "state": "MA"}, {"school": "B", "state": ""}, {"school": "C", "state": "MN"}]
+    assert SL.picked(progs, []) == progs
+    assert [p["school"] for p in SL.picked(progs, ["B|", "C|MN"])] == ["B", "C"]
+    assert SL.picked(progs, ["nope|XX"]) == progs
 
 
 # ---------------------------------------------------------------- the button
