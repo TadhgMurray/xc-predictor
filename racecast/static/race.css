@@ -700,3 +700,10 @@ main.ath-page.rc .tf-dist-h { font-size: 1rem; margin: 1.4rem 0 .2rem; }
   main.ath-page.rc .season { overflow-x: auto; }
   main.ath-page.rc .season table { min-width: 640px; }
 }
+/* runners per team (owner, 2026-10-10): a number box in the field's head */
+main.rc.pred-page .per-team { display: inline-flex; align-items: center; gap: .4rem;
+  font-size: .85rem; color: var(--muted); white-space: nowrap; }
+main.rc.pred-page .per-team[hidden] { display: none; }
+main.rc.pred-page .per-team input { width: 4.2rem; font: inherit; color: var(--ink, #111418);
+  padding: .2rem .4rem; border: 1px solid var(--line-2, #cbd0d6); border-radius: 5px; }
+

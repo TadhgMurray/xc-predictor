@@ -189,6 +189,14 @@
         {# whole squads for every team: this race, and every race of a
            grouped meet (owner, 2026-09-06) #}
         <span class="squad-boxes" id="squad-boxes"></span>
+        {# ★ RUNNERS PER TEAM (owner, 2026-10-10): a conference meet runs
+           ten or more a team; blank is the rulebook seven. Scoring still
+           takes seven -- the rest finish and displace nobody. #}
+        <label class="per-team" id="per-team-box">Runners per team
+          <input type="number" id="per-team" min="7" max="99" step="1"
+                 inputmode="numeric" placeholder="7"
+                 title="How many of each team's runners to put in the race. Blank is seven; a conference meet often runs ten. Only seven score.">
+        </label>
       </div>
 
       {# Every team from that meet, seven runners each, editable. Athletes who

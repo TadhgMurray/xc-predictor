@@ -33,6 +33,12 @@ const state = {
   // ★ OFF BY DEFAULT. Two entries is what actually happened on the day;
   //   merging them is the what-if, and a what-if should be asked for.
   coalesce: false,
+  /* ★ RUNNERS PER TEAM PAST SEVEN (owner, 2026-10-10: "for each team with
+     5-7 indivs say take top 10, like for NESCACs" -- and "a number you can
+     enter", not buttons). null is the rulebook seven. Only "this year": as
+     it ran is the field that ran. The server (predict.squadCap) gives every
+     school that brought a scoring team this many; scoring still takes seven. */
+  perTeam: null,
   // Which picked divisions are scored as ONE race. A partition of divs; see
   // normalizeGroups. The two presets are groupings, not a separate mode.
   groups: [],
@@ -434,6 +440,7 @@ function writeState() {
       divs: state.divs, raceMode: state.raceMode,
       groups: state.groups,
       coalesce: state.coalesce, course: state.course,
+      perTeam: state.perTeam,
       athletes: state.athletes,
       date: $("t-date") ? $("t-date").value : null,
       labels: [..._divLabels], edits,
@@ -458,6 +465,20 @@ function showWhen(when) {
     b.classList.toggle("is-on", b.dataset.when === when));
   document.querySelectorAll(".when-pane").forEach((pn) =>
     pn.classList.toggle("hidden", pn.dataset.pane !== when));
+  // as it ran is the field that ran: no lineup size to choose
+  const pt = $("per-team-box");
+  if (pt) pt.hidden = when !== "thisyear";
+}
+
+/* "10" -> 10; blank, junk or 7 and under -> null (the rulebook seven). */
+function parsePerTeam(v) {
+  if (v === "all") return 99;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 7 ? Math.min(n, 99) : null;
+}
+function syncPerTeam() {
+  const el = $("per-team");
+  if (el) el.value = state.perTeam ? String(state.perTeam) : "";
 }
 
 function showWho(who) {
@@ -512,6 +533,8 @@ async function restoreFromQuery(p, names) {
   }
   state.coalesce = p.get("coalesce") === "1";
   if ($("coalesce")) $("coalesce").checked = state.coalesce;
+  state.perTeam = parsePerTeam(p.get("per_team"));
+  syncPerTeam();
   await loadRaces();
   // ! AFTER loadRaces, which re-proposes a date of its own
   if (p.get("date") && $("t-date")) $("t-date").value = p.get("date");
@@ -616,6 +639,8 @@ function restoreState() {
     saved.groups || groupsForMode(state.divs, state.raceMode));
   state.coalesce = !!saved.coalesce;
   state.course = saved.course || null;
+  state.perTeam = saved.perTeam || null;
+  syncPerTeam();
   state.athletes = saved.athletes || [];
 
   resetEdits();
@@ -1625,6 +1650,7 @@ async function fetchField(div) {
   // ★ which meet of the id (2026-10-05): see parseMeetLink
   if (state.meet.alt) q.set("alt", state.meet.alt);
   if (state.meet.src) q.set("src", state.meet.src);
+  if (state.when === "thisyear" && state.perTeam) q.set("per_team", state.perTeam);
   try {
     const res = await fetch("/api/predict/field?" + q.toString());
     const data = await readJson(res);
@@ -2048,6 +2074,8 @@ function buildQuery(div) {
      different venue was actually chosen. "As it ran" never sends one: that
      mode means the race that happened, on the course it happened on. */
   if (state.when === "thisyear" && state.course) q.set("course", state.course);
+  // the same lineup size the field on screen was read at (fetchField)
+  if (state.when === "thisyear" && state.perTeam) q.set("per_team", state.perTeam);
 
   if (state.who === "individual") {
     // One parameter, one or many values -- the endpoint splits it.
@@ -3570,12 +3598,14 @@ function wholeOn(d) {
 function squadButtons(on, asran) {
   const btn = (v, label, title) =>
     `<button class="vbtn${on === v ? " is-on" : ""}" data-whole="${v}" title="${title}">${label}</button>`;
+  // the lineup size the box set (state.perTeam), seven by default
+  const n = state.perTeam || 7;
   return ` <span class="viewsel">Squads:` +
-    btn("fielded", asran ? "As raced" : "Top 7",
+    btn("fielded", asran ? "As raced" : `Top ${n}`,
         asran ? "Each team's runners as the results list them"
-              : "Each team's seven best by predicted time, the squad it would field") +
+              : `Each team's ${n} best by predicted time, the squad it would field`) +
     btn("whole", "Everyone",
-        "Every current runner of every team onto its card, not only the top 7") +
+        `Every current runner of every team onto its card, not only the top ${n}`) +
     `</span>`;
 }
 
@@ -4134,3 +4164,21 @@ $("predict").addEventListener("click", predict);
 
 /* ★ LAST, so every control it writes back into already exists. */
 document.addEventListener("DOMContentLoaded", restoreState);
+
+/* ★ RUNNERS PER TEAM: a number box (see state.perTeam). A new size is a new
+   field, so every race's field is read again; the hand edits (who was taken
+   off, who was added) are kept -- they are still the person's choices. */
+(function () {
+  const el = $("per-team");
+  if (!el) return;
+  el.addEventListener("change", () => {
+    const v = parsePerTeam(el.value.trim());
+    if (v === state.perTeam) { el.value = v ? String(v) : ""; return; }
+    state.perTeam = v;
+    el.value = v ? String(v) : "";
+    if (!state.meet) { saveState(); return; }
+    for (const e of _edits.values()) e.field = null;
+    clearOutput();
+    loadField().then(() => { renderSquadBoxes(); saveState(); });
+  });
+})();
