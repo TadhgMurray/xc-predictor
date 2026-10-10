@@ -343,7 +343,7 @@
                strip's cells untouched, absent whenever the season has no
                rating. The distance is the one a reader of the pool expects
                (conversions.ratingClock). #}
-            {% if athlete.equiv_time %}<span class="s-sub s-clock" title="The rating as a time: what this season's rating converts to at a venue of average difficulty. The conversions page does any other course or distance.">&asymp; {{ athlete.equiv_time }} {{ athlete.equiv_dist }} {{ athlete.equiv_where or "on a typical course" }}</span>{% endif %}
+            {% if athlete.equiv_time %}<span class="s-sub s-clock" title="The rating as a time: a cross country rating as a 5K on a track, a track rating at the athlete's main event. The conversions page does any other course or distance.">&asymp; {{ athlete.equiv_time }} {{ athlete.equiv_dist }} {{ athlete.equiv_where or "on a typical course" }}</span>{% endif %}
         </div>
         {% if alltime.rating %}
         <div>

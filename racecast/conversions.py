@@ -1308,16 +1308,36 @@ def ratingSeconds(rating, pool, sport="XC", distance=None):
     return math.exp(math.log(t0) + w * (math.log(t1) - math.log(t0)))
 
 
+# ★ A CROSS COUNTRY RATING IS QUOTED AS A TRACK TIME (owner, 2026-10-10:
+#   "5k should be in a track"). "On a typical course" depends on which
+#   courses are typical; a track is the same everywhere. It is the 'track'
+#   side of fiveKForRating -- the rating read on the track's scale and put
+#   on a typical outdoor track -- at 5000 m for high school and college and
+#   at the middle-school reader distance (3200 m) below that.
+# ⚠ HIGH SCHOOL AND MIDDLE SCHOOL TRACK CURVES ARE FITTED TO 3200 m: a high
+#   schooler's track 5K is one step of the curve past its fitted span.
+#   College track is fitted through 5000 m.
+XC_TRACK_M = {"hs": 5000.0, "college": 5000.0, "ms": 3200.0}
+
+
 def ratingClock(rating, pool, sport="XC", distance=None):
     """{'time', 'dist', 'where', 'text'} -- 'text' is the whole phrase,
-    "≈ 14:39 5K on a typical course" -- or None."""
+    "≈ 15:02 5K on a track" -- or None."""
     from season_floor import clockFor          # m:ss, the header's own
+    if str(sport or "XC").upper() == "XC" and distance is None:
+        level = (_bare(pool) or "").partition("_")[0]
+        if readerDistance(pool, "XC") is None or level not in XC_TRACK_M:
+            return None
+        sport, distance = "TF", XC_TRACK_M[level]
+        where = "on a track"
+    else:
+        where = None
     d = distance or readerDistance(pool, sport)
     t = clockFor(ratingSeconds(rating, pool, sport, d))
     if not t:
         return None
-    where = ("on a typical track" if str(sport or "XC").upper() == "TF"
-             else "on a typical course")
+    where = where or ("on a typical track" if str(sport or "XC").upper() == "TF"
+                      else "on a typical course")
     dist = distanceWords(d)
     return {"time": t, "dist": dist, "where": where,
             "text": f"≈ {t} {dist} {where}"}

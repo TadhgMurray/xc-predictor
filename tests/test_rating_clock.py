@@ -82,11 +82,12 @@ def test_a_higher_rating_is_a_faster_time():
 def test_the_phrase():
     _stub()
     c = cv.ratingClock(124.6, "hs_m", "XC")
-    secs = int(round(_direct(124.6, "hs_m", "XC", 5000.0)))
-    assert c["text"] == f"≈ {secs // 60}:{secs % 60:02d} 5K on a typical course"
+    # a cross country rating is quoted as a TRACK 5K (owner, 2026-10-10)
+    secs = int(round(_direct(124.6, "hs_m", "TF", 5000.0)))
+    assert c["text"] == f"≈ {secs // 60}:{secs % 60:02d} 5K on a track"
     t = cv.ratingClock(124.6, "hs_m", "TF", 3200.0)
     assert t["dist"] == "3200m" and t["where"] == "on a typical track"
-    assert cv.ratingClock(124.6, "college_m", "XC")["dist"] == "8K"
+    assert cv.ratingClock(124.6, "college_m", "XC")["dist"] == "5K"
     assert cv.ratingClock(None, "hs_m", "XC") is None
 
 
@@ -98,7 +99,7 @@ def test_board_rows_get_a_title():
             {"pool": "pro_m", "sport": "XC", "rating": 150.0},
             {"pool": "hs_m", "sport": "XC", "rating": None}]
     cv.stampBoardClocks(rows)
-    assert rows[0]["rating_clock"].endswith("5K on a typical course")
+    assert rows[0]["rating_clock"].endswith("5K on a track")
     # one track race says itself at its own distance; a 400 does not
     assert rows[1]["rating_clock"].endswith("3200m on a typical track")
     assert rows[2]["rating_clock"].endswith("1600m on a typical track")
