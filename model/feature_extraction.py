@@ -753,6 +753,25 @@ def _ratedTime(row, scale):
     return k / rating if k else None
 
 
+def rowPool(row):
+    """The pool a corpus row's normalized time is on -- the backfill's own
+    resolver (school, season level, grade fix, college veto), so a row with a
+    blank or class-year grade still gets one. None when it cannot be told."""
+    from normalize_distance import (normPoolFor, academicYearOfDate,
+                                    firstCollegeSeason)
+    fixed = ((row.get("fixed_grade"), row.get("fixed_level"))
+             if row.get("grade_untrusted") else None)
+    # ! THE SEASON AND THE FIRST COLLEGE SEASON TOO (2026-09-29), exactly as
+    #   the backfill passes them, or the college veto would move this row's
+    #   anchor differently from the one the backfill wrote it on.
+    return normPoolFor(row.get("grade"), row.get("gender"), row.get("source"),
+                       row.get("school"), season_level=row.get("season_level"),
+                       fixed=fixed,
+                       season=academicYearOfDate(row.get("date")),
+                       college_first_ay=firstCollegeSeason(
+                           row.get("college_first")))
+
+
 def toCommonScale(row, scale=None):
     """The row with normalized_time on the common anchor. Pure but for the
     spline artifact; a row whose pool cannot be told keeps its value and is
@@ -763,19 +782,8 @@ def toCommonScale(row, scale=None):
     row["rated_time"] = _ratedTime(row, scale or NORM_SCALE)
     if (scale or NORM_SCALE) != "common5000" or nt is None:
         return row
-    from normalize_distance import (normPoolFor, anchorShift,
-                                    academicYearOfDate, firstCollegeSeason)
-    fixed = ((row.get("fixed_grade"), row.get("fixed_level"))
-             if row.get("grade_untrusted") else None)
-    # ! THE SEASON AND THE FIRST COLLEGE SEASON TOO (2026-09-29), exactly as
-    #   the backfill passes them, or the college veto would move this row's
-    #   anchor differently from the one the backfill wrote it on.
-    pool = normPoolFor(row.get("grade"), row.get("gender"), row.get("source"),
-                       row.get("school"), season_level=row.get("season_level"),
-                       fixed=fixed,
-                       season=academicYearOfDate(row.get("date")),
-                       college_first_ay=firstCollegeSeason(
-                           row.get("college_first")))
+    from normalize_distance import anchorShift
+    pool = rowPool(row)
     if pool is None:
         row["norm_unshifted"] = True
         return row

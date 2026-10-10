@@ -220,6 +220,14 @@ def safeNext(path, default="/account"):
     if (not p.startswith("/") or p.startswith("//") or "\\" in p
             or p.startswith(("/login", "/auth/", "/logout"))):
         return default
+    # ! NO CONTROL CHARACTERS OR SPACES (sweep 2026-10-10): browsers drop a
+    #   tab, so '/\t/evil.com' went out as Location: //evil.com.
+    if any(ord(c) < 0x21 or ord(c) == 0x7f for c in p):
+        return default
+    from urllib.parse import urlsplit
+    u = urlsplit(p)
+    if u.scheme or u.netloc:
+        return default
     return p[:512]
 
 

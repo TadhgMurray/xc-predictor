@@ -130,7 +130,9 @@ def prepare(field, preds, z=1.0):
         "team": np.array([idx.get(t, -1) for t in teams], dtype=np.int64),
         "names": names,
         # a team that did not put TEAM_SCORERS on the line is not a team here
-        "full": on_line >= TEAM_SCORERS,
+        # (and that has TEAM_SCORERS here with a time -- same rule as _score)
+        "full": np.minimum(on_line, np.array([counts[t] for t in names],
+                                             dtype=np.int64)) >= TEAM_SCORERS,
         # ...and takes only as many scoring places as it entered, capped
         "cap": np.minimum(on_line, MAX_PER_TEAM),
         "person": [f.get("person_id") for f, _p in rows],

@@ -126,6 +126,12 @@ def _loadModelLocked():
         import pickle
         import torch
         import sys
+        # ★ ONE SHARE OF THE CORES PER WORKER (sweep 2026-10-10). Every
+        #   gunicorn worker loads the model (deploy/server_setup.sh: -w 8),
+        #   and torch's default is a thread per core in each -- eight workers
+        #   predicting at once oversubscribed the box Postgres runs on.
+        torch.set_num_threads(int(os.environ.get("XCP_TORCH_THREADS") or
+                                  max(1, (os.cpu_count() or 1) // 8)))
         p = os.path.join(_ROOT, "model")
         if p not in sys.path:
             sys.path.insert(0, p)
@@ -701,7 +707,12 @@ def _score(field, preds):
     def onLine(team):
         return entered.get(team, counts.get(team, 0))
 
-    full = {t for t in counts if onLine(t) >= TEAM_SCORERS}
+    # ! AND ENOUGH OF THEM PREDICTED (sweep 2026-10-10). `counts` holds only
+    #   runners with a time; a school that entered five with one the model
+    #   could not place used to count as full, so its four took scoring places
+    #   and pushed every team behind it down while it never scored itself.
+    full = {t for t in counts
+            if min(onLine(t), counts[t]) >= TEAM_SCORERS}
 
     # ★ PASS 2 -- TWO DIFFERENT PLACES, AND THEY ARE NOT THE SAME NUMBER.
     #
@@ -834,7 +845,12 @@ def _score(field, preds):
 
     # Incomplete teams sort last; ties broken by the sixth runner, as in the
     # real rules.
-    out.sort(key=lambda t: (t["score"] is None, t["score"] or 0))
+    def sixth(t):
+        rs = [r for r in t["runners"] if r.get("score_place")]
+        return (rs[TEAM_SCORERS]["score_place"]
+                if len(rs) > TEAM_SCORERS else 10 ** 6)
+
+    out.sort(key=lambda t: (t["score"] is None, t["score"] or 0, sixth(t)))
     return out, finishers
 
 
@@ -1187,7 +1203,10 @@ def _servedTimes(cur, person_ids, target):
             #   guard's own bar decides: a band wider than _GUARD_MAX_SIGMA
             #   "is not a prediction", so such a runner is listed, unscored,
             #   with the reason -- never placed on a model guess.
-            if (secs and (sig is None or float(sig) / 100.0 > _GUARD_MAX_SIGMA)):
+            # ! OR NOT ON THE TARGET'S CLOCK AT ALL: a flat-5K equivalent
+            #   placed among 8K times is not a placing (sweep 2026-10-10).
+            if (secs and (sig is None or float(sig) / 100.0 > _GUARD_MAX_SIGMA
+                          or not entry.get("is_race_time"))):
                 entry["model_seconds"] = secs
                 entry["seconds"] = None
                 entry["lo"] = entry["hi"] = None
@@ -1563,6 +1582,15 @@ def _denormContext(spec, last_row):
                        (last_row or {}).get("gender"))
     except Exception:                                   # noqa: BLE001
         pool = None
+    if (not pool or pool == "unknown_level") and last_row:
+        # ★ A BLANK OR CLASS-YEAR GRADE (tfrrs XC rows carry none) used to end
+        #   here, and the runner was printed on the flat-5K clock against an
+        #   8K -- the "?" group in the backtest (sweep 2026-10-10). The
+        #   backfill's resolver reads the school and season level too.
+        try:
+            pool = _fx().rowPool(last_row)
+        except Exception:                               # noqa: BLE001
+            pool = None
     if not pool or pool == "unknown_level":
         return None
     date = _asDate(spec.get("date"))

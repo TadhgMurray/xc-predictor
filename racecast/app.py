@@ -261,6 +261,10 @@ def _xc_distance_sql(r="r"):
 
 # Creates the app; __name__ tells Flask where "here" is
 app = Flask(__name__)
+# ! A CAP ON THE REQUEST BODY (sweep 2026-10-10). Werkzeug parsed a whole
+#   multipart upload before accounts' 8 MB photo check ran; the largest
+#   thing anyone posts is that photo.
+app.config["MAX_CONTENT_LENGTH"] = 9 * 1024 * 1024
 
 # ★ TRACEBACKS SURVIVE THE SCROLLBACK. A 500's stack trace used to exist
 #   only in the console window running the server -- gone by the time
@@ -858,6 +862,12 @@ def _maintenance():
 def _db_blip(err):
     from flask import g
     print(f"db blip on {request.method} {request.path}: {type(err).__name__}: {err}", flush=True)
+    # ! ONLY A LOST CONNECTION IS WORTH A SECOND TRY (sweep 2026-10-10). A
+    #   statement timeout (57014) or lock timeout (55P03) is an
+    #   OperationalError too, and re-running a 55 s query ran into gunicorn's
+    #   60 s kill and a 502.
+    if getattr(err, "pgcode", None) in ("57014", "55P03"):
+        return render_template("error.html", code=503), 503, {"Retry-After": "30"}
     if request.method == "GET" and not getattr(g, "db_retried", False):
         g.db_retried = True
         try:
@@ -8026,7 +8036,7 @@ def search_api():
     if len(raw) < 2:
         return jsonify([])
     kind = (request.args.get("kind") or "").strip()
-    limit = min(int(request.args.get("limit") or 10), 40)
+    limit = max(1, min(request.args.get("limit", 10, type=int) or 10, 40))
     rows = _searchCached(("api", raw, kind, limit),
                          lambda: _searchApiRows(raw, kind, limit))
     resp = jsonify(rows)
@@ -8451,7 +8461,11 @@ def search_page():
     q      = (request.args.get("q") or "").strip()
     kind   = request.args.get("kind") or "all"
     year   = request.args.get("year")            # optional year filter
-    offset = int(request.args.get("offset") or 0)
+    # ! MALFORMED PARAMETERS ARE IGNORED, not a 500 (sweep 2026-10-10)
+    if year and not (year.isdigit() and len(year) == 4):
+        year = None
+    offset = request.args.get("offset", 0, type=int) or 0
+    offset = max(0, min(offset, 600))
 
     # the same ten-minute memo as the dropdown (_searchCached): the tab
     # counts and the year list are two more scans on top of the page itself
@@ -9056,6 +9070,8 @@ def course_search():
 @app.route("/api/athlete_results")
 def athlete_results():
     pid = request.args.get("person_id")
+    if not (pid or "").isdigit():
+        return jsonify([]), 400
     sport = request.args.get("sport", "XC")
     if sport == "XC":
         sql = """
