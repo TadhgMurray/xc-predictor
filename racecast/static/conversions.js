@@ -490,6 +490,7 @@
         var v = (from && from.vdot) || data.vdot;
         if (!rows.length && !(v && v.value) && !data.paces_note) {
             panel.hidden = true;
+            paintSidePaces(panel, rows, from, v);
             return;
         }
         panel.hidden = false;
@@ -538,6 +539,46 @@
         }
         if (data.paces_note) bits.push(data.paces_note);
         foot.textContent = bits.join(' ');
+        paintSidePaces(panel, rows, from, v);
+    }
+
+    // ★ THE SIDE CARD AND THE PACES TAB (owner, 2026-10-10, the race-page
+    //   shape): zone and per mile beside the tables, as the race page's team
+    //   scores sit beside its results, and the Paces tab offered only while
+    //   #paces-panel has something in it. The full table, per km and the
+    //   basis of each row stay in that tab.
+    function paintSidePaces(panel, rows, from, v) {
+        var on = !panel.hidden;
+        var tab = document.getElementById('paces-tab');
+        if (tab) {
+            tab.hidden = !on;
+            // ! the tab going away while open leaves an empty panel open:
+            //   back to the first tab
+            if (!on && tab.classList.contains('is-on')) {
+                var firstTab = document.querySelector('.rc-tabs [data-tab]');
+                if (firstTab && firstTab !== tab) firstTab.click();
+            }
+        }
+        var side = document.querySelector('#side-paces tbody');
+        if (!side) return;
+        side.innerHTML = (on ? rows : []).map(function (p) {
+            return '<tr><td class="tn">' + esc(p.label) + '</td><td class="n tpts">' +
+                   esc(p.per_mile) + '</td></tr>';
+        }).join('');
+        var empty = document.getElementById('side-paces-empty');
+        if (empty) empty.hidden = on && rows.length > 0;
+        var more = document.getElementById('side-paces-more');
+        if (more) more.hidden = !on;
+        var src = document.getElementById('side-paces-src');
+        if (src) src.textContent = on && from && from.n_races
+            ? 'Fitted from the ' + from.year + ' season · ' + from.n_races + ' races.' : '';
+        var sv = document.getElementById('side-vdot');
+        if (sv) {
+            sv.hidden = !(on && v && v.value);
+            sv.innerHTML = on && v && v.value
+                ? 'VO<sub>2</sub>max <strong>' + esc(v.value) +
+                  '</strong> <span class="paces-vdot-note">' + esc(v.note) + '</span>' : '';
+        }
     }
 
     function esc(t) {

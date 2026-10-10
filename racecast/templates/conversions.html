@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Conversions - Racecast</title>
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
     {# the favicon rides in _meta.html on every other page; this head does
        not include that partial, so the tag is here by hand (issue 149) #}
     <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
@@ -14,19 +15,35 @@
 <body>
 {% include "_topbar.html" %}
 
-{# the athlete a /conversions?athlete=<id> link named, for conversions.js #}
-<section class="conv" data-prefill-athlete="{{ prefill_athlete or '' }}" data-prefill-pool="{{ prefill_pool or '' }}">
+{# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10): the tool's name and what it
+   does in the header, the answer as its headline line, the form under it,
+   then one table at a time behind tabs with the paces card beside them.
+   race.css carries the layout under main.conv-page.rc.
+   ! STILL .conv WITH data-prefill-*: conversions.js finds the athlete a
+     /conversions?athlete=<id> link named by '.conv[data-prefill-athlete]'. #}
+<main class="page-wide rc conv conv-page" data-prefill-athlete="{{ prefill_athlete or '' }}" data-prefill-pool="{{ prefill_pool or '' }}">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag">Tools</span></div>
     <h1>Conversions</h1>
-    <p class="conv-intro">
-        Enter one performance - a time, a rating, an athlete, or a specific
+    <div class="rc-meta">
+      {{ xc_courses|length }} courses · {{ tf_distances|length }} track distances · any time, rating, athlete or result
+      · <button type="button" class="share-btn rc-share-link" data-share-title="Conversions on Racecast"
+            data-share-url="{{ site_origin }}{{ request.full_path.rstrip('?') }}" title="Share this page">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <span>Share</span>
+    </button>
+    </div>
+    <p class="rc-story">Enter one performance - a time, a rating, an athlete, or a specific
         result - and see it projected across courses and distances.
-        <span class="req-key"><span class="req">*</span> required (or a source that implies it)</span>
-    </p>
-    {# One scale for the page: what a typed rating means and what the
-       computed one shows. Same control as every other page. #}
-    <div class="toggle-row">{{ scale_toggle() }}</div>
+        <span class="req-key"><span class="req">*</span> required (or a source that implies it)</span></p>
+    {# the answer, where the race page names its winner: conversions.js
+       writes this node by id, so moving it needed no script change #}
+    <div class="conv-normalized" id="norm-display"></div>
+  </div>
+</div></header>
 
-    {# ---- SOURCE CONTROLS ------------------------------------------- #}
+    {# ---- SOURCE CONTROLS: the form directly under the header ---------- #}
     <div class="conv-source">
         <div class="conv-row">
             <label>Source
@@ -183,64 +200,79 @@
         <button id="convert-btn" class="conv-go">Convert</button>
     </div>
 
-    {# ---- THE TWO TABLES ------------------------------------------- #}
-    <div class="conv-normalized" id="norm-display"></div>
+    {# ---- THE TABLES, ONE AT A TIME -------------------------------------
+       ★ TABS, AS ON THE RACE PAGE (owner, 2026-10-10): Cross country, Track,
+         and Paces once there are paces; the scale toggle ends the tab bar.
+         XC and TF no longer sit side by side -- the answer line in the
+         header keeps the headline number in view on either tab. #}
+<div class="rc-w rc-grid">
+<div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#xc" data-tab="xc">Cross country<span class="n">{{ xc_courses|length }}</span></a>
+      <a class="seg-btn" href="#tf" data-tab="tf">Track<span class="n">{{ tf_distances|length }}</span></a>
+      {# shown once there are paces to show (conversions.js paintPaces) #}
+      <a class="seg-btn" href="#paces" data-tab="paces" id="paces-tab" hidden>Paces</a>
+    </nav>
+    {# One scale for the page: what a typed rating means and what the
+       computed one shows. Same control as every other page. #}
+    <div class="rc-tbar-end">{{ scale_toggle() }}</div>
+  </div>
 
-    <div class="conv-tables">
-        {# XC table -- most common courses, extensible #}
-
-        <div class="conv-table-wrap">
-            <h2>Cross Country</h2>
-            <table class="conv-table" id="xc-table">
-                <thead><tr><th>Course</th><th>Distance</th><th>Time</th></tr></thead>
-                <tbody id="xc-body">
-                    {% for c in xc_courses %}
-                    {# canonical_id rides along so /api/convert can re-resolve
-                       the difficulty server-side instead of trusting whatever
-                       this attribute holds -- see _XC_COURSE_SQL in app.py #}
-                    <tr data-course="{{ c.course_name }}"
-                        data-canonical="{{ c.canonical_id if c.canonical_id is not none else '' }}"
-                        data-difficulty="{{ c.difficulty }}"
-                        data-distance="{{ c.distance }}">
-                        <td>{{ c.course_name }}</td>
-                        <td class="cell-dist">{{ (c.distance / 1000)|round(2) }}k</td>
-                        <td class="cell-time"> - </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            <div class="conv-add">
-                <div class="drop-anchor">
-                    <input type="search" id="add-course" placeholder="Search a course…" autocomplete="off">
-                    <div id="course-drop" class="conv-drop"></div>
-                </div>
-            </div>
-        </div>
-
-        {# TF table -- usual distances, extensible #}
-        <div class="conv-table-wrap">
-            <h2>Track &amp; Field</h2>
-            <table class="conv-table" id="tf-table">
-                <thead><tr><th>Distance</th><th>Time</th></tr></thead>
-                <tbody id="tf-body">
-                    {% for dist, lbl in tf_distances %}
-                    <tr data-distance="{{ dist }}">
-                        <td>{{ lbl }}</td>
-                        <td class="cell-time"> - </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-            <p class="meta" id="tf-note"></p>
-            <div class="conv-add">
-                <div class="drop-anchor">
-                    <input type="search" id="add-distance" placeholder="Search a distance…" autocomplete="off">
-                    <div id="distance-drop" class="conv-drop"></div>
-                </div>
-            </div>
+  {# XC table -- most common courses, extensible #}
+  <section class="rc-panel" id="xc" data-panel="xc">
+    <table class="conv-table" id="xc-table">
+        <thead><tr><th>Course</th><th>Distance</th><th>Time</th></tr></thead>
+        <tbody id="xc-body">
+            {% for c in xc_courses %}
+            {# canonical_id rides along so /api/convert can re-resolve
+               the difficulty server-side instead of trusting whatever
+               this attribute holds -- see _XC_COURSE_SQL in app.py #}
+            <tr data-course="{{ c.course_name }}"
+                data-canonical="{{ c.canonical_id if c.canonical_id is not none else '' }}"
+                data-difficulty="{{ c.difficulty }}"
+                data-distance="{{ c.distance }}">
+                <td>{{ c.course_name }}</td>
+                <td class="cell-dist">{{ (c.distance / 1000)|round(2) }}k</td>
+                <td class="cell-time"> - </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <div class="conv-add">
+        <div class="drop-anchor">
+            <input type="search" id="add-course" placeholder="Add a course…" autocomplete="off">
+            <div id="course-drop" class="conv-drop"></div>
         </div>
     </div>
+  </section>
 
+  {# TF table -- usual distances, extensible #}
+  <section class="rc-panel" id="tf" data-panel="tf">
+    <table class="conv-table" id="tf-table">
+        <thead><tr><th>Distance</th><th>Time</th></tr></thead>
+        <tbody id="tf-body">
+            {% for dist, lbl in tf_distances %}
+            <tr data-distance="{{ dist }}">
+                <td>{{ lbl }}</td>
+                <td class="cell-time"> - </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="meta" id="tf-note"></p>
+    <div class="conv-add">
+        <div class="drop-anchor">
+            <input type="search" id="add-distance" placeholder="Add a distance…" autocomplete="off">
+            <div id="distance-drop" class="conv-drop"></div>
+        </div>
+    </div>
+  </section>
+
+  {# ! THE PANEL WRAPS conversions.js's OWN PACES SECTION, so the script's
+     hidden flag (#paces-panel) and the tab's (the rc-panel) never fight
+     over one element. #}
+  <section class="rc-panel" id="paces-wrap" data-panel="paces">
     {# ★ FILLED BY conversions.js, HIDDEN UNTIL THERE IS SOMETHING TO SAY.
        Training paces need two races at different distances, so this only
        populates when the source names an athlete -- a typed time cannot tell
@@ -257,9 +289,26 @@
         <p class="paces-vdot" id="paces-vdot" hidden></p>
         <p class="paces-foot" id="paces-foot"></p>
     </section>
-</section>
+  </section>
+</div>
+
+{# ★ THE SIDE CARD: the paces in brief, as the race page's team scores sit
+   beside its results; the full table with its basis is one tab away.
+   conversions.js paintPaces fills it. #}
+<aside class="rc-side">
+  <h2>Training paces <small>per mile</small></h2>
+  <table class="rc-tscores rc-tscores-plain" id="side-paces"><tbody></tbody></table>
+  <p class="rc-tip" id="side-paces-src"></p>
+  <p class="conv-vdot" id="side-vdot" hidden></p>
+  <p class="rc-tip" id="side-paces-empty">Pick an athlete as the source: paces need two of their races at different distances.</p>
+  <a class="rc-more" href="#paces" data-tab="paces" id="side-paces-more" hidden>All paces and how each is set</a>
+</aside>
+</div>
+</main>
 
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('conversions.js') }}"></script>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

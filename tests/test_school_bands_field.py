@@ -109,6 +109,8 @@ def test_conversion_tab_lists_finishers():
         assert '{% include "_conv_side.html" %}' in t(n)
         assert ' data-t="{{ row.time_seconds }}"' in t(n)
     assert '<ol class="rc-conv-list"></ol>' in t("_conv_side.html")
-    assert 'main.classList.toggle("rc-on-track", name === "track")' in js
+    # the tab root is <main> on the race page (race-page.js wireTabs(main))
+    assert 'root.classList.toggle("rc-on-track", name === "track")' in js
+    assert "wireTabs(main)" in js
     assert 'input.dispatchEvent(new Event("change"))' in js
     assert "if (!st.sc) { st.want = t; return; }" in eq      # a tap before the curve loads
