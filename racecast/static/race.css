@@ -311,3 +311,96 @@ main.schools-page.rc .rc-links .k { font-weight: 400; color: var(--muted); }
 main.search-page.rc { box-sizing: content-box; }
 main.search-page.rc .year-filter { margin: 0 0 0 auto; font-size: .9rem; }
 main.search-page.rc .search-page-form { margin-top: 1rem; }
+
+/* ==== HOME AND /rankings IN THE RACE SHAPE (owner, 2026-10-10) =============
+   Everything from here to the end of the file. Only what the two pages need
+   on top of the shared rules above and their own style.css rules; each block
+   is scoped to its page (main.rc.home-rc, main.rc.rankings-page). */
+
+/* ---- home: the Rankings snapshot ----------------------------------------- */
+main.rc.home-rc .rankings { max-width: 1240px; margin: 0 auto; padding: 1.8rem 1.5rem 1.5rem; }
+/* the kicker, the season and the No. 1 line follow the sport / scope
+   toggles, by the same data-attr matching style.css uses for .board-pair */
+main.rc.home-rc .hm-sp, main.rc.home-rc .hm-ss { display: none; }
+main.rc.home-rc .rankings[data-sport="XC"] .hm-sp[data-sport="XC"],
+main.rc.home-rc .rankings[data-sport="TF"] .hm-sp[data-sport="TF"] { display: inline-block; }
+main.rc.home-rc .rankings[data-sport="XC"][data-scope="season"]  .hm-ss[data-sport="XC"][data-scope="season"],
+main.rc.home-rc .rankings[data-sport="XC"][data-scope="alltime"] .hm-ss[data-sport="XC"][data-scope="alltime"],
+main.rc.home-rc .rankings[data-sport="TF"][data-scope="season"]  .hm-ss[data-sport="TF"][data-scope="season"],
+main.rc.home-rc .rankings[data-sport="TF"][data-scope="alltime"] .hm-ss[data-sport="TF"][data-scope="alltime"] { display: inline; }
+main.rc.home-rc .rankings .rc-champs.hm-ss { display: none; }
+main.rc.home-rc .rankings[data-sport="XC"][data-scope="season"]  .rc-champs[data-sport="XC"][data-scope="season"],
+main.rc.home-rc .rankings[data-sport="XC"][data-scope="alltime"] .rc-champs[data-sport="XC"][data-scope="alltime"],
+main.rc.home-rc .rankings[data-sport="TF"][data-scope="season"]  .rc-champs[data-sport="TF"][data-scope="season"],
+main.rc.home-rc .rankings[data-sport="TF"][data-scope="alltime"] .rc-champs[data-sport="TF"][data-scope="alltime"] { display: flex; }
+main.rc.home-rc h1 { font-size: 1.9rem; }
+/* the controls directly under the header, aligned left like the other
+   race-shape pages */
+main.rc.home-rc .rank-controls { justify-content: flex-start; margin: 1rem 0 0; }
+/* ★ THE BOARDS AND THE SIDE CARD START LEVEL: the tab bar and the card's
+   heading are boxes of one height */
+main.rc.home-rc .rc-tbar, main.rc.home-rc .rc-side h2 { height: 2.4rem; margin: 0 0 .5rem; align-items: center; }
+main.rc.home-rc .rc-side h2 { font-size: 1.1rem; }
+main.rc.home-rc .rc-tbar-end .scale-toggle { margin: 0; }
+main.rc.home-rc .recent-block { margin-top: 0; }
+/* each tab's six pools two by two: boys beside girls */
+main.rc.home-rc .hm-pools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 1rem; }
+main.rc.home-rc .hm-pools .pool-head { margin-top: .3rem; }
+main.rc.home-rc .hm-pools .pool-block { margin-bottom: .9rem; min-width: 0; }
+@media (min-width: 761px) {
+  main.rc.home-rc .hm-board-athlete .board-grid { grid-template-columns: 2.2rem minmax(0, 1.35fr) minmax(0, 1.25fr) 4.2rem minmax(0, .75fr); }
+  main.rc.home-rc .hm-board-performance .board-grid { grid-template-columns: 2.2rem minmax(0, 1.2fr) minmax(0, 1fr) 4.2rem minmax(0, 1.35fr); }
+  main.rc.home-rc .board-grid .cell, main.rc.home-rc .board-grid .head { padding: .4rem .5rem; }
+}
+/* the side cards: Latest results, Rankings by state */
+main.rc.home-rc .hm-recent td { padding: .32rem .45rem; }
+main.rc.home-rc .hm-recent td.tpts { width: 3.6rem; font-weight: 600; }
+main.rc.home-rc .hm-recent td.tn .sp a { color: inherit; }
+/* one meet, two lines: the name, then date · course · state; a long one
+   ends in an ellipsis and reads whole on hover (title) */
+main.rc.home-rc .rc-tscores-plain.hm-recent td.tn a.hm-mn,
+main.rc.home-rc .rc-tscores-plain.hm-recent td.tn .sp { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+main.rc.home-rc .rc-tscores-plain.hm-recent td.tn .sp a { white-space: nowrap; }
+main.rc.home-rc .hm-side-links { display: flex; flex-direction: column; gap: .2rem; margin: .5rem 0 0; font-weight: 600; font-size: .9rem; }
+main.rc.home-rc .rc-side h2.hm-side-h2 { margin-top: 1.4rem; }
+main.rc.home-rc .hm-states td.tpts { width: 7rem; font-weight: 600; }
+@media (max-width: 760px) {
+  main.rc.home-rc .rankings { padding: 1.2rem 16px; }
+  main.rc.home-rc .hm-pools { grid-template-columns: minmax(0, 1fr); }
+  main.rc.home-rc .rc-tbar { height: auto; flex-wrap: wrap; }
+}
+
+/* ---- /rankings ------------------------------------------------------------ */
+/* the board tabs open the page, like the strip on /breakouts and By state */
+main.rc.rankings-page > .tabs { margin: 0 0 1rem; }
+main.rc.rankings-page .rc-hd { margin-bottom: 1rem; }
+main.rc.rankings-page .rc-meta .info, main.rc.rankings-page .rc-meta .rating-i { vertical-align: baseline; }
+/* ★ THE BOARD AND THE SIDE CARD START LEVEL: same-height heading boxes */
+main.rc.rankings-page .rc-grid { margin-top: 1rem; }
+main.rc.rankings-page .rc-tbar, main.rc.rankings-page .rk-states-card > h2 { height: 2.4rem; margin: 0 0 .5rem; align-items: center; }
+main.rc.rankings-page .rk-states-card > h2 { font-size: 1.1rem; display: flex; justify-content: space-between; }
+main.rc.rankings-page .rk-board-h { margin: 0; font-size: 1.1rem; }
+main.rc.rankings-page .rc-tbar-end .scale-toggle { margin: 0; }
+main.rc.rankings-page #results .status { margin-top: 0; }
+main.rc.rankings-page .rk-states td.tpts { width: 7rem; font-weight: 600; }
+main.rc.rankings-page .rk-states td.tn { font-weight: 600; }
+/* find-an-athlete as the second side card */
+main.rc.rankings-page .rc-side .findme { margin: 1.4rem 0 0; }
+main.rc.rankings-page .rc-side .findme > label { font-size: 1rem; font-weight: 700; text-transform: none; letter-spacing: 0; color: var(--ink); display: block; margin-bottom: .5rem; }
+main.rc.rankings-page .rc-side .find-wrap { max-width: none; }
+main.rc.rankings-page .rc-side .find-wrap input { width: 100%; box-sizing: border-box; }
+main.rc.rankings-page .rc-side .find-results { width: 100%; }
+/* beside the 280px side card: the race table's tighter cells, one line a
+   row (a long school still wraps); a wider board scrolls inside itself */
+main.rc.rankings-page table.rk th, main.rc.rankings-page table.rk td { padding: .45rem .5rem; white-space: nowrap; }
+main.rc.rankings-page table.rk td:nth-child(3) { white-space: normal; }
+main.rc.rankings-page #results { overflow-x: auto; }
+@media (max-width: 760px) {
+  main.rc.rankings-page .rc-tbar { height: auto; flex-wrap: wrap; }
+  /* ! ON A PHONE THE FIND BOX COMES BEFORE THE 50 ROWS, the state links
+       after the pager: the side card's children join the column's order */
+  main.rc.rankings-page .rc-grid { display: flex; flex-direction: column; }
+  main.rc.rankings-page .rc-side { display: contents; }
+  main.rc.rankings-page .rc-side .findme { order: -1; margin: 0 0 .4rem; width: 100%; }
+  main.rc.rankings-page .rk-states-card { order: 2; margin-top: 1.4rem; width: 100%; }
+}

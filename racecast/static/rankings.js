@@ -1665,6 +1665,64 @@ function leadColumnUp(host) {
 function paintBoard(rows, data) {
   $("results").innerHTML = renderBoard(rows, data);
   leadColumnUp($("results"));
+  syncBoardHeader(rows, data);
+}
+
+/* ★ THE HEADER FOLLOWS THE BOARD (owner, 2026-10-10: the race page's shape).
+   Three things over the board say what it is: the kicker ("HS boys cross
+   country"), the board's own heading ("Ability · HS boys") and the champion
+   line, "No. 1 on this board". The first two read the selects and the
+   board; the third reads the rows just drawn, so it is redrawn with them
+   (paintBoard) and hidden whenever a board is loading, empty or failed.
+
+   ! NO. 1 MEANS NO. 1. The first row is only the board's leader on page
+     one, sorted the board's own way; a page further on, a column sort or
+     the courses board has no No. 1 to name, so the line steps aside rather
+     than crown whoever happens to be on top. */
+const BOARD_WORD = { ability: "Ability", performance: "Performances",
+                     pr: "Best times/marks", teams: "Teams", courses: "Courses" };
+
+function syncBoardHeader(rows, data) {
+  const kick = $("rk-kicker"), head = $("rk-board-h"), champs = $("rk-champs");
+  const poolSel = $("pool"), sport = $("sport").value;
+  const pool = poolSel.options[poolSel.selectedIndex]
+    ? poolSel.options[poolSel.selectedIndex].text : "";
+  const board = state.board;
+  if (kick) {
+    const word = sport === "XC" ? "cross country" : sport === "TF" ? "track"
+               : "cross country & track";
+    kick.textContent = board === "courses" ? "Cross country courses" : `${pool} ${word}`;
+    kick.className = "sport-tag sport-tag--" + (sport === "TF" ? "tf" : "xc");
+  }
+  if (head) {
+    head.textContent = (BOARD_WORD[board] || "Board")
+      + (board === "courses" ? "" : ` · ${pool}`);
+  }
+  if (!champs) return;
+  const own = board === "pr" ? "time" : "rating";
+  const natural = NATURAL_ASC.has(own) ? "asc" : "desc";
+  const r = rows && rows[0];
+  if (!r || board === "courses" || state.offset !== 0 || (data && data.course_mode)
+      || state.sort !== own || (state.dir && state.dir !== natural)) {
+    champs.hidden = true;
+    champs.innerHTML = "";
+    return;
+  }
+  let who, num, school = "";
+  if (board === "teams") {
+    who = `<a href="${schoolHref(r.school, r.state)}">${esc(r.school)}</a>`;
+    num = `${esc(r.points)} pts`;
+  } else {
+    who = `<a href="/athlete/${esc(r.person_id)}">${esc(r.name)}</a>`;
+    num = board !== "pr" ? fmtRating(rval(r, "rating"))
+        : r.mark !== null && r.mark !== undefined ? fmtMark(r.mark)
+        : fmtTime(r.time_seconds);
+    if (r.school) school = ` · ${esc(r.school)}`;
+  }
+  champs.innerHTML = '<div><span class="k">No. 1 on this board</span>'
+    + `<span class="rc-crow">${crestMark(r.crest)}<b class="rc-cn">${who}</b>`
+    + `<i>${num}${school}</i></span></div>`;
+  champs.hidden = false;
 }
 
 function renderBoard(rows, data) {
@@ -1799,6 +1857,8 @@ async function load() {
   $("results").innerHTML =
     '<div class="status loading"><span class="spinner"></span>' +
     '<span>Loading rankings\u2026</span></div>';
+  // the kicker and heading for the board asked for; no No. 1 until it lands
+  syncBoardHeader();
 
   // Built ONCE and used for both the request and the address bar, so the two
   // cannot disagree about what is being shown.

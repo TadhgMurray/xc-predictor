@@ -159,6 +159,8 @@
     {% include "_meta.html" %}
     {# Favicon comes from _meta.html now, same as every other page. #}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
+    {# the snapshot is in the race page's shape (owner, 2026-10-10) #}
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 {# ================================================================= #}
@@ -208,7 +210,7 @@
 {#    m4  TALL 1:2                 m5  TALL 1:2                        #}
 {#    m6  m7  m8  m9   four squares along the bottom                   #}
 {# ================================================================= #}
-<main id="main">
+<main id="main" class="rc home-rc">
 <section class="hero-mosaic">
     {% for slot in ['m1','m2','m3','m4','m5','m6','m7','m8','m9'] %}
         <div class="mtile {{ slot }}"
@@ -251,150 +253,181 @@
 {#  RANKINGS                                                         #}
 {#  Toggles are just buttons that set a data-attr on .rankings;      #}
 {#  CSS does the showing/hiding. All data is already in the page.    #}
+{#                                                                   #}
+{#  ★ IN THE RACE PAGE'S SHAPE (owner, 2026-10-10). The hero stays as #}
+{#    it is. Under it: the race header (kicker, title, the season and #}
+{#    Share on the meta line, the No. 1s as the champion line), the   #}
+{#    same three controls, then the two boards as tabs beside the     #}
+{#    Latest results and By state side cards. home.js still flips     #}
+{#    data-sport / data-scope; race-page.js runs the tabs. The rules  #}
+{#    are race.css's, under main.rc.home-rc.                          #}
 {# ================================================================= #}
 <section class="rankings" id="rankings"
          data-sport="{{ DEFAULT_SPORT }}" data-scope="season">
 
-{% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
-        <h2 class="rank-heading">Rankings Snapshot</h2>
-    <p class="rank-sub">The current leaders, by level and sport.</p>
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      {# the kicker follows the sport toggle (race.css shows the matching one) #}
+      <div class="rc-sport">
+        <span class="sport-tag sport-tag--xc hm-sp" data-sport="XC">Cross country</span>
+        <span class="sport-tag sport-tag--tf hm-sp" data-sport="TF">Track &amp; field</span>
+      </div>
+      <h1>Rankings snapshot</h1>
+      {# ! THE "XC - 2026 SEASON" HEADING IS GONE (owner, 2026-10-10): the
+           season, or All-time, is the meta line's first word now, one span
+           per sport x scope, shown by the same data-attr rules as the boards. #}
+      <div class="rc-meta">
+        {% for sport in ['XC', 'TF'] %}{% for scope in ['season', 'alltime'] %}
+        <span class="hm-ss" data-sport="{{ sport }}" data-scope="{{ scope }}">{% if scope == 'season' %}{{ meta.get('season_year_' ~ sport, '') }} season{% else %}All-time{% endif %}</span>{% endfor %}{% endfor %}
+        · the current leaders, by level and sport
+        · <button type="button" class="share-btn rc-share-link" data-share-title="Racecast: every result on one comparable scale"
+              data-share-url="{{ site_origin }}/" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      {# ★ THE CHAMPION LINE: the No. 1 of each HS and college athlete board
+           in view, one line per sport x scope. Read from the same panels the
+           boards below print, so the line and the boards cannot disagree. #}
+      {% for sport in ['XC', 'TF'] %}{% for scope in ['season', 'alltime'] %}
+      {% set ath = panels.get(sport, {}).get(scope, {}).get('athlete', {}) %}
+      <div class="rc-champs hm-ss" data-sport="{{ sport }}" data-scope="{{ scope }}">
+        {% for pool, word in [('hs_m', 'HS boys'), ('hs_f', 'HS girls'), ('college_m', 'College men'), ('college_f', 'College women')] %}
+        {% set r = (ath.get(pool) or [none])[0] %}
+        {% if r %}
+        <div><span class="k">No. 1 · {{ word }}</span>
+          <span class="rc-crow">{% if r.school and r.school|is_team %}{{ crest(r.school, r.state, pool=r.pool) }}{% endif %}<b class="rc-cn">{% if r.name_link %}<a href="{{ r.name_link }}">{{ r.name }}</a>{% else %}{{ r.name }}{% endif %}</b><i>{{ rv(r.rating, r.hs_rating) }}</i></span></div>
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% endfor %}{% endfor %}
+    </div>
+  </div></header>
 
-    <div class="rank-controls">
-        {# sport: default comes from panels.py's wall-clock choice #}
-        <div class="toggle-group" data-toggle="sport">
-            <button data-value="XC">Cross Country</button>
-            <button data-value="TF">Track &amp; Field</button>
-        </div>
+  <div class="rank-controls">
+      {# sport: default comes from panels.py's wall-clock choice #}
+      <div class="toggle-group" data-toggle="sport">
+          <button data-value="XC">Cross Country</button>
+          <button data-value="TF">Track &amp; Field</button>
+      </div>
 
-        {# scope: current season vs all-time #}
-        <div class="toggle-group" data-toggle="scope">
-            <button data-value="season">This Season</button>
-            <button data-value="alltime">All-Time</button>
-        </div>
+      {# scope: current season vs all-time #}
+      <div class="toggle-group" data-toggle="scope">
+          <button data-value="season">This Season</button>
+          <button data-value="alltime">All-Time</button>
+      </div>
 
-        {# pool chips: these HIDE a pool when un-checked (filter, not select).
-           Order is HS -> College -> MS, per your call. #}
-        <div class="pool-chips">
-            {# Order is fixed here rather than iterating the dict, because a
-               dict's order is an implementation detail and HS should lead. #}
-            {% for key in ['hs_m','hs_f','college_m','college_f','ms_m','ms_f'] %}
-                <button class="chip is-on" data-pool="{{ key }}">{{ POOL_LABELS[key] }}</button>
-            {% endfor %}
-        </div>
+      {# pool chips: these HIDE a pool when un-checked (filter, not select).
+         Order is HS -> College -> MS, per your call. #}
+      <div class="pool-chips">
+          {# Order is fixed here rather than iterating the dict, because a
+             dict's order is an implementation detail and HS should lead. #}
+          {% for key in ['hs_m','hs_f','college_m','college_f','ms_m','ms_f'] %}
+              <button class="chip is-on" data-pool="{{ key }}">{{ POOL_LABELS[key] }}</button>
+          {% endfor %}
+      </div>
+  </div>
+
+  <div class="rc-grid">
+  <div class="rc-mainc">
+    {# ★ TWO TABS, NOT TWO COLUMNS (owner, 2026-10-10): Top athletes and
+         Best performances, which sat side by side, are race-page tabs, and
+         each tab's six pools sit two by two (boys beside girls). #}
+    <div class="rc-tbar">
+      <nav class="seg rc-tabs" role="tablist">
+        <a class="seg-btn is-on" href="#athletes" data-tab="athletes">Top athletes</a>
+        <a class="seg-btn" href="#performances" data-tab="performances">Best performances</a>
+      </nav>
+      {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
     </div>
 
-    {# One .board-pair per (sport, scope). CSS shows only the pair whose
-       data-sport/data-scope match the section's current state, so switching
-       is instant and needs no server round-trip. #}
-    {% for sport in ['XC', 'TF'] %}
+    {# One .board-pair per (board, sport, scope). CSS shows only the pair
+       whose data-sport/data-scope match the section's current state, so
+       switching is instant and needs no server round-trip. #}
+    {% for tab, board_type in [('athletes', 'athlete'), ('performances', 'performance')] %}
+    <section class="rc-panel" id="{{ tab }}" data-panel="{{ tab }}">
+      {% for sport in ['XC', 'TF'] %}
         {% for scope in ['season', 'alltime'] %}
-            <div class="board-pair" data-sport="{{ sport }}" data-scope="{{ scope }}">
+          <div class="board-pair hm-board-{{ board_type }}" data-sport="{{ sport }}" data-scope="{{ scope }}">
+            {% set pools = panels.get(sport, {}).get(scope, {}).get(board_type, {}) %}
 
-                {% set athlete_pools = panels.get(sport, {}).get(scope, {}).get('athlete', {}) %}
-                {% set perf_pools    = panels.get(sport, {}).get(scope, {}).get('performance', {}) %}
+            {# Scope -> year, resolved once for this cell. Same meta key the
+               meta line prints, so the label and the link cannot disagree.
+               All-time passes None, and rankings_url then omits `year`
+               entirely.
+               CAVEAT: if the meta row is missing, '' is falsy and a
+               "This Season" link degrades to all-time. The meta line
+               already renders blank in that case, so the page is visibly
+               degraded either way. #}
+            {% set link_year = meta.get('season_year_' ~ sport, '') if scope == 'season' else None %}
 
-                {# Scope -> year, resolved once for both boards in this cell.
-                   Same meta key the heading below prints, so the label and
-                   the link cannot disagree. All-time passes None, and
-                   rankings_url then omits `year` entirely.
-                   CAVEAT: if the meta row is missing, '' is falsy and a
-                   "This Season" link degrades to all-time. The heading
-                   already renders blank in that case, so the page is
-                   visibly degraded either way. #}
-                {% set link_year = meta.get('season_year_' ~ sport, '') if scope == 'season' else None %}
-
-                {# scope label, human-readable #}
-                <h2 class="board-scope-label">
-                    {{ sport }} -
-                    {% if scope == 'season' %}
-                        {{ meta.get('season_year_' ~ sport, '') }} Season
-                    {% else %}
-                        All-Time
-                    {% endif %}
-                </h2>
-
-                <div class="board-pair-grid">
-                    <div class="board-side">
-                        <h3 class="board-title">Top Athletes</h3>
-                        {{ board_grid(athlete_pools, 'athlete', POOL_LABELS, sport, link_year) }}
-                    </div>
-                    <div class="board-side">
-                        <h3 class="board-title">Best Performances</h3>
-                        {{ board_grid(perf_pools, 'performance', POOL_LABELS, sport, link_year) }}
-                    </div>
-                </div>
-
-                {% if not athlete_pools and not perf_pools %}
-                    <p class="board-empty">No data for this view.</p>
-                {% endif %}
-
+            <div class="hm-pools">
+              {{ board_grid(pools, board_type, POOL_LABELS, sport, link_year) }}
             </div>
-        {% endfor %}
-    {% endfor %}
 
+            {% if not pools %}
+              <p class="board-empty">No data for this view.</p>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% endfor %}
+    </section>
+    {% endfor %}
+  </div>
+
+  <aside class="rc-side">
     {# ============================================================= #}
     {#  LATEST RESULTS -- the newest meets with real fields, from    #}
     {#  homepage_recent (precomputed by panels.py; the route reads   #}
     {#  ~30 rows). One block per sport; CSS shows the one matching   #}
     {#  the section's sport toggle, same mechanism as the boards.    #}
+    {#  ★ A SIDE CARD NOW (owner, 2026-10-10): one meet a row, the   #}
+    {#    name, then date · course · state on a small line; a long   #}
+    {#    one ends in an ellipsis and reads whole on hover (title).  #}
     {# ============================================================= #}
     {% if recent %}
-        {% for sport in ['XC', 'TF'] %}
-            {% if recent.get(sport) %}
-            <div class="recent-block" data-sport="{{ sport }}">
-                <h2 class="rank-heading">Latest results</h2>
-                <p class="rank-sub">The newest meets on the books.{% if coming_n and coming_n.get(sport) %}
-                    <a href="/meets?view=upcoming&amp;sport={{ sport }}">{{ "{:,}".format(coming_n[sport]) }} coming up this week →</a>{% endif %}</p>
-                {# 15 rows; the full precomputed year lives at /meets. #}
-                <table class="recent-table">
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Meet</th>
-                            <th>{{ "Course" if sport == 'XC' else "Setting" }}</th>
-                            <th>State</th>
-                            <th>Results</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for m in recent[sport][:15] %}
-                        <tr>
-                            <td class="no-break">{{ m.date|mdy }}</td>
-                            <td><a href="/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}">{{ m.meet_name }}</a></td>
-                            <td>
-                                {% if sport == 'XC' and m.course_name %}
-                                    <a href="/course/{{ m.course_name|urlencode }}">{{ m.course_name }}</a>
-                                {% else %}{{ m.course_name or " - " }}{% endif %}
-                            </td>
-                            <td>{{ m.state or " - " }}</td>
-                            <td>{{ m.n_results }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-                <p class="recent-all">
-                    <a href="/meets?sport={{ sport }}">All recent meets →</a>
-                </p>
-            </div>
-            {% endif %}
-        {% endfor %}
+    {% for sport in ['XC', 'TF'] %}
+      {% if recent.get(sport) %}
+      <div class="recent-block" data-sport="{{ sport }}">
+        <h2>Latest results <small>the newest meets</small></h2>
+        {# 15 rows; the full precomputed year lives at /meets. #}
+        <table class="rc-tscores rc-tscores-plain hm-recent">
+          <tbody>
+          {% for m in recent[sport][:15] %}
+          <tr>
+            <td class="tn"><a class="hm-mn" title="{{ m.meet_name }}" href="/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}">{{ m.meet_name }}</a>
+              <span class="sp" title="{{ m.date|mdy }} · {{ m.course_name or '' }}{% if m.state %} · {{ m.state }}{% endif %}">{{ m.date|mdy }} · {% if sport == 'XC' and m.course_name %}<a href="/course/{{ m.course_name|urlencode }}">{{ m.course_name }}</a>{% else %}{{ m.course_name or " - " }}{% endif %}{% if m.state %} · {{ m.state }}{% endif %}</span></td>
+            <td class="n tpts" title="results">{{ "{:,}".format(m.n_results) }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        <p class="hm-side-links">
+          <a href="/meets?sport={{ sport }}">All recent meets →</a>
+          {% if coming_n and coming_n.get(sport) %}<a href="/meets?view=upcoming&amp;sport={{ sport }}">{{ "{:,}".format(coming_n[sport]) }} coming up this week →</a>{% endif %}
+        </p>
+      </div>
+      {% endif %}
+    {% endfor %}
     {% endif %}
 
-    <p class="by-state">Rankings by state:
-      <a href="/rankings/xc/hs-boys">HS boys XC</a> ·
-      <a href="/rankings/xc/hs-girls">HS girls XC</a> ·
-      <a href="/rankings/tf/hs-boys">HS boys track</a> ·
-      <a href="/rankings/tf/hs-girls">HS girls track</a> ·
-      <a href="/rankings/xc/college-men">College men XC</a> ·
-      <a href="/rankings/xc/college-women">College women XC</a> ·
-      <a href="/rankings/tf/college-men">College men track</a> ·
-      <a href="/rankings/tf/college-women">College women track</a> ·
-      <a href="/schools">Teams by state</a>
-    </p>
+    {# the state ranking pages (landing.py): plain links, so a crawler and a
+       person both have a path into them from here #}
+    <h2 class="hm-side-h2">Rankings by state <small>XC and track</small></h2>
+    <table class="rc-tscores rc-tscores-plain hm-states">
+      <tbody>
+      {% for words, slug in [("HS boys", "hs-boys"), ("HS girls", "hs-girls"), ("College men", "college-men"), ("College women", "college-women")] %}
+      <tr><td class="tn">{{ words }}</td>
+        <td class="n tpts"><a href="/rankings/xc/{{ slug }}">XC</a> · <a href="/rankings/tf/{{ slug }}">Track</a></td></tr>
+      {% endfor %}
+      <tr><td class="tn" colspan="2"><a href="/schools">Teams by state →</a></td></tr>
+      </tbody>
+    </table>
+  </aside>
+  </div>
 </section>
 </main>
 
 <script src="{{ static_v('home.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

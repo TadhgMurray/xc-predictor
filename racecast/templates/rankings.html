@@ -40,6 +40,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+{# the race page's shape (owner, 2026-10-10); this page's rules in it sit
+   under main.rc.rankings-page at the end of race.css #}
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 {% set meta_title = "Rankings" %}
 {% set meta_description =
    "Cross country and track rankings on one comparable scale. Filter by
@@ -55,17 +58,13 @@
 
 {# data-board drives the filter-visibility rules in style.css. rankings.js
    keeps it in sync with the selected tab and never touches individual field
-   visibility itself. #}
-<div class="rankings-page" id="rankings" data-board="ability">
-
-  <div class="hdr-row">
-    <h1>Rankings</h1>
-    {# the link shared is this page with the board's own query; rankings.js keeps it current #}
-    {% with share_title="Rankings on Racecast", share_url=site_origin ~ "/rankings" %}{% include "_share.html" %}{% endwith %}
-  </div>
-  <p class="sub" id="subtitle">
-    Season ability - averaged across a season.{{ rating_i() }}
-  </p>
+   visibility itself.
+   ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10). main.rc, the board tabs
+     first (the same strip Breakouts and By state open with), then the
+     header with the board's description and Share on the meta line, the
+     No. 1 as the champion line, the filters under it, the board beside a
+     side card. Every id and class rankings.js reads is unchanged. #}
+<main class="page-wide rankings-page rc" id="rankings" data-board="ability">
 
   <div class="tabs" role="tablist">
     <button class="tab" role="tab" data-board="ability"     aria-selected="true">Ability</button>
@@ -91,6 +90,25 @@
        (rankings.js keeps the href in step). Owner, 2026-10-06. #}
     <a class="tab tab-link" id="by-state-tab" href="/rankings/xc/hs-boys">By state</a>
   </div>
+
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      {# the kicker, the board heading and the No. 1 line follow the pool,
+         the sport and the board in view: rankings.js (syncBoardHeader) #}
+      <div class="rc-sport"><span class="sport-tag sport-tag--xc" id="rk-kicker">HS boys cross country &amp; track</span></div>
+      <h1>Rankings</h1>
+      {# the link shared is this page with the board's own query; rankings.js
+         keeps it current (syncShare finds .share-btn) #}
+      <div class="rc-meta">
+        <span id="subtitle">Season ability - averaged across a season.</span>{{ rating_i() }}
+        · <a href="/about">how it works</a>
+        · <button type="button" class="share-btn rc-share-link" data-share-title="Rankings on Racecast"
+              data-share-url="{{ site_origin ~ '/rankings' }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      {# filled from the board's first row once it lands (rankings.js) #}
+      <div class="rc-champs" id="rk-champs" hidden></div>
+    </div>
+  </div></header>
 
   <div class="filters">
 
@@ -508,24 +526,6 @@
 
   </details>
 
-
-  {# Jump straight to an athlete's page of the board.
-
-     ★ ON EVERY BOARD NOW. This was ability-only because the result boards
-       bounded their candidate set before deduping, so a rank computed against
-       one was a rank within that window rather than within the corpus. They
-       are ranked by COUNTING instead -- see rankings._rankInResults -- which
-       became possible once the per-athlete cap came off Performances. #}
-  <div class="findme">
-    <label for="find-input">Find an athlete on this board</label>
-    <div class="find-wrap">
-      <input id="find-input" type="search" autocomplete="off"
-             placeholder="Name, or paste an athlete link">
-      <div id="find-results" class="find-results"></div>
-    </div>
-    <div class="find-status" id="find-status"></div>
-  </div>
-
   {# ⚠ SHOWN ONLY WHEN THE SCOPE IS OPEN. The caveat is about comparing across
      the linkage graph's edges, which cannot happen on a USA board -- and a
      warning that is always up is a warning nobody reads. rankings.js toggles
@@ -551,46 +551,81 @@
      projection, so it cannot be on screen over a board that is not one. #}
   <div class="projected-banner" id="projected-banner" role="note"></div>
 
-  <div class="toggle-row">{{ scale_toggle(hidden=True) }}</div>
-  <div id="results"></div>
+  <div class="rc-grid">
+  <div class="rc-mainc">
+    {# ★ THE BOARD'S OWN HEADING (owner, 2026-10-10): "Ability · HS boys",
+         kept in step by rankings.js; the scale toggle sits at its end. The
+         heading box is as tall as the side card's, so the two start level. #}
+    <div class="rc-tbar">
+      <h2 class="rk-board-h" id="rk-board-h">Ability</h2>
+      <div class="rc-tbar-end">{{ scale_toggle(hidden=True) }}</div>
+    </div>
 
-  {# ★ FIRST, THEN PREV. Deep in a board, "Prev" is a fifty-row crawl back to
-     the top -- the pager could walk you forward indefinitely and only
-     backward one step at a time. #}
-  <div class="pager hidden" id="pager">
-    <button id="first" title="Back to the first page">&laquo; First</button>
-    <button id="prev">&larr; Prev</button>
-    <span class="page" id="pageLabel"></span>
-    <button id="next">Next &rarr;</button>
-    {# ★ LAST (owner, 2026-09-02). The board does not know its length on an
-       ordinary load -- counting is a scan the page should not pay for on
-       every filter change -- so the button asks for the count when pressed
-       (?count=1) and jumps. #}
-    <button id="last" title="Jump to the last page">Last &raquo;</button>
-    <span class="page-note" id="pageNote"></span>
+    <div id="results"></div>
+
+    {# ★ FIRST, THEN PREV. Deep in a board, "Prev" is a fifty-row crawl back to
+       the top -- the pager could walk you forward indefinitely and only
+       backward one step at a time. #}
+    <div class="pager hidden" id="pager">
+      <button id="first" title="Back to the first page">&laquo; First</button>
+      <button id="prev">&larr; Prev</button>
+      <span class="page" id="pageLabel"></span>
+      <button id="next">Next &rarr;</button>
+      {# ★ LAST (owner, 2026-09-02). The board does not know its length on an
+         ordinary load -- counting is a scan the page should not pay for on
+         every filter change -- so the button asks for the count when pressed
+         (?count=1) and jumps. #}
+      <button id="last" title="Jump to the last page">Last &raquo;</button>
+      <span class="page-note" id="pageNote"></span>
+    </div>
+    {# this page of the board as a spreadsheet (csv_export.py); rankings.js
+       sets the href to the query just served, rating boards only.
+       ! ITS OWN LINE UNDER THE PAGER (owner, 2026-10-06: the CSV links made
+         the pager narrower; "csv should be lower"). #}
+    <p class="csv-link hidden" id="csv-wrap">Download CSV:
+      <a id="csv" rel="nofollow" download>this page</a> ·
+      <a id="csv-all" rel="nofollow">whole board</a></p>
   </div>
-  {# this page of the board as a spreadsheet (csv_export.py); rankings.js
-     sets the href to the query just served, rating boards only.
-     ! ITS OWN LINE UNDER THE PAGER (owner, 2026-10-06: the CSV links made
-       the pager narrower; "csv should be lower"). #}
-  <p class="csv-link hidden" id="csv-wrap">Download CSV:
-    <a id="csv" rel="nofollow" download>this page</a> ·
-    <a id="csv-all" rel="nofollow">whole board</a></p>
 
-  {# the state ranking pages (landing.py): plain links, so a crawler and a
-     person both have a path into them from here #}
-  <p class="by-state">Rankings by state:
-    <a href="/rankings/xc/hs-boys">HS boys XC</a> ·
-    <a href="/rankings/xc/hs-girls">HS girls XC</a> ·
-    <a href="/rankings/tf/hs-boys">HS boys track</a> ·
-    <a href="/rankings/tf/hs-girls">HS girls track</a> ·
-    <a href="/rankings/xc/college-men">College men XC</a> ·
-    <a href="/rankings/xc/college-women">College women XC</a> ·
-    <a href="/rankings/tf/college-men">College men track</a> ·
-    <a href="/rankings/tf/college-women">College women track</a> ·
-      <a href="/schools">Teams by state</a>
-  </p>
-</div>
+  <aside class="rc-side">
+    {# the state ranking pages (landing.py): plain links, so a crawler and a
+       person both have a path into them from here.
+       ! A SIDE CARD NOW (owner, 2026-10-10), XC · Track per pool; on a phone
+         it comes after the pager (race.css). #}
+    <div class="rk-states-card">
+    <h2>Rankings by state <small>XC and track</small></h2>
+    <table class="rc-tscores rc-tscores-plain rk-states">
+      <tbody>
+      {% for words, slug in [("HS boys", "hs-boys"), ("HS girls", "hs-girls"), ("College men", "college-men"), ("College women", "college-women")] %}
+      <tr><td class="tn">{{ words }}</td>
+        <td class="n tpts"><a href="/rankings/xc/{{ slug }}">XC</a> · <a href="/rankings/tf/{{ slug }}">Track</a></td></tr>
+      {% endfor %}
+      <tr><td class="tn" colspan="2"><a href="/schools">Teams by state →</a></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    {# Jump straight to an athlete's page of the board.
+
+       ★ ON EVERY BOARD NOW. This was ability-only because the result boards
+         bounded their candidate set before deduping, so a rank computed against
+         one was a rank within that window rather than within the corpus. They
+         are ranked by COUNTING instead -- see rankings._rankInResults -- which
+         became possible once the per-athlete cap came off Performances.
+       ! THE SECOND SIDE CARD (owner, 2026-10-10); on a phone it comes before
+         the board (race.css). Still hidden on Teams and Courses by style.css. #}
+    <div class="findme">
+      <label for="find-input">Find an athlete on this board</label>
+      <div class="find-wrap">
+        <input id="find-input" type="search" autocomplete="off"
+               placeholder="Name, or paste an athlete link">
+        <div id="find-results" class="find-results"></div>
+      </div>
+      <div class="find-status" id="find-status"></div>
+    </div>
+  </aside>
+  </div>
+</main>
 
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>

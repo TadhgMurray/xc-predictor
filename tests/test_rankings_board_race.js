@@ -32,6 +32,8 @@ const ctx = {
   buildQuery: () => new URLSearchParams({ board: ctx.state.board }),
   syncUrl: () => {},
   teamsNote: () => {},
+  // the race-shape header (kicker, board heading, No. 1 line; owner, 2026-10-10)
+  syncBoardHeader: () => {},
   emptyBoard: () => "empty",
   esc: (x) => String(x),
   PAGE_SIZE: 50,
