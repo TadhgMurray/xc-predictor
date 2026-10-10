@@ -6155,7 +6155,7 @@ def get_course_team_rating_bests(cur, course_name, limit=60):
       priced by the majority, which is the whole approximation.
     """
     pool_col = _ratingPoolCol(cur, "results")
-    cur.execute(f"""
+    sql = f"""
         WITH {_courseRowsCte(pool_col)},
         finishers AS (
             SELECT r.meet_id, r.div_id, r.source, r.school, r.speed_rating,
@@ -6200,8 +6200,12 @@ def get_course_team_rating_bests(cur, course_name, limit=60):
         )
         SELECT * FROM ranked WHERE rn <= %(limit)s
         ORDER BY gender, avg5 DESC
-    """, {"course": course_name, "limit": limit})
-    rows = cur.fetchall()
+    """
+
+    def run(cap):
+        cur.execute(sql, {"course": course_name, "limit": cap})
+        return cur.fetchall()
+    rows = _teamsOnly(run, limit, lambda r: (r.get("gender"), r.get("pool")))
     stampBoardRows(rows, rating_keys=("avg5",), sport="XC")
     return bestByShown(rows, limit, key="avg5", person="school",
                        hs_key="hs_avg5")
@@ -7066,7 +7070,7 @@ def get_course_team_records(cur, course_name, dist, limit=60):
     """Fastest team performances at one distance: top-5 time total within
     ONE race, best race per school, top `limit` per gender. Ranked by the
     total; the average is displayed alongside for readability."""
-    cur.execute(f"""
+    sql = f"""
         WITH {_courseRowsCte(drop=_hasDistDrop(cur))},
         finishers AS (
             SELECT r.meet_id, r.div_id, r.source, r.school, r.time_seconds,
@@ -7107,8 +7111,43 @@ def get_course_team_records(cur, course_name, dist, limit=60):
         )
         SELECT * FROM ranked WHERE rn <= %(limit)s
         ORDER BY gender, total ASC
-    """, {"course": course_name, "dist": int(dist), "limit": limit})
-    return cur.fetchall()
+    """
+
+    def run(cap):
+        cur.execute(sql, {"course": course_name, "dist": int(dist), "limit": cap})
+        return cur.fetchall()
+    return _teamsOnly(run, limit, lambda r: r.get("gender"))
+
+
+def _teamsOnly(fetch, limit, part):
+    """fetch(cap)'s rows with the non-teams taken out, `limit` per partition.
+
+    ★ UNATTACHED IS NOT A TEAM (sweep 2026-10-10). The course team records
+      ranked every school STRING with five finishers, so five unattached
+      runners in one race -- no team at all -- could top a course's list.
+      meet_compile.isTeam is the rule the race pages score by; it is a
+      Python regex, so the filter runs here, and a partition the filter
+      left short is fetched again with that many more rows, until it is
+      full or the query has nothing more to give.
+    """
+    from meet_compile import isTeam
+    cap = limit
+    while True:
+        rows = fetch(cap)
+        raw, kept, out = {}, {}, []
+        for r in rows:
+            k = part(r)
+            raw[k] = raw.get(k, 0) + 1
+            if not isTeam(r.get("school")):
+                continue
+            if kept.get(k, 0) < limit:
+                out.append(r)
+            kept[k] = kept.get(k, 0) + 1
+        short = [limit - kept.get(k, 0) for k, n in raw.items()
+                 if n >= cap and kept.get(k, 0) < limit]
+        if not short:
+            return out
+        cap += max(short)
 
 
 def get_course_cell_difficulties(cur, course_name):

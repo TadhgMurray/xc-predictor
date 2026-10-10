@@ -316,3 +316,29 @@ def test_school_scalars_take_the_state_chip(fn, args):
     cur = StubCursor([[{"athletes": 3, "y": 2025}]])
     getattr(school, fn)(cur, "Oregon", *args)
     assert "person_home_state" not in cur.sql[0][0]
+
+
+# ---- 9. course team records: no Unattached ------------------------------ #
+
+def test_course_team_records_leave_out_non_teams(A):
+    table = ([{"school": "Unattached", "gender": "M", "total": 1}]
+             + [{"school": f"School {i}", "gender": "M", "total": 2 + i}
+                for i in range(5)])
+    caps = []
+
+    def answer(sql, params):
+        caps.append(params["limit"])
+        return table[:params["limit"]]
+    cur = StubCursor([[{"d": None}], answer, answer])
+    rows = A.get_course_team_records(cur, "Woodward Park", 5000, limit=3)
+    assert [r["school"] for r in rows] == ["School 0", "School 1", "School 2"]
+    assert caps == [3, 4]                      # refetched one deeper, once
+
+
+def test_course_team_rating_bests_leave_out_non_teams(A, monkeypatch):
+    monkeypatch.setattr(A, "_ratingPoolCol", lambda cur, t: None)
+    rows = [{"school": "Unattached", "gender": "F", "pool": "hs_f", "avg5": 140.0},
+            {"school": "Dublin", "gender": "F", "pool": "hs_f", "avg5": 130.0}]
+    cur = StubCursor([lambda sql, p: rows[:p["limit"]]] * 3)
+    got = A.get_course_team_rating_bests(cur, "Hidden Valley", limit=1)
+    assert [r["school"] for r in got] == ["Dublin"]
