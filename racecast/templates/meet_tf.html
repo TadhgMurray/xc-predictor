@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 {% from "_tf_points.html" import tf_team_block %}
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv %}
 {# ★ THE EVENT LINKS CARRY THE FEED (sweep 2026-10-10), as meet.html's
    race_q: without ?alt= the race page opened the colliding OTHER meet. #}
 {% macro race_q() %}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}{% endif %}{% if school %}{% set _ = _q.append('school=' ~ (school|urlencode)) %}{% endif %}{% if _q %}?{{ _q|join('&') }}{% endif %}{% endmacro %}
@@ -136,7 +136,7 @@
     {# No event ids exist for this meet, so there are no race pages to
        link -- the results themselves render here, grouped by each row's
        own event name. #}
-    {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+    {# ★ NO SCALE SWITCH HERE (owner, 2026-10-10): one public rating scale. A single-pool page shows the HS-equivalent only; the "own pool" view lives behind Advanced on the multi-pool boards (_scale.html). #}
     {% for ev in loose %}
     <h2>{{ ev.name }}</h2>
     <table class="rc-table">

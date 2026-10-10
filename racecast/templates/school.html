@@ -15,7 +15,7 @@
   Season pages come later; the year links are the entry point for those.
 ===================================================================== #}
 <!DOCTYPE html>
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
 <html lang="en">
 <head>
@@ -189,7 +189,7 @@
       {% if best %}<a class="seg-btn" href="#best" data-tab="best">Best performances</a>{% endif %}
       {% if meets %}<a class="seg-btn" href="#races" data-tab="races">{{ (picked ~ " races") if picked else "Races" }}<span class="n">{{ meets|length }}</span></a>{% endif %}
     </nav>
-    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+    {# ★ NO SCALE SWITCH HERE (owner, 2026-10-10): one public rating scale. A single-pool page shows the HS-equivalent only; the "own pool" view lives behind Advanced on the multi-pool boards (_scale.html). #}
   </div>
 
 {% if roster %}

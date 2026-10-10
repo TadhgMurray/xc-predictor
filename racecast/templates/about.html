@@ -66,17 +66,27 @@
 
   <h2 class="rc-sec" id="rating">What a rating is</h2>
 
+  {# ★ ONE PUBLIC SCALE (owner, 2026-10-10). This said "100 is the mean of
+       that pool" and warned that a rating means nothing outside it -- the
+       own-pool scale, which no page shows by default any more. It now
+       describes the scale every number on the site is shown on. #}
   <p>
     A <strong>speed rating</strong> is a race, corrected for everything about
-    it that was not the athlete, and expressed against the field the athlete
-    competes in. <strong>100 is the mean of that pool</strong>; higher is
+    it that was not the athlete. <strong>100 is an average high-school
+    runner</strong>, and every level is shown on that one scale; higher is
     faster. Real values run roughly 30 to 170.
   </p>
   <p>
-    Because the scale is pool-relative, a rating is only meaningful
-    <em>within</em> its pool. A 140 in high school boys and a 140 in middle
-    school boys are not the same performance - each is measured against its
-    own field.
+    So a 140 means the same thing wherever it appears: a middle schooler, a
+    high schooler and a collegian rated 140 ran as fast as each other, as a
+    high schooler of the same sex would be rated. Boys and girls are each on
+    their own side of the scale, close in percentiles but not one-to-one.
+  </p>
+  <p>
+    Underneath, the model fits each pool (high-school boys, college women,
+    middle-school boys&hellip;) on its own scale, where 100 is that pool's
+    average. The multi-pool boards can show those numbers instead, under
+    <em>Advanced</em>, for anyone comparing an athlete with their own peers.
   </p>
   <p>
     What each rating means as a time, from the top of the boards to the
@@ -197,12 +207,13 @@
 
   <h2 class="rc-sec" id="glossary">Glossary</h2>
   <dl class="glossary">
-    <dt>Rating</dt><dd>A race corrected for course, distance, weather and era, expressed against the athlete's pool. 100 is the pool's average runner; 133 means 33% faster than that runner. Roughly, a high-school boy rated 146 runs a 15:05 5K.</dd>
+    <dt>Rating</dt><dd>A race corrected for course, distance, weather and era. 100 is an average high-school runner, and every level is shown on that one scale; 133 means 33% faster than that runner. Roughly, a high-school boy rated 146 runs a 15:05 5K.</dd>
     <dt>Rating to time</dt><dd>Every rating on the boards as a 1600, a 3200 and a cross country 5K (and the college 6K and 8K), pool by pool, in <a href="/scale">one printable table</a>. The circled <i>i</i> beside a rating opens it.</dd>
     <dt>Athletes board (season average)</dt><dd>One row per athlete-season, ranked on the average of their rated races. The default, because one race is noisy by about four points.</dd>
-    <dt>Performances board (single races)</dt><dd>One row per race. A great day by an ordinary athlete outranks an ordinary day by a great one, which is right for a list of races and wrong for a list of athletes.</dd>
-    <dt>Best times/marks</dt><dd>The clock and the tape, uncorrected: fastest time at one distance, longest or highest mark in a field event.</dd>
-    <dt>HS-equivalent / own pool</dt><dd>Every pool (high-school boys, college women, middle-school boys&hellip;) has its own 100. The HS-equivalent scale re-expresses every rating as if the athlete were a high schooler of the same sex, so a college and a middle-school number can sit on one list. Own pool shows the number as fitted.</dd>
+    <dt>Best races board (single races)</dt><dd>One row per race. A great day by an ordinary athlete outranks an ordinary day by a great one, which is right for a list of races and wrong for a list of athletes.</dd>
+    <dt>Fastest times board</dt><dd>The clock and the tape, uncorrected: fastest time at one distance, longest or highest mark in a field event.</dd>
+    <dt>HS-equivalent (the scale shown)</dt><dd>Every rating re-expressed as if the athlete were a high schooler of the same sex: 100 is an average high-school runner, so a college and a middle-school number can sit on one list. It is the only scale shown by default.</dd>
+    <dt>Own-pool scale (Advanced)</dt><dd>The scale the model fits: every pool (high-school boys, college women, middle-school boys&hellip;) has its own 100 at its own average. The multi-pool boards show it under <em>Advanced &rsaquo; Show each pool's own scale</em>.</dd>
     <dt>Difficulty</dt><dd>How much slower times run at a course than at an average course, one scale for cross country and track: +4% is about 40 seconds on a 16-minute 5K. Ratings already account for it.</dd>
     <dt>PR, SR, CR, CSR, R, RSR</dt><dd>Personal record, season record, course record, course season record, rating record, rating season record. A star means it still stands.</dd>
     <dt>League, area, section, division, class, conference, region</dt><dd>The units a school competes in, inferred from the championship meets it attends. High school runs league &rarr; area &rarr; section &rarr; state; college runs conference &rarr; region &rarr; division.</dd>

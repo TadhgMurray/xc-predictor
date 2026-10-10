@@ -11696,11 +11696,44 @@ def recruit_profile(person_id):
     return render_template("recruit.html", p=prof)
 
 
+# ★ THE RANKINGS PAGE OPENS ON THE SEASON IN SEASON (owner, 2026-10-10), the
+#   home page's rule (_homeSport), not "Both". Read from homepage_meta,
+#   cached: the answer moves once a season and the page made no query of its
+#   own before this, so a failed read must cost nothing -- it falls back to
+#   _homeSport({}), cross country.
+_RANKINGS_SPORT_CACHE = {}
+_RANKINGS_SPORT_TTL = 600.0
+
+
+def _rankingsDefaultSport():
+    import time as _t
+    hit = _RANKINGS_SPORT_CACHE.get("sport")
+    if hit and _t.time() - hit[0] <= _RANKINGS_SPORT_TTL:
+        return hit[1]
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                meta = get_homepage_meta(cur)
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"rankings sport: {type(exc).__name__}: {exc}", flush=True)
+        meta = {}
+    sport = _homeSport(meta)
+    _RANKINGS_SPORT_CACHE["sport"] = (_t.time(), sport)
+    return sport
+
+
 @app.route("/rankings")
 def rankings_page():
     # the preview is the board the query names (the default board when bare)
-    return render_template("rankings.html",
-                           card_query=request.query_string.decode("utf-8", "replace"))
+    card_query = request.query_string.decode("utf-8", "replace")
+    default_sport = _rankingsDefaultSport()
+    # ! A LINK WITH NO sport= OPENS ON THE SEASON IN SEASON, so its preview
+    #   card must draw that board too, not the API's own "both" default.
+    #   A link that names a sport (sport=both included) keeps it.
+    if not request.args.get("sport"):
+        card_query = (card_query + "&" if card_query else "") + "sport=" + default_sport
+    return render_template("rankings.html", card_query=card_query,
+                           default_sport=default_sport)
 
 
 @app.route("/schools")

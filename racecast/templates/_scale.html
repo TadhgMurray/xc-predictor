@@ -7,10 +7,12 @@
                    instant, no server round trip. A rating with no HS value
                    keeps its own-scale number in either view.
 
-   scale_toggle()  the switch itself. Render it ONLY when the route says the
-                   page has something to toggle (a factor that moves) -- a
-                   switch that does nothing reads as broken. Pages must also
-                   load static/scale-view.js, which wires this by its id.
+   scale_toggle()  the "Advanced" disclosure (2026-10-10): one checkbox,
+                   "Show each pool's own scale". Multi-pool pages only, and
+                   ONLY when the route says the page has something to
+                   toggle (a factor that moves) -- a switch that does
+                   nothing reads as broken. Pages must also load
+                   static/scale-view.js, which wires this by its id.
 
    Import with:  {% from "_scale.html" import rv, scale_toggle %}
    ===================================================================== #}
@@ -23,25 +25,26 @@
 
 {# hidden=True starts the control display:none for pages whose boards load
    by JS -- rankings.js shows it only when the served rows actually move. #}
+{# ★ ONE PUBLIC RATING SCALE (owner, 2026-10-10). The HS-equivalent is the
+     only scale a reader is shown: 100 is an average high-school runner and
+     every level sits on that one scale. The two-button "HS-equivalent / Own
+     pool" switch that stood here put a second scale in front of everybody,
+     on every page, for the few who want it -- so it is now a small grey
+     "Advanced" disclosure holding one checkbox, and ONLY on the pages that
+     put more than one pool side by side (rankings, conversions,
+     predictions and the other multi-pool boards). Single-pool pages --
+     athlete, race and school pages -- do not call this at all.
+   ! THE ID AND THE CLASS ARE KEPT. rankings.js and predictions.js show and
+     hide #scale-toggle off whether the rows move; scale-view.js wires the
+     checkbox by the same id, and a stored "pool" preference still ticks it.
+   ! `same` IS KEPT TOO: the is-same class on the box, for scripts, exactly
+     as before (owner, 2026-09-02). Nothing styles it. #}
 {% macro scale_toggle(hidden=False, same=False) %}
-    {# `same`: every rating on the page is already on the HS scale, so the
-       two views show the same numbers. The control still renders, looking
-       exactly as it does everywhere else -- a toggle that came and went
-       between athletes read as a fault, and a note saying "same on both"
-       was not wanted either (owner, 2026-09-02). The class is kept for
-       scripts; nothing styles it. #}
-    <div class="scale-toggle{% if same %} is-same{% endif %}" id="scale-toggle"{% if hidden %} style="display:none"{% endif %}>
-        <span class="scale-lab">Rating scale</span>
-
-        {# ! HS IS THE DEFAULT (issue #50), so it starts active here too --
-             scale-view.js syncs these on load, but a control that renders
-             with the wrong one lit flickers on every page load. #}
-        <button type="button" data-scale="pool" aria-pressed="false">Own pool</button>
-        <button type="button" data-scale="hs" class="is-active" aria-pressed="true">HS-equivalent</button>
-        <span class="flag scale-note" tabindex="0"
-              data-title="Rating scale"
-              data-blurb="Each pool has its own rating scale, which means speed ratings are not comparable across pools. The HS-equivalent view (the default) rates everyone like a high schooler, which makes ratings comparable across age. Own pool shows each rating on its own pool's scale, where 100 is that pool's average -- the scale the model fitted, and the one to read when comparing an athlete against their own peers. They are still not one-to-one comparable across gender (although they are close in percentiles)."
-              aria-label="Rating scale. Each pool has its own rating scale, which means speed ratings are not comparable across pools. The HS-equivalent view, the default, rates everyone like a high schooler, which makes ratings comparable across age. Own pool shows each rating on its own pool's scale, where 100 is that pool's average. They are still not one-to-one comparable across gender, although they are close in percentiles.">?</span>
-    </div>
-
+    <details class="scale-toggle scale-adv{% if same %} is-same{% endif %}" id="scale-toggle"{% if hidden %} style="display:none"{% endif %}>
+        <summary>Advanced</summary>
+        <div class="scale-adv-panel">
+            <label><input type="checkbox" data-scale-own> Show each pool's own scale</label>
+            <p>Ratings are shown on one scale: 100 is an average high-school runner. Each pool's own scale puts 100 at that pool's own average (college men, MS girls&hellip;), the scale the model fitted.</p>
+        </div>
+    </details>
 {% endmacro %}

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
 {% from "_equiv_line.html" import equiv_line %}
 {% from "_recflag.html" import recflag, ratflag %}
@@ -90,7 +90,7 @@
 
   <section class="rc-panel" id="results" data-panel="results">
     {% if not school_points %}{{ al.box(above_spec) }}{% endif %}
-    {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+    {# ★ NO SCALE SWITCH HERE (owner, 2026-10-10): one public rating scale. A single-pool page shows the HS-equivalent only; the "own pool" view lives behind Advanced on the multi-pool boards (_scale.html). #}
     <table class="rc-table">
       <thead><tr>
         <th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th>

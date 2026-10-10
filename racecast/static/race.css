@@ -464,6 +464,63 @@ main.rc.rankings-page #results { overflow-x: auto; }
   main.rc.rankings-page .rc-side .findme { order: -1; margin: 0 0 .4rem; width: 100%; }
   main.rc.rankings-page .rk-states-card { order: 2; margin-top: 1.4rem; width: 100%; }
 }
+/* ★ THE FILTER BAR, SPLIT (owner, 2026-10-10; rankings.html). The five
+     board tabs with Breakouts and By state as plain links at the bar's end;
+     pool and sport as chips and the state box inline, applied on change;
+     everything else under "More filters", shut by default. */
+main.rc.rankings-page .rk-tabrow { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem 1.2rem; margin: 0 0 1.1rem; }
+main.rc.rankings-page .rk-tabrow > .tabs { margin: 0; }
+main.rc.rankings-page .rk-tablinks { margin-left: auto; font-size: .93rem; white-space: nowrap; }
+main.rc.rankings-page .rk-tablinks a { font-weight: 600; color: var(--link); text-decoration: underline; text-underline-offset: 2px; display: inline; }
+main.rc.rankings-page .rk-tablinks .sep { color: var(--muted); margin: 0 .4rem; }
+/* the inline row: no card around it, the fields side by side */
+main.rc.rankings-page .filters.rk-quick { border: 0; padding: 0; margin: 0 0 .2rem; gap: .55rem 1.4rem; align-items: center; background: none; }
+main.rc.rankings-page .rk-quick .field.rk-cg { flex-direction: row; align-items: center; flex-wrap: wrap; gap: .4rem; flex: 0 1 auto; }
+main.rc.rankings-page .rk-quick .k, main.rc.rankings-page .rk-quick .field > label {
+  font-size: .72rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-right: .1rem; }
+main.rc.rankings-page .rk-quick .field:not(.rk-cg) { flex-direction: row; align-items: center; gap: .5rem; }
+main.rc.rankings-page .rk-src { display: none !important; }
+main.rc.rankings-page .rk-chips { display: contents; }
+main.rc.rankings-page .rk-chip { font: inherit; font-size: .88rem; padding: .32rem .7rem; border: 1px solid #d1d5db; border-radius: 999px;
+  background: #fff; color: #374151; cursor: pointer; white-space: nowrap; }
+main.rc.rankings-page .rk-chip:hover { border-color: #9ca3af; color: var(--ink); }
+main.rc.rankings-page .rk-chip.is-on { background: var(--sel, #111418); border-color: var(--sel, #111418); color: #fff; font-weight: 600; }
+main.rc.rankings-page .rk-chip[hidden] { display: none; }
+/* the state box as a pill beside the chips */
+main.rc.rankings-page .rk-quick .state-field .combo-btn { width: auto; min-width: 7.5rem; border-radius: 999px; border-color: #d1d5db;
+  padding: .32rem .75rem; font-size: .88rem; color: #374151; }
+main.rc.rankings-page .rk-quick .state-field .combo.has-values .combo-btn { background: var(--sel, #111418); border-color: var(--sel, #111418); color: #fff; }
+main.rc.rankings-page .rk-quick .state-field .combo.has-values .combo-caret { color: #fff; }
+/* More filters */
+main.rc.rankings-page .rk-more { margin: .6rem 0 0; }
+main.rc.rankings-page .rk-more > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: .45rem;
+  font-size: .9rem; font-weight: 600; color: var(--ink); padding: .35rem .75rem; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; }
+main.rc.rankings-page .rk-more > summary::-webkit-details-marker { display: none; }
+main.rc.rankings-page .rk-more > summary::after { content: ""; display: inline-block; width: .36em; height: .36em;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-.2em) rotate(45deg); }
+main.rc.rankings-page .rk-more[open] > summary::after { transform: translateY(.05em) rotate(-135deg); }
+main.rc.rankings-page .rk-more > summary:hover { border-color: #9ca3af; }
+main.rc.rankings-page .rk-more-n { color: var(--muted); font-weight: 400; }
+main.rc.rankings-page .rk-more-on:not(:empty) { font-size: .75rem; font-weight: 700; color: #fff; background: var(--sel, #111418);
+  border-radius: 999px; padding: .05rem .5rem; }
+main.rc.rankings-page .rk-more-in { margin-top: .7rem; }
+main.rc.rankings-page .rk-more-in .filters { margin: .4rem 0 0; }
+main.rc.rankings-page .rk-more-in details.units { margin-top: .6rem; }
+main.rc.rankings-page .rk-intl { display: inline-flex; align-items: center; gap: .45rem; font-size: .92rem; cursor: pointer; margin: .1rem 0 .2rem; }
+main.rc.rankings-page .rk-notes { margin: .2rem 0 0; }
+@media (max-width: 760px) {
+  main.rc.rankings-page .rk-tabrow { row-gap: .45rem; margin-bottom: .8rem; }
+  main.rc.rankings-page .rk-tabrow > .tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+  main.rc.rankings-page .rk-tabrow > .tabs .tab { white-space: nowrap; flex: 0 0 auto; }
+  main.rc.rankings-page .rk-tablinks { margin-left: 0; }
+  main.rc.rankings-page .filters.rk-quick { padding: 0; gap: .6rem; }
+  main.rc.rankings-page .rk-quick .field.rk-cg { flex: 1 1 100%; }
+  main.rc.rankings-page .rk-quick .field.rk-cg > .k, main.rc.rankings-page .rk-quick .state-field > label { flex: 0 0 100%; margin-bottom: -.1rem; }
+  main.rc.rankings-page .rk-quick .field:not(.rk-cg) { flex: 1 1 100%; flex-direction: column; align-items: stretch; gap: .25rem; }
+  main.rc.rankings-page .rk-quick .state-field .combo, main.rc.rankings-page .rk-quick .state-field .combo-btn { width: auto; }
+  main.rc.rankings-page .rk-chip { font-size: .85rem; padding: .3rem .62rem; }
+  main.rc.rankings-page .rk-more-n { display: none; }
+}
 /* ===============================================================   ★ RECRUITING, THE COACH SEARCH, THE RECRUIT PROFILE AND /coaches IN THE
    RACE SHAPE (owner, 2026-10-10: "lgtm" on the proposals). Only what the
    shape needs on top of the pages' own style.css rules.

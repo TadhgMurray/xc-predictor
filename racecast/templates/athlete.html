@@ -174,7 +174,7 @@
 {%- endmacro %}
 
 {# The shared rating-value + toggle macros; scale-view.js does the swap. #}
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
 
 {% macro season_block(year, sport, season) %}
@@ -458,15 +458,13 @@
       {% if tf_seasons %}<a class="seg-btn{% if not xc_seasons %} is-on{% endif %}" href="#tf" data-tab="tf">{{ "TF"|sport_name }}<span class="n">{{ n_tf }}</span></a>{% endif %}
       <a class="seg-btn{% if not xc_seasons and not tf_seasons %} is-on{% endif %}" href="#career" data-tab="career">Career</a>
     </nav>
-    {# ================================================================= #}
-    {#  POOL-VIEW TOGGLE, at the tab bar's end. Always rendered (owner,  #}
-    {#  2026-09-02: it came and went between athletes and read as a      #}
-    {#  fault). For a pure-HS career both views are the same numbers,    #}
-    {#  and the control says so ("same on both") instead of vanishing.   #}
-    {#  athlete-charts.js owns the behaviour: it swaps every .rv span    #}
-    {#  and redraws the rating charts, and remembers the choice.         #}
-    {# ================================================================= #}
-    <div class="rc-tbar-end">{{ scale_toggle(same=not has_hs_view) }}</div>
+    {# ★ NO SCALE SWITCH ON AN ATHLETE PAGE (owner, 2026-10-10): one
+       public rating scale. The pool-view toggle that stood here (always
+       rendered since 2026-09-02, "same on both" for a pure-HS career) is
+       gone: an athlete page is one athlete, and every number on it is the
+       HS-equivalent -- 100 is an average high-school runner. The own-pool
+       view lives behind Advanced on the multi-pool boards (_scale.html);
+       scale-view.js keeps a page with no control on the HS view. #}
   </div>
 
   {# ★ COLLAPSED ON A PHONE (owner, 2026-09-01). The charts sit ABOVE each

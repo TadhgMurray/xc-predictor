@@ -5,7 +5,7 @@
  * a span whose text is the own-pool number and whose data-hs carries the
  * HS-equivalent. This file owns the switch between the two, everywhere:
  * it remembers the choice (one key for the whole site), swaps the spans,
- * keeps any #scale-toggle control in sync, and tells chart scripts and
+ * keeps any #scale-toggle control (the "Advanced" checkbox) in sync, and tells chart scripts and
  * board renderers to redraw via a "rc-scale-change" event on document.
  *
  * Load this BEFORE any script that reads window.rcScale (athlete-charts.js,
@@ -40,8 +40,19 @@
     }
   }
 
-  /* The one object other scripts read. mode is 'pool' or 'hs'. */
-  window.rcScale = { mode: load() };
+  /* The one object other scripts read. mode is 'pool' or 'hs'.
+
+     ★ ONE PUBLIC SCALE (owner, 2026-10-10). A page with no control --
+       athlete, race and school pages since the switch left them -- is
+       always on the HS-equivalent. A stored "pool" from a board page must
+       not follow the reader onto a page that offers no way back: the
+       numbers would be on a scale the page never names. The preference is
+       still honoured wherever the Advanced box is (rankings, conversions,
+       predictions, ...).
+     ! READ AT LOAD, AND THAT IS SAFE: every page loads this script at the
+       end of <body>, after the control's markup. */
+  var hasControl = !!document.getElementById("scale-toggle");
+  window.rcScale = { mode: hasControl ? load() : "hs" };
 
   /* Swap every .rv span between its two values. The own-pool number is the
      span's server-rendered text; it is stashed in data-own on first touch so
@@ -116,6 +127,14 @@
 
   function syncButtons(box) {
     if (!box) return;
+    /* ★ THE ADVANCED BOX (2026-10-10): one checkbox, ticked = own pool.
+       Opened on load when the stored choice is "pool", so a reader whose
+       numbers are on the other scale can see why, and where to undo it. */
+    var own = box.querySelector("input[data-scale-own]");
+    if (own) {
+      own.checked = window.rcScale.mode === "pool";
+      if (own.checked && "open" in box) box.open = true;
+    }
     var btns = box.querySelectorAll("button[data-scale]");
     for (var i = 0; i < btns.length; i++) {
       btns[i].classList.toggle("is-active",
@@ -136,16 +155,25 @@
     }
 
     if (!box) return;
-    box.addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-scale]");
-      if (!btn || btn.dataset.scale === window.rcScale.mode) return;
-      window.rcScale.mode = btn.dataset.scale;
+    function choose(mode) {
+      if (mode === window.rcScale.mode) return;
+      window.rcScale.mode = mode;
       try {
         localStorage.setItem(SCALE_KEY, window.rcScale.mode);
       } catch (err) { /* private mode: the choice just won't persist */ }
       syncButtons(box);
       applySpans();
       document.dispatchEvent(new CustomEvent("rc-scale-change"));
+    }
+    /* the checkbox (the Advanced box) and, for any page still carrying
+       the old two buttons, those -- one stored key either way */
+    box.addEventListener("change", function (e) {
+      var own = e.target.closest && e.target.closest("input[data-scale-own]");
+      if (own) choose(own.checked ? "pool" : "hs");
+    });
+    box.addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-scale]");
+      if (btn) choose(btn.dataset.scale);
     });
   }
 

@@ -13,7 +13,7 @@
     link.
 ===================================================================== #}
 <!DOCTYPE html>
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -149,7 +149,7 @@
              href="/school/{{ school|urlencode }}/prs?sport={{ s_ }}{% if data.state %}&amp;state={{ data.state }}{% endif %}">{{ s_|sport_name }}</a>
         {% endfor %}
       </nav>
-      {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+      {# ★ NO SCALE SWITCH HERE (owner, 2026-10-10): one public rating scale. A single-pool page shows the HS-equivalent only; the "own pool" view lives behind Advanced on the multi-pool boards (_scale.html). #}
     </div>
 
     {% if data.years %}

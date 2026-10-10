@@ -66,15 +66,22 @@
      side card. Every id and class rankings.js reads is unchanged. #}
 <main class="page-wide rankings-page rc" id="rankings" data-board="ability">
 
+  {# ★ FIVE BOARDS, PLAIN WORDS (owner, 2026-10-10). Ability, Performances
+       and Best times/marks were our words for the three questions; the tabs
+       now say the questions: who is best this season, which races were
+       best, what are the fastest times. data-board values, and so every
+       URL, are unchanged. Breakouts and By state are other PAGES, so they
+       are links at the end of the bar, not tabs that look like boards. #}
+  <div class="rk-tabrow">
   <div class="tabs" role="tablist">
-    <button class="tab" role="tab" data-board="ability"     aria-selected="true">Ability</button>
-    <button class="tab" role="tab" data-board="performance" aria-selected="false">Performances</button>
+    <button class="tab" role="tab" data-board="ability"     aria-selected="true">Athletes (season)</button>
+    <button class="tab" role="tab" data-board="performance" aria-selected="false">Best races</button>
     {# ★ A THIRD BOARD, AND IT ANSWERS A DIFFERENT QUESTION. Ability and
        Performances both rank speed_rating -- difficulty-adjusted and
        distance-normalised, which is what makes them fair and also what makes
        them unrecognisable to somebody who just wants the fastest 5k times.
        This ranks the clock. #}
-    <button class="tab" role="tab" data-board="pr" aria-selected="false">Best times/marks</button>
+    <button class="tab" role="tab" data-board="pr" aria-selected="false" title="Fastest times and best marks">Fastest times</button>
 
     {# ★ A FOURTH BOARD, AND THE ONLY ONE THAT RANKS A GROUP. The other three
        rank a number each row already has. This one ranks the finish order of
@@ -83,19 +90,21 @@
        superstar is worth exactly one point, as in life. #}
     <button class="tab" role="tab" data-board="teams" aria-selected="false">Teams</button>
     <button class="tab" role="tab" data-board="courses" aria-selected="false">Courses</button>
+  </div>
     {# Breakouts is a board too (owner, 2026-10-05), on its own page: the
-       newest races measured against each athlete's own season. #}
-    <a class="tab tab-link" href="/breakouts">Breakouts</a>
-    {# the state ranking pages (landing.py), for the pool and sport in view
-       (rankings.js keeps the href in step). Owner, 2026-10-06. #}
-    <a class="tab tab-link" id="by-state-tab" href="/rankings/xc/hs-boys">By state</a>
+       newest races measured against each athlete's own season. By state
+       opens the state ranking pages (landing.py) for the pool and sport in
+       view; rankings.js keeps its href in step (owner, 2026-10-06). #}
+    <nav class="rk-tablinks" aria-label="More rankings">
+      <a href="/breakouts">Breakouts</a><span class="sep" aria-hidden="true">·</span><a class="tab-link" id="by-state-tab" href="/rankings/xc/hs-boys">By state</a>
+    </nav>
   </div>
 
   <header class="rc-hd"><div class="rc-hgrid rc-hone">
     <div class="rc-left">
       {# the kicker, the board heading and the No. 1 line follow the pool,
          the sport and the board in view: rankings.js (syncBoardHeader) #}
-      <div class="rc-sport"><span class="sport-tag sport-tag--xc" id="rk-kicker">HS boys cross country &amp; track</span></div>
+      <div class="rc-sport"><span class="sport-tag sport-tag--{{ "tf" if default_sport == "TF" else "xc" }}" id="rk-kicker">HS boys {{ "track" if default_sport == "TF" else "cross country" if default_sport == "XC" else "cross country &amp; track"|safe }}</span></div>
       <h1>Rankings</h1>
       {# the link shared is this page with the board's own query; rankings.js
          keeps it current (syncShare finds .share-btn) #}
@@ -110,14 +119,29 @@
     </div>
   </div></header>
 
-  <div class="filters">
+  {# ★ THE FILTER BAR, SPLIT (owner, 2026-10-10). The three filters most
+       people use -- pool, sport, state -- sit inline and APPLY ON CHANGE;
+       there is no Apply button. Each board's own defining control (the
+       distance on Best races and Fastest times, the course filters on
+       Courses) sits with them. Everything else is under "More filters",
+       shut by default, so on a phone the first ranked row is near the top.
+     ! EVERY ID IS THE ONE IT WAS. rankings.js, the URL restore and every
+       shared link read the same controls; only where they sit moved. #}
+  <div class="filters rk-quick" id="rk-quick">
 
     {# Single-value selects. Pool and sport are genuinely one-at-a-time: a
        board mixing HS boys and college women has no meaning, and the API
        already offers sport=both. #}
-    <div class="field not-courses">
-      <label for="pool">Pool</label>
-      <select id="pool">
+    {# ★ CHIPS, APPLIED ON CHANGE (owner, 2026-10-10). The <select> is still
+         the one source of truth -- buildQuery, syncBoard, the URL restore
+         and the header all read #pool / #sport -- and stays in the page,
+         hidden; rankings.js (syncChips) draws a chip per option it offers,
+         so an option hidden on this board (All pools off the times board,
+         Both on Teams) is a chip hidden too. A chip sets the select and
+         fires its change event, which is what applies. #}
+    <div class="field rk-cg not-courses">
+      <span class="k" id="pool-k">Pool</span>
+      <select id="pool" class="rk-src" aria-labelledby="pool-k" tabindex="-1">
         {# ! ALL is PR-ONLY, and rankings.js hides it on the other boards.
            speed_rating is relative to a pool's own 100 point, so a rating
            board mixing middle schoolers and collegians puts two scales in one
@@ -130,34 +154,22 @@
         <option value="college_m">College men</option>
         <option value="college_f">College women</option>
       </select>
+      <div class="rk-chips" data-for="pool" role="group" aria-labelledby="pool-k"></div>
     </div>
 
-    <div class="field not-courses">
-      <label for="sport">Sport</label>
-      <select id="sport">
-        <option value="both">Both</option>
-        <option value="XC">{{ "XC"|sport_name }}</option>
-        <option value="TF">{{ "TF"|sport_name }}</option>
+    {# ★ THE SEASON IN SEASON IS THE DEFAULT (owner, 2026-10-10), the home
+         page's rule (app._homeSport): cross country in the autumn, track
+         once its season is the newer. Both is still an option, and a link
+         that names a sport -- sport=both included -- opens on it. #}
+    <div class="field rk-cg not-courses">
+      <span class="k" id="sport-k">Sport</span>
+      <select id="sport" class="rk-src" aria-labelledby="sport-k" tabindex="-1">
+        <option value="both"{% if default_sport not in ("XC", "TF") %} selected{% endif %}>Both</option>
+        <option value="XC"{% if default_sport == "XC" %} selected{% endif %}>{{ "XC"|sport_name }}</option>
+        <option value="TF"{% if default_sport == "TF" %} selected{% endif %}>{{ "TF"|sport_name }}</option>
       </select>
+      <div class="rk-chips" data-for="sport" role="group" aria-labelledby="sport-k"></div>
     </div>
-
-    {# ★ SCOPE, AND USA IS THE DEFAULT. There is no nation column -- state is
-       the only geography stored -- so this filters on `state IS NOT NULL`,
-       which US meets have and foreign ones do not.
-
-       It defaults to USA because the alternative silently mixes scales: the
-       ratings come from a linkage graph that is overwhelmingly American, so a
-       foreign athlete rides on whatever thin connection their meet happens to
-       have and lands beside a US athlete as though both were measured the
-       same way. #}
-    <div class="field not-courses scope-field">
-      <label for="scope">Scope</label>
-      <select id="scope">
-        <option value="usa">USA only</option>
-        <option value="all">Everyone</option>
-      </select>
-    </div>
-
 
     {# Multi-value comboboxes. Type or pick; Enter adds a token.
 
@@ -165,143 +177,9 @@
          a value that is already applied -- "CA, or California" looked like the
          board was filtered to California. The label above says what the box
          is, and the dropdown shows what it accepts. #}
-    <div class="field wide state-field">
+    <div class="field rk-cg state-field">
       <label for="state-input">State</label>
       <div class="combo" data-field="state"></div>
-    </div>
-
-    {# ★ ONE GRADE CONTROL, BOTH JOBS (owner, 2026-09-15: "grade and
-         graduating should be the same ... You should be able to press for
-         example all freshman teams"). On the athlete boards it filters
-         athletes. On TEAMS it BUILDS the squad: tick 9 and the board is
-         every school's freshman team, and "next year's squad" is the same
-         control with the seniors left unticked.
-
-         This replaced a second, teams-only "Graduating (removed)" combo
-         that said the second half only and said it backwards. The API
-         still accepts exclude_grade for links already sent.
-
-         ! IT NEEDS ONE SEASON, and now it picks one instead of refusing:
-           teams.parseFilters fills the current season and the board says
-           which one it used. #}
-    <div class="field not-courses">
-      <label for="grade-input">Grade</label>
-      <div class="combo" data-field="grade"></div>
-    </div>
-
-    <div class="field not-courses year-field">
-      {# ★ NAMED FOR WHAT IT IS (owner, 2026-09-08). The boards filter the
-         stored academic year now, and calling that "Year" beside a board
-         that reads "2025" for the spring of 2026 is how it looks broken:
-         pick 2026 in September and you have selected the season that just
-         opened, which is nearly empty. "2025-26" says which one it is. #}
-      <label for="year-input">Academic year</label>
-      <div class="combo" data-field="year"></div>
-    </div>
-
-    <div class="field wide not-courses">
-      <label for="school-input">School</label>
-      <div class="combo" data-field="school"></div>
-    </div>
-
-    {# ★ THE COURSE SPECIFIER, Performances + Best times + Teams. With a
-       course picked those boards scope to one venue: Performances alone is
-       the overall all-distances view, adding a distance narrows it; on
-       Teams a course switches the board to single-race team performances
-       there (see teams.getCoursePerformances). teams-ok keeps this one
-       visible on the Teams tab. #}
-    <div class="field wide perfpr-only teams-ok">
-      <label for="course-input">Course</label>
-      <div class="combo" data-field="course"></div>
-    </div>
-
-    {# ability-only / perf-only: shown and hidden by style.css off
-       .rankings-page[data-board]. #}
-    {# Teams-only: how many rated athletes a squad needs before it is
-       ranked at all. Five is not a preference, it is the scoring rule. #}
-    <div class="field teams-only">
-      <label for="min_athletes">Min athletes</label>
-      <input id="min_athletes" class="narrow" type="number" min="5" max="50" value="5">
-    </div>
-
-    {# ★ THE PROJECTED BOARD (owner, 2026-10-10): the current season with
-       last season's unraced returners counted, at last season's ratings --
-       the predictions' roster rule (roster.py). Off by default; on, the
-       banner above the table says what it is. See teams.serveBoard. #}
-    <div class="field teams-only projected-field">
-      <label for="projected">Projection</label>
-      <label class="projected-check">
-        <input id="projected" type="checkbox">
-        Include returners who haven't raced
-      </label>
-    </div>
-
-    {# ★ COURSES ARE NOT ATHLETES, so almost none of the filter bar applies to
-       them -- there is no pool, no sport, no season, no school. What is left
-       is where the ground is, how far round it, and how much racing is behind
-       the number. #}
-    <div class="field courses-only">
-      <label for="course_distance">Distance</label>
-      <select id="course_distance">
-        <option value="">Any</option>
-        <option value="3000">3000m</option>
-        <option value="3200">3200m</option>
-        <option value="4000">4000m</option>
-        <option value="4828">3 miles</option>
-        <option value="5000">5000m</option>
-        <option value="6000">6000m</option>
-        <option value="6437">4 miles</option>
-        <option value="8000">8000m</option>
-        <option value="8047">5 miles</option>
-        <option value="10000">10000m</option>
-      </select>
-    </div>
-    <div class="field courses-only">
-      <label for="course_name">Course</label>
-      <input id="course_name" type="search" placeholder="name contains…"
-             autocomplete="off">
-    </div>
-    <div class="field courses-only">
-      <label for="course_min_results">Min results</label>
-      <input id="course_min_results" class="narrow" type="number" min="0"
-             step="100" value="0">
-    </div>
-
-    <div class="field ability-only">
-      <label for="min_races">Min races</label>
-      {# ! THE VALUE IS SET BY rankings.js (defaultMinRaces, 3 -- owner,
-           2026-09-02), and the placeholder says so for a cleared box: the
-           script sends the default whenever the box is empty. #}
-      <input id="min_races" class="narrow" type="number" min="1" max="200" placeholder="3"
-             title="Default 3. Seasons from 2026 cross country on have no minimum unless you set one.">
-    </div>
-
-    {# ★ THE EVENT WINDOW (owner, 2026-09-08). A track season's rating is
-         an aggregate over everything the athlete ran, so an 800 specialist
-         and a 5000 runner share one board and neither number projects an
-         autumn. Restricting the aggregate to the longer events asks the
-         question a preseason cross-country guess is actually asking.
-
-         ! PRESETS, NOT TWO NUMBER BOXES. The useful windows are few and the
-           pair dist_min/dist_max is easy to invert by accident (the API
-           400s on that, but a control that cannot express the mistake is
-           better than an error message). The API takes metres, so a custom
-           window is still reachable by URL for anyone who wants one. #}
-    {# ★ ON TEAMS TOO (owner, 2026-09-14: "Team rankings need to have the
-         same event thing as ability"). Same control, same metres, same
-         athlete-seasons underneath -- a team's rating is the top five of
-         them, so restricting the aggregate restricts the squad's number.
-       ! teams-ok, the class the course specifier already uses to survive
-         the Teams tab's blanket .ability-only hide. #}
-    <div class="field ability-only teams-ok">
-      <label for="events">Events</label>
-      <select id="events" title="Rate each athlete on this slice of their season only.">
-        <option value="">All events</option>
-        <option value="800">800m and up</option>
-        <option value="1500">1500m and up</option>
-        <option value="3000">3000m and up (XC projection)</option>
-        <option value="5000">5000m and up</option>
-      </select>
     </div>
 
     {# The distance to rank. PR-only: the other boards are already
@@ -390,6 +268,166 @@
 
     </div>
 
+    {# ★ COURSES ARE NOT ATHLETES, so almost none of the filter bar applies to
+       them -- there is no pool, no sport, no season, no school. What is left
+       is where the ground is, how far round it, and how much racing is behind
+       the number. #}
+    <div class="field courses-only">
+      <label for="course_distance">Distance</label>
+      <select id="course_distance">
+        <option value="">Any</option>
+        <option value="3000">3000m</option>
+        <option value="3200">3200m</option>
+        <option value="4000">4000m</option>
+        <option value="4828">3 miles</option>
+        <option value="5000">5000m</option>
+        <option value="6000">6000m</option>
+        <option value="6437">4 miles</option>
+        <option value="8000">8000m</option>
+        <option value="8047">5 miles</option>
+        <option value="10000">10000m</option>
+      </select>
+    </div>
+    <div class="field courses-only">
+      <label for="course_name">Course</label>
+      <input id="course_name" type="search" placeholder="name contains…"
+             autocomplete="off">
+    </div>
+    <div class="field courses-only">
+      <label for="course_min_results">Min results</label>
+      <input id="course_min_results" class="narrow" type="number" min="0"
+             step="100" value="0">
+    </div>
+
+  </div>
+
+  {# ! not-courses: a course has no grade, school or league, and the course
+       board's own three filters are inline above. rankings.js counts what
+       is set in here on the summary (syncMoreCount), so a shared link with
+       a grade in it says so while the box is shut. #}
+  <details class="rk-more not-courses" id="rk-more">
+    <summary>More filters <span class="rk-more-n">grade, year, school, min races, events, league</span><span class="rk-more-on" id="rk-more-on"></span></summary>
+    <div class="rk-more-in">
+    {# ★ SCOPE, AND USA IS THE DEFAULT. There is no nation column -- state is
+       the only geography stored -- so this filters on `state IS NOT NULL`,
+       which US meets have and foreign ones do not.
+
+       It defaults to USA because the alternative silently mixes scales: the
+       ratings come from a linkage graph that is overwhelmingly American, so a
+       foreign athlete rides on whatever thin connection their meet happens to
+       have and lands beside a US athlete as though both were measured the
+       same way. #}
+    {# ★ A CHECKBOX NOW (owner, 2026-10-10): "Include international
+         athletes", unticked, replaced the Scope select (USA only /
+         Everyone). Same parameter: unticked sends scope=usa, ticked
+         scope=all, and a link carrying scope=all ticks it. #}
+    <label class="rk-intl not-courses scope-field"><input type="checkbox" id="intl"> Include international athletes</label>
+
+  <div class="filters">
+
+    {# ★ ONE GRADE CONTROL, BOTH JOBS (owner, 2026-09-15: "grade and
+         graduating should be the same ... You should be able to press for
+         example all freshman teams"). On the athlete boards it filters
+         athletes. On TEAMS it BUILDS the squad: tick 9 and the board is
+         every school's freshman team, and "next year's squad" is the same
+         control with the seniors left unticked.
+
+         This replaced a second, teams-only "Graduating (removed)" combo
+         that said the second half only and said it backwards. The API
+         still accepts exclude_grade for links already sent.
+
+         ! IT NEEDS ONE SEASON, and now it picks one instead of refusing:
+           teams.parseFilters fills the current season and the board says
+           which one it used. #}
+    <div class="field not-courses">
+      <label for="grade-input">Grade</label>
+      <div class="combo" data-field="grade"></div>
+    </div>
+
+    <div class="field not-courses year-field">
+      {# ★ NAMED FOR WHAT IT IS (owner, 2026-09-08). The boards filter the
+         stored academic year now, and calling that "Year" beside a board
+         that reads "2025" for the spring of 2026 is how it looks broken:
+         pick 2026 in September and you have selected the season that just
+         opened, which is nearly empty. "2025-26" says which one it is. #}
+      <label for="year-input">Academic year</label>
+      <div class="combo" data-field="year"></div>
+    </div>
+
+    <div class="field wide not-courses">
+      <label for="school-input">School</label>
+      <div class="combo" data-field="school"></div>
+    </div>
+
+    {# ★ THE COURSE SPECIFIER, Performances + Best times + Teams. With a
+       course picked those boards scope to one venue: Performances alone is
+       the overall all-distances view, adding a distance narrows it; on
+       Teams a course switches the board to single-race team performances
+       there (see teams.getCoursePerformances). teams-ok keeps this one
+       visible on the Teams tab. #}
+    <div class="field wide perfpr-only teams-ok">
+      <label for="course-input">Course</label>
+      <div class="combo" data-field="course"></div>
+    </div>
+
+    {# ability-only / perf-only: shown and hidden by style.css off
+       .rankings-page[data-board]. #}
+    {# Teams-only: how many rated athletes a squad needs before it is
+       ranked at all. Five is not a preference, it is the scoring rule. #}
+    <div class="field teams-only">
+      <label for="min_athletes">Min athletes</label>
+      <input id="min_athletes" class="narrow" type="number" min="5" max="50" value="5">
+    </div>
+
+    {# ★ THE PROJECTED BOARD (owner, 2026-10-10): the current season with
+       last season's unraced returners counted, at last season's ratings --
+       the predictions' roster rule (roster.py). Off by default; on, the
+       banner above the table says what it is. See teams.serveBoard. #}
+    <div class="field teams-only projected-field">
+      <label for="projected">Projection</label>
+      <label class="projected-check">
+        <input id="projected" type="checkbox">
+        Include returners who haven't raced
+      </label>
+    </div>
+
+    <div class="field ability-only">
+      <label for="min_races">Min races</label>
+      {# ! THE VALUE IS SET BY rankings.js (defaultMinRaces, 3 -- owner,
+           2026-09-02), and the placeholder says so for a cleared box: the
+           script sends the default whenever the box is empty. #}
+      <input id="min_races" class="narrow" type="number" min="1" max="200" placeholder="3"
+             title="Default 3. Seasons from 2026 cross country on have no minimum unless you set one.">
+    </div>
+
+    {# ★ THE EVENT WINDOW (owner, 2026-09-08). A track season's rating is
+         an aggregate over everything the athlete ran, so an 800 specialist
+         and a 5000 runner share one board and neither number projects an
+         autumn. Restricting the aggregate to the longer events asks the
+         question a preseason cross-country guess is actually asking.
+
+         ! PRESETS, NOT TWO NUMBER BOXES. The useful windows are few and the
+           pair dist_min/dist_max is easy to invert by accident (the API
+           400s on that, but a control that cannot express the mistake is
+           better than an error message). The API takes metres, so a custom
+           window is still reachable by URL for anyone who wants one. #}
+    {# ★ ON TEAMS TOO (owner, 2026-09-14: "Team rankings need to have the
+         same event thing as ability"). Same control, same metres, same
+         athlete-seasons underneath -- a team's rating is the top five of
+         them, so restricting the aggregate restricts the squad's number.
+       ! teams-ok, the class the course specifier already uses to survive
+         the Teams tab's blanket .ability-only hide. #}
+    <div class="field ability-only teams-ok">
+      <label for="events">Events</label>
+      <select id="events" title="Rate each athlete on this slice of their season only.">
+        <option value="">All events</option>
+        <option value="800">800m and up</option>
+        <option value="1500">1500m and up</option>
+        <option value="3000">3000m and up (XC projection)</option>
+        <option value="5000">5000m and up</option>
+      </select>
+    </div>
+
     <div class="field perf-only">
       <label for="date_from">From</label>
       <input id="date_from" type="date">
@@ -400,46 +438,9 @@
       <input id="date_to" type="date">
     </div>
 
-    {# ⚠ SAID ON THE BOARD, NOT IN A FOOTNOTE. A times board is the one place
-       on this site where course difficulty is NOT accounted for, and that is
-       deliberate -- correcting it would stop the number being a PR. Somebody
-       reading a leaderboard assumes the numbers are comparable unless told. #}
-    {# ⚠ SAID ON THE BOARD. Points are a finishing score against a
-       particular field, so the same squad scores differently in its state's
-       meet than in the national one. The RANK travels between boards; the
-       points explain it. #}
-    {# ★ FILLED BY rankings.js ON EVERY LOAD, because the sentence is not the
-       same every time: when the filtered field is small enough it is RACED as
-       one meet and there is a single first place, and when it is not the
-       board falls back to each squad's place in its own season. Only the
-       response knows which happened -- see teamsNote. The text below is what
-       shows before the first response lands. #}
-    <p class="board-note teams-only" id="teams-note">
-      Ranked by racing every team's top seven in one hypothetical meet.
-    </p>
-
-    {# ⚠ THE SIGN IS THE THING PEOPLE GET BACKWARDS, so the note leads with it
-       rather than trusting a + to carry the meaning. #}
-    <p class="board-note courses-only" id="courses-note">
-      <strong>Positive is harder.</strong> +5% means a field runs about 5%
-      slower here than the same field would on a typical course - and
-      because difficulty is applied <em>after</em> distance is normalised, a
-      5k and an 8k belong in one list. Ratings already give the difference
-      back, so a slow time on a hard course is not a slow performance.
-    </p>
-
-    <p class="board-note pr-only">
-      Raw times and marks as the meet recorded them, uncorrected for course,
-      conditions or altitude - a flat 5k beats the same effort on a
-      hill, and a sprint, hurdle or field event has no rating at all. For a
-      fair comparison of distance running use Ability or Performances.
-    </p>
-
     {# No Sort/Order controls: the column headers are the sort control. Click
        one to sort by it, click again to reverse. Two ways to do the same thing
        is one too many, and a header you can click is where people look. #}
-
-    <button class="go" id="apply">Apply</button>
   </div>
 
   {# ★ THESE READ school_unit, THE SAME TABLE THE ATHLETE PAGE'S CHIPS USE.
@@ -525,6 +526,47 @@
   </div>
 
   </details>
+    </div>
+  </details>
+
+  {# the board's own note, under the filters, whatever is open #}
+  <div class="rk-notes">
+    {# ⚠ SAID ON THE BOARD, NOT IN A FOOTNOTE. A times board is the one place
+       on this site where course difficulty is NOT accounted for, and that is
+       deliberate -- correcting it would stop the number being a PR. Somebody
+       reading a leaderboard assumes the numbers are comparable unless told. #}
+    {# ⚠ SAID ON THE BOARD. Points are a finishing score against a
+       particular field, so the same squad scores differently in its state's
+       meet than in the national one. The RANK travels between boards; the
+       points explain it. #}
+    {# ★ FILLED BY rankings.js ON EVERY LOAD, because the sentence is not the
+       same every time: when the filtered field is small enough it is RACED as
+       one meet and there is a single first place, and when it is not the
+       board falls back to each squad's place in its own season. Only the
+       response knows which happened -- see teamsNote. The text below is what
+       shows before the first response lands. #}
+    <p class="board-note teams-only" id="teams-note">
+      Ranked by racing every team's top seven in one hypothetical meet.
+    </p>
+
+    {# ⚠ THE SIGN IS THE THING PEOPLE GET BACKWARDS, so the note leads with it
+       rather than trusting a + to carry the meaning. #}
+    <p class="board-note courses-only" id="courses-note">
+      <strong>Positive is harder.</strong> +5% means a field runs about 5%
+      slower here than the same field would on a typical course - and
+      because difficulty is applied <em>after</em> distance is normalised, a
+      5k and an 8k belong in one list. Ratings already give the difference
+      back, so a slow time on a hard course is not a slow performance.
+    </p>
+
+    <p class="board-note pr-only">
+      Raw times and marks as the meet recorded them, uncorrected for course,
+      conditions or altitude - a flat 5k beats the same effort on a
+      hill, and a sprint, hurdle or field event has no rating at all. For a
+      fair comparison of distance running use Athletes (season) or Best races.
+    </p>
+
+  </div>
 
   {# ⚠ SHOWN ONLY WHEN THE SCOPE IS OPEN. The caveat is about comparing across
      the linkage graph's edges, which cannot happen on a USA board -- and a
@@ -533,8 +575,8 @@
   <div class="notice hidden" id="notice">
     <strong>International comparison caveat:</strong>
     Athletes outside the USA sit on the far side of a thin linkage graph, so
-    their ratings can be inflated or deflated by an unknown amount. Switch
-    Scope back to <em>USA only</em> to compare like with like.
+    their ratings can be inflated or deflated by an unknown amount. Untick
+    <em>Include international athletes</em> to compare like with like.
   </div>
 
   {# The cross-state banner that stood here said a national board carried a
@@ -553,11 +595,12 @@
 
   <div class="rc-grid">
   <div class="rc-mainc">
-    {# ★ THE BOARD'S OWN HEADING (owner, 2026-10-10): "Ability · HS boys",
+    {# ★ THE BOARD'S OWN HEADING (owner, 2026-10-10): "Athletes (season) · HS boys",
          kept in step by rankings.js; the scale toggle sits at its end. The
-         heading box is as tall as the side card's, so the two start level. #}
+         heading box is as tall as the side card's, so the two start level.
+       ! The scale control is the "Advanced" box now (_scale.html). #}
     <div class="rc-tbar">
-      <h2 class="rk-board-h" id="rk-board-h">Ability</h2>
+      <h2 class="rk-board-h" id="rk-board-h">Athletes (season)</h2>
       <div class="rc-tbar-end">{{ scale_toggle(hidden=True) }}</div>
     </div>
 
