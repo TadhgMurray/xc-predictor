@@ -406,21 +406,38 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
     year_clause = "AND rr.year = %(year)s" if year else ""
     sf, sfp = stateFilterSql("rr", state, primary, school)
     if sport == "XC":
+        # ! THE PIN PICKS THE TABLE (sweep 2026-10-10). anet and tfrrs
+        #   collide on meet ids, and COALESCE(anet, tfrrs) named a tfrrs
+        #   meet after the unrelated anet one. A negative result id is a
+        #   tfrrs row (app._ridArg), so the group's pin says whose name it is.
         name_sql = """
-            SELECT COALESCE(
-                     (SELECT min(m.meet_name) FROM meets m
-                       WHERE m.meet_id = g.meet_id),
-                     (SELECT min(mt.meet_name) FROM meets_tfrrs mt
-                       WHERE mt.meet_id = g.meet_id AND mt.sport = 'XC'))
-                   AS meet_name"""
+            SELECT CASE WHEN g.pin_rid < 0
+                   THEN (SELECT min(mt.meet_name) FROM meets_tfrrs mt
+                          WHERE mt.meet_id = g.meet_id AND mt.sport = 'XC')
+                   ELSE (SELECT min(m.meet_name) FROM meets m
+                          WHERE m.meet_id = g.meet_id
+                            AND m.source IS DISTINCT FROM 'tfrrs')
+                   END AS meet_name"""
     else:
         name_sql = """
-            SELECT min(m.meet_name) AS meet_name
-            FROM   meets_tf m WHERE m.meet_id = g.meet_id"""
+            SELECT CASE WHEN g.pin_rid < 0
+                   THEN COALESCE(
+                     (SELECT min(m.meet_name) FROM meets_tf m
+                       WHERE m.meet_id = g.meet_id AND m.source = 'tfrrs'),
+                     (SELECT min(mt.meet_name) FROM meets_tfrrs mt
+                       WHERE mt.meet_id = g.meet_id AND mt.sport = 'TF'))
+                   ELSE (SELECT min(m.meet_name) FROM meets_tf m
+                          WHERE m.meet_id = g.meet_id
+                            AND m.source IS DISTINCT FROM 'tfrrs')
+                   END AS meet_name"""
 
     cur.execute(f"""
         WITH g AS (
             SELECT rr.meet_id,
+                   -- ★ THE PIN (sweep 2026-10-10): one of the school's own
+                   --   result ids, so the link opens THIS feed's meet (?r=)
+                   --   when two feeds share the id -- grouped per feed too
+                   min(rr.result_id)                            AS pin_rid,
                    min(rr.race_date)                            AS date,
                    count(*)                                     AS runners,
                    count(DISTINCT rr.div_id)                    AS divisions,
@@ -437,9 +454,9 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
               AND  rr.sport  = %(sport)s
               {year_clause}
               {sf}
-            GROUP  BY rr.meet_id
+            GROUP  BY rr.meet_id, (rr.result_id < 0)
         )
-        SELECT g.meet_id, g.date, g.runners, g.divisions, g.avg_rating,
+        SELECT g.meet_id, g.pin_rid, g.date, g.runners, g.divisions, g.avg_rating,
                g.best_rating, g.r_pools, g.r_ratings, g.distances, n.meet_name
         FROM   g
         LEFT JOIN LATERAL ({name_sql}) n ON TRUE

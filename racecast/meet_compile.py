@@ -223,7 +223,7 @@ def compiledResults(cur, meet_id, source=None):
                r.grade, r.school, r.speed_rating, r.div_id,
                {_ratingPoolSql(cur)},
                (round(COALESCE(
-                   m.distance,
+                   dov.distance::real, m.distance,
                    (mt.division_distances -> r.div_id::text ->> 'distance')::real
                 ) / 100.0) * 100)::int                AS distance,
                COALESCE(NULLIF(btrim(COALESCE(an.first_name, '') || ' '
@@ -242,6 +242,11 @@ def compiledResults(cur, meet_id, source=None):
                          AND m.source  = r.source
         LEFT JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id
                                 AND mt.sport   = 'XC'
+        -- ★ THE CORRECTED DISTANCE FIRST (sweep 2026-10-10), as the race
+        --   page's app._xc_distance_sql: an overridden division compiled
+        --   under its scraped distance, into the wrong race
+        LEFT JOIN dist_override dov ON dov.meet_id = r.meet_id
+                                   AND dov.div_id  = r.div_id
         LEFT JOIN LATERAL (
             SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
                    NULLIF(TRIM(x.last_name),  '') AS last_name,
@@ -274,7 +279,7 @@ def compiledResults(cur, meet_id, source=None):
           AND  r.time_seconds IS NOT NULL
           AND  r.time_seconds < 999999
           AND  COALESCE(
-                 m.distance,
+                 dov.distance::real, m.distance,
                  (mt.division_distances -> r.div_id::text ->> 'distance')::real
                ) > 0
         -- ⚠ BY NAME, NOT POSITION (2026-09-29). This read `ORDER BY 9, 11`
@@ -372,7 +377,7 @@ def compiledIndex(cur, meet_id, source=None):
         WITH rows AS (
             SELECT r.div_id, r.school, r.person_id,
                    (round(COALESCE(
-                       m.distance,
+                       dov.distance::real, m.distance,
                        (mt.division_distances -> r.div_id::text ->> 'distance')::real
                     ) / 100.0) * 100)::int                AS distance,
                    {rowGenderSql()}                     AS gender
@@ -382,6 +387,9 @@ def compiledIndex(cur, meet_id, source=None):
                              AND m.source  = r.source
             LEFT JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id
                                     AND mt.sport   = 'XC'
+            -- ★ dist_override first, as compiledResults (sweep 2026-10-10)
+            LEFT JOIN dist_override dov ON dov.meet_id = r.meet_id
+                                       AND dov.div_id  = r.div_id
             LEFT JOIN LATERAL (
                 SELECT x.gender
                 FROM   athletes x
@@ -395,7 +403,7 @@ def compiledIndex(cur, meet_id, source=None):
               AND  r.time_seconds IS NOT NULL
               AND  r.time_seconds < 999999
               AND  COALESCE(
-                     m.distance,
+                     dov.distance::real, m.distance,
                      (mt.division_distances -> r.div_id::text ->> 'distance')::real
                    ) > 0
         ),

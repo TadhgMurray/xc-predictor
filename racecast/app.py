@@ -5070,6 +5070,51 @@ def _tf_seed_points_cache(meet_id, source, rows, scored):
         _time.time(), scored["points_by_result"], names)
 
 
+def _tfRaceSource(cur, meet_id, div_id, event_id, args):
+    """(race_src, alt_idx, other_sources) for a TF race page: ?r= first,
+    then ?alt= when that feed ran this triple, then the triple's biggest feed.
+    """
+    # ★ RESOLVE THE SOURCE FIRST. The anet and tfrrs id spaces
+    #   collide on (meet, div, event) too -- a source-blind lookup
+    #   can serve the OTHER feed's event under this URL.
+    #   ?r=<result_id> pins the clicked row's source exactly
+    #   (opaque -- no feed names in URLs); without it the modal
+    #   source of the triple decides, as the points cache always
+    #   did.
+    race_src = None
+    rid = _ridArg(args)
+    if rid is not None:
+        cur.execute("SELECT source FROM results_tf "
+                    "WHERE result_id = %s AND meet_id = %s LIMIT 1",
+                    (rid, meet_id))
+        pin = cur.fetchone()
+        race_src = pin["source"] if pin else None
+    # ★ AND ?alt=, AS THE XC RACE PAGE (sweep 2026-10-10). The meet
+    #   page's "other meet" toggle is an index into the meet's feed
+    #   list; its event links carried no ?alt=, so the race page fell
+    #   back to the triple's biggest feed -- the OTHER meet. The alt
+    #   is honoured only when that feed ran this triple.
+    meet_srcs = _tfSourceList(cur, meet_id)
+    if race_src is None:
+        cur.execute("""
+            SELECT source FROM results_tf
+            WHERE meet_id = %(meet)s AND div_id = %(div)s
+              AND event_id = %(event)s AND source IS NOT NULL
+            GROUP BY source ORDER BY count(*) DESC
+        """, {"meet": meet_id, "div": div_id, "event": event_id})
+        ran = [srow["source"] for srow in cur.fetchall()]
+        want = (pick_source(meet_srcs, args.get("alt"))[0]
+                if args.get("alt") is not None else None)
+        race_src = (want if want in ran
+                    else ran[0] if ran else None)
+    src_names = [s_["source"] for s_ in meet_srcs]
+    alt_idx = (src_names.index(race_src)
+               if race_src in src_names else 0)
+    other_sources = [{"alt": i, "n": s_["n"]}
+                     for i, s_ in enumerate(meet_srcs) if i != alt_idx]
+    return race_src, alt_idx, other_sources
+
+
 @app.route("/race/tf/<int:meet_id>/<int:event_id>/<int:div_id>")
 def race_tf(meet_id, event_id, div_id):
     from tf_points import prettyEventName
@@ -5078,30 +5123,8 @@ def race_tf(meet_id, event_id, div_id):
     hl_school = (request.args.get("school") or "").strip() or None
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # ★ RESOLVE THE SOURCE FIRST. The anet and tfrrs id spaces
-            #   collide on (meet, div, event) too -- a source-blind lookup
-            #   can serve the OTHER feed's event under this URL.
-            #   ?r=<result_id> pins the clicked row's source exactly
-            #   (opaque -- no feed names in URLs); without it the modal
-            #   source of the triple decides, as the points cache always
-            #   did.
-            race_src = None
-            rid = _ridArg(request.args)
-            if rid is not None:
-                cur.execute("SELECT source FROM results_tf "
-                            "WHERE result_id = %s AND meet_id = %s LIMIT 1",
-                            (rid, meet_id))
-                pin = cur.fetchone()
-                race_src = pin["source"] if pin else None
-            if race_src is None:
-                cur.execute("""
-                    SELECT source FROM results_tf
-                    WHERE meet_id = %(meet)s AND div_id = %(div)s
-                      AND event_id = %(event)s AND source IS NOT NULL
-                    GROUP BY source ORDER BY count(*) DESC LIMIT 1
-                """, {"meet": meet_id, "div": div_id, "event": event_id})
-                srow = cur.fetchone()
-                race_src = srow["source"] if srow else None
+            race_src, alt_idx, other_sources = _tfRaceSource(
+                cur, meet_id, div_id, event_id, request.args)
             header  = get_tf_race_header(cur, meet_id, div_id, event_id,
                                          source=race_src)
             results = get_tf_race_results(cur, meet_id, div_id, event_id,
@@ -5266,6 +5289,7 @@ def race_tf(meet_id, event_id, div_id):
                            equiv_dist=equiv_dist, equiv_pool=equiv_pool,
                            equiv_lo=equiv_lo, equiv_hi=equiv_hi,
                            college=(race_src == "tfrrs"),
+                           alt_idx=alt_idx, other_sources=other_sources,
                            meet_id=meet_id, event_id=event_id, div_id=div_id,
                            header=header,
                            results=results,
@@ -5921,7 +5945,7 @@ def compiled_tf(meet_id):
 # ! ONE DEFINITION, SEVEN QUERIES. The bodies select from `course_rows` and
 #   never name `meets` or `meets_tfrrs` again, so a course page cannot
 #   disagree with itself about which races were held on it.
-def _courseRowsCte(pool_col=None):
+def _courseRowsCte(pool_col=None, drop=False):
     """A CTE named course_rows: every result raced on %(course)s, either feed.
 
     Columns are named so the existing bodies keep working: the results
@@ -5931,36 +5955,59 @@ def _courseRowsCte(pool_col=None):
     pool_col: _ratingPoolCol(cur, "results")'s answer, for a caller that
     needs the pool each rating was computed in (the HS-equivalent ranking).
     None leaves the CTE exactly as every other caller has always had it.
+
+    ★ THE CORRECTED DISTANCE (sweep 2026-10-10). The race page reads
+      _xc_distance_sql -- dist_override first -- and this CTE read the
+      scrape, so an overridden division sat on the course page under the
+      distance the corpus had rejected: wrong chip, wrong records table.
+    drop: True (the caller checked _hasDistDrop) leaves out the divisions
+      dist_drop withholds -- their distance is unknown, so their times
+      cannot be records at any distance.
     """
     pool = f"\n               {pool_col}," if pool_col else ""
+    no_drop = ("""
+          AND NOT EXISTS (SELECT 1 FROM dist_drop dd
+                          WHERE dd.sport = 'XC' AND dd.meet_id = r.meet_id
+                            AND dd.div_id = r.div_id)""" if drop else "")
     return f"""
     course_rows AS (
         SELECT r.person_id, r.athlete_id, r.athlete_name, r.result_id,
                r.time_seconds, r.date, r.grade, r.school, r.speed_rating,
                r.div_id, r.meet_id, r.source,{pool}
-               m.distance::real AS distance,
+               COALESCE(dov.distance::real, m.distance::real) AS distance,
                m.meet_name      AS meet_name,
                m.state          AS state
         FROM   meets m
         JOIN   results r
                ON r.div_id = m.div_id AND r.source = m.source
-        WHERE  m.course_name = %(course)s
+        {_dist_override_join('r')}
+        WHERE  m.course_name = %(course)s{no_drop}
         UNION ALL
         -- the tfrrs half: keyed on meet_id, with the per-division distance
         -- inside the jsonb blob (see _blob) rather than a column
         SELECT r.person_id, r.athlete_id, r.athlete_name, r.result_id,
                r.time_seconds, r.date, r.grade, r.school, r.speed_rating,
                r.div_id, r.meet_id, r.source,{pool}
-               (mt.division_distances -> r.div_id::text
-                   ->> 'distance')::real AS distance,
+               COALESCE(dov.distance::real,
+                        (mt.division_distances -> r.div_id::text
+                            ->> 'distance')::real) AS distance,
                mt.meet_name     AS meet_name,
                mt.state         AS state
         FROM   meets_tfrrs mt
         JOIN   results r
                ON r.meet_id = mt.meet_id AND r.source = 'tfrrs'
-        WHERE  mt.sport = 'XC' AND mt.venue_name = %(course)s
+        {_dist_override_join('r')}
+        WHERE  mt.sport = 'XC' AND mt.venue_name = %(course)s{no_drop}
     )
     """
+
+
+def _hasDistDrop(cur):
+    """True once dist_drop exists (it arrives with a dump_overrides run;
+    raceExtras degrades the same way)."""
+    cur.execute("SELECT to_regclass('dist_drop') AS d")
+    row = cur.fetchone()
+    return bool(row and (row["d"] if isinstance(row, dict) else row[0]))
 
 
 def get_course_header(cur, course_name, dist=None):
@@ -6151,6 +6198,10 @@ def get_course_meets(cur, course_name, dist=None, limit=200):
         WITH {_courseRowsCte()}
         SELECT r.meet_id,
                r.meet_name,
+               -- ★ THE PIN (sweep 2026-10-10): a result id of this feed's
+               --   meet, so the link (?r=) opens it and not the other
+               --   feed's meet under the same id; grouped per feed for it
+               min(r.result_id) AS pin_rid,
                -- DISTINCT so a distance run by six divisions appears once.
                -- ORDER BY so the list is stable between page loads.
                -- FILTER drops NULLs, which would otherwise become a literal
@@ -6161,7 +6212,7 @@ def get_course_meets(cur, course_name, dist=None, limit=200):
                max(r.date)  AS last_date,
                count(*)     AS n_results
         FROM course_rows r
-        GROUP BY r.meet_id, r.meet_name
+        GROUP BY r.meet_id, r.meet_name, (r.result_id < 0)
         -- dist picks WHICH meets appear (those that ran the selected
         -- distance) but not what a row says about them: the distances
         -- and result counts stay the whole meet's. A HAVING, not a
@@ -6960,7 +7011,7 @@ def get_course_records(cur, course_name, dist, limit=60):
     uses; rows without a linked person or a gender stay off the records
     (they remain in the rating table below)."""
     cur.execute(f"""
-        WITH {_courseRowsCte()},
+        WITH {_courseRowsCte(drop=_hasDistDrop(cur))},
         rows AS (
             SELECT r.person_id, r.result_id, r.time_seconds, r.date,
                    r.grade, r.school, r.speed_rating,
@@ -6993,7 +7044,7 @@ def get_course_team_records(cur, course_name, dist, limit=60):
     ONE race, best race per school, top `limit` per gender. Ranked by the
     total; the average is displayed alongside for readability."""
     cur.execute(f"""
-        WITH {_courseRowsCte()},
+        WITH {_courseRowsCte(drop=_hasDistDrop(cur))},
         finishers AS (
             SELECT r.meet_id, r.div_id, r.source, r.school, r.time_seconds,
                    r.date, r.meet_name, a.gender,
