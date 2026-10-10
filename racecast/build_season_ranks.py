@@ -46,17 +46,28 @@ sys.path.insert(0, "racecast")
 
 from database import getConn                            # noqa: E402
 from dbfast import swapTable                            # noqa: E402
-from rankings import US_STATES                          # noqa: E402
+from rankings import US_STATES, gradeKeySql             # noqa: E402
 from season_floor import DEFAULT_FLOOR, OPEN_FROM       # noqa: E402
 
 _COLS = ("nation", "nation_total", "state_rank", "state_div", "section", "section_div",
          "area", "league", "division", "region", "conference", "team")
+# ★ AND THE GRADE (owner, 2026-10-10, item 13: "#212 of HS sophomores
+#   nationally · top 3%"). The same nation and state windows, one grade
+#   inside them: the grade is the season's own (athlete_season.grade, the
+#   mode of its races), keyed by rankings.gradeKeySql -- the grade filter's
+#   own key, so "#212 of sophomores" is the place the board filtered to
+#   grade 10 would show. The totals ride beside the ranks, so the header's
+#   "top 3%" is one row read, never a count.
+GRADE_COLS = ("grade_key", "grade_nation", "grade_nation_total",
+              "grade_state", "grade_state_total")
 _WORK_MEM = ("2GB", "1GB", "512MB", "256MB")
 
 
-def rankSql(unit_cols=True):
+def rankSql(unit_cols=True, grade_col=True):
     """The one statement. unit_cols says whether athlete_season carries the
-    unit columns (older databases do not: those scopes come out NULL)."""
+    unit columns (older databases do not: those scopes come out NULL);
+    grade_col the same for its grade (without one the grade ranks are
+    NULL and the header simply has no grade line)."""
     u = (lambda c: f'"{c}"') if unit_cols else (lambda c: "NULL::text")
     # a window over the board's filter set; NULL outside it
     def rn(*keys):
@@ -71,7 +82,8 @@ def rankSql(unit_cols=True):
                    coalesce({u('state_div')}, {u('class')}) AS sd,
                    {u('section')} AS sec, {u('section_div')} AS secd, {u('area')} AS ar,
                    {u('league')} AS lg, {u('division')} AS dv, {u('region')} AS rg,
-                   {u('conference')} AS cf
+                   {u('conference')} AS cf,
+                   {gradeKeySql() if grade_col else "NULL::text"} AS gk
             FROM   athlete_season
             WHERE  mean_rating IS NOT NULL
         )
@@ -88,9 +100,20 @@ def rankSql(unit_cols=True):
                CASE WHEN ranked AND rg IS NOT NULL THEN {rn('rg')} END::int AS region,
                CASE WHEN ranked AND cf IS NOT NULL THEN {rn('cf')} END::int AS conference,
                CASE WHEN school IS NOT NULL THEN
-                    rank() OVER (PARTITION BY school, sport, year ORDER BY mean_rating DESC) END::int AS team
+                    rank() OVER (PARTITION BY school, sport, year ORDER BY mean_rating DESC) END::int AS team,
+               gk AS grade_key,
+               CASE WHEN ranked AND us AND gk IS NOT NULL THEN {rn('gk')} END::int AS grade_nation,
+               CASE WHEN ranked AND us AND gk IS NOT NULL THEN count(*) OVER (PARTITION BY pool, sport, year, ranked, us, gk) END::int AS grade_nation_total,
+               CASE WHEN ranked AND state IS NOT NULL AND gk IS NOT NULL THEN {rn('state', 'gk')} END::int AS grade_state,
+               CASE WHEN ranked AND state IS NOT NULL AND gk IS NOT NULL THEN count(*) OVER (PARTITION BY pool, sport, year, ranked, us, state, gk) END::int AS grade_state_total
         FROM   base
     """
+
+
+def _hasGradeCol(cur):
+    cur.execute("""SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'athlete_season' AND column_name = 'grade'""")
+    return cur.fetchone() is not None
 
 
 def _hasUnitCols(cur):
@@ -149,9 +172,10 @@ def main():
                 print("  athlete_season missing -- run 10_rankings first.")
                 return
             unit_cols = _hasUnitCols(cur)
+            grade_col = _hasGradeCol(cur)
             print(f"  unit columns on athlete_season: {'yes' if unit_cols else 'no (unit scopes come out NULL)'}")
             if args.dry_run:
-                print(rankSql(unit_cols))
+                print(rankSql(unit_cols, grade_col))
                 return
             cur.execute("DROP TABLE IF EXISTS season_rank_new")
             for want in _WORK_MEM:
@@ -163,7 +187,7 @@ def main():
                     conn.rollback()
                     print(f"    (server refused work_mem {want}: {str(exc).splitlines()[0]})")
             t0 = time.time()
-            cur.execute(rankSql(unit_cols), {"us": list(US_STATES)})
+            cur.execute(rankSql(unit_cols, grade_col), {"us": list(US_STATES)})
             cur.execute("SELECT count(*) FROM season_rank_new")
             n = cur.fetchone()[0]
             print(f"    [{time.time() - t0:7.1f}s] season_rank_new: {n:,} rows")

@@ -55,6 +55,15 @@ ROWS = [
 ]
 FLOOR, OPEN_FROM = 3, 2026
 
+# ★ THE GRADE RANKS (2026-10-10, item 13): the season's grade as the feeds
+#   spell it, and the key rankings.gradeKeySql makes of it -- a class word
+#   is its number in a school pool and stays a word in a college one, so
+#   "Sr" and "12" are one grade. person -> (stored, key); absent = no grade.
+GRADES = {1: ("12", "12"), 2: ("Sr", "12"), 3: ("11", "11"), 4: ("12", "12"),
+          5: ("12th", "12"), 7: ("12", "12"), 8: ("11", "11"),
+          9: ("10", "10"), 10: ("10", "10"),
+          11: ("SO-2", "so"), 12: ("Sophomore", "so"), 13: ("JR-3", "jr")}
+
 
 def _rows():
     cols = ["person_id", "pool", "sport", "year", "mean_rating", "n_races", "school", "state"] + list(UNIT_COLS)
@@ -68,6 +77,7 @@ def _expected(us_states):
         r["ranked"] = r["n_races"] >= FLOOR or r["year"] >= OPEN_FROM
         r["us"] = r["state"] in us_states
         r["sd"] = r["state_div"] or r["class"]
+        r["gk"] = GRADES.get(r["person_id"], (None, None))[1]
 
     def place(row, keys, only=lambda r: True):
         if not row["ranked"] or not only(row):
@@ -98,6 +108,15 @@ def _expected(us_states):
             "team": (1 + len([x for x in rows if x["school"] == r["school"] and x["sport"] == r["sport"]
                               and x["year"] == r["year"] and x["mean_rating"] > r["mean_rating"]]))
                     if r["school"] else None,
+            "grade_key": r["gk"],
+            "grade_nation": place(r, ["gk"], lambda x: x["us"]) if (r["us"] and r["gk"]) else None,
+            "grade_nation_total": (len([x for x in rows if x["ranked"] and x["us"] and x["gk"] == r["gk"]
+                                        and (x["pool"], x["sport"], x["year"]) == (r["pool"], r["sport"], r["year"])])
+                                   if (r["us"] and r["ranked"] and r["gk"]) else None),
+            "grade_state": place(r, ["state", "gk"]) if (has_state and r["gk"]) else None,
+            "grade_state_total": (len([x for x in rows if x["ranked"] and x["gk"] == r["gk"] and x["state"] == r["state"]
+                                       and (x["pool"], x["sport"], x["year"]) == (r["pool"], r["sport"], r["year"])])
+                                  if (has_state and r["ranked"] and r["gk"]) else None),
         }
     return want
 
@@ -122,11 +141,13 @@ def test_every_scope_matches_a_hand_computation():
         cur.execute("DROP TABLE IF EXISTS athlete_season, season_rank_new CASCADE")
         cur.execute(f"""CREATE TABLE athlete_season (
             person_id bigint, pool text, sport text, year int, mean_rating real,
-            n_races int, school text, state text,
+            n_races int, school text, state text, grade text,
             {', '.join(c + ' text' for c in UNIT_COLS)})""")
         psycopg2.extras.execute_values(
             cur, f"INSERT INTO athlete_season (person_id, pool, sport, year, mean_rating, n_races, "
                  f"school, state, {', '.join(UNIT_COLS)}) VALUES %s", ROWS)
+        for pid, (g, _k) in GRADES.items():
+            cur.execute("UPDATE athlete_season SET grade = %s WHERE person_id = %s", (g, pid))
         # the build's own statement, and the key it puts on the result
         cur.execute(B.rankSql(True), {"us": list(US_STATES)})
         cur.execute("ALTER TABLE season_rank_new ADD CONSTRAINT season_rank_new_pkey "
@@ -156,4 +177,10 @@ def test_every_scope_matches_a_hand_computation():
     assert got[(8, "hs_m", "XC", 2025)]["state_div"] == 4      # class stands in for state_div, and the tie still breaks on id
     assert got[(13, "college_m", "XC", 2025)]["division"] == 1  # DIII is its own board
     assert got[(11, "college_m", "XC", 2025)]["nation"] == 1
+    # the grade ranks: "Sr" and "12" are one grade, and the floor still holds
+    assert got[(2, "hs_m", "XC", 2025)]["grade_nation"] == 2       # behind person 1, a "12"
+    assert got[(2, "hs_m", "XC", 2025)]["grade_nation_total"] == 3  # 1, 2 and the UT "12th"
+    assert got[(4, "hs_m", "XC", 2025)]["grade_nation"] is None    # under the floor
+    assert got[(6, "hs_m", "XC", 2025)]["grade_key"] is None       # no grade, no grade rank
+    assert got[(12, "college_m", "XC", 2025)]["grade_nation"] == 2  # SO-2 and Sophomore: one class
     conn.close()

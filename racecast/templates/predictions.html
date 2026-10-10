@@ -106,6 +106,9 @@
     </div>
 
     <div class="meet-chosen hidden" id="meet-chosen"></div>
+    {# ★ THE MODEL AT THIS MEET BEFORE (2026-10-10): one precomputed line,
+       meet-record.js / meet_track.py #}
+    <p class="hint meet-record" id="meet-record" hidden></p>
   </section>
 
   {# ---------------- 2. WHEN ---------------- #}
@@ -250,6 +253,7 @@
    header says so, and the ordering is the whole of the dependency. #}
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('predictions.js') }}"></script>
+<script src="{{ static_v('meet-record.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
 {# window.rcTabs: predict() wires each predicted race's tabs with it #}
 <script src="{{ static_v('race-page.js') }}"></script>

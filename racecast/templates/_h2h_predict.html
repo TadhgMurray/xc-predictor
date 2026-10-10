@@ -1,0 +1,53 @@
+{# =====================================================================
+  _h2h_predict.html -- the "Predicted" tab on /compare (h2h.py, owner
+  2026-10-10, item 10): a course and a date, both athletes' predicted
+  times from /api/predict/individual, the margin, and the model's own
+  test numbers under it. static/h2h.js runs it.
+
+  ★ THE SAME DEFAULT RACE THE ATHLETES RUN: a college pool opens on its
+    championship distance (8000 men, 6000 women), everyone else on 5000.
+===================================================================== #}
+{% set _p = card_a.pool or "" %}
+{% set dd = 8000 if _p.startswith("college_m") else (6000 if _p.startswith("college_f") else 5000) %}
+{% set acc = h2h_accuracy() %}
+<section class="rc-panel h2h-pred" id="predict" data-panel="predict"
+         data-a="{{ card_a.person_id }}" data-b="{{ card_b.person_id }}"
+         data-a-name="{{ card_a.short }}" data-b-name="{{ card_b.short }}"
+         data-dist="{{ dd }}">
+  <p class="meta rc-lead">Both athletes in one race that has not been run: pick the course and the day.</p>
+  <div class="h2h-pick h2h-pred-form">
+    <div class="field">
+      <label for="h2h-sport">Race</label>
+      <select id="h2h-sport">
+        <option value="XC" selected>Cross country</option>
+        <option value="TF">Track</option>
+      </select>
+    </div>
+    <div class="field h2h-course-field">
+      <label for="h2h-course">Course</label>
+      <div class="h2h-search">
+        <input id="h2h-course" type="search" autocomplete="off" placeholder="A typical course">
+        <div class="h2h-sug hidden" id="h2h-course-sug"></div>
+      </div>
+    </div>
+    <div class="field">
+      <label for="h2h-dist">Distance</label>
+      <select id="h2h-dist"></select>
+    </div>
+    <div class="field">
+      <label for="h2h-date">Date</label>
+      <input id="h2h-date" type="date">
+    </div>
+    <button type="button" class="more-btn h2h-go" id="h2h-predict">Predict</button>
+  </div>
+  <div class="h2h-pred-out" id="h2h-pred-out" aria-live="polite"></div>
+  <p class="meta h2h-acc">
+    {%- if acc and acc.order %}On races the ratings never saw, the higher-rated of two runners
+    in the same race finished ahead <b>{{ acc.order }}</b> of the time{% if acc.miss %}, and a
+    predicted time typically missed by <b>{{ acc.miss }}</b>{% endif %}.
+    {%- elif acc and acc.miss %}On races the ratings never saw, a predicted time typically missed by <b>{{ acc.miss }}</b>.
+    {%- else %}A prediction is each athlete's recent rated form as a time at this course; a single
+    race also carries the day.{% endif %}
+    <a href="/about#accuracy">How accurate is it</a>{% if acc and acc.as_of %} <span class="h2h-muted">(tested {{ acc.as_of|mdy }})</span>{% endif %}
+  </p>
+</section>

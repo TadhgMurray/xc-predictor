@@ -1,0 +1,82 @@
+/* tools.css -- the small reader tools of 2026-10-10: the rating -> time
+   sheet (/scale), the grade rank under the athlete header, the head-to-head
+   prediction on /compare, the per-meet track record on /predictions and the
+   goal calculator (/goal). Each block rides the race page's own classes
+   (race.css, pages2.css) and adds only what those do not have: no new
+   colours, no new type, nothing louder than the page around it. */
+
+/* ---- /scale ------------------------------------------------------------ */
+.scale-page .scale-nav { margin: 0.6rem 0 0.4rem; }
+.scale-page .scale-tbl { max-width: 44rem; }
+/* the rating is the row's name: ink, not the rank-number grey .p2-tbl gives
+   a first column */
+.scale-page .scale-tbl td.scale-r { color: var(--ink, #111418); font-weight: 600; width: auto; }
+.scale-page .scale-tbl .scale-own { color: var(--muted, #6b7280); }
+/* every tenth point ruled, so a long column reads in blocks of two */
+.scale-page .scale-tbl tr.scale-ten td { border-top: 1px solid var(--line-2, #cbd0d6); }
+.scale-page .scale-pool + .scale-pool { margin-top: 1.6rem; }
+.scale-page .scale-print { font: inherit; }
+@media (max-width: 640px) {
+  .scale-page .scale-tbl .scale-own { display: none; }
+}
+
+/* ★ PRINTABLE (owner: "Printable"): the table and its one-line footnote, no
+   site chrome, no controls; with ?pool=all each pool starts a page. */
+@media print {
+  body:has(main.scale-page) .topbar,
+  .scale-page .scale-nav, .scale-page .rc-meta,
+  .scale-page .rc-story, .scale-page .scale-how { display: none !important; }
+  .scale-page { padding: 0; }
+  .scale-page .scale-tbl { max-width: none; font-size: 10pt; }
+  .scale-page .scale-tbl th, .scale-page .scale-tbl td { padding: 0.12rem 0.5rem; }
+  .scale-page .scale-pool + .scale-pool { break-before: page; }
+  .scale-page .scale-tbl .scale-own { display: table-cell; }
+}
+
+/* ---- /compare: the Predicted tab (_h2h_predict.html, h2h.js) ----------- */
+.h2h-pred .h2h-pred-form { flex-wrap: wrap; }
+.h2h-pred .h2h-pred-form select,
+.h2h-pred .h2h-pred-form input[type="date"] { padding: 0.4rem 0.5rem; border: 1px solid #ccc;
+  border-radius: 4px; font: inherit; font-size: 0.9rem; background: #fff; }
+.h2h-pred .h2h-course-field input { min-width: 15rem; }
+.h2h-pred .h2h-pred-out { margin: 0.8rem 0 0.4rem; }
+.h2h-pred .h2h-pred-tbl { width: auto; min-width: 20rem; }
+.h2h-pred .h2h-pred-tbl th, .h2h-pred .h2h-pred-tbl td { padding: 0.4rem 0.9rem 0.4rem 0; text-align: left; }
+.h2h-pred .h2h-pred-tbl .h2h-t { font-weight: 700; font-variant-numeric: tabular-nums; }
+.h2h-pred .h2h-pred-tbl .h2h-band { color: var(--muted, #6b7280); font-variant-numeric: tabular-nums; }
+.h2h-pred .h2h-pred-tbl .h2h-none { color: var(--muted, #6b7280); }
+.h2h-pred .h2h-margin { margin: 0.5rem 0 0; font-size: 1rem; }
+.h2h-pred .h2h-muted, .h2h-acc .h2h-muted { color: var(--muted, #6b7280); font-size: 0.85em; }
+.h2h-pred .h2h-acc { margin-top: 0.8rem; max-width: 46rem; }
+@media (max-width: 640px) {
+  .h2h-pred .h2h-course-field, .h2h-pred .h2h-course-field input { min-width: 0; width: 100%; }
+  .h2h-pred .h2h-pred-tbl { min-width: 0; width: 100%; }
+}
+
+/* ---- /goal (goal.html, goal.js) ---------------------------------------- */
+.goal-page .goal-form { display: flex; flex-wrap: wrap; gap: 0.6rem 0.8rem; align-items: flex-end;
+  margin: 1rem 0 0.6rem; }
+.goal-page .goal-form .field label { display: block; font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted, #6b7280); margin-bottom: 0.2rem; }
+.goal-page .goal-form select, .goal-page .goal-form input { padding: 0.42rem 0.55rem; border: 1px solid #ccc;
+  border-radius: 4px; font: inherit; font-size: 0.9rem; background: #fff; }
+.goal-page .goal-form #goal-course, .goal-page .goal-form #goal-college { min-width: 14rem; }
+.goal-page .goal-form .field[hidden] { display: none; }
+.goal-page .goal-go { width: auto; }
+.goal-page .goal-tbl { max-width: 40rem; }
+.goal-page .goal-tbl td:first-child { color: var(--ink, #111418); width: auto; }
+.goal-page .goal-err { color: #a05a00; }
+@media (max-width: 640px) {
+  .goal-page .goal-form .field { flex: 1 1 45%; }
+  .goal-page .goal-form .goal-course, .goal-page .goal-form .goal-college { flex-basis: 100%; }
+  .goal-page .goal-form select, .goal-page .goal-form input,
+  .goal-page .goal-form #goal-course, .goal-page .goal-form #goal-college { width: 100%; min-width: 0; box-sizing: border-box; }
+}
+
+/* ---- /predictions: the model's record at this meet (meet-record.js) ---- */
+.pred-page .meet-record { margin: 0.45rem 0 0; }
+
+/* six pools and All do not fit a phone: the control scrolls inside itself,
+   never the page */
+.scale-page .scale-nav .p2-seg { max-width: 100%; overflow-x: auto; }
+.scale-page .scale-nav .p2-seg a { white-space: nowrap; }

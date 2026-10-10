@@ -331,6 +331,7 @@
             {# the percentile rides with the season (owner, 2026-09-07): "2026 TF
                season · top 1.3% of HS boys"; the 5K equivalent is off the page #}
             {% if athlete.rating_note or athlete.percentile %}<span class="s-sub">{{ athlete.rating_note or "" }}{% if athlete.rating_note and athlete.percentile %} &middot; {% endif %}{% if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif %}</span>{% endif %}
+            {% include "_grade_rank.html" %}
         </div>
         {% if alltime.rating %}
         <div>
@@ -395,6 +396,7 @@
         ({{ wit_line.label }}, {{ rv(wit_line.mark, wit_line.mark) }})
         {%- endif %}
         <span class="sep">·</span><a href="{{ wit_line.href }}">Past marks</a>
+        <span class="sep">·</span><a href="/goal?athlete={{ athlete.person_id }}">Any goal, any course</a>
         {# goal times: the mark as a clock where this athlete actually races,
            and at the round's championship course (cuts.goalTimes) #}
         {%- if wit_line.times %}

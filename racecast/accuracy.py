@@ -91,3 +91,20 @@ def loadAccuracy(path=HISTORY):
                for d, vals in reversed(runs)]
     return {"as_of": latest_date, "tests": tests, "history": history,
             "labels": list(SHORT)}
+
+
+def latestByKey(path=HISTORY):
+    """{"as_of": date, key: printed value, ...} for the newest run's FAIR
+    TESTS, keyed by the scorecard's own metric names -- for a page that
+    quotes one test in a sentence (the head-to-head prediction on /compare,
+    2026-10-10) rather than the About page's whole table. None without a
+    history; a test the newest run did not report is simply absent."""
+    acc = loadAccuracy(path)
+    if not acc:
+        return None
+    by_label = {t["label"]: t["value"] for t in acc["tests"]}
+    out = {"as_of": acc["as_of"]}
+    for key, label, _text, _fmt in TESTS:
+        if label in by_label:
+            out[key] = by_label[label]
+    return out
