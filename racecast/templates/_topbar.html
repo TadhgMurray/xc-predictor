@@ -21,68 +21,72 @@
        section lit, and an exact test would leave every detail page with a
        blank bar. #}
     {% set here = request.path %}
-    {# ★ TWO EDITIONS, SWITCHED BY PATH RATHER THAN BY A COOKIE. The coach
-       tools are their own product under /coaches, not a link inside the
-       athlete nav. Keying the view on request.path is what keeps every page
-       edge-cacheable: a cookie-varying topbar would make the cache key the
-       reader rather than the URL, and the whole site would stop being
-       shared between them. It also means a coach can send a colleague a
-       link and have them land in the same edition. #}
-    {# ★ AND THE EDITION STICKS (sweep 2026-10-10, B3). Keyed on the path
-       alone, a coach clicking Rankings from /coaches landed back in the
-       athlete edition. Both link sets are in the cached HTML -- the path
-       picks which one is shown -- and topbar-search.js re-applies the
-       edition this tab last chose (the browser's per-tab storage, set on
-       /coaches and cleared by the Athletes switch). Nothing about the reader
-       reaches the server, so every page stays cacheable. #}
-    {% set coach_view = here.startswith('/coaches') %}
-    <div class="viewswitch" role="group" aria-label="Site edition">
-        <a href="/" data-ed="athlete" class="{{ 'is-on' if not coach_view }}"
-           {% if not coach_view %}aria-current="true"{% endif %}>Athletes</a>
-        <a href="/coaches" data-ed="coach" class="{{ 'is-on' if coach_view }}"
-           {% if coach_view %}aria-current="true"{% endif %}>Coaches</a>
-    </div>
-    {# ★ NO TABS OF THEIR OWN FOR STATE MEETS AND BREAKOUTS (owner,
-       2026-10-05): Breakouts is a board, reached from Rankings' board tabs;
-       State meets is a prediction, reached from Predictions. Each page
-       lights its parent's tab.
-       ★ A "MORE" MENU (ui pass, 2026-10-04). With State meets and Breakouts
-       the athlete bar measured ~1,530px of content, and below that width the
-       search box and Sign in were pushed off the right edge (the wrap rule
-       starts at 1200px). About and Report an issue -- reference, not
-       sections -- live in More at every width. Conversions is inline where
-       there is room for it (1440px and up, and on a phone, where the bar
-       wraps anyway) and in More between, so 1280 and 1440 both fit on one
-       line. A <details>, so it opens with no script; topbar-search.js only
-       closes it on a click elsewhere or Escape. #}
+    {# ★ ONE NAV FOR EVERYONE (owner, 2026-10-10: the approved nav design).
+       The Athletes / Coaches edition switch is gone, and with it the second
+       link set and the per-tab memory that re-applied it (topbar-search.js).
+       Two editions meant two bars to learn, a "Recruiting" on one side and a
+       "Find recruits" on the other, and a coach who clicked Rankings landed
+       in the other edition. Now the sections are the same five for every
+       reader; the coach product is a plain "For coaches" link beside Sign in
+       (/coaches), and its own page keeps "Recruit search".
+       Still keyed on request.path alone, so every page stays edge-cacheable:
+       nothing about the reader reaches this markup.
+       ★ TOOLS REPLACES MORE. The pages that had no tab -- Compare, What it
+       takes, Who wins state, Breakouts, Schools, the paces, the scale, the
+       goal calculator -- had no way in from the bar at all; About and
+       Report an issue (reference, not sections) sit under its divider, muted.
+       A <details>, so it opens with no script; topbar-search.js only shuts
+       it on a click elsewhere or Escape. #}
     {% set conv_here = here.startswith('/conversions') %}
-    <nav class="topnav">
-        <span class="topnav-ed" data-ed="coach"{% if not coach_view %} hidden{% endif %}>
-        <a href="/coaches/recruits" class="{{ 'is-here' if here.startswith('/coaches/recruits') }}">Find recruits</a>
-        <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') or here.startswith('/breakouts') }}">Rankings</a>
+    {% set tools = [
+        (url_for('compare_page'), 'Compare two athletes', '/compare'),
+        (url_for('cuts.wit_index'), 'What it takes to make state', '/what-it-takes'),
+        (url_for('pages2.projections_index'), 'Who wins state', '/projections'),
+        (url_for('pages2.breakouts_page'), 'Breakouts', '/breakouts'),
+        (url_for('schools_directory'), 'Schools by state', '/schools'),
+        (url_for('conversions_page') ~ '#paces', 'Training paces', none),
+        (url_for('scale.scale_page'), 'Rating to time', '/scale'),
+        (url_for('goal.goal_page'), 'Goal calculator', '/goal'),
+    ] %}
+    {% set ref = [
+        (url_for('about_page'), 'About', '/about'),
+        (url_for('report_page'), 'Report an issue', '/report'),
+    ] %}
+    {% set ns = namespace(tools_here=false) %}
+    {% for t in tools + ref %}{% if t[2] and here.startswith(t[2]) %}{% set ns.tools_here = true %}{% endif %}{% endfor %}
+    {# ★ THE PHONE MENU (under 700px): logo, Sign in and this button on the
+       first row, the search on a row of its own and always on screen; the
+       button opens the sections, Tools and For coaches as a panel under the
+       bar. A real <button> with aria-expanded (topbar-search.js toggles it
+       and closes it on Escape); hidden above 700px, where the nav is inline. #}
+    <button type="button" class="nav-toggle" aria-expanded="false" aria-controls="topnav" aria-label="Menu">
+        <span></span><span></span><span></span>
+    </button>
+    <nav class="topnav" id="topnav" aria-label="Sections">
+        <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') }}">Rankings</a>
         <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
-        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') or here.startswith('/projections') or here.startswith('/what-it-takes') }}">Predictions</a>
-        </span>
-        <span class="topnav-ed" data-ed="athlete"{% if coach_view %} hidden{% endif %}>
-        <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') or here.startswith('/breakouts') }}">Rankings</a>
-        <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
-        <a href="/conversions" class="nav-roomy {{ 'is-here' if conv_here }}">Conversions</a>
+        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') }}">Predictions</a>
+        <a href="/conversions" class="{{ 'is-here' if conv_here }}">Conversions</a>
+        {# athlete-side college fit (/recruiting); the coaches' search is
+           "Recruit search" on /coaches, not a second Recruiting here #}
         <a href="/recruiting" class="{{ 'is-here' if here.startswith('/recruit') }}">Recruiting</a>
-        <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') or here.startswith('/projections') or here.startswith('/what-it-takes') }}">Predictions</a>
-        </span>
-        {% set more_here = here.startswith('/about') or here.startswith('/report') %}
-        <details class="topnav-more">
-            <summary class="{{ 'is-here' if more_here }}{{ ' conv-here' if conv_here }}">More</summary>
+        <details class="topnav-more topnav-tools">
+            <summary class="{{ 'is-here' if ns.tools_here }}">Tools</summary>
             <div class="topnav-menu">
-                <a href="/conversions" class="nav-tight {{ 'is-here' if conv_here }}" data-ed="athlete"{% if coach_view %} hidden{% endif %}>Conversions</a>
-                <a href="{{ url_for('about_page') }}" class="{{ 'is-here' if here.startswith('/about') }}">About</a>
-                {# Muted, and last. The topbar is the only element on EVERY page,
-                   so it is the only place a report link gets site-wide reach --
-                   but it is not a destination, so it should not compete with
-                   the sections. #}
-                <a href="{{ url_for('report_page') }}" class="{{ 'is-here' if here.startswith('/report') }}">Report an issue</a>
+                {% for href, label, pre in tools %}
+                <a href="{{ href }}" class="{{ 'is-here' if pre and here.startswith(pre) }}">{{ label }}</a>
+                {% endfor %}
+                <hr>
+                {# Muted, and last. The topbar is the only element on EVERY
+                   page, so it is the only place a report link gets site-wide
+                   reach -- but it is not a destination. #}
+                {% for href, label, pre in ref %}
+                <a href="{{ href }}" class="nav-quiet {{ 'is-here' if here.startswith(pre) }}">{{ label }}</a>
+                {% endfor %}
             </div>
         </details>
+        {# the phone panel's own copy; the one beside Sign in is hidden there #}
+        <a href="{{ url_for('coaches_page') }}" class="nav-coach nav-coach-m {{ 'is-here' if here.startswith('/coaches') }}">For coaches</a>
     </nav>
 
     <div class="search-wrap">
@@ -110,6 +114,7 @@
          the site shell now, and "Sign in" beside the sign-in card points at
          the page you are on. The slot stays, so a signed-in visitor still
          gets their picture from topbar-search.js. #}
+    <a href="{{ url_for('coaches_page') }}" class="nav-coach nav-coach-d {{ 'is-here' if here.startswith('/coaches') }}">For coaches</a>
     <span id="topbar-account" class="topbar-account">{% if not (here == '/login' or here.startswith('/login/')) %}<a href="/login" class="tb-signin">Sign in</a>{% endif %}</span>
 </header>
 {# phones: every table in a box the page's width, scrolling sideways only

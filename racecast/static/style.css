@@ -4938,78 +4938,37 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 .recruit-coach table.rc-tbl td.gain-down { color: #a32d2d; }
 
 /* ===================================================================== *
- * THE COACH EDITION (282/283): the topbar's edition switch and /coaches.
- *
- * ★ THE SWITCH IS A LINK, NOT A TOGGLE. It sits next to the mark and reads
- *   as one control with two sides; which side is lit comes from
- *   request.path in _topbar.html, so it is part of the cached HTML and
- *   needs no JavaScript. See the comment there for why a cookie would
- *   have cost the edge cache.
+ * THE ONE NAV (owner, 2026-10-10: the approved nav design): five
+ * sections, Tools, the search, "For coaches", Sign in. The Athletes /
+ * Coaches edition switch that stood beside the mark is gone (_topbar.html
+ * says why); /coaches is a plain link now, styled as a quiet nav word.
  * ===================================================================== */
 
-.topbar .viewswitch {
-    display: inline-flex;
-    flex: none;
-    border: 1px solid #ccc;          /* the search input's own border */
-    border-radius: 4px;
-    overflow: hidden;
-    background: #fff;
-    font-size: 0.82rem;
-    line-height: 1.2;
-}
-.topbar .viewswitch a {
-    padding: 0.38rem 0.7rem;
-    text-decoration: none;
-    color: #6b7280;
-    font-weight: 600;
-    white-space: nowrap;
-}
-.topbar .viewswitch a + a { border-left: 1px solid #e5e7eb; }
-.topbar .viewswitch a:hover { color: var(--ink); background: #f7f8fa; }
-.topbar .viewswitch a.is-on { background: var(--ink); color: #fff; }
-.topbar .viewswitch a.is-on:hover { background: var(--ink); }
+.topbar .nav-toggle { display: none; }
+.topbar .nav-coach { flex: none; color: #374151; text-decoration: none; white-space: nowrap; }
+.topbar .nav-coach:hover { color: var(--ink); text-decoration: underline; }
+.topbar .nav-coach.is-here { color: var(--ink); font-weight: 650; }
+.topbar .topnav .nav-coach-m { display: none; }
+.topbar .search-wrap { margin-left: auto; }
 
-/* ⚠ THE LAPTOP BAND WAS ALREADY BROKEN, AND THE SWITCH ONLY MADE IT WIDER.
-     Measured in a browser on b1bf920, BEFORE this section existed: at
-     1180px the bar overflowed by 23px and the account chip sat off the
-     right edge; at 1024px, by 145px; and so on down to the 700px rule,
-     which wraps and is fine. Nothing between 700 and ~1200 ever reflowed,
-     because .search-wrap was a rigid 320px and .topnav could not wrap --
-     so the last element on the bar, the account chip, was pushed out of
-     the window and the page scrolled sideways. The chip has been invisible
-     on a 1024px laptop since it was added.
-
-     Three things yield, in the order they can afford to:
+/* ⚠ THE LAPTOP BAND WAS ALREADY BROKEN BEFORE THE SWITCH (b1bf920: at
+     1180px the bar overflowed by 23px, at 1024px by 145px, the account chip
+     off the right edge), because .search-wrap was a rigid 320px and .topnav
+     could not wrap. Two things yield, in the order they can afford to:
        search    a rigid 320px becomes flexible. It loses width without
                  losing a word, so it goes first.
        nav       may wrap to a second line rather than push its siblings
                  out. min-width: 0 is what lets it shrink past its own
-                 content in the first place.
-       switch    tightens its padding last; it is two words and both
-                 have to stay readable.
-
-     This runs on BOTH editions -- the athlete bar is the wider of the two
-     (seven links to the coach bar's six) and was the one breaking first. */
+                 content in the first place. */
 @media (max-width: 1200px) {
     .topbar { gap: 0.9rem; flex-wrap: wrap; }
     .topbar .search-wrap { width: auto; flex: 1 1 9rem; min-width: 7rem; }
     .topbar .topnav { flex-wrap: wrap; min-width: 0; gap: 0.35rem 0.9rem; }
-    .topbar .viewswitch { font-size: 0.78rem; }
-    .topbar .viewswitch a { padding: 0.34rem 0.55rem; }
 }
 
-/* ★ THE "MORE" MENU AND THE ONE-LINE BAR (ui pass, 2026-10-04). With State
-     meets and Breakouts the athlete bar wanted ~1,530px; from 1201 to ~1520
-     nothing wrapped, so search and Sign in left the window and the page
-     scrolled sideways. About and Report live in More (_topbar.html);
-     Conversions is inline at 1440 and up (and on a phone, where the bar
-     wraps) and in More between; the gaps tighten a step. Fits on one line
-     at 1280 and 1440. */
+/* ★ THE TOOLS MENU (was "More", ui pass 2026-10-04). Hangs from its own
+     left edge: it sits mid-bar now, not at the end of it. */
 .topnav-more { position: relative; }
-/* the two editions' link sets (_topbar.html): a wrapper that does not exist
-   for layout, so the links stay direct flex items of .topnav */
-.topnav .topnav-ed { display: contents; }
-.topnav .topnav-ed[hidden] { display: none; }
 .topnav-more > summary { list-style: none; cursor: pointer; color: #374151; white-space: nowrap; user-select: none; }
 .topnav-more > summary::-webkit-details-marker { display: none; }
 .topnav-more > summary::after { content: ""; display: inline-block; width: 0.38em; height: 0.38em; margin-left: 0.35em;
@@ -5018,37 +4977,59 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
 .topnav-more[open] > summary::after { transform: translateY(0.05em) rotate(-135deg); }
 .topnav-more > summary:hover { color: var(--ink); }
 .topnav-more > summary.is-here { color: var(--ink); font-weight: 650; box-shadow: inset 0 -2px 0 var(--accent); }
-.topnav-menu { position: absolute; right: 0; top: calc(100% + 0.5rem); z-index: 80; min-width: 11rem;
+.topnav-menu { position: absolute; left: 0; top: calc(100% + 0.5rem); z-index: 80; min-width: 15rem;
   display: flex; flex-direction: column; padding: 0.35rem 0; background: #fff;
   border: 1px solid #e5e7eb; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
 .topnav .topnav-menu a { padding: 0.45rem 0.9rem; white-space: nowrap; }
 .topnav .topnav-menu a:hover { background: #f3f4f6; }
 .topnav .topnav-menu a.is-here { box-shadow: inset 2px 0 0 var(--accent); }
-.topnav .topnav-menu a.nav-tight { display: none; }
+.topnav .topnav-menu hr { border: 0; border-top: 1px solid #e5e7eb; margin: 0.3rem 0; }
+.topnav .topnav-menu a.nav-quiet { color: var(--muted); font-size: 0.9rem; }
 @media (min-width: 1201px) {
   .topbar { column-gap: 1.1rem; }
   .topbar .topnav { column-gap: 0.95rem; }
   .topbar .search-wrap { min-width: 6.5rem; }   /* 1201-1240: yields rather than spills */
 }
-/* between phone and laptop the bar is two rows: the mark, the switch and
+/* between phone and laptop the bar is two rows: the mark, For coaches and
    Sign in on the first, the sections and search on the second -- Sign in
    no longer drops onto a third row by itself (it did at 900px) */
 @media (min-width: 701px) and (max-width: 1200px) {
-  .topbar .topbar-account { order: 2; margin-left: auto; }
+  .topbar .nav-coach-d { order: 2; margin-left: auto; }
+  .topbar .topbar-account { order: 2; margin-left: 0.5rem; }
   .topbar { row-gap: 0.3rem; }
   .topbar::after { content: ""; order: 3; flex-basis: 100%; height: 0; }   /* the row break */
   .topbar .topnav { order: 4; }
   .topbar .search-wrap { order: 5; }
 }
-/* (Conversions used to fold into More from 701 to 1439px; with State meets
-   and Breakouts off the bar (2026-10-05) it fits inline at every width.) */
-/* on a phone the links wrap, so More can land anywhere on its row: the menu
-   hangs from the right edge of the whole link block instead of from More,
-   and cannot run off either side of the screen */
+
+/* ★ THE PHONE BAR (under 700px): logo, Sign in and the menu button on the
+     first row; the search full width on the second, always on screen; the
+     menu button opens the sections, Tools (listed open, not as a dropdown)
+     and For coaches as a panel under it (topbar-search.js). */
 @media (max-width: 700px) {
-  .topbar .topnav { position: relative; }
-  .topnav-more { position: static; }
-  .topnav-menu { top: calc(100% + 0.3rem); right: 0; }
+  .topbar { flex-wrap: wrap; gap: 0.55rem 0.6rem; }
+  .topbar .brand-mark { order: 1; }
+  .topbar .topbar-account { order: 2; margin-left: auto; }
+  .topbar .nav-coach-d { display: none; }
+  .topbar .nav-toggle { order: 3; display: flex; flex-direction: column; justify-content: center; align-items: center;
+    gap: 4px; width: 40px; height: 36px; padding: 0; border: 1px solid #ccc; border-radius: 4px;
+    background: #fff; cursor: pointer; }
+  .topbar .nav-toggle span { display: block; width: 18px; height: 2px; background: var(--ink); border-radius: 1px; }
+  .topbar .nav-toggle[aria-expanded="true"] { background: var(--ink); border-color: var(--ink); }
+  .topbar .nav-toggle[aria-expanded="true"] span { background: #fff; }
+  .topbar .search-wrap { order: 4; flex: 1 1 100%; margin: 0; width: auto; min-width: 0; }
+  .topbar #search-input { font-size: 1rem; padding: 0.55rem 0.75rem; }
+  .topbar .topnav { order: 5; display: none; flex: 1 1 100%; flex-direction: column; flex-wrap: nowrap;
+    gap: 0; border-top: 1px solid #e5e7eb; margin-top: 0.15rem; }
+  .topbar.nav-open .topnav { display: flex; }
+  .topbar .topnav > a, .topbar .topnav > details > summary { display: block; padding: 0.7rem 0.1rem;
+    border-bottom: 1px solid #f0f1f3; font-size: 1.02rem; box-shadow: none; }
+  .topbar .topnav > a.is-here, .topbar .topnav > details > summary.is-here { font-weight: 650; color: var(--ink); box-shadow: none; }
+  .topbar .topnav .nav-coach-m { display: block; color: var(--link); font-weight: 600; border-bottom: 0; }
+  .topbar .topnav-tools { position: static; }
+  .topbar .topnav-tools .topnav-menu { position: static; box-shadow: none; border: 0; border-radius: 0;
+    padding: 0 0 0.3rem 0.9rem; background: transparent; min-width: 0; }
+  .topbar .topnav-tools .topnav-menu a { padding: 0.5rem 0.2rem; font-size: 0.95rem; }
 }
 
 /* ---- /coaches ------------------------------------------------------- */
@@ -5914,11 +5895,10 @@ main.rc .flag { line-height: 13px; vertical-align: 1px; }
 @keyframes link-flash { 0% { background: #fdeeb5; } 100% { background: transparent; } }
 
 /* ★ PHONE TAP TARGETS, 24px AT LEAST (sweep 2026-10-10, B15): the topbar's
-     section links measured ~19px tall and the edition switch ~20px. Same
-     look; the box around the words grows. */
+     section links measured ~19px tall (the edition switch, ~20px, is gone
+     since 2026-10-10). Same look; the box around the words grows. */
 @media (max-width: 700px) {
   .topbar .topnav a, .topbar .topnav-more > summary { display: inline-flex; align-items: center; min-height: 24px; }
-  .topbar .viewswitch a { display: inline-flex; align-items: center; box-sizing: border-box; min-height: 24px; }
 }
 
 /* ★ THE 5K COLUMN (owner, 2026-10-10: "add [a 5K column] to all pages with

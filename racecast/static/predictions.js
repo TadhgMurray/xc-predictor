@@ -544,9 +544,14 @@ async function restoreFromQuery(p, names) {
   syncPerTeam();
   await loadRaces();
   // ! AFTER loadRaces, which re-proposes a date of its own
+  const proposed = $("t-date") ? $("t-date").value : "";
   if (p.get("date") && $("t-date")) $("t-date").value = p.get("date");
   state.course = p.get("course") || null;
   if ($("t-course")) $("t-course").value = state.course || "";
+  /* a date that is not the one the page would propose counts as set: a
+     "this year" link always carries its date */
+  openOpts((!!p.get("date") && p.get("date") !== proposed)
+           || !!state.course || !!state.perTeam);
 
   if (pids.length) {
     state.athletes = pids.map((pid) => ({
@@ -590,6 +595,16 @@ function applySharedField(p, names) {
       e.open.delete(t.school);        // arrive with the cards closed
     }
   }
+}
+
+/* ★ THE OPTIONS FOLD OPENS ITSELF (2026-10-10): predictions.html folds the
+     date, the course and the team size under one closed <details>; a
+     shared link or a restored session that set any of them opens it, so
+     what made that prediction different is on screen. Never closes it --
+     the reader may have opened it. */
+function openOpts(on) {
+  const d = $("pred-opts");
+  if (d && on) d.open = true;
 }
 
 function restoreState() {
@@ -676,6 +691,7 @@ function restoreState() {
        text in it after a reload was the "still in the search bar but not
        picked" report -- it looked chosen and was not. */
   if ($("t-course")) $("t-course").value = state.course || "";
+  openOpts(!!state.course || !!state.perTeam);
 
   loadRaces();            // rebuilds the chips, and re-applies the mode
   /* The fields are not stored -- they are refetched, which is also what keeps

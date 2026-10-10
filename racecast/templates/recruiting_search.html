@@ -12,7 +12,7 @@
 {% from "_explain.html" import rating_i %}
 {% set meta_title = "Recruiting Search for Coaches" %}
 {% set meta_description = "Find high school cross country and track recruits by graduation year, speed rating, year-over-year improvement, state and school. Every season in the country on one comparable scale." %}
-{% set meta_crumbs = [("Coaches", "/coaches"), ("Find recruits", none)] %}
+{% set meta_crumbs = [("Coaches", "/coaches"), ("Recruit search", none)] %}
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
@@ -29,8 +29,8 @@
      the link": Share carries the live query string (recruiting-search.js). #}
   <header class="rc-hd"><div class="rc-hgrid rc-hone">
     <div class="rc-left">
-      <div class="rc-sport"><span class="sport-tag">Coach edition</span></div>
-      <h1>Find recruits</h1>
+      <div class="rc-sport"><span class="sport-tag">For coaches</span></div>
+      <h1>Recruit search</h1>
       <div class="rc-meta">
         Every high-school season in the country on one scale{{ rating_i() }}
         {% if season_years.get('XC') %} · {{ season_years.get('XC') }} XC season{% endif %}

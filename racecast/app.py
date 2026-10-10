@@ -10260,15 +10260,51 @@ def predictions_page():
     # a shared prediction link carries the request (?meet_id=..., the old
     # long form) or names a saved one (?s=<id>); the page previews with
     # that prediction's card and restores it
+    ctx = _predictOpening()
     sid = (request.args.get("s") or "").strip().lower()
     if sid:
         q, _ = _loadShare(sid, count=True)
         # the card is asked for BY ID too, so its URL is short whatever the
         # field's size
         return render_template("predictions.html",
-                               card_query=("s=" + sid) if q else "")
+                               card_query=("s=" + sid) if q else "", **ctx)
     q = request.query_string.decode("utf-8", "replace") if request.args.get("meet_id") else ""
-    return render_template("predictions.html", card_query=q)
+    return render_template("predictions.html", card_query=q, **ctx)
+
+
+# ★ THE PAGE OPENS ON WHAT PEOPLE COME FOR (owner, 2026-10-10: the approved
+#   predictions design): this week's posted meets and "Who wins state?",
+#   with re-running a past race after them.
+#     week      weekend.comingUpCached -- the same calendar /meets?view=
+#               upcoming lists, one compute per day per worker, [] on a
+#               failure. Biggest first (races posted), the top PRED_WEEK_N.
+#     states    the state-meets mode's own list (pages2._stateNames, what
+#               /projections offers), and a few popular ones as links.
+# ! NO DATABASE OF ITS OWN: a failed calendar renders as "nothing posted",
+#   never as an error page.
+PRED_WEEK_N = 7
+PRED_POPULAR_STATES = ("CA", "TX", "NY", "OR", "PA")
+
+
+def _predictOpening():
+    import datetime
+    from weekend import comingUpCached
+    from pages2 import _stateNames
+    week = []
+    for d in comingUpCached(getConn):
+        for m in d["meets"]:
+            try:
+                day = datetime.date.fromisoformat(m["date"])
+                when = day.strftime("%a %b ") + str(day.day)
+            except (TypeError, ValueError):
+                when = d.get("label") or ""
+            week.append({**m, "when": when})
+    week.sort(key=lambda m: (-m["n_races"], m["date"] or "", m["name"] or ""))
+    states, names = _stateNames()
+    return {"week": week[:PRED_WEEK_N], "week_n": len(week),
+            "pred_states": states,
+            "pred_popular": [(c, names[c]) for c in PRED_POPULAR_STATES
+                             if c in names]}
 
 
 @app.route("/api/predict/share", methods=["POST"])

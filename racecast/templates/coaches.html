@@ -36,11 +36,16 @@
      in Jinja if the cards ever become data. #}
   <header class="rc-hd"><div class="rc-hgrid rc-hone">
     <div class="rc-left">
-      <div class="rc-sport"><span class="sport-tag">Coach edition</span></div>
+      {# ★ "RECRUIT SEARCH", NOT "FIND RECRUITS" (2026-10-10): the topbar's
+         one nav says "Recruiting" for the athlete-side college fit, and
+         two recruiting words for two different tools read as one. The
+         edition tag went with the edition switch: "For coaches" is the
+         topbar link that lands here. #}
+      <div class="rc-sport"><span class="sport-tag">For coaches</span></div>
       <h1>Coaching tools</h1>
       <div class="rc-meta">
         For cross country and track coaches
-        · <a href="/coaches/recruits">Find recruits</a>
+        · <a href="/coaches/recruits">Recruit search</a>
         · <a href="/recruiting">Athletes: where you'd fit</a>
         <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="Coaching tools on Racecast"
               data-share-url="{{ site_origin ~ '/coaches' }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
@@ -67,7 +72,7 @@
     <h2 class="sr-only">Tools</h2>
     <div class="coach-grid">
       <a class="coach-card" href="/coaches/recruits">
-        <h3>Find recruits</h3>
+        <h3>Recruit search</h3>
         <p>Every high school season in the country, filtered by graduation year, rating, state, school
            and &mdash; the one nobody else can sort on &mdash; how fast they are improving year over year.</p>
         <span class="coach-go">Search{% if season_years.get('XC') %} the {{ season_years.get('XC') }} season{% endif %} &rarr;</span>

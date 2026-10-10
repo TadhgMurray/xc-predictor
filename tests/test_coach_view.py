@@ -1,4 +1,6 @@
-"""The coach edition (282/283): the /coaches product and the topbar switch.
+"""The coach edition (282/283): the /coaches product and its topbar link.
+(The topbar's Athletes / Coaches switch went 2026-10-10 -- one nav for
+everyone, "For coaches" beside Sign in; tests/test_one_nav.py.)
 
     python -m pytest -q tests/test_coach_view.py
 
@@ -28,11 +30,11 @@ def test_the_routes_exist_and_the_old_one_redirects():
     assert app.count('render_template("recruiting_search.html"') == 1
 
 
-def test_the_topbar_switches_on_the_path_not_a_cookie():
+def test_the_topbar_reaches_the_coaches_without_a_cookie():
     top = read("racecast", "templates", "_topbar.html")
-    assert "{% set coach_view = here.startswith('/coaches') %}" in top
-    assert 'class="viewswitch"' in top
-    assert 'href="/coaches"' in top and 'href="/coaches/recruits"' in top
+    # ★ ONE NAV (2026-10-10): no edition switch, a plain "For coaches" link
+    assert 'class="viewswitch"' not in top and "coach_view" not in top
+    assert "url_for('coaches_page')" in top and ">For coaches</a>" in top
     # ⚠ the whole point: nothing about the reader may reach the cached bar.
     #   Comments are stripped first -- the block above explains at length
     #   why there is no cookie here, and the word itself is not the bug.
@@ -89,4 +91,5 @@ def test_the_bar_reflows_instead_of_pushing_the_account_off_screen():
     band = css.split("@media (max-width: 1200px)", 1)[1].split("}", 6)[0]
     assert "flex-wrap: wrap" in band
     assert ".topbar .search-wrap" in css.split("@media (max-width: 1200px)", 1)[1][:700]
-    assert ".topbar .viewswitch a.is-on" in css
+    # the edition switch's rules went with the switch (2026-10-10)
+    assert ".viewswitch" not in css
