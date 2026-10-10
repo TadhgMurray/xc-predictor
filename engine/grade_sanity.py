@@ -2029,6 +2029,22 @@ def resolve(cur, audit=False):
                                      "method": "corroborated"}
     n_corr = len(acad)
 
+    # ★ RULE 0: THE OWNER'S PINS, BEFORE EVERY RULE AND AFTER THEM ALL
+    #   (2026-10-10). An athlete reported a wrong grade ("Suggest a fix",
+    #   racecast/fixes.py) and the owner approved it; the answer lives in
+    #   grade_pin (scripts/person_pins.py), because grade_fix is rebuilt from
+    #   scratch here every run and a correction written into it would last
+    #   one night. Laid in HERE, beside the corroborated grades, so the rules
+    #   below that read a season's neighbours (3b, 5, 5b) see the pinned
+    #   season as settled evidence; laid in AGAIN after trust, so no rule can
+    #   overwrite it. method 'pinned', trust 'high'.
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                    "scripts"))
+    import person_pins as _PP
+    grade_pins = _PP.loadGradePins(cur)
+    n_pinned = _PP.applyGradePins(acad, grade_pins)
+    print(f"    [0] owner's grade pins laid in: {n_pinned:,}", flush=True)
+
     # ! RULE 2c, BETWEEN 2 AND 4 ON PURPOSE. It rewrites grades rule 4 is
     #   about to read as field evidence; running it afterwards would leave
     #   every ungraded athlete in those fields pooled off the wrong mode.
@@ -2391,9 +2407,13 @@ def resolve(cur, audit=False):
     n_untrusted, n_vouched = trustByProgression(
         acad, race_count, open_ay=academicYear(_dt.date.today()))
 
+    # ★ RULE 0 AGAIN: the pins win over every rule above (see the first pass)
+    _PP.applyGradePins(acad, grade_pins)
+
     out = dict(acad)
 
     print("\n[grade] academic-year verdicts")
+    print(f"    owner's pin (grade_pin)  {n_pinned:>10,}")
     print(f"    corroborated grade       {n_corr:>10,}")
     print(f"    one race, vouched for by the season before {n_vouched:>8,}")
     print(f"    bare word, own grades    {n_bare:>10,}")

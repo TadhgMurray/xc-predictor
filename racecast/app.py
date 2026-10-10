@@ -4396,6 +4396,12 @@ def _raceDayRow(cur, sport, header, race_date):
 
 
 @app.route("/race/xc/<int:meet_id>/<int:div_id>")
+@app.route("/race/xc/<int(signed=True):meet_id>/<int(signed=True):div_id>")
+# ★ AN UPLOADED MEET'S IDS ARE NEGATIVE (racecast/uploads.py, 2026-10-10:
+#   meet_id and div_id in a range no feed uses), and <int:> matches no minus
+#   sign, so every uploaded race linked from an athlete page 404'd. The
+#   signed rule beside each race and meet page serves them; the unsigned one
+#   stays first, so url_for and every positive id are as before.
 def race_xc(meet_id, div_id):
     from meet_compile import (scoreRows, publishedScores, annotateScoring,
                               splitCollisionTeams, unsplitTeams,
@@ -5041,6 +5047,7 @@ def _xc_meet_sources(cur, meet_id, args, div_id=None):
 
 
 @app.route("/meet/xc/<int:meet_id>")
+@app.route("/meet/xc/<int(signed=True):meet_id>")
 def meet_xc(meet_id):
     from meet_compile import compiledIndex, publishedScores
 
@@ -5583,6 +5590,7 @@ def _tfRaceSource(cur, meet_id, div_id, event_id, args):
 
 
 @app.route("/race/tf/<int:meet_id>/<int:event_id>/<int:div_id>")
+@app.route("/race/tf/<int(signed=True):meet_id>/<int:event_id>/<int(signed=True):div_id>")
 def race_tf(meet_id, event_id, div_id):
     from tf_points import prettyEventName
     from flask import g
@@ -6264,6 +6272,7 @@ def _tfEventWinners(rows):
 
 
 @app.route("/meet/tf/<int:meet_id>")
+@app.route("/meet/tf/<int(signed=True):meet_id>")
 def meet_tf(meet_id):
     from tf_points import scoreMeet, genderOf, prettyEventName, eventDistance
 
@@ -10579,9 +10588,9 @@ def _predictSource(cur, meet_id, sport, alt=None, div_id=None):
 # ! A PIN, LIKE ?r=. Where that feed has results under the id, its ?alt=
 #   index is the answer, the meet page's own rule; where it has none, the
 #   meet is the posted one and the feed is the answer with no index.
-# ! ONLY THE TWO FEED NAMES. Anything else is ignored, never echoed, and a
+# ! ONLY THE FEED NAMES (anet, tfrrs, and upload since 2026-10-10). Anything else is ignored, never echoed, and a
 #   link without it resolves exactly as before.
-_FEEDS = ("anet", "tfrrs")
+_FEEDS = ("anet", "tfrrs", "upload")   # + the owner-approved uploads (2026-10-10)
 
 
 def _feedPin(cur, meet_id, sport, hint, src, alt_idx):

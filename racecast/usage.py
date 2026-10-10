@@ -76,7 +76,7 @@ _BOT = re.compile(
     re.I)
 _HOST = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,78}[a-z0-9])?$")
 _SECOND_LEVEL = {"co", "com", "org", "net", "ac", "gov", "edu", "k12"}
-_RULE_ARG = re.compile(r"<(?:[a-z_]+:)?([a-z_]+)>")
+_RULE_ARG = re.compile(r"<(?:[a-z_]+(?:\([^)]*\))?:)?([a-z_]+)>")   # int(signed=True) too
 
 
 # ---- the pure rules ------------------------------------------------------

@@ -1079,6 +1079,44 @@ def canonicalSchool(school):
     return _NAME_ALIAS.get(school, school)
 
 
+# ★ ONE ATHLETE'S SEASON, FILED UNDER THE SCHOOL THE OWNER APPROVED (owner,
+#   2026-10-10). school_name_alias corrects a SPELLING everywhere; an athlete
+#   whose season sits under the wrong school (a transfer the feed missed, a
+#   meet that typed the host school) asked through "Suggest a fix"
+#   (racecast/fixes.py), and the owner's Approve wrote school_pin
+#   (scripts/person_pins.py). Applied in prepareRow BEFORE anything reads
+#   the school, so the boards, athlete_season (the athlete page's season
+#   header and latest team) and the school pages' rosters all follow it --
+#   and since this table is rebuilt every night, the pin is what keeps the
+#   correction. The raw rows keep the feed's string (the rule above).
+#   {(person_id, season, sport or ''): school}; _SCHOOL_PIN_PEOPLE is the
+#   per-row fast test, so an empty table costs one set probe.
+_SCHOOL_PIN = {}
+_SCHOOL_PIN_PEOPLE = set()
+
+
+def loadSchoolPins(cur):
+    """Load school_pin into the module (every stream process, like the
+    aliases). Returns how many."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                    "scripts"))
+    import person_pins as PP
+    _SCHOOL_PIN.clear()
+    _SCHOOL_PIN.update(PP.loadSchoolPins(cur))
+    _SCHOOL_PIN_PEOPLE.clear()
+    _SCHOOL_PIN_PEOPLE.update(p for p, _s, _sp in _SCHOOL_PIN)
+    return len(_SCHOOL_PIN)
+
+
+def pinnedSchool(person_id, sport, date):
+    """The owner's school for this row's season, or None."""
+    if person_id not in _SCHOOL_PIN_PEOPLE:
+        return None
+    season = seasonYearFromIso(sport, date)
+    return (_SCHOOL_PIN.get((person_id, season, sport))
+            or _SCHOOL_PIN.get((person_id, season, "")))
+
+
 # COPY's TEXT format needs four characters escaped, and essentially no row
 # contains any of them. Measured over 2M strings: four chained .replace() calls
 # 0.36s, str.translate 2.02s (it always allocates), a membership guard that
@@ -1345,7 +1383,9 @@ def prepareRow(row, sport):
     #   lookup, the stored column and athlete_season's mode() all see one
     #   spelling. Folding later would leave two schools everywhere but the
     #   display.
-    school = canonicalSchool(row.school)
+    # ★ THE OWNER'S PIN FIRST (school_pin, see loadSchoolPins), then the
+    #   alias fold, so a pinned spelling is folded like any other
+    school = canonicalSchool(pinnedSchool(row.person_id, sport, row.date) or row.school)
     if _isNonSchoolCached(school):
         return None
     # Hidden, not corrected -- see panels._DODEA_SCHOOLS.
@@ -3367,6 +3407,9 @@ def main():
             #   passes through untouched.
             with conn.cursor() as _cur:
                 _n = loadNameAliases(_cur)
+                _np = loadSchoolPins(_cur)
+            print(f"  {_np:,} athlete-seasons pinned to a school by the owner "
+                  f"(school_pin; scripts/person_pins.py)", flush=True)
             print(f"  {_n:,} school spellings fold onto another team's name "
                   f"(school_name_alias; scripts/merge_school_names.py --write "
                   f"builds it)" if _n else

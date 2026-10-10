@@ -198,7 +198,7 @@ def _resolveSource(cur, meet_id, alt, src):
             cur.connection.rollback()
         except Exception:                               # noqa: BLE001
             pass
-        return src if src in ("anet", "tfrrs") else None
+        return src if src in ("anet", "tfrrs", "upload") else None
 
 
 @bp.route("/api/predict/track_record")

@@ -28,15 +28,28 @@
 #                  the app never fetches a link, and other sites are not
 #                  scraped (owner's rule); results from them come in through
 #                  /account/uploads.
-#     grade        RECORDED ONLY. grade_fix is rebuilt by grade_sanity.py
-#     school       every run, and no pin table exists for a person's grade,
-#     not_mine     school or a single result. MISSING_SUPPORT says what each
-#                  needs; the approved request is the record of the decision
-#                  until it exists.
+#     grade        APPLIED (2026-10-10) as a PIN, scripts/person_pins.py:
+#                  grade_pin (person, season) -- engine/grade_sanity.py lays
+#                  it in before its rules and over them after, so the
+#                  nightly rebuild of grade_fix keeps it. A class year alone
+#                  pins the grade it implies that season; one that implies
+#                  no school grade 1-12 stays recorded only
+#                  (MISSING_SUPPORT['grade_class']). Undo:
+#                  person_pins.py --unpin grade <person> <season>.
+#     school       APPLIED as school_pin (person, season, sport) --
+#                  build_ranking_results files the season's rows under it
+#                  (boards, athlete_season, the athlete and school pages).
+#                  The owner may correct the spelling on the card before
+#                  approving. Undo: --unpin school <person> <season> [sport].
+#     not_mine     APPLIED as result_detach: the row moves NOW to a fresh
+#                  person id (unlink.SPLIT_BASE's range), logged in
+#                  person_link_log rule 'detach'; the linkers skip it and
+#                  pipeline step 04a3 re-applies it after them. Undo:
+#                  person_pins.py --undo-detach <result id>.
 #
-# ! WRONG-PERSON DETECTION STAYS REPORT-ONLY (owner's rule). A "not mine"
-#   request is a person's own report, kept and shown; approving it moves
-#   nothing.
+# ! WRONG-PERSON DETECTION STAYS REPORT-ONLY (owner's rule). Nothing here
+#   detects: a "not mine" is the athlete's own report, and only the owner's
+#   Approve, on this card, detaches the one row it names.
 #
 # ! THE ATHLETE PAGE STAYS EDGE-CACHEABLE. The "Suggest a fix" link is in
 #   the anonymous HTML, hidden, and shown by script only when /api/me says
@@ -63,20 +76,23 @@ GRADES = ("5", "6", "7", "8", "9", "10", "11", "12", "FR", "SO", "JR", "SR", "GR
 FIXES_PER_DAY = 10
 NOTE_MAX = 1000
 
+# ★ WHAT APPROVE CANNOT APPLY, SAID ON THE CARD (2026-10-10: grade, school
+#   and not_mine have their pins now -- scripts/person_pins.py -- and left
+#   this table; what remains is what no mechanism can do).
 MISSING_SUPPORT = {
-    "grade": ("No persistent grade correction exists: grade_fix is rebuilt by "
-              "engine/grade_sanity.py on every run. Needed: a grade pin (person_id, sport, "
-              "season, grade) that grade_sanity applies before its rules."),
-    "school": ("No per-athlete school correction exists: school_name_alias and "
-               "merge_school_names.py correct a school's spelling everywhere, not one athlete's "
-               "row. Needed: a school pin (person_id, season, school) that "
-               "build_ranking_results.py reads."),
-    "not_mine": ("No per-result correction the pipeline honours exists: the linkers move whole "
-                 "people and person_collision.py / unlink.py are detectors. Needed: a result "
-                 "detach table (sport, result_id) the linkers skip, and a step that moves the row "
-                 "to a fresh person (unlink.SPLIT_BASE), logged in person_link_log with --undo."),
+    "grade_class": ("That class year implies no school grade (1-12) in that season, and a "
+                    "college class needs the word (FR/SO/JR/SR): recorded only."),
     "missing_other": ("Only athletic.net and tfrrs meets can be queued for the scrape; for any "
                       "other site the results come in as an upload (/account/uploads)."),
+}
+
+# What Approve applies, per kind, for the card and the side table.
+APPLIES = {
+    "same_person": "link_profile_school (profile_school_merge, redirect)",
+    "missing": "meet_queue, for athletic.net and tfrrs meets",
+    "grade": "grade_pin (grade_sanity honours it every run)",
+    "school": "school_pin (the boards and pages follow it every run)",
+    "not_mine": "result_detach (the row moves to a new person now; 04a3 keeps it there)",
 }
 
 DDL = """
@@ -393,6 +409,56 @@ def applyMissing(cur, fx):
             "source": src}
 
 
+def _pins():
+    sys.path.insert(0, "scripts")
+    import person_pins as PP
+    return PP
+
+
+def applyGrade(cur, fx, actor):
+    """grade_pin, or None when the request names no school grade."""
+    PP = _pins()
+    got = PP.gradeFromRequest(fx["detail"])
+    if got is None:
+        return None
+    grade, level = got
+    pid, season = int(fx["person_id"]), int(fx["detail"]["season"])
+    PP.ensure(cur)
+    PP.pinGrade(cur, pid, season, grade, level, fx["id"], actor)
+    return {"mechanism": "grade_pin", "person_id": pid, "season": season, "grade": grade,
+            "level": level, "undo": f"python scripts/person_pins.py --unpin grade {pid} {season}"}
+
+
+def applySchool(cur, fx, actor, school=None):
+    """school_pin; school: the owner's spelling from the card, else the
+    athlete's."""
+    PP = _pins()
+    d = fx["detail"]
+    school = " ".join((school or d.get("school") or "").split())[:120]
+    if len(school) < 2:
+        raise ValueError("no school to pin")
+    pid, season, sport = int(fx["person_id"]), int(d["season"]), d.get("sport")
+    PP.ensure(cur)
+    PP.pinSchool(cur, pid, season, school, sport, d.get("state"), fx["id"], actor)
+    return {"mechanism": "school_pin", "person_id": pid, "season": season, "sport": sport or "both",
+            "school": school,
+            "undo": f"python scripts/person_pins.py --unpin school {pid} {season}"
+                    + (f" {sport}" if sport else "")}
+
+
+def applyNotMine(cur, fx, actor):
+    """result_detach, applied now; None when the row has left this page
+    since the request (nothing is written)."""
+    PP = _pins()
+    d = fx["detail"]
+    to = PP.detach(cur, d["sport"], int(d["result_id"]), int(fx["person_id"]), fx["id"], actor)
+    if to is None:
+        return None
+    return {"mechanism": "result_detach", "sport": d["sport"], "result_id": int(d["result_id"]),
+            "from_person": int(fx["person_id"]), "to_person": to,
+            "undo": f"python scripts/person_pins.py --undo-detach {int(d['result_id'])}"}
+
+
 def outcomeWords(kind, applied):
     """One line for the requester and the queue: what approval did."""
     if kind == "same_person" and applied:
@@ -403,14 +469,25 @@ def outcomeWords(kind, applied):
                 "and the nightly update that follows.")
     if kind == "missing":
         return "Recorded. Results from that site come in as an upload, which the owner reviews."
-    return "Recorded with the owner's approval; the correction is made by hand for now."
+    if kind == "grade" and applied:
+        return (f"Your {applied['season']} grade is set to {applied['grade']}; the page and the "
+                f"ratings follow after the next full update.")
+    if kind == "school" and applied:
+        return (f"Your {applied['season']} season is filed under {applied['school']}; the page "
+                f"and the rankings follow after the next nightly update.")
+    if kind == "not_mine" and applied:
+        return ("The result has been taken off your page; your season and ratings follow after "
+                "the next nightly update.")
+    return ("Recorded with the owner's approval; it could not be applied automatically, so the "
+            "correction is made by hand.")
 
 
-def decide(conn, cur, fid, action, admin_email, note=None, keep=None):
-    """-> (status, error, outcome). Writes the request's own row; for an
-    approved same_person or missing request, applies it through the
-    existing tool. The caller commits, except that same_person's tool
-    commits the whole transaction itself (decision row included)."""
+def decide(conn, cur, fid, action, admin_email, note=None, keep=None, school=None):
+    """-> (status, error, outcome). Writes the request's own row; an
+    approved request is applied through its mechanism (APPLIES) in the same
+    transaction. The caller commits, except that same_person's tool commits
+    the whole transaction itself (decision row included). school: the
+    owner's spelling for a school pin (the card's field)."""
     from psycopg2.extras import Json
     cur.execute("SELECT * FROM fix_request WHERE id = %s FOR UPDATE", (fid,))
     fx = AC._one(cur)
@@ -438,9 +515,20 @@ def decide(conn, cur, fid, action, admin_email, note=None, keep=None):
         applied = applyMissing(cur, fx)
         gap = None if applied else MISSING_SUPPORT["missing_other"]
         outcome = outcomeWords(kind, applied)
+    elif kind == "grade":
+        applied = applyGrade(cur, fx, admin_email)
+        gap = None if applied else MISSING_SUPPORT["grade_class"]
+        outcome = outcomeWords(kind, applied)
+    elif kind == "school":
+        applied = applySchool(cur, fx, admin_email, school)
+        outcome = outcomeWords(kind, applied)
+    elif kind == "not_mine":
+        applied = applyNotMine(cur, fx, admin_email)
+        if applied is None:
+            return fx["status"], "That result is not on this page any more; nothing was changed.", None
+        outcome = outcomeWords(kind, applied)
     else:
-        gap = MISSING_SUPPORT[kind]
-        outcome = outcomeWords(kind, None)
+        return fx["status"], "Unknown kind.", None
     cur.execute("""UPDATE fix_request SET status = 'approved', decided_at = now(), decided_by = %s,
                           decision_note = %s, outcome = %s, applied = %s WHERE id = %s""",
                 (admin_email, note, outcome, Json({"applied": applied, "missing_support": gap}), fid))
@@ -583,7 +671,7 @@ def admin_fixes():
         decided = [dict(r, summary=summary(r["detail"])) for r in cur.fetchall()]
         conn.commit()
     return render_template("admin_fixes.html", open_=open_, decided=decided, csrf=sess["csrf"],
-                           kind_words=KIND_WORDS, missing=MISSING_SUPPORT,
+                           kind_words=KIND_WORDS, missing=MISSING_SUPPORT, applies=APPLIES,
                            notice=request.args.get("notice", "")[:200], error=request.args.get("error", "")[:200])
 
 
@@ -598,11 +686,13 @@ def admin_fix_decide(fid):
     note = (request.form.get("note") or "").strip()[:NOTE_MAX] or None
     keep = (request.form.get("keep") or "").strip()
     keep = int(keep) if keep.isdigit() else None
+    school = " ".join((request.form.get("school") or "").split())[:120] or None
     with AC._db() as (conn, cur):
         if not tablesReady(cur):
             abort(503)
         try:
-            status, err, outcome = decide(conn, cur, fid, action, sess["account"]["email"], note, keep)
+            status, err, outcome = decide(conn, cur, fid, action, sess["account"]["email"], note, keep,
+                                          school)
         except Exception as exc:                        # noqa: BLE001
             conn.rollback()
             print(f"[fixes] decide {fid} failed ({type(exc).__name__}: {exc})", flush=True)
@@ -631,7 +721,14 @@ def main(argv):
     if "--init" in argv:
         with getConn() as conn:
             initTables(conn)
-        print("  fix_request: ready")
+            # the pins Approve writes (2026-10-10), so the first Approve does
+            # not have to create them under a web worker
+            import person_pins as PP
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL lock_timeout = '5s'")
+                PP.ensure(cur)
+            conn.commit()
+        print("  fix_request, grade_pin, school_pin, result_detach, person_pin_log: ready")
         return 0
     print("python racecast/fixes.py --init")
     return 2

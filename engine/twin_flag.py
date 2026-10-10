@@ -34,6 +34,10 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
                   the same time (XC within a second, track to the
                   hundredth): one race under two names with no canon link
                   (2026-10-06, the UVU pair).
+    twin_upload   an uploaded row (racecast/uploads.py, source 'upload')
+                  that a scraped feed also has: same day, same time, and the
+                  same person, name or school (2026-10-10; see
+                  twinUploadSql). The feed's copy survives.
     dup_same_feed the later result_id of two rows in ONE feed that agree on
                   person, meet, division (and event, on track), date and
                   time to the tenth. Two rows, one run.
@@ -62,6 +66,7 @@ import argparse
 import os
 import time
 import sys
+from collections import defaultdict
 
 sys.path.insert(0, "scripts")
 from database import getConn                                   # noqa: E402
@@ -167,6 +172,109 @@ def twinSameDaySql(table, sport):
         SELECT DISTINCT t.result_id
         FROM   t JOIN a ON a.person_id = t.person_id AND a.d = t.d
         WHERE  {match}
+    """
+
+
+# ★ AN UPLOADED MEET THE FEED LATER SCRAPES IS ONE RACE TWICE (owner,
+#   2026-10-10). racecast/uploads.py takes the results of a meet no feed
+#   had, approved by the owner into the raw tables with source 'upload'
+#   (negative meet ids of their own) -- and a meet a coach uploads in
+#   October can be posted to athletic.net in November. Nothing then links
+#   the two: different meet ids, no canon meet, and the uploaded runner may
+#   be a person the upload linker minted, not the anet profile. So the
+#   canon- and person-keyed rules above miss it, and both copies would be
+#   rated, ranked and listed.
+#
+#   THE RULE, from the two that already decide "one run in two feeds":
+#     - same day, and the same time as precisely as both print it --
+#       link_feed_twins.sameTime (to the tenth, to the second when either
+#       is whole seconds) for cross country; to the hundredth for track,
+#       relays and field events out (twin_same_day's track rule);
+#     - and it is the same runner: the same person, or the same name
+#       (link_freshmen.normName's key), or the same school
+#       (link_feed_twins.sameSchool's words) with exactly ONE partner each
+#       way -- a pack of teammates a tenth apart says nothing (link_feed_twins
+#       rule 3).
+#   ! THE FEED SURVIVES, AS ANET ALWAYS DOES: the scraped row (anet or tfrrs)
+#     carries the athlete id, the meet's own page and the re-scrape; the
+#     uploaded copy is the one flagged. Nothing is deleted (this file's rule),
+#     so the owner's approval of the upload stays on record.
+UPLOAD_PARTNERS = ("anet", "tfrrs")
+
+
+def uploadTwins(uploads, scraped):
+    """The Python twin of twinUploadSql, for the tests: uploads and scraped
+    are dicts (result_id, person_id, date, ts, name, school, sport). Returns
+    the uploaded result ids flagged."""
+    from link_feed_twins import sameSchool, sameTime
+    from link_freshmen import normName
+    pairs = []
+    for u in uploads:
+        for s in scraped:
+            if str(u["date"])[:10] != str(s["date"])[:10]:
+                continue
+            if u.get("sport", "XC") == "XC":
+                if not sameTime(u["ts"], s["ts"]):
+                    continue
+            elif round(float(u["ts"]), 2) != round(float(s["ts"]), 2):
+                continue
+            strong = ((u.get("person_id") is not None and u.get("person_id") == s.get("person_id"))
+                      or (normName(u.get("name")) is not None
+                          and normName(u.get("name")) == normName(s.get("name"))))
+            school = sameSchool(u.get("school"), s.get("school"))
+            if strong or school:
+                pairs.append((u["result_id"], s["result_id"], strong))
+    nu = defaultdict(int)
+    ns = defaultdict(int)
+    for a, b, _st in pairs:
+        nu[a] += 1
+        ns[b] += 1
+    return sorted({a for a, b, st in pairs if st or (nu[a] == 1 and ns[b] == 1)})
+
+
+def twinUploadSql(table, sport):
+    """Uploaded rows that are a scraped feed's race (see the block above)."""
+    from link_feed_twins import _sameTimeSql, _schoolWordsSql
+    from link_uploads import nameKeyTextSql
+    if sport == "XC":
+        keep, match = "", _sameTimeSql("u.ts", "s.ts")
+    else:
+        keep = "AND COALESCE(is_relay, 0) = 0 AND COALESCE(is_field, 0) = 0"
+        match = "round(u.ts::numeric, 2) = round(s.ts::numeric, 2)"
+    keep_r = keep.replace("is_relay", "r.is_relay").replace("is_field", "r.is_field")
+    feeds = ", ".join(f"'{f}'" for f in UPLOAD_PARTNERS)
+    return f"""
+        WITH u AS (
+            SELECT result_id, person_id, substr(date, 1, 10) AS d, time_seconds AS ts,
+                   NULLIF({nameKeyTextSql('athlete_name')}, '') AS nm,
+                   {_schoolWordsSql('school')} AS sw
+            FROM   {table}
+            WHERE  source = 'upload'
+              AND  time_seconds > 0 AND time_seconds < 100000
+              AND  date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}' {keep}),
+        s AS (
+            SELECT r.result_id, r.person_id, substr(r.date, 1, 10) AS d, r.time_seconds AS ts,
+                   NULLIF({nameKeyTextSql('r.athlete_name')}, '') AS nm,
+                   {_schoolWordsSql('r.school')} AS sw
+            FROM   {table} r
+            WHERE  r.source IN ({feeds})
+              AND  substr(r.date, 1, 10) IN (SELECT DISTINCT d FROM u)
+              AND  r.time_seconds > 0 AND r.time_seconds < 100000 {keep_r}),
+        c AS (
+            SELECT u.result_id AS u_rid, s.result_id AS s_rid,
+                   ((u.person_id IS NOT NULL AND u.person_id = s.person_id)
+                    OR (u.nm IS NOT NULL AND u.nm = s.nm))          AS strong
+            FROM   u JOIN s ON s.d = u.d
+            WHERE  {match}
+              AND  ((u.person_id IS NOT NULL AND u.person_id = s.person_id)
+                    OR (u.nm IS NOT NULL AND u.nm = s.nm)
+                    OR (cardinality(u.sw) > 0 AND cardinality(s.sw) > 0
+                        AND (u.sw <@ s.sw OR s.sw <@ u.sw))))
+        SELECT DISTINCT u_rid AS result_id FROM (
+            SELECT c.*, count(*) OVER (PARTITION BY u_rid) AS nu,
+                        count(*) OVER (PARTITION BY s_rid) AS ns
+            FROM c) x
+        WHERE strong OR (nu = 1 AND ns = 1)
     """
 
 
@@ -569,6 +677,7 @@ import level_conflict as LC                                     # noqa: E402
 
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("twin_same_day", twinSameDaySql),
+         ("twin_upload", twinUploadSql),
          ("dup_same_feed", dupSameFeedSql),
          ("dup_cross_date", dupCrossDateSql),
          ("dup_race_copy", dupRaceCopySql),

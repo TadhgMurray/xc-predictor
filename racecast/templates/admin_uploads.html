@@ -143,8 +143,20 @@
   </tbody></table>
   {% endif %}
   <h2>After approval</h2>
-  <p>The rows land in the raw tables with no athlete attached. Still missing in the pipeline:</p>
-  <ul class="ct-muted">{% for g in gaps %}<li>{{ g }}</li>{% endfor %}</ul>
+  <p>The rows land in the raw tables with no athlete attached. The nightly update then:</p>
+  <ul class="ct-muted">{% for s in (steps or []) %}<li>{{ s }}</li>{% endfor %}</ul>
+  {% if gaps %}<p>Still missing in the pipeline:</p>
+  <ul class="ct-muted">{% for g in gaps %}<li>{{ g }}</li>{% endfor %}</ul>{% endif %}
+  {% if linking %}
+  <h2>Athletes</h2>
+  <p>{{ linking.linked }} of {{ linking.n }} results belong to an athlete.</p>
+  {% if linking.doubtful %}
+  <p class="ct-muted">Left unlinked, for you to look at (nothing is guessed; a "Suggest a fix" or a by-hand link settles them):</p>
+  <ul class="ct-list">{% for d in linking.doubtful %}
+    <li>{{ d.name }} <span class="ct-muted">{{ d.school or "" }} · {{ d.reason }}{% if d.touched %} · {% for p in d.touched %}<a href="/athlete/{{ p }}">#{{ p }}</a>{{ ", " if not loop.last }}{% endfor %}{% endif %} · result {{ d.result_id }}</span></li>
+  {% endfor %}</ul>
+  {% endif %}
+  {% endif %}
 </aside>
 </div>
 </main>

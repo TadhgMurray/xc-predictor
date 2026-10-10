@@ -117,7 +117,13 @@ ev AS (
     FROM   results r
     LEFT   JOIN fld f ON f.source = r.source AND f.meet_id = r.meet_id
                      AND f.div_id IS NOT DISTINCT FROM r.div_id
-    LEFT   JOIN meets m        ON m.div_id = r.div_id AND r.source = 'anet'
+    -- ★ AND AN UPLOADED RACE'S DIVISION (2026-10-10): racecast/uploads.py
+    --   writes an anet-shaped meets row per race, source 'upload', the
+    --   gender in its division ("Girls Varsity"); an uploaded runner has no
+    --   athletes profile, so the label is the only vote they bring
+    LEFT   JOIN meets m        ON m.div_id = r.div_id
+                              AND (r.source = 'anet'
+                                   OR (r.source = 'upload' AND m.source = 'upload'))
     LEFT   JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id AND r.source = 'tfrrs'
     WHERE  r.person_id IS NOT NULL
     UNION ALL

@@ -3,8 +3,10 @@
    as it was when sent beside the page now, the affected rows and links,
    and Approve / Reject. Admins only (uploads.requireAdmin).
    ★ EACH CARD SAYS WHAT APPROVE WILL DO before the button is pressed:
-     applied through link_profile_school, queued for the scrape, or recorded
-     only (with the pipeline support that is missing). #}
+     applied through link_profile_school, queued for the scrape, pinned
+     (grade_pin / school_pin) or detached (result_detach) -- the pins of
+     scripts/person_pins.py, 2026-10-10 -- or recorded only (and why).
+     A decided card says "applied", what, and its undo. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -76,12 +78,17 @@
       {% if f.kind == "same_person" %}join the two pages through link_profile_school (profile_school_merge, person_link_log rule 'profile_school', redirect written; undo with <code>link_profile_school.py --undo &lt;old id&gt;</code>).
       {% elif f.kind == "missing" and d.queue %}queue {{ d.queue[2] }} meet {{ d.queue[0] }} for the next nightly scrape (meet_queue, as find_meet.py --requeue).
       {% elif f.kind == "missing" %}record it only. {{ missing.missing_other }}
-      {% else %}record it only. {{ missing[f.kind] }}{% endif %}</p>
+      {% elif f.kind == "grade" %}pin the {{ d.season }} grade{% if d.grade %} to {{ d.grade }}{% elif d.class_year %} the class of {{ d.class_year }} implies{% endif %} (grade_pin; grade_sanity lays it over its own verdict every run; undo with <code>person_pins.py --unpin grade {{ f.person_id }} {{ d.season }}</code>).
+      {% elif f.kind == "school" %}file the {{ d.season }}{% if d.sport %} {{ d.sport }}{% endif %} season under the school below (school_pin; the boards, the athlete page and the school pages follow it every run; undo with <code>person_pins.py --unpin school {{ f.person_id }} {{ d.season }}</code>).
+      {% elif f.kind == "not_mine" %}move this one result to a new athlete id now (result_detach, person_link_log rule 'detach'; the linkers skip it and step 04a3 keeps it there; undo with <code>person_pins.py --undo-detach {{ d.result_id }}</code>).
+      {% else %}record it only.{% endif %}</p>
     <form method="post" action="/account/admin/fixes/{{ f.id }}/decide" class="ct-decide">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       {% if f.kind == "same_person" %}
       <label class="ct-keep"><input type="radio" name="keep" value="{{ f.person_id }}" checked> keep #{{ f.person_id }} (the claimed page)</label>
       <label class="ct-keep"><input type="radio" name="keep" value="{{ d.other_person_id }}"> keep #{{ d.other_person_id }}</label>
+      {% elif f.kind == "school" %}
+      <label class="ct-wide">School, as it should be filed (correct the spelling if it is not the feed's) <input type="text" name="school" maxlength="120" value="{{ d.school }}"></label>
       {% endif %}
       <textarea name="note" maxlength="1000" placeholder="Note for the athlete (optional; it goes in the email)"></textarea>
       <button type="submit" name="action" value="approve" class="go ok">Approve</button>
@@ -98,20 +105,18 @@
         <span class="ct-pill s-{{ f.status }}">{{ f.status }}</span>
         <span class="ct-when">{{ f.decided_at.strftime("%b %-d") if f.decided_at else "" }}</span>
         {% set ap = (f.applied or {}) %}{% if ap.missing_support %}<span class="ct-muted" style="flex-basis:100%">Recorded only: {{ ap.missing_support }}</span>
-        {% elif ap.applied %}<span class="ct-muted" style="flex-basis:100%">Applied: {{ ap.applied.mechanism }}{% if ap.applied.undo %} · undo: <code>{{ ap.applied.undo }}</code>{% endif %}</span>{% endif %}</li>
+        {% elif ap.applied %}<span class="ct-muted" style="flex-basis:100%"><span class="ct-pill s-approved">applied</span> {{ ap.applied.mechanism }}{% if ap.applied.mechanism == "grade_pin" %}: {{ ap.applied.season }} grade {{ ap.applied.grade }}{% elif ap.applied.mechanism == "school_pin" %}: {{ ap.applied.season }} {{ ap.applied.school }}{% elif ap.applied.mechanism == "result_detach" %}: result {{ ap.applied.result_id }} to <a href="/athlete/{{ ap.applied.to_person }}">#{{ ap.applied.to_person }}</a>{% endif %}{% if ap.applied.undo %} · undo: <code>{{ ap.applied.undo }}</code>{% endif %}</span>{% endif %}</li>
     {% endfor %}</ul>{% endif %}
   </section>
 </div>
 <aside class="rc-side">
   <h2>What Approve does</h2>
   <table class="ct-facts"><tbody>
-    <tr><td>Same person</td><td>Applied: link_profile_school</td></tr>
-    <tr><td>Missing</td><td>Queued, for athletic.net and tfrrs meets</td></tr>
-    <tr><td>Grade</td><td>Recorded only</td></tr>
-    <tr><td>School</td><td>Recorded only</td></tr>
-    <tr><td>Not mine</td><td>Recorded only</td></tr>
+    {% for k in ("same_person", "missing", "grade", "school", "not_mine") %}
+    <tr><td>{{ kind_words.get(k, k) }}</td><td>Applied: {{ (applies or {}).get(k, "recorded only") }}</td></tr>
+    {% endfor %}
   </tbody></table>
-  <p class="ct-muted">Every decision emails the athlete. "Not mine" stays a report: nothing moves a result off a page from here.</p>
+  <p class="ct-muted">Every decision emails the athlete, and every applied one is logged and has an undo (shown on it once decided). Nothing is detected here: a result leaves a page only when its athlete reported it and you approve it.</p>
 </aside>
 </div>
 </main>

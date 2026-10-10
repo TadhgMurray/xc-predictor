@@ -1108,6 +1108,31 @@ def _loadMeetDistances(cur):
     return {d: dist for d, dist in cur}
 
 
+# ★ AN UPLOADED CROSS COUNTRY ROW'S GENDER IS ITS DIVISION'S (owner,
+#   2026-10-10). racecast/uploads.py writes one anet-shaped meets row per
+#   uploaded race -- the distance through div_id, as anet's -- with the
+#   race's gender in meets.division ("Girls Varsity"). An anet row reads
+#   its gender off the athletes join (_anetXcDistance returns None on
+#   purpose); an uploaded row has no athletes row and, until 04a links it,
+#   no person, so it was pooled unknown_gender. _blobGender reads this map
+#   for source 'upload', in the same slot it reads a tfrrs division title:
+#   AFTER the person's own gender, so a linked runner's verdict still wins.
+#   {div_id: 'M'|'F'}, upload divisions only (div_id < 0, never anet's).
+#   Module state, loaded once per run by _buildLookups, like the override
+#   maps above.
+_UPLOAD_DIV_GENDER = {}
+
+
+def _loadUploadDivGenders(cur):
+    cur.execute("SELECT div_id, division FROM meets WHERE source = 'upload'")
+    _UPLOAD_DIV_GENDER.clear()
+    for div_id, division in cur:
+        g = _genderFromDivName(division)
+        if g is not None:
+            _UPLOAD_DIV_GENDER[div_id] = g
+    return len(_UPLOAD_DIV_GENDER)
+
+
 # ★ ONE PATTERN FOR EVERY WHEELCHAIR SEAM. The engine's _xcQuery carries the
 #   same trio in SQL ('wheelchair|seated|ambulator') for anet XC; this is the
 #   Python spelling for the two seams SQL could not reach (tfrrs blob titles,
@@ -1814,6 +1839,8 @@ def _resolveDistanceGender(cfg, row, meet_distances, tfrrs_blob):
 # Detail   : tfrrs only. anet rows carry gender on the athlete, so a title guess
 #           there would ADD noise rather than remove it.
 def _blobGender(row, tfrrs_blob):
+    if row[_SRC] == "upload":
+        return _UPLOAD_DIV_GENDER.get(row[_DIV])
     if row[_SRC] != "tfrrs":
         return None
     info = tfrrs_blob.get((row[_MEET], row[_DIV]))
@@ -3293,6 +3320,8 @@ def _buildLookups(read_conn, cfg):
         # XC distance: anet from meets, tfrrs from the division_distances blob.
         # TF resolves distance from EVENT_DISTANCES_TF, so both dicts stay empty.
         meet_distances = _loadMeetDistances(cur) if cfg.sport == "XC" else {}
+        if cfg.sport == "XC":
+            _loadUploadDivGenders(cur)
         tfrrs_distances = (_loadTfrrsBlobDistances(cur)
                            if cfg.sport == "XC" else {})
         # Canon dedup: the matched cross-source twins (drop the tfrrs copy) and
