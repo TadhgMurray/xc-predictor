@@ -40,6 +40,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Search: {{ q }} - Racecast</title>
+    {# ! NEVER INDEXED (2026-10-10): robots.txt already keeps crawlers out of
+       /search; this covers a result page reached by a link anyway, and an
+       empty search above all. #}
+    <meta name="robots" content="noindex,follow">
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
     {# the favicon rides in _meta.html on every other page; this head does

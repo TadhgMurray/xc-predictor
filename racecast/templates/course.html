@@ -7,7 +7,12 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    {% set meta_title = course_name %}
+    {# ★ SAY WHAT THE PAGE IS (SEO pass, 2026-10-10): a bare venue name
+       won nothing for "<course> cross country course records". #}
+    {% set meta_title = course_name ~ " Cross Country Course: Records & Difficulty" %}
+    {% set meta_crumbs = [("Meets", "/meets"), (course_name, none)] %}
+    {% set meta_ld = {"@context": "https://schema.org", "@type": "SportsActivityLocation",
+                      "name": course_name, "url": site_origin ~ canonical_path()} %}
     {% set meta_description = "Course records, team records and course "
        "difficulty for " ~ course_name ~ ": how much the course gives or "
        "takes, solved from athletes who raced both here and elsewhere." %}

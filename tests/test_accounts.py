@@ -241,6 +241,9 @@ def _flowApp(monkeypatch, tokens, ages, made):
     app = flask.Flask(__name__, template_folder=os.path.join(ROOT, "racecast", "templates"))
     app.jinja_env.globals["static_v"] = lambda f: "/static/" + f
     app.jinja_env.globals["site_origin"] = "https://racecast.co"
+    # _meta.html's canonical, title and JSON-LD helpers (seo.py, 2026-10-10)
+    import seo as _seo
+    _seo.install(app, "https://racecast.co")
     app.register_blueprint(AC.bp)
     # login.html carries the site's topbar (owner, 2026-10-10), which
     # url_for()s these site pages; stand-ins so the links can be built

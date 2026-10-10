@@ -14,13 +14,15 @@
        ~ ((" " ~ header.event_short) if header.event_short else "")
        ~ " results and speed ratings, on one comparable scale across every "
          "track and season." %}
-    {% set meta_ld = {"@context": "https://schema.org", "@type": "SportsEvent",
-                      "name": meta_title, "sport": "Running",
-                      "url": site_origin ~ request.path,
-                      "startDate": ((race_date|string)[:10] if race_date else none),
-                      "eventStatus": "https://schema.org/EventScheduled",
-                      "location": ({"@type": "Place", "name": header.course_name}
-                                   if header.course_name else none)} %}
+    {# ★ THE EVENT, BY seo.eventLd (2026-10-10): url is the CANONICAL one (the
+       ?alt= meet stays itself), location carries the state as an address,
+       and the trail is Meets > meet > race. #}
+    {% set meta_ld = seo_event_ld(meta_title, site_origin ~ canonical_path(), race_date,
+                                  header.course_name, header.state) %}
+    {% set meta_crumbs = [("Meets", "/meets"),
+                          (header.meet_name|with_year(race_date),
+                           "/meet/tf/" ~ meet_id ~ (("?alt=" ~ alt_idx) if alt_idx else "")),
+                          (header.event_short or "Results", none)] %}
     {% set meta_image = site_origin ~ "/card/race/tf/" ~ meet_id ~ "/" ~ event_id ~ "/" ~ div_id ~ ".png" %}
     {% set meta_image_alt = (header.meet_name|with_year(race_date)) ~ ": the top finishers and their ratings" %}
     {% include "_meta.html" %}

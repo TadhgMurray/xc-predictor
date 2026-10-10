@@ -34,6 +34,10 @@
     {% set meta_title = (header.meet_name|with_year(group.date)) ~ " - Compiled" %}
     {% set meta_description = "Every division merged into one field - who "
        "beats whom when the races at this meet are compiled together." %}
+    {% set meta_crumbs = [("Meets", "/meets"),
+                          (header.meet_name|with_year(group.date),
+                           "/meet/xc/" ~ header.meet_id ~ (("?alt=" ~ request.args.get("alt")) if request.args.get("alt") else "")),
+                          ("Compiled", none)] %}
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">

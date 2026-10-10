@@ -23,8 +23,8 @@
 {% set meta_path = "/goal" %}
 {% set meta_crumbs = [("What it takes", "/what-it-takes"), ("What do I need to run?", none)] %}
 {% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 {% set where = (course.name if course else "a typical course") %}
