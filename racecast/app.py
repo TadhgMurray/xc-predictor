@@ -9837,6 +9837,8 @@ def _target(args):
                 field.append((pair[0], ids, entered))
         if field:
             t["field"] = field
+    # runners per team past the rulebook seven, every mode (predict.squadCap)
+    t["per_team"] = _perTeam(args)
     return t, None
 
 
@@ -9872,7 +9874,8 @@ def api_predict_field():
                                              request.args.get("alt"), div,
                                              request.args.get("src"))
             out = meetField(cur, int(meet), int(div) if div.isdigit() else None,
-                            sport, when=when, source=src)
+                            sport, when=when, source=src,
+                            per_team=_perTeam(request.args))
     out["alt"] = alt_idx
     return jsonify(out)
 
@@ -10551,6 +10554,22 @@ def api_predict_team():
     resp.headers["Server-Timing"] = ", ".join(
         f"{n};dur={ms:.0f}" for n, ms in _predict.stagesRows())
     return resp
+
+
+def _perTeam(args):
+    """?per_team=10 / ?per_team=all -> how many of each team's squad run
+    (predict.squadCap); None (absent, or 7 or fewer) is the rulebook seven.
+    ! ONLY ABOVE SEVEN: the per-school cap below seven already follows what
+      each school brought, and a smaller number would field no team."""
+    from predict import MAX_PER_TEAM, PER_TEAM_ALL
+    raw = (args.get("per_team") or "").strip().lower()
+    if raw == "all":
+        return PER_TEAM_ALL
+    try:
+        n = int(raw)
+    except ValueError:
+        return None
+    return min(n, PER_TEAM_ALL) if n > MAX_PER_TEAM else None
 
 
 # ! THE SQUAD SIZES COME FROM predict.py, which owns the scoring rules; a

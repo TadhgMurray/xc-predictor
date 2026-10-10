@@ -455,3 +455,47 @@ if __name__ == "__main__":
                test_a_missing_pool_is_not_treated_as_comparable]:
         fn()
     print("\nall squad-cap tests passed")
+
+
+# ------------------------------------------------------------------ #
+# runners per team past seven (owner, 2026-10-10: "take top 10, like
+# for NESCACs")
+# ------------------------------------------------------------------ #
+
+def test_per_team_lifts_the_cap_for_every_scoring_team():
+    # a school that brought five, six or seven (or was named by hand) gets ten
+    for n in (0, 5, 6, 7, 12):
+        assert predict.squadCap(n, per_team=10) == 10, n
+    # individual qualifiers keep exactly what they brought
+    for n in (1, 2, 3, 4):
+        assert predict.squadCap(n, per_team=10) == n, n
+    # and without it, the rulebook table is untouched
+    assert predict.squadCap(6) == 7 and predict.squadCap(3) == 3
+
+
+def test_runners_past_seven_finish_but_never_score():
+    """Ten run for a team that entered ten; only seven take scoring places,
+    so the eighth to tenth displace nobody -- the real rule."""
+    field = ([{"person_id": i, "school": "Deep", "name": f"D{i}", "entered": 10}
+              for i in range(10)]
+             + [{"person_id": 100 + i, "school": "Rival", "name": f"R{i}", "entered": 7}
+                for i in range(7)])
+    # Deep's ten first, then Rival's seven
+    preds = [{"seconds": 900 + i} for i in range(len(field))]
+    teams, finishers = predict._score(field, preds)
+    deep = {r["person_id"]: r for r in finishers if r["school"] == "Deep"}
+    assert sum(1 for r in deep.values() if r["score_place"]) == 7
+    rival_first = min(r["score_place"] for r in finishers if r["school"] == "Rival")
+    assert rival_first == 8          # places 8-10 by Deep did not push Rival back
+
+
+def test_the_request_parameter():
+    import importlib
+    os.environ.setdefault("XCP_DB_PASSWORD", "x")
+    app = importlib.import_module("app")
+    assert app._perTeam({"per_team": "10"}) == 10
+    assert app._perTeam({"per_team": "all"}) == predict.PER_TEAM_ALL
+    # seven or fewer, junk, or absent: the rulebook seven (None)
+    for v in ("7", "3", "", "x"):
+        assert app._perTeam({"per_team": v}) is None, v
+    assert app._perTeam({}) is None

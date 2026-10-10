@@ -2161,7 +2161,22 @@ SMALL_SQUAD_MAX = 5
 #
 # ! ZERO MEANS "NOT AT THE ORIGINAL MEET" -- a manually named school, where
 #   there is no attendance to cap against -- so it keeps the rulebook seven.
-def squadCap(n_at_meet):
+# ★ RUNNERS PER TEAM, WHEN A MEET TAKES MORE THAN SEVEN (owner,
+#   2026-10-10: "for each team with 5-7 indivs say take top 10, like for
+#   NESCACs"). A conference championship lets a team run ten or more; the
+#   prediction took seven and left the rest off the results. per_team lifts
+#   the cap for every school that brought a scoring team (TEAM_SCORERS or
+#   more); a school that brought fewer is still individual qualifiers and
+#   keeps exactly what it brought.
+# ! SCORING IS UNCHANGED: _score still lets a team take at most
+#   MAX_PER_TEAM scoring places, so runners eight and on finish in the
+#   results and displace nobody -- the real rule.
+PER_TEAM_ALL = 99         # "all": more than any cross country entry list
+def squadCap(n_at_meet, per_team=None):
+    if per_team:
+        if 0 < n_at_meet < TEAM_SCORERS:
+            return n_at_meet
+        return per_team
     if n_at_meet <= 0:
         return MAX_PER_TEAM
     if n_at_meet <= SMALL_SQUAD_MAX:
@@ -2182,7 +2197,7 @@ def countsBySchool(originals):
 
 
 def meetField(cur, meet_id, div_id, sport, season_year=None,
-              when="thisyear", source=None):
+              when="thisyear", source=None, per_team=None):
     """The field for a re-run, grouped by school -- and WHEN decides who.
 
     ★ `source` IS WHICH MEET (owner, 2026-10-05). The anet and tfrrs ids
@@ -2275,7 +2290,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     by_school = {}
     for school in at_meet:
         sq = squads.get(school, [])
-        cap = squadCap(at_meet_counts.get(school, 0))
+        cap = squadCap(at_meet_counts.get(school, 0), per_team)
         by_school[school] = {"school": school,
                              "state": states.get(school) or _stateOf(school),
                              # ! HOW MANY THIS SCHOOL ACTUALLY HAD ON THE
@@ -3054,7 +3069,8 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
             at_meet_counts = countsBySchool(originals)
             entries = []
             for sch in sorted(squads):
-                for e in squads[sch][:squadCap(at_meet_counts.get(sch, 0))]:
+                for e in squads[sch][:squadCap(at_meet_counts.get(sch, 0),
+                                               target.get("per_team"))]:
                     # ! WHAT THE SCHOOL ENTERED, carried on every runner so
                     #   _score can tell a team from a lone qualifier. The cap
                     #   above already keeps the lineup honest; `add` is what
@@ -3065,7 +3081,7 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
         squads = _currentSquads(cur, schools, sport,
                                 _currentSeason(cur, sport))
         entries = [e for sch in sorted(squads)
-                   for e in squads[sch][:MAX_PER_TEAM]]
+                   for e in squads[sch][:target.get("per_team") or MAX_PER_TEAM]]
 
     rm = {int(x) for x in remove if str(x).isdigit()}
     entries = [e for e in entries if e["person_id"] not in rm]
