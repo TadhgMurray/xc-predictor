@@ -75,7 +75,7 @@
 <table class="meets">
   {% for m in meets %}
   <tr><td class="d">{{ m.date|mdy }}</td>
-      <td><a href="{{ site_origin }}/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}?school={{ school|urlencode }}{% if m.pin_rid is not none %}&amp;r={{ m.pin_rid }}{% endif %}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td></tr>
+      <td><a href="{{ site_origin }}/meet/{{ 'xc' if sport == 'XC' else 'tf' }}/{{ m.meet_id }}?school={{ school|urlencode }}{% if m.pin_rid %}&amp;r={{ m.pin_rid }}{% endif %}">{{ m.meet_name if m.meet_name else "Meet " ~ m.meet_id }}</a></td></tr>
   {% endfor %}
 </table>
 {% endif %}

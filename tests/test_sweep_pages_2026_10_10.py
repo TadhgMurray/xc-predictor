@@ -574,3 +574,19 @@ def test_negative_result_anchor_scrolls():
     if out.returncode != 0:
         pytest.skip("node unavailable")
     assert out.stdout.strip() == "true,true,false"
+
+
+# ---- every template this sweep touched still compiles ------------------- #
+
+@pytest.mark.parametrize("name", [
+    "compiled.html", "compare.html", "course.html", "embed_school.html",
+    "meet.html", "meet_tf.html", "predictions.html", "race.html",
+    "race_tf.html", "rankings.html", "school.html", "school_prs.html"])
+def test_touched_templates_compile(A, name):
+    A.app.jinja_env.get_template(name)
+
+
+def test_old_course_boards_render_without_a_pin(A):
+    # a board precomputed before the rebuild has no pin_rid: no empty ?r=
+    src = _tpl("course.html")
+    assert "{% if m.pin_rid %}" in src and "is not none %}?r=" not in src
