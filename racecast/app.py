@@ -1983,6 +1983,11 @@ def athlete(person_id):
             #   raises and never waits on a cold state (it warms the cache in
             #   the background and shows nothing this once).
             wit_line = _cuts.athleteLine(cur, person_id)
+            # ★ THE GRADE RANK (2026-10-10, item 13): "#212 of HS sophomore
+            #   boys nationally · top 3.0%", one season_rank row read on its
+            #   key (grade_rank.py); None until step 10g has built it.
+            from grade_rank import gradeRank as _gradeRank
+            athlete["grade_rank"] = _gradeRank(cur, person_id, season_rating)
 
             # ⚠ THE FALLBACK IS THE OLD TABLE, and it still earns its keep:
             #   athlete_season is built from ranking_results, which is
@@ -2374,6 +2379,7 @@ def athlete(person_id):
         if _pblk.get("school"):
             athlete["school"] = _pblk["school"]
         rank_line = None
+        athlete["grade_rank"] = None        # a pro season has no grade board
         units = []
     else:
         # ★ AND A PROFESSIONAL VERDICT ON THE NEWEST SEASON, RATED OR NOT
@@ -2388,6 +2394,7 @@ def athlete(person_id):
         if pv:
             (_plabel, _psport), _pblk = pv
             athlete["grade"] = None
+            athlete["grade_rank"] = None    # no grade, no grade board
             athlete["pro_header"] = True
             _ps = _pblk.get("school")
             if _ps and _ps != athlete.get("school") and \
@@ -10194,6 +10201,17 @@ import my_page as _my_page                                     # noqa: E402
 import shortlist as _shortlist                                 # noqa: E402
 import team_meets as _team_meets                               # noqa: E402
 for _bp in (_follows.bp, _my_page.bp, _shortlist.bp, _team_meets.bp):
+    app.register_blueprint(_bp)
+
+# ★ THE READER TOOLS (owner, 2026-10-10): the rating -> time sheet (/scale),
+#   the goal calculator (/goal), the head-to-head prediction's accuracy line
+#   (/compare) and the model's record at a meet (/predictions). Each is its
+#   own blueprint; see the module headers.
+import scale as _scale                                         # noqa: E402
+import goal as _goal                                           # noqa: E402
+import h2h as _h2h                                             # noqa: E402
+import meet_track as _meet_track                               # noqa: E402
+for _bp in (_scale.bp, _goal.bp, _h2h.bp, _meet_track.bp):
     app.register_blueprint(_bp)
 
 

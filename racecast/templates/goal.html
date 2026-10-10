@@ -1,0 +1,157 @@
+{# =====================================================================
+  goal.html -- "What do I need to run?" (goal.py, owner 2026-10-10, item 4)
+
+  ★ THE RACE PAGE'S SHAPE: the header (tag, title, a meta line ending in
+    Share) with the answer on the champion line, then the form, then the
+    goal's clocks as one plain table. Server-rendered from the query
+    string, so every answer is a link; goal.js only adds the course picker
+    and hides the fields a goal does not use.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('pages2.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('tools.css') }}">
+{% from "_scale.html" import rv %}
+{% set glabel = (goals|selectattr(0, "equalto", goal)|first)[1] %}
+{% set meta_title = "What do I need to run? " ~ glabel %}
+{% set meta_description = "The time it takes to make state, finish top 25 or top 8 there, or match a college's typical recruit, at any cross country course and distance." %}
+{% set meta_path = "/goal" %}
+{% set meta_crumbs = [("What it takes", "/what-it-takes"), ("What do I need to run?", none)] %}
+{% include "_meta.html" %}
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+{% set where = (course.name if course else "a typical course") %}
+
+<main class="page-wide p2-page rc goal-page">
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--xc">High school {{ gender_words|lower }} cross country</span></div>
+      <h1>What do I need to run?</h1>
+      <div class="rc-meta">
+        {% if target %}{{ glabel }}{% if goal == "recruit" %} · {{ target.label }}{% else %} · {{ state_name }} {{ target.label }}{% endif %} · {{ (dist)|goal_dist }} at {{ where }}{% else %}A goal, a course, a distance{% endif %}
+        · <a href="/what-it-takes">What it takes</a>
+        · <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title }} on Racecast"
+            data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      {% if target and times %}
+      <div class="rc-champs">
+        <div><span class="k">You need</span>
+          <span class="rc-crow"><b class="rc-cn">{{ (times.course or times.typical)|scale_time or "–" }}</b><i>{{ (dist)|goal_dist }} at {{ where }}</i></span>
+          <span class="rc-csub">a season rating of {{ rv(target.rating, target.rating) }}</span></div>
+        {% if athlete and athlete.times %}
+        <div><span class="k">{{ athlete.name or "This athlete" }} now</span>
+          <span class="rc-crow"><b class="rc-cn">{{ (athlete.times.course or athlete.times.typical)|scale_time or "–" }}</b><i>{% if athlete.gap > 0 %}{{ "%.1f"|format(athlete.gap) }} points to find{% else %}already there, {{ "%.1f"|format(-athlete.gap) }} points to spare{% endif %}</i></span>
+          <span class="rc-csub">{{ athlete.year }} season rating {{ rv(athlete.rating, athlete.rating) }}</span></div>
+        {% endif %}
+      </div>
+      {% else %}
+      <p class="rc-story">Pick a goal: making your state meet, a top-25 or top-8 finish there, or a college's typical
+        recruit. Then a course and a distance, and read the time that goal takes there.</p>
+      {% endif %}
+    </div>
+  </div></header>
+
+  <form class="goal-form" method="get" action="/goal" id="goal-form">
+    {% if athlete %}<input type="hidden" name="athlete" value="{{ athlete.person_id }}">{% endif %}
+    <div class="field">
+      <label for="goal-goal">Goal</label>
+      <select id="goal-goal" name="goal">
+        {% for k, lab in goals %}<option value="{{ k }}"{% if k == goal %} selected{% endif %}>{{ lab }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="goal-g">Runners</label>
+      <select id="goal-g" name="g">
+        <option value="boys"{% if gender == "boys" %} selected{% endif %}>Boys</option>
+        <option value="girls"{% if gender == "girls" %} selected{% endif %}>Girls</option>
+      </select>
+    </div>
+    <div class="field goal-state">
+      <label for="goal-state">State</label>
+      <select id="goal-state" name="state">
+        <option value="">Pick a state</option>
+        {% for code, name in states %}<option value="{{ code }}"{% if code == state %} selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field goal-state">
+      <label for="goal-div">Division</label>
+      <select id="goal-div" name="div">
+        {% if not divisions %}<option value="">{{ "Pick a state first" if not state else "None on record" }}</option>{% endif %}
+        {% for s, short in divisions %}<option value="{{ s }}"{% if s == slug %} selected{% endif %}>{{ short }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field goal-college">
+      <label for="goal-college">College</label>
+      <input id="goal-college" name="college" list="goal-colleges" value="{{ college }}" autocomplete="off" placeholder="Type a college">
+      <datalist id="goal-colleges">{% for c in colleges %}<option value="{{ c }}">{% endfor %}</datalist>
+    </div>
+    <div class="field goal-course">
+      <label for="goal-course">Course</label>
+      <div class="h2h-search">
+        <input id="goal-course" type="search" autocomplete="off" value="{{ course.name if course and not course.state_course else '' }}"
+               placeholder="{{ course.name if course and course.state_course else 'A typical course' }}">
+        <input type="hidden" name="cid" id="goal-cid" value="{{ cid or '' }}">
+        <div class="h2h-sug hidden" id="goal-course-sug"></div>
+      </div>
+    </div>
+    <div class="field">
+      <label for="goal-dist">Distance</label>
+      <select id="goal-dist" name="dist" data-have="{{ (course.distances if course and not course.state_course else [])|join(',') }}">
+        {% set opts = (course.distances if course and course.distances and not course.state_course else [3000, 4000, 4800, 5000, 6000, 8000]) %}
+        {% if (dist|int) not in opts %}{% set opts = (opts + [dist|int])|sort %}{% endif %}
+        {% for m in opts %}<option value="{{ m }}"{% if m == dist|int %} selected{% endif %}>{{ (m)|goal_dist }}</option>{% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="more-btn goal-go">Show the time</button>
+  </form>
+  {% if error %}<p class="p2-note goal-err">{{ error }}</p>{% endif %}
+
+  {% if target and times %}
+  <div class="rc-grid rc-grid-one">
+  <div class="rc-mainc">
+    {% if target.thin %}
+    <div class="p2-banner" role="note"><strong>Thin data.</strong> {{ target.thin_reasons|join("; ")|capitalize }}. Read this mark as a rough guide, not a line.</div>
+    {% endif %}
+    <table class="p2-tbl goal-tbl">
+      <thead><tr><th>Where</th><th class="num">The goal</th>{% if athlete and athlete.times %}<th class="num">{{ athlete.name or "Athlete" }} now</th>{% endif %}</tr></thead>
+      <tbody>
+        {% set rows = [] %}
+        {% if times.course %}{% set _ = rows.append(((dist)|goal_dist ~ " at " ~ course.name ~ (" (the state meet's course)" if course.state_course else ""), "course")) %}{% endif %}
+        {% set _ = rows.append(((dist)|goal_dist ~ " on a typical course", "typical")) %}
+        {% set _ = rows.append(("1600 on a typical track", "t1600")) %}
+        {% set _ = rows.append(("3200 on a typical track", "t3200")) %}
+        {% for label, key in rows %}
+        <tr><td>{{ label }}</td><td class="num"><strong>{{ times.get(key)|scale_time or "–" }}</strong></td>
+          {% if athlete and athlete.times %}<td class="num">{{ athlete.times.get(key)|scale_time or "–" }}</td>{% endif %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="p2-foot">
+      {% if goal == "recruit" %}
+        The rating is the median high-school rating of {{ target.label }}'s recruits{% if target.classes %}, classes of {{ target.classes }}{% endif %}
+        ({{ target.n }} recruits, recent classes weighted most){% if target.p25 is not none and target.p75 is not none %}; the middle half ran
+        {{ rv(target.p25, target.p25) }} to {{ rv(target.p75, target.p75) }}{% endif %}.
+        <a href="{{ target.href }}">All their recruits</a>.
+      {% else %}
+        The {{ target.year }} mark for {{ state_name }} {{ target.label }} {{ gender_words|lower }}: the season rating
+        {{ mark_pct }}% of {{ target.whose }} had reached ({{ target.n }} rated runners).
+        <a href="{{ target.href }}">Every season's marks</a>.
+      {% endif %}
+      Times use the conversions page's own arithmetic; the rating already allows for the course, and a
+      real race also carries the day.
+    </p>
+  </div>
+  </div>
+  {% endif %}
+</main>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('goal.js') }}"></script>
+</body>
+</html>

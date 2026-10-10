@@ -186,6 +186,7 @@
       <div class="rc-meta">
         Season ratings of the runners who were actually there{% if cell %}, {{ cell.seasons|map(attribute='year')|join(', ') }}{% endif %}
         · <span class="p2-muted">computed {{ data.computed_at|ago_words }}</span>
+        · <a href="/goal?state={{ state }}&amp;div={{ division_slug }}&amp;g={{ gender }}">These marks at any course</a>
         · {{ share_link("What it takes: " ~ dlabel ~ " " ~ gender_words ~ " on Racecast", site_origin ~ meta_path) }}
       </div>
       {# the latest season's marks, the page's headline facts #}

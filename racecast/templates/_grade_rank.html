@@ -1,0 +1,7 @@
+{# The grade line under the header rating (grade_rank.py, owner 2026-10-10,
+   item 13): "#212 of HS sophomore boys nationally · top 3.0% · #14 in CA".
+   Each number opens the board it is read off, filtered to the grade. #}
+{%- set g = athlete.grade_rank -%}
+{%- if g -%}
+<span class="s-sub s-grade"><a href="{{ g.href }}">#{{ "{:,}".format(g.rank) }}</a> of {{ g.words }} nationally{% if g.pct %} &middot; {{ g.pct }}{% endif %}{% if g.state %} &middot; <a href="{{ g.state_href }}">#{{ "{:,}".format(g.state_rank) }}</a> in {{ g.state }}{% endif %}</span>
+{%- endif -%}

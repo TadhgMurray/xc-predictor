@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="{{ static_v('athlete-charts.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
     <script defer src="{{ static_v('topbar-search.js') }}"></script>
+    <link rel="stylesheet" href="{{ static_v('tools.css') }}">
 </head>
 <body>
 {% include "_topbar.html" %}
@@ -113,6 +114,8 @@
         <a class="seg-btn is-on" href="#meetings" data-tab="meetings">Meetings<span class="n">{{ meetings|length }}</span></a>
         {% if seasons %}<a class="seg-btn" href="#seasons" data-tab="seasons">Season by season</a>{% endif %}
         {% if bests or brate %}<a class="seg-btn" href="#bests" data-tab="bests">Best performances</a>{% endif %}
+        {# ★ THE NEXT RACE, PREDICTED (2026-10-10): _h2h_predict.html #}
+        <a class="seg-btn" href="#predict" data-tab="predict">Predicted</a>
       </nav>
       {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
     </div>
@@ -199,6 +202,7 @@
     </table>
     </section>
     {% endif %}
+    {% include "_h2h_predict.html" %}
 
 {% elif not same %}
     <p class="meta">Pick two athletes and compare: their record in the races
@@ -213,6 +217,7 @@
 <script src="{{ static_v('athlete-charts.js') }}"></script>
 <script src="{{ static_v('staged.js') }}"></script>
 <script src="{{ static_v('compare.js') }}"></script>
+<script src="{{ static_v('h2h.js') }}"></script>
 <script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

@@ -1,0 +1,109 @@
+/* tools.css -- the small reader tools of 2026-10-10: the rating -> time
+   sheet (/scale), the grade rank under the athlete header, the head-to-head
+   prediction on /compare, the per-meet track record on /predictions and the
+   goal calculator (/goal). Each block rides the race page's own classes
+   (race.css, pages2.css) and adds only what those do not have: no new
+   colours, no new type, nothing louder than the page around it. */
+
+/* ---- /scale ------------------------------------------------------------ */
+.scale-page .scale-nav { margin: 0.6rem 0 0.8rem; }
+/* ★ THE RACE PAGE'S TABLE, COMPACT AND BALANCED (owner, 2026-10-10: "looks
+   off"). A fixed layout: the rating a bold first column of modest width on
+   the left, every time column the same width, right-aligned tabular
+   numerals; the whole table as wide as its content wants and no wider than
+   a readable 720px. The header row sticks while the rows scroll. */
+.scale-page table.scale-tbl { width: 100%; max-width: 720px; table-layout: fixed;
+  border-collapse: separate; border-spacing: 0; border: 1px solid var(--line, #e5e7eb);
+  border-radius: 6px; font-variant-numeric: tabular-nums; }
+.scale-page .scale-tbl th, .scale-page .scale-tbl td { padding: 0.42rem 0.75rem; border: 0;
+  border-bottom: 1px solid var(--line, #e5e7eb); text-align: right; white-space: nowrap; }
+.scale-page .scale-tbl tbody tr:last-child td { border-bottom: 0; }
+.scale-page .scale-tbl col.scale-rc { width: 10.5rem; }
+.scale-page .scale-tbl thead th { position: sticky; top: 0; z-index: 1; background: #f5f5f5;
+  color: var(--ink, #111418); font-size: 0.86rem; font-weight: 600; text-transform: none;
+  letter-spacing: 0; border-bottom: 1px solid var(--line-2, #cbd0d6); }
+.scale-page .scale-tbl thead th:first-child { border-top-left-radius: 6px; }
+.scale-page .scale-tbl thead th:last-child { border-top-right-radius: 6px; }
+.scale-page .scale-tbl th.scale-r, .scale-page .scale-tbl td.scale-r { text-align: left; }
+.scale-page .scale-tbl td.scale-r { font-weight: 700; color: var(--ink, #111418); }
+.scale-page .scale-tbl tbody tr:nth-child(even) td { background: #fafbfc; }
+/* ★ LANDMARK ROWS: the No. 100 and the middle of the board -- a subtle tint
+   and a small tag beside the rating, a signpost, not a second line */
+.scale-page .scale-tbl tbody tr.scale-lm td { background: var(--sel-bg, #f1f2f4); }
+.scale-page .scale-tbl .scale-mark { display: inline-block; margin-left: 0.45rem; padding: 0.05rem 0.45rem;
+  border: 1px solid var(--line-2, #cbd0d6); border-radius: 999px; background: #fff;
+  font-size: 0.72rem; font-weight: 500; color: var(--muted, #6b7280); vertical-align: 0.08em; }
+.scale-page .scale-pool + .scale-pool { margin-top: 1.6rem; }
+.scale-page .scale-pool .p2-foot { max-width: 720px; }
+.scale-page .scale-print { font: inherit; }
+@media (max-width: 640px) {
+  .scale-page table.scale-tbl { font-size: 0.88rem; }
+  .scale-page .scale-tbl th, .scale-page .scale-tbl td { padding: 0.42rem 0.3rem; }
+  .scale-page .scale-tbl th.scale-r, .scale-page .scale-tbl td.scale-r { padding-left: 0.55rem; }
+  .scale-page .scale-tbl col.scale-rc { width: 6.6rem; }
+  .scale-page .scale-tbl.scale-cols-5 col.scale-rc { width: 6.2rem; }
+  .scale-page .scale-tbl .scale-mark { margin-left: 0.25rem; padding: 0 0.35rem; font-size: 0.66rem; }
+}
+
+/* ★ PRINTABLE (owner: "Printable"): the table and its one-line footnote, no
+   site chrome, no controls; with ?pool=all each pool starts a page. */
+@media print {
+  body:has(main.scale-page) .topbar,
+  .scale-page .scale-nav, .scale-page .rc-meta,
+  .scale-page .rc-story, .scale-page .scale-how { display: none !important; }
+  .scale-page { padding: 0; }
+  .scale-page .scale-tbl { max-width: none; font-size: 10pt; }
+  .scale-page .scale-tbl th, .scale-page .scale-tbl td { padding: 0.12rem 0.5rem; }
+  .scale-page .scale-tbl thead th { position: static; }
+  .scale-page .scale-pool + .scale-pool { break-before: page; }
+}
+
+/* ---- /compare: the Predicted tab (_h2h_predict.html, h2h.js) ----------- */
+.h2h-pred .h2h-pred-form { flex-wrap: wrap; }
+.h2h-pred .h2h-pred-form select,
+.h2h-pred .h2h-pred-form input[type="date"] { padding: 0.4rem 0.5rem; border: 1px solid #ccc;
+  border-radius: 4px; font: inherit; font-size: 0.9rem; background: #fff; }
+.h2h-pred .h2h-course-field input { min-width: 15rem; }
+.h2h-pred .h2h-pred-out { margin: 0.8rem 0 0.4rem; }
+/* ★ THE MEETINGS TABLE'S OWN LOOK (owner, 2026-10-10: "make it a full-width
+   table in the race-page table style"): the site's table rules do the
+   width, the boxes and the padding; only the numbers' weight is added. */
+.h2h-pred .h2h-pred-tbl .h2h-t { font-weight: 700; font-variant-numeric: tabular-nums; }
+.h2h-pred .h2h-pred-tbl .h2h-band { color: var(--muted, #6b7280); font-variant-numeric: tabular-nums; }
+.h2h-pred .h2h-pred-tbl .h2h-none { color: var(--muted, #6b7280); }
+.h2h-pred .h2h-pred-tbl .h2h-dot { margin-right: 0.35rem; }
+/* the margin is the headline, above the table */
+.h2h-pred .h2h-margin { margin: 0 0 0.5rem; font-size: 1.1rem; }
+.h2h-pred .h2h-muted, .h2h-acc .h2h-muted { color: var(--muted, #6b7280); font-size: 0.85em; }
+.h2h-pred .h2h-acc { margin-top: 0.8rem; max-width: 46rem; }
+@media (max-width: 640px) {
+  .h2h-pred .h2h-course-field, .h2h-pred .h2h-course-field input { min-width: 0; width: 100%; }
+}
+
+/* ---- /goal (goal.html, goal.js) ---------------------------------------- */
+.goal-page .goal-form { display: flex; flex-wrap: wrap; gap: 0.6rem 0.8rem; align-items: flex-end;
+  margin: 1rem 0 0.6rem; }
+.goal-page .goal-form .field label { display: block; font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted, #6b7280); margin-bottom: 0.2rem; }
+.goal-page .goal-form select, .goal-page .goal-form input { padding: 0.42rem 0.55rem; border: 1px solid #ccc;
+  border-radius: 4px; font: inherit; font-size: 0.9rem; background: #fff; }
+.goal-page .goal-form #goal-course, .goal-page .goal-form #goal-college { min-width: 14rem; }
+.goal-page .goal-form .field[hidden] { display: none; }
+.goal-page .goal-go { width: auto; }
+.goal-page .goal-tbl { max-width: 40rem; }
+.goal-page .goal-tbl td:first-child { color: var(--ink, #111418); width: auto; }
+.goal-page .goal-err { color: #a05a00; }
+@media (max-width: 640px) {
+  .goal-page .goal-form .field { flex: 1 1 45%; }
+  .goal-page .goal-form .goal-course, .goal-page .goal-form .goal-college { flex-basis: 100%; }
+  .goal-page .goal-form select, .goal-page .goal-form input,
+  .goal-page .goal-form #goal-course, .goal-page .goal-form #goal-college { width: 100%; min-width: 0; box-sizing: border-box; }
+}
+
+/* ---- /predictions: the model's record at this meet (meet-record.js) ---- */
+.pred-page .meet-record { margin: 0.45rem 0 0; }
+
+/* six pools and All do not fit a phone: the control scrolls inside itself,
+   never the page */
+.scale-page .scale-nav .p2-seg { max-width: 100%; overflow-x: auto; }
+.scale-page .scale-nav .p2-seg a { white-space: nowrap; }

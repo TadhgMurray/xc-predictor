@@ -344,6 +344,7 @@
                rating. The distance is the one a reader of the pool expects
                (conversions.ratingClock). #}
             {% if athlete.equiv_time %}<span class="s-sub s-clock" title="The rating as a time: a cross country rating as a 5K on a track, a track rating at the athlete's main event. The conversions page does any other course or distance.">&asymp; {{ athlete.equiv_time }} {{ athlete.equiv_dist }} {{ athlete.equiv_where or "on a typical course" }}</span>{% endif %}
+            {% include "_grade_rank.html" %}
         </div>
         {% if alltime.rating %}
         <div>
@@ -408,6 +409,7 @@
         ({{ wit_line.label }}, {{ rv(wit_line.mark, wit_line.mark) }})
         {%- endif %}
         <span class="sep">·</span><a href="{{ wit_line.href }}">Past marks</a>
+        <span class="sep">·</span><a href="/goal?athlete={{ athlete.person_id }}">Any goal, any course</a>
         {# goal times: the mark as a clock where this athlete actually races,
            and at the round's championship course (cuts.goalTimes) #}
         {%- if wit_line.times %}
