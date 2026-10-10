@@ -436,3 +436,13 @@ class Wiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_ldjson_drops_a_templates_missing_values():
+    # an athlete with no school must not 500 the page (2026-10-10)
+    import seo
+    from jinja2 import ChainableUndefined
+    out = str(seo.ldJson({"@type": "Person", "name": "A",
+                          "memberOf": ChainableUndefined(name="school"),
+                          "list": [ChainableUndefined(), "x"]}))
+    assert "memberOf" not in out and '"list":["x"]' in out

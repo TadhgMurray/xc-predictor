@@ -133,6 +133,12 @@ def _clean(obj):
     if isinstance(obj, (list, tuple)):
         return [x for x in (_clean(v) for v in obj)
                 if not (x is None or x == "" or x == [] or x == {})]
+    # ! A TEMPLATE'S MISSING VALUE IS ABSENT TOO. The site's Jinja runs with
+    #   ChainableUndefined, so a page whose context lacks a field (an athlete
+    #   with no school) handed json.dumps an Undefined and the whole page 500'd.
+    from jinja2 import Undefined
+    if isinstance(obj, Undefined):
+        return None
     return obj
 
 
