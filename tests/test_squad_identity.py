@@ -258,7 +258,7 @@ def client(fixtures, monkeypatch):
     monkeypatch.setattr(A, "getConn", lambda: _Conn())
     calls = {"levels": 0}
 
-    def meetLevels(cur, meet_id, div_id, sport, source=None):
+    def meetLevels(cur, meet_id, div_id, sport, source=None, event_id=None):
         calls["levels"] += 1
         return {"college"}
     monkeypatch.setattr(P, "meetLevels", meetLevels)

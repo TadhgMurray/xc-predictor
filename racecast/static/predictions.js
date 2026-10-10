@@ -470,11 +470,14 @@ function showWhen(when) {
   if (pt) pt.hidden = when !== "thisyear";
 }
 
-/* "10" -> 10; blank, junk or 7 and under -> null (the rulebook seven). */
+/* "10" -> 10; blank, junk or 7 and under -> null (the rulebook seven).
+   ! A TRACK EVENT TAKES ANY NUMBER FROM ONE (entries per school; blank is
+     what each school entered -- app._perTeam). */
 function parsePerTeam(v) {
   if (v === "all") return 99;
   const n = parseInt(v, 10);
-  return Number.isFinite(n) && n > 7 ? Math.min(n, 99) : null;
+  const floor = state.meet && state.meet.sport === "TF" ? 1 : 8;
+  return Number.isFinite(n) && n >= floor ? Math.min(n, 99) : null;
 }
 function syncPerTeam() {
   const el = $("per-team");
@@ -521,7 +524,7 @@ async function restoreFromQuery(p, names) {
   } catch (err) { /* the meet still opens, unnamed */ }
   const tail = (alt ? `?alt=${alt}` : "")
     + (src ? `${alt ? "&" : "?"}src=${src}` : "");
-  await chooseMeet({ link: (first ? `/race/${sport}/${id}/${first}` : `/meet/${sport}/${id}`) + tail,
+  await chooseMeet({ link: (first ? raceLink(sport, id, first) : `/meet/${sport}/${id}`) + tail,
                      label: name || `Meet ${id}`, sub: date || "" });
 
   // the races, as one group: a single division, or several scored as one
@@ -1025,8 +1028,14 @@ function parseMeetLink(link) {
   const src = sm ? sm[1] : null;
   const race = /^\/race\/(xc|tf)\/(\d+)\/(\d+)(?:\/(\d+))?/.exec(link || "");
   if (race) {
+    /* ★ A TRACK RACE IS AN EVENT (owner, 2026-10-10: "predictions for tf
+       races are majorly messed up"). /race/tf/<meet>/<event>/<div> named
+       both, and only the division was kept -- so the "race" was every event
+       in it. The race key is "<div>-<event>" (predict.splitRaceKey), opaque
+       to everything here that keys a race. */
+    const tfDiv = race[4] ? `${race[4]}-${race[3]}` : race[3];
     return { sport: race[1].toUpperCase(), id: race[2],
-             div: race[1] === "tf" ? (race[4] || race[3]) : race[3], alt: alt,
+             div: race[1] === "tf" ? tfDiv : race[3], alt: alt,
              src: src };
   }
   const meet = /^\/meet\/(xc|tf)\/(\d+)/.exec(link || "");
@@ -1035,6 +1044,47 @@ function parseMeetLink(link) {
              src: src };
   }
   return null;
+}
+
+/* The race page's link for a race key: parseMeetLink's inverse. A track key
+   "<div>-<event>" is /race/tf/<meet>/<event>/<div>, the race page's order. */
+function raceLink(sport, id, key) {
+  const m = /^(\d+)-(\d+)$/.exec(String(key));
+  if (sport === "tf" && m) return `/race/tf/${id}/${m[2]}/${m[1]}`;
+  return `/race/${sport}/${id}/${key}`;
+}
+
+/* ★ TRACK, NOT CROSS COUNTRY (2026-10-10): the few places the page's copy
+   and controls differ -- event points instead of team places, entries per
+   event instead of a seven-runner team, no course box (a track's venue is
+   not a course to swap), times to the hundredth. */
+function isTrack() {
+  return !!(state.meet && state.meet.sport === "TF");
+}
+
+/* 4:31.07 -- a track time to the hundredth; fmtTime everywhere else. */
+function fmtRaceTime(s) {
+  if (!isTrack() || s === null || s === undefined) return fmtTime(s);
+  const c = Math.round(Number(s) * 100);
+  const m = Math.floor(c / 6000);
+  return `${m}:${((c - m * 6000) / 100).toFixed(2).padStart(5, "0")}`;
+}
+
+/* The controls that change with the sport, set once a meet is chosen. */
+function applySportUI() {
+  const tf = isTrack();
+  const box = $("course-box");
+  if (box) box.hidden = tf;
+  const lab = $("per-team-label");
+  const el = $("per-team");
+  if (lab) lab.textContent = tf ? "Entries per team" : "Runners per team";
+  if (el) {
+    el.min = tf ? "1" : "7";
+    el.placeholder = tf ? "as entered" : "7";
+    el.title = tf
+      ? "How many of each school's athletes to enter in this event. Blank is what each school entered in it (at its last running, for a meet not yet run); three for a school with no entry to count."
+      : "How many of each team's runners to put in the race. Blank is seven; a conference meet often runs ten. Only seven score.";
+  }
 }
 
 /* A year out of the label or the sublabel. Meets are stored with it in the
@@ -1208,7 +1258,7 @@ function renderChosenMeet(bare) {
      <div class="mc-sub">
        <span id="mc-date">${state.meet.date ? `${state.meet.upcoming ? "" : "ran "}${esc(state.meet.date)} \u00b7 ` : ""}</span>
        ${esc(state.meet.sport === "XC" ? "Cross Country" : "Track & Field")}
-       <span id="mc-course"></span>
+       <span id="mc-course"></span><span id="mc-race"></span>
        <p class="hint" id="mc-basis" hidden></p>
      </div>
      <button class="mc-change" data-clear="meet">Change</button>
@@ -1231,6 +1281,18 @@ function renderChosenMeet(bare) {
        </label>
        <span class="mc-mode-hint" id="mc-mode-hint"></span>
      </div>`;
+  applySportUI();
+  showRaceHead();
+}
+
+/* ★ THE EVENT IN THE HEADER (2026-10-10): a track meet is a dozen races,
+   and "Track & Field" alone does not say which one is being predicted --
+   the race open for editing does: "1600m · Varsity Boys". */
+function showRaceHead() {
+  const el = $("mc-race");
+  if (!el) return;
+  const lab = isTrack() && state.meet.div ? _divLabels.get(String(state.meet.div)) : "";
+  el.textContent = lab ? ` · ${lab}` : "";
 }
 
 
@@ -1310,6 +1372,12 @@ async function loadRaces() {
     for (const r of races) _divGender.set(String(r.div_id), r.gender || "");
     if (races.length < 2) {
       if (races.length === 1) state.meet.div = String(races[0].div_id);
+      // a lone track event still names itself in the header (showRaceHead)
+      if (races.length === 1 && races[0].event) {
+        _divLabels.set(String(races[0].div_id),
+                       [races[0].event, races[0].label].filter(Boolean).join(" · "));
+        showRaceHead();
+      }
       return;
     }
     /* ★ ALL RACES BY DEFAULT (owner, 2026-10-08: "the default race picked
@@ -1319,7 +1387,13 @@ async function loadRaces() {
        pressing "All races" does. A shared link or a restored session that
        names its races keeps them. */
     if (!state.divs.length) {
-      state.divs = races.map((r) => String(r.div_id));
+      /* ! A LINK TO ONE TRACK EVENT OPENS THAT EVENT (2026-10-10): a meet's
+           dozen events are a dozen predictions, and the race page's
+           "predict this race" means the one it was on */
+      const linked = isTrack() && state.meet.div
+        && races.some((r) => String(r.div_id) === String(state.meet.div));
+      state.divs = linked ? [String(state.meet.div)]
+                          : races.map((r) => String(r.div_id));
       state.raceMode = "separate";
       state.groups = groupsForMode(state.divs, state.raceMode);
       state.meet.div = state.divs[0];
@@ -1341,9 +1415,14 @@ async function loadRaces() {
         `<button class="race-chip quick${setOn(qs.ids) ? " is-on" : ""}" ` +
         `data-set="${i}">${esc(qs.label)}</button>`).join("") +
       races.map((r) => {
-        const bits = [r.label];
-        if (r.gender) bits.push(r.gender === "M" ? "Boys" : "Girls");
-        if (r.distance) bits.push(`${Math.round(r.distance)}m`);
+        /* ★ A TRACK RACE NAMES ITS EVENT FIRST (2026-10-10): "1600m ·
+           Varsity Boys". Its name already says the distance ("1600m",
+           "Men's Mile"), so the metres are not repeated, and the gender
+           is added only where neither name says it. */
+        const bits = r.event ? [r.event, r.label].filter(Boolean) : [r.label];
+        const said = /\b(boys?|girls?|(wo)?men'?s?)\b/i.test(bits.join(" "));
+        if (r.gender && !(r.event && said)) bits.push(r.gender === "M" ? "Boys" : "Girls");
+        if (r.distance && !r.event) bits.push(`${Math.round(r.distance)}m`);
         _divLabels.set(String(r.div_id), bits.join(" \u00b7 "));
         const id = String(r.div_id);
         const gi = groupIndex().get(id);
@@ -1372,6 +1451,7 @@ async function loadRaces() {
          OR combined -- it is just the race -- and showing the control there
          is two radio buttons and a sentence that mean nothing. */
     $("mc-mode").classList.toggle("hidden", races.length < 2);
+    showRaceHead();
     $("mc-mode").querySelectorAll("input[name=racemode]").forEach((r) => {
       r.addEventListener("change", () => {
         state.raceMode = r.value;
@@ -1460,6 +1540,7 @@ async function loadRaces() {
         x.classList.toggle("is-editing",
                            state.divs.length > 1 && d === state.meet.div);
       });
+      showRaceHead();          // the race open for editing, by name (track)
     }
 
     box.querySelectorAll(".race-chip").forEach((b) => {
@@ -2073,7 +2154,8 @@ function buildQuery(div) {
      server does with an absent value -- so nothing is sent unless a
      different venue was actually chosen. "As it ran" never sends one: that
      mode means the race that happened, on the course it happened on. */
-  if (state.when === "thisyear" && state.course) q.set("course", state.course);
+  // ! never for track: _applyCourse ignores it there and the box is hidden
+  if (state.when === "thisyear" && state.course && !isTrack()) q.set("course", state.course);
   // the same lineup size the field on screen was read at (fetchField)
   if (state.when === "thisyear" && state.perTeam) q.set("per_team", state.perTeam);
 
@@ -2500,6 +2582,7 @@ function scoreSpreadTip(t, d, teams) {
 }
 
 function teamScoreTable(d, opts) {
+  if (d.scoring === "points") return eventPointsTable(d, opts);
   /* ★ THE TOOLS RIDE ON THE PAGE'S OWN RESULT ONLY: a head-to-head drawn
        under it is an answer, not a new place to start from. */
   const tools = !(opts && opts.tools === false) && state.who === "team";
@@ -2619,6 +2702,79 @@ function teamScoreTable(d, opts) {
     </table>${note}${toolbar}${tools ? '<div class="team-tool-out"></div>' : ""}`;
 }
 
+/* ★ A TRACK EVENT'S TEAMS, BY EVENT POINTS (owner, 2026-10-10: "predictions
+   for tf races are majorly messed up"). The cross country table -- five
+   scorers, two displacers, low score wins, "no team has five runners" --
+   was drawn for a 1600. One track event pays 10-8-6-5-4-3-2-1 to the first
+   eight from a team (tf_points' table, predict._eventPoints), every
+   entrant counts, and the most points wins. Each team's scorers are listed
+   with the place they took and what it paid.
+   ! NO DUAL MEET OR BEST SEVEN: both are cross country questions (a track
+     dual meet pays 5-3-1, and a "best seven" has no meaning for an event). */
+function eventPointsTable(d, opts) {
+  const teams = d.teams || [];
+  const anySim = !!(d.sim && d.sim.available && teams.some((t) => t.sim));
+  const heading = opts && opts.title === "" ? ""
+    : `<h2>${esc((opts && opts.title) || "Predicted event points")}</h2>`;
+  if (!teams.length) {
+    return `${heading}<p class="meta">No school has a predicted runner in
+      this event.</p>`;
+  }
+  const rows = teams.map((t, i) => {
+    const scorers = (t.runners || []).filter((r) => r.points)
+      .map((r) => `<a href="/athlete/${encodeURIComponent(r.person_id)}"
+          title="${esc(r.name || "")} – ${fmtRaceTime(r.seconds)}">${
+          esc(ordinal(r.place))} (${esc(r.points)})</a>`).join(", ");
+    return `<tr data-find="${esc(findKey([t.school_label
+        || schoolWithState(t.team, t.state), t.team,
+        ...(t.runners || []).map((r) => r.name)]))}">
+      <td>${i + 1}</td>
+      <td>${schoolCell(t.team, t.state, t.school_href, t.school_label,
+                       t.crest)}</td>
+      <td${t.sim ? ` class="has-tip" title="${esc(pointsSpreadTip(t, d))}"`
+                 : ""}>${esc(t.score_display ?? String(t.score))}${
+        t.sim ? '<span class="tip-dot">\u00b7</span>' : ""}</td>
+      ${anySim ? `<td class="pwin">${pct((t.sim || {}).p_win) ?? " - "}</td>` : ""}
+      <td class="ev-scorers">${scorers || " - "}</td>
+    </tr>`;
+  }).join("");
+  return `${heading}
+    <table>
+      <thead><tr>
+        <th>Place</th><th>Team</th><th>Points</th>
+        ${anySim ? `<th class="pwin" title="How often this team scores the
+          most points when the event is run ${(d.sim || {}).draws || 0}
+          times, drawing each runner out of their predicted band.">Win</th>` : ""}
+        <th>Scorers</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="meta">Event points: 10-8-6-5-4-3-2-1 to the first eight
+      finishers who run for a team, every entrant counting. Most points wins.${
+      anySim ? ` Win chances and the range behind each total come from running
+      the event ${d.sim.draws.toLocaleString()} times.` : ""}${
+      d.sim && d.sim.available === false && d.sim.reason
+        ? ` (No win chances: ${esc(d.sim.reason)})` : ""}</p>`;
+}
+
+/* "1" -> "1st", "12" -> "12th": the place a scorer took. */
+function ordinal(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return String(n ?? "");
+  const t = v % 100;
+  const s = t >= 11 && t <= 13 ? "th"
+    : ({ 1: "st", 2: "nd", 3: "rd" })[v % 10] || "th";
+  return `${v}${s}`;
+}
+
+/* The spread behind a team's event points, from the simulation. */
+function pointsSpreadTip(t, d) {
+  const s = t.sim || {};
+  if (s.score_p10 === undefined || s.score_p10 === null) return "";
+  return `Usually ${Math.round(s.score_p10)}-${Math.round(s.score_p90)} points `
+    + `over ${((d.sim || {}).draws || 0).toLocaleString()} simulated runnings.`;
+}
+
 /* Every predicted finisher, one per row -- race.html's second table.
    ★ THE BAND STAYS. A single race carries about +-4 rating points, so a time
      quoted to a tenth with no range claims a precision the model does not
@@ -2666,6 +2822,8 @@ function timeBasisNote(runners) {
 function finishTable(d) {
   const runners = d.runners || [];
   if (!runners.length) return "";
+  // a track event's Points are event points (predict._eventPoints)
+  const points = d.scoring === "points";
   // the r marker only means something when the field mixes the two bases
   const mixed = runners.some((r) => r.basis === "rating")
              && runners.some((r) => r.basis !== "rating");
@@ -2682,14 +2840,14 @@ function finishTable(d) {
       <td class="no-break"${r.basis === "rating"
           ? ` title="From this runner's race ratings${
               r.stale_years ? ` (last rated race over ${Math.floor(r.stale_years) + 1} years ago)` : ""}${
-              r.model_seconds ? ` - the model said ${fmtTime(r.model_seconds)}` : ""}"` : ""
-        }>${fmtTime(r.seconds)}${r.basis === "rating" && mixed
+              r.model_seconds ? ` - the model said ${fmtRaceTime(r.model_seconds)}` : ""}"` : ""
+        }>${fmtRaceTime(r.seconds)}${r.basis === "rating" && mixed
           ? `<sup class="pred-rb" aria-label="from race ratings">r</sup>` : ""}${
         r.lo !== undefined && r.lo !== null
-          ? `<span class="pred-band">${fmtTime(r.lo)}–${
-              fmtTime(r.hi)}</span>` : ""}</td>
+          ? `<span class="pred-band">${fmtRaceTime(r.lo)}–${
+              fmtRaceTime(r.hi)}</span>` : ""}</td>
       <td class="no-break">${rv(r.rating, r.hs_rating) || " - "}</td>
-      <td>${r.score_place || " - "}</td>
+      <td>${(points ? r.points : r.score_place) || " - "}</td>
     </tr>`).join("");
   return `<h2>Predicted results</h2>
     <table>
@@ -2701,8 +2859,12 @@ function finishTable(d) {
     </table>
     ${timeBasisNote(runners)}${ratingBasisNote(runners)}
     <p class="meta">Each time is the model's prediction with its likely range
-      underneath. Points is the scoring place: the gap from Place is the
-      unattached runners, the incomplete teams and the eighth runners.</p>`;
+      underneath. ${points
+      ? `Points are this event's: 10-8-6-5-4-3-2-1 to the first eight
+      finishers who run for a team (an unattached finisher keeps the place,
+      the points go on to the next).`
+      : `Points is the scoring place: the gap from Place is the
+      unattached runners, the incomplete teams and the eighth runners.`}</p>`;
 }
 
 /* ★ LAID OUT AS A RACE PAGE (owner, 2026-10-10, the race-page shape):
@@ -2793,6 +2955,7 @@ function filterPredicted(input) {
 function teamSideCard(d) {
   const full = (d.teams || []).filter((t) => t.score !== null);
   if (!full.length) return "";
+  if (d.scoring === "points") return pointsSideCard(d, full);
   const anySim = !!(d.sim && d.sim.available && full.some((t) => t.sim));
   const rows = full.slice(0, 10).map((t, i) => {
     const sp = (t.runners || []).slice(0, 5)
@@ -2812,6 +2975,30 @@ function teamSideCard(d) {
       <p class="rc-tip">${tip}</p>
       <a class="rc-more" href="#teams" data-tab="teams">${
         full.length > 10 ? `All ${full.length} teams and tools` : "All teams and tools"}</a>
+    </aside>`;
+}
+
+/* The side card for a track event: the event points, most first, with the
+   places that earned them under each school (eventPointsTable's rule). */
+function pointsSideCard(d, teams) {
+  const anySim = !!(d.sim && d.sim.available && teams.some((t) => t.sim));
+  const rows = teams.slice(0, 10).map((t, i) => {
+    const sp = (t.runners || []).filter((r) => r.points)
+      .map((r) => `<i>${r.place}</i>`).join("");
+    const win = anySim ? pct((t.sim || {}).p_win) : null;
+    return `<tr><td class="tp">${i + 1}</td><td class="tn">${
+      schoolCell(t.team, t.state, t.school_href, t.school_label, t.crest)
+    }<span class="sp">${sp}</span></td><td class="n tpts">${
+      esc(t.score_display ?? String(t.score))}${
+      win ? `<small>${win} win</small>` : ""}</td></tr>`;
+  }).join("");
+  return `<aside class="rc-side">
+      <h2>Event points <small>places that scored</small></h2>
+      <table class="rc-tscores rc-tscores-plain"><tbody>${rows}</tbody></table>
+      <p class="rc-tip">Most points wins: 10-8-6-5-4-3-2-1 to the first eight
+        from a team.</p>
+      <a class="rc-more" href="#teams" data-tab="teams">${
+        teams.length > 10 ? `All ${teams.length} teams` : "All teams"}</a>
     </aside>`;
 }
 
@@ -3664,9 +3851,13 @@ function squadButtons(on, asran) {
     `<button class="vbtn${on === v ? " is-on" : ""}" data-whole="${v}" title="${title}">${label}</button>`;
   // the lineup size the box set (state.perTeam), seven by default
   const n = state.perTeam || 7;
+  /* ! A TRACK EVENT FIELDS WHAT EACH SCHOOL ENTERED in it, its best at the
+       distance first (predict._tfEventSquads) -- not a top seven */
+  const tf = isTrack() && !state.perTeam;
   return ` <span class="viewsel">Squads:` +
-    btn("fielded", asran ? "As raced" : `Top ${n}`,
+    btn("fielded", asran ? "As raced" : (tf ? "As entered" : `Top ${n}`),
         asran ? "Each team's runners as the results list them"
+              : tf ? "Each school's entries in this event, its best at this distance first"
               : `Each team's ${n} best by predicted time, the squad it would field`) +
     btn("whole", "Everyone",
         `Every current runner of every team onto its card, not only the top ${n}`) +
@@ -4148,6 +4339,7 @@ document.addEventListener("click", (e) => {
     saveState();
   } else if (x.dataset.clear === "meet") {
     state.meet = null;
+    applySportUI();            // the cross country controls back
     resetMeetScoped();
     resetEdits();
     state.field = null;

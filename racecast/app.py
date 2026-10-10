@@ -10025,11 +10025,26 @@ MAX_FIELD_TEAMS = 400
 MAX_FIELD_RUNNERS = 3000
 
 
+# ★ ONE RACE KEY RULE FOR TRACK (2026-10-10), predict's -- imported when
+#   used, as every predict import here is (the module is heavy)
+def splitRaceKey(raw):
+    from predict import splitRaceKey as _split
+    return _split(raw)
+
+
+def trackRaces(rows):
+    from predict import trackRaces as _races
+    return _races(rows)
+
+
 def _perTeam(args):
     """?per_team=10 / ?per_team=all -> how many of each team's squad run
     (predict.squadCap); None (absent, or 7 or fewer) is the rulebook seven.
     ! ONLY ABOVE SEVEN: the per-school cap below seven already follows what
-      each school brought, and a smaller number would field no team."""
+      each school brought, and a smaller number would field no team.
+    ★ EXCEPT A TRACK EVENT (2026-10-10), where it is ENTRIES per school in
+      the event (predict.tfEntryCap) and one is a real answer: any number
+      from one up; blank is each school's own entry count."""
     from predict import MAX_PER_TEAM, PER_TEAM_ALL
     raw = (args.get("per_team") or "").strip().lower()
     if raw == "all":
@@ -10038,6 +10053,8 @@ def _perTeam(args):
         n = int(raw)
     except ValueError:
         return None
+    if (args.get("sport") or "").strip().upper() == "TF":
+        return min(n, PER_TEAM_ALL) if n >= 1 else None
     return min(n, PER_TEAM_ALL) if n > MAX_PER_TEAM else None
 
 
@@ -10060,6 +10077,15 @@ def _target(args):
         t["meet_id"] = int(raw)
         t["div_id"] = args.get("div_id")
         t["sport"] = args.get("sport") or "XC"
+        # ★ A TRACK RACE IS AN EVENT (2026-10-10): the page's race key is
+        #   "<div>-<event>" (predict.splitRaceKey); an explicit event_id is
+        #   read too, for a caller that sends the two apart
+        _d, _e = splitRaceKey(t["div_id"])
+        if _e is None and str(args.get("event_id") or "").strip().isdigit():
+            _e = int(str(args.get("event_id")).strip())
+        if _e is not None:
+            t["div_id"] = _d
+            t["event_id"] = _e
         # ★ WHICH OF THE MEETS THAT SHARE THIS ID (owner, 2026-10-05): the
         #   opaque ?alt=N the meet page uses. Resolved to a source by
         #   _withSource once a cursor exists; validated there by pick_source,
@@ -10220,6 +10246,8 @@ def api_predict_field():
     sport = (request.args.get("sport") or "XC").strip().upper()
     if sport not in ("XC", "TF"):
         return jsonify({"error": "sport must be XC or TF."}), 400
+    # ★ A TRACK RACE'S KEY CARRIES ITS EVENT (2026-10-10): splitRaceKey
+    div_n, event_n = splitRaceKey(div)
 
     when = (request.args.get("when") or "thisyear").strip()
     if when not in ("thisyear", "asran"):
@@ -10230,11 +10258,12 @@ def api_predict_field():
             # ★ THE ONE MEET (2026-10-05): see _predictSource; and the feed
             #   a Coming-up link named, for a meet not yet run (_feedPin)
             src, alt_idx = _predictSourceFor(cur, int(meet), sport,
-                                             request.args.get("alt"), div,
+                                             request.args.get("alt"), div_n,
                                              request.args.get("src"))
-            out = meetField(cur, int(meet), int(div) if div.isdigit() else None,
+            out = meetField(cur, int(meet), div_n,
                             sport, when=when, source=src,
-                            per_team=_perTeam(request.args))
+                            per_team=_perTeam(request.args),
+                            event_id=event_n)
     out["alt"] = alt_idx
     return jsonify(out)
 
@@ -10312,24 +10341,33 @@ def api_predict_races():
                           "n_results": r["n_results"]} for r in rows]
                 _fillRaceGenders(cur, int(meet), src, races)
             else:
+                # ★ A TRACK RACE IS ONE EVENT OF ONE DIVISION (owner,
+                #   2026-10-10: "predictions for tf races are majorly messed
+                #   up"). This listed divisions -- "Varsity Boys (412)", every
+                #   event's results counted together, the meets_tf join
+                #   missing event_id so each result counted once per event
+                #   row -- and a college meet as one genderless "Division 0".
+                #   Now one row per (division, event), only the distance
+                #   races a rating can predict (predict.trackRaces), counted
+                #   by their own results.
                 cur.execute("""
-                    SELECT r.div_id, m.division,
-                           count(*) AS n_results
+                    SELECT r.div_id, r.event_id,
+                           min(r.event_short)      AS event_short,
+                           min(m.division)         AS division,
+                           min(m.distance_meters)  AS distance_meters,
+                           count(*)                AS n_results
                     FROM   results_tf r
-                    LEFT JOIN meets_tf m ON m.meet_id = r.meet_id
-                                        AND m.div_id  = r.div_id
-                                        AND m.source  = r.source
+                    LEFT JOIN meets_tf m ON m.meet_id  = r.meet_id
+                                        AND m.div_id   = r.div_id
+                                        AND m.event_id = r.event_id
+                                        AND m.source   = r.source
                     WHERE  r.meet_id = %(meet)s
                       AND  (%(src)s::text IS NULL OR r.source = %(src)s)
-                    GROUP  BY r.div_id, m.division
-                    ORDER  BY m.division NULLS LAST, r.div_id
+                      AND  COALESCE(r.is_field, 0) = 0
+                      AND  COALESCE(r.is_relay, 0) = 0
+                    GROUP  BY r.div_id, r.event_id
                 """, {"meet": int(meet), "src": src})
-                from tf_points import genderOf as _genderOf
-                races = [{"div_id": r["div_id"],
-                          "label": r.get("division") or f"Division {r['div_id']}",
-                          "distance": None,
-                          "gender": _genderOf(r.get("division") or ""),
-                          "n_results": r["n_results"]} for r in cur.fetchall()]
+                races = trackRaces(cur.fetchall())
             # ★ THE MEET'S OWN DATE (owner, 2026-09-01). The page used to
             #   scrape this out of the SEARCH SUBLABEL with a regex, so a meet
             #   whose sublabel carried no ISO date silently had no date at
@@ -10370,6 +10408,18 @@ def api_predict_races():
                     up = None
                 if up:
                     races, meet_date = up_races, up.get("date")
+                    # ★ A POSTED TRACK MEET LISTS ITS POSTED EVENTS, as one
+                    #   that ran does (trackRaces) -- not its divisions
+                    if sport == "TF":
+                        cur.execute("""
+                            SELECT div_id, event_id, event_short, division,
+                                   distance_meters, 0 AS n_results
+                            FROM   meets_tf
+                            WHERE  meet_id = %(meet)s
+                              AND  (%(src)s::text IS NULL OR source = %(src)s)
+                        """, {"meet": int(meet),
+                              "src": src or up.get("source")})
+                        races = trackRaces(cur.fetchall()) or races
                     # the feed the posted meet was found in, when the
                     # results could not say: the course and name below
                     # read the same meet
@@ -10473,6 +10523,8 @@ def _squadParams(args):
     #   so nothing is narrowed and nothing is re-derived.
     meet = (args.get("meet_id") or "").strip()
     div = (args.get("div_id") or "").strip()
+    # ★ A TRACK RACE'S KEY CARRIES ITS EVENT (2026-10-10): splitRaceKey
+    div_n, event_n = splitRaceKey(div)
     # ★ AS IT RAN: the squad of the meet's own season, not this one's
     #   (owner, 2026-10-05: "as it ran includes new freshmen")
     as_ran = (args.get("when") or "").strip().lower() == "asran"
@@ -10480,7 +10532,7 @@ def _squadParams(args):
             "as_ran": as_ran,
             "levels_given": "levels" in args,
             "meet_id": int(meet) if meet.isdigit() else None,
-            "div_id": int(div) if div.isdigit() else None,
+            "div_id": div_n, "event_id": event_n,
             # ★ WHICH MEET OF THE ID (2026-10-05): _squadsServed resolves it
             "alt": (args.get("alt") or "").strip() or None,
             # and the feed a Coming-up link named (2026-10-06): _feedPin
@@ -10504,15 +10556,22 @@ def _squadsServed(cur, wanted, p):
                                       p["div_id"], p.get("src"))
         if not p["levels_given"]:
             levels = predict.meetLevels(cur, p["meet_id"], p["div_id"], sport,
-                                        source=src)
+                                        source=src,
+                                        event_id=p.get("event_id"))
         # ★ AND THE RACE'S GENDER WHEN THE PAGE SENT NONE (owner, 2026-10-05:
         #   a whole roster added to a men's race brought the women's team).
         #   Only from a named division -- a meet as a whole is both sides.
-        if not gender and p["div_id"]:
+        if not gender and p["div_id"] is not None:
             try:
                 ids = [r["person_id"] for r in predict._exactField(
-                    cur, p["meet_id"], p["div_id"], sport, source=src)]
-                gender = predict._fieldGender(cur, ids, sport) or None
+                    cur, p["meet_id"], p["div_id"], sport, source=src,
+                    event_id=p.get("event_id"))]
+                # a track event names its own gender (predict._raceGender)
+                gender = (predict._raceGender(cur, p["meet_id"], p["div_id"],
+                                              sport, src, ids,
+                                              event_id=p.get("event_id"))
+                          if p.get("event_id") is not None
+                          else predict._fieldGender(cur, ids, sport)) or None
             except Exception:                            # noqa: BLE001
                 cur.connection.rollback()
         # ★ THE MEET'S STATE NAMES THE NAMESAKE WHEN THE PAGE DID NOT: an

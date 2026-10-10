@@ -395,6 +395,16 @@ def predictTeam(cur, schools, target, head_to_head=False,
 
     with _stage("score"):
         teams, finishers = _score(field, preds)
+        # ★ A TRACK EVENT SCORES BY POINTS, NOT BY PLACES (2026-10-10). _score
+        #   is the cross country rule -- five scorers, seven per team, low
+        #   total wins -- and it was scoring 1600s: a school with four milers
+        #   "could not score", and one with a single winner scored nothing.
+        #   One event at a track meet pays tf_points' place table to the
+        #   first eight from a team, every entrant counts, highest total
+        #   wins. The finish order (`finishers`) is _score's, unchanged.
+        track = (target.get("sport") or "XC").upper() == "TF"
+        if track:
+            teams = _eventPoints(finishers)
 
     # ★ THE PAGE RENDERS WHAT A RESULTS PAGE RENDERS, so the row carries what
     #   race.html's row carries: the school's resolved link and label, the
@@ -429,11 +439,62 @@ def predictTeam(cur, schools, target, head_to_head=False,
     out = {"available": True,
            "mode": "head_to_head" if head_to_head else "meet",
            "teams": teams,
-           "runners": finishers}
+           "runners": finishers,
+           # xc: places, low wins | points: track event points, high wins
+           "scoring": "points" if track else "xc"}
     if sim:
         with _stage("sim"):
             out["sim"] = _stampSim(field, preds, teams, finishers,
-                                   draws=draws, team_rho=team_rho)
+                                   draws=draws, team_rho=team_rho,
+                                   scoring=out["scoring"])
+    return out
+
+
+# Purpose:   one track event's team points over a predicted finish order.
+# Input:     finishers -- _score's runner rows, in predicted finish order
+#            (school None for the unattached).
+# Output:    [team rows], most points first: {team, state, score (points),
+#            score_display, runners [{person_id, name, place, seconds,
+#            points}], scoring: "points"}; each finisher row gets `points`.
+#
+# ★ tf_points' OWN RULE, NOT A SECOND ONE. _award is what the meet pages
+#   score a real track event with: TABLE (10-8-6-5-4-3-2-1) down the order,
+#   an unattached finisher keeps their place and the points skip to the next
+#   team runner, ties split. A predicted race has no ties in practice
+#   (times to the hundredth), but the rule is the same function.
+# ! EVERY SCHOOL ON THE LINE IS A ROW, at 0 when nobody placed: "no points"
+#   is the prediction for that team, not a team that could not score.
+def _eventPoints(finishers):
+    from tf_points import _award, fmtPoints
+    timed = [r for r in finishers if r.get("seconds") is not None]
+    entries = [((float(r["seconds"]), 0, 0), ("person", r.get("person_id")),
+                r) for r in timed]
+    by_team, order = {}, []
+    for _label, pts, _win, r in _award(entries):
+        r["points"] = fmtPoints(pts) if pts else None
+        # ! NOT A CROSS COUNTRY SCORING PLACE: _score stamped one, and the
+        #   finish table would print it under "Points"
+        r["score_place"] = None
+        team = r.get("school")
+        if not team:
+            continue
+        if team not in by_team:
+            by_team[team] = {"team": team, "state": r.get("school_state"),
+                             "divs": None, "points": 0.0, "runners": [],
+                             "scoring": "points"}
+            order.append(team)
+        t = by_team[team]
+        t["points"] += pts
+        t["runners"].append({"person_id": r.get("person_id"),
+                             "name": r.get("name"), "place": r.get("place"),
+                             "seconds": r.get("seconds"),
+                             "points": r["points"]})
+    out = [by_team[t] for t in order]
+    for t in out:
+        t["score"] = round(t["points"], 2)
+        t["score_display"] = fmtPoints(t["points"])
+    # most points first; equal points keep the better first finisher ahead
+    out.sort(key=lambda t: (-t["points"], order.index(t["team"])))
     return out
 
 
@@ -466,7 +527,8 @@ def predictTeam(cur, schools, target, head_to_head=False,
 #   measured that here yet, so the honest default is to leave it out and say
 #   so -- score_sd published at rho=0 is the narrowest the spread can
 #   honestly be, not the likeliest.
-def _stampSim(field, preds, teams, finishers, draws=None, team_rho=0.0):
+def _stampSim(field, preds, teams, finishers, draws=None, team_rho=0.0,
+              scoring="xc"):
     """Merge the simulation onto the team and runner rows; return its
     top-level summary. Never raises: a page that cannot simulate still shows
     the prediction it already had."""
@@ -478,6 +540,8 @@ def _stampSim(field, preds, teams, finishers, draws=None, team_rho=0.0):
         kw = {"team_rho": float(team_rho or 0.0)}
         if draws:
             kw["draws"] = int(draws)
+        if scoring == "points":
+            kw["scoring"] = "points"       # a track event (race_sim)
         res = race_sim.simulate(field, preds, **kw)
     except Exception:                                   # noqa: BLE001
         import logging
@@ -520,6 +584,13 @@ def predictTeamLineup(cur, schools, target, team, remove=None, add=None,
     The returned rows are the same decorated runner rows predictTeam serves,
     so the page can render a lineup exactly the way it renders a field.
     """
+    # ★ A CROSS COUNTRY QUESTION (2026-10-10): "which seven" is five scorers
+    #   and two displacers; a track event's entries score by points and the
+    #   page does not offer this for one
+    if (target.get("sport") or "XC").upper() == "TF":
+        return {"available": False,
+                "reason": "Best lineup is for cross country; a track event "
+                          "is scored by event points."}
     status = modelStatus()
     if not status["available"]:
         return status
@@ -977,6 +1048,21 @@ def _predictTimes(cur, person_ids, target, spec=None):
             #   the cut removed, and it is what this line is looking for.
             orig = [r for r in full if r.get("meet_id") == spec.get("meet_id")
                     and (not src or r.get("source") in (None, src))]
+            # ★ AND THIS EVENT'S ROW, AT A TRACK MEET (2026-10-10). A miler
+            #   who also ran the 800 that day has two rows here, and orig[-1]
+            #   was whichever sorted last -- the 1600 prediction set beside
+            #   their 800 time. A track corpus row's course_name IS its
+            #   event name (feature_extraction._TF_SQL), so it matches the
+            #   spec's; failing a name match, the same distance; failing
+            #   both, no actual rather than another event's.
+            if not spec.get("is_xc") and spec.get("event_short"):
+                same = [r for r in orig
+                        if r.get("course_name") == spec["event_short"]]
+                if not same and spec.get("distance_meters"):
+                    d = round(float(spec["distance_meters"]))
+                    same = [r for r in orig if r.get("distance_meters")
+                            and round(float(r["distance_meters"])) == d]
+                orig = same
             if orig:
                 # ★ THE RAW TIME THEY RAN, NOT ITS NORMALIZED FORM. The
                 #   corpus row carries both, and the prediction beside it is
@@ -1271,9 +1357,15 @@ def _ratingRows(cur, person_ids, lo_date, hi_date):
         return out
     for sport, table in (("XC", "results"), ("TF", "results_tf")):
         skip = _outlierFilter(cur, sport)
+        # ★ A TRACK ROW SAYS WHICH RACE IT WAS (2026-10-10): its event name,
+        #   for the distance _formRating weights by, and its meet, so a
+        #   prelim and its final count once
+        extra = (", r.event_short, r.meet_id" if sport == "TF"
+                 else ", NULL AS event_short, NULL AS meet_id")
         cur.execute(f"""
             SELECT COALESCE(r.person_id, r.athlete_id) AS pid, r.date,
                    r.speed_rating, split_part(r.rating_pool, '|', 1) AS pool
+                   {extra}
             FROM   {table} r
             WHERE  (r.person_id = ANY(%s)
                     OR (r.person_id IS NULL AND r.athlete_id = ANY(%s)))
@@ -1282,26 +1374,54 @@ def _ratingRows(cur, person_ids, lo_date, hi_date):
               AND  (r.time_seconds IS NULL OR r.time_seconds < 19999)
               {skip}
         """, (ids, ids, lo_date or "0000", hi_date))
+        ep = None
         for row in cur.fetchall():
-            pid, d, rating, pool = (
-                (row["pid"], row["date"], row["speed_rating"], row["pool"])
-                if isinstance(row, dict) else tuple(row))
-            out.setdefault(pid, []).append((str(d), float(rating), pool, sport))
+            row = (row if isinstance(row, dict) else
+                   dict(zip(("pid", "date", "speed_rating", "pool",
+                             "event_short", "meet_id"), tuple(row))))
+            pid, d, rating, pool = (row["pid"], row["date"],
+                                    row["speed_rating"], row["pool"])
+            metres = None
+            if sport == "TF" and row.get("event_short"):
+                ep = ep or _eventParse()
+                metres, _g = ep.distanceFromEventShort(row["event_short"])
+            out.setdefault(pid, []).append(
+                (str(d), float(rating), pool, sport,
+                 float(metres) if metres else None, row.get("meet_id")))
+    # ! NEWEST FIRST BY (date, rating) ONLY: the trailing fields may be None
+    #   and a None does not compare with a number
     for rows in out.values():
-        rows.sort(reverse=True)
+        rows.sort(key=lambda r: (r[0], r[1]), reverse=True)
     return out
 
 
-def _formRating(rows, sport=None):
+def _formRating(rows, sport=None, distance=None):
     """(rating, sigma_log, pool, n) from an athlete's recent rated races:
     the pool they raced in LAST (a rating is relative to its pool), the last
     few races in it, a fall or a DNF-shaped outlier dropped, recent races
     weighted up. None when nothing is left.
 
+    rows: (date, rating, pool[, sport[, metres[, meet_id]]]), newest first.
+
     ★ THE TARGET'S SPORT FIRST, when it has two races or more. The two
       sports' ratings are meant to be one scale and are not yet (the TF
       sport-level gap is still being fitted), and a cross country prediction
-      read off a spring of track ratings came out two minutes fast."""
+      read off a spring of track ratings came out two minutes fast.
+
+    ★ AND FOR A TRACK TARGET, THE TARGET'S DISTANCE (2026-10-10). "The last
+      six rated races" at any distance served a miler's 1600 off a spring
+      of 400s. With `distance`, a track race's weight halves per doubling
+      of distance away from the target (2 ** -|log2(d / target)|): an 800
+      counts half in a 1600 prediction, a 3200 half, a 400 a quarter. Half
+      per rung is the same trade the recency weight makes -- 0.8 ** 3 is
+      0.51, so a race one rung off counts like a same-distance race three
+      races older; a recent race at a neighbouring distance is still
+      evidence, never noise. A row with no distance (XC, or a name the
+      parser cannot price) keeps weight 1.
+    ★ ONE RACE PER EVENT PER MEET: a prelim and its final are two rows of
+      one race (the qualifying round is often run to qualify, not all out),
+      so the better of the two stands for both -- otherwise a championship
+      fills half of the last-six window by itself."""
     if not rows:
         return None
     if sport:
@@ -1309,12 +1429,36 @@ def _formRating(rows, sport=None):
         if len(same) >= 2:
             rows = same
     pool = rows[0][2]
-    vals = [r[1] for r in rows if r[2] == pool][:_RATING_LAST_N]
+    mine = [r for r in rows if r[2] == pool]
+    if distance:
+        kept, at = [], {}
+        for r in mine:
+            m = r[4] if len(r) > 4 else None
+            meet = r[5] if len(r) > 5 else None
+            if m and meet is not None:
+                k = (meet, round(float(m)))
+                if k in at:
+                    i = at[k]
+                    if r[1] > kept[i][1]:
+                        kept[i] = r
+                    continue
+                at[k] = len(kept)
+            kept.append(r)
+        mine = kept
+    mine = mine[:_RATING_LAST_N]
+    vals = [r[1] for r in mine]
     if not vals:
         return None
     med = sorted(vals)[len(vals) // 2]
-    vals = [v for v in vals if v >= med - _RATING_OUTLIER_PTS]
-    w = [0.8 ** k for k in range(len(vals))]
+    keep = [i for i, v in enumerate(vals) if v >= med - _RATING_OUTLIER_PTS]
+    w = []
+    for k, i in enumerate(keep):
+        wk = 0.8 ** k
+        m = mine[i][4] if len(mine[i]) > 4 else None
+        if distance and m:
+            wk *= 2.0 ** -abs(math.log2(float(m) / float(distance)))
+        w.append(wk)
+    vals = [vals[i] for i in keep]
     tot = sum(w)
     rating = sum(wi * v for wi, v in zip(w, vals)) / tot
     if len(vals) > 1:
@@ -1417,7 +1561,8 @@ def _ratingTimes(cur, person_ids, spec, cut):
             last = _asDate(mine[0][0])
             if last:
                 stale_yrs = max(0.0, (hi_d - last).days / 365.25 - 1.0)
-        form = _formRating(recent or mine, sport)
+        form = _formRating(recent or mine, sport,
+                           distance=(float(dist) if sport == "TF" else None))
         if form is None:
             continue
         rating, sig, pool, n = form
@@ -1429,8 +1574,12 @@ def _ratingTimes(cur, person_ids, spec, cut):
             continue
         lo = at(rating * math.exp(sig), pool) or secs * math.exp(-sig)
         hi = at(rating * math.exp(-sig), pool) or secs * math.exp(sig)
-        out[pid] = {"seconds": round(secs, 1), "lo": round(lo, 1),
-                    "hi": round(hi, 1), "sigma_pct": round(100.0 * sig, 2),
+        # ! TRACK TIMES TO THE HUNDREDTH (2026-10-10): a 1600 is read and
+        #   ranked in hundredths, and a tenth hides a real gap between two
+        #   milers the page then prints as a tie
+        nd = 2 if sport == "TF" else 1
+        out[pid] = {"seconds": round(secs, nd), "lo": round(lo, nd),
+                    "hi": round(hi, nd), "sigma_pct": round(100.0 * sig, 2),
                     "is_race_time": True, "time_basis": "rating",
                     "basis": "rating", "form_rating": round(rating, 1),
                     "form_pool": pool, "n_races": n,
@@ -2102,6 +2251,7 @@ def _tfSpecSql(tf_dist, ov_join, venue):
                        NULL AS altitude_meters,
                        NULL AS canonical_id, @COLS@
                        m.location_id, m.is_indoor,
+                       m.event_id, m.event_short, m.division,
                        COALESCE((SELECT min(r.date) FROM results_tf r
                                  WHERE r.meet_id = m.meet_id
                                    AND r.source = m.source),
@@ -2114,8 +2264,17 @@ def _tfSpecSql(tf_dist, ov_join, venue):
 @OVJOIN@@JOINS@
                 WHERE m.meet_id = %(meet)s
                   AND (%(div)s::bigint IS NULL OR m.div_id = %(div)s)
+                  AND (%(event)s::bigint IS NULL OR m.event_id = %(event)s)
                   AND (%(src)s::text IS NULL OR m.source = %(src)s)
-                  AND @DIST@ IS NOT NULL
+                -- ★ THE EVENT'S OWN ROW (2026-10-10). This was "any row of
+                --   the division with a distance, LIMIT 1" -- the 100 m's,
+                --   the 3200's, whichever came back first -- and a stored
+                --   distance of -1 (anet's failed-scrape placeholder) passed
+                --   IS NOT NULL. A named event is one row; without one, a
+                --   row whose distance is real is preferred, in a fixed
+                --   order, and a row with none still answers (its name
+                --   carries the distance: _targetSpec reads it there).
+                ORDER BY (@DIST@ > 0) DESC NULLS LAST, m.event_id
                 LIMIT 1
             """.replace("@COLS@", cols).replace("@JOINS@", joins) \
                .replace("@OVJOIN@", ov_join).replace("@DIST@", tf_dist)
@@ -2201,12 +2360,26 @@ def _targetSpec(cur, target):
             #   corpus (_TF_SQL) already does.
             ov_join, ov_coal = _specOverride("m", "TF", "m.distance_meters")
             tf_dist = f"COALESCE({ov_coal} m.distance_meters)"
+            ev = target.get("event_id")
+            ev = int(ev) if ev is not None and str(ev).isdigit() else None
             cur.execute(_tfSpecSql(tf_dist, ov_join,
                                    _venueDifficultyOn("TF")),
-                        {"meet": meet_id, "div": div, "src": src})
+                        {"meet": meet_id, "div": div, "event": ev,
+                         "src": src})
         row = cur.fetchone()
         if row:
             spec.update(dict(row))
+        # ★ A TRACK EVENT'S DISTANCE FROM ITS NAME when the stored one is
+        #   missing or a placeholder (2026-10-10). Every tfrrs row has no
+        #   distance_meters and a failed anet scrape stores -1; both made the
+        #   spec distance-less, and every runner was then stripped "no
+        #   distance" -- no college track meet could be predicted at all.
+        if sport == "TF":
+            stored = spec.get("distance_meters")
+            if stored is None or float(stored) <= 0:
+                metres, _g = tfEventInfo(spec.get("event_short"),
+                                         spec.get("division"))
+                spec["distance_meters"] = metres
         # ★ AND THE DATE OF THAT MEET WHEN ITS ROW HAD NONE -- a tfrrs track
         #   meet whose events never landed in meets_tf, a tfrrs meet with no
         #   meets_tfrrs row -- read off the same source's results and meet
@@ -2491,8 +2664,151 @@ def countsBySchool(originals):
     return counts
 
 
+# ------------------------------------------------------------------ #
+#  A TRACK RACE IS ONE EVENT                                          #
+# ------------------------------------------------------------------ #
+#
+# ★ (meet, division, EVENT), NOT (meet, division) (owner, 2026-10-10:
+#   "predictions for tf races are majorly messed up"). An anet track
+#   division ("Varsity Boys") holds every event of the day -- the 100, the
+#   1600, the shot put, the 4x400 -- and the page, the races list, the
+#   field and the target spec all keyed a track race on the division, so a
+#   "1600 prediction" was every athlete in the division, sprinters and
+#   throwers included, at the distance of whichever meets_tf row LIMIT 1
+#   happened to return. The event is the race; the division only scopes
+#   who was racing whom.
+#
+# ! ONE OPAQUE KEY ON THE PAGE, "<div>-<event>". The page keys every race
+#   (its edits, its colour, its share link, its saved session) on one
+#   string it never parses, so the event rides inside that string and is
+#   split back out here and in app._target -- the page's race machinery
+#   works on it unchanged. A bare "<div>" is the old key and still reads.
+def splitRaceKey(raw):
+    """("12-345" | "12" | 12 | None) -> (div_id | None, event_id | None)."""
+    if raw is None:
+        return None, None
+    s = str(raw).strip()
+    div, _, ev = s.partition("-")
+    div = int(div) if div.isdigit() else None
+    ev = int(ev) if ev.isdigit() else None
+    return div, ev
+
+
+def raceKey(div_id, event_id=None):
+    """The page's key for a race: "<div>" for XC, "<div>-<event>" for track."""
+    if event_id is None:
+        return str(div_id)
+    return f"{div_id}-{event_id}"
+
+
+def _eventParse():
+    """engine/event_parse, the one reader of a track event's name -- the
+    parser the engine rates with, so the race the page lists and the race
+    the ratings priced are the same distance."""
+    import sys
+    eng = os.path.join(_ROOT, "engine")
+    if eng not in sys.path:
+        sys.path.insert(0, eng)
+    import event_parse
+    return event_parse
+
+
+# Purpose:   (metres, gender) of a track event, or (None, gender) when it is
+#            not a distance race this site rates.
+# ★ distanceFromEventShort, NOT meets_tf.distance_meters. tfrrs rows never
+#   get a stored distance and anet writes -1 when its scrape failed, so the
+#   stored number is a hint at best; the event's own name ("1600m",
+#   "Men's Mile", "3200 Meter Run") is always there, and it is what the
+#   engine itself rated the race at. Relays, hurdles, steeple, field events
+#   and anything under 600 m come back None: none of them is a race a
+#   rating can predict.
+# ★ THE GENDER FROM THE EVENT FIRST, THEN THE DIVISION. tfrrs names it in the
+#   event ("Women's 1500 Meters"), anet in the division ("Varsity Girls");
+#   tf_points.genderOf reads either spelling, wherever the word sits.
+def tfEventInfo(event_short, division=None):
+    from tf_points import genderOf
+    metres, g = _eventParse().distanceFromEventShort(event_short or "")
+    gender = g or genderOf(event_short or "") or genderOf(division or "")
+    return metres, gender
+
+
+# ★ THE DISTANCE BAND A TRACK SQUAD IS DRAWN FROM: one rung of the doubling
+#   ladder the distance events stand on (800, 1600, 3200 -- and 1500/mile,
+#   3000/2 mile beside them). Half a doubling either way, sqrt(2), is the
+#   midpoint in log distance between neighbouring rungs, so a 1600 squad
+#   takes 1131-2263 m (1500, 1600, the mile, 2000) and neither the 800 nor
+#   the 3200; a 3200 squad takes 3000 and the 2 mile. Nothing tuned: it is
+#   the geometry of the event schedule.
+TF_BAND_LOG = math.log(2.0) / 2.0
+
+
+def tfInBand(metres, target):
+    """Is a race of `metres` the same rung as the target distance?"""
+    if not metres or not target or metres <= 0 or target <= 0:
+        return False
+    return abs(math.log(float(metres) / float(target))) <= TF_BAND_LOG
+
+
+# ★ ENTRIES PER SCHOOL IN ONE TRACK EVENT. A school's entry count in the
+#   event is a FACT at a meet that ran (or at its last edition, for one that
+#   has not): that is the cap, read off the race -- a school that put four in
+#   the 1600 runs four, one that sent one runs one. Only a school with no
+#   entry to count (named by hand, or new to the meet) takes the default:
+#   three, the per-school entry limit in a single event under the NFHS
+#   championship format most state series and dual/tri meets use; a meet
+#   that takes more shows it in its own entry counts, which win.
+TF_DEFAULT_ENTRIES = 3
+
+
+def tfEntryCap(n_in_event, per_team=None):
+    if per_team:
+        return per_team
+    return n_in_event if n_in_event > 0 else TF_DEFAULT_ENTRIES
+
+
+# Purpose:   the races list of a track meet, from one row per (division,
+#            event): {div_id, event_id, event_short, division,
+#            distance_meters, n_results}.
+# Output:    [{div_id: "<div>-<event>" (the page's race key), div, event_id,
+#             label (the division), event (its reader name), distance,
+#             gender, n_results}] -- distance races only, in division then
+#             distance order.
+# ! ONLY WHAT A RATING CAN PREDICT. The 100, the shot put, the 4x400 are
+#   events of the meet and not races this page can run: tfEventInfo answers
+#   None for each, and they are left off rather than listed and then failed.
+def trackRaces(rows):
+    from tf_points import prettyEventName
+    out = []
+    for r in rows:
+        r = dict(r)
+        if r.get("event_id") is None or r.get("div_id") is None:
+            continue
+        metres, gender = tfEventInfo(r.get("event_short"), r.get("division"))
+        if metres is None:
+            continue
+        stored = r.get("distance_meters")
+        dist = (float(stored) if stored is not None and float(stored) > 0
+                else float(metres))
+        out.append({"div_id": raceKey(r["div_id"], r["event_id"]),
+                    "div": r["div_id"], "event_id": r["event_id"],
+                    "label": (r.get("division") or "").strip(),
+                    "event": prettyEventName(r.get("event_short")),
+                    "distance": dist, "gender": gender,
+                    "n_results": r.get("n_results") or 0})
+    # a division-less (tfrrs) race sorts after the named ones
+    out.sort(key=lambda x: (x["label"] == "", x["label"], x["gender"] or "",
+                            x["distance"], x["event"] or "", x["event_id"]))
+    return out
+
+
+def isTrackEvent(target):
+    """A track target that names its event -- the races scored by points."""
+    return ((target.get("sport") or "XC").upper() == "TF"
+            and target.get("event_id") is not None)
+
+
 def meetField(cur, meet_id, div_id, sport, season_year=None,
-              when="thisyear", source=None, per_team=None):
+              when="thisyear", source=None, per_team=None, event_id=None):
     """The field for a re-run, grouped by school -- and WHEN decides who.
 
     ★ `source` IS WHICH MEET (owner, 2026-10-05). The anet and tfrrs ids
@@ -2529,7 +2845,8 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
 
     if when == "asran":
         by_school = {}
-        exact = _exactField(cur, meet_id, div_id, sport, source=source)
+        exact = _exactField(cur, meet_id, div_id, sport, source=source,
+                            event_id=event_id)
         states = _teamStates(cur, [dict(r) for r in exact],
                              _meetState(cur, meet_id, sport, source=source))
         for r in exact:
@@ -2556,13 +2873,14 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         return {"season_year": season_year, "when": when, "teams": teams}
 
     originals, basis = thisYearOriginals(cur, meet_id, div_id, sport,
-                                         source=source)
+                                         source=source, event_id=event_id)
     at_meet = sorted({r["school"] for r in originals if r.get("school")})
     # ★ THE RACE'S OWN GENDER, from the people who ran it. None means the
     #   field really is mixed -- "All races" at a meet with both -- and then
     #   nothing is filtered, because there is no one right answer to filter to.
     gender = _raceGender(cur, meet_id, div_id, sport, source,
-                         [r["person_id"] for r in originals])
+                         [r["person_id"] for r in originals],
+                         event_id=event_id)
     # ★ AND THE LEVEL, for the same reason: a school NAME is both a college
     #   and a high school often enough that "everyone at Amherst" is two
     #   different teams. See _fieldLevels.
@@ -2577,6 +2895,15 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     squads = _currentSquads(cur, at_meet, sport, season_year, gender=gender,
                             levels=levels, states=states)
     current_ids = {e["person_id"] for sq in squads.values() for e in sq}
+    # ★ A TRACK EVENT'S SQUAD IS WHO RUNS THAT DISTANCE (2026-10-10), best
+    #   at it first; the school's other athletes wait under dropped
+    track_rest = {}
+    track_m = None
+    if sport != "XC" and event_id is not None:
+        track_m = _tfEventMetres(cur, meet_id, div_id, event_id, source)
+        if track_m:
+            squads, track_rest = _tfEventSquads(cur, squads, track_m,
+                                                season_year)
     # ★ THE CAP IS PER SCHOOL, from what it brought to the original running.
     #   Everyone past the cap goes to `dropped`, not out of the field, so a
     #   school that really is fielding seven this year can be corrected by
@@ -2585,7 +2912,11 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     by_school = {}
     for school in at_meet:
         sq = squads.get(school, [])
-        cap = squadCap(at_meet_counts.get(school, 0), per_team)
+        # ! A TRACK EVENT ENTERS WHAT THE SCHOOL ENTERED IN IT (tfEntryCap),
+        #   not a cross country seven
+        cap = (tfEntryCap(at_meet_counts.get(school, 0), per_team)
+               if track_m else squadCap(at_meet_counts.get(school, 0),
+                                        per_team))
         by_school[school] = {"school": school,
                              "state": states.get(school) or _stateOf(school),
                              # ! HOW MANY THIS SCHOOL ACTUALLY HAD ON THE
@@ -2594,7 +2925,8 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
                              #   what-ifs added beside them.
                              "entered": at_meet_counts.get(school, 0),
                              "runners": sq[:cap],
-                             "dropped": list(sq[cap:])}
+                             "dropped": (list(sq[cap:])
+                                         + list(track_rest.get(school, [])))}
     # ★ THE DROPPED NEED THEIR RATING MOST (owner, 2026-09-01). These are the
     #   people a human is deciding whether to add back, and that decision is
     #   "how good were they" -- which was rendered as a blank, because they
@@ -2656,8 +2988,14 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     # ★ AND WHERE THE FIELD CAME FROM when it is not this meet's own (owner,
     #   2026-10-06): the page says so under the meet, so nobody takes last
     #   year's teams for an entry list.
-    return {"season_year": season_year, "when": when, "teams": teams,
-            "gender": gender, "levels": sorted(levels), "basis": basis}
+    out = {"season_year": season_year, "when": when, "teams": teams,
+           "gender": gender, "levels": sorted(levels), "basis": basis}
+    if track_m:
+        # ★ THE PAGE'S PER-TEAM CONTROL READS "Entries per team" FOR TRACK,
+        #   and says what the blank means: each school's own entry count
+        out["entries"] = "event"
+        out["distance"] = track_m
+    return out
 
 
 # Purpose:   the runners a "this year" field is built from, and where they
@@ -2673,15 +3011,17 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
 # ! basis IS None FOR A MEET THAT RAN: nothing was borrowed, nothing to say.
 # ! ONE HELPER FOR meetField AND _teamRosters, which "must agree or the page
 #   shows one lineup and the model scores another".
-def thisYearOriginals(cur, meet_id, div_id, sport, source=None):
-    originals = _exactField(cur, meet_id, div_id, sport, source=source)
+def thisYearOriginals(cur, meet_id, div_id, sport, source=None,
+                      event_id=None):
+    originals = _exactField(cur, meet_id, div_id, sport, source=source,
+                            event_id=event_id)
     if originals or not meet_id:
         return originals, None
     from last_edition import lastEditionField
     try:
         return lastEditionField(cur, int(meet_id),
                                 int(div_id) if div_id is not None else None,
-                                sport, source=source)
+                                sport, source=source, event_id=event_id)
     except Exception as exc:                              # noqa: BLE001
         # ! A TABLE THIS BOX DOES NOT HAVE (weekend.py skips one the same
         #   way): an empty field to fill by hand, not a 500
@@ -2779,8 +3119,9 @@ def _fieldLevels(cur, person_ids, sport, season_year=None):
 # Purpose:   the level of a meet's race, the way meetField reads it -- for a
 #            squad request that named its meet but no level (2026-10-05).
 # Output:    {"college"} etc., or None for a mixed race (no narrowing).
-def meetLevels(cur, meet_id, div_id, sport, source=None):
-    originals = _exactField(cur, int(meet_id), div_id, sport, source=source)
+def meetLevels(cur, meet_id, div_id, sport, source=None, event_id=None):
+    originals = _exactField(cur, int(meet_id), div_id, sport, source=source,
+                            event_id=event_id)
     return _fieldLevels(cur, _lineupIds(originals), sport,
                         _currentSeason(cur, sport)) or None
 
@@ -2830,7 +3171,19 @@ _LEVEL_MIN_SHARE = 0.60
 #   the school. "Womens 6K" says it outright; the runners decide only when
 #   the title is silent. ONE function for the field (meetField), the scored
 #   lineup (_entriesFor) and coalescing, so the page and the model agree.
-def _raceGender(cur, meet_id, div_id, sport, source, person_ids):
+def _raceGender(cur, meet_id, div_id, sport, source, person_ids,
+                event_id=None):
+    # ★ A TRACK EVENT SAYS ITS OWN GENDER (2026-10-10): "Women's 1500
+    #   Meters", or the division it sits in ("Varsity Girls"). A track
+    #   division with no gender word holds boys AND girls events, and its
+    #   runners' seasons then vote "mixed" -- one school's boys and girls on
+    #   one squad.
+    if meet_id and event_id is not None and sport != "XC":
+        ev = _tfEventRow(cur, meet_id, div_id, event_id, source)
+        if ev:
+            _m, g = tfEventInfo(ev.get("event_short"), ev.get("division"))
+            if g:
+                return g
     if meet_id and div_id is not None:
         from tf_points import genderOf
         g = genderOf(_divisionLabel(cur, meet_id, div_id, sport, source=source) or "")
@@ -3245,6 +3598,9 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     sport = (target.get("sport") or "XC").upper()
     div = target.get("div_id")
     div = int(div) if div and str(div).isdigit() else None
+    # ★ AND THE EVENT, FOR A TRACK RACE (2026-10-10): see splitRaceKey
+    ev = target.get("event_id")
+    ev = int(ev) if ev is not None and str(ev).isdigit() else None
     # ★ THE ONE MEET THE ROUTE RESOLVED (owner, 2026-10-05): every read of
     #   the meet below is narrowed to it -- see _targetSpec
     src = target.get("source") or None
@@ -3295,7 +3651,7 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
         #   everyone who ran it (a hand-added runner keeps the lookup above)
         if mode == "rerun_exact" and target.get("meet_id"):
             for e in _exactField(cur, int(target["meet_id"]), div, sport,
-                                 source=src):
+                                 source=src, event_id=ev):
                 k = known.setdefault(e["person_id"], {})
                 k.update({kk: e.get(kk) for kk in
                           ("grade", "pool", "rating", "hs_rating")})
@@ -3332,10 +3688,11 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
         #   meetField does (2026-10-06); "as it ran" stays the meet's own
         if mode == "rerun_exact":
             originals = _exactField(cur, int(target["meet_id"]), div, sport,
-                                    source=src)
+                                    source=src, event_id=ev)
         else:
             originals, _basis = thisYearOriginals(
-                cur, int(target["meet_id"]), div, sport, source=src)
+                cur, int(target["meet_id"]), div, sport, source=src,
+                event_id=ev)
         if mode == "rerun_exact":
             # The exact field IS the entry list, so counting it is counting
             # who entered -- no stamp needed, and _score falls back to it.
@@ -3351,7 +3708,8 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
             #   the same evidence: the meet's own runners and its state.
             squads = _currentSquads(cur, at_meet, sport, year,
                                     gender=_raceGender(cur, int(target["meet_id"]),
-                                                       div, sport, src, ids),
+                                                       div, sport, src, ids,
+                                                       event_id=ev),
                                     levels=_fieldLevels(
                                         cur, _lineupIds(originals), sport,
                                         year),
@@ -3359,13 +3717,22 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                                         cur, [dict(r) for r in originals],
                                         _meetState(cur, target["meet_id"],
                                                    sport, source=src)))
+            # ★ THE SAME EVENT SQUADS AS meetField, for a track event
+            track_m = None
+            if sport != "XC" and ev is not None:
+                track_m = _tfEventMetres(cur, int(target["meet_id"]), div,
+                                         ev, src)
+                if track_m:
+                    squads, _rest = _tfEventSquads(cur, squads, track_m, year)
             # ★ SAME PER-SCHOOL CAP AS meetField. These two must agree or the
             #   page shows one lineup and the model scores another.
             at_meet_counts = countsBySchool(originals)
             entries = []
             for sch in sorted(squads):
-                for e in squads[sch][:squadCap(at_meet_counts.get(sch, 0),
-                                               target.get("per_team"))]:
+                n_in = at_meet_counts.get(sch, 0)
+                cap = (tfEntryCap(n_in, target.get("per_team")) if track_m
+                       else squadCap(n_in, target.get("per_team")))
+                for e in squads[sch][:cap]:
                     # ! WHAT THE SCHOOL ENTERED, carried on every runner so
                     #   _score can tell a team from a lone qualifier. The cap
                     #   above already keeps the lineup honest; `add` is what
@@ -3401,7 +3768,7 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
         try:
             exact = (originals if originals is not None else
                      _exactField(cur, int(target["meet_id"]), div, sport,
-                                 source=src))
+                                 source=src, event_id=ev))
             evidence += [dict(r) for r in exact]
         except Exception:                               # noqa: BLE001
             _rollback(cur)
@@ -3436,11 +3803,16 @@ def _combinedRoster(cur, target, div_ids, sport, mode):
     per_div, labels = [], {}
     for d in div_ids:
         one = dict(base)
-        one["div_id"] = d
+        # ! A TRACK RACE'S KEY CARRIES ITS EVENT ("<div>-<event>",
+        #   splitRaceKey); an XC key is the bare division
+        d_div, d_ev = splitRaceKey(d)
+        one["div_id"] = d_div
+        if d_ev is not None:
+            one["event_id"] = d_ev
         one.pop("div_ids", None)
         rows = _teamRosters(cur, None, one)
-        labels[d] = (_divisionLabel(cur, target.get("meet_id"), d, sport,
-                                    source=target.get("source"))
+        labels[d] = (_raceLabel(cur, target.get("meet_id"), d_div, sport,
+                                source=target.get("source"), event_id=d_ev)
                      or str(d))
         # ★ WHERE EACH RUNNER CAME FROM, ALWAYS (owner, 2026-09-01: "need to
         #   check coalesce actually works... which div does it end up showing
@@ -3454,8 +3826,9 @@ def _combinedRoster(cur, target, div_ids, sport, mode):
         #   else here reads it -- the un-coalesced path suffixes by division,
         #   which needs no gender at all.
         if target.get("coalesce"):
-            g = _raceGender(cur, int(target["meet_id"]), d, sport, target.get("source"),
-                            [e["person_id"] for e in rows])
+            g = _raceGender(cur, int(target["meet_id"]), d_div, sport,
+                            target.get("source"),
+                            [e["person_id"] for e in rows], event_id=d_ev)
             for e in rows:
                 e["div_gender"] = g
         for e in rows:
@@ -3543,6 +3916,133 @@ def _divisionLabel(cur, meet_id, div_id, sport, source=None):
     return ((row or {}).get("d") or "").strip() or None
 
 
+# Purpose:   one track event's row: {event_short, division, distance_meters}
+#            -- meets_tf's when it has one, else the event's own results'
+#            name (a tfrrs event with no meets_tf row yet), else None.
+def _tfEventRow(cur, meet_id, div_id, event_id, source=None):
+    if not meet_id or event_id is None:
+        return None
+    args = {"m": int(meet_id), "d": div_id, "e": int(event_id),
+            "src": source}
+    cur.execute("""
+        SELECT m.event_short, m.division, m.distance_meters
+        FROM   meets_tf m
+        WHERE  m.meet_id = %(m)s AND m.event_id = %(e)s
+          AND  (%(d)s::bigint IS NULL OR m.div_id = %(d)s)
+          AND  (%(src)s::text IS NULL OR m.source = %(src)s)
+        LIMIT  1
+    """, args)
+    row = cur.fetchone()
+    if row and row.get("event_short"):
+        return dict(row)
+    cur.execute("""
+        SELECT min(r.event_short) AS event_short
+        FROM   results_tf r
+        WHERE  r.meet_id = %(m)s AND r.event_id = %(e)s
+          AND  (%(d)s::bigint IS NULL OR r.div_id = %(d)s)
+          AND  (%(src)s::text IS NULL OR r.source = %(src)s)
+    """, args)
+    got = cur.fetchone()
+    if got and got.get("event_short"):
+        out = dict(row or {})
+        out["event_short"] = got["event_short"]
+        return out
+    return dict(row) if row else None
+
+
+# Purpose:   a track event's distance in metres, or None (not a distance
+#            race): the stored one when it is real, else the name's.
+def _tfEventMetres(cur, meet_id, div_id, event_id, source=None):
+    ev = _tfEventRow(cur, meet_id, div_id, event_id, source)
+    if not ev:
+        return None
+    stored = ev.get("distance_meters")
+    metres, _g = tfEventInfo(ev.get("event_short"), ev.get("division"))
+    if metres is None:
+        # ! NOT A DISTANCE RACE BY ITS NAME (a relay, a 100) is never one by
+        #   a stored number either: the name is the race
+        return None
+    if stored is not None and float(stored) > 0:
+        return float(stored)
+    return float(metres)
+
+
+# Purpose:   the label a race wears: the division, and for a track race the
+#            event ("Varsity Boys · 1600m").
+def _raceLabel(cur, meet_id, div_id, sport, source=None, event_id=None):
+    div = _divisionLabel(cur, meet_id, div_id, sport, source=source)
+    if sport == "XC" or event_id is None:
+        return div
+    ev = _tfEventRow(cur, meet_id, div_id, event_id, source) or {}
+    from tf_points import prettyEventName
+    name = (prettyEventName(ev.get("event_short"))
+            if ev.get("event_short") else None)
+    return " \u00b7 ".join(x for x in (div, name) if x) or None
+
+
+# Purpose:   a school's squad for ONE track event: who has raced that
+#            distance, best at it first.
+# Input:     squads -- _currentSquads' {school: [rows]}; target_m -- the
+#            event's metres; season_year -- the season the squads are of.
+# Output:    (squads narrowed to the event, {school: [the rest]}).
+#
+# ★ THE 1600'S ENTRANTS ARE MILERS (owner, 2026-10-10). The squad was the
+#   school's top seven TRACK athletes by season rating, whatever they run --
+#   a sprinter and two hurdlers in the 1600 -- because a track season rating
+#   is one number across every event. Here the squad is everyone who has
+#   raced the event's rung of the distance ladder (tfInBand: a 1600 takes the
+#   1500, the mile and 2000 too) this season, or last season for a runner
+#   carried forward with none yet; ranked by their form AT THAT DISTANCE
+#   (_formRating, distance-weighted, one race per event per meet).
+# ! THE REST ARE NOT THROWN AWAY: they come back as the second half, and
+#   meetField lists them under dropped so a person can still add the 800
+#   runner who is moving up.
+def _tfEventSquads(cur, squads, target_m, season_year):
+    ids = sorted({r["person_id"] for rows in squads.values() for r in rows
+                  if r.get("person_id") is not None})
+    if not ids or not target_m or season_year is None:
+        return squads, {}
+    from season_year import ACADEMIC_START_MONTH as _m
+    this_lo = f"{int(season_year):04d}-{_m:02d}-01"
+    lo = f"{int(season_year) - 1:04d}-{_m:02d}-01"
+    hi = f"{int(season_year) + 1:04d}-{_m:02d}-01"
+    cur.execute("""
+        SELECT r.person_id AS pid, r.date, r.speed_rating,
+               split_part(r.rating_pool, '|', 1) AS pool,
+               r.meet_id, r.event_short
+        FROM   results_tf r
+        WHERE  r.person_id = ANY(%(ids)s)
+          AND  r.date >= %(lo)s AND r.date < %(hi)s
+          AND  COALESCE(r.is_field, 0) = 0 AND COALESCE(r.is_relay, 0) = 0
+          AND  r.speed_rating > 0 AND r.rating_pool IS NOT NULL
+    """, {"ids": ids, "lo": lo, "hi": hi})
+    ep = _eventParse()
+    by = {}
+    for row in cur.fetchall():
+        metres, _g = ep.distanceFromEventShort(row.get("event_short") or "")
+        if not tfInBand(metres, target_m):
+            continue
+        by.setdefault(row["pid"], []).append(
+            (str(row["date"]), float(row["speed_rating"]), row["pool"], "TF",
+             float(metres), row.get("meet_id")))
+    form = {}
+    for pid, rows in by.items():
+        rows.sort(key=lambda r: (r[0], r[1]), reverse=True)
+        now = [r for r in rows if r[0] >= this_lo]
+        got = _formRating(now or rows, "TF", distance=target_m)
+        if got is not None:
+            form[pid] = got[0]
+    narrowed, rest = {}, {}
+    for sch, rows in squads.items():
+        ins = [r for r in rows if r.get("person_id") in form]
+        for r in ins:
+            r["event_form"] = round(form[r["person_id"]], 1)
+        ins.sort(key=lambda r: -form[r["person_id"]])
+        narrowed[sch] = ins
+        rest[sch] = [r for r in rows if r.get("person_id") not in form]
+    return narrowed, rest
+
+
 # Purpose:   a coalesced squad enters what a team is allowed to enter.
 # Input:     field/preds as predictTeam holds them.
 # Output:    the field, trimmed to MAX_PER_TEAM per school by predicted time.
@@ -3603,9 +4103,16 @@ _NAME_LATERAL = """
 """
 
 
-def _exactField(cur, meet_id, div_id, sport, source=None):
+def _exactField(cur, meet_id, div_id, sport, source=None, event_id=None):
     """Everyone who actually ran a meet: person, name, school -- and the
     grade and rating THEY HAD THEN.
+
+    ★ AND FOR TRACK, EVERYONE WHO RAN THE EVENT (2026-10-10). event_id (one
+      id or a list -- a last edition can hold the same distance under two)
+      narrows a track division to its race; field events and relays never
+      enter a running field, the rule _raceEntrantsUncached already keeps.
+      Without an event, a track division is still every event in it -- the
+      old reading, for a caller that names none.
 
     ★ AS IT RAN MEANS AS THEY WERE (owner, 2026-09-25: "for the as it ran
       grades/ratings we should use their grade at that race not their
@@ -3624,6 +4131,15 @@ def _exactField(cur, meet_id, div_id, sport, source=None):
     from season_year import seasonYearSqlInt
     table = "results" if sport == "XC" else "results_tf"
     div_clause = "AND r.div_id = %(div)s" if div_id is not None else ""
+    events = ([] if event_id is None else
+              [int(e) for e in (event_id if isinstance(event_id, (list, tuple,
+                                                                  set))
+                                else [event_id])])
+    if sport != "XC":
+        div_clause += (" AND COALESCE(r.is_field, 0) = 0"
+                       " AND COALESCE(r.is_relay, 0) = 0")
+        if events:
+            div_clause += " AND r.event_id = ANY(%(events)s)"
     cur.execute(f"""
         SELECT DISTINCT ON (r.person_id)
                r.person_id, r.team_id, r.school, r.grade,
@@ -3645,7 +4161,8 @@ def _exactField(cur, meet_id, div_id, sport, source=None):
           AND  (%(src)s::text IS NULL OR r.source = %(src)s)
           AND  r.person_id IS NOT NULL
         ORDER  BY r.person_id
-    """, {"meet": meet_id, "div": div_id, "sport": sport, "src": source})
+    """, {"meet": meet_id, "div": div_id, "sport": sport, "src": source,
+          "events": events})
     out = []
     for r in cur.fetchall():
         out.append({"person_id": r["person_id"], "school": r["school"],
