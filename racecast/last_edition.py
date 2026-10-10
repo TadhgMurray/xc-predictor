@@ -457,7 +457,8 @@ def editionRaces(cur, meet_id, sport, source):
             for r in cur.fetchall()]
 
 
-def lastEditionField(cur, meet_id, div_id, sport, source=None):
+def lastEditionField(cur, meet_id, div_id, sport, source=None,
+                     event_id=None):
     """(originals, basis) for a meet with no results: the last edition's
     runners of the race `div_id` maps to, in _exactField's shape, and what
     was borrowed --
@@ -469,7 +470,13 @@ def lastEditionField(cur, meet_id, div_id, sport, source=None):
 
     ★ THE RUNNERS ARE _exactField's OF THE EDITION, so meetField's current
       squads, caps, gender, level and state all work on them unchanged --
-      they are "who came to this meet", one running back."""
+      they are "who came to this meet", one running back.
+
+    ★ AND FOR A TRACK EVENT, LAST YEAR'S SAME EVENT (2026-10-10). Event ids
+      are per meet, so the upcoming 1600 is matched to the edition's events
+      of the same distance (and gender, where both say one) inside the
+      divisions mapRace pairs it with; who ran THOSE is the field. No such
+      event last year is an empty field, never the whole division."""
     from predict import _exactField
     none = {"kind": "none"}
     # ! ONLY A MEET THAT HAS NOT RUN. A meet that ran and one empty division
@@ -496,6 +503,22 @@ def lastEditionField(cur, meet_id, div_id, sport, source=None):
     if race is not None:
         divs, how = mapRace(race, up["races"],
                             editionRaces(cur, ed["meet_id"], sport, src))
+    if event_id is not None and (sport or "XC").upper() == "TF":
+        from predict import _tfEventRow, tfEventInfo
+        ev = _tfEventRow(cur, meet_id, div_id, event_id, src) or {}
+        metres, gender = tfEventInfo(ev.get("event_short"), ev.get("division"))
+        originals, seen = [], set()
+        if metres:
+            for d, evs in _editionEvents(cur, ed["meet_id"], src, divs,
+                                         metres, gender).items():
+                for r in _exactField(cur, ed["meet_id"], d, sport,
+                                     source=src, event_id=evs):
+                    if r["person_id"] not in seen:
+                        seen.add(r["person_id"])
+                        originals.append(r)
+        return originals, {"kind": "last_edition", "meet_id": ed["meet_id"],
+                           "date": str(ed["date"])[:10],
+                           "meet_name": ed["name"], "matched": "event"}
     if divs is None:
         originals = _exactField(cur, ed["meet_id"], None, sport, source=src)
     else:
@@ -508,6 +531,37 @@ def lastEditionField(cur, meet_id, div_id, sport, source=None):
     return originals, {"kind": "last_edition", "meet_id": ed["meet_id"],
                        "date": str(ed["date"])[:10], "meet_name": ed["name"],
                        "matched": how}
+
+
+# Purpose:   {div_id: [event_id, ...]} of an edition's track events at the
+#            same distance as `metres` (and of `gender` where both name one),
+#            within `divs` (None: every division).
+# ! THE SAME DISTANCE, TO THE METRE: a 1600 is not the mile, and the mile is
+#   not the 1500 -- each is its own race with its own entrants.
+def _editionEvents(cur, ed_meet, source, divs, metres, gender):
+    from predict import tfEventInfo
+    cur.execute("""
+        SELECT r.div_id, r.event_id, min(r.event_short) AS event_short,
+               min(m.division) AS division
+        FROM   results_tf r
+        LEFT JOIN meets_tf m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
+                            AND m.event_id = r.event_id
+                            AND m.source = r.source
+        WHERE  r.meet_id = %(m)s AND r.source = %(src)s
+          AND  (%(divs)s::bigint[] IS NULL OR r.div_id = ANY(%(divs)s))
+          AND  COALESCE(r.is_field, 0) = 0 AND COALESCE(r.is_relay, 0) = 0
+        GROUP  BY r.div_id, r.event_id
+    """, {"m": int(ed_meet), "src": source,
+          "divs": [int(d) for d in divs] if divs else None})
+    out = {}
+    for r in cur.fetchall():
+        m2, g2 = tfEventInfo(r.get("event_short"), r.get("division"))
+        if not m2 or round(m2) != round(metres):
+            continue
+        if gender and g2 and g2 != gender:
+            continue
+        out.setdefault(r["div_id"], []).append(r["event_id"])
+    return out
 
 
 def upcomingRaces(cur, meet_id, sport, source=None):

@@ -11,6 +11,10 @@ been run. READ ONLY.
     RACECAST_MODEL=/srv/models/new/model.pt /srv/venv/bin/python \
         scripts/backtest_predictions.py --from 2026-09-17 --to 2026-10-05
 
+    # track: one distance EVENT of one division is a race (2026-10-10)
+    /srv/venv/bin/python scripts/backtest_predictions.py --sport TF \
+        --from 2026-03-01 --to 2026-06-15 --min-field 8
+
 ★ WHY (owner, 2026-10-08: "the last predictions round was really bad").
   Nothing scored the served predictions against what then happened, so
   "bad" had no number and no fix could be shown to help. This re-runs the
@@ -97,6 +101,11 @@ def main():
     ap.add_argument("--min-field", type=int, default=20)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--no-breakdown", dest="breakdown", action="store_false")
+    # ★ TRACK TOO (2026-10-10: "predictions for tf races are majorly messed
+    #   up" had no number either). A track race is (meet, division, EVENT),
+    #   the page's own unit, and only a distance event (event_parse prices
+    #   it) -- the 100 and the shot put are not races the page predicts.
+    ap.add_argument("--sport", choices=("XC", "TF"), default="XC")
     ap.add_argument("--val-only", action="store_true",
                     help="only runners on the model's VALIDATION side (the "
                          "10%% of athletes train.py never trained on): an "
@@ -117,10 +126,22 @@ def main():
     with getConn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SET statement_timeout = '600s'")
-        cur.execute("""
-            SELECT meet_id, div_id, source, left(date, 10) AS day, count(*) AS n
-            FROM   results r
-            WHERE  date >= %s AND date <= %s
+        tf = a.sport == "TF"
+        table = "results_tf" if tf else "results"
+        # a track race is one event: grouped by it, running events only
+        ev_col = ", event_id, min(event_short) AS event_short" if tf else ""
+        ev_grp = ", event_id" if tf else ""
+        running = ("AND COALESCE(is_field, 0) = 0 AND COALESCE(is_relay, 0) = 0"
+                   if tf else "")
+        # ! XC GROUPS BY THE DAY AS IT ALWAYS DID; a track event's prelim and
+        #   final days are one event id, dated by its first day
+        day = "min(left(date, 10))" if tf else "left(date, 10)"
+        day_grp = "" if tf else ", left(date, 10)"
+        cur.execute(f"""
+            SELECT meet_id, div_id, source, {day} AS day,
+                   count(*) AS n {ev_col}
+            FROM   {table} r
+            WHERE  date >= %s AND date <= %s {running}
               AND  person_id IS NOT NULL
               AND  time_seconds > 0 AND time_seconds < 19999
               -- ★ ONE RACE, ONE SAMPLE (sweep 2026-10-10). A race stored in
@@ -130,11 +151,18 @@ def main():
               --   engine and the boards all anti-join; the flagged copy's
               --   rows vanish here and its group falls under --min-field.
               AND  NOT EXISTS (SELECT 1 FROM result_twin x
-                               WHERE x.sport = 'XC'
+                               WHERE x.sport = %s
                                  AND x.result_id = r.result_id)
-            GROUP  BY 1, 2, 3, 4 HAVING count(*) >= %s""",
-                    (a.lo, a.hi + "~", a.min_field))
+            GROUP  BY meet_id, div_id, source {ev_grp}{day_grp}
+            HAVING count(*) >= %s""",
+                    (a.lo, a.hi + "~", a.sport, a.min_field))
         races = cur.fetchall()
+        if tf:
+            # ! A DISTANCE RACE BY ITS NAME, the page's own test
+            #   (predict.trackRaces / event_parse)
+            from event_parse import distanceFromEventShort
+            races = [r for r in races
+                     if distanceFromEventShort(r.get("event_short") or "")[0]]
         conn.rollback()
         random.Random(a.seed).shuffle(races)
         races = races[:a.divs]
@@ -143,21 +171,28 @@ def main():
         acc = {}          # (basis, lead) -> {"err": [], "order": [], "races": 0}
         for i, race in enumerate(races, 1):
             day = datetime.date.fromisoformat(race["day"])
-            cur.execute("""SELECT DISTINCT ON (person_id) person_id, time_seconds
-                           FROM results r WHERE meet_id = %s AND div_id = %s
-                             AND source = %s AND person_id IS NOT NULL
+            # the event's own times, at a track meet (a miler's 800 that
+            # day is another race)
+            ev_where = "AND event_id = %s" if tf else ""
+            ev_arg = (race["event_id"],) if tf else ()
+            cur.execute(f"""SELECT DISTINCT ON (person_id) person_id, time_seconds
+                           FROM {table} r WHERE meet_id = %s AND div_id = %s
+                             AND source = %s AND person_id IS NOT NULL {ev_where}
                              AND time_seconds > 0 AND time_seconds < 19999
                              AND NOT EXISTS (SELECT 1 FROM result_twin x
-                                             WHERE x.sport = 'XC'
+                                             WHERE x.sport = %s
                                                AND x.result_id = r.result_id)
                            ORDER BY person_id, time_seconds""",
-                        (race["meet_id"], race["div_id"], race["source"]))
+                        (race["meet_id"], race["div_id"], race["source"])
+                        + ev_arg + (a.sport,))
             actual = {r["person_id"]: float(r["time_seconds"]) for r in cur.fetchall()}
             ids = sorted(actual)
             for lead in leads:
-                target = {"mode": "rerun_exact", "sport": "XC",
+                target = {"mode": "rerun_exact", "sport": a.sport,
                           "meet_id": race["meet_id"], "div_id": race["div_id"],
                           "source": race["source"]}
+                if tf:
+                    target["event_id"] = race["event_id"]
                 cut = day - datetime.timedelta(weeks=lead)
                 if lead:
                     target["history_before"] = cut.isoformat()
@@ -205,8 +240,10 @@ def main():
                     if rho is not None:
                         s["order"].append(rho)
                     s["races"] += 1
+            ev_txt = f" {race['event_short']}" if tf else ""
             print(f"  [{i}/{len(races)}] {race['day']} meet {race['meet_id']} "
-                  f"div {race['div_id']} ({race['source']}) {len(ids)} runners", flush=True)
+                  f"div {race['div_id']}{ev_txt} ({race['source']}) "
+                  f"{len(ids)} runners", flush=True)
 
     print(f"\n{'basis':7} {'lead':>5} {'races':>6} {'runners':>8} "
           f"{'median |err|':>13} {'bias':>7} {'order':>6} {'within-race':>12}")

@@ -133,6 +133,9 @@
          teams run at the state course" was reachable only through a manual
          target, which throws the meet away -- its field, its division, its
          date. Here it swaps the venue and changes nothing else. #}
+      {# ! HIDDEN FOR TRACK (2026-10-10): _applyCourse is cross country only
+         -- a track meet's venue is not a course to swap (applySportUI) #}
+      <div id="course-box">
       <label for="t-course">Course</label>
       <div class="pick-wrap">
         <input id="t-course" type="search" autocomplete="off"
@@ -141,6 +144,7 @@
       </div>
       <p class="hint" id="t-course-hint">Defaults to the course this meet was
         run on. Pick another to run this same field somewhere else.</p>
+      </div>
     </div>
 
     <div class="when-pane hidden" data-pane="asran">
@@ -192,7 +196,9 @@
         {# ★ RUNNERS PER TEAM (owner, 2026-10-10): a conference meet runs
            ten or more a team; blank is the rulebook seven. Scoring still
            takes seven -- the rest finish and displace nobody. #}
-        <label class="per-team" id="per-team-box">Runners per team
+        {# ★ TRACK (2026-10-10): "Entries per team" -- one event's entries
+           per school, blank is what each school entered (applySportUI) #}
+        <label class="per-team" id="per-team-box"><span id="per-team-label">Runners per team</span>
           <input type="number" id="per-team" min="7" max="99" step="1"
                  inputmode="numeric" placeholder="7"
                  title="How many of each team's runners to put in the race. Blank is seven; a conference meet often runs ten. Only seven score.">

@@ -87,8 +87,10 @@ def test_tf_reads_override():
     _spec(cur, sport="TF", source="anet")
     sql = cur.sql[0]
     assert "ov_tf dov ON dov.meet_id = m.meet_id" in sql
-    assert "COALESCE(LEAST(dov.distance, m.distance_meters), " \
-           "m.distance_meters) IS NOT NULL" in sql
+    # ★ 2026-10-10: the row with a real distance first (ORDER BY, not a
+    #   filter -- a row with none still answers, its name carries it)
+    assert "ORDER BY (COALESCE(LEAST(dov.distance, m.distance_meters), " \
+           "m.distance_meters) > 0) DESC" in sql
 
 
 def test_no_corrections_module_is_the_old_query(monkeypatch):

@@ -98,7 +98,7 @@ def test_the_meets_field_is_read_once_per_prediction(monkeypatch):
              "name": f"R{i}", "grade": "11", "pool": "hs_m", "rating": 100.0}
             for i in range(1, 11)]
 
-    def exactField(cur, meet_id, div, sport, source=None):
+    def exactField(cur, meet_id, div, sport, source=None, event_id=None):
         calls.append((meet_id, div, sport))
         return [dict(r) for r in rows]
 

@@ -153,7 +153,7 @@ def test_the_rosters_read_the_targets_source(monkeypatch):
     """_teamRosters hands the target's source to every read of the meet."""
     got = []
     monkeypatch.setattr(P, "_exactField",
-                        lambda cur, m, d, s, source=None:
+                        lambda cur, m, d, s, source=None, event_id=None:
                         got.append(("field", source)) or [])
     monkeypatch.setattr(P, "_meetState",
                         lambda cur, m, s, source=None:
@@ -260,7 +260,7 @@ def test_squads_as_it_ran_read_the_chosen_meets_season(A, monkeypatch):
         return [{"school": s, "runners": [{"person_id": 1}]} for s, _ in wanted]
     monkeypatch.setattr(P, "meetSeason", season)
     monkeypatch.setattr(P, "meetLevels",
-                        lambda cur, m, d, s, source=None:
+                        lambda cur, m, d, s, source=None, event_id=None:
                         seen.setdefault("levels_source", source) and None)
     monkeypatch.setattr(P, "_meetState",
                         lambda cur, m, s, source=None:

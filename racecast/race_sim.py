@@ -266,6 +266,46 @@ def _scoreDraws(times, team, full, cap, n_teams):
     return scores, places
 
 
+# Purpose:   a track event's team points for every draw (2026-10-10).
+# Output:    (scores [draws, n_teams], places [draws, n]) as _scoreDraws.
+#
+# ★ tf_points' PLACE TABLE, NOT THE CROSS COUNTRY RULE. A single track event
+#   pays 10-8-6-5-4-3-2-1 to the first eight finishers who run for a team;
+#   an unattached finisher keeps their place and the points skip past them
+#   (tf_points._award). Every team scores -- a team with nobody in the top
+#   eight scores 0 -- so there is no NaN and no "incomplete" here, and the
+#   HIGHEST total wins. A drawn race has no exact ties (continuous times),
+#   so the split-tie half of _award never arises.
+def _pointsDraws(times, team, n_teams):
+    from tf_points import TABLE
+    n_draws, n = times.shape
+    scores = np.zeros((n_draws, n_teams))
+    places = np.zeros((n_draws, n), dtype=np.int64)
+    if not n:
+        return scores, places
+    table = np.array(TABLE, dtype=np.float64)
+    pos = np.arange(n, dtype=np.int64)
+    step = max(1, _CHUNK_CELLS // max(n, 1))
+    for lo in range(0, n_draws, step):
+        hi = min(n_draws, lo + step)
+        rows = hi - lo
+        order = np.argsort(times[lo:hi], axis=1, kind="stable")
+        t_ord = team[order]
+        on_team = t_ord >= 0
+        rank = np.cumsum(on_team, axis=1) - 1         # among team runners
+        paid = on_team & (rank < table.shape[0])
+        pts = np.where(paid, table[np.clip(rank, 0, table.shape[0] - 1)], 0.0)
+        if n_teams:
+            cell = (np.arange(rows, dtype=np.int64)[:, None] * n_teams
+                    + np.where(on_team, t_ord, 0))
+            sums = np.bincount(cell[paid], weights=pts[paid],
+                               minlength=rows * n_teams)
+            scores[lo:hi] = sums.reshape(rows, n_teams)
+        np.put_along_axis(places[lo:hi], order,
+                          np.broadcast_to(pos + 1, (rows, n)), axis=1)
+    return scores, places
+
+
 def _draw(rng, mu, sigma, team, n_teams, team_rho, draws):
     """[draws, n] log-normal times. `team_rho` shares that fraction of each
     athlete's variance with their teammates, so a squad has good and bad
@@ -282,7 +322,8 @@ def _draw(rng, mu, sigma, team, n_teams, team_rho, draws):
     return np.exp(mu[None, :] + sigma[None, :] * eps)
 
 
-def simulate(field, preds, draws=DRAWS, seed=0, team_rho=0.0, z=1.0):
+def simulate(field, preds, draws=DRAWS, seed=0, team_rho=0.0, z=1.0,
+             scoring="xc"):
     """Run the predicted race `draws` times.
 
     Returns {"teams": {name: {...}}, "h2h": {(a, b): p}, "runners": [...],
@@ -292,6 +333,9 @@ def simulate(field, preds, draws=DRAWS, seed=0, team_rho=0.0, z=1.0):
     P(win), P(top 3), and how often it could not field five. Per runner: the
     mean place and its 10-90 band. h2h[(a, b)] is P(a scores better than b),
     counted only over draws where both scored.
+
+    scoring="points" scores a track event (_pointsDraws): the HIGHEST total
+    wins, and h2h[(a, b)] is P(a outscores b).
     """
     prep = prepare(field, preds, z)
     if prep is None:
@@ -305,14 +349,20 @@ def simulate(field, preds, draws=DRAWS, seed=0, team_rho=0.0, z=1.0):
                   team_rho, draws)
 
     # every draw scored at once -- see _scoreDraws; scoreDraw is the rule
-    scores, places = _scoreDraws(times, prep["team"], prep["full"],
-                                 prep["cap"], n_teams)
+    points = scoring == "points"
+    if points:
+        scores, places = _pointsDraws(times, prep["team"], n_teams)
+    else:
+        scores, places = _scoreDraws(times, prep["team"], prep["full"],
+                                     prep["cap"], n_teams)
 
     scored = ~np.isnan(scores)
     # ! THE WINNER IS THE LOWEST SCORE AMONG TEAMS THAT SCORED IN THAT DRAW,
     #   and a draw where nobody scored has no winner -- not a winner by
     #   default.
-    filled = np.where(scored, scores, np.inf)
+    # ★ TRACK POINTS RUN THE OTHER WAY: the most points wins. Negated here,
+    #   so everything below (best, rank, h2h) is the one low-wins rule.
+    filled = np.where(scored, -scores if points else scores, np.inf)
     best = filled.min(axis=1)
     any_scored = np.isfinite(best)
     wins = (filled == best[:, None]) & any_scored[:, None]
@@ -345,12 +395,13 @@ def simulate(field, preds, draws=DRAWS, seed=0, team_rho=0.0, z=1.0):
     #   probability is the same expression on them.
     h2h = {}
     ok = ~np.isnan(scores)
+    cmp = -scores if points else scores      # low is better, as above
     for i, a in enumerate(names):
         both = ok[:, i:i + 1] & ok
         n_both = both.sum(axis=0)
-        mine = scores[:, i:i + 1]
-        beat = ((mine < scores) & both).sum(axis=0)
-        tie = ((mine == scores) & both).sum(axis=0)
+        mine = cmp[:, i:i + 1]
+        beat = ((mine < cmp) & both).sum(axis=0)
+        tie = ((mine == cmp) & both).sum(axis=0)
         for j, b in enumerate(names):
             if i == j:
                 continue

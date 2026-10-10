@@ -3,6 +3,7 @@
 
     /srv/venv/bin/python scripts/land_tfrrs_meet_names.py            # census
     /srv/venv/bin/python scripts/land_tfrrs_meet_names.py --apply    # write
+    /srv/venv/bin/python scripts/land_tfrrs_meet_names.py --apply --distances
 
 Every page that names a track meet reads meets_tf on the row's own
 (div_id, meet_id, event_id, source). tfrrs rows had meets_tf rows only
@@ -18,6 +19,21 @@ look:
      gets one, named, with the stamp's geometry where there is one.
 Idempotent; anet rows are never touched. Pipeline step 06, before the
 pack (its venue keys) and the boards.
+
+  3. --distances (2026-10-10): every tfrrs meets_tf row whose
+     distance_meters is NULL or a placeholder (<= 0) takes the distance
+     its event name states (engine/event_parse.distanceFromEventShort, the
+     parser the engine rates with). tfrrs rows never had one, so every
+     reader of meets_tf.distance_meters saw college track as distance-less.
+     ⚠ OPT-IN, NOT PART OF STEP 06, AND ON PURPOSE. The model's corpus and
+       its inference history (feature_extraction._TF_SQL, which
+       predict._historyRows runs) keep only rows WITH a stored distance:
+       filling it adds every tfrrs track race to the live model's INPUT the
+       moment it is written, before any model was trained on such rows. Run
+       it, then re-extract and retrain (and re-run the engine: its class
+       distance prefers the stored number) -- one deliberate step. The
+       predictions page does not need it: it reads a track race's distance
+       from the event's name already (predict.tfEventInfo).
 """
 import argparse
 import os
@@ -88,9 +104,58 @@ _INSERT = """
 """
 
 
+_NO_DISTANCE = """
+    SELECT DISTINCT event_short FROM meets_tf
+    WHERE  source = 'tfrrs' AND event_short IS NOT NULL
+      AND  (distance_meters IS NULL OR distance_meters <= 0)
+"""
+
+# ! ONLY A MISSING OR PLACEHOLDER DISTANCE IS WRITTEN: a stored real one is
+#   somebody's verdict (a scrape, a geometry stamp) and stays
+_SET_DISTANCE = """
+    UPDATE meets_tf m
+    SET    distance_meters = x.d
+    FROM   unnest(%s::text[], %s::real[]) AS x(ev, d)
+    WHERE  m.source = 'tfrrs' AND m.event_short = x.ev
+      AND  (m.distance_meters IS NULL OR m.distance_meters <= 0)
+"""
+
+
+def eventDistances(names):
+    """{event_short: metres} for the names that ARE distance races; relays,
+    hurdles, steeple, field events and sub-600 m sprints are left out (None
+    from distanceFromEventShort), so their rows stay distance-less."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "engine"))
+    from event_parse import distanceFromEventShort
+    out = {}
+    for ev in names:
+        metres, _g = distanceFromEventShort(ev)
+        if metres:
+            out[ev] = float(metres)
+    return out
+
+
+def landDistances(cur, apply):
+    cur.execute(_NO_DISTANCE)
+    names = [r[0] for r in cur.fetchall()]
+    got = eventDistances(names)
+    print(f"  tfrrs event names with no stored distance: {len(names):,}; "
+          f"{len(got):,} name a distance race")
+    if not apply or not got:
+        return 0
+    evs = sorted(got)
+    cur.execute(_SET_DISTANCE, (evs, [got[e] for e in evs]))
+    print(f"  distance landed on {cur.rowcount:,} tfrrs meets_tf rows")
+    return cur.rowcount
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--apply", action="store_true", help="write (default: census)")
+    ap.add_argument("--distances", action="store_true",
+                    help="also land each tfrrs event's distance from its name "
+                         "(see the docstring: then re-extract and retrain)")
     a = ap.parse_args()
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("SELECT count(*), count(DISTINCT meet_id) FROM results_tf "
@@ -115,6 +180,8 @@ def main():
               f"the pages fall back to meets_tfrrs): {colliding:,}")
         print(f"  meets_tfrrs track meets carrying a name: {named:,}")
         if not a.apply:
+            if a.distances:
+                landDistances(cur, False)
             print("  (census only; --apply writes)")
             return
         t0 = time.time()
@@ -153,6 +220,12 @@ def main():
         conn.commit()
         cur.execute("SELECT count(*) FROM meets_tf WHERE source = 'tfrrs' AND NULLIF(btrim(meet_name), '') IS NULL")
         print(f"  still nameless (no meets_tfrrs name): {cur.fetchone()[0]:,}")
+        if a.distances:
+            # after _INSERT, so the rows it just landed are filled too
+            t0 = time.time()
+            landDistances(cur, True)
+            conn.commit()
+            print(f"  ({time.time() - t0:.0f}s)")
         cur.execute("ANALYZE meets_tf")
         conn.commit()
 
