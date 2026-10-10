@@ -1,0 +1,54 @@
+                 Westview High School - Licensed Hy-Tek's MEET MANAGER  9:59 PM  5/10/2025  Page 1
+                    2025 Washington County Championships - 5/9/2025 to 5/10/2025
+                                     Westview HS, Portland, OR
+                                              Results
+
+Event 3  Girls 1600 Meter Run
+=========================================================================
+    Name                    Year School                  Seed    Finals  Points
+=========================================================================
+County: * 4:51.20  2018        Hannah Moore, Westview
+  1 Doe, Ann                  11 Sunset                5:01.22   4:58.31*  10
+  2 Pereira, Sofia            10 Lincoln               5:05.00   5:02.12    8
+  3 Lee, Hana                  9 Westview              5:12.40   5:09.88    6
+  4 Grant, Olivia             12 Sunset                     NT   5:15.03    5
+ -- Brown, Kim                 9 Jesuit                5:10.00       DNF
+ -- Patel, Riya               11 Westview              5:20.00       SCR
+
+Event 5  Boys 100 Meter Dash
+=========================================================================
+    Name                    Year School                  Seed    Prelims  H# Points
+=========================================================================
+Preliminaries
+  1 Johnson, Marcus           12 Sunset                  11.02     10.95q  2  +1.2
+  2 Kim, Daniel               11 Westview                11.20     11.08q  1  +0.8
+  3 Adeyemi, Tobi             10 Lincoln                 11.31     11.19   2  +1.2
+Finals
+    Name                    Year School                  Prelims  Finals  Points
+  1 Johnson, Marcus           12 Sunset                  10.95     10.88   10
+  2 Kim, Daniel               11 Westview                11.08     11.01    8
+
+Event 7  Boys 4x400 Meter Relay
+=========================================================================
+    School                                               Seed    Finals  Points
+=========================================================================
+  1 Sunset  'A'                                        3:28.00   3:24.51   10
+     1) Johnson, Marcus 12             2) Grant, Eli 11
+     3) Wu, Alan 10                    4) Ochoa, Raul 12
+  2 Westview  'A'                                      3:30.10   3:27.88    8
+
+Event 9  Girls Long Jump
+=========================================================================
+    Name                    Year School                  Seed    Finals  Points
+=========================================================================
+  1 Lee, Hana                  9 Westview              16-02.00  16-08.25  10
+
+Event 11  Boys 3200 Meter Run
+=========================================================================
+    Name                    Year School                  Seed    Finals  Points
+=========================================================================
+  1 Castellano, Owen          11 Jesuit                9:20.00   9:12.44   10
+  2 Goldfarb, Ezra            12 Lincoln               9:25.50   9:18.07    8
+  3 Wu, Alan                  10 Sunset                9:40.00   9:33.91    6
+     4:40.11 (4:40.11)    9:33.91 (4:53.80)
+  4 Garcia Lopez, Mateo        9 Westview              10:01.00  9:58.20    5

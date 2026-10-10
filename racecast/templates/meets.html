@@ -142,6 +142,9 @@
               data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {% endif %}
+      {# ★ ADD MISSING RESULTS (2026-10-10, uploads.py): a meet the feeds never had #}
+      {% if not upcoming %}<p class="rc-addres" style="margin:.5rem 0 0;font-size:.88rem">Missing a meet?
+        <a href="/account/uploads/new?sport={{ sport }}" style="font-weight:600">Add missing results</a></p>{% endif %}
     </div>
   </div></header>
 

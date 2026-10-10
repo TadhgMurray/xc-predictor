@@ -1,0 +1,152 @@
+{# admin_uploads.html -- the owner's queue of uploaded meets (uploads.py,
+   owner 2026-10-10). mode=queue: what waits, what was decided lately;
+   mode=one: one upload with the meets it may duplicate, every warning,
+   the rows, the raw file, and Approve / Reject (Insert anyway on a held
+   one). Admins only (uploads.requireAdmin: a 404 for anyone else).
+   ! APPROVE WRITES THE LIVE RAW TABLES (uploads.applyUpload); a likely
+     duplicate is HELD instead, and only "Insert anyway" with its box
+     ticked writes a held one. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Uploads to review" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('contrib.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc account-page contrib-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Admin · private</span>
+      {% if mode == "one" %}<span class="ct-pill s-{{ up.status }}">{{ status_words.get(up.status, up.status) }}</span>{% endif %}</div>
+    <h1>{% if mode == "one" %}{{ up.meet_name or "Untitled meet" }}{% else %}Uploads to review{% endif %}</h1>
+    <div class="rc-meta">
+      {% if mode == "one" %}Upload #{{ up.id }} from {{ up.account_email or "a deleted account" }}
+        · {{ up.meet_date or "no date" }}{% if up.location %} · {{ up.location }}{% endif %}
+        · {{ {"XC": "Cross country", "TF": "Track"}.get(up.sport, "sport not set") }}
+        · <a href="/account/admin/uploads">The queue</a>
+      {% else %}{{ waiting|length }} waiting · <a href="/account/admin/fixes">Fixes to review</a> · <a href="/account/status">Site status</a>{% endif %}
+    </div>
+    {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
+    {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+  </div>
+</div></header>
+
+<div class="rc-grid">
+<div class="rc-mainc">
+{% if mode == "queue" %}
+  <section class="acct-block">
+    <h2>Waiting</h2>
+    {% if not waiting %}<p class="ct-muted">Nothing waiting.</p>{% else %}
+    <ul class="ct-list">
+      {% for u in waiting %}
+      <li><a href="/account/admin/uploads/{{ u.id }}"><b>{{ u.meet_name or "Untitled" }}</b></a>
+        <span class="ct-muted">{{ u.meet_date }} · {{ u.sport }} · {{ u.n_rows }} results in {{ u.n_events }} events · {{ u.software or u.file_kind }}{% if u.n_warn %} · {{ u.n_warn }} warnings{% endif %} · {{ u.account_email or "deleted account" }}</span>
+        <span class="ct-pill s-{{ u.status }}">{{ status_words.get(u.status, u.status) }}</span>
+        <span class="ct-when">sent {{ u.submitted_at.strftime("%b %-d %H:%M") if u.submitted_at else "" }}</span></li>
+      {% endfor %}
+    </ul>{% endif %}
+  </section>
+  <section class="acct-block">
+    <h2>Decided lately</h2>
+    {% if not decided %}<p class="ct-muted">None yet.</p>{% else %}
+    <ul class="ct-list">
+      {% for u in decided %}
+      <li><a href="/account/admin/uploads/{{ u.id }}">{{ u.meet_name or "Untitled" }}</a>
+        <span class="ct-muted">{{ u.meet_date }} · {{ u.sport }} · {{ u.n_rows }} results · by {{ u.decided_by or "?" }}</span>
+        <span class="ct-pill s-{{ u.status }}">{{ status_words.get(u.status, u.status) }}</span>
+        <span class="ct-when">{{ u.decided_at.strftime("%b %-d") if u.decided_at else "" }}</span></li>
+      {% endfor %}
+    </ul>{% endif %}
+  </section>
+
+{% else %}
+  {# ---- the decision first: what it may duplicate, and the buttons ---- #}
+  <section class="acct-block">
+    <h2>Already on the site?</h2>
+    {% if dupes and dupes[0].error %}<p class="ct-warn ct-bad">Could not check: {{ dupes[0].error }}</p>
+    {% elif dupes %}
+      <p class="ct-warn">{{ dupes|length }} meet{{ "s" if dupes|length != 1 }} on the same date read like this one. Approve will HOLD it, not write it.</p>
+      <div class="ct-scroll"><table class="ct-rows">
+        <thead><tr><th>Where</th><th>Meet</th><th>Venue</th><th>Date</th><th class="n">Name</th><th class="n">Venue</th></tr></thead>
+        <tbody>{% for d in dupes %}<tr><td>{{ d.where }}</td><td>{{ d.name }}{% if d.meet_id %} <span class="ct-muted">#{{ d.meet_id }}</span>{% endif %}</td>
+          <td>{{ d.venue or "" }}</td><td>{{ d.date }}</td><td class="n">{{ "%.2f"|format(d.name_sim) }}</td><td class="n">{{ "%.2f"|format(d.venue_sim) }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+    {% else %}<p class="ct-muted">No meet on {{ up.meet_date }} reads like this one.</p>{% endif %}
+
+    {% if up.status in ("submitted", "flagged") %}
+      {% if apply_gaps %}<p class="ct-gap">Cannot be written yet: {{ apply_gaps|join("; ") }}.</p>{% endif %}
+      <form method="post" action="/account/admin/uploads/{{ up.id }}/decide" class="ct-decide">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <textarea name="note" maxlength="1000" placeholder="Note for the uploader (optional; it goes in the email)"></textarea>
+        {% if up.status == "submitted" %}
+        <button type="submit" name="action" value="approve" class="go ok">Approve</button>
+        {% else %}
+        <label class="ct-keep"><input type="checkbox" name="confirm" value="yes"> I checked: a different meet</label>
+        <button type="submit" name="action" value="force" class="go ok">Insert anyway</button>
+        {% endif %}
+        <button type="submit" name="action" value="reject" class="go no">Reject</button>
+      </form>
+    {% elif up.status == "approved" %}
+      <p class="ct-warn ct-ok">Approved by {{ up.decided_by }}{% if up.decided_at %} on {{ up.decided_at.strftime("%b %-d %H:%M") }}{% endif %}:
+        {% set a = up.applied or {} %}{{ a.races }} races and {{ a.results }} results written as meet {{ a.meet_id }} ({{ a.sport }}, source 'upload'){% if a.forced %}, inserted over a duplicate warning{% endif %}.</p>
+    {% elif up.status == "rejected" %}
+      <p class="ct-warn ct-bad">Rejected by {{ up.decided_by }}.{% if up.decision_note %} {{ up.decision_note }}{% endif %}</p>
+    {% else %}
+      <p class="ct-muted">The uploader has not sent this yet.</p>
+    {% endif %}
+  </section>
+
+  {% set warns = up.warnings or [] %}
+  {% if warns %}
+  <div class="ct-warn"><b>{{ warns|length }} warning{{ "s" if warns|length != 1 }} from the reader</b>
+    <ul>{% for w in warns[:80] %}<li>{% if w.line %}Line {{ w.line }}: {% endif %}{{ w.text }}</li>{% endfor %}</ul></div>
+  {% endif %}
+  {% if up.note %}<p class="ct-warn ct-ok"><b>The uploader says:</b> {{ up.note }}</p>{% endif %}
+
+  {% for ev_n, ev_rows in rows|groupby("event_n") %}
+    {% set e = (events|selectattr("n", "equalto", ev_n)|list or [{}])[0] %}
+    <h2 class="ct-ev">{{ e.title or ev_rows[0].event }}
+      <small>{{ e.gender or "?" }} · {% if e.distance_m %}{{ "%g"|format(e.distance_m) }} m{% elif up.distance_m %}{{ "%g"|format(up.distance_m) }} m (meet-wide){% else %}<b>no distance</b>{% endif %} · {{ ev_rows|length }} rows</small></h2>
+    <div class="ct-scroll"><table class="ct-rows">
+      <thead><tr><th class="n">Pl</th><th>Name</th><th class="ct-hide-m">As written</th><th>Yr</th><th>School</th><th>Time</th><th class="n ct-hide-m">Line</th></tr></thead>
+      <tbody>{% for r in ev_rows %}
+        <tr{% if r.warning %} class="is-flag"{% endif %}><td class="n">{{ r.place or "--" }}</td><td>{{ r.name }}{% if r.warning %}<span class="ct-flag">{{ r.warning }}</span>{% endif %}</td>
+          <td class="ct-hide-m ct-muted">{{ r.name_raw }}</td><td>{{ r.grade or "" }}</td><td>{{ r.school or "" }}</td>
+          <td class="t">{{ r.status or r.time_text }}{% if r.round == "P" %} <span class="ct-muted">P</span>{% endif %}</td><td class="n ct-hide-m">{{ r.line or "" }}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+  {% endfor %}
+
+  {% if raw %}
+  <details class="acct-block"><summary>The file as uploaded ({{ up.file_name }}, {{ "{:,}".format(up.file_bytes or 0) }} bytes)</summary>
+    <pre class="ct-raw">{{ raw }}</pre></details>
+  {% endif %}
+{% endif %}
+</div>
+<aside class="rc-side">
+  {% if mode == "one" %}
+  <h2>This upload</h2>
+  <table class="ct-facts"><tbody>
+    <tr><td>From</td><td>{{ up.account_email or "deleted account" }}</td></tr>
+    <tr><td>File</td><td>{{ up.file_name }} <span class="ct-muted">{{ up.software or up.file_kind }}</span></td></tr>
+    <tr><td>Races</td><td>{{ events|selectattr("kind", "equalto", "running")|list|length }}</td></tr>
+    <tr><td>Results</td><td>{{ up.n_rows }}</td></tr>
+    <tr><td>Writes to</td><td>{{ "meets + results" if up.sport == "XC" else "meets_tf + meets_tf_meta + results_tf" }}, source 'upload'</td></tr>
+  </tbody></table>
+  {% endif %}
+  <h2>After approval</h2>
+  <p>The rows land in the raw tables with no athlete attached. Still missing in the pipeline:</p>
+  <ul class="ct-muted">{% for g in gaps %}<li>{{ g }}</li>{% endfor %}</ul>
+</aside>
+</div>
+</main>
+</body>
+</html>

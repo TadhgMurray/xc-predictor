@@ -444,6 +444,8 @@
         {{ training.n_races }} races in {{ training.year }}</span>
     </p>
     {% endif %}
+    {# ★ SUGGEST A FIX (2026-10-10, fixes.py): shown only to the claimant #}
+    {% include "_suggest_fix.html" %}
   </div>
 </div></header>
 {# ★ NEXT RACE (2026-10-10, upcoming_preview.py): filled client-side from a cached API #}

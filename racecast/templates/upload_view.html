@@ -1,0 +1,133 @@
+{# upload_view.html -- one upload as we read it (uploads.py, owner
+   2026-10-10): the meet's details to confirm, every warning, every row
+   grouped by race, and Send / Discard. The uploader's own page; an admin
+   may open it too (read-only for them here: the queue decides).
+   ★ THE RACE PAGE'S SHAPE: header with the status, the races as the race
+     page lists results, a side card with the counts.
+   ! NOTHING FROM THE FILE IS RENDERED AS HTML: every value goes through
+     Jinja's autoescape. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Check your upload" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('contrib.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+{% set editable = mine and up.status in ("draft", "submitted") %}
+{% set warns = up.warnings or [] %}
+{% set flagged_rows = rows|selectattr("warning")|list %}
+<main class="page-wide rc account-page contrib-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Upload #{{ up.id }}</span>
+      <span class="ct-pill s-{{ up.status }}">{{ status_words.get(up.status, up.status) }}</span></div>
+    <h1>{{ up.meet_name or "Untitled meet" }}</h1>
+    <div class="rc-meta">{{ up.meet_date or "no date" }}{% if up.meet_date_end and up.meet_date_end != up.meet_date %} to {{ up.meet_date_end }}{% endif %}
+      {% if up.location %} · {{ up.location }}{% endif %}
+      · {{ {"XC": "Cross country", "TF": "Track"}.get(up.sport, "sport not set") }}
+      · read from {{ up.file_name }}{% if up.software %} ({{ up.software }}){% endif %}
+      · <a href="/account/uploads">Your uploads</a></div>
+    {% if up.status == "draft" %}
+    <ol class="ct-step" aria-label="Steps"><li class="is-done">1 Uploaded</li><li class="is-on">2 Check what we read</li><li>3 Send for review</li></ol>
+    {% endif %}
+    {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
+    {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+  </div>
+</div></header>
+
+<div class="rc-grid">
+<div class="rc-mainc">
+  {% if up.status == "approved" %}<p class="ct-warn ct-ok">Approved{% if up.decided_at %} on {{ up.decided_at.strftime("%b %-d, %Y") }}{% endif %}. These results join the site with the next nightly update.{% if up.decision_note %} Note: {{ up.decision_note }}{% endif %}</p>
+  {% elif up.status == "rejected" %}<p class="ct-warn ct-bad">Not added.{% if up.decision_note %} {{ up.decision_note }}{% endif %}</p>
+  {% elif up.status == "flagged" %}<p class="ct-warn">Held: this looks like a meet Racecast already has. The site owner is checking it.</p>
+  {% elif up.status == "submitted" %}<p class="ct-warn ct-ok">Sent{% if up.submitted_at %} on {{ up.submitted_at.strftime("%b %-d, %Y") }}{% endif %}. The site owner reviews every upload; you can still correct the details below until then.</p>
+  {% endif %}
+
+  {% if editable %}
+  <section class="acct-block">
+    <h2>The meet</h2>
+    <form method="post" action="/account/uploads/{{ up.id }}/submit">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="ct-form">
+        <label class="ct-wide">Meet name <input type="text" name="meet_name" value="{{ up.meet_name or '' }}" maxlength="200" required></label>
+        <label>Date <input type="date" name="meet_date" value="{{ up.meet_date or '' }}" required></label>
+        <label>Last day (if two days) <input type="date" name="meet_date_end" value="{{ up.meet_date_end or '' }}"></label>
+        <label>Course or venue <input type="text" name="location" value="{{ up.location or '' }}" maxlength="200"></label>
+        <label>State <input type="text" name="state" value="{{ up.state or '' }}" maxlength="2" placeholder="OR"></label>
+        <label>Sport
+          <select name="sport" required>
+            <option value="">Pick one</option>
+            <option value="XC" {{ "selected" if up.sport == "XC" }}>Cross country</option>
+            <option value="TF" {{ "selected" if up.sport == "TF" }}>Track</option>
+          </select></label>
+        <label>Race distance, if the file has none <input type="text" name="distance_m" value="{{ '%g'|format(up.distance_m) if up.distance_m else '' }}" placeholder="5000 or 3 mi"></label>
+        <label class="ct-wide">Note for the owner <textarea name="note" maxlength="1000">{{ up.note or '' }}</textarea></label>
+      </div>
+      {% if gaps %}<p class="ct-gap">Before it can be sent: {{ gaps|join("; ") }}.</p>{% endif %}
+      <div class="ct-actions">
+        {% if up.status == "draft" %}<button type="submit" name="action" value="send" class="go">Send for review</button>{% endif %}
+        <button type="submit" name="action" value="save" class="go quiet">Save details</button>
+      </div>
+    </form>
+    <form method="post" action="/account/uploads/{{ up.id }}/discard" class="ct-actions">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="acct-x">Discard this upload</button>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if warns %}
+  <div class="ct-warn">
+    <b>{{ warns|length }} thing{{ "s" if warns|length != 1 }} to check</b>{% if warns|length > 40 %} (the first 40){% endif %}
+    <ul>{% for w in warns[:40] %}<li>{% if w.line %}Line {{ w.line }}: {% endif %}{{ w.text }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  {% set by_ev = rows|groupby("event_n") %}
+  {% for ev_n, ev_rows in by_ev %}
+    {% set e = (events|selectattr("n", "equalto", ev_n)|list or [{}])[0] %}
+    <h2 class="ct-ev">{{ e.title or ev_rows[0].event }}
+      <small>{{ {"M": "Boys / men", "F": "Girls / women"}.get(e.gender, "gender not given") }}
+      · {% if e.distance_m %}{{ "%g"|format(e.distance_m) }} m{% elif up.distance_m %}{{ "%g"|format(up.distance_m) }} m (meet-wide){% else %}<b>no distance</b>{% endif %}
+      · {{ e.n_rows or ev_rows|length }} results</small></h2>
+    <div class="ct-scroll">
+    <table class="ct-rows">
+      <thead><tr><th class="n">Pl</th><th>Name</th><th class="ct-hide-m">Yr</th><th>School</th><th>Time</th><th class="ct-hide-m">Round</th></tr></thead>
+      <tbody>
+      {% for r in ev_rows %}
+        <tr{% if r.warning %} class="is-flag"{% endif %}><td class="n">{{ r.place or "--" }}</td>
+          <td>{{ r.name }}{% if r.warning %}<span class="ct-flag">{{ r.warning }}</span>{% endif %}</td>
+          <td class="ct-hide-m">{{ r.grade or "" }}</td><td>{{ r.school or "" }}</td>
+          <td class="t">{{ r.status or r.time_text }}{% if r.round == "P" %} <span class="ct-muted ct-hide-d">P</span>{% endif %}</td><td class="ct-hide-m">{{ "Prelim" if r.round == "P" else "Final" }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  {% else %}
+    <p class="ct-warn ct-bad">No results were read from this file.</p>
+  {% endfor %}
+  {% if up.n_rows > rows|length %}<p class="ct-muted">Showing the first {{ rows|length }} of {{ up.n_rows }} results.</p>{% endif %}
+</div>
+<aside class="rc-side">
+  <h2>What we read</h2>
+  <table class="ct-facts"><tbody>
+    <tr><td>Format</td><td>{{ {"hytek_text": "Hy-Tek text", "hytek_html": "Hy-Tek HTML", "csv": "CSV"}.get(up.file_kind, up.file_kind) }}</td></tr>
+    <tr><td>Races</td><td>{{ events|selectattr("kind", "equalto", "running")|list|length }}{% set skipped = events|rejectattr("kind", "equalto", "running")|list %}{% if skipped %} <span class="ct-muted">(+{{ skipped|length }} skipped)</span>{% endif %}</td></tr>
+    <tr><td>Results</td><td>{{ up.n_rows }}</td></tr>
+    <tr><td>To check</td><td>{{ warns|length }}{% if flagged_rows %} <span class="ct-muted">({{ flagged_rows|length }} rows)</span>{% endif %}</td></tr>
+    <tr><td>Status</td><td>{{ status_words.get(up.status, up.status) }}</td></tr>
+  </tbody></table>
+  <p class="ct-muted">If a name, time or school is wrong in the file, fix the file and upload it again; discard this one.</p>
+</aside>
+</div>
+</main>
+</body>
+</html>

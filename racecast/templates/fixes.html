@@ -1,0 +1,163 @@
+{# fixes.html -- "Suggest a fix" (fixes.py, owner 2026-10-10): the form an
+   athlete who claims their page fills in (mode=new), their requests
+   (mode=list), and the two refusals (unclaimed, unready).
+   ★ FIVE KINDS, ONE FORM: the kind is a row of chips; the fields for the
+     others hide (a few lines of script below; without it every field shows
+     and the server reads only the chosen kind's).
+   ! THE CLAIM IS CHECKED BY THE SERVER on the GET and again on the POST,
+     whatever this page shows. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Suggest a fix" if mode != "list" else "Your suggested fixes" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('contrib.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc account-page contrib-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Your account · fixes</span></div>
+    <h1>{% if mode == "new" %}Suggest a fix{% if snap and snap.name %}: {{ snap.name }}{% endif %}{% elif mode == "list" %}Your suggested fixes{% else %}Suggest a fix{% endif %}</h1>
+    <div class="rc-meta">{% if mode == "new" %}<a href="/athlete/{{ person_id }}">Back to the page</a> · {% endif %}<a href="/account/fixes">Your fixes</a> · <a href="/account">Settings</a></div>
+    {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
+    {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+  </div>
+</div></header>
+
+<div class="rc-grid">
+<div class="rc-mainc">
+{% if mode == "unready" %}
+  <p class="ct-warn ct-bad">Fixes are not switched on yet. The site owner needs to run <code>python racecast/fixes.py --init</code>.</p>
+{% elif mode == "unclaimed" %}
+  <p class="ct-warn">Only the athlete whose page this is can suggest a fix to it. If this is you,
+    <a href="/account#athlete">link the page to your account</a> first, then come back.</p>
+{% elif mode == "list" %}
+  <section class="acct-block">
+    <h2>Sent</h2>
+    {% if not mine %}<p class="ct-muted">None yet. Use "Suggest a fix" on your athlete page.</p>{% else %}
+    <ul class="ct-list">
+      {% for f in mine %}
+      <li><b>{{ kind_words.get(f.kind, f.kind) }}</b> <span class="ct-muted">{{ f.summary }} · <a href="/athlete/{{ f.person_id }}">the page</a></span>
+        <span class="ct-pill s-{{ f.status }}">{{ {"open": "Waiting", "approved": "Approved", "rejected": "Not made"}.get(f.status, f.status) }}</span>
+        <span class="ct-when">{{ f.created_at.strftime("%b %-d, %Y") if f.created_at else "" }}</span>
+        {% if f.outcome or f.decision_note %}<span class="ct-muted" style="flex-basis:100%">{{ f.outcome or "" }}{% if f.decision_note %} {{ f.decision_note }}{% endif %}</span>{% endif %}</li>
+      {% endfor %}
+    </ul>{% endif %}
+  </section>
+{% else %}
+  <form method="post" action="/account/fixes/new?person={{ person_id }}" id="fix-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <section class="acct-block">
+      <h2>What is wrong?</h2>
+      <fieldset class="ct-kinds">
+        <legend class="ct-muted" style="padding:0;margin-bottom:.3rem">Pick one</legend>
+        {% for k in kinds %}<label><input type="radio" name="kind" value="{{ k }}" {{ "checked" if k == kind }}><span>{{ kind_words[k] }}</span></label>{% endfor %}
+      </fieldset>
+    </section>
+
+    {% set seasons = snap.seasons or [] %}
+    {% macro season_select(k) %}
+      <label>Season
+        <select name="{{ k }}_season">
+          <option value="">Pick a season</option>
+          {% for s in seasons|map(attribute="year")|unique %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+          {% if not seasons %}{% for y in range(2026, 2014, -1) %}<option value="{{ y }}">{{ y }}</option>{% endfor %}{% endif %}
+        </select></label>
+      <label>Sport
+        <select name="{{ k }}_sport"><option value="">Both</option><option value="XC">Cross country</option><option value="TF">Track</option></select></label>
+    {% endmacro %}
+
+    <section class="acct-block ct-panel" data-kind="grade">
+      <h2>Wrong grade or class year</h2>
+      {% if seasons %}<p class="ct-muted">The page says: {% for s in seasons[:6] %}{{ s.year }} {{ s.sport }} grade {{ s.grade or "?" }}{{ "; " if not loop.last }}{% endfor %}</p>{% endif %}
+      <div class="ct-form">
+        {{ season_select("grade") }}
+        <label>Right grade
+          <select name="grade"><option value="">Pick</option>{% for g in grades %}<option value="{{ g }}">{{ g }}</option>{% endfor %}</select></label>
+        <label>Or your class year <input type="number" name="class_year" min="1990" max="2040" placeholder="2027"></label>
+      </div>
+    </section>
+
+    <section class="acct-block ct-panel" data-kind="school">
+      <h2>Wrong school</h2>
+      {% if seasons %}<p class="ct-muted">The page says: {% for s in seasons[:6] %}{{ s.year }} {{ s.sport }} {{ s.school or "?" }}{{ "; " if not loop.last }}{% endfor %}</p>{% endif %}
+      <div class="ct-form">
+        {{ season_select("school") }}
+        <label>Right school <input type="text" name="school" maxlength="120" placeholder="Jesuit"></label>
+        <label>State <input type="text" name="state" maxlength="2" placeholder="OR"></label>
+      </div>
+    </section>
+
+    <section class="acct-block ct-panel" data-kind="not_mine">
+      <h2>A result that is not mine</h2>
+      <p class="ct-muted">Pick the race. The owner checks it against the meet; nothing moves until then.</p>
+      {% if results %}
+      <div class="ct-pick-row">
+        {% for r in results %}<label><input type="radio" name="result" value="{{ r.sport }}:{{ r.result_id }}">
+          <span class="ct-muted">{{ (r.date|string)[:10] }}</span>
+          <span>{{ r.meet_name or ("Meet " ~ r.meet_id) }}{% if r.event_short %} · {{ r.event_short }}{% endif %} <span class="ct-muted">{{ r.school or "" }}</span></span>
+          <span class="t">{{ r.time_seconds|wit_time if r.time_seconds else "" }}</span></label>{% endfor %}
+      </div>
+      {% else %}<p class="ct-muted">No results on this page.</p>{% endif %}
+    </section>
+
+    <section class="acct-block ct-panel" data-kind="missing">
+      <h2>A missing result</h2>
+      <div class="ct-form">
+        <label class="ct-wide">Link to the result <input type="url" name="url" maxlength="500" placeholder="https://www.athletic.net/CrossCountry/meet/..."></label>
+        <label class="ct-wide">Meet and race (optional) <input type="text" name="meet" maxlength="200" placeholder="Lakeside Invitational, Boys Varsity 5K"></label>
+      </div>
+      <p class="ct-muted">An athletic.net or tfrrs meet link is queued for the scrape once approved. For other sites, or a meet with no page anywhere, <a href="/account/uploads/new">upload the results file</a>.</p>
+    </section>
+
+    <section class="acct-block ct-panel" data-kind="same_person">
+      <h2>Two pages that are the same person</h2>
+      <div class="ct-form">
+        <label class="ct-wide">Link to the other page <input type="text" name="other_person_id" maxlength="80" placeholder="https://racecast.co/athlete/12345678"></label>
+      </div>
+      <p class="ct-muted">This page: {{ snap.name or "?" }}, {{ snap.n_xc }} cross country and {{ snap.n_tf }} track results.</p>
+    </section>
+
+    <section class="acct-block">
+      <div class="ct-form"><label class="ct-wide">Anything else the owner should know (optional)
+        <textarea name="note" maxlength="{{ note_max }}" placeholder="How you know, e.g. the meet's own results page"></textarea></label></div>
+      <div class="ct-actions"><button type="submit" class="go">Send to the owner</button>
+        <span class="ct-muted">You get an email when it is decided.</span></div>
+    </section>
+  </form>
+  <script>
+  /* show only the chosen kind's fields; with no script every panel shows */
+  (function () {
+    var form = document.getElementById('fix-form');
+    if (!form) return;
+    function sync() {
+      var k = (form.querySelector('input[name=kind]:checked') || {}).value;
+      form.querySelectorAll('.ct-panel').forEach(function (p) { p.hidden = p.dataset.kind !== k; });
+    }
+    form.addEventListener('change', function (e) { if (e.target.name === 'kind') sync(); });
+    sync();
+  })();
+  </script>
+{% endif %}
+</div>
+<aside class="rc-side">
+  <h2>How fixes work</h2>
+  <table class="ct-facts"><tbody>
+    <tr><td>1</td><td>You say what is wrong. We keep what the page showed when you sent it.</td></tr>
+    <tr><td>2</td><td>The site owner checks it against the meet's own results.</td></tr>
+    <tr><td>3</td><td>An approved fix goes in with the nightly update; you get an email either way.</td></tr>
+  </tbody></table>
+  <p class="ct-muted">A whole meet that is missing? <a href="/account/uploads/new">Add missing results</a>.</p>
+</aside>
+</div>
+</main>
+</body>
+</html>

@@ -10240,6 +10240,15 @@ for _bp in (_scale.bp, _goal.bp, _h2h.bp, _meet_track.bp):
 import pages3 as _pages3                                       # noqa: E402
 app.register_blueprint(_pages3.bp)
 
+# ★ RESULTS UPLOADS AND SUGGESTED FIXES (owner, 2026-10-10): staging, the
+#   owner's two review queues under /account/admin, and nothing written to
+#   a live table without the owner's Approve -- see uploads.py, fixes.py.
+#   Under /account, so private (no-store, not crawled) like the rest.
+import uploads as _uploads                                     # noqa: E402
+import fixes as _fixes                                         # noqa: E402
+for _bp in (_uploads.bp, _fixes.bp):
+    app.register_blueprint(_bp)
+
 
 @app.route("/predictions")
 def predictions_page():

@@ -1,0 +1,24 @@
+{# _suggest_fix.html -- "Suggest a fix", for the athlete who claims this
+   page (fixes.py, owner 2026-10-10). Included once, at the end of the
+   athlete header. The page is edge-cached and anonymous, so the link
+   ships hidden and is shown here only when /api/me (window.xcpMe or the
+   xcp:me event from topbar-search.js) lists this person among the
+   reader's claimed athletes. The routes check the claim again.
+   needs: athlete.person_id #}
+<p class="ath-fix-link" id="ath-fix-link" data-fix-person="{{ athlete.person_id }}" hidden
+   style="margin:.5rem 0 0;font-size:.82rem"><a href="/account/fixes/new?person={{ athlete.person_id }}"
+   style="color:var(--muted)">Suggest a fix to this page</a></p>
+<script>
+(function () {
+  var el = document.getElementById('ath-fix-link');
+  if (!el) return;
+  function show(me) {
+    var pid = el.getAttribute('data-fix-person');
+    if (me && me.signed_in && (me.athletes || []).some(function (a) { return String(a.person_id) === pid; })) {
+      el.hidden = false;
+    }
+  }
+  if (window.xcpMe) show(window.xcpMe);
+  document.addEventListener('xcp:me', function (e) { show(e.detail); });
+})();
+</script>

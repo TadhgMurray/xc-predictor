@@ -1,0 +1,116 @@
+{# uploads.html -- "Add missing results" (uploads.py, owner 2026-10-10):
+   the uploader's list of their uploads (mode=list), the upload form
+   (mode=new), and the page that says the tables are not set up (unready).
+   ★ THE RACE PAGE'S SHAPE: header, the form or list in the main column,
+     a side card saying what happens next (hidden on a phone below it).
+   ! THE FORM IS multipart, ONE FILE, THE SESSION'S CSRF TOKEN. The size cap
+     is the app's (9 MB, MAX_CONTENT_LENGTH); the accept list is a hint, the
+     server checks the file itself. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Add missing results" if mode == "new" else "Your uploads" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('contrib.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc account-page contrib-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Your account · results</span></div>
+    <h1>{{ "Add missing results" if mode == "new" else "Your uploads" }}</h1>
+    <div class="rc-meta">
+      {% if mode == "new" %}A meet that is not on Racecast: upload the results file the timer posted.
+      {% else %}Meets you sent, and where each one stands.{% endif %}
+      · <a href="/account">Settings</a>{% if mode != "new" %} · <a href="/account/uploads/new">Add missing results</a>{% else %} · <a href="/account/uploads">Your uploads</a>{% endif %}{% if admin %} · <a href="/account/admin/uploads">Review queue</a>{% endif %}
+    </div>
+    {% if mode == "new" %}
+    <ol class="ct-step" aria-label="Steps"><li class="is-on">1 Upload the file</li><li>2 Check what we read</li><li>3 Send for review</li></ol>
+    {% endif %}
+    {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
+    {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+  </div>
+</div></header>
+
+<div class="rc-grid">
+<div class="rc-mainc">
+{% if mode == "unready" %}
+  <p class="ct-warn ct-bad">Uploads are not switched on yet. The site owner needs to run
+     <code>python racecast/uploads.py --init</code>.</p>
+
+{% elif mode == "new" %}
+  <section class="acct-block">
+    <h2>The results file</h2>
+    <form method="post" action="/account/uploads/new" enctype="multipart/form-data" id="up-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="ct-file">
+        <input type="file" name="file" required accept=".txt,.htm,.html,.csv,text/plain,text/html,text/csv" aria-label="Results file">
+        <span class="ct-muted">.txt, .htm or .csv, up to {{ max_mb }} MB</span>
+      </div>
+      <div class="ct-form">
+        <label>Sport
+          <select name="sport">
+            <option value="">Read it from the file</option>
+            <option value="XC" {{ "selected" if sport == "XC" }}>Cross country</option>
+            <option value="TF" {{ "selected" if sport == "TF" }}>Track</option>
+          </select></label>
+        <label>Meet name <input type="text" name="meet_name" maxlength="200" placeholder="From the file if blank"></label>
+        <label>Date <input type="date" name="meet_date"></label>
+        <label>Course or venue <input type="text" name="location" maxlength="200" placeholder="From the file if blank"></label>
+        <label class="ct-wide">Anything the owner should know (optional)
+          <textarea name="note" maxlength="1000" placeholder="{{ ('e.g. our team (' ~ school ~ ') ran this; the timer never posted it to athletic.net') if school else 'e.g. the timer never posted this meet to athletic.net' }}"></textarea></label>
+      </div>
+      <div class="ct-actions"><button type="submit" class="go">Upload and check</button>
+        <span class="ct-muted">Nothing goes live from here: you see what we read first.</span></div>
+    </form>
+  </section>
+
+  <section class="acct-block">
+    <h2>What we can read</h2>
+    <ul class="ct-list">
+      <li><b>Hy-Tek Meet Manager or Team Manager results</b> <span class="ct-muted">the printed results text (.txt) a timer posts, cross country or track: "Event 1 Girls 5000 Meter Run CC", then place, name, year, school, time</span></li>
+      <li><b>Hy-Tek HTML results</b> <span class="ct-muted">the .htm pages Meet Manager publishes; save the page and upload it</span></li>
+      <li><b>A spreadsheet saved as CSV</b> <span class="ct-muted">one row per runner, in <a href="/account/uploads/template.csv">the template's columns</a>: meet_name, meet_date, location, sport, event, gender, division, distance (metres), place, name, grade, school, time</span></li>
+    </ul>
+    <p class="ct-muted">Relays and field events are skipped. Times as the sheet prints them: 15:12.4, 4:58.31, 58.31; DNF, DNS and DQ are kept as such.
+      At most {{ per_day }} uploads a day.</p>
+  </section>
+
+{% else %}
+  <section class="acct-block">
+    <h2>Uploads</h2>
+    {% if not uploads %}
+      <p class="ct-muted">Nothing yet. <a href="/account/uploads/new">Add missing results</a> for a meet that is not on Racecast.</p>
+    {% else %}
+    <ul class="ct-list">
+      {% for u in uploads %}
+      <li><a href="/account/uploads/{{ u.id }}">{{ u.meet_name or u.file_name or ("Upload " ~ u.id) }}</a>
+        <span class="ct-muted">{{ u.meet_date or "no date" }} · {{ {"XC": "Cross country", "TF": "Track"}.get(u.sport, "sport not set") }} · {{ u.n_rows }} results</span>
+        <span class="ct-pill s-{{ u.status }}">{{ status_words.get(u.status, u.status) }}</span>
+        <span class="ct-when">{{ u.created_at.strftime("%b %-d, %Y") if u.created_at else "" }}</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+{% endif %}
+</div>
+<aside class="rc-side">
+  <h2>How it works</h2>
+  <table class="ct-facts"><tbody>
+    <tr><td>1</td><td>You upload the results file. We read it and show you every row, with anything we could not read.</td></tr>
+    <tr><td>2</td><td>You check the meet's name, date and course, then send it.</td></tr>
+    <tr><td>3</td><td>The site owner reviews every upload. A meet we already have is held, not added twice.</td></tr>
+    <tr><td>4</td><td>Approved results join the nightly update, and you get an email either way.</td></tr>
+  </tbody></table>
+</aside>
+</div>
+</main>
+</body>
+</html>

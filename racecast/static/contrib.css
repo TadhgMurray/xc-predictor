@@ -1,0 +1,109 @@
+/* contrib.css -- the pages people use to add to the site (owner,
+   2026-10-10): uploading a meet's results (uploads.py), suggesting a fix
+   to their own page (fixes.py), and the owner's two queues that decide
+   them. Loaded only by those pages, after style.css and race.css; every
+   rule sits under main.rc.contrib-page so nothing else can be touched.
+   ★ THE RACE PAGE'S SHAPE: the rc-hd header, the main column, a side card
+     that says where the thing stands. The forms borrow .account-page's
+     inputs and buttons (style.css), so they look like Settings. */
+
+main.rc.contrib-page .ct-step { display: flex; gap: .5rem; flex-wrap: wrap; margin: .7rem 0 0; padding: 0; list-style: none; font-size: .85rem; }
+main.rc.contrib-page .ct-step li { padding: .2rem .65rem; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); }
+main.rc.contrib-page .ct-step li.is-on { border-color: var(--ink); color: var(--ink); font-weight: 600; }
+main.rc.contrib-page .ct-step li.is-done { color: #146c2e; border-color: #b7dcc2; }
+
+main.rc.contrib-page .ct-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: .7rem 1rem; margin: .6rem 0 .8rem; }
+main.rc.contrib-page .ct-form label { display: flex; flex-direction: column; gap: .25rem; font-size: .82rem; color: var(--muted); font-weight: 600; }
+main.rc.contrib-page .ct-form .ct-wide { grid-column: 1 / -1; }
+main.rc.contrib-page input[type=text], main.rc.contrib-page input[type=date], main.rc.contrib-page input[type=url],
+main.rc.contrib-page input[type=number], main.rc.contrib-page select, main.rc.contrib-page textarea {
+  padding: .5rem .65rem; border: 1px solid var(--line-2, #cfd4da); border-radius: 6px; font: inherit; font-weight: 400;
+  color: var(--ink); background: #fff; box-sizing: border-box; width: 100%; min-width: 0; }
+main.rc.contrib-page textarea { min-height: 4.5rem; resize: vertical; }
+main.rc.contrib-page .ct-file { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; padding: 1rem;
+  border: 1px dashed var(--line-2, #cfd4da); border-radius: 10px; background: var(--zebra, #fafbfc); }
+main.rc.contrib-page .ct-file input[type=file] { font: inherit; max-width: 100%; }
+main.rc.contrib-page .ct-actions { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; margin-top: .8rem; }
+main.rc.contrib-page .ct-actions form { margin: 0; }
+
+main.rc.contrib-page .ct-warn { border-left: 3px solid #d97706; background: #fffbeb; padding: .5rem .8rem; margin: .6rem 0;
+  border-radius: 0 6px 6px 0; font-size: .88rem; }
+main.rc.contrib-page .ct-warn ul { margin: .3rem 0 0; padding-left: 1.1rem; }
+main.rc.contrib-page .ct-warn li { margin: .1rem 0; }
+main.rc.contrib-page .ct-bad { border-left-color: #b91c1c; background: #fef2f2; }
+main.rc.contrib-page .ct-ok { border-left-color: #15803d; background: #f0fdf4; }
+main.rc.contrib-page .ct-muted { color: var(--muted); font-size: .85rem; }
+
+/* the parsed rows: the race page's results table, plainer */
+main.rc.contrib-page .ct-ev { margin: 1.4rem 0 .3rem; font-size: 1.02rem; display: flex; gap: .5rem; flex-wrap: wrap; align-items: baseline; }
+main.rc.contrib-page .ct-ev small { font-weight: 400; color: var(--muted); font-size: .82rem; }
+main.rc.contrib-page table.ct-rows { width: 100%; border-collapse: collapse; font-size: .88rem; }
+main.rc.contrib-page table.ct-rows th { text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); font-weight: 600; padding: .35rem .5rem; border-bottom: 1px solid var(--line); }
+main.rc.contrib-page table.ct-rows td { padding: .35rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+main.rc.contrib-page table.ct-rows tr:nth-child(even) td { background: var(--zebra, #fafbfc); }
+main.rc.contrib-page table.ct-rows td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+main.rc.contrib-page table.ct-rows td.t { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+main.rc.contrib-page table.ct-rows tr.is-flag td { background: #fffbeb; }
+main.rc.contrib-page table.ct-rows .ct-flag { display: block; color: #b45309; font-size: .78rem; font-weight: 400; }
+main.rc.contrib-page .ct-scroll { overflow-x: auto; }
+main.rc.contrib-page table.ct-rows .ct-hide-d { display: none; }
+
+/* status pills: one word, coloured by state */
+main.rc.contrib-page .ct-pill { display: inline-block; font-size: .72rem; font-weight: 600; border-radius: 999px; padding: 1px 8px;
+  background: #f3f4f6; color: #374151; white-space: nowrap; }
+main.rc.contrib-page .ct-pill.s-submitted, main.rc.contrib-page .ct-pill.s-open { background: #eef2ff; color: #3730a3; }
+main.rc.contrib-page .ct-pill.s-approved { background: #dcfce7; color: #166534; }
+main.rc.contrib-page .ct-pill.s-flagged { background: #fef3c7; color: #92400e; }
+main.rc.contrib-page .ct-pill.s-rejected { background: #fee2e2; color: #991b1b; }
+
+/* lists of uploads and requests */
+main.rc.contrib-page .ct-list { list-style: none; padding: 0; margin: .4rem 0; }
+main.rc.contrib-page .ct-list li { display: flex; flex-wrap: wrap; gap: .2rem .6rem; align-items: baseline; padding: .55rem 0;
+  border-bottom: 1px solid var(--line); }
+main.rc.contrib-page .ct-list li .ct-when { margin-left: auto; color: var(--muted); font-size: .82rem; white-space: nowrap; }
+
+/* the owner's cards: one request, its evidence, the two buttons */
+main.rc.contrib-page .ct-card { border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1.1rem 1rem; margin: 1rem 0; }
+main.rc.contrib-page .ct-card h3 { margin: 0 0 .3rem; font-size: 1rem; display: flex; gap: .5rem; flex-wrap: wrap; align-items: baseline; }
+main.rc.contrib-page .ct-card .ct-sum { font-size: .95rem; margin: .2rem 0 .5rem; }
+main.rc.contrib-page .ct-ev2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .6rem 1rem; margin: .4rem 0; }
+main.rc.contrib-page .ct-ev2 > div { background: var(--zebra, #fafbfc); border: 1px solid var(--line); border-radius: 8px; padding: .5rem .7rem; font-size: .85rem; }
+main.rc.contrib-page .ct-ev2 h4 { margin: 0 0 .3rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+main.rc.contrib-page .ct-ev2 table { width: 100%; border-collapse: collapse; }
+main.rc.contrib-page .ct-ev2 td { padding: .1rem .3rem .1rem 0; vertical-align: top; }
+main.rc.contrib-page .ct-decide { display: flex; gap: .5rem; flex-wrap: wrap; align-items: flex-end; margin-top: .6rem; }
+main.rc.contrib-page .ct-decide textarea { min-height: 2.4rem; flex: 1 1 16rem; width: auto; }
+main.rc.contrib-page .ct-decide .go.ok { background: #166534; }
+main.rc.contrib-page .ct-decide .go.no { background: #fff; color: #991b1b; border: 1px solid #efc4c4; }
+main.rc.contrib-page .ct-decide label.ct-keep { font-size: .85rem; display: flex; gap: .3rem; align-items: center; }
+main.rc.contrib-page .ct-gap { font-size: .82rem; color: #92400e; margin: .4rem 0 0; }
+main.rc.contrib-page pre.ct-raw { font-size: .72rem; line-height: 1.35; overflow: auto; max-height: 28rem; background: var(--zebra, #fafbfc);
+  border: 1px solid var(--line); border-radius: 6px; padding: .6rem; white-space: pre; }
+
+/* the kind picker on Suggest a fix: five radio chips */
+main.rc.contrib-page .ct-kinds { display: flex; flex-wrap: wrap; gap: .5rem; margin: .4rem 0 .2rem; border: 0; padding: 0; }
+main.rc.contrib-page .ct-kinds label { padding: .4rem .85rem; border: 1px solid var(--line-2, #cfd4da); border-radius: 999px; cursor: pointer;
+  font-weight: 600; font-size: .88rem; }
+main.rc.contrib-page .ct-kinds input { position: absolute; opacity: 0; pointer-events: none; }
+main.rc.contrib-page .ct-kinds label:has(input:checked) { background: var(--ink); color: #fff; border-color: var(--ink); }
+main.rc.contrib-page .ct-kinds input:focus-visible + span { outline: 2px solid var(--accent, #14477d); outline-offset: 3px; }
+main.rc.contrib-page .ct-panel[hidden] { display: none; }
+main.rc.contrib-page .ct-pick-row { max-height: 22rem; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+main.rc.contrib-page .ct-pick-row label { display: flex; gap: .6rem; align-items: baseline; padding: .4rem .6rem; border-bottom: 1px solid var(--line);
+  font-size: .86rem; font-weight: 400; color: var(--ink); cursor: pointer; }
+main.rc.contrib-page .ct-pick-row label:hover { background: var(--hover, #f3f6fa); }
+main.rc.contrib-page .ct-pick-row .t { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+
+/* the side card */
+main.rc.contrib-page .rc-side .ct-facts { width: 100%; border-collapse: collapse; font-size: .88rem; }
+main.rc.contrib-page .rc-side .ct-facts td { padding: .3rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+main.rc.contrib-page .rc-side .ct-facts td:first-child { color: var(--muted); padding-right: .6rem; white-space: nowrap; }
+main.rc.contrib-page .rc-side p { font-size: .85rem; }
+
+@media (max-width: 700px) {
+  main.rc.contrib-page table.ct-rows .ct-hide-m { display: none; }
+  main.rc.contrib-page table.ct-rows .ct-hide-d { display: inline; }
+  main.rc.contrib-page .ct-card { padding: .8rem .85rem .9rem; }
+  main.rc.contrib-page .ct-list li .ct-when { margin-left: 0; flex-basis: 100%; }
+}

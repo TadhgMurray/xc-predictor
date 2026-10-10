@@ -1,0 +1,119 @@
+{# admin_fixes.html -- the owner's queue of suggested fixes (fixes.py,
+   owner 2026-10-10). Each open request as a card: what it says, the page
+   as it was when sent beside the page now, the affected rows and links,
+   and Approve / Reject. Admins only (uploads.requireAdmin).
+   ★ EACH CARD SAYS WHAT APPROVE WILL DO before the button is pressed:
+     applied through link_profile_school, queued for the scrape, or recorded
+     only (with the pipeline support that is missing). #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Fixes to review" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('contrib.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+{% macro seasons_tbl(snap) %}
+  {% if snap %}
+  <p><a href="/athlete/{{ snap.person_id }}">{{ snap.name or ("Athlete " ~ snap.person_id) }}</a> <span class="ct-muted">#{{ snap.person_id }} · {{ snap.n_xc }} XC, {{ snap.n_tf }} TF rows{% if snap.gender %} · {{ snap.gender }}{% endif %}</span></p>
+  {% if snap.seasons %}<table><tbody>{% for s in snap.seasons[:8] %}<tr><td>{{ s.year }} {{ s.sport }}</td><td>gr {{ s.grade or "?" }}</td><td>{{ s.school or "?" }}{% if s.state %} ({{ s.state }}){% endif %}</td><td class="ct-muted">{{ s.n_races }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+  {% endif %}
+{% endmacro %}
+{% macro result_line(r) %}
+  {% if r %}{{ (r.date|string)[:10] }} · {{ r.meet_name or ("meet " ~ r.meet_id) }}{% if r.event_short %} · {{ r.event_short }}{% endif %}
+    · <b>{{ r.time_seconds|wit_time if r.time_seconds else "no time" }}</b>{% if r.place %} · {{ r.place }}{% endif %}
+    · {{ r.athlete_name or "" }} · {{ r.school or "" }} gr {{ r.grade or "?" }}
+    <span class="ct-muted">· {{ r.source }}{% if r.athlete_id %} athlete {{ r.athlete_id }}{% endif %} · result {{ r.result_id }}</span>
+  {% else %}<span class="ct-muted">no such row now</span>{% endif %}
+{% endmacro %}
+<main class="page-wide rc account-page contrib-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Admin · private</span></div>
+    <h1>Fixes to review</h1>
+    <div class="rc-meta">{{ open_|length }} open · <a href="/account/admin/uploads">Uploads to review</a> · <a href="/account/status">Site status</a></div>
+    {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
+    {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+  </div>
+</div></header>
+
+<div class="rc-grid">
+<div class="rc-mainc">
+  {% if not open_ %}<p class="ct-muted">Nothing open.</p>{% endif %}
+  {% for f in open_ %}
+  {% set d = f.detail %}{% set ev = f.evidence or {} %}
+  <article class="ct-card" id="fix-{{ f.id }}">
+    <h3>#{{ f.id }} {{ kind_words.get(f.kind, f.kind) }} <span class="ct-pill s-open">open</span>
+      <span class="ct-muted" style="font-weight:400;font-size:.82rem">from {{ f.account_email or "a deleted account" }} · {{ f.created_at.strftime("%b %-d %H:%M") if f.created_at else "" }}</span></h3>
+    <p class="ct-sum">{{ f.summary }}</p>
+    {% if f.note %}<p class="ct-muted">"{{ f.note }}"</p>{% endif %}
+    <div class="ct-ev2">
+      <div><h4>The page when sent</h4>{{ seasons_tbl(ev.athlete) }}</div>
+      <div><h4>The page now</h4>{{ seasons_tbl(f.now) }}</div>
+      {% if f.kind == "same_person" %}
+      <div><h4>The other page when sent</h4>{{ seasons_tbl(ev.other) }}</div>
+      <div><h4>The other page now</h4>{{ seasons_tbl(f.other_now) }}</div>
+      {% elif f.kind == "not_mine" %}
+      <div style="grid-column:1/-1"><h4>The result</h4>
+        <p>When sent: {{ result_line(ev.result) }}</p>
+        <p>Now: {{ result_line(f.result_now) }}</p>
+        {% if ev.linked_by %}<p class="ct-muted">Linked to this page by: {% for l in ev.linked_by %}{{ l.rule }} ({{ l.from_person }} to {{ l.to_person }}){{ ", " if not loop.last }}{% endfor %}. That linker's --undo takes it back.</p>
+        {% else %}<p class="ct-muted">No linker moved this row here (person_link_log): it is the feed's own.</p>{% endif %}</div>
+      {% elif f.kind == "missing" %}
+      <div style="grid-column:1/-1"><h4>The link</h4>
+        <p><a href="{{ d.url }}" rel="noopener noreferrer nofollow" target="_blank">{{ d.url }}</a>{% if d.meet %} · {{ d.meet }}{% endif %}</p>
+        {% if d.queue %}<p class="ct-muted">{{ d.queue[2] }} {{ d.queue[1] }} meet {{ d.queue[0] }}; scrape queue state when sent: {{ {0: "due", 1: "done", 2: "failed", 3: "claimed", 4: "no meet"}.get(ev.queue_state, "not queued") }}</p>{% endif %}</div>
+      {% endif %}
+    </div>
+    <p class="ct-gap">Approve will:
+      {% if f.kind == "same_person" %}join the two pages through link_profile_school (profile_school_merge, person_link_log rule 'profile_school', redirect written; undo with <code>link_profile_school.py --undo &lt;old id&gt;</code>).
+      {% elif f.kind == "missing" and d.queue %}queue {{ d.queue[2] }} meet {{ d.queue[0] }} for the next nightly scrape (meet_queue, as find_meet.py --requeue).
+      {% elif f.kind == "missing" %}record it only. {{ missing.missing_other }}
+      {% else %}record it only. {{ missing[f.kind] }}{% endif %}</p>
+    <form method="post" action="/account/admin/fixes/{{ f.id }}/decide" class="ct-decide">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% if f.kind == "same_person" %}
+      <label class="ct-keep"><input type="radio" name="keep" value="{{ f.person_id }}" checked> keep #{{ f.person_id }} (the claimed page)</label>
+      <label class="ct-keep"><input type="radio" name="keep" value="{{ d.other_person_id }}"> keep #{{ d.other_person_id }}</label>
+      {% endif %}
+      <textarea name="note" maxlength="1000" placeholder="Note for the athlete (optional; it goes in the email)"></textarea>
+      <button type="submit" name="action" value="approve" class="go ok">Approve</button>
+      <button type="submit" name="action" value="reject" class="go no">Reject</button>
+    </form>
+  </article>
+  {% endfor %}
+
+  <section class="acct-block">
+    <h2>Decided lately</h2>
+    {% if not decided %}<p class="ct-muted">None yet.</p>{% else %}
+    <ul class="ct-list">{% for f in decided %}
+      <li>#{{ f.id }} <b>{{ kind_words.get(f.kind, f.kind) }}</b> <span class="ct-muted">{{ f.summary }} · <a href="/athlete/{{ f.person_id }}">page</a> · {{ f.decided_by or "?" }}</span>
+        <span class="ct-pill s-{{ f.status }}">{{ f.status }}</span>
+        <span class="ct-when">{{ f.decided_at.strftime("%b %-d") if f.decided_at else "" }}</span>
+        {% set ap = (f.applied or {}) %}{% if ap.missing_support %}<span class="ct-muted" style="flex-basis:100%">Recorded only: {{ ap.missing_support }}</span>
+        {% elif ap.applied %}<span class="ct-muted" style="flex-basis:100%">Applied: {{ ap.applied.mechanism }}{% if ap.applied.undo %} · undo: <code>{{ ap.applied.undo }}</code>{% endif %}</span>{% endif %}</li>
+    {% endfor %}</ul>{% endif %}
+  </section>
+</div>
+<aside class="rc-side">
+  <h2>What Approve does</h2>
+  <table class="ct-facts"><tbody>
+    <tr><td>Same person</td><td>Applied: link_profile_school</td></tr>
+    <tr><td>Missing</td><td>Queued, for athletic.net and tfrrs meets</td></tr>
+    <tr><td>Grade</td><td>Recorded only</td></tr>
+    <tr><td>School</td><td>Recorded only</td></tr>
+    <tr><td>Not mine</td><td>Recorded only</td></tr>
+  </tbody></table>
+  <p class="ct-muted">Every decision emails the athlete. "Not mine" stays a report: nothing moves a result off a page from here.</p>
+</aside>
+</div>
+</main>
+</body>
+</html>
