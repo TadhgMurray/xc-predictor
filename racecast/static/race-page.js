@@ -17,6 +17,32 @@
   //   carries its own rc-on-teams / rc-on-track, so two predicted races on
   //   one page do not fold each other's side cards.
   var roots = [];
+  var panelSeq = 0;
+
+  /* ★ A STRIP WIDER THAN THE PHONE SAYS SO (sweep 2026-10-10, B12). It
+       scrolls sideways (race.css) with the scrollbar hidden, so the last
+       tabs were simply cut off with nothing to say there were more. The
+       edge that has more behind it fades out (race.css .rc-fade-l/-r), and
+       the open tab is scrolled into the strip -- the strip only, never the
+       page, so arriving on #teams does not jump the page. */
+  function fadeEdges(strip) {
+    function paint() {
+      var more = strip.scrollWidth - strip.clientWidth;
+      strip.classList.toggle("rc-fade-l", more > 1 && strip.scrollLeft > 1);
+      strip.classList.toggle("rc-fade-r", more > 1 && strip.scrollLeft < more - 1);
+    }
+    strip.addEventListener("scroll", paint, { passive: true });
+    window.addEventListener("resize", paint);
+    paint();
+  }
+  function keepInView(a) {
+    var strip = a.closest(".rc-tabs");
+    if (!strip || strip.scrollWidth <= strip.clientWidth) return;
+    var sr = strip.getBoundingClientRect(), ar = a.getBoundingClientRect();
+    if (ar.left < sr.left) strip.scrollLeft -= (sr.left - ar.left) + 24;
+    else if (ar.right > sr.right) strip.scrollLeft += (ar.right - sr.right) + 24;
+  }
+
   function wireTabs(root) {
     var tabs = root.querySelectorAll("[data-tab]");
     var panels = root.querySelectorAll("[data-panel]");
@@ -26,6 +52,25 @@
     var firstTab = root.querySelector(".rc-tabs [data-tab]");
     var first = firstTab ? firstTab.dataset.tab
               : (panels.length ? panels[0].dataset.panel : "results");
+    /* ★ THE TAB ROLES, DONE PROPERLY (sweep 2026-10-10, B9). The strips
+         said role="tablist" and nothing else: no tab, no tabpanel, no
+         aria-selected, so a screen reader announced a tab list with no tabs
+         in it. Every strip on the site is in-page [data-tab] links, so the
+         roles are completed here rather than dropped. */
+    var strips = root.querySelectorAll(".rc-tabs");
+    strips.forEach(function (strip) {
+      strip.setAttribute("role", "tablist");
+      strip.querySelectorAll("[data-tab]").forEach(function (a) {
+        a.setAttribute("role", "tab");
+        var p = root.querySelector('[data-panel="' + a.dataset.tab + '"]');
+        if (p) {
+          if (!p.id) p.id = "panel-" + a.dataset.tab + "-" + (++panelSeq);
+          a.setAttribute("aria-controls", p.id);
+        }
+      });
+      fadeEdges(strip);
+    });
+    panels.forEach(function (p) { p.setAttribute("role", "tabpanel"); });
     function has(name) {
       var found = false;
       panels.forEach(function (p) { if (p.dataset.panel === name) found = true; });
@@ -42,7 +87,10 @@
       root.classList.toggle("rc-on-track", name === "track");
       if (name === "track" && root === main && typeof fillConv === "function") fillConv();
       root.querySelectorAll(".rc-tabs [data-tab]").forEach(function (a) {
-        a.classList.toggle("is-on", a.dataset.tab === name);   // the site's .seg-btn.is-on
+        var on = a.dataset.tab === name;
+        a.classList.toggle("is-on", on);   // the site's .seg-btn.is-on
+        a.setAttribute("aria-selected", on ? "true" : "false");
+        if (on) keepInView(a);
       });
     }
     tabs.forEach(function (a) {
@@ -406,8 +454,8 @@
   var find = main.querySelector(".rc-find");
   var list = main.querySelector(".rc-findlist");
   var pending = null, asked = "", raceHit = false;
-  function esc(t) { return String(t).replace(/[&<>"]/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function esc(t) { return String(t).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
   // ★ THE MEET PAGE ASKS THE SERVER (data-api): every finisher at the meet
   //   whose name or school matches, each a link to their row in their race.
   function askServer(q) {
@@ -497,8 +545,9 @@
       if (!b) return;
       var input = main.querySelector("#track .eq-time");
       if (!input) return;
-      ol.querySelectorAll("button.is-on").forEach(function (x) { x.classList.remove("is-on"); });
+      ol.querySelectorAll("button.is-on").forEach(function (x) { x.classList.remove("is-on"); x.setAttribute("aria-pressed", "false"); });
       b.classList.add("is-on");
+      b.setAttribute("aria-pressed", "true");
       input.value = b.dataset.time;
       input.dispatchEvent(new Event("change"));
       // on a phone the list sits under the line: bring the line back

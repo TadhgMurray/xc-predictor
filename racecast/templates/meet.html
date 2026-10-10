@@ -29,8 +29,8 @@
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide rc">
@@ -40,18 +40,18 @@
    a finder -- and the table first. race.css carries the layout. #}
 <header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div class="rc-left">
-    <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country</span></div>
+    <div class="rc-sport"><span class="sport-tag sport-tag--xc">{{ "XC"|sport_name }}</span></div>
     <h1>{{ header.meet_name }}</h1>
     <div class="rc-meta">
       {# the course links through to its own page, as on the race page #}
       {% if header.course_name %}<a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a>{% else %} - {% endif %}
       {% if meet_date %} · {{ meet_date|mdy }}{% endif %}
       {% if header.state %} · {{ header.state }}{% endif %}
-      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name|with_year(meet_date) }} on Racecast"
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name|with_year(meet_date) }} on Racecast"
             data-share-url="{{ site_origin }}/meet/xc/{{ header.meet_id }}" title="Share this page; the preview is its card">
       <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
       <span>Share</span>
-    </button>
+    </button></span>
     </div>
     {% set n_run = divisions|sum(attribute='n_results') %}
     <div class="rc-facts">

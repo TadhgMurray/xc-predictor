@@ -43,8 +43,8 @@
 {% if card_query %}{% set meta_image = site_origin ~ "/card/predict.png?" ~ card_query %}
 {% set meta_image_alt = "A predicted race on Racecast: team scores and the top five" %}{% endif %}
 {% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -62,12 +62,14 @@
     {# ! #pred-share TAKES THE PREDICTION'S SAVED LINK (predictions.js
        headShare / saveShare); until there is one it shares the page #}
     <div class="rc-meta">
-      Cross country and track · re-run any race that has already happened, or check the model against it
-      · <button type="button" class="share-btn rc-share-link" id="pred-share" data-share-title="A prediction on Racecast"
+      {# ! the rest of what this line said is the sentence below it, said
+           twice (sweep 2026-10-10, B23) #}
+      Cross country and track
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" id="pred-share" data-share-title="A prediction on Racecast"
             data-share-url="{{ site_origin }}{{ request.full_path.rstrip('?') }}" title="Share this prediction; the preview is its card">
       <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
       <span>Share</span>
-    </button>
+    </button></span>
     </div>
     <p class="rc-story">Pick a race that has already happened. Predict what would happen if it were
       run again - or check the model against what actually did.</p>
@@ -98,7 +100,7 @@
 
     <div class="meet-search" id="meet-search">
       <div class="pick-wrap wide">
-        <input id="meet-input" type="search" autocomplete="off"
+        <input id="meet-input" type="search" autocomplete="off" aria-label="Find a meet"
                placeholder="Arcadia, Woodbridge, state championships&hellip;">
         <div id="meet-results" class="pick-results hidden"></div>
       </div>
@@ -113,11 +115,11 @@
     <div class="step-head"><span class="step-n">2</span> When</div>
 
     <div class="cards">
-      <button class="card is-on" data-when="thisyear">
+      <button class="card is-on" aria-pressed="true" data-when="thisyear">
         <span class="card-t">Run it this year</span>
         <span class="card-d">Same course, same weekend, whoever is racing now</span>
       </button>
-      <button class="card" data-when="asran">
+      <button class="card" aria-pressed="false" data-when="asran">
         <span class="card-t">As it actually ran</span>
         <span class="card-d">That year, that field - scored against the real result</span>
       </button>
@@ -153,11 +155,11 @@
     <div class="step-head"><span class="step-n">3</span> Who</div>
 
     <div class="cards">
-      <button class="card is-on" data-who="team">
+      <button class="card is-on" aria-pressed="true" data-who="team">
         <span class="card-t">The whole field</span>
         <span class="card-d">Team scores and places</span>
       </button>
-      <button class="card" data-who="individual">
+      <button class="card" aria-pressed="false" data-who="individual">
         <span class="card-t">Specific athletes</span>
         <span class="card-d">One or several, compared side by side</span>
       </button>

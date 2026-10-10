@@ -1,4 +1,16 @@
-// topbar-search.js -- the live search dropdown. Loaded on every page.
+// topbar-search.js -- the live search dropdown. Loaded on every page, from
+// <head> with `defer`: it runs after the document is parsed, and every init
+// below still checks readyState so it would work loaded any other way.
+
+/* ★ ONE ESCAPE FOR TEXT AND ATTRIBUTES (sweep 2026-10-10, D11). The old
+     textContent -> innerHTML trick escapes & < > but NOT quotes, so a value
+     put inside href="..." or title="..." could close the attribute. */
+function escAttr(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+
 (function () {
     function init() {
         var input = document.getElementById('search-input');
@@ -77,8 +89,8 @@
             }
             var items = rows.map(function (r) {
                 var sub = r.sublabel ? '<span class="sr-sub">' + esc(r.sublabel) + '</span>' : '';
-                return '<a class="sr-item" href="' + r.link + '">' +
-                    '<span class="sr-kind">' + r.kind + '</span>' +
+                return '<a class="sr-item" href="' + esc(r.link || '') + '">' +
+                    '<span class="sr-kind">' + esc(r.kind || '') + '</span>' +
                     '<span class="sr-label">' + esc(r.label) + '</span>' + sub + '</a>';
             }).join('');
             box.innerHTML = '<div class="sr-scroll">' + items + '</div>' + more;
@@ -122,7 +134,7 @@
             }
         });
 
-        function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+        function esc(s) { return escAttr(s); }
     }
 
     if (document.readyState === 'loading') {
@@ -137,12 +149,12 @@
    cached) and swaps the topbar link, marks an athlete page that is yours,
    and hands the answer to any page script listening (xcp:me). */
 (function () {
-  /* ! AFTER THE DOM, LIKE init() ABOVE: this file is loaded before <body>,
-       so the slot does not exist yet when the script runs. */
+  /* ! AFTER THE DOM, LIKE init() ABOVE: deferred, so the DOM is parsed by
+       the time this runs, but the readyState check keeps it safe either way. */
   function whoami() {
     var slot = document.getElementById('topbar-account');
     if (!slot) return;
-    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    var esc = escAttr;
     fetch('/api/me', { credentials: 'same-origin' })
         .then(function (r) { return r.json(); })
         .then(function (me) {
@@ -176,6 +188,67 @@
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', whoami);
   else whoami();
+})();
+
+/* ★ THE EDITION STICKS, AND SIGN IN COMES BACK HERE (sweep 2026-10-10,
+     B3 + B17). Both run on the cached, signed-out HTML, in the browser only.
+
+   Edition: _topbar.html renders both link sets and shows the one the path
+   picks (/coaches -> coach). A coach who clicked Rankings from /coaches used
+   to land back in the athlete edition; this tab now remembers the last
+   edition chosen (sessionStorage: per tab, gone when the tab closes) and
+   re-applies it. /coaches sets it; the Athletes side of the switch clears
+   it. In the coach edition the mark leads to the coach home.
+
+   Sign in: the link carries ?next=<this page>, so signing in from the bar
+   lands where you were, not on Settings. */
+(function () {
+  var KEY = 'rc-edition';
+  function store(v) {
+    try { if (v) sessionStorage.setItem(KEY, v); else sessionStorage.removeItem(KEY); } catch (e) { /* private mode */ }
+  }
+  function stored() {
+    try { return sessionStorage.getItem(KEY); } catch (e) { return null; }
+  }
+  function apply(ed) {
+    var bar = document.querySelector('.topbar');
+    if (!bar) return;
+    var sets = bar.querySelectorAll('.topnav-ed, .topnav-menu [data-ed]');
+    for (var i = 0; i < sets.length; i++) sets[i].hidden = sets[i].getAttribute('data-ed') !== ed;
+    var sw = bar.querySelectorAll('.viewswitch a[data-ed]');
+    for (var k = 0; k < sw.length; k++) {
+      var on = sw[k].getAttribute('data-ed') === ed;
+      sw[k].classList.toggle('is-on', on);
+      if (on) sw[k].setAttribute('aria-current', 'true'); else sw[k].removeAttribute('aria-current');
+    }
+    var mark = bar.querySelector('a.brand');
+    if (mark) mark.setAttribute('href', ed === 'coach' ? '/coaches' : '/');
+  }
+  function init() {
+    var path = location.pathname;
+    if (path === '/coaches' || path.indexOf('/coaches/') === 0) { store('coach'); apply('coach'); }
+    else if (stored() === 'coach') apply('coach');
+    var ath = document.querySelector('.topbar .viewswitch a[data-ed="athlete"]');
+    if (ath) ath.addEventListener('click', function () { store(null); });
+    var coach = document.querySelector('.topbar .viewswitch a[data-ed="coach"]');
+    if (coach) coach.addEventListener('click', function () { store('coach'); });
+
+    var signin = document.querySelector('#topbar-account .tb-signin');
+    if (signin && path.indexOf('/login') !== 0) {
+      /* read when used, not only at load: rankings and recruiting rewrite
+         their query string as filters change */
+      var aim = function () {
+        signin.setAttribute('href', '/login?next=' +
+            encodeURIComponent(location.pathname + location.search));
+      };
+      aim();
+      signin.addEventListener('mousedown', aim);
+      signin.addEventListener('focus', aim);
+      signin.addEventListener('click', aim);
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 
 /* ★ THE TOPBAR'S "MORE" MENU CLOSES LIKE A MENU (ui pass, 2026-10-04). It is

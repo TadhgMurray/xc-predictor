@@ -6,6 +6,9 @@ p  { color: rgb(82, 82, 82); }
   display: flex;
   gap: 1px;
 }
+/* text for screen readers only (the flags' meanings, _recflag.html) */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 .meta {
   color: var(--muted, #6b7280);
   font-size: 14px;
@@ -20,7 +23,10 @@ p  { color: rgb(82, 82, 82); }
   margin-right: 3px;
   color: #fff;
 }
-.flag--pr  { background: #b8860b; }   /* PR  — gold-ish */
+/* ! DARKENED FOR CONTRAST (sweep 2026-10-10, B14): white on #b8860b was
+     3.3:1, under the 4.5:1 an 11px label needs; #8a6508 is 5.3:1 and still
+     reads as the gold. The others already pass (SR 5.1, CPR 6.0, ...). */
+.flag--pr  { background: #8a6508; }   /* PR  — gold-ish */
 .flag--sr  { background: #4b7a34; }   /* SR  — green */
 .flag--cpr { background: #2e53e6; }   /* course PR — blue */
 .flag--rpr { background: #6b3fa0; }   /* rating PR — purple */
@@ -744,7 +750,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 }
 .conv-drop:empty { display: none; }      /* invisible when no results */
 .drop-item { padding:0.4rem 0.7rem; cursor:pointer; }
-.drop-item:hover { background:#f0f0f0; }
+.drop-item:hover, .drop-item.is-active { background:#f0f0f0; }
 .drop-meta { color: #6f6f6f; font-size:0.8rem; }
 
 .src-field { position: relative; }
@@ -826,7 +832,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 }
 .conv-drop:empty { display: none; }
 .drop-item { padding: 0.4rem 0.7rem; cursor: pointer; font-size: 0.9rem; }
-.drop-item:hover { background: #f0f0f0; }
+.drop-item:hover, .drop-item.is-active { background: #f0f0f0; }
 .drop-meta { color: #6f6f6f; font-size: 0.8rem; margin-left: 0.4rem; }
 
 /* ---- optional weather, collapsed ---- */
@@ -1308,6 +1314,10 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
   text-align: center;
 }
 .rankings-page .status.error { color: var(--rk-error); }
+/* the Retry beside a load error (rankings, recruiting; sweep 2026-10-10) */
+.rc-retry { margin-left: 0.4rem; padding: 0.15rem 0.6rem; font: inherit; font-size: 0.9em;
+  color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 4px; cursor: pointer; }
+.rc-retry:hover { background: rgba(0,0,0,0.04); }
 
 .rankings-page .pager {
   display: flex;
@@ -1729,7 +1739,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
  *
  * Shown on :focus as well as :hover -- hover alone is invisible to keyboard
  * users and to every touch device, which is why the badges carry tabindex. */
-.flag--pr  { --tip: #b8860b; }
+.flag--pr  { --tip: #8a6508; }
 .flag--sr  { --tip: #4b7a34; }
 .flag--cpr { --tip: #2e53e6; }
 .flag--rpr { --tip: #6b3fa0; }
@@ -2128,6 +2138,9 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     white-space: nowrap;
 }
 .rankings-page th.sortable:hover { color: #111; text-decoration: underline; }
+/* the header's sort control is a real button (keyboard), drawn as the text */
+.rankings-page th.sortable .th-sort { all: unset; cursor: pointer; }
+.rankings-page th.sortable .th-sort:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
 .rankings-page th.is-sorted { color: #111; font-weight: 700; }
 
 /* ---- loading --------------------------------------------------------- *
@@ -2218,7 +2231,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     background: none; text-align: left; font: inherit; font-size: 0.88rem;
     cursor: pointer;
 }
-.predict2 .pick-opt:hover { background: #f0f0ec; }
+.predict2 .pick-opt:hover, .predict2 .pick-opt.is-active { background: #f0f0ec; }
 .predict2 .pick-sub { display: block; color: #888; font-size: 0.78rem; }
 
 /* The chosen athletes.
@@ -2564,7 +2577,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     background: none; text-align: left; font: inherit; font-size: 0.88rem;
     cursor: pointer;
 }
-.predict2 .pick-opt:hover { background: #f0f0ec; }
+.predict2 .pick-opt:hover, .predict2 .pick-opt.is-active { background: #f0f0ec; }
 .predict2 .pick-sub { display: block; color: #888; font-size: 0.78rem; }
 
 /* The chosen athletes.
@@ -3751,7 +3764,7 @@ input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
 .h2h-sug.hidden { display: none; }
 .h2h-sug-row { padding: 0.4rem 0.6rem; cursor: pointer; font-size: 0.9rem;
                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.h2h-sug-row:hover { background: #f0f3f7; }
+.h2h-sug-row:hover, .h2h-sug-row.is-active { background: #f0f3f7; }
 /* ! .more-btn is a full-width table strip; the Compare button borrows its
      font and colour but has to stand alone. */
 .h2h-go { display: inline-block; width: auto; padding: 0.42rem 1.1rem;
@@ -5058,6 +5071,10 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
      wraps) and in More between; the gaps tighten a step. Fits on one line
      at 1280 and 1440. */
 .topnav-more { position: relative; }
+/* the two editions' link sets (_topbar.html): a wrapper that does not exist
+   for layout, so the links stay direct flex items of .topnav */
+.topnav .topnav-ed { display: contents; }
+.topnav .topnav-ed[hidden] { display: none; }
 .topnav-more > summary { list-style: none; cursor: pointer; color: #374151; white-space: nowrap; user-select: none; }
 .topnav-more > summary::-webkit-details-marker { display: none; }
 .topnav-more > summary::after { content: ""; display: inline-block; width: 0.38em; height: 0.38em; margin-left: 0.35em;
@@ -5960,3 +5977,11 @@ main.rc .flag { line-height: 13px; vertical-align: 1px; }
    hidden under cells with their own). */
 .link-flash, tr.link-flash > td { animation: link-flash 1.6s ease-out; }
 @keyframes link-flash { 0% { background: #fdeeb5; } 100% { background: transparent; } }
+
+/* ★ PHONE TAP TARGETS, 24px AT LEAST (sweep 2026-10-10, B15): the topbar's
+     section links measured ~19px tall and the edition switch ~20px. Same
+     look; the box around the words grows. */
+@media (max-width: 700px) {
+  .topbar .topnav a, .topbar .topnav-more > summary { display: inline-flex; align-items: center; min-height: 24px; }
+  .topbar .viewswitch a { display: inline-flex; align-items: center; box-sizing: border-box; min-height: 24px; }
+}

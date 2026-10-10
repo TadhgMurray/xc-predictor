@@ -15,7 +15,9 @@
         function paint() {
             var current = rankings.getAttribute('data-' + name);
             group.querySelectorAll('button').forEach(function (b) {
-                b.classList.toggle('is-active', b.getAttribute('data-value') === current);
+                var on = b.getAttribute('data-value') === current;
+                b.classList.toggle('is-active', on);
+                b.setAttribute('aria-pressed', on ? 'true' : 'false');
             });
         }
 
@@ -40,6 +42,7 @@
         chip.addEventListener('click', function () {
             var pool = chip.getAttribute('data-pool');
             chip.classList.toggle('is-on');
+            chip.setAttribute('aria-pressed', chip.classList.contains('is-on') ? 'true' : 'false');
             document.body.classList.toggle('hide-' + pool, !chip.classList.contains('is-on'));
         });
     });

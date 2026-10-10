@@ -419,6 +419,18 @@ def _mdy(value):
 app.template_filter("mdy")(_mdy)
 
 
+# ★ ONE SPELLING FOR EACH SPORT (sweep 2026-10-10, B6). Sentence case, as
+#   every heading on the site is; the short pair only where room is tight
+#   (a table cell, a two-way toggle), and never a bare "TF" in visible text.
+#   Mirrored as SPORT_NAMES / SPORT_SHORT in the page scripts that print one.
+SPORT_NAMES = {"XC": "Cross country", "TF": "Track & field"}
+SPORT_SHORT = {"XC": "XC", "TF": "Track"}
+app.template_filter("sport_name")(
+    lambda code: SPORT_NAMES.get(str(code or "").upper(), code))
+app.template_filter("sport_short")(
+    lambda code: SPORT_SHORT.get(str(code or "").upper(), code))
+
+
 @app.template_filter("with_year")
 def _with_year(name, date_text):
     """'Scary Dairy Invite' + '2025-10-03' -> 'Scary Dairy Invite 2025'; a

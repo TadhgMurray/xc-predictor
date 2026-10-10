@@ -26,8 +26,8 @@
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 {#- ★ THE TRACK RACE PAGE IN THE CROSS COUNTRY RACE PAGE'S LAYOUT (owner,
@@ -46,7 +46,7 @@
 <main class="page-wide rc">
 <header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div>
-    <div class="rc-sport"><span class="sport-tag sport-tag--tf">Track &amp; field</span></div>
+    <div class="rc-sport"><span class="sport-tag sport-tag--tf">{{ "TF"|sport_name }}</span></div>
     <div class="rc-kick"><a href="/meet/tf/{{ header.meet_id }}">{{ header.meet_name|with_year(race_date) }}</a></div>
     <h1>{{ race_title(header.event_short, header.gender, results) }}{% if header.division %} · {{ header.division }}{% endif %}</h1>
     <div class="rc-meta">
@@ -54,11 +54,11 @@
          plain "Venue page" link rather than the bare word #}
       {% if header.location_id %}<a href="/venue/tf/{{ header.location_id }}/{{ 'in' if header.is_indoor == 1 else 'out' }}">{% if header.venue_name %}{{ header.venue_name }}{% if header.venue_city and header.venue_city|lower not in header.venue_name|lower %}, {{ header.venue_city }}{% endif %}{% else %}Venue page{% endif %}</a> · {% elif header.venue_name %}{{ header.venue_name }} · {% endif %}
       {{ "Indoor" if header.is_indoor == 1 else "Outdoor" }} · {{ race_date|mdy if race_date else " - " }}{% if header.state %} · {{ header.state }}{% endif %}
-      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"
             data-share-url="{{ site_origin }}/race/tf/{{ meet_id }}/{{ event_id }}/{{ div_id }}" title="Share this page; the preview is its card">
       <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
       <span>Share</span>
-    </button>
+    </button></span>
     </div>
     {# ★ THE DAY UNDER THE TITLE, NOT BESIDE IT (owner, 2026-10-09: the
        top-right block "just looks out of place"): course/day facts and

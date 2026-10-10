@@ -30,8 +30,8 @@
     wrong." %}
 {% set meta_crumbs = [("About", none)] %}
 {% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -41,7 +41,7 @@
     <div class="rc-sport"><span class="sport-tag sport-tag--site">How Racecast works</span></div>
     <h1>About</h1>
     <div class="rc-meta">
-      {% if meta.get('built_at') %}Ratings rebuilt {{ meta.built_at[:10] }} · {% endif %}cross country and track, middle school to college
+      {% if meta.get('built_at') %}Ratings rebuilt {{ meta.built_at[:10]|mdy }} · {% endif %}cross country and track, middle school to college
       · <a href="{{ url_for('report_page') }}">Report an issue</a>
     </div>
     <p class="rc-story">
@@ -132,7 +132,7 @@
       <thead><tr><th>Run</th>{% for l in accuracy.labels %}<th>{{ l }}</th>{% endfor %}</tr></thead>
       <tbody>
       {% for r in accuracy.history %}
-        <tr><td>{{ r.date.strftime('%Y-%m-%d') if r.date else '' }}</td>
+        <tr><td>{{ r.date|string|mdy if r.date else '' }}</td>
           {% for v in r['values'] %}<td>{{ v or '-' }}</td>{% endfor %}</tr>
       {% endfor %}
       </tbody>
@@ -197,7 +197,7 @@
     <dt>Athletes board (season average)</dt><dd>One row per athlete-season, ranked on the average of their rated races. The default, because one race is noisy by about four points.</dd>
     <dt>Performances board (single races)</dt><dd>One row per race. A great day by an ordinary athlete outranks an ordinary day by a great one, which is right for a list of races and wrong for a list of athletes.</dd>
     <dt>Best times/marks</dt><dd>The clock and the tape, uncorrected: fastest time at one distance, longest or highest mark in a field event.</dd>
-    <dt>HS scale / own pool</dt><dd>Every pool (high-school boys, college women, middle-school boys&hellip;) has its own 100. The HS scale re-expresses every rating as if the athlete were a high schooler of the same sex, so a college and a middle-school number can sit on one list. Own pool shows the number as fitted.</dd>
+    <dt>HS-equivalent / own pool</dt><dd>Every pool (high-school boys, college women, middle-school boys&hellip;) has its own 100. The HS-equivalent scale re-expresses every rating as if the athlete were a high schooler of the same sex, so a college and a middle-school number can sit on one list. Own pool shows the number as fitted.</dd>
     <dt>Difficulty</dt><dd>How much slower times run at a course than at an average course, one scale for cross country and track: +4% is about 40 seconds on a 16-minute 5K. Ratings already account for it.</dd>
     <dt>PR, SR, CR, CSR, R, RSR</dt><dd>Personal record, season record, course record, course season record, rating record, rating season record. A star means it still stands.</dd>
     <dt>League, area, section, division, class, conference, region</dt><dd>The units a school competes in, inferred from the championship meets it attends. High school runs league &rarr; area &rarr; section &rarr; state; college runs conference &rarr; region &rarr; division.</dd>

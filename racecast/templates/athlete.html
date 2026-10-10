@@ -38,8 +38,8 @@
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('athlete-charts.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% from "_units.html" import unit_chips %}
 {% include "_topbar.html" %}
@@ -116,8 +116,7 @@
     <span class="flag flag--{{ f.css }}{{ ' is-current' if current else '' }}"
           tabindex="0"
           data-title="{{ title }}"
-          data-blurb="{{ blurb }}"
-          aria-label="{{ title }}. {{ blurb }}">{{ '★' if current else '' }}{{ f.code }}</span>
+          data-blurb="{{ blurb }}"><span aria-hidden="true">{{ '★' if current else '' }}{{ f.code }}</span><span class="sr-only">{{ title }}. {{ blurb }}</span></span>
 {%- endmacro %}
 
 {# ===================================================================== #}
@@ -184,7 +183,7 @@
            it is the number the section is about, and the sidebar links here
            showing the same figure. #}
         <h3 class="season-head">
-            {{ year }} {{ sport }}
+            {{ year }} {{ sport|sport_short }}
             <span class="season-rating">{{ rv(season.rating, season.rating_hs) }}</span>
         </h3>
         <p class="season-meta">{% if season.school|is_team %}{{ crest(season.school, season.state, pool=season.pool) }}<a href="{{ school_href(season.school, season.state, pool=season.pool) }}">{{ season.school|school_label_for(season.pool, season.state) }}</a>{% else %}{{ season.school|school_label_for(season.pool, season.state) }}{% endif %}{% if season.pro_verdict or (season.pool and (season.pool|string).startswith('pro_')) %} · Professional{% elif season.grade %}{% set gl = season.grade|grade_label(season.pool) %} · {{ gl if gl.startswith("Class of") else "Grade " ~ gl }}{% endif %}{% if gender_mixed and season.gender %} · {{ "Boys" if season.gender == "m" else "Girls" }}{% endif %}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
@@ -305,8 +304,8 @@
      page is theirs). #}
   <div class="rc-left ath-head" data-has-photo="{{ '1' if athlete.photo else '' }}">
     {# the kicker names the sports raced, as the race page's names its sport #}
-    <div class="rc-sport">{% if xc_seasons %}<span class="sport-tag sport-tag--xc">Cross country</span>{% endif %}
-      {% if tf_seasons %}<span class="sport-tag sport-tag--tf">Track &amp; field</span>{% endif %}</div>
+    <div class="rc-sport">{% if xc_seasons %}<span class="sport-tag sport-tag--xc">{{ "XC"|sport_name }}</span>{% endif %}
+      {% if tf_seasons %}<span class="sport-tag sport-tag--tf">{{ "TF"|sport_name }}</span>{% endif %}</div>
     {# the picture (305) sits INSIDE the name (owner, 2026-09-15: "just
        next to the name, so it only indents the name"), the way
        athletic.net draws it: the meta line and the numbers below start
@@ -315,11 +314,11 @@
     {# Share (281) ends the meta line now, as on the race page (owner,
        2026-10-10); it was the boxed button at the right of the name row #}
     <div class="rc-meta" data-person-id="{{ athlete.person_id }}">{% if athlete.school and athlete.school|is_team %}{{ crest(athlete.school, athlete.team_state, px=128, size=24, pool=athlete.team_pool) }}<a href="{{ school_href(athlete.school, athlete.team_state, pool=athlete.team_pool) }}">{{ athlete.school|school_label_for(athlete.team_pool, athlete.team_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.team_pool, athlete.team_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.grade_pool) if athlete.grade else ("Professional" if athlete.pro_header else " - ") }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a>{% if athlete.team_pool and (athlete.team_pool|string).startswith('hs_') %} · <a href="/recruiting?athlete={{ athlete.person_id }}">Recruiting: where you'd fit</a> · <a href="/recruit/{{ athlete.person_id }}#like">Runners like you</a>{% endif %}
-      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ athlete.name }} on Racecast"
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ athlete.name }} on Racecast"
             data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}" title="Share this page; the preview is the athlete's card">
       <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
       <span>Share</span>
-    </button></div>
+    </button></span></div>
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the
        page did not say. Each figure links where it can: the best race
@@ -330,13 +329,13 @@
             <span class="s-val">{{ rv(athlete.rating, athlete.rating_hs) }}</span>
             {# the percentile rides with the season (owner, 2026-09-07): "2026 TF
                season · top 1.3% of HS boys"; the 5K equivalent is off the page #}
-            {% if athlete.rating_note or athlete.percentile %}<span class="s-sub">{{ athlete.rating_note or "" }}{% if athlete.rating_note and athlete.percentile %} &middot; {% endif %}{% if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif %}</span>{% endif %}
+            {% if athlete.rating_note or athlete.percentile %}<span class="s-sub">{{ (athlete.rating_note or "")|replace(" TF season", " " ~ "TF"|sport_short ~ " season") }}{% if athlete.rating_note and athlete.percentile %} &middot; {% endif %}{% if athlete.percentile %}{{ athlete.percentile }} of {{ athlete.pool_words }}{% endif %}</span>{% endif %}
         </div>
         {% if alltime.rating %}
         <div>
             <span class="s-lab">Best race</span>
             <span class="s-val"><a href="#race-{{ alltime.rating.result_id }}">{{ rv(alltime.rating.speed_rating, alltime.rating.hs_rating) }}</a></span>
-            <span class="s-sub">{{ alltime.rating.sport }}</span>
+            <span class="s-sub">{{ alltime.rating.sport|sport_name }}</span>
         </div>
         {% endif %}
         {# Guarded like the others: a caller that does not set this should
@@ -435,8 +434,8 @@
        third. The labels are short so the bar stays one line and the first
        table starts level with the side card. #}
     <nav class="seg rc-tabs" role="tablist">
-      {% if xc_seasons %}<a class="seg-btn is-on" href="#xc" data-tab="xc">Cross country<span class="n">{{ n_xc }}</span></a>{% endif %}
-      {% if tf_seasons %}<a class="seg-btn{% if not xc_seasons %} is-on{% endif %}" href="#tf" data-tab="tf">Track<span class="n">{{ n_tf }}</span></a>{% endif %}
+      {% if xc_seasons %}<a class="seg-btn is-on" href="#xc" data-tab="xc">{{ "XC"|sport_name }}<span class="n">{{ n_xc }}</span></a>{% endif %}
+      {% if tf_seasons %}<a class="seg-btn{% if not xc_seasons %} is-on{% endif %}" href="#tf" data-tab="tf">{{ "TF"|sport_name }}<span class="n">{{ n_tf }}</span></a>{% endif %}
       <a class="seg-btn{% if not xc_seasons and not tf_seasons %} is-on{% endif %}" href="#career" data-tab="career">Career</a>
     </nav>
     {# ================================================================= #}
@@ -462,6 +461,9 @@
      hidden tab draws when shown (athlete-charts.js redraws on resize). #}
   {% if xc_seasons %}
   <section class="rc-panel sport-section" id="xc" data-panel="xc">
+    {# names the panel in the outline: the seasons' h3 sat straight under the
+       h1 (sweep 2026-10-10, B21); the tab names it on screen #}
+    <h2 class="sr-only">{{ "XC"|sport_name }} seasons</h2>
     <details class="chart-fold" open>
       <summary>XC speed rating</summary>
       <div class="chart-slot chart-wide" data-chart="xc_rating" data-kind="rating" data-title="XC speed rating"></div>
@@ -478,9 +480,10 @@
 
   {% if tf_seasons %}
   <section class="rc-panel sport-section" id="tf" data-panel="tf">
+    <h2 class="sr-only">{{ "TF"|sport_name }} seasons</h2>
     <details class="chart-fold" open>
-      <summary>TF speed rating</summary>
-      <div class="chart-slot chart-wide" data-chart="tf_rating" data-kind="rating" data-title="TF speed rating"></div>
+      <summary>Track speed rating</summary>
+      <div class="chart-slot chart-wide" data-chart="tf_rating" data-kind="rating" data-title="Track speed rating"></div>
     </details>
     <nav class="season-jump">
         {% for (year, sport), season in tf_seasons %}<a href="#{{ year }}-{{ sport }}">{{ year }}</a>
@@ -512,6 +515,7 @@
     stays one colour -- it is one athlete's progression, not two series.
   #}
   <section class="rc-panel" id="career" data-panel="career">
+    <h2 class="sr-only">Career</h2>
     <details class="chart-fold" open>
       <summary>Speed rating - all races</summary>
       <div class="chart-slot chart-wide" data-chart="all_rating" data-kind="rating" data-bysport="1" data-title="Speed rating - all races"></div>
@@ -537,7 +541,7 @@
   {% set bucket = alltime[sport] %}
   {% if bucket.rating or bucket.events %}
   <table class="rc-tscores rc-tscores-plain ath-bests">
-    <thead><tr><th colspan="2">{{ "Cross country" if sport == "XC" else "Track & field" }}</th></tr></thead>
+    <thead><tr><th colspan="2">{{ sport|sport_name }}</th></tr></thead>
     <tbody>
     {% if bucket.rating %}
     <tr class="is-rating"><td class="tn">Best rating</td>
@@ -566,7 +570,7 @@
     <tbody>
     {% for (year, sport), bests in season_bests %}
     <tr>
-      <td class="tn"><a href="#{{ year }}-{{ sport }}">{{ year }} {{ sport }}</a>
+      <td class="tn"><a href="#{{ year }}-{{ sport }}">{{ year }} {{ sport|sport_short }}</a>
         <span class="sp">{% if bests.rating %}best <a href="#race-{{ bests.rating.result_id }}"><b>{{ rv(bests.rating.speed_rating, bests.rating.hs_rating) }}</b></a>{% endif %}{% for event, race in bests.events.items() %} · {{ event|event_label }} <a href="#race-{{ race.result_id }}">{{ race.result }}</a>{% endfor %}</span></td>
       <td class="n tpts">{{ rv(bests.season_rating, bests.season_rating_hs) }}</td>
     </tr>

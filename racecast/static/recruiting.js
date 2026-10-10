@@ -107,14 +107,43 @@
   function paintSeg() {
     document.querySelectorAll(".rc-seg-btn").forEach((b) => {
       b.classList.toggle("is-on", state[b.dataset.set] === b.dataset.value);
+      b.setAttribute("aria-pressed", String(state[b.dataset.set] === b.dataset.value));
     });
   }
 
-  function status(msg, isError) {
+  /* `retry`: a server or network failure offers the same request again
+     (sweep 2026-10-10, B4); a bad filter does not, retrying it is pointless. */
+  function status(msg, isError, retry) {
     const el = $("r-status");
     el.textContent = msg || "";
     el.className = "predict-status" + (msg ? " show" : "") + (isError ? " error" : "");
+    if (retry) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "rc-retry";
+      b.textContent = "Retry";
+      b.addEventListener("click", retry);
+      el.append(" ", b);
+    }
   }
+
+/* ★ A SERVER ERROR IS NOT JSON (sweep 2026-10-10, B4). A 502 from the proxy
+       is an HTML page, and res.json() on it threw "Unexpected token '<' ...
+       is not valid JSON" -- which is what the reader was shown. This reads the
+       body as JSON only when it is JSON, and otherwise throws a sentence a
+       reader can use (err.friendly) instead. */
+  async function readJson(res) {
+    const type = (res.headers.get("content-type") || "").toLowerCase();
+    if (!type.includes("json")) {
+      const err = new Error(res.ok
+        ? "The server sent an answer this page could not read."
+        : `The server had a problem (error ${res.status}).`);
+      err.friendly = true;
+      throw err;
+    }
+    return res.json();
+  }
+
 
   /* ---- rendering -------------------------------------------------- */
   function pill(t) {
@@ -231,7 +260,7 @@
       return;
     }
     const withTier = d.rating != null;
-    $("r-out").innerHTML = `<p class="meta rc-count">${rows.length} of ${d.total} ${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track"} programmes. Ratings on the high-school scale; the times are the typical recruit's.</p>
+    $("r-out").innerHTML = `<p class="meta rc-count">${rows.length} of ${d.total} ${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track & field"} programmes. Ratings on the high-school scale; the times are the typical recruit's.</p>
       <div class="r-scroll"><table class="rk rc-tbl">${tableHead(withTier)}<tbody>${rows.map((r) => schoolRow(r, withTier)).join("")}</tbody></table></div>`;
     const div = $("r-division");
     if (d.divisions && d.divisions.length && div.options.length <= 1) {
@@ -252,12 +281,13 @@
     status("Loading…", false);
     try {
       const res = await fetch("/api/recruiting/schools?" + q.toString());
-      const d = await res.json();
-      if (!res.ok || d.error) { status(d.error || res.statusText, true); $("r-out").innerHTML = ""; return; }
+      const d = await readJson(res);
+      if (!res.ok || d.error) { status(d.error || res.statusText || `The server had a problem (error ${res.status}).`, true, res.status >= 500 ? load : null); $("r-out").innerHTML = ""; return; }
       status("", false);
       render(d);
     } catch (err) {
-      status("Could not reach the server: " + err.message, true);
+      status(err.friendly ? err.message : "Could not reach the server. Check your connection and try again.", true, load);
+      $("r-out").innerHTML = "";
     }
   }
 

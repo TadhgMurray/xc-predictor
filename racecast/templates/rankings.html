@@ -51,8 +51,8 @@
 {% set meta_image = site_origin ~ "/card/board.png" ~ ("?" ~ card_query if card_query else "") %}
 {% set meta_image_alt = "Rankings on Racecast: the top ten of this board" %}
 {% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -102,8 +102,8 @@
       <div class="rc-meta">
         <span id="subtitle">Season ability - averaged across a season.</span>{{ rating_i() }}
         · <a href="/about">how it works</a>
-        · <button type="button" class="share-btn rc-share-link" data-share-title="Rankings on Racecast"
-              data-share-url="{{ site_origin ~ '/rankings' }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="Rankings on Racecast"
+              data-share-url="{{ site_origin ~ '/rankings' }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {# filled from the board's first row once it lands (rankings.js) #}
       <div class="rc-champs" id="rk-champs" hidden></div>
@@ -136,8 +136,8 @@
       <label for="sport">Sport</label>
       <select id="sport">
         <option value="both">Both</option>
-        <option value="XC">Cross Country</option>
-        <option value="TF">Track &amp; Field</option>
+        <option value="XC">{{ "XC"|sport_name }}</option>
+        <option value="TF">{{ "TF"|sport_name }}</option>
       </select>
     </div>
 

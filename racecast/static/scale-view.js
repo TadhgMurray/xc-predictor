@@ -120,6 +120,8 @@
     for (var i = 0; i < btns.length; i++) {
       btns[i].classList.toggle("is-active",
                                btns[i].dataset.scale === window.rcScale.mode);
+      btns[i].setAttribute("aria-pressed",
+                           String(btns[i].dataset.scale === window.rcScale.mode));
     }
   }
 

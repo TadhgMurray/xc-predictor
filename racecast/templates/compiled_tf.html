@@ -29,8 +29,8 @@
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide rc ctf-page">
@@ -53,8 +53,8 @@
       {%- if meet_date %} · {{ meet_date|mdy }}{% endif %}
       {%- if header.state %} · {{ header.state }}{% endif %}
       · Compiled results
-      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name ~ ' compiled results on Racecast' }}"
-            data-share-url="{{ site_origin ~ '/meet/tf/' ~ header.meet_id ~ '/compiled' ~ ('?alt=' ~ alt_idx if alt_idx else '') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name ~ ' compiled results on Racecast' }}"
+            data-share-url="{{ site_origin ~ '/meet/tf/' ~ header.meet_id ~ '/compiled' ~ ('?alt=' ~ alt_idx if alt_idx else '') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
     </div>
     {% if has_teams %}
     <div class="rc-champs">

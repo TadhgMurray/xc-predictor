@@ -51,8 +51,8 @@
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('race.css') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% from "_units.html" import unit_chips %}
 {% include "_topbar.html" %}
@@ -62,7 +62,7 @@
    then a tab bar and one table at a time. race.css carries the layout. #}
 <header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div class="rc-left">
-    <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ "Cross country" if sport == 'XC' else "Track & field" }}</span></div>
+    <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ sport|sport_name }}</span></div>
     {# the crest (305): INSIDE the h1, so it stays with the name when the
        header wraps on a phone, drawn by the same helper as every other
        mention of a school -- it returns nothing when there is no crest.
@@ -139,7 +139,7 @@
     <div class="seg">
         {% for s in ['XC', 'TF'] %}
           <a class="seg-btn sport--{{ s|lower }}{{ ' is-on' if s == sport }}"
-             href="/school/{{ school|urlencode }}?sport={{ s }}{{ keep }}">{{ "Cross Country" if s == 'XC' else "Track" }}</a>
+             href="/school/{{ school|urlencode }}?sport={{ s }}{{ keep }}">{{ s|sport_name }}</a>
         {% endfor %}
     </div>
 

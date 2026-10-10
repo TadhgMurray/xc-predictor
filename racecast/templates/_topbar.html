@@ -28,11 +28,18 @@
        reader rather than the URL, and the whole site would stop being
        shared between them. It also means a coach can send a colleague a
        link and have them land in the same edition. #}
+    {# ★ AND THE EDITION STICKS (sweep 2026-10-10, B3). Keyed on the path
+       alone, a coach clicking Rankings from /coaches landed back in the
+       athlete edition. Both link sets are in the cached HTML -- the path
+       picks which one is shown -- and topbar-search.js re-applies the
+       edition this tab last chose (the browser's per-tab storage, set on
+       /coaches and cleared by the Athletes switch). Nothing about the reader
+       reaches the server, so every page stays cacheable. #}
     {% set coach_view = here.startswith('/coaches') %}
     <div class="viewswitch" role="group" aria-label="Site edition">
-        <a href="/" class="{{ 'is-on' if not coach_view }}"
+        <a href="/" data-ed="athlete" class="{{ 'is-on' if not coach_view }}"
            {% if not coach_view %}aria-current="true"{% endif %}>Athletes</a>
-        <a href="/coaches" class="{{ 'is-on' if coach_view }}"
+        <a href="/coaches" data-ed="coach" class="{{ 'is-on' if coach_view }}"
            {% if coach_view %}aria-current="true"{% endif %}>Coaches</a>
     </div>
     {# ★ NO TABS OF THEIR OWN FOR STATE MEETS AND BREAKOUTS (owner,
@@ -50,25 +57,24 @@
        closes it on a click elsewhere or Escape. #}
     {% set conv_here = here.startswith('/conversions') %}
     <nav class="topnav">
-        {% if coach_view %}
+        <span class="topnav-ed" data-ed="coach"{% if not coach_view %} hidden{% endif %}>
         <a href="/coaches/recruits" class="{{ 'is-here' if here.startswith('/coaches/recruits') }}">Find recruits</a>
         <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') or here.startswith('/breakouts') }}">Rankings</a>
         <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
         <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') or here.startswith('/projections') or here.startswith('/what-it-takes') }}">Predictions</a>
-        {% else %}
+        </span>
+        <span class="topnav-ed" data-ed="athlete"{% if coach_view %} hidden{% endif %}>
         <a href="/rankings" class="{{ 'is-here' if here.startswith('/rankings') or here.startswith('/breakouts') }}">Rankings</a>
         <a href="/meets" class="{{ 'is-here' if here.startswith('/meet') }}">Meets</a>
         <a href="/conversions" class="nav-roomy {{ 'is-here' if conv_here }}">Conversions</a>
         <a href="/recruiting" class="{{ 'is-here' if here.startswith('/recruit') }}">Recruiting</a>
         <a href="{{ url_for('predictions_page') }}" class="{{ 'is-here' if here.startswith('/predictions') or here.startswith('/projections') or here.startswith('/what-it-takes') }}">Predictions</a>
-        {% endif %}
+        </span>
         {% set more_here = here.startswith('/about') or here.startswith('/report') %}
         <details class="topnav-more">
             <summary class="{{ 'is-here' if more_here }}{{ ' conv-here' if conv_here }}">More</summary>
             <div class="topnav-menu">
-                {% if not coach_view %}
-                <a href="/conversions" class="nav-tight {{ 'is-here' if conv_here }}">Conversions</a>
-                {% endif %}
+                <a href="/conversions" class="nav-tight {{ 'is-here' if conv_here }}" data-ed="athlete"{% if coach_view %} hidden{% endif %}>Conversions</a>
                 <a href="{{ url_for('about_page') }}" class="{{ 'is-here' if here.startswith('/about') }}">About</a>
                 {# Muted, and last. The topbar is the only element on EVERY page,
                    so it is the only place a report link gets site-wide reach --

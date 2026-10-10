@@ -45,8 +45,8 @@
     {# the favicon rides in _meta.html on every other page; this head does
        not include that partial, so the tag is here by hand (issue 149) #}
     <link rel="icon" type="image/svg+xml" href="{{ static_v('favicon.svg') }}">
+    <script defer src="{{ static_v('topbar-search.js') }}"></script>
 </head>
-<script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
@@ -65,8 +65,8 @@
         <h1 class="search-heading">Results for "{{ q }}"</h1>
         <div class="rc-meta">
           {{ (count_cap|string ~ '+') if n_all > count_cap else "{:,}".format(n_all) }} match{{ "" if n_all == 1 else "es" }}{% if year %} · {{ year }}{% endif %}
-          · <button type="button" class="share-btn rc-share-link" data-share-title="{{ 'Search: ' ~ q ~ ' on Racecast' }}"
-                data-share-url="{{ site_origin ~ '/search?q=' ~ q|urlencode ~ ('&kind=' ~ kind if kind != 'all' else '') ~ ('&year=' ~ year if year else '') }}" title="Share this search"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+          <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ 'Search: ' ~ q ~ ' on Racecast' }}"
+                data-share-url="{{ site_origin ~ '/search?q=' ~ q|urlencode ~ ('&kind=' ~ kind if kind != 'all' else '') ~ ('&year=' ~ year if year else '') }}" title="Share this search"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
         </div>
       </div>
     </div></header>
@@ -153,8 +153,9 @@
         <button id="load-more"
                 data-q="{{ q }}" data-kind="{{ kind }}"
                 data-year="{{ year or '' }}" data-offset="{{ offset + page_size }}">
-            Load More
+            Load more
         </button>
+        <p id="load-more-status" class="meta" role="status"></p>
     {% endif %}
 
     {% if not results %}

@@ -115,6 +115,9 @@ function fmtRating(value) {
 
 /* "2025-08-30" -> "Aug 30, 2025", for tooltips only. Built from the string
  * rather than a Date, so a UTC-vs-local shift cannot move a race a day. */
+/* the short sport names (app.SPORT_SHORT): never a bare "TF" on screen */
+const SPORT_SHORT = { XC: "XC", TF: "Track" };
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -381,7 +384,7 @@ function drawChart(host, points, opts) {
        the DOM -- and this string is being built before it exists. An estimate
        is fine because the consequence of getting it slightly wrong is one
        label shown or hidden, not a broken layout. */
-    const label = run.sport ? `${run.sport} ${run.year}` : String(run.year);
+    const label = run.sport ? `${SPORT_SHORT[run.sport] || run.sport} ${run.year}` : String(run.year);
     const runWidth = xScale(run.end) - xScale(run.start);
     const needed = label.length * 6.2;
 
@@ -461,7 +464,7 @@ function drawChart(host, points, opts) {
   /* Say which scale is drawn whenever the alternate one is in effect --
      a rescaled chart with an unchanged title looks like a data change. */
   const scaled = scaleMode() === "hs" && data.some((p) => p.vh != null);
-  const title = scaled ? `${opts.title} - HS scale` : opts.title;
+  const title = scaled ? `${opts.title} - HS-equivalent` : opts.title;
 
   host.classList.remove("chart-empty");
   host.innerHTML =
@@ -634,7 +637,7 @@ function drawCompareChart(host, series, opts) {
       );
     }
     const mid = ((xScale(run.start) + xScale(run.end)) / 2).toFixed(1);
-    const label = run.sport ? `${run.sport} ${run.year}` : String(run.year);
+    const label = run.sport ? `${SPORT_SHORT[run.sport] || run.sport} ${run.year}` : String(run.year);
     const runWidth = xScale(run.end) - xScale(run.start);
     const next = runs[i + 1];
     const slotWidth = next
@@ -684,7 +687,7 @@ function drawCompareChart(host, series, opts) {
 
   const scaled = scaleMode() === "hs" &&
     series.some((s) => (s.points || []).some((p) => p.vh != null));
-  const title = scaled ? `${opts.title} - HS scale` : opts.title;
+  const title = scaled ? `${opts.title} - HS-equivalent` : opts.title;
 
   host.classList.remove("chart-empty");
   host.innerHTML =
