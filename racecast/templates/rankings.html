@@ -206,6 +206,18 @@
       <input id="min_athletes" class="narrow" type="number" min="5" max="50" value="5">
     </div>
 
+    {# ★ THE PROJECTED BOARD (owner, 2026-10-10): the current season with
+       last season's unraced returners counted, at last season's ratings --
+       the predictions' roster rule (roster.py). Off by default; on, the
+       banner above the table says what it is. See teams.serveBoard. #}
+    <div class="field teams-only projected-field">
+      <label for="projected">Projection</label>
+      <label class="projected-check">
+        <input id="projected" type="checkbox">
+        Include returners who haven't raced
+      </label>
+    </div>
+
     {# ★ COURSES ARE NOT ATHLETES, so almost none of the filter bar applies to
        them -- there is no pool, no sport, no season, no school. What is left
        is where the ground is, how far round it, and how much racing is behind
@@ -534,6 +546,11 @@
 
   {# HS-equivalent view. Hidden until rankings.js sees a board
      whose rows actually move (hs_movable from the API). #}
+  {# ⚠ PROJECTED - NOT RESULTS. Filled and shown by rankings.js
+     (projectedBanner) whenever the Teams board was asked for the
+     projection, so it cannot be on screen over a board that is not one. #}
+  <div class="projected-banner" id="projected-banner" role="note"></div>
+
   <div class="toggle-row">{{ scale_toggle(hidden=True) }}</div>
   <div id="results"></div>
 

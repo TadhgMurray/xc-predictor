@@ -1182,6 +1182,61 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 }
 .rankings-page .notice.show { display: block; }
 
+/* ★ THE PROJECTED TEAM BOARD (owner, 2026-10-10). The banner is the
+   site's own warning banner (pages2.css .p2-banner: the same amber, the
+   same rule) at a size that cannot be scrolled past -- it is the one
+   sentence that keeps a projection from being read as results. Shown only
+   on the Teams board, only when rankings.js adds .show. */
+.rankings-page .projected-banner { display: none; }
+.rankings-page[data-board="teams"] .projected-banner.show {
+  display: block;
+  background: var(--rk-warn-bg);
+  color: var(--rk-warn-fg);
+  border: 1px solid #f5d98a;
+  padding: 0.75rem 0.9rem;
+  margin: 0 0 0.875rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.rankings-page .projected-banner strong { font-size: 1.05rem; }
+/* asked for and not available: a plain line, not the warning */
+.rankings-page[data-board="teams"] .projected-banner.show.is-off {
+  background: transparent;
+  border: 0;
+  border-left: 3px solid #d9b168;
+  color: #57534e;
+  font-size: 0.8125rem;
+  padding: 0.4rem 0 0.4rem 0.7rem;
+}
+.rankings-page .projected-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.875rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: inherit;
+  padding: 0.375rem 0;
+  cursor: pointer;
+}
+.rankings-page .field .projected-check input { min-width: 0; padding: 0; }
+/* the per-row marks: same chip as pages2.css .p2-thin */
+.rankings-page .proj-tag {
+  display: inline-block;
+  margin-left: 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #92400e;
+  background: var(--rk-warn-bg);
+  border: 1px solid #f5d98a;
+  padding: 0 0.3rem;
+  line-height: 1.45;
+  vertical-align: 0.1em;
+  white-space: nowrap;
+}
+
 
 /* ---------------------------------------------------------------- *
  *  TABLE
