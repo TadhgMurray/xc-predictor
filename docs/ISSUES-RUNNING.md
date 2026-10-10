@@ -5865,3 +5865,24 @@ Chromium against the old script (readout 15:00, label under the pointer
   tilt + level.
 - Tests: tests/test_watchdog.py (stub rows per check, a stub database for the whole pass,
   the page, the email, the pipelines' order).
+
+## 2026-10-10 — 🔎 Predict page: long wait, then "could not reach server" (logged, not fixed)
+
+- **Symptom (owner):** on /predictions, pressing Predict sits for a long time and then
+  shows "could not reach server".
+- **Likely causes, to check on the server:**
+  - The request outlives a limit: gunicorn `--timeout 60` (deploy/server_setup.sh) kills
+    the sync worker, or the 55 s statement timeout cancels a query. Either way nginx
+    returns a 502/504, which the page reports as "could not reach server".
+  - Big fields (championship meets, "this year" squads for every school) run the model
+    and the simulation inside one sync request; 8 sync workers means a few slow
+    predictions also queue everyone else.
+  - Model loaded in every worker with a thread cap of cores/8 (sweep D4, today): each
+    prediction now has fewer threads, so it may be slower than before.
+- **To look at:** `journalctl -u xc-predictor --since -1h | grep -E "WORKER TIMEOUT|predict"`,
+  the nginx error log for 502/504 on /api/predict*, `/account/status/errors` (new today:
+  slow requests over half the statement timeout are grouped there), and the page's
+  Server-Timing header on a slow prediction.
+- **Possible fixes (not done):** run predictions as a background job the page polls;
+  serve /api/predict* from a separate gunicorn with more threads and a longer timeout;
+  cap or cache very large fields; tell the reader "this is a big field, about N s".
