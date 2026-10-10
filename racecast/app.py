@@ -10214,6 +10214,11 @@ import meet_track as _meet_track                               # noqa: E402
 for _bp in (_scale.bp, _goal.bp, _h2h.bp, _meet_track.bp):
     app.register_blueprint(_bp)
 
+# ★ PREVIEWS, MOVERS, THE TEAM TRACKER, THE ONE-PAGER (owner, 2026-10-10):
+#   their own blueprint too, see pages3.py.
+import pages3 as _pages3                                       # noqa: E402
+app.register_blueprint(_pages3.bp)
+
 
 @app.route("/predictions")
 def predictions_page():

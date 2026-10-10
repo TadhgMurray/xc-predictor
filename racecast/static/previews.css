@@ -1,0 +1,87 @@
+/* previews.css -- the pages of 2026-10-10 (pages3.py): the meet preview,
+ * the movers digest, the team season tracker and the recruiting one-pager.
+ *
+ * ★ THE LOOK IS race.css'S AND style.css'S. These pages are arranged as the
+ *   race page is (main.rc: header, tabs, a side card) and use its classes;
+ *   what lives here is only what they add -- the "Preview" tag, the race
+ *   tabs' loading line, the chart pair, and the one-pager's print sheet.
+ *   Colours are style.css's :root tokens with the same fallbacks.
+ */
+
+/* ---- shared ---------------------------------------------------------- */
+main.rc .pv-tag { display: inline-block; font-size: .72rem; font-weight: 650; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--muted, #6b7280); border: 1px solid var(--line-2, #cbd0d6);
+  border-radius: 3px; padding: .05rem .4rem; vertical-align: .1em; }
+
+/* ---- the next-race line under the athlete and school headers ---------- */
+.nr-wrap { margin-top: -.2rem; }
+.nr-wrap .rank-line { margin: .35rem 0 0; }
+.nr-line .nr-br { display: block; height: .25rem; }
+.nr-line .nr-g { font-weight: 600; }
+.nr-line strong { font-variant-numeric: tabular-nums; }
+
+/* ---- meet preview ---------------------------------------------------- */
+main.pv-page .pv-basis { margin: .6rem 0 0; font-size: .85rem; color: var(--muted, #6b7280); max-width: 46rem; line-height: 1.5; }
+main.pv-page .pv-status { color: var(--muted, #6b7280); margin: .8rem 0; }
+main.pv-page .pv-h { font-size: 1.05rem; margin: 1rem 0 .4rem; display: flex; align-items: baseline; gap: .6rem; }
+main.pv-page .pv-h small { font-size: .8rem; font-weight: 400; color: var(--muted, #6b7280); }
+main.pv-page .pv-sc i { font-style: normal; display: inline-block; min-width: 1.9rem; text-align: right;
+  color: var(--muted, #6b7280); font-variant-numeric: tabular-nums; }
+main.pv-page .pv-rec caption { text-align: left; font-weight: 650; font-size: .8rem; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted, #6b7280); padding: .5rem 0 .2rem; }
+main.pv-page .pv-side-h { margin-top: 1.4rem !important; }
+
+/* ---- movers ---------------------------------------------------------- */
+main.mv-page .mv-lede { max-width: 48rem; }
+main.mv-page .mv-h { font-size: 1rem; margin: 1.2rem 0 .3rem; }
+
+/* ---- team season tracker --------------------------------------------- */
+main.ts-page .ts-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.2rem; }
+main.ts-page .ts-h { font-size: 1.05rem; margin: 1.2rem 0 .4rem; }
+main.ts-page .ts-meets { color: var(--muted, #6b7280); font-size: .78rem; }
+main.ts-page .ts-seven { font-size: .85rem; line-height: 1.45; }
+main.ts-page .ts-seven a { font-weight: 600; }
+main.ts-page .ts-how { margin-top: 1rem; max-width: 52rem; }
+main.ts-page .rc-scope { margin-top: .9rem; }
+@media (max-width: 760px) {
+  main.ts-page .ts-pair { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
+
+/* ---- the recruiting one-pager ---------------------------------------- */
+main.pf-page { max-width: 60rem; }
+main.pf-page .pf-actions { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin: .2rem 0 .6rem; font-size: .9rem; }
+main.pf-page .pf-print { font: inherit; font-weight: 650; padding: .4rem .9rem; border-radius: 3px; cursor: pointer;
+  border: 1px solid var(--accent, #14477d); background: var(--accent, #14477d); color: #fff; }
+main.pf-page .pf-hint { color: var(--muted, #6b7280); font-size: .82rem; }
+main.pf-page .pf-actions a { margin-left: auto; font-weight: 600; }
+main.pf-page .pf-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.6rem; margin-top: 1.2rem; }
+main.pf-page .pf-sec h2 { font-size: 1.05rem; margin: 1.1rem 0 .4rem; display: flex; justify-content: space-between; align-items: baseline; }
+main.pf-page .pf-sec h2 small { font-size: .8rem; font-weight: 400; color: var(--muted, #6b7280); }
+main.pf-page .pf-grid .pf-sec h2 { margin-top: 0; }
+main.pf-page .pf-lead { margin: 0 0 .5rem; font-size: .85rem; }
+main.pf-page .pf-tbl td.tpts { width: 7.5rem; }
+main.pf-page .pf-chart .chart-slot.chart-wide { --chart-h: 260px; }
+main.pf-page .pf-foot { margin-top: 1.4rem; padding-top: .6rem; border-top: 1px solid var(--line, #e5e7eb);
+  font-size: .82rem; color: var(--muted, #6b7280); }
+@media (max-width: 760px) {
+  main.pf-page .pf-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  main.pf-page .pf-actions a { margin-left: 0; }
+}
+
+/* ★ THE PAPER. Everything that only works on a screen goes; each section
+   stays whole on its page; links print as plain text (the footer carries
+   the live address); the chart keeps its colours. */
+@media print {
+  @page { size: letter; margin: 14mm 12mm; }
+  .pf-body .topbar, .pf-body .pf-actions, .pf-body .site-foot, .pf-body footer.site { display: none !important; }
+  .pf-body { background: #fff; }
+  main.pf-page { max-width: none; padding: 0; margin: 0; }
+  main.pf-page a { color: inherit; text-decoration: none; }
+  main.pf-page .pf-sec, main.pf-page .pf-grid, main.pf-page table { break-inside: avoid; }
+  main.pf-page .pf-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  main.pf-page .rc-wide { display: table-cell !important; }
+  main.pf-page .rc-subline { display: none !important; }
+  main.pf-page .chart-slot { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  main.pf-page .r-pill { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  main.pf-page .flag { display: none; }
+}

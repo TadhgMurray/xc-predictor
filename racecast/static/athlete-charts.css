@@ -613,3 +613,26 @@
   white-space: normal;
   line-height: 1.9;
 }
+
+/* ★ THE NEXT-SEASON FAN (2026-10-10, comps-fan.js): "runners like you" past
+   the last race. The line's own blue, washed: the outer band (10th-90th
+   percentile of the comps) palest, the middle half a step darker, the
+   comps' average dashed to a hollow dot -- a forecast, so nothing solid. */
+.chart-slot .fan { stroke: none; pointer-events: none; }
+.chart-slot .fan-outer { fill: #1d4ed8; fill-opacity: .08; }
+.chart-slot .fan-inner { fill: #1d4ed8; fill-opacity: .16; }
+.chart-slot .fan-mean {
+  stroke: #1d4ed8; stroke-width: 1.5; stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke; pointer-events: none;
+}
+.chart-slot .fan-dot {
+  fill: #fff; stroke: #1d4ed8; stroke-width: 2; stroke-dasharray: 2 1.5;
+  vector-effect: non-scaling-stroke; pointer-events: none;
+}
+.chart-cap { margin: -.4rem 0 .9rem; font-size: .85rem; color: var(--muted, #6b7280); }
+.chart-cap a { font-weight: 600; }
+.chart-cap-key { white-space: nowrap; margin-left: .3rem; }
+.chart-cap-key i { display: inline-block; width: .8rem; height: .6rem; margin: 0 .25rem 0 .5rem;
+  vertical-align: -.02rem; border-radius: 2px; background: #1d4ed8; }
+.chart-cap-key i.k-in { opacity: .3; }
+.chart-cap-key i.k-out { opacity: .14; }

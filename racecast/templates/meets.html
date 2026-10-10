@@ -353,7 +353,7 @@
               <td>{{ m.state or " - " }}</td>
               <td>{{ m.level or " - " }}</td>
               <td>{{ m.n_races }}</td>
-              <td><a href="{{ m.predict_href }}">Predict</a></td>
+              <td class="cu-go">{% set ph = meet_preview_href(m) %}{% if ph %}<a href="{{ ph }}">Preview</a> · {% endif %}<a href="{{ m.predict_href }}">Predict</a></td>
             </tr>
           {% endfor %}
           </tbody>
@@ -453,7 +453,7 @@
       <tbody>
       {% for c in side_coming %}
       <tr>
-        <td class="tn"><a href="{{ c.m.predict_href }}">{{ c.m.name }}</a>
+        <td class="tn"><a href="{{ meet_preview_href(c.m) or c.m.predict_href }}">{{ c.m.name }}</a>
           <span class="sp">{{ c.day }} · {{ c.m.n_races }} race{{ "" if c.m.n_races == 1 else "s" }}</span></td>
         <td class="n tpts">{{ c.m.state or " - " }}</td>
       </tr>

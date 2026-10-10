@@ -196,6 +196,10 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
         step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py \
           && step 11_teams "$PY" -u racecast/build_team_season.py
         step 13c_search_index "$PY" -u racecast/search_index.py
+        # ★ this week's state ranks for /movers (build_rank_snapshot.py,
+        #   2026-10-10); off the && chain, so a failed snapshot never costs
+        #   the team boards
+        step 10g2_rank_snapshot "$PY" -u racecast/build_rank_snapshot.py
       fi
       # ★ THE HOME PAGE AND /meets READ panels.py's tables (homepage_recent:
       #   "Latest results"), so without this a meet scraped tonight had a

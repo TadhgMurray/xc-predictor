@@ -1,0 +1,135 @@
+{# =====================================================================
+  meet_preview.html -- a posted meet before it runs (upcoming_preview.py,
+  owner 2026-10-10): /meet/preview/xc/<id>[?src=tfrrs]
+
+  ★ THE RACE PAGE'S SHAPE, FORWARD. Header: the meet, the day, the course
+    and the weather; the projected winners where a race page has its
+    champions. Body: the races as tabs, each one's projected team scores
+    and top individuals (loaded per race from /api/meet-preview, so one
+    view costs one race's prediction, cached); the course records beside.
+
+  ! "PROJECTED", EVERYWHERE A NUMBER IS. No feed posts entries; the field is
+    the teams at the meet's last edition with this season's squads, and the
+    note under the header says so with the edition's date.
+===================================================================== #}
+<!DOCTYPE html>
+{% from "_explain.html" import difficulty_i, dv %}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = pv.name ~ " preview: projected team scores and top runners" %}
+{% set meta_description = "Projected team scores and top individuals for " ~ pv.name
+   ~ (", " ~ pv.date_label if pv.date_label else "")
+   ~ (" at " ~ pv.venue if pv.venue else "")
+   ~ ", from this season's ratings and the course. Course records, difficulty and the forecast." %}
+{% set meta_path = "/meet/preview/xc/" ~ pv.meet_id ~ ("?src=tfrrs" if src else "") %}
+{% set meta_image = site_origin ~ "/card/predict.png?" ~ card_query %}
+{% set meta_image_alt = pv.name ~ ": projected team scores and top five" %}
+{% set meta_crumbs = [("Meets", "/meets?view=upcoming"), ("Preview", none)] %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('previews.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+{% set cond = pv.conditions or {} %}
+<main class="page-wide rc pv-page" data-meet="{{ pv.meet_id }}"{% if src %} data-src="{{ src }}"{% endif %}>
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  <div>
+    <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country</span> <span class="pv-tag">Preview</span></div>
+    <h1>{{ pv.name }}</h1>
+    <div class="rc-meta">
+      {{ pv.date_label or (pv.date|mdy) }}
+      {% if pv.venue %} · <a href="/course/{{ pv.venue|urlencode }}">{{ pv.venue }}</a>{% endif %}
+      {% if pv.state %} · {{ pv.state }}{% endif %}
+      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ pv.name }} preview on Racecast"
+            data-share-url="{{ site_origin }}{{ meta_path }}" title="Share this preview; the card is the projected scores">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <span>Share</span></button>
+    </div>
+    <div class="rc-facts">
+      {% if cond.difficulty is not none %}<span>Course <b>{{ dv(cond.difficulty, "XC") }}</b>{{ difficulty_i("XC") }}</span>{% endif %}
+      {% if cond.forecast_text %}<span>Forecast <b>{{ cond.forecast_text }}</b></span>
+      {% elif cond.normal_text %}<span>Usually <b>{{ cond.normal_text }}</b></span>{% endif %}
+      <span>Races <b>{{ pv.races|length }}</b></span>
+    </div>
+    <div class="rc-champs pv-champs" hidden>
+      <div><span class="k">Projected team winner</span><span class="rc-crow"><b class="rc-cn pv-tw"></b><i class="pv-tws"></i></span></div>
+      <div><span class="k">Projected individual winner</span><span class="rc-crow"><b class="rc-cn pv-iw"></b><i class="pv-iwt"></i></span></div>
+    </div>
+    <p class="pv-basis">{% if pv.edition %}No entries are posted, so the field is the teams that ran
+      <a href="/meet/xc/{{ pv.edition.meet_id }}{% if src %}?src=tfrrs{% endif %}">the last edition</a>
+      ({{ pv.edition.date|mdy }}), each with this season's top seven by rating.{% else %}No entries are posted and no earlier
+      running of this meet is on file, so there is no field to project yet.{% endif %}</p>
+  </div>
+</div></header>
+
+<div class="rc-w rc-grid">
+<div class="rc-mainc">
+  {% if pv.edition and pv.races %}
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs pv-races" role="tablist" aria-label="Races">
+      {% for r in pv.races %}
+      <a class="seg-btn{{ ' is-on' if r.div_id == pv.lead_div }}" href="#race-{{ r.div_id }}" data-div="{{ r.div_id }}"
+         data-predict="{{ r.predict_href }}">{% set lw = r.label|lower %}{{ r.label }}{% if r.gender and not ('boy' in lw or 'girl' in lw or 'men' in lw) %} · {{ "Boys" if r.gender == "M" else "Girls" }}{% endif %}<span class="n">{{ r.n_teams }}</span></a>
+      {% endfor %}
+    </nav>
+    <a class="rc-out pv-open" href="{{ (pv.races|selectattr('div_id', 'equalto', pv.lead_div)|first).predict_href }}">Edit the field →</a>
+  </div>
+  <section class="rc-panel pv-panel" aria-live="polite">
+    <p class="pv-status">Projecting this race…</p>
+    <div class="pv-body" hidden>
+      <h2 class="pv-h">Projected team scores <small class="pv-nt"></small></h2>
+      <table class="rc-table pv-teams">
+        <thead><tr><th>Pl</th><th>Team</th><th class="rc-wide">Scorers</th><th class="n">Pts</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <h2 class="pv-h">Projected top runners <small class="pv-nf"></small></h2>
+      <table class="rc-table pv-runners">
+        <thead><tr><th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th><th class="n">Time</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+  {% else %}
+  <p class="meta">Nothing to project for this meet yet.</p>
+  {% endif %}
+</div>
+
+<aside class="rc-side">
+  {% if pv.records %}
+  <h2>Course records <small>{{ pv.records.dist }} m</small></h2>
+  {% for g, label in [("M", "Boys"), ("F", "Girls")] %}{% set rows = pv.records[g] %}
+  {% if rows %}
+  <table class="rc-tscores rc-tscores-plain pv-rec">
+    <caption>{{ label }}</caption>
+    <tbody>
+    {% for r in rows %}
+    <tr><td class="tp">{{ loop.index }}</td>
+      <td class="tn"><a href="/athlete/{{ r.person_id }}">{{ r.name }}</a>
+        <span class="sp">{{ r.school or "" }}{% if r.date %} · {{ (r.date|string)[:4] }}{% endif %}</span></td>
+      <td class="n tpts">{{ r.display_time or (r.time_seconds|proj_time) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% endfor %}
+  {% if pv.venue %}<a class="rc-more" href="/course/{{ pv.venue|urlencode }}?dist={{ pv.records.dist }}">All course records →</a>{% endif %}
+  {% elif pv.venue %}
+  <h2>Course <small>{{ pv.venue }}</small></h2>
+  <p class="rc-tip">No records are built for this course and distance yet. <a href="/course/{{ pv.venue|urlencode }}">The course page →</a></p>
+  {% endif %}
+  <h2 class="pv-side-h">How this is projected</h2>
+  <p class="rc-tip">Each runner's time comes from the prediction model on this course and distance, the same
+    as <a href="/predictions">Predictions</a> in "This year" mode. Team scores use five scorers and two
+    displacers. Real entries can differ; the field is a guess until the meet posts them.</p>
+</aside>
+</div>
+</main>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('meet-preview.js') }}"></script>
+</body>
+</html>

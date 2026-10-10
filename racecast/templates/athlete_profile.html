@@ -1,0 +1,112 @@
+{# =====================================================================
+  athlete_profile.html -- the recruiting one-pager (profile_page.py,
+  owner 2026-10-10): /athlete/<id>/profile
+
+  ★ ONE SHEET OF PAPER. On screen it is a page with the site's top bar and
+    a "Save as PDF" button; printed (or saved as PDF from the print dialog)
+    the bar, the buttons and the link styling go, and every section is kept
+    whole on the page (previews.css, @media print). There is no PDF library
+    in the site's requirements, so the browser's print is the PDF.
+
+  ! EVERY NUMBER LINKS BACK. The footer prints the live page's address, so a
+    coach holding the paper can find the current numbers.
+===================================================================== #}
+<!DOCTYPE html>
+{% from "_explain.html" import rating_i %}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = p.name ~ " recruiting profile" %}
+{% set meta_description = p.name ~ (", " ~ p.school_label if p.school_label else "") ~ (", class of " ~ p.grad_year if p.grad_year else "") ~ ": personal bests, rating and ranks, progression, and the college programmes the rating fits." %}
+{% set meta_image = site_origin ~ "/card/athlete/" ~ p.person_id ~ ".png" %}
+{% set meta_crumbs = [("Athletes", none), (p.name, "/athlete/" ~ p.person_id), ("Profile", none)] %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('athlete-charts.css') }}">
+<link rel="stylesheet" href="{{ static_v('previews.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body class="pf-body">
+{% include "_topbar.html" %}
+{% set live = site_origin ~ "/athlete/" ~ p.person_id %}
+{% set L = p.latest %}
+<main class="page-wide rc pf-page">
+<div class="pf-actions">
+  <button type="button" class="pf-print" onclick="window.print()">Save as PDF</button>
+  <span class="pf-hint">Opens the print dialog; choose "Save as PDF".</span>
+  <a href="/athlete/{{ p.person_id }}">Live page →</a>
+</div>
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  <div>
+    <div class="rc-sport"><span class="pv-tag">Recruiting profile</span></div>
+    <h1>{{ p.name }}</h1>
+    <div class="rc-meta">{% if p.school %}{{ crest(p.school, p.state, pool=p.pool) }}{{ p.school_label or p.school }}{% endif %}
+      {% if p.grad_year %} · Class of {{ p.grad_year }}{% endif %} · {{ p.pool_words }}</div>
+    <div class="rc-facts rc-facts-lead">
+      {% if L %}<span>Rating{{ rating_i() }} <b>{{ "%.1f"|format(L.mean_rating) }}</b> <span class="dist-note-quiet">{{ L.label }} {{ L.sport }} season</span></span>{% endif %}
+      {% if p.percentile %}<span>Standing <b>{{ p.percentile }}</b> <span class="dist-note-quiet">of {{ p.pool_words }}</span></span>{% endif %}
+    </div>
+    {% if p.ranks %}
+    <p class="rank-line"><span class="rl-lab">Ranked</span>
+      {%- for e in p.ranks %}{% if not loop.first %}<span class="sep">·</span>{% endif %}<span class="rk"><span class="scope">{{ e.label }}</span> <a href="{{ e.href }}">#{{ e.rank }}</a></span>{% endfor %}</p>
+    {% endif %}
+  </div>
+</div></header>
+
+<div class="pf-grid">
+  <section class="pf-sec">
+    <h2>Personal bests</h2>
+    {% if p.bests %}
+    <table class="rc-tscores rc-tscores-plain pf-tbl">
+      <tbody>{% for b in p.bests %}
+      <tr><td class="tn">{{ b.label }}<span class="sp">{{ b.date|mdy }}</span></td><td class="n tpts">{{ b.time }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% else %}<p class="meta">No timed results at a standard distance yet.</p>{% endif %}
+  </section>
+  <section class="pf-sec">
+    <h2>Seasons <small>season rating</small></h2>
+    <table class="rc-tscores rc-tscores-plain pf-tbl">
+      <tbody>{% for s in p.seasons|reverse %}
+      <tr><td class="tn">{{ s.label }} {{ s.sport }}<span class="sp">{{ s.school or "" }}{% if s.grade_num %} · grade {{ s.grade_num }}{% endif %} · {{ s.n_races }} race{{ "" if s.n_races == 1 else "s" }}</span></td>
+        <td class="n tpts">{{ "%.1f"|format(s.mean_rating) if s.mean_rating is not none else "-" }}{% if s.gain is not none %} <span class="dist-note-quiet">{{ "%+.1f"|format(s.gain) }}</span>{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </section>
+</div>
+
+<section class="pf-sec pf-chart">
+  <h2>Progression <small>every rated race</small></h2>
+  <div class="chart-slot chart-wide" data-chart="all_rating" data-kind="rating" data-bysport="1" data-title="Speed rating, every race"></div>
+</section>
+
+{% for sport, rows in p.fits.items() %}{% if rows %}
+<section class="pf-sec">
+  <h2>College fit, {{ "cross country" if sport == "XC" else "track" }} <small>top {{ rows|length }}</small></h2>
+  <p class="meta pf-lead">The {{ rows|length }} programmes with the fastest recent recruits where this rating is in their recruit range or better
+    (at or above their 25th-percentile recruit), from <a href="/recruiting?athlete={{ p.person_id }}">Recruiting</a>.</p>
+  <table class="rc-table pf-fit">
+    <thead><tr><th>#</th><th>Programme</th><th class="rc-wide">Division</th><th class="n">Median recruit</th><th>Fit</th></tr></thead>
+    <tbody>{% for r in rows %}
+    <tr><td class="pl">{{ loop.index }}</td>
+      <td class="nm"><a href="/recruiting/school/{{ r.school|urlencode }}{% if r.state %}?state={{ r.state }}{% endif %}">{{ r.label or r.school }}</a><span class="rc-subline">{{ r.division or "" }}</span></td>
+      <td class="rc-wide">{{ r.division or "-" }}{% if r.conference %} <span class="dist-note-quiet">{{ r.conference }}</span>{% endif %}</td>
+      <td class="n">{{ "%.1f"|format(r.median) if r.median is not none else "-" }}</td>
+      <td><span class="r-pill r-pill-{{ r.tier.key }}">{{ r.tier.label }}</span></td></tr>
+    {% endfor %}</tbody>
+  </table>
+</section>
+{% endif %}{% endfor %}
+
+<footer class="pf-foot">
+  <p>Live page: <a href="{{ live }}">{{ live|replace("https://", "") }}</a> · printed {{ p.printed|mdy }}.
+    Ratings are speed ratings: every race on one scale, adjusted for course and distance (100 is the pool's average).</p>
+</footer>
+</main>
+<script type="application/json" id="chart-data">{{ {"all_rating": p.points}|tojson }}</script>
+<script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('athlete-charts.js') }}"></script>
+</body>
+</html>
