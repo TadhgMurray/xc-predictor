@@ -525,7 +525,6 @@ main.rc.coach-home .coach-mine-note { font-size: .85rem; }
 main.rc.coach-home .coach-next-list { margin-top: .3rem; }
 main.rc.coach-home .coach-foot { margin-top: 1.4rem; }
 /* ---- end of the recruiting / coaches block ----------------------------- */
-=======
 /* =======================================================================
    ★ ABOUT, REPORT, ACCOUNT, SIGN IN, 404, ERROR AND STATUS IN THE RACE
      SHAPE (owner, 2026-10-10). Each page's <main> is .page-wide.rc plus
@@ -644,7 +643,6 @@ main.rc.status-page .st-reports .st-btn { white-space: nowrap; }
   main.rc.status-page .rc-side { display: none; }
 }
 /* ======================= end of the 2026-10-10 pages ===================== */
-=======
 /* =====================================================================
    ★ PREDICTIONS, CONVERSIONS AND ATHLETE IN THE RACE SHAPE (owner,
    2026-10-10: the approved proposals). Each page's rules are scoped to its
