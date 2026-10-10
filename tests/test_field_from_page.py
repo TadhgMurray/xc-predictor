@@ -22,10 +22,16 @@ just take those athletes?"
 """
 import io
 import json
+import sys
 import os
 import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# _perTeam (inside the slice) reads predict's caps
+os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+for _p in ("engine", "racecast"):
+    if os.path.join(ROOT, _p) not in sys.path:
+        sys.path.insert(0, os.path.join(ROOT, _p))
 
 
 def read(*p):
