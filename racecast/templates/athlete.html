@@ -37,6 +37,7 @@
     {% include "_meta.html" %}
     <link rel="stylesheet" href="{{ static_v('style.css') }}">
     <link rel="stylesheet" href="{{ static_v('athlete-charts.css') }}">
+    <link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
@@ -289,30 +290,36 @@
     </div>
 {% endmacro %}
 
-    {# Share (281, owner: "a box, the curved-arrow icon, then the word Share"):
-       at the right end of the name row, the one place a header action lives
-       on every profile page people know #}
-    {# the header (305): the picture of the account that claims this page
-       beside the name and the meta line, Share at the right; the numbers
-       keep the full width underneath. With no picture the slot is hidden
-       for everyone but the owner, who gets "+ photo" (topbar-search.js,
-       when /api/me says the page is theirs). #}
-    <div class="hdr-row ath-head" data-has-photo="{{ '1' if athlete.photo else '' }}">
-      {# the picture (305) sits INSIDE the name (owner, 2026-09-15: "just
-         next to the name, so it only indents the name"), the way
-         athletic.net draws it: the meta line and the numbers below start
-         at the page's own left edge, not behind the avatar. #}
-      <h1 class="ath-name"><span class="ath-portrait{% if not athlete.photo %} ath-avatar-empty{% endif %}" id="ath-avatar"{% if not athlete.photo %} hidden{% endif %}>{% if athlete.photo %}<img src="{{ athlete.photo }}" alt="" width="44" height="44">{% endif %}</span>{{ athlete.name }}</h1>
-      {# Share (281, owner: "a box, the curved-arrow icon, then the word Share"):
-         at the right end of the name row #}
-      <button type="button" class="share-box share-btn" data-share-title="{{ athlete.name }} on Racecast"
-              data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}"
-              title="Share this page; the preview is the athlete's card">
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
-        <span>Share</span>
-      </button>
-    </div>
-    <p class="meta" data-person-id="{{ athlete.person_id }}">{% if athlete.school and athlete.school|is_team %}{{ crest(athlete.school, athlete.team_state, px=128, size=24, pool=athlete.team_pool) }}<a href="{{ school_href(athlete.school, athlete.team_state, pool=athlete.team_pool) }}">{{ athlete.school|school_label_for(athlete.team_pool, athlete.team_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.team_pool, athlete.team_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.grade_pool) if athlete.grade else ("Professional" if athlete.pro_header else " - ") }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a>{% if athlete.team_pool and (athlete.team_pool|string).startswith('hs_') %} · <a href="/recruiting?athlete={{ athlete.person_id }}">Recruiting: where you'd fit</a> · <a href="/recruit/{{ athlete.person_id }}#like">Runners like you</a>{% endif %}</p>
+{# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10). Header: kicker, name, one
+   meta line ending in Share, the stat strip and the rank / what-it-takes
+   lines; then the sports as tabs with the scale toggle at the bar's end,
+   every season's table in its sport's tab, and the bests as compact side
+   cards. Nothing is gone -- it moved. race.css carries the layout under
+   main.ath-page.rc; race-page.js runs the tabs and opens the tab holding a
+   linked row or season (#race-<id>, #2025-TF, ?r=, data-flash-id). #}
+<main class="page-wide rc ath-page"{% if flash_rid %} data-flash-id="race-{{ flash_rid }}"{% endif %}>
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  {# the header (305): the picture of the account that claims this page
+     beside the name. With no picture the slot is hidden for everyone but
+     the owner, who gets "+ photo" (topbar-search.js, when /api/me says the
+     page is theirs). #}
+  <div class="rc-left ath-head" data-has-photo="{{ '1' if athlete.photo else '' }}">
+    {# the kicker names the sports raced, as the race page's names its sport #}
+    <div class="rc-sport">{% if xc_seasons %}<span class="sport-tag sport-tag--xc">Cross country</span>{% endif %}
+      {% if tf_seasons %}<span class="sport-tag sport-tag--tf">Track &amp; field</span>{% endif %}</div>
+    {# the picture (305) sits INSIDE the name (owner, 2026-09-15: "just
+       next to the name, so it only indents the name"), the way
+       athletic.net draws it: the meta line and the numbers below start
+       at the page's own left edge, not behind the avatar. #}
+    <h1 class="ath-name"><span class="ath-portrait{% if not athlete.photo %} ath-avatar-empty{% endif %}" id="ath-avatar"{% if not athlete.photo %} hidden{% endif %}>{% if athlete.photo %}<img src="{{ athlete.photo }}" alt="" width="44" height="44">{% endif %}</span>{{ athlete.name }}</h1>
+    {# Share (281) ends the meta line now, as on the race page (owner,
+       2026-10-10); it was the boxed button at the right of the name row #}
+    <div class="rc-meta" data-person-id="{{ athlete.person_id }}">{% if athlete.school and athlete.school|is_team %}{{ crest(athlete.school, athlete.team_state, px=128, size=24, pool=athlete.team_pool) }}<a href="{{ school_href(athlete.school, athlete.team_state, pool=athlete.team_pool) }}">{{ athlete.school|school_label_for(athlete.team_pool, athlete.team_state) }}</a>{% elif athlete.school %}{{ athlete.school|school_label_for(athlete.team_pool, athlete.team_state) }}{% else %} - {% endif %} · {{ athlete.grade|grade_label(athlete.grade_pool) if athlete.grade else ("Professional" if athlete.pro_header else " - ") }}{% if units %} · {{ unit_chips(units) }}{% endif %} · <a href="/compare?a={{ athlete.person_id }}">Compare head to head</a>{% if athlete.team_pool and (athlete.team_pool|string).startswith('hs_') %} · <a href="/recruiting?athlete={{ athlete.person_id }}">Recruiting: where you'd fit</a> · <a href="/recruit/{{ athlete.person_id }}#like">Runners like you</a>{% endif %}
+      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ athlete.name }} on Racecast"
+            data-share-url="{{ site_origin }}/athlete/{{ athlete.person_id }}" title="Share this page; the preview is the athlete's card">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <span>Share</span>
+    </button></div>
     {# ★ THE HEADLINE NUMBERS, IN THE HEADLINE. The rating lived only in the
        sidebar, so the page's own subject was the one thing the top of the
        page did not say. Each figure links where it can: the best race
@@ -348,7 +355,6 @@
         </div>
         {% endif %}
     </div>
-
 
     {# ★ THE SEASON RANK LINE. Where this athlete stands for the same season
        the header rating describes, broadest scope to narrowest, ending at
@@ -416,240 +422,166 @@
         {{ training.n_races }} races in {{ training.year }}</span>
     </p>
     {% endif %}
+  </div>
+</div></header>
 
-    {# One row: the sport nav on the left, the pool-view toggle flush     #}
-    {#  right (owner's pick, option C) -- same height, same segmented     #}
-    {#  shape, so the two boxes read as siblings on one line.             #}
+{% set n_xc = xc_seasons|map(attribute='1')|map(attribute='races')|map('length')|sum %}
+{% set n_tf = tf_seasons|map(attribute='1')|map(attribute='races')|map('length')|sum %}
+<div class="rc-w rc-grid">
+<div class="rc-mainc">
+  <div class="rc-tbar">
+    {# ★ THE SPORTS ARE THE TABS (owner, 2026-10-10): they were the two
+       anchor links of the sport-toggle; the whole-career chart is the
+       third. The labels are short so the bar stays one line and the first
+       table starts level with the side card. #}
+    <nav class="seg rc-tabs" role="tablist">
+      {% if xc_seasons %}<a class="seg-btn is-on" href="#xc" data-tab="xc">Cross country<span class="n">{{ n_xc }}</span></a>{% endif %}
+      {% if tf_seasons %}<a class="seg-btn{% if not xc_seasons %} is-on{% endif %}" href="#tf" data-tab="tf">Track<span class="n">{{ n_tf }}</span></a>{% endif %}
+      <a class="seg-btn{% if not xc_seasons and not tf_seasons %} is-on{% endif %}" href="#career" data-tab="career">Career</a>
+    </nav>
     {# ================================================================= #}
-    {#  POOL-VIEW TOGGLE. Always rendered (owner, 2026-09-02: it came   #}
-    {#  and went between athletes and read as a fault). For a pure-HS    #}
-    {#  career both views are the same numbers, and the control says so  #}
-    {#  ("same on both") instead of disappearing.                        #}
+    {#  POOL-VIEW TOGGLE, at the tab bar's end. Always rendered (owner,  #}
+    {#  2026-09-02: it came and went between athletes and read as a      #}
+    {#  fault). For a pure-HS career both views are the same numbers,    #}
+    {#  and the control says so ("same on both") instead of vanishing.   #}
     {#  athlete-charts.js owns the behaviour: it swaps every .rv span    #}
     {#  and redraws the rating charts, and remembers the choice.         #}
     {# ================================================================= #}
-    <div class="toggle-row">
-        <nav class="sport-toggle">
-            <a href="#xc">Cross Country</a>
-            <a href="#tf">Track &amp; Field</a>
-        </nav>
-        {{ scale_toggle(same=not has_hs_view) }}
+    <div class="rc-tbar-end">{{ scale_toggle(same=not has_hs_view) }}</div>
+  </div>
+
+  {# ★ COLLAPSED ON A PHONE (owner, 2026-09-01). The charts sit ABOVE each
+     sport's results, so on a narrow screen the first result table was two
+     screens down. `open` is the DESKTOP default and stays in the markup, so
+     with no JS the page behaves exactly as it did. athlete-charts.js closes
+     these below 700px and the CSS hides the summary above it.
+     ! NO FLASH: a chart slot is EMPTY until the script fills it, so a
+       collapsed fold never had a rendered chart to hide.
+     Chart slots carry no placeholder text: athlete-charts.js replaces
+     their contents and renders its own "no data" state. A chart in a
+     hidden tab draws when shown (athlete-charts.js redraws on resize). #}
+  {% if xc_seasons %}
+  <section class="rc-panel sport-section" id="xc" data-panel="xc">
+    <details class="chart-fold" open>
+      <summary>XC speed rating</summary>
+      <div class="chart-slot chart-wide" data-chart="xc_rating" data-kind="rating" data-title="XC speed rating"></div>
+    </details>
+    <nav class="season-jump">
+        {% for (year, sport), season in xc_seasons %}<a href="#{{ year }}-{{ sport }}">{{ year }}</a>
+        {% endfor %}
+    </nav>
+    {% for (year, sport), season in xc_seasons %}
+        {{ season_block(year, sport, season) }}
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if tf_seasons %}
+  <section class="rc-panel sport-section" id="tf" data-panel="tf">
+    <details class="chart-fold" open>
+      <summary>TF speed rating</summary>
+      <div class="chart-slot chart-wide" data-chart="tf_rating" data-kind="rating" data-title="TF speed rating"></div>
+    </details>
+    <nav class="season-jump">
+        {% for (year, sport), season in tf_seasons %}<a href="#{{ year }}-{{ sport }}">{{ year }}</a>
+        {% endfor %}
+    </nav>
+    {% for (year, sport), season in tf_seasons %}
+        {{ season_block(year, sport, season) }}
+    {% endfor %}
+    {# the per-distance charts, moved from the sidebar into their sport
+       (owner, 2026-10-10) #}
+    {% if tf_dists %}
+    <h3 class="tf-dist-h">Each distance</h3>
+    <div class="tf-dist-grid chart-panel">
+        {% for dist in tf_dists %}
+        <div class="chart-slot" data-chart="tf_dist.{{ dist }}" data-kind="time" data-title="{{ dist }}"></div>
+        {% endfor %}
     </div>
+    {% endif %}
+  </section>
+  {% endif %}
 
+  {#
+    CAREER CHART -- every rated race, both sports, in date order. Its own
+    tab, because it belongs to neither sport: speed_rating is 5K-equivalent
+    and difficulty-adjusted, so an XC 5k and a TF 1600m are directly
+    comparable and this is the one view of a whole career.
 
-    <div class="page-layout">
+    data-bysport="1" colours the dots by sport and adds the legend. The LINE
+    stays one colour -- it is one athlete's progression, not two series.
+  #}
+  <section class="rc-panel" id="career" data-panel="career">
+    <details class="chart-fold" open>
+      <summary>Speed rating - all races</summary>
+      <div class="chart-slot chart-wide" data-chart="all_rating" data-kind="rating" data-bysport="1" data-title="Speed rating - all races"></div>
+    </details>
+  </section>
 
-        <main class="main-col"{% if flash_rid %} data-flash-id="race-{{ flash_rid }}"{% endif %}>
+  <div class="page-report">Something wrong on this page?
+      <a href="/report?about={{ request.path|urlencode }}&amp;kind=rating">Report it →</a></div>
+</div>
 
-            {#
-              CAREER CHART -- every rated race, both sports, in date order.
+{# ★ THE BESTS AS SIDE CARDS, the plain race-page card: a label on the
+   left, the figure on the right, every figure a link to its row (which
+   opens its sport's tab, race-page.js). #}
+<aside class="rc-side">
+  {#
+    ALL-TIME BESTS. One table per sport, rendered only when that sport has
+    something, so an XC-only athlete gets no empty TF heading. Ratings
+    first: they are the figures comparable across every distance. The
+    average is not a link -- it is a summary of many races, not one.
+  #}
+  <h2>All-time bests <small>{{ athlete.n_races }} races</small></h2>
+  {% for sport in ["XC", "TF"] %}
+  {% set bucket = alltime[sport] %}
+  {% if bucket.rating or bucket.events %}
+  <table class="rc-tscores rc-tscores-plain ath-bests">
+    <thead><tr><th colspan="2">{{ "Cross country" if sport == "XC" else "Track & field" }}</th></tr></thead>
+    <tbody>
+    {% if bucket.rating %}
+    <tr class="is-rating"><td class="tn">Best rating</td>
+      <td class="n tpts"><a href="#race-{{ bucket.rating.result_id }}">{{ rv(bucket.rating.speed_rating, bucket.rating.hs_rating) }}</a></td></tr>
+    {% endif %}
+    {% if bucket.avg_rating %}
+    <tr class="is-rating"><td class="tn">Average rating</td>
+      <td class="n tpts">{{ rv(bucket.avg_rating, bucket.avg_rating_hs) }}</td></tr>
+    {% endif %}
+    {% for event, race in bucket.events.items() %}
+    <tr><td class="tn">{{ event|event_label }}</td>
+      <td class="n tpts"><a href="#race-{{ race.result_id }}">{{ race.result }}</a></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% endfor %}
 
-              It sits ABOVE the sport sections rather than inside either,
-              because it belongs to neither: speed_rating is 5K-equivalent and
-              difficulty-adjusted, so an XC 5k and a TF 1600m are directly
-              comparable and this is the one view of a whole career.
-
-              data-bysport="1" colours the dots by sport and adds the legend.
-              The LINE stays one colour -- it is one athlete's progression, not
-              two separate series.
-
-              Chart slots carry no placeholder text: athlete-charts.js replaces
-              their contents and renders its own "no data" state. Text here
-              would flash before the script runs.
-            #}
-            {# ★ COLLAPSED ON A PHONE (owner, 2026-09-01). The charts sit ABOVE each
-       sport's results, so on a narrow screen the first result table was two
-       screens down. Shrinking them was not enough -- what is above the table
-       is chart PLUS header, rank line, sport nav and heading.
-
-       `open` is the DESKTOP default and stays in the markup, so with no JS
-       the page behaves exactly as it did. athlete-charts.js closes these
-       below 700px and the CSS hides the summary above it, so the desktop
-       page is visually unchanged.
-       ! NO FLASH: a chart slot is EMPTY until the script fills it, so a
-         collapsed fold never had a rendered chart to hide. #}
-            <details class="chart-fold" open>
-              <summary>Speed rating - all races</summary>
-              <div class="chart-slot chart-wide"
-                   data-chart="all_rating" data-kind="rating" data-bysport="1"
-                   data-title="Speed rating - all races"></div>
-            </details>
-
-            {% if xc_seasons %}
-            <section class="sport-section" id="xc">
-                <h2 class="sport--xc">Cross Country</h2>
-
-                <details class="chart-fold" open>
-                  <summary>XC speed rating</summary>
-                  <div class="chart-slot chart-wide"
-                       data-chart="xc_rating" data-kind="rating"
-                       data-title="XC speed rating">
-                  </div>
-                </details>
-
-                <nav class="season-jump">
-                    {% for (year, sport), season in xc_seasons %}
-                        <a href="#{{ year }}-{{ sport }}">{{ year }}</a>
-                    {% endfor %}
-                </nav>
-
-                {% for (year, sport), season in xc_seasons %}
-                    {{ season_block(year, sport, season) }}
-                {% endfor %}
-            </section>
-            {% endif %}
-
-            {% if tf_seasons %}
-            <section class="sport-section" id="tf">
-                <h2 class="sport--tf">Track &amp; Field</h2>
-
-                <details class="chart-fold" open>
-                  <summary>TF speed rating</summary>
-                  <div class="chart-slot chart-wide"
-                       data-chart="tf_rating" data-kind="rating"
-                       data-title="TF speed rating">
-                  </div>
-                </details>
-
-                <nav class="season-jump">
-                    {% for (year, sport), season in tf_seasons %}
-                        <a href="#{{ year }}-{{ sport }}">{{ year }}</a>
-                    {% endfor %}
-                </nav>
-
-                {% for (year, sport), season in tf_seasons %}
-                    {{ season_block(year, sport, season) }}
-                {% endfor %}
-            </section>
-            {% endif %}
-
-    <div class="page-report">Something wrong on this page?
-        <a href="/report?about={{ request.path|urlencode }}&amp;kind=rating">Report it →</a></div>
-        </main>
-
-        <aside class="sidebar">
-
-            {#
-              ALL-TIME BESTS.
-
-              Top of the sidebar because it answers the first question anyone
-              has about an athlete. The career rating leads, then the best
-              single race across BOTH sports underneath it -- those two are
-              different quantities and sitting them together makes the
-              difference legible: the first is an ability averaged over a
-              career, the second is one day.
-            #}
-            <div class="bests-panel">
-                <h3>All-Time Bests</h3>
-
-                {# ★ NO RATING / BEST RACE HERE ANY MORE (owner, 2026-10-07: "try not
-                   to have duplicated things"): the header's stat strip shows the
-                   same two numbers, with the same notes, directly above. The
-                   sidebar keeps what only it has: each sport's bests. #}
-                {# The rating in words -- the 5K it stands for and where it
-                   sits in the pool. Here, under both stats, not in the
-                   header strip (owner, 2026-09-02); inside the rating stat
-                   it pushed Best race out of the panel. Either half may be
-                   missing; the line drops what it cannot say. #}
-
-
-                {#
-                  One block per sport. Rendered only when that sport has
-                  something, so an XC-only athlete gets no empty TF heading.
-                #}
-                {% for sport in ["XC", "TF"] %}
-                    {% set bucket = alltime[sport] %}
-                    {% if bucket.rating or bucket.events %}
-                    <div class="bests-sport">
-                        <h5>{{ sport }}</h5>
-                        <ul>
-                            {# Ratings first: they are the figures comparable
-                               across every distance, so they head the list
-                               rather than trailing it. #}
-                            {% if bucket.rating %}
-                            <li class="is-rating">
-                                <span class="ev">Best rating</span>
-                                <a href="#race-{{ bucket.rating.result_id }}">{{ rv(bucket.rating.speed_rating, bucket.rating.hs_rating) }}</a>
-                            </li>
-                            {% endif %}
-
-                            {% if bucket.avg_rating %}
-                            {# Not a link -- it is a summary of many races,
-                               not one of them. #}
-                            <li class="is-rating">
-                                <span class="ev">Average rating</span>
-                                <span>{{ rv(bucket.avg_rating, bucket.avg_rating_hs) }}</span>
-                            </li>
-                            {% endif %}
-
-                            {# Then every distance, fastest time in each. #}
-                            {% for event, race in bucket.events.items() %}
-                            <li>
-                                <span class="ev">{{ event|event_label }}</span>
-                                <a href="#race-{{ race.result_id }}">{{ race.result }}</a>
-                            </li>
-                            {% endfor %}
-                        </ul>
-                    </div>
-                    {% endif %}
-                {% endfor %}
-            </div>
-
-            {#
-              SEASON BESTS, flattened.
-
-              One heading per (year, sport) -- "2026 TF" -- rather than a year
-              heading with sports nested under it. That was one level deeper
-              than the content needed, and it made the sport unclickable.
-
-              The heading links to that season's table (#2026-TF) and carries
-              the engine's rating for the season on the right.
-            #}
-            <div class="pr-panel">
-                <h3>Season Bests</h3>
-                {% for (year, sport), bests in season_bests %}
-                    <a class="season-head-link" href="#{{ year }}-{{ sport }}">
-                        <span>{{ year }} {{ sport }}</span>
-                        <span class="rating">{{ rv(bests.season_rating, bests.season_rating_hs) }}</span>
-                    </a>
-                    <ul>
-                        {% if bests.rating %}
-                        <li class="is-rating">
-                            <span class="ev">Best rating</span>
-                            <a href="#race-{{ bests.rating.result_id }}">{{ rv(bests.rating.speed_rating, bests.rating.hs_rating) }}</a>
-                        </li>
-                        {% endif %}
-                        {% for event, race in bests.events.items() %}
-                        <li>
-                            <span class="ev">{{ event|event_label }}</span>
-                            <a href="#race-{{ race.result_id }}">{{ race.result }}</a>
-                        </li>
-                        {% endfor %}
-                    </ul>
-                {% endfor %}
-            </div>
-
-            {# Own guard: the sidebar sits OUTSIDE the TF section, so it cannot
-               inherit that section's {% if tf_seasons %}. Without this, an
-               XC-only athlete gets an empty chart panel. #}
-            {% if tf_dists %}
-            <div class="chart-panel">
-                <h3>TF Distances</h3>
-                {% for dist in tf_dists %}
-                    <div class="chart-slot"
-                         data-chart="tf_dist.{{ dist }}" data-kind="time"
-                         data-title="{{ dist }}"></div>
-                {% endfor %}
-            </div>
-            {% endif %}
-        </aside>
-
-    </div>
+  {#
+    SEASON BESTS, one row per (year, sport): the season links to its table
+    (#2026-TF) with the engine's season rating on the right; the best
+    rating and each event's best ride on the sub-line.
+  #}
+  <h2>Season bests <small>season rating</small></h2>
+  <table class="rc-tscores rc-tscores-plain">
+    <tbody>
+    {% for (year, sport), bests in season_bests %}
+    <tr>
+      <td class="tn"><a href="#{{ year }}-{{ sport }}">{{ year }} {{ sport }}</a>
+        <span class="sp">{% if bests.rating %}best <a href="#race-{{ bests.rating.result_id }}"><b>{{ rv(bests.rating.speed_rating, bests.rating.hs_rating) }}</b></a>{% endif %}{% for event, race in bests.events.items() %} · {{ event|event_label }} <a href="#race-{{ race.result_id }}">{{ race.result }}</a>{% endfor %}</span></td>
+      <td class="n tpts">{{ rv(bests.season_rating, bests.season_rating_hs) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</aside>
+</div>
+</main>
 <script type="application/json" id="chart-data">{{ chart_data|tojson }}</script>
 {# scale-view.js FIRST: athlete-charts.js reads window.rcScale. #}
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('athlete-charts.js') }}"></script>
 
 <script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

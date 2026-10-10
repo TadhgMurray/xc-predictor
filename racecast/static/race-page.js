@@ -9,41 +9,141 @@
   main.classList.add("rc-js");
 
   // ---- tabs: #results / #teams / #track, kept in the URL hash
-  var tabs = main.querySelectorAll("[data-tab]");
-  var panels = main.querySelectorAll("[data-panel]");
-  // ! THE FIRST TAB IS THE DEFAULT, not "results": the meet page's first
-  //   tab is "races", and an unknown name used to hide every panel. The
-  //   tab bar's order, not the panels' order in the source, says which.
-  var firstTab = main.querySelector(".rc-tabs [data-tab]");
-  var first = firstTab ? firstTab.dataset.tab
-            : (panels.length ? panels[0].dataset.panel : "results");
-  function show(name) {
-    var found = false;
-    panels.forEach(function (p) { if (p.dataset.panel === name) found = true; });
-    if (!found) name = first;
-    panels.forEach(function (p) { p.hidden = p.dataset.panel !== name; });
-    // ! THE FULL TEAMS TABLE AND THE SIDEBAR'S TOP TEN ARE ONE LIST TWICE
-    //   (owner, 2026-10-07, on "All teams"): with the Teams tab open the
-    //   sidebar steps aside and the table takes the width
-    main.classList.toggle("rc-on-teams", name === "teams");
-    // the conversion tab swaps the sidebar for the finishers (fillConv)
-    main.classList.toggle("rc-on-track", name === "track");
-    if (name === "track" && typeof fillConv === "function") fillConv();
-    main.querySelectorAll(".rc-tabs [data-tab]").forEach(function (a) {
-      a.classList.toggle("is-on", a.dataset.tab === name);   // the site's .seg-btn.is-on
+  // ★ ONE SET OF TABS PER ROOT (owner, 2026-10-10: the predictions page lays
+  //   its predicted race out as a race page, and that markup arrives by
+  //   fetch, long after this script ran). wireTabs(root) wires the tabs and
+  //   panels inside one root; the page's own <main> is the first root, and
+  //   window.rcTabs(root) wires one drawn later. A root other than <main>
+  //   carries its own rc-on-teams / rc-on-track, so two predicted races on
+  //   one page do not fold each other's side cards.
+  var roots = [];
+  function wireTabs(root) {
+    var tabs = root.querySelectorAll("[data-tab]");
+    var panels = root.querySelectorAll("[data-panel]");
+    // ! THE FIRST TAB IS THE DEFAULT, not "results": the meet page's first
+    //   tab is "races", and an unknown name used to hide every panel. The
+    //   tab bar's order, not the panels' order in the source, says which.
+    var firstTab = root.querySelector(".rc-tabs [data-tab]");
+    var first = firstTab ? firstTab.dataset.tab
+              : (panels.length ? panels[0].dataset.panel : "results");
+    function has(name) {
+      var found = false;
+      panels.forEach(function (p) { if (p.dataset.panel === name) found = true; });
+      return found;
+    }
+    function show(name) {
+      if (!has(name)) name = first;
+      panels.forEach(function (p) { p.hidden = p.dataset.panel !== name; });
+      // ! THE FULL TEAMS TABLE AND THE SIDEBAR'S TOP TEN ARE ONE LIST TWICE
+      //   (owner, 2026-10-07, on "All teams"): with the Teams tab open the
+      //   sidebar steps aside and the table takes the width
+      root.classList.toggle("rc-on-teams", name === "teams");
+      // the conversion tab swaps the sidebar for the finishers (fillConv)
+      root.classList.toggle("rc-on-track", name === "track");
+      if (name === "track" && root === main && typeof fillConv === "function") fillConv();
+      root.querySelectorAll(".rc-tabs [data-tab]").forEach(function (a) {
+        a.classList.toggle("is-on", a.dataset.tab === name);   // the site's .seg-btn.is-on
+      });
+    }
+    tabs.forEach(function (a) {
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        show(a.dataset.tab);
+        history.replaceState(null, "", "#" + a.dataset.tab);
+        if (a.classList.contains("rc-more")) {
+          root.querySelector(".rc-tabs").scrollIntoView({ block: "start", behavior: "smooth" });
+        }
+      });
     });
+    var entry = { root: root, panels: panels, show: show, first: first };
+    roots.push(entry);
+    // ! A TAB THAT IS NOT OFFERED YET IS NOT OPENED (the conversions page's
+    //   Paces tab stays hidden until there are paces): #paces on arrival
+    //   would open an empty panel
+    //   A #tab names its tab; otherwise the panel holding the linked row or
+    //   season (#race-<id>, ?r=<id>, data-flash-id), else the first tab.
+    var want = location.hash.slice(1);
+    var offered = want && root.querySelector('.rc-tabs [data-tab="' + want + '"]');
+    show(offered && offered.hidden ? first
+         : (want && has(want) ? want : (panelOf(target()) || first)));
+    return entry;
   }
-  tabs.forEach(function (a) {
-    a.addEventListener("click", function (e) {
-      e.preventDefault();
-      show(a.dataset.tab);
-      history.replaceState(null, "", "#" + a.dataset.tab);
-      if (a.classList.contains("rc-more")) {
-        main.querySelector(".rc-tabs").scrollIntoView({ block: "start", behavior: "smooth" });
+
+  // ★ A LINK TO A ROW OPENS THE TAB THAT HOLDS IT (owner, 2026-10-10, the
+  //   athlete page in the race shape: each sport's seasons sit in their own
+  //   tab, so #race-<id>, #2025-TF, ?r=<id> and the route's data-flash-id
+  //   pointed into a hidden panel). The panel holding the target opens
+  //   first; link-flash.js then centres and flashes the row as before.
+  //   Same order of lookup as link-flash.js's target().
+  function target() {
+    var named = document.querySelector("[data-flash-id]");
+    var el = named && document.getElementById(named.getAttribute("data-flash-id"));
+    if (el) return el;
+    var h = location.hash.slice(1);
+    if (h) {
+      try { el = document.getElementById(decodeURIComponent(h)); } catch (e) { el = null; }
+      if (el) return el;
+    }
+    var m = /[?&]r=(\d+)/.exec(location.search);
+    return m ? (document.getElementById("r" + m[1]) ||
+                document.getElementById("race-" + m[1])) : null;
+  }
+  // the name of the panel (of a wired root) that holds el, or ""
+  function panelOf(el) {
+    var p = el && el.closest && el.closest("[data-panel]");
+    while (p) {
+      for (var i = 0; i < roots.length; i++) {
+        if (Array.prototype.indexOf.call(roots[i].panels, p) >= 0) return p.dataset.panel;
       }
-    });
-  });
-  show((location.hash || "#" + first).slice(1));
+      p = p.parentElement && p.parentElement.closest("[data-panel]");
+    }
+    return "";
+  }
+  // open every hidden panel on the way to el; true when one opened
+  function reveal(el) {
+    var opened = false;
+    var p = el && el.closest && el.closest("[data-panel]");
+    while (p) {
+      for (var i = 0; i < roots.length; i++) {
+        if (p.hidden && Array.prototype.indexOf.call(roots[i].panels, p) >= 0) {
+          roots[i].show(p.dataset.panel);
+          opened = true;
+        }
+      }
+      p = p.parentElement && p.parentElement.closest("[data-panel]");
+    }
+    return opened;
+  }
+  // ! CAPTURE PHASE: link-flash.js's own click handler (loaded earlier,
+  //   from _topbar.html) measures and scrolls to the row, so the panel has
+  //   to be open before it runs
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest('a[href^="#"]');
+    if (!a || a.hasAttribute("data-tab") || e.button !== 0 || e.metaKey || e.ctrlKey) return;
+    var id = a.getAttribute("href").slice(1);
+    var el = null;
+    try { el = id && document.getElementById(decodeURIComponent(id)); } catch (err) { el = null; }
+    if (el) reveal(el);
+  }, true);
+  // back/forward to a row or a tab: capture on window, so it runs before
+  // link-flash.js's hashchange handler
+  window.addEventListener("hashchange", function () {
+    var h = location.hash.slice(1);
+    var el = null;
+    try { el = h && document.getElementById(decodeURIComponent(h)); } catch (err) { el = null; }
+    if (el && el.hasAttribute("data-panel")) {
+      roots.forEach(function (r) {
+        if (Array.prototype.indexOf.call(r.panels, el) >= 0) r.show(el.dataset.panel);
+      });
+    } else if (el && reveal(el) && !el.matches("tr, li")) {
+      el.scrollIntoView({ block: "start" });
+    }
+  }, true);
+
+  var mainTabs = wireTabs(main);
+  var first = mainTabs.first;
+  var show = mainTabs.show;
+  window.rcTabs = function (root) { return wireTabs(root || main).show; };
 
   // ---- "All N teams" extends the sidebar's list in place, and folds it back
   var moreTeams = main.querySelector(".rc-more-teams");

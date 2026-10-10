@@ -2127,7 +2127,7 @@ async function predict() {
   state.busy = true;
   $("predict").disabled = true;
   setStatus("Predicting\u2026", false);
-  $("output").innerHTML = "";
+  clearOutput();
   loadWeather(state.meet && state.meet.div);
 
   const path = state.who === "individual"
@@ -2191,17 +2191,31 @@ async function predict() {
         : body);
     }
     setStatus("", false);
-    /* ★ SHARE, ABOVE A TEAM RESULT (281). The link carries the first race's
-         request: the page restores the meet from it and its preview is the
-         prediction card drawn from the same request. */
-    const share = state.who === "team" ? shareBox(buildQuery(targets[0])) : "";
-    $("output").innerHTML = share + parts.join("");
+    $("output").innerHTML = parts.join("");
+    /* ★ EACH PREDICTED RACE IS A RACE PAGE (owner, 2026-10-10): its
+         Predicted results / Teams tabs are wired here, because the markup
+         arrives long after race-page.js ran (window.rcTabs). One tab set
+         per race when several are predicted at once. */
+    if (typeof window.rcTabs === "function") {
+      document.querySelectorAll("#output .team-result").forEach((el) => window.rcTabs(el));
+    }
+    /* the predicted winners in the header, as the race page names its
+       winners -- one race only: across several, "the" winner means nothing */
+    if (state.who === "team" && targets.length === 1) showChamps(state.lastResults[0]);
     /* ! THE RESULTS ARE AN INJECTION TOO (owner, 2026-10-05: "those speed
          ratings should be hs equivalent!"). The rosters repainted after every
          fetch; the predicted results, the dual and the best seven never did,
          so their ratings stayed own-pool whatever the scale said. */
     applyScale();
-    if (share) saveShare(buildQuery(targets[0]));
+    /* ★ SHARE, ON THE HEADER'S META LINE (281; owner, 2026-10-10: the box
+         above the result moved to the meta line, as on the race page). The
+         link carries the first race's request: the page restores the meet
+         from it and its preview is the prediction card drawn from the same
+         request. */
+    if (state.who === "team") {
+      headShare(buildQuery(targets[0]));
+      saveShare(buildQuery(targets[0]));
+    }
   } catch (err) {
     /* ! A REAL NETWORK FAILURE AND A BAD RESPONSE READ DIFFERENTLY. fetch
          itself rejects with a TypeError when the request never landed;
@@ -2234,21 +2248,58 @@ function saveShare(q) {
     body: JSON.stringify({ query: q.toString(), extra: { names } }),
   }).then((r) => r.json()).then((d) => {
     if (!d || !d.url) return;
-    document.querySelectorAll("#output .share-btn").forEach((b) => {
-      b.dataset.shareUrl = d.url;
-    });
+    // ! ONLY WHILE THIS PREDICTION IS STILL ON THE PAGE: a reply that lands
+    //   after the output was cleared would share a race no longer shown
+    const b = $("pred-share");
+    if (b && b.dataset.pending === q.toString()) b.dataset.shareUrl = d.url;
   }).catch(() => { /* the long link stays */ });
 }
 
-function shareBox(q) {
-  const url = location.origin + "/predictions?" + q.toString();
+/* The header's Share takes the prediction: the long link at once, the
+   saved /predictions?s=<id> as soon as saveShare has it. With no
+   prediction on the page it shares the page as it was opened. */
+function headShare(q) {
+  const b = $("pred-share");
+  if (!b) return;
+  if (b.dataset.pageUrl === undefined) {
+    b.dataset.pageUrl = b.dataset.shareUrl || "";
+    b.dataset.pageTitle = b.dataset.shareTitle || "";
+  }
+  if (!q) {
+    b.dataset.shareUrl = b.dataset.pageUrl;
+    b.dataset.shareTitle = b.dataset.pageTitle;
+    delete b.dataset.pending;
+    return;
+  }
   const label = state.meet && state.meet.label ? state.meet.label : "A race";
-  return `<div class="hdr-row share-row">
-    <button type="button" class="share-box share-btn" data-share-title="${esc(label)} predicted on Racecast"
-            data-share-url="${esc(url)}" title="Share this prediction; the preview is its card">
-      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
-      <span>Share</span>
-    </button></div>`;
+  b.dataset.shareUrl = location.origin + "/predictions?" + q.toString();
+  b.dataset.shareTitle = `${label} predicted on Racecast`;
+  b.dataset.pending = q.toString();
+}
+
+/* The header's headline line: the predicted individual winner and the
+   predicted team winner, with time and points. null hides it. */
+function showChamps(d) {
+  const box = $("pred-champs");
+  if (!box) return;
+  const w = d && (d.runners || []).find((r) => r.seconds !== null && r.seconds !== undefined);
+  const t = d && (d.teams || []).find((x) => x.score !== null && x.score !== undefined);
+  if (!w || !t) { box.hidden = true; return; }
+  $("pc-ind").innerHTML = w.person_id
+    ? `<a href="/athlete/${encodeURIComponent(w.person_id)}">${esc(w.name || "Unknown")}</a>`
+    : esc(w.name || "Unknown");
+  $("pc-ind-t").textContent = fmtTime(w.seconds);
+  $("pc-team").innerHTML = schoolCell(t.team, t.state, t.school_href, t.school_label, t.crest);
+  $("pc-team-t").textContent = `${t.score} pts`;
+  box.hidden = false;
+}
+
+/* Everything a prediction put on the page, gone: the output, the header's
+   winners, and the header's Share back to the page itself. */
+function clearOutput() {
+  $("output").innerHTML = "";
+  showChamps(null);
+  headShare(null);
 }
 
 function setStatus(msg, isError) {
@@ -2623,12 +2674,66 @@ function finishTable(d) {
       unattached runners, the incomplete teams and the eighth runners.</p>`;
 }
 
+/* ★ LAID OUT AS A RACE PAGE (owner, 2026-10-10, the race-page shape):
+     "Predicted results" and "Teams" are tabs in an .rc-tbar, the compact
+     team scores sit beside the results as race.html's side card, and the
+     full team table -- 6th/7th, Win, Actual, the notes, the Dual meet and
+     Best seven tools -- is the Teams tab, unchanged. race-page.js runs the
+     tabs (window.rcTabs, called by predict()) and folds the side card away
+     while Teams is open, as on race.html.
+   ! THE PANELS KEEP THEIR <h2>s (hidden by race.css): the tables, their
+     notes and the tools are exactly what they were, only placed. */
 function renderTeam(d) {
-  /* The mode line first, because it changes what every number below means. */
+  /* The mode line first, because it changes what every number below means:
+     it ends the tab bar, where the race page puts its scope. */
   const note = d.mode === "head_to_head"
-    ? `<p class="meta">Scored as if only these teams raced.</p>`
-    : `<p class="meta">Scored against the full field.</p>`;
-  return note + teamScoreTable(d) + finishTable(d);
+    ? "Scored as if only these teams raced."
+    : "Scored against the full field.";
+  const nRes = (d.runners || []).length;
+  const nTeams = (d.teams || []).filter((t) => t.score !== null).length;
+  const side = teamSideCard(d);
+  return `<div class="rc-w rc-grid${side ? "" : " rc-grid-one"}">
+    <div class="rc-mainc">
+      <div class="rc-tbar">
+        <nav class="seg rc-tabs" role="tablist">
+          <a class="seg-btn is-on" href="#results" data-tab="results">Predicted results<span class="n">${nRes}</span></a>
+          <a class="seg-btn" href="#teams" data-tab="teams">Teams<span class="n">${nTeams}</span></a>
+        </nav>
+        <div class="rc-tbar-end">${note}</div>
+      </div>
+      <section class="rc-panel" data-panel="results">${finishTable(d)}</section>
+      <section class="rc-panel" data-panel="teams" hidden>${teamScoreTable(d)}</section>
+    </div>${side}
+  </div>`;
+}
+
+/* The side card: place, team, the five scoring places under the name, the
+   points with the win chance under them -- race.html's team scores. Its
+   rows are not race.html's lighting rows (no results table to light here),
+   so it is the plain card. Ten at most; the Teams tab has every one. */
+function teamSideCard(d) {
+  const full = (d.teams || []).filter((t) => t.score !== null);
+  if (!full.length) return "";
+  const anySim = !!(d.sim && d.sim.available && full.some((t) => t.sim));
+  const rows = full.slice(0, 10).map((t, i) => {
+    const sp = (t.runners || []).slice(0, 5)
+      .map((r) => `<i>${r.score_place || r.place}</i>`).join("");
+    const win = anySim ? pct((t.sim || {}).p_win) : null;
+    return `<tr><td class="tp">${i + 1}</td><td class="tn">${
+      schoolCell(t.team, t.state, t.school_href, t.school_label, t.crest)
+    }<span class="sp">${sp}</span></td><td class="n tpts">${t.score}${
+      win ? `<small>${win} win</small>` : ""}</td></tr>`;
+  }).join("");
+  const tip = (anySim
+    ? `Win chances from ${(d.sim.draws || 0).toLocaleString()} simulated races. ` : "")
+    + "The full table, the dual meet and best seven are under Teams.";
+  return `<aside class="rc-side">
+      <h2>Team scores <small>top 5 places</small></h2>
+      <table class="rc-tscores rc-tscores-plain"><tbody>${rows}</tbody></table>
+      <p class="rc-tip">${tip}</p>
+      <a class="rc-more" href="#teams" data-tab="teams">${
+        full.length > 10 ? `All ${full.length} teams and tools` : "All teams and tools"}</a>
+    </aside>`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -3669,7 +3774,7 @@ document.querySelectorAll(".card[data-when]").forEach((btn) => {
          every race is read again for the mode now chosen. */
     if (changed && state.meet) {
       resetEdits();
-      $("output").innerHTML = "";
+      clearOutput();
       loadField().then(() => { renderSquadBoxes(); saveState(); });
     }
   });
@@ -3682,7 +3787,7 @@ document.querySelectorAll(".card[data-who]").forEach((btn) => {
       b.classList.toggle("is-on", b === btn));
     document.querySelectorAll(".who-pane").forEach((p) =>
       p.classList.toggle("hidden", p.dataset.pane !== state.who));
-    $("output").innerHTML = "";
+    clearOutput();
     setStatus("", false);
   });
 });
@@ -3958,7 +4063,7 @@ document.addEventListener("click", (e) => {
     showStep("when", false);
     showStep("who", false);
     $("actions").classList.add("hidden");
-    $("output").innerHTML = "";
+    clearOutput();
   }
 });
 

@@ -33,6 +33,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 {% set meta_title = "Predictions" %}
 {% set meta_description =
    "Re-run a cross country or track meet: predict what an athlete or a team
@@ -47,13 +48,37 @@
 <body>
 {% include "_topbar.html" %}
 
-<div class="predict2" id="predict2">
-
-  <h1>Predict a race</h1>
-  <p class="page-lead">
-    Pick a race that has already happened. Predict what would happen if it were
-    run again - or check the model against what actually did.
-  </p>
+{# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10): kicker, title, one meta
+   line ending in Share, the predicted winners as the headline once there
+   are some; the Any race / State meets switch under the header; the three
+   steps keep their flow; the prediction itself is laid out as a race page
+   (predictions.js renderTeam, race-page.js's tabs). race.css carries the
+   layout under main.pred-page.rc. #}
+<main class="page-wide rc predict2 pred-page" id="predict2">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag">Predictions</span></div>
+    <h1>Predict a race</h1>
+    {# ! #pred-share TAKES THE PREDICTION'S SAVED LINK (predictions.js
+       headShare / saveShare); until there is one it shares the page #}
+    <div class="rc-meta">
+      Cross country and track · re-run any race that has already happened, or check the model against it
+      · <button type="button" class="share-btn rc-share-link" id="pred-share" data-share-title="A prediction on Racecast"
+            data-share-url="{{ site_origin }}{{ request.full_path.rstrip('?') }}" title="Share this prediction; the preview is its card">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
+      <span>Share</span>
+    </button>
+    </div>
+    <p class="rc-story">Pick a race that has already happened. Predict what would happen if it were
+      run again - or check the model against what actually did.</p>
+    {# filled once a prediction is on the page, as the race page names its
+       winners (predictions.js showChamps) #}
+    <div class="rc-champs" id="pred-champs" hidden>
+      <div><span class="k">Predicted winner</span><span class="rc-crow"><b class="rc-cn" id="pc-ind"></b><i id="pc-ind-t"></i></span></div>
+      <div><span class="k">Predicted team</span><span class="rc-crow"><b class="rc-cn" id="pc-team"></b><i id="pc-team-t"></i></span></div>
+    </div>
+  </div>
+</div></header>
   {# State meets lives under Predictions (owner, 2026-10-05) #}
   <div class="seg predict-views">
     <a class="seg-btn is-on" href="{{ url_for('predictions_page') }}">Any race</a>
@@ -211,12 +236,14 @@
       <a href="/report?about=/predictions&amp;kind=other">Report it →</a>
       Say which meet and race, and which runner or team looks off.</div>
 
-</div>
+</main>
 
 {# ⚠ BEFORE predictions.js, WHICH READS window.rcScale. scale-view.js's own
    header says so, and the ordering is the whole of the dependency. #}
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('predictions.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
+{# window.rcTabs: predict() wires each predicted race's tabs with it #}
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>
