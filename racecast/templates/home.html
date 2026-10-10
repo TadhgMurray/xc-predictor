@@ -116,7 +116,7 @@
                                     {% if r.school|is_team %}{{ crest(r.school, r.state, pool=r.pool) }}<a href="{{ school_href(r.school, r.state, pool=r.pool) }}">{{ r.school|school_label_for(r.pool, r.state) }}</a>{% else %}{{ r.school|school_label_for(r.pool, r.state) }}{% endif %}
                                 {% else %} - {% endif %}
                             </div>
-                            <div class="cell c-rating">{{ rv(r.rating, r.hs_rating) }}</div>
+                            <div class="cell c-rating"{% if r.rating_clock %} title="{{ r.rating_clock }}"{% endif %}>{{ rv(r.rating, r.hs_rating) }}</div>
                             {# ! title CARRIES THE WHOLE STRING, because this
                                cell ellipsises. The time always fits; a long
                                meet name runs out of room, and hovering is

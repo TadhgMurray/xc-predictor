@@ -1191,6 +1191,159 @@ def fiveKForHsRating(rating, gender, distance=FIVE_K_M):
     return fiveKForRating(rating, "hs_" + g, distance)
 
 
+# ★ THE TIME NEXT TO THE RATING (owner, 2026-10-10: "124.6 means nothing
+#   to a parent"). The athlete header, the rankings and the home boards
+#   say what a rating is as a clock: "≈ 14:39 5K on a typical course". It
+#   is fiveKForRating's algebra exactly -- 100 * pool_mean / rating, put
+#   back at a venue with no name through normalized_to_time -- so the line
+#   and /conversions can never disagree.
+#
+# ★ THE DISTANCE A READER OF THAT POOL EXPECTS, NOT THE ENGINE'S ANCHOR.
+#   targetFor is 5000 m for every pool by ability, which is right for the
+#   scale and wrong for a sentence: a college man's coach thinks in 8K, a
+#   college woman's in 6K, a middle schooler's in the 3200. Track has no
+#   one distance; the boards say the mile-ish race of the level (1600 m in
+#   school, 1500 m in college), and the athlete page names the athlete's
+#   own main event instead (app._mainTrackDistance).
+#
+# ! THE TIME DOES NOT CHANGE WITH THE SCALE TOGGLE. An HS-equivalent and an
+#   own-pool number are two spellings of one athlete; the clock is
+#   computed from the own-pool rating on its own pool and holds for both.
+READER_XC_M = {"hs": 5000.0, "ms": 3200.0,
+               "college_m": 8000.0, "college_f": 6000.0}
+READER_TF_M = {"hs": 1600.0, "ms": 1600.0, "college": 1500.0}
+
+
+def readerDistance(pool, sport):
+    """The distance, in metres, a reader of `pool` expects a rating in this
+    sport to be quoted at; None for a pool with no such custom (pro, open,
+    unknown gender)."""
+    p = _bare(pool) or ""
+    level, _, g = p.partition("_")
+    if g not in ("m", "f"):
+        return None
+    if str(sport or "XC").upper() == "TF":
+        return READER_TF_M.get(level)
+    return READER_XC_M.get(p) or READER_XC_M.get(level)
+
+
+def distanceWords(meters):
+    """5000 -> '5K', 1600 -> '1600m', 1609.34 -> 'mile', 3218.69 -> '2 mile'."""
+    try:
+        m = float(meters)
+    except (TypeError, ValueError):
+        return None
+    if m <= 0:
+        return None
+    for n, word in ((1, "mile"), (2, "2 mile")):
+        if abs(m - 1609.344 * n) < 2.0:
+            return word
+    if m >= 4000 and abs(m / 1000.0 - round(m / 1000.0)) < 1e-6:
+        return f"{int(round(m / 1000.0))}K"
+    return f"{int(round(m))}m"
+
+
+# ! ONE TABLE PER (pool, sport, distance), NOT ONE CONVERSION PER ROW. A
+#   board is fifty rows and the home page a hundred and twenty; the clock
+#   is a smooth, monotone function of the rating, so it is converted once
+#   at every whole rating (EQUIV_RATINGS) and read off by interpolation in
+#   log time -- under a second's error at any rating a board shows. The
+#   table is re-made when the engine scale it was built on is re-read.
+_clock_tables = {}
+_clock_lock = threading.Lock()
+
+
+def _clockTable(pool, sport, distance):
+    key = (_bare(pool), str(sport or "XC").upper(), float(distance))
+    stamp = _scale["at"]
+    with _clock_lock:
+        got = _clock_tables.get(key)
+        if got and got[0] == stamp:
+            return got[1]
+    pts = []
+    ctx = {"distance": key[2], "pool": key[0], "sport": key[1]}
+    for r in EQUIV_RATINGS:
+        norm = _norm_from_rating(float(r), key[0], 0.0, key[1])
+        t = normalized_to_time(norm, ctx) if norm else None
+        if t and t > 0 and (not pts or t < pts[-1][1]):
+            pts.append((float(r), float(t)))
+    # ! A DATABASE WITH NO SCALE YET IS NOT CACHED: an empty table would
+    #   blank every title until the next re-read of the scale
+    if pts:
+        with _clock_lock:
+            _clock_tables[key] = (_scale["at"], pts)
+    return pts
+
+
+def ratingSeconds(rating, pool, sport="XC", distance=None):
+    """Seconds a `rating` (on `pool`'s own scale) stands for at `distance`
+    (default readerDistance) at a venue with no name; None when it cannot
+    be said."""
+    try:
+        r = float(rating)
+    except (TypeError, ValueError):
+        return None
+    if not r or r <= 0:
+        return None
+    d = distance or readerDistance(pool, sport)
+    if not d:
+        return None
+    pts = _clockTable(pool, sport, d)
+    if len(pts) < 2 or not pts[0][0] <= r <= pts[-1][0]:
+        # off the table's ends (a 30 or a 190): convert this one directly
+        norm = _norm_from_rating(r, pool, 0.0, sport)
+        t = normalized_to_time(norm, {"distance": float(d), "pool": pool,
+                                      "sport": str(sport or "XC").upper()}) \
+            if norm else None
+        return t if t and t > 0 else None
+    lo, hi = 0, len(pts) - 1
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if pts[mid][0] <= r:
+            lo = mid
+        else:
+            hi = mid
+    (r0, t0), (r1, t1) = pts[lo], pts[hi]
+    w = (r - r0) / (r1 - r0) if r1 != r0 else 0.0
+    return math.exp(math.log(t0) + w * (math.log(t1) - math.log(t0)))
+
+
+def ratingClock(rating, pool, sport="XC", distance=None):
+    """{'time', 'dist', 'where', 'text'} -- 'text' is the whole phrase,
+    "≈ 14:39 5K on a typical course" -- or None."""
+    from season_floor import clockFor          # m:ss, the header's own
+    d = distance or readerDistance(pool, sport)
+    t = clockFor(ratingSeconds(rating, pool, sport, d))
+    if not t:
+        return None
+    where = ("on a typical track" if str(sport or "XC").upper() == "TF"
+             else "on a typical course")
+    dist = distanceWords(d)
+    return {"time": t, "dist": dist, "where": where,
+            "text": f"≈ {t} {dist} {where}"}
+
+
+def stampBoardClocks(rows, key="rating", pool=None, sport=None):
+    """row['<key>_clock'] = ratingClock(...)['text'] for board rows that
+    carry their own pool and sport (or one for the board). Never raises: a
+    board without its titles is still a board.
+
+    ! A TRACK ROW THAT IS ONE RACE says it at that race's distance (an
+      800 m to 10,000 m race, row['distance']): "≈ 9:02 3200m" beside a
+      3200 reads true where a 1600 would read as a different race."""
+    for row in rows:
+        sp = str(row.get("sport") or sport or "XC").upper()
+        d = row.get("distance")
+        try:
+            d = float(d) if sp == "TF" and d and 800.0 <= float(d) <= 10000.0 \
+                else None
+            c = ratingClock(row.get(key), row.get("pool") or pool, sp, d)
+        except Exception:                               # noqa: BLE001
+            c = None
+        row[key + "_clock"] = c["text"] if c else None
+    return rows
+
+
 def convert_spread(source, xc_targets, tf_targets):
     """The whole tool in one call.
 
