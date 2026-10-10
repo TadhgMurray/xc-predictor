@@ -240,151 +240,112 @@ td.no-break { white-space: nowrap; }
 .topsearch { margin-left: auto; }          /* pushes search to the right */
 .topsearch input { padding: 0.4rem 0.7rem; min-width: 220px; }
  
-/* ---- hero ------------------------------------------------------------ */
-/* ---- hero: nine-photo mosaic with a centred title -------------------- */
+/* ---- home hero: headline + search beside the nine photos (2026-10-10) -- */
 /*
- * A 4x4 grid, laid out with NAMED AREAS rather than line numbers:
+ * ★ THE OWNER-APPROVED RENDER (renders4 "NB"), replacing the nine-photo
+ *   mosaic with the logo in a merged centre cell. The band keeps the
+ *   mosaic's black (#0a0c0e) and its inset (1280px, centred); inside it the
+ *   text column (headline, the search, what a rating is, the facts) sits
+ *   beside one tidy 5 x 2 photo grid. No second logo: the top bar has it.
  *
- *     m1   m2   m2   m3
- *     m4   TT   TT   m5
- *     m4   TT   TT   m5
- *     m6   m7   m8   m9
- *
- * ★ THE CELL SHAPES ARE THE POINT. Nine identical squares would crop the
- *   portraits to heads and the panoramas to slivers. So the grid offers three
- *   shapes and the photos are assigned to match:
- *     m2      2:1 wide   -> the widest source (1.78)
- *     m4, m5  1:2 tall   -> the two portraits (0.80, 0.81)
- *     rest    ~1:1       -> the mid-landscape and square sources
- *
- * ★ grid-template-areas, not grid-column/row numbers. Nine tiles plus a
- *   spanning title is where line numbers stop being readable -- the ASCII
- *   block below IS the layout, so rearranging is editing a picture rather
- *   than recomputing four numbers per tile.
- *
- * ★ aspect-ratio on the SECTION, not heights on tiles. One number sets the
- *   band's proportion and the rows divide it; per-tile heights is how a
- *   mosaic ends up with a ragged bottom edge.
+ * ★ <img> WITH object-fit, NOT BACKGROUND TILES. Same cover-crop, but the
+ *   focal point is object-position on the image itself, and nothing else
+ *   on the page sets it.
  */
-.hero-mosaic {
-    display: grid;
-    grid-template-columns: 1fr 1.3fr 1.3fr 1fr;
-    /* ★ THE OUTER ROWS ARE THE TALL ONES. At 1 / 0.8 / 0.8 / 1 the top and
-     *   bottom strips were shallow enough that cover-crop threw away most of
-     *   each photo -- Bolt lost his head, Kipchoge lost the clock. 1.6 makes
-     *   those rows twice the height of the middle pair, so the images that
-     *   have to carry a moment actually show it. The title cell gets less of
-     *   the band and more absolute height, because the section is taller. */
-    grid-template-rows: 1.6fr 0.7fr 0.7fr 1.6fr;
-    grid-template-areas:
-        "m1 m2 m2 m3"
-        "m4 tt tt m5"
-        "m4 tt tt m5"
-        "m6 m7 m8 m9";
-    gap: 3px;                       /* the seam. 0 for butted panels */
-    max-width: 1280px;
-    margin: 0 auto;
-    aspect-ratio: 16 / 11;          /* taller band -- outer rows need the room */
-    background: #0a0c0e;            /* shows through the gaps */
-    border-bottom: 1px solid #e5e5e5;
+.hm-band { max-width: 1280px; margin: 0 auto; background: #0a0c0e; padding-bottom: 1.6rem; }
+.hm-hero {
+    max-width: 1240px; margin: 0 auto; box-sizing: border-box;
+    padding: 1.6rem 1.5rem 0;
+    display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr);
+    gap: 1.75rem; align-items: center;
 }
+.hm-text h1 {
+    font-size: 2.05rem; line-height: 1.12; letter-spacing: -0.015em;
+    margin: 0 0 1.1rem; color: #fff;
+}
+/* ! THE DROPDOWN LIVES OUTSIDE THE ROUNDED BOX: .hm-search-box clips to its
+     corners (overflow: hidden), and a results list inside it would be cut
+     off at the box's bottom edge. */
+.hm-search { position: relative; }
+.hm-search-box { display: flex; border: 1px solid #fff; border-radius: 6px; overflow: hidden; background: #fff; }
+.hm-search input {
+    flex: 1; min-width: 0; border: 0; padding: .75rem .9rem; font-size: 1rem;
+    outline: none; background: transparent; color: #111;
+}
+.hm-search button {
+    border: 0; border-left: 1px solid #d5d7da; background: #fff; color: #0a0c0e;
+    font-weight: 600; font-size: .95rem; padding: 0 1.1rem; cursor: pointer;
+}
+.hm-search-box:focus-within { box-shadow: 0 0 0 3px rgba(255,255,255,.35); }
+.hm-search .search-results { top: calc(100% + 4px); border-radius: 6px; border-top: 1px solid #ccc; overflow: hidden; }
+.hm-what { margin: .85rem 0 0; color: rgba(255,255,255,.80); font-size: .95rem; line-height: 1.45; }
+.hm-what a { color: #fff; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+.hm-facts { margin: .6rem 0 0; color: rgba(255,255,255,.62); font-size: .82rem; }
+.hm-facts b { color: #fff; font-weight: 700; }
 
-.m1 { grid-area: m1; } .m2 { grid-area: m2; } .m3 { grid-area: m3; }
-.m4 { grid-area: m4; } .m5 { grid-area: m5; } .m6 { grid-area: m6; }
-.m7 { grid-area: m7; } .m8 { grid-area: m8; } .m9 { grid-area: m9; }
-.mtitle { grid-area: tt; }
+/* photos: one 5 x 2 grid, Bolt's panorama spans two cells */
+.hm-photos {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-rows: 190px 190px; gap: 6px;
+}
+.hm-photos .hp {
+    width: 100%; height: 100%; object-fit: cover; object-position: center;
+    display: block; border-radius: 6px; background: #1a1d21;
+}
+.hm-photos .hp-m2 { grid-column: span 2; }
 
-/* ---- per-tile framing ------------------------------------------------ */
+/* ---- per-photo focal points ------------------------------------------ */
 /*
- * background-position decides WHICH PART SURVIVES the cover-crop, and the
- * default `center` is wrong whenever the subject is not centred. These are
- * measured off each source, not guessed:
+ * object-position decides WHICH PART SURVIVES the cover-crop. Measured off
+ * each source, not guessed (renders4, 2026-10-10).
  *
- *   m2  Bolt's face sits ~28% across and ~13% down a 1296x729 frame. Centre
- *       crops straight through his chest; 30% 22% keeps the head and the
- *       backward glance, which is the entire reason for the photo.
- *   m8  Kipchoge's 1:59:40 clock is in the top ~15% of the frame. Anything
- *       but `top` loses it, and the clock is the point of the image.
- *   m1  the NXN tape break is upper-middle; `center top` keeps the arms.
- *   m9  the shout is upper-middle of a tight portrait.
- *   m6  Bannister is left of frame and breasting the tape at mid-height.
- *
- * ! SPECIFICITY TRAP. `.mtile` further down ALSO sets background-position, it
- *   is also a single class, and it comes LATER -- so a bare `.mN` loses the
- *   tie on source order and its framing silently never applies. Any tile rule
- *   here MUST be written as `.hero-mosaic .mN` (0,2,0) to win. `.m2` was the
- *   only one written that way, which is why it was the only one that worked.
- *   .m1, .m8 and .m9 are still bare and therefore still inert.
+ * ⚠ THE OLD MOSAIC'S TRAP, NOT REPEATED. Its .m1 / .m8 / .m9 framing rules
+ *   were bare single classes and `.mtile`, also one class, came later in the
+ *   file and set background-position too -- so they lost on source order and
+ *   never applied (Kipchoge lost his clock). Every rule here is written
+ *   `.hm-photos img.hp-mN` (0,2,1), which outranks the shared
+ *   `.hm-photos .hp` (0,2,0) wherever either one sits in the file.
  */
-.m1 { background-position: center 15%; }
-.hero-mosaic .m2 { background-position: 30% 22%; }
-.hero-mosaic .m6 { background-position: 25% center; }
-.m8 { background-position: center top; }
-.m9 { background-position: center 20%; }
+.hm-photos img.hp-m2 { object-position: 28% 22%; }   /* Bolt's face and the glance back */
+.hm-photos img.hp-m1 { object-position: 48% 30%; }   /* the NXN tape break, arms up */
+.hm-photos img.hp-m5 { object-position: 52% 30%; }   /* Hocker crossing the line */
+.hm-photos img.hp-m3 { object-position: 45% 45%; }   /* the DIII start pack */
+.hm-photos img.hp-m4 { object-position: 30% 28%; }   /* the 1600 under the lights */
+.hm-photos img.hp-m7 { object-position: 47% 45%; }   /* Switzer, Boston 1967 */
+.hm-photos img.hp-m8 { object-position: 48% 50%; }   /* Kipchoge: 48% across keeps the 1:59 clock */
+.hm-photos img.hp-m6 { object-position: 22% 32%; }   /* Bannister, left of frame */
+.hm-photos img.hp-m9 { object-position: 50% 40%; }   /* the shout */
 
-/* Every tile: cover-crop, dimmed and desaturated so the centre cell stays
-   dominant and nine competing photos read as one texture. */
-.mtile {
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    filter: grayscale(0.2) brightness(0.78);
-    transition: filter 0.25s;
+/* the four jobs, on white under the band: no boxes, a rule above, one line each */
+.hm-tasks {
+    max-width: 1240px; margin: 1.6rem auto 0; box-sizing: border-box; padding: 0 1.5rem;
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.5rem;
 }
-.hero-mosaic:hover .mtile { filter: grayscale(0) brightness(0.92); }
+.hm-tasks a {
+    display: block; text-decoration: none; color: #111;
+    border-top: 2px solid #111; padding-top: .55rem;
+}
+.hm-tasks b { display: block; font-size: .98rem; }
+.hm-tasks b::after { content: " \2192"; color: #1a4f8b; }
+.hm-tasks a:hover b { text-decoration: underline; }
+.hm-tasks span { display: block; color: #6b7179; font-size: .84rem; margin-top: .15rem; }
 
-/* The centre cell. Solid, not translucent: nine photos behind a see-through
-   panel is noise, and the title has to win. */
-.mtitle {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 1.25rem 1.5rem;
-    background: #0a0c0e;
-    z-index: 1;
-}
-
-.hero-mosaic .brand {
-    display: block;
-    color: #fff;
-    font-size: 2.8rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    line-height: 1.05;
-    text-decoration: none;
-}
-.hero-mosaic .tagline {
-    color: rgba(255,255,255,0.82);
-    margin: 0.45rem 0 1rem;
-    font-size: 1rem;
-}
-.hero-mosaic .facts {
-    display: flex;
-    gap: 1.5rem;
-    justify-content: center;
-    flex-wrap: wrap;
-}
-.hero-mosaic .fact { color: rgba(255,255,255,0.72); font-size: 0.85rem; }
-.hero-mosaic .fact-num { font-weight: 700; color: #fff; }
-
-/* Narrow: the ring collapses to two tiles above and two below. Nine slivers
-   on a phone would make all nine illegible, so five are hidden rather than
-   shrunk -- the ones kept are the two portraits, which suit a phone anyway. */
+/* ★ A PHONE GETS THE PHOTOS AS ONE STRIP THAT SCROLLS INSIDE THE BAND
+     (never the page), and the search stays above the fold */
 @media (max-width: 760px) {
-    .hero-mosaic {
-        grid-template-columns: 1fr 1fr;
-        grid-template-rows: 110px auto 110px;
-        grid-template-areas:
-            "m4 m5"
-            "tt tt"
-            "m2 m9";
-        aspect-ratio: auto;
+    .hm-band { padding-bottom: 1.1rem; }
+    .hm-hero { grid-template-columns: minmax(0, 1fr); padding: 16px 0 0; gap: .9rem; }
+    .hm-text { order: 2; padding: 0 16px; }
+    .hm-photos {
+        order: 1; display: flex; gap: 6px; overflow-x: auto; scroll-snap-type: x mandatory;
+        padding: 0 16px; scrollbar-width: none;
     }
-    .m1, .m3, .m6, .m7, .m8 { display: none; }
-    .mtitle { padding: 1.5rem 1rem; }
-    .hero-mosaic .brand { font-size: 1.9rem; }
+    .hm-photos::-webkit-scrollbar { display: none; }
+    .hm-photos .hp { flex: 0 0 92px; height: 120px; scroll-snap-align: start; }
+    .hm-photos .hp-m2 { flex-basis: 150px; }
+    .hm-text h1 { font-size: 1.5rem; margin-bottom: .75rem; }
+    .hm-tasks { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .9rem 1rem; padding: 0 16px; margin-top: 1.2rem; }
+    .hm-tasks span { font-size: .8rem; }
 }
  
 /* ---- rankings controls ---------------------------------------------- */
@@ -1577,40 +1538,6 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
     font-weight: 600;
     letter-spacing: -0.01em;
     color: #222;
-}
-
-/* The hero wordmark, as an image rather than text.
-
-   .brand still carries the old font rules; they now apply to nothing, because
-   the anchor's only child is an <img>. Left in place because the topbar's
-   .brand is still text.
-
-   min() rather than a fixed width: the mosaic's centre cell is a grid area
-   that narrows on small screens, and a fixed-width logo would overflow it
-   before the media query at 850px fires. The percentage wins on narrow
-   screens, the px ceiling wins on wide ones.
-
-   display: block on the img kills the inline-descender gap under it, which
-   would otherwise push the tagline a few px lower than the design. */
-.hero-mosaic .brand-logo {
-    display: block;
-    margin: 0 0 0.5rem;
-    line-height: 0;
-}
-.hero-mosaic .brand-logo img {
-    display: block;
-    /* A block element with an explicit width and no auto margins sits hard
-       left -- it does NOT inherit the parent's text-align: center, because
-       that centres inline content, not the block's own box. */
-    margin-inline: auto;
-    width: min(420px, 78%);
-    height: auto;
-}
-
-@media (max-width: 850px) {
-    /* The mosaic collapses to a single column here and the centre cell gets
-       most of the width, so the logo can take more of it. */
-    .hero-mosaic .brand-logo img { width: min(340px, 88%); }
 }
 
 /* Topbar wordmark. Replaces the text .brand on every page via _topbar.html.

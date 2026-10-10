@@ -989,6 +989,42 @@ def get_homepage_recent(cur):
     return out
 
 
+# the rating the hero quotes beside 100 (owner, 2026-10-10: "a 146 is about
+# 15:05") -- the time itself comes from conversions.track5k
+HERO_EXAMPLE_RATING = 146
+
+
+def _homeTeams(cur, meta):
+    """teams.homeTopTeams for the season the snapshot shows, or {} on a
+    database whose team boards are not built yet."""
+    from teams import homeTopTeams
+    sport = _homeSport(meta)
+    cur.execute("SAVEPOINT home_teams")
+    try:
+        out = homeTopTeams(cur, sport, meta.get("season_year_" + sport))
+        cur.execute("RELEASE SAVEPOINT home_teams")
+        return out
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"home teams: {type(exc).__name__}: {exc}", flush=True)
+        cur.execute("ROLLBACK TO SAVEPOINT home_teams")
+        return {}
+
+
+def _homeSport(meta):
+    """The sport the home snapshot shows: whichever season is more recent,
+    XC on a tie (autumn), panels.py's default_sport when neither year is
+    there. The template made this call before; the Teams read needs it
+    too, so it is made once, here."""
+    try:
+        xc = int(meta.get("season_year_XC") or 0)
+        tf = int(meta.get("season_year_TF") or 0)
+    except (TypeError, ValueError):
+        xc = tf = 0
+    if xc or tf:
+        return "TF" if tf > xc else "XC"
+    return meta.get("default_sport") or "XC"
+
+
 @app.route("/")
 def home():
     with getConn() as conn:
@@ -996,6 +1032,10 @@ def home():
             rows = get_homepage_panels(cur)
             meta = get_homepage_meta(cur)
             recent = get_homepage_recent(cur)
+            # ★ THE TEAMS TAB (owner, 2026-10-10): the stored national
+            #   season board's top ten per level -- one indexed read, never
+            #   a race (teams.homeTopTeams)
+            teams = _homeTeams(cur, meta)
 
     # HS-equivalent view: each panel row carries its board's pool + sport;
     # season means and career bests take the representative factor.
@@ -1003,15 +1043,22 @@ def home():
     # ★ THE RATING AS A TIME, ON HOVER (owner, 2026-10-10): each rating
     #   cell's title, "≈ 14:39 5K on a typical course" -- one table read per
     #   pool, no request of its own (conversions.stampBoardClocks)
-    from conversions import stampBoardClocks
+    from conversions import stampBoardClocks, stampTrack5k, track5k
     stampBoardClocks(rows)
+    # ★ AND AS A TRACK 5K, IN ITS OWN COLUMN (owner, 2026-10-10)
+    stampTrack5k(rows)
+    team_rows = [r for pool_rows in teams.values() for r in pool_rows]
+    stampBoardRows(team_rows, rating_keys=("top5_mean",))
+    # ★ THE HERO'S RATING LINE IN CLOCK TIME (owner, 2026-10-10): 100 and an
+    #   example rating as a track 5K on the HS boys scale, from the same
+    #   tables as the boards' column -- never typed in
+    hero_5k = {r: track5k(r, "hs_m") for r in (100, HERO_EXAMPLE_RATING)}
 
     panels = group_panels(rows)
     panels = pad_pool_pairs(panels)      # equalize lengths for the grid
 
-    # Default sport: what panels.py decided from the wall clock, falling back
-    # to XC if the meta row is somehow missing.
-    default_sport = meta.get("default_sport") or "XC"
+    # ★ ONE SPORT, NO TOGGLE (owner, 2026-10-10): the season in season
+    default_sport = _homeSport(meta)
 
     # "Coming up" (weekend.py): just the count per sport, a link into /meets
     from weekend import comingUpCached
@@ -1021,6 +1068,9 @@ def home():
             coming_n[m["sport"]] = coming_n.get(m["sport"], 0) + 1
 
     return render_template("home.html",
+                           teams=teams,
+                           hero_5k=hero_5k,
+                           hero_example=HERO_EXAMPLE_RATING,
                            coming_n=coming_n,
                            has_hs_view=has_hs_view,
                            panels=panels,

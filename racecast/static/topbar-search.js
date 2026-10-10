@@ -12,9 +12,20 @@ function escAttr(s) {
 }
 
 (function () {
+    /* ★ ONE DROPDOWN, ANY NUMBER OF BOXES (2026-10-10). The home hero's big
+         search is this same box: same endpoint, same rows, same keys. Any
+         input with data-live-search="<id of its results div>" is wired by
+         this one function rather than by a copy of it. */
     function init() {
-        var input = document.getElementById('search-input');
-        var box   = document.getElementById('search-results');
+        wire(document.getElementById('search-input'),
+             document.getElementById('search-results'));
+        var more = document.querySelectorAll('input[data-live-search]');
+        for (var i = 0; i < more.length; i++) {
+            wire(more[i], document.getElementById(more[i].getAttribute('data-live-search')));
+        }
+    }
+
+    function wire(input, box) {
         if (!input || !box) return;
 
         var timer = null, seq = 0, closed = false;

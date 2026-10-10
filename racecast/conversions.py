@@ -1323,6 +1323,26 @@ def ratingClock(rating, pool, sport="XC", distance=None):
             "text": f"≈ {t} {dist} {where}"}
 
 
+def track5k(rating, pool):
+    """m:ss a `rating` (on `pool`'s own scale) is worth over 5000 m on a
+    typical track, or None. The same interpolated table as ratingClock."""
+    try:
+        c = ratingClock(rating, pool, "TF", FIVE_K_M)
+    except Exception:                                   # noqa: BLE001
+        c = None
+    return c["time"] if c else None
+
+
+# ★ THE HOME BOARDS' "5K" COLUMN (owner, 2026-10-10): every rating beside
+#   the track 5K it is worth, at the row's own level -- one yardstick a
+#   parent already knows, whichever pool and sport the board is.
+def stampTrack5k(rows, key="rating", pool=None):
+    """row['track5k'] = track5k(row[key], row's pool). Never raises."""
+    for row in rows:
+        row["track5k"] = track5k(row.get(key), row.get("pool") or pool)
+    return rows
+
+
 def stampBoardClocks(rows, key="rating", pool=None, sport=None):
     """row['<key>_clock'] = ratingClock(...)['text'] for board rows that
     carry their own pool and sport (or one for the board). Never raises: a

@@ -995,6 +995,50 @@ def _serveBoard(cur, f):
 
 
 # ------------------------------------------------------------------ #
+#  THE HOME PAGE'S TEAMS TAB
+# ------------------------------------------------------------------ #
+
+HOME_POOLS = ("hs_m", "hs_f", "college_m", "college_f")
+
+
+def homeTopTeams(cur, sport, year, n=10):
+    """{pool: [row, ...]} -- the top `n` of each HS and college national
+    season board, for the home page's Teams tab.
+
+    ★ THE STORED BOARD, READ, NOT RACED (2026-10-10). One national season
+      is exactly the meet build_team_season.py already ran and stored as
+      span='season', scope='usa', so its first ten ARE the /rankings Teams
+      board's first ten -- and one indexed read of forty rows is the whole
+      cost. serveBoard would race the same field again (~600 ms) on every
+      uncached home render to arrive at the same order.
+    ! min_athletes 5, THE BOARD'S OWN DEFAULT (parseFilters), so the ranks
+      shown are the ranks /rankings shows -- gaps and all, never renumbered.
+    Empty dict when there is no season or no table yet."""
+    if not year:
+        return {}
+    cur.execute("""
+        SELECT t.school, t.state, t.pool, t.sport, t.year, t.rank,
+               t.points, t.n_athletes, t.top5_mean
+        FROM   team_season t
+        WHERE  t.span = 'season' AND t.scope = 'usa'
+          AND  t.sport = %(sport)s AND t.year = %(year)s
+          AND  t.pool = ANY(%(pools)s)
+          AND  t.n_athletes >= 5
+          AND  t.rank <= %(deep)s
+        ORDER  BY t.pool, t.rank
+    """, {"sport": sport, "year": int(year), "pools": list(HOME_POOLS),
+          # ! a little deeper than n: a team under five athletes still holds
+          #   its stored rank, so the first ten shown can reach past rank 10
+          "deep": n * 3})
+    out = {}
+    for r in cur.fetchall():
+        rows = out.setdefault(r["pool"], [])
+        if len(rows) < n:
+            rows.append(dict(r))
+    return out
+
+
+# ------------------------------------------------------------------ #
 #  SINGLE RACES AT A COURSE
 # ------------------------------------------------------------------ #
 
