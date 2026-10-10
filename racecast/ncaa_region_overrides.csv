@@ -1,0 +1,14 @@
+# ncaa_region_overrides.csv -- EDIT ME. Places a team in an NCAA region when
+# the manual's list and the data cannot (each /ncaa page lists the teams it
+# could not place, under "Teams we could not place"), or corrects one.
+#
+#   division  d1 / d2 / d3
+#   gender    M / F, or blank for both
+#   school    as the site spells it (the team page's name), any case
+#   state     the team's state code, or blank when the name is unique
+#   region    one of the division's regions in racecast/ncaa_rules.py
+#   note      why (a source, a date)
+#
+# A row here wins over the manual and over the data. The next pipeline run
+# (step 11c) picks it up.
+division,gender,school,state,region,note

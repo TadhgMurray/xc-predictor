@@ -1367,6 +1367,11 @@ step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py
 #   (build_rank_snapshot.py). Seconds, reads only season_rank.
 step 10g2_rank_snapshot "$PY" -u racecast/build_rank_snapshot.py
 step 11_teams         "$PY" -u racecast/build_team_season.py
+# ★ THE NCAA CHAMPIONSHIPS PROJECTION (2026-10-10): the regionals, the
+#   at-large selection and nationals, simulated for D1/D2/D3 men and women,
+#   one stored row per board per week (build_ncaa_projection.py). Reads
+#   athlete_season and the season's tfrrs results; /ncaa reads its table.
+step 11c_ncaa         "$PY" -u racecast/build_ncaa_projection.py
 # ! THE PAGE INDEXES COME BEFORE THE COURSE PAGES. They ran AFTER them
 #   (step 14), so every course page of a first run was built without the
 #   indexes the course queries need; 12b took 41,047 s on 2026-09-02.
