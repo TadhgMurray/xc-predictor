@@ -5796,4 +5796,30 @@ Chromium against the old script (readout 15:00, label under the pointer
 - ✅ eventFamily folds the abbreviations too: Hj, Lj, Tj, Pv, Shot/SP, DT,
   JT, HT, WT; "55mh" / "300mh" / "110 h"; "F/s" and stray punctuation.
 - ✅ Breakouts in the race page's shape: header (window + Share on the meta line, biggest jump and biggest PR as the champion line), Rating jumps / New PRs / What counts as tabs.
-- ✅ Venue page: meets_tf (14M rows) had no location_id index -- every venue page seq-scanned it twice. add_page_indexes.py now builds idx_meets_tf_location (CONCURRENTLY). scripts/diag_venue_speed.py times each step and EXPLAINs the pass.
+- ⚠ CORRECTION: the "missing location_id index" above was wrong --
+  idx_meets_tf_location (location_id, is_indoor) already existed on the
+  server (add_page_indexes: "nothing to build"). diag_venue_speed.py on the
+  busiest venue (101705, 123k results) found the real cost: individual
+  records 2.60 s of 3.18 s, the per-row event-name/mark parsing in Python.
+- ✅ Venue individual records parse each event spelling and mark once
+  (memoised), not once per row.
+- ✅ train.py: multi-GPU under torchrun (DDP). And the batch order read a
+  whole chunk file per batch (~20x the corpus per epoch): invisible on a
+  local disk, 0% GPU / 32% iowait on a RunPod network volume. Batches are
+  now laid out per DataLoader worker, one read per chunk
+  (tests/test_chunk_reads.py).
+
+## Open (owner, 2026-10-10)
+- 🔴 **Everything loads kind of slow** -- the site in general, not one
+  page. Needs measuring page by page (which routes, cold vs warm, DB time
+  vs render time) before any fix.
+- 🔴 **Track team scores still split into separate sections for divisions
+  of one meet** -- e.g. para vs invite vs F/S (frosh-soph) each get their
+  own team-score block where they should be scored/grouped as the meet's
+  own divisions.
+- 🔎 **Check the state-meet projections pages** (/projections, a state, a
+  division) -- converted to the race-page layout by an agent on
+  2026-10-09; not yet checked on live data.
+- 🔎 **Check What it takes** (/what-it-takes, a state, a division) -- same:
+  agent-converted, not yet checked on live data.
+
