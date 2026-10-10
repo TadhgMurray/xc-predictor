@@ -697,7 +697,27 @@ def boardYear(sport, label):
     return n - 1 if (sport or "").upper() == "TF" else n
 
 
-def gradeKeySql(alias=""):
+# ★ A GRADUATION YEAR IS A GRADE FOR ONE SEASON (sweep 2026-10-10, A12).
+#   Some feeds write the class year in the grade column ("2026"). The digit
+#   branch below read it as left('2026', 3) = 202 -- a key that is never
+#   '12', so the runner never graduated off a carried roster, and a grade
+#   filter for 12 never found them. The class of G is a senior in the
+#   academic year that ENDS in G: stored year Y (the academic year's opening
+#   calendar year, both sports -- boardYear) has seniors of class Y+1, so
+#   the high-school grade is 12 - (G - (Y+1)) = 13 + Y - G.
+#     - G <= Y+1: '12' -- the graduating class, or past it (a class year the
+#       season has already passed is terminal; it is never "13").
+#     - a college pool: the class word, sr/jr/so/fr for 0..3 years left
+#       (four years is the class's whole span); further out than that is no
+#       college class at all and keys as the raw text, never a guessed word.
+#   ! THE YEAR COLUMN IS THE ROW'S OWN (`year`, athlete_season and
+#     ranking_results both), qualified with the alias like grade and pool.
+#   ! ANCHORED ^(19|20)dd$: "12", "2", "SR-4" and an ordinal can never
+#     match it, so every other branch keys exactly as before.
+_CLASS_YEAR_RE = "^(19|20)[0-9][0-9]$"
+
+
+def gradeKeySql(alias="", year_col="year"):
     """The grade key expression, optionally qualified: gradeKeySql("s")."""
     q = f"{alias}." if alias else ""
     g = f"lower(trim({q}grade))"
@@ -705,7 +725,17 @@ def gradeKeySql(alias=""):
     gw = (f"(CASE WHEN {g} LIKE 'fr%%' THEN 'fr' WHEN {g} LIKE 'so%%' THEN 'so' "
           f"WHEN {g} LIKE 'j%%' THEN 'jr' "
           f"WHEN {g} LIKE 'sr%%' OR {g} LIKE 'se%%' THEN 'sr' END)")
+    # years until graduation, counted from the row's own season
+    left = f"({g}::int - ({q}{year_col} + 1))"
     return f"""(CASE
+    WHEN {g} ~ '{_CLASS_YEAR_RE}' THEN
+        CASE WHEN {q}pool LIKE 'college%%' THEN
+                  CASE WHEN {left} <= 0 THEN 'sr'
+                       WHEN {left} <= 3
+                       THEN (ARRAY['jr','so','fr'])[{left}]
+                       ELSE {g} END
+             WHEN {left} <= 0 THEN '12'
+             ELSE (12 - {left})::text END
     WHEN {g} ~ '^[0-9]' THEN
         CASE WHEN {q}pool LIKE 'college%%' AND {gn} BETWEEN 13 AND 16
              THEN (ARRAY['fr','so','jr','sr'])[{gn} - 12]

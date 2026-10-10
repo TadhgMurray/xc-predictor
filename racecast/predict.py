@@ -2318,6 +2318,10 @@ def _targetRow(spec, last_row, weather=None):
                - (academicYearOfDate(last_row.get("date")) or 0))
         if yrs > 0 and academicYearOfDate(last_row.get("date")) \
                 and row.get("grade") not in (None, ""):
+            # ! NO season FOR A CLASS YEAR HERE (A12): training reads the
+            #   target race's own STORED grade, and a feed that writes
+            #   "2026" wrote it on that row too -- a mapped "11" would be a
+            #   grade the network never saw on such a runner.
             row["grade"] = _advanced(row["grade"], yrs,
                                      getPool(row["grade"], row.get("gender")))
     except Exception:                                   # noqa: BLE001
@@ -3705,7 +3709,7 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
         for rows in squads.values():
             for r in rows:
                 r["grade"] = _advanced(r.get("grade"), now - season_year,
-                                       r.get("pool"))
+                                       r.get("pool"), season=now)
 
     # ★ THE CARRY-FORWARD IS PER SCHOOL AND PER RACE NOW, NOT ALL-OR-NOTHING
     #   (owner, 2026-09-15: "keep everybody else on the roster until they
@@ -3743,7 +3747,8 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
             for r in add:
                 r["carried"] = True   # last season's roster, aged forward
                 # ...and a year older on the page, like the roster itself
-                r["grade"] = _advanced(r.get("grade"), 1, r.get("pool"))
+                r["grade"] = _advanced(r.get("grade"), 1, r.get("pool"),
+                                       season=season_year)
             if add:
                 # ⚠ SORTED EXPLICITLY FIRST. _bestFirst only REORDERS a squad
                 #   that spans pools -- with one pool it hands the list back
@@ -4102,11 +4107,19 @@ def _inferCollegeGrades(cur, entries, year, levels=None):
             e["grade_inferred"] = True
 
 
-def _advanced(grade, years, pool):
+def _advanced(grade, years, pool, season=None):
     """grade_label.advanceGrade, keeping the stored value when it cannot
-    read it (an unknown spelling is still better than a blank)."""
+    read it (an unknown spelling is still better than a blank).
+
+    ★ season: the academic year (opening calendar year) the grade is wanted
+      FOR (sweep 2026-10-10, A12). A class-year grade ("2026") cannot be
+      advanced by a count -- it is read against the season: '11' the year
+      before its senior year. Past it, advanceGrade says None and the stored
+      "2026" stays (it prints "Class of 2026", which is true); the squads
+      never get that far, because roster.graduatedClause already dropped
+      them through rankings.gradeKeySql's class-year branch."""
     from grade_label import advanceGrade
-    return advanceGrade(grade, years, pool) or grade
+    return advanceGrade(grade, years, pool, season=season) or grade
 
 
 def _rollback(cur):
@@ -4357,7 +4370,8 @@ def _athleteEntries(cur, person_ids, sport, season_year):
             seen.add(r["person_id"])
             age = max(0, now_year - int(season_year))
             out.append({"person_id": r["person_id"], "school": r["school"],
-                        "grade": ((advanceGrade(r["grade"], age, r["pool"])
+                        "grade": ((advanceGrade(r["grade"], age, r["pool"],
+                                                season=now_year)
                                    or r["grade"]) if age else r["grade"]),
                         "pool": r["pool"],
                         # ⚠ ROUNDED, LIKE EVERY OTHER RATING ON THE SITE
@@ -4396,7 +4410,9 @@ def _athleteEntries(cur, person_ids, sport, season_year):
                         "grade": advanceGrade(r["grade"],
                                               max(season_year, now_year)
                                               - int(r["year"]),
-                                              r["pool"]),
+                                              r["pool"],
+                                              season=max(season_year,
+                                                         now_year)),
                         "pool": r["pool"],
                         "rating": (round(float(r["rating"]), 1)
                                    if r["rating"] is not None else None),
