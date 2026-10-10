@@ -167,11 +167,12 @@ def raceWanted(day, since):
 # ★ RACE PAGES: EVERY RACE, OR RECENT SEASONS ONLY (2026-10-10). The owner
 #   chose "every race" on 2026-09-05; the SEO pass of 2026-10-10 asked for
 #   race pages of recent seasons, and sitemap_budget.py shows Google
-#   declining most of a 3.5M-URL ask. Both are one setting: the default
-#   keeps every race (no change), XCP_SITEMAP_RACE_YEARS=N or --race-years N
-#   lists the last N seasons' races. Old race pages still exist, render and
-#   are linked from every athlete page; they just are not in the sitemap.
-RACE_YEARS = int(os.environ.get("XCP_SITEMAP_RACE_YEARS", "0") or 0)
+#   declining most of a 3.5M-URL ask. The owner chose (2026-10-10) the last
+#   TWO seasons -- this one and last, the races people search for -- as the
+#   default; XCP_SITEMAP_RACE_YEARS=N or --race-years N changes it, 0 lists
+#   every race again. Old race pages still exist, render and are linked
+#   from every athlete page; they just are not in the sitemap.
+RACE_YEARS = int(os.environ.get("XCP_SITEMAP_RACE_YEARS", "2") or 0)
 
 
 def collect(conn, race_years=None):
@@ -184,7 +185,12 @@ def collect(conn, race_years=None):
     by_kind = {"pages": [(p, None) for p in FIXED_PAGES]
                         + [(p, None) for p in allLandingPaths()]
                         + [("/schools", None)]
-                        + [(f"/schools/{c.lower()}", None) for c in STATE_NAMES]}
+                        + [(f"/schools/{c.lower()}", None) for c in STATE_NAMES]
+                        # ★ THE RECORD BOOKS (2026-10-10): the index and one
+                        #   all-time page per state, the URL the route
+                        #   itself redirects to (lower-case)
+                        + [("/records", None)]
+                        + [(f"/records/{c.lower()}", None) for c in STATE_NAMES]}
     with conn.cursor() as cur:
         # ★ THE RACE LISTS ARE TWO FULL-TABLE GROUP BYs (34M and 30M rows,
         #   millions of groups) and the athlete list a third over 12.9M. At
@@ -337,7 +343,7 @@ def main():
     ap.add_argument("--out", default=OUT_DIR)
     ap.add_argument("--race-years", type=int, default=None,
                     help="list race pages of the last N seasons only "
-                         "(default XCP_SITEMAP_RACE_YEARS, 0 = every race)")
+                         "(default XCP_SITEMAP_RACE_YEARS or 2; 0 = every race)")
     args = ap.parse_args()
     from database import getConn
     with getConn() as conn:

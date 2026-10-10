@@ -77,6 +77,12 @@ def athleteFloors(cur):
     return out, total
 
 
+def _since():
+    """The first race date the sitemap lists (build_sitemap.RACE_YEARS)."""
+    from build_sitemap import raceSince, RACE_YEARS
+    return raceSince(RACE_YEARS or 2)
+
+
 def otherKinds(cur):
     """Everything else the sitemap submits, so the athlete share is honest."""
     kinds = {}
@@ -86,6 +92,14 @@ def otherKinds(cur):
                          WHERE meet_id IS NOT NULL AND div_id IS NOT NULL
                          GROUP BY meet_id, div_id) t""")
         kinds["races XC"] = int(cur.fetchone()[0])
+        # ★ AND WHAT THE SITEMAP NOW LISTS: the last two seasons only
+        #   (build_sitemap.RACE_YEARS, 2026-10-10)
+        cur.execute("""SELECT count(*) FROM (
+                         SELECT 1 FROM results
+                         WHERE meet_id IS NOT NULL AND div_id IS NOT NULL
+                           AND date >= %s
+                         GROUP BY meet_id, div_id) t""", (_since(),))
+        kinds["races XC (sitemap: last 2 seasons)"] = int(cur.fetchone()[0])
     if _exists(cur, "results_tf"):
         cur.execute("""SELECT count(*) FROM (
                          SELECT 1 FROM results_tf
@@ -116,6 +130,12 @@ def otherKinds(cur):
                            AND COALESCE(is_relay, 0) = 0
                          GROUP BY meet_id, event_id, div_id) t""")
         kinds["races TF (track, no relay)"] = int(cur.fetchone()[0])
+        cur.execute("""SELECT count(*) FROM (
+                         SELECT 1 FROM results_tf
+                         WHERE meet_id IS NOT NULL AND event_id IS NOT NULL
+                           AND div_id IS NOT NULL AND date >= %s
+                         GROUP BY meet_id, event_id, div_id) t""", (_since(),))
+        kinds["races TF (sitemap: last 2 seasons)"] = int(cur.fetchone()[0])
     for table, label in (("meet_agg_xc", "meets XC"), ("meet_agg_tf", "meets TF")):
         if _exists(cur, table):
             cur.execute(f"SELECT count(*) FROM {table}")
