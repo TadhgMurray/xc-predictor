@@ -241,7 +241,14 @@
 
   async function load() {
     const q = query();
-    try { history.replaceState(null, "", location.pathname + "?" + q.toString()); } catch (e) { /* fine */ }
+    // ! THE HASH IS KEPT (owner, 2026-10-10): the page's tabs live in it
+    //   (race-page.js), and dropping it broke /recruiting#fit links.
+    try { history.replaceState(null, "", location.pathname + "?" + q.toString() + location.hash); } catch (e) { /* fine */ }
+    // ★ SHARE SENDS THE LIVE URL (owner, 2026-10-10): a placement is the
+    //   query string, so Share carries it rather than the bare page.
+    document.querySelectorAll(".share-btn[data-share-url]").forEach((b) => {
+      b.dataset.shareUrl = b.dataset.shareUrl.split(/[?#]/)[0] + "?" + q.toString();
+    });
     status("Loading…", false);
     try {
       const res = await fetch("/api/recruiting/schools?" + q.toString());

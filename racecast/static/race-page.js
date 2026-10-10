@@ -43,7 +43,13 @@
       }
     });
   });
-  show((location.hash || "#" + first).slice(1));
+  // ! AN OLD ANCHOR CAN NAME A TAB (owner, 2026-10-10): /recruit/<id>#like
+  //   predates the tabs; an element with that id and data-opens="<tab>"
+  //   opens that tab instead of falling back to the first.
+  var start = (location.hash || "#" + first).slice(1);
+  var alias = start && document.getElementById(start);
+  if (alias && alias.dataset.opens && !alias.dataset.panel) start = alias.dataset.opens;
+  show(start);
 
   // ---- "All N teams" extends the sidebar's list in place, and folds it back
   var moreTeams = main.querySelector(".rc-more-teams");

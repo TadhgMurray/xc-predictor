@@ -15,20 +15,37 @@
 {% set meta_crumbs = [("Recruiting", none)] %}
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
-<main class="page-wide recruit-athlete" id="recruiting"
+<main class="page-wide recruit-athlete rc" id="recruiting"
       data-year-xc="{{ season_years.get('XC') or '' }}" data-year-tf="{{ season_years.get('TF') or '' }}"
       data-built="{{ '1' if built else '' }}" data-athlete="{{ prefill_athlete or '' }}">
-  <div class="hdr-row">
-    <h1>Recruiting</h1>
-    <a class="rc-coach" href="/coaches/recruits">Coaches: search athletes →</a>
-  </div>
-  <p class="rc-sub">What each college's recruits actually ran, on the high-school scale.{{ rating_i() }}
-     Find yourself or enter a time, and every school says where you would sit among the runners it took.</p>
+  {# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10: "lgtm"): the tag, the
+     title, the facts and the coach link on the meta line ending in Share,
+     the explanation as the story line under it; "you" straight under the
+     header, then every college / where you fit / how it works as tabs in
+     one wide column (the school table runs to 10-11 columns, no room for a
+     side card). Share carries the live query string (recruiting.js), so a
+     placement shares as itself. #}
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag">College recruiting</span></div>
+      <h1>Recruiting</h1>
+      <div class="rc-meta">
+        Every college's recruits on the high-school scale{{ rating_i() }}
+        {% if since_year %} · classes of {{ since_year }} on{% endif %}
+        · <a href="/coaches/recruits">Coaches: search athletes</a>
+        · <button type="button" class="share-btn rc-share-link" data-share-title="College recruiting on Racecast"
+              data-share-url="{{ site_origin ~ '/recruiting' }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      <p class="rc-story">What each college's recruits actually ran. Find yourself or enter a time,
+         and every school says where you would sit among the runners it took.</p>
+    </div>
+  </div></header>
 
   {% if not built %}
   <p class="predict-status show error">The recruiting table has not been built yet. It arrives with the next pipeline run (step 10f).</p>
@@ -66,18 +83,15 @@
     <div id="r-subject" class="rc-subject" hidden></div>
   </section>
 
-  {# ---- the suggestions, when there is a subject ------------------- #}
-  <section id="r-suggest" class="rc-suggest" hidden>
-    <h2>Where your times fit</h2>
-    <p class="meta">Bands are quartiles of each school's own recent recruits, fastest programmes first inside each.
-       "{{ scholarship_label }}" is the top quarter of that school's recruits, where athletic aid tends to go in DI, DII and NAIA; DIII gives none, so it reads "Top recruit" there.</p>
-    <div id="r-suggest-out"></div>
-  </section>
-
-  {# ---- every school ------------------------------------------------ #}
-  <section class="rc-schools">
-    <div class="rc-schools-head">
-      <h2>Every college's recruits</h2>
+  <div class="rc-grid rc-grid-one">
+  <div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#schools" data-tab="schools">Every college</a>
+      <a class="seg-btn" href="#fit" data-tab="fit">Where your times fit</a>
+      <a class="seg-btn" href="#how" data-tab="how">How this works</a>
+    </nav>
+    <div class="rc-tbar-end">
       <div class="rc-seg" id="r-seg">
         <button type="button" class="rc-seg-btn" data-set="gender" data-value="m">Men</button>
         <button type="button" class="rc-seg-btn" data-set="gender" data-value="f">Women</button>
@@ -86,6 +100,10 @@
         <button type="button" class="rc-seg-btn" data-set="sport" data-value="TF">Track</button>
       </div>
     </div>
+  </div>
+
+  {# ---- every school ------------------------------------------------ #}
+  <section class="rc-panel rc-schools" id="schools" data-panel="schools">
     <div class="rc-filters">
       <select id="r-division" class="rc-input" aria-label="Division">
         <option value="">Any division</option>
@@ -110,11 +128,27 @@
     <div id="r-out"></div>
   </section>
 
+  {# ---- the suggestions, when there is a subject ------------------- #}
+  <section class="rc-panel" id="fit" data-panel="fit">
+    <div id="r-suggest" class="rc-suggest" hidden>
+      <p class="meta">Bands are quartiles of each school's own recent recruits, fastest programmes first inside each.
+         "{{ scholarship_label }}" is the top quarter of that school's recruits, where athletic aid tends to go in DI, DII and NAIA; DIII gives none, so it reads "Top recruit" there.</p>
+      <div id="r-suggest-out"></div>
+    </div>
+    <p class="meta rc-nosubj">Find your page or enter a time above, and the schools whose recruits you would sit among are listed here by band.</p>
+  </section>
+
+  <section class="rc-panel" id="how" data-panel="how">
   <p class="meta rc-foot">A recruit is an athlete's first college season{% if since_year %}, from the {{ since_year }} class on{% endif %}; a transfer is not a recruiting fact about the second school.
      The rating is the recruit's own last high-school season where Racecast has it, otherwise their first college season brought onto the high-school scale less the measured freshman-year gain.
      The times are what that rating converts to at a typical course or track. Schools need {{ min_recruits }} recruits to be listed; a school's page shows every one.</p>
+  </section>
+  </div>
+  </div>
 </main>
 
 <script src="{{ static_v('recruiting.js') }}"></script>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

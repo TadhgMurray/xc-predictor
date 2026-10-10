@@ -15,33 +15,36 @@
 {% set meta_crumbs = [("Coaches", "/coaches"), ("Find recruits", none)] %}
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
-<main class="page-wide recruit-athlete recruit-coach" id="recruiting"
+<main class="page-wide recruit-athlete recruit-coach rc" id="recruiting"
       data-year-xc="{{ season_years.get('XC') or '' }}" data-year-tf="{{ season_years.get('TF') or '' }}">
-  <div class="hdr-row">
-    <h1>Find recruits</h1>
-    <a class="rc-coach" href="/recruiting">Athletes: where you'd fit →</a>
-  </div>
-  <p class="rc-sub">Every high-school season in the country on one scale.{{ rating_i() }}
-     Pick the classes you recruit, set a floor, and sort by rating or by how fast they are improving. The search is the link: send it to an assistant.</p>
-
-  <section class="rc-schools">
-    <div class="rc-schools-head">
-      <div class="rc-seg" id="r-seg">
-        <button type="button" class="rc-seg-btn" data-set="pool" data-value="hs_m">Boys</button>
-        <button type="button" class="rc-seg-btn" data-set="pool" data-value="hs_f">Girls</button>
-        <span class="rc-seg-gap"></span>
-        <button type="button" class="rc-seg-btn" data-set="sport" data-value="XC">Cross country</button>
-        <button type="button" class="rc-seg-btn" data-set="sport" data-value="TF">Track</button>
+  {# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10: "lgtm"): the race page's
+     header; the filters directly under it, the results and the explanation
+     as tabs. Every id recruiting-search.js reads is kept. "The search is
+     the link": Share carries the live query string (recruiting-search.js). #}
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag">Coach edition</span></div>
+      <h1>Find recruits</h1>
+      <div class="rc-meta">
+        Every high-school season in the country on one scale{{ rating_i() }}
+        {% if season_years.get('XC') %} · {{ season_years.get('XC') }} XC season{% endif %}
+        · <a href="/recruiting">Athletes: where you'd fit</a>
+        · <button type="button" class="share-btn rc-share-link" data-share-title="A recruiting search on Racecast"
+              data-share-url="{{ site_origin ~ '/coaches/recruits' }}" title="Share this search"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
       </div>
-      <label class="rc-group">Season <input id="r-year" type="text" inputmode="numeric" class="rc-input rc-input-sm" placeholder="{{ season_years.get('XC') or '' }}"></label>
+      <p class="rc-story">Pick the classes you recruit, set a floor, and sort by rating or by how fast they are improving. The search is the link: send it to an assistant.</p>
     </div>
+  </div></header>
 
+  <section class="rc-search">
     <div class="rc-filters">
+      <label class="rc-group">Season <input id="r-year" type="text" inputmode="numeric" class="rc-input rc-input-sm" placeholder="{{ season_years.get('XC') or '' }}"></label>
       <span class="rc-group">Class of <span class="rc-classes" id="r-grad"></span></span>
     </div>
     <div class="rc-filters">
@@ -67,7 +70,27 @@
       </select>
       <button id="r-go" class="rc-btn">Search</button>
     </div>
+  </section>
 
+  <div class="rc-grid rc-grid-one">
+  <div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#results" data-tab="results">Athletes</a>
+      <a class="seg-btn" href="#how" data-tab="how">How the search works</a>
+    </nav>
+    <div class="rc-tbar-end">
+      <div class="rc-seg" id="r-seg">
+        <button type="button" class="rc-seg-btn" data-set="pool" data-value="hs_m">Boys</button>
+        <button type="button" class="rc-seg-btn" data-set="pool" data-value="hs_f">Girls</button>
+        <span class="rc-seg-gap"></span>
+        <button type="button" class="rc-seg-btn" data-set="sport" data-value="XC">Cross country</button>
+        <button type="button" class="rc-seg-btn" data-set="sport" data-value="TF">Track</button>
+      </div>
+    </div>
+  </div>
+
+  <section class="rc-panel rc-schools" id="results" data-panel="results">
     <p class="predict-status" id="r-status"></p>
     <div id="r-out"></div>
     <div class="pager" id="r-pager" hidden>
@@ -77,11 +100,17 @@
     </div>
   </section>
 
+  <section class="rc-panel" id="how" data-panel="how">
   <p class="meta rc-foot">Gain is this season's rating minus the same athlete's rating a year earlier in the same sport.
      The class year comes from the grade the results carry, so a season with no grade shows none.
      Seasons need {{ default_floor }} rated races unless you set a minimum yourself. Open an athlete for their profile: every season, the gain, and where their rating would rank in each college division.</p>
+  </section>
+  </div>
+  </div>
 </main>
 
 <script src="{{ static_v('recruiting-search.js') }}"></script>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

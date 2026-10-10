@@ -167,7 +167,14 @@
   async function load() {
     const q = query();
     if (offset) q.set("offset", String(offset));
-    try { history.replaceState(null, "", location.pathname + "?" + q.toString()); } catch (e) { /* fine */ }
+    // ! THE HASH IS KEPT (owner, 2026-10-10): the page's tabs live in it
+    //   (race-page.js), and dropping it broke #how links.
+    try { history.replaceState(null, "", location.pathname + "?" + q.toString() + location.hash); } catch (e) { /* fine */ }
+    // ★ SHARE SENDS THE LIVE URL (owner, 2026-10-10: "the search is the
+    //   link"): Share carries the query string rather than the bare page.
+    document.querySelectorAll(".share-btn[data-share-url]").forEach((b) => {
+      b.dataset.shareUrl = b.dataset.shareUrl.split(/[?#]/)[0] + "?" + q.toString();
+    });
     q.set("limit", String(LIMIT));
     status("Searching…", false);
     try {
