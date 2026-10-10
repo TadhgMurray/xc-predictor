@@ -149,7 +149,11 @@ def resolve(dry):
         if not _exists(cur, "person_probe"):
             print("no person_probe yet (the snapshot step has not run): nothing to resolve")
             return
-        cur.execute(DDL)
+        # ! THROUGH ensureTable, NOT A BARE CREATE (tests/test_school_logos
+        #   Migrations): IF NOT EXISTS never adds a column, so a column added
+        #   to DDL later would never reach a table an earlier run made.
+        from scrape_school_logos import ensureTable
+        ensureTable(cur, DDL)
         cur.execute(RESOLVE)
         rows = cur.fetchall()
         print(f"{len(rows):,} athlete ids vanished since the snapshot and have a successor")
