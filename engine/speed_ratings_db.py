@@ -751,7 +751,12 @@ def _eventMetersSql(alias: str) -> str:
     return (f"CASE WHEN {alias}.event_short IS NULL THEN NULL "
             # a steeplechase or a walk is not the flat event of its metres:
             # no class (as before), rather than the 3000's offset
+            # ! AND THE STEEPLE ABBREVIATED (2026-10-10): anet's glued
+            #   "3000mSC", "3000 S/C", "3000m SC" never say 'steeple', and
+            #   this read them as the flat 3000 (event_parse._STEEPLE_ABBR's
+            #   forms, in POSIX: an s/c or sc after a digit, an m or a space)
             f"WHEN lower({alias}.event_short) ~ '(steeple|walk|hurdle)' THEN NULL "
+            f"WHEN lower({alias}.event_short) ~ '([0-9m ])s ?/? ?c([^a-z]|$)' THEN NULL "
             f"WHEN lower({alias}.event_short) LIKE '%mile%' "
             f"THEN COALESCE({num}, 1) * 1609.34 "
             f"WHEN {num} IS NULL THEN NULL "
