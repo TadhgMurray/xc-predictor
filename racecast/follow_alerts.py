@@ -590,11 +590,13 @@ def writeSnapshots(cur, follows, claims, today, year):
         from school_identity import primaryState
         for school, state in sorted(teams, key=lambda t: (t[0], t[1] or "")):
             state = state or primaryState(school)
+            # ! aliased (2026-10-10): tests/test_dict_cursor_columns.py fails
+            #   any request-path module with two bare aggregates in a SELECT
             cur.execute("""INSERT INTO follow_snapshot (subject, sport, pool, year, taken_on, rating, nation, state_rank)
                            SELECT 'team:' || %s || '|' || COALESCE(%s, '') || '|' || t.pool, t.sport, t.pool,
-                                  t.year, %s, max(t.top5_mean),
-                                  max(t.rank) FILTER (WHERE t.scope = 'usa'),
-                                  max(t.rank) FILTER (WHERE t.scope <> 'usa')
+                                  t.year, %s, max(t.top5_mean) AS rating,
+                                  max(t.rank) FILTER (WHERE t.scope = 'usa') AS nation,
+                                  max(t.rank) FILTER (WHERE t.scope <> 'usa') AS state_rank
                            FROM   team_season t
                            WHERE  t.span = 'season' AND t.school = %s AND t.year = %s
                              AND  (%s::text IS NULL OR t.state = %s)

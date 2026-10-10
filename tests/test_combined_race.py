@@ -27,9 +27,11 @@ def _install(per_div, labels, gender="M"):
     """
     saved = (predict._teamRosters, predict._divisionLabel,
              predict._fieldGender)
+    # ! str(): since the track-predictions merge (2026-10-10) _combinedRoster
+    #   splits each race key (splitRaceKey) and passes the division as an int
     predict._teamRosters = lambda cur, schools, one, *a, **k: [
-        dict(e) for e in per_div[one["div_id"]]]
-    predict._divisionLabel = lambda cur, m, d, s, source=None: labels.get(d)
+        dict(e) for e in per_div[str(one["div_id"])]]
+    predict._divisionLabel = lambda cur, m, d, s, source=None: labels.get(str(d))
     predict._fieldGender = lambda cur, ids, sport: gender
 
     def undo():
