@@ -4722,6 +4722,10 @@ li > .school-mark, p > .school-mark { margin-right: 0.35rem; }
 /* you: one card, two ways in, then the placement replaces the form */
 .recruit-athlete .rc-you { border: 1px solid var(--line); border-radius: 10px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); padding: 1.1rem 1.25rem; }
 .recruit-athlete .rc-you-form { display: flex; gap: 1.25rem; align-items: stretch; }
+/* ! THE PLACEMENT REPLACES THE FORM (owner, 2026-10-10): recruiting.js set
+   `hidden` on the form once someone was placed, but `display: flex` above
+   beat the attribute, so both showed. The attribute wins now. */
+.recruit-athlete .rc-you-form[hidden] { display: none; }
 .recruit-athlete .rc-you-col { flex: 1 1 0; min-width: 0; }
 .recruit-athlete .rc-you-col:first-child { flex: 0.9 1 0; }
 .recruit-athlete .rc-you-col:last-child { flex: 1.1 1 0; }

@@ -14,23 +14,59 @@
 {% set meta_image_alt = p.name ~ " on Racecast" %}
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
-<main class="page-wide recruit-page">
-  <div class="hdr-row">
-    <h1>{{ p.name }}</h1>
-    {% with share_title=p.name ~ " recruiting profile on Racecast", share_url=site_origin ~ "/recruit/" ~ p.person_id %}{% include "_share.html" %}{% endwith %}
-  </div>
-  <p class="meta">
-    {% if p.school and p.school|is_team %}{{ crest(p.school, p.state) }}<a href="{{ school_href(p.school, p.state) }}">{{ p.school_label }}</a>{% elif p.school %}{{ p.school_label }}{% else %} - {% endif %}
-    {% if p.grad_year %} · Class of {{ p.grad_year }}{% endif %}
-    · <a href="/athlete/{{ p.person_id }}">Athlete page</a>
-    · <a href="/compare?a={{ p.person_id }}">Compare</a>
-  </p>
+<main class="page-wide recruit-page rc">
+  {# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10: "lgtm"): tag, crest and
+     name, the links on the meta line ending in Share, each sport's latest
+     rating on the champion line; the seasons and "Runners like" as tabs,
+     and where the rating would rank in college as the side card. With no
+     comps there are no tabs and Seasons keeps its h2. #}
+  {% set first = p.name.split(' ')[0] %}
+  {% set tabbed = p.comps|length > 0 %}
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag">Recruiting profile</span></div>
+      <h1>{% if p.school and p.school|is_team %}{{ crest(p.school, p.state, px=128, size=44, cls="school-crest") }}{% endif %}{{ p.name }}</h1>
+      <div class="rc-meta">
+        {% if p.school and p.school|is_team %}<a href="{{ school_href(p.school, p.state) }}">{{ p.school_label }}</a>{% elif p.school %}{{ p.school_label }}{% else %} - {% endif %}
+        {% if p.grad_year %} · Class of {{ p.grad_year }}{% endif %}
+        · <a href="/athlete/{{ p.person_id }}">Athlete page</a>
+        · <a href="/compare?a={{ p.person_id }}">Compare</a>
+        · <button type="button" class="share-btn rc-share-link" data-share-title="{{ p.name ~ ' recruiting profile on Racecast' }}"
+              data-share-url="{{ site_origin ~ '/recruit/' ~ p.person_id }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      {# the latest season in each sport, and its gain #}
+      <div class="rc-champs">
+        {% for sp, word in [("XC", "cross country"), ("TF", "track")] %}
+        {% set ss = p.seasons|selectattr("sport", "equalto", sp)|list %}
+        {% if ss %}{% set s = ss[-1] %}{% if s.mean_rating is not none %}
+        <div><span class="k">{{ s.label }} {{ word }}{% if s.grade_label %} · {{ s.grade_label }}{% endif %}</span>
+          <span class="rc-crow"><b class="rc-cn">{{ "%.1f"|format(s.mean_rating) }}</b>{% if s.gain is not none %}<i>{{ "%+.1f"|format(s.gain) }} on the year</i>{% endif %}</span></div>
+        {% endif %}{% endif %}
+        {% endfor %}
+      </div>
+    </div>
+  </div></header>
 
-  <h2>Seasons</h2>
+  <div class="rc-grid{{ ' rc-grid-one' if not p.placements }}">
+  <div class="rc-mainc">
+  {% if tabbed %}
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#seasons" data-tab="seasons">Seasons<span class="n">{{ p.seasons|length }}</span></a>
+      {% for c in p.comps %}
+      <a class="seg-btn" href="#like-{{ c.subject.sport|lower }}" data-tab="like-{{ c.subject.sport|lower }}">Runners like {{ first }}: {{ "XC" if c.subject.sport == "XC" else "track" }}</a>
+      {% endfor %}
+    </nav>
+  </div>
+  {% endif %}
+
+  <section class="rc-panel" id="seasons" data-panel="seasons">
+  {% if not tabbed %}<h2>Seasons</h2>{% endif %}
   <table class="recruit-tbl">
     <thead><tr><th>Season</th><th>Grade</th><th class="num">Rating{{ rating_i() }}</th><th class="num">Gain</th><th class="num">Best race</th><th class="num">Races</th></tr></thead>
     <tbody>
@@ -47,37 +83,19 @@
     </tbody>
   </table>
   <p class="meta">Gain is the season's rating minus the season a year earlier in the same sport. A blank means no season the year before.</p>
-
-  {% for pl in p.placements %}
-  <h2>Where {{ "the " ~ pl.label ~ " XC" if pl.sport == "XC" else "the " ~ pl.label ~ " track" }} rating would rank in college</h2>
-  {% if pl.rows %}
-  <table class="recruit-tbl">
-    <thead><tr><th>Division</th><th class="num">Would rank</th><th class="num">Of</th><th>Season</th></tr></thead>
-    <tbody>
-    {% for r in pl.rows %}
-      <tr>
-        <td><a href="{{ r.board_url }}">{{ r.division }}</a></td>
-        <td class="num">#{{ "{:,}".format(r.rank) }}</td>
-        <td class="num">{{ "{:,}".format(r.total) }}</td>
-        <td>{{ r.year }} {{ "XC" if pl.sport == "XC" else "Track" }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  <p class="meta">The {{ "%.1f"|format(pl.rating) }} high school rating placed on each division's season board through the same scale conversion the mixed boards use. The links open that board.</p>
-  {% else %}
-  <p class="meta">No college board to place this rating on yet.</p>
-  {% endif %}
-  {% endfor %}
+  </section>
   {# ★ RUNNERS LIKE YOU (comps.py): the high-schoolers who were here before,
      same grade, a rating and a gain the data cannot tell apart from this
      one, and what happened to them. #}
-  <div id="like"></div>
+  {# ! THE OLD #like LINK OPENS THE FIRST "Runners like" TAB (owner,
+     2026-10-10): with the comps as tabs, an unknown hash fell back to
+     Seasons. race-page.js reads data-opens. #}
+  <div id="like"{% if p.comps %} data-opens="like-{{ p.comps[0].subject.sport|lower }}"{% endif %}></div>
   {% for c in p.comps %}
   {% set sj = c.subject %}
   {% set sport_word = "cross country" if sj.sport == "XC" else "track" %}
-  <h2 id="like-{{ sj.sport|lower }}">Runners like {{ p.name.split(' ')[0] }}: {{ sport_word }}</h2>
-  <p class="meta">
+  <section class="rc-panel" id="like-{{ sj.sport|lower }}" data-panel="like-{{ sj.sport|lower }}">
+  <p class="meta rc-lead">
     {{ "{:,}".format(c.n) }} past {{ sj.class_word }}
     rated within {{ "%.1f"|format(c.se) }} of {{ "%.1f"|format(sj.rating) }}
     (the margin of {{ sj.n_races }} races in {{ sj.label }}){% if c.gain is not none %},
@@ -133,8 +151,36 @@
   </table></div>
   {% endif %}
   {% endif %}
+  </section>
   {% endfor %}
+  </div>
+
+  {% if p.placements %}
+  <aside class="rc-side">
+    {% for pl in p.placements %}
+    <h2>In college <small>{{ pl.label }} {{ "XC" if pl.sport == "XC" else "track" }} · {{ "%.1f"|format(pl.rating) }}</small></h2>
+    {% if pl.rows %}
+    <table class="rc-tscores rc-tscores-plain">
+      <tbody>
+      {% for r in pl.rows %}
+      <tr>
+        <td class="tn"><a href="{{ r.board_url }}">{{ r.division }}</a>
+          <span class="sp">of {{ "{:,}".format(r.total) }} on the {{ r.year }} board</span></td>
+        <td class="n tpts">#{{ "{:,}".format(r.rank) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if loop.last %}<p class="rc-tip">Where each high school rating would rank on each division's season board, through the same scale conversion the mixed boards use. The links open that board.</p>{% endif %}
+    {% else %}
+    <p class="rc-tip">No college board to place this rating on yet.</p>
+    {% endif %}
+    {% endfor %}
+  </aside>
+  {% endif %}
+  </div>
 </main>
 <script src="{{ static_v('share.js') }}"></script>
+{% if p.comps %}<script src="{{ static_v('race-page.js') }}"></script>{% endif %}
 </body>
 </html>

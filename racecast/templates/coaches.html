@@ -22,34 +22,46 @@
 {% set meta_crumbs = [("Coaches", none)] %}
 {% include "_meta.html" %}
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 </head>
 <script src="{{ static_v('topbar-search.js') }}"></script>
 <body>
 {% include "_topbar.html" %}
 
-<main class="page-wide coach-home" id="coaches">
-  <div class="hdr-row">
-    <h1>Coaching tools</h1>
-    <a class="rc-coach" href="/recruiting">Athletes: where you'd fit &rarr;</a>
+<main class="page-wide coach-home rc" id="coaches">
+  {# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10: "lgtm"): the race page's
+     header; the tools and what is being built as tabs, "your teams" as the
+     side card (still filled by coaches.js, so the page stays cacheable).
+     The 6 and 3 on the tabs count the hard-coded cards below; count them
+     in Jinja if the cards ever become data. #}
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag">Coach edition</span></div>
+      <h1>Coaching tools</h1>
+      <div class="rc-meta">
+        For cross country and track coaches
+        · <a href="/coaches/recruits">Find recruits</a>
+        · <a href="/recruiting">Athletes: where you'd fit</a>
+        · <button type="button" class="share-btn rc-share-link" data-share-title="Coaching tools on Racecast"
+              data-share-url="{{ site_origin ~ '/coaches' }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      <p class="rc-story">Every high school and college season in the country, on one scale that already
+         accounts for the course, the conditions and the era. Nothing here needs an account &mdash; sign in
+         only to keep your teams on hand.</p>
+    </div>
+  </div></header>
+
+  <div class="rc-grid">
+  <div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#tools" data-tab="tools">Tools<span class="n">6</span></a>
+      <a class="seg-btn" href="#next" data-tab="next">Being built<span class="n">3</span></a>
+    </nav>
   </div>
-  <p class="rc-sub">Every high school and college season in the country, on one scale that already
-     accounts for the course, the conditions and the era. Nothing here needs an account &mdash; sign in
-     only to keep your teams on hand.</p>
 
-  {# Filled by coaches.js from /api/me. Signed out, this is what shows. #}
-  <section class="coach-mine" id="coach-mine">
-    <h2>Your teams</h2>
-    <p class="coach-mine-note" id="coach-mine-note">
-      <a href="/login?next=/coaches">Sign in</a> and add the team you coach in
-      <a href="/account">settings</a> to keep it here.
-    </p>
-    <ul class="coach-team-list" id="coach-team-list" hidden></ul>
-  </section>
-
-  <section class="coach-tools">
-    <h2>Tools</h2>
+  <section class="rc-panel coach-tools" id="tools" data-panel="tools">
     <div class="coach-grid">
-
       <a class="coach-card" href="/coaches/recruits">
         <h3>Find recruits</h3>
         <p>Every high school season in the country, filtered by graduation year, rating, state, school
@@ -97,8 +109,7 @@
 
   {# ! NAMED AS NOT BUILT, AND NOT LINKED. A card that looks live and goes
        nowhere is worse than no card. These are plain text on purpose. #}
-  <section class="coach-next">
-    <h2>Being built</h2>
+  <section class="rc-panel coach-next" id="next" data-panel="next">
     <ul class="coach-next-list">
       <li><b>Recruiting projections.</b> What a high schooler is likely to run in college, as a range
           rather than a number, and who is furthest below what their times suggest.</li>
@@ -108,6 +119,22 @@
           on it races.</li>
     </ul>
   </section>
+  </div>
+
+  {# Filled by coaches.js from /api/me. Signed out, this is what shows. #}
+  <aside class="rc-side">
+  <section class="coach-mine" id="coach-mine">
+    <h2>Your teams</h2>
+    <div class="coach-mine-box">
+    <ul class="coach-team-list" id="coach-team-list" hidden></ul>
+    <p class="coach-mine-note" id="coach-mine-note">
+      <a href="/login?next=/coaches">Sign in</a> and add the team you coach in
+      <a href="/account">settings</a> to keep it here.
+    </p>
+    </div>
+  </section>
+  </aside>
+  </div>
 
   <p class="meta coach-foot">Ratings are pool-relative: 100 sits at the mean of an athlete's own pool.
      A search is its own link &mdash; every filter lives in the query string, so you can send one to an
@@ -115,5 +142,7 @@
 </main>
 
 <script src="{{ static_v('coaches.js') }}"></script>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 </body>
 </html>

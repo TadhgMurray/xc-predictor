@@ -311,3 +311,65 @@ main.schools-page.rc .rc-links .k { font-weight: 400; color: var(--muted); }
 main.search-page.rc { box-sizing: content-box; }
 main.search-page.rc .year-filter { margin: 0 0 0 auto; font-size: .9rem; }
 main.search-page.rc .search-page-form { margin-top: 1rem; }
+/* ======================================================================
+   ★ RECRUITING, THE COACH SEARCH, THE RECRUIT PROFILE AND /coaches IN THE
+   RACE SHAPE (owner, 2026-10-10: "lgtm" on the proposals). Only what the
+   shape needs on top of the pages' own style.css rules.
+   ====================================================================== */
+/* ---- /recruiting (recruiting.html) -------------------------------------
+   ! scoped :not(.recruit-coach): the coach search's <main> carries
+   .recruit-athlete too (it shares the athlete edition's style.css rules),
+   and these spacings are this page's alone */
+main.rc.recruit-athlete:not(.recruit-coach) .rc-you { margin-top: 1.2rem; }
+main.rc.recruit-athlete:not(.recruit-coach) .rc-tbar { margin-top: 1.4rem; }
+main.rc.recruit-athlete:not(.recruit-coach) .rc-tbar-end .rc-seg { margin: 0; }
+main.rc.recruit-athlete:not(.recruit-coach) .rc-panel > .rc-filters:first-child { margin-top: .5rem; }
+main.rc.recruit-athlete:not(.recruit-coach) .rc-panel > .meta:first-child { margin-top: .5rem; }
+/* the Fit tab with nobody placed says how to place someone; recruiting.js
+   unhides #r-suggest once there is a subject, and the prompt steps aside */
+main.rc.recruit-athlete:not(.recruit-coach) #r-suggest:not([hidden]) ~ .rc-nosubj { display: none; }
+main.rc.recruit-athlete:not(.recruit-coach) .rc-foot { margin-top: .5rem; }
+@media (max-width: 760px) {
+  main.rc.recruit-athlete:not(.recruit-coach) .rc-tbar-end { margin-left: 0; }
+  main.rc.recruit-athlete:not(.recruit-coach) .rc-seg { flex-wrap: wrap; }
+}
+/* ---- /coaches/recruits (recruiting_search.html) -------------------------
+   the filters directly under the header, the Boys/Girls and XC/Track pills
+   on the tab line */
+main.rc.recruit-coach .rc-search { margin-top: 1.1rem; }
+main.rc.recruit-coach .rc-search .rc-filters { margin: 0 0 .5rem; }
+main.rc.recruit-coach .rc-tbar { margin-top: 1.2rem; }
+main.rc.recruit-coach .rc-tbar-end .rc-seg { margin: 0; }
+main.rc.recruit-coach .rc-panel > .predict-status:first-child + #r-out > .rc-count { margin-top: .5rem; }
+@media (max-width: 760px) {
+  main.rc.recruit-coach .rc-tbar-end { margin-left: 0; }
+  main.rc.recruit-coach .rc-seg { flex-wrap: wrap; }
+}
+/* ---- /recruit/<id> (recruit.html) -------------------------------------- */
+main.rc.recruit-page .rc-panel > .recruit-tbl:first-child,
+main.rc.recruit-page .rc-panel > .meta:first-child { margin-top: 0; }
+/* tables level: the tab bar and the first side heading are one height */
+main.rc.recruit-page .rc-tbar, main.rc.recruit-page .rc-side > h2:first-child { height: 2.6rem; margin: 0 0 .5rem; align-items: center; }
+main.rc.recruit-page .rc-side h2 { font-size: 1.05rem; }
+main.rc.recruit-page .rc-side table + h2 { margin-top: 1.3rem; }
+main.rc.recruit-page .rc-grid { margin-top: 1.2rem; }
+main.rc.recruit-page .rc-panel h3 { margin: 1.3rem 0 .3rem; font-size: 1rem; }
+/* the side card's rank column carries "#1,184" */
+main.rc.recruit-page .rc-tscores-plain td.tpts { width: 5rem; }
+main.rc.recruit-page .rc-champs .rc-cn small { font-weight: 600; font-size: .85rem; margin-left: .35rem; }
+/* ---- /coaches (coaches.html) ------------------------------------------- */
+main.rc.coach-home .rc-grid { margin-top: 1.4rem; }
+/* tables level: the tab bar and the side heading are one height */
+main.rc.coach-home .rc-tbar, main.rc.coach-home .coach-mine > h2 { display: flex; height: 2.6rem; margin: 0 0 .5rem; align-items: center; }
+main.rc.coach-home .rc-side h2 { font-size: 1.05rem; }
+/* style.css's 2rem top margins would push the cards below the side card */
+main.rc.coach-home .coach-mine, main.rc.coach-home .coach-tools, main.rc.coach-home .coach-next { margin: 0; }
+main.rc.coach-home .coach-mine-box { border: 1px solid var(--line-2); padding: .65rem .75rem; }
+main.rc.coach-home .coach-team-list { margin: 0 0 .5rem; gap: 0; }
+main.rc.coach-home .coach-team-list li { display: block; padding: .45rem 0; border-bottom: 1px solid var(--line); }
+main.rc.coach-home .coach-team-list li a { font-weight: 600; }
+main.rc.coach-home .coach-team-list li .dist-note { display: block; font-size: .75rem; color: var(--muted); margin: 0; }
+main.rc.coach-home .coach-mine-note { font-size: .85rem; }
+main.rc.coach-home .coach-next-list { margin-top: .3rem; }
+main.rc.coach-home .coach-foot { margin-top: 1.4rem; }
+/* ---- end of the recruiting / coaches block ----------------------------- */
