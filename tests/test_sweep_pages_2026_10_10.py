@@ -534,3 +534,43 @@ def test_course_route_takes_a_slash(A):
     endpoint, args = adapter.match("/course/North Park/East Loop")
     assert endpoint == "course" and args == {"course_name": "North Park/East Loop"}
     assert adapter.match("/card/course/North Park.png")[0] != "course"
+
+
+# ---- 21. recruiting has_other, TF source scoping, negative #r ----------- #
+
+def test_has_recruits_is_one_exists():
+    import recruiting as R
+    cur = StubCursor([[{"to_regclass": "college_recruit"}], [{"hit": 1}]])
+    assert R.hasRecruits(cur, "Stanford", "CA", "f") is True
+    sql, params = cur.sql[-1]
+    assert "LIMIT  1" in sql and params["state"] == "CA" and params["gender"] == "f"
+    cur = StubCursor([[{"to_regclass": "college_recruit"}], []])
+    assert R.hasRecruits(cur, "Stanford", None, "m") is False
+    assert "state" not in cur.sql[-1][1]
+
+
+def test_recruiting_page_does_not_rerun_school_recruits():
+    src = open(os.path.join(_ROOT, "racecast", "app.py"), encoding="utf-8").read()
+    assert "has_other = R.hasRecruits(cur, school_name, state, other)" in src
+    assert "R.schoolRecruits(cur, school_name, state, other" not in src
+
+
+def test_tf_meet_events_join_this_feeds_results(A):
+    cur = StubCursor([[], []])
+    A.get_tf_meet_events(cur, 9, source="anet")
+    assert "AND (m.source IS NULL OR r.source = m.source)" in cur.sql[0][0]
+
+
+def test_negative_result_anchor_scrolls():
+    import subprocess
+    src = open(os.path.join(_ROOT, "racecast", "static", "race-page.js"),
+               encoding="utf-8").read()
+    m = re.search(r"if \((/\^#r[^/]*/)\.test\(location\.hash\)\)", src)
+    assert m, "anchor test not found"
+    out = subprocess.run(
+        ["node", "-e", f"const re = {m.group(1)};"
+                       "console.log([re.test('#r-301'), re.test('#r42'), re.test('#results')].join())"],
+        capture_output=True, text=True)
+    if out.returncode != 0:
+        pytest.skip("node unavailable")
+    assert out.stdout.strip() == "true,true,false"

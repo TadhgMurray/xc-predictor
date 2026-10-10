@@ -5543,10 +5543,14 @@ def get_tf_meet_events(cur, meet_id, source=None):
                m.distance_meters,
                count(r.result_id) AS n_results
         FROM meets_tf m
+        -- ! THE RESULTS OF THIS FEED (sweep 2026-10-10): the id spaces
+        --   collide on (meet, div, event), and an unscoped join counted the
+        --   other feed's rows into this meet's events
         LEFT JOIN results_tf r
                ON r.meet_id  = m.meet_id
               AND r.div_id   = m.div_id
               AND r.event_id = m.event_id
+              AND (m.source IS NULL OR r.source = m.source)
         WHERE m.meet_id = %(meet)s
           AND (%(src)s::text IS NULL OR m.source = %(src)s)
         GROUP BY m.div_id, m.event_id, m.event_short, m.division, m.distance_meters
@@ -5970,10 +5974,12 @@ def meet_tf(meet_id):
             school = (request.args.get("school") or "").strip() or None
             school_events = set()
             if school:
+                # ! this feed's rows only (sweep 2026-10-10), as meet_xc
                 cur.execute("""
                     SELECT DISTINCT div_id, event_id FROM results_tf
                     WHERE  meet_id = %(meet)s AND school = %(school)s
-                """, {"meet": meet_id, "school": school})
+                      AND  (%(src)s::text IS NULL OR source = %(src)s)
+                """, {"meet": meet_id, "school": school, "src": src})
                 school_events = {(r["div_id"], r["event_id"])
                                  for r in cur.fetchall()}
             stamp_home_states(cur, scoring_rows)
@@ -11100,8 +11106,8 @@ def recruiting_school_page(school_name):
                                "tier": R.tierFor(rating, summary, summary.get("division"))
                                if rating is not None else None})
             other = "f" if gender == "m" else "m"
-            has_other = any(R.schoolRecruits(cur, school_name, state, other, sp)[0]
-                            for sp in R.SPORTS)
+            # ! one EXISTS, not two more full schoolRecruits (sweep 2026-10-10)
+            has_other = R.hasRecruits(cur, school_name, state, other)
     # ★ THE THRESHOLDS IN THE READER'S OWN EVENTS (owner, 2026-10-05): the
     #   events the athlete has a PR in, or the one they typed; 5K / 1600 /
     #   3200 when nobody is named.

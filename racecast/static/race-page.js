@@ -517,7 +517,9 @@
   if (main.classList.contains("rc-on-track")) fillConv();
 
   // ---- arriving at #r<result id> (from the meet page's finder): that row
-  if (/^#r\d+$/.test(location.hash)) {
+  // ! -?: tfrrs result ids are NEGATIVE, and the finder links them as
+  //   #r-301 -- which /^#r\d+$/ never matched (sweep 2026-10-10)
+  if (/^#r-?\d+$/.test(location.hash)) {
     var target = document.getElementById(location.hash.slice(1));
     if (target) {
       target.scrollIntoView({ block: "center" });
