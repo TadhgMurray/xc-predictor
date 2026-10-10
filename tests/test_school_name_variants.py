@@ -307,8 +307,11 @@ class Wiring(unittest.TestCase):
 
     def test_the_boards_fold_the_name_before_anything_reads_it(self):
         src = self._read("racecast", "build_ranking_results.py")
-        self.assertIn("school = canonicalSchool(row.school)", src)
-        i = src.index("school = canonicalSchool(row.school)")
+        # ! the owner's school pin is read first since 2026-10-10
+        #   (scripts/person_pins.py); the fold still runs before anything else
+        line = "school = canonicalSchool(pinnedSchool(row.person_id, sport, row.date) or row.school)"
+        self.assertIn(line, src)
+        i = src.index(line)
         after = src[i:i + 400]
         self.assertLess(after.index("_isNonSchoolCached(school)"),
                         after.index("_is_dodea(school)"))

@@ -57,7 +57,7 @@ class VarianceComponentsAreArrays(unittest.TestCase):
     def test_no_scalar_format_of_the_per_group_components(self):
         bad = []
         for root, _dirs, files in os.walk(_ROOT):
-            if any(p in root for p in (".git", "node_modules", "__pycache__")):
+            if any(p in root for p in (".git", "node_modules", "__pycache__", ".claude")):
                 continue
             for fn in files:
                 if not fn.endswith(".py"):
