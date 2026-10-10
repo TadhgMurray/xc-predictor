@@ -328,15 +328,32 @@ def _fieldUncached(cur, pool, year, state, division):
     #   times more athletes than it has places at seven a school.
     # ! A ROW WITH NO TEAM PARTITIONS ON ITS OWN person_id, so "Unattached"
     #   is never a seven-runner squad that crowds an individual out.
-    # ! STATE ON THE ROW TOO. A school name with a row in another state
-    #   (two Oregons) must not bring that state's runners into this one.
+    # ⚠ "NO TEAM" IS meet_compile.isTeam, NOT AN EMPTY STRING (sweep
+    #   2026-10-10). Only '' partitioned per person; "Unattached" is a
+    #   non-empty string, so every unattached runner in the state shared one
+    #   partition and all but seven were cut here, before topPerSchool --
+    #   which already exempts them -- ever saw them. isTeam is a Python
+    #   regex, so the field's non-team strings are named first and passed in.
+    from meet_compile import isTeam
+    cur.execute(f"""
+        SELECT DISTINCT s.school FROM athlete_season s
+        WHERE  s.pool = %(pool)s AND s.sport = 'XC' AND s.year = %(year)s
+          AND  s.state = %(st)s AND s.mean_rating IS NOT NULL
+          {div_sql}
+    """, params)
+    params["not_teams"] = sorted(
+        sc for sc in (_row(r, "school")[0] for r in cur.fetchall())
+        if sc and not isTeam(sc))
     cur.execute(f"""
         WITH ranked AS (
             SELECT s.person_id, s.school, s.state, s.grade,
                    s.mean_rating, s.best_rating, s.n_races, s.last_race,
                    row_number() OVER (
-                       PARTITION BY COALESCE(NULLIF(s.school, ''),
-                                             s.person_id::text)
+                       PARTITION BY CASE
+                           WHEN NULLIF(s.school, '') IS NULL
+                             OR s.school = ANY(%(not_teams)s)
+                           THEN 'p:' || s.person_id::text
+                           ELSE s.school END
                        ORDER BY s.mean_rating DESC, s.person_id) AS k
             FROM   athlete_season s
             WHERE  s.pool = %(pool)s AND s.sport = 'XC' AND s.year = %(year)s

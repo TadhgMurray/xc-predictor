@@ -504,3 +504,24 @@ def test_meet_divisions_count_finishers(A, monkeypatch):
     cur = StubCursor([[]])
     A.get_meet_divisions(cur, 7)
     assert "AS n_finishers" in cur.sql[-1][0] and "'DNF'" in cur.sql[-1][0]
+
+
+# ---- 17. embed footer --------------------------------------------------- #
+
+def test_embed_footer_names_the_scale():
+    src = _tpl("embed_school.html")
+    assert "high-school scale" in src
+    assert "an average runner in the group" not in src
+
+
+# ---- 18. projections: unattached runners are not one squad -------------- #
+
+def test_projection_field_partitions_non_teams_per_person():
+    import projections as P
+    cur = StubCursor([[{"school": "Unattached"}, {"school": "Jesuit"},
+                       {"school": ""}], []])
+    P._fieldUncached(cur, "hs_m", 2025, "CA", None)
+    sql, params = cur.sql[-1]
+    assert params["not_teams"] == ["Unattached"]
+    assert "s.school = ANY(%(not_teams)s)" in sql
+    assert "THEN 'p:' || s.person_id::text" in sql
