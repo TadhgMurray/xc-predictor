@@ -25,6 +25,32 @@
 # No guessing, no pattern-matching: the piece-count IS the format.
 # ------------------------------------------------------------------ #
 
+import re
+from collections import Counter
+
+# ★ HOW MANY CELLS WERE NOT TIMES, BY KIND (sweep 2026-10-10): "placeholder"
+#   (DNF, DQ, NT, "-"), "malformed" (anything else that is not a time), and
+#   "decorated_kept" (a flagged time that WAS kept). Process-wide; a scraper
+#   run prints or logs it. A rise in "malformed" is a new TFRRS decoration.
+REJECTS = Counter()
+
+# A placeholder: letters, dashes and spaces only -- no digit at all.
+_PLACEHOLDER = re.compile(r"^[A-Za-z\-\s/.]*$")
+
+# The first time, then only the decorations TFRRS is known to hang on one:
+# h/H (hand time), @ (altitude), # (converted), and a parenthesised second
+# reading (tie-break thousandths), in any order, nothing else.
+_DECORATED = re.compile(
+    r"^(\d+(?::\d+){0,2}(?:\.\d+)?)"
+    r"(?:\s*(?:[hH@#]|\([\d:.\s]*\)))+\s*$")
+
+
+def _decoratedTime(cleaned):
+    """The bare time out of a decorated TFRRS cell, or None."""
+    m = _DECORATED.match(cleaned)
+    return m.group(1) if m else None
+
+
 # parseTimeToSeconds
 # Purpose: Convert one TFRRS display time string into a float of seconds.
 # Arguments:
@@ -45,8 +71,24 @@ def parseTimeToSeconds(raw):
     # Empty / known non-time markers -> "no time". We do NOT invent a value.
     # _looksLikeTime rejects "DNF", "NT", "-" etc. BEFORE we try to int()/float()
     # them, so a placeholder can't crash the parse.
-    if cleaned == "" or not _looksLikeTime(cleaned):
+    if cleaned == "":
         return None
+    if not _looksLikeTime(cleaned):
+        # ★ A DECORATED TIME IS STILL A TIME (sweep 2026-10-10). TFRRS hangs
+        #   flags on real marks -- "10.8h" (hand-timed), "1:52.34@" (altitude),
+        #   "8:45.12#" (converted / oversized track), "4:05.21 (4:05.203)"
+        #   (the tie-break thousandths) -- and the digits-only guard threw
+        #   every one of them away as if it were a DNF. Only those known
+        #   decorations are stripped, and only the FIRST time is kept; any
+        #   other shape is still None, and counted (REJECTS) so a new one
+        #   shows up as a number instead of as missing rows.
+        token = _decoratedTime(cleaned)
+        if token is None:
+            REJECTS["placeholder" if _PLACEHOLDER.match(cleaned)
+                    else "malformed"] += 1
+            return None
+        REJECTS["decorated_kept"] += 1
+        cleaned = token
     
     # The colon-count is the format. Splitting gives us the pieces in order
     # (biggest unit first): ["16", "12.4"] is minutes then seconds.

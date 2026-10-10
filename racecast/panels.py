@@ -1617,9 +1617,19 @@ def _writePanels(conn, buckets, meta, recent=(), sports=("XC", "TF")):
             VALUES %s
         """, rows, page_size=1000)
 
-        cur.execute("DELETE FROM homepage_meta")
+        # ★ UPSERT, NEVER A BARE DELETE (sweep 2026-10-10). The XC and TF
+        #   processes run side by side and each wrote meta as DELETE-all +
+        #   INSERT-its-own: whichever committed second erased the other's
+        #   season_year_<sport> (predict.py's "season_year_TF but no
+        #   season_year_XC"), and the two concurrent INSERTs of the shared
+        #   keys could collide on the primary key and fail the step. Each
+        #   process now writes only the keys it computed; the shared ones
+        #   (built_at, default_sport, the facts) are the same numbers either
+        #   way. ! A key this build does not write (a fact whose count
+        #   failed) keeps its last value instead of vanishing from the page.
         psycopg2.extras.execute_values(cur,
-            "INSERT INTO homepage_meta (key, value) VALUES %s",
+            "INSERT INTO homepage_meta (key, value) VALUES %s "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
             list(meta.items()))
 
         # Same transaction, same all-or-nothing swap (and the same caveat a

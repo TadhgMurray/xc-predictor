@@ -237,7 +237,12 @@ def seasonYearSqlInt(sport=None, date_col="date"):
 #  4. WHERE THIS RULE MUST *NOT* BE APPLIED                           #
 # ------------------------------------------------------------------ #
 #
-# ! pro_athlete_season IS STILL BUILT ON THE CALENDAR YEAR.
+# ★ sweep 2026-10-10: THE NOTE BELOW IS HISTORY. pro_flag now writes
+#   pro_athlete_season on the academic year (pro_flag.py docstring), poolOf
+#   uses one key, and build_ranking_results / panels / feature_extraction all
+#   join it with seasonYearSql(Int). Kept so the old two-key code reads right.
+#
+# ! pro_athlete_season WAS STILL BUILT ON THE CALENDAR YEAR.
 #
 #   poolOf keeps two keys for that reason:
 #       pkey = (pid, int(season))   calendar -- pro_athlete_season

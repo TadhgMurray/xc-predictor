@@ -1576,19 +1576,38 @@ def _denormContext(spec, last_row):
     dist = spec.get("distance_meters")
     if not dist:
         return None
-    try:
-        from normalize_distance import getPool
-        pool = getPool((last_row or {}).get("grade"),
-                       (last_row or {}).get("gender"))
-    except Exception:                                   # noqa: BLE001
-        pool = None
-    if (not pool or pool == "unknown_level") and last_row:
+    # ★ sweep 2026-10-10: THE ATHLETE ON THE TARGET'S DAY, not on the last
+    #   race's (_seasonAdvanced): an 8th grader's spring row denormalised
+    #   their autumn high school 5K on the middle school curve.
+    row, yrs = _seasonAdvanced(spec, last_row)
+    pool = None
+    # ★ sweep 2026-10-10: THE RATED POOL FIRST, same season only. engine/
+    #   anchor_repair (05b) puts stored times on the pool the row is RATED
+    #   in, so that is the scale the model's targets were on
+    #   (feature_extraction.storedPool). A season later it describes a
+    #   level the athlete may have left, so the advanced grade decides.
+    if row and not yrs:
+        try:
+            from normalize_distance import ratedScalePool
+            # a pro pool's scale is its college twin's (ratedScalePool)
+            pool = ratedScalePool((row.get("rating_pool") or "")
+                                  .split("|")[0] or None)
+        except Exception:                               # noqa: BLE001
+            pool = None
+    if not pool or pool == "unknown_level":
+        try:
+            from normalize_distance import getPool
+            pool = getPool((row or {}).get("grade"),
+                           (row or {}).get("gender"))
+        except Exception:                               # noqa: BLE001
+            pool = None
+    if (not pool or pool == "unknown_level") and row:
         # ★ A BLANK OR CLASS-YEAR GRADE (tfrrs XC rows carry none) used to end
         #   here, and the runner was printed on the flat-5K clock against an
         #   8K -- the "?" group in the backtest (sweep 2026-10-10). The
         #   backfill's resolver reads the school and season level too.
         try:
-            pool = _fx().rowPool(last_row)
+            pool = _fx().rowPool(row)
         except Exception:                               # noqa: BLE001
             pool = None
     if not pool or pool == "unknown_level":
@@ -2089,29 +2108,63 @@ _WEATHER_FIELDS = ("temp_c", "dew_point_c", "humidity", "apparent_temp_c",
                    "wind_speed_km", "wind_dir")
 
 
+# ★ THE ATHLETE AS THEY WILL BE ON THE TARGET'S DAY: (row copy, academic
+#   years moved). Shared by _targetRow and _denormContext so the context
+#   vector and the clock read the same athlete.
+# ★ THE GRADE THEY WILL HAVE ON THE DAY (2026-10-08 audit). Training reads
+#   the target race's own grade; this row copied the last race's, so a
+#   September race after a spring track season went in a year young --
+#   grade ordinal and level both, worst at ms->hs and hs->college. Moved on
+#   by the academic years between the two dates, the same rule the squads
+#   use (_advanced keeps the stored grade when it cannot read it, or a senior
+#   has nothing to move to).
+# ★ sweep 2026-10-10: AND THE SEASON-KEYED FACTS GO WITH IT. grade_untrusted,
+#   fixed_grade, fixed_level and season_level are the LAST season's verdicts
+#   (grade_fix / athlete_season_level are keyed per academic year), and
+#   pool_resolve.resolvePool reads fixed_grade over grade when
+#   grade_untrusted -- so the advanced grade above was silently ignored for
+#   exactly the athletes grade_sanity had corrected, and a season_level of
+#   'hs' kept a new college freshman in the hs pool. The target season has
+#   no verdict yet (it has no races), which is what None says. rating_pool
+#   is the last season's solve, cleared for the same reason.
+# ! is_pro AND college_first STAY. college_first is a per-person date, not a
+#   season key; a pro verdict carries forward more truthfully than a fall
+#   back to a grade a professional does not have.
+_SEASON_FACTS = ("grade_untrusted", "fixed_grade", "fixed_level",
+                 "season_level", "rating_pool")
+
+
+def _seasonAdvanced(spec, last_row):
+    if not last_row:
+        return last_row, 0
+    row = dict(last_row)
+    yrs = 0
+    try:
+        from normalize_distance import academicYearOfDate, getPool
+        last_ay = academicYearOfDate(last_row.get("date"))
+        target_ay = academicYearOfDate(spec.get("date"))
+        if last_ay and target_ay and target_ay > last_ay:
+            yrs = target_ay - last_ay
+        if yrs > 0:
+            if row.get("grade") not in (None, ""):
+                row["grade"] = _advanced(row["grade"], yrs,
+                                         getPool(row["grade"],
+                                                 row.get("gender")))
+            for f in _SEASON_FACTS:
+                if f in row:
+                    row[f] = None
+    except Exception:                                   # noqa: BLE001
+        pass
+    return row, yrs
+
+
 def _targetRow(spec, last_row, weather=None):
     """The hypothetical race as a corpus-shaped row: the athlete as they
     last raced, at the target's venue on the target's date. `weather`,
     a forecast.py row, fills the weather fields; None leaves them as
     the model's no-weather shape."""
-    row = dict(last_row)
-    # ★ THE GRADE THEY WILL HAVE ON THE DAY (2026-10-08 audit). Training
-    #   reads the target race's own grade; this row copied the last race's,
-    #   so a September race after a spring track season went in a year
-    #   young -- grade ordinal and level both, worst at ms->hs and
-    #   hs->college. Moved on by the academic years between the two dates,
-    #   the same rule the squads use (_advanced keeps the stored grade when
-    #   it cannot read it, or a senior has nothing to move to).
-    try:
-        from normalize_distance import academicYearOfDate, getPool
-        yrs = ((academicYearOfDate(spec.get("date")) or 0)
-               - (academicYearOfDate(last_row.get("date")) or 0))
-        if yrs > 0 and academicYearOfDate(last_row.get("date")) \
-                and row.get("grade") not in (None, ""):
-            row["grade"] = _advanced(row["grade"], yrs,
-                                     getPool(row["grade"], row.get("gender")))
-    except Exception:                                   # noqa: BLE001
-        pass
+    # the grade and season facts they will have on the day (_seasonAdvanced)
+    row, _yrs = _seasonAdvanced(spec, last_row)
     row["is_xc"] = spec["is_xc"]
     row["is_indoor"] = None if spec["is_xc"] else bool(spec.get("is_indoor"))
     for f in _RACE_FIELDS:

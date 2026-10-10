@@ -84,8 +84,12 @@ EVENT_DISTANCES_TF = {
     "2mile":    3218.69,
     "5000m":    5000,
     "10000m":   10000,
-    "3000mSC":  3000,
-    "2000mSC":  2000,
+    # ! NO STEEPLECHASE KEYS (sweep 2026-10-10). "3000mSC": 3000 and
+    #   "2000mSC": 2000 sat here, and event_parse reads this dict BEFORE its
+    #   steeple reject -- so every anet steeple was priced as a flat 3000 or
+    #   2000 on the flat curve. A steeple's distance is parseEventShort's job
+    #   (kind "steeple"); this dict is flat races only. The only other reader
+    #   is backfill_normalize_tf.py, SQLite-era dead code.
     "1000m":    1000,
 }
 
