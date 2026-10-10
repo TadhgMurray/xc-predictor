@@ -374,7 +374,8 @@ class XCPredictor(nn.Module):
 
     def __init__(self, n_venues: int = 1, context_features: int = CONTEXT_FEATURES,
                  sequence_features: int = SEQUENCE_FEATURES,
-                 derived_features: int = 0, student_t: bool = False):
+                 derived_features: int = 0, student_t: bool = False,
+                 context_token: bool = False):
         super().__init__()
         # ★ 0 / False BUILD THE MODEL EVERY OLDER CHECKPOINT WAS TRAINED AS;
         #   fromState() reads both off a state_dict, so a file always loads
@@ -409,6 +410,24 @@ class XCPredictor(nn.Module):
         # made from the context, attending over the encoded races.
         q_width = context_features + self.derived_features
         self.context_query = nn.Linear(q_width, EMBED_DIM)
+
+        # ★ THE RACE AS THE FIRST ITEM OF THE HISTORY (owner, 2026-10-10:
+        #   "agree with 1"). Without it the encoder reads the history blind
+        #   to what is being predicted and the target race only asks ONE
+        #   question of the finished summary (_askHistory) -- so it cannot
+        #   read a hilly 8K's history differently from a flat 5K's. With it
+        #   the target race (its context, break features and venue) is a
+        #   token at position 0 that every layer attends to and from, and its
+        #   encoded output goes to the head as well.
+        # ! ZERO-INITIALISED so a model widened from one without it (train.py
+        #   --init) starts from a blank token -- close to what it already
+        #   knew -- and learns what to put in it.
+        self.context_token = bool(context_token)
+        if self.context_token:
+            self.context_token_proj = nn.Linear(q_width + VENUE_EMBED_DIM,
+                                                EMBED_DIM)
+            nn.init.zeros_(self.context_token_proj.weight)
+            nn.init.zeros_(self.context_token_proj.bias)
         self.pool_attention = nn.MultiheadAttention(
             EMBED_DIM, N_HEADS, dropout=DROPOUT, batch_first=True)
 
@@ -420,7 +439,8 @@ class XCPredictor(nn.Module):
         #   the mean, so every existing caller is unchanged; forwardDist()
         #   returns both.
         self.head = nn.Sequential(
-            nn.Linear(2 * EMBED_DIM + q_width + VENUE_EMBED_DIM, 64),
+            nn.Linear((3 if self.context_token else 2) * EMBED_DIM
+                      + q_width + VENUE_EMBED_DIM, 64),
             nn.ReLU(),
             nn.Linear(64, 2),
         )
@@ -467,7 +487,8 @@ class XCPredictor(nn.Module):
                    context_features=state["context_query.weight"].shape[1] - derived,
                    sequence_features=state["input_projection.weight"].shape[1],
                    derived_features=derived,
-                   student_t="nu_raw" in state, **kw)
+                   student_t="nu_raw" in state,
+                   context_token="context_token_proj.weight" in state, **kw)
 
     def tailNu(self):
         """Student-t degrees of freedom, > 2 so the variance exists."""
@@ -578,23 +599,43 @@ class XCPredictor(nn.Module):
                     context: torch.Tensor,
                     venues: torch.Tensor = None) -> torch.Tensor:
         x = (sequences.to(torch.float32) - self.seq_mean) / self.seq_std
-        ctx = (context.to(torch.float32) - self.ctx_mean) / self.ctx_std
-        if self.derived_features:
-            ctx = torch.cat([ctx, self.breakFeatures(sequences, masks,
-                                                     context)], dim=1)
+        ctx_base = (context.to(torch.float32) - self.ctx_mean) / self.ctx_std
+        derived = (self.breakFeatures(sequences, masks, context)
+                   if self.derived_features else None)
+        # the context the query and the token read: extraction's, then ours
+        ctx = (torch.cat([ctx_base, derived], dim=1) if derived is not None
+               else ctx_base)
+
+        if venues is None:
+            venues = torch.zeros(x.shape[0], dtype=torch.long,
+                                 device=x.device)
+        venue_vec = self.venue_embedding(venues)          # [B,16]
 
         x = self.input_projection(x)                     # [B,S,21] -> [B,S,256]
-        x = self._encode(x, masks)                        # [B,S,256]
+        if self.context_token:
+            tok = self.context_token_proj(
+                torch.cat([ctx, venue_vec], dim=1)).unsqueeze(1)   # [B,1,256]
+            x = torch.cat([tok, x], dim=1)
+            masks_all = torch.cat([torch.ones_like(masks[:, :1]), masks], dim=1)
+            x = self._encode(x, masks_all)
+            token_out, x = x[:, 0], x[:, 1:]              # the races alone below
+        else:
+            x = self._encode(x, masks)                    # [B,S,256]
 
         attended = self._askHistory(x, ctx, masks)        # [B,256]
         pooled = self._poolRealRaces(x, masks)            # [B,256]
 
-        if venues is None:
-            venues = torch.zeros(pooled.shape[0], dtype=torch.long,
-                                 device=pooled.device)
-        venue_vec = self.venue_embedding(venues)          # [B,16]
-
-        combined = torch.cat([attended, pooled, ctx, venue_vec], dim=1)
+        # ⚠ NEW INPUTS GO ON THE END, NEVER IN THE MIDDLE. train._initFrom
+        #   widens an older checkpoint by copying its columns into the FIRST
+        #   ones; anything inserted before an old block would hand that
+        #   block's weights to the wrong inputs. The original four keep their
+        #   order and positions; break features, then the token, follow.
+        parts = [attended, pooled, ctx_base, venue_vec]
+        if derived is not None:
+            parts.append(derived)
+        if self.context_token:
+            parts.append(token_out)
+        combined = torch.cat(parts, dim=1)
         return self.head(combined)                         # [B,2]
 
     def breakFeatures(self, sequences, masks, context) -> torch.Tensor:

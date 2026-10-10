@@ -247,6 +247,7 @@ LOSS = "student"
 BETA = 0.5
 BALANCE_BREAKS = "sqrt"
 BREAK_FEATURES = True       # transformer.DERIVED_FEATURES, --no-break-features
+CONTEXT_TOKEN = True        # the target race as the history's first item, --no-context-token
 BREAK_W = None              # per-band weights, set in main() from the stats
 # real days away (gap minus the hidden stretch), the backtest's bands
 BREAK_BANDS = (14.0, 42.0, 120.0, 365.0)
@@ -1764,10 +1765,14 @@ def _initFrom(model, state):
         else:
             raise RuntimeError(f"--init: {k} is {tuple(v.shape)}, "
                                f"this model has {tuple(t.shape)}")
-    # ! THE BREAK-FEATURE COLUMNS IN context_query/head SIT AFTER THE OLD
-    #   CONTEXT, which is where _forwardRaw concatenates them -- so the
-    #   copied columns keep their meaning.
-    missing = [k for k in own if k not in out]
+    # ! NEW COLUMNS ARE ALWAYS APPENDED: context_query reads [context,
+    #   break features] and the head [attended, pooled, context, venue,
+    #   break features, token] (transformer._forwardRaw), so an older
+    #   model's columns are exactly the first ones and keep their meaning.
+    # ! THE CONTEXT TOKEN'S LAYER IS NEW and keeps its zero init (see
+    #   transformer.context_token); everything else must come from the file.
+    missing = [k for k in own if k not in out
+               and not k.startswith("context_token_proj.")]
     ok = {"n_derived", "nu_raw", "baseline_mode", "baseline_half_life"}
     if set(missing) - ok:
         raise RuntimeError("--init: missing " + ", ".join(sorted(set(missing) - ok)))
@@ -1856,7 +1861,8 @@ def main():
 
     model = XCPredictor(n_venues=n_venues,
                         derived_features=DERIVED_FEATURES if BREAK_FEATURES else 0,
-                        student_t=(LOSS == "student"))
+                        student_t=(LOSS == "student"),
+                        context_token=CONTEXT_TOKEN)
     # ⚠ BEFORE setTargetStats, AND WITH THE SAME VALUES computeStats USED.
     #   The target is ln(target/baseline), so the stats below are properties
     #   of the rule; measuring under one and un-z-scoring under another puts
@@ -2107,6 +2113,9 @@ if __name__ == "__main__":
                           f"(default {BALANCE_BREAKS})")
     _ap.add_argument("--no-break-features", action="store_true",
                      help="build the model without the in-model break features")
+    _ap.add_argument("--no-context-token", action="store_true",
+                     help="build the model without the target race as the "
+                          "history's first item (transformer.context_token)")
     _ap.add_argument("--init", default=None, metavar="MODEL_PT",
                      help="start from this model.pt's weights instead of "
                           "random ones (fine-tuning at a new --lr). The "
@@ -2180,6 +2189,8 @@ if __name__ == "__main__":
         BALANCE_BREAKS = _args.balance_breaks
     if _args.no_break_features:
         BREAK_FEATURES = False
+    if _args.no_context_token:
+        CONTEXT_TOKEN = False
     if _args.baseline:
         BASELINE = {"ewma": BASELINE_EWMA, "best2": BASELINE_BEST2,
                     "last": BASELINE_LAST,
