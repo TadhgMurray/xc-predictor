@@ -1,0 +1,31 @@
+{# =====================================================================
+  _next_race.html -- "Next race" under the athlete and school headers
+  (upcoming_preview.py, owner 2026-10-10).
+
+  Set before the include:
+      nr_api   the /api/next-race/... URL for this page
+      nr_kind  "athlete" | "school"
+      nr_track   (school only) [(href, label)] of the season tracker, or none
+      nr_profile (athlete only) the recruiting one-pager's URL, or none
+
+  ★ EMPTY IN THE HTML, FILLED BY next-race.js. The pages are edge cached and
+    the prediction is not theirs to wait on: the line stays hidden until the
+    cached API answers, and stays hidden when there is no posted meet.
+    Styled as the header's rank line, which it sits under.
+===================================================================== #}
+{# its few rules live in previews.css; a <link> in the body so the host pages' <head>s stay untouched #}
+<link rel="stylesheet" href="{{ static_v('previews.css') }}">
+<div class="rc-w nr-wrap">
+  {% if nr_api %}<p class="rank-line nr-line" data-next-race="{{ nr_api }}" data-kind="{{ nr_kind }}" hidden></p>{% endif %}
+  {% if nr_profile %}
+  <p class="rank-line nr-prof"><span class="rl-lab">Recruiting</span>
+    <span class="rk"><a href="{{ nr_profile }}">One-page profile →</a></span>
+    <span class="rl-floor">bests, rating, ranks and college fit on one printable sheet</span></p>
+  {% endif %}
+  {% if nr_track %}
+  <p class="rank-line nr-track"><span class="rl-lab">Season tracker</span>
+    {% for href, label in nr_track %}{% if not loop.first %}<span class="sep">·</span>{% endif %}<span class="rk"><a href="{{ href }}">{{ label }} →</a></span>{% endfor %}
+    <span class="rl-floor">team rating, 1–5 gap and projected state place, week by week</span></p>
+  {% endif %}
+</div>
+{% if nr_api %}<script src="{{ static_v('next-race.js') }}" defer></script>{% endif %}

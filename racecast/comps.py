@@ -47,12 +47,45 @@ def _pct(vals, q):
     return vals[lo] + (vals[hi] - vals[lo]) * (k - lo)
 
 
+# ★ THE FAN ON THE ATHLETE CHART (owner, 2026-10-10: "runners like you
+#   averaged 129 the next season (range 124-134)"). The range is the comps'
+#   own 10th to 90th percentile -- where eight in ten of them landed -- and
+#   the inner band is the middle half the recruit page already prints. Not
+#   the min and max: one comp who got hurt or one who doubled their mileage
+#   would set the range alone, and it would widen with every comp added.
+#   Not a sd band either: next-season changes are skewed (a bad season
+#   falls further than a good one climbs), and percentiles read off the
+#   comps say what happened without assuming a shape.
+FAN_Q = (0.10, 0.90)
+# ! A 10th PERCENTILE NEEDS A RUNNER BEYOND IT ON EACH SIDE: below ten comps
+#   the "range" is just the two extreme comps, so the outer band is left
+#   off (the middle half and the average are still drawn).
+FAN_MIN = int(round(1 / FAN_Q[0]))
+
+
 def _spread(vals):
     vals = sorted(v for v in vals if v is not None)
     if not vals:
         return None
     return {"n": len(vals), "p25": _pct(vals, .25), "median": _pct(vals, .5),
-            "p75": _pct(vals, .75)}
+            "p75": _pct(vals, .75),
+            # ★ added 2026-10-10 for the chart's fan (FAN_Q); additive keys,
+            #   the recruit page reads none of them
+            "mean": sum(vals) / len(vals),
+            "p10": _pct(vals, FAN_Q[0]) if len(vals) >= FAN_MIN else None,
+            "p90": _pct(vals, FAN_Q[1]) if len(vals) >= FAN_MIN else None}
+
+
+def nextSeasonFan(result):
+    """The chart's next-season band from a runnersLikeYou() answer, or None:
+    {year, sport, mean, p10, p25, median, p75, p90, n, rating, grade}."""
+    if not result or not result.get("next"):
+        return None
+    s, nx = result["subject"], result["next"]
+    return {"year": int(s["year"]) + 1, "sport": s["sport"], "grade": s.get("grade"),
+            "rating": float(s["rating"]), "n": nx["n"], "mean": nx["mean"],
+            "p10": nx.get("p10"), "p25": nx["p25"], "median": nx["median"],
+            "p75": nx["p75"], "p90": nx.get("p90"), "fan_q": list(FAN_Q)}
 
 
 def subjectSeason(cur, person_id, sport):

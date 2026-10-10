@@ -1331,6 +1331,10 @@ step 10f3_comps       "$PY" -u racecast/build_comps.py
 # the athlete page's rank line, precomputed (311): every season's place in
 # every scope, one row per season, so the page runs no scoped counts
 step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py
+# ★ THIS WEEK'S STATE RANKS, KEPT (2026-10-10): season_rank is swapped every
+#   run and held no history; /movers compares a week with the one before
+#   (build_rank_snapshot.py). Seconds, reads only season_rank.
+step 10g2_rank_snapshot "$PY" -u racecast/build_rank_snapshot.py
 step 11_teams         "$PY" -u racecast/build_team_season.py
 # ! THE PAGE INDEXES COME BEFORE THE COURSE PAGES. They ran AFTER them
 #   (step 14), so every course page of a first run was built without the

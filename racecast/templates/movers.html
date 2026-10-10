@@ -1,0 +1,184 @@
+{# =====================================================================
+  movers.html -- "This week in <state>" (movers.py, owner 2026-10-10)
+
+  The lede is rule-based sentences (movers.sentences, race_story.py's
+  kind); the tabs are the lists every sentence is read off:
+    Risers / Fallers   this week's state board against last week's
+    Breakouts          breakouts.py's rating jumps, this state, this week
+    Above their level  above_level.py's rule over the state's week
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set sport_words = "cross country" if sport == "XC" else "track" %}
+{% set meta_title = ("This week in " ~ state_name ~ ": " ~ words ~ " " ~ sport_words ~ " movers") if state else ("Weekly movers: " ~ words ~ " " ~ sport_words) %}
+{% set meta_description = ("Who climbed the " ~ state_name ~ " " ~ words ~ " " ~ sport_words ~ " rankings this week, the biggest breakouts, and who ran above their level.") if state else "Pick a state: who climbed the rankings this week, the biggest breakouts, and who ran above their level." %}
+{% set meta_path = "/movers" ~ ("?state=" ~ state ~ "&pool=" ~ pool ~ "&sport=" ~ (sport|lower) if state else "") %}
+{% if state %}{% set meta_image = site_origin ~ "/card/board/" ~ (sport|lower) ~ "/" ~ pool ~ "/" ~ state ~ ".png" %}{% endif %}
+{% set meta_crumbs = [("Rankings", "/rankings"), ("Movers", none)] %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('pages2.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('previews.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+{% macro qs(st=state, pl=pool, sp=sport) -%}
+/movers?{% if st %}state={{ st }}&{% endif %}pool={{ pl }}&sport={{ sp|lower }}
+{%- endmacro %}
+{% macro who(r) -%}
+<a href="/athlete/{{ r.person_id }}">{{ r.name }}</a>{% if r.school %}<span class="p2-row-sub">{{ r.school }}</span>{% endif %}
+{%- endmacro %}
+{% set plevel = pool.split('_')[0] %}
+<main class="page-wide p2-page rc mv-page">
+  <div class="board-strip" role="navigation" aria-label="Rankings boards">
+    <a href="/rankings?board=ability">Ability</a>
+    <a href="/rankings?board=teams">Teams</a>
+    <a href="/breakouts">Breakouts</a>
+    <a class="is-on" href="/movers" aria-current="page">Movers</a>
+    <a href="/rankings/xc/hs-boys">By state</a>
+  </div>
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ words }} {{ sport_words }}</span></div>
+      <h1>{% if state %}This week in {{ state_name }}{% else %}Weekly movers{% endif %}</h1>
+      {% if d %}
+      <div class="rc-meta">
+        {% if d.history %}Ranks on {{ d.weeks[0]|mdy }} against {{ d.weeks[1]|mdy }}{% else %}Rank changes start once two weekly snapshots exist{% endif %}
+        {% if d.anchor %} · races {{ d.window_lo|mdy }} to {{ d.anchor|mdy }}{% endif %}
+        · <span class="p2-muted">computed {{ d.computed_at|ago_words }}</span>
+        · <button type="button" class="share-btn rc-share-link" data-share-title="This week in {{ state_name }} on Racecast"
+              data-share-url="{{ site_origin ~ qs() }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+      </div>
+      {% if lede %}<p class="rc-story mv-lede">{% for s in lede %}{{ s }}{% if not loop.last %} {% endif %}{% endfor %}</p>{% endif %}
+      {% endif %}
+    </div>
+  </div></header>
+
+  <nav class="p2-toggles" aria-label="Movers options">
+    <span class="p2-chips" role="group" aria-label="Level">
+      {% for p, w in pools %}<a href="{{ qs(pl=p) }}" class="{{ 'is-on' if p == pool }}">{{ w }}</a>{% endfor %}
+    </span>
+    <span class="p2-seg" role="group" aria-label="Sport">
+      <a href="{{ qs(sp='XC') }}" class="{{ 'is-on' if sport == 'XC' }}">XC</a>
+      <a href="{{ qs(sp='TF') }}" class="{{ 'is-on' if sport == 'TF' }}">Track</a>
+    </span>
+    <form class="p2-state-form" method="get" action="/movers">
+      <input type="hidden" name="pool" value="{{ pool }}">
+      <input type="hidden" name="sport" value="{{ sport|lower }}">
+      <label for="mv-state" class="p2-muted">State</label>
+      <select id="mv-state" name="state" onchange="this.form.submit()">
+        <option value="">Pick a state</option>
+        {% for code, name in states %}<option value="{{ code }}"{% if code == state %} selected{% endif %}>{{ name }}</option>{% endfor %}
+      </select>
+      <noscript><button type="submit">Go</button></noscript>
+    </form>
+  </nav>
+
+  {% if not state %}
+  <ul class="p2-states">
+    {% for code, name in states %}<li><a href="{{ qs(st=code) }}">{{ name }}</a></li>{% endfor %}
+  </ul>
+  {% else %}
+  {% if not d.history %}
+  <div class="p2-banner" role="note">The rank lists need last week's board, and rank history starts with this
+    season's snapshots{% if d.weeks %} (the first was taken the week of {{ d.weeks[0]|mdy }}){% endif %}. Breakouts and
+    above-their-level are below now; risers and fallers join them after the next weekly snapshot.</div>
+  {% endif %}
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      {% if d.history %}
+      <a class="seg-btn is-on" href="#risers" data-tab="risers">Risers<span class="n">{{ d.risers|length }}</span></a>
+      <a class="seg-btn" href="#fallers" data-tab="fallers">Fallers<span class="n">{{ d.fallers|length }}</span></a>
+      {% endif %}
+      <a class="seg-btn{{ ' is-on' if not d.history }}" href="#breakouts" data-tab="breakouts">Breakouts<span class="n">{{ d.breakouts|length }}</span></a>
+      <a class="seg-btn" href="#above" data-tab="above">Above their level<span class="n">{{ d.above|length }}</span></a>
+      <a class="seg-btn" href="#how" data-tab="how">What counts</a>
+    </nav>
+  </div>
+
+  {% if d.history %}
+  <section class="rc-panel" id="risers" data-panel="risers">
+  {% if d.risers %}
+  <table class="p2-tbl">
+    <thead><tr><th class="num">Now</th><th>Athlete</th><th class="num">Was</th><th class="num">Change</th><th class="num p2-wide">Rating</th></tr></thead>
+    <tbody>{% for r in d.risers %}<tr>
+      <td class="num">{{ r.now }}</td><td>{{ who(r) }}</td><td class="num">{{ r.prev }}</td>
+      <td class="num p2-up">+{{ r.change }}</td>
+      <td class="num p2-wide">{{ "%.1f"|format(r.rating) if r.rating is not none }}{% if r.prev_rating is not none and r.rating is not none %} <span class="p2-muted">({{ "%+.1f"|format(r.rating - r.prev_rating) }})</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="p2-note">Nobody in the top {{ d.window }} moved up this week.</p>{% endif %}
+  {% if d.entered %}
+  <h2 class="mv-h">New to the top {{ d.window }}</h2>
+  <p class="p2-note">{% for r in d.entered %}<a href="/athlete/{{ r.person_id }}">{{ r.name }}</a>{% if r.school %} ({{ r.school }}){% endif %} <span class="p2-muted">{{ r.now }}{% if r.prev %}, was {{ r.prev }}{% else %}, first ranked{% endif %}</span>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+  </section>
+
+  <section class="rc-panel" id="fallers" data-panel="fallers">
+  {% if d.fallers %}
+  <table class="p2-tbl">
+    <thead><tr><th class="num">Was</th><th>Athlete</th><th class="num">Now</th><th class="num">Change</th><th class="num p2-wide">Rating</th></tr></thead>
+    <tbody>{% for r in d.fallers %}<tr>
+      <td class="num">{{ r.prev }}</td><td>{{ who(r) }}</td><td class="num">{{ r.now if r.now else "off" }}</td>
+      <td class="num">{{ ("-" ~ r.change) if r.change else "-" }}</td>
+      <td class="num p2-wide">{{ "%.1f"|format(r.rating) if r.rating is not none else "-" }}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="p2-note">Nobody in last week's top {{ d.window }} moved down.</p>{% endif %}
+  </section>
+  {% endif %}
+
+  <section class="rc-panel" id="breakouts" data-panel="breakouts">
+  {% if d.breakouts %}
+  <table class="p2-tbl">
+    <thead><tr><th class="num">#</th><th>Athlete</th><th>Race</th><th class="num">Rating</th><th class="num">Jump</th></tr></thead>
+    <tbody>{% for r in d.breakouts %}<tr>
+      <td class="num">{{ loop.index }}</td><td>{{ who(r) }}</td>
+      <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}<span class="p2-row-sub">{{ r.race_date|mdy }}</span></td>
+      <td class="num">{{ "%.1f"|format(r.speed_rating) }}</td><td class="num p2-up">+{{ "%.1f"|format(r.jump) }}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+  <a class="rc-more" href="/breakouts?level={{ level }}&state={{ state }}&sport={{ sport|lower }}">All breakouts in {{ state_name }} →</a>
+  {% else %}<p class="p2-note">No rating jumps in {{ state_name }} this week.</p>{% endif %}
+  </section>
+
+  <section class="rc-panel" id="above" data-panel="above">
+  {% if d.above %}
+  <table class="p2-tbl">
+    <thead><tr><th class="num">#</th><th>Athlete</th><th>Race</th><th class="num">Rating</th><th class="num" title="Percent over the level they brought into the race">Over level</th></tr></thead>
+    <tbody>{% for r in d.above %}<tr>
+      <td class="num">{{ loop.index }}</td><td>{{ who(r) }}</td>
+      <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}<span class="p2-row-sub">{{ r.day|mdy }}</span></td>
+      <td class="num">{{ "%.1f"|format(r.rating) }} <span class="p2-row-sub">level {{ "%.1f"|format(r.level) }}</span></td>
+      <td class="num p2-up">+{{ "%.1f"|format(r.vs_level) }}%</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="p2-note">Nobody in {{ state_name }} beat their level by more than a normal day's swing this week.</p>{% endif %}
+  </section>
+
+  <section class="rc-panel p2-how" id="how" data-panel="how">
+    <ul>
+      <li><strong>Risers and fallers</strong> compare this week's {{ state_name }} board with last week's. A
+        weekly snapshot of the boards is kept from this season on (weeks start Friday, so a week's board is
+        the one just before its weekend's meets). Only the first page of the board, the top {{ d.window }},
+        is listed: past it a point of rating moves a runner dozens of places.</li>
+      <li><strong>Breakouts</strong> are <a href="/breakouts">Breakouts</a>' rating jumps in {{ state_name }} this
+        week: a race above the median of the athlete's earlier races this season.</li>
+      <li><strong>Above their level</strong> is a race's rating against the level the runner brought in (the
+        season statistic over their races in the year before it), listed when it beats that level by more
+        than a normal day's swing{% if d.sigma %} ({{ "%.1f"|format(d.sigma) }}% this week, measured from these
+        runners){% endif %}. The race pages flag the same thing one race at a time.</li>
+      <li><strong>The sentences</strong> at the top are templates that fire only when their facts are in these lists.</li>
+    </ul>
+  </section>
+  {% endif %}
+</main>
+<script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
+</body>
+</html>

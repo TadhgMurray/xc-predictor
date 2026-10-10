@@ -9533,6 +9533,10 @@ app.register_blueprint(_pages2.bp)
 # ★ "WHAT IT TAKES" (owner, 2026-10-05): its own blueprint too, see cuts.py.
 import cuts as _cuts                                           # noqa: E402
 app.register_blueprint(_cuts.bp)
+# ★ PREVIEWS, MOVERS, THE TEAM TRACKER, THE ONE-PAGER (owner, 2026-10-10):
+#   their own blueprint too, see pages3.py.
+import pages3 as _pages3                                       # noqa: E402
+app.register_blueprint(_pages3.bp)
 
 
 @app.route("/predictions")

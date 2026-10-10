@@ -402,6 +402,8 @@
         <p class="hm-side-links">
           <a href="/meets?sport={{ sport }}">All recent meets →</a>
           {% if coming_n and coming_n.get(sport) %}<a href="/meets?view=upcoming&amp;sport={{ sport }}">{{ "{:,}".format(coming_n[sport]) }} coming up this week →</a>{% endif %}
+          {# ★ THE WEEK'S BIGGEST POSTED MEET, PREVIEWED (2026-10-10, pages3.comingTop) #}
+          {% set ct = coming_top(sport) if coming_n and coming_n.get(sport) else none %}{% if ct and ct.preview_href %}<a href="{{ ct.preview_href }}">Preview: {{ ct.name }} →</a>{% endif %}
         </p>
       </div>
       {% endif %}

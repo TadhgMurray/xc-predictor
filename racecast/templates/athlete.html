@@ -424,8 +424,12 @@
     {% endif %}
   </div>
 </div></header>
+{# ★ NEXT RACE (2026-10-10, upcoming_preview.py): filled client-side from a cached API #}
+{% set nr_api = ("/api/next-race/athlete/" ~ athlete.person_id) if xc_seasons else none %}{% set nr_kind = "athlete" %}{% set nr_track = none %}
+{% set nr_profile = ("/athlete/" ~ athlete.person_id ~ "/profile") if athlete.team_pool and (athlete.team_pool|string).startswith('hs_') else none %}
+{% include "_next_race.html" %}
 
-{% set n_xc = xc_seasons|map(attribute='1')|map(attribute='races')|map('length')|sum %}
+{% set n_xc =xc_seasons|map(attribute='1')|map(attribute='races')|map('length')|sum %}
 {% set n_tf = tf_seasons|map(attribute='1')|map(attribute='races')|map('length')|sum %}
 <div class="rc-w rc-grid">
 <div class="rc-mainc">
@@ -580,6 +584,8 @@
 {# scale-view.js FIRST: athlete-charts.js reads window.rcScale. #}
 <script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('athlete-charts.js') }}"></script>
+{# the next-season fan on the rating charts (comps.py, 2026-10-10) #}
+<script src="{{ static_v('comps-fan.js') }}"></script>
 
 <script src="{{ static_v('share.js') }}"></script>
 <script src="{{ static_v('race-page.js') }}"></script>

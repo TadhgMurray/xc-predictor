@@ -288,10 +288,25 @@ function drawChart(host, points, opts) {
   const data = points;
   const n = data.length;
 
-  const ys = data.map(pointVal);
-  const [yLo, yHi, yStep] = niceRange(Math.min(...ys), Math.max(...ys));
+  /* ★ THE NEXT-SEASON FAN (2026-10-10, comps-fan.js): "runners like you"
+     as one more slot past the last race. Its values join the y range so
+     the band is never clipped, and it takes a slot of its own so the
+     races keep their spacing. */
+  const fan = opts.fan || null;
+  const fanVals = fan ? [fan.p10, fan.p90, fan.p25, fan.p75, fan.mean]
+    .filter((v) => v !== null && v !== undefined) : [];
 
-  const xScale = makeXScale(n, width);
+  const ys = data.map(pointVal);
+  let [yLo, yHi, yStep] = niceRange(Math.min(...ys, ...fanVals),
+                                    Math.max(...ys, ...fanVals));
+  /* opts.integer: whole-number ticks (a place, a count), so no "#7.5" */
+  if (opts.integer && yStep % 1 !== 0) {
+    yStep = Math.ceil(yStep);
+    yLo = Math.floor(yLo / yStep) * yStep;
+    yHi = Math.ceil(yHi / yStep) * yStep;
+  }
+
+  const xScale = makeXScale(n + (fan ? 1 : 0), width);
   const yScale = makeYScale(yLo, yHi, height);
 
   const parts = [];
@@ -409,6 +424,35 @@ function drawChart(host, points, opts) {
                    `${yScale(pointVal(p)).toFixed(1)}`)
     .join(" ");
   parts.push(`<path class="line" d="${path}"/>`);
+
+  /* --- the fan ---
+     From the last race out to the next-season slot: the outer band is the
+     comps' 10th-90th percentile (drawn only when there are enough comps to
+     have one, comps.FAN_MIN), the inner the middle half, the dashed line
+     to the comps' average. A season rule before the slot, "Next season"
+     under it, and one hover target carrying the sentence. */
+  if (fan) {
+    const x0 = xScale(n - 1), y0 = yScale(pointVal(data[n - 1]));
+    const x1 = xScale(n);
+    const f = (v) => v.toFixed(1);
+    const divX = (x0 + x1) / 2;
+    parts.push(
+      `<line class="season-div" x1="${f(divX)}" y1="${PAD.top}" ` +
+      `x2="${f(divX)}" y2="${height - PAD.bottom}"/>`);
+    if (fan.p10 != null && fan.p90 != null) {
+      parts.push(`<path class="fan fan-outer" d="M${f(x0)},${f(y0)} ` +
+                 `L${f(x1)},${f(yScale(fan.p90))} L${f(x1)},${f(yScale(fan.p10))} Z"/>`);
+    }
+    parts.push(`<path class="fan fan-inner" d="M${f(x0)},${f(y0)} ` +
+               `L${f(x1)},${f(yScale(fan.p75))} L${f(x1)},${f(yScale(fan.p25))} Z"/>`);
+    parts.push(`<line class="fan-mean" x1="${f(x0)}" y1="${f(y0)}" ` +
+               `x2="${f(x1)}" y2="${f(yScale(fan.mean))}"/>`);
+    parts.push(`<circle class="fan-dot" cx="${f(x1)}" cy="${f(yScale(fan.mean))}" r="3.5"/>`);
+    parts.push(`<text class="axis-x" x="${f(x1)}" y="${height - 10}" ` +
+               `text-anchor="middle">Next</text>`);
+    parts.push(`<circle class="hit" cx="${f(x1)}" cy="${f(yScale(fan.mean))}" r="12" ` +
+               `data-label="${esc(fan.label || "")}" data-rid=""/>`);
+  }
 
   /* Seasons of exactly one race have no segment to draw, so their dot must
      survive even when crowding would otherwise suppress it -- otherwise that
@@ -781,6 +825,21 @@ function initCharts() {
      never disagree with the tables. */
   document.addEventListener("rc-scale-change", () =>
     drawn.forEach(({ host, points, opts }) => drawChart(host, points, opts)));
+
+  /* ★ A HOOK FOR LATE DATA (2026-10-10): comps-fan.js fetches the
+     next-season fan after the charts are drawn and hands it over here;
+     the chart redraws with it and keeps it through resizes and scale
+     flips, because it lives on the chart's own opts. */
+  window.rcCharts = {
+    setFan(key, fan) {
+      drawn.filter((d) => d.host.dataset.chart === key).forEach((d) => {
+        d.opts.fan = fan;
+        drawChart(d.host, d.points, d.opts);
+      });
+      return drawn.some((d) => d.host.dataset.chart === key && d.points && d.points.length);
+    }
+  };
+  document.dispatchEvent(new CustomEvent("rc-charts-ready"));
 
   /*
    * REDRAW ON RESIZE. Because the chart is drawn in pixels rather than scaled,

@@ -1,0 +1,108 @@
+{# =====================================================================
+  team_season.html -- a team's season, week by week (team_tracker.py,
+  owner 2026-10-10): /school/<name>/season?pool=hs_m&state=CA
+
+  ★ THE SCHOOL PAGE'S HEADER, THEN THE CHARTS. Three charts drawn by
+    athlete-charts.js (the same drawChart, so they look like the athlete
+    page's), then the weeks as a table -- the numbers under every point.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set gw = pools[pool] %}
+{% set meta_title = school ~ (" (" ~ state ~ ")" if state else "") ~ " " ~ gw ~ " XC season tracker" %}
+{% set meta_description = school ~ " " ~ gw|lower ~ " cross country, week by week: team rating, top seven, the 1-5 gap and the projected state-meet place." %}
+{% set meta_path = "/school/" ~ (school|urlencode) ~ "/season?pool=" ~ pool ~ ("&state=" ~ state if state else "") %}
+{% set meta_image = site_origin ~ "/card/school/" ~ (school|urlencode) ~ ".png" ~ ("?state=" ~ state if state else "") %}
+{% set meta_crumbs = [("Schools", "/schools"), (school, "/school/" ~ (school|urlencode) ~ ("?state=" ~ state if state else "")), ("Season", none)] %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('athlete-charts.css') }}">
+<link rel="stylesheet" href="{{ static_v('previews.css') }}">
+</head>
+<script src="{{ static_v('topbar-search.js') }}"></script>
+<body>
+{% include "_topbar.html" %}
+{% set weeks = data.weeks or [] %}
+{% set last = weeks[-1] if weeks else none %}
+{% set back = "/school/" ~ (school|urlencode) ~ "?sport=XC" ~ ("&state=" ~ state if state else "") %}
+<main class="page-wide rc ts-page">
+<header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country</span> <span class="pv-tag">Season tracker</span></div>
+    <h1>{{ crest(school, state, px=128, size=44, cls="school-crest") }}{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
+    <div class="rc-meta">{{ gw }} · {{ data.year }}{% if data.division %} · {{ data.division.label }}{% endif %}
+      · <a href="{{ back }}">School page</a>
+      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ school }} {{ gw|lower }} season on Racecast"
+            data-share-url="{{ site_origin }}{{ meta_path }}" title="Share this page">
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
+    </div>
+    {% if last %}
+    <div class="rc-facts rc-facts-lead">
+      {% if last.top5 is not none %}<span>Team rating <b>{{ "%.1f"|format(last.top5) }}</b> <span class="dist-note-quiet">top five</span></span>{% endif %}
+      {% if last.gap15 is not none %}<span>1–5 gap <b>{{ "%.1f"|format(last.gap15) }} pts</b></span>{% endif %}
+      {% if last.place %}<span>Projected state place <b>{{ last.place }} of {{ last.n_teams }}</b></span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div></header>
+
+<div class="rc-scope rc-scope-row">
+  <div class="seg">
+    {% for p, w in pools.items() %}
+    <a class="seg-btn{{ ' is-on' if p == pool }}" href="/school/{{ school|urlencode }}/season?pool={{ p }}{% if state %}&amp;state={{ state }}{% endif %}">{{ w }}</a>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="rc-w rc-grid rc-grid-one">
+<div class="rc-mainc">
+  {% if data.error %}
+  <p class="meta">The season could not be computed just now ({{ data.error }}). It will be tried again in a few minutes.</p>
+  {% elif not weeks %}
+  <p class="meta">No rated {{ gw|lower }} races for {{ school }} this season yet.</p>
+  {% else %}
+  <div class="ts-charts">
+    <div class="chart-slot chart-wide" data-ts="top5" data-title="Team rating (mean of the top five)"></div>
+    <div class="ts-pair">
+      <div class="chart-slot" data-ts="place" data-title="Projected state-meet place"></div>
+      <div class="chart-slot" data-ts="gap15" data-title="1–5 gap (rating points)"></div>
+    </div>
+  </div>
+  <h2 class="ts-h">Week by week</h2>
+  <table class="rc-table ts-weeks">
+    <thead><tr><th>Week ending</th><th class="n">Team rating</th><th class="n">1–5 gap</th>
+      <th class="n">State place</th><th class="rc-wide">Top seven</th></tr></thead>
+    <tbody>
+    {% for w in weeks|reverse %}
+    <tr><td>{{ w.date|mdy }}{% if w.meet_names %}<span class="rc-sub ts-meets">{{ w.meet_names|join(" · ") }}</span>{% endif %}</td>
+      <td class="n">{{ "%.1f"|format(w.top5) if w.top5 is not none else "-" }}</td>
+      <td class="n">{{ "%.1f"|format(w.gap15) if w.gap15 is not none else "-" }}</td>
+      <td class="n">{% if w.place %}{{ w.place }} <span class="dist-note-quiet">of {{ w.n_teams }}</span>{% else %}-{% endif %}</td>
+      <td class="rc-wide ts-seven">{% for pid in w.top7_ids %}<a href="/athlete/{{ pid }}">{{ w.top7_names[loop.index0] }}</a>{% if w.top7 and w.top7|length > loop.index0 %} <span class="dist-note-quiet">{{ "%.1f"|format(w.top7[loop.index0]) }}</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <div class="p2-how ts-how">
+    <p class="meta"><b>How it is built.</b> Each week ends on Sunday. Every runner in
+      {{ data.division.label if data.division else "the state" }} gets the rating their races up to that day give
+      them, by the boards' own season rule (the 80th-percentile race, after dropping races far under their
+      median), and the state meet is raced again with each school's best seven, as on
+      <a href="/projections/{{ state|lower }}{% if data.division %}/{{ data.division.slug }}{% endif %}{% if pool == 'hs_f' %}?g=girls{% endif %}">Who wins state?</a>
+      The team rating is the mean of the top five; the 1–5 gap is the first runner's rating minus the fifth's.
+      Computed {{ data.computed_at|ago_words }}.</p>
+  </div>
+  {% endif %}
+</div>
+</div>
+</main>
+<script type="application/json" id="ts-data">{{ weeks|tojson }}</script>
+<script src="{{ static_v('scale-view.js') }}"></script>
+<script src="{{ static_v('athlete-charts.js') }}"></script>
+<script src="{{ static_v('team-season.js') }}"></script>
+<script src="{{ static_v('share.js') }}"></script>
+</body>
+</html>
