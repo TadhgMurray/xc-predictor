@@ -324,6 +324,7 @@ function syncTeamsCourseMode() {
  */
 function buildQuery() {
   syncTeamsCourseMode();
+  syncFilterUi();
   const q = new URLSearchParams({
     board:  state.board,
     pool:   $("pool").value,
@@ -331,7 +332,7 @@ function buildQuery() {
     /* ★ SCOPE IS ALWAYS SENT, INCLUDING THE DEFAULT. The API defaults to
        "usa" too, but a URL that omits it is a URL whose meaning changes if
        that default ever moves -- and these URLs get shared. */
-    scope:  $("scope").value,
+    scope:  scopeValue(),
     /* ★ THE SCALE THE READER IS ON, so the server orders by what it shows.
        Without it a pool=all board in HS-equivalent view reads unsorted
        wherever two pools' factors differ, which is every board that crosses
@@ -1767,7 +1768,7 @@ function paintBoard(rows, data) {
 
 /* ★ THE HEADER FOLLOWS THE BOARD (owner, 2026-10-10: the race page's shape).
    Three things over the board say what it is: the kicker ("HS boys cross
-   country"), the board's own heading ("Ability · HS boys") and the champion
+   country"), the board's own heading ("Athletes (season) · HS boys") and the champion
    line, "No. 1 on this board". The first two read the selects and the
    board; the third reads the rows just drawn, so it is redrawn with them
    (paintBoard) and hidden whenever a board is loading, empty or failed.
@@ -1776,8 +1777,10 @@ function paintBoard(rows, data) {
      one, sorted the board's own way; a page further on, a column sort or
      the courses board has no No. 1 to name, so the line steps aside rather
      than crown whoever happens to be on top. */
-const BOARD_WORD = { ability: "Ability", performance: "Performances",
-                     pr: "Best times/marks", teams: "Teams", courses: "Courses" };
+/* ★ THE TABS' OWN WORDS (owner, 2026-10-10): "Athletes (season)", "Best
+     races", "Fastest times" -- the heading says what the tab says. */
+const BOARD_WORD = { ability: "Athletes (season)", performance: "Best races",
+                     pr: "Fastest times", teams: "Teams", courses: "Courses" };
 
 function syncBoardHeader(rows, data) {
   const kick = $("rk-kicker"), head = $("rk-board-h"), champs = $("rk-champs");
@@ -1951,7 +1954,6 @@ async function load() {
   state.busy = true;
   _reloadWanted = false;
   const boardAsked = state.board;
-  $("apply").disabled = true;
   /* Loud, not a grey word. A rankings query can take a second or two, and a
      faint "Loading..." where a table used to be reads as an empty result --
      people re-click Apply, which the busy guard then swallows, and the page
@@ -2015,7 +2017,7 @@ async function load() {
                     that is permanently up is one nobody reads. */
     // bias-notice: retired 2026-09-06 (issue 191 measured the cross-state
     // offset at under a point); the element stays so nothing here throws.
-    $("notice").classList.toggle("show", $("scope").value === "all");
+    $("notice").classList.toggle("show", scopeValue() === "all");
 
     /* ★ ADOPT THE SORT THAT WAS SERVED, before anything renders. The teams
        board lets the server choose (see buildQuery), and renderHead draws
@@ -2101,7 +2103,6 @@ async function load() {
     $("csv-wrap").classList.add("hidden");
   } finally {
     state.busy = false;
-    $("apply").disabled = false;
     if (_reloadWanted || state.board !== boardAsked) {
       _reloadWanted = false;
       load();
@@ -2212,6 +2213,8 @@ function syncBoard(board) {
     poolSel.value = "all";
   }
 
+  syncFilterUi();
+
   $("subtitle").textContent =
     board === "ability"
       ? "Season ability - averaged across a season, so one lucky race cannot carry an athlete."
@@ -2238,6 +2241,107 @@ function setBoard(board) {
   load();
 }
 
+
+/* ------------------------------------------------------------------ *
+ *  THE INLINE FILTERS (owner, 2026-10-10)
+ * ------------------------------------------------------------------ */
+
+/* "Include international athletes" is the old Scope select's two values:
+   unticked usa, ticked all. buildQuery, the caveat and the URL restore all
+   read it through here. */
+function scopeValue() {
+  const box = $("intl");
+  return box && box.checked ? "all" : "usa";
+}
+
+/* ★ A CHIP PER OPTION, DRAWN FROM THE SELECT. #pool and #sport stay the
+   source of truth (hidden in the page); the chips mirror them. An option
+   syncBoard hides on this board (All pools off the times board, Both on
+   Teams) is a hidden chip, so the two can never offer different things.
+
+   ! A CHIP DOES NOT LOAD THE BOARD ITSELF. It sets the select and fires the
+     select's own change event -- the listeners below (poolTouched, the
+     min-races follow, the unit rows, By state's href, applyNow) are the
+     ones a select change always ran, so a chip and the select cannot apply
+     differently. */
+function syncChips() {
+  document.querySelectorAll(".rk-chips[data-for]").forEach((box) => {
+    const sel = $(box.dataset.for);
+    if (!sel) return;
+    const opts = Array.from(sel.options);
+    if (box.children.length !== opts.length) {
+      box.innerHTML = opts.map((o) =>
+        `<button type="button" class="rk-chip" data-v="${esc(o.value)}">${esc(o.text)}</button>`
+      ).join("");
+    }
+    opts.forEach((o, i) => {
+      const chip = box.children[i];
+      const on = o.value === sel.value;
+      chip.hidden = Boolean(o.hidden);
+      chip.classList.toggle("is-on", on);
+      chip.setAttribute("aria-pressed", String(on));
+    });
+  });
+}
+
+function pickChip(e) {
+  const chip = e.target.closest && e.target.closest(".rk-chip");
+  if (!chip) return;
+  const box = chip.closest(".rk-chips");
+  const sel = box && $(box.dataset.for);
+  if (!sel || sel.value === chip.dataset.v) return;
+  sel.value = chip.dataset.v;
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+/* ★ WHAT IS SET UNDER "More filters", SAID ON ITS SUMMARY. The box is shut
+   by default, so a shared link carrying a grade or a school would
+   otherwise open on a narrowed board with nothing on screen saying why. */
+function moreFiltersSet() {
+  let n = 0;
+  for (const f of ["grade", "year", "school", "course", ...UNIT_KEYS]) {
+    if (!combos[f] || !combos[f].values().length) continue;
+    /* only what this board shows: a field the board hides filters nothing
+       here. ! Computed display, not offsetParent -- inside the SHUT box
+       every field has no layout, and all of them would read as hidden. */
+    const host = document.querySelector(`[data-field="${f}"]`);
+    const field = host && host.closest(".field");
+    if (field && (field.closest(".hidden")
+                  || getComputedStyle(field).display === "none")) continue;
+    n++;
+  }
+  if (scopeValue() === "all") n++;
+  const minr = $("min_races");
+  if (minr && minr.value && state.board === "ability") n++;
+  const ev = $("events");
+  if (ev && ev.value && (state.board === "ability" || state.board === "teams")) n++;
+  if (state.board === "performance") {
+    if ($("date_from") && $("date_from").value) n++;
+    if ($("date_to") && $("date_to").value) n++;
+  }
+  if (state.board === "teams" && $("projected") && $("projected").checked) n++;
+  return n;
+}
+
+function syncMoreCount() {
+  const el = $("rk-more-on");
+  if (!el) return;
+  const n = moreFiltersSet();
+  el.textContent = n ? `${n} set` : "";
+}
+
+function syncFilterUi() {
+  syncChips();
+  syncMoreCount();
+}
+
+document.querySelectorAll(".rk-chips[data-for]").forEach((box) => {
+  box.addEventListener("click", pickChip);
+});
+["pool", "sport"].forEach((id) => {
+  const sel = $(id);
+  if (sel) sel.addEventListener("change", syncChips);
+});
 
 /* ------------------------------------------------------------------ *
  *  WIRING
@@ -2291,7 +2395,7 @@ $("results").addEventListener("click", (e) => {
    because the new board is a different length. */
 function applyNow() { state.offset = 0; load(); }
 
-$("scope").addEventListener("change", applyNow);
+$("intl").addEventListener("change", applyNow);
 
 /* ★ THE FIELD FOLLOWS THE POOL. A Gender control beside a pool that already
    names one is a control that can only be wrong, so it appears exactly when
@@ -2378,9 +2482,9 @@ $("pool").addEventListener("change", () => {
   applyNow();
 });
 
-/* Kept as an explicit refresh -- it costs nothing and it is where the eye
-   goes when someone wants to be sure the board matches the controls. */
-$("apply").addEventListener("click", applyNow);
+/* (The Apply button that stood here is gone -- owner, 2026-10-10. Every
+   control applies on change, the chips included, so a button that re-ran
+   the same query only said the others might not have.) */
 
 /* ★ FIRST IS NOT "PREV, REPEATEDLY". Fifty rows a click is not a way back
    from page twelve, and `next` will happily take you there. Same reset the
@@ -2513,7 +2617,10 @@ function applyUrlFilters(params) {
   /* ! RESTORED, OR A SHARED "EVERYONE" LINK QUIETLY OPENS AS USA. The select
        defaults to usa in the markup, so without this the one scope worth
        sharing is the one that does not survive being shared. */
-  setSelectFromUrl("scope", params.get("scope"));
+  /* ! scope=all TICKS "Include international athletes" (2026-10-10, the
+       checkbox that replaced the Scope select); anything else leaves it
+       unticked, which is usa -- the same two values the select had. */
+  $("intl").checked = params.get("scope") === "all";
   syncUnitRows();
   for (const k of UNIT_KEYS) {
     if (combos[k] && params.get(k)) combos[k].set(params.get(k).split(","));

@@ -102,7 +102,7 @@
   </div>
 
   <section class="rc-panel" id="results" data-panel="results">
-    {% if has_hs_view %}<div class="toggle-row">{{ scale_toggle() }}</div>{% endif %}
+    {# ★ NO SCALE SWITCH HERE (owner, 2026-10-10): one public rating scale. A single-pool page shows the HS-equivalent only; the "own pool" view lives behind Advanced on the multi-pool boards (_scale.html). #}
     <figure class="rc-field" hidden><figcaption>The field on one scale<span class="rc-field-key"></span></figcaption><div class="rc-field-plot"></div></figure>
     <table class="rc-table">
       <thead><tr>

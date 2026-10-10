@@ -24,10 +24,17 @@
     focus still shows the hint; a click goes to /scale, where every rating
     on the boards has its 1600, 3200 and 5K. An <a> is focusable already,
     so the tabindex the <span> needed is gone. -#}
+{#- ★ ONE PUBLIC SCALE (owner, 2026-10-10): the hint describes the
+    HS-equivalent, the only scale a reader is shown. It used to say "100 is
+    the average runner in the pool" -- the own-pool scale, which is now an
+    Advanced option on the multi-pool boards (_scale.html). pool_label is
+    kept in the signature so no caller breaks; no caller passes it, and the
+    hint no longer names a pool. ! Under 170 characters: the hint is a
+    tooltip (test_difficulty_one_scale). -#}
 {% macro rating_i(pool_label=None) -%}
 <a class="flag info-i" href="/scale" data-title="What a Rating Means"
-      data-blurb="100 is the average {{ pool_label if pool_label else 'runner in the pool' }}. 133 means 33% faster than that. Course and distance are already accounted for. Click for every rating as a time."
-      aria-label="What a rating means. 100 is the average runner in the pool; 133 means 33% faster than that. Opens the rating to time table.">i</a>
+      data-blurb="100 is an average high-school runner; every level is shown on that one scale. 133 is 33% faster. Course and distance are accounted for. Click for times."
+      aria-label="What a rating means. 100 is an average high-school runner; every level is shown on that one scale. 133 is 33% faster. Opens the rating to time table.">i</a>
 {%- endmacro %}
 
 {% macro difficulty_i(sport="XC") -%}

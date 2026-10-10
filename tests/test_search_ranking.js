@@ -112,13 +112,14 @@ const ok = (c, m) => { if (!c) { console.error("  FAIL " + m); failed++; } };
   ok(!/=== "hs" \? "hs" : "pool"/.test(js), "the old default is gone");
 
   const tpl = read("racecast", "templates", "_scale.html");
-  ok(/data-scale="hs" class="is-active"/.test(tpl),
-     "the control renders with HS lit, or it flickers on every page load "
-     + "while scale-view.js syncs it");
-  ok(!/data-scale="pool" class="is-active"/.test(tpl),
-     "and not with both lit");
-  ok(/HS-equivalent view \(the default\)/.test(tpl),
-     "the explanation says which one is the default");
+  /* ★ ONE PUBLIC SCALE (2026-10-10): the control is the "Advanced" box,
+     one checkbox for the own-pool scale, rendered unticked (HS) so it does
+     not flicker while scale-view.js syncs it. */
+  ok(/<input type="checkbox" data-scale-own>/.test(tpl),
+     "the control renders with the own-pool box unticked");
+  ok(!/data-scale-own checked/.test(tpl), "and never ticked at render");
+  ok(/100 is an average high-school runner/.test(tpl),
+     "the explanation describes the HS-equivalent default");
   ok(!/Own pool \(the default\)/.test(tpl), "and does not still say the old one");
 }
 

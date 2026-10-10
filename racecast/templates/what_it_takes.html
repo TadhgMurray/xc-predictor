@@ -249,7 +249,7 @@
       {% if others %}<a class="seg-btn" href="#others" data-tab="others">Other finals<span class="n">{{ others|length }}</span></a>{% endif %}
       <a class="seg-btn" href="#how" data-tab="how">How it's read</a>
     </nav>
-    <div class="rc-tbar-end">{{ scale_toggle(same=True) }}</div>
+    {# ★ NO SCALE SWITCH HERE (owner, 2026-10-10): one public rating scale. A single-pool page shows the HS-equivalent only; the "own pool" view lives behind Advanced on the multi-pool boards (_scale.html). #}
   </div>
 
   {# ---- the state meet ------------------------------------------------ #}

@@ -89,7 +89,7 @@
       <a class="seg-btn is-on" href="#events" data-tab="events">Events<span class="n">{{ ns.n_events }}</span></a>
       <a class="seg-btn" href="#teams" data-tab="teams">Team points</a>
     </nav>{% endif %}
-    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+    {# ★ NO SCALE SWITCH HERE (owner, 2026-10-10): one public rating scale. A single-pool page shows the HS-equivalent only; the "own pool" view lives behind Advanced on the multi-pool boards (_scale.html). #}
   </div>
 
   <section class="rc-panel" id="events" data-panel="events">

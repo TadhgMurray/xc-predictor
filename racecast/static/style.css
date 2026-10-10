@@ -5925,3 +5925,26 @@ th.fk.fk-l, td.fk.fk-l { text-align: left !important; }
 @media (max-width: 699px) {
   .fk-sm { display: none; }
 }
+
+/* ★ ONE PUBLIC RATING SCALE: THE "ADVANCED" BOX (owner, 2026-10-10). The
+     two-button scale switch became a small grey disclosure on the
+     multi-pool boards (_scale.html scale_toggle): one checkbox, "Show each
+     pool's own scale", and a line saying what that is. The panel floats
+     under the word so opening it never pushes the board down.
+   ! THE OLD .scale-toggle RULES ABOVE STILL MATCH THE BOX (same class, for
+     the scripts); these reset the bits that would make it a button bar. */
+.scale-toggle.scale-adv { display: inline-block; position: relative; margin-left: auto; font-size: .85rem; }
+.toggle-row .scale-toggle.scale-adv { display: inline-block; width: auto; margin-left: auto; }
+.scale-adv > summary { list-style: none; cursor: pointer; color: var(--muted, #6b7280); white-space: nowrap; user-select: none; padding: .2rem 0; }
+.scale-adv > summary::-webkit-details-marker { display: none; }
+.scale-adv > summary::after { content: ""; display: inline-block; width: .36em; height: .36em; margin-left: .4em;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-.2em) rotate(45deg); }
+.scale-adv[open] > summary::after { transform: translateY(.05em) rotate(-135deg); }
+.scale-adv > summary:hover, .scale-adv > summary:focus-visible { color: var(--ink, #111418); }
+.scale-adv-panel { position: absolute; right: 0; top: calc(100% + .35rem); z-index: 60; width: 17rem; max-width: calc(100vw - 2rem);
+  box-sizing: border-box; background: #fff; border: 1px solid var(--line, #e5e7eb); border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: .75rem .85rem; text-align: left; white-space: normal; }
+.scale-adv-panel label { display: flex; gap: .5rem; align-items: flex-start; font-weight: 600; color: var(--ink, #111418); cursor: pointer;
+  text-transform: none; letter-spacing: 0; font-size: .88rem; }
+.scale-adv-panel label input { margin-top: .2rem; }
+.scale-adv-panel p { margin: .35rem 0 0 1.45rem; color: var(--muted, #6b7280); font-weight: 400; line-height: 1.4; font-size: .82rem; }

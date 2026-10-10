@@ -34,6 +34,9 @@ const ctx = {
   teamsNote: () => {},
   // the race-shape header (kicker, board heading, No. 1 line; owner, 2026-10-10)
   syncBoardHeader: () => {},
+  // "Include international athletes", the checkbox that replaced the Scope
+  // select (2026-10-10); load() reads it for the caveat
+  scopeValue: () => "usa",
   emptyBoard: () => "empty",
   esc: (x) => String(x),
   // a server error page is not JSON (sweep 2026-10-10): the reply here always is

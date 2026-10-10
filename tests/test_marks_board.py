@@ -163,7 +163,8 @@ for d in RK.PR_HURDLE_DISTANCES:
 ok(html.count("pr-only-opt") >= len(RK.PR_FIELD_EVENTS)
    + len(RK.PR_HURDLE_DISTANCES) + len(RK.PR_STEEPLE_DISTANCES),
    "every new option is pr-only")
-ok("Best times/marks" in html, "the tab says marks")
+ok("Fastest times" in html and "Fastest times and best marks" in html,
+   "the tab says times, and its title says marks too (renamed 2026-10-10)")
 js = read("racecast", "static", "rankings.js")
 ok("function parseEventValue" in js and "fmtMark" in js
    and 'q.set("event", sel.event)' in js,

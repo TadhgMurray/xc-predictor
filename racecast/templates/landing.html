@@ -26,9 +26,9 @@
      (owner, 2026-10-06), reached from the By state tab #}
   {% set _bq = "&sport=" ~ sport|upper ~ "&pool=" ~ (pool_key or "") %}
   <div class="board-strip" role="navigation" aria-label="Rankings boards">
-    <a href="/rankings?board=ability{{ _bq }}">Ability</a>
-    <a href="/rankings?board=performance{{ _bq }}">Performances</a>
-    <a href="/rankings?board=pr{{ _bq }}">Best times/marks</a>
+    <a href="/rankings?board=ability{{ _bq }}">Athletes (season)</a>
+    <a href="/rankings?board=performance{{ _bq }}">Best races</a>
+    <a href="/rankings?board=pr{{ _bq }}">Fastest times</a>
     <a href="/rankings?board=teams{{ _bq }}">Teams</a>
     <a href="/rankings?board=courses">Courses</a>
     <a href="/breakouts">Breakouts</a>
@@ -97,7 +97,7 @@
   <div class="rc-mainc">
   <div class="rc-tbar">
     <h2 class="landing-list-h">{{ state_name or "National" }} top {{ rows|length if rows else "" }}</h2>
-    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
+    {# ★ NO SCALE SWITCH HERE (owner, 2026-10-10): one public rating scale. A single-pool page shows the HS-equivalent only; the "own pool" view lives behind Advanced on the multi-pool boards (_scale.html). #}
   </div>
 
   <section class="landing-list">
