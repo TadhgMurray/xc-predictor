@@ -126,8 +126,13 @@ def _v(row, key, idx=0):
 
 
 def ensure(cur):
+    """The pin tables, through ensureTable (one CREATE at a time, so a
+    column added to the DDL later reaches tables made before it)."""
     from link_freshmen import LOG_DDL
-    cur.execute(DDL)
+    from scrape_school_logos import ensureTable
+    for one in DDL.split(";"):
+        if one.strip():
+            ensureTable(cur, one.strip())
     cur.execute(LOG_DDL)
 
 
