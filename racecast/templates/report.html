@@ -9,6 +9,11 @@
 {#  ★ NO <form> SUBMIT. The page posts JSON via fetch and stays put, so a #}
 {#    failed request shows an error instead of navigating to a broken     #}
 {#    page and losing what the user typed.                                #}
+{#                                                                       #}
+{#  ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10): header, the form under   #}
+{#    one heading and capped at 36rem, a "What helps" card beside it.     #}
+{#    "Send report" has the site's black button (race.css); it was a      #}
+{#    bare browser button, since .go was only styled on other pages.      #}
 {# ===================================================================== #}
 <!DOCTYPE html>
 <html lang="en">
@@ -16,6 +21,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 {% set meta_title = "Report an issue" %}
 {% set meta_description =
    "Report a wrong rating, a misidentified athlete, bad meet data or a site
@@ -27,14 +33,22 @@
 <body>
 {% include "_topbar.html" %}
 
-<main class="page">
+<main class="page-wide rc report-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Help</span></div>
+    <h1>Report an issue</h1>
+    <div class="rc-meta">No account needed · email optional · <a href="{{ url_for('about_page') }}#limits">where ratings are still wrong</a></div>
+    <p class="rc-story">
+      Wrong ratings are the most useful thing you can report. Specific beats
+      general - a link and a sentence about what looks off is enough.
+    </p>
+  </div>
+</div></header>
 
-  <h1>Report an issue</h1>
-  <p class="page-lead">
-    Wrong ratings are the most useful thing you can report. Specific beats
-    general - a link and a sentence about what looks off is enough.
-  </p>
-
+<div class="rc-grid">
+<div class="rc-mainc rc-form">
+  <h2 class="rc-sec">Your report</h2>
   {% if about %}
   <div class="about-chip">Reporting about: <code>{{ about }}</code></div>
   {% endif %}
@@ -76,6 +90,19 @@
   <button class="go" id="send">Send report</button>
   <div class="form-status" id="status"></div>
 
+</div>
+<aside class="rc-side">
+  <h2>What helps</h2>
+  <div class="rc-side-card">
+    <ol>
+      <li><b>The page.</b> Filled in for you when you came from a link on the site.</li>
+      <li><b>One sentence</b> on what looks off, and what you expected.</li>
+      <li><b>An email</b> only if you want a reply.</li>
+    </ol>
+    <p>Before reporting a rating, the <a href="{{ url_for('about_page') }}#limits">limitations</a> on About cover the known cases.</p>
+  </div>
+</aside>
+</div>
 </main>
 
 <script>

@@ -100,7 +100,11 @@
        signed out and the person's picture or initial when signed in.
        Rendered signed-out on every page so the page stays cacheable;
        topbar-search.js asks /api/me and swaps it. #}
-    <span id="topbar-account" class="topbar-account"><a href="/login" class="tb-signin">Sign in</a></span>
+    {# ! NOT ON THE SIGN-IN PAGE ITSELF (owner, 2026-10-10): login.html is in
+         the site shell now, and "Sign in" beside the sign-in card points at
+         the page you are on. The slot stays, so a signed-in visitor still
+         gets their picture from topbar-search.js. #}
+    <span id="topbar-account" class="topbar-account">{% if not (here == '/login' or here.startswith('/login/')) %}<a href="/login" class="tb-signin">Sign in</a>{% endif %}</span>
 </header>
 {# phones: every table in a box the page's width, scrolling sideways only
    when it cannot fit; the athlete sidebar folded at the top (layout.js,

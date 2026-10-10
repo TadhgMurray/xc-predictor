@@ -9,6 +9,12 @@
 {#                                                                       #}
 {#  Figures come from homepage_meta, the same bag the landing page reads, #}
 {#  so they cannot go stale independently of the boards.                  #}
+{#                                                                       #}
+{#  ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10): a header, the prose in   #}
+{#    the main column and a sticky Contents card beside it (above it on   #}
+{#    a phone). Every section h2 has an id; #accuracy and #glossary are   #}
+{#    linked from elsewhere, so those two must not change. The look is    #}
+{#    race.css's "pages in the race shape" block at its end.              #}
 {# ===================================================================== #}
 <!DOCTYPE html>
 <html lang="en">
@@ -16,6 +22,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
 {% set meta_title = "About" %}
 {% set meta_description =
    "How Racecast ratings work: every cross country and track result put on one
@@ -28,16 +35,37 @@
 <body>
 {% include "_topbar.html" %}
 
-<main class="page">
+<main class="page-wide rc about-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">How Racecast works</span></div>
+    <h1>About</h1>
+    <div class="rc-meta">
+      {% if meta.get('built_at') %}Ratings rebuilt {{ meta.built_at[:10] }} · {% endif %}cross country and track, middle school to college
+      · <a href="{{ url_for('report_page') }}">Report an issue</a>
+    </div>
+    <p class="rc-story">
+      Racecast puts every cross country and track result on one comparable
+      scale, so a 5K on a muddy course in Minnesota and a 3200 on a fast track
+      in California can be read as the same kind of number.
+    </p>
+    {% if accuracy and accuracy.tests %}
+    {# the latest run's two plainest tests, as the race page's champion line #}
+    <div class="rc-champs">
+      {% for t in accuracy.tests[:2] %}
+      <div><span class="k">{{ t.label }}</span><span class="rc-cv">{{ t.value }}</span></div>
+      {% endfor %}
+      <div><span class="k">Scored</span><span class="rc-cv"><a href="#accuracy">{{ accuracy.as_of.strftime('%b %-d, %Y') if accuracy.as_of else "latest run" }}</a></span></div>
+    </div>
+    {% endif %}
+  </div>
+</div></header>
 
-  <h1>About</h1>
-  <p class="page-lead">
-    Racecast puts every cross country and track result on one comparable
-    scale, so a 5K on a muddy course in Minnesota and a 3200 on a fast track
-    in California can be read as the same kind of number.
-  </p>
+<div class="rc-grid">
+<div class="rc-mainc rc-prose">
 
-  <h2>What a rating is</h2>
+  <h2 class="rc-sec" id="rating">What a rating is</h2>
+
   <p>
     A <strong>speed rating</strong> is a race, corrected for everything about
     it that was not the athlete, and expressed against the field the athlete
@@ -51,7 +79,7 @@
     own field.
   </p>
 
-  <h2>How a result becomes a rating</h2>
+  <h2 class="rc-sec" id="how">How a result becomes a rating</h2>
   <ol class="page-steps">
     <li>
       <strong>Distance.</strong> Every time is converted to a 5K-equivalent,
@@ -84,7 +112,7 @@
   </ol>
 
   {% if accuracy %}
-  <h2 id="accuracy">How accurate is it</h2>
+  <h2 class="rc-sec" id="accuracy">How accurate is it</h2>
   <p>
     Every rebuild is scored on results it was not allowed to see. These are
     the latest run's numbers{% if accuracy.as_of %}
@@ -114,7 +142,7 @@
   {% endif %}
   {% endif %}
 
-  <h2>Where it is still wrong</h2>
+  <h2 class="rc-sec" id="limits">Where it is still wrong</h2>
 
   <h3>One race is not a season</h3>
   <p>
@@ -147,7 +175,7 @@
     one, <a href="{{ url_for('report_page') }}">tell us</a>.
   </p>
 
-  <h2>The data</h2>
+  <h2 class="rc-sec" id="data">The data</h2>
   <p>
     Over 200 million stored results, with
     {% if meta.get('fact_results') %}{{ meta.fact_results }}{% else %}Tens of
@@ -160,11 +188,10 @@
     every run - the ratings here are not taken from anywhere, they are
     computed. 
   </p>
-  {% if meta.get('built_at') %}
-    <p class="page-meta">Ratings last rebuilt {{ meta.built_at[:10] }}.</p>
-  {% endif %}
+  {# ! THE REBUILD DATE IS SAID ONCE, in the header's meta line (owner,
+       2026-10-10); it used to repeat here. #}
 
-  <h2 id="glossary">Glossary</h2>
+  <h2 class="rc-sec" id="glossary">Glossary</h2>
   <dl class="glossary">
     <dt>Rating</dt><dd>A race corrected for course, distance, weather and era, expressed against the athlete's pool. 100 is the pool's average runner; 133 means 33% faster than that runner. Roughly, a high-school boy rated 146 runs a 15:05 5K.</dd>
     <dt>Athletes board (season average)</dt><dd>One row per athlete-season, ranked on the average of their rated races. The default, because one race is noisy by about four points.</dd>
@@ -178,13 +205,31 @@
     <dt>Ranked line</dt><dd>Where the athlete's latest season stands nationally, in each unit, in the state and on their team, at three or more races for seasons up to 2026 track; seasons from 2026 cross country on have no floor.</dd>
   </dl>
 
-  <h2>Found something wrong?</h2>
+  <h2 class="rc-sec" id="report">Found something wrong?</h2>
   <p>
     Wrong ratings are the most useful thing you can report, and specific ones
     are more useful than general ones.
     <a href="{{ url_for('report_page') }}">Report an issue</a>.
   </p>
 
+</div>
+<aside class="rc-side rc-side-sticky">
+  <h2>Contents</h2>
+  <table class="rc-tscores rc-tscores-plain">
+    <tbody>
+    {% set toc = [("rating", "What a rating is"), ("how", "How a result becomes a rating")]
+       + ([("accuracy", "How accurate is it")] if accuracy else [])
+       + [("limits", "Where it is still wrong"), ("data", "The data"),
+          ("glossary", "Glossary"), ("report", "Found something wrong?")] %}
+    {% for id, label in toc %}
+    <tr class="rc-jump"><td class="tp">{{ loop.index }}</td><td class="tn"><a href="#{{ id }}">{{ label }}</a></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="rc-side-foot">Wrong rating? <a href="{{ url_for('report_page') }}">Report it</a>; a link and a sentence is enough.</p>
+</aside>
+</div>
 </main>
+<script src="{{ static_v('rc-jump.js') }}"></script>
 </body>
 </html>

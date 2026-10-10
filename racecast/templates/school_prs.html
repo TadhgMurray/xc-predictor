@@ -222,15 +222,9 @@
 </main>
 <script src="{{ static_v('staged.js') }}"></script>
 <script src="{{ static_v('scale-view.js') }}"></script>
-<script>
-// The whole event row jumps, not just its name (owner, 2026-10-09).
-document.querySelectorAll("tr.rc-jump").forEach(function (tr) {
-  tr.addEventListener("click", function (e) {
-    if (e.target.closest("a")) return;
-    var a = tr.querySelector("a"); if (a) a.click();
-  });
-});
-</script>
+{# The whole event row jumps, not just its name (owner, 2026-10-09);
+   the script is shared with About and Site status (owner, 2026-10-10). #}
+<script src="{{ static_v('rc-jump.js') }}"></script>
 <script>
 // Course-chip expand: one press shows every course, no round trip.
 (function () {
