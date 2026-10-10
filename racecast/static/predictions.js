@@ -864,11 +864,9 @@ async function readJson(res) {
 }
 
 /* Seconds -> 16:27.8. The model predicts seconds; a time is what people read. */
+/* ! static/fmt-time.js: round first, then split (959.96 was "15:60.0"). */
 function fmtTime(s) {
-  if (s === null || s === undefined) return " - ";
-  const n = Number(s);
-  const m = Math.floor(n / 60);
-  return `${m}:${(n - m * 60).toFixed(1).padStart(4, "0")}`;
+  return rcFmtTime(s);
 }
 
 

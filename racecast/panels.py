@@ -992,8 +992,8 @@ def _fmtTime(seconds):
       build time and writes text into homepage_panels, so the site cannot
       reformat it later -- but a reader comparing the home board with a race
       page is comparing these two functions. Change one, change the other.
-      Kept local rather than imported because app.py builds a Flask app at
-      import time and this is a pipeline script.
+      Both now call time_format.format_time, which has no Flask in it
+      (sweep 2026-10-10).
     """
     if seconds is None:
         return None
@@ -1003,17 +1003,10 @@ def _fmtTime(seconds):
         return None
     if value <= 0 or value >= DNF_SENTINEL:
         return None
-    whole = int(value)
-    hundredths = round((value - whole) * 100)
-    tail = ("" if hundredths == 0
-            else f".{hundredths // 10}" if hundredths % 10 == 0
-            else f".{hundredths:02d}")
-    if value < 60:
-        return f"{whole}{tail}"
-    hours, minutes, secs = whole // 3600, (whole % 3600) // 60, whole % 60
-    if hours:
-        return f"{hours}:{minutes:02d}:{secs:02d}{tail}"
-    return f"{minutes}:{secs:02d}{tail}"
+    # ! the clock itself is time_format.format_time, the module app.py now
+    #   imports too (sweep 2026-10-10) -- a pure module, so the twin is gone
+    from time_format import format_time
+    return format_time(value)
 
 
 def _perfDetail(sport, row):

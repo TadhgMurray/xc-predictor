@@ -27,6 +27,8 @@ thin, the SQL lives here, every value is bound.
 
 import datetime
 
+from time_format import format_time
+
 try:                                    # scripts/ is on the site's path
     from result_status import isSentinelTime
 except ImportError:                     # standalone use: no sentinel rule
@@ -254,14 +256,11 @@ _BEST_RUNGS = (400, 800, 1500, 1600, 3000, 3200, 5000, 10000)
 
 
 def fmtTime(seconds):
+    """! time_format.format_time, the site's one formatter (sweep 2026-10-10):
+    the old m:ss.s here split before rounding and printed 959.96 as 15:60.0."""
     if seconds is None:
         return None
-    s = float(seconds)
-    m, rem = divmod(s, 60.0)
-    if m >= 60:
-        h, m = divmod(int(m), 60)
-        return f"{h}:{m:02d}:{rem:04.1f}"
-    return f"{int(m)}:{rem:04.1f}"
+    return format_time(seconds)
 
 
 def displayYear(sport, year):

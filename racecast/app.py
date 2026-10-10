@@ -2895,54 +2895,11 @@ from result_status import isSentinelTime as _isSentinelTime   # noqa: E402
 _TF_SENTINEL_SQL = "r.time_seconds BETWEEN 19999 AND 20001"
 
 
-def format_time(seconds):
-    """Format raw seconds for display, keeping whatever precision the data has.
-
-       11.24 -> '11.24'    14:58.2 -> '14:58.2'    1:05:03 -> '1:05:03'
-
-    Precision is NOT fixed at two places. Printing '19:57.60' on a value stored
-    as 1197.6 would claim hundredth accuracy the scrape never captured. We show
-    the decimals that exist and nothing more.
-
-    ! SENTINELS ARE NOT TIMES. DNF/DNS/DQ are stored as huge values
-      (999999 and friends); one leaked onto a page as '277:46:39'
-      (2026-08-27, Walters State Opener). Same line the backfill draws:
-      nothing past 100,000 seconds is a running time.
-    """
-    seconds = float(seconds)
-    # ! and anet TF's 20,000 s (5:33:20) -- result_status.TF_SENTINEL
-    if seconds >= 100_000 or abs(seconds - _TF_SENTINEL) < 1.0:
-        return " - "
-    whole   = int(seconds)                       # truncate, never round
-    frac    = seconds - whole
-
-    tail = _format_fraction(frac)                # '', '.6', or '.24'
-
-    if seconds < 60:
-        return f"{whole}{tail}"                  # sprint: '11.24'
-
-    hours   = whole // 3600
-    minutes = (whole % 3600) // 60
-    secs    = whole % 60
-
-    if hours > 0:
-        return f"{hours}:{minutes:02d}:{secs:02d}{tail}"
-    return f"{minutes}:{secs:02d}{tail}"
-
-
-def _format_fraction(frac):
-    """The decimal tail, at the precision the value actually carries.
-
-    Rounded to 2dp first because `real` is a 4-byte float: a mark entered as
-    11.24 can be stored as 11.239999771, and testing that raw would report
-    false precision on effectively every row.
-    """
-    hundredths = round(frac * 100)
-    if hundredths == 0:
-        return ""                                # whole second -> no tail
-    if hundredths % 10 == 0:
-        return f".{hundredths // 10}"            # tenth  -> '.6'
-    return f".{hundredths:02d}"                  # hundredth -> '.24'
+# ★ ONE FORMATTER (sweep 2026-10-10): time_format.format_time is shared with
+#   compare.py and panels.py, and rounds before it splits -- 959.96 had printed
+#   "15:60.0" on compiled races and a 0.996 tail ".10" here.
+from time_format import format_time                              # noqa: E402
+app.template_filter("clock")(format_time)
 
 
 def season_label(sport, date_text):
