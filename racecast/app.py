@@ -403,6 +403,16 @@ def raceTitle(division, gender, rows, fallback="Results"):
 
 app.jinja_env.globals["race_gender_word"] = raceGenderWord
 app.jinja_env.globals["race_title"] = raceTitle
+
+# ★ THE 5K COLUMN, IN EVERY TEMPLATE (owner, 2026-10-10: "add [a 5K column]
+#   to all pages with ratings"). five_k(rating, pool, sport, hs) is one
+#   cell -- {'time', 'dist'} or None, read off the per-pool clock table --
+#   and five_k_label(pools) the header ('5K', '3200m' or 'Track ≈'). The
+#   cell and header macros are _scale.html's fk_th / fk_td / fk_inline.
+import conversions as _conv_fk
+app.jinja_env.globals["five_k"] = _conv_fk.fiveK
+app.jinja_env.globals["five_k_label"] = _conv_fk.fiveKLabel
+app.jinja_env.globals["FIVE_K_TITLE"] = _conv_fk.FIVE_K_TITLE
 stampCrests = school_logo.stampCrests
 
 
@@ -9804,8 +9814,12 @@ def api_rankings():
     hs_movable = stampBoardRows(rows, rating_keys=("rating", "best_rating"))
     # ★ rating_clock: the rating cell's hover title, the same time the
     #   athlete header prints under its rating (owner, 2026-10-10)
-    from conversions import stampBoardClocks
+    from conversions import stampBoardClocks, stampFiveK
     stampBoardClocks(rows)
+    # ★ rating_5k / rating_5k_dist: the 5K column (owner, 2026-10-10) --
+    #   the track 5K the row's own-pool rating is worth, one clock for both
+    #   scale views, read off the per-pool tables (rankings.js draws it)
+    stampFiveK(rows)
 
     # ★ THE SCHOOL'S HOME STATE, BESIDE THE RESULT'S STATE, NOT INSTEAD OF IT.
     #   ranking_results.state says where the RACE was, which is the right
@@ -9920,6 +9934,9 @@ def api_teams():
         # rather than the representative one.
         hs_movable = stampBoardRows(rows, rating_keys=("top5_mean",),
                                     pool=f.get("pool"), sport="XC")
+        # ★ the top-5 average's track 5K (owner, 2026-10-10)
+        from conversions import stampFiveK
+        stampFiveK(rows, "top5_mean", pool=f.get("pool"), sport="XC")
         stampCrests(rows)
         return jsonify({"filters": f, "count": len(rows),
                         "course_mode": True,
@@ -9978,6 +9995,10 @@ def api_teams():
     if scorers and stampBoardRows(scorers, rating_keys=("rating",),
                                   pool=f.get("pool"), sport=f.get("sport")):
         hs_movable = True
+    # ★ the top-5 average's track 5K (owner, 2026-10-10), on the row's pool
+    #   or the board's
+    from conversions import stampFiveK
+    stampFiveK(rows, "top5_mean", pool=f.get("pool"), sport=f.get("sport"))
 
     stampCrests(rows)
     return jsonify({"filters": f, "count": len(rows),
@@ -11552,6 +11573,12 @@ def api_recruiting_schools():
     rows = [dict(r) for r in R.filterSchools(every, f)]
     rating = R.subjectRating(subject, f["sport"]) if subject else None
     R.placeRows(rows, rating)
+    # ★ median_5k: the TRACK 5K the typical recruit's HS-scale rating is
+    #   worth (owner, 2026-10-10: "5k should be in a track"), the same
+    #   reference as every other page's 5K column; it replaces the old
+    #   typical-course 5K in the table's 5K column (recruiting.js)
+    from conversions import stampFiveK
+    stampFiveK(rows, "median", pool="hs_" + f["gender"], sport=f["sport"])
     return jsonify({
         "rows": rows, "gender": f["gender"], "sport": f["sport"], "sort": f["sort"],
         "built": built, "total": len(every),
@@ -11667,6 +11694,10 @@ def api_recruiting():
         #   0-3: rounded to one, half the column reads the same.
         if r.get("proj_resid") is not None:
             r["proj_resid"] = round(float(r["proj_resid"]), 2)
+    # ★ mean_rating_5k: the 5K column (owner, 2026-10-10), the track 5K
+    #   the season rating is worth on the board's own pool
+    from conversions import stampFiveK
+    stampFiveK(rows, "mean_rating", pool=f["pool"], sport=f["sport"])
     return jsonify({"rows": rows, "season": f["label"], "sport": f["sport"], "pool": f["pool"],
                     "limit": f["limit"], "offset": f["offset"], "note": note})
 

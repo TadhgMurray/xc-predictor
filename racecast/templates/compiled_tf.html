@@ -17,7 +17,7 @@
     five beside them. race.css carries the layout, race-page.js the tabs.
 ===================================================================== #}
 <!DOCTYPE html>
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_th, fk %}
 {% from "_tf_points.html" import tf_team_block %}
 <html lang="en">
 <head>
@@ -115,7 +115,9 @@
             <th{% if not ev.is_relay %} class="rc-wide"{% endif %}>School</th>
             <th class="n">{{ "Mark" if ev.is_field else "Time" }}</th>
             {# Relays have no per-athlete rating; field marks have none either. #}
-            {% if not ev.is_field and not ev.is_relay %}<th class="n">Rating</th>{% endif %}
+            {# ★ and the track 5K the rating is worth (owner, 2026-10-10) #}
+            {% set fk_label = five_k_label(ev.rows|map(attribute="label_pool")) %}
+            {% if not ev.is_field and not ev.is_relay %}<th class="n">Rating</th>{{ fk_th(fk_label) }}{% endif %}
             <th class="n">Points</th>
         </tr></thead>
         <tbody>
@@ -134,7 +136,7 @@
                 {% endif %}
                 <td class="sch{% if not ev.is_relay %} rc-wide{% endif %}">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}<a href="{{ school_href(row.school, header.state) }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label }}{% else %} - {% endif %}</td>
                 <td class="n no-break">{{ row.display_result }}</td>
-                {% if not ev.is_field and not ev.is_relay %}<td class="n">{{ rv(row.speed_rating, row.hs_rating) }}</td>{% endif %}
+                {% if not ev.is_field and not ev.is_relay %}<td class="n">{{ rv(row.speed_rating, row.hs_rating) }}</td>{{ fk(row.speed_rating, row.rating_pool or row.label_pool, "TF", row.hs_rating, fk_label) }}{% endif %}
                 {% if row.points %}<td class="n pts">{{ row.points }}</td>{% else %}<td></td>{% endif %}
             </tr>
             {% endfor %}

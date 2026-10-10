@@ -1,6 +1,6 @@
 {% from "_capped.html" import capped_note %}
 <!DOCTYPE html>
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_th, fk, fk_inline %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
 {% from "_equiv_line.html" import equiv_line %}
 <html lang="en">
@@ -81,7 +81,7 @@
       {% set r = lead[g][0] if lead[g] else none %}
       {% if r %}{% set sst = r.school_state or header.state %}
       <div><span class="k">{{ g_label }} {{ "record" if sel_dist else "best" }}</span>
-        <span class="rc-crow">{% if r.school and r.school|is_team %}{{ crest(r.school, sst, trusted=r.school_state) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name or "Unknown" }}</a></b><i>{% if sel_dist %}{{ r.display_time }}{% else %}{{ rv(r.speed_rating, r.hs_rating) }}{% endif %}</i></span></div>
+        <span class="rc-crow">{% if r.school and r.school|is_team %}{{ crest(r.school, sst, trusted=r.school_state) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name or "Unknown" }}</a></b><i>{% if sel_dist %}{{ r.display_time }}{% else %}{{ rv(r.speed_rating, r.hs_rating) }}{{ fk_inline(five_k(r.speed_rating, r.rating_pool or r.label_pool, "XC", r.hs_rating)) }}{% endif %}</i></span></div>
       {% endif %}
       {% endfor %}
     </div>
@@ -155,21 +155,21 @@
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
             <table class="staged rec-ind" data-step="20">
-                <thead><tr><th>#</th><th>Athlete</th><th>Rating{{ rating_i() }}</th>
+                <thead><tr><th>#</th><th>Athlete</th><th>Rating{{ rating_i() }}</th>{{ fk_th(five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}
                     <th>Time</th><th>Dist</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
                         <td><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
-                        <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
+                        <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>{{ fk(r.speed_rating, r.rating_pool or r.label_pool, "XC", r.hs_rating, five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ r.distance }}m</td>
                         <td>{% set sst = r.school_state or header.state %}{% set sok = r.school_state %}{% if r.school and r.school|is_team %}{{ crest(r.school, sst, trusted=sok) }}<a href="{{ school_href(r.school, sst, trusted=sok) }}" title="{{ r.school }}">{{ r.school|school_label_in(sst, sok) }}</a>{% elif r.school %}{{ r.school|school_label_in(sst, sok) }}{% else %} - {% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}
-                    {{ more_row(rows, 7) }}
+                    {{ more_row(rows, 8) }}
                 </tbody>
             </table>
             <p class="view-all"><a href="/rankings?board=performance&sport=XC&pool={{ bpool }}&course={{ course_name|urlencode }}">View all →</a></p>
@@ -190,20 +190,20 @@
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
             <table class="staged rec-team" data-step="20">
-                <thead><tr><th>#</th><th>School</th><th>Top-5 avg</th>
+                <thead><tr><th>#</th><th>School</th><th>Top-5 avg</th>{{ fk_th(five_k_label(rows|map(attribute="pool")), "fk-sm") }}
                     <th>Dist</th><th>Meet</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for t in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
                         <td>{% set tst = t.school_state or header.state %}{% set tok = t.school_state %}{% if t.school|is_team %}{{ crest(t.school, tst, trusted=tok) }}<a href="{{ school_href(t.school, tst, trusted=tok) }}" title="{{ t.school }}">{{ t.school|school_label_in(tst, tok) }}</a>{% else %}{{ t.school|school_label_in(tst, tok) }}{% endif %}</td>
-                        <td>{{ rv(t.avg5, t.hs_avg5) }}</td>
+                        <td>{{ rv(t.avg5, t.hs_avg5) }}</td>{{ fk(t.avg5, t.pool, "XC", t.hs_avg5, five_k_label(rows|map(attribute="pool")), "fk-sm") }}
                         <td>{{ t.distance }}m</td>
                         <td><a href="/race/xc/{{ t.meet_id }}/{{ t.div_id }}" title="{{ t.meet_name }}">{{ t.meet_name if t.meet_name else "Meet " ~ t.meet_id }}</a></td>
                         <td class="no-break">{{ t.date|mdy }}</td>
                     </tr>
                     {% endfor %}
-                    {{ more_row(rows, 6) }}
+                    {{ more_row(rows, 7) }}
                 </tbody>
             </table>
             <p class="view-all"><a href="/rankings?board=teams&sport=XC&pool={{ bpool }}&course={{ course_name|urlencode }}">View all →</a></p>
@@ -226,20 +226,20 @@
             {% if rows %}
             <table class="staged rec-ind" data-step="20">
                 <thead><tr><th>#</th><th>Athlete</th><th>Time</th>
-                    <th>Rating{{ rating_i() }}</th><th>Grade</th><th>School</th><th>Date</th></tr></thead>
+                    <th>Rating{{ rating_i() }}</th>{{ fk_th(five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}<th>Grade</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
                         <td><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
                         <td class="no-break">{{ r.display_time }}</td>
-                        <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
+                        <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>{{ fk(r.speed_rating, r.rating_pool or r.label_pool, "XC", r.hs_rating, five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}
                         <td>{{ r.grade|grade_label(r.rating_pool or r.label_pool) if r.grade else " - " }}</td>
                         <td>{% set sst = r.school_state or header.state %}{% set sok = r.school_state %}{% if r.school and r.school|is_team %}{{ crest(r.school, sst, trusted=sok) }}<a href="{{ school_href(r.school, sst, trusted=sok) }}" title="{{ r.school }}">{{ r.school|school_label_in(sst, sok) }}</a>{% elif r.school %}{{ r.school|school_label_in(sst, sok) }}{% else %} - {% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}
-                    {{ more_row(rows, 7) }}
+                    {{ more_row(rows, 8) }}
                 </tbody>
             </table>
             {% if pr_ok %}<p class="view-all"><a href="/rankings?board=pr&sport=XC&pool={{ bpool }}&distance={{ sel_dist }}&course={{ course_name|urlencode }}">View all →</a></p>{% endif %}
@@ -297,21 +297,21 @@
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
             <table class="staged rec-ind" data-step="20">
-                <thead><tr><th>#</th><th>Athlete</th><th>Rating{{ rating_i() }}</th>
+                <thead><tr><th>#</th><th>Athlete</th><th>Rating{{ rating_i() }}</th>{{ fk_th(five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}
                     <th>Time</th><th>Grade</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
                         <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
                         <td><a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}" title="{{ r.name }}">{{ r.name if r.name else "Unknown" }}</a></td>
-                        <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>
+                        <td>{{ rv(r.speed_rating, r.hs_rating) }}</td>{{ fk(r.speed_rating, r.rating_pool or r.label_pool, "XC", r.hs_rating, five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}
                         <td class="no-break">{{ r.display_time }}</td>
                         <td>{{ r.grade|grade_label(r.rating_pool or r.label_pool) if r.grade else " - " }}</td>
                         <td>{% set sst = r.school_state or header.state %}{% set sok = r.school_state %}{% if r.school and r.school|is_team %}{{ crest(r.school, sst, trusted=sok) }}<a href="{{ school_href(r.school, sst, trusted=sok) }}" title="{{ r.school }}">{{ r.school|school_label_in(sst, sok) }}</a>{% elif r.school %}{{ r.school|school_label_in(sst, sok) }}{% else %} - {% endif %}</td>
                         <td class="no-break"><a href="/race/xc/{{ r.meet_id }}/{{ r.div_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.date|mdy }}</a></td>
                     </tr>
                     {% endfor %}
-                    {{ more_row(rows, 7) }}
+                    {{ more_row(rows, 8) }}
                 </tbody>
             </table>
             {% if pr_ok %}<p class="view-all"><a href="/rankings?board=performance&sport=XC&pool={{ bpool }}&distance={{ sel_dist }}&course={{ course_name|urlencode }}">View all →</a></p>{% endif %}

@@ -1,6 +1,6 @@
 {# landing.html -- one state (or national) ranking page, server-rendered.
    See landing.py for why these exist. #}
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_th, fk, fk_inline %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -51,7 +51,7 @@
       {% if rows %}{% set r0 = rows[0] %}
       <div class="rc-champs">
         <div><span class="k">No. 1</span>
-          <span class="rc-crow">{% if r0.school and r0.school|is_team %}{{ crest(r0.school, r0.state, pool=pool_level) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ r0.person_id }}">{{ r0.name }}</a></b><i>{{ rv(r0.rating, r0.hs_rating) }}{% if r0.school %} · {{ r0.school|school_label_for(pool_level, r0.state) }}{% endif %}</i></span></div>
+          <span class="rc-crow">{% if r0.school and r0.school|is_team %}{{ crest(r0.school, r0.state, pool=pool_level) }}{% endif %}<b class="rc-cn"><a href="/athlete/{{ r0.person_id }}">{{ r0.name }}</a></b><i>{{ rv(r0.rating, r0.hs_rating) }}{{ fk_inline(five_k(r0.rating, pool_key, sport, r0.hs_rating)) }}{% if r0.school %} · {{ r0.school|school_label_for(pool_level, r0.state) }}{% endif %}</i></span></div>
         {% if top_schools %}{% set t0 = top_schools[0] %}
         <div><span class="k">Most runners in the top {{ rows|length }}</span>
           <span class="rc-crow">{{ crest(t0.school, t0.state, pool=pool_level) }}<b class="rc-cn"><a href="{{ school_href(t0.school, t0.state, pool=pool_level) }}">{{ t0.school|school_label_for(pool_level, t0.state) }}</a></b><i>{{ t0.n }}</i></span></div>
@@ -104,7 +104,7 @@
   {% if rows %}
   <table class="landing-tbl" data-scale-sort="5">
     <thead>
-      <tr><th class="rk">#</th><th>Athlete</th><th>School</th><th>Grade</th><th class="num">Rating</th><th class="num">Races</th></tr>
+      <tr><th class="rk">#</th><th>Athlete</th><th>School</th><th>Grade</th><th class="num">Rating</th>{{ fk_th(five_k_label([pool_key]), "fk-sm") }}<th class="num">Races</th></tr>
     </thead>
     <tbody>
       {% for r in rows %}
@@ -114,6 +114,8 @@
         <td>{% if r.school and r.school|is_team %}{{ crest(r.school, r.state, pool=pool_level) }}<a href="{{ school_href(r.school, r.state, pool=pool_level) }}">{{ r.school|school_label_for(pool_level, r.state) }}</a>{% elif r.school %}{{ r.school|school_label_for(pool_level, r.state) }}{% else %} - {% endif %}</td>
         <td>{{ r.grade|grade_label(pool_level) if r.grade else " - " }}</td>
         <td class="num">{{ rv(r.rating, r.hs_rating) }}</td>
+        {# ★ the track 5K the season rating is worth (owner, 2026-10-10) #}
+        {{ fk(r.rating, pool_key, sport, r.hs_rating, five_k_label([pool_key]), "fk-sm") }}
         <td class="num">{{ r.n_races }}</td>
       </tr>
       {% endfor %}

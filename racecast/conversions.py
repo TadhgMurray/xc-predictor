@@ -1384,6 +1384,82 @@ def stampBoardClocks(rows, key="rating", pool=None, sport=None):
     return rows
 
 
+# ★ THE 5K COLUMN (owner, 2026-10-10: "add [a 5K column] to all pages with
+#   ratings"). Beside every rating a page shows, the track 5K it is worth:
+#   ONE reference for both sports, so a column reads down a page that mixes
+#   cross country and track. A cross country rating is ratingClock's own
+#   track 5K; a track rating is read at the same 5000 m on a track (not at
+#   its own event, as the titles do), so the two land on one column. Middle
+#   school is 3200 m on both, and the cell says so.
+# ! THE SAME CLOCK IN BOTH VIEWS. The own-pool rating on its own pool and
+#   the HS-equivalent on the same-gender HS pool are two spellings of one
+#   athlete (see readerDistance's note above), so the column is computed
+#   once, from the own-pool number, and the scale toggle leaves it alone.
+#   Only a row with no own pool a reader's level knows (pro, open) reads
+#   its HS-equivalent on hs_<g> -- fiveKForHsRating's rule.
+# ! OFF THE PER-POOL TABLES (_clockTable), never a conversion per row: a
+#   board of fifty rows is one table read fifty times.
+FIVE_K_TITLE = "The track 5K this rating is worth"
+
+
+def fiveKDistance(pool):
+    """5000.0 for a high-school or college pool, 3200.0 for middle school,
+    None for a pool with no reader's level or no gender."""
+    p = _bare(pool) or ""
+    level, _, g = p.partition("_")
+    if g not in ("m", "f"):
+        return None
+    return XC_TRACK_M.get(level)
+
+
+def fiveK(rating, pool, sport="XC", hs=None):
+    """{'time': 'm:ss', 'dist': '5K' | '3200m'} -- the track 5K (3200 m in
+    middle school) a rating on `pool`'s own scale is worth -- or None.
+    `hs` (the row's HS-equivalent) serves only a pool with no level."""
+    try:
+        d = fiveKDistance(pool)
+        if d is None and hs is not None:
+            g = (_bare(pool) or "").partition("_")[2]
+            if g in ("m", "f"):
+                rating, pool, d = hs, "hs_" + g, XC_TRACK_M["hs"]
+        if d is None:
+            return None
+        if str(sport or "XC").upper() == "TF":
+            c = ratingClock(rating, pool, "TF", d)
+        else:
+            c = ratingClock(rating, pool, "XC")
+    except Exception:                                   # noqa: BLE001
+        return None
+    return {"time": c["time"], "dist": c["dist"]} if c else None
+
+
+def fiveKLabel(pools):
+    """The column's header for the pools on a page: '5K' when every row is
+    a 5K, '3200m' when every row is middle school, 'Track ≈' for a mix
+    (each cell then names its distance). Unknown pools do not vote."""
+    ds = {fiveKDistance(p) for p in (pools or ())} - {None}
+    if ds == {XC_TRACK_M["ms"]}:
+        return distanceWords(XC_TRACK_M["ms"])
+    return "Track ≈" if len(ds) > 1 else "5K"
+
+
+def stampFiveK(rows, key="rating", pool=None, sport=None, hs_key=None):
+    """row['<key>_5k'] = 'm:ss' and row['<key>_5k_dist'] = '5K' / '3200m'
+    for rows that carry their own pool ('pool' or 'rating_pool') and sport,
+    or one for the whole list. Returns fiveKLabel for the rows' pools, the
+    column's header. Never raises."""
+    pools = []
+    for row in rows or ():
+        p = row.get("pool") or row.get("rating_pool") or pool
+        c = fiveK(row.get(key), p, row.get("sport") or sport,
+                  row.get(hs_key) if hs_key else None)
+        row[key + "_5k"] = c["time"] if c else None
+        row[key + "_5k_dist"] = c["dist"] if c else None
+        if c:
+            pools.append(p)
+    return fiveKLabel(pools)
+
+
 def convert_spread(source, xc_targets, tf_targets):
     """The whole tool in one call.
 

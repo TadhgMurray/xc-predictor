@@ -29,7 +29,10 @@
 <link rel="stylesheet" href="{{ static_v('style.css') }}">
 <link rel="stylesheet" href="{{ static_v('pages2.css') }}">
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_inline %}
+{# ★ A MARK IS AN HS SEASON RATING, so its 5K (owner, 2026-10-10) reads
+   on the same-gender HS pool: a muted "≈ 16:05" after each mark #}
+{% set wpool = "hs_f" if gender == "girls" else "hs_m" %}
 {% set pct = (100 * mark_q)|round|int if mark_q is defined else 10 %}
 {% if mode == "division" %}
   {% set dlabel = cell.label if cell else (state ~ " " ~ division_slug|upper) %}
@@ -150,7 +153,7 @@
         {% set c = (gs.get(g) or {}).get("divisions", [])|selectattr("slug", "equalto", slug)|first %}
         <td class="num">
           {% if c and c.latest and c.latest.lines.qualify %}
-            <a href="/what-it-takes/{{ state|lower }}/{{ slug }}{{ '?g=girls' if g == 'girls' }}">{{ rv(c.latest.lines.qualify.mark, c.latest.lines.qualify.mark) }}</a>
+            <a href="/what-it-takes/{{ state|lower }}/{{ slug }}{{ '?g=girls' if g == 'girls' }}">{{ rv(c.latest.lines.qualify.mark, c.latest.lines.qualify.mark) }}</a>{{ fk_inline(five_k(c.latest.lines.qualify.mark, "hs_f" if g == "girls" else "hs_m", "XC")) }}
             <span class="p2-row-sub">{{ c.latest.year }} &middot; {{ c.latest.lines.qualify.n }} runners {{ thin_tag(c) }}</span>
           {% else %}<span class="p2-muted">none on record</span>{% endif %}
         </td>
@@ -194,7 +197,7 @@
       <div class="rc-champs">
         {% for key, title, whose, n in lines %}{% set ln = s0.lines.get(key) %}{% if ln %}
         <div><span class="k">{{ title }} · {{ s0.year }}</span>
-          <span class="rc-crow"><b class="rc-cn">{{ rv(ln.mark, ln.mark) }}</b>{% if ln.t_state %}<i>{{ ln.t_state|wit_time }} at the state course</i>{% elif ln.t_typical %}<i>{{ ln.t_typical|wit_time }} typical course</i>{% endif %}</span></div>
+          <span class="rc-crow"><b class="rc-cn">{{ rv(ln.mark, ln.mark) }}{{ fk_inline(five_k(ln.mark, wpool, "XC")) }}</b>{% if ln.t_state %}<i>{{ ln.t_state|wit_time }} at the state course</i>{% elif ln.t_typical %}<i>{{ ln.t_typical|wit_time }} typical course</i>{% endif %}</span></div>
         {% endif %}{% endfor %}
       </div>
       {% endif %}
@@ -262,7 +265,7 @@
     <section class="wit-card">
       <h3 class="wit-card-h">{{ title }}</h3>
       {% if ln %}
-      <div class="wit-big">{{ rv(ln.mark, ln.mark) }} <span class="wit-big-yr">{{ s0.year }}</span></div>
+      <div class="wit-big">{{ rv(ln.mark, ln.mark) }} <span class="wit-big-yr">{{ s0.year }}</span>{{ fk_inline(five_k(ln.mark, wpool, "XC")) }}</div>
       <p class="wit-what">{{ 100 - pct }}% {{ whose }} had a season rating of at least this.</p>
       {% if ln.t_state or ln.t_typical %}
       <p class="wit-times">
@@ -311,7 +314,7 @@
       <tr>
         <td>{{ c.label }} {{ thin_tag(c) }}
           <span class="p2-row-sub">{{ s.year }}{% if s.feeds_share and s.feeds_share < 1 %} &middot; {{ (100 * s.feeds_share)|round|int }}% of its advancers ran this division{% endif %}</span></td>
-        <td class="num">{% if ln %}{{ rv(ln.mark, ln.mark) }}<span class="p2-row-sub">slowest {{ ln.slowest }}</span>{% endif %}</td>
+        <td class="num">{% if ln %}{{ rv(ln.mark, ln.mark) }}{{ fk_inline(five_k(ln.mark, wpool, "XC")) }}<span class="p2-row-sub">slowest {{ ln.slowest }}</span>{% endif %}</td>
         <td class="num p2-wide">{% if ln and ln.t_typical %}{{ ln.t_typical|wit_time }} <span class="p2-muted">{{ "%.0f"|format(ln.t_distance) }} m</span>{% endif %}</td>
         <td class="num">{{ s.n_advanced }} of {{ s.n_finishers }}
           <span class="p2-row-sub">{{ s.n_schools }} schools{% if s.deepest_place %} &middot; as deep as {{ s.deepest_place|wit_ord }}{% endif %}</span></td>
@@ -337,7 +340,7 @@
       {% for c in others %}{% set s = c.latest %}
         <tr>
           <td>{{ c.label }} {{ thin_tag(c) }}<span class="p2-row-sub">{{ s.year }}</span></td>
-          <td class="num">{{ rv(s.lines.advance.mark, s.lines.advance.mark) if s.lines.advance }}</td>
+          <td class="num">{% if s.lines.advance %}{{ rv(s.lines.advance.mark, s.lines.advance.mark) }}{{ fk_inline(five_k(s.lines.advance.mark, wpool, "XC")) }}{% endif %}</td>
           <td class="num">{{ s.n_advanced }} of {{ s.n_finishers }}</td>
           <td class="p2-wide">{% if c.feeds %}<a href="/what-it-takes/{{ state|lower }}/{{ c.feeds }}{{ '?g=girls' if gender == 'girls' }}">{{ c.feeds_label or c.feeds|upper }}</a>{% endif %}</td>
         </tr>
@@ -391,7 +394,7 @@
       <tr{% if d.slug == division_slug %} class="rc-lit"{% endif %}>
         <td class="tn"><a href="/what-it-takes/{{ state|lower }}/{{ d.slug }}{{ '?g=girls' if gender == 'girls' }}">{{ d.short }}</a>
           {% if q %}<span class="sp">{{ d.latest.year }} · {{ q.n }} runners{% if d.thin %} · thin{% endif %}</span>{% endif %}</td>
-        <td class="n tpts">{% if q %}{{ rv(q.mark, q.mark) }}{% else %}<span class="p2-muted">&ndash;</span>{% endif %}</td>
+        <td class="n tpts">{% if q %}{{ rv(q.mark, q.mark) }}{{ fk_inline(five_k(q.mark, wpool, "XC")) }}{% else %}<span class="p2-muted">&ndash;</span>{% endif %}</td>
       </tr>
       {% endfor %}
       </tbody>

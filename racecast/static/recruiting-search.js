@@ -173,6 +173,7 @@
         <td class="rc-dim">${esc(r.grade_label || "")}</td>
         <td class="num">${r.grad_year || " - "}</td>
         <td class="num rc-strong">${r.mean_rating == null ? " - " : r.mean_rating.toFixed(1)}</td>
+        <td class="fk">${r.mean_rating_5k ? esc(r.mean_rating_5k) + (r.mean_rating_5k_dist && r.mean_rating_5k_dist !== "5K" ? ` <span class="fk-d">${esc(r.mean_rating_5k_dist)}</span>` : "") : '<span class="fk-none">-</span>'}</td>
         <td class="num rc-dim">${r.prev_rating == null ? " - " : r.prev_rating.toFixed(1)}</td>
         ${gainCell(r.gain)}
         ${anyProj ? projCell(r) : ""}
@@ -185,7 +186,7 @@
       college season. They assume the athlete keeps racing.` : ""}</p>
       <div class="r-scroll"><table class="rk rc-tbl">
       <thead><tr><th class="num">#</th><th>Athlete</th><th>School</th><th>Grade</th>
-        <th class="num">Class of</th><th class="num" title="this season's rating">${label}</th><th class="num" title="the same athlete a year earlier">${prev}</th>
+        <th class="num">Class of</th><th class="num" title="this season's rating">${label}</th><th class="fk" title="The track 5K this rating is worth">5K</th><th class="num" title="the same athlete a year earlier">${prev}</th>
         <th class="num">Gain</th>${anyProj ? `<th class="num" title="What the
           model projects this athlete runs about a year from now, on this
           season's scale, if they keep racing. Hover a number for its band.">

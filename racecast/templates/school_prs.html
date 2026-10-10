@@ -13,7 +13,7 @@
     link.
 ===================================================================== #}
 <!DOCTYPE html>
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_th, fk, fk_inline %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -43,7 +43,9 @@
         <thead><tr>
             <th>#</th><th>Athlete</th>
             <th>{{ "Mark" if sec.kind == "field" else "Time" }}</th>
-            {% if sec.kind == "running" %}<th>Rating</th>{% endif %}
+            {# ★ and the track 5K the rating is worth (owner, 2026-10-10) #}
+            {% set fk_label = five_k_label(rows|map(attribute="pool")) %}
+            {% if sec.kind == "running" %}<th>Rating</th>{{ fk_th(fk_label, "fk-sm") }}{% endif %}
             <th>Grade</th>
             {% if with_course %}<th>Course</th>{% endif %}
             <th>Date</th>
@@ -55,7 +57,7 @@
                 <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name if r.name else "Unknown" }}</a>
                     {% else %}{{ r.name if r.name else "Unknown" }}{% endif %}</td>
                 <td class="no-break">{{ r.display_mark }}</td>
-                {% if sec.kind == "running" %}<td>{{ rv(r.speed_rating, r.hs_speed_rating) }}</td>{% endif %}
+                {% if sec.kind == "running" %}<td>{{ rv(r.speed_rating, r.hs_speed_rating) }}</td>{{ fk(r.speed_rating, r.pool, sport, r.hs_speed_rating, fk_label, "fk-sm") }}{% endif %}
                 <td>{{ r.grade|grade_label(r.pool) if r.grade else " - " }}</td>
                 {% if with_course %}
                 <td>{% if r.course_name %}<a href="/course/{{ r.course_name|urlencode }}" title="{{ r.course_name }}">{{ r.course_name }}</a>{% else %} - {% endif %}</td>
@@ -76,7 +78,7 @@
             </tr>
             {% endfor %}
             {% if rows|length > 15 %}
-            <tr class="more-row"><td colspan="{{ 5 + (1 if sec.kind == 'running' else 0) + (1 if with_course else 0) }}">
+            <tr class="more-row"><td colspan="{{ 5 + (2 if sec.kind == 'running' else 0) + (1 if with_course else 0) }}">
                 <button type="button" class="more-btn">
                     Show 20 more <span class="more-left">({{ rows|length - 15 + sec.left[g] }} left)</span>
                 </button>
@@ -124,7 +126,7 @@
       {% for g, g_label in [("M", "Boys"), ("F", "Girls")] %}
       {% if best[g] %}{% set v, r, ev = best[g] %}
       <div><span class="k">{{ g_label }} best · {{ ev }}</span>
-        <span class="rc-crow"><b class="rc-cn">{% if r.person_id %}<a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name or "Unknown" }}</a>{% else %}{{ r.name or "Unknown" }}{% endif %}</b><i>{{ r.display_mark }} · {{ rv(r.speed_rating, r.hs_speed_rating) }}</i></span></div>
+        <span class="rc-crow"><b class="rc-cn">{% if r.person_id %}<a href="/athlete/{{ r.person_id }}{% if r.result_id %}?r={{ r.result_id }}{% endif %}">{{ r.name or "Unknown" }}</a>{% else %}{{ r.name or "Unknown" }}{% endif %}</b><i>{{ r.display_mark }} · {{ rv(r.speed_rating, r.hs_speed_rating) }}{{ fk_inline(five_k(r.speed_rating, r.pool, sport, r.hs_speed_rating)) }}</i></span></div>
       {% endif %}
       {% endfor %}
     </div>

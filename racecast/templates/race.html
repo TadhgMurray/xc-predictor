@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_th, fk %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
 {% from "_recflag.html" import recflag, ratflag %}
 {% from "_equiv_line.html" import equiv_line %}
@@ -123,6 +123,10 @@
         <th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th>
         <th class="n">Time</th>
         <th class="n">Rating{{ rating_i() }}{% if above_spec %}<span class="vs-level-h rc-sub">vs level{{ al.level_i() }}</span>{% endif %}</th>
+        {# ★ the track 5K each rating is worth (owner, 2026-10-10); kept on
+           phones -- the school and points columns fold away first #}
+        {% set fk_label = five_k_label(results|map(attribute="label_pool")) %}
+        {{ fk_th(fk_label) }}
         {# Rank among runners who can score or displace: complete teams'
            first seven only. #}
         <th class="n rc-wide">Pts</th>
@@ -141,6 +145,7 @@
         <td class="sch rc-wide">{% if row.school and row.school|is_team %}{{ crest(row.school, sst, trusted=sok) }}<a href="{{ school_href(row.school, sst, trusted=sok) }}">{{ row.school|school_label_in(sst, sok) }}</a>{% elif row.school %}{{ row.school|school_label_in(sst, sok) }}{% else %} - {% endif %}{% if row.grade %}<span class="gr">{{ row.grade|grade_label(row.rating_pool) }}</span>{% endif %}</td>
         <td class="n tm"{% if row.time_seconds %} data-t="{{ row.time_seconds }}"{% endif %}>{{ row.display_time }}{{ recflag(row) }}</td>
         <td class="n rt" data-rx="xc:{{ row.result_id }}"><span class="rc-rv">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</span>{% if above_spec %}<span class="vs-level" data-rid="{{ row.result_id }}"></span>{% endif %}</td>
+        {{ fk(row.speed_rating, row.rating_pool or row.label_pool, "XC", row.hs_rating, fk_label) }}
         <td class="n pts rc-wide">{{ row.score_place if row.score_place else " - " }}</td>
       </tr>
       {% endfor %}
@@ -247,7 +252,7 @@
 <dialog class="rc-teampop" aria-label="Team results">
   <form method="dialog"><button class="rc-pop-x" aria-label="Close">&times;</button></form>
   <h2 class="rc-pop-h"></h2>
-  <table class="rc-pop-t"><thead><tr><th>Pl</th><th>Athlete</th><th class="n">Time</th><th class="n">Rating</th><th class="n">Pts</th></tr></thead><tbody></tbody></table>
+  <table class="rc-pop-t"><thead><tr><th>Pl</th><th>Athlete</th><th class="n">Time</th><th class="n">Rating</th><th class="n fk" title="The track 5K this rating is worth">5K</th><th class="n">Pts</th></tr></thead><tbody></tbody></table>
   <a class="rc-pop-go" href="#" hidden>Team page &rarr;</a>
 </dialog>
 </main>

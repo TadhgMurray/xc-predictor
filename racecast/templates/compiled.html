@@ -26,7 +26,7 @@
     (stampXcPlaces, the race page's rule), and it scores nobody.
 ===================================================================== #}
 <!DOCTYPE html>
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_th, fk %}
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -108,6 +108,9 @@
       <thead><tr>
         <th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th>
         <th class="n">Time</th><th class="n">Rating</th>
+        {# ★ the track 5K the rating is worth (owner, 2026-10-10) #}
+        {% set fk_label = five_k_label(level.results|map(attribute="label_pool")) %}
+        {{ fk_th(fk_label) }}
         {# Same Points as race.html: rank among the scorable, within THIS
            compiled field. #}
         <th class="n rc-wide">Pts</th>
@@ -127,6 +130,7 @@
         <td class="sch rc-wide">{% if row.school and row.school|is_team %}{{ crest(row.school, header.state) }}<a href="{{ school_href(row.school, header.state) }}">{{ row.school|school_label_in(header.state) }}</a>{% elif row.school %}{{ row.school|school_label }}{% else %} - {% endif %}{% if row.grade %}<span class="gr">{{ row.grade|grade_label(row.rating_pool or row.label_pool) }}</span>{% endif %}</td>
         <td class="n tm">{{ row.time_seconds|clock }}</td>
         <td class="n rt"><span class="rc-rv">{{ rv(row.speed_rating, row.hs_rating) }}</span></td>
+        {{ fk(row.speed_rating, row.rating_pool or row.label_pool, "XC", row.hs_rating, fk_label) }}
         <td class="n pts rc-wide">{{ row.score_place if row.score_place else " - " }}</td>
         <td class="n"><a href="/race/xc/{{ header.meet_id }}/{{ row.div_id }}#r{{ row.result_id }}" title="Their place in the race they ran">{{ row.division_place if row.division_place else row.division_status }}</a></td>
       </tr>

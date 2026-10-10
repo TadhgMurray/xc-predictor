@@ -211,7 +211,7 @@
       <td class="num rc-dim">${num(r.min)}</td>
       <td class="num rc-strong">${num(r.median)}</td>
       <td class="num rc-dim">${num(r.max)}</td>
-      <td class="num">${fmtTime(med["5k"]) || " - "}</td>
+      <td class="num fk">${esc(r.median_5k || "") || " - "}${r.median_5k_dist && r.median_5k_dist !== "5K" ? ` <span class="fk-d">${esc(r.median_5k_dist)}</span>` : ""}</td>
       <td class="num">${fmtTime(med["3200"]) || " - "}</td>
       ${withTier ? tierCell(r.tier) : ""}
     </tr>`;
@@ -222,7 +222,7 @@
       <th class="num" title="the slowest recruit's rating: the walk-on line">Slowest</th>
       <th class="num" title="the median recruit's rating">Typical</th>
       <th class="num" title="the fastest recruit's rating">Fastest</th>
-      <th class="num" title="the typical recruit's rating as a 5K at a typical course">5K</th>
+      <th class="num fk" title="The track 5K the typical recruit's rating is worth">5K</th>
       <th class="num" title="the typical recruit's rating as a 3200 on a typical track">3200</th>${withTier ? "<th>You</th>" : ""}</tr></thead>`;
   }
 

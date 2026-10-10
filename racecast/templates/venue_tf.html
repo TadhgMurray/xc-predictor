@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_th, fk, fk_inline %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
 <html lang="en">
 <head>
@@ -42,7 +42,7 @@
     {% if bests %}{% set b0 = bests[0] %}
     <div class="rc-champs">
       <div><span class="k">Best mark here</span>
-        <span class="rc-crow"><b class="rc-cn">{% if b0.person_id %}<a href="/athlete/{{ b0.person_id }}{% if b0.result_id %}?r={{ b0.result_id }}{% endif %}">{{ b0.name or "Unknown" }}</a>{% else %}{{ b0.name or "Unknown" }}{% endif %}</b><i>{{ b0.event_short or "" }} {{ b0.display_result }} · {{ rv(b0.speed_rating, b0.hs_rating) }}</i></span></div>
+        <span class="rc-crow"><b class="rc-cn">{% if b0.person_id %}<a href="/athlete/{{ b0.person_id }}{% if b0.result_id %}?r={{ b0.result_id }}{% endif %}">{{ b0.name or "Unknown" }}</a>{% else %}{{ b0.name or "Unknown" }}{% endif %}</b><i>{{ b0.event_short or "" }} {{ b0.display_result }} · {{ rv(b0.speed_rating, b0.hs_rating) }}{{ fk_inline(five_k(b0.speed_rating, b0.rating_pool or b0.label_pool, "TF", b0.hs_rating)) }}</i></span></div>
     </div>
     {% endif %}
   </div>
@@ -73,6 +73,9 @@
                 <th>Meet</th>
                 <th>Date</th>
                 <th>Rating{{ rating_i() }}</th>
+                {# ★ the track 5K the rating is worth (owner, 2026-10-10) #}
+                {% set fk_label = five_k_label(bests|map(attribute="label_pool")) %}
+                {{ fk_th(fk_label, "fk-sm") }}
             </tr>
         </thead>
         <tbody>
@@ -93,6 +96,7 @@
                 <td><a href="/race/tf/{{ row.meet_id }}/{{ row.event_id }}/{{ row.div_id }}{% if row.result_id %}?r={{ row.result_id }}{% endif %}">{{ row.meet_name }}</a></td>
                 <td class="no-break">{{ row.date|mdy }}</td>
                 <td>{{ rv(row.speed_rating, row.hs_rating) }}</td>
+                {{ fk(row.speed_rating, row.rating_pool or row.label_pool, "TF", row.hs_rating, fk_label, "fk-sm") }}
             </tr>
             {% endfor %}
         </tbody>

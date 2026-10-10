@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 {% from "_tf_points.html" import tf_team_block %}
-{% from "_scale.html" import rv, scale_toggle %}
+{% from "_scale.html" import rv, scale_toggle, fk_th, fk %}
 {# ★ THE EVENT LINKS CARRY THE FEED (sweep 2026-10-10), as meet.html's
    race_q: without ?alt= the race page opened the colliding OTHER meet. #}
 {% macro race_q() %}{% set _q = [] %}{% if other_sources %}{% set _ = _q.append('alt=' ~ alt_idx) %}{% endif %}{% if school %}{% set _ = _q.append('school=' ~ (school|urlencode)) %}{% endif %}{% if _q %}?{{ _q|join('&') }}{% endif %}{% endmacro %}
@@ -142,7 +142,9 @@
     <table class="rc-table">
         <thead>
             <tr><th>Pl</th><th>Athlete</th><th class="rc-wide">Grade</th><th class="rc-wide">School</th>
-                <th class="n">Result</th><th class="n">Rating</th></tr>
+                {# ★ and the track 5K the rating is worth (owner, 2026-10-10) #}
+                {% set fk_label = five_k_label(ev.rows|map(attribute="label_pool")) %}
+                <th class="n">Result</th><th class="n">Rating</th>{{ fk_th(fk_label) }}</tr>
         </thead>
         <tbody>
             {% for r in ev.rows %}
@@ -153,6 +155,7 @@
                 <td class="rc-wide">{% if r.school and r.school|is_team %}{{ crest(r.school, header.state, pool='college' if college else none) }}<a href="{{ school_href(r.school, header.state, pool='college' if college else none) }}">{{ r.school|school_label_for('college' if college else none, header.state) }}</a>{% elif r.school %}{{ r.school|school_label_for('college' if college else none, header.state) }}{% else %} - {% endif %}</td>
                 <td class="n">{{ r.display_result }}</td>
                 <td class="n">{{ rv(r.speed_rating, r.hs_rating) if r.speed_rating else " - " }}</td>
+                {{ fk(r.speed_rating, r.rating_pool or r.label_pool, "TF", r.hs_rating, fk_label) }}
             </tr>
             {% endfor %}
         </tbody>

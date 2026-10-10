@@ -738,8 +738,9 @@ main.ath-page.rc .season table th:nth-child(3) { width: 3.9rem; }
 main.ath-page.rc .season table th:nth-child(4) { width: 4.6rem; }
 main.ath-page.rc .season table th:nth-child(5) { width: 5.6rem; }
 main.ath-page.rc .season table th:nth-child(6) { width: 4.4rem; }
-main.ath-page.rc .season table th:nth-child(7) { width: 5.8rem; }
-main.ath-page.rc .season table th:nth-child(8) { width: 7rem; }
+main.ath-page.rc .season table th:nth-child(7) { width: 3.3rem; }  /* ★ 5K (2026-10-10): paid for by Flags, so Meet keeps its room */
+main.ath-page.rc .season table th:nth-child(8) { width: 5.8rem; }
+main.ath-page.rc .season table th:nth-child(9) { width: 5.8rem; }    /* 7 before; the pills wrap two to a line */
 /* "· 1st on team" under the place, as a small sub-line */
 main.ath-page.rc .season td.place-cell .muted { display: block; font-size: .8rem; line-height: 1.2; }
 main.ath-page.rc .rc-side > h2 { font-size: 1.1rem; }

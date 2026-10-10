@@ -334,6 +334,17 @@ def athleteCard(cur, pid):
         rated = headerSeason(seasons)
     best = max((float(s["best_rating"]) for s in seasons
                 if s.get("best_rating") is not None), default=None)
+    # ★ AND THE 5K THAT BEST RACE IS WORTH (owner, 2026-10-10), on the pool
+    #   of the season it came from -- the scale that number is on
+    best_season = max((s for s in seasons if s.get("best_rating") is not None),
+                      key=lambda s: float(s["best_rating"]), default=None)
+    best_5k = None
+    if best_season is not None:
+        try:
+            from conversions import fiveK
+            best_5k = fiveK(best, best_season.get("pool"), best_season["sport"])
+        except Exception:                               # noqa: BLE001
+            best_5k = None
     # ★ THE HS BEST IS ITS OWN MAX (owner, 2026-10-09): seasons span pools,
     #   so the best race on the HS scale need not be the own-pool best.
     from pool_view import repFactor
@@ -381,6 +392,7 @@ def athleteCard(cur, pid):
         "season_races": int(rated["n_races"]) if rated else 0,
         "best_rating": best,
         "best_rating_hs": round(best_hs, 1) if best_hs is not None else None,
+        "best_5k": best_5k,
         "seasons": seasons,
     }
 
