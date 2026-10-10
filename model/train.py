@@ -160,6 +160,7 @@ USE_AMP = False
 # Where to write the resumable checkpoint. None = do not checkpoint, which
 # is right for a smoke run and wrong for anything you are paying for.
 CHECKPOINT = None
+INIT = None          # --init: a model.pt to start from instead of random weights
 
 # Fraction of examples held OUT of training, used only to check the
 # model is generalising rather than memorising.
@@ -1738,6 +1739,25 @@ def main():
     start_epoch, best_val_loss, bad_epochs = _loadCheckpoint(
         CHECKPOINT, model, optimizer, scheduler)
 
+    # ★ --init: START FROM A SAVED model.pt, NOT FROM RANDOM WEIGHTS (owner,
+    #   2026-10-10: the full run's epoch 1 was the best -- 4.32% against the
+    #   baseline's 8.82% -- and epoch 2, still at the peak learning rate,
+    #   went backwards). Fine-tuning those weights at a lower --lr keeps
+    #   what epoch 1 learned. Weights only: the optimizer and the schedule
+    #   start fresh, as they should at a new rate. Ignored when a
+    #   checkpoint resumed -- that run already has its own weights.
+    if INIT and start_epoch == 0:
+        model.load_state_dict(torch.load(INIT, map_location=DEVICE))
+        print(f"  weights from {INIT} (fine-tuning; optimizer and schedule fresh)")
+        # ! THE BAR IS THE STARTING MODEL, not infinity: an epoch that does
+        #   not beat what --init already scores is not saved, so a fine-tune
+        #   can only replace the model with a better one.
+        best_val_loss, _pm, _pb, _cal = _validateOneEpoch(model, val_loader,
+                                                          criterion)
+        print(f"  starting point: val {best_val_loss:.4f}  model {_pm:.2f}%  "
+              f"baseline {_pb:.2f}%  close-pair {_cal['pair_model']:.1f}% -- "
+              f"an epoch must beat this to be saved")
+
     # ★ AND target_stats.pkl IS REWRITTEN FROM THE RESUMED MODEL, not left
     #   as the numbers computed above (owner, 2026-09-16, training the
     #   corpus in shifts). _loadCheckpoint restores the calibration buffers
@@ -1920,6 +1940,10 @@ if __name__ == "__main__":
                           "every epoch. REQUIRED for spot instances: "
                           "model.pt alone cannot resume, it has no "
                           "optimizer state.")
+    _ap.add_argument("--init", default=None, metavar="MODEL_PT",
+                     help="start from this model.pt's weights instead of "
+                          "random ones (fine-tuning at a new --lr). The "
+                          "optimizer and LR schedule start fresh.")
     _args = _ap.parse_args()
 
     if WORLD > 1:
@@ -1980,6 +2004,7 @@ if __name__ == "__main__":
         NUM_WORKERS = _args.workers
     USE_AMP = _args.amp
     CHECKPOINT = _args.checkpoint
+    INIT = _args.init
     if _args.baseline:
         BASELINE = {"ewma": BASELINE_EWMA, "best2": BASELINE_BEST2,
                     "last": BASELINE_LAST,
