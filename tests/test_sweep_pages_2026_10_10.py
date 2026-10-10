@@ -394,3 +394,27 @@ def test_compare_edges_follow_the_default_hs_scale():
     src = _tpl("compare.html")
     assert 'brate_edge == "a"' in src and "m.margin_label" in src
     assert '"%.1f"|format(m.margin)' not in src
+
+
+# ---- 11. TF heats: semis are their own round, ties share a place -------- #
+
+def test_tf_sections_keep_semis_apart_and_tie_places(A):
+    rows = [
+        {"result_id": 1, "round": "F", "time_seconds": 10.50, "heat": None},
+        {"result_id": 2, "round": "F", "time_seconds": 10.60, "heat": None},
+        {"result_id": 3, "round": "F", "time_seconds": 10.60, "heat": None},
+        {"result_id": 4, "round": "F", "time_seconds": 10.70, "heat": None},
+        {"result_id": 5, "round": "S", "time_seconds": 10.65, "heat": None},
+        {"result_id": 6, "round": "P", "time_seconds": 10.80, "heat": None},
+    ]
+    secs = A._tf_heat_sections(rows, False)
+    assert [s["label"] for s in secs] == ["Finals", "Semifinals", "Prelims"]
+    assert [r["sec_place"] for r in secs[0]["rows"]] == [1, 2, 2, 4]
+
+
+def test_scoring_still_reads_a_semi_as_not_the_final():
+    import tf_points
+    assert tf_points.rowRound({"round": "S"}) == "prelim"
+    assert tf_points.rowRound({"round": "S"}, fine=True) == "semi"
+    assert tf_points.rowRound({"round": "Q"}, fine=True) == "quarter"
+    assert tf_points.rowRound({"round": "F"}, fine=True) == "final"

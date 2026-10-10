@@ -4975,7 +4975,10 @@ def _tf_heat_sections(results, is_field):
         except ValueError:
             return 0
 
-    rounds = {rowRound(r) for r in results}
+    # ★ SEMIS AND QUARTERS ARE ROUNDS OF THEIR OWN (sweep 2026-10-10):
+    #   rowRound folds them into "prelim" for scoring, which merged a
+    #   semifinal's heats into the prelims' numbering on this page.
+    rounds = {rowRound(r, fine=True) for r in results}
     multi_round = len(rounds) > 1
     word = "Flight" if is_field else "Heat"
 
@@ -4987,17 +4990,35 @@ def _tf_heat_sections(results, is_field):
         t = r.get("time_seconds")
         return (t is None, t or 0)
 
-    # round groups first, finals on top
+    def tie_key(r):
+        """Rows that share this (not None) share a place."""
+        if is_field:
+            mk = parseMark(r.get("mark"))
+            return None if mk is None else (r.get("place"), mk)
+        t = r.get("time_seconds")
+        return None if t is None else round(float(t), 2)
+
+    def place_rows(rows):
+        # ! A TIE IS ONE PLACE (sweep 2026-10-10): 1, 2, 2, 4 -- not 1, 2, 3
+        prev = None
+        for i, r in enumerate(rows):
+            k = tie_key(r)
+            r["sec_place"] = (prev["sec_place"] if prev is not None and k is not None
+                              and tie_key(prev) == k else i + 1)
+            prev = r
+
+    # round groups first, finals on top, then the order rounds are run in
+    order = {"final": 0, None: 1, "semi": 2, "quarter": 3, "prelim": 4}
     by_round = {}
     for r in results:
-        rd = rowRound(r)
-        by_round.setdefault({"final": 0, None: 1,
-                             "prelim": 2}.get(rd, 2), []).append(r)
+        rd = rowRound(r, fine=True)
+        by_round.setdefault(order.get(rd, order["prelim"]), []).append(r)
 
     sections = []
     for rk in sorted(by_round):
         r_rows = by_round[rk]
-        r_label = ({0: "Finals", 2: "Prelims"}.get(rk, "")
+        r_label = ({0: "Finals", 2: "Semifinals", 3: "Quarterfinals",
+                    4: "Prelims"}.get(rk, "")
                    if multi_round else "")
 
         # explicit heat numbers when the feed filled them...
@@ -5007,8 +5028,7 @@ def _tf_heat_sections(results, is_field):
         if len(heats) > 1:
             for hn in sorted(heats):
                 rows = sorted(heats[hn], key=sort_in)
-                for i, r in enumerate(rows):
-                    r["sec_place"] = i + 1
+                place_rows(rows)
                 hl = f"{word} {hn}" if hn else ""
                 label = " · ".join(x for x in (r_label, hl) if x)
                 sections.append({"label": label, "rows": rows})
@@ -5026,8 +5046,7 @@ def _tf_heat_sections(results, is_field):
             continue
 
         rows = sorted(r_rows, key=sort_in)
-        for i, r in enumerate(rows):
-            r["sec_place"] = i + 1
+        place_rows(rows)
         sections.append({"label": r_label, "rows": rows})
     return sections
 
