@@ -17,6 +17,13 @@
 #                                carries on where this one stopped
 #     ... --redo                 re-score races already stored (after a
 #                                new model or a re-rating)
+#     ... --all-seasons          every past edition, not just this season's
+#
+# ★ THIS SEASON BY DEFAULT (owner, 2026-10-11: 4,165 races back to 2025-10,
+#   one at a time, a line each). Without --from/--to the races are cut at
+#   the start of the current academic season (engine/season_year.py, the
+#   one clock); --all-seasons restores the full history. Progress is one
+#   line per percent of the races (dbfast.Progress) plus a summary.
 #
 # ★ THE AS-RAN BACKTEST, THROUGH THE SERVED PATH. Each race is predicted as
 #   scripts/backtest_predictions.py predicts it at lead 0: target
@@ -183,10 +190,22 @@ def upsert(conn, row):
     conn.commit()
 
 
+def seasonStart(today=None):
+    """'YYYY-MM-DD': the first day of the current season (season_year's
+    academic year, opening in ACADEMIC_START_MONTH)."""
+    from season_year import academicYear, ACADEMIC_START_MONTH
+    today = today or datetime.date.today()
+    return datetime.date(academicYear(today), ACADEMIC_START_MONTH, 1).isoformat()
+
+
 def targets(cur, args):
     """The races to score, newest first, by the mode the flags pick."""
     if args.lo or args.hi:
         return racesOf(cur, None, None, args.min_field, args.lo, args.hi)
+    lo = None if args.all_seasons else seasonStart()
+    if lo:
+        print(f"  this season only: races from {lo} (--all-seasons for every "
+              f"past edition)", flush=True)
     meets = []                                    # (meet_id, source)
     if args.meet:
         for mid in args.meet:
@@ -208,7 +227,7 @@ def targets(cur, args):
                if c["meet_id"] != mid]
         if not eds:
             continue
-        for r in racesOf(cur, eds, up["source"], args.min_field):
+        for r in racesOf(cur, eds, up["source"], args.min_field, lo=lo):
             k = (r["meet_id"], r["div_id"], r["source"])
             if k not in seen:
                 seen.add(k)
@@ -226,10 +245,14 @@ def main():
     ap.add_argument("--min-field", type=int, default=MIN_FIELD)
     ap.add_argument("--redo", action="store_true")
     ap.add_argument("--budget-minutes", type=float, default=None)
+    ap.add_argument("--all-seasons", action="store_true",
+                    help="every past edition, not just the current season's")
     args = ap.parse_args()
 
     import psycopg2.extras
     from database import getConn
+    from dbfast import Progress, interruptible
+    interruptible()                       # one Ctrl-C cancels the statement
     t0 = time.time()
     with getConn() as conn:
         ensureTable(conn)
@@ -240,7 +263,9 @@ def main():
         todo = [r for r in races if (r["meet_id"], r["div_id"], r["source"]) not in done]
         print(f"  {len(races)} races found, {len(races) - len(todo)} already scored, "
               f"{len(todo)} to score (field >= {args.min_field})", flush=True)
-        n_ok = 0
+        n_ok = n_pick = n_none = n_fail = 0
+        misses = []
+        prog = Progress("races", len(todo))
         for i, race in enumerate(todo, 1):
             if args.budget_minutes and time.time() - t0 > 60 * args.budget_minutes:
                 print(f"  budget reached after {i - 1} races; run again to carry on")
@@ -251,15 +276,25 @@ def main():
                 if row:
                     upsert(conn, row)
                     n_ok += 1
-                tag = (f"winner {'picked' if row['picked'] else 'missed'}, "
-                       f"median miss {row['median_err']:.1f}s" if row else "nothing predicted")
+                    n_pick += bool(row["picked"])
+                    if row.get("median_err") is not None:
+                        misses.append(row["median_err"])
+                else:
+                    n_none += 1
             except Exception as exc:               # noqa: BLE001
                 conn.rollback()
-                tag = f"FAILED {type(exc).__name__}: {exc}"
-            print(f"  [{i}/{len(todo)}] {race['day']} {race['meet_name']} "
-                  f"(meet {race['meet_id']} div {race['div_id']}, {race['source']}): {tag}",
-                  flush=True)
-    print(f"  {n_ok} races scored in {datetime.timedelta(seconds=int(time.time() - t0))}")
+                n_fail += 1
+                # a failure is rare and worth its own line
+                print(f"  ! {race['day']} {race['meet_name']} (meet {race['meet_id']} "
+                      f"div {race['div_id']}, {race['source']}): "
+                      f"{type(exc).__name__}: {exc}", flush=True)
+            prog.tick(extra=f"{n_ok} scored, {n_pick} winners picked; "
+                            f"last {race['day']} {race['meet_name']}")
+    misses.sort()
+    med = f", median miss {misses[len(misses) // 2]:.1f}s" if misses else ""
+    print(f"  {n_ok} races scored ({n_pick} winners picked{med}), "
+          f"{n_none} with nothing predicted, {n_fail} failed, in "
+          f"{datetime.timedelta(seconds=int(time.time() - t0))}")
 
 
 if __name__ == "__main__":

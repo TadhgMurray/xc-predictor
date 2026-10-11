@@ -42,5 +42,5 @@ def test_search_index_swaps():
     # the loaders run in one loop now (each prints its own time; --only
     # skips the rest), and the shadow is dropped before that loop starts
     main = src[src.index("def main("):]
-    assert (main.index("DROP TABLE IF EXISTS search_index_new")
+    assert (main.index('_dropShadow(cur, "search_index_new")')
             < main.index("for key, fn in _LOADERS.items():"))

@@ -34,7 +34,7 @@ sys.path.insert(0, "racecast")
 
 import psycopg2.extras
 from database import getConn, _Utf8Json
-from dbfast import swapTable
+from dbfast import swapTable, interruptible, Progress, SWAP_WAIT_S
 
 _DDL = """
 CREATE TABLE course_boards_new (
@@ -101,6 +101,7 @@ def main():
     ap.add_argument("--finish", action="store_true",
                     help="swap the shadow table in and stop")
     args = ap.parse_args()
+    interruptible()                       # one Ctrl-C cancels the statement
 
     if args.prepare:
         with getConn() as conn:
@@ -135,6 +136,13 @@ def main():
     with getConn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         if not args.resume and shard_n is None:
+            # ! A BOUNDED WAIT, NOT A SILENT ONE. Nothing on the site reads
+            #   the shadow, but a stray shard or --finish from an earlier
+            #   run can hold it, and a bare DROP would sit behind that
+            #   forever before the first line of output. The swap's own
+            #   wait (dbfast.SWAP_WAIT_S): give up loudly instead.
+            cur.execute("SET LOCAL lock_timeout = %s",
+                        (f"{int(SWAP_WAIT_S * 1000)}ms",))
             cur.execute("DROP TABLE IF EXISTS course_boards_new")
         cur.execute("SELECT to_regclass('public.course_boards_new')")
         if next(iter(cur.fetchone().values())) is None:
@@ -170,24 +178,35 @@ def main():
 
         built = skipped = failed = 0
         batch = []
-        for i, cname in enumerate(courses):
+        # ★ ONE LINE PER PERCENT OF THE COURSES (owner, 2026-10-11: "building
+        #   boards for 1,200 courses" and then nothing). The old line came
+        #   every 500 courses, and the list is biggest-first -- the top 500
+        #   took an hour -- so the first one was an hour away. dbfast.Progress
+        #   prints the first course, every 1%, and the last, with an ETA.
+        #   The ETA runs high early: the biggest courses come first.
+        prog = Progress("courses", len(courses))
+        if courses:
+            print(f"  first: {courses[0]} (the biggest -- its line can take "
+                  f"minutes)", flush=True)
+        for cname in courses:
             try:
                 ctx = buildCourseCtx(cur, cname, None)
                 # None: no results at all (app.buildCourseCtx, D10)
                 if not ctx or not ctx.get("header"):
                     skipped += 1
-                    continue
-                batch.append((cname, 0, _json(ctx)))
-                for d in ctx["dist_values"]:
-                    batch.append((cname, d,
-                                  _json(buildCourseCtx(cur, cname, d))))
-                built += 1
+                else:
+                    batch.append((cname, 0, _json(ctx)))
+                    for d in ctx["dist_values"]:
+                        batch.append((cname, d,
+                                      _json(buildCourseCtx(cur, cname, d))))
+                    built += 1
             except Exception as exc:      # noqa: BLE001 -- one course, not the run
                 conn.rollback()
                 failed += 1
                 print(f"  ! {cname}: {type(exc).__name__}: {exc}",
                       flush=True)
-                continue
+            prog.tick(extra=f"({built:,} built, {skipped:,} empty, "
+                            f"{failed:,} failed; last {cname})")
             if len(batch) >= 200:
                 psycopg2.extras.execute_values(cur, """
                     INSERT INTO course_boards_new (course_name, dist, ctx)
@@ -195,10 +214,6 @@ def main():
                 """, batch)
                 conn.commit()
                 batch = []
-            if (i + 1) % 500 == 0:
-                mins = (time.time() - t0) / 60
-                print(f"  {i + 1:,}/{len(courses):,} courses "
-                      f"({mins:.1f} min)", flush=True)
         if batch:
             psycopg2.extras.execute_values(cur, """
                 INSERT INTO course_boards_new (course_name, dist, ctx)

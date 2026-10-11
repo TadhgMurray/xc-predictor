@@ -224,6 +224,64 @@ def swapTable(conn, name, new=None, renames=(), tries=SWAP_TRIES, wait=SWAP_WAIT
 
 
 # ------------------------------------------------------------------ #
+#  CTRL-C THAT WORKS, AND A PROGRESS LINE THAT SAYS SOMETHING
+# ------------------------------------------------------------------ #
+#
+# ★ CTRL-C DURING A LONG STATEMENT (owner, 2026-10-11: search_index "took
+#   many presses"). In psycopg2's default blocking mode the statement runs
+#   inside libpq with Python's signal handler parked until it returns, so a
+#   ten-minute CREATE TABLE AS ignores Ctrl-C for ten minutes. The wait
+#   callback runs every statement through a select() loop in Python instead;
+#   psycopg2.extras.wait_select catches the KeyboardInterrupt there, sends
+#   the server a cancel for the running statement and lets the
+#   QueryCanceledError surface -- one press, and the server stops working
+#   too. Process-wide, so a builder calls it once at the top of main().
+def interruptible():
+    """Make Ctrl-C cancel the running statement (psycopg2 wait callback)."""
+    import psycopg2.extensions
+    import psycopg2.extras
+    psycopg2.extensions.set_wait_callback(psycopg2.extras.wait_select)
+
+
+# ★ ONE LINE PER PERCENT, NOT PER ITEM AND NOT PER FIXED COUNT. A fixed
+#   "every 500" printed twice in an hour for 1,200 slow courses and 8,000
+#   times for a fast loop; a step of total/100 gives about a hundred lines
+#   whatever the size of the job, each with elapsed time and an ETA from the
+#   rate so far.
+PROGRESS_STEPS = 100
+
+
+class Progress:
+    """`p = Progress("courses", total); p.tick()` per item -- prints at
+    every 1/PROGRESS_STEPS of `total`, at the last item, and at the FIRST:
+    the builders put their biggest work first, so the first item alone can
+    take minutes, and its line is the proof the run is alive."""
+
+    def __init__(self, label, total, steps=PROGRESS_STEPS, out=print):
+        import time
+        self.label, self.total, self.out = label, int(total), out
+        self.every = max(1, self.total // steps)
+        self.n = 0
+        self.t0 = time.time()
+
+    def line(self, now=None):
+        import time
+        el = (now if now is not None else time.time()) - self.t0
+        pct = 100.0 * self.n / self.total if self.total else 100.0
+        # max(0): a total that was an estimate can be overrun
+        eta = el / self.n * max(0, self.total - self.n) if self.n else 0.0
+        return (f"  {self.label}: {self.n:,}/{self.total:,} ({pct:.0f}%) "
+                f"{el / 60:.1f} min elapsed, ~{eta / 60:.1f} min left")
+
+    def tick(self, k=1, extra=""):
+        before = self.n
+        self.n += k
+        if (before == 0 or self.n // self.every != before // self.every
+                or self.n == self.total):
+            self.out(self.line() + (f"  {extra}" if extra else ""), flush=True)
+
+
+# ------------------------------------------------------------------ #
 #  SELF-CHECK -- `python racecast/dbfast.py` (needs no database)
 # ------------------------------------------------------------------ #
 
@@ -265,6 +323,19 @@ def _selfCheck():
         def rollback(self): pass
         def commit(self): pass
     check("nothing set, nothing raised", tuneSession(Refuses(), quiet=True), [])
+
+    print("\nProgress prints once per percent and at the end")
+    lines = []
+    p = Progress("x", 250, out=lambda s, **k: lines.append(s))
+    for _ in range(250):
+        p.tick()
+    check("250 items, step 2: the first + 125 lines", len(lines), 126)
+    lines.clear()
+    p = Progress("x", 7, out=lambda s, **k: lines.append(s))
+    for _ in range(7):
+        p.tick()
+    check("fewer items than steps: a line each", len(lines), 7)
+    check("the last line is 100%", "(100%)" in lines[-1], True)
 
     print("\nall cases pass" if not bad else f"\n{bad} FAILURES")
     return bad
