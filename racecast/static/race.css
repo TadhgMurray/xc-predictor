@@ -936,4 +936,4 @@ main.rc.pred-page .pred-opts-in .per-team input { width: 100%; font-size: .92rem
 
 /* the season head's rating and the 5K it is worth in ONE colour (owner,
    2026-10-11: "why is rating and 5k equivalent different colors") */
-main.ath-page.rc .season-head .season-rating .fk-i { color: inherit; font-weight: inherit; }
+main.ath-page.rc .season-head .season-rating .fk-i { color: inherit; font-weight: inherit; font-size: inherit; }
