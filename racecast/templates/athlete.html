@@ -521,9 +521,28 @@
   {% if tf_seasons %}
   <section class="rc-panel sport-section" id="tf" data-panel="tf">
     <h2 class="sr-only">{{ "TF"|sport_name }} seasons</h2>
+    {# ★ ONE CHART, A SWITCH FOR THE EVENT (owner, 2026-10-11: the
+       per-distance time charts sat under every season -- "I really dislike
+       the location"). The rating and each distance share the top slot;
+       athlete-charts.js flips the panes. A hidden pane draws when shown
+       (the resize observer); with no JS only the rating shows. #}
     <details class="chart-fold" open>
       <summary>Track speed rating</summary>
-      <div class="chart-slot chart-wide" data-chart="tf_rating" data-kind="rating" data-title="Track speed rating"></div>
+      {% if tf_dists %}
+      <nav class="seg tf-chart-pick" aria-label="Chart">
+        <button type="button" class="seg-btn is-on" data-pane="rating">Rating</button>
+        {% for dist in tf_dists %}<button type="button" class="seg-btn" data-pane="{{ dist }}">{{ dist }}</button>
+        {% endfor %}
+      </nav>
+      {% endif %}
+      <div class="tf-chart-pane" data-pane="rating">
+        <div class="chart-slot chart-wide" data-chart="tf_rating" data-kind="rating" data-title="Track speed rating"></div>
+      </div>
+      {% for dist in tf_dists %}
+      <div class="tf-chart-pane" data-pane="{{ dist }}" hidden>
+        <div class="chart-slot chart-wide" data-chart="tf_dist.{{ dist }}" data-kind="time" data-title="{{ dist }}"></div>
+      </div>
+      {% endfor %}
     </details>
     <nav class="season-jump">
         {% for (year, sport), season in tf_seasons %}<a href="#{{ year }}-{{ sport }}">{{ year }}</a>
@@ -535,16 +554,6 @@
     {# the badges spelled out ONCE per tab, under its last season (owner,
        2026-10-11: one legend under every season was clutter) #}
     <p class="flag-legend"><b>PR</b> personal record &middot; <b>SR</b> season record &middot; <b>CR</b> course record &middot; <b>CSR</b> course season record &middot; <b>R</b> rating record &middot; <b>RSR</b> rating season record &middot; &#9733; still standing</p>
-    {# the per-distance charts, moved from the sidebar into their sport
-       (owner, 2026-10-10) #}
-    {% if tf_dists %}
-    <h3 class="tf-dist-h">Each distance</h3>
-    <div class="tf-dist-grid chart-panel">
-        {% for dist in tf_dists %}
-        <div class="chart-slot" data-chart="tf_dist.{{ dist }}" data-kind="time" data-title="{{ dist }}"></div>
-        {% endfor %}
-    </div>
-    {% endif %}
   </section>
   {% endif %}
 

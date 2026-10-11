@@ -892,5 +892,24 @@ function initCharts() {
  *   fallback -- there is nothing left for this file to set on load.
  */
 
+/* ★ THE TRACK CHART'S EVENT SWITCH (owner, 2026-10-11): Rating, then one
+   button per distance, all sharing the top slot (athlete.html). Showing a
+   pane resizes its chart from nothing, and the resize observer draws it. */
+function initChartPick() {
+  document.querySelectorAll(".tf-chart-pick").forEach((nav) => {
+    const fold = nav.parentElement;
+    nav.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-pane]");
+      if (!btn) return;
+      nav.querySelectorAll("[data-pane]").forEach((b) =>
+        b.classList.toggle("is-on", b === btn));
+      fold.querySelectorAll(".tf-chart-pane").forEach((p) => {
+        p.hidden = p.dataset.pane !== btn.dataset.pane;
+      });
+    });
+  });
+}
+
 document.addEventListener("DOMContentLoaded", initCharts);
+document.addEventListener("DOMContentLoaded", initChartPick);
 document.addEventListener("DOMContentLoaded", initCompare);

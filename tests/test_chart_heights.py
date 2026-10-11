@@ -119,8 +119,12 @@ def test_every_wide_chart_is_folded_and_open_by_default():
     #   every chart shut on desktop too.
     for attrs in folds:
         assert "open" in attrs, f"a fold is not open by default: {attrs!r}"
-    # every wide slot sits inside a fold
-    assert tpl.count('chart-slot chart-wide') == WIDE_SLOTS
+    # every wide slot sits inside a fold (the Track fold holds the rating
+    # and the per-distance panes, owner 2026-10-11)
+    for m in re.finditer(r'chart-slot chart-wide', tpl):
+        before = tpl[:m.start()]
+        assert before.rfind('<details class="chart-fold"') > before.rfind('</details>'), \
+            "a wide chart slot outside a fold"
     print(f"  {WIDE_SLOTS} folds, all open by default ................. OK")
 
 

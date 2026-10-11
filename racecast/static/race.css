@@ -857,9 +857,9 @@ main.ath-page.rc .ath-seasons tbody + tbody tr.ath-season-h td { border-top: 2px
 main.ath-page.rc .ath-seasons tr.ath-season-h td { font-weight: 700; background: #f8fafc; }
 main.ath-page.rc .ath-seasons .ath-best { display: block; font-size: .8rem; font-weight: 400; color: var(--muted); }
 main.ath-page.rc .ath-seasons tr.ath-season-ev td.tn { padding-left: 1.2rem; }
-/* the per-distance TF charts: a row of small charts in the Track tab */
-main.ath-page.rc .tf-dist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .8rem; margin: .6rem 0 1rem; }
-main.ath-page.rc .tf-dist-h { font-size: 1rem; margin: 1.4rem 0 .2rem; }
+/* the Track chart's event switch (athlete.html, tf-chart-pick) */
+main.ath-page.rc .tf-chart-pick { flex-wrap: wrap; margin: 0 0 .5rem; }
+main.ath-page.rc .tf-chart-pick .seg-btn { cursor: pointer; font: inherit; font-size: .85rem; padding: .3rem .7rem; }
 @media (max-width: 760px) {
   main.ath-page.rc .rc-tbar { flex-wrap: wrap; }
   main.ath-page.rc .rc-tbar-end { margin-left: 0; }
