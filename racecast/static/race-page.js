@@ -83,6 +83,13 @@
       //   (owner, 2026-10-07, on "All teams"): with the Teams tab open the
       //   sidebar steps aside and the table takes the width
       root.classList.toggle("rc-on-teams", name === "teams");
+      // ★ THE ATHLETE SIDE FOLLOWS THE SPORT TAB (owner, 2026-10-11): a
+      //   [data-side-for] block shows with its own tab, every block on any
+      //   other (Career), and a block whose sport has no tab always
+      root.querySelectorAll("[data-side-for]").forEach(function (el) {
+        var mine = el.dataset.sideFor;
+        el.hidden = has(name) && (name === "xc" || name === "tf") && has(mine) && mine !== name;
+      });
       // the conversion tab swaps the sidebar for the finishers (fillConv)
       root.classList.toggle("rc-on-track", name === "track");
       if (name === "track" && root === main && typeof fillConv === "function") fillConv();
