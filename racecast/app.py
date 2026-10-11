@@ -2208,16 +2208,6 @@ def athlete(person_id):
         print(f"athlete {person_id}: outlier marks skipped: "
               f"{type(exc).__name__}: {exc}", flush=True)
 
-    # ★ THE COURSE IN ONE WORD (header redesign B, 2026-10-10): Fast /
-    #   Typical / Hard / Very hard against the sport's own distribution of
-    #   course difficulties, the % in the tooltip (difficulty_view.courseWord
-    #   holds the cut-offs' derivation). No cut-offs = no word, and the row
-    #   shows the old percentage.
-    _cw_cuts = difficulty_view.courseCutoffs()
-    for race in races:
-        race["course_word"], race["course_pct"] = difficulty_view.courseWord(
-            race.get("difficulty"), race.get("sport"), _cw_cuts)
-
     # 5. group/enrich/sort
     seasons = group_into_seasons(races)
     # ★ THE SEASON NUMBER IS THE BOARD'S (owner, 2026-09-05): athlete_season

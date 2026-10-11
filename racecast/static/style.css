@@ -4945,10 +4945,6 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
  * ===================================================================== */
 
 .topbar .nav-toggle { display: none; }
-.topbar .nav-coach { flex: none; color: #374151; text-decoration: none; white-space: nowrap; }
-.topbar .nav-coach:hover { color: var(--ink); text-decoration: underline; }
-.topbar .nav-coach.is-here { color: var(--ink); font-weight: 650; }
-.topbar .topnav .nav-coach-m { display: none; }
 .topbar .search-wrap { margin-left: auto; }
 
 /* ⚠ THE LAPTOP BAND WAS ALREADY BROKEN BEFORE THE SWITCH (b1bf920: at
@@ -4990,12 +4986,11 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
   .topbar .topnav { column-gap: 0.95rem; }
   .topbar .search-wrap { min-width: 6.5rem; }   /* 1201-1240: yields rather than spills */
 }
-/* between phone and laptop the bar is two rows: the mark, For coaches and
+/* between phone and laptop the bar is two rows: the mark and
    Sign in on the first, the sections and search on the second -- Sign in
    no longer drops onto a third row by itself (it did at 900px) */
 @media (min-width: 701px) and (max-width: 1200px) {
-  .topbar .nav-coach-d { order: 2; margin-left: auto; }
-  .topbar .topbar-account { order: 2; margin-left: 0.5rem; }
+  .topbar .topbar-account { order: 2; margin-left: auto; }
   .topbar { row-gap: 0.3rem; }
   .topbar::after { content: ""; order: 3; flex-basis: 100%; height: 0; }   /* the row break */
   .topbar .topnav { order: 4; }
@@ -5010,7 +5005,6 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
   .topbar { flex-wrap: wrap; gap: 0.55rem 0.6rem; }
   .topbar .brand-mark { order: 1; }
   .topbar .topbar-account { order: 2; margin-left: auto; }
-  .topbar .nav-coach-d { display: none; }
   .topbar .nav-toggle { order: 3; display: flex; flex-direction: column; justify-content: center; align-items: center;
     gap: 4px; width: 40px; height: 36px; padding: 0; border: 1px solid #ccc; border-radius: 4px;
     background: #fff; cursor: pointer; }
@@ -5025,7 +5019,6 @@ body.auth-body { margin: 0; min-height: 100vh; background: #161719; background-i
   .topbar .topnav > a, .topbar .topnav > details > summary { display: block; padding: 0.7rem 0.1rem;
     border-bottom: 1px solid #f0f1f3; font-size: 1.02rem; box-shadow: none; }
   .topbar .topnav > a.is-here, .topbar .topnav > details > summary.is-here { font-weight: 650; color: var(--ink); box-shadow: none; }
-  .topbar .topnav .nav-coach-m { display: block; color: var(--link); font-weight: 600; border-bottom: 0; }
   .topbar .topnav-tools { position: static; }
   .topbar .topnav-tools .topnav-menu { position: static; box-shadow: none; border: 0; border-radius: 0;
     padding: 0 0 0.3rem 0.9rem; background: transparent; min-width: 0; }

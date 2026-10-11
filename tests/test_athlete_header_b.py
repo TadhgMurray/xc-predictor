@@ -254,12 +254,7 @@ def test_records_are_pr_sr_cr_only_and_no_legend():
     assert "flag-legend" not in out and "Difficulty" not in out
 
 
-def test_course_cell_is_a_word_with_its_percent_in_the_tooltip():
+def test_course_cell_is_the_difficulty_percent_never_a_word():
+    # owner, 2026-10-11: the one-word course column is gone
     out = _season_block(_race(course_word="Hard", course_pct="+3.4%"))
-    assert 'data-title="Hard course · +3.4%"' in out
-    assert ('data-blurb="Times here run +3.4% against a typical cross country course. '
-            'The rating already adjusts for it."') in out
-    assert '<span aria-hidden="true">Hard</span>' in out
-    # no cut-offs read: the old percentage, never a word
-    out = _season_block(_race(course_word=None, course_pct=None))
     assert "flag cw" not in out and 'class="dv"' in out

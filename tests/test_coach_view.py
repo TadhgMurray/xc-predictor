@@ -32,9 +32,10 @@ def test_the_routes_exist_and_the_old_one_redirects():
 
 def test_the_topbar_reaches_the_coaches_without_a_cookie():
     top = read("racecast", "templates", "_topbar.html")
-    # ★ ONE NAV (2026-10-10): no edition switch, a plain "For coaches" link
+    # ★ ONE NAV (2026-10-10): no edition switch; and no "For coaches" link
+    #   in the bar either (owner, 2026-10-11)
     assert 'class="viewswitch"' not in top and "coach_view" not in top
-    assert "url_for('coaches_page')" in top and ">For coaches</a>" in top
+    assert ">For coaches</a>" not in top
     # ⚠ the whole point: nothing about the reader may reach the cached bar.
     #   Comments are stripped first -- the block above explains at length
     #   why there is no cookie here, and the word itself is not the bug.

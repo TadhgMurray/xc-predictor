@@ -797,13 +797,6 @@ main.ath-page.rc .ath-act { display: inline-flex; align-items: center; gap: .35r
   font-weight: 500; line-height: 1.4; text-decoration: none; cursor: pointer; white-space: nowrap; }
 main.ath-page.rc .ath-act svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
 main.ath-page.rc .ath-act:hover { border-color: #9ca3af; color: var(--ink); text-decoration: none; }
-/* the course word (difficulty_view.courseWord): a quiet word with a dotted
-   underline that opens its tooltip, coloured only off "Typical" */
-main.ath-page.rc .flag.cw { background: none; color: #374151; font-weight: 500; font-size: .88rem; padding: 0;
-  border-radius: 0; border-bottom: 1px dotted #9ca3af; white-space: nowrap; --tip: #374151; }
-main.ath-page.rc .flag.cw--fast { color: #1f6f3f; }
-main.ath-page.rc .flag.cw--hard { color: #92400e; }
-main.ath-page.rc .flag.cw--very-hard { color: #9a1c1c; font-weight: 600; }
 /* the tables and the side cards start level */
 main.ath-page.rc .rc-tbar { flex-wrap: nowrap; }
 main.ath-page.rc .rc-tbar .seg-btn, main.ath-page.rc .rc-tbar-end .scale-toggle > * { white-space: nowrap; }

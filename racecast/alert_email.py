@@ -287,9 +287,16 @@ def _squadHtml(block):
         f'<td style="padding:2px 0;font-size:14px;line-height:20px;color:{INK};white-space:nowrap;'
         f'font-variant-numeric:tabular-nums">{_e(t)}</td></tr>'
         for k, (pl, n, t) in enumerate(block["rows"]))
-    return (f'<p style="margin:8px 0 4px;font-size:15px;line-height:20px;font-weight:600;color:{INK}">'
-            f'{_e(block["title"])}</p>'
-            f'<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 8px">{rows}</table>')
+    title = (f'<p style="margin:8px 0 4px;font-size:15px;line-height:20px;font-weight:600;color:{INK}">'
+             f'{_e(block["title"])}</p>')
+    if block.get("img"):
+        # the team's crest beside its finish (owner, 2026-10-11)
+        title = (f'<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 4px"><tr>'
+                 f'<td style="padding:0 8px 0 0;vertical-align:middle">{_img(block["img"], "", 24)}</td>'
+                 f'<td style="vertical-align:middle;font-size:15px;line-height:20px;font-weight:600;color:{INK}">'
+                 f'{_e(block["title"])}</td></tr></table>')
+    return (title
+            + f'<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 8px">{rows}</table>')
 
 
 def _img(src, alt, size, round_=False):
@@ -352,6 +359,8 @@ def compose(groups, origin, unsub, account_name=None, today=None):
                 facts, squads = raceFacts(p), []
                 tb = teamBlock(p)
                 if tb:
+                    if p.get("logo"):
+                        tb["img"] = origin + p["logo"]
                     after = [tb]
             else:
                 facts, squads = teamFacts(p)

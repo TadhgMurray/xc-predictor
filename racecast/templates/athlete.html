@@ -277,19 +277,10 @@
                     <td data-rx="{{ race.sport|lower }}:{{ race.result_id }}">{{ rv(race.speed_rating, race.hs_rating) }}</td>
                     {% endif %}
                     {{ fk(race.speed_rating, race.pool, race.sport, race.hs_rating, fk_label) }}
-                    {# ★ THE COURSE IN ONE WORD -- Fast / Typical / Hard / Very
-                       hard -- against the sport's own spread of courses, the %
-                       in the tooltip (difficulty_view.courseWord: the cut-offs
-                       are the quartiles and top tenth of course_difficulties,
-                       not typed in). No cut-offs read yet = the old % cell. #}
-                    {% if race.course_word %}
-                    {% set _cw = race.course_word %}{% set _where = 'cross country course' if race.sport == 'XC' else 'track' %}
-                    <td><span class="flag cw cw--{{ _cw|replace(' ', '-')|lower }}" tabindex="0"
-                          data-title="{{ _cw }} course · {{ race.course_pct }}"
-                          data-blurb="Times here run {{ race.course_pct }} against a typical {{ _where }}. The rating already adjusts for it."><span aria-hidden="true">{{ _cw }}</span><span class="sr-only">{{ _cw }} course, {{ race.course_pct }}. Times here run {{ race.course_pct }} against a typical {{ _where }}. The rating already adjusts for it.</span></span></td>
-                    {% else %}
+                    {# ! THE COURSE CELL IS THE DIFFICULTY %, AS IT WAS (owner,
+                       2026-10-11). Header B's one word -- Fast / Typical / Hard
+                       against "a typical cross country course" -- is gone. #}
                     <td>{{ dv(race.difficulty, race.sport, race.day_effect) }}</td>
-                    {% endif %}
                     {# ★ RECORDS: PR, SR AND CR ONLY (header redesign B,
                        2026-10-10). The rating records (R, RSR) and the course
                        season record (CSR) were three more badges and a legend

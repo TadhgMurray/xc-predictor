@@ -27,8 +27,8 @@
        Two editions meant two bars to learn, a "Recruiting" on one side and a
        "Find recruits" on the other, and a coach who clicked Rankings landed
        in the other edition. Now the sections are the same five for every
-       reader; the coach product is a plain "For coaches" link beside Sign in
-       (/coaches), and its own page keeps "Recruit search".
+       reader. ! NO "For coaches" LINK IN THE BAR (owner, 2026-10-11: it looked
+       off); /coaches is still there, and keeps "Recruit search".
        Still keyed on request.path alone, so every page stays edge-cacheable:
        nothing about the reader reaches this markup.
        ★ TOOLS REPLACES MORE. The pages that had no tab -- Compare, What it
@@ -56,7 +56,7 @@
     {% for t in tools + ref %}{% if t[2] and here.startswith(t[2]) %}{% set ns.tools_here = true %}{% endif %}{% endfor %}
     {# ★ THE PHONE MENU (under 700px): logo, Sign in and this button on the
        first row, the search on a row of its own and always on screen; the
-       button opens the sections, Tools and For coaches as a panel under the
+       button opens the sections and Tools as a panel under the
        bar. A real <button> with aria-expanded (topbar-search.js toggles it
        and closes it on Escape); hidden above 700px, where the nav is inline. #}
     <button type="button" class="nav-toggle" aria-expanded="false" aria-controls="topnav" aria-label="Menu">
@@ -85,8 +85,6 @@
                 {% endfor %}
             </div>
         </details>
-        {# the phone panel's own copy; the one beside Sign in is hidden there #}
-        <a href="{{ url_for('coaches_page') }}" class="nav-coach nav-coach-m {{ 'is-here' if here.startswith('/coaches') }}">For coaches</a>
     </nav>
 
     <div class="search-wrap">
@@ -114,7 +112,6 @@
          the site shell now, and "Sign in" beside the sign-in card points at
          the page you are on. The slot stays, so a signed-in visitor still
          gets their picture from topbar-search.js. #}
-    <a href="{{ url_for('coaches_page') }}" class="nav-coach nav-coach-d {{ 'is-here' if here.startswith('/coaches') }}">For coaches</a>
     <span id="topbar-account" class="topbar-account">{% if not (here == '/login' or here.startswith('/login/')) %}<a href="/login" class="tb-signin">Sign in</a>{% endif %}</span>
 </header>
 {# phones: every table in a box the page's width, scrolling sideways only

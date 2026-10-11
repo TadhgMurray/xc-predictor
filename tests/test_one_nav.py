@@ -89,11 +89,10 @@ def test_a_tools_page_lights_tools_and_itself(A, path, lit):
     assert re.search(r'class="[^"]*is-here[^"]*">' + re.escape(lit) + "<", h)
 
 
-def test_for_coaches_beside_sign_in_and_in_the_phone_panel(A):
+def test_no_for_coaches_link_in_the_bar(A):
+    # owner, 2026-10-11: "For coaches looks very off" -- out of the bar
     h = topbar(A, "/rankings")
-    assert h.count('href="/coaches"') == 2          # the bar's, and the phone panel's
-    tail = h.split("</nav>", 1)[1]
-    assert tail.index(">For coaches</a>") < tail.index('id="topbar-account"')
+    assert 'href="/coaches"' not in h and "For coaches" not in h
     assert "Recruiting</a>" in h and 'href="/recruiting"' in h
 
 
@@ -130,7 +129,7 @@ def test_phone_css_has_the_two_rows_and_the_panel():
     phone = one.split("@media (max-width: 700px)", 1)[1]
     assert ".topbar .search-wrap { order: 4; flex: 1 1 100%" in phone
     assert ".topbar.nav-open .topnav { display: flex; }" in phone
-    assert ".topbar .nav-coach-d { display: none; }" in phone
+    assert "nav-coach" not in css      # no For coaches link in the bar (owner, 2026-10-11)
 
 
 # ------------------------------------------------------- predictions
