@@ -162,7 +162,7 @@
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
             <table class="staged rec-ind" data-step="20">
-                <thead><tr><th>#</th><th>Athlete</th><th>Rating{{ rating_i() }}</th>{{ fk_th(five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}
+                <thead><tr><th>#</th><th>Athlete</th><th class="no-break">Rating{{ rating_i() }}</th>{{ fk_th(five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}
                     <th>Time</th><th>Dist</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}
@@ -233,7 +233,7 @@
             {% if rows %}
             <table class="staged rec-ind" data-step="20">
                 <thead><tr><th>#</th><th>Athlete</th><th>Time</th>
-                    <th>Rating{{ rating_i() }}</th>{{ fk_th(five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}<th>Grade</th><th>School</th><th>Date</th></tr></thead>
+                    <th class="no-break">Rating{{ rating_i() }}</th>{{ fk_th(five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}<th>Grade</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}
                     <tr{{ hid(loop.index0) }}>
@@ -304,7 +304,7 @@
             <h4 class="rec-gender">{{ label }}</h4>
             {% if rows %}
             <table class="staged rec-ind" data-step="20">
-                <thead><tr><th>#</th><th>Athlete</th><th>Rating{{ rating_i() }}</th>{{ fk_th(five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}
+                <thead><tr><th>#</th><th>Athlete</th><th class="no-break">Rating{{ rating_i() }}</th>{{ fk_th(five_k_label(rows|map(attribute="label_pool")), "fk-sm") }}
                     <th>Time</th><th>Grade</th><th>School</th><th>Date</th></tr></thead>
                 <tbody>
                     {% for r in rows %}

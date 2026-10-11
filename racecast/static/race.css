@@ -129,7 +129,22 @@ main.rc .page-report { margin-top: 1.4rem; }
 /* side by side they truncated every name and school ("Runne...", "Dana ...");
    stacked, each table has the full width */
 main.rc .rec-pair { grid-template-columns: minmax(0, 1fr); gap: .4rem; }
+/* ★ INSIDE ITS COLUMN (owner, 2026-10-11: the Best ratings table ran
+   under the Recent meets card). Every cell was nowrap (style.css
+   .rec-pair), so an auto table was as wide as its longest row, and once
+   the 5K equiv column landed the grid column could not hold it. On a
+   wide screen the table now fills its column and a name or school that
+   does not fit wraps to a second line -- nothing is cut off, nothing
+   overlaps. Times, dates (.no-break) and numbers hold no spaces and stay
+   on one line. A phone keeps the nowrap table, scrolling in its own box. */
 main.rc .rec-pair table { table-layout: auto; }
+@media (min-width: 761px) {
+  main.rc .rec-pair table { width: 100%; }
+  /* and when even wrapped names cannot fit, it scrolls in its own box */
+  main.rc .rec-pair > div { min-width: 0; overflow-x: auto; }
+  main.rc .rec-pair td, main.rc .rec-pair th { white-space: normal; overflow: visible; text-overflow: clip; }
+  main.rc .rec-pair td.no-break, main.rc .rec-pair th.no-break { white-space: nowrap; }
+}
 main.rc .rec-pair .rec-gender { margin: .6rem 0 .3rem; }
 main.rc .rec-pair td.rt, main.rc .rec-pair td .rv { font-weight: 600; }
 @media (max-width: 760px) {

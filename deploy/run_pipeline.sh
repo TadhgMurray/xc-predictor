@@ -201,6 +201,15 @@ failed() {                       # did step $1 already fail this run?
 # the file. Factored out so an early abort reports exactly like a full run.
 summarise() {
   TOTAL=$(( $(date +%s) - T_START ))
+  # ★ WHAT TO DO NOW (owner, 2026-10-11: "remind me of the thing to do
+  #   after the pipeline finished from now on"): deploy/AFTER_PIPELINE.md,
+  #   printed above the banner on every finish, failed or not. Edit the
+  #   file as items are done or added.
+  if [ -s deploy/AFTER_PIPELINE.md ]; then
+    echo ""
+    echo "==== AFTER THIS RUN (deploy/AFTER_PIPELINE.md) ===="
+    cat deploy/AFTER_PIPELINE.md
+  fi
   echo ""
   echo "======================================================================"
   echo "  finished in $((TOTAL / 3600))h $(((TOTAL % 3600) / 60))m"
