@@ -108,6 +108,28 @@
   }
 
 
+  /* ★ THE CREST BEFORE THE NAME (owner, 2026-10-11), as the other boards
+     draw it (rankings.js crestMark): the API stamps r.crest
+     (school_logo.stampCrests) only where a crest exists, so a school
+     without one gets no broken <img>. */
+  function crestMark(url) {
+    return url ? `<img class="school-mark" src="${esc(url)}" alt=""`
+               + ` width="18" height="18" loading="lazy" decoding="async">` : "";
+  }
+
+  /* ★ "5K EQUIV" WITH ITS ⓘ (owner, 2026-10-11): _scale.html's fk_th, in JS --
+     the same markup, so a board the browser draws reads exactly as the
+     server's. The ⓘ is the CSS .flag tooltip (data-title / data-blurb in a
+     ::after), so a header drawn later needs no wiring. */
+  function fkTh(label, cls) {
+    const lb = label || "5K", track = lb.startsWith("Track");
+    return `<th class="fk no-break${cls ? " " + cls : ""}">${esc(track ? lb : lb + " equiv")}`
+      + `<a class="flag info-i" href="/scale" data-title="Track ${track ? "" : esc(lb) + " "}equivalent"`
+      + ` data-blurb="The time on a track ${track ? "5K (3200 m in middle school)" : esc(lb)} that this rating is worth.`
+      + ` It reads the rating, not this race's course or distance."`
+      + ` aria-label="Track equivalent: the time on a track this rating is worth">i</a></th>`;
+  }
+
   function gainCell(g) {
     if (g == null) return `<td class="num"> - </td>`;
     const cls = g > 0 ? "gain-up" : (g < 0 ? "gain-down" : "");
@@ -169,7 +191,7 @@
       <tr>
         <td class="num rc-dim">${offset + i + 1}</td>
         <td class="rc-school"><a href="/recruit/${r.person_id}">${esc(r.name || "Unknown")}</a></td>
-        <td>${r.school ? `<a href="/school/${encodeURIComponent(r.school)}${r.state ? "?state=" + r.state : ""}">${esc(r.school_label || r.school)}</a>` : " - "}</td>
+        <td>${r.school ? `${crestMark(r.crest)}<a href="/school/${encodeURIComponent(r.school)}${r.state ? "?state=" + r.state : ""}">${esc(r.school_label || r.school)}</a>` : " - "}</td>
         <td class="rc-dim">${esc(r.grade_label || "")}</td>
         <td class="num">${r.grad_year || " - "}</td>
         <td class="num rc-strong">${r.mean_rating == null ? " - " : r.mean_rating.toFixed(1)}</td>
@@ -186,7 +208,7 @@
       college season. They assume the athlete keeps racing.` : ""}</p>
       <div class="r-scroll"><table class="rk rc-tbl">
       <thead><tr><th class="num">#</th><th>Athlete</th><th>School</th><th>Grade</th>
-        <th class="num">Class of</th><th class="num" title="this season's rating">${label}</th><th class="fk" title="The track 5K this rating is worth">5K</th><th class="num" title="the same athlete a year earlier">${prev}</th>
+        <th class="num">Class of</th><th class="num" title="this season's rating">${label}</th>${fkTh("5K")}<th class="num" title="the same athlete a year earlier">${prev}</th>
         <th class="num">Gain</th>${anyProj ? `<th class="num" title="What the
           model projects this athlete runs about a year from now, on this
           season's scale, if they keep racing. Hover a number for its band.">

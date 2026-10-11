@@ -28,7 +28,7 @@ const rk = read("rankings.js");
 const ctx = { esc };
 vm.createContext(ctx);
 vm.runInContext(slice(rk, "const FK_TITLE", "\n/* ★ THE CREST COMES FROM THE ROW") +
-  "\nthis.fkLabelFor = fkLabelFor; this.fkCell = fkCell;" +
+  "\nthis.fkLabelFor = fkLabelFor; this.fkCell = fkCell; this.fkTh = fkTh;" +
   "\nthis.setHead = (h) => { fkHead = h; };", ctx);
 
 const hs = { rating_5k: "15:02", rating_5k_dist: "5K" };
@@ -69,12 +69,44 @@ ok(/if \(fk\) tr\.insertBefore\(cells\[from \+ 1\], cells\[to \+ 1\]\)/.test(rk)
 const pr = read("predictions.js");
 const pctx = { esc };
 vm.createContext(pctx);
-vm.runInContext(slice(pr, "const FK_TITLE", "\nfunction finishTable") +
-  "\nthis.fkHead = fkHead; this.fkCell = fkCell;", pctx);
+vm.runInContext(slice(pr, "/* ★ \"5K EQUIV\"", "\nfunction finishTable") +
+  "\nthis.fkHead = fkHead; this.fkCell = fkCell; this.fkTh = fkTh;", pctx);
 ok(pctx.fkHead([hs, ms]) === "Track ≈", "predictions: a mixed field -> Track ≈");
 ok(/>15:02 <span class="fk-d">5K/.test(pctx.fkCell(hs, "Track ≈")), "predictions: under Track ≈ a cell names its distance");
 ok(/class="fk fk-sm"/.test(pctx.fkCell(hs, "5K")), "predictions: the column folds away on a phone");
-ok(/<th>Rating<\/th><th class="fk fk-sm"/.test(pr), "predictions: the 5K header follows Rating");
+ok((pr.match(/<th>Rating<\/th>\$\{fkTh\(fk, "fk-sm"\)\}/g) || []).length === 2,
+   "predictions: the 5K header follows Rating, on both tables");
+
+// ---- "5K equiv" with its ⓘ (owner, 2026-10-11) ----------------------------
+// every JS-built 5K header is _scale.html's fk_th, character for character
+// (tests/test_five_k_column.py holds the macro to the same strings)
+const WANT_5K = '<th class="fk no-break">5K equiv<a class="flag info-i" href="/scale"'
+  + ' data-title="Track 5K equivalent" data-blurb="The time on a track 5K that this rating'
+  + ' is worth. It reads the rating, not this race\'s course or distance."'
+  + ' aria-label="Track equivalent: the time on a track this rating is worth">i</a></th>';
+const fkThs = { "rankings.js": ctx.fkTh, "predictions.js": pctx.fkTh };
+for (const f of ["meet-preview.js", "recruiting.js", "recruiting-search.js"]) {
+  const src = read(f);
+  const c = { esc };
+  vm.createContext(c);
+  vm.runInContext(slice(src, "  function fkTh", "\n  }\n") + "\n  }\nthis.fkTh = fkTh;", c);
+  fkThs[f] = c.fkTh;
+}
+for (const [f, fn] of Object.entries(fkThs)) {
+  ok(fn("5K") === WANT_5K, `${f}: the 5K header is fk_th's`);
+  ok(fn("3200m").startsWith('<th class="fk no-break">3200m equiv<a') && /data-title="Track 3200m equivalent"/.test(fn("3200m")),
+     `${f}: a 3200m header says "3200m equiv"`);
+  ok(fn("Track \u2248", "fk-sm").startsWith('<th class="fk no-break fk-sm">Track \u2248<a') &&
+     /data-title="Track equivalent"/.test(fn("Track \u2248")), `${f}: "Track ≈" stays as it is`);
+}
+ok(/if \(c\.fk\) return fkTh\(fkHead\)/.test(rk), "rankings: every board's 5K header is fkTh");
+ok(/th\.outerHTML = fkTh\(fkLabel, "fk-sm pv-fk"\)/.test(read("meet-preview.js")),
+   "meet preview: the header is redrawn whole, ⓘ and all");
+for (const f of ["rankings.js", "predictions.js", "meet-preview.js", "recruiting.js", "recruiting-search.js"]) {
+  const src = read(f);
+  ok(!/<th[^>]*class="[^"]*\bfk\b[^"]*"[^>]*title=/.test(src), `${f}: no 5K header carries a title`);
+  ok(!/<td class="(n|num) fk/.test(src), `${f}: 5K cells are plain .fk, not right-aligned`);
+}
 
 if (failed) { console.error(`${failed} failed`); process.exit(1); }
 console.log("ok");

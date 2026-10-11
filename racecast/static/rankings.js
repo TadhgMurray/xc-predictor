@@ -166,6 +166,19 @@ function fkLabelFor(rows, key) {
   return ds.size === 1 && !ds.has("5K") ? Array.from(ds)[0] : "5K";
 }
 
+/* ★ "5K EQUIV" WITH ITS ⓘ (owner, 2026-10-11): _scale.html's fk_th, in JS --
+   the same markup, so a board the browser draws reads exactly as the
+   server's. The ⓘ is the CSS .flag tooltip (data-title / data-blurb in a
+   ::after), so a header drawn later needs no wiring. */
+function fkTh(label, cls) {
+  const lb = label || "5K", track = lb.startsWith("Track");
+  return `<th class="fk no-break${cls ? " " + cls : ""}">${esc(track ? lb : lb + " equiv")}`
+    + `<a class="flag info-i" href="/scale" data-title="Track ${track ? "" : esc(lb) + " "}equivalent"`
+    + ` data-blurb="The time on a track ${track ? "5K (3200 m in middle school)" : esc(lb)} that this rating is worth.`
+    + ` It reads the rating, not this race's course or distance."`
+    + ` aria-label="Track equivalent: the time on a track this rating is worth">i</a></th>`;
+}
+
 function fkCell(r, key) {
   const t = r && r[key + "_5k"];
   if (!t) return '<td class="fk"><span class="fk-none">-</span></td>';
@@ -1191,7 +1204,7 @@ const POOL_LABEL = {
  */
 function renderHead(board) {
   return "<thead><tr>" + COLUMNS[board].map((c) => {
-    if (c.fk) return `<th class="fk" title="${FK_TITLE}">${esc(fkHead)}</th>`;
+    if (c.fk) return fkTh(fkHead);
     if (!c.key) return `<th>${c.label}</th>`;
     const active = state.sort === c.key;
     const dir = active ? (effectiveDir(board, c.key) === "asc" ? "asc" : "desc") : "";

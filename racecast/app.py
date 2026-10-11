@@ -11905,6 +11905,9 @@ def api_recruiting_schools():
     #   typical-course 5K in the table's 5K column (recruiting.js)
     from conversions import stampFiveK
     stampFiveK(rows, "median", pool="hs_" + f["gender"], sport=f["sport"])
+    # ★ the crest before each college's name (owner, 2026-10-11), as the
+    #   other JS boards draw it; stamped before the suggestions copy the rows
+    stampCrests(rows)
     return jsonify({
         "rows": rows, "gender": f["gender"], "sport": f["sport"], "sort": f["sort"],
         "built": built, "total": len(every),
@@ -12024,6 +12027,8 @@ def api_recruiting():
     #   the season rating is worth on the board's own pool
     from conversions import stampFiveK
     stampFiveK(rows, "mean_rating", pool=f["pool"], sport=f["sport"])
+    # ★ the high school's crest before its name (owner, 2026-10-11)
+    stampCrests(rows)
     return jsonify({"rows": rows, "season": f["label"], "sport": f["sport"], "pool": f["pool"],
                     "limit": f["limit"], "offset": f["offset"], "note": note})
 

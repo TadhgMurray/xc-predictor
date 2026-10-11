@@ -295,3 +295,24 @@ def test_personal_bests_are_the_athlete_s_own_fastest_per_event():
     assert R.personalBests(FakeCur([]), 7) == []
     assert '"prs": personalBests(cur, int(person_id))' in read("racecast", "recruiting.py")
     assert "rating equivalents" in read("racecast", "static", "recruiting.js")
+
+
+def test_crests_before_the_school_names():
+    """★ Crests on the recruiting boards (owner, 2026-10-11), the way the
+    other boards draw them: the APIs stamp r.crest (school_logo.stampCrests),
+    the JS draws a .school-mark only where it is, and the school page's high
+    schools take the `crest` global."""
+    app = read("racecast", "app.py")
+    for route in ('"/api/recruiting/schools"', '"/api/recruiting")'):
+        body = app[app.index("@app.route(" + route):]
+        body = body[:body.index("\n@app.route(", 1)]
+        assert "stampCrests(rows)" in body, route
+    sch = app[app.index('@app.route("/api/recruiting/schools")'):]
+    assert sch.index("stampCrests(rows)") < sch.index("R.suggestions(rows")   # the bands copy the rows
+    for js, cell in (("recruiting.js", '<td class="rc-school">${crestMark(r.crest)}<a href="${schoolHref(r)}">'),
+                     ("recruiting-search.js", '${crestMark(r.crest)}<a href="/school/')):
+        src = read("racecast", "static", js)
+        assert cell in src, js
+        assert '`<img class="school-mark" src="${esc(url)}" alt=""`' in src, js
+        assert 'width="18" height="18" loading="lazy"' in src, js
+    assert "{{ crest(r.hs_school, r.hs_state) }}" in read("racecast", "templates", "recruiting_school.html")
