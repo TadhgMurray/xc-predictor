@@ -201,17 +201,39 @@
     });
   }
 
+  /* ★ THE CREST BEFORE THE NAME (owner, 2026-10-11), as the other boards
+     draw it (rankings.js crestMark): the API stamps r.crest
+     (school_logo.stampCrests) only where a crest exists, so a school
+     without one gets no broken <img>. */
+  function crestMark(url) {
+    return url ? `<img class="school-mark" src="${esc(url)}" alt=""`
+               + ` width="18" height="18" loading="lazy" decoding="async">` : "";
+  }
+
+  /* ★ "5K EQUIV" WITH ITS ⓘ (owner, 2026-10-11): _scale.html's fk_th, in JS --
+     the same markup, so a board the browser draws reads exactly as the
+     server's. The ⓘ is the CSS .flag tooltip (data-title / data-blurb in a
+     ::after), so a header drawn later needs no wiring. */
+  function fkTh(label, cls) {
+    const lb = label || "5K", track = lb.startsWith("Track");
+    return `<th class="fk no-break${cls ? " " + cls : ""}">${esc(track ? lb : lb + " equiv")}`
+      + `<a class="flag info-i" href="/scale" data-title="Track ${track ? "" : esc(lb) + " "}equivalent"`
+      + ` data-blurb="The time on a track ${track ? "5K (3200 m in middle school)" : esc(lb)} that this rating is worth.`
+      + ` It reads the rating, not this race's course or distance."`
+      + ` aria-label="Track equivalent: the time on a track this rating is worth">i</a></th>`;
+  }
+
   function schoolRow(r, withTier) {
     const t = r.times || {}, med = t.median || {};
     return `<tr>
-      <td class="rc-school"><a href="${schoolHref(r)}">${esc(r.label || r.school)}</a></td>
+      <td class="rc-school">${crestMark(r.crest)}<a href="${schoolHref(r)}">${esc(r.label || r.school)}</a></td>
       <td class="rc-dim">${esc(r.division || "")}</td>
       <td class="rc-dim">${esc(r.conference || "")}</td>
       <td class="num">${r.n}</td>
       <td class="num rc-dim">${num(r.min)}</td>
       <td class="num rc-strong">${num(r.median)}</td>
       <td class="num rc-dim">${num(r.max)}</td>
-      <td class="num fk">${esc(r.median_5k || "") || " - "}${r.median_5k_dist && r.median_5k_dist !== "5K" ? ` <span class="fk-d">${esc(r.median_5k_dist)}</span>` : ""}</td>
+      <td class="fk">${r.median_5k ? esc(r.median_5k) + (r.median_5k_dist && r.median_5k_dist !== "5K" ? ` <span class="fk-d">${esc(r.median_5k_dist)}</span>` : "") : '<span class="fk-none">-</span>'}</td>
       <td class="num">${fmtTime(med["3200"]) || " - "}</td>
       ${withTier ? tierCell(r.tier) : ""}
     </tr>`;
@@ -222,7 +244,7 @@
       <th class="num" title="the slowest recruit's rating: the walk-on line">Slowest</th>
       <th class="num" title="the median recruit's rating">Typical</th>
       <th class="num" title="the fastest recruit's rating">Fastest</th>
-      <th class="num fk" title="The track 5K the typical recruit's rating is worth">5K</th>
+      ${fkTh("5K")}
       <th class="num" title="the typical recruit's rating as a 3200 on a typical track">3200</th>${withTier ? "<th>You</th>" : ""}</tr></thead>`;
   }
 

@@ -14,6 +14,7 @@
 ===================================================================== #}
 <!DOCTYPE html>
 {% from "_explain.html" import difficulty_i, dv %}
+{% from "_scale.html" import fk_th %}
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -93,7 +94,7 @@
       <table class="rc-table pv-runners">
         {# ★ THE 5K COLUMN (owner, 2026-10-10): the track 5K each runner's rating is worth;
            meet-preview.js fills the header from the race's pools (fk_label) #}
-        <thead><tr><th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th><th class="n">Time</th><th class="n fk fk-sm pv-fk" title="The track 5K this rating is worth">5K</th></tr></thead>
+        <thead><tr><th>Pl</th><th>Athlete</th><th class="rc-wide">School · Gr</th><th class="n">Time</th>{{ fk_th("5K", "fk-sm pv-fk") }}</tr></thead>
         <tbody></tbody>
       </table>
     </div>

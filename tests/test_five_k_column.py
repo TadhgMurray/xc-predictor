@@ -148,6 +148,26 @@ def test_the_macros():
     assert inline.startswith('<span class="fk-i"') and "3200m" in inline
 
 
+def test_fk_th_is_the_js_header():
+    """★ "5K equiv" with its ⓘ (owner, 2026-10-11): the macro prints, line
+    breaks aside, exactly the string tests/test_five_k_column.js holds every
+    JS fkTh() to -- so a board the browser draws reads as the server's."""
+    import re
+    app = _env_jinja()
+    with app.test_request_context():
+        out = app.jinja_env.from_string(
+            '{% from "_scale.html" import fk_th %}'
+            '{{ fk_th("5K") }}|{{ fk_th("Track ≈", "fk-sm") }}').render()
+    five, track = (re.sub(r"\s+", " ", x) for x in out.split("|"))
+    assert five == ('<th class="fk no-break">5K equiv<a class="flag info-i" href="/scale"'
+                    ' data-title="Track 5K equivalent" data-blurb="The time on a track 5K that'
+                    ' this rating is worth. It reads the rating, not this race\'s course or'
+                    ' distance." aria-label="Track equivalent: the time on a track this rating'
+                    ' is worth">i</a></th>'), five
+    assert track.startswith('<th class="fk no-break fk-sm">Track ≈<a')
+    assert 'data-title="Track equivalent"' in track       # one space, not two
+
+
 PAGES = ("race.html", "race_tf.html", "compiled.html", "compiled_tf.html", "meet_tf.html",
          "course.html", "venue_tf.html", "school.html", "school_prs.html", "embed_school.html",
          "athlete.html", "compare.html", "breakouts.html", "landing.html", "what_it_takes.html",

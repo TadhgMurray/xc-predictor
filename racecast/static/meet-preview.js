@@ -57,13 +57,26 @@
       `<td class="n tm">${esc(r.time || "")}</td>` + fk(r.five_k) + `</tr>`;
   }
 
+  /* ★ "5K EQUIV" WITH ITS ⓘ (owner, 2026-10-11): _scale.html's fk_th, in JS --
+     the same markup, so a board the browser draws reads exactly as the
+     server's. The ⓘ is the CSS .flag tooltip (data-title / data-blurb in a
+     ::after), so a header drawn later needs no wiring. */
+  function fkTh(label, cls) {
+    const lb = label || "5K", track = lb.startsWith("Track");
+    return `<th class="fk no-break${cls ? " " + cls : ""}">${esc(track ? lb : lb + " equiv")}`
+      + `<a class="flag info-i" href="/scale" data-title="Track ${track ? "" : esc(lb) + " "}equivalent"`
+      + ` data-blurb="The time on a track ${track ? "5K (3200 m in middle school)" : esc(lb)} that this rating is worth.`
+      + ` It reads the rating, not this race's course or distance."`
+      + ` aria-label="Track equivalent: the time on a track this rating is worth">i</a></th>`;
+  }
+
   /* ★ THE 5K COLUMN (owner, 2026-10-10): _scale.html's fk_td, in JS. The
      distance is written in the cell only when the header says "Track ≈". */
   let fkLabel = "5K";
   function fk(c) {
-    if (!c) return `<td class="n fk fk-sm"><span class="fk-none">-</span></td>`;
+    if (!c) return `<td class="fk fk-sm"><span class="fk-none">-</span></td>`;
     const d = c.dist !== fkLabel ? ` <span class="fk-d">${esc(c.dist)}</span>` : "";
-    return `<td class="n fk fk-sm">${esc(c.time)}${d}</td>`;
+    return `<td class="fk fk-sm">${esc(c.time)}${d}</td>`;
   }
 
   function draw(d) {
@@ -75,8 +88,8 @@
       return;
     }
     fkLabel = d.fk_label || "5K";
-    const fkTh = body.querySelector(".pv-fk");
-    if (fkTh) fkTh.textContent = fkLabel;
+    const th = body.querySelector(".pv-fk");
+    if (th) th.outerHTML = fkTh(fkLabel, "fk-sm pv-fk");
     body.querySelector(".pv-teams tbody").innerHTML = d.teams.map(team).join("") ||
       `<tr><td colspan="4" class="meta">No team brings five runners.</td></tr>`;
     body.querySelector(".pv-runners tbody").innerHTML = d.runners.map(runner).join("");
