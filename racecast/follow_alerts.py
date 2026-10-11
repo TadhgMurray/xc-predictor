@@ -409,11 +409,18 @@ def raceContext(races, payload):
 
 
 def pictures(cur, payload):
-    """{photo, logo}: site-relative URLs of the athlete's picture (the
+    """{photo, crest}: site-relative URLs of the athlete's picture (the
     claiming account's, as on the athlete page) and the school's crest, each
     None when there is none. Looked up once, when the item is enriched, and
-    kept in the payload: the mail is drawn from the payload alone."""
-    out = {"photo": None, "logo": None}
+    kept in the payload: the mail is drawn from the payload alone.
+
+    ★ THE CREST IS THE SITE'S OWN (owner, 2026-10-11: the mail's crest was
+      missing, or not the page's). school_logo.crestUrl, the resolver every
+      page uses -- the label cache's state for the school (by pool), the
+      crest's level and its version in the URL -- so the image route finds
+      the file and the mail shows the crest the athlete page shows. Both
+      caches load here once per process, as app.py loads them at start-up."""
+    out = {"photo": None, "crest": None}
     if payload.get("person_id"):
         try:
             out["photo"] = AC.photoFor(cur, payload["person_id"])
@@ -422,11 +429,15 @@ def pictures(cur, payload):
     school = payload.get("school") or (payload.get("team") or {}).get("school")
     if school:
         try:
+            import school_identity
             import school_logo
-            if school_logo.logoPath(cur, school, payload.get("state")):
-                out["logo"] = school_logo.logoUrl(school, payload.get("state"))
-        except Exception:                               # noqa: BLE001
-            cur.connection.rollback()
+            from database import getConn
+            school_identity.loadLabels(getConn)
+            school_logo.loadCrests(getConn)
+            out["crest"] = school_logo.crestUrl(school, payload.get("state"), px=128,
+                                                pool=payload.get("pool"))
+        except Exception as exc:                        # noqa: BLE001
+            print(f"  crest {school}: {type(exc).__name__}: {exc}", flush=True)
     return out
 
 
@@ -449,8 +460,8 @@ def teamContext(races, payload):
         out.append({"division": race["division"], "course": race["course"], "field": len(race["rows"]),
                     **(team or {})})
     base = dict(payload, races=out) if out else dict(payload)
-    return dict(base, logo=pictures(races.cur, {"school": payload.get("school"),
-                                               "state": payload.get("state")})["logo"])
+    return dict(base, crest=pictures(races.cur, {"school": payload.get("school"),
+                                                "state": payload.get("state")})["crest"])
 
 
 def recordItems(cur, follows, found, year, enrich=None):
@@ -557,7 +568,7 @@ def sendDigests(cur, conn, follows, now, origin, send=True, log=print):
     for items_ in by.values():
         for i in items_:
             p = i["payload"] if isinstance(i["payload"], dict) else json.loads(i["payload"])
-            if "logo" not in p:
+            if "crest" not in p:
                 enrich = enrich or enricher(cur)
                 try:
                     p = enrich(p)

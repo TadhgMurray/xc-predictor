@@ -309,7 +309,7 @@ def _groupHead(title, items, kind, origin):
     """The group's heading: the athlete's photo (or the team's crest) beside
     the name, the school with its crest under an athlete's name."""
     photo = next((p.get("photo") for p in items if p.get("photo")), None)
-    logo = next((p.get("logo") for p in items if p.get("logo")), None)
+    logo = next((p.get("crest") for p in items if p.get("crest")), None)
     school = next((p.get("school") or (p.get("team") or {}).get("school")
                    for p in items if p.get("school") or p.get("team")), None)
     name = f'<p style="margin:0;font-size:17px;line-height:22px;font-weight:700;color:{INK}">{_e(title)}</p>'
@@ -359,8 +359,8 @@ def compose(groups, origin, unsub, account_name=None, today=None):
                 facts, squads = raceFacts(p), []
                 tb = teamBlock(p)
                 if tb:
-                    if p.get("logo"):
-                        tb["img"] = origin + p["logo"]
+                    if p.get("crest"):
+                        tb["img"] = origin + p["crest"]
                     after = [tb]
             else:
                 facts, squads = teamFacts(p)

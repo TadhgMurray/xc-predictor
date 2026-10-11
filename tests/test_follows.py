@@ -680,7 +680,7 @@ def test_alert_mail_shows_the_pictures_and_the_team_squad():
     p = {"type": "race", "sport": "XC", "person_id": 7, "result_id": 1, "name": "M O", "pool": "hs_f",
          "school": "Jesuit", "date": "2026-10-03", "meet_name": "Nike Portland XC", "time": 1104.2,
          "rating": 118.9, "flags": {}, "place": 12, "field": 184,
-         "photo": "/static/photos/7-a.jpg", "logo": "/img/school/Jesuit.png?state=OR",
+         "photo": "/static/photos/7-a.jpg", "crest": "/img/school/Jesuit.png?state=OR",
          "team": {"school": "Jesuit", "place": 2, "n_teams": 31, "points": 87,
                   "runners": [{"name": "A C", "place": 4, "time": 1082.0, "person_id": 1},
                               {"name": "M O", "place": 12, "time": 1104.2, "person_id": 7}]}}
