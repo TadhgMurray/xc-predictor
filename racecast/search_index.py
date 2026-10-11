@@ -9,7 +9,8 @@ import time
 
 sys.path.insert(0, "scripts")
 from database import getConn
-from dbfast import swapTable
+from dbfast import (swapTable, interruptible, Progress, PROGRESS_STEPS,
+                    SWAP_WAIT_S)
 
 FETCH_BATCH = 20000
 SANE_YEAR   = r'^(19|20)[0-9]{2}'
@@ -64,6 +65,8 @@ CREATE TABLE IF NOT EXISTS {table} (
 #
 # ! idx_search_prefix STILL EARNS ITS PLACE: the ranking asks
 #   `search_text LIKE 'tok%'`, which is left-anchored and does use a btree.
+# ! ONE STATEMENT PER ";" (comment lines are stripped first) -- main() runs them one at a time so each index
+#   build prints its own time (the trigram one is the long pole).
 _INDEX = """
 -- the extension must exist before gin_trgm_ops means anything; a fresh
 -- server without it fails the index create with a cryptic operator-class
@@ -176,6 +179,26 @@ def _hasHomeStates(conn):
     return cur.fetchone()[0] is not None
 
 
+# ! A BOUNDED WAIT ON THE SHADOW'S DROP (owner, 2026-10-11). Nothing on the
+#   site reads a *_new table, but a stale session from a killed run can
+#   still hold one, and a bare DROP waits on it forever with no output. The
+#   swap's own wait (dbfast.SWAP_WAIT_S): fail with a LockNotAvailable that
+#   names the table instead of hanging.
+def _dropShadow(cur, table):
+    cur.execute("SET LOCAL lock_timeout = %s", (f"{int(SWAP_WAIT_S * 1000)}ms",))
+    cur.execute(f"DROP TABLE IF EXISTS {table}")
+
+
+def _rowEstimate(conn, table):
+    """The planner's row count for `table` (pg_class.reltuples): free, and
+    close enough to size a progress step. 0 when unknown."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT GREATEST(reltuples, 0)::bigint FROM pg_class "
+                    "WHERE oid = to_regclass(%s)", (table,))
+        row = cur.fetchone()
+    return int(row[0]) if row and row[0] else 0
+
+
 def _stream_cursor(conn, name):
     """Server-side cursor so millions of rows don't load into Python at once."""
     cur = conn.cursor(name=name, cursor_factory=psycopg2.extras.RealDictCursor)
@@ -249,13 +272,23 @@ def _load_athletes(conn):
     write = conn.cursor()
     batch, total = [], 0
     t0 = time.time()
-    seen = 0
+    # ★ ONE LINE PER PERCENT OF THE ATHLETES, sized off athlete_named's
+    #   planner estimate (the driving table of _ATHLETE_SQL), so ~100 lines
+    #   whatever the corpus; the old fixed 500,000 was 30 lines at 15M and
+    #   none at all on a small database. The first FETCH runs the whole
+    #   join, so say so before it, and say when the rows start.
+    est = _rowEstimate(conn, "athlete_named")
+    print(f"    athletes: querying (~{est:,} rows expected)...", flush=True)
+    prog = None
     for row in read:
-        seen += 1
-        if seen % 500_000 == 0:
-            el = time.time() - t0
-            print(f"    athletes: {seen:,} rows read, {total:,} written, "
-                  f"{seen / el:,.0f} rows/s, {el / 60:.1f} min", flush=True)
+        if prog is None:
+            print(f"    athletes: first rows after {time.time() - t0:.0f}s",
+                  flush=True)
+            # no statistics yet (a fresh table): a line per server round
+            # trip (FETCH_BATCH) rather than one per row
+            prog = Progress("    athletes",
+                            est or FETCH_BATCH * PROGRESS_STEPS)
+        prog.tick(extra=f"{total:,} written")
         name   = row["name"]
         school = row.get("school")
         # ★ THE SCHOOL'S STATE, NOT THE ATHLETE'S (owner, 2026-09-06): the
@@ -496,8 +529,12 @@ def _ensure_meet_agg(conn):
         cur.execute("SET max_parallel_workers_per_gather = 4")
         cur.execute("SET work_mem = '1GB'")
         for table, sql in _MEET_AGG.items():
-            cur.execute(f"DROP TABLE IF EXISTS {table}_new")
+            t0 = time.time()
+            print(f"  {table}: aggregating (one scan of the results)...",
+                  flush=True)
+            _dropShadow(cur, f"{table}_new")
             cur.execute(f"CREATE TABLE {table}_new AS {sql}")
+            print(f"  {table}: aggregated in {time.time() - t0:.0f}s", flush=True)
             cur.execute(f"ALTER TABLE {table}_new ADD CONSTRAINT {table}_new_pkey "
                         f"PRIMARY KEY (meet_id, source)")
             conn.commit()
@@ -690,6 +727,7 @@ def main():
     ap = argparse.ArgumentParser(description="Rebuild the search index.")
     ap.add_argument("--only", choices=list(_LOADERS))
     args = ap.parse_args()
+    interruptible()                       # one Ctrl-C cancels the statement
 
     global _TARGET
     with getConn() as conn:
@@ -704,7 +742,7 @@ def main():
                 conn.commit()
             else:
                 _TARGET = "search_index_new"
-                cur.execute("DROP TABLE IF EXISTS search_index_new")
+                _dropShadow(cur, "search_index_new")
                 cur.execute(_DDL.format(table=_TARGET))
                 conn.commit()
 
@@ -715,6 +753,7 @@ def main():
             if args.only and key != args.only:
                 continue
             t0 = time.time()
+            print(f"  {key}: loading...", flush=True)
             fn(conn)
             print(f"  {key}: {time.time() - t0:.0f}s", flush=True)
 
@@ -728,9 +767,17 @@ def main():
                 cur.execute("SET max_parallel_maintenance_workers = 4")
                 print("building indexes (prefix, trigram, school label)...", flush=True)
                 t0 = time.time()
-                cur.execute(_INDEX.format(table="search_index_new",
-                                          prefix="idx_search_new"))
-                conn.commit()
+                sql = _INDEX.format(table="search_index_new",
+                                    prefix="idx_search_new")
+                sql = "\n".join(ln for ln in sql.splitlines()
+                                if not ln.lstrip().startswith("--"))
+                for stmt in filter(None, (x.strip() for x in sql.split(";"))):
+                    t1 = time.time()
+                    cur.execute(stmt)
+                    conn.commit()
+                    # the first line's last word: the index (or extension)
+                    print(f"    {stmt.splitlines()[0].split()[-1]}: "
+                          f"{time.time() - t1:.0f}s", flush=True)
                 print(f"  indexes: {time.time() - t0:.0f}s", flush=True)
             # ★ THROUGH dbfast.swapTable (sweep 2026-10-10, D5/D6). This had
             #   its own loop of 5 s waits -- the site's own lock_timeout, so a
