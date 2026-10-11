@@ -639,3 +639,4 @@
 
 /* the next-season caption: the expectation in ink, where it comes from muted */
 .chart-cap .chart-cap-why { color: var(--muted, #6b7280); }
+.fan-start { fill: #fff; stroke: #2e48c8; stroke-width: 1.5; }

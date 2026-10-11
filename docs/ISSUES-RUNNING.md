@@ -5921,3 +5921,12 @@ Chromium against the old script (readout 15:00, label under the pointer
   `XCP_NCAA`).
 - Done the same day: Resend mail on (test sent), Cloudflare board cache
   rule live (HIT confirmed), `XCP_ALERT_SECRET` added.
+
+## 2026-10-11 -- TODO: the rankings "Fastest times" board is very slow
+
+- Owner report: the Fastest times (best times) table on /rankings takes a
+  long time to load. Not looked at yet. To check: the /api/rankings call
+  behind that board (board=marks / best times) -- time it with and without a
+  state, see whether it reads a precomputed table or races the field per
+  request (EXPLAIN ANALYZE the query; scripts/slow_queries.py while it loads),
+  and whether the Cloudflare board cache rule covers its URL.
