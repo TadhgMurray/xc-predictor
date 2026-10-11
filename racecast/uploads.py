@@ -261,7 +261,22 @@ VENUE_SIM = 0.75
 def matchMeets(meet_name, location, candidates):
     """The candidates (dicts with name, venue) that read as this meet."""
     out = []
+    # ★ A DIFFERENT NUMBER IN THE NAME IS A DIFFERENT MEET (owner,
+    #   2026-10-11: "GHSA 6A Sectional 1 (Regions 1,4,7,8)" was held as a
+    #   duplicate of Sectional 2 and of 4A Sectional 2, same day, 0.76 alike).
+    #   Sectional 1 / 2, 6A / 4A, Region 3 / 5 differ by exactly the tokens
+    #   that make them separate races. The years are left out: one meet's
+    #   names carry them inconsistently ("2024 ..." on one feed, not the other).
+    def _nums(text):
+        return {t for t in re.findall(r"\d+[a-z]?", (text or "").lower())
+                if not re.fullmatch(r"(19|20)\d\d", t)}
+    mine = _nums(meet_name)
     for c in candidates:
+        theirs = _nums(c.get("name"))
+        # ! CONFLICTING, NOT MERELY UNEQUAL: "GHSA 6A Sectional 1" against
+        #   "GHSA 6A Sectional 1 (Regions 1,4,7,8)" is one meet named twice
+        if mine and theirs and not (mine <= theirs or theirs <= mine):
+            continue
         ns = similarity(meet_name, c.get("name"))
         vs = similarity(location, c.get("venue")) if (location and c.get("venue")) else 0.0
         if ns >= NAME_SIM or vs >= VENUE_SIM:
