@@ -181,8 +181,10 @@ def test_every_page_with_a_5k_compiles_and_uses_it():
         app.jinja_env.get_template(name)                 # a syntax error raises
         src = open(os.path.join(root, name), encoding="utf-8").read()
         assert "five_k" in src or "fk(" in src, name
-    # ! home is another change's (its own 5K column): untouched here
-    assert "five_k" not in open(os.path.join(root, "home.html"), encoding="utf-8").read()
+    # home reads its 5K from the board rows (track5k); only the header is
+    # the shared fk_th (owner, 2026-10-11: "change all those 5k columns")
+    home = open(os.path.join(root, "home.html"), encoding="utf-8").read()
+    assert "five_k(" not in home and 'fk_th("5K", "hm-5k")' in home
 
 
 def test_the_athlete_bests_average():

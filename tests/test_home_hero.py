@@ -138,5 +138,5 @@ def test_the_page_renders_in_the_new_shape(monkeypatch):
     # the Teams tab, linked to the teams board
     assert "Team hs_f 9" in html and "board=teams" in html
     # the 5K column
-    assert 'title="Track 5K this rating is worth">5K</th>' in html
+    assert "5K equiv<a class=\"flag info-i\"" in html   # fk_th, owner 2026-10-11
     assert "More levels" in html

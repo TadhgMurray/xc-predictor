@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-{% from "_scale.html" import rv %}
+{% from "_scale.html" import rv, fk_th %}
 {% from "_explain.html" import rating_i %}
 <html lang="en">
 {# ===================================================================== #}
@@ -101,7 +101,7 @@
             {# ★ THE RATING AS A TRACK 5K, IN ITS OWN COLUMN (owner,
                  2026-10-10): at the row's own level, the one yardstick a
                  parent already knows (conversions.stampTrack5k) #}
-            <th class="n hm-5k" title="Track 5K this rating is worth">5K</th>
+            {{ fk_th("5K", "hm-5k") }}
             {% if board_type == 'athlete' %}<th class="n rc-wide">Races</th>{% endif %}
         </tr></thead>
         <tbody>
@@ -122,7 +122,7 @@
             <td class="hm-res" title="{{ _detail }}">{% if r.link %}<a href="{{ r.link }}">{% endif %}<span class="d-main">{{ _parts[0] or ' - ' }}</span>{% if _parts|length > 1 %}<span class="d-meet">{{ _parts[1] }}</span>{% endif %}{% if r.link %}</a>{% endif %}</td>
             {% endif %}
             <td class="n rt"{% if r.rating_clock %} title="{{ r.rating_clock }}"{% endif %}><span class="rc-rv">{{ rv(r.rating, r.hs_rating) }}</span></td>
-            <td class="n hm-5k">{{ r.track5k or ' - ' }}</td>
+            <td class="fk hm-5k">{{ r.track5k or ' - ' }}</td>
             {% if board_type == 'athlete' %}<td class="n rc-wide">{{ _parts[0] or ' - ' }}</td>{% endif %}
         </tr>
         {% endfor %}

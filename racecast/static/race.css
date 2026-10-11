@@ -382,8 +382,7 @@ main.rc.home-rc .hm-t td.nm a { font-weight: 600; }
 main.rc.home-rc .hm-t td.rt { width: 4.4rem; }
 main.rc.home-rc .hm-t th .info-i { margin-left: .25rem; }
 /* ★ THE 5K COLUMN: narrow, muted, right-aligned, tabular (owner, 2026-10-10) */
-main.rc.home-rc .hm-t .hm-5k { width: 3.6rem; color: var(--muted); font-variant-numeric: tabular-nums; }
-main.rc.home-rc .hm-t th.hm-5k { cursor: help; }
+main.rc.home-rc .hm-t .hm-5k { width: 5.9rem; font-variant-numeric: tabular-nums; }
 /* the performance: the time, then the meet in small type under it */
 main.rc.home-rc .hm-t td.hm-res { font-variant-numeric: tabular-nums; max-width: 16rem; }
 main.rc.home-rc .hm-t td.hm-res a { color: inherit; text-decoration: none; }
@@ -419,7 +418,7 @@ main.rc.home-rc .hm-states td.tpts { width: 7rem; font-weight: 600; }
   main.rc.home-rc .hm-t th, main.rc.home-rc .hm-t td { padding-left: .3rem; padding-right: .3rem; }
   main.rc.home-rc .hm-t th.pl, main.rc.home-rc .hm-t td.pl { width: 1.7rem; }
   main.rc.home-rc .hm-t th.n, main.rc.home-rc .hm-t td.rt { width: 3.3rem; }
-  main.rc.home-rc .hm-t .hm-5k { width: 3rem; }
+  main.rc.home-rc .hm-t .hm-5k { width: 5.4rem; }
   main.rc.home-rc .hm-t td.nm { overflow: hidden; }
   /* a long surname breaks rather than clips ("Rasmusse") */
   main.rc.home-rc .hm-t td.nm a { overflow-wrap: anywhere; }
@@ -806,23 +805,30 @@ main.ath-page.rc .rc-tbar, main.ath-page.rc .rc-side > h2:first-child { min-heig
    every season still lines up down the page */
 main.ath-page.rc .season table th, main.ath-page.rc .season table td { padding-left: .45rem; padding-right: .45rem; }
 main.ath-page.rc .season table { min-width: 0; }
-main.ath-page.rc .season table th:nth-child(1) { width: 6.7rem; }
+main.ath-page.rc .season table th:nth-child(1) { width: 6.4rem; }
 main.ath-page.rc .season table th:nth-child(2) { width: auto; }
-main.ath-page.rc .season table th:nth-child(3) { width: 3.9rem; }
-main.ath-page.rc .season table th:nth-child(4) { width: 4.6rem; }
-main.ath-page.rc .season table th:nth-child(5) { width: 5.6rem; }
+main.ath-page.rc .season table th:nth-child(3) { width: 3.8rem; }
+main.ath-page.rc .season table th:nth-child(4) { width: 4.4rem; }
+main.ath-page.rc .season table th:nth-child(5) { width: 5rem; }
 /* ! THE HEADERS FIT ON ONE LINE, ⓘ INCLUDED (owner, 2026-10-11: "the i
-     still goes to the next row"): Rating and 5K equiv are sized for their
-     header, and no header wraps */
+     still goes to the next row"), and no header wraps */
 main.ath-page.rc .season table th { white-space: nowrap; }
-main.ath-page.rc .season table th:nth-child(6) { width: 5.4rem; }
-main.ath-page.rc .season table th:nth-child(7) { width: 5.9rem; }
-main.ath-page.rc .season table th:nth-child(8) { width: 5.8rem; }
+main.ath-page.rc .season table th:nth-child(6) { width: 4.8rem; }
+main.ath-page.rc .season table th:nth-child(7) { width: 5.4rem; }
+main.ath-page.rc .season table th:nth-child(8) { width: 4.8rem; }
 /* ★ RECORDS: THREE PILLS TO A LINE (owner, 2026-10-11: "make the flags not
      make all the meets go multiple rows"). A row is already two lines (the
      course under the meet, the team place under the place); at three a line
      even all six badges fit in those two, so the flags never add a third. */
-main.ath-page.rc .season table th:nth-child(9) { width: 8.6rem; }
+main.ath-page.rc .season table th:nth-child(9) { width: 6.6rem; }
+/* ⚠ AND THE MEET NEVER SQUEEZED TO A LETTER (owner, 2026-10-11: "meet names
+     are all cut off. Entirely."). The sized columns sum to ~41rem (border-box,
+     athlete-charts.css), what they took before the 5K and the ⓘ came in; the
+     table keeps at least 8rem for the meet on top of them and scrolls
+     sideways in its .tscroll below that, instead of eating the meet. */
+@media (min-width: 701px) {
+  main.ath-page.rc .season table { min-width: 49rem; }
+}
 main.ath-page.rc .season td.flags .flag { margin: 0 1px 2px 0; padding: 1px 4px; font-size: 10.5px; }
 /* "· 1st on team" under the place, as a small sub-line */
 main.ath-page.rc .season td.place-cell .muted { display: block; font-size: .8rem; line-height: 1.2; }
