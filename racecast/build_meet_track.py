@@ -17,13 +17,15 @@
 #                                carries on where this one stopped
 #     ... --redo                 re-score races already stored (after a
 #                                new model or a re-rating)
-#     ... --all-seasons          every past edition, not just this season's
+#     ... --this-season          only this season's editions
 #
-# ★ THIS SEASON BY DEFAULT (owner, 2026-10-11: 4,165 races back to 2025-10,
-#   one at a time, a line each). Without --from/--to the races are cut at
-#   the start of the current academic season (engine/season_year.py, the
-#   one clock); --all-seasons restores the full history. Progress is one
-#   line per percent of the races (dbfast.Progress) plus a summary.
+# ★ EVERY PAST EDITION BY DEFAULT. The line this feeds is "the model picked
+#   the winner X of Y at this meet": the coming week's meets have mostly
+#   run in earlier seasons, so cutting at this season would leave the line
+#   empty. The first run is the long one (4,165 races on 2026-10-11); a
+#   stored race is never re-scored, so later runs only add new ones.
+#   Progress is one line per percent of the races (dbfast.Progress) plus a
+#   summary, not a line per race (owner, 2026-10-11: "too noisy").
 #
 # ★ THE AS-RAN BACKTEST, THROUGH THE SERVED PATH. Each race is predicted as
 #   scripts/backtest_predictions.py predicts it at lead 0: target
@@ -202,10 +204,9 @@ def targets(cur, args):
     """The races to score, newest first, by the mode the flags pick."""
     if args.lo or args.hi:
         return racesOf(cur, None, None, args.min_field, args.lo, args.hi)
-    lo = None if args.all_seasons else seasonStart()
+    lo = seasonStart() if args.this_season else None
     if lo:
-        print(f"  this season only: races from {lo} (--all-seasons for every "
-              f"past edition)", flush=True)
+        print(f"  this season only: races from {lo}", flush=True)
     meets = []                                    # (meet_id, source)
     if args.meet:
         for mid in args.meet:
@@ -245,8 +246,8 @@ def main():
     ap.add_argument("--min-field", type=int, default=MIN_FIELD)
     ap.add_argument("--redo", action="store_true")
     ap.add_argument("--budget-minutes", type=float, default=None)
-    ap.add_argument("--all-seasons", action="store_true",
-                    help="every past edition, not just the current season's")
+    ap.add_argument("--this-season", action="store_true",
+                    help="only the current season's editions (default: every past edition)")
     args = ap.parse_args()
 
     import psycopg2.extras
