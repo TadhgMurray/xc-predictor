@@ -20,3 +20,6 @@ Printed at the end of every deploy/run_pipeline.sh run. Delete an item once it's
 5. Rebuild the search's athlete tables, then the search index, so college-only and newer athletes become searchable. Future runs do this themselves (step 13c0); this run started before that step existed.
        /srv/venv/bin/python -u racecast/build_search_helpers.py
        /srv/venv/bin/python -u racecast/search_index.py
+
+6. Find out why /athlete/29603096 (HS) and /athlete/1009167329 (college) weren't joined automatically. Read-only; paste the [pair] section:
+       /srv/venv/bin/python scripts/link_freshmen.py --pair 1009167329 29603096
