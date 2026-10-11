@@ -1029,6 +1029,9 @@ async def scrapeMeetTF(page, meet_id: int, meet_info: dict,
         # tuning perMeetDelayRange. Marked failed -> retried later via meet_queue
         # (the "just slow down" behavior — no per-meet backoff here).
         print(f"{label} [429] rate limited on meet {meet_id} — marking failed")
+        # ★ POLITE MODE: the first 429 ends the run (polite_stop.py)
+        import polite_stop
+        polite_stop.trip(label, f"429 on meet {meet_id}")
         return -1
     except Exception as e:
         # Anything else: log and fall through to the per-div path.
@@ -1332,6 +1335,9 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
             # while tuning perMeetDelayRange. Marked failed -> retried later
             # via meet_queue (no per-meet backoff).
             print(f"{label} [429] rate limited on meet {meet_id} (XC) — marking failed")
+            # ★ POLITE MODE: the first 429 ends the run (polite_stop.py)
+            import polite_stop
+            polite_stop.trip(label, f"429 on meet {meet_id} (XC)")
             return -1, True
         except Exception as e:
             # Anything else: log and fail the meet (no fallback). It retries.

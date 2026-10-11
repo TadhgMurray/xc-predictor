@@ -1290,10 +1290,14 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
     pending = set()
     crashes = 0
 
+    import polite_stop
     while (True):
         # Wraps the entire session in a try/except so if anything bad happens
         # we return what we have instead of crashing the launcher and other sessions.
         try:
+            # ★ POLITE MODE (polite_stop.py): another session hit a 429 or a
+            #   block -- claim nothing more
+            polite_stop.check()
                 
             # One DB round trip for the whole batch.
             # Returns only the meet_ids in this batch that need work,
@@ -1349,6 +1353,9 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
                 # Attempts to scrape each sport this meet_id still hasn't
                 # scraped.
                 for sport in sports_to_try:
+                    # the run is stopping: what this batch has not reached
+                    # goes back to the queue (the PoliteStop handler below)
+                    polite_stop.check()
 
                     # ── Scrape with retry loop ────────────────────────────────
                     # On a Cloudflare block we rotate and retry the same meet
@@ -1402,6 +1409,10 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
                             break
 
                         except CloudflareException:
+                            # ★ POLITE MODE: a block is a "no" for tonight --
+                            #   no rotation, no retry (polite_stop.py)
+                            if polite_stop.trip(label, f"Cloudflare block on meet {meet_id}"):
+                                break
                             block_retries += 1
 
                             if block_retries > MAX_BLOCK_RETRIES:
@@ -1453,6 +1464,17 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
                     low, high = perMeetDelayRange()
                     await asyncio.sleep(random.uniform(low, high))
 
+        except polite_stop.PoliteStop as e:
+            # hand the unreached claims back, close the browser, end the session
+            try:
+                released = await runDbCall(releaseClaims, list(pending), CLAIM_STATES[0])
+                if released:
+                    print(f"{label} [polite] released {released} claimed meet rows")
+            except Exception as rel:
+                print(f"{label} [polite] could not release claims ({rel}); "
+                      f"the next start resets them")
+            print(f"{label} [polite] session ends: {e}")
+            break
         except Exception as e:
             import traceback
             print(f"{label} Session crashed: {e}")
