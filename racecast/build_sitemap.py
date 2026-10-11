@@ -325,10 +325,16 @@ def collect(conn, race_years=None):
             redirect_sql = ("AND NOT EXISTS (SELECT 1 FROM person_redirect pr "
                             "WHERE pr.old_id = s.person_id)"
                             if _exists(cur, "person_redirect") else "")
+            # ★ NOR A HIDDEN ATHLETE (owner, 2026-10-11; racecast/person_optout.py):
+            #   their page answers 410, and a sitemap that lists a 410 is
+            #   one the crawler distrusts
+            optout_sql = ("AND NOT EXISTS (SELECT 1 FROM person_optout o "
+                          "WHERE o.person_id = s.person_id)"
+                          if _exists(cur, "person_optout") else "")
             cur.execute(f"""
                 SELECT s.person_id, to_char(max(s.last_race), 'YYYY-MM-DD')
                 FROM   athlete_season s
-                WHERE  s.n_races >= 1 {redirect_sql}
+                WHERE  s.n_races >= 1 {redirect_sql} {optout_sql}
                 GROUP  BY s.person_id
             """)
             by_kind["athletes"] = [(f"/athlete/{pid}", lm) for pid, lm in cur.fetchall()]

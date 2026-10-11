@@ -307,6 +307,13 @@ school_identity.loadLabels(getConn)
 #   Restart after the scraper runs to pick up new crests, exactly as the
 #   labels want a restart after a pipeline.
 school_logo.loadCrests(getConn)
+# ★ THE ATHLETES WHO ASKED TO BE HIDDEN (owner, 2026-10-11: "remove/unpublish
+#   my results"), loaded like the crests: a restart after scripts/optout.py
+#   picks a new one up. person_optout.py says what is hidden and what is
+#   not; the three hooks below (_optoutGone, _optoutMaskContext,
+#   _optoutMaskBody) are the whole of the site's side.
+import person_optout as _optout
+_optout.loadHidden(getConn)
 
 
 # ★ THE PREDICTION MODEL, LOADED WHEN THE WORKER STARTS (owner, 2026-10-05:
@@ -772,6 +779,71 @@ def _strip_trailing_slash():
         return None
     qs = request.query_string.decode("utf-8", "replace")
     return redirect(bare + ("?" + qs if qs else ""), code=301)
+
+
+# ★ A HIDDEN ATHLETE'S OWN PAGES ARE GONE (owner, 2026-10-11: an athlete's
+#   "remove/unpublish my results"; racecast/person_optout.py). Every route that
+#   takes the athlete in its path names it person_id -- /athlete/<id>, its
+#   /profile, /card/athlete/<id>.png, /recruit/<id>, the per-athlete APIs --
+#   so one look at view_args covers them all, and the next one too. The
+#   query-string spellings: ?person_id= (the athlete APIs), ?athlete= (the
+#   conversions / predict prefill), and /compare's ?a= / ?b=.
+#   410, not 404: "gone on purpose", which a crawler drops faster. noindex
+#   on top, for the crawler that does not.
+_OPTOUT_QUERY_KEYS = ("person_id", "athlete")
+_OPTOUT_PAIR_PATHS = {"/compare": ("a", "b")}
+
+
+@app.before_request
+def _optoutGone():
+    if not _optout.hiddenIds():
+        return None
+    asked = [(request.view_args or {}).get("person_id")]
+    asked += [request.args.get(k) for k in _OPTOUT_QUERY_KEYS]
+    asked += [request.args.get(k) for k in _OPTOUT_PAIR_PATHS.get(request.path, ())]
+    if not any(_optout.isHidden(p) for p in asked):
+        return None
+    resp = make_response(_optout.GONE_HTML, 410)
+    resp.headers["X-Robots-Tag"] = "noindex"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ★ AND EVERY ROW THAT NAMES THEM READS "Hidden athlete", UNLINKED. Two
+#   choke points instead of forty templates: the rows are renamed in the
+#   template context before the render (so a title="", a data- attribute or
+#   a team-score cell's tooltip never sees the name), and the finished page
+#   has its /athlete/<hidden> anchors unwrapped; a JSON answer (the boards,
+#   search, predictions) gets the same row walk, so the JS renderers print
+#   the masked name. The data underneath -- places, team scores, the other
+#   athletes' ratings -- is untouched.
+from flask import before_render_template as _before_render
+
+
+def _optoutMaskContext(sender, template, context, **extra):
+    if _optout.hiddenIds():
+        _optout.maskTree(context)
+
+
+_before_render.connect(_optoutMaskContext, app)
+
+
+@app.after_request
+def _optoutMaskBody(resp):
+    if (not _optout.hiddenIds() or resp.direct_passthrough or resp.is_streamed
+            or resp.status_code != 200):
+        return resp
+    if resp.mimetype == "text/html":
+        html = resp.get_data(as_text=True)
+        masked = _optout.maskHtml(html)
+    elif resp.mimetype == "application/json":
+        html = resp.get_data(as_text=True)
+        masked = _optout.maskJson(html)
+    else:
+        return resp
+    if masked is not html:
+        resp.set_data(masked)
+    return resp
 
 # ★ ACCOUNTS (283): logins and claims live in their own module and
 #   blueprint; the pages stay anonymous (see accounts.py) and only

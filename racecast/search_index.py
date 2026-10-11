@@ -111,7 +111,19 @@ LEFT JOIN athlete_school s USING (person_id)
 {ph_join}
 WHERE  n.name IS NOT NULL
   AND  n.name NOT LIKE '%<%'
+  {optout}
 """
+# ★ AN ATHLETE WHO ASKED TO BE HIDDEN IS NOT FINDABLE (owner, 2026-10-11;
+#   racecast/person_optout.py). The site also drops their hit from /search/api at
+#   once; this keeps the index itself clean from the next build on.
+_OPTOUT_SQL = ("AND NOT EXISTS (SELECT 1 FROM person_optout o "
+               "WHERE o.person_id = n.person_id)")
+
+
+def _hasOptout(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT to_regclass('public.person_optout')")
+    return cur.fetchone()[0] is not None
 
 
 # ===================================================================== #
@@ -267,7 +279,8 @@ def _load_athletes(conn):
     read.execute(_ATHLETE_SQL.format(
         ph_col=", ph.state AS home_state" if has_ph else ", NULL AS home_state",
         ph_join="LEFT JOIN person_home_state ph USING (person_id)"
-                if has_ph else ""))
+                if has_ph else "",
+        optout=_OPTOUT_SQL if _hasOptout(conn) else ""))
 
     write = conn.cursor()
     batch, total = [], 0

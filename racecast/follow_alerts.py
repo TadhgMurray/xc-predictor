@@ -57,6 +57,7 @@ sys.path.insert(0, "racecast")
 
 import accounts as AC                                   # noqa: E402
 import follows as F                                     # noqa: E402
+import person_optout as optout                          # noqa: E402
 
 # ★ THE PROVIDERS' OWN SEND RATE. Resend's default API limit is two requests
 #   a second; Postmark's is higher. Half a second between digests stays under
@@ -294,7 +295,9 @@ def findItems(cur, follows, year):
         else:
             tk = (f["school"], f.get("state"), f.get("level"))
             if tk not in teams:
-                rows = _fill(cur, teamRows(cur, *tk, year))
+                # a hidden athlete's race is never a team's news item
+                rows = [r for r in _fill(cur, teamRows(cur, *tk, year))
+                        if not optout.isHidden(r.get("person_id"))]
                 tp, tj = _breakoutsFor(cur, [(r["sport"], r["result_id"]) for r in rows])
                 teams[tk] = teamItems(F.subjectKey(f), rows, tp, tj)
             subj = F.subjectKey(f)
@@ -335,7 +338,8 @@ def teamResult(rows, school):
     if me is None:
         return None
     places = dict(zip((r["result_id"] for r in rows), placesOf(rows)))
-    squad = [{"name": r.get("athlete_name") or "", "person_id": r.get("person_id"),
+    squad = [{"name": optout.maskedName(r.get("person_id"), r.get("athlete_name") or ""),
+              "person_id": r.get("person_id"),
               "place": places.get(r["result_id"]), "time": r["time_seconds"]}
              for r in me["runners"][:SCORERS + DISPLACERS]]
     return {"place": me["place"], "n_teams": len(teams), "points": me["points"], "runners": squad}
@@ -720,7 +724,12 @@ def main(argv=None):
             if not AC._one(cur)["ok"]:
                 print("  another alert run holds the lock; skipping")
                 return 0
-            follows = loadFollows(cur)
+            # ★ A HIDDEN ATHLETE IS NOT MAILED ABOUT (owner, 2026-10-11;
+            #   racecast/person_optout.py): their follows go, a team item skips
+            #   their races, a squad lists them as "Hidden athlete".
+            optout.setHidden(optout.loadIds(cur))
+            follows = [f for f in loadFollows(cur)
+                       if not (f["kind"] == "athlete" and optout.isHidden(f["person_id"]))]
             cur.execute("SELECT kind, person_id, school, state, level FROM account_claim")
             claims = [dict(r) for r in cur.fetchall()]
             print(f"  {len(follows)} follows across {len({f['account_id'] for f in follows})} accounts; season {year}")
