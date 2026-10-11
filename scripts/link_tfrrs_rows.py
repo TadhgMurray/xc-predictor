@@ -273,12 +273,33 @@ def main():
                     print(f"[tfrrs-link] pass 2, freshmen {y}: {len(p):,} "
                           f"pairs; skipped {skipped}")
                     pairs += p
+                # ★ AND THE SAME-NAME GROUPS, TOLD APART BY RACE TIMES
+                #   (L.timePairsAll; its own rule, its own --undo-times)
+                by_time, _bands = L.timePairsAll(cur, fresh_by, senior_by, years)
+                tpairs = []
+                for y in years:
+                    tp, tskip = by_time[y]
+                    print(f"[tfrrs-link] pass 2, race times {y}: {len(tp):,} "
+                          f"pairs; skipped {tskip}")
+                    tpairs += tp
             conn.rollback()                  # temp tables only
             pairs = L.dedupePairs(pairs)
+            taken = {p[0] for p in pairs}
+            tpairs = L.dedupePairs([p for p in tpairs if p[0] not in taken])
             if a.apply and pairs:
                 moved = L.write(conn, pairs)
                 print(f"[tfrrs-link] pass 2: joined {len(pairs):,} freshmen; "
                       f"rows {moved}")
+            # ! WRITTEN ONLY WITH XCP_LINK_TIMES=1 (owner reviews a dry run
+            #   of link_freshmen.py first); reported every run either way
+            times_on = os.environ.get("XCP_LINK_TIMES", "0") not in ("0", "", "false")
+            if tpairs and not times_on:
+                print(f"[tfrrs-link] pass 2: {len(tpairs):,} race-time pairs found, "
+                      f"not written (XCP_LINK_TIMES=1 to write them)")
+            if a.apply and tpairs and times_on:
+                moved = L.write(conn, tpairs, rule=L.TIME_RULE)
+                print(f"[tfrrs-link] pass 2: joined {len(tpairs):,} by race "
+                      f"times; rows {moved}")
 
         if not a.no_mint:
             with conn.cursor() as cur:

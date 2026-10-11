@@ -420,6 +420,155 @@ def seniorYears(years):
     return sorted(set(years) | {y - 1 for y in years})
 
 
+# ★ SAME NAME, TOLD APART BY RACE TIMES (owner, 2026-10-11: "it has to be
+#   race times"). pairsFor refuses every name with two first-years or two
+#   seniors -- 550-630 names a year, the largest reason freshmen stay
+#   strangers. A senior's last high school season and the same runner's
+#   first college season are one athlete a few months apart, so their
+#   ratings, both on the high school scale (pool_view.repFactor), sit a
+#   predictable step apart.
+#
+#   THE STEP IS MEASURED, NOT CHOSEN: every person already carrying both a
+#   high school season in Y-1 and a college season in Y (athletes the
+#   other passes joined) gives one step per sport; the band is the central
+#   JUMP_COVERAGE of those steps. A same-name group is resolved only when
+#   it is unambiguous in BOTH directions:
+#     - the first-year's step to exactly one of the seniors is inside the
+#       band (every sport the two share must agree), and every other senior
+#       of the name is OUTSIDE it -- a senior with no comparable season
+#       could be the one, so it refuses the group;
+#     - and the same from the senior's side, over the group's first-years.
+#   Every pairsFor guard still applies (no college tfrrs row, not still in
+#   high school, genders agreeing).
+# ! JUMP_COVERAGE IS THE ONE CHOICE HERE: how much of the measured spread
+#   counts as "the same runner". The band's edges come from the data.
+TIME_RULE = "freshman_time"
+JUMP_COVERAGE = 0.95
+
+
+def ambiguousGroups(fresh, senior):
+    """[(name, [tfrrs keys], [anet persons])] -- names on both sides with
+    more than one candidate on either side (pairsFor's 'name not unique')."""
+    t_by, a_by = defaultdict(list), defaultdict(list)
+    for pid, v in fresh.items():
+        k = normName(v[0])
+        if k:
+            t_by[k].append(pid)
+    for pid, v in senior.items():
+        k = normName(v[0])
+        if k:
+            a_by[k].append(pid)
+    return [(k, ts, a_by[k]) for k, ts in t_by.items()
+            if k in a_by and (len(ts) > 1 or len(a_by[k]) > 1)]
+
+
+def jumpBands(cur, years, coverage=JUMP_COVERAGE):
+    """{sport: (lo, hi, n)} -- the central `coverage` of the step from a
+    high school season in Y-1 to the same person's college season in Y, on
+    the high school scale, over the years being linked and the four before."""
+    from pool_view import repFactor
+    lo_y, hi_y = min(years) - 5, max(years) - 1
+    cur.execute(r"""
+        SELECT a.sport, a.pool, a.mean_rating, b.pool, b.mean_rating
+        FROM   athlete_season a
+        JOIN   athlete_season b ON b.person_id = a.person_id
+                               AND b.sport = a.sport AND b.year = a.year + 1
+        WHERE  a.pool LIKE 'hs\_%%' AND b.pool LIKE 'college\_%%'
+          AND  a.year BETWEEN %s AND %s
+          AND  a.mean_rating IS NOT NULL AND b.mean_rating IS NOT NULL
+    """, (lo_y, hi_y))
+    steps = defaultdict(list)
+    for sp, pa, ra, pb, rb in cur.fetchall():
+        fa, fb = repFactor(pa, sp), repFactor(pb, sp)
+        if fa and fb:
+            steps[sp].append(float(rb) * fb - float(ra) * fa)
+    out = {}
+    for sp, v in steps.items():
+        v.sort()
+        tail = (1.0 - coverage) / 2.0
+        out[sp] = (v[int(tail * (len(v) - 1))],
+                   v[int((1.0 - tail) * (len(v) - 1))], len(v))
+    return out
+
+
+def _hsSeasons(cur, pids, years, level):
+    """{(pid, year, sport): rating on the high school scale} for seasons of
+    `level` ('hs' or 'college')."""
+    from pool_view import repFactor
+    if not pids:
+        return {}
+    cur.execute("""
+        SELECT person_id, year, sport, pool, mean_rating FROM athlete_season
+        WHERE  person_id = ANY(%s) AND year = ANY(%s)
+          AND  pool LIKE %s AND mean_rating IS NOT NULL
+    """, (list(pids), list(years), level + "\\_%"))
+    out = {}
+    for pid, y, sp, pool, r in cur.fetchall():
+        f = repFactor(pool, sp)
+        if f:
+            out[(int(pid), int(y), sp)] = float(r) * f
+    return out
+
+
+def timePairsFor(groups, y, fresh, senior, fr_r, sr_r, bands):
+    """[(tfrrs key, anet person, name, college, high school)] resolved by the
+    step, and {reason: count} for the groups left alone. fr_r / sr_r are
+    _hsSeasons for the first-years (year y) and seniors (year y - 1)."""
+    def verdict(t, a):
+        if not t.startswith("p:"):
+            return None
+        tp, shared, inside = int(t[2:]), 0, True
+        for sp, (lo, hi, _n) in bands.items():
+            f, s_ = fr_r.get((tp, y, sp)), sr_r.get((a, y - 1, sp))
+            if f is None or s_ is None:
+                continue
+            shared += 1
+            inside = inside and lo <= f - s_ <= hi
+        return None if not shared else inside
+
+    out, skipped = [], defaultdict(int)
+    for _k, ts, as_ in groups:
+        for t in ts:
+            hits = [a for a in as_ if verdict(t, a) is True]
+            if len(hits) != 1:
+                skipped["time: no single senior in the band"] += 1
+                continue
+            a = hits[0]
+            if any(verdict(t, o) is not False for o in as_ if o != a):
+                skipped["time: another senior not ruled out"] += 1
+                continue
+            if any(verdict(o, a) is not False for o in ts if o != t):
+                skipped["time: another first-year not ruled out"] += 1
+                continue
+            if senior[a][3]:
+                skipped["time: senior already on tfrrs"] += 1
+                continue
+            if len(senior[a]) > 4 and senior[a][4]:
+                skipped["time: senior still in high school"] += 1
+                continue
+            gt, ga = _g(fresh[t][2]), _g(senior[a][2])
+            if gt and ga and gt != ga:
+                skipped["time: gender differs"] += 1
+                continue
+            out.append((t, a, fresh[t][0], fresh[t][1], senior[a][1]))
+    return out, dict(skipped)
+
+
+def timePairsAll(cur, fresh_by, senior_by, years):
+    """{y: (pairs, skipped)} -- the race-time pass over every year's
+    same-name groups, and the bands it used."""
+    bands = jumpBands(cur, years)
+    out = {}
+    for y in years:
+        groups = ambiguousGroups(fresh_by[y], senior_by[y])
+        tps = {int(t[2:]) for _k, ts, _a in groups for t in ts if t.startswith("p:")}
+        aps = {a for _k, _t, as_ in groups for a in as_}
+        fr_r = _hsSeasons(cur, tps, [y], "college")
+        sr_r = _hsSeasons(cur, aps, [y - 1], "hs")
+        out[y] = timePairsFor(groups, y, fresh_by[y], senior_by[y], fr_r, sr_r, bands)
+    return out, bands
+
+
 def dedupePairs(pairs):
     """Across years: a tfrrs person joins once, and an anet senior claimed by
     two different first-years (a repeated senior year) joins neither."""
@@ -446,7 +595,7 @@ CREATE TABLE IF NOT EXISTS person_link_log (
 )"""
 
 
-def write(conn, pairs):
+def write(conn, pairs, rule=RULE):
     """Stamp the anet person onto every row of each tfrrs identity: by
     person_id ('p:') or by tfrrs athlete id ('n:system:id', the rows that
     carry no person_id yet -- as merge_links and stamp_fanout write one)."""
@@ -485,7 +634,7 @@ def write(conn, pairs):
                        ON r.source = 'tfrrs' AND r.person_id IS NULL
                       AND r.native_id = n.native_id AND {sysx} = n.id_system
                 ON CONFLICT DO NOTHING
-            """, (sport, RULE, sport, RULE))
+            """, (sport, rule, sport, rule))
             cur.execute(f"""
                 UPDATE {table} r SET person_id = m.to_person
                 FROM   lf_map m WHERE r.person_id = m.from_person
@@ -502,7 +651,7 @@ def write(conn, pairs):
     return moved
 
 
-def undo(conn):
+def undo(conn, rule=RULE):
     with conn.cursor() as cur:
         if not _hasTable(cur, "person_link_log"):
             print("[link] nothing to undo")
@@ -514,9 +663,9 @@ def undo(conn):
                 FROM   person_link_log l
                 WHERE  l.sport = %s AND l.rule = %s
                   AND  r.result_id = l.result_id AND r.person_id = l.to_person
-            """, (sport, RULE))
+            """, (sport, rule))
             back[sport] = cur.rowcount
-        cur.execute("DELETE FROM person_link_log WHERE rule = %s", (RULE,))
+        cur.execute("DELETE FROM person_link_log WHERE rule = %s", (rule,))
     conn.commit()
     print(f"[link] undone: {back}")
 
@@ -623,13 +772,17 @@ def main():
                     help="explain why these two athlete pages were or were not joined")
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--undo", action="store_true")
+    ap.add_argument("--no-times", action="store_true",
+                    help="skip the race-time pass over same-name groups")
+    ap.add_argument("--undo-times", action="store_true",
+                    help="take back only the race-time pass's joins")
     a = ap.parse_args()
 
     with getConn() as conn:
-        if a.undo:
-            undo(conn)
+        if a.undo or a.undo_times:
+            undo(conn, TIME_RULE if a.undo_times else RULE)
             return
-        all_pairs = []
+        all_pairs, time_pairs = [], []
         with conn.cursor() as cur:
             print(f"[link] academic years {a.years}; each step prints when "
                   f"it finishes", flush=True)
@@ -648,22 +801,43 @@ def main():
                     print(f"    {nm:<28} {str(hs)[:30]:<30} -> {str(col)[:28]:<28}"
                           f"  tfrrs {t} -> anet person {s}")
                 all_pairs += pairs
+            if not a.no_times:
+                by_time, bands = timePairsAll(cur, fresh_by, senior_by, a.years)
+                print("[link] race-time pass: the step from a senior season to the "
+                      "college first season, high school scale, central "
+                      f"{JUMP_COVERAGE:.0%} of joined careers:")
+                for sp, (lo, hi, n) in sorted(bands.items()):
+                    print(f"    {sp}: {lo:+.1f} to {hi:+.1f}  ({n:,} careers)")
+                for y in a.years:
+                    tp, tskip = by_time[y]
+                    print(f"[link] {y} race-time pass: {len(tp):,} pairs; skipped {tskip}")
+                    for t, s_, nm, col, hs in tp[:a.show]:
+                        print(f"    {nm:<28} {str(hs)[:30]:<30} -> {str(col)[:28]:<28}"
+                              f"  tfrrs {t} -> anet person {s_}")
+                    time_pairs += tp
             if a.pair:
                 explainPair(cur, a.pair[0], a.pair[1], a.years, fresh_by, senior_by)
-                hit = [p for p in all_pairs if p[0] == f"p:{a.pair[0]}" and p[1] == a.pair[1]]
+                hit = [p for p in all_pairs + time_pairs
+                       if p[0] == f"p:{a.pair[0]}" and p[1] == a.pair[1]]
                 print(f"  -> {'JOINED by this run' if hit else 'not joined'}")
         conn.rollback()                       # the temp tables only
         # one tfrrs person, one target, across years (a person is a
         # first-year in exactly one year, so this only guards a re-run)
         uniq = dedupePairs(all_pairs)
+        taken = {p[0] for p in uniq}
+        tuniq = dedupePairs([p for p in time_pairs if p[0] not in taken])
         if not a.write:
-            print(f"[link] dry run: {len(uniq):,} pairs would be joined; "
-                  f"--write to join them")
+            print(f"[link] dry run: {len(uniq):,} pairs by name and "
+                  f"{len(tuniq):,} by race times would be joined; --write to join them")
             return
         moved = write(conn, uniq)
         print(f"[link] joined {len(uniq):,} freshmen to their high school "
               f"careers; rows moved {moved}; logged in person_link_log "
               f"(--undo reverses)")
+        if tuniq:
+            moved = write(conn, tuniq, rule=TIME_RULE)
+            print(f"[link] joined {len(tuniq):,} more by race times; rows moved "
+                  f"{moved} (--undo-times reverses only these)")
 
 
 if __name__ == "__main__":

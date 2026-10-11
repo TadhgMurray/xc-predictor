@@ -23,3 +23,9 @@ Printed at the end of every deploy/run_pipeline.sh run. Delete an item once it's
 
 6. Find out why /athlete/29603096 (HS) and /athlete/1009167329 (college) weren't joined automatically. Read-only; paste the [pair] section:
        /srv/venv/bin/python scripts/link_freshmen.py --pair 1009167329 29603096
+
+7. Review the new race-time linking (same-name freshmen), dry run only, then send Claude the output. It prints the measured band and every pair it would join:
+       /srv/venv/bin/python scripts/link_freshmen.py --show 60 2>&1 | tee -a logs/link_times_review.log
+   Older classes (backfill), same dry run:
+       /srv/venv/bin/python scripts/link_freshmen.py --years 2016 2017 2018 2019 2020 2021 2022 2023 --show 60 2>&1 | tee -a logs/link_backfill_review.log
+   Once the pairs look right: run with --write, and add XCP_LINK_TIMES=1 to /etc/xc-predictor.env so the pipeline keeps doing it.

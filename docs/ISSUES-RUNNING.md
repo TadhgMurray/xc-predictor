@@ -263,6 +263,14 @@ still overrides both ways.* Takes effect on the next solve. `d744086`
   - 🔎 Still open: about 2,500 tfrrs first-years a year have no athletic.net identity. Most
     skips are "name not unique" (550-627 a year), and years before the three-year window were
     never tried.
+  - ⏳ Same-name groups told apart by race times (owner: "it has to be race times"):
+    link_freshmen.timePairsFor, rule freshman_time, with its own --undo-times.
+    - The band is the central 95% (JUMP_COVERAGE, the one choice) of the measured step from
+      senior season to college first season, on the HS scale, over careers already joined.
+    - A pair joins only when both directions are unambiguous: exactly one candidate in the
+      band, and every other same-name candidate shown to be outside it.
+    - The pipeline reports these pairs every run but writes them only with XCP_LINK_TIMES=1,
+      after the owner reviews a dry run.
 
 - **⏳ Athletes missing from search (owner, 2026-10-11: /athlete/1009167329 "only the first one
   shows up on search results").** search_index.py reads athlete_named / athlete_agg /
