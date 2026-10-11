@@ -20,8 +20,9 @@
    ===================================================================== #}
 
 {% macro rv(value, hs) -%}
-    {%- if value is not none -%}
-    <span class="rv"{% if hs is not none %} data-hs="{{ "%.1f"|format(hs) }}"{% endif %}>{{ "%.1f"|format(value) }}</span>
+    {#- `is defined` too: a missing key must print " - ", never 500 the page -#}
+    {%- if value is defined and value is not none -%}
+    <span class="rv"{% if hs is defined and hs is not none %} data-hs="{{ "%.1f"|format(hs) }}"{% endif %}>{{ "%.1f"|format(value) }}</span>
     {%- else -%} - {%- endif -%}
 {%- endmacro %}
 

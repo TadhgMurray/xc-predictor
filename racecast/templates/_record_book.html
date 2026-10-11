@@ -1,3 +1,6 @@
+{# ! A STORED ROW DROPS ITS NULL FIELDS (build_record_books.slim), so an
+     unrated time has no speed_rating key at all: read with .get, never as
+     an attribute (2026-10-11, a 500 on /school/<name>). #}
 {# _record_book.html -- one school's record book (record_books.py, part
    'school'): the Record book tab on the school page and the body of
    /school/<name>/records. `record_book` is the precomputed ctx.
@@ -36,7 +39,7 @@
             <td>{% if r.person_id %}<a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a>{% else %}{{ r.name or "Unknown" }}{% endif %}
               {% if r.grade %}<span class="rb-g">{{ r.grade|grade_label(r.pool) }}</span>{% endif %}</td>
             <td class="no-break">{% if sec.kind == "running" %}{{ race_link(dict(r, sport=rb.sport), r.time_seconds|clock) }}{% elif sec.kind == "hurdles" %}{{ race_link(dict(r, sport="TF"), r.mark or (r.time_seconds|clock)) }}{% else %}{{ race_link(dict(r, sport="TF"), r.mark or " - ") }}{% endif %}</td>
-            {% if sec.kind == "running" %}<td class="num">{{ rv(r.speed_rating, r.hs_speed_rating) }}</td>{{ fk(r.speed_rating, r.pool, rb.sport, r.hs_speed_rating, fk_label, "fk-sm") }}{% endif %}
+            {% if sec.kind == "running" %}<td class="num">{{ rv(r.get("speed_rating"), r.get("hs_speed_rating")) }}</td>{{ fk(r.get("speed_rating"), r.pool, rb.sport, r.get("hs_speed_rating"), fk_label, "fk-sm") }}{% endif %}
             <td>{{ season_label(rb.sport if sec.kind == "running" else "TF", r.year) if r.year else ((r.race_date or r.date or "")[:4]) }}</td>
           </tr>
           {% endfor %}
