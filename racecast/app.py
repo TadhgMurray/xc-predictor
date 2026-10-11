@@ -1697,7 +1697,11 @@ def buildRankLine(cur, person_id, season):
                 print(f"rank_line: {kind} unit fold refused ({uerr}) args={args}", flush=True)
                 return None
             r = rankOf(plain, f, person_id)
-            if r is None:
+            # ! ONLY WITH XCP_RANK_LINE_DEBUG=1 (owner, 2026-10-11: "so many
+            #   errors I can't find that one"). An athlete off a unit board is
+            #   the normal case on every track page view, five lines a view,
+            #   and it buried every real traceback in the journal.
+            if r is None and os.environ.get("XCP_RANK_LINE_DEBUG") == "1":
                 # ! SAID, NOT SWALLOWED (2026-09-06): a scope that comes back
                 #   empty is the athlete not being on that board, and the
                 #   log has to say which board so it can be checked: the

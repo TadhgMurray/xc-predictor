@@ -850,6 +850,21 @@ def _norm_from_athlete(person_id, pool, sport):
                 row = cur.fetchone()
                 if row and row[0]:
                     break
+            # ★ THEN THE SEASON THE BOARDS SHOW (owner, 2026-10-11: Training
+            #   paces from an athlete page landed on "unresolvable source").
+            #   The page's pool is the athlete's latest season and its sport
+            #   the select's default, and athlete_ratings need not hold that
+            #   pair -- a track-only runner arrives with sport XC. The
+            #   latest season in this pool answers, the asked sport first.
+            if not row or not row[0]:
+                cur.execute("""
+                    SELECT mean_rating FROM athlete_season
+                    WHERE  person_id = %(pid)s AND split_part(pool, '|', 1) = %(pool)s
+                      AND  mean_rating IS NOT NULL
+                    ORDER  BY (sport = %(sport)s) DESC, year DESC, last_race DESC NULLS LAST
+                    LIMIT  1
+                """, {"pid": person_id, "pool": bare, "sport": sport or ""})
+                row = cur.fetchone()
     if not row or not row[0]:
         return None
     return _norm_from_rating(row[0], bare, difficulty=0.0, sport=sport)
