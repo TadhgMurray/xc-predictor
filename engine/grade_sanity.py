@@ -1752,9 +1752,14 @@ def eliteFieldSeasons(cur):
 # ★ THREE SIGNALS, ALL REQUIRED, so an elite high schooler is never moved
 #   (owner: "jackson spencer running one race at worlds doesn't mean he's
 #   not in hs"):
-#     1. every team the season names is a club (CLUB_NAME_RE) -- not a
-#        school, and not unattached (an unattached senior at elite meets is
-#        still a senior);
+#     1. no team the season names is a school: every row is a club
+#        (CLUB_NAME_RE), unattached or blank, or a country (NOT_SCHOOL_RE);
+#        ★ UNATTACHED AND COUNTRIES NO LONGER BLOCK (owner, 2026-10-11:
+#        Bobby Poynter -- Tracksmith at the 2024 Trials, "United States" at
+#        Portland, Unattached at USATF -- and Tommy Cardenas, Professional
+#        Runners Club, both "12" on the HS boys board). Neither is a school,
+#        and an unattached senior at elite meets is still kept by signal 2:
+#        a real senior's season has races with high schoolers on top;
 #     2. no race in the season had high schoolers on top: every race's
 #        ceiling (race_top_level) is college or pro -- a real senior runs
 #        league, section and state races;
@@ -1767,6 +1772,16 @@ def eliteFieldSeasons(cur):
 CLUB_NAME_RE = (r"\m(club|tc|ac|xtc|elite|striders|endurance|athletics|"
                 r"track (and|&) field|racing|harriers|youth)\M")
 ADULT_CLUB_SHARE = 0.5          # a majority, the club rules' own gate
+# Rule 8's "not a school" (signal 1): unattached in any spelling, a blank or
+# placeholder, or a country -- the same list as college_flag._NOT_SCHOOLS,
+# spelled for Postgres (its \b is a backspace there, so no word boundaries).
+NOT_SCHOOL_RE = (
+    r"^$|unattached|^(una|unat|individual|independent|n/?a|none|no team|-+|\?+|0)$"
+    r"|^(united states|united states of america|usa|u\.?s\.?a\.?|great britain"
+    r"|canada|japan|kenya|ethiopia|jamaica|australia|new zealand|ireland|mexico"
+    r"|puerto rico|south africa|nigeria|germany|france|italy|spain|poland|norway"
+    r"|sweden|netherlands|belgium|portugal|brazil|china|india|uganda|eritrea"
+    r"|morocco|algeria|bahrain|qatar|turkey|israel|philippines|colombia)$")
 
 
 def adultClubSeasons(cur, hs_grade, college_start):
@@ -1844,8 +1859,11 @@ def adultClubSeasons(cur, hs_grade, college_start):
     cur.execute("SET enable_nestloop = off")
     cur.execute(f"""
         SELECT c.person_id, c.acad,
-               -- unattached and blank rows count AGAINST the move, like a school
-               bool_or(NOT (lower(COALESCE(r.school, '')) ~ '{CLUB_NAME_RE}')) AS has_school,
+               -- a SCHOOL row blocks the move; a club, unattached, blank or
+               -- country row does not (signal 1, owner 2026-10-11)
+               bool_or(NOT (lower(btrim(COALESCE(r.school, ''))) ~ '{CLUB_NAME_RE}'
+                            OR lower(btrim(COALESCE(r.school, ''))) ~ '{NOT_SCHOOL_RE}'))
+                                                                           AS has_school,
                bool_and(rl.top_level IN ('college', 'pro'))                AS all_senior
         FROM   tmp_club_cand c
         JOIN   (SELECT r.person_id, {_ACAD_R} AS acad, r.school, r.meet_id, r.div_id, r.source

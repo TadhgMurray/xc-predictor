@@ -44,6 +44,18 @@ def test_earlier_graduation_stands_in_for_the_adult_club():
     assert decide((False, True), grades=grades) == {}
 
 
+def test_not_a_school():
+    import re as _re
+    # the Postgres pattern, read by Python: no \b, so the two agree here
+    pat = _re.compile(GS.NOT_SCHOOL_RE)
+    for s in ("unattached", "19-unattached", "", "united states", "usa", "u.s.a.",
+              "jamaica", "unat", "n/a"):
+        assert pat.search(s), s
+    for s in ("crater", "mercer island", "united states naval academy prep",
+              "una high", "canada college", "justin northwest"):
+        assert not pat.search(s), s
+
+
 def test_club_names_match_the_boards_label_rule():
     import build_ranking_results as B
     assert GS.CLUB_NAME_RE == B._CLUB_NAME_RE, "one club test, two places"
@@ -77,9 +89,18 @@ def test_rule8_on_postgres():
         # 3: club senior who ran one high school race
         (3, "2025-04-18", "Brentwood Track Club", 10, 1, "anet"),
         (3, "2025-05-01", "Brentwood Track Club", 13, 1, "anet"),
-        # 4: unattached + club at elite meets -> kept (unattached counts against)
+        # 4: unattached + club at elite meets, no adult club and no earlier
+        #    grade -> kept (signal 3)
         (4, "2025-04-18", "Unattached", 10, 1, "anet"),
         (4, "2025-05-10", "Gazelle Sports Elite", 11, 1, "anet"),
+        # 8: Bobby Poynter's shape (owner, 2026-10-11) -- a club, then
+        #    Unattached and "United States" at elite meets, graduated -> moved
+        (8, "2025-04-18", "Brentwood Track Club", 10, 1, "anet"),
+        (8, "2025-05-10", "Unattached", 11, 1, "anet"),
+        (8, "2025-06-01", "United States", 12, 1, "anet"),
+        # 9: the same, but one high school race on top -> kept (signal 2)
+        (9, "2025-04-18", "Brentwood Track Club", 10, 1, "anet"),
+        (9, "2025-05-10", "Unattached", 13, 1, "anet"),
         # 5: a ZAP "12" with no history -- its club reads adult because the
         #    last build pooled the club's other athletes pro (6, 7)
         (5, "2025-04-18", "ZAP Endurance", 10, 1, "anet"),
@@ -95,7 +116,8 @@ def test_rule8_on_postgres():
     cur.executemany("INSERT INTO athlete_season VALUES (%s, 'TF', %s, %s)",
                     [(5, ay, "hs_m"), (6, ay, "pro_m"), (7, ay, "pro_m")])
     hs = {(1, ay): 12, (1, 2014): 9, (2, ay): 12, (3, ay): 12, (4, ay): 12,
-          (5, ay): 12}
+          (5, ay): 12, (8, ay): 12, (8, 2014): 9, (9, ay): 12, (9, 2014): 9}
     got = GS.adultClubSeasons(cur, hs, college_start={})
     conn.rollback()
-    assert got == {(1, ay): "gazelle sports elite", (5, ay): "zap endurance"}, got
+    assert got == {(1, ay): "gazelle sports elite", (5, ay): "zap endurance",
+                   (8, ay): "brentwood track club"}, got

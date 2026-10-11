@@ -252,7 +252,7 @@ still overrides both ways.* Takes effect on the next solve. `d744086`
 
 ## 2. THE SITE — BOARDS
 
-- **🔎 Pros on the HS boys track board, 2024-25 (owner, 2026-10-11).** The owner's list of eight:
+- **⏳ Pros on the HS boys track board, 2024-25 (owner, 2026-10-11).** The owner's list of eight:
   six (Tostenson, Kitchen, Lutkenhaus, Powell, Boone, Hansen) are real high schoolers, each with
   12-18 races for their school that season, so they stay. Two are pros:
   - **Bobby Poynter** (2000000845, a collision split): Tracksmith at the 2024 Olympic Trials,
@@ -260,9 +260,12 @@ still overrides both ways.* Takes effect on the next solve. `d744086`
   - **Tommy Cardenas** (32788692): Professional Runners Club at college meets, plus "United States"
     rows, graded 12 in 2025 and 2026.
   Rule 8 (adult club) passes both by because Unattached rows and "United States" count as a school
-  (signal 1). Rule 5 needs a third year at one grade. Proposal: only a school-shaped name blocks
-  signal 1. Signal 2 (any race with high schoolers on top blocks) still protects real seniors.
-  Waiting on the owner.
+  (signal 1). Rule 5 needs a third year at one grade.
+  - Fix (owner: "yes"): only a school-shaped name blocks signal 1. Unattached, blank, and country
+    rows no longer do (grade_sanity.NOT_SCHOOL_RE). Signal 2 (any race with high schoolers on top
+    blocks) still protects real seniors.
+  - Takes effect at the next grade_sanity run.
+  - Poynter may still stay: his 2025 rows include Brooks PR Invitational, a high school meet.
 
 ### ✅ 2.1 One squad ranked as several teams — **confirmed live**
 > `restated  686,207 athlete-seasons moved to their school's own state`
