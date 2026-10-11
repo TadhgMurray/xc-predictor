@@ -1326,8 +1326,11 @@ async function chooseMeet(data) {
 
   // ! AWAITED: loadRaces picks the races (all of them, by default), and the
   //   field has to be loaded for that choice, not for the whole meet merged
+  const meet = state.meet;
   await loadRaces();
+  if (state.meet !== meet) return;     // another meet was picked meanwhile
   await loadField();
+  if (state.meet !== meet) return;
   saveState();
 }
 
@@ -1397,6 +1400,13 @@ function showRaceHead() {
 async function loadRaces() {
   const box = document.getElementById("mc-races");
   if (!box) return;
+  /* ! THE MEET THIS CALL IS FOR (2026-10-11, "Cannot read properties of
+       null (reading 'div')" on /predictions): a meet cleared or changed
+       while its races were in flight left state.meet null or another meet's
+       when the answer landed. The answer is dropped unless it is still the
+       meet on screen. */
+  const meet = state.meet;
+  if (!meet) return;
   box.innerHTML = "";
   try {
     const q = new URLSearchParams({ meet_id: state.meet.id,
@@ -1410,6 +1420,7 @@ async function loadRaces() {
     if (state.meet.div) q.set("div_id", state.meet.div);
     const res = await fetch("/api/predict/races?" + q.toString());
     const data = await res.json();
+    if (state.meet !== meet) return;
     /* ! THE SERVER'S INDEX IS THE ONE KEPT: every later request (the field,
          the squads, the prediction, the share link) names the same meet. */
     if (typeof data.alt === "number") {
@@ -1771,6 +1782,8 @@ function defaultDate() {
  *   showing "Loading", once with the answers.
  */
 async function loadField() {
+  const meet = state.meet;            // see loadRaces: drop a stale answer
+  if (!meet) return;
   const blocks = activeBlocks();
 
   renderField();                         // the blocks appear, saying Loading
@@ -1778,6 +1791,7 @@ async function loadField() {
   const missing = blocks.filter((d) => !editsFor(d).field);
   if (missing.length) {
     const got = await Promise.all(missing.map((d) => fetchField(d)));
+    if (state.meet !== meet) return;
     missing.forEach((d, i) => {
       if (got[i]) editsFor(d).field = got[i];
     });
