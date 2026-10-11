@@ -280,10 +280,18 @@ def seniors(cur, years):
                a.school,
                (SELECT x.gender FROM athletes x
                 WHERE x.athlete_id = a.person_id LIMIT 1)  AS gender,
+               -- ! A COLLEGE tfrrs ROW, NOT ANY tfrrs ROW (owner, 2026-10-11:
+               --   Connor Fanberg, Jesuit (LA) -> Johns Hopkins, never joined).
+               --   A high schooler who races an open college meet is on
+               --   tfrrs as "Unattached" with a high school grade; that is
+               --   not being joined to a college, and it kept every such
+               --   senior (common in Louisiana, Texas, the Northeast) out
+               --   of the freshman pass. level_conflict's college test is
+               --   the same one the freshman side uses.
                EXISTS (SELECT 1 FROM results r WHERE r.person_id = a.person_id
-                         AND r.source = 'tfrrs')
+                         AND r.source = 'tfrrs' AND {collegeSql('r')})
                OR EXISTS (SELECT 1 FROM results_tf r WHERE r.person_id = a.person_id
-                         AND r.source = 'tfrrs')           AS has_tfrrs,
+                         AND r.source = 'tfrrs' AND {collegeSql('r')})   AS has_tfrrs,
                -- a high school row in the freshman year or later: not a graduate
                EXISTS (SELECT 1 FROM results r WHERE r.person_id = a.person_id
                          AND r.date >= (a.y::text || '-08-01')

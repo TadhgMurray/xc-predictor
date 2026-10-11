@@ -74,3 +74,12 @@ def test_unlinked_tfrrs_identities_pair_by_their_athlete_id():
     senior = {1: ("Jane Frosh", "Newton North", "F", False)}
     pairs, _ = L.pairsFor(fresh, senior)
     assert [(t, a) for t, a, *_ in pairs] == [("n:tfrrs:8812345", 1)]
+
+
+def test_a_senior_racing_open_college_meets_unattached_is_still_a_senior():
+    # owner, 2026-10-11 (Connor Fanberg): only a COLLEGE tfrrs row keeps a
+    # senior out of the freshman pass, not an unattached high-school one
+    import inspect
+    import link_freshmen as LF
+    src = inspect.getsource(LF.seniors)
+    assert src.count("r.source = 'tfrrs' AND {collegeSql('r')}") == 2

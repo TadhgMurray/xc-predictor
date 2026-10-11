@@ -29,7 +29,9 @@ from database import getConn                                   # noqa: E402
 
 
 def facts(cur, pid):
-    cur.execute("SELECT name FROM athlete_named WHERE person_id = %s LIMIT 1", (pid,))
+    cur.execute("""SELECT name FROM athlete_named WHERE person_id = %(p)s
+                   UNION ALL SELECT athlete_name FROM results WHERE person_id = %(p)s
+                   LIMIT 1""", {"p": pid})
     r = cur.fetchone()
     cur.execute("""SELECT sport, pool, min(year), max(year), sum(n_races), max(school)
                    FROM athlete_season WHERE person_id = %s GROUP BY sport, pool ORDER BY 3""", (pid,))
@@ -55,8 +57,18 @@ def main(argv=None):
     with getConn() as conn:
         with conn.cursor() as cur:
             if a.find:
-                cur.execute("SELECT person_id FROM athlete_named WHERE lower(name) = lower(%s) ORDER BY person_id",
-                            (a.find.strip(),))
+                # ! THE RESULT ROWS TOO (owner, 2026-10-11: --find missed his
+                #   college page): athlete_named is the high school registry;
+                #   a tfrrs-only college page has its name on its rows alone
+                nm = a.find.strip()
+                cur.execute("""SELECT person_id FROM athlete_named WHERE lower(name) = lower(%(n)s)
+                               UNION
+                               SELECT DISTINCT person_id FROM results
+                               WHERE  person_id IS NOT NULL AND lower(btrim(athlete_name)) = lower(%(n)s)
+                               UNION
+                               SELECT DISTINCT person_id FROM results_tf
+                               WHERE  person_id IS NOT NULL AND lower(btrim(athlete_name)) = lower(%(n)s)
+                               ORDER  BY 1""", {"n": nm})
                 ids = [r[0] for r in cur.fetchall()]
                 print(f"{len(ids)} page(s) named {a.find!r}:")
                 for pid in ids:
