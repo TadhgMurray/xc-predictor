@@ -663,3 +663,13 @@ def test_follow_button_sits_beside_the_name_and_says_what_it_does():
     assert "' races, sets a PR or breaks out.'" in js and "'Get an email after each '" in js
     assert "Email me: " in js and "#alerts" in js
     assert "data-first=" in read("racecast", "templates", "athlete.html")
+
+
+def test_alert_rating_is_on_the_hs_equivalent_scale(monkeypatch):
+    import alert_email as AE
+    monkeypatch.setattr(AE, "hsScale", lambda pool: 0.5 if pool == "ms_m" else 1.0)
+    p = {"type": "race", "pool": "ms_m", "rating": 120.0, "prev_rating": 110.0, "time": 600,
+         "flags": {"jump": {"by": 22.0}}}
+    facts = dict(AE.raceFacts(p))
+    assert facts["Rating"] == "60.0, up 5.0 from the previous race"
+    assert facts["Breakout"].startswith("11.0 above")

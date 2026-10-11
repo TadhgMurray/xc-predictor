@@ -56,6 +56,22 @@ def ordinal(n):
     return f"{n}{suf}"
 
 
+def hsScale(pool):
+    """The factor from `pool`'s own scale onto the HS-equivalent one -- the
+    one public scale every page shows (owner, 2026-10-10: a middle schooler's
+    alert read their own-pool number). pool_view.hsFactor, one number per
+    pool; 1.0 when the pool has no HS twin or the factor cannot be had, so
+    the mail still goes, on the number the page would show in that case."""
+    if not pool:
+        return 1.0
+    try:
+        from pool_view import hsFactor
+        f = hsFactor(pool, None, None)
+    except Exception:                                   # noqa: BLE001
+        f = None
+    return float(f) if f else 1.0
+
+
 def clock(sec):
     """A result time as a results sheet prints it: 15:12.4, 4:21.5."""
     from recruiting import fmtTime
@@ -114,9 +130,10 @@ def raceFacts(p):
                 if f:
                     bits.append(f)
             out.append((label, ", ".join(bits) if bits else "yes"))
-    r = f"{float(p['rating']):.1f}"
+    k = hsScale(p.get("pool"))
+    r = f"{float(p['rating']) * k:.1f}"
     if p.get("prev_rating") is not None:
-        d = float(p["rating"]) - float(p["prev_rating"])
+        d = (float(p["rating"]) - float(p["prev_rating"])) * k
         if abs(d) >= 0.05:
             r += f", {'up' if d > 0 else 'down'} {abs(d):.1f} from the previous race"
         else:
@@ -125,7 +142,7 @@ def raceFacts(p):
     if "jump" in fl:
         by = (fl.get("jump") or {}).get("by")
         if by is not None:
-            out.append(("Breakout", f"{float(by):.1f} above the median of earlier races this season"))
+            out.append(("Breakout", f"{float(by) * k:.1f} above the median of earlier races this season"))
     t = p.get("team")
     if t:
         out.append(("Team", f"{t['school']} {ordinal(t['place'])} of {t['n_teams']} teams, {t['points']} points"))
