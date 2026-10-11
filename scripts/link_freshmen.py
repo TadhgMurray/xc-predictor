@@ -350,6 +350,76 @@ def pairsFor(fresh, senior):
     return out, dict(skipped)
 
 
+# ★ A YEAR BETWEEN SCHOOL AND COLLEGE (owner, 2026-10-11: Owen Staley,
+#   Sleepy Hollow senior in 2024-25, then Tufts FR-1 from September 2026 --
+#   "he was injured freshman year"). pairsFor only looks at seniors of the
+#   year straight before, so a gap year, an injury year or a redshirt
+#   before the first race left the first-year a stranger to their own high
+#   school career. A first-year whose name has NO senior the year before
+#   is matched against the seniors one year further back, on every guard
+#   pairsFor uses: unique on both sides, no college tfrrs row, the genders
+#   agreeing -- and "not still in high school" is judged from the gap year
+#   on, so a senior who raced high school again is never the graduate.
+# ! ONLY WHEN THE YEAR BEFORE HAS NOBODY OF THAT NAME: a same-name senior
+#   there is either the match (pairsFor) or an ambiguity, never a reason to
+#   reach further back.
+def gapPairsFor(fresh, senior_prev, senior_gap, paired):
+    """[(tfrrs_pid, anet_pid, name, college, high_school)] for first-years of
+    year y matched to seniors of y - 2 (senior_gap, keyed as seniors(y - 1)).
+    `senior_prev` is seniors(y), the year straight before; `paired` the
+    tfrrs ids pairsFor already joined."""
+    prev_names = {normName(v[0]) for v in senior_prev.values()}
+    t_by, a_by = defaultdict(list), defaultdict(list)
+    for pid, (nm, sch, g, n) in fresh.items():
+        k = normName(nm)
+        if k and pid not in paired and k not in prev_names:
+            t_by[k].append(pid)
+    for pid, (nm, sch, g, ht, *_still) in senior_gap.items():
+        k = normName(nm)
+        if k:
+            a_by[k].append(pid)
+    out, skipped = [], defaultdict(int)
+    for k, ts in t_by.items():
+        as_ = a_by.get(k, [])
+        if not as_:
+            continue
+        if len(ts) != 1 or len(as_) != 1:
+            skipped["gap: name not unique"] += 1
+            continue
+        t, a = ts[0], as_[0]
+        if senior_gap[a][3]:
+            skipped["gap: senior already on tfrrs"] += 1
+            continue
+        if len(senior_gap[a]) > 4 and senior_gap[a][4]:
+            skipped["gap: senior still in high school"] += 1
+            continue
+        gt, ga = _g(fresh[t][2]), _g(senior_gap[a][2])
+        if gt and ga and gt != ga:
+            skipped["gap: gender differs"] += 1
+            continue
+        out.append((t, a, fresh[t][0], fresh[t][1], senior_gap[a][1]))
+    return out, dict(skipped)
+
+
+def pairsAll(fresh_by, senior_by, years):
+    """{y: (pairs, skipped)} -- the straight pass, then the gap-year pass
+    for whoever it left. senior_by must hold seniors(y - 1) for every y too
+    (seniorYears)."""
+    out = {}
+    for y in years:
+        p, skipped = pairsFor(fresh_by[y], senior_by[y])
+        gp, gs = gapPairsFor(fresh_by[y], senior_by[y], senior_by.get(y - 1, {}),
+                             {t for t, *_ in p})
+        skipped.update(gs)
+        out[y] = (p + gp, skipped)
+    return out
+
+
+def seniorYears(years):
+    """The years seniors() must cover for pairsAll: each y and y - 1."""
+    return sorted(set(years) | {y - 1 for y in years})
+
+
 def dedupePairs(pairs):
     """Across years: a tfrrs person joins once, and an anet senior claimed by
     two different first-years (a repeated senior year) joins neither."""
@@ -526,6 +596,12 @@ def explainPair(cur, t_pid, a_pid, years, fresh_by, senior_by):
             print(f"    senior raced high school after: {'YES (refused)' if len(a) > 4 and a[4] else 'no'}")
             gt, ga = _g(f[2]), _g(a[2])
             print(f"    genders {gt or '?'} / {ga or '?'} -> {'DIFFER (refused)' if gt and ga and gt != ga else 'ok'}")
+        # the gap-year pass: a first-year in y and a senior of y - 2
+        ag = senior_by.get(y - 1, {}).get(a_pid)
+        if f and not a and ag:
+            found = True
+            print(f"    gap year: a senior of {y - 2} -> tried by the gap-year pass "
+                  f"(gapPairsFor); the pair runs below if it joins")
     if not found:
         print(f"  in none of the years {years} is either page a candidate.")
         print("    college side needs: tfrrs rows only, a freshman grade (FR/13) at a"
@@ -558,10 +634,11 @@ def main():
             print(f"[link] academic years {a.years}; each step prints when "
                   f"it finishes", flush=True)
             fresh_by = freshmen(cur, a.years)
-            senior_by = seniors(cur, a.years)
+            senior_by = seniors(cur, seniorYears(a.years))
+            by_year = pairsAll(fresh_by, senior_by, a.years)
             for y in a.years:
                 fresh, senior = fresh_by[y], senior_by[y]
-                pairs, skipped = pairsFor(fresh, senior)
+                pairs, skipped = by_year[y]
                 print(f"[link] {y}: {len(fresh):,} tfrrs first-years with no "
                       f"anet identity, {len(senior):,} anet seniors of {y - 1}; "
                       f"{len(pairs):,} pairs; skipped {skipped}")
@@ -573,6 +650,8 @@ def main():
                 all_pairs += pairs
             if a.pair:
                 explainPair(cur, a.pair[0], a.pair[1], a.years, fresh_by, senior_by)
+                hit = [p for p in all_pairs if p[0] == f"p:{a.pair[0]}" and p[1] == a.pair[1]]
+                print(f"  -> {'JOINED by this run' if hit else 'not joined'}")
         conn.rollback()                       # the temp tables only
         # one tfrrs person, one target, across years (a person is a
         # first-year in exactly one year, so this only guards a re-run)

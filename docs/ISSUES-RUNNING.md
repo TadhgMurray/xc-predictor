@@ -252,6 +252,18 @@ still overrides both ways.* Takes effect on the next solve. `d744086`
 
 ## 2. THE SITE — BOARDS
 
+- **⏳ Freshman link missed a gap year (owner, 2026-10-11: Owen Staley, /athlete/29603096 and
+  1009167329).** He was a Sleepy Hollow senior in 2024-25 and raced for Tufts as FR-1 from
+  September 2026, after an injury year. The linker only paired a first-year with a senior from
+  the year straight before.
+  - Fix: link_freshmen.gapPairsFor. When nobody of the name was a senior the year before, it
+    tries seniors one year further back, on every guard. "Not still in high school" is judged
+    from the gap year on. The pipeline pass (link_tfrrs_rows) uses it too.
+  - The --pair diagnostic names the guard that refuses a given pair.
+  - 🔎 Still open: about 2,500 tfrrs first-years a year have no athletic.net identity. Most
+    skips are "name not unique" (550-627 a year), and years before the three-year window were
+    never tried.
+
 - **⏳ Athletes missing from search (owner, 2026-10-11: /athlete/1009167329 "only the first one
   shows up on search results").** search_index.py reads athlete_named / athlete_agg /
   athlete_school, which were built once by hand and never rebuilt. Nobody created since could be

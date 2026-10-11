@@ -264,10 +264,12 @@ def main():
             years = [now - 2, now - 1, now]
             with conn.cursor() as cur:
                 fresh_by = L.freshmen(cur, years)
-                senior_by = L.seniors(cur, years)
+                # ★ AND THE YEAR BEFORE EACH, for a gap year (L.pairsAll)
+                senior_by = L.seniors(cur, L.seniorYears(years))
+                by_year = L.pairsAll(fresh_by, senior_by, years)
                 pairs = []
                 for y in years:
-                    p, skipped = L.pairsFor(fresh_by[y], senior_by[y])
+                    p, skipped = by_year[y]
                     print(f"[tfrrs-link] pass 2, freshmen {y}: {len(p):,} "
                           f"pairs; skipped {skipped}")
                     pairs += p
