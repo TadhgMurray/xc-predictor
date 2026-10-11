@@ -838,9 +838,10 @@ main.ath-page.rc .ath-bests td.tn { white-space: nowrap; }
 /* season bests: three plain columns, the season never wraps */
 main.ath-page.rc .ath-seasons th { font-size: .72rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
 main.ath-page.rc .ath-seasons th.n, main.ath-page.rc .ath-seasons td.n { text-align: right; }
-main.ath-page.rc .ath-seasons td.tn .sp { white-space: normal; }
-main.ath-page.rc .ath-xc-prs { margin: .4rem 0 0; font-size: .85rem; }
-main.ath-page.rc .ath-xc-prs summary { cursor: pointer; color: var(--link); }
+main.ath-page.rc .ath-seasons tbody + tbody tr.ath-season-h td { border-top: 2px solid var(--line, #e5e7eb); }
+main.ath-page.rc .ath-seasons tr.ath-season-h td { font-weight: 700; background: #f8fafc; }
+main.ath-page.rc .ath-seasons .ath-best { display: block; font-size: .8rem; font-weight: 400; color: var(--muted); }
+main.ath-page.rc .ath-seasons tr.ath-season-ev td.tn { padding-left: 1.2rem; }
 /* the per-distance TF charts: a row of small charts in the Track tab */
 main.ath-page.rc .tf-dist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .8rem; margin: .6rem 0 1rem; }
 main.ath-page.rc .tf-dist-h { font-size: 1rem; margin: 1.4rem 0 .2rem; }

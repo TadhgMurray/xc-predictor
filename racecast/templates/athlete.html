@@ -194,7 +194,7 @@
                     <th>Event</th>
                     <th>Result</th>
                     <th>Place</th>
-                    <th>Rating{{ rating_i() }}</th>
+                    <th class="no-break">Rating{{ rating_i() }}</th>
                     {# ★ THE 5K COLUMN (owner, 2026-10-10): every race, XC
                        or track, as the track 5K its rating is worth (3200 m
                        in middle school). Kept on phones -- the season block
@@ -289,9 +289,14 @@
                        each badge left keeps its tooltip. The outlier marks are
                        not records but why a number is greyed, so they stay. #}
                     <td class="flags">
+                        {# ! ALL SIX BADGES AGAIN (owner, 2026-10-11: "what happened to
+                           all the other flags?") -- header B had cut R, RSR and CSR #}
                         {% if race.is_pr %}{{ flag('pr', race.is_star_pr) }}{% endif %}
-                        {% if race.is_sr %}{{ flag('sr') }}{% endif %}
                         {% if race.is_course_pr and race.sport == 'XC' %}{{ flag('cpr', race.is_star_course) }}{% endif %}
+                        {% if race.is_rating_pr %}{{ flag('rpr', race.is_star_rating) }}{% endif %}
+                        {% if race.is_sr %}{{ flag('sr') }}{% endif %}
+                        {% if race.is_course_sr and race.sport == 'XC' %}{{ flag('csr') }}{% endif %}
+                        {% if race.is_rating_sr %}{{ flag('rsr') }}{% endif %}
                         {% if race.rank_outlier == 'slow' %}<span class="flag flag--out" tabindex="0" data-title="Not counted" data-blurb="Far slower than this athlete's neighbouring races -- a jog, a race run easy, a bad day. It stays here with its rating, but counts toward no season number, ranking or prediction." aria-label="Not counted: far off this athlete's neighbouring races">not counted</span>{% elif race.rank_outlier %}<span class="flag flag--out" tabindex="0" data-title="Not ranked" data-blurb="Far faster than this athlete's neighbouring races -- usually a wrong distance, a wrong time, or two people's results under one name. It keeps its rating here but stays off the rankings and out of predictions until it is checked." aria-label="Not ranked: far faster than this athlete's neighbouring races">not ranked</span>{% endif %}
                         {% if race.season_outlier %}<span class="flag flag--out" tabindex="0" data-title="Left out of season averages" data-blurb="More than twenty points under this season's median: not a run at the right distance on the right day, so it does not count toward the season's numbers." aria-label="Left out of season averages">out</span>{% endif %}
                     </td>
@@ -299,11 +304,9 @@
                 {% endfor %}
             </tbody>
         </table>
-        {# ! NO LEGEND UNDER EVERY TABLE ANY MORE (header redesign B,
-           2026-10-10): it spelled out six badges once per season, and three
-           of them are gone from the column. PR, SR and CR are words a
-           runner's family already reads, and each badge keeps its tooltip
-           (hover, tap or focus). #}
+        {# The badges, spelled out once per table (survey, 2026-09-02; back
+           with all six badges, owner 2026-10-11) #}
+        <p class="flag-legend"><b>PR</b> personal record &middot; <b>SR</b> season record &middot; <b>CR</b> course record &middot; <b>CSR</b> course season record &middot; <b>R</b> rating record &middot; <b>RSR</b> rating season record &middot; &#9733; still standing</p>
     </div>
 {% endmacro %}
 
@@ -599,36 +602,37 @@
     {% endif %}
     </tbody>
   </table>
-  {# ! CROSS COUNTRY PRs BY DISTANCE, FOLDED (owner, 2026-10-11: "include
-     PRs still", after "cluttered"): a course's 4,747 m is not another's,
-     so they are there for whoever wants them, not in the way #}
+  {# CROSS COUNTRY PRs BY DISTANCE, listed (owner, 2026-10-11) #}
   {% if sport == "XC" and bucket.events %}
-  <details class="ath-xc-prs"><summary>Times by distance ({{ bucket.events|length }})</summary>
-  <table class="rc-tscores rc-tscores-plain ath-bests"><tbody>
+  <table class="rc-tscores rc-tscores-plain ath-bests"><thead><tr><th colspan="2">Times by distance</th></tr></thead><tbody>
     {% for event, race in bucket.events.items() %}
     <tr><td class="tn">{{ event|event_label }}</td>
       <td class="n tpts"><a href="#race-{{ race.result_id }}">{{ race.result }}</a></td></tr>
     {% endfor %}
-  </tbody></table></details>
+  </tbody></table>
   {% endif %}
   {% endif %}
 
   {% if sb %}
-  {# ★ ONE ROW A SEASON: its rating (the board's) and its best race's,
-     the season's PRs on the small line under it #}
+  {# ★ EACH SEASON A HEADER ROW, ITS PRs FULL-SIZE ROWS UNDER IT (owner,
+     2026-10-11: the season bests on a small grey line were "basically
+     impossible to see" -- the issue from the start). Header: the season,
+     its rating with the 5K it is worth, its best race's rating. #}
   <h2>Season bests</h2>
   <table class="rc-tscores rc-tscores-plain ath-seasons">
-    <thead><tr><th>Season</th><th class="n">Rating</th><th class="n">Best</th></tr></thead>
-    <tbody>
     {% for (year, sp), bests in sb %}
-    <tr>
-      <td class="tn"><a href="#{{ year }}-{{ sp }}">{{ year }} {{ sp|sport_short }}</a>
-        {% if bests.events %}<span class="sp">{% for event, race in bests.events.items() %}{{ " · " if not loop.first }}{{ event|event_label }} <a href="#race-{{ race.result_id }}">{{ race.result }}</a>{% endfor %}</span>{% endif %}</td>
-      <td class="n tpts">{{ rv(bests.season_rating, bests.season_rating_hs) }}{{ fk_inline(five_k(bests.season_rating, bests.season_pool, sp, bests.season_rating_hs)) }}</td>
-      <td class="n">{% if bests.rating %}<a href="#race-{{ bests.rating.result_id }}">{{ rv(bests.rating.speed_rating, bests.rating.hs_rating) }}</a>{% else %} - {% endif %}</td>
+    <tbody>
+    <tr class="ath-season-h">
+      <td class="tn"><a href="#{{ year }}-{{ sp }}">{{ year }} {{ sp|sport_short }}</a></td>
+      <td class="n tpts">{{ rv(bests.season_rating, bests.season_rating_hs) }}{{ fk_inline(five_k(bests.season_rating, bests.season_pool, sp, bests.season_rating_hs)) }}
+        {% if bests.rating %}<span class="ath-best">best <a href="#race-{{ bests.rating.result_id }}">{{ rv(bests.rating.speed_rating, bests.rating.hs_rating) }}</a></span>{% endif %}</td>
     </tr>
+    {% for event, race in bests.events.items() %}
+    <tr class="ath-season-ev"><td class="tn">{{ event|event_label }}</td>
+      <td class="n tpts"><a href="#race-{{ race.result_id }}">{{ race.result }}</a></td></tr>
     {% endfor %}
     </tbody>
+    {% endfor %}
   </table>
   {% endif %}
   </div>

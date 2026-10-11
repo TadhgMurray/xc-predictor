@@ -138,7 +138,9 @@ def test_the_macros():
             '{{ fk_inline(five_k(110.0, "ms_m", "XC")) }}')
         out = t.render()
     th, hs, ms, none_, inline = out.split("|")
-    assert th == '<th class="n fk" title="The track 5K this rating is worth">5K</th>'
+    # "5K equiv" with its ⓘ (owner, 2026-10-11)
+    assert th.startswith('<th class="fk no-break">5K equiv<a class="flag info-i"') and th.endswith("</th>")
+    assert "track 5K that this rating is worth" in th
     want = cv.fiveK(124.6, "hs_m")["time"]
     assert hs == f'<td class="n fk">{want}</td>'
     assert 'class="n fk fk-sm"' in ms and '<span class="fk-d">3200m</span>' in ms

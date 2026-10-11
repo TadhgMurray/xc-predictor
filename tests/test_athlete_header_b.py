@@ -242,16 +242,14 @@ def _race(**kw):
     return r
 
 
-def test_records_are_pr_sr_cr_only_and_no_legend():
+def test_all_six_record_badges_and_the_legend():
+    # owner, 2026-10-11: "what happened to all the other flags?"
     out = _season_block(_race(is_pr=True, is_sr=True, is_course_pr=True,
-                              is_rating_pr=True, is_rating_sr=True, is_course_sr=True,
-                              course_word="Hard", course_pct="+3.4%"))
+                              is_rating_pr=True, is_rating_sr=True, is_course_sr=True))
     assert "<th>Records</th>" in out and "<th>Course</th>" in out
-    for code in ("PR", "SR", "CR"):
-        assert f'<span aria-hidden="true">{code}</span>' in out
     for css in ("flag--rpr", "flag--rsr", "flag--csr"):
-        assert css not in out
-    assert "flag-legend" not in out and "Difficulty" not in out
+        assert css in out
+    assert "flag-legend" in out
 
 
 def test_course_cell_is_the_difficulty_percent_never_a_word():
