@@ -136,8 +136,16 @@ def fits(u, rows, hold_rows=None):
             return "generation mismatch"
     if g is not None and 9 <= g <= 12 and any(r.level == "college" for r in _near(d, rows)):
         return "level mismatch (college namesake)"
-    seasons = [s for s in (_season(r.date) for r in (hold_rows if hold_rows is not None else rows))
-               if s is not None]
+    # ! A HIGH SCHOOL'S YEARS ARE HIGH SCHOOL YEARS (owner, 2026-10-11: Isaac
+    #   Dehnke ran for the Brookwood youth club from grade 5, so his rows "at
+    #   Brookwood" spanned 2020-2026 and his own sectional was refused as
+    #   "too far from his years at the school"). Rows that read below grade 9
+    #   are another school with the same name -- the club, the middle school
+    #   -- and leave the span, unless the uploaded row is itself one of them.
+    span = hold_rows if hold_rows is not None else rows
+    if g is None or g >= 9:
+        span = [r for r in span if (_numGrade(r.grade) is None or _numGrade(r.grade) >= 9)]
+    seasons = [s for s in (_season(r.date) for r in span) if s is not None]
     s = _season(u.date)
     if seasons and s is not None:
         if max(seasons + [s]) - min(seasons + [s]) + 1 > MAX_SEASONS_AT_ONE_SCHOOL:

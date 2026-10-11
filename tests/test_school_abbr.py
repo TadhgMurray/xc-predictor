@@ -20,3 +20,17 @@ def test_abbreviations_match_the_spelled_out_school():
 
 def test_an_abbreviation_does_not_join_another_level():
     assert not sameSchool("Archer HS", "Archer Middle School")
+
+
+def test_youth_club_years_do_not_count_as_high_school_years():
+    import datetime as dt
+    import link_uploads as LU
+    rows = [LU.Row(dt.date(y, 9, 15), "XC", gr, "Brookwood", None)
+            for y, gr in ((2020, "5"), (2022, "7"), (2023, "8"), (2024, "9"), (2025, "10"), (2026, "11"))]
+    u = LU.UpRow(*([None] * len(LU.UpRow._fields)))._replace(
+        sport="XC", date=dt.date(2024, 11, 2), grade=None, school="Brookwood") \
+        if hasattr(LU, "UpRow") else None
+    if u is None:
+        import pytest
+        pytest.skip("no UpRow type")
+    assert LU.fits(u, rows, hold_rows=rows) is None
