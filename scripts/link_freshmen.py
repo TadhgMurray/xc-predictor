@@ -451,6 +451,31 @@ def undo(conn):
     print(f"[link] undone: {back}")
 
 
+def explainName(name, y, fresh, senior, pairs):
+    """--name: where one name stands in year y (owner, 2026-10-11: a grep of
+    the dry run cannot tell "not a candidate" from "not shown")."""
+    k = normName(name)
+    fs = [(pid, v) for pid, v in fresh.items() if normName(v[0]) == k]
+    ss = [(pid, v) for pid, v in senior.items() if normName(v[0]) == k]
+    print(f"  [{name}] {y}: {len(fs)} college first-year(s), {len(ss)} high school senior(s) of {y - 1}")
+    for pid, (nm, sch, g, n) in fs:
+        print(f"      first-year  {pid}  {sch}  gender {g or '?'}  {n} rows")
+    for pid, (nm, sch, g, ht, *still) in ss:
+        print(f"      senior      {pid}  {sch}  gender {g or '?'}"
+              f"  college tfrrs row: {'YES (skipped)' if ht else 'no'}"
+              f"  raced HS after: {'YES (skipped)' if (still and still[0]) else 'no'}")
+    hit = [p for p in pairs if normName(p[2]) == k]
+    if hit:
+        print(f"      -> PAIRED: tfrrs {hit[0][0]} -> anet person {hit[0][1]}")
+    elif fs and ss:
+        print("      -> not paired: see the flags above (both sides must be exactly one, genders agree)")
+    elif not fs:
+        print("      -> no college first-year by that name this year (already linked, an earlier"
+              " row, an anet row, or no freshman/college grade on the rows)")
+    else:
+        print("      -> no high school senior by that name in the year before")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -460,6 +485,7 @@ def main():
                     help="academic years of the FRESHMAN season (default: "
                          "the last three)")
     ap.add_argument("--show", type=int, default=40)
+    ap.add_argument("--name", help="explain this one name: is it a freshman, a senior, paired, or why not")
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--undo", action="store_true")
     a = ap.parse_args()
@@ -480,6 +506,8 @@ def main():
                 print(f"[link] {y}: {len(fresh):,} tfrrs first-years with no "
                       f"anet identity, {len(senior):,} anet seniors of {y - 1}; "
                       f"{len(pairs):,} pairs; skipped {skipped}")
+                if a.name:
+                    explainName(a.name, y, fresh, senior, pairs)
                 for t, s, nm, col, hs in pairs[:a.show]:
                     print(f"    {nm:<28} {str(hs)[:30]:<30} -> {str(col)[:28]:<28}"
                           f"  tfrrs {t} -> anet person {s}")
