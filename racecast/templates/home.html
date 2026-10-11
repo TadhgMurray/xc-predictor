@@ -51,7 +51,7 @@
 {%- endmacro %}
 
 {# ===================================================================== #}
-{#  MACRO: one level's top ten, as a race-page table                     #}
+{#  MACRO: one level's top 25, as  a race-page table                     #}
 {#                                                                       #}
 {#  ★ A TABLE IN THE RACE PAGE'S SHAPE (2026-10-10), not the old CSS     #}
 {#    grid: the grid's zebra and rank rules counted to five columns, and #}
@@ -237,7 +237,7 @@
 {#                                                                   #}
 {#  ★ ONE ROW OF LEVEL TABS, NO OTHER TOGGLES (owner, 2026-10-10):   #}
 {#    the sport, scope and pool chips and the scale toggle are gone;  #}
-{#    the season in season shows, four levels, top ten each. The     #}
+{#    the season in season shows, four levels, top 25 each. The      #}
 {#    board tabs (athletes / performances / teams) are race-page.js's #}
 {#    [data-tab] strip; the level tabs flip data-level on .rankings   #}
 {#    (home.js) and CSS shows the matching table in every panel.     #}
@@ -296,7 +296,7 @@
         {# ! THE PADDING IS DROPPED HERE: pad_pool_pairs evens the two boards
              with None rows for a shared grid these tables do not have #}
         {% if board_type == 'teams' %}{% set rows = (teams or {}).get(pool, []) %}
-        {% else %}{% set rows = (boards.get(board_type, {}).get(pool, [])|reject('none')|list)[:10] %}{% endif %}
+        {% else %}{% set rows = (boards.get(board_type, {}).get(pool, [])|reject('none')|list)[:25] %}{% endif %}
         {{ level_table(rows, board_type, pool, POOL_LABELS[pool], SP, SEASON) }}
       {% endfor %}
     </section>

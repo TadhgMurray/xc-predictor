@@ -1001,7 +1001,7 @@ def _serveBoard(cur, f):
 HOME_POOLS = ("hs_m", "hs_f", "college_m", "college_f")
 
 
-def homeTopTeams(cur, sport, year, n=10):
+def homeTopTeams(cur, sport, year, n=25):
     """{pool: [row, ...]} -- the top `n` of each HS and college national
     season board, for the home page's Teams tab.
 
@@ -1028,7 +1028,7 @@ def homeTopTeams(cur, sport, year, n=10):
         ORDER  BY t.pool, t.rank
     """, {"sport": sport, "year": int(year), "pools": list(HOME_POOLS),
           # ! a little deeper than n: a team under five athletes still holds
-          #   its stored rank, so the first ten shown can reach past rank 10
+          #   its stored rank, so the first n shown can reach past rank n
           "deep": n * 3})
     out = {}
     for r in cur.fetchall():

@@ -1,6 +1,6 @@
 """The home page as built from the owner-approved render (2026-10-10): the
 black hero with the search, the nine photos with their focal points, the
-four task links, and the snapshot with one row of level tabs, top ten per
+four task links, and the snapshot with one row of level tabs, top 25 per
 table, a Teams tab and a track-5K column. The database is stubbed; the page
 is rendered through the real home() route.
 
@@ -82,7 +82,7 @@ def _render(monkeypatch):
     rows = []
     for board in ("athlete", "performance"):
         for pool in ("hs_m", "hs_f", "college_m", "college_f", "ms_m"):
-            for i in range(25):
+            for i in range(30):
                 rows.append(dict(sport="XC", scope="season", board=board, pool=pool,
                                  rank=i + 1, person_id=i, name=f"{pool} {board} {i + 1}",
                                  name_link=f"/athlete/{i}", school="Summit", state="OR",
@@ -132,8 +132,8 @@ def test_the_page_renders_in_the_new_shape(monkeypatch):
     assert html.count('data-level="') == 4 + 1          # four tabs + the section's own
     for tab in ("athletes", "performances", "teams"):
         assert f'data-tab="{tab}"' in html
-    # top ten, not five and not twenty-five; middle school is not on home
-    assert ">hs_m athlete 10<" in html and ">hs_m athlete 11<" not in html
+    # top 25 (owner, 2026-10-11: was ten); middle school is not on home
+    assert ">hs_m athlete 25<" in html and ">hs_m athlete 26<" not in html
     assert "ms_m athlete" not in html
     # the Teams tab, linked to the teams board
     assert "Team hs_f 9" in html and "board=teams" in html

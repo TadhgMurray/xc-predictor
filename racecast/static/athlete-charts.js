@@ -593,17 +593,24 @@ function attachHover(host) {
   });
 
   /* Clicking a dot jumps to that race's row, already anchored in the season
-     tables as id="race-<result_id>". */
+     tables as id="race-<result_id>".
+     ★ THE SAME JUMP AS A LINK (owner, 2026-10-11: the chart's highlight
+       "isn't the same as when pressing the links on the season bests", and
+       a Career-graph dot should go to its result). A click on a throwaway
+       #race-<id> anchor runs the page's own link path: race-page.js opens
+       the sport tab holding the row (the Career tab holds none), and
+       link-flash.js centres it and flashes it once the scroll ends. */
   svg.addEventListener("click", (e) => {
     const hit = e.target.closest(".hit");
     if (!hit || !hit.dataset.rid) return;
+    if (!document.getElementById(`race-${hit.dataset.rid}`)) return;
 
-    const row = document.getElementById(`race-${hit.dataset.rid}`);
-    if (!row) return;
-
-    row.scrollIntoView({ behavior: "smooth", block: "center" });
-    row.classList.add("race-flash");
-    setTimeout(() => row.classList.remove("race-flash"), 1200);
+    const a = document.createElement("a");
+    a.href = `#race-${hit.dataset.rid}`;
+    a.hidden = true;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   });
 }
 

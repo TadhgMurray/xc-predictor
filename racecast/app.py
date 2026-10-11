@@ -1143,7 +1143,7 @@ def home():
             meta = get_homepage_meta(cur)
             recent = get_homepage_recent(cur)
             # ★ THE TEAMS TAB (owner, 2026-10-10): the stored national
-            #   season board's top ten per level -- one indexed read, never
+            #   season board's top 25 per level -- one indexed read, never
             #   a race (teams.homeTopTeams)
             teams = _homeTeams(cur, meta)
             # ★ ON THIS DAY (2026-10-10): one precomputed row, or none
