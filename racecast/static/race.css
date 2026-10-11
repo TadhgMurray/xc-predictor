@@ -920,7 +920,7 @@ main.rc.pred-page .pred-opts > summary::before { content: ""; display: inline-bl
   border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-.15em) rotate(-45deg); }
 main.rc.pred-page .pred-opts[open] > summary::before { transform: translateY(-.2em) rotate(45deg); }
 main.rc.pred-page .pred-opts-in { margin: .7rem 0 0 .2rem; padding-left: 1rem; border-left: 2px solid var(--line); display: grid;
-  grid-template-columns: 11rem minmax(0, 22rem) 10rem; gap: .9rem 1.2rem; align-items: start; }
+  grid-template-columns: 11rem minmax(0, 22rem) 10rem 10rem; gap: .9rem 1.2rem; align-items: start; }
 main.rc.pred-page .pred-opts-in .pred-opt[hidden] { display: none; }
 main.rc.pred-page .pred-opts-in label { display: block; font-size: .78rem; font-weight: 600; color: #374151; margin-bottom: .25rem; }
 main.rc.pred-page .pred-opts-in input { width: 100%; box-sizing: border-box; }
@@ -928,6 +928,10 @@ main.rc.pred-page .pred-opts-in .hint { font-size: .78rem; margin: .3rem 0 0; }
 main.rc.pred-page .pred-opts-in .per-team { display: block; white-space: normal; color: #374151; font-size: .78rem; }
 main.rc.pred-page .pred-opts-in .per-team span { display: block; margin-bottom: .25rem; }
 main.rc.pred-page .pred-opts-in .per-team input { width: 100%; font-size: .92rem; padding: .45rem .5rem; }
+/* the pick-by box, the team size box's twin (2026-10-11) */
+main.rc.pred-page .pred-opts-in select { width: 100%; box-sizing: border-box; font: inherit; font-size: .92rem;
+  padding: .45rem .5rem; color: var(--ink, #111418); background: #fff; height: 2.4rem;
+  border: 1px solid var(--line-2, #cbd0d6); border-radius: 5px; }
 @media (max-width: 760px) {
   main.rc.pred-page .pred-open { grid-template-columns: minmax(0, 1fr); gap: 1.3rem; }
   main.rc.pred-page .pred-week-t td.go-c { width: 5.6rem; }

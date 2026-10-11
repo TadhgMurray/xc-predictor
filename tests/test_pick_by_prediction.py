@@ -21,17 +21,18 @@ SQUADS = {"A": [{"person_id": 1}, {"person_id": 2}, {"person_id": 3}],
 
 
 def run(times, raises=False):
-    def fake(cur, ids, target, spec=None):
+    def fake(cur, ids, spec, cut):
         if raises:
-            raise RuntimeError("no model")
-        return [{"seconds": times.get(i)} for i in ids]
-    real = P._predictTimes
-    P._predictTimes = fake
+            raise RuntimeError("no ratings")
+        return {i: {"seconds": times[i]} for i in ids if i in times}
+    real = (P._ratingTimes, P._targetSpec)
+    P._ratingTimes = fake
+    P._targetSpec = lambda cur, target: {"date": "2026-10-17"}
     try:
         return P.byPrediction(None, {k: [dict(e) for e in v] for k, v in SQUADS.items()},
                               ["A", "B"], {"mode": "rerun"})
     finally:
-        P._predictTimes = real
+        P._ratingTimes, P._targetSpec = real
 
 
 def ids(sq):

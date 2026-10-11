@@ -2821,9 +2821,15 @@ def isTrackEvent(target):
 #   course, distance and date) and reorders each squad fastest first, so
 #   the cap that follows keeps the runners the model expects to be fastest
 #   here. The rest stay under `dropped`, as before.
-# ! THE MODEL OR NOTHING: an athlete with no prediction keeps their rating
-#   order behind everyone who has one, and a model that cannot run leaves
-#   every squad exactly as it came, with the reason.
+# ★ THE SERVED TIME, NOT THE NETWORK (owner, 2026-10-11: "takes way too
+#   long to load"). The first cut ran _predictTimes -- the model's history
+#   queries and forward pass -- for every squad member, three to six times
+#   the field. What the page serves a rated runner is _ratingTimes (their
+#   recent form as a time at this race, _servedTimes under the default
+#   basis), one batched read with no model, so the order is the one the
+#   prediction will print. An athlete with no rated form keeps their
+#   rating order behind everyone who has one; nothing at all leaves every
+#   squad exactly as it came, with the reason.
 def byPrediction(cur, squads, schools, target):
     """(squads, None) reordered fastest-predicted first, or (squads, reason)
     unchanged when nothing could be predicted."""
@@ -2832,11 +2838,13 @@ def byPrediction(cur, squads, schools, target):
     if not ids:
         return squads, None
     try:
-        preds = _predictTimes(cur, ids, target)
+        spec = _targetSpec(cur, target)
+        cut = _asDate(spec.get("date"))
+        rated = _ratingTimes(cur, ids, spec, cut)
     except Exception as exc:                      # noqa: BLE001 -- keep the field
         _rollback(cur)
         return squads, f"no predictions ({type(exc).__name__})"
-    secs = {pid: p.get("seconds") for pid, p in zip(ids, preds or [])}
+    secs = {pid: (rated.get(pid) or {}).get("seconds") for pid in ids}
     if not any(v is not None for v in secs.values()):
         return squads, "no predictions for this field"
     out = dict(squads)
