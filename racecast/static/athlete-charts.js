@@ -434,13 +434,8 @@ function drawChart(host, points, opts) {
      have one, comps.FAN_MIN), the inner the middle half, the dashed line
      to the comps' average. A season rule before the slot, "Next season"
      under it, and one hover target carrying the sentence. */
-  /* ★ FROM THE SEASON'S RATING, NOT THE LAST RACE (owner, 2026-10-11): the
-     comps are matched on the season rating, so the fan starts there -- from
-     a last race above it the line read as a drop. A small square marks
-     where it starts, with its own hover. */
   if (fan) {
-    const startVal = fan.rating != null ? fan.rating : pointVal(data[n - 1]);
-    const x0 = xScale(n - 1), y0 = yScale(startVal);
+    const x0 = xScale(n - 1), y0 = yScale(pointVal(data[n - 1]));
     const x1 = xScale(n);
     const f = (v) => v.toFixed(1);
     const divX = (x0 + x1) / 2;
@@ -456,11 +451,6 @@ function drawChart(host, points, opts) {
     parts.push(`<line class="fan-mean" x1="${f(x0)}" y1="${f(y0)}" ` +
                `x2="${f(x1)}" y2="${f(yScale(fan.mean))}"/>`);
     parts.push(`<circle class="fan-dot" cx="${f(x1)}" cy="${f(yScale(fan.mean))}" r="3.5"/>`);
-    if (fan.rating != null) {
-      parts.push(`<rect class="fan-start" x="${f(x0 - 3.5)}" y="${f(y0 - 3.5)}" width="7" height="7"/>`);
-      parts.push(`<circle class="hit" cx="${f(x0)}" cy="${f(y0)}" r="10" ` +
-                 `data-label="${esc("This season's rating: " + Number(startVal).toFixed(1))}" data-rid=""/>`);
-    }
     parts.push(`<text class="axis-x" x="${f(x1)}" y="${height - 10}" ` +
                `text-anchor="middle">Next</text>`);
     parts.push(`<circle class="hit" cx="${f(x1)}" cy="${f(yScale(fan.mean))}" r="12" ` +
