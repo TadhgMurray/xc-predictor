@@ -9270,8 +9270,21 @@ _XC_COURSE_SQL = """
 """
 
 
-def _default_xc_courses(cur, n=10):
-    cur.execute(_XC_COURSE_SQL.format(where="", name_where=""), {"n": n})
+def _default_xc_courses(cur, n=10, pool=None):
+    """The busiest fitted courses, each at the distance its races were run.
+
+    ★ AT THE LEVEL'S OWN DISTANCE (owner, 2026-10-11: "it should be the
+      distance at those courses, mostly different college run courses").
+      A course's cells are per distance, and the busiest cells are high
+      school 5Ks; a college or middle school pool takes the courses busiest
+      at its own race distance (conversions.READER_XC_M), compared in whole
+      kilometres so an 8K measured 7,990 m or a 2-mile 3,219 m still counts.
+      High school keeps every cell, as before."""
+    import conversions as _cv
+    lv = (_cv._bare(pool) or "").split("_", 1)[0]
+    km = _cv.readerDistance(pool, "XC") if pool and lv != "hs" else None
+    where = "AND round(cd.distance_m / 1000.0) = round(%(m)s / 1000.0)" if km else ""
+    cur.execute(_XC_COURSE_SQL.format(where=where, name_where=""), {"n": n, "m": km})
     # `or 0.0` would swallow a course genuinely fitted at 0.0 AND turn a NULL
     # (no fitted cell) into a claim of averageness. Pass NULL through as None
     # so the conversion layer can tell "unrated" from "average".
@@ -9286,10 +9299,6 @@ def _default_xc_courses(cur, n=10):
 def conversions_page():
     """The conversions tool page. Renders default courses + distances; the
        actual computing happens client-side via /api/convert."""
-    with getConn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            xc_courses = _default_xc_courses(cur, 10)
-
     # ★ DEEP LINK FROM AN ATHLETE PAGE. /conversions?athlete=123 arrives with
     #   the source already chosen, so the handoff is one click rather than a
     #   name typed twice.
@@ -9301,6 +9310,9 @@ def conversions_page():
     #   The script asked /search/api for it by person_id, which that API does
     #   not answer; the page knows the name, so it carries it.
     prefill_name = _personName(prefill) if prefill else None
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            xc_courses = _default_xc_courses(cur, 10, prefill_pool)
     return render_template("conversions.html",
                            prefill_athlete=prefill,
                            prefill_pool=prefill_pool,
@@ -9339,6 +9351,16 @@ def _latestPool(person_id):
     except Exception as exc:                        # noqa: BLE001
         print(f"athlete_pool: {type(exc).__name__}: {exc}", flush=True)
         return None
+
+
+@app.route("/api/xc_courses")
+def api_xc_courses():
+    """The default course list for a pool (_default_xc_courses), for the
+    conversions page when its pool select changes."""
+    pool = (request.args.get("pool") or "")[:24] or None
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            return jsonify(_default_xc_courses(cur, 10, pool))
 
 
 @app.route("/api/athlete_pool")
@@ -9405,18 +9427,8 @@ def api_convert():
         # is absent too. Never assert 0.0 -- see the note above.
         return c.get("difficulty")
 
-    # ★ A COLLEGE OR MIDDLE SCHOOL SOURCE RUNS THE COURSES AT ITS OWN
-    #   DISTANCE (owner, 2026-10-11: a college man's row read "Detweiller
-    #   Park 4.8k"). The default list is the high school edition of each
-    #   course; another level's reader expects 8K / 6K / 3200 m there
-    #   (conversions.READER_XC_M), so the row is converted, and labelled, at
-    #   that distance.
-    _lv = (_cv._bare(pool) or "").split("_", 1)[0]
-    _own_xc = _cv.readerDistance(pool, "XC") if _lv != "hs" else None
     xc_targets = []
     for c in body.get("xc_courses", []):
-        if _own_xc:
-            c = dict(c, distance=_own_xc)
         xc_targets.append({
             "label":      c.get("label"),
             "distance":   c.get("distance", 5000.0),

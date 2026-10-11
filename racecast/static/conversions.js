@@ -511,7 +511,7 @@
                     paintScaleHint();
                     convert();
                 } else {
-                    adoptAthletePool(pid, convert);
+                    adoptAthletePool(pid, function () { loadDefaultCourses(convert); });
                 }
             });
     })();
@@ -660,10 +660,6 @@
             if (!rows[i]) return;
             rows[i].querySelector('.cell-time').textContent =
                 c.time != null ? fmt(c.time) : ' - ';
-            /* the row is run at the distance the server converted it at:
-               a college source's courses at 8K / 6K, not the HS 5K */
-            var dc = rows[i].querySelector('.cell-dist');
-            if (dc && c.distance) dc.textContent = (Math.round(c.distance / 10) / 100) + 'k';
         });
     }
 
@@ -709,6 +705,43 @@
         }
     );
 
+    // ★ THE DEFAULT COURSES FOLLOW THE POOL (owner, 2026-10-11): a college
+    //   pool lists the courses run most at 8K / 6K, at those distances
+    //   (/api/xc_courses). Rows the reader added stay.
+    function loadDefaultCourses(then) {
+        if (!poolSel) { if (then) then(); return; }
+        fetch('/api/xc_courses?pool=' + encodeURIComponent(poolSel.value))
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .catch(function () { return null; })
+            .then(function (list) {
+                if (list && list.length) {
+                    var body = document.getElementById('xc-body');
+                    Array.prototype.forEach.call(body.querySelectorAll('tr:not([data-added])'),
+                        function (tr) { tr.remove(); });
+                    var first = body.firstChild;
+                    list.forEach(function (c) {
+                        var tr = courseTr(c.course_name, c.difficulty, c.distance, c.canonical_id);
+                        body.insertBefore(tr, first);
+                    });
+                }
+                if (then) then();
+            });
+    }
+    if (poolSel) poolSel.addEventListener('change', function () { loadDefaultCourses(convert); });
+
+    function courseTr(name, diff, dist, cid) {
+        var tr = document.createElement('tr');
+        tr.setAttribute('data-course', name);
+        tr.setAttribute('data-canonical', cid == null ? '' : cid);
+        tr.setAttribute('data-difficulty', diff == null ? '' : diff);
+        tr.setAttribute('data-distance', dist);
+        tr.innerHTML =
+            '<td>' + esc(name) + '</td>' +
+            '<td class="cell-dist">' + (Math.round(dist / 10) / 100) + 'k</td>' +
+            '<td class="cell-time"> - </td>';
+        return tr;
+    }
+
     function addCourseRow(name, diff, dist, cid) {
         var tr = document.createElement('tr');
         tr.setAttribute('data-course', name);
@@ -719,6 +752,7 @@
             '<td>' + esc(name) + '</td>' +
             '<td class="cell-dist">' + (dist/1000).toFixed(2) + 'k</td>' +
             '<td class="cell-time"> - </td>';
+        tr.setAttribute('data-added', '1');
         document.getElementById('xc-body').appendChild(tr);
         convert();
     }
