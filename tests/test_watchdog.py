@@ -96,7 +96,23 @@ def test_breakouts_check_rows_become_items():
              "meet_name": "M", "jump": 24.0, "gain": None}]
     got = {f.key: f for f in W.judgeBreakoutChecks(rows)}
     assert got["pr:TF:7"].check == "performance" and "14%" in got["pr:TF:7"].title
-    assert got["XC:8"].check == "jump" and ("athlete", "/athlete/80") in got["XC:8"].links
+    # a runner jumping alone folds into the one count line
+    assert got["breakouts:singles"].check == "jump" and got["breakouts:singles"].title.startswith("1 runner ")
+
+
+def test_breakouts_jumps_are_judged_per_race():
+    def jr(rid, meet, div, jump):
+        return {"kind": "jump", "sport": "XC", "result_id": rid, "person_id": rid * 10, "name": "N",
+                "race_date": D(2026, 10, 1), "meet_id": meet, "div_id": div, "event_id": None,
+                "meet_name": f"Meet {meet}", "jump": jump, "gain": None}
+    rows = [jr(1, 5, 50, 24.8), jr(2, 5, 50, 31.0), jr(3, 5, 50, 20.3), jr(4, 6, 60, 22.0), jr(5, 7, 70, 41.7)]
+    got = W.judgeBreakoutChecks(rows)
+    keys = [f.key for f in got]
+    assert keys == ["race:XC:5:50:None", "breakouts:singles"]
+    race = got[0]
+    assert "3 runners +20.3 to +31.0" in race.title and race.subject["result_ids"] == [1, 2, 3]
+    assert race.links and race.links[0][0] == "race"
+    assert got[1].title.startswith("2 runners ") and got[1].severity == "info"
 
 
 # ------------------------------------------------------------------ #

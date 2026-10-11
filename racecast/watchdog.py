@@ -279,13 +279,21 @@ def judgeBand(sport, rows, band_for):
 def judgeBreakoutChecks(rows):
     """[Finding] for the breakouts page's own "check" rows: a jump of
     CHECK_JUMP over the season median, or a PR CHECK_GAIN under the old
-    one ("usually a distance error"). rows: breakout_rows dicts. Pure."""
+    one ("usually a distance error"). rows: breakout_rows dicts. Pure.
+
+    Jumps are judged per RACE, not per runner: two or more runners of one
+    race all jumping is the course or distance, one item for that race.
+    A runner jumping alone is usually a kid improving -- the breakouts
+    page already lists them, and the career check (judgeJumps) judges
+    tonight's ones against the runner's own spread -- so those fold into
+    one count line instead of one item each."""
     out = []
+    by_race = defaultdict(list)
     for r in rows:
-        href = athleteHref(r["person_id"])
-        race = raceHref(r["sport"], None, r.get("meet_id"), r.get("div_id"), r.get("event_id"))
-        links = (("athlete", href),) + ((("race", race),) if race else ())
         if r["kind"] == "pr":
+            href = athleteHref(r["person_id"])
+            race = raceHref(r["sport"], None, r.get("meet_id"), r.get("div_id"), r.get("event_id"))
+            links = (("athlete", href),) + ((("race", race),) if race else ())
             out.append(Finding(
                 "performance", f"pr:{r['sport']}:{r['result_id']}", "high",
                 f"{r.get('name') or 'Athlete'}: PR {float(r['gain']) * 100:.0f}% under the old one",
@@ -293,12 +301,31 @@ def judgeBreakoutChecks(rows):
                 f"'check' -- usually a distance error ({r.get('meet_name') or 'meet'}, {r.get('race_date')})",
                 links, {"sport": r["sport"], "result_ids": [r["result_id"]]}))
         else:
-            out.append(Finding(
-                "jump", f"{r['sport']}:{r['result_id']}", "high",
-                f"{r.get('name') or 'Athlete'}: {float(r['jump']):+.1f} over the season median",
-                f"on the breakouts page with its 'check' mark (CHECK_JUMP {BO.CHECK_JUMP:g}); "
-                f"{r.get('meet_name') or 'meet'}, {r.get('race_date')}",
-                links, {"sport": r["sport"], "result_ids": [r["result_id"]]}))
+            by_race[(r["sport"], r.get("meet_id"), r.get("div_id"), r.get("event_id"))].append(r)
+    singles = []
+    for (sport, meet_id, div_id, event_id), rs in sorted(
+            by_race.items(), key=lambda kv: (-len(kv[1]), str(kv[0]))):
+        if len(rs) < 2:
+            singles += rs
+            continue
+        jumps = sorted(float(r["jump"]) for r in rs)
+        race = raceHref(sport, None, meet_id, div_id, event_id)
+        out.append(Finding(
+            "jump", f"race:{sport}:{meet_id}:{div_id}:{event_id}", "high",
+            f"{rs[0].get('meet_name') or 'Meet'} ({rs[0].get('race_date')}): "
+            f"{len(rs)} runners {jumps[0]:+.1f} to {jumps[-1]:+.1f} over their season median",
+            f"several runners of one race all jumping by breakouts' check bar (CHECK_JUMP "
+            f"{BO.CHECK_JUMP:g}) is usually the course's distance or difficulty, not the runners",
+            (("race", race),) if race else (),
+            {"sport": sport, "result_ids": sorted(r["result_id"] for r in rs)}))
+    if singles:
+        out.append(Finding(
+            "jump", "breakouts:singles", "info",
+            f"{len(singles)} runner{'s' if len(singles) != 1 else ''} jumping alone by breakouts' check bar",
+            f"one runner per race, CHECK_JUMP {BO.CHECK_JUMP:g} or more over the season median; "
+            f"listed with a 'check' mark on the breakouts page",
+            (("breakouts", "/breakouts"),),
+            {"result_ids": sorted((r["sport"], r["result_id"]) for r in singles)}))
     return out
 
 
