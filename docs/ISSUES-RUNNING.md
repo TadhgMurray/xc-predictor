@@ -5908,3 +5908,16 @@ Chromium against the old script (readout 15:00, label under the pointer
    LEFT JOIN course_canonical cc ON cc.course_name = m.course_name
    LEFT JOIN course_difficulties cd ON cd.canonical_id = cc.canonical_id
    WHERE m.meet_id = <id> AND m.div_id = <div>;`
+
+## 2026-10-11 -- TODO tomorrow: read the `features` tmux job's output
+
+- The owner ran the four first builds (meet forecasts, state odds, record
+  books, NCAA projection) by hand in a tmux session named `features`,
+  each under `time`. Tomorrow: `cat` all four logs
+  (`logs/forecasts_first.log`, `logs/state_odds_first.log`,
+  `logs/record_books_first.log`, `logs/ncaa_first.log`) plus the `time`
+  lines from the tmux scrollback, and decide per step whether its nightly
+  switch goes on (`XCP_FORECASTS`, `XCP_STATE_ODDS`, `XCP_RECORD_BOOKS`,
+  `XCP_NCAA`).
+- Done the same day: Resend mail on (test sent), Cloudflare board cache
+  rule live (HIT confirmed), `XCP_ALERT_SECRET` added.
