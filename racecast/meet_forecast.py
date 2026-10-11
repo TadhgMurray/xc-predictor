@@ -149,6 +149,7 @@ def saveRace(cur, meet, race, pred, today):
     ! THE FREEZE AGAIN, IN SQL: an existing row is only replaced while its
       meet is still ahead of `today` and it has not been scored."""
     from psycopg2.extras import Json
+    from database import _cleanJson
     ed = meet.get("edition") or {}
     p = {"source": meet["source"], "meet_id": int(meet["meet_id"]),
          "div_id": int(race["div_id"]), "meet_name": meet.get("name"),
@@ -157,7 +158,12 @@ def saveRace(cur, meet, race, pred, today):
          "gender": race.get("gender"), "distance": race.get("distance"),
          "edition_meet_id": ed.get("meet_id"), "edition_date": ed.get("date") or None,
          "n_field": pred.get("n_field"),
-         "runners": Json(pred.get("runners") or []), "teams": Json(pred.get("teams") or []),
+         # ! NO NUL IN JSONB (2026-10-11: 23 of the first run's forecasts
+         #   failed "unsupported Unicode escape sequence"): a team key joins
+         #   school and state with \x00, which Postgres refuses in jsonb.
+         #   database._cleanJson is the scrapers' own stripper.
+         "runners": Json(_cleanJson(pred.get("runners") or [])),
+         "teams": Json(_cleanJson(pred.get("teams") or [])),
          "model_basis": modelBasis(), "model_version": modelVersion(),
          "today": _day(today).isoformat()}
     cur.execute(f"""
@@ -359,6 +365,7 @@ def toScore(cur, today, window_days):
 
 def saveScore(cur, source, meet_id, div_id, score):
     from psycopg2.extras import Json
+    from database import _cleanJson           # no NUL in jsonb (see saveRace)
     cur.execute(f"""UPDATE {TABLE} SET score = %s, scored_at = now()
                     WHERE source = %s AND meet_id = %s AND div_id = %s""",
-                (Json(score), source, int(meet_id), int(div_id)))
+                (Json(_cleanJson(score)), source, int(meet_id), int(div_id)))
