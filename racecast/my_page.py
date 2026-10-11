@@ -161,7 +161,7 @@ def storeNext(cur, subject, today, payload):
     cur.execute("""INSERT INTO next_meet_cache (subject, computed_on, payload) VALUES (%s, %s, %s)
                    ON CONFLICT (subject) DO UPDATE SET computed_on = EXCLUDED.computed_on,
                                                        payload = EXCLUDED.payload""",
-                (subject, today, json.dumps(payload, default=str)))
+                (subject, today, json.dumps(payload, default=str, ensure_ascii=False)))
 
 
 def likelyBoth(cur, school, state, today, level=None):

@@ -10634,7 +10634,7 @@ def api_predict_share():
                                    (share_id, query, extra)
                                VALUES (%s, %s, %s)
                                ON CONFLICT (share_id) DO NOTHING""",
-                            (sid, query, json.dumps({"names": names})))
+                            (sid, query, json.dumps({"names": names}, ensure_ascii=False)))
             conn.commit()
     except Exception:                                   # noqa: BLE001
         app.logger.exception("/api/predict/share failed")

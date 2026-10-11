@@ -348,7 +348,7 @@ def initTables(conn):
 def logEvent(cur, kind, account_id=None, email=None, detail=None):
     try:
         cur.execute("INSERT INTO auth_event (account_id, email, kind, ip, detail) VALUES (%s, %s, %s, %s, %s)",
-                    (account_id, email, kind, clientIp(), json.dumps(detail) if detail else None))
+                    (account_id, email, kind, clientIp(), json.dumps(detail, ensure_ascii=False) if detail else None))
     except Exception as exc:                            # noqa: BLE001
         print(f"[accounts] event {kind} not logged ({type(exc).__name__}: {exc})", flush=True)
 

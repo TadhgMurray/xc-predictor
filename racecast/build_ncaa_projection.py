@@ -706,7 +706,7 @@ def liveYear(cur):
 
 
 def store(conn, week, payload):
-    import psycopg2.extras
+    from jsonb import J
     with conn.cursor() as cur:
         cur.execute(DDL)
         cur.execute("""DELETE FROM ncaa_projection
@@ -715,7 +715,7 @@ def store(conn, week, payload):
         cur.execute("""INSERT INTO ncaa_projection (week, division, gender, year, payload)
                        VALUES (%s, %s, %s, %s, %s)""",
                     (week, payload["division"], payload["gender"], payload["year"],
-                     psycopg2.extras.Json(payload)))
+                     J(payload)))   # SQL_ASCII-safe (jsonb.py)
     conn.commit()
 
 

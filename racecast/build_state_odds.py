@@ -284,7 +284,7 @@ def _write(cur, year, state, slug, label, g, field, rounds, why, res, fp):
             draws = EXCLUDED.draws, n_field = EXCLUDED.n_field,
             n_no_path = EXCLUDED.n_no_path, as_of = EXCLUDED.as_of,
             fingerprint = EXCLUDED.fingerprint, built_at = now()
-    """, (year, state, slug, g, label, res["mode"], json.dumps(rd_public),
+    """, (year, state, slug, g, label, res["mode"], json.dumps(rd_public, ensure_ascii=False),
           why, res["draws"], len(field), len(res["no_path"]),
           S.asOf(f.get("last_race") for f in field), fp))
 

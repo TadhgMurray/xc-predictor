@@ -1430,8 +1430,8 @@ def saveFindings(cur, tonight, new, still, resolved, now):
                 nights = CASE WHEN watchdog_finding.still_open
                               THEN watchdog_finding.nights + 1 ELSE 1 END,
                 still_open = true, resolved = NULL""",
-                    (f.check, f.key, f.severity, f.title, f.detail, json.dumps(list(f.links)),
-                     json.dumps(f.subject) if f.subject is not None else None, now, now))
+                    (f.check, f.key, f.severity, f.title, f.detail, json.dumps(list(f.links), ensure_ascii=False),
+                     json.dumps(f.subject, ensure_ascii=False) if f.subject is not None else None, now, now))
     for c, k in resolved:
         cur.execute("""UPDATE watchdog_finding SET still_open = false, resolved = %s
                        WHERE check_name = %s AND key = %s""", (now, c, k))
@@ -1625,7 +1625,7 @@ def run(conn, args, log=print):
                            WHERE run_id <> %s AND cardinality(person_ids) > 0""", (run_id,))
         cur.execute("""UPDATE watchdog_run SET finished_at = now(), n_new = %s, n_open = %s,
                               n_resolved = %s, counts = %s, report = %s WHERE run_id = %s""",
-                    (len(new), len(tonight), len(resolved), json.dumps(counts[0]), report, run_id))
+                    (len(new), len(tonight), len(resolved), json.dumps(counts[0], ensure_ascii=False), report, run_id))
     conn.commit()
     if args.log_dir and os.path.isdir(args.log_dir):
         with open(os.path.join(args.log_dir, "WATCHDOG.txt"), "w", encoding="utf-8") as f:

@@ -263,7 +263,7 @@ def saveSnapshot(conn, data):
     with conn.cursor() as cur:
         cur.execute(_SNAP_DDL)
         cur.execute("INSERT INTO site_status_snapshot (data) VALUES (%s)",
-                    (json.dumps(data, default=str),))
+                    (json.dumps(data, default=str, ensure_ascii=False),))
         # the last few are plenty; this is a status page, not a history
         cur.execute("""DELETE FROM site_status_snapshot WHERE taken_at <
                        (SELECT min(taken_at) FROM (SELECT taken_at

@@ -360,7 +360,7 @@ def recentCount(cur, account_id):
 
 
 def submit(cur, account_id, person_id, detail):
-    from psycopg2.extras import Json
+    from jsonb import J as Json   # SQL_ASCII-safe, NUL-free (jsonb.py)
     ev = evidenceFor(cur, person_id, detail)
     if detail["kind"] == "not_mine" and not (ev.get("result") and
                                              str(ev["result"].get("result_id")) == str(detail["result_id"])):
@@ -488,7 +488,7 @@ def decide(conn, cur, fid, action, admin_email, note=None, keep=None, school=Non
     transaction. The caller commits, except that same_person's tool commits
     the whole transaction itself (decision row included). school: the
     owner's spelling for a school pin (the card's field)."""
-    from psycopg2.extras import Json
+    from jsonb import J as Json   # SQL_ASCII-safe, NUL-free (jsonb.py)
     cur.execute("SELECT * FROM fix_request WHERE id = %s FOR UPDATE", (fid,))
     fx = AC._one(cur)
     if fx is None:

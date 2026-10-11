@@ -34,3 +34,15 @@ def test_team_keys_with_a_nul_are_stored_clean():
     for k in ("runners", "teams"):
         dumped = json.dumps(cur.params[k].adapted)
         assert "\\u0000" not in dumped
+
+
+def test_accented_names_go_as_utf8_not_escapes():
+    # the server is SQL_ASCII: jsonb rejects ñ, takes the raw bytes
+    import meet_forecast as MF
+    cur = _Cur()
+    pred = {"runners": [{"name": "Noah Ordoñez", "school": "St. Margaret’s"}],
+            "teams": [], "n_field": 1}
+    MF.saveRace(cur, {"source": "anet", "meet_id": 1, "date": "2099-10-10", "name": "M"},
+                {"div_id": 2, "label": "V"}, pred, "2026-10-11")
+    s = cur.params["runners"].dumps(cur.params["runners"].adapted)
+    assert "Ordoñez" in s and "\\u00f1" not in s

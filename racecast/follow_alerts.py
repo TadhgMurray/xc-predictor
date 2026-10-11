@@ -492,7 +492,7 @@ def recordItems(cur, follows, found, year, enrich=None):
                                                    sent_at)
                            VALUES (%s, %s, %s, %s, %s, %s, CASE WHEN %s = 'pending' THEN NULL ELSE now() END)
                            ON CONFLICT (account_id, item_key) DO NOTHING""",
-                        (f["account_id"], key, year, subj, json.dumps(payload, default=str),
+                        (f["account_id"], key, year, subj, json.dumps(payload, default=str, ensure_ascii=False),
                          status, status))
             have.add((f["account_id"], key))
             if status == "pending":
@@ -577,7 +577,7 @@ def sendDigests(cur, conn, follows, now, origin, send=True, log=print):
                 try:
                     p = enrich(p)
                     cur.execute("UPDATE alert_item SET payload = %s WHERE account_id = %s AND item_key = %s",
-                                (json.dumps(p, default=str), i["account_id"], i["item_key"]))
+                                (json.dumps(p, default=str, ensure_ascii=False), i["account_id"], i["item_key"]))
                     conn.commit()
                 except Exception as exc:                # noqa: BLE001
                     conn.rollback()

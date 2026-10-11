@@ -364,7 +364,8 @@ def recentCount(cur, account_id):
 
 def stage(cur, account_id, filename, data, parsed, form):
     """Write one parsed file to staging as a draft -> its id."""
-    from psycopg2.extras import Json, execute_values
+    from psycopg2.extras import execute_values
+    from jsonb import J as Json   # SQL_ASCII-safe, NUL-free (jsonb.py)
     meta, _errs = checkMeta(form, parsed["meet"], parsed.get("sport"))
     text = RP.decode(data).replace("\x00", "")
     events = parsed["events"]
@@ -567,7 +568,7 @@ def decide(cur, uid, action, admin_email, note=None):
     """The owner's decision on one upload -> (status, detail). action:
     'approve' (flags a likely duplicate instead of writing), 'force'
     (writes a flagged upload anyway), 'reject'. The caller commits."""
-    from psycopg2.extras import Json
+    from jsonb import J as Json   # SQL_ASCII-safe, NUL-free (jsonb.py)
     cur.execute("SELECT * FROM result_upload WHERE id = %s FOR UPDATE", (uid,))
     up = AC._one(cur)
     if up is None:
