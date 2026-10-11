@@ -147,6 +147,7 @@ def raceItem(r, prs, jumps, sbs, prior=None):
     payload = {"type": "race", "sport": r["sport"], "person_id": r["person_id"],
                "result_id": r["result_id"], "meet_id": r.get("meet_id"), "div_id": r.get("div_id"),
                "name": r.get("name"), "pool": r.get("pool"), "school": r.get("school"),
+               "state": r.get("state"),
                "date": str(r["race_date"])[:10],
                "meet_name": r.get("meet_name"), "distance": r.get("distance"),
                "time": r.get("time_seconds"), "rating": round(float(r["speed_rating"]), 1),
@@ -172,7 +173,7 @@ def teamItems(subject, rows, prs, jumps):
         day = min(str(r["race_date"])[:10] for r in rs)
         payload = {"type": "team", "sport": sport, "meet_id": meet_id, "date": day,
                    "meet_name": best.get("meet_name"), "n_rated": len({r["person_id"] for r in rs}),
-                   "school": best.get("school"),
+                   "school": best.get("school"), "state": best.get("state"),
                    "result_ids": sorted(r["result_id"] for r in rs),
                    "best": {"person_id": best["person_id"], "name": best.get("name"),
                             "time": best.get("time_seconds"),
@@ -402,7 +403,30 @@ def raceContext(races, payload):
         team = teamResult(rows, me["school"])
         if team:
             out["team"] = {"school": me["school"], "place": team["place"],
-                           "n_teams": team["n_teams"], "points": team["points"]}
+                           "n_teams": team["n_teams"], "points": team["points"],
+                           "runners": team["runners"]}
+    return dict(out, **pictures(races.cur, out))
+
+
+def pictures(cur, payload):
+    """{photo, logo}: site-relative URLs of the athlete's picture (the
+    claiming account's, as on the athlete page) and the school's crest, each
+    None when there is none. Looked up once, when the item is enriched, and
+    kept in the payload: the mail is drawn from the payload alone."""
+    out = {"photo": None, "logo": None}
+    if payload.get("person_id"):
+        try:
+            out["photo"] = AC.photoFor(cur, payload["person_id"])
+        except Exception:                               # noqa: BLE001
+            cur.connection.rollback()
+    school = payload.get("school") or (payload.get("team") or {}).get("school")
+    if school:
+        try:
+            import school_logo
+            if school_logo.logoPath(cur, school, payload.get("state")):
+                out["logo"] = school_logo.logoUrl(school, payload.get("state"))
+        except Exception:                               # noqa: BLE001
+            cur.connection.rollback()
     return out
 
 
@@ -424,7 +448,9 @@ def teamContext(races, payload):
         team = teamResult(race["rows"], me.get("school"))
         out.append({"division": race["division"], "course": race["course"], "field": len(race["rows"]),
                     **(team or {})})
-    return dict(payload, races=out) if out else payload
+    base = dict(payload, races=out) if out else dict(payload)
+    return dict(base, logo=pictures(races.cur, {"school": payload.get("school"),
+                                               "state": payload.get("state")})["logo"])
 
 
 def recordItems(cur, follows, found, year, enrich=None):
@@ -523,6 +549,25 @@ def sendDigests(cur, conn, follows, now, origin, send=True, log=print):
     for r in cur.fetchall():
         by.setdefault(r["account_id"], []).append(dict(r))
     conn.commit()
+    # ! AN ITEM WITHOUT ITS CONTEXT IS ENRICHED NOW: recordItems adds the
+    #   race (place, team finish, pictures) only to items it records as
+    #   pending, so a baseline item put back to pending, or one recorded
+    #   before a field existed, would mail without them.
+    enrich = None
+    for items_ in by.values():
+        for i in items_:
+            p = i["payload"] if isinstance(i["payload"], dict) else json.loads(i["payload"])
+            if "logo" not in p:
+                enrich = enrich or enricher(cur)
+                try:
+                    p = enrich(p)
+                    cur.execute("UPDATE alert_item SET payload = %s WHERE account_id = %s AND item_key = %s",
+                                (json.dumps(p, default=str), i["account_id"], i["item_key"]))
+                    conn.commit()
+                except Exception as exc:                # noqa: BLE001
+                    conn.rollback()
+                    log(f"  enrich {i['item_key']}: {type(exc).__name__}: {exc}")
+            i["payload"] = p
     sent = failed = 0
     for aid, items in by.items():
         if not isDue(items[0]["cadence"], items[0]["last_sent_at"], now):

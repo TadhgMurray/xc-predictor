@@ -21,8 +21,13 @@
 # ! LINKS ARE BUTTONS IN THE HTML, URLS ONLY IN THE TEXT PART.
 #
 # ! THE SITE'S LOOK, IN WHAT MAIL CLIENTS RENDER: tables and inline styles,
-#   black on white, the site's navy (--link) as the one accent. No images, so
-#   nothing is blocked and nothing tracks an open.
+#   black on white, the site's navy (--link) as the one accent.
+#
+# ★ PICTURES (owner, 2026-10-11): the real logo, the athlete's photo and the
+#   school's crest. Plain <img> tags on the site's own static URLs, the same
+#   for every reader -- nothing in them identifies who opened the mail. Each
+#   has alt text and the layout stands without it, for a client that blocks
+#   images.
 import datetime
 import html as _html
 
@@ -144,9 +149,24 @@ def raceFacts(p):
         if by is not None:
             out.append(("Breakout", f"{float(by) * k:.1f} above the median of earlier races this season"))
     t = p.get("team")
-    if t:
+    if t and not t.get("runners"):
         out.append(("Team", f"{t['school']} {ordinal(t['place'])} of {t['n_teams']} teams, {t['points']} points"))
     return out
+
+
+def teamBlock(p):
+    """The athlete's team in that race, as a squad block: its finish and
+    score as the title, its scoring runners (five score, two displace) with
+    places and times. None when the team did not score or the item predates
+    the squad."""
+    t = p.get("team")
+    if not t or not t.get("runners"):
+        return None
+    return {"title": f"{t['school']}: {ordinal(t['place'])} of {t['n_teams']} teams, {t['points']} points",
+            "rows": [(ordinal(x["place"]) if x.get("place") else "", x.get("name") or "",
+                      clock(x.get("time"))) for x in t["runners"]],
+            "me": next((k for k, x in enumerate(t["runners"])
+                        if x.get("person_id") is not None and x.get("person_id") == p.get("person_id")), None)}
 
 
 def teamFacts(p):
@@ -258,16 +278,47 @@ def _factsHtml(facts):
 
 
 def _squadHtml(block):
+    me = block.get("me")
     rows = "".join(
         f'<tr><td style="padding:2px 12px 2px 0;font-size:14px;line-height:20px;color:{MUTED};'
         f'text-align:right;white-space:nowrap">{_e(pl)}</td>'
-        f'<td style="padding:2px 12px 2px 0;font-size:14px;line-height:20px;color:{INK}">{_e(n)}</td>'
+        f'<td style="padding:2px 12px 2px 0;font-size:14px;line-height:20px;color:{INK}'
+        f'{";font-weight:700" if k == me else ""}">{_e(n)}</td>'
         f'<td style="padding:2px 0;font-size:14px;line-height:20px;color:{INK};white-space:nowrap;'
         f'font-variant-numeric:tabular-nums">{_e(t)}</td></tr>'
-        for pl, n, t in block["rows"])
+        for k, (pl, n, t) in enumerate(block["rows"]))
     return (f'<p style="margin:8px 0 4px;font-size:15px;line-height:20px;font-weight:600;color:{INK}">'
             f'{_e(block["title"])}</p>'
             f'<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 8px">{rows}</table>')
+
+
+def _img(src, alt, size, round_=False):
+    return (f'<img src="{_e(src)}" width="{size}" height="{size}" alt="{_e(alt)}" '
+            f'style="display:block;width:{size}px;height:{size}px;border:0;object-fit:'
+            f'{"cover" if round_ else "contain"};{"border-radius:50%;" if round_ else ""}">')
+
+
+def _groupHead(title, items, kind, origin):
+    """The group's heading: the athlete's photo (or the team's crest) beside
+    the name, the school with its crest under an athlete's name."""
+    photo = next((p.get("photo") for p in items if p.get("photo")), None)
+    logo = next((p.get("logo") for p in items if p.get("logo")), None)
+    school = next((p.get("school") or (p.get("team") or {}).get("school")
+                   for p in items if p.get("school") or p.get("team")), None)
+    name = f'<p style="margin:0;font-size:17px;line-height:22px;font-weight:700;color:{INK}">{_e(title)}</p>'
+    if kind == "athlete" and school:
+        crest = (f'<td style="padding:0 6px 0 0;vertical-align:middle">{_img(origin + logo, school, 18)}</td>'
+                 if logo else "")
+        name += (f'<table role="presentation" cellpadding="0" cellspacing="0" style="margin:2px 0 0"><tr>{crest}'
+                 f'<td style="vertical-align:middle;font-size:14px;line-height:18px;color:{MUTED}">{_e(school)}</td>'
+                 f'</tr></table>')
+    pic = (_img(origin + photo, title, 48, round_=True) if kind == "athlete" and photo
+           else _img(origin + logo, title, 44) if kind == "team" and logo else None)
+    if not pic:
+        return name
+    return (f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="padding:0 12px 0 0;vertical-align:middle">{pic}</td>'
+            f'<td style="vertical-align:middle">{name}</td></tr></table>')
 
 
 def compose(groups, origin, unsub, account_name=None, today=None):
@@ -296,16 +347,25 @@ def compose(groups, origin, unsub, account_name=None, today=None):
         for p in sorted(items, key=lambda p: (p["date"], p.get("meet_name") or "")):
             head = raceHead(p)
             text.append(head)
+            after = []
             if p["type"] == "race":
                 facts, squads = raceFacts(p), []
+                tb = teamBlock(p)
+                if tb:
+                    after = [tb]
             else:
                 facts, squads = teamFacts(p)
-            for sq in squads:
+
+            def sqText(sq):
                 text.append(sq["title"])
-                for pl, n, t in sq["rows"]:
+                for k, (pl, n, t) in enumerate(sq["rows"]):
                     text.append(f"  {pl:>5}  {n}  {t}")
+            for sq in squads:
+                sqText(sq)
             for k, v in facts:
                 text.append(f"{k}: {v}")
+            for sq in after:
+                sqText(sq)
             race_word = "See the race" if p["type"] == "race" else "See the results"
             if p.get("href"):
                 text.append(f"{race_word}: {origin}{p['href']}")
@@ -313,6 +373,7 @@ def compose(groups, origin, unsub, account_name=None, today=None):
             parts.append(
                 f'<p style="margin:10px 0 0;font-size:14px;line-height:20px;color:{MUTED}">{_e(head)}</p>'
                 + "".join(_squadHtml(sq) for sq in squads) + _factsHtml(facts)
+                + "".join(_squadHtml(sq) for sq in after)
                 + (f'<p style="margin:0 0 6px">{_btn(origin + p["href"], race_word)}</p>' if p.get("href") else ""))
         nl = nextLine(nx)
         if nl:
@@ -321,7 +382,7 @@ def compose(groups, origin, unsub, account_name=None, today=None):
         text.append("")
         blocks.append(
             f'<tr><td style="padding:16px 0 14px;border-top:1px solid {LINE}">'
-            f'<p style="margin:0;font-size:17px;line-height:22px;font-weight:700;color:{INK}">{_e(title)}</p>'
+            + _groupHead(title, items, kind, origin)
             + "".join(parts)
             + (f'<p style="margin:10px 0 0;font-size:14px;line-height:20px;color:{INK}">'
                f'<span style="color:{MUTED}">Next likely meet:</span> {_e(nl)}</p>' if nl else "")
@@ -337,7 +398,7 @@ def compose(groups, origin, unsub, account_name=None, today=None):
 <tr><td align="center" style="padding:24px 12px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid {LINE};border-radius:10px;font-family:{font}">
 <tr><td style="padding:22px 24px 0">
-<p style="margin:0;font-size:21px;line-height:24px;font-weight:900;font-style:italic;letter-spacing:-0.5px;color:{INK}">RACECAST</p>
+<a href="{_e(origin)}/" style="text-decoration:none"><img src="{_e(origin)}/static/logo-card.png" width="152" height="36" alt="RACECAST" style="display:block;width:152px;height:36px;border:0;font-size:21px;line-height:24px;font-weight:900;font-style:italic;color:{INK}"></a>
 </td></tr>
 <tr><td style="padding:16px 24px 4px">
 <p style="margin:0 0 4px;font-size:16px;line-height:24px;color:{INK}">{_e(hi)}</p>

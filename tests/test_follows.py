@@ -673,3 +673,24 @@ def test_alert_rating_is_on_the_hs_equivalent_scale(monkeypatch):
     facts = dict(AE.raceFacts(p))
     assert facts["Rating"] == "60.0, up 5.0 from the previous race"
     assert facts["Breakout"].startswith("11.0 above")
+
+
+def test_alert_mail_shows_the_pictures_and_the_team_squad():
+    import alert_email as AE
+    p = {"type": "race", "sport": "XC", "person_id": 7, "result_id": 1, "name": "M O", "pool": "hs_f",
+         "school": "Jesuit", "date": "2026-10-03", "meet_name": "Nike Portland XC", "time": 1104.2,
+         "rating": 118.9, "flags": {}, "place": 12, "field": 184,
+         "photo": "/static/photos/7-a.jpg", "logo": "/img/school/Jesuit.png?state=OR",
+         "team": {"school": "Jesuit", "place": 2, "n_teams": 31, "points": 87,
+                  "runners": [{"name": "A C", "place": 4, "time": 1082.0, "person_id": 1},
+                              {"name": "M O", "place": 12, "time": 1104.2, "person_id": 7}]}}
+    _s, text, html = AE.compose([("M O", "/athlete/7", [p], "athlete", None)], "https://racecast.co",
+                                "https://racecast.co/u/x", "T")
+    assert 'src="https://racecast.co/static/logo-card.png"' in html
+    assert 'src="https://racecast.co/static/photos/7-a.jpg"' in html
+    assert "https://racecast.co/img/school/Jesuit.png?state=OR" in html
+    assert "Jesuit: 2nd of 31 teams, 87 points" in text and "Team:" not in text
+    assert "font-weight:700\">M O</td>" in html          # the athlete's row in the squad
+    # an older item without the squad keeps the one Team line
+    q = dict(p, team={"school": "Jesuit", "place": 2, "n_teams": 31, "points": 87})
+    assert ("Team", "Jesuit 2nd of 31 teams, 87 points") in AE.raceFacts(q)
