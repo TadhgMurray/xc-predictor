@@ -366,12 +366,16 @@
             .then(function (r) { return r.ok ? r.json() : null; })
             .catch(function () { return null; })
             .then(function (d) {
+                var moved = false;
                 if (d && d.pool && poolSel) {
                     var has = Array.prototype.some.call(poolSel.options,
                         function (o) { return o.value === d.pool; });
-                    if (has) poolSel.value = d.pool;
+                    if (has && poolSel.value !== d.pool) { poolSel.value = d.pool; moved = true; }
                 }
-                if (then) then();
+                // a set .value fires no 'change': the course list follows
+                // the adopted pool here (picking an athlete on the page)
+                if (moved) loadDefaultCourses(then);
+                else if (then) then();
             });
     }
 
@@ -511,7 +515,7 @@
                     paintScaleHint();
                     convert();
                 } else {
-                    adoptAthletePool(pid, function () { loadDefaultCourses(convert); });
+                    adoptAthletePool(pid, convert);
                 }
             });
     })();
@@ -736,7 +740,7 @@
         tr.setAttribute('data-difficulty', diff == null ? '' : diff);
         tr.setAttribute('data-distance', dist);
         tr.innerHTML =
-            '<td>' + esc(name) + '</td>' +
+            '<td><a href="/course/' + encodeURIComponent(name) + '">' + esc(name) + '</a></td>' +
             '<td class="cell-dist">' + (Math.round(dist / 10) / 100) + 'k</td>' +
             '<td class="cell-time"> - </td>';
         return tr;
@@ -749,7 +753,7 @@
         tr.setAttribute('data-difficulty', diff);
         tr.setAttribute('data-distance', dist);
         tr.innerHTML =
-            '<td>' + esc(name) + '</td>' +
+            '<td><a href="/course/' + encodeURIComponent(name) + '">' + esc(name) + '</a></td>' +
             '<td class="cell-dist">' + (dist/1000).toFixed(2) + 'k</td>' +
             '<td class="cell-time"> - </td>';
         tr.setAttribute('data-added', '1');

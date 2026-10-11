@@ -237,7 +237,7 @@
                 data-canonical="{{ c.canonical_id if c.canonical_id is not none else '' }}"
                 data-difficulty="{{ c.difficulty }}"
                 data-distance="{{ c.distance }}">
-                <td>{{ c.course_name }}</td>
+                <td><a href="/course/{{ c.course_name|urlencode }}">{{ c.course_name }}</a></td>
                 <td class="cell-dist">{{ (c.distance / 1000)|round(2) }}k</td>
                 <td class="cell-time"> - </td>
             </tr>
