@@ -1,8 +1,8 @@
 """Each team's top N by predicted time (owner, 2026-10-11: "predict best
 athletes for every team, but you only present/show the top x").
-predict.byPrediction reorders every squad fastest-predicted first; an
-athlete with no prediction keeps rating order behind those who have one,
-and a model that cannot run leaves the squads as they came.
+predict.byPrediction shortlists by recent form and its band, runs the model
+on the shortlist only ("takes way too long" with the whole squad; "not as
+accurate" with form alone), and orders each team by the model's time.
 
     python -m pytest -q tests/test_pick_by_prediction.py
 """
@@ -16,43 +16,48 @@ os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
 
 import predict as P                                             # noqa: E402
 
-SQUADS = {"A": [{"person_id": 1}, {"person_id": 2}, {"person_id": 3}],
-          "B": [{"person_id": 4}, {"person_id": 5}]}
+# team A runs 2. Form (seconds, lo, hi): 1 and 2 are in, 3's fast end
+# reaches 2's slow end, 4 cannot; 5 has no form.
+FORM = {1: (900, 880, 920), 2: (910, 890, 930), 3: (940, 925, 960),
+        4: (1000, 980, 1020)}
+SQUADS = {"A": [{"person_id": i} for i in (1, 2, 3, 4, 5)]}
 
 
-def run(times, raises=False):
-    def fake(cur, ids, spec, cut):
-        if raises:
-            raise RuntimeError("no ratings")
-        return {i: {"seconds": times[i]} for i in ids if i in times}
-    real = (P._ratingTimes, P._targetSpec)
-    P._ratingTimes = fake
+def run(model, model_raises=False, form=FORM):
+    sent = []
+
+    def rating_times(cur, ids, spec, cut):
+        return {i: {"seconds": f[0], "lo": f[1], "hi": f[2]}
+                for i, f in form.items() if i in ids}
+
+    def predict_times(cur, ids, target, spec=None):
+        sent.extend(ids)
+        if model_raises:
+            raise RuntimeError("no model")
+        return [{"seconds": model.get(i)} for i in ids]
+    real = (P._ratingTimes, P._predictTimes, P._targetSpec)
+    P._ratingTimes, P._predictTimes = rating_times, predict_times
     P._targetSpec = lambda cur, target: {"date": "2026-10-17"}
     try:
-        return P.byPrediction(None, {k: [dict(e) for e in v] for k, v in SQUADS.items()},
-                              ["A", "B"], {"mode": "rerun"})
+        out, note = P.byPrediction(
+            None, {k: [dict(e) for e in v] for k, v in SQUADS.items()},
+            {"A": 2}, {"mode": "rerun"})
     finally:
-        P._ratingTimes, P._targetSpec = real
+        P._ratingTimes, P._predictTimes, P._targetSpec = real
+    return [e["person_id"] for e in out["A"]], sorted(sent), note
 
 
-def ids(sq):
-    return [e["person_id"] for e in sq]
+def test_model_only_for_contenders_and_it_decides():
+    order, sent, note = run({1: 905, 2: 930, 3: 915, 5: 920})
+    assert sent == [1, 2, 3, 5]          # 4 is out of reach, never modelled
+    assert order[:2] == [1, 3] and note is None
 
 
-def test_fastest_predicted_first():
-    out, note = run({1: 900, 2: 880, 3: 870, 4: 1000, 5: 990})
-    assert note is None
-    assert ids(out["A"]) == [3, 2, 1] and ids(out["B"]) == [5, 4]
-    assert out["A"][0]["pred_seconds"] == 870
+def test_model_failure_falls_back_to_form_order():
+    order, _sent, note = run({}, model_raises=True)
+    assert order == [1, 2, 3, 4, 5] and "recent form" in note
 
 
-def test_unpredicted_keep_rating_order_at_the_back():
-    out, _ = run({2: 880, 4: 1000})
-    assert ids(out["A"]) == [2, 1, 3] and ids(out["B"]) == [4, 5]
-
-
-def test_no_model_leaves_the_squads():
-    out, note = run({}, raises=True)
-    assert note and ids(out["A"]) == [1, 2, 3]
-    out, note = run({})
-    assert note and ids(out["B"]) == [4, 5]
+def test_no_form_and_no_model_leaves_the_squad():
+    order, _sent, note = run({}, form={})
+    assert order == [1, 2, 3, 4, 5] and "season rating" in note

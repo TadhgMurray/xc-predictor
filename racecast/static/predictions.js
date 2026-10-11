@@ -1839,8 +1839,7 @@ function showBasis(blocks) {
       + `running of this meet (${fmtDate(b.date)}), with this season's squads. Edit it below.`
     : `No entries posted yet and no earlier edition to borrow teams from `
       + `\u2014 add teams below.`);
-  if (miss) parts.push(`Each team's runners are picked by season rating: `
-    + `${miss.pick_note}.`);
+  if (miss) parts.push(`Picking each team's runners: ${miss.pick_note}.`);
   /* ! THE hidden ATTRIBUTE, NOT class="hidden": there is no global .hidden
      in style.css (its own warning), and .predict2 .hint sets no display */
   el.hidden = !parts.length;

@@ -2821,44 +2821,90 @@ def isTrackEvent(target):
 #   course, distance and date) and reorders each squad fastest first, so
 #   the cap that follows keeps the runners the model expects to be fastest
 #   here. The rest stay under `dropped`, as before.
-# ★ THE SERVED TIME, NOT THE NETWORK (owner, 2026-10-11: "takes way too
-#   long to load"). The first cut ran _predictTimes -- the model's history
-#   queries and forward pass -- for every squad member, three to six times
-#   the field. What the page serves a rated runner is _ratingTimes (their
-#   recent form as a time at this race, _servedTimes under the default
-#   basis), one batched read with no model, so the order is the one the
-#   prediction will print. An athlete with no rated form keeps their
-#   rating order behind everyone who has one; nothing at all leaves every
-#   squad exactly as it came, with the reason.
-def byPrediction(cur, squads, schools, target):
+# ★ THE MODEL, ON A SHORTLIST (owner, 2026-10-11). Two cuts before this
+#   one, both measured by the owner: the model for every squad member was
+#   right and "takes way too long to load" (three to six times the field
+#   through the network); the recent-form time alone (_ratingTimes, one
+#   read) loaded fast and was "not as accurate". So the form time only
+#   decides who CAN make the team, and the model decides who does:
+#     - a runner whose form band's fast end (lo) beats the slow end (hi) of
+#       the team's cap-th runner by form is a contender -- the bands are the
+#       published ones, so no margin is invented here;
+#     - a runner with no form time is a contender too (nothing rules them
+#       out);
+#     - the contenders go through _predictTimes, the first cut's model, and
+#       are ordered by its time; everyone else follows in form order.
+#   Usually a few past the cap per team, not the squad.
+# ! THE MODEL OR THE FORM, NEVER NOTHING: a contender the model cannot time
+#   keeps their form place behind those it can; a model that cannot run at
+#   all falls back to the form order; no form either leaves the squads as
+#   they came, with the reason.
+def byPrediction(cur, squads, caps, target):
     """(squads, None) reordered fastest-predicted first, or (squads, reason)
-    unchanged when nothing could be predicted."""
+    unchanged when nothing could be predicted (or reordered by form, with
+    the reason, when the model could not run). `caps` is {school: how many
+    run}; only those schools are reordered."""
+    schools = [sch for sch in caps if squads.get(sch)]
     ids = list(dict.fromkeys(e["person_id"] for sch in schools
-                             for e in squads.get(sch, [])))
+                             for e in squads[sch]))
     if not ids:
         return squads, None
     try:
         spec = _targetSpec(cur, target)
-        cut = _asDate(spec.get("date"))
-        rated = _ratingTimes(cur, ids, spec, cut)
+        rated = _ratingTimes(cur, ids, spec, _asDate(spec.get("date")))
     except Exception as exc:                      # noqa: BLE001 -- keep the field
         _rollback(cur)
         return squads, f"no predictions ({type(exc).__name__})"
-    secs = {pid: (rated.get(pid) or {}).get("seconds") for pid in ids}
-    if not any(v is not None for v in secs.values()):
-        return squads, "no predictions for this field"
+
+    def form(pid):
+        return (rated.get(pid) or {}).get("seconds")
+
+    # the contenders, per school (see above)
+    order = {}
+    contenders = []
+    for sch in schools:
+        sq = squads[sch]
+        by_form = sorted(enumerate(sq), key=lambda ie: (
+            form(ie[1]["person_id"]) is None,
+            form(ie[1]["person_id"]) or 0.0, ie[0]))
+        order[sch] = [e for _i, e in by_form]
+        timed = [e for e in order[sch] if form(e["person_id"]) is not None]
+        cap = caps[sch]
+        if len(timed) <= cap:
+            contenders += [e["person_id"] for e in sq]
+            continue
+        bar = rated[timed[cap - 1]["person_id"]].get("hi") or form(
+            timed[cap - 1]["person_id"])
+        for e in sq:
+            r = rated.get(e["person_id"])
+            if r is None or (r.get("lo") or r["seconds"]) <= bar:
+                contenders.append(e["person_id"])
+    contenders = list(dict.fromkeys(contenders))
+
+    model = {}
+    note = None
+    if contenders:
+        try:
+            preds = _predictTimes(cur, contenders, target, spec=spec)
+            model = {pid: p.get("seconds") for pid, p
+                     in zip(contenders, preds or []) if p.get("seconds")}
+        except Exception as exc:                  # noqa: BLE001 -- form order stands
+            _rollback(cur)
+            note = (f"the model could not run ({type(exc).__name__}), "
+                    f"so by recent form")
+    if not model and not any(form(pid) is not None for pid in ids):
+        return squads, "no predictions for this field, so by season rating"
+
     out = dict(squads)
     for sch in schools:
-        sq = squads.get(sch)
-        if not sq:
-            continue
-        ranked = sorted(enumerate(sq), key=lambda ie: (
-            secs.get(ie[1]["person_id"]) is None,
-            secs.get(ie[1]["person_id"]) or 0.0, ie[0]))
-        out[sch] = [e for _i, e in ranked]
+        ranked = order[sch]
+        mod = [e for e in ranked if e["person_id"] in model]
+        mod.sort(key=lambda e: model[e["person_id"]])
+        rest = [e for e in ranked if e["person_id"] not in model]
+        out[sch] = mod + rest
         for e in out[sch]:
-            e["pred_seconds"] = secs.get(e["person_id"])
-    return out, None
+            e["pred_seconds"] = model.get(e["person_id"], form(e["person_id"]))
+    return out, note
 
 
 def meetField(cur, meet_id, div_id, sport, season_year=None,
@@ -2961,22 +3007,24 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
                                                 season_year)
     # ★ AND ORDERED BY PREDICTED TIME WHEN ASKED (byPrediction), so the cap
     #   below keeps each team's predicted-fastest
-    pick_note = None
-    if pick == "predicted" and target is not None:
-        squads, pick_note = byPrediction(cur, squads, at_meet, target)
     # ★ THE CAP IS PER SCHOOL, from what it brought to the original running.
     #   Everyone past the cap goes to `dropped`, not out of the field, so a
     #   school that really is fielding seven this year can be corrected by
     #   hand on the page.
+    # ! A TRACK EVENT ENTERS WHAT THE SCHOOL ENTERED IN IT (tfEntryCap),
+    #   not a cross country seven
     at_meet_counts = countsBySchool(originals)
+    caps = {school: (tfEntryCap(at_meet_counts.get(school, 0), per_team)
+                     if track_m else squadCap(at_meet_counts.get(school, 0),
+                                              per_team))
+            for school in at_meet}
+    pick_note = None
+    if pick == "predicted" and target is not None:
+        squads, pick_note = byPrediction(cur, squads, caps, target)
     by_school = {}
     for school in at_meet:
         sq = squads.get(school, [])
-        # ! A TRACK EVENT ENTERS WHAT THE SCHOOL ENTERED IN IT (tfEntryCap),
-        #   not a cross country seven
-        cap = (tfEntryCap(at_meet_counts.get(school, 0), per_team)
-               if track_m else squadCap(at_meet_counts.get(school, 0),
-                                        per_team))
+        cap = caps[school]
         by_school[school] = {"school": school,
                              "state": states.get(school) or _stateOf(school),
                              # ! HOW MANY THIS SCHOOL ACTUALLY HAD ON THE
@@ -3051,7 +3099,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     out = {"season_year": season_year, "when": when, "teams": teams,
            "gender": gender, "levels": sorted(levels), "basis": basis,
            "pick": ("predicted" if pick == "predicted" and target is not None
-                    and not pick_note else "rating"),
+                    else "rating"),
            "pick_note": pick_note}
     if track_m:
         # ★ THE PAGE'S PER-TEAM CONTROL READS "Entries per team" FOR TRACK,
@@ -3788,11 +3836,16 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                 if track_m:
                     squads, _rest = _tfEventSquads(cur, squads, track_m, year)
             # ★ AND THE SAME ORDER AS meetField'S (byPrediction)
+            at_meet_counts = countsBySchool(originals)
             if target.get("pick") == "predicted":
-                squads, _note = byPrediction(cur, squads, list(squads), target)
+                caps = {sch: (tfEntryCap(at_meet_counts.get(sch, 0),
+                                         target.get("per_team")) if track_m
+                              else squadCap(at_meet_counts.get(sch, 0),
+                                            target.get("per_team")))
+                        for sch in squads}
+                squads, _note = byPrediction(cur, squads, caps, target)
             # ★ SAME PER-SCHOOL CAP AS meetField. These two must agree or the
             #   page shows one lineup and the model scores another.
-            at_meet_counts = countsBySchool(originals)
             entries = []
             for sch in sorted(squads):
                 n_in = at_meet_counts.get(sch, 0)
