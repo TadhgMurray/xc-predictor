@@ -807,23 +807,23 @@ main.ath-page.rc .season table th, main.ath-page.rc .season table td { padding-l
 main.ath-page.rc .season table { min-width: 0; }
 main.ath-page.rc .season table th:nth-child(1) { width: 6.4rem; }
 main.ath-page.rc .season table th:nth-child(2) { width: auto; }
-main.ath-page.rc .season table th:nth-child(3) { width: 3.8rem; }
-main.ath-page.rc .season table th:nth-child(4) { width: 4.4rem; }
-main.ath-page.rc .season table th:nth-child(5) { width: 5rem; }
+main.ath-page.rc .season table th:nth-child(3) { width: 4.8rem; }   /* Result, the event under it */
+main.ath-page.rc .season table th:nth-child(4) { width: 5rem; }
 /* ! THE HEADERS FIT ON ONE LINE, ⓘ INCLUDED (owner, 2026-10-11: "the i
      still goes to the next row"), and no header wraps */
 main.ath-page.rc .season table th { white-space: nowrap; }
-main.ath-page.rc .season table th:nth-child(6) { width: 4.8rem; }
-main.ath-page.rc .season table th:nth-child(7) { width: 5.4rem; }
-main.ath-page.rc .season table th:nth-child(8) { width: 4.8rem; }
+main.ath-page.rc .season table th:nth-child(5) { width: 4.8rem; }
+main.ath-page.rc .season table th:nth-child(6) { width: 5.4rem; }
+main.ath-page.rc .season table th:nth-child(7) { width: 4.8rem; }
 /* ★ RECORDS: THREE PILLS TO A LINE (owner, 2026-10-11: "make the flags not
      make all the meets go multiple rows"). A row is already two lines (the
      course under the meet, the team place under the place); at three a line
      even all six badges fit in those two, so the flags never add a third. */
-main.ath-page.rc .season table th:nth-child(9) { width: 6.6rem; }
+main.ath-page.rc .season table th:nth-child(8) { width: 6.6rem; }
+main.ath-page.rc .season td.res-cell .res-ev { display: block; font-size: .8rem; line-height: 1.2; color: var(--muted); }
 /* ⚠ AND THE MEET NEVER SQUEEZED TO A LETTER (owner, 2026-10-11: "meet names
      are all cut off. Entirely."). The sized columns sum to ~41rem (border-box,
-     athlete-charts.css), what they took before the 5K and the ⓘ came in; the
+     athlete-charts.css), less than before the 5K and the ⓘ came in; the
      table keeps at least 8rem for the meet on top of them and scrolls
      sideways in its .tscroll below that, instead of eating the meet. */
 @media (min-width: 701px) {
@@ -933,3 +933,7 @@ main.rc.pred-page .pred-opts-in .per-team input { width: 100%; font-size: .92rem
   main.rc.pred-page .pred-week-t td.go-c { width: 5.6rem; }
   main.rc.pred-page .pred-opts-in { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* the season head's rating and the 5K it is worth in ONE colour (owner,
+   2026-10-11: "why is rating and 5k equivalent different colors") */
+main.ath-page.rc .season-head .season-rating .fk-i { color: inherit; font-weight: inherit; }

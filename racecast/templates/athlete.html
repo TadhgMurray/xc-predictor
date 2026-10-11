@@ -191,7 +191,9 @@
                 <tr>
                     <th>Date</th>
                     <th>Meet</th>
-                    <th>Event</th>
+                    {# ★ THE EVENT UNDER THE RESULT, NOT ITS OWN COLUMN (owner,
+                       2026-10-11: "cluttered"): "25:35.4 / 8000m" reads as one
+                       fact, and the column went to the meet's name #}
                     <th>Result</th>
                     <th>Place</th>
                     <th class="no-break">Rating{{ rating_i() }}</th>
@@ -254,8 +256,7 @@
                     {# The round under the event: a prelim and a final are two
                        races at one distance, and the page used to print the
                        same "1600m" twice with no way to tell them apart. #}
-                    <td>{{ race.event|event_label }}{% set _rnd = race.round|round_label %}{% if _rnd and _rnd != (race.event|event_label) %}<span class="ev-round">{{ _rnd }}</span>{% endif %}</td>
-                    <td>{{ race.result }}</td>
+                    <td class="res-cell">{{ race.result }}<span class="res-ev">{{ race.event|event_label }}{% set _rnd = race.round|round_label %}{% if _rnd and _rnd != (race.event|event_label) %} · {{ _rnd }}{% endif %}</span></td>
                     {# Derived within the division, ties share a place. No
                        place for field events or DNS/DNF sentinel rows.
                        The team place always shows (owner's call:
@@ -304,9 +305,7 @@
                 {% endfor %}
             </tbody>
         </table>
-        {# The badges, spelled out once per table (survey, 2026-09-02; back
-           with all six badges, owner 2026-10-11) #}
-        <p class="flag-legend"><b>PR</b> personal record &middot; <b>SR</b> season record &middot; <b>CR</b> course record &middot; <b>CSR</b> course season record &middot; <b>R</b> rating record &middot; <b>RSR</b> rating season record &middot; &#9733; still standing</p>
+        
     </div>
 {% endmacro %}
 
@@ -513,6 +512,9 @@
     {% for (year, sport), season in xc_seasons %}
         {{ season_block(year, sport, season) }}
     {% endfor %}
+    {# the badges spelled out ONCE per tab, under its last season (owner,
+       2026-10-11: one legend under every season was clutter) #}
+    <p class="flag-legend"><b>PR</b> personal record &middot; <b>SR</b> season record &middot; <b>CR</b> course record &middot; <b>CSR</b> course season record &middot; <b>R</b> rating record &middot; <b>RSR</b> rating season record &middot; &#9733; still standing</p>
   </section>
   {% endif %}
 
@@ -530,6 +532,9 @@
     {% for (year, sport), season in tf_seasons %}
         {{ season_block(year, sport, season) }}
     {% endfor %}
+    {# the badges spelled out ONCE per tab, under its last season (owner,
+       2026-10-11: one legend under every season was clutter) #}
+    <p class="flag-legend"><b>PR</b> personal record &middot; <b>SR</b> season record &middot; <b>CR</b> course record &middot; <b>CSR</b> course season record &middot; <b>R</b> rating record &middot; <b>RSR</b> rating season record &middot; &#9733; still standing</p>
     {# the per-distance charts, moved from the sidebar into their sport
        (owner, 2026-10-10) #}
     {% if tf_dists %}

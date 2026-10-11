@@ -249,7 +249,11 @@ def test_all_six_record_badges_and_the_legend():
     assert "<th>Records</th>" in out and "<th>Course</th>" in out
     for css in ("flag--rpr", "flag--rsr", "flag--csr"):
         assert css in out
-    assert "flag-legend" in out
+    # the legend: once per tab under the last season, not under every one
+    assert "flag-legend" not in out
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "racecast", "templates", "athlete.html"), encoding="utf-8").read()
+    assert src.count('<p class="flag-legend">') == 2
 
 
 def test_course_cell_is_the_difficulty_percent_never_a_word():
