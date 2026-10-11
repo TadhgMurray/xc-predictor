@@ -3069,17 +3069,18 @@ function filterPredicted(input) {
 /* The side card: place, team, the five scoring places under the name, the
    points with the win chance under them -- race.html's team scores. Its
    rows are not race.html's lighting rows (no results table to light here),
-   so it is the plain card. Ten at most; the Teams tab has every one. */
+   so it is the plain card. Ten shown; the rest wait hidden for "All N
+   teams" (sideMoreTeams). */
 function teamSideCard(d) {
   const full = (d.teams || []).filter((t) => t.score !== null);
   if (!full.length) return "";
   if (d.scoring === "points") return pointsSideCard(d, full);
   const anySim = !!(d.sim && d.sim.available && full.some((t) => t.sim));
-  const rows = full.slice(0, 10).map((t, i) => {
+  const rows = full.map((t, i) => {
     const sp = (t.runners || []).slice(0, 5)
       .map((r) => `<i>${r.score_place || r.place}</i>`).join("");
     const win = anySim ? pct((t.sim || {}).p_win) : null;
-    return `<tr><td class="tp">${i + 1}</td><td class="tn">${
+    return `<tr${sideMoreRow(i)}><td class="tp">${i + 1}</td><td class="tn">${
       schoolCell(t.team, t.state, t.school_href, t.school_label, t.crest)
     }<span class="sp">${sp}</span></td><td class="n tpts">${t.score}${
       win ? `<small>${win} win</small>` : ""}</td></tr>`;
@@ -3091,20 +3092,43 @@ function teamSideCard(d) {
       <h2>Team scores <small>top 5 places</small></h2>
       <table class="rc-tscores rc-tscores-plain"><tbody>${rows}</tbody></table>
       <p class="rc-tip">${tip}</p>
-      <a class="rc-more" href="#teams" data-tab="teams">${
-        full.length > 10 ? `All ${full.length} teams and tools` : "All teams and tools"}</a>
+      ${sideMoreTeams(full.length)}
     </aside>`;
+}
+
+/* ★ EVERY TEAM, THE ELEVENTH ON HIDDEN: "All N teams" extends the side
+   card's list in place, as race.html's does (owner, 2026-10-07: "I want all
+   teams to extend the list on the right, not open the tab"). The same
+   markup and classes, so race.css dresses the button alike; the click is
+   the output listener's. */
+function sideMoreRow(i) {
+  return i >= 10 ? ` class="rc-team-more" hidden` : "";
+}
+
+function sideMoreTeams(n) {
+  return n > 10 ? `<button type="button" class="rc-more rc-more-teams"
+      data-all="All ${n} teams">All ${n} teams</button>` : "";
+}
+
+/* the click: race-page.js's toggle, held to the one card it sits in */
+function toggleMoreTeams(btn) {
+  const side = btn.closest(".rc-side");
+  const open = btn.getAttribute("aria-expanded") === "true";
+  side.querySelectorAll(".rc-tscores .rc-team-more")
+    .forEach((tr) => { tr.hidden = open; });
+  btn.setAttribute("aria-expanded", open ? "false" : "true");
+  btn.textContent = open ? btn.dataset.all : "Top 10 only";
 }
 
 /* The side card for a track event: the event points, most first, with the
    places that earned them under each school (eventPointsTable's rule). */
 function pointsSideCard(d, teams) {
   const anySim = !!(d.sim && d.sim.available && teams.some((t) => t.sim));
-  const rows = teams.slice(0, 10).map((t, i) => {
+  const rows = teams.map((t, i) => {
     const sp = (t.runners || []).filter((r) => r.points)
       .map((r) => `<i>${r.place}</i>`).join("");
     const win = anySim ? pct((t.sim || {}).p_win) : null;
-    return `<tr><td class="tp">${i + 1}</td><td class="tn">${
+    return `<tr${sideMoreRow(i)}><td class="tp">${i + 1}</td><td class="tn">${
       schoolCell(t.team, t.state, t.school_href, t.school_label, t.crest)
     }<span class="sp">${sp}</span></td><td class="n tpts">${
       esc(t.score_display ?? String(t.score))}${
@@ -3115,8 +3139,7 @@ function pointsSideCard(d, teams) {
       <table class="rc-tscores rc-tscores-plain"><tbody>${rows}</tbody></table>
       <p class="rc-tip">Most points wins: 10-8-6-5-4-3-2-1 to the first eight
         from a team.</p>
-      <a class="rc-more" href="#teams" data-tab="teams">${
-        teams.length > 10 ? `All ${teams.length} teams` : "All teams"}</a>
+      ${sideMoreTeams(teams.length)}
     </aside>`;
 }
 
@@ -3409,6 +3432,7 @@ $("output").addEventListener("click", (e) => {
   if (b.classList.contains("h2h-go")) headToHead(b);
   else if (b.classList.contains("bl-btn")) bestSeven(b);
   else if (b.classList.contains("bl-apply")) applyLineup(b);
+  else if (b.classList.contains("rc-more-teams")) toggleMoreTeams(b);
 });
 
 
