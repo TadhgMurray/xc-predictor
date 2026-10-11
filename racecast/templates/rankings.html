@@ -127,6 +127,10 @@
        shut by default, so on a phone the first ranked row is near the top.
      ! EVERY ID IS THE ONE IT WAS. rankings.js, the URL restore and every
        shared link read the same controls; only where they sit moved. #}
+  {# ★ ONE BOX AROUND EVERY FILTER (owner, 2026-10-11: "I want the
+       filters to be in a box"): the inline row and More filters together,
+       so the board starts where the box ends. #}
+  <div class="rk-filterbox">
   <div class="filters rk-quick" id="rk-quick">
 
     {# Single-value selects. Pool and sport are genuinely one-at-a-time: a
@@ -474,8 +478,12 @@
      bar into a wall, and most sessions use none of them. Open it and the
      group for the current pool is there; leave it shut and the bar is what
      it was. #}
-  <details class="units" id="units">
-    <summary>League &amp; division filters</summary>
+  {# ★ NO SECOND DISCLOSURE (owner, 2026-10-11: "more filters [should]
+     show the league and division filters so you don't need to press two
+     things, just one"). They open with More filters; rankings.js still
+     hides the whole group off the HS and college pools. #}
+  <div class="units" id="units">
+    <p class="units-h">League &amp; division</p>
   <div class="unit-row college-units" id="college-units">
     <div class="field not-courses">
       <label>Division</label>
@@ -525,9 +533,10 @@
     </div>
   </div>
 
-  </details>
+  </div>
     </div>
   </details>
+  </div>
 
   {# the board's own note, under the filters, whatever is open #}
   <div class="rk-notes">

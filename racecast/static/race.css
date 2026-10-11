@@ -504,7 +504,17 @@ main.rc.rankings-page .rk-more-on:not(:empty) { font-size: .75rem; font-weight: 
   border-radius: 999px; padding: .05rem .5rem; }
 main.rc.rankings-page .rk-more-in { margin-top: .7rem; }
 main.rc.rankings-page .rk-more-in .filters { margin: .4rem 0 0; }
-main.rc.rankings-page .rk-more-in details.units { margin-top: .6rem; }
+main.rc.rankings-page .rk-more-in .units { margin-top: .6rem; }
+/* the box round every filter (2026-10-11) */
+main.rc.rankings-page .rk-filterbox { border: 1px solid var(--line, #e5e7eb); border-radius: 6px; background: #fff;
+  padding: .85rem 1rem; margin: 0 0 1rem; }
+main.rc.rankings-page .rk-filterbox .rk-more { margin-top: .7rem; }
+/* inside the box, no box of its own; the league and division fields in a
+   row like the ones above them */
+main.rc.rankings-page .rk-filterbox .rk-more-in .filters { border: 0; padding: 0; background: none; }
+main.rc.rankings-page .rk-filterbox .unit-row:not(.hidden) { display: flex; flex-wrap: wrap; gap: .625rem; align-items: flex-end; }
+main.rc.rankings-page .rk-filterbox .units-h { margin: .9rem 0 .35rem; font-size: .72rem; font-weight: 600; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--muted); }
 main.rc.rankings-page .rk-intl { display: inline-flex; align-items: center; gap: .45rem; font-size: .92rem; cursor: pointer; margin: .1rem 0 .2rem; }
 main.rc.rankings-page .rk-notes { margin: .2rem 0 0; }
 @media (max-width: 760px) {

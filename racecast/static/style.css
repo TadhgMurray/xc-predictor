@@ -1311,7 +1311,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
    should have shown one or none. */
 .rankings-page .field.hidden,
 .rankings-page .unit-row.hidden,
-.rankings-page details.units.hidden { display: none; }
+.rankings-page .units.hidden { display: none; }
 
 /* A filter waiting on its parent: visibly inert, still readable, and the
    title says which parent. Not [disabled] -- the control is a div, not an
