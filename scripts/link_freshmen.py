@@ -476,6 +476,63 @@ def explainName(name, y, fresh, senior, pairs):
         print("      -> no high school senior by that name in the year before")
 
 
+# ★ ONE PAIR, EVERY GUARD (owner, 2026-10-11: /athlete/29603096 and
+#   /athlete/1009167329, "clearly the same person but I want it to be
+#   automatic"). --name needs the name and only says where it landed; this
+#   takes the two page ids and prints each check the pair has to pass, so
+#   the one that refused it is named. Read-only.
+def explainPair(cur, t_pid, a_pid, years, fresh_by, senior_by):
+    print(f"\n[pair] college page {t_pid}  <-  high school page {a_pid}")
+    for label, pid in (("college", t_pid), ("high school", a_pid)):
+        cur.execute("""
+            SELECT src, sport, min(date), max(date), count(*),
+                   array_agg(DISTINCT lower(btrim(grade))) FILTER (WHERE grade IS NOT NULL),
+                   mode() WITHIN GROUP (ORDER BY school),
+                   mode() WITHIN GROUP (ORDER BY btrim(athlete_name))
+            FROM (SELECT source AS src, 'XC' AS sport, date, grade, school, athlete_name
+                  FROM results WHERE person_id = %(p)s
+                  UNION ALL
+                  SELECT source, 'TF', date, grade, school, athlete_name
+                  FROM results_tf WHERE person_id = %(p)s) x
+            GROUP BY 1, 2 ORDER BY 1, 2""", {"p": pid})
+        rows = cur.fetchall()
+        cur.execute("""SELECT concat_ws(' ', btrim(first_name), btrim(last_name)), gender
+                       FROM athletes WHERE athlete_id = %s OR person_id = %s LIMIT 1""",
+                    (pid, pid))
+        prof = cur.fetchone()
+        print(f"  {label} page {pid}: profile name {prof[0] if prof else '(no athletes row)'!r}"
+              f", gender {(prof[1] if prof else None) or '?'}")
+        for src, sp, lo, hi, n, grades, sch, nm in rows:
+            print(f"    {src:<6} {sp}  {lo} .. {hi}  {n:>4} rows  school {sch!r}"
+                  f"  name on rows {nm!r}  grades {sorted(grades or [])}")
+    found = False
+    for y in years:
+        f = fresh_by.get(y, {}).get(f"p:{t_pid}")
+        a = senior_by.get(y, {}).get(a_pid)
+        if not f and not a:
+            continue
+        found = True
+        print(f"  academic year {y} (college first year) / {y - 1} (senior year):")
+        print(f"    college side: {'a first-year candidate, name ' + repr(f[0]) if f else 'NOT a first-year candidate this year'}")
+        print(f"    senior side:  {'a senior candidate, name ' + repr(a[0]) if a else 'NOT a senior of ' + str(y - 1)}")
+        if f and a:
+            kf, ka = normName(f[0]), normName(a[0])
+            print(f"    names: {kf!r} vs {ka!r} -> {'match' if kf == ka else 'DIFFERENT (refused)'}")
+            n_f = sum(1 for v in fresh_by[y].values() if normName(v[0]) == kf)
+            n_a = sum(1 for v in senior_by[y].values() if normName(v[0]) == ka)
+            print(f"    same-name first-years {n_f}, same-name seniors {n_a}"
+                  f" -> {'unique' if n_f == 1 and n_a == 1 else 'NOT UNIQUE (refused)'}")
+            print(f"    senior already has a college tfrrs row: {'YES (refused)' if a[3] else 'no'}")
+            print(f"    senior raced high school after: {'YES (refused)' if len(a) > 4 and a[4] else 'no'}")
+            gt, ga = _g(f[2]), _g(a[2])
+            print(f"    genders {gt or '?'} / {ga or '?'} -> {'DIFFER (refused)' if gt and ga and gt != ga else 'ok'}")
+    if not found:
+        print(f"  in none of the years {years} is either page a candidate.")
+        print("    college side needs: tfrrs rows only, a freshman grade (FR/13) at a"
+              " college, and no race before that season")
+        print("    high school side needs: an anet row graded 12/SR in the season before")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -486,6 +543,8 @@ def main():
                          "the last three)")
     ap.add_argument("--show", type=int, default=40)
     ap.add_argument("--name", help="explain this one name: is it a freshman, a senior, paired, or why not")
+    ap.add_argument("--pair", type=int, nargs=2, metavar=("COLLEGE_PAGE", "HS_PAGE"),
+                    help="explain why these two athlete pages were or were not joined")
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--undo", action="store_true")
     a = ap.parse_args()
@@ -512,6 +571,8 @@ def main():
                     print(f"    {nm:<28} {str(hs)[:30]:<30} -> {str(col)[:28]:<28}"
                           f"  tfrrs {t} -> anet person {s}")
                 all_pairs += pairs
+            if a.pair:
+                explainPair(cur, a.pair[0], a.pair[1], a.years, fresh_by, senior_by)
         conn.rollback()                       # the temp tables only
         # one tfrrs person, one target, across years (a person is a
         # first-year in exactly one year, so this only guards a re-run)
