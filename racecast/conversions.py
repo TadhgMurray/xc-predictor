@@ -1524,6 +1524,7 @@ def convert_spread(source, xc_targets, tf_targets):
             out.append({
                 "label": t.get("label"),
                 "time":  round(time, 2) if time else None,
+                "distance": t.get("distance"),
             })
         return out
 

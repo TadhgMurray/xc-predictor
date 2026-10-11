@@ -495,7 +495,8 @@
             .then(function (r) { return r.ok ? r.json() : null; })
             .catch(function () { return null; })
             .then(function (rows) {
-                var name = (rows && rows[0] && (rows[0].name || rows[0].label))
+                var name = host.getAttribute('data-prefill-name')
+                           || (rows && rows[0] && (rows[0].name || rows[0].label))
                            || ('athlete ' + pid);
                 if (typeSel) { typeSel.value = 'athlete'; paintFields(); }
                 chosenAthlete = { person_id: Number(pid), name: name };
@@ -521,7 +522,7 @@
             return;
         }
         lastBase = { pool: data.base_rating, hs: data.base_rating_hs,
-                     tail: '  ·  normalized 5K: ' + fmt(data.normalized_time) };
+                     tail: '' };   /* the engine's internal 5K normalised time is not a reader's number */
         paintBaseRating();
         fill('#xc-body', data.xc);
         fill('#tf-body', data.tf);
@@ -656,8 +657,13 @@
     function fill(bodySel, cells) {
         var rows = document.querySelectorAll(bodySel + ' tr');
         cells.forEach(function (c, i) {
-            if (rows[i]) rows[i].querySelector('.cell-time').textContent =
+            if (!rows[i]) return;
+            rows[i].querySelector('.cell-time').textContent =
                 c.time != null ? fmt(c.time) : ' - ';
+            /* the row is run at the distance the server converted it at:
+               a college source's courses at 8K / 6K, not the HS 5K */
+            var dc = rows[i].querySelector('.cell-dist');
+            if (dc && c.distance) dc.textContent = (Math.round(c.distance / 10) / 100) + 'k';
         });
     }
 

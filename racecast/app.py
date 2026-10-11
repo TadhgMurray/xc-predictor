@@ -9297,12 +9297,30 @@ def conversions_page():
     # ★ AND THEIR POOL (issue 49): the select defaulted to hs_m, so a college
     #   runner arriving from their page was converted as a high schooler.
     prefill_pool = _latestPool(prefill) if prefill else None
+    # ★ AND THEIR NAME (owner, 2026-10-11: the box read "athlete 29603086").
+    #   The script asked /search/api for it by person_id, which that API does
+    #   not answer; the page knows the name, so it carries it.
+    prefill_name = _personName(prefill) if prefill else None
     return render_template("conversions.html",
                            prefill_athlete=prefill,
                            prefill_pool=prefill_pool,
+                           prefill_name=prefill_name,
                            xc_courses=xc_courses,
                            tf_distances=_TF_DEFAULT_DISTANCES,
                            pools=_POOLS)
+
+
+def _personName(person_id):
+    """The athlete's name (athlete_named, the search index's source), or None."""
+    try:
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT name FROM athlete_named WHERE person_id = %s LIMIT 1", (person_id,))
+                row = cur.fetchone()
+                return row[0] if row and row[0] else None
+    except Exception as exc:                        # noqa: BLE001
+        print(f"athlete_name: {type(exc).__name__}: {exc}", flush=True)
+        return None
 
 
 def _latestPool(person_id):
@@ -9387,8 +9405,18 @@ def api_convert():
         # is absent too. Never assert 0.0 -- see the note above.
         return c.get("difficulty")
 
+    # ★ A COLLEGE OR MIDDLE SCHOOL SOURCE RUNS THE COURSES AT ITS OWN
+    #   DISTANCE (owner, 2026-10-11: a college man's row read "Detweiller
+    #   Park 4.8k"). The default list is the high school edition of each
+    #   course; another level's reader expects 8K / 6K / 3200 m there
+    #   (conversions.READER_XC_M), so the row is converted, and labelled, at
+    #   that distance.
+    _lv = (_cv._bare(pool) or "").split("_", 1)[0]
+    _own_xc = _cv.readerDistance(pool, "XC") if _lv != "hs" else None
     xc_targets = []
     for c in body.get("xc_courses", []):
+        if _own_xc:
+            c = dict(c, distance=_own_xc)
         xc_targets.append({
             "label":      c.get("label"),
             "distance":   c.get("distance", 5000.0),
