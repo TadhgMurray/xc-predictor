@@ -238,6 +238,19 @@
                title="How many of each team's runners to put in the race. Blank is seven; a conference meet often runs ten. Only seven score.">
       </label>
       </div>
+
+      {# ★ HOW EACH TEAM'S RUNNERS ARE CHOSEN (owner, 2026-10-11): every
+         squad member is predicted at this race and the fastest N run
+         (predict.byPrediction); the season rating is the old way. #}
+      <div class="pred-opt" id="pick-by-box">
+      <label for="pick-by">Pick each team's runners by</label>
+      <select id="pick-by">
+        <option value="predicted" selected>Predicted time in this race</option>
+        <option value="rating">Season rating</option>
+      </select>
+      <p class="hint">Predicted time runs every athlete on each squad at this
+        course and date, then keeps each team's fastest.</p>
+      </div>
       </div>
     </details>
     </div>

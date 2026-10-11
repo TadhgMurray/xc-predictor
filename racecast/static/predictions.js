@@ -39,6 +39,12 @@ const state = {
      it ran is the field that ran. The server (predict.squadCap) gives every
      school that brought a scoring team this many; scoring still takes seven. */
   perTeam: null,
+  /* ★ HOW EACH TEAM'S TOP N IS CHOSEN (owner, 2026-10-11: "predict best
+     athletes for every team, but you only present/show the top x"):
+     "predicted" orders every squad by its predicted time at this race
+     before the cut (predict.byPrediction); "rating" is the season rating,
+     the old way. Only "this year". */
+  pick: "predicted",
   // Which picked divisions are scored as ONE race. A partition of divs; see
   // normalizeGroups. The two presets are groupings, not a separate mode.
   groups: [],
@@ -440,7 +446,7 @@ function writeState() {
       divs: state.divs, raceMode: state.raceMode,
       groups: state.groups,
       coalesce: state.coalesce, course: state.course,
-      perTeam: state.perTeam,
+      perTeam: state.perTeam, pick: state.pick,
       athletes: state.athletes,
       date: $("t-date") ? $("t-date").value : null,
       labels: [..._divLabels], edits,
@@ -470,6 +476,8 @@ function showWhen(when) {
   // as it ran is the field that ran: no lineup size to choose
   const pt = $("per-team-box");
   if (pt) pt.hidden = when !== "thisyear";
+  const pb = $("pick-by-box");
+  if (pb) pb.hidden = when !== "thisyear";
 }
 
 /* "10" -> 10; blank, junk or 7 and under -> null (the rulebook seven).
@@ -484,6 +492,10 @@ function parsePerTeam(v) {
 function syncPerTeam() {
   const el = $("per-team");
   if (el) el.value = state.perTeam ? String(state.perTeam) : "";
+}
+function syncPick() {
+  const el = $("pick-by");
+  if (el) el.value = state.pick;
 }
 
 function showWho(who) {
@@ -542,6 +554,9 @@ async function restoreFromQuery(p, names) {
   if ($("coalesce")) $("coalesce").checked = state.coalesce;
   state.perTeam = parsePerTeam(p.get("per_team"));
   syncPerTeam();
+  // a link without pick= is a lineup chosen by rating (made before, or asked)
+  state.pick = p.get("pick") === "predicted" ? "predicted" : "rating";
+  syncPick();
   await loadRaces();
   // ! AFTER loadRaces, which re-proposes a date of its own
   const proposed = $("t-date") ? $("t-date").value : "";
@@ -663,6 +678,8 @@ function restoreState() {
   state.course = saved.course || null;
   state.perTeam = saved.perTeam || null;
   syncPerTeam();
+  state.pick = saved.pick === "rating" ? "rating" : "predicted";
+  syncPick();
   state.athletes = saved.athletes || [];
 
   resetEdits();
@@ -1811,18 +1828,23 @@ async function loadField() {
 function showBasis(blocks) {
   const el = $("mc-basis");
   if (!el) return;
-  const b = (blocks || activeBlocks())
-    .map((d) => (editsFor(d).field || {}).basis)
-    .find((x) => x && x.kind);
-  /* ! THE hidden ATTRIBUTE, NOT class="hidden": there is no global .hidden
-     in style.css (its own warning), and .predict2 .hint sets no display */
-  el.hidden = !b;
-  if (!b) { el.textContent = ""; return; }
-  el.textContent = b.kind === "last_edition"
+  const fields = (blocks || activeBlocks()).map((d) => editsFor(d).field || {});
+  const b = fields.map((f) => f.basis).find((x) => x && x.kind);
+  /* and a squad order by prediction that could not be had (byPrediction) */
+  const miss = state.when === "thisyear" && state.pick === "predicted"
+    && fields.find((f) => f.pick_note);
+  const parts = [];
+  if (b) parts.push(b.kind === "last_edition"
     ? `No entries posted yet \u2014 the field is the teams from the last `
       + `running of this meet (${fmtDate(b.date)}), with this season's squads. Edit it below.`
     : `No entries posted yet and no earlier edition to borrow teams from `
-      + `\u2014 add teams below.`;
+      + `\u2014 add teams below.`);
+  if (miss) parts.push(`Each team's runners are picked by season rating: `
+    + `${miss.pick_note}.`);
+  /* ! THE hidden ATTRIBUTE, NOT class="hidden": there is no global .hidden
+     in style.css (its own warning), and .predict2 .hint sets no display */
+  el.hidden = !parts.length;
+  el.textContent = parts.join(" ");
 }
 
 
@@ -1839,6 +1861,12 @@ async function fetchField(div) {
   if (state.meet.alt) q.set("alt", state.meet.alt);
   if (state.meet.src) q.set("src", state.meet.src);
   if (state.when === "thisyear" && state.perTeam) q.set("per_team", state.perTeam);
+  /* the squads ordered at this race: its date and course go with the ask */
+  if (state.when === "thisyear" && state.pick === "predicted") {
+    q.set("pick", "predicted");
+    if ($("t-date") && $("t-date").value) q.set("date", $("t-date").value);
+    if (state.course && !isTrack()) q.set("course", state.course);
+  }
   try {
     const res = await fetch("/api/predict/field?" + q.toString());
     const data = await readJson(res);
@@ -2265,6 +2293,8 @@ function buildQuery(div) {
   if (state.when === "thisyear" && state.course && !isTrack()) q.set("course", state.course);
   // the same lineup size the field on screen was read at (fetchField)
   if (state.when === "thisyear" && state.perTeam) q.set("per_team", state.perTeam);
+  // and how each team's top N was chosen (the field's own order)
+  if (state.when === "thisyear" && state.pick === "predicted") q.set("pick", "predicted");
 
   if (state.who === "individual") {
     // One parameter, one or many values -- the endpoint splits it.
@@ -2691,9 +2721,6 @@ function scoreSpreadTip(t, d, teams) {
 
 function teamScoreTable(d, opts) {
   if (d.scoring === "points") return eventPointsTable(d, opts);
-  /* ★ THE TOOLS RIDE ON THE PAGE'S OWN RESULT ONLY: a head-to-head drawn
-       under it is an answer, not a new place to start from. */
-  const tools = !(opts && opts.tools === false) && state.who === "team";
   const scored = (d.teams || []).some((t) => t.actual_score !== undefined
                                           && t.actual_score !== null);
   /* ⚠ AN INCOMPLETE TEAM IS NOT A ROW, IT IS A SENTENCE -- which is what
@@ -2768,6 +2795,31 @@ function teamScoreTable(d, opts) {
     d.sim && d.sim.available === false && d.sim.reason
       ? ` (No win chances: ${esc(d.sim.reason)})` : ""}</p>`;
 
+  const heading = opts && opts.title === "" ? ""
+    : `<h2>${esc((opts && opts.title) || "Predicted team scores")}</h2>`;
+  return `${heading}
+    <table>
+      <thead><tr>
+        <th>Place</th><th>Team</th><th>Points</th>
+        ${anySim ? `<th class="pwin" title="How often this team wins when the
+          race is run ${(d.sim || {}).draws || 0} times, drawing each runner
+          out of the band the model published for them.">Win</th>` : ""}
+        ${scored ? "<th>Actual</th>" : ""}
+        <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>${note}`;
+}
+
+/* ★ THE DUAL MEET AND BEST SEVEN, A TAB OF THEIR OWN (owner, 2026-10-11:
+     "what happened to h2h for teams and ... choose best x predictions wise
+     ... that whole card"). They sat under the Teams table, at the foot of
+     a tab that opens hidden, and read as gone. Same two questions, same
+     handlers (headToHead, bestSeven): the answer opens underneath. */
+function teamTools(d) {
+  if (d.scoring === "points" || state.who !== "team") return "";
+  const full = (d.teams || []).filter((t) => t.score !== null);
+  if (full.length < 2) return "";
   /* ★ TWO FOLLOW-UP QUESTIONS, ASKED IN WORDS UNDER THE TABLE (owner,
        2026-09-25: a checkbox column and a per-row "Best 7" button read as
        clutter nobody could decode). Each row is a sentence with the teams
@@ -2775,8 +2827,7 @@ function teamScoreTable(d, opts) {
   const opt = (sel) => full.map((t) => `<option value="${esc(t.team)}"${
     t.team === sel ? " selected" : ""}>${esc(t.school_label
       || schoolWithState(t.team, t.state))}</option>`).join("");
-  const toolbar = tools && full.length >= 2
-    ? `<div class="team-tools">
+  return `<div class="team-tools">
         <div class="tt-row">
           <span class="tt-q">Dual meet</span>
           <select class="h2h-a" aria-label="First team">${opt(full[0].team)}</select>
@@ -2791,23 +2842,9 @@ function teamScoreTable(d, opts) {
           <button type="button" class="bl-btn">Find</button>
           <span class="tt-hint">Which seven of this team's whole squad give it the best chance to win this race.</span>
         </div>
-      </div>`
-    : "";
+      </div>
+      <div class="team-tool-out"></div>`;
 
-  const heading = opts && opts.title === "" ? ""
-    : `<h2>${esc((opts && opts.title) || "Predicted team scores")}</h2>`;
-  return `${heading}
-    <table>
-      <thead><tr>
-        <th>Place</th><th>Team</th><th>Points</th>
-        ${anySim ? `<th class="pwin" title="How often this team wins when the
-          race is run ${(d.sim || {}).draws || 0} times, drawing each runner
-          out of the band the model published for them.">Win</th>` : ""}
-        ${scored ? "<th>Actual</th>" : ""}
-        <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>${note}${toolbar}${tools ? '<div class="team-tool-out"></div>' : ""}`;
 }
 
 /* ★ A TRACK EVENT'S TEAMS, BY EVENT POINTS (owner, 2026-10-10: "predictions
@@ -3028,12 +3065,16 @@ function renderTeam(d) {
   const nRes = (d.runners || []).length;
   const nTeams = (d.teams || []).filter((t) => t.score !== null).length;
   const side = teamSideCard(d);
+  // ★ THE TOOLS RIDE ON THE PAGE'S OWN RESULT ONLY: a head-to-head drawn
+  //   under it is an answer, not a new place to start from (teamTools)
+  const tools = teamTools(d);
   return `<div class="rc-w rc-grid${side ? "" : " rc-grid-one"}">
     <div class="rc-mainc">
       <div class="rc-tbar">
         <nav class="seg rc-tabs" role="tablist">
           <a class="seg-btn is-on" href="#results" data-tab="results">Predicted results<span class="n">${nRes}</span></a>
           <a class="seg-btn" href="#teams" data-tab="teams">Teams<span class="n">${nTeams}</span></a>
+          ${tools ? '<a class="seg-btn" href="#duals" data-tab="duals">Dual meet &middot; Best seven</a>' : ""}
         </nav>
         <div class="rc-tbar-end">${note}</div>
         <input class="rc-find pred-find" type="search" autocomplete="off"
@@ -3043,6 +3084,7 @@ function renderTeam(d) {
       <p class="meta pred-find-none" hidden></p>
       <section class="rc-panel" data-panel="results">${finishTable(d)}</section>
       <section class="rc-panel" data-panel="teams" hidden>${teamScoreTable(d)}</section>
+      ${tools ? `<section class="rc-panel" data-panel="duals" hidden>${tools}</section>` : ""}
     </div>${side}
   </div>`;
 }
@@ -3112,7 +3154,7 @@ function teamSideCard(d) {
   }).join("");
   const tip = (anySim
     ? `Win chances from ${(d.sim.draws || 0).toLocaleString()} simulated races. ` : "")
-    + "The full table, the dual meet and best seven are under Teams.";
+    + "The full table is under Teams; the dual meet and best seven have their own tab.";
   return `<aside class="rc-side">
       <h2>Team scores <small>top 5 places</small></h2>
       <table class="rc-tscores rc-tscores-plain"><tbody>${rows}</tbody></table>
@@ -4605,6 +4647,22 @@ document.addEventListener("DOMContentLoaded", restoreState);
     if (v === state.perTeam) { el.value = v ? String(v) : ""; return; }
     state.perTeam = v;
     el.value = v ? String(v) : "";
+    if (!state.meet) { saveState(); return; }
+    for (const e of _edits.values()) e.field = null;
+    clearOutput();
+    loadField().then(() => { renderSquadBoxes(); saveState(); });
+  });
+})();
+
+/* ★ PICK EACH TEAM'S RUNNERS BY: a new order is a new field, read again
+   like a new size above; the hand edits are kept. */
+(function () {
+  const el = $("pick-by");
+  if (!el) return;
+  el.addEventListener("change", () => {
+    const v = el.value === "rating" ? "rating" : "predicted";
+    if (v === state.pick) return;
+    state.pick = v;
     if (!state.meet) { saveState(); return; }
     for (const e of _edits.values()) e.field = null;
     clearOutput();

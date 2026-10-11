@@ -10953,6 +10953,9 @@ def _target(args):
             t["field"] = field
     # runners per team past the rulebook seven, every mode (predict.squadCap)
     t["per_team"] = _perTeam(args)
+    # each team's top N by predicted time, not rating (predict.byPrediction)
+    if (args.get("pick") or "").strip() == "predicted":
+        t["pick"] = "predicted"
     return t, None
 
 
@@ -10989,10 +10992,21 @@ def api_predict_field():
             src, alt_idx = _predictSourceFor(cur, int(meet), sport,
                                              request.args.get("alt"), div_n,
                                              request.args.get("src"))
+            # ★ EACH TEAM'S TOP N BY PREDICTED TIME (owner, 2026-10-11):
+            #   the same target the prediction will use, so the squads are
+            #   ordered at this race's course, distance and date
+            pick = (request.args.get("pick") or "").strip()
+            target = None
+            if pick == "predicted" and when == "thisyear":
+                a = request.args.to_dict()
+                a["mode"] = "rerun"
+                target, _err = _target(a)
+                if target is not None:
+                    target["source"], target["alt"] = src, alt_idx
             out = meetField(cur, int(meet), div_n,
                             sport, when=when, source=src,
                             per_team=_perTeam(request.args),
-                            event_id=event_n)
+                            event_id=event_n, pick=pick, target=target)
     out["alt"] = alt_idx
     return jsonify(out)
 

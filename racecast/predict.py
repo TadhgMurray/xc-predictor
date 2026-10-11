@@ -2814,8 +2814,48 @@ def isTrackEvent(target):
             and target.get("event_id") is not None)
 
 
+# ★ EACH TEAM'S TOP N BY PREDICTED TIME, NOT SEASON RATING (owner,
+#   2026-10-11: "predict best athletes for every team, but you only
+#   present/show the top x. This is highly necessary"). The squads come
+#   best-rating-first; this predicts every squad member at THIS race (its
+#   course, distance and date) and reorders each squad fastest first, so
+#   the cap that follows keeps the runners the model expects to be fastest
+#   here. The rest stay under `dropped`, as before.
+# ! THE MODEL OR NOTHING: an athlete with no prediction keeps their rating
+#   order behind everyone who has one, and a model that cannot run leaves
+#   every squad exactly as it came, with the reason.
+def byPrediction(cur, squads, schools, target):
+    """(squads, None) reordered fastest-predicted first, or (squads, reason)
+    unchanged when nothing could be predicted."""
+    ids = list(dict.fromkeys(e["person_id"] for sch in schools
+                             for e in squads.get(sch, [])))
+    if not ids:
+        return squads, None
+    try:
+        preds = _predictTimes(cur, ids, target)
+    except Exception as exc:                      # noqa: BLE001 -- keep the field
+        _rollback(cur)
+        return squads, f"no predictions ({type(exc).__name__})"
+    secs = {pid: p.get("seconds") for pid, p in zip(ids, preds or [])}
+    if not any(v is not None for v in secs.values()):
+        return squads, "no predictions for this field"
+    out = dict(squads)
+    for sch in schools:
+        sq = squads.get(sch)
+        if not sq:
+            continue
+        ranked = sorted(enumerate(sq), key=lambda ie: (
+            secs.get(ie[1]["person_id"]) is None,
+            secs.get(ie[1]["person_id"]) or 0.0, ie[0]))
+        out[sch] = [e for _i, e in ranked]
+        for e in out[sch]:
+            e["pred_seconds"] = secs.get(e["person_id"])
+    return out, None
+
+
 def meetField(cur, meet_id, div_id, sport, season_year=None,
-              when="thisyear", source=None, per_team=None, event_id=None):
+              when="thisyear", source=None, per_team=None, event_id=None,
+              pick=None, target=None):
     """The field for a re-run, grouped by school -- and WHEN decides who.
 
     ★ `source` IS WHICH MEET (owner, 2026-10-05). The anet and tfrrs ids
@@ -2911,6 +2951,11 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         if track_m:
             squads, track_rest = _tfEventSquads(cur, squads, track_m,
                                                 season_year)
+    # ★ AND ORDERED BY PREDICTED TIME WHEN ASKED (byPrediction), so the cap
+    #   below keeps each team's predicted-fastest
+    pick_note = None
+    if pick == "predicted" and target is not None:
+        squads, pick_note = byPrediction(cur, squads, at_meet, target)
     # ★ THE CAP IS PER SCHOOL, from what it brought to the original running.
     #   Everyone past the cap goes to `dropped`, not out of the field, so a
     #   school that really is fielding seven this year can be corrected by
@@ -2996,7 +3041,10 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     #   2026-10-06): the page says so under the meet, so nobody takes last
     #   year's teams for an entry list.
     out = {"season_year": season_year, "when": when, "teams": teams,
-           "gender": gender, "levels": sorted(levels), "basis": basis}
+           "gender": gender, "levels": sorted(levels), "basis": basis,
+           "pick": ("predicted" if pick == "predicted" and target is not None
+                    and not pick_note else "rating"),
+           "pick_note": pick_note}
     if track_m:
         # ★ THE PAGE'S PER-TEAM CONTROL READS "Entries per team" FOR TRACK,
         #   and says what the blank means: each school's own entry count
@@ -3731,6 +3779,9 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                                          ev, src)
                 if track_m:
                     squads, _rest = _tfEventSquads(cur, squads, track_m, year)
+            # ★ AND THE SAME ORDER AS meetField'S (byPrediction)
+            if target.get("pick") == "predicted":
+                squads, _note = byPrediction(cur, squads, list(squads), target)
             # ★ SAME PER-SCHOOL CAP AS meetField. These two must agree or the
             #   page shows one lineup and the model scores another.
             at_meet_counts = countsBySchool(originals)
