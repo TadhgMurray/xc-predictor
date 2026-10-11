@@ -235,6 +235,20 @@ WANTED = [
     ("meets_tf",        "location_id", "idx_meets_tf_location", None),
 
     ("results",         "meet_id", "idx_results_meet", None),
+    # ★ THE ATHLETE PAGE'S PLACES (owner, 2026-10-11: "it's not very good
+    #   if the pipeline makes athlete pages take 45 seconds"). Every race on
+    #   the page counts its place with a lateral over its own field
+    #   (app.get_races: meet_id, div_id -- and event_id on the track), and
+    #   the only index it had was meet_id: each race fetched EVERY row of
+    #   the meet, all divisions, from the heap. Warm, unnoticed; while the
+    #   pipeline's grade_sanity copies 225M rows and evicts the cache, a
+    #   70-race career was thousands of random reads -- 55 s measured,
+    #   17:27. Covering, so the count is an index-only read of one race's
+    #   entries, and the heap is touched only on pages not yet vacuumed.
+    ("results",         "meet_id", "idx_results_meet_div_place",
+     "(meet_id, div_id) INCLUDE (time_seconds, school)"),
+    ("results_tf",      "meet_id", "idx_results_tf_meet_ev_place",
+     "(meet_id, event_id, div_id) INCLUDE (time_seconds, school)"),
     # ★ THE DATA WATCHDOG'S SCOPE (2026-10-10): "rows scraped since the last
     #   run" (racecast/watchdog.py). BRIN, not B-tree: scraped_at follows
     #   the heap's append order, so a block-range summary of a few KB finds

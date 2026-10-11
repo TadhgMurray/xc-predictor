@@ -252,6 +252,16 @@ still overrides both ways.* Takes effect on the next solve. `d744086`
 
 ## 2. THE SITE — BOARDS
 
+- **⏳ Athlete pages took 55 s while the pipeline ran (owner, 2026-10-11, 17:27, six hits in one
+  minute).** It wasn't a lock. app.get_races counts every race's place with a lateral over its
+  field, and the only index that read could use was results(meet_id), so each race fetched every
+  row of the whole meet from the heap. grade_sanity copies about 225M rows with 8 workers, which
+  evicts the cache and saturates the disk, so those fetches went to disk.
+  - Fix: covering indexes, (meet_id, div_id) INCLUDE (time_seconds, school) on results and
+    (meet_id, event_id, div_id) INCLUDE (...) on results_tf (scripts/add_page_indexes.py). The
+    place count becomes an index-only read of the race's own entries.
+  - Build them after the pipeline finishes.
+
 - **⏳ Pros on the HS boys track board, 2024-25 (owner, 2026-10-11).** The owner's list of eight:
   six (Tostenson, Kitchen, Lutkenhaus, Powell, Boone, Hansen) are real high schoolers, each with
   12-18 races for their school that season, so they stay. Two are pros:
