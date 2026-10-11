@@ -586,7 +586,10 @@
     <tr class="is-rating"><td class="tn">Average rating</td>
       <td class="n tpts">{{ rv(bucket.avg_rating, bucket.avg_rating_hs) }}{{ fk_inline(bucket.avg_5k) }}</td></tr>
     {% endif %}
-    {% for event, race in bucket.events.items() %}
+    {# ! NO CROSS COUNTRY TIMES BY DISTANCE (owner, 2026-10-11: "cluttered").
+       A course's 4,747 m is not another's: the times do not compare, and the
+       best rating above already says which race was best. Track events do. #}
+    {% for event, race in (bucket.events.items() if sport == "TF" else []) %}
     <tr><td class="tn">{{ event|event_label }}</td>
       <td class="n tpts"><a href="#race-{{ race.result_id }}">{{ race.result }}</a></td></tr>
     {% endfor %}
@@ -600,14 +603,19 @@
     (#2026-TF) with the engine's season rating on the right; the best
     rating and each event's best ride on the sub-line.
   #}
-  <h2>Season bests <small>season rating</small></h2>
-  <table class="rc-tscores rc-tscores-plain">
+  {# ★ ONE LINE A SEASON (owner, 2026-10-11: "cluttered/hard to see"):
+     the season, its rating (the board's) with the 5K it is worth, and its
+     best race's rating -- the event-by-event bests are in the season's own
+     table, one click away. #}
+  <h2>Season bests</h2>
+  <table class="rc-tscores rc-tscores-plain ath-seasons">
+    <thead><tr><th>Season</th><th class="n">Rating</th><th class="n">Best</th></tr></thead>
     <tbody>
     {% for (year, sport), bests in season_bests %}
     <tr>
-      <td class="tn"><a href="#{{ year }}-{{ sport }}">{{ year }} {{ sport|sport_short }}</a>
-        <span class="sp">{% if bests.rating %}best <a href="#race-{{ bests.rating.result_id }}"><b>{{ rv(bests.rating.speed_rating, bests.rating.hs_rating) }}</b></a>{% endif %}{% for event, race in bests.events.items() %} · {{ event|event_label }} <a href="#race-{{ race.result_id }}">{{ race.result }}</a>{% endfor %}</span></td>
+      <td class="tn"><a href="#{{ year }}-{{ sport }}">{{ year }} {{ sport|sport_short }}</a></td>
       <td class="n tpts">{{ rv(bests.season_rating, bests.season_rating_hs) }}{{ fk_inline(five_k(bests.season_rating, bests.season_pool, sport, bests.season_rating_hs)) }}</td>
+      <td class="n">{% if bests.rating %}<a href="#race-{{ bests.rating.result_id }}">{{ rv(bests.rating.speed_rating, bests.rating.hs_rating) }}</a>{% else %} - {% endif %}</td>
     </tr>
     {% endfor %}
     </tbody>
