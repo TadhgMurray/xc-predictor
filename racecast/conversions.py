@@ -842,29 +842,32 @@ def _norm_from_athlete(person_id, pool, sport):
     row = None
     with getConn() as conn:
         with conn.cursor() as cur:
-            for p in candidates:
-                cur.execute("""
-                    SELECT speed_rating FROM athlete_ratings
-                    WHERE athlete_id = %(pid)s AND pool = %(pool)s
-                """, {"pid": person_id, "pool": p})
-                row = cur.fetchone()
-                if row and row[0]:
-                    break
-            # ★ THEN THE SEASON THE BOARDS SHOW (owner, 2026-10-11: Training
-            #   paces from an athlete page landed on "unresolvable source").
-            #   The page's pool is the athlete's latest season and its sport
-            #   the select's default, and athlete_ratings need not hold that
-            #   pair -- a track-only runner arrives with sport XC. The
-            #   latest season in this pool answers, the asked sport first.
+            # ★ THE SEASON THE BOARDS SHOW, FIRST (owner, 2026-10-11: a
+            #   24:15 college 8K man converted to 23:00 everywhere).
+            #   athlete_ratings holds one number per (person, pool) across a
+            #   career -- his college_m row read 120.5 while every race this
+            #   season rated 113-116 and his board number is 115.2. The
+            #   converter answers "what does he run NOW", which is the
+            #   latest season in this pool (athlete_season, the asked sport
+            #   first); athlete_ratings is only the fallback for a person
+            #   with no season row in the pool.
+            cur.execute("""
+                SELECT mean_rating FROM athlete_season
+                WHERE  person_id = %(pid)s AND split_part(pool, '|', 1) = %(pool)s
+                  AND  mean_rating IS NOT NULL
+                ORDER  BY year DESC, (sport = %(sport)s) DESC, last_race DESC NULLS LAST
+                LIMIT  1
+            """, {"pid": person_id, "pool": bare, "sport": sport or ""})
+            row = cur.fetchone()
             if not row or not row[0]:
-                cur.execute("""
-                    SELECT mean_rating FROM athlete_season
-                    WHERE  person_id = %(pid)s AND split_part(pool, '|', 1) = %(pool)s
-                      AND  mean_rating IS NOT NULL
-                    ORDER  BY (sport = %(sport)s) DESC, year DESC, last_race DESC NULLS LAST
-                    LIMIT  1
-                """, {"pid": person_id, "pool": bare, "sport": sport or ""})
-                row = cur.fetchone()
+                for p in candidates:
+                    cur.execute("""
+                        SELECT speed_rating FROM athlete_ratings
+                        WHERE athlete_id = %(pid)s AND pool = %(pool)s
+                    """, {"pid": person_id, "pool": p})
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        break
     if not row or not row[0]:
         return None
     return _norm_from_rating(row[0], bare, difficulty=0.0, sport=sport)
