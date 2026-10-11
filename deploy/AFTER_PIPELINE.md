@@ -16,3 +16,7 @@ Printed at the end of every deploy/run_pipeline.sh run. Delete an item once it's
 
 4. Link Connor Fanberg's HS and college pages:
        /srv/venv/bin/python scripts/link_freshmen.py --years 2026 --name "Connor Fanberg"
+
+5. Rebuild the search's athlete tables, then the search index, so college-only and newer athletes become searchable. Future runs do this themselves (step 13c0); this run started before that step existed.
+       /srv/venv/bin/python -u racecast/build_search_helpers.py
+       /srv/venv/bin/python -u racecast/search_index.py

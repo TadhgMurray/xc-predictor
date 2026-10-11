@@ -252,6 +252,17 @@ still overrides both ways.* Takes effect on the next solve. `d744086`
 
 ## 2. THE SITE — BOARDS
 
+- **⏳ Athletes missing from search (owner, 2026-10-11: /athlete/1009167329 "only the first one
+  shows up on search results").** search_index.py reads athlete_named / athlete_agg /
+  athlete_school, which were built once by hand and never rebuilt. Nobody created since could be
+  found: tfrrs people minted from 1,000,000,000 up (college-only pages), person_collision splits
+  from 2,000,000,000 up, and every athlete scraped since. The pages themselves were real; they just
+  weren't indexed.
+  - Fix: racecast/build_search_helpers.py, pipeline step 13c0, one scan of both results tables;
+    the name is the profile name, else the name on the result rows.
+  - The same person also has two pages, 29603096 (athletic.net) and 1009167329 (tfrrs). That's
+    the freshman-linking question again (see Connor Fanberg).
+
 - **⏳ Athlete pages took 55 s while the pipeline ran (owner, 2026-10-11, 17:27, six hits in one
   minute).** It wasn't a lock. app.get_races counts every race's place with a lateral over its
   field, and the only index that read could use was results(meet_id), so each race fetched every

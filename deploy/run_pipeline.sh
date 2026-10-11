@@ -1439,6 +1439,12 @@ step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 # athlete ids that vanished since 01a -> the id their rows went to (the
 # athlete page 301s them; see scripts/person_redirects.py)
 step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
+# ★ THE SEARCH INDEX'S THREE SOURCE TABLES, REBUILT FIRST (owner,
+#   2026-10-11: a college-only page "doesn't show up on search results").
+#   athlete_named / athlete_agg / athlete_school were built once by hand and
+#   never again, so nobody made since could be found. One scan of the
+#   results; racecast/build_search_helpers.py.
+step 13c0_search_helpers "$PY" -u racecast/build_search_helpers.py
 step 13c_search_index "$PY" -u racecast/search_index.py
 # the sitemap for Google: every ranked athlete, school, course and meet
 step 13d_sitemap      "$PY" -u racecast/build_sitemap.py
