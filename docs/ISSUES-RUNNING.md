@@ -5940,5 +5940,9 @@ Chromium against the old script (readout 15:00, label under the pointer
   resolves New Orleans' Jesuit to Portland's. Same family as task 16
   ("Jesuit (CA) team link goes to Jesuit (LA)"). Check athlete_season.state
   for his rows and school_identity's entry for "Jesuit".
-- His high-school page and his Johns Hopkins page were two pages; joined by
-  hand with scripts/merge_pages.py (new, 2026-10-11).
+- FIXED 2026-10-11: app._season_state takes the most-raced state the name
+  has a cluster in (his travel states AL/NC/TN have no Jesuit), not the
+  plain venue mode.
+- His high-school and Johns Hopkins pages were two pages: link_freshmen
+  refused him because his HS page has tfrrs rows ("Unattached" at open
+  college meets). Fixed: only a COLLEGE tfrrs row keeps a senior out.

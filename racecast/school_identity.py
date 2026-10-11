@@ -307,6 +307,12 @@ def teamState(school, pool=None, state=None):
     return _LABELS["map"].get(school) or state
 
 
+def hasCluster(school, state):
+    """Whether the name has a school (a cluster of its athletes) in `state`."""
+    clusters = _LABELS.get("clusters") or {}
+    return bool(state) and (clusters.get(school) or {}).get(state) is not None
+
+
 def schoolLabelFor(school, pool, state=None):
     """The label for a SEASON: a college-pooled season of a name the
     college directory knows gets the college's state ("Amherst (MA)"),

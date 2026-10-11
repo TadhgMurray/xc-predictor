@@ -3438,7 +3438,7 @@ def enrich_seasons(seasons, board_seasons=None):
             #   made every college season's "So" read "Grade 10" (owner,
             #   2026-09-06: "college season rows being numeric").
             "pool":   _season_pool(races),
-            "state":  _season_state(races),
+            "state":  _season_state(races, _season_school(races)),
         }
     return enriched
 
@@ -3451,10 +3451,26 @@ def _season_pool(races):
     return c.most_common(1)[0][0] if c else None
 
 
-def _season_state(races):
+def _season_state(races, school=None):
+    """The state a season's label resolves the school in.
+
+    ★ THE MOST-RACED STATE THE SCHOOL HAS A SCHOOL IN (owner, 2026-10-11:
+      Connor Fanberg's Jesuit (LA) seasons read "Jesuit (OR)"). A row's state
+      is the VENUE's; a travelling season's plain mode (Alabama, North
+      Carolina, Tennessee) is a state with no Jesuit at all, so the label
+      fell back to the name's biggest cluster, Portland's. The states are
+      tried most-raced first and the first one the name has a cluster in
+      wins -- a home state always is, a school races its league there --
+      else the plain mode, as before."""
     from collections import Counter
     c = Counter(r.get("state") for r in races if r.get("state"))
-    return c.most_common(1)[0][0] if c else None
+    if not c:
+        return None
+    if school:
+        for st, _n in c.most_common():
+            if school_identity.hasCluster(school, st):
+                return st
+    return c.most_common(1)[0][0]
 
 
 # The verdicts that mean grade_sanity looked and could not place the season.
