@@ -5930,3 +5930,15 @@ Chromium against the old script (readout 15:00, label under the pointer
   state, see whether it reads a precomputed table or races the field per
   request (EXPLAIN ANALYZE the query; scripts/slow_queries.py while it loads),
   and whether the Cloudflare board cache rule covers its URL.
+
+## 2026-10-11 -- Jesuit (LA) seasons labelled "Jesuit (OR)" on the athlete page
+
+- Connor Fanberg's page: the header says Jesuit (LA) (with LA D1 / Class 5A /
+  District 9 chips) but every season line under it reads "Jesuit (OR)".
+  The season meta goes through school_label_for(season.pool, season.state)
+  -- the season's own state, or the label cache's teamState for the pool,
+  resolves New Orleans' Jesuit to Portland's. Same family as task 16
+  ("Jesuit (CA) team link goes to Jesuit (LA)"). Check athlete_season.state
+  for his rows and school_identity's entry for "Jesuit".
+- His high-school page and his Johns Hopkins page were two pages; joined by
+  hand with scripts/merge_pages.py (new, 2026-10-11).
