@@ -137,11 +137,23 @@ STRAY, MINTED, CAREER = "stray", "minted", "career"
 SCHOOL_STOP = ("university", "univ", "college", "the", "of", "at", "and")
 
 
+# ★ A TIMER'S ABBREVIATION IS THE WORDS IT STANDS FOR (owner, 2026-10-11:
+#   an uploaded GHSA sectional wrote "Archer HS" and "Rockdale Co.", and every
+#   runner of those teams was refused as "a namesake at another school").
+#   Expanded, not dropped: "Archer HS" -> {archer, high, school} sits inside
+#   "Archer High School" and still does not match "Archer Middle School".
+SCHOOL_ABBR = {"hs": ("high", "school"), "ms": ("middle", "school"),
+               "co": ("county",), "cnty": ("county",)}
+
+
 def schoolWords(school):
     """'Middle Tennessee State University' -> {'middle', 'tennessee',
     'state'}; blank -> empty."""
     words = re.split(r"[^a-z0-9]+", str(school or "").lower())
-    return frozenset(w for w in words if w and w not in SCHOOL_STOP)
+    out = []
+    for w in words:
+        out.extend(SCHOOL_ABBR.get(w, (w,)))
+    return frozenset(w for w in out if w and w not in SCHOOL_STOP)
 
 
 def sameSchool(a, b):
