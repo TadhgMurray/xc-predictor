@@ -6030,3 +6030,37 @@ Chromium against the old script (readout 15:00, label under the pointer
 - ⏳ Needs a run. If either page still shows after the next run, the split
   came from somewhere other than unlink (diag_board_people --person prints
   the origin).
+
+## 2026-10-12 -- TODO (owner, later): run the TFRRS scraper from another computer
+
+- athletic.net stays off the table (scraping it from a second machine is
+  getting around their block). TFRRS and the other unblocked sources are fine.
+- The database stays closed to the internet; the laptop reaches it through
+  an SSH tunnel:
+  1. PowerShell window 1, leave it open:
+     `ssh -N -L 55432:127.0.0.1:5432 root@104.243.32.7`
+  2. PowerShell window 2, in the repo:
+     `pip install -r requirements-scrape.txt`
+     `$env:XCP_DB_HOST="127.0.0.1"; $env:XCP_DB_PORT="55432"; $env:XCP_DB_PASSWORD="<XCP_DB_PASSWORD from /etc/xc-predictor.env>"`
+     then the usual slow TFRRS command (tfrrs/driver). It writes straight to
+     the server's database through the tunnel; polite_stop still ends it at
+     the first block.
+
+## 2026-10-12 -- XC/TF level: the stated 6% checked against the data
+
+- 10c_gap (run 20261011_150217) interpolates each athlete's track level
+  across their XC season: D = -0.00405 in log-rating, i.e. the asserted
+  ln(1.06) = 0.0583 is within 0.4% of what the sandwiches measure. Per pool
+  -1.2% .. +1.1% (sd 0.9%): no evidence the number is wrong. Kept stated.
+
+## 2026-10-12 -- Solver prototype: abilities eliminated first (opt-in)
+
+- `XCP_SCHUR=1`: each athlete's block (ability, slope, sport offset) solved
+  exactly, CG on the rest. `XCP_PRECOND=arrow`: each course and its race
+  days inverted as one block. Same minimiser, same stopping rule (answers
+  agree to ~1e-8 on planted worlds; every joint test passes with both on).
+- Planted worlds (140-220k rows, slope on): 480-510 matvecs -> 240-270 with
+  both on. ⏳ Needs a server measurement before it becomes the default:
+  `--holdout-only --sample-pct 10` with XCP_HOLDOUT_VERBOSE=1, each setting.
+- diag_venue_days: Mt. SAC's cell is canonical 13433, whose name has no
+  "SAC"; the script now takes `--meet-id` (the race page's own join).

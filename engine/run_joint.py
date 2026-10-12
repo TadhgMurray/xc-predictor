@@ -1748,8 +1748,14 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     # the training design
     D_te, _, _ = buildDesign(cols, keep_te, **dict(dkw, season_tie=False))
     t0 = time.time()
+    # XCP_HOLDOUT_VERBOSE=1 prints the held-out solve's passes (cg
+    # iterations, seconds) -- the cheap way to time a solver option on a
+    # --sample-pct copy without a go-live (2026-10-12, XCP_SCHUR)
+    _hv = os.environ.get("XCP_HOLDOUT_VERBOSE", "0") == "1"
     out = js.solveJoint(y_all[keep_tr], design=D_tr, n_probe=0,
-                        **solveKwargs(args, athlete_pool, verbose=False))
+                        **solveKwargs(args, athlete_pool, verbose=_hv))
+    if _hv:
+        print(f"[joint] held-out solve: {time.time() - t0:.0f}s", flush=True)
     # the walk the held-out solve fitted, so the rung's log says what it tied
     if out.get("season_tie_lines"):
         print("[joint] season tie on the training rows (walk per transition "

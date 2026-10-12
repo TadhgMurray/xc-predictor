@@ -2051,11 +2051,16 @@ def _operatorDiag(athlete, cell, race, w, h, n_ath, n_cell, n_race,
 # Detail:    Jacobi preconditioner -- the operator's own diagonal, which is
 #            available in closed form and costs one bincount per block.
 def conjugateGradient(rhs, matvec, diag, tol=CG_TOL, max_iter=CG_MAX_ITER,
-                      x0=None):
+                      x0=None, precond=None):
+    """precond: r -> z, a symmetric positive preconditioner in place of
+    Jacobi (arrowPrecond); None is the diagonal, as always."""
     x = np.zeros_like(rhs) if x0 is None else x0.copy()
     r = rhs - matvec(x)
     inv_diag = 1.0 / np.maximum(diag, 1e-12)
-    z = inv_diag * r
+    if precond is None:
+        def precond(v):
+            return inv_diag * v
+    z = precond(r)
     p = z.copy()
     rz = float(r @ z)
     rhs_norm = max(float(np.linalg.norm(rhs)), 1e-30)
@@ -2094,11 +2099,267 @@ def conjugateGradient(rhs, matvec, diag, tol=CG_TOL, max_iter=CG_MAX_ITER,
             print(f"    [cg] {it + 1:4d}  rel {rel:.3e}", flush=True)
         if rel < tol:
             return x, it + 1
-        z = inv_diag * r
+        z = precond(r)
         rz_new = float(r @ z)
         p = z + (rz_new / rz) * p
         rz = rz_new
     return x, max_iter
+
+
+# ------------------------------------------------------------------ #
+# THE ABILITIES ELIMINATED FIRST (Schur complement), opt-in XCP_SCHUR=1
+# ------------------------------------------------------------------ #
+#
+# ★ WHY (owner, 2026-10-12: "prototype the first one"). The solve is ~1,200
+#   CG iterations a run, ~3 s each, and the athletes are most of the
+#   unknowns. An athlete's ability has no prior and touches only that
+#   athlete's own rows, so its block of the normal matrix, A11, is DIAGONAL
+#   (sum of the row weights) and can be inverted exactly. Eliminating it
+#   leaves the system in everything else -- courses, days, curve, levels:
+#
+#       S x2 = b2 - A21 A11^-1 b1,    S = A22 - A21 A11^-1 A12
+#       x1   = A11^-1 (b1 - A12 x2)
+#
+#   CG then runs on S, which is far smaller and better conditioned: the
+#   slow directions of the full system are mostly "an athlete's level
+#   against the courses they ran", and those are solved exactly here.
+#
+# ★ THE SAME ANSWER, THE SAME STOPPING RULE. After the back-substitution
+#   the full residual's athlete rows are exactly zero and the rest IS the
+#   reduced residual, so ||S x2 - b2'|| / ||b|| <= tol is the old test on
+#   the full system, not a looser one. A different route to the same
+#   minimiser: no accuracy is gained or lost at a given tolerance.
+#
+# ★ PER ATHLETE, A BLOCK: the ability plus the sport offset (beta) and the
+#   endurance slope (g) when the model carries them, 1x1 to 3x3, inverted
+#   exactly (_AthleteBlocks). The slope is on by default, so the diagonal
+#   case alone would never have run in production.
+# ! NOT WITH THE SEASON LINK OR TIE: those join one athlete-season to
+#   another, and the blocks stop being independent. Then None, and the
+#   caller runs the plain CG. The pipeline's flags (no link, no tie) qualify.
+# ! ONE MATVEC AND ONE GATHER PER ITERATION (A12 x2 by the rows'
+#   prediction without the ability, then A21 z + A22 x2), so it pays only
+#   if the iterations fall by more than that extra pass costs -- XCP_SCHUR
+#   is off by default until a server run measures it.
+def schurEligible(D, op):
+    """The athletes' unknowns -- ability, and the per-athlete sport offset
+    and endurance slope when they are in the model -- couple only to that
+    athlete's own rows, unless the season link or tie joins athletes."""
+    return (op.tie_w is None
+            and not (getattr(D, "has_link", False) and op.link_weight > 0))
+
+
+class _AthleteBlocks:
+    """Each athlete's small block of the normal matrix (ability, then beta
+    and g when present: 1x1 to 3x3) and its inverse, from the rows. The
+    eliminated unknowns are indexed by `idx1` into theta, athlete-major."""
+
+    def __init__(self, op, D):
+        w, na = op.w, D.n_ath
+        feats = [np.ones_like(w)]
+        ridge = [0.0]
+        offs = [D.o_a]
+        if getattr(D, "n_beta", 0):
+            feats.append(D.sc)
+            ridge.append(op.ridge)
+            offs.append(D.o_beta)
+        if getattr(D, "n_g", 0):
+            feats.append(D.lz)
+            ridge.append(op.ridge_slope)
+            offs.append(D.o_g)
+        m = len(feats)
+        self.m, self.feats, self.offs = m, feats, offs
+        B = np.empty((na, m, m))
+        for p_ in range(m):
+            for q_ in range(p_, m):
+                v = np.bincount(D.athlete, weights=w * feats[p_] * feats[q_], minlength=na)
+                B[:, p_, q_] = v
+                B[:, q_, p_] = v
+            B[:, p_, p_] += ridge[p_]
+        # an athlete with no weight at all keeps a tiny diagonal, as the
+        # Jacobi path's np.maximum(diag, 1e-12) does
+        for p_ in range(m):
+            B[:, p_, p_] = np.maximum(B[:, p_, p_], 1e-12)
+        self.Binv = B[:, 0, 0] ** -1 if m == 1 else np.linalg.inv(B)
+        self.idx1 = np.concatenate([np.arange(o, o + na) for o in offs])
+        mask = np.ones(D.n_total, dtype=bool)
+        mask[self.idx1] = False
+        self.idx2 = np.nonzero(mask)[0]
+
+    def solve(self, v1):
+        """Binv applied per athlete to a stacked (m * n_ath) vector in idx1
+        order."""
+        if self.m == 1:
+            return self.Binv * v1
+        na = v1.size // self.m
+        V = v1.reshape(self.m, na).T                     # (na, m)
+        return np.einsum("kij,kj->ki", self.Binv, V).T.reshape(-1)
+
+    def rowQuad(self, D):
+        """Per row, phi' Binv[athlete] phi: each row's share of the
+        elimination, for the preconditioner's diagonal and coupling."""
+        if self.m == 1:
+            return self.Binv[D.athlete]
+        P = np.stack(self.feats, axis=1)                 # (rows, m)
+        Bi = self.Binv[D.athlete]                        # (rows, m, m)
+        return np.einsum("ri,rij,rj->r", P, Bi, P)
+
+
+def schurDiag(op, D, diag, blk, rowq, idx2):
+    """A Jacobi preconditioner for S: diag(A22) less each row's share of the
+    elimination, (w h)^2 phi' Binv phi, on the course and day blocks. Exact
+    for a day (one row per athlete per race), a lower bound for a course
+    run twice by one athlete; the other blocks keep diag(A22)."""
+    w, h = op.w, op.h
+    full = diag.copy()
+    corr = (w * h) ** 2 * rowq
+    full[D.o_d:D.o_u] -= np.bincount(D.cell, weights=corr, minlength=D.n_cell)
+    full[D.o_u:D.o_mu] -= np.bincount(D.race, weights=corr, minlength=D.n_race)
+    # S is A22 less a positive term; the preconditioner must stay positive
+    full = np.maximum(full, np.maximum(diag * 1e-3, 1e-12))
+    return full[idx2]
+
+
+def schurConjugateGradient(op, D, rhs, diag, tol=CG_TOL, max_iter=CG_MAX_ITER,
+                           x0=None):
+    """(theta, iterations) by CG on the Schur complement, or None when the
+    athletes are coupled to each other (schurEligible)."""
+    if not schurEligible(D, op):
+        return None
+    n = rhs.size
+    blk = _AthleteBlocks(op, D)
+    idx1, idx2 = blk.idx1, blk.idx2
+    buf = np.zeros(n)
+
+    def A(x1, x2):
+        buf[idx1] = x1
+        buf[idx2] = x2
+        return op.matvec(buf)
+
+    def A12(x2):
+        # the athletes' share of the rows' prediction WITHOUT their own
+        # unknowns -- one gather and a bincount per feature, not a matvec
+        buf[idx1] = 0.0
+        buf[idx2] = x2
+        wp = op.w * rowPrediction(D.unpack(buf), D, op.h, op.amp)
+        return np.concatenate([np.bincount(D.athlete, weights=wp * f, minlength=D.n_ath)
+                               for f in blk.feats])
+
+    zero2 = np.zeros(idx2.size)
+    b1, b2 = rhs[idx1], rhs[idx2]
+    b2r = b2 - A(blk.solve(b1), zero2)[idx2]
+
+    def S(x2):
+        return A(-blk.solve(A12(x2)), x2)[idx2]
+
+    x = np.zeros(idx2.size) if x0 is None else x0[idx2].copy()
+    r = b2r - S(x)
+    rowq = blk.rowQuad(D)
+    sdiag = schurDiag(op, D, diag, blk, rowq, idx2)
+    if precondKind() == "arrow":
+        # the arrowhead on the reduced system, applied through a full-length
+        # vector so the course and day blocks keep their theta offsets
+        full_d = np.zeros(n)
+        full_d[idx2] = sdiag
+        full_apply = arrowPrecond(D, full_d, 0, op.w, op.h, cellOfRace(D),
+                                  rowq=rowq)
+        tmp = np.zeros(n)
+
+        def precond(v):
+            tmp[idx2] = v
+            return full_apply(tmp)[idx2]
+    else:
+        _inv = 1.0 / sdiag
+
+        def precond(v):
+            return _inv * v
+    z = precond(r)
+    p = z.copy()
+    rz = float(r @ z)
+    # the FULL system's norm: the stopping rule is the plain CG's own
+    rhs_norm = max(float(np.linalg.norm(rhs)), 1e-30)
+    trace = int(os.environ.get("XCP_CG_TRACE", "0"))
+    it_done = max_iter
+    if float(np.linalg.norm(r)) / rhs_norm < tol:
+        it_done = 0
+    else:
+        for it in range(max_iter):
+            Sp = S(p)
+            pSp = float(p @ Sp)
+            if pSp <= 0:
+                it_done = it + 1
+                break
+            alpha = rz / pSp
+            x += alpha * p
+            r -= alpha * Sp
+            rel = float(np.linalg.norm(r)) / rhs_norm
+            if trace and (it % trace == 0):
+                print(f"    [schur] it {it:4d}  rel {rel:.3e}", flush=True)
+            if rel < tol:
+                it_done = it + 1
+                break
+            z = precond(r)
+            rz_new = float(r @ z)
+            p = z + (rz_new / rz) * p
+            rz = rz_new
+    out = np.empty(n)
+    out[idx2] = x
+    out[idx1] = blk.solve(b1 - A12(x))
+    return out, it_done
+
+
+def arrowPrecond(D, diag_sub, off, w, h, cell_of, rowq=None):
+    """r -> z: each course and its race days solved EXACTLY as one arrowhead
+    block, every other unknown by its diagonal.
+
+    ★ THE SLOW DIRECTION IS A COURSE AGAINST ITS OWN DAYS. Inside a cell,
+      d and every u of its races load on the same rows with the same h, so
+      only the two priors tell them apart (nestedPosteriorVar's arrowhead);
+      a Jacobi preconditioner sees each alone and CG spends its iterations
+      walking that ridge. The block's inverse is closed form:
+
+          q_j = b_j / U_j,   s_c = C_c - sum_j b_j q_j
+          x_c = (r_c - sum_j q_j r_j) / s_c,   x_j = (r_j - b_j x_c) / U_j
+
+      C, U the diagonal entries, b_j the course-day coupling (the race's
+      rows on its own cell, sum w h^2).
+    diag_sub: the diagonal of the system CG runs on, starting at the
+    theta offset `off` (0 for the full system, n_ath for the Schur one);
+    rowq given = the Schur system, whose coupling loses each row's
+    (w h)^2 phi' Binv phi like its diagonal (schurDiag)."""
+    wh2 = w * h * h
+    on_own = D.cell == cell_of[D.race]
+    coup = wh2 * on_own
+    if rowq is not None:
+        coup = coup - (w * h) ** 2 * rowq * on_own
+    b = np.bincount(D.race, weights=coup, minlength=D.n_race)
+    cs, ce = D.o_d - off, D.o_u - off
+    us, ue = D.o_u - off, D.o_mu - off
+    C = diag_sub[cs:ce]
+    U = np.maximum(diag_sub[us:ue], 1e-12)
+    q = b / U
+    s_c = C - np.bincount(cell_of, weights=b * q, minlength=D.n_cell)
+    # a positive block whatever the approximation: never below a small
+    # share of the course's own diagonal
+    s_c = np.maximum(s_c, np.maximum(C * 1e-3, 1e-12))
+    inv_all = 1.0 / np.maximum(diag_sub, 1e-12)
+
+    def apply(r):
+        z = inv_all * r
+        rc, ru = r[cs:ce], r[us:ue]
+        xc = (rc - np.bincount(cell_of, weights=q * ru, minlength=D.n_cell)) / s_c
+        z[cs:ce] = xc
+        z[us:ue] = (ru - b * xc[cell_of]) / U
+        return z
+    return apply
+
+
+def precondKind():
+    return os.environ.get("XCP_PRECOND", "jacobi").strip().lower()
+
+
+def schurOn():
+    return os.environ.get("XCP_SCHUR", "0").strip().lower() in ("1", "true", "on", "yes")
 
 
 # ------------------------------------------------------------------ #
@@ -3470,9 +3731,18 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         div_used = div_last
         t_solve = time.time()
         # the last outer carries the published numbers; see CG_TOL_OUTER
-        theta, iters = conjugateGradient(
-            op.rhs(y_fit), op.matvec, diag, max_iter=cg_max_iter, x0=theta,
-            tol=CG_TOL if outer == n_outer - 1 else CG_TOL_OUTER)
+        _tol = CG_TOL if outer == n_outer - 1 else CG_TOL_OUTER
+        _rhs = op.rhs(y_fit)
+        _sch = (schurConjugateGradient(op, D, _rhs, diag, tol=_tol,
+                                       max_iter=cg_max_iter, x0=theta)
+                if schurOn() else None)
+        if _sch is not None:
+            theta, iters = _sch
+        else:
+            theta, iters = conjugateGradient(
+                _rhs, op.matvec, diag, max_iter=cg_max_iter, x0=theta, tol=_tol,
+                precond=(arrowPrecond(D, diag, 0, w, h, cellOfRace(D))
+                         if precondKind() == "arrow" else None))
         b = D.unpack(theta)
         bbar = 0.0
         if D.n_beta:

@@ -60,6 +60,11 @@ def main():
                     help="part of a meet NAME run there, e.g. 'Mt. SAC Invitational': "
                          "the courses its rows were run on are used (the engine's "
                          "course name is often not the one people say)")
+    ap.add_argument("--meet-id", type=int, default=None,
+                    help="an XC meet id off a race page URL (/race/xc/<meet_id>/..): "
+                         "the course cells its divisions resolve to, the race page's "
+                         "own join -- no name to guess (owner, 2026-10-12: Mt. SAC's "
+                         "cell, canonical 13433, is not named 'SAC')")
     ap.add_argument("--since", default="1900-01-01")
     a = ap.parse_args()
     # ! PUNCTUATION-BLIND (owner's first run: "no race_day_effect rows
@@ -93,6 +98,18 @@ def main():
                 cur.execute("""SELECT canonical_id, course_name FROM course_canonical
                                WHERE course_name = ANY(%s)""", ([g[0] for g in got],))
                 canon += cur.fetchall()
+        if a.meet_id is not None:
+            cur.execute("""
+                SELECT DISTINCT cc.canonical_id, cc.course_name
+                FROM   meets m
+                JOIN   course_canonical cc
+                       ON cc.course_name = m.course_name
+                      AND round(cc.gps_lat::numeric, 5) = round(m.gps_lat::numeric, 5)
+                      AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
+                WHERE  m.meet_id = %s""", (a.meet_id,))
+            got = cur.fetchall()
+            print(f"meet {a.meet_id} runs on: {got}")
+            canon += got
         cids = [c for c, _n in canon]
         names = sorted({n for _c, n in canon if n})
         print(f"courses matching {a.course!r}: {len(cids)} canonical ids, names {names[:8]}")
