@@ -488,12 +488,21 @@
     rows.forEach(function (tr) { var g = gradeOf(tr); if (g) seen[g] = true; });
     var grades = Object.keys(seen);
     if (grades.length < 2) return;
+    // ! SCHOOL ORDER, NOT THE ALPHABET: grades 1-12, then the college
+    //   classes FR SO JR SR (grade_label writes them FR-1 .. SR-4, or a
+    //   bare word), then "Class of" years youngest first, then the rest
+    var CLS = { FR: 13, SO: 14, JR: 15, SR: 16 };
+    function rank(g) {
+      if (/^\d+$/.test(g)) return [0, parseInt(g, 10)];
+      var m = /^(FR|SO|JR|SR)(?:-?(\d))?/i.exec(g);
+      if (m) return [0, CLS[m[1].toUpperCase()] + (m[2] ? parseInt(m[2], 10) / 10 : 0)];
+      m = /^Class of (\d{4})$/.exec(g);
+      if (m) return [1, -parseInt(m[1], 10)];
+      return [2, 0];
+    }
     grades.sort(function (a, b) {
-      var na = parseInt(a, 10), nb = parseInt(b, 10);
-      if (!isNaN(na) && !isNaN(nb)) return na - nb;
-      if (!isNaN(na)) return -1;
-      if (!isNaN(nb)) return 1;
-      return a < b ? -1 : a > b ? 1 : 0;
+      var ra = rank(a), rb = rank(b);
+      return ra[0] - rb[0] || ra[1] - rb[1] || (a < b ? -1 : a > b ? 1 : 0);
     });
     var sel = document.createElement("select");
     sel.className = "rc-grade";
