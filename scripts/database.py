@@ -2189,6 +2189,23 @@ def saveResultsBulk(conn, results: list):
             _feedName(resultData),         # the feed's name, on the row (see _feedName)
         ))
     
+    # ★ ONE ROW PER result_id (owner, 2026-10-12, the side-computer anet run:
+    #   "save failed ... ON CONFLICT DO UPDATE"). GetAllResultsData can list
+    #   one result twice in a meet -- under two divisions -- and Postgres
+    #   refuses an upsert batch that touches the same row twice ("command
+    #   cannot affect row a second time"), failing the WHOLE meet. The track
+    #   saver has always collapsed by result_id; this is the same, keeping
+    #   the copy that carries a division (div_id, index 3) over one without.
+    deduped = {}
+    for row in rows:
+        rid = row[0]
+        if rid is None:
+            continue
+        have = deduped.get(rid)
+        if have is None or (have[3] is None and row[3] is not None):
+            deduped[rid] = row
+    rows = list(deduped.values())
+
     # Insert every athlete this batch references, under the SAME school the
     # result carries. An athlete can have multiple schools across years (e.g.
     # middle school then high school) - each (athlete_id, school) is its own
