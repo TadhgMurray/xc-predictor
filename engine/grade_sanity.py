@@ -1714,6 +1714,12 @@ def eliteFieldSeasons(cur):
                 SELECT r.* FROM {table} r
                 WHERE  r.person_id IS NOT NULL AND r.date IS NOT NULL
                   AND  r.time_seconds > 0 {relay}
+                  -- a plain regex first: every grade normGrade reads as 1-8
+                  -- or '7-8' starts with an optional run of zeros and a
+                  -- digit 1-8 followed by a non-digit (schoolGrade's own
+                  -- pattern, bandGrade's '7-8'), so the function stack
+                  -- below runs only on those rows, not on every 9-12
+                  AND  r.grade ~ '^\s*0*[1-8]([^0-9]|$)'
                   AND  gradeLevel(normGrade(r.grade)) IN ('elem', 'ms')
                   -- ★ a national team's grade is not one (ntschool)
                   AND  NOT EXISTS (SELECT 1 FROM {_NT_TABLE} nt
