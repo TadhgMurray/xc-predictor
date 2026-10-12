@@ -2352,6 +2352,65 @@ def _clean(value):
 #                    (result, meet_info, div_id, event_id, event_short,
 #                     is_relay, school, is_field).
 # Output: None.
+# ★ THE TABLE'S OTHER UNIQUE KEY (owner, 2026-10-12, the side-computer anet
+#   run: TF meets 675219 and 675206 failed on idx_results_tf_nodup). Besides
+#   result_id, results_tf is unique on (meet_id, div_id, event_id, person_id,
+#   round, round(time_seconds, 1)) -- one person's one run in one round. When
+#   athletic.net re-issues a result under a NEW IDResult, ON CONFLICT
+#   (result_id) does not see it, the insert collides on that index, and the
+#   whole meet fails. Such a row is the same run already stored: it is
+#   skipped, as is a second row with the same key in one batch. A key with a
+#   NULL in it never collides (Postgres treats NULLs as distinct), so only
+#   complete keys are checked. Row layout: saveResultsTFBulk's insert list.
+_TF_RID, _TF_MEET, _TF_DIV, _TF_EVENT, _TF_TIME, _TF_ROUND, _TF_PERSON = 0, 2, 3, 4, 6, 18, 31
+
+
+def _tenth(t):
+    """time_seconds rounded as Postgres's round(x::numeric, 1) does: half
+    away from zero, on the float's shortest decimal form."""
+    from decimal import Decimal, ROUND_HALF_UP
+    return str(Decimal(repr(float(t))).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+def _nodupKey(row):
+    vals = (row[_TF_MEET], row[_TF_DIV], row[_TF_EVENT], row[_TF_PERSON],
+            row[_TF_ROUND], row[_TF_TIME])
+    if any(v is None for v in vals):
+        return None
+    return vals[:5] + (_tenth(vals[5]),)
+
+
+def _dropNodupTwins(conn, rows):
+    """rows less those whose idx_results_tf_nodup key another result_id
+    already holds, in the table or earlier in this batch."""
+    keyed = [(r, _nodupKey(r)) for r in rows]
+    meets = sorted({k[0] for _r, k in keyed if k})
+    taken = {}
+    if meets:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT result_id, meet_id, div_id, event_id, person_id, round,
+                   round(time_seconds::numeric, 1)::text
+            FROM   results_tf
+            WHERE  meet_id = ANY(%s) AND person_id IS NOT NULL
+              AND  time_seconds IS NOT NULL AND round IS NOT NULL""", (meets,))
+        for rid, m, d, e, p, rnd, t in cur.fetchall():
+            taken[(m, d, e, p, rnd, t)] = rid
+    out, dropped = [], 0
+    for row, key in keyed:
+        if key is not None:
+            have = taken.get(key)
+            if have is not None and have != row[_TF_RID]:
+                dropped += 1
+                continue
+            taken[key] = row[_TF_RID]
+        out.append(row)
+    if dropped:
+        print(f"[DB] results_tf: {dropped} row(s) skipped -- the same run is "
+              f"already stored under another result id")
+    return out
+
+
 def saveResultsTFBulk(conn, results: list):
 
     if not results:
@@ -2445,6 +2504,7 @@ def saveResultsTFBulk(conn, results: list):
     for row in rows:
         deduped[row[0]] = row
     rows = list(deduped.values())
+    rows = _dropNodupTwins(conn, rows)
  
     cursor = conn.cursor()
     psycopg2.extras.execute_values(cursor, """
