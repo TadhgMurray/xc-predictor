@@ -54,12 +54,15 @@ main.rc .rc-grade + .rc-find { margin-left: .5rem; }
    with everything"): the finder and the grade select take the tab row's
    height and the tabs' corners instead of their own 31-33px boxes, and sit
    as a pair (the bar's 1rem gap less half). */
-main.rc .rc-tbar > .rc-grade, main.rc .rc-tbar > .rc-find,
-main.rc .rc-tbar > .rc-findwrap { align-self: stretch; }
+main.rc .rc-tbar > .rc-find, main.rc .rc-tbar > .rc-findwrap,
+main.rc .rc-tbar > .rc-findgroup { align-self: stretch; }
 main.rc .rc-tbar .rc-find, main.rc .rc-tbar .rc-grade { border-radius: 6px; font-size: .875rem; box-sizing: border-box; }
 main.rc .rc-tbar .rc-findwrap .rc-find { height: 100%; }
-main.rc .rc-tbar > .rc-grade + .rc-find,
-main.rc .rc-tbar > .rc-grade + .rc-findwrap { margin-left: -.5rem; }
+/* the grade select and the finder as ONE unit (race-page.js): they wrap
+   together and the group holds the row's right edge (owner, 2026-10-12) */
+main.rc .rc-findgroup { display: flex; gap: .5rem; margin-left: auto; }
+main.rc .rc-findgroup > .rc-grade, main.rc .rc-findgroup > .rc-find,
+main.rc .rc-findgroup > .rc-findwrap { margin-left: 0; }
 main.rc.rc-js .rc-panel[hidden] { display: none; }
 main.rc .toggle-row { margin: .2rem 0 .6rem; }
 
@@ -131,8 +134,9 @@ main.rc .page-report { margin-top: 1.4rem; }
 @media (max-width: 760px) {
   main.rc .rc-hgrid, main.rc .rc-grid { grid-template-columns: minmax(0, 1fr); }
   main.rc .rc-find { width: 100%; margin-left: 0; }
-  main.rc .rc-grade, main.rc .rc-grade + .rc-find,
-  main.rc .rc-tbar > .rc-grade + .rc-find, main.rc .rc-tbar > .rc-grade + .rc-findwrap { width: 100%; margin-left: 0; }
+  main.rc .rc-grade, main.rc .rc-grade + .rc-find { width: 100%; margin-left: 0; }
+  main.rc .rc-findgroup { flex-direction: column; width: 100%; margin-left: 0; }
+  main.rc .rc-findgroup .rc-findwrap, main.rc .rc-findgroup .rc-findwrap .rc-find { width: 100%; }
   main.rc .rc-wide { display: none; }
   main.rc .rc-subline { display: block; font-size: .8rem; line-height: 1.3; color: var(--muted); margin-top: .1rem; }
   main.rc .rc-subline img.school-mark { width: 15px; height: 15px; margin-right: .3rem; vertical-align: -3px; }

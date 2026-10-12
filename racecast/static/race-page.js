@@ -511,8 +511,18 @@
       return '<option value="' + g.replace(/"/g, "&quot;") + '">' +
              (/^\d+$/.test(g) ? "Grade " + g : g) + "</option>";
     }).join("");
-    if (finder && finder.parentNode) finder.parentNode.insertBefore(sel, finder);
-    else {
+    // ★ THE PAIR IS ONE UNIT (owner, 2026-10-12: "you moved it too far
+    //   left"): side by side, the finder wrapped ALONE onto the next line at
+    //   laptop widths and sat 8px left of the table. Grouped, the two wrap
+    //   together and the group keeps the row's right edge.
+    var target = finder && (finder.closest(".rc-findwrap") || finder);
+    if (target && target.parentNode) {
+      var group = document.createElement("div");
+      group.className = "rc-findgroup";
+      target.parentNode.insertBefore(group, target);
+      group.appendChild(sel);
+      group.appendChild(target);
+    } else {
       var tbl = main.querySelector(".rc-table");
       if (!tbl) return;
       tbl.parentNode.insertBefore(sel, tbl);
