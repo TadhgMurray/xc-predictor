@@ -6080,3 +6080,15 @@ Chromium against the old script (readout 15:00, label under the pointer
 - FIXED: VPNRotatorWindows never set `disabled`, so NO_VPN=1 crashed every
   session on Windows; tests/test_rotator_surface now checks every attribute
   a rotator reads is set somewhere in its class.
+
+## 2026-10-12 -- Solver benchmark on the server (10% sample, 3 outers)
+
+- plain CG 803 s (425/300/309 iters); arrow preconditioner 777 s (-3%);
+  athletes eliminated + arrow 905 s (+13%): 30% fewer iterations, but each
+  costs ~1.7x. XCP_SCHUR stays off; XCP_PRECOND=arrow is optional (3%).
+- ⚠ NO "[joint] kernels:" LINE in any run: joint_kernels prints one either
+  way when it is enabled, so the fused numba matvec is NOT running -- numba
+  missing from /srv/venv (requirements-engine.txt lists it) or
+  XCP_JOINT_KERNELS=0. Every solve has been on the numpy path. Check:
+  `/srv/venv/bin/python -c "import numba; print(numba.__version__)"`,
+  `grep XCP_JOINT_KERNELS /etc/xc-predictor.env`.
