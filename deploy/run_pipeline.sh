@@ -1167,6 +1167,15 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
     1) LADDER_WHY="XCP_LADDER=1" ;;
     *) if [ "$(cat "$LADDER_STAMP_FILE" 2>/dev/null)" = "$LADDER_STAMP" ]; then
          LADDER_RUN=0; LADDER_WHY="engine, settings and ladder unchanged since its last run"
+       # ★ AT MOST WEEKLY (owner, 2026-10-12: "speed up other parts of the
+       #   pipeline too"; 08b took 12,305 s on 20261011). Any edit to an
+       #   engine file -- a grade rule -- changed the stamp and bought a
+       #   three-hour report. It is a report the owner reads to choose a
+       #   switch, not something a run uses; a week-old one answers the
+       #   same question. XCP_LADDER_MIN_DAYS sets the gap, XCP_LADDER=1
+       #   forces a run.
+       elif [ -f "$LADDER_STAMP_FILE" ] && [ -n "$(find "$LADDER_STAMP_FILE" -mtime -"${XCP_LADDER_MIN_DAYS:-7}" 2>/dev/null)" ]; then
+         LADDER_RUN=0; LADDER_WHY="last run under ${XCP_LADDER_MIN_DAYS:-7} days ago (weekly at most)"
        else
          LADDER_WHY="the model changed since its last run"
        fi ;;
