@@ -2042,6 +2042,18 @@ def saveAthletesBulk(conn, athletes: list):
             cleaned.append(_clean(v))
         rows.append(tuple(cleaned))
 
+    # ★ ONE ROW PER (athlete_id, school), the conflict key (owner,
+    #   2026-10-12, TF meet 676569: "ON CONFLICT DO UPDATE command cannot
+    #   affect row a second time"). An athlete entered in several events can
+    #   arrive twice, and one duplicate fails the whole meet. The XC path
+    #   already collapses on this key; keep the copy that carries a name.
+    by_key = {}
+    for row in rows:
+        key = (row[0], row[4])
+        have = by_key.get(key)
+        if have is None or (not (have[1] or have[2]) and (row[1] or row[2])):
+            by_key[key] = row
+    rows = list(by_key.values())
 
     if not rows:
         return
