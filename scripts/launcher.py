@@ -1619,7 +1619,9 @@ _FRONTIER_LAST = {"t": 0.0}
 
 
 async def _maybeExtendFrontier(label):
-    if RETRY_FAILED:
+    # SEED_AHEAD=0: no forward probing at all (owner, 2026-10-12, the side
+    # computer: "set the probe to 0") -- the queue below the frontier only
+    if RETRY_FAILED or SEED_AHEAD <= 0:
         return
     from database import _CLAIM_ORDER
     if _CLAIM_ORDER != "DESC":
@@ -1682,11 +1684,15 @@ def _prepareQueue():
             print("[queue] ANET_NO_SEED=1 -- draining the queue as it "
                   "stands, seeding nothing.")
         else:
-            print("[queue] seeding: forward from the last real id per sport, "
-                  "plus recent meets with no results")
+            if SEED_AHEAD > 0:
+                print("[queue] seeding: forward from the last real id per sport, "
+                      "plus recent meets with no results")
+            else:
+                print("[queue] SEED_AHEAD=0 -- no forward probing; recent meets "
+                      "with no results only")
             seedAll(conn, source="anet", write=True,
                     sports=[ANET_SPORT] if ANET_SPORT else None,
-                    ahead=SEED_AHEAD,
+                    ahead=SEED_AHEAD, do_new=SEED_AHEAD > 0,
                     recent_days=int(os.environ.get("SEED_RECENT_DAYS", 120)))
 
         print("[queue] anet meet_queue:")
