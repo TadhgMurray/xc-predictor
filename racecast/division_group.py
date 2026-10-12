@@ -79,7 +79,11 @@ _CATEGORY_WORDS = {
               "elite", "seeded", "unseeded", "championship",
               "championships", "champ", "champs", "heat", "heats", "flight",
               "section", "sect", "sec", "race", "fast", "slow", "final",
-              "finals", "prelim", "prelims"},
+              "finals", "prelim", "prelims",
+              # ★ Mt. SAC's top races (owner, 2026-10-12: its compiled page
+              #   compiled almost nothing): "Team Sweepstakes", "Individual
+              #   Sweepstakes" are the invitational's varsity fields
+              "sweepstakes"},
 }
 
 # Words that say nothing about WHICH standings: gender, distance, the
@@ -95,6 +99,15 @@ _FILLER = {
     "event", "events", "group", "wave",
     "i", "ii", "iii", "iv",
     "a", "b", "c", "d", "and", "of", "the", "&", "-", "/", "+", "#",
+    "individual", "individuals",
+    # ★ A HEAT'S COLOUR IS A HEAT NAME (owner, 2026-10-12, Mt. SAC: "D1
+    #   Varsity Blue", "D1 Varsity Red", "D1&2 Frosh Green" -- the same
+    #   level run in coloured heats, each compiled alone because the
+    #   colour was an unknown word). Plain colours say nothing about level.
+    # ! GOLD, SILVER AND BRONZE ARE NOT HERE: they name RANKED tiers ("Gold
+    #   Race" above "Silver Race"), and the rule keeps those apart.
+    "red", "blue", "green", "yellow", "white", "black", "orange", "purple",
+    "pink", "maroon", "navy", "grey", "gray", "brown", "teal",
 }
 _DISTANCE_TOKEN = re.compile(
     r"^\d+(?:\.\d+)?(?:k|km|m|mi|mile|miles|meters?|metres?|y|yd|yds|"
@@ -106,7 +119,8 @@ _DISTANCE_TOKEN = re.compile(
 #   the label says they are one varsity field -- so they stay unrecognised.
 _SIZE_WORDS = {"large", "small", "medium", "big", "class"}
 # size classes: 1a..7a, aa/aaa/aaaa, d1..d3
-_SIZE_TOKEN = re.compile(r"^(?:[1-7]a|a{2,5}|d[1-3]|class[1-7]a?)$")
+# ! d1..d9: CIF sections run D1-D5 (Mt. SAC's labels), and more
+_SIZE_TOKEN = re.compile(r"^(?:[1-7]a|a{2,5}|d[1-9]|class[1-7]a?)$")
 
 
 def _tokens(label):
@@ -117,7 +131,8 @@ def _tokens(label):
         s = re.sub(pat, rep, s)
     # split on whitespace and the punctuation hosts separate words with,
     # keeping '/' and '-' out of tokens (frosh/soph is already collapsed)
-    return [t for t in re.split(r"[\s,;:()\[\]/\-_.|]+", s) if t]
+    # ("D1&2", "D3,4&5": the & splits too, the bare numbers read past)
+    return [t for t in re.split(r"[\s,;:()\[\]/\-_.|&]+", s) if t]
 
 
 def divisionGroup(label):

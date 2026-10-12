@@ -109,3 +109,21 @@ def test_order_and_labels():
     assert ranks == sorted(ranks) and len(set(ranks)) == 6
     assert groupLabel("varsity") == "Varsity"
     assert groupLabel("other:gold") is None
+
+
+def test_mt_sac_coloured_heats_compile_by_level():
+    # owner, 2026-10-12: Mt. SAC's compiled page compiled almost nothing --
+    # every coloured heat, sweepstakes race and D4/D5 label was "other"
+    got = {lab: divisionGroup(lab) for lab in (
+        "D1 Varsity Blue", "D1 Varsity Red", "D5 Varsity Yellow",
+        "D1&2 Team Sweepstakes Red", "D3,4&5 Individual Sweepstakes Yellow",
+        "D1 JV Blue", "D3,4&5 JV Yellow", "D1 Frosh Red", "D4&5 Soph Green")}
+    assert got == {"D1 Varsity Blue": "varsity", "D1 Varsity Red": "varsity",
+                   "D5 Varsity Yellow": "varsity",
+                   "D1&2 Team Sweepstakes Red": "varsity",
+                   "D3,4&5 Individual Sweepstakes Yellow": "varsity",
+                   "D1 JV Blue": "jv", "D3,4&5 JV Yellow": "jv",
+                   "D1 Frosh Red": "fs", "D4&5 Soph Green": "fs"}
+    # ranked tiers are still never merged
+    assert divisionGroup("Gold Race").startswith("other:")
+    assert divisionGroup("Varsity Gold").startswith("other:")
