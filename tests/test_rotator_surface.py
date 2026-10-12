@@ -108,3 +108,26 @@ class TheGateIsNeverLeftShut(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class EveryReadAttributeIsSet(unittest.TestCase):
+    """(owner, 2026-10-12, Windows, NO_VPN=1: "'VPNRotatorWindows' object
+    has no attribute 'disabled'"). A method reading self.X that no method
+    of the same class ever assigns is a crash on the first call."""
+
+    def test_reads_are_assigned(self):
+        tree = ast.parse(_read("scripts", "vpn_rotation.py"))
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            set_, read = set(), set()
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name) \
+                        and sub.value.id == "self":
+                    (set_ if isinstance(sub.ctx, ast.Store) else read).add(sub.attr)
+            methods = {m.name for m in node.body
+                       if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            consts = {t.id for m in node.body if isinstance(m, ast.Assign)
+                      for t in m.targets if isinstance(t, ast.Name)}
+            missing = read - set_ - methods - consts
+            self.assertFalse(missing, f"{node.name} reads but never sets: {sorted(missing)}")

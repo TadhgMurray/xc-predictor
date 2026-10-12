@@ -6070,3 +6070,13 @@ Chromium against the old script (readout 15:00, label under the pointer
   `--holdout-only --sample-pct 10` with XCP_HOLDOUT_VERBOSE=1, each setting.
 - diag_venue_days: Mt. SAC's cell is canonical 13433, whose name has no
   "SAC"; the script now takes `--meet-id` (the race page's own join).
+
+## 2026-10-12 -- athletic.net, small scrape from the side computer (permitted)
+
+- athletic.net agreed to a small scrape from the owner's side computer (not
+  the server). Same setup as the TFRRS steps above, last command
+  `$env:NO_VPN="1"; $env:NUM_SESSIONS="1"; $env:PER_MEET_DELAY="6,10"`
+  `python scripts/launcher.py` -- one IP, stops at the first block.
+- FIXED: VPNRotatorWindows never set `disabled`, so NO_VPN=1 crashed every
+  session on Windows; tests/test_rotator_surface now checks every attribute
+  a rotator reads is set somewhere in its class.

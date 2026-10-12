@@ -184,6 +184,16 @@ class VPNRotatorWindows:
     # Output: None.
     def __init__(self):
 
+        # ★ NO_VPN=1: this machine's own connection, no rotation (owner,
+        #   2026-10-12: the agreed small athletic.net scrape from a side
+        #   computer). rotate/checkRotation/removeCurrentServer already read
+        #   self.disabled -- only the Linux rotator ever SET it, so a Windows
+        #   run with NO_VPN=1 died on AttributeError at the first meet.
+        self.disabled = os.environ.get("NO_VPN", "") not in ("", "0", "false")
+        if self.disabled:
+            print("[VPN] NO_VPN=1 -- no tunnel, no rotation, one IP. "
+                  "A block stops the run (polite_stop).")
+
         # Index of the current server in MULLVAD_LOCATIONS.
         self.current_index = 0
 
