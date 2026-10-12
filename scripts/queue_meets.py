@@ -223,7 +223,15 @@ def emptyRecent(cur, sport, since, source="anet"):
     """Meets DATED in the window that we finished and got nothing from.
 
     The owner's ask, literally: recent meets with 0 results.
+
+    ★ NOT AFTER TODAY (owner, 2026-10-12, the side-computer run: page after
+      page of "saved 0 results"). athletic.net lists a meet weeks ahead --
+      this autumn's later XC, next spring's track -- and the window had no
+      end, so every launch re-asked every scheduled meet. One that has not
+      been run yet has nothing to give; it is asked again once its date
+      has passed.
     """
+    import datetime as _dt
     t = _t(source, sport)
     cur.execute(f"""
         SELECT DISTINCT q.meet_id
@@ -233,10 +241,11 @@ def emptyRecent(cur, sport, since, source="anet"):
         WHERE  q.source = %s AND q.sport = %s
           AND  q.scraped IN (1, 2)
           AND  d.{t['date_col']} >= %s
+          AND  d.{t['date_col']} <= %s
           AND  NOT EXISTS (SELECT 1 FROM {t['results']} r
                            WHERE r.meet_id = q.meet_id AND r.source = %s)
         ORDER  BY q.meet_id
-    """, (source, sport, since, source))
+    """, (source, sport, since, _dt.date.today().isoformat(), source))
     return [r[0] for r in cur.fetchall()]
 
 
