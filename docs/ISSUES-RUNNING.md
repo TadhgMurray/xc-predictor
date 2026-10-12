@@ -6092,3 +6092,16 @@ Chromium against the old script (readout 15:00, label under the pointer
   XCP_JOINT_KERNELS=0. Every solve has been on the numpy path. Check:
   `/srv/venv/bin/python -c "import numba; print(numba.__version__)"`,
   `grep XCP_JOINT_KERNELS /etc/xc-predictor.env`.
+
+## 2026-10-12 -- West Windsor 8K (2025-10-17) unrated: a drop that fed on itself
+
+- anet 270077/1075582 (men's 8K, 332 rows): 4 normalized. Its tfrrs copy,
+  26094/1, is on _DISTANCE_DROP_XC, and backfill_normalize's dropped-twin
+  rule carries a tfrrs drop to the anet copy of the same race.
+- Why the tfrrs copy was dropped: find_dropped_divisions counts "rated" as
+  "on a board", and a tfrrs row skipped as DEDUP_TWIN (the anet copy is the
+  one kept) is never on one -- a fully twinned tfrrs division reads 0%. Its
+  median (~24:30 / 8 km = 0.18 s/m) also sat on the old pace bar.
+- FIXED (finder): a row whose other-feed copy is on a board counts as rated.
+- ⏳ The existing drop still needs lifting (amnesty_division_drops.py, or a
+  pardon block in engine/corrections.py), then dump_overrides + a backfill.

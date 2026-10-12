@@ -143,10 +143,27 @@ WITH own AS (
 --   row had a person: NCAA DI 2025 read as a field of 250 whose ratings
 --   had all been deleted. And (meet, div) is grouped WITH the source: the
 --   anet and tfrrs id spaces overlap, and two meets are not one division.
+-- ★ A DUPLICATE IS NOT AN UNRATED RUNNER (owner, 2026-10-12, the West
+--   Windsor 8K, tfrrs 26094/1 and anet 270077/1075582). At a canon-linked
+--   meet the backfill keeps the anet copy and skips the tfrrs twin
+--   (DEDUP_TWIN), so a fully twinned tfrrs division is never on a board and
+--   read here as 0% rated -- it was dropped, and the backfill's dropped-twin
+--   rule then dropped the anet copy too: neither copy rated. A row whose
+--   other-feed copy of the same race is on a board counts as rated.
+twin_rated AS (
+    SELECT DISTINCT r.person_id, r.canon_meet_id, r.source
+    FROM   results r
+    JOIN   ranking_results k ON k.result_id = r.result_id AND k.sport = 'XC'
+    WHERE  r.person_id IS NOT NULL AND r.canon_meet_id IS NOT NULL
+),
 div AS (
     SELECT r.meet_id, r.div_id, r.source,
            count(*) FILTER (WHERE r.person_id IS NOT NULL) AS n_rows,
-           count(k.result_id)                          AS n_rated,
+           count(*) FILTER (WHERE k.result_id IS NOT NULL
+                              OR EXISTS (SELECT 1 FROM twin_rated t
+                                         WHERE t.person_id = r.person_id
+                                           AND t.canon_meet_id = r.canon_meet_id
+                                           AND t.source <> r.source)) AS n_rated,
            -- ! THE SURVIVORS' OWN VERDICT, carried up with them. avg over a
            --   handful of rows, because that is all a broken division leaves.
            avg(r.speed_rating)
