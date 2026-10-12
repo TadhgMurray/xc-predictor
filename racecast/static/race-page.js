@@ -83,6 +83,10 @@
       //   (owner, 2026-10-07, on "All teams"): with the Teams tab open the
       //   sidebar steps aside and the table takes the width
       root.classList.toggle("rc-on-teams", name === "teams");
+      // ★ WHICH TAB IS OPEN, for CSS (owner, 2026-10-12, the Teams tab: the
+      //   finder and the grade select filter result rows only, so on Teams
+      //   and On the track they sat in the bar doing nothing -- hidden there)
+      root.setAttribute("data-rc-tab", name);
       // ★ THE ATHLETE SIDE FOLLOWS THE SPORT TAB (owner, 2026-10-11): a
       //   [data-side-for] block shows with its own tab, every block on any
       //   other (Career), and a block whose sport has no tab always

@@ -61,6 +61,9 @@ main.rc .rc-tbar .rc-findwrap .rc-find { height: 100%; }
 /* the grade select and the finder as ONE unit (race-page.js): they wrap
    together and the group holds the row's right edge (owner, 2026-10-12) */
 main.rc .rc-findgroup { display: flex; gap: .5rem; margin-left: auto; }
+/* they filter result rows only: not shown on the Teams or track tabs */
+main.rc[data-rc-tab="teams"] .rc-tbar .rc-findgroup, main.rc[data-rc-tab="teams"] .rc-tbar > .rc-find,
+main.rc[data-rc-tab="track"] .rc-tbar .rc-findgroup, main.rc[data-rc-tab="track"] .rc-tbar > .rc-find { display: none; }
 main.rc .rc-findgroup > .rc-grade, main.rc .rc-findgroup > .rc-find,
 main.rc .rc-findgroup > .rc-findwrap { margin-left: 0; }
 main.rc.rc-js .rc-panel[hidden] { display: none; }
