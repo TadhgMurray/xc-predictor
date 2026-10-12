@@ -147,6 +147,13 @@ def fusedMatvec(D, w, h, amp, b):
     or None when the compiled path is not available for this design."""
     global _ANNOUNCED
     if not enabled():
+        # ★ SAY SO (2026-10-12: a server benchmark printed no kernels line at
+        #   all, so nobody could tell which path the solve was on)
+        if not _ANNOUNCED:
+            why = ("numba not importable" if not _HAVE_NUMBA
+                   else "XCP_JOINT_KERNELS=0")
+            print(f"[joint] kernels: off ({why}) -- numpy path", flush=True)
+            _ANNOUNCED = True
         return None
     edges = _edges(D)
     if edges is None:
