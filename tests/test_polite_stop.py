@@ -45,3 +45,9 @@ def test_the_scraper_trips_it_on_a_429():
     assert src.count("polite_stop.trip(") == 2
     launcher = open(os.path.join(ROOT, "scripts", "launcher.py")).read()
     assert "polite_stop.PoliteStop" in launcher and "polite_stop.check()" in launcher
+
+
+def test_the_tfrrs_drain_stops_too():
+    src = open(os.path.join(ROOT, "tfrrs", "driver", "run_tfrrs.py")).read()
+    assert "while not polite_stop.stopped():" in src
+    assert src.count("polite_stop.trip(") == 2          # IP block and "blocked:" bundles

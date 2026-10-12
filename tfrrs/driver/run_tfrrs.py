@@ -548,11 +548,19 @@ async def _extendFrontier(label):
 #           counter:     a shared [count] list + lock for a global progress number.
 # Output:   none.
 async def _sessionWorker(session_idx, url_for, page, rotator, counter):
+    # ★ POLITE MODE (scripts/polite_stop.py; owner, 2026-10-12: "the tfrrs
+    #   scraper seemingly doesn't stop"). With NO_VPN=1 the block path
+    #   "rotated" (a no-op) and took the next meet at once, and a 429 or a
+    #   Cloudflare page was logged "blocked:" and the drain went on at the
+    #   same pace. Now the first of either ends every session; the meets
+    #   they still hold sit at scraped=3 and resetTFRRSInProgress returns
+    #   them to the queue when the next run starts.
+    import polite_stop
     gen = 0   # this session's last-seen rotation generation (for stagger)
     # Borrow ONE connection for this session's whole lifetime (off the loop).
     conn = await asyncio.to_thread(_borrowConn)
     try:
-        while True:
+        while not polite_stop.stopped():
             t0 = time.perf_counter()
             # ! RETRY-ONLY CLAIMS 2 AND 3 THEMSELVES -- see
             #   database._claimMeetBatch for why a reset-then-claim-0 retry
@@ -573,6 +581,8 @@ async def _sessionWorker(session_idx, url_for, page, rotator, counter):
                 break
 
             for meet_id, sport in batch:
+                if polite_stop.stopped():
+                    break
                 gen = await rotator.waitForTunnel(session_idx, gen, SESSION_COUNT)
                 url = url_for(meet_id, sport)
                 t1 = time.perf_counter()
@@ -582,12 +592,20 @@ async def _sessionWorker(session_idx, url_for, page, rotator, counter):
                     # roll back any partial txn before rotating, so this session's
                     # conn is clean when it resumes.
                     await asyncio.to_thread(conn.rollback)
+                    if polite_stop.trip(f"[S{session_idx}]",
+                                        f"CloudFront IP block on meet {meet_id}"):
+                        break
                     await rotator.rotate(f"[S{session_idx}]", "CloudFront IP block")
                     continue
                 
                 _tick("process", time.perf_counter() - t1)
                 counter[0] += 1
                 _printMeetResult(counter[0], bundle)
+                # a 429 or a Cloudflare page comes back as a "blocked:" bundle
+                if str(bundle.get("note") or "").startswith("blocked:"):
+                    if polite_stop.trip(f"[S{session_idx}]",
+                                        f"{bundle['note']} (meet {meet_id})"):
+                        break
                 await rotator.checkRotation(f"[S{session_idx}]")
                 await asyncio.sleep(random.uniform(*PER_MEET_DELAY))
     finally:
