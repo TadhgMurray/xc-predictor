@@ -248,6 +248,9 @@ def seniors(cur, years):
     still_hs says they raced high school again in year y or later. One scan per
     table for every year."""
     lo, hi = f"{min(years) - 1}-08-01", f"{max(years)}-08-01"
+    # the "raced college since" test reads level_conflict's known colleges
+    # off this session; staged once, reused if freshmen() already did
+    stageCollegeSchools(cur)
     cur.execute("DROP TABLE IF EXISTS lf_a")
     _step(cur, "anet senior rows in the seasons before (a scan of both tables)", """
         CREATE TEMP TABLE lf_a AS

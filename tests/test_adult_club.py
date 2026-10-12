@@ -174,3 +174,34 @@ def test_prior_adult_seasons():
     adult, pro = GS.priorAdultSeasons(acad)
     assert adult == {1: 2024, 2: 2024, 3: 2024}
     assert pro == {1: 2024}
+
+
+def test_season_ceilings_on_postgres():
+    import pytest
+    dsn = os.environ.get("XCP_TWIN_TEST_DSN")
+    if not dsn:
+        pytest.skip("set XCP_TWIN_TEST_DSN to a scratch Postgres to run the SQL")
+    import importlib
+    psycopg2 = importlib.import_module("psycopg2")
+    from level_graph import _raceKeyExpr
+    conn = psycopg2.connect(dsn)
+    cur = conn.cursor()
+    cur.execute("""
+        DROP TABLE IF EXISTS results, results_tf, race_top_level;
+        CREATE TABLE results (person_id bigint, date text, school text,
+                              meet_id bigint, div_id bigint, source text);
+        CREATE TABLE results_tf (LIKE results);
+        CREATE TABLE race_top_level (race bigint PRIMARY KEY, top_level text,
+                                     n_levels int, known_frac real, n_teams int);""")
+    cur.executemany("INSERT INTO results_tf VALUES (%s,%s,%s,%s,%s,%s)", [
+        (1, "2026-01-17", "Unattached", 10, 1, "anet"),
+        (1, "2026-01-31", "Unattached", 10, 1, "anet"),
+        (1, "2026-02-14", "Unattached", 11, 1, "anet"),
+        (2, "2026-01-17", "Unattached", 11, 1, "anet")])
+    for meet, lvl in ((10, "college"), (11, "pro")):
+        cur.execute(f"INSERT INTO race_top_level SELECT {_raceKeyExpr('x')}, %s, 1, 1, 1 "
+                    f"FROM (SELECT %s::bigint meet_id, 1::bigint div_id, 'anet'::text source) x",
+                    (lvl, meet))
+    got = GS.seasonCeilings(cur, [(1, 2025), (2, 2025), (3, 2025)])
+    conn.rollback()
+    assert got == {(1, 2025): (2, 1), (2, 2025): (0, 1)}, got

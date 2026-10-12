@@ -47,3 +47,48 @@ def test_rejoin_pairs():
     assert unlink.rejoinPairs({10: hs, 20: kid}, [(10, 20, [2026])]) == []
     # one side gone -> nothing
     assert unlink.rejoinPairs({10: hs}, [(10, 20, [2026])]) == []
+
+
+def test_rejoin_on_postgres():
+    """The whole --rejoin --write round trip, and its undo, on a scratch
+    Postgres (XCP_TWIN_TEST_DSN)."""
+    import pytest
+    dsn = os.environ.get("XCP_TWIN_TEST_DSN")
+    if not dsn:
+        pytest.skip("set XCP_TWIN_TEST_DSN to a scratch Postgres to run the SQL")
+    import importlib
+    psycopg2 = importlib.import_module("psycopg2")
+    import unlink
+    conn = psycopg2.connect(dsn)
+    cur = conn.cursor()
+    cur.execute("""
+        DROP TABLE IF EXISTS results, results_tf, person_split, person_link_log;
+        CREATE TABLE results (result_id bigint, person_id bigint, date text,
+                              grade text, school text, athlete_name text);
+        CREATE TABLE results_tf (LIKE results);
+        CREATE TABLE person_split (old_person_id bigint, season int,
+                                  new_person_id bigint, class_year int, school text,
+                                  PRIMARY KEY (old_person_id, season));""")
+    rows = [(i, 10, f"{y}-10-01", str(g), "Christian Brothers Academy", "Jack Falkowski")
+            for i, (y, g) in enumerate(((2021, 9), (2022, 10), (2023, 11), (2024, 12)), 1)]
+    # the split-off unattached season, and a real second person split the same way
+    rows += [(11, 2000000001, "2026-02-01", "9", "Unattached", "Jack Falkowski"),
+             (12, 2000000001, "2026-03-01", "9", "Unattached", "Jack Falkowski"),
+             (21, 30, "2021-10-01", "12", "Crater", "Sam Lee"),
+             (22, 2000000002, "2026-10-01", "7", "Hanby Middle", "Sam Lee")]
+    cur.executemany("INSERT INTO results VALUES (%s,%s,%s,%s,%s,%s)", rows)
+    cur.executemany("INSERT INTO person_split VALUES (%s,%s,%s,NULL,NULL)",
+                    [(10, 2026, 2000000001), (30, 2026, 2000000002)])
+    assert unlink.rejoin(cur, do_write=True) == 1
+    cur.execute("SELECT result_id, person_id FROM results WHERE result_id IN (11, 12, 22) ORDER BY 1")
+    assert cur.fetchall() == [(11, 10), (12, 10), (22, 2000000002)]
+    cur.execute("SELECT old_person_id FROM person_split")
+    assert cur.fetchall() == [(30,)]
+    assert unlink.rejoin(cur, do_write=True) == 0, "idempotent"
+    unlink.rejoinUndo(cur)
+    cur.execute("SELECT person_id FROM results WHERE result_id = 11")
+    assert cur.fetchone() == (2000000001,)
+    cur.execute("SELECT count(*) FROM person_split")
+    assert cur.fetchone() == (2,)
+    conn.rollback()
+    conn.close()

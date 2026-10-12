@@ -807,6 +807,85 @@ def _runSport(cur, sport, table, write, skip):
 TWIN_PARALLEL = os.environ.get("XCP_TWIN_PARALLEL", "1") not in ("0", "false", "")
 
 
+# ★ EVERY RULE ITS OWN SESSION (run 20261011_150217: 04c 41 min, all of it
+#   track's twelve rules one after another while cross country finished in
+#   ten). No rule reads another's flags -- only the INSERT order matters,
+#   earlier reasons winning the key. So each (sport, rule) runs in a pool of
+#   XCP_TWIN_WORKERS sessions into its own UNLOGGED stage table, and the
+#   stages go into result_twin_new afterwards in RULES order: the same rows,
+#   the same reasons. Each pooled session halves the per-query parallel
+#   workers, so four sessions do not ask for sixteen. XCP_TWIN_WORKERS=1
+#   is the sport-per-session behaviour above.
+TWIN_WORKERS = int(os.environ.get("XCP_TWIN_WORKERS", "4"))
+
+
+def _stageName(sport, reason):
+    return f"twin_stage_{sport.lower()}_{reason}"
+
+
+def _stageRule(connect, sport, table, reason, fn):
+    """One rule into its stage table, on its own connection. Returns the
+    log line; a timeout stages last run's flags instead (carryOver's rule)."""
+    import psycopg2.errors
+    stage = _stageName(sport, reason)
+    t0 = time.time()
+    with connect() as c:
+        with c.cursor() as cur:
+            _session(c, cur)
+            cur.execute("SET max_parallel_workers_per_gather = 2")
+            cur.execute(f"DROP TABLE IF EXISTS {stage}")
+            cur.execute(f"CREATE UNLOGGED TABLE {stage} (result_id bigint)")
+            c.commit()
+            cur.execute(f"SET statement_timeout = {int(RULE_TIMEOUT * 1000)}")
+            try:
+                prepareRule(cur, table, sport, reason)
+                cur.execute(f"INSERT INTO {stage} SELECT s.result_id FROM ({fn(table, sport)}) s")
+                n = cur.rowcount
+                c.commit()
+                return (f"  [{sport}] {reason:<14} {n:>12,}  ({time.time() - t0:.0f}s)")
+            except psycopg2.errors.QueryCanceled:
+                c.rollback()
+                cur.execute("RESET statement_timeout")
+                cur.execute("SELECT to_regclass('result_twin')")
+                kept = 0
+                if cur.fetchone()[0] is not None:
+                    cur.execute(f"""INSERT INTO {stage} SELECT result_id FROM result_twin
+                                    WHERE sport = %s AND reason = %s""", (sport, reason))
+                    kept = cur.rowcount
+                c.commit()
+                return (f"  [{sport}] {reason:<14} TIMED OUT after {time.time() - t0:.0f}s "
+                        f"(XCP_TWIN_RULE_TIMEOUT={RULE_TIMEOUT}); {kept:,} flags kept "
+                        "from the last run")
+
+
+def _buildPooled(conn, cur, skip, connect, workers):
+    """Every (sport, rule) in a pool of sessions, then the stages into
+    result_twin_new in RULES order (TWIN_WORKERS says why)."""
+    from concurrent.futures import ThreadPoolExecutor
+    jobs = [(sport, table, reason, fn)
+            for sport, table in sorted(TABLES.items(), key=lambda kv: kv[0] != "TF")
+            for reason, fn in RULES if reason not in skip]
+    conn.commit()
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(_stageRule, connect, *j) for j in jobs]
+        for f in futs:
+            print(f.result(), flush=True)
+    for sport in TABLES:
+        for reason, _fn in RULES:
+            if reason in skip:
+                kept = carryOver(cur, sport, reason)
+                print(f"  [{sport}] {reason:<14} skipped (XCP_TWIN_SKIP); "
+                      f"{kept:,} flags kept from the last run", flush=True)
+                continue
+            cur.execute(f"""
+                INSERT INTO result_twin_new (sport, result_id, reason)
+                SELECT %s, result_id, %s FROM {_stageName(sport, reason)}
+                ON CONFLICT DO NOTHING""", (sport, reason))
+    for sport in TABLES:
+        for reason, _fn in RULES:
+            cur.execute(f"DROP TABLE IF EXISTS {_stageName(sport, reason)}")
+
+
 def build(conn, write=False, parallel=None, connect=None):
     """parallel: None reads XCP_TWIN_PARALLEL. connect: a context manager
     giving a connection to the same database for the second session
@@ -823,7 +902,19 @@ def build(conn, write=False, parallel=None, connect=None):
         _session(conn, cur)
         if write:
             cur.execute("CREATE TABLE result_twin_new (LIKE result_twin INCLUDING ALL)")
-        if not (parallel and write):
+        if parallel and write and TWIN_WORKERS > 1:
+            conn.commit()
+            try:
+                _buildPooled(conn, cur, skip, connect or getConn, TWIN_WORKERS)
+            except Exception:
+                conn.rollback()
+                cur.execute("DROP TABLE IF EXISTS result_twin_new")
+                for sport in TABLES:
+                    for reason, _fn in RULES:
+                        cur.execute(f"DROP TABLE IF EXISTS {_stageName(sport, reason)}")
+                conn.commit()
+                raise
+        elif not (parallel and write):
             for sport, table in TABLES.items():
                 _runSport(cur, sport, table, write, skip)
         else:

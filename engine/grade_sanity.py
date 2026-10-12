@@ -1319,15 +1319,33 @@ _BARE_CLASS_SQL = """
 _FIELD_SCHOOL_SHARE = 0.80
 
 _BARE_FIELD_SQL = """
-    WITH ev AS (
-        SELECT meet_id, div_id, source, event_key,
-               count(*) FILTER (WHERE gradeLevel(grade_folded)
+    -- ★ ONLY THE EVENTS A BARE WORD RAN IN (run 20261011_150217: each round
+    --   took 750s grouping all 225M rows by event, calling gradeLevel on
+    --   every one, when the answer is read only for events holding a bare
+    --   FR/SO/JR/SR row of a season with no definite row -- the final
+    --   SELECT's own filter). Found by one plain scan, then their rows by
+    --   allraces' event index. Same events scored, same answer.
+    WITH wanted AS (
+        SELECT DISTINCT a.meet_id, a.div_id, a.source, a.event_key
+        FROM   allraces a
+        WHERE  a.grade_folded IN ('FR','SO','JR','SR')
+          AND  NOT EXISTS (SELECT 1 FROM allraces d
+                           WHERE d.person_id = a.person_id
+                             AND d.acad      = a.acad
+                             AND d.definite)
+    ),
+    ev AS (
+        SELECT a.meet_id, a.div_id, a.source, a.event_key,
+               count(*) FILTER (WHERE gradeLevel(a.grade_folded)
                                       IN ('elem','ms','hs')) AS n_school,
-               count(*) FILTER (WHERE gradeLevel(grade_folded)
+               count(*) FILTER (WHERE gradeLevel(a.grade_folded)
                                       IS NOT NULL)           AS n_graded
-        FROM   allraces
+        FROM   wanted w
+        JOIN   allraces a
+               ON a.meet_id = w.meet_id AND a.div_id = w.div_id
+              AND a.source  = w.source  AND a.event_key = w.event_key
         GROUP  BY 1, 2, 3, 4
-        HAVING count(*) FILTER (WHERE gradeLevel(grade_folded) IS NOT NULL)
+        HAVING count(*) FILTER (WHERE gradeLevel(a.grade_folded) IS NOT NULL)
                    >= %(minf)s
     ),
     -- The modal numeric grade of each qualifying event: what a bare word in

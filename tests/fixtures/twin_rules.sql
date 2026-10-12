@@ -3,11 +3,11 @@ DROP TABLE IF EXISTS results, results_tf, meets, meets_tf, result_twin, college_
 -- that stops at date leaves them NULL (level_conflict reads them)
 CREATE TABLE results (result_id bigint, person_id bigint, source text, meet_id bigint, div_id bigint,
   canon_meet_id bigint, place int, time_seconds double precision, date text,
-  grade text, team_id int, team_slug text, school text);
+  grade text, team_id int, team_slug text, school text, athlete_name text);
 CREATE TABLE results_tf (result_id bigint, person_id bigint, source text, meet_id bigint, div_id bigint,
   event_id bigint, canon_meet_id bigint, place int, time_seconds double precision, date text,
   grade text, team_id int, team_slug text,
-  event_short text, is_relay int, is_field int, school text);
+  event_short text, is_relay int, is_field int, school text, athlete_name text);
 CREATE TABLE meets (meet_id bigint, div_id bigint, meet_name text);
 CREATE TABLE meets_tf (meet_id bigint, div_id bigint, event_id bigint, source text, meet_name text, state text);
 CREATE TABLE result_twin (sport text NOT NULL, result_id bigint NOT NULL, reason text NOT NULL, PRIMARY KEY (sport, result_id));
