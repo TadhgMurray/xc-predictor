@@ -6042,9 +6042,15 @@ Chromium against the old script (readout 15:00, label under the pointer
   2. PowerShell window 2, in the repo:
      `pip install -r requirements-scrape.txt`
      `$env:XCP_DB_HOST="127.0.0.1"; $env:XCP_DB_PORT="55432"; $env:XCP_DB_PASSWORD="<XCP_DB_PASSWORD from /etc/xc-predictor.env>"`
-     then the usual slow TFRRS command (tfrrs/driver). It writes straight to
-     the server's database through the tunnel; polite_stop still ends it at
-     the first block.
+     `$env:NO_VPN="1"; $env:TFRRS_SESSIONS="2"; $env:TFRRS_PER_MEET_DELAY="5,9"`
+     `python tfrrs/driver/launch_tfrrs.py`   (from the repo root)
+     It writes straight to the server's database through the tunnel;
+     NO_VPN=1 makes it stop at the first block.
+  ⚠ Never alongside the server's own TFRRS scraper: each launcher resets
+    in-progress claims (meet_queue scraped=3) at startup, so two would
+    undo each other's claims and fetch the same meets.
+  ! Needs real Google Chrome (scripts/chrome_path.py finds it under Program
+    Files); never `playwright install`.
 
 ## 2026-10-12 -- XC/TF level: the stated 6% checked against the data
 
