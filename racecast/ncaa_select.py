@@ -163,10 +163,19 @@ def h2hCompare(a, b, W, last):
     return 0
 
 
-def commonCompare(a, b, W):
+def commonCompare(a, b, W, met=None):
     """+1 / -1 / 0 on win percentage against common opponents, every
-    meeting counted ("including multiple wins and/or losses")."""
-    met = (W + W.T) > 0
+    meeting counted ("including multiple wins and/or losses").
+
+    `met` is (W + W.T) > 0, passed in by a caller that compares many pairs
+    against one W (_context builds it once per selection)."""
+    # ★ ONCE PER SELECTION, NOT PER PAIR (owner, 2026-10-12: 11c_ncaa took
+    #   65 minutes, D1 men and women 22 each). This built a teams x teams
+    #   matrix on every comparison, and kolasSelect compares inside its
+    #   pick, its push test and the rest-of-selection it re-runs per push --
+    #   for each of 2,000 draws.
+    if met is None:
+        met = (W + W.T) > 0
     common = met[a] & met[b]
     common[a] = common[b] = False
     if not common.any():
@@ -202,7 +211,7 @@ def breakTie(tied, ctx, steps):
                 return h2hCompare(a, b, ctx["W"], ctx["last"])
         elif step == "common":
             def cmp(a, b):
-                return commonCompare(a, b, ctx["W"])
+                return commonCompare(a, b, ctx["W"], ctx.get("met"))
         else:
             cmp = None
         if cmp is not None:
@@ -241,7 +250,7 @@ def _context(orders, scores, W, last, strength, auto_n):
             if last_aq is not None and t in scores and last_aq in scores:
                 gap[t] = scores[t] - scores[last_aq]
     return {"W": W, "last": last, "place": place, "gap": gap,
-            "strength": strength or {}}
+            "strength": strength or {}, "met": (W + W.T) > 0}
 
 
 def kolasSelect(orders, scores, W, last, rules, strength=None, push=True,
