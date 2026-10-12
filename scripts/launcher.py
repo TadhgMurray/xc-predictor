@@ -619,12 +619,29 @@ CHROME_ARGS = [
 ]
 
 
+# ★ THE SERVER'S FLAGS, NOT A DESKTOP'S (owner, 2026-10-12, the Windows side
+#   computer: every session died at launch, "Target page, context or browser
+#   has been closed", Chrome exiting 0x80000003). --single-process is a
+#   Linux-container memory saving that desktop Chrome on Windows does not
+#   support, and the sandbox, /dev/shm and 128 MB heap flags exist for
+#   dozens of Chromes on the box. On Windows they are left off.
+_SERVER_ONLY_ARGS = {"--single-process", "--no-sandbox", "--disable-setuid-sandbox",
+                     "--disable-dev-shm-usage", "--js-flags=--max-old-space-size=128"}
+
+
+def chromeArgs():
+    import platform
+    if platform.system() == "Windows":
+        return [a for a in CHROME_ARGS if a not in _SERVER_ONLY_ARGS]
+    return list(CHROME_ARGS)
+
+
 async def _launchBrowser(playwright):
 
     return await playwright.chromium.launch(
         headless=False,
         executable_path=_chromePath(),
-        args=CHROME_ARGS,
+        args=chromeArgs(),
     )
 
 # _buildContext
