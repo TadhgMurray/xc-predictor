@@ -31,8 +31,48 @@ and add one keyword to render_template:
   before it, every tooltip reads "920.1".
 """
 
+import os
 import re
+import sys
 from collections import Counter
+
+_ENGINE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "engine")
+if _ENGINE not in sys.path:
+    sys.path.insert(0, _ENGINE)
+
+
+# ★ ONE CHART PER DISTANCE, NOT PER SPELLING (owner, 2026-10-11: the Track
+#   chart's buttons read "1mile", "Women's Mile Preliminaries", "Girls 1500
+#   Meter Run Enroute", "80mh" side by side). A race's event name is however
+#   the feed wrote it -- rounds, en-route splits, gender words; the distance
+#   is what the chart is about. engine/event_parse reads it, the one parser
+#   the ratings use, so a 1500 en route sits with the 1500s. Hurdles and
+#   steeple (which that parser leaves out) keep their reader name.
+_MILE_M, _TWO_MILE_M = 1609.344, 3218.688
+
+
+def tfChartKey(event):
+    """(sort metres, label) for a track event's time chart, or None for a
+    relay. '1mile' and "Women's Mile Preliminaries" -> (1609.3, 'Mile')."""
+    if not event:
+        return None
+    import event_parse as E
+    m, _g = E.distanceFromEventShort(event)
+    if m is None:
+        m, _g = E.sprintDistanceFromEventShort(event)
+    if m is not None:
+        m = float(m)
+        if abs(m - _MILE_M) < 2:
+            return (m, "Mile")
+        if abs(m - _TWO_MILE_M) < 3:
+            return (m, "2 Mile")
+        return (m, f"{int(round(m))}m")
+    from tf_points import prettyEventName
+    name = prettyEventName(event)
+    if re.search(r"relay|\b\d\s*x\s*\d", name, re.I):
+        return None
+    lead = re.match(r"\s*(\d+)", name)
+    return (float(lead.group(1)) if lead else 1e9, name)
 
 METERS_PER_MILE = 1609.34
 
@@ -230,10 +270,10 @@ def build_chart_data(races):
             # For TF, "event" is event_short ("1600m") -- exactly the key
             # tf_distances() produces for the sidebar slots, so chart keys and
             # markup keys line up without a second mapping.
-            event = race.get("event")
+            key = tfChartKey(race.get("event"))
             time_raw = race.get("time_raw")
-            if event and time_raw:
-                data["tf_dist"].setdefault(event, []).append(
+            if key and time_raw:
+                data["tf_dist"].setdefault(key[1], []).append(
                     _point(race, time_raw))
 
     by_date = lambda p: p["d"]

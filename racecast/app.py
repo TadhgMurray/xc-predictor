@@ -3753,12 +3753,17 @@ def season_bests_by_year(races):
 
 
 def tf_distances(races):
-    """Distinct TF events this athlete ran - one time-chart per distance."""
-    seen = []
+    """The athlete's track distances, shortest first -- one time chart each,
+    keyed as athlete_chart_data.tfChartKey groups them (owner, 2026-10-11:
+    one button per distance, not per spelling of the event)."""
+    from athlete_chart_data import tfChartKey
+    seen = {}
     for r in races:
-        if r["sport"] == "TF" and r["event"] and r["event"] not in seen:
-            seen.append(r["event"])
-    return seen
+        if r["sport"] == "TF" and not r.get("is_field"):
+            key = tfChartKey(r.get("event"))
+            if key:
+                seen.setdefault(key[1], key[0])
+    return [label for label, _m in sorted(seen.items(), key=lambda kv: (kv[1], kv[0]))]
 
 _DUP_DAYS = 1     # sources disagree about which day a two-day meet's race fell on
 
