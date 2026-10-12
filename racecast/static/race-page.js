@@ -469,6 +469,52 @@
     drawField();
   }
 
+  // ---- grade filter (owner, 2026-10-12: "in the race and compiled races
+  //   tab you should be able to filter by grade"). A select beside the
+  //   finder, built from the grades the results actually carry (the .gr
+  //   label in the school cell); "All grades" is the race as run. It
+  //   combines with the finder: a row shows when it matches both.
+  // ! PLACES, POINTS AND TEAM SCORES STAY THE RACE'S OWN: hiding the
+  //   seniors does not make the first freshman "1st".
+  var gradeWant = "";
+  function gradeOf(tr) {
+    var g = tr.querySelector("td.sch .gr");
+    return g ? g.textContent.replace(/\s+/g, " ").trim() : "";
+  }
+  function gradeHidden(tr) { return !!gradeWant && gradeOf(tr) !== gradeWant; }
+  (function () {
+    var finder = main.querySelector(".rc-find");
+    var seen = {};
+    rows.forEach(function (tr) { var g = gradeOf(tr); if (g) seen[g] = true; });
+    var grades = Object.keys(seen);
+    if (grades.length < 2) return;
+    grades.sort(function (a, b) {
+      var na = parseInt(a, 10), nb = parseInt(b, 10);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      if (!isNaN(na)) return -1;
+      if (!isNaN(nb)) return 1;
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    var sel = document.createElement("select");
+    sel.className = "rc-grade";
+    sel.setAttribute("aria-label", "Filter by grade");
+    sel.innerHTML = '<option value="">All grades</option>' + grades.map(function (g) {
+      return '<option value="' + g.replace(/"/g, "&quot;") + '">' +
+             (/^\d+$/.test(g) ? "Grade " + g : g) + "</option>";
+    }).join("");
+    if (finder && finder.parentNode) finder.parentNode.insertBefore(sel, finder);
+    else {
+      var tbl = main.querySelector(".rc-table");
+      if (!tbl) return;
+      tbl.parentNode.insertBefore(sel, tbl);
+    }
+    sel.addEventListener("change", function () {
+      gradeWant = sel.value;
+      if (finder) finder.dispatchEvent(new Event("input"));
+      else rows.forEach(function (tr) { tr.hidden = gradeHidden(tr); });
+    });
+  })();
+
   // ---- finder: hide rows whose name or school does not contain the text
   var find = main.querySelector(".rc-find");
   var list = main.querySelector(".rc-findlist");
@@ -513,7 +559,7 @@
       var anyHit = !q || Array.prototype.some.call(rows, hit);
       raceHit = !!q && anyHit;
       rows.forEach(function (tr) {
-        tr.hidden = !!q && (anyHit || !find.dataset.api) && !hit(tr);
+        tr.hidden = (!!q && (anyHit || !find.dataset.api) && !hit(tr)) || gradeHidden(tr);
       });
       if (find.dataset.api) askServer(find.value.trim());
     });

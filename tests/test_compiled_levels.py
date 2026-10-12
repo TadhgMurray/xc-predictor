@@ -1,8 +1,8 @@
-"""Compiled XC results split by level, and the DQ rule (owner, 2026-10-10).
+"""Compiled XC results, one race per (distance, gender), and the DQ rule.
 
-★ A compiled race merged every division at one distance and gender, so JV
-  runners took varsity places and displaced varsity scorers. Each level
-  (division_group.divisionGroup) now compiles on its own; varsity is primary.
+★ owner, 2026-10-12: one compiled race per gender and distance, every
+  division in it (the 2026-10-10 split by level is undone); the page's
+  grade filter is how a reader asks for one class.
 ★ A DQ (status DQ / FS) has a real time and no place: it keeps its row, gets
   no compiled place, and neither scores nor displaces. DNF/DNS likewise.
 
@@ -115,54 +115,31 @@ def _boys():
     return {(g["distance"], g["gender"]): g for g in groups}[(5000, "M")]
 
 
-# ---- 1. partition by level ------------------------------------------------ #
+# ---- 1. one race per (distance, gender) ------------------------------------ #
+# ★ owner, 2026-10-12: "there should be one compiled race per gender/
+#   distance" -- the 2026-10-10 split by level is undone; the page filters
+#   by grade instead.
 
-def test_levels_partition_the_group():
+def test_one_race_per_distance_and_gender():
     g = _boys()
-    assert [lv["level"] for lv in g["levels"]] == [
-        "varsity", "jv", "fs", "other:alumni", "other:masters"]
-    by = {lv["level"]: lv for lv in g["levels"]}
-    # Varsity and Open are one varsity-level field
-    assert by["varsity"]["divisions"] == [1, 2]
-    assert by["varsity"]["div_labels"] == ["Varsity", "Open"]
-    assert by["jv"]["divisions"] == [3] and by["jv"]["label"] == "JV"
-    assert by["fs"]["label"] == "Frosh-Soph"
-    # every row lands in exactly one level
-    assert {r["div_id"] for r in by["jv"]["results"]} == {3}
-    assert all(r["div_id"] in (1, 2) for r in by["varsity"]["results"])
-    assert sum(len(lv["results"]) for lv in g["levels"]) == g["n_results"]
+    assert [lv["level"] for lv in g["levels"]] == [MC.ALL_LEVELS]
+    lv = g["levels"][0]
+    assert lv["label"] == "All divisions"
+    assert lv["divisions"] == [1, 2, 3, 4, 5, 6]
+    assert len(lv["results"]) == g["n_results"]
+    # the group's own keys are that one race, for every older reader
+    assert g["results"] is lv["results"] and g["scores"] is lv["scores"]
 
 
-def test_each_level_places_and_scores_on_its_own():
-    by = {lv["level"]: lv for lv in _boys()["levels"]}
-    jv = by["jv"]["results"]
-    assert [r["place"] for r in jv] == list(range(1, len(jv) + 1))
-    # three full JV teams scored, apart from varsity
-    assert len(by["jv"]["scores"]["teams"]) == 3
-    assert len(by["fs"]["scores"]["teams"]) == 3
-
-
-# ---- 2. varsity is primary ------------------------------------------------ #
-
-def test_varsity_is_primary_and_the_group_keys_are_its():
-    g = _boys()
-    v = g["levels"][0]
-    assert g["level"] == "varsity" and v["level"] == "varsity"
-    assert g["results"] is v["results"] and g["scores"] is v["scores"]
-    assert g["divisions"] == [1, 2]
-    # ★ THE JV RUNNER WHO OUTRAN THE VARSITY FIELD IS NOT IN IT: varsity's
-    #   first place is a varsity runner, and no JV row displaces a scorer
-    assert not any(r["name"].startswith("JV ") for r in g["results"])
-    winner = next(r for r in g["results"] if r["place"] == 1)
-    assert winner["div_id"] == 1 and winner["time_seconds"] == 960.0
-    scorers = [r["score_place"] for r in g["results"] if r["score_place"]]
+def test_every_level_runs_in_the_one_race():
+    v = _boys()["levels"][0]["results"]
+    # the JV runner who outran the varsity field wins the compiled race
+    winner = next(r for r in v if r["place"] == 1)
+    assert winner["name"].startswith("JV ")
+    placed = [r["place"] for r in v if r["place"]]
+    assert placed == list(range(1, len(placed) + 1))
+    scorers = [r["score_place"] for r in v if r["score_place"]]
     assert scorers == list(range(1, len(scorers) + 1))
-
-
-def test_groups_with_no_varsity_level_lead_with_their_first():
-    rows = [r for r in fixtureRows() if r["div_id"] in (3, 4)]
-    g = MC.compiledResults(StubCursor(rows), 77)[0]
-    assert g["level"] == "jv" and g["levels"][0]["level"] == "jv"
 
 
 def test_one_division_is_labelled_single():
@@ -172,30 +149,20 @@ def test_one_division_is_labelled_single():
     assert not _boys()["levels"][0]["single"]
 
 
-# ---- 3. unknown labels are never merged ----------------------------------- #
-
-def test_unknown_labels_are_their_own_levels():
-    by = {lv["level"]: lv for lv in _boys()["levels"]}
-    assert by["other:masters"]["divisions"] == [5]
-    assert by["other:alumni"]["divisions"] == [6]
-    # called by the division's own name -- there is no generic one
-    assert by["other:masters"]["label"] == "Masters"
-    assert MC.levelLabel("other:gold race", []) == "Gold Race"
-
-
 # ---- 4. DQ: no place, no score, status in the place column ---------------- #
 
 def test_dq_keeps_its_row_and_loses_its_place():
     v = _boys()["levels"][0]["results"]
-    dq = next(r for r in v if r["name"] == "Dq Runner")
+    i = next(k for k, r in enumerate(v) if r["name"] == "Dq Runner")
+    dq = v[i]
     # in time order (its time is real) but unplaced
-    assert v[0] is dq
     assert dq["place"] is None and dq["place_status"] == "DQ"
     assert dq["score_place"] is None and dq["team_place"] is None
     assert dq["division_place"] is None and dq["division_status"] == "DQ"
-    # the runner behind it is first, not second -- in the compile and in
-    # the race they ran
-    assert v[1]["place"] == 1 and v[1]["division_place"] == 1
+    # the runner behind it takes the next place, not one lower -- in the
+    # compile and in the race they ran
+    assert v[i + 1]["place"] == v[i - 1]["place"] + 1
+    assert v[i + 1]["division_place"] == 1
 
 
 def test_dnf_with_a_time_is_unplaced_and_last():
@@ -261,16 +228,13 @@ def _indexRows():
              "school": sc, "n": n} for (d, g, dv, lb, sc), n in c.items()]
 
 
-def test_compiled_index_lists_levels_varsity_first():
+def test_compiled_index_lists_one_race_per_distance_and_gender():
     got = MC.compiledIndex(StubCursor(index_rows=_indexRows()), 77)
     boys = [e for e in got if e["gender"] == "M"]
-    assert [e["level"] for e in boys] == [
-        "varsity", "jv", "fs", "other:alumni", "other:masters"]
-    assert [e["primary"] for e in boys] == [True, False, False, False, False]
-    assert boys[0]["n_divisions"] == 2 and boys[0]["n_teams"] == 3
-    assert boys[0]["n_results"] == 20
-    assert boys[1]["n_teams"] == 3 and boys[1]["single"]
-    assert boys[3]["n_teams"] == 0 and boys[3]["label"] == "Alumni"
+    assert len(boys) == 1 and boys[0]["primary"]
+    assert boys[0]["level"] == MC.ALL_LEVELS and boys[0]["n_divisions"] == 6
+    assert boys[0]["n_results"] == sum(r["n"] for r in _indexRows()
+                                       if r["gender"] == "M")
     girls = [e for e in got if e["gender"] == "F"]
     assert len(girls) == 1 and girls[0]["primary"] and girls[0]["single"]
     # biggest (distance, gender) first, as before
@@ -286,15 +250,11 @@ def test_meet_template_links_levels():
 
 # ---- 6. URL back-compat --------------------------------------------------- #
 
-def test_compiled_level_picks_by_query():
+def test_compiled_level_picks_the_one_race():
     import app as A
     g = _boys()
-    assert A._compiledLevel(g, None)["level"] == "varsity"
-    assert A._compiledLevel(g, "")["level"] == "varsity"
-    assert A._compiledLevel(g, "VARSITY")["level"] == "varsity"
-    assert A._compiledLevel(g, "jv")["level"] == "jv"
-    assert A._compiledLevel(g, "other:masters")["level"] == "other:masters"
-    assert A._compiledLevel(g, "ms") is None
+    for want in (None, "", "varsity", "jv", "other:masters", "ms"):
+        assert A._compiledLevel(g, want) is g["levels"][0]
     assert A._compiledLevel(None, None) is None
 
 
@@ -331,31 +291,20 @@ def client(monkeypatch):
     return A.app.test_client()
 
 
-def test_old_compiled_url_lands_on_varsity(client):
+def test_compiled_url_shows_every_division(client):
     r = client.get("/race/xc/77/compiled/5000/M")
     assert r.status_code == 200
     html = r.get_data(as_text=True)
-    assert "JV Jesuit 0" not in html            # no JV row in the varsity race
-    assert "Dq Runner" in html
-    assert 'class="rc-levels"' in html or "rc-levels" in html
-    # the level bar links the others by ?level=, the primary by the bare URL
-    assert 'href="/race/xc/77/compiled/5000/M?level=jv"' in html
-    assert 'href="/race/xc/77/compiled/5000/M"' in html
+    assert "JV Jesuit 0" in html and "Dq Runner" in html
+    assert "rc-levels" not in html                # no level bar: one race
     # lower-case gender, as older links were written, still resolves
     assert client.get("/race/xc/77/compiled/5000/m").status_code == 200
 
 
-def test_level_query_selects_and_keeps_other_args(client):
-    html = client.get("/race/xc/77/compiled/5000/M?level=jv&alt=1").get_data(as_text=True)
-    assert "JV Jesuit 0" in html and "Dq Runner" not in html
-    assert 'href="/race/xc/77/compiled/5000/M?alt=1"' in html
-    assert 'href="/race/xc/77/compiled/5000/M?level=fs&amp;alt=1"' in html
-
-
-def test_unknown_level_is_404(client):
-    assert client.get("/race/xc/77/compiled/5000/M?level=ms").status_code == 404
-    # ?level=varsity always lands somewhere
-    assert client.get("/race/xc/77/compiled/5000/F?level=varsity").status_code == 200
+def test_a_level_link_from_before_lands_on_the_one_race(client):
+    for q in ("?level=jv&alt=1", "?level=ms", "?level=varsity"):
+        r = client.get("/race/xc/77/compiled/5000/M" + q)
+        assert r.status_code == 200 and "JV Jesuit 0" in r.get_data(as_text=True)
 
 
 def test_dq_shows_its_status_in_the_place_column(client):

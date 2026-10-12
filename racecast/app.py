@@ -5340,6 +5340,10 @@ def _compiledLevel(group, want):
       quietly show the varsity race under a JV heading."""
     if group is None:
         return None
+    # ★ ONE RACE PER GROUP NOW (meet_compile.ALL_LEVELS, owner 2026-10-12):
+    #   a ?level= link made while levels were split lands on that one race
+    if len(group["levels"]) == 1:
+        return group["levels"][0]
     want = (want or "").strip().lower()
     if not want or want == "varsity":
         return next((lv for lv in group["levels"] if lv["level"] == "varsity"),

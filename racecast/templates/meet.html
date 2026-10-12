@@ -147,7 +147,7 @@
            and the rest add ?level= ahead of the race_q args. A level of one
            division is that race, re-placed -- listed, and said so. #}
         {% set _rq = race_q()|string %}
-        <td class="nm"><a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender|urlencode }}{% if g.primary %}{{ _rq }}{% else %}?level={{ g.level|urlencode }}{% if _rq %}&amp;{{ _rq[1:] }}{% endif %}{% endif %}">{{ "Boys" if g.gender == 'M' else "Girls" if g.gender == 'F' else "All" }} {{ g.distance }}m{% if g.label and (not g.primary or g.level != 'varsity') %} · {{ g.label }}{% endif %}</a>{% if g.single %}<span class="rc-subline">one race{% if g.div_label %}: {{ g.div_label }}{% endif %}</span>{% endif %}</td>
+        <td class="nm"><a href="/race/xc/{{ header.meet_id }}/compiled/{{ g.distance }}/{{ g.gender|urlencode }}{% if g.primary %}{{ _rq }}{% else %}?level={{ g.level|urlencode }}{% if _rq %}&amp;{{ _rq[1:] }}{% endif %}{% endif %}">{{ "Boys" if g.gender == 'M' else "Girls" if g.gender == 'F' else "All" }} {{ g.distance }}m{% if g.label and (not g.primary or g.level not in ('varsity', 'all')) %} · {{ g.label }}{% endif %}</a>{% if g.single %}<span class="rc-subline">one race{% if g.div_label %}: {{ g.div_label }}{% endif %}</span>{% endif %}</td>
         <td class="n">{{ "{:,}".format(g.n_results) }}</td>
         <td class="n">{{ g.n_divisions }}</td>
         <td class="n">{{ g.n_teams if g.n_teams else " - " }}</td>

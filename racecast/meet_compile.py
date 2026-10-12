@@ -436,7 +436,7 @@ def compiledResults(cur, meet_id, source=None):
     for g in groups.values():
         levels = {}
         for r in g["results"]:
-            lv = divisionGroup(r["div_label"])
+            lv = _levelOf(r["div_label"])
             r["level"] = lv
             levels.setdefault(lv, []).append(r)
         g["levels"] = [_compileLevel(cur, lv, rows, source)
@@ -463,9 +463,26 @@ def _compiledOrder(r):
     return (k not in ("ok", "dq"), r["time_seconds"])
 
 
+# ★ ONE COMPILED RACE PER (DISTANCE, GENDER) (owner, 2026-10-12: "there
+#   should be one compiled race per gender/distance, and in the race and
+#   compiled races tab you should be able to filter by grade"). The
+#   2026-10-10 split by level is undone: every division at the distance is
+#   in one list, and the page's grade filter (race-page.js) is how a reader
+#   asks for the freshmen. compiledResults / compiledIndex still return
+#   `levels`, now always the one ALL_LEVELS entry, so every reader keeps
+#   its shape.
+ALL_LEVELS = "all"
+
+
+def _levelOf(_div_label):
+    return ALL_LEVELS
+
+
 def levelLabel(level, div_labels=()):
     """'Varsity', 'JV', ...; an unrecognised level is called by the
     division's own name -- there is no generic word for it."""
+    if level == ALL_LEVELS:
+        return "All divisions"
     return (groupLabel(level)
             or next((d for d in div_labels if d), None)
             or level.split(":", 1)[-1].title())
@@ -578,7 +595,7 @@ def compiledIndex(cur, meet_id, source=None):
         else:
             distance, gender, div_id, div_label, school, n = row
         div_label = (div_label or "").strip() or None
-        lv = divisionGroup(div_label)
+        lv = _levelOf(div_label)
         g = groups.setdefault((int(distance), gender), {})
         e = g.setdefault(lv, {"n_results": 0, "divs": set(), "labels": [],
                               "schools": {}})
