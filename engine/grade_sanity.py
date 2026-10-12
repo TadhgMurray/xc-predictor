@@ -907,12 +907,11 @@ _BUILD = f"""
           AND  substring(date, 1, 4)::int BETWEEN 1990 AND 2035
           AND  tw.result_id IS NULL;
 
-    -- ! (person_id, acad, race) COVERS THE COUNTS. Rules 2 and 4 both do
-    --   count(DISTINCT race) grouped by person and season; a plain
-    --   (person_id, acad) index still has to fetch every heap row for the
-    --   third column. Including it lets those aggregate from the index.
-    CREATE INDEX ON allraces (person_id, acad, race);
-    CREATE INDEX ON allraces (meet_id, div_id, source, event_key);
+    -- ★ NO INDEXES YET (run 20261011_150217: 134 s building two indexes
+    --   the fold below threw away with the table). The only readers before
+    --   the fold are raceKinds' full GROUP BY, which no index serves; the
+    --   indexes the rules read -- (person_id, acad, race) covering their
+    --   count(DISTINCT race) -- are built once, on the folded table.
     ANALYZE allraces;
 
     -- ============================================================== --
