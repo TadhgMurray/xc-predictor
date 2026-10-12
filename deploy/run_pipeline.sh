@@ -257,7 +257,7 @@ summarise() {
 # ★ 04a2_link_teamless TOO, for the same reason: it moves ids (2026-09-29).
 # ★ 04a3_pins TOO: it keeps the owner's detaches where he put them (2026-10-10).
 # ★ 00_integrity TOO: a damaged page is damaged whichever step reads it first.
-_ALWAYS="00_integrity 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a3_pins 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
+_ALWAYS="00_integrity 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a4_unsplit 04a3_pins 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
 step() {
   name="$1"; shift
@@ -501,7 +501,8 @@ bgwait() {
 }
 
 # ---- verdicts ------------------------------------------------------- #
-# ! unlink.py IS NOT HERE ON PURPOSE -- it is the one non-idempotent step.
+# ! unlink.py --write IS NOT HERE ON PURPOSE -- it is the one non-idempotent
+#   step (its idempotent --rejoin half is 04a4_unsplit).
 # ★ AN anet MEET UNDER THE WRONG YEAR IS PUT BACK FIRST (2026-09-29). Meet
 #   227716, a 2023 Middlesex League race stored as 2025-10-26, put four
 #   runners' own high school race on their college seasons. Every step after
@@ -576,6 +577,13 @@ step 04a2_link_teamless "$PY" -u scripts/link_teamless.py --apply
 #   'detach'; `scripts/person_pins.py --undo-detach <result id>|all`. The
 #   grade and school pins need no step: grade_sanity (next) and
 #   build_ranking_results read them themselves.
+# ★ A SPLIT THE RULES NO LONGER MAKE IS PUT BACK (owner, 2026-10-12, Jack
+#   Falkowski split off his own high school career by an unattached "9").
+#   unlink.py --write stays by hand; its --rejoin half re-judges every split
+#   on record with today's rules and undoes the ones they would not make.
+#   Idempotent. Before the pins, so an owner's decision is re-applied last.
+#   Logged in person_link_log rule 'unsplit'; `engine/unlink.py --rejoin --undo`.
+step 04a4_unsplit     "$PY" -u engine/unlink.py --rejoin --write
 step 04a3_pins        "$PY" -u scripts/person_pins.py --apply
 step 04_grade_sanity  "$PY" -u engine/grade_sanity.py --write
 

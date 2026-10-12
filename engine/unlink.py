@@ -106,6 +106,29 @@ MAX_RACING_GAP = 15
 YEAR_MIN = 1990
 YEAR_MAX = 2035
 
+# ★ A GRADE ON AN UNATTACHED OR CLUB ROW IS NOT A SCHOOL'S GRADE (owner,
+#   2026-10-12: /athlete/2000002910, Jack Falkowski -- a redshirt freshman
+#   racing unattached at college meets the autumn after his senior year,
+#   his rows reading "9"). Class of 2025 by his school seasons, "class of
+#   2029" by the unattached one: a spread of four, and the id was split.
+#   An entry form's grade column on an unattached or club entry is the
+#   scraper copying something forward (a profile's year, a club's year
+#   count -- grade_sanity rules 7 and 8), not a school saying which class
+#   the athlete is in. Only a row on a SCHOOL-shaped team gives a class
+#   year; the others still load and testify by their dates (the gap rule).
+def _schoolShapedSql(col="school"):
+    from grade_sanity import CLUB_NAME_RE, NOT_SCHOOL_RE
+    x = f"lower(btrim(COALESCE({col}, '')))"
+    return f"NOT ({x} ~ '{NOT_SCHOOL_RE}' OR {x} ~ '{CLUB_NAME_RE}')"
+
+
+def classYearsSql(only=None):
+    """The per-season class years; `only` names a temp table of person_ids
+    (column person_id) to restrict the scan to (rejoin)."""
+    return _CLASS_YEARS_SQL.replace("{SCHOOL_SHAPED}", _schoolShapedSql()).replace(
+        "{ONLY}", f"AND person_id IN (SELECT person_id FROM {only})" if only else "")
+
+
 _CLASS_YEARS_SQL = f"""
     WITH allraces AS (
         SELECT person_id,
@@ -116,17 +139,20 @@ _CLASS_YEARS_SQL = f"""
         FROM   results
         WHERE  person_id IS NOT NULL AND date IS NOT NULL
           AND  substr(date, 1, 4)::int BETWEEN {YEAR_MIN} AND {YEAR_MAX}
+          {{ONLY}}
         UNION ALL
         SELECT person_id, substr(date, 1, 4)::int, NULLIF(TRIM(grade), ''),
                school, NULLIF(TRIM(athlete_name), '')
         FROM   results_tf
         WHERE  person_id IS NOT NULL AND date IS NOT NULL
           AND  substr(date, 1, 4)::int BETWEEN {YEAR_MIN} AND {YEAR_MAX}
+          {{ONLY}}
     ),
     per_season AS (
         SELECT person_id, season,
                mode() WITHIN GROUP (ORDER BY grade)
-                   FILTER (WHERE grade ~ '^[0-9]+$')      AS grade,
+                   FILTER (WHERE grade ~ '^[0-9]+$'
+                             AND {{SCHOOL_SHAPED}})        AS grade,
                mode() WITHIN GROUP (ORDER BY school)      AS school,
                mode() WITHIN GROUP (ORDER BY athlete_name) AS name,
                count(*)                                   AS n_races
@@ -146,9 +172,9 @@ _CLASS_YEARS_SQL = f"""
 """
 
 
-def loadSeasons(cur):
+def loadSeasons(cur, only=None):
     """{person_id: [(season, class_year, grade, school, n_races), ...]}."""
-    cur.execute(_CLASS_YEARS_SQL)
+    cur.execute(classYearsSql(only))
     out = {}
     for pid, season, grade, school, name, n_races, class_year in cur.fetchall():
         out.setdefault(int(pid), []).append(
@@ -365,8 +391,9 @@ def write(cur, splits):
                 moves.append((pid, season, next_id, class_year, school))
             next_id += 1
 
-    cur.execute("DROP TABLE IF EXISTS person_split")
-    cur.execute("""CREATE TABLE person_split (
+    # ! KEPT ACROSS RUNS, NOT DROPPED (2026-10-12): rejoin() reads every
+    #   split ever made, and a second --write used to erase the first's.
+    cur.execute("""CREATE TABLE IF NOT EXISTS person_split (
                        old_person_id bigint NOT NULL,
                        season        int    NOT NULL,
                        new_person_id bigint NOT NULL,
@@ -374,25 +401,154 @@ def write(cur, splits):
                                                     -- carried no numeric grade
                        school        text,
                        PRIMARY KEY (old_person_id, season))""")
-    execute_values(cur, "INSERT INTO person_split VALUES %s", moves,
-                   page_size=5000)
-    cur.execute("CREATE INDEX ON person_split (old_person_id, season)")
+    execute_values(cur, "INSERT INTO person_split VALUES %s ON CONFLICT DO NOTHING",
+                   moves, page_size=5000)
+    cur.execute("CREATE INDEX IF NOT EXISTS person_split_new_idx "
+                "ON person_split (new_person_id)")
     cur.execute("ANALYZE person_split")
 
     # ! THE UPDATE JOINS ON SEASON, NOT JUST person_id. A split moves SOME of
     #   an id's seasons and leaves the rest; updating by person_id alone would
     #   move every race the athlete ever ran.
+    cur.execute("DROP TABLE IF EXISTS tmp_split_moves; CREATE TEMP TABLE tmp_split_moves "
+                "(old_person_id bigint, season int, new_person_id bigint)")
+    execute_values(cur, "INSERT INTO tmp_split_moves VALUES %s",
+                   [m[:3] for m in moves], page_size=5000)
     for table in ("results", "results_tf"):
         cur.execute(f"""
             UPDATE {table} r
             SET    person_id = s.new_person_id
-            FROM   person_split s
+            FROM   tmp_split_moves s
             WHERE  r.person_id = s.old_person_id
               AND  substr(r.date, 1, 4)::int = s.season
         """)
         print(f"    {table}: {cur.rowcount:,} rows reassigned")
 
     return len(moves)
+
+
+# ================================================================== #
+#  REJOIN -- A SPLIT THE RULES NO LONGER MAKE IS PUT BACK
+# ================================================================== #
+#
+# ★ WHY (owner, 2026-10-12: "we cannot just go manually on these people we
+#   need to find what is wrong and fix it automatically"). A split is made
+#   once, by hand, and then stands forever; when the rule that made it is
+#   corrected -- an unattached row's grade is no class year any more -- the
+#   people it wrongly took apart stay apart. Every split in person_split is
+#   re-judged here with the CURRENT rules on the two ids' seasons together,
+#   and one the rules would not make now is undone.
+#
+# ! TWO GUARDS, BECAUSE A WRONG MERGE IS WORSE THAN A MISSED ONE (this
+#   module's own rule): the joined seasons must cluster as one person
+#   (findSplits returns nothing -- the gap, the class years, and a thin
+#   cluster's school and name all agree), AND the two sides' names must
+#   share a spelling (not _disjoint on name), whatever their sizes.
+# ! IDEMPOTENT, so it runs every night (pipeline 04a4): a rejoined split
+#   leaves person_split, and a second run finds nothing. Only the seasons
+#   the split moved go back; rows another linker gave the new id stay.
+#   Logged in person_link_log, rule 'unsplit'; --rejoin --undo restores.
+REJOIN_RULE = "unsplit"
+
+
+def rejoinPairs(by_person, pairs):
+    """[(old, new, seasons)] of the splits the current rules would not make.
+
+    by_person: loadSeasons over both sides' ids; pairs: [(old, new, seasons)]
+    from person_split. Pure."""
+    out = []
+    for old, new, seasons in pairs:
+        a, b = by_person.get(old), by_person.get(new)
+        if not a or not b:
+            continue                   # one side is gone: nothing to join
+        if _disjoint(a, b, 5):
+            continue                   # no shared name spelling
+        if findSplits({old: a + b}):
+            continue                   # still two people by today's rules
+        out.append((old, new, sorted(seasons)))
+    return out
+
+
+def rejoin(cur, do_write=False, show=25):
+    """Re-judge every split in person_split; undo the ones that no longer
+    hold (see REJOIN_RULE). Returns the number of ids put back."""
+    cur.execute("SELECT to_regclass('person_split')")
+    if cur.fetchone()[0] is None:
+        print("[unlink/rejoin] no person_split: nothing was ever split")
+        return 0
+    cur.execute("""SELECT old_person_id, new_person_id, array_agg(season)
+                   FROM person_split GROUP BY 1, 2""")
+    pairs = [(int(o), int(n), [int(x) for x in ss]) for o, n, ss in cur.fetchall()]
+    print(f"[unlink/rejoin] {len(pairs):,} splits on record")
+    if not pairs:
+        return 0
+    cur.execute("DROP TABLE IF EXISTS rj_ids; CREATE TEMP TABLE rj_ids (person_id bigint PRIMARY KEY)")
+    from psycopg2.extras import execute_values
+    ids = sorted({p for o, n, _ in pairs for p in (o, n)})
+    execute_values(cur, "INSERT INTO rj_ids VALUES %s", [(i,) for i in ids], page_size=10000)
+    cur.execute("ANALYZE rj_ids")
+    back = rejoinPairs(loadSeasons(cur, only="rj_ids"), pairs)
+    print(f"[unlink/rejoin] {len(back):,} splits the current rules would not make")
+    for old, new, ss in back[:show]:
+        print(f"    {new} -> {old}  seasons {', '.join(map(str, ss))}")
+    if not do_write or not back:
+        if back:
+            print("[unlink/rejoin] DRY RUN, pass --write to apply")
+        return len(back)
+    sys.path.insert(0, os.path.join(_ROOT, "scripts"))
+    from link_freshmen import LOG_DDL
+    cur.execute(LOG_DDL)
+    cur.execute("DROP TABLE IF EXISTS rj_back; CREATE TEMP TABLE rj_back "
+                "(old_id bigint, new_id bigint, season int)")
+    execute_values(cur, "INSERT INTO rj_back VALUES %s",
+                   [(o, n, y) for o, n, ss in back for y in ss], page_size=10000)
+    moved = {}
+    for sport, table in (("XC", "results"), ("TF", "results_tf")):
+        cur.execute(f"""
+            INSERT INTO person_link_log (sport, result_id, from_person, to_person, rule)
+            SELECT %s, r.result_id, b.new_id, b.old_id, %s
+            FROM   {table} r JOIN rj_back b
+                   ON r.person_id = b.new_id AND substr(r.date, 1, 4)::int = b.season
+            ON CONFLICT DO NOTHING""", (sport, REJOIN_RULE))
+        cur.execute(f"""
+            UPDATE {table} r SET person_id = b.old_id
+            FROM   rj_back b
+            WHERE  r.person_id = b.new_id AND substr(r.date, 1, 4)::int = b.season""")
+        moved[sport] = cur.rowcount
+    cur.execute("""DELETE FROM person_split s USING rj_back b
+                   WHERE s.old_person_id = b.old_id AND s.season = b.season
+                     AND s.new_person_id = b.new_id""")
+    print(f"[unlink/rejoin] {len(back):,} ids put back; rows moved {moved}; "
+          f"logged in person_link_log rule '{REJOIN_RULE}'")
+    return len(back)
+
+
+def rejoinUndo(cur):
+    """Put every rejoined row back on its split id, and the split on record."""
+    cur.execute("SELECT to_regclass('person_link_log')")
+    if cur.fetchone()[0] is None:
+        print("[unlink/rejoin] nothing to undo")
+        return
+    cur.execute("""
+        INSERT INTO person_split (old_person_id, season, new_person_id)
+        SELECT DISTINCT l.to_person, substr(r.date, 1, 4)::int, l.from_person
+        FROM   person_link_log l
+        JOIN   (SELECT 'XC' AS sport, result_id, date FROM results
+                UNION ALL SELECT 'TF', result_id, date FROM results_tf) r
+               ON r.sport = l.sport AND r.result_id = l.result_id
+        WHERE  l.rule = %s
+        ON CONFLICT DO NOTHING""", (REJOIN_RULE,))
+    back = {}
+    for sport, table in (("XC", "results"), ("TF", "results_tf")):
+        cur.execute(f"""
+            UPDATE {table} r SET person_id = l.from_person
+            FROM   person_link_log l
+            WHERE  l.sport = %s AND l.rule = %s
+              AND  r.result_id = l.result_id AND r.person_id = l.to_person""",
+                    (sport, REJOIN_RULE))
+        back[sport] = cur.rowcount
+    cur.execute("DELETE FROM person_link_log WHERE rule = %s", (REJOIN_RULE,))
+    print(f"[unlink/rejoin] undone: {back}")
 
 
 def main(do_write=False):
@@ -418,4 +574,14 @@ def main(do_write=False):
 
 
 if __name__ == "__main__":
-    main(do_write="--write" in sys.argv)
+    if "--rejoin" in sys.argv:
+        from database import getConn
+        with getConn() as _conn:
+            with _conn.cursor() as _cur:
+                if "--undo" in sys.argv:
+                    rejoinUndo(_cur)
+                else:
+                    rejoin(_cur, do_write="--write" in sys.argv)
+            _conn.commit()
+    else:
+        main(do_write="--write" in sys.argv)

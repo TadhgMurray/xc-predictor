@@ -6002,3 +6002,31 @@ Chromium against the old script (readout 15:00, label under the pointer
 - His high-school and Johns Hopkins pages were two pages: link_freshmen
   refused him because his HS page has tfrrs rows ("Unattached" at open
   college meets). Fixed: only a COLLEGE tfrrs row keeps a senior out.
+
+## 2026-10-12 -- Unattached college/pro seasons on the HS boards, and split careers
+
+- Owner report: /athlete/2000002438 (Jason Intravaia: PDC professional in
+  2024, then "Grade 10" unattached at the UW indoor meets, #3 HS sophomore
+  board) and /athlete/2000002910 (Jack Falkowski: redshirt freshman,
+  unattached at college meets, "Grade 9"). "Not just a linkage failure, but
+  a failure of pool too" -- fix the rules, not the people.
+- POOL: two unattached rows agreeing on a grade corroborate it (grade_sanity
+  rule 2), and a corroborated grade overrules the race's college ceiling in
+  resolvePool (Kitchen's screen) -- so the season pooled high school. Rule 8
+  only looked at seasons with a club row. FIXED: rule 8's unattached arm --
+  a season with no school row, only college/pro races, after the athlete was
+  already past school (graduated by their own grade, or an earlier
+  pro/college season) is method 'past_school'. Its level, and rule 3b's
+  'graduated', is now college when most of the season's races are college
+  races, no earlier season was pro, and it is inside eligibility; pro
+  otherwise (it was always pro).
+- LINKAGE: unlink.py read the unattached "9" as class of 2029 against a
+  school career of 2025 and split the id. FIXED: only a row on a
+  school-shaped team gives a class year. NEW pipeline step 04a4_unsplit
+  (`engine/unlink.py --rejoin --write`) re-judges every split on record with
+  today's rules and undoes the ones they would not make (same name spelling
+  required); logged as person_link_log rule 'unsplit', `--rejoin --undo`.
+  person_split is no longer dropped by a later --write.
+- ⏳ Needs a run. If either page still shows after the next run, the split
+  came from somewhere other than unlink (diag_board_people --person prints
+  the origin).

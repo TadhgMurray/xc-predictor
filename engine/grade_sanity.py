@@ -1784,12 +1784,15 @@ NOT_SCHOOL_RE = (
     r"|morocco|algeria|bahrain|qatar|turkey|israel|philippines|colombia)$")
 
 
-def adultClubSeasons(cur, hs_grade, college_start):
-    """{(person_id, acad): school} meeting rule 8's three signals.
+def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
+    """{(person_id, acad): school} meeting rule 8's three signals. The
+    school is '' for a season moved on the unattached arm (no club row).
 
     hs_grade: {(pid, acad): int grade} of the high school verdicts;
-    college_start: {pid: first college academic year} (rule 5b's start).
+    college_start: {pid: first college academic year} (rule 5b's start);
+    adult_from: {pid: first academic year past school} (priorAdultSeasons).
     Pure apart from the reads; the decision is _adultClubDecide."""
+    adult_from = adult_from or {}
     from level_graph import _raceKeyExpr
     cur.execute("SELECT to_regclass('race_top_level')")
     if cur.fetchone()[0] is None:
@@ -1844,8 +1847,11 @@ def adultClubSeasons(cur, hs_grade, college_start):
             JOIN   athlete_season s ON s.person_id = c.person_id AND s.year = c.acad
             GROUP  BY 1""")
         adult |= {c for c, a, n in cur.fetchall() if n and a / n > ADULT_CLUB_SHARE}
-    # the candidates: high school verdicts in a season with a club row
-    cand = [k for k in hs_grade if k in club_seasons]
+    # the candidates: high school verdicts in a season with a club row, or
+    # (the unattached arm) a season after the athlete was already past school
+    grads = _graduations(hs_grade)
+    cand = [k for k in hs_grade
+            if k in club_seasons or _pastSchoolBy(k, grads, adult_from)]
     if not cand:
         print(f"    [8] no high school season on a club ({time.time() - t0:.0f}s)")
         return {}
@@ -1877,9 +1883,11 @@ def adultClubSeasons(cur, hs_grade, college_start):
     facts = {(int(p), int(a)): (bool(hs), bool(sen)) for p, a, hs, sen in cur.fetchall()}
     cur.execute("RESET enable_nestloop")
     cur.execute("DROP TABLE tmp_club_rows; DROP TABLE tmp_club_cand")
-    out = _adultClubDecide(cand, facts, club_seasons, adult, hs_grade)
-    print(f"    [8] {len(cand):,} high school seasons on a club, {len(adult):,} adult "
-          f"clubs, {len(out):,} moved ({time.time() - t0:.0f}s)")
+    out = _adultClubDecide(cand, facts, club_seasons, adult, hs_grade, adult_from)
+    n_un = sum(1 for v in out.values() if not v)
+    print(f"    [8] {len(cand):,} high school seasons on a club or past school, "
+          f"{len(adult):,} adult clubs, {len(out) - n_un:,} moved on a club, "
+          f"{n_un:,} unattached ({time.time() - t0:.0f}s)")
     return out
 
 
@@ -1914,6 +1922,10 @@ def adultClubSeasons(cur, hs_grade, college_start):
 POST_ELIGIBILITY_SEASONS = 7
 
 
+# the verdicts whose level pastSchoolLevel decides
+_PAST_SCHOOL = ("graduated", "past_school")
+
+
 def pastEligibilitySeasons(acad, college_start, gap=None):
     """Rule 5e's decision, pure: the (person_id, acad) keys whose verdict is
     a field-derived 'college' with no grade, at least `gap` academic years
@@ -1930,22 +1942,127 @@ def pastEligibilitySeasons(acad, college_start, gap=None):
     return sorted(out)
 
 
-def _adultClubDecide(cand, facts, club_seasons, adult, hs_grade):
-    """Rule 8's decision, pure. {(pid, acad): club} of the seasons moved."""
+def _graduations(hs_grade):
+    """{pid: [academic year each high school grade says they graduate]}."""
     grads = {}
     for (pid, ay), g in hs_grade.items():
         grads.setdefault(pid, []).append(ay + (12 - g))
+    return grads
+
+
+def _pastSchoolBy(key, grads, adult_from):
+    """Was this athlete already past school before this season? Their own
+    earlier high school grade graduates them first, or an earlier season of
+    theirs is already professional or college."""
+    pid, ay = key
+    first = adult_from.get(pid)
+    return (any(gy < ay for gy in grads.get(pid, ()))
+            or (first is not None and first < ay))
+
+
+def _adultClubDecide(cand, facts, club_seasons, adult, hs_grade, adult_from=None):
+    """Rule 8's decision, pure. {(pid, acad): club} of the seasons moved;
+    the club is '' for the unattached arm (a season with no club row)."""
+    grads = _graduations(hs_grade)
+    adult_from = adult_from or {}
     out = {}
     for key in cand:
         has_school, all_senior = facts.get(key, (True, False))
         if has_school or not all_senior:
             continue
-        pid, ay = key
         clubs = club_seasons.get(key, set())
-        graduated = any(gy < ay for gy in grads.get(pid, []))
-        if clubs & adult or graduated:
-            out[key] = sorted(clubs)[0]
+        past = _pastSchoolBy(key, grads, adult_from)
+        if clubs:
+            if clubs & adult or past:
+                out[key] = sorted(clubs)[0]
+        elif past:
+            out[key] = ""
     return out
+
+
+def priorAdultSeasons(acad, cur=None):
+    """({pid: first adult academic year}, {pid: first professional one}).
+
+    Adult is a verdict of level pro or college, or a college class word;
+    with `cur`, the last build's pro_/college_ pools (athlete_season) too --
+    most professionals carry no class row, rule 8's own reason for reading
+    that table."""
+    adult, pro = {}, {}
+
+    def _put(d, pid, ay):
+        if d.get(pid) is None or ay < d[pid]:
+            d[pid] = ay
+
+    for (pid, ay), v in acad.items():
+        if v.get("level") == "pro":
+            _put(adult, pid, ay)
+            _put(pro, pid, ay)
+        elif v.get("level") == "college" or v.get("grade") in ("FR", "SO", "JR", "SR"):
+            _put(adult, pid, ay)
+    if cur is not None:
+        cur.execute("SELECT to_regclass('athlete_season')")
+        if cur.fetchone()[0] is not None:
+            cur.execute("""
+                SELECT person_id, min(year),
+                       min(year) FILTER (WHERE pool ~ '^pro_')
+                FROM   athlete_season WHERE pool ~ '^(pro|college)_'
+                GROUP  BY 1""")
+            for pid, a, p in cur.fetchall():
+                _put(adult, int(pid), int(a))
+                if p is not None:
+                    _put(pro, int(pid), int(p))
+    return adult, pro
+
+
+def seasonCeilings(cur, keys):
+    """{(pid, acad): (college races, pro races)} by race_top_level, for the
+    given seasons only (rule 8's facts query, narrowed to the counts)."""
+    from level_graph import _raceKeyExpr
+    keys = list(keys)
+    if not keys:
+        return {}
+    cur.execute("SELECT to_regclass('race_top_level')")
+    if cur.fetchone()[0] is None:
+        return {}
+    from psycopg2.extras import execute_values
+    cur.execute("DROP TABLE IF EXISTS tmp_ceil_keys; "
+                "CREATE TEMP TABLE tmp_ceil_keys (person_id bigint, acad int)")
+    execute_values(cur, "INSERT INTO tmp_ceil_keys VALUES %s", keys, page_size=10000)
+    cur.execute("ANALYZE tmp_ceil_keys")
+    cur.execute("SET enable_nestloop = off")
+    cur.execute(f"""
+        SELECT c.person_id, c.acad,
+               count(*) FILTER (WHERE rl.top_level = 'college'),
+               count(*) FILTER (WHERE rl.top_level = 'pro')
+        FROM   tmp_ceil_keys c
+        JOIN   (SELECT r.person_id, {_ACAD_R} AS acad, r.meet_id, r.div_id, r.source
+                FROM results r WHERE r.person_id IN (SELECT person_id FROM tmp_ceil_keys)
+                UNION ALL
+                SELECT r.person_id, {_ACAD_R}, r.meet_id, r.div_id, r.source
+                FROM results_tf r WHERE r.person_id IN (SELECT person_id FROM tmp_ceil_keys)) r
+               ON r.person_id = c.person_id AND r.acad = c.acad
+        JOIN   race_top_level rl ON rl.race = {_raceKeyExpr('r')}
+        GROUP  BY 1, 2""")
+    out = {(int(p), int(a)): (int(nc), int(np_)) for p, a, nc, np_ in cur.fetchall()}
+    cur.execute("RESET enable_nestloop")
+    cur.execute("DROP TABLE tmp_ceil_keys")
+    return out
+
+
+def pastSchoolLevel(key, ceilings, pro_from, school_out=None):
+    """The level of a season past school: college when most of its races
+    had a college ceiling, the athlete has not already been a professional,
+    and it is inside NCAA eligibility of their first year out of school
+    (school_out, POST_ELIGIBILITY_SEASONS, rule 5e's calendar) -- a redshirt
+    freshman racing unattached at college meets. Professional otherwise."""
+    pid, ay = key
+    first_pro = pro_from.get(pid)
+    out = (school_out or {}).get(pid)
+    n_college, n_pro = ceilings.get(key, (0, 0))
+    if n_college > n_pro and (first_pro is None or first_pro >= ay) \
+            and (out is None or ay - out < POST_ELIGIBILITY_SEASONS):
+        return "college"
+    return "pro"
 
 
 # ★ RULE 5d IN SQL (run 20261006_120609: five hours between rule 7 and the
@@ -2182,6 +2299,8 @@ def resolve(cur, audit=False):
                 # Past twelfth grade on this athlete's own progression. Rule
                 # 5b reaches the same verdict from collegiate evidence; this
                 # reaches it from arithmetic.
+                # ! PRO HERE, AND RE-LEVELLED AFTER RULE 8 (_PAST_SCHOOL):
+                #   college when the season's races are college ones.
                 acad[(pid, ay)] = {"grade": None, "level": "pro",
                                    "method": "graduated"}
             else:
@@ -2246,9 +2365,52 @@ def resolve(cur, audit=False):
     #   school verdicts still standing; college starts are 5b's own.
     hs_grade = {k: int(v["grade"]) for k, v in acad.items()
                 if v["grade"] and str(v["grade"]).isdigit() and 9 <= int(v["grade"]) <= 12}
-    moved8 = adultClubSeasons(cur, hs_grade, college_start)
-    for key in moved8:
-        acad[key] = {"grade": None, "level": "pro", "method": "adult_club"}
+    # ★ AND THE UNATTACHED ARM (owner, 2026-10-12, /athlete/2000002438 and
+    #   2000002910): Jason Intravaia, a professional in 2024 (PDC), then
+    #   "Grade 10" unattached at the UW indoor meets and #3 on the HS
+    #   sophomore board; Jack Falkowski, a redshirt freshman racing unattached
+    #   at college meets, "Grade 9". Two unattached rows agreeing on a grade
+    #   corroborate it (rule 2), and a corroborated grade overrules the
+    #   race's college ceiling in resolvePool (Kitchen's screen) -- so the
+    #   season pooled high school. A grade only moves forward: a season with
+    #   no school row, only college and pro races, AFTER the athlete was past
+    #   school (graduated by their own grade, or an earlier adult season) is
+    #   not a high school season. College when its field is college and no
+    #   earlier season was professional; professional otherwise.
+    adult_from, pro_from = priorAdultSeasons(acad, cur)
+    moved8 = adultClubSeasons(cur, hs_grade, college_start, adult_from)
+    n_unatt = 0
+    for key, club in moved8.items():
+        if club:
+            acad[key] = {"grade": None, "level": "pro", "method": "adult_club"}
+        else:
+            acad[key] = {"grade": None, "level": "pro", "method": "past_school"}
+            n_unatt += 1
+    # ★ THE LEVEL OF A SEASON PAST SCHOOL (rule 3b's 'graduated' and the
+    #   unattached arm): college when most of its races were college races
+    #   and no earlier season was professional -- Jack Falkowski's redshirt
+    #   year at college meets -- else professional, as before. The earlier
+    #   professional seasons are read without these two methods' own.
+    _relevel = [k for k, v in acad.items() if v["method"] in _PAST_SCHOOL]
+    _ceil = seasonCeilings(cur, _relevel)
+    _keep = {k: v for k, v in acad.items() if v["method"] not in _PAST_SCHOOL}
+    _a, pro_before = priorAdultSeasons(_keep, cur)
+    # the first academic year out of school: after the earliest graduation a
+    # school grade implies, or the first college season
+    school_out = dict(college_start)
+    for (pid, ay), v in _keep.items():
+        g = v.get("grade")
+        if g and str(g).isdigit() and 1 <= int(g) <= 12:
+            gy = ay + (12 - int(g)) + 1
+            if school_out.get(pid) is None or gy < school_out[pid]:
+                school_out[pid] = gy
+    n_to_college = 0
+    for key in _relevel:
+        lvl = pastSchoolLevel(key, _ceil, pro_before, school_out)
+        acad[key]["level"] = lvl
+        n_to_college += lvl == "college"
+    print(f"    [8] {len(_relevel):,} seasons past school, {n_to_college:,} of "
+          f"them college by their races", flush=True)
     n_adult = len(moved8)
     for (pid, ay), club in list(moved8.items())[:12]:
         print(f"        e.g. person {pid} season {ay}: {club}")
@@ -2440,7 +2602,8 @@ def resolve(cur, audit=False):
     print(f"    nobody in the race graded{n_nograde:>10,}")
     print(f"    grade never advanced     {n_stale:>10,}")
     print(f"    school grade after college{n_postcoll:>9,}")
-    print(f"    adult club's '12'        {n_adult:>10,}")
+    print(f"    adult club's '12'        {n_adult - n_unatt:>10,}")
+    print(f"    unattached, past school  {n_unatt:>10,}")
     print(f"    off the progression      {n_progress:>10,}")
     print(f"    season contradicts itself{n_nuked:>10,}")
     print(f"    field mostly nuked       {n_nuked_field:>10,}")

@@ -121,3 +121,56 @@ def test_rule8_on_postgres():
     conn.rollback()
     assert got == {(1, ay): "gazelle sports elite", (5, ay): "zap endurance",
                    (8, ay): "brentwood track club"}, got
+
+
+def test_unattached_arm_needs_an_earlier_adult_season():
+    # (owner, 2026-10-12) Jason Intravaia: PDC professional in 2024, then
+    # "Grade 10" unattached at college meets -> moved, no club named
+    key = (1, 2025)
+    got = GS._adultClubDecide([key], {key: (False, True)}, {}, set(), {key: 10},
+                              adult_from={1: 2024})
+    assert got == {key: ""}
+    # the same season with no earlier adult season: a real tenth grader who
+    # only raced unattached at college meets is left alone
+    assert GS._adultClubDecide([key], {key: (False, True)}, {}, set(), {key: 10}) == {}
+    # a school row or a high school race that season still keeps it
+    assert GS._adultClubDecide([key], {key: (True, True)}, {}, set(), {key: 10},
+                               adult_from={1: 2024}) == {}
+    assert GS._adultClubDecide([key], {key: (False, False)}, {}, set(), {key: 10},
+                               adult_from={1: 2024}) == {}
+    # adult the SAME season is not earlier
+    assert GS._adultClubDecide([key], {key: (False, True)}, {}, set(), {key: 10},
+                               adult_from={1: 2025}) == {}
+
+
+def test_unattached_arm_by_own_graduation():
+    # Jack Falkowski: grade 12 in 2025, an unattached "9" the next year
+    key = (1, 2026)
+    got = GS._adultClubDecide([key], {key: (False, True)}, {}, set(),
+                              {key: 9, (1, 2025): 12})
+    assert got == {key: ""}
+
+
+def test_past_school_level():
+    key = (1, 2026)
+    # mostly college races, never a pro, a year out of school -> college
+    assert GS.pastSchoolLevel(key, {key: (3, 1)}, {}, {1: 2026}) == "college"
+    # after a professional season -> pro (Intravaia)
+    assert GS.pastSchoolLevel(key, {key: (3, 0)}, {1: 2025}, {1: 2024}) == "pro"
+    # mostly pro races -> pro
+    assert GS.pastSchoolLevel(key, {key: (1, 2)}, {}, {1: 2026}) == "pro"
+    # past NCAA eligibility of the first year out of school -> pro
+    assert GS.pastSchoolLevel(key, {key: (3, 0)}, {},
+                              {1: 2026 - GS.POST_ELIGIBILITY_SEASONS}) == "pro"
+    # no races read -> pro, as before
+    assert GS.pastSchoolLevel(key, {}, {}, {}) == "pro"
+
+
+def test_prior_adult_seasons():
+    acad = {(1, 2023): {"grade": "12", "level": None},
+            (1, 2024): {"grade": None, "level": "pro"},
+            (2, 2024): {"grade": "FR", "level": None},
+            (3, 2024): {"grade": None, "level": "college"}}
+    adult, pro = GS.priorAdultSeasons(acad)
+    assert adult == {1: 2024, 2: 2024, 3: 2024}
+    assert pro == {1: 2024}
