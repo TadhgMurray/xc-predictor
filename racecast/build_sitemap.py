@@ -18,9 +18,10 @@ directly; app.py serves /sitemap.xml (the index) and /robots.txt.
   sitemap-races-N.xml            /race/xc/<meet>/<div> and /race/tf/<meet>/<event>/<div>,
                                  every race with a result, race date as lastmod
   sitemap-athletes-N.xml         /athlete/<id>, every athlete with a rated
-                                 race (canonical ids: none person_redirect
-                                 sends elsewhere), newest
-                                 season's last race as lastmod
+                                 race in the last two seasons (ATHLETE_YEARS;
+                                 canonical ids: none person_redirect sends
+                                 elsewhere), newest season's last race as
+                                 lastmod
 
 50,000 URLs per file is the protocol's cap; MAX_PER_FILE stays under it.
 """
@@ -174,9 +175,21 @@ def raceWanted(day, since):
 #   from every athlete page; they just are not in the sitemap.
 RACE_YEARS = int(os.environ.get("XCP_SITEMAP_RACE_YEARS", "2") or 0)
 
+# ★ ATHLETE PAGES: THE SAME WINDOW (owner, 2026-10-12: "yes" to listing
+#   only athletes who raced in the last two seasons). The 2026-09-05 choice
+#   ("it should be all athletes") put 11.85M athlete URLs in the sitemap,
+#   most of them careers that ended years ago; a new site's crawl is spent
+#   better on the runners people are searching for now. Older athlete pages
+#   still exist and stay linked from schools, races and the boards.
+#   XCP_SITEMAP_ATHLETE_YEARS=N or --athlete-years N changes it; 0 lists
+#   every athlete again.
+ATHLETE_YEARS = int(os.environ.get("XCP_SITEMAP_ATHLETE_YEARS", "2") or 0)
 
-def collect(conn, race_years=None):
+
+def collect(conn, race_years=None, athlete_years=None):
     race_since = raceSince(RACE_YEARS if race_years is None else race_years)
+    athlete_since = raceSince(ATHLETE_YEARS if athlete_years is None
+                              else athlete_years)
     # the state ranking landing pages (landing.py, 2026-09-06): 12 national
     # and one per state, sport and pool; they change with every run
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -337,7 +350,8 @@ def collect(conn, race_years=None):
                 WHERE  s.n_races >= 1 {redirect_sql} {optout_sql}
                 GROUP  BY s.person_id
             """)
-            by_kind["athletes"] = [(f"/athlete/{pid}", lm) for pid, lm in cur.fetchall()]
+            by_kind["athletes"] = [(f"/athlete/{pid}", lm) for pid, lm in cur.fetchall()
+                                   if raceWanted(_day(lm), athlete_since)]
             print(f"  athletes: {len(by_kind['athletes']):,} pages in {time.time() - t0:.0f}s", flush=True)
     return by_kind
 
@@ -350,10 +364,13 @@ def main():
     ap.add_argument("--race-years", type=int, default=None,
                     help="list race pages of the last N seasons only "
                          "(default XCP_SITEMAP_RACE_YEARS or 2; 0 = every race)")
+    ap.add_argument("--athlete-years", type=int, default=None,
+                    help="list athletes who raced in the last N seasons only "
+                         "(default XCP_SITEMAP_ATHLETE_YEARS or 2; 0 = every athlete)")
     args = ap.parse_args()
     from database import getConn
     with getConn() as conn:
-        by_kind = collect(conn, args.race_years)
+        by_kind = collect(conn, args.race_years, args.athlete_years)
     files = writeSitemaps(by_kind, args.out, args.origin.rstrip("/"))
     for kind, entries in by_kind.items():
         print(f"  {kind:<9} {len(entries):>10,} urls")
