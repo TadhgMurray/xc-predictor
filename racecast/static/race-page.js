@@ -372,9 +372,18 @@
       return ids[tr.id] || (dup <= 1 && tr.dataset.team === key);
     });
   }
+  // ! THE VISIBLE VALUE ONLY (owner, 2026-10-12: the popup printed "16:53
+  //   PRPersonal Record. Their fastest time at this distance..."). A time
+  //   or rating cell carries its PR/SR badge, and the badge carries a
+  //   screen-reader sentence; textContent read all of it, and one long cell
+  //   pushed the popup's columns off its edge. The badges are dropped from
+  //   a copy before reading.
   function cellText(tr, sel) {
     var c = tr.querySelector(sel);
-    return c ? c.textContent.replace(/\s+/g, " ").trim() : "";
+    if (!c) return "";
+    var copy = c.cloneNode(true);
+    copy.querySelectorAll(".flag, .sr-only, .vs-level").forEach(function (x) { x.remove(); });
+    return copy.textContent.replace(/\s+/g, " ").trim();
   }
   function openTeam(t) {
     if (!pop || typeof pop.showModal !== "function") return false;
