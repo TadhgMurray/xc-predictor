@@ -6105,3 +6105,23 @@ Chromium against the old script (readout 15:00, label under the pointer
 - FIXED (finder): a row whose other-feed copy is on a board counts as rated.
 - ⏳ The existing drop still needs lifting (amnesty_division_drops.py, or a
   pardon block in engine/corrections.py), then dump_overrides + a backfill.
+
+## 2026-10-13 -- Athlete header STATE block: owner does not like it
+
+- Owner: "I still don't like ur changes" (the STATE block, 2d1a599, which
+  folded What it takes, the course clocks and the state odds into one
+  block; and the earlier "The 132.2 mark is" relabel, d184423).
+- ⏳ OPEN: needs a different design. Not reverted yet; ask what they want
+  the header to say for a runner past every mark (e.g. Marcelo, national
+  #1) before redoing it.
+
+## 2026-10-13 -- Ratings that do not make sense (owner's list)
+
+- CA all-time HS boys track board: a 1:57.3 "805m" dual meet (Larry
+  Cardona, 2004) at 150.6 tops it, over Nico Young's 13:50.55 5000m (149.8)
+  and Granville's 1:46.45 800m (148.8); a 1:25.8 "604m" (CSUN, 2013) at
+  147.2. Both read ~24% too fast, as if rated at a longer distance.
+- Race-day term: one TX runner's 2023 season, UIL 6A District 31 at
+  Kenneth White Junior High, 17:42.8 on +5.1%, rated 161.5 against
+  141-159 elsewhere (NXN 143.0). Owner: the day term "overall helps" but
+  "does some straight bs sometimes".
