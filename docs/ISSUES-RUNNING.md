@@ -6207,3 +6207,17 @@ Chromium against the old script (readout 15:00, label under the pointer
   row: growing with the course charged = the course term over-applied;
   flat = an athlete-level offset. NOTE: the distance holdout's seasons are
   per SPORT (athleteSeasonCodes with sport), so "from TF only" never prints.
+- Distance holdout split results (owner's run, 2026-10-13): XC bias FLAT
+  across course effect bands (-3.2..-3.4%) and directions (shorter -3.1,
+  longer -3.5, both -3.7) -- not the course term, not the distance law. The
+  RACE holdout (08a_holdout, run 20261011) shows the same on races never
+  seen: XC -3.8% every month, TF 0.0; the sport holdout (TF from XC) +0.2%.
+  So XC abilities carry over to track correctly and every new XC race is
+  predicted ~3.5% slow. Suspect now: a slow tail in the training XC rows
+  (jogs, falls, sick days at reduced robust weight) pulling abilities slow
+  while the typical race stays faster.
+  NEW (every holdout): the training rows' residual mean vs median per sport
+  (+ share with robust weight < 0.5) -- a near-zero mean with a negative
+  median confirms it; and the ability x course table (owner: "can we check
+  ability tilt at course difficulty?") -- bias by rating band x course
+  effect, with each band's slope: flat rows = the tilt is right.

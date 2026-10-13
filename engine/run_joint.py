@@ -1656,6 +1656,56 @@ def distanceBreakdown(err, pool, dist_te, gap, min_rows=200):
 CE_BANDS = ((-1.0, 0.0), (0.0, 0.03), (0.03, 0.06), (0.06, 0.09), (0.09, 1.0))
 
 
+TILT_RATING_BANDS = ((0, 90), (90, 110), (110, 130), (130, 1000))
+TILT_CE_BANDS = ((-1.0, -0.02), (-0.02, 0.02), (0.02, 0.06), (0.06, 1.0))
+
+
+def tiltCourseTable(err, sport_te, ce, rating, min_rows=100):
+    """★ THE TILT, TESTED ON RACES NEVER SEEN (owner, 2026-10-13: "can we
+    check ability tilt at course difficulty?"). Held-out bias by the
+    athlete's rating band (rows) and the course effect charged (columns),
+    per sport. If the tilt is right, every row of the table is flat across
+    the course bands, whatever its level. A row whose bias falls as the
+    course gets harder is charged too much course (its h is too high); one
+    that rises, too little. The level of a row is not the tilt (that is the
+    row's own offset); its SLOPE across the columns is. Pure."""
+    err = np.asarray(err, dtype=np.float64)
+    sport_te = np.asarray(sport_te)
+    ce = np.asarray(ce, dtype=np.float64)
+    rating = np.asarray(rating, dtype=np.float64)
+
+    def lab(a, b):
+        if a <= -1:
+            return f"<{100 * b:+.0f}%"
+        if b >= 1:
+            return f">={100 * a:+.0f}%"
+        return f"{100 * a:+.0f}..{100 * b:+.0f}%"
+    out = ["        held-out bias by ability x course effect charged (+ = SLOWER; "
+           "flat across a row = the tilt is right):"]
+    for code, name in ((0, "XC"), (1, "TF")):
+        ms = sport_te == code
+        if int(ms.sum()) < min_rows:
+            continue
+        out.append(f"          {name:<9}" + "".join(f"{lab(a, b):>15}" for a, b in TILT_CE_BANDS)
+                   + "   slope/1% course")
+        for lo, hi in TILT_RATING_BANDS:
+            mr = ms & (rating >= lo) & (rating < hi)
+            if int(mr.sum()) < min_rows:
+                continue
+            cells = []
+            for a, b in TILT_CE_BANDS:
+                m = mr & (ce >= a) & (ce < b)
+                cells.append(f"{100 * err[m].mean():+6.2f}% ({int(m.sum()):>6,})"
+                             if int(m.sum()) >= min_rows else f"{'-':>15}")
+            x, y = ce[mr], err[mr]
+            vx = float(np.var(x))
+            slope = float(np.cov(x, y, bias=True)[0, 1] / vx) if vx > 0 else float("nan")
+            rl = f"{lo}-{hi}" if hi < 1000 else f"{lo}+"
+            out.append(f"          {rl:<9}" + "".join(f"{c:>15}" for c in cells)
+                       + f"   {slope:+.3f}")
+    return out
+
+
 def directionCourseBreakdown(err, sport_te, ce, season_te, logd_te,
                              season_tr, logd_tr, min_rows=200):
     """Two splits that tell the distance law from everything else.
@@ -1972,6 +2022,51 @@ def holdout(cols, keep, args, athlete_pool, D_full):
         for line in seasonCurveBreakdown(err, sport_te[cov],
                                          np.asarray(cols["doy"])[keep_te][cov]):
             print(line)
+    # ★ THE TRAINING ROWS' OWN RESIDUALS, MEAN AGAINST MEDIAN (2026-10-13:
+    #   every held-out XC race ~3.5% faster than predicted, in the race AND
+    #   the distance holdout, flat across courses and directions). A slow
+    #   tail in the training rows -- jogs, falls, sick days, kept at reduced
+    #   weight -- pulls each ability slow while the typical race stays
+    #   faster: the fit's residuals then have a mean near 0 and a NEGATIVE
+    #   median, and every typical new race reads fast. Printed per sport.
+    try:
+        _p_tr, _ = js.predictHeldOut(out, D_tr, D_tr, athlete_pool=athlete_pool,
+                                     tilt=not args.no_tilt)
+        _r_tr = y_all[keep_tr] - _p_tr
+        _sp_tr = np.asarray(cols["sport"])[keep_tr] if "sport" in cols else np.zeros(_r_tr.size)
+        _w_tr = np.asarray(out.get("weights"), dtype=np.float64) if out.get("weights") is not None else None
+        print("        training rows' residuals (+ = slower than the fit): mean vs median, "
+              "and the share of rows the robust weights cut below half:")
+        for code, name in ((0, "XC"), (1, "TF")):
+            m = (_sp_tr == code) & np.isfinite(_r_tr)
+            if int(m.sum()) < 100:
+                continue
+            q = np.percentile(_r_tr[m], [10, 90])
+            low_w = (f"  weight<0.5: {100 * np.mean(_w_tr[m] < 0.5):.1f}%"
+                     if _w_tr is not None and _w_tr.size == _r_tr.size else "")
+            print(f"          {name}: mean {100 * _r_tr[m].mean():+.2f}%  median "
+                  f"{100 * np.median(_r_tr[m]):+.2f}%  p10 {100 * q[0]:+.2f}%  "
+                  f"p90 {100 * q[1]:+.2f}%{low_w}  ({int(m.sum()):,})")
+    except Exception as exc:                                      # noqa: BLE001
+        print(f"        (training residuals not computed: {type(exc).__name__}: {exc})")
+    # the course effect charged to each held-out row (h * (d + u) from the
+    # training fit, log-time), for the splits below
+    _ce = None
+    try:
+        _b = D_tr.unpack(out["theta"])
+        _rcnt = np.bincount(D_tr.race, minlength=D_tr.n_race)
+        _u = np.where(_rcnt > 0, _b["u"], 0.0)
+        _h = (js.tiltRows(np.asarray(out["rating"])[D_te.athlete])
+              if out.get("rating") is not None and not args.no_tilt
+              else np.ones(D_te.n))
+        _ce = _h * (_b["d"][D_te.cell] + _u[D_te.race])
+        if out.get("rating") is not None:
+            for line in tiltCourseTable(err, sport_te[cov], _ce[cov],
+                                        np.asarray(out["rating"])[D_te.athlete][cov]):
+                print(line)
+    except Exception as exc:                                      # noqa: BLE001
+        print(f"        (ability x course table not computed: "
+              f"{type(exc).__name__}: {exc})")
     if kind == "distance":
         _dist_all = np.asarray(cols["dist_m"], dtype=np.float64)
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -1984,13 +2079,8 @@ def holdout(cols, keep, args, athlete_pool, D_full):
         # ★ WHICH WAY, AND HOW HARD A COURSE (owner, 2026-10-13: "so what
         #   seems to be the issue for xc?") -- see directionCourseBreakdown
         try:
-            _b = D_tr.unpack(out["theta"])
-            _rcnt = np.bincount(D_tr.race, minlength=D_tr.n_race)
-            _u = np.where(_rcnt > 0, _b["u"], 0.0)
-            _h = (js.tiltRows(np.asarray(out["rating"])[D_te.athlete])
-                  if out.get("rating") is not None and not args.no_tilt
-                  else np.ones(D_te.n))
-            _ce = _h * (_b["d"][D_te.cell] + _u[D_te.race])
+            if _ce is None:
+                raise ValueError("no course effect")
             for line in directionCourseBreakdown(
                     err, sport_te[cov], _ce[cov], _season[te_local][cov],
                     _logd_te[cov], _season[~te_local], _logd_tr):
