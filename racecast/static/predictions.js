@@ -2094,13 +2094,21 @@ function alsoInThisRace(div) {
 
 function renderFieldBlock(sumEl, gridEl) {
   const f = state.field;
-  const teams = f.teams.filter((t) => t.runners.length || t.dropped.length);
+  /* ★ A REMOVED RUNNER STAYS OFF THE CARD (owner, 2026-10-13: "you remove
+       an athlete and they get added back automatically"). Remove took the
+       row out of the DOM and recorded the id in e.removed, but every
+       re-render -- an Add, a lineup applied, a race switched -- drew
+       t.runners whole and the athlete came back (the request already left
+       them out). The card now draws what the request sends. */
+  const _rm = editsFor(state.meet.div).removed;
+  const live = (t) => (t.runners || []).filter((r) => !_rm.has(String(r.person_id)));
+  const teams = f.teams.filter((t) => live(t).length || t.dropped.length);
   const alsoIn = alsoInThisRace(state.meet.div);
   /* Whether this race has more than one division at all -- which decides
      whether the cards carry a second line, not whether THIS school does. */
   const _gi = groupIndex().get(state.meet.div);
   const grouped = _gi !== undefined && (state.groups[_gi] || []).length > 1;
-  const kept = teams.reduce((n, t) => n + t.runners.length, 0);
+  const kept = teams.reduce((n, t) => n + live(t).length, 0);
 
   /* ★ THE COUNT IS THE HEADLINE; THE GLOSS IS A TOOLTIP (owner: "can we get
    *   a bit more space from the explaining text at the top of who and the
@@ -2185,12 +2193,12 @@ function renderFieldBlock(sumEl, gridEl) {
                       esc(alsoIn.get(t.school).join(", "))}`
                   : `${esc(divLabel(state.meet.div))} only`}</span>` : ""}
         </span>
-        <span class="team-n">${t.runners.length}</span>
+        <span class="team-n">${live(t).length}</span>
         <button class="team-x" data-drop-team="${esc(t.school)}"
                 title="Remove this team">&times;</button>
       </summary>
       <div class="team-body">
-        ${t.runners.map((r) => `
+        ${live(t).map((r) => `
           <div class="runner-row" data-pid="${r.person_id}">
             <span class="r-name"><a class="lnk"
                href="/athlete/${r.person_id}">${esc(r.name)}</a></span>
@@ -4520,6 +4528,8 @@ document.addEventListener("click", (e) => {
     /* the card's own race, as for add below */
     editsFor(cardDiv === undefined ? state.meet.div : cardDiv).removed.add(rm.dataset.remove);
     rm.closest(".runner-row").remove();
+    // kept across a reload too (saveState carries the edits)
+    saveState();
     return;
   }
   const add = e.target.closest("[data-add]");
