@@ -6265,3 +6265,14 @@ Chromium against the old script (readout 15:00, label under the pointer
 - CHANGED: the course guard also checks course + applied day per row
   (xcTogetherSuspect), so a +20% history with a capped day (+30% on the
   row) is not rated either. ⏳ The Old Pueblo divisions likely want 6000 m.
+- Owner's query (same course): Al Shirley 2026 has TWO "Collegiate" divs at
+  5000 m -- 1145427 (25 rows, median 35:40) and 1145428 (13 rows, 23:17,
+  the women). The 35:40 is the junior college men's 8K filed as 5000. The
+  Old Pueblo HS 5Ks (boys ~22:20-23:20, girls ~30-32) look like real hot
+  5000s, not 6K -- my earlier 6K guess withdrawn.
+- NEW: engine/gender_pace_pin.py (pipeline 04g0, before the audit): a men's
+  division whose median is >15% SLOWER than its meet's women at the same
+  stored distance is pinned to the implied standard distance (women take
+  ~1.15x the men's time at equal distance); Al Shirley men -> 8000. Writes
+  its own block in corrections.py (_DISTANCE_PIN_GENDER), rewritten whole;
+  hand overrides win; the audit can still drop a pin.

@@ -706,6 +706,10 @@ fi
 #   ⚠ XCP_BACKFILL_XC=changed does not re-normalise a division whose
 #     override was removed; the next full XC pass does.
 if [ "${XCP_AUDIT_OVERRIDES:-1}" != "0" ] && [ -f engine/corrections.py ]; then
+  # ★ AND A MEN'S RACE FILED AT THE WOMEN'S DISTANCE IS PINNED FIRST (owner,
+  #   2026-10-13: Al Shirley 2026, men 35:40 vs women 23:17 at "5000 m" --
+  #   the junior college men's 8K; engine/gender_pace_pin.py)
+  step 04g0_gender_pin "$PY" -u engine/gender_pace_pin.py --write
   step 04g_audit_overrides "$PY" -u engine/audit_overrides.py --rebuild --write
   if ! failed 04g_audit_overrides; then
     step 04g2_dump_overrides "$PY" -u engine/dump_overrides.py
