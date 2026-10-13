@@ -6299,3 +6299,17 @@ Chromium against the old script (readout 15:00, label under the pointer
 - ⏳ Not yet in the step: grade/age vs class year (grade_sanity covers the
   rest), athletic.net vs tfrrs copies disagreeing on distance, pace past a
   record. Each is one more function returning issue rows.
+
+## 2026-10-13 -- Page times with nothing cached (17a_page_timing)
+
+- Owner: "some are slow, especially when not cached ... it should be fast w
+  or w/o a cache".
+- scripts/page_timing.py, pipeline step 17a (report only): a FRESH process
+  (no in-process cache warm) renders random pages of every kind (athlete,
+  XC/TF race and meet, school, course, the static pages) through Flask's
+  test client, timing each page and every SQL statement in it (database.
+  getConn wrapped before the site imports it). Prints p50/p95/max per kind,
+  pages that errored, and every page over 1 s with its three slowest
+  statements; page_timing table. XCP_PAGE_TIMING=0 skips.
+- ⏳ First run's work list is the input for the fixes (indexes / query
+  rewrites per slow statement).

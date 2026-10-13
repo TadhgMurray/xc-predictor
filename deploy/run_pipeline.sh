@@ -1543,6 +1543,14 @@ if [ "${XCP_LACCTIC:-1}" != "0" ]; then
   step 16b_lacctic      "$PY" -u scripts/lacctic_compare.py \
       --race "${XCP_LACCTIC_RACES:-12194,12158,11632}" --runners 150 || true
 fi
+# ★ PAGE TIMES WITH NOTHING CACHED (owner, 2026-10-13: "it should be fast
+#   w or w/o a cache"): a fresh process renders random pages of every kind
+#   and times each page and every SQL statement in it; the slow pages and
+#   their slowest statements are the work list (page_timing table, log).
+#   Report only. XCP_PAGE_TIMING=0 skips; XCP_PAGE_TIMING_N pages per kind.
+if [ "${XCP_PAGE_TIMING:-1}" != "0" ]; then
+  step 17a_page_timing  "$PY" -u scripts/page_timing.py --write --n "${XCP_PAGE_TIMING_N:-6}" || true
+fi
 step 17c_report       "$PY" -u scripts/run_report.py --log-dir "$LOGDIR" || true
 # ★ THE DATA WATCHDOG (owner, 2026-10-10): after the boards swap and every
 #   step that writes what readers see, before the vacuum. Report only; its
