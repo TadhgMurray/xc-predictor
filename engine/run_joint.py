@@ -3137,6 +3137,21 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         u_ref = num / P
         u_loo = (num[D.race] - kept * c * r_pre) / (P[D.race] - kept * w * h * h)
         out["race_effect_row_bracket"] = u_new[D.race] + (u_loo - u_ref[D.race])
+        # ★ EACH DIVISION LEANS TOWARD ITS OWN DAY (js.divisionDayRow): by
+        #   how much the divisions of one venue-day really differ, measured
+        #   ! ITS OWN SWITCH, NOT THE GUARD'S: the divisions are D.subrace
+        #     whether or not the guard is on
+        div_ids = getattr(D, "subrace", None)
+        if js.dayDivisionShrinkOn() and div_ids is not None:
+            out["race_effect_row_venue"] = out["race_effect_row_bracket"]
+            u_div, dinfo = js.divisionDayRow(
+                r_pre, w, h, D.race, div_ids, out["race_effect_row_bracket"],
+                float(out["sigma2"]), keep=kept)
+            out["race_effect_row_bracket"] = u_div
+            print(f"[joint] bracket: division days -- sd of a division's day "
+                  f"about its venue-day {100 * dinfo['sigma_v']:.2f}%; "
+                  f"{dinfo['rows_moved']:,} rows lean toward their own "
+                  f"division (median weight {dinfo['k_median']:.2f})", flush=True)
         out["race_day_div_bracket"] = dd
         out["race_day_div_table_bracket"] = js.divisionTable(dd)
         out["race_day_div_flag_bracket"] = (None if dd["flag"] is None

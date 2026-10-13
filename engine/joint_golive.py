@@ -111,6 +111,12 @@ def dayConsistencyReport(y, eff_pre, out, D, u_row, u_applied, day_on,
             rows = []
             variants = [("day out", z_off), ("day in, leave-self-out", z_on),
                         ("day in, own race u", z_own)]
+            ven = out.get("race_effect_row_venue")
+            if ven is not None and np.asarray(ven).size == z_off.size:
+                # the venue-day alone, before js.divisionDayRow's lean
+                uv = np.clip(np.asarray(ven, dtype=np.float64), -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
+                uv = np.where(fast_only, np.minimum(uv, 0.0), uv)
+                variants.append(("day in, venue-day only", z_off - np.where(day_on, h * uv, 0.0)))
             mix = out.get("race_effect_row_mix")
             if mix is not None and np.asarray(mix).size == z_off.size:
                 # the heavy-tailed prior's leave-self-out day (js.dayMixtureFit)

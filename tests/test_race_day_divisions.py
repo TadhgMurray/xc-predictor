@@ -257,9 +257,16 @@ def _bracket(cols, keep, guard, monkeypatch):
 
 def test_the_bracket_refit_keeps_the_broken_divisions_out_of_the_day(monkeypatch):
     cols, keep, wrong, mid = _pack()
-    D, ap, pn, off = _bracket(cols, keep, False, monkeypatch)
     good = mid & ~wrong
-    assert np.median(off["race_effect_row_bracket"][good]) > 0.04     # the bug
+    # the bug: no guard and no division lean
+    monkeypatch.setenv("XCP_DAY_DIVISION_SHRINK", "0")
+    D, ap, pn, off = _bracket(cols, keep, False, monkeypatch)
+    assert np.median(off["race_effect_row_bracket"][good]) > 0.04
+    # ★ the division lean ALONE (js.divisionDayRow, 2026-10-13) already pulls
+    #   the correct divisions most of the way back to their own day
+    monkeypatch.setenv("XCP_DAY_DIVISION_SHRINK", "1")
+    D, ap, pn, lean = _bracket(cols, keep, False, monkeypatch)
+    assert np.median(lean["race_effect_row_bracket"][good]) < 0.02
     D, ap, pn, on = _bracket(cols, keep, True, monkeypatch)
     u_good = on["race_effect_row_bracket"][good]
     assert np.abs(u_good).max() < 0.02, (np.median(u_good), np.abs(u_good).max())

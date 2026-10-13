@@ -366,6 +366,101 @@ DIVISION_TABLE_COLS = ("division", "race", "division_day", "info", "rows",
                        "centre", "race_u")
 
 
+# ★★ A DIVISION LEANS TOWARD ITS OWN DAY (owner, 2026-10-13: the race-day
+#    term "overall helps, but does some straight bs sometimes" -- a TX
+#    district meet at a junior high, 17:42.8, rated 161.5 against 141-159
+#    everywhere else; and Mt. SAC before it). The day term is one number
+#    per VENUE-DAY: every division run there that afternoon -- varsity,
+#    JV, frosh, the girls, a middle school race -- shares it. The guard
+#    above only removes a division more than RACE_DAY_CAP (10%) from the
+#    race's centre; a JV loop a few percent long, or a mud patch the late
+#    races met, still moves the day for everyone, and the varsity boys are
+#    credited the JV's course.
+#
+#  THE RULE, a hierarchy the data sizes. Each row's applied day is its
+#  venue-day (leave-self-out, as now) moved toward its OWN division's day
+#  (leave-self-out too) by k = W / (W + sigma2 / sigma_v2): W the
+#  division's information without the row, sigma_v2 the variance of real
+#  division days about their venue-day, MEASURED -- each division's raw day
+#  against the other divisions' pooled day, less both sides' sampling noise
+#  (method of moments, over races with two or more divisions). Where divisions agree, sigma_v2 is ~0, k is ~0 and nothing
+#  moves; where they do not, a big division takes mostly its own day and a
+#  small one stays near the venue's.
+#  ! A FLAGGED DIVISION (the guard's) keeps the venue day, as before: its
+#    own day is a broken sheet, not a day.
+#  ! A ONE-DIVISION RACE IS UNCHANGED: its division day IS the race day.
+#  XCP_DAY_DIVISION_SHRINK=0 turns it off (ablation).
+def dayDivisionShrinkOn():
+    return os.environ.get("XCP_DAY_DIVISION_SHRINK", "1").strip().lower() not in (
+        "0", "false", "off", "no")
+
+
+def divisionDayRow(r_pre, w, h, race, sub, u_row, sigma2, keep=None,
+                   min_rows=5):
+    """Per row, the applied day leaned toward the row's own division.
+
+    r_pre: per row residual before the day (h-units); w, h: weights, tilt;
+    race, sub: race and division ids (division nested in race); u_row: the
+    row's venue-day as applied now (leave-self-out); sigma2: the solve's
+    residual variance; keep: the guard's per-row 1/0 (0 = flagged).
+
+    Returns (u_row_new, info) -- info: sigma_v (the measured sd of division
+    days about their race's), k_median over moved rows, rows_moved."""
+    r = np.asarray(r_pre, dtype=np.float64)
+    w = np.asarray(w, dtype=np.float64)
+    h = np.asarray(h, dtype=np.float64)
+    h = np.full(r.size, float(h)) if h.ndim == 0 else h
+    race = np.asarray(race, dtype=np.int64)
+    u_row = np.asarray(u_row, dtype=np.float64)
+    info = {"sigma_v": 0.0, "k_median": 0.0, "rows_moved": 0}
+    if sub is None or r.size == 0:
+        return u_row, info
+    sub = np.asarray(sub, dtype=np.int64)
+    keep = np.ones(r.size) if keep is None else np.asarray(keep, dtype=np.float64)
+    c, wh2 = w * h * keep, w * h * h * keep
+    n_sub = int(sub.max()) + 1
+    num_s = np.bincount(sub, weights=c * r, minlength=n_sub)
+    W_s = np.bincount(sub, weights=wh2, minlength=n_sub)
+    n_s = np.bincount(sub, weights=keep, minlength=n_sub)
+    race_of = np.zeros(n_sub, dtype=np.int64)
+    race_of[sub] = race
+    n_race = int(race.max()) + 1
+    good = (W_s > 0) & (n_s >= min_rows)
+    per_race = np.bincount(race_of[good], minlength=n_race)
+    multi = good & (per_race[race_of] >= 2)
+    if not multi.any():
+        return u_row, info
+    with np.errstate(divide="ignore", invalid="ignore"):
+        m_s = num_s / np.where(W_s > 0, W_s, 1.0)
+    # each division against the OTHER divisions of its race (their pooled
+    # day): E[dev^2] = sigma_v2 (1 + S) + sigma2/W_d + sigma2/W_other, with
+    # S = sum_{j != d} W_j^2 / W_other^2 -- the others' own division spread
+    W_good = np.where(good, W_s, 0.0)
+    W_o = (np.bincount(race_of, weights=W_good, minlength=n_race)[race_of] - W_good)[multi]
+    num_good = np.where(good, num_s, 0.0)
+    num_o = (np.bincount(race_of, weights=num_good, minlength=n_race)[race_of] - num_good)[multi]
+    W2_o = (np.bincount(race_of, weights=W_good ** 2, minlength=n_race)[race_of]
+            - W_good ** 2)[multi]
+    dev = m_s[multi] - num_o / W_o
+    noise = sigma2 * (1.0 / W_s[multi] + 1.0 / W_o)
+    S = W2_o / (W_o * W_o)
+    sigma_v2 = max(0.0, float(np.mean(dev * dev - noise) / np.mean(1.0 + S)))
+    info["sigma_v"] = float(np.sqrt(sigma_v2))
+    if sigma_v2 <= 0.0:
+        return u_row, info
+    # the row's own division day without the row (raw, no prior)
+    W_loo = W_s[sub] - wh2
+    ok = multi[sub] & (keep > 0) & (W_loo > 0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        m_loo = (num_s[sub] - c * r) / np.where(W_loo > 0, W_loo, 1.0)
+    k = np.where(ok, W_loo / (W_loo + sigma2 / sigma_v2), 0.0)
+    new = u_row + k * np.where(ok, m_loo - u_row, 0.0)
+    moved = ok & (k > 0)
+    info["rows_moved"] = int(moved.sum())
+    info["k_median"] = float(np.median(k[moved])) if moved.any() else 0.0
+    return new, info
+
+
 def divisionTable(dd):
     """The flagged divisions of a raceDayDivisions result as one float
     array, a row each, columns DIVISION_TABLE_COLS; None when none."""

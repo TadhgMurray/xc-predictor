@@ -738,6 +738,11 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
 # Output:    SQL string.
 # Detail:    distance_meters >= 800 keeps the distance law inside its fitted
 #            domain. is_relay / is_field excluded: not one runner's own race.
+from event_parse import _YARD_DISTANCES, _BARE_YARD_ONLY   # noqa: E402
+_YARD_SQL = ", ".join(str(n) for n in sorted(_YARD_DISTANCES))
+_BARE_YARD_SQL = ", ".join(str(n) for n in sorted(_BARE_YARD_ONLY))
+
+
 def _eventMetersSql(alias: str) -> str:
     """Metres from an event name, in SQL: '5000m' 5000, '10,000m' 10000,
     '8k' 8000, 'Mile' 1609.34, '2 Mile' 3218.7; NULL where no number and
@@ -760,6 +765,17 @@ def _eventMetersSql(alias: str) -> str:
             f"WHEN lower({alias}.event_short) LIKE '%mile%' "
             f"THEN COALESCE({num}, 1) * 1609.34 "
             f"WHEN {num} IS NULL THEN NULL "
+            # ★ YARDS (owner, 2026-10-13: a 1:57.3 "880" dual meet, 2004,
+            #   rated 150.6 on top of the CA all-time board). normalized_time
+            #   read it as 804.67 m (event_parse._toMeters) and this read it as
+            #   880 m: the solve put it in the 900 class and the pool rescale
+            #   compared it at 880 m -- a ~10% disagreement inside one row.
+            #   event_parse's two rules, in SQL: a yard unit on a distance the
+            #   imperial schedule ran, or a bare number no metric race uses.
+            f"WHEN lower({alias}.event_short) ~ '(\\yyards?\\y|\\yyds?\\y|[0-9] *y\\y|[0-9] *yds?\\y)' "
+            f"AND {num} IN ({_YARD_SQL}) THEN {num} * 0.9144 "
+            f"WHEN lower({alias}.event_short) !~ '(meter|metre|[0-9]m\\y|\\ym\\y)' "
+            f"AND {num} IN ({_BARE_YARD_SQL}) THEN {num} * 0.9144 "
             f"WHEN {num} < 100 THEN {num} * 1000 "
             f"ELSE {num} END")
 

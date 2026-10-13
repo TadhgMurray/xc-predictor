@@ -6125,3 +6125,21 @@ Chromium against the old script (readout 15:00, label under the pointer
   Kenneth White Junior High, 17:42.8 on +5.1%, rated 161.5 against
   141-159 elsewhere (NXN 143.0). Owner: the day term "overall helps" but
   "does some straight bs sometimes".
+- FIXED (yards): speed_ratings_db._eventMetersSql, the pack's distance,
+  had no yard rule -- "880y" packed as 880 m while normalized_time was
+  built at 804.67 m (event_parse). The row landed in the 900 distance class
+  and the pool rescale compared it at 880 m (a ~10% disagreement, right at
+  _SCALE_TOL). Now event_parse's two rules in SQL (yard unit on a yard
+  distance; bare 660/880/1320/1760). tests/test_event_meters_sql.py.
+  ⏳ Needs a pack rebuild + solve to move the 880y/660y ratings.
+- NEW (race-day term): js.divisionDayRow -- each row's applied day leans
+  from its venue-day toward its own division's day by
+  W / (W + sigma2 / sigma_v2), sigma_v2 measured each run (printed as
+  "division days -- sd of a division's day about its venue-day"). Where
+  divisions agree nothing moves. On the planted Midlothian world it alone
+  takes the correct divisions' false credit from >4% to <2%. The go-live's
+  day-term consistency report now prints a "venue-day only" row beside it,
+  so the next run says whether the lean makes races agree better.
+  XCP_DAY_DIVISION_SHRINK=0 turns it off.
+  ⏳ Whether it explains the District 31 161.5 is unproven: if that race's
+  own field (not another division) carries the bias, this does not move it.
