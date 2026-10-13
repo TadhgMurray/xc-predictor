@@ -3901,6 +3901,10 @@ async function addTeam(school, div, st) {
         : `No one from ${school} has raced this season.`, true);
       return;
     }
+    /* ★ THE BOX'S LINEUP SIZE, not a fixed seven (owner, 2026-10-13: "I
+         put runners per team to 10, then ... it reset to 7"): a team added
+         by hand took squad.runners.slice(0, 7) whatever the box said. */
+    const cap = state.perTeam || 7;
     e.field.teams.push({
       school: school,
       // ! WHICH NAMESAKE WAS PICKED (2026-10-05), so this card's later squad
@@ -3910,15 +3914,15 @@ async function addTeam(school, div, st) {
       //   without one. schoolSquad stamps it from the same cache meetField
       //   uses.
       crest: squad.crest,
-      runners: squad.runners.slice(0, 7),
+      runners: squad.runners.slice(0, cap),
       // The rest of the squad, offered under the card rather than discarded --
       // "add anyone from their squad" is the point of having fetched it.
-      dropped: squad.runners.slice(7),
+      dropped: squad.runners.slice(cap),
       added: true,
     });
     e.field.teams.sort((a, b) => a.school.localeCompare(b.school));
     e.open.add(school);              // open it: it is the thing just added
-    for (const r of squad.runners.slice(0, 7))
+    for (const r of squad.runners.slice(0, cap))
       e.added.push({ person_id: r.person_id, name: r.name, school: school });
 
     /* ★ A SUCCESSFUL ADD MUST LOOK DIFFERENT FROM A FAILED ONE, and it did
@@ -3935,7 +3939,7 @@ async function addTeam(school, div, st) {
     if (state.view === "none") state.view = "teams";
     renderField();
     setStatus(`Added ${school} - `
-              + `${squad.runners.slice(0, 7).length} runners.`, false);
+              + `${squad.runners.slice(0, cap).length} runners.`, false);
     /* ⚠ NO SCROLLING. This used to pull the new card into view, which moves
          the page away from the search box you are still typing in -- and
          adding teams is something you do several times in a row (owner,
