@@ -175,6 +175,71 @@ def twinSameDaySql(table, sport):
     """
 
 
+RACE_REST_MIN = 5          # matched runners before a race is called a copy
+RACE_REST_SHARE = 0.6      # of the tfrrs division's rows, matched in ONE anet meet
+
+
+def twinRaceRestSql(table, sport):
+    """THE REST OF A COPIED RACE (owner, 2026-10-13, the MIT Alumni race:
+    tfrrs meet 28510 and anet 285474, Sep 5 2026). twin_same_day flagged 27
+    of the tfrrs copy's 34 rows -- every runner whose person holds both
+    copies at the same time. The other 7 stayed: 6 rows that have no person
+    yet, and a row whose person is not the anet runner's (a minted tfrrs
+    person). They are the same race all the same, and the one rated put a
+    second "MIT Alumni Cross Country Race" on a page.
+
+    THE RULE, dup_race_copy's across feeds ("the entire race, not
+    individual rows"): a tfrrs division where at least RACE_REST_MIN rows,
+    and RACE_REST_SHARE of all its rows, are twin_same_day's matches (same
+    person, same day, under a second) in ONE anet meet is a copy of that
+    meet. Every row of it goes, matched or not; the anet copy survives, as
+    in every cross-feed rule. A tfrrs race that only shares a few runners
+    with an anet race the same day (a combined meet, two sections) never
+    reaches the share.
+    ! XC only: a track division holds every event, and twin_same_day's
+      hundredth already decides track row by row."""
+    if sport != "XC":
+        return f"SELECT result_id FROM {table} WHERE false"
+    return f"""
+        WITH t AS (
+            SELECT result_id, person_id, meet_id, div_id,
+                   substr(date, 1, 10) AS d, time_seconds AS ts
+            FROM   {table}
+            WHERE  source = 'tfrrs' AND person_id IS NOT NULL
+              AND  time_seconds > 0 AND time_seconds < 100000
+              AND  date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'),
+        a AS (
+            SELECT r.person_id, r.meet_id, substr(r.date, 1, 10) AS d,
+                   r.time_seconds AS ts
+            FROM   {table} r
+            JOIN   (SELECT DISTINCT person_id FROM t) p ON p.person_id = r.person_id
+            WHERE  r.source = 'anet'
+              AND  r.time_seconds > 0 AND r.time_seconds < 100000
+              AND  r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'),
+        hit AS (
+            SELECT t.meet_id, t.div_id, a.meet_id AS am,
+                   count(DISTINCT t.result_id) AS k
+            FROM   t JOIN a ON a.person_id = t.person_id AND a.d = t.d
+                           AND abs(a.ts - t.ts) < 1.0
+            GROUP  BY 1, 2, 3
+            HAVING count(DISTINCT t.result_id) >= {RACE_REST_MIN}),
+        size AS (
+            SELECT meet_id, div_id, count(*) AS n
+            FROM   {table}
+            WHERE  source = 'tfrrs'
+              AND  (meet_id, div_id) IN (SELECT meet_id, div_id FROM hit)
+            GROUP  BY 1, 2),
+        copy AS (
+            SELECT DISTINCT h.meet_id, h.div_id
+            FROM   hit h JOIN size s ON s.meet_id = h.meet_id AND s.div_id = h.div_id
+            WHERE  h.k >= {RACE_REST_SHARE} * s.n)
+        SELECT r.result_id
+        FROM   {table} r
+        JOIN   copy c ON c.meet_id = r.meet_id AND c.div_id = r.div_id
+        WHERE  r.source = 'tfrrs'
+    """
+
+
 # ★ AN UPLOADED MEET THE FEED LATER SCRAPES IS ONE RACE TWICE (owner,
 #   2026-10-10). racecast/uploads.py takes the results of a meet no feed
 #   had, approved by the owner into the raw tables with source 'upload'
@@ -677,6 +742,7 @@ import level_conflict as LC                                     # noqa: E402
 
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("twin_same_day", twinSameDaySql),
+         ("twin_race_rest", twinRaceRestSql),
          ("twin_upload", twinUploadSql),
          ("dup_same_feed", dupSameFeedSql),
          ("dup_cross_date", dupCrossDateSql),

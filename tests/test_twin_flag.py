@@ -39,7 +39,7 @@ def test_rules_key_on_the_right_things():
     assert "min(result_id) AS keep" in dup_xc and "r.result_id <> k.keep" in dup_xc, \
         "the lowest result_id survives, every later copy goes"
     assert [r for r, _ in TF.RULES] == ["twin_race", "twin_person", "twin_same_day",
-                                        "twin_upload",
+                                        "twin_race_rest", "twin_upload",
                                         "dup_same_feed",
                                         "dup_cross_date", "dup_race_copy",
                                         "dup_same_day", "dup_adjacent_day",
@@ -79,7 +79,10 @@ _EXPECTED = {
     ("XC", "twin_person"):    [702],
     # 2026-10-06: the UVU pair; 722 is 14 s off its person's anet race.
     # 9032 is level_conflict's "one race in both feeds" (6004), a twin.
-    ("XC", "twin_same_day"):  [721, 9032],
+    ("XC", "twin_same_day"):  [721, 7301, 7302, 7303, 7304, 7305, 7601, 7602, 9032],
+    # 2026-10-13: the MIT Alumni race -- the whole tfrrs copy, not race 76
+    ("XC", "twin_race_rest"): [7301, 7302, 7303, 7304, 7305, 7306, 7307],
+    ("TF", "twin_race_rest"): [],
     ("TF", "twin_same_day"):  [1901],
     # 2026-10-10: the fixtures hold no uploaded row
     ("XC", "twin_upload"):    [],
@@ -144,7 +147,8 @@ def test_rules_on_fixtures():
     cur.execute("SELECT reason, count(*) FROM result_twin GROUP BY 1 ORDER BY 1")
     by = dict(cur.fetchall())
     assert by["twin_race"] == 1 and by["twin_person"] == 1
-    assert by["twin_same_day"] == 3          # 721, 9032 (XC); 1901 (TF)
+    assert by["twin_same_day"] == 10         # 721, 7301-05, 7601-02, 9032 (XC); 1901 (TF)
+    assert by["twin_race_rest"] == 2         # 7306, 7307: the rest of the copied race
     assert by["dup_same_feed"] == 2          # 502 and 1602 file here, not as cross-date
     assert by["level_conflict"] == 4          # 9005, 9014, 9115, 9116; no tie
     conn.rollback()

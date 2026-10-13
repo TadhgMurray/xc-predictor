@@ -38,6 +38,16 @@ INSERT INTO results VALUES (7201, 5101, 'anet', 73, 731, NULL, 1, 801.4, '2026-0
   (721, 5101, 'tfrrs', 72, 721, NULL, 1, 801.0, '2026-09-04'),
   (7202, 5102, 'anet', 74, 741, NULL, 3, 815.0, '2026-09-05'),
   (722, 5102, 'tfrrs', 75, 751, NULL, 3, 801.0, '2026-09-05');
+-- a whole race in both feeds, no canon link (the MIT Alumni race,
+-- 2026-10-13): 5 runners match by person; 7306 has no person and 7307 a
+-- person of its own, and both go with the race. Race 76 shares only two
+-- runners with the same anet meet: those two are twin_same_day's, the
+-- rest stays.
+INSERT INTO results SELECT 7400+g, 5200+g, 'anet', 77, 771, NULL, g, 900+g*3, '2026-09-05' FROM generate_series(1,7) g;
+INSERT INTO results SELECT 7300+g, 5200+g, 'tfrrs', 78, 781, NULL, g, 900+g*3, '2026-09-05' FROM generate_series(1,5) g;
+INSERT INTO results VALUES (7306, NULL, 'tfrrs', 78, 781, NULL, 6, 918.0, '2026-09-05'),
+  (7307, 5299, 'tfrrs', 78, 781, NULL, 7, 921.0, '2026-09-05');
+INSERT INTO results SELECT 7600+g, CASE WHEN g <= 2 THEN 5205+g ELSE 5300+g END, 'tfrrs', 76, 761, NULL, g, 915+g*3, '2026-09-05' FROM generate_series(1,6) g;
 -- a lone row that pairs with nothing
 INSERT INTO results VALUES (801, 5001, 'anet', 8, 81, 8, 1, 999.9, '2025-10-20');
 
