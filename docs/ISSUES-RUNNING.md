@@ -6361,3 +6361,21 @@ Chromium against the old script (readout 15:00, label under the pointer
   school; athletes keep the full one). Checked on a scratch table: the meet
   branch uses its partial index.
 
+
+## 2026-10-13 -- Jake Ritter: a club pro's 2024 season on the HS boards
+
+- Owner: Railroad Athletics (TX), "Professional" in 2025-26, "Grade 11" in
+  2024 and national #1 high school boy at 147.7 (13:36 5K, 28:19 10K).
+  Rule 8 (the adult club's grade) should move it; one of its three signals
+  fails. scripts/why_hs_season.py <athlete url> prints, per academic
+  season, the verdict, the pools and each signal, with every race's ceiling
+  (the race that blocks signal 2 is marked) and the club's adult share.
+- ⏳ Fix waits on its output.
+
+## 2026-10-13 -- 17a: SQL share, boards and movers, 500 ms work list
+
+- Third run: nothing over 1 s (search 840 ms after the per-kind indexes).
+- page_timing now prints each kind's SQL share of page time ("is most of
+  loading times just the db query?") and SQL vs other ms per slow page;
+  times random /rankings boards (state x pool x sport) and /movers too; the
+  work list threshold is 500 ms.

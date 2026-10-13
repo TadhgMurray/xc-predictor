@@ -18,6 +18,7 @@ def test_summary():
     s = PT.summarise(rows)
     assert s["athlete"][0] == 2 and s["athlete"][3] == 300.0 and s["athlete"][4] == 2.0
     assert s["static"][1] == 50.0
+    assert s["athlete"][5] == pytest.approx(4 / 400.0)    # sql ms over page ms
 
 
 def test_the_timed_cursor_records_and_behaves():

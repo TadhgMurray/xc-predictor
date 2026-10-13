@@ -31,7 +31,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in ("scripts", "engine", "racecast"):
     sys.path.insert(0, os.path.join(_ROOT, _p))
 
-SLOW_MS = 1000.0
+SLOW_MS = 500.0
 STATIC = ["/", "/meets", "/rankings", "/schools", "/records", "/predictions",
           "/recruiting", "/what-it-takes", "/conversions", "/about",
           "/search?q=smith"]
@@ -123,6 +123,16 @@ def samplePaths(cur, n):
     out["school"] = [f"/school/{quote(s)}" for (s,) in q(
         f"SELECT DISTINCT school FROM athletes TABLESAMPLE SYSTEM (0.5) "
         f"WHERE school IS NOT NULL AND school <> '' LIMIT {n}")]
+    # ★ THE BOARDS AND THE DIGESTS (owner, 2026-10-13: "does that check every
+    #   query/load that could be slow?"). A random state and pool per page,
+    #   both sports, so a board nobody opened lately is what gets timed.
+    import random as _r
+    from rankings import US_STATES
+    pools = ("hs_m", "hs_f", "college_m", "college_f", "ms_m", "ms_f")
+    out["board"] = [f"/rankings?board=ability&sport={_r.choice(['xc', 'tf'])}"
+                    f"&pool={_r.choice(pools)}&state={_r.choice(US_STATES)}" for _ in range(n)]
+    out["movers"] = [f"/movers?state={_r.choice(US_STATES)}&pool={_r.choice(pools[:2])}"
+                     for _ in range(n)]
     out["course"] = [f"/course/{quote(c)}" for (c,) in q(
         f"SELECT course_name FROM course_difficulties WHERE course_name NOT LIKE 'TF:%%' "
         f"ORDER BY random() LIMIT {n}".replace("%%", "%"))]
@@ -137,14 +147,19 @@ def pct(xs, p):
 
 
 def summarise(rows):
-    """{kind: (n, p50, p95, max, mean queries)} from (kind, path, status,
-    ms, queries) rows. Pure."""
+    """{kind: (n, p50, p95, max, mean queries, sql share)} from (kind,
+    path, status, ms, queries) rows. The share is the kind's SQL time over
+    its total page time: what is left is Python (templates, the model,
+    conversions) -- the owner's "is most of loading times just the db
+    query?". Pure."""
     out = {}
     for kind in sorted({r[0] for r in rows}):
         ks = [r for r in rows if r[0] == kind]
         ms = [r[3] for r in ks]
+        sql = sum(q[0] for r in ks for q in r[4])
         out[kind] = (len(ks), pct(ms, 50), pct(ms, 95), max(ms),
-                     sum(len(r[4]) for r in ks) / len(ks))
+                     sum(len(r[4]) for r in ks) / len(ks),
+                     sql / sum(ms) if sum(ms) else 0.0)
     return out
 
 
@@ -174,9 +189,9 @@ def main():
             rows.append((kind, p, status, ms, list(_QUERIES)))
     summ = summarise(rows)
     print(f"[timing] {len(rows)} pages, fresh process, nothing cached:")
-    print(f"    {'kind':<10}{'pages':>6}{'p50 ms':>9}{'p95 ms':>9}{'max ms':>9}{'queries':>9}")
-    for kind, (n, p50, p95, mx, nq) in summ.items():
-        print(f"    {kind:<10}{n:>6}{p50:>9.0f}{p95:>9.0f}{mx:>9.0f}{nq:>9.1f}")
+    print(f"    {'kind':<10}{'pages':>6}{'p50 ms':>9}{'p95 ms':>9}{'max ms':>9}{'queries':>9}{'sql %':>7}")
+    for kind, (n, p50, p95, mx, nq, share) in summ.items():
+        print(f"    {kind:<10}{n:>6}{p50:>9.0f}{p95:>9.0f}{mx:>9.0f}{nq:>9.1f}{100 * share:>7.0f}")
     bad = [r for r in rows if r[2] != 200 and r[2] not in (301, 302, 404)]
     if bad:
         print(f"[timing] {len(bad)} pages did not render:")
@@ -185,7 +200,8 @@ def main():
     slow = sorted((r for r in rows if r[3] > SLOW_MS), key=lambda r: -r[3])
     print(f"[timing] {len(slow)} pages over {SLOW_MS:.0f} ms (the work list):")
     for kind, p, status, ms, qs in slow[:15]:
-        print(f"    {ms:7.0f} ms  {len(qs):3} queries  {p}")
+        sql = sum(q[0] for q in qs)
+        print(f"    {ms:7.0f} ms  {len(qs):3} queries  sql {sql:.0f} ms, other {ms - sql:.0f} ms  {p}")
         for qms, sql in sorted(qs, reverse=True)[:3]:
             print(f"        {qms:7.0f} ms  {sql}")
     if args.write:
