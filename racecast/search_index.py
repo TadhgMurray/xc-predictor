@@ -81,6 +81,18 @@ CREATE INDEX IF NOT EXISTS {prefix}_trgm
 -- school rows alone keeps that off the 15M-row table
 CREATE INDEX IF NOT EXISTS {prefix}_school_label
     ON {table} (label, sort_count) WHERE kind = 'school';
+-- the search page's tab counts (17a page timing, 2026-10-13: /search?q=smith
+-- spent a second counting): one trigram index per SMALL kind, so a count of
+-- meets is a bitmap over the meets alone instead of all 15M rows. Athletes
+-- are most of the table and use the full index above.
+CREATE INDEX IF NOT EXISTS {prefix}_trgm_meet
+    ON {table} USING gin (search_text gin_trgm_ops) WHERE kind = 'meet';
+CREATE INDEX IF NOT EXISTS {prefix}_trgm_course
+    ON {table} USING gin (search_text gin_trgm_ops) WHERE kind = 'course';
+CREATE INDEX IF NOT EXISTS {prefix}_trgm_venue
+    ON {table} USING gin (search_text gin_trgm_ops) WHERE kind = 'venue';
+CREATE INDEX IF NOT EXISTS {prefix}_trgm_school
+    ON {table} USING gin (search_text gin_trgm_ops) WHERE kind = 'school';
 """
 
 
@@ -778,7 +790,7 @@ def main():
                 #   and not a mystery.
                 cur.execute("SET maintenance_work_mem = '2GB'")
                 cur.execute("SET max_parallel_maintenance_workers = 4")
-                print("building indexes (prefix, trigram, school label)...", flush=True)
+                print("building indexes (prefix, trigram, school label, per-kind trigram)...", flush=True)
                 t0 = time.time()
                 sql = _INDEX.format(table="search_index_new",
                                     prefix="idx_search_new")
@@ -801,7 +813,9 @@ def main():
             swapTable(conn, "search_index", renames=[
                 ("idx_search_new_prefix", "idx_search_prefix"),
                 ("idx_search_new_trgm", "idx_search_trgm"),
-                ("idx_search_new_school_label", "idx_search_school_label")])
+                ("idx_search_new_school_label", "idx_search_school_label")]
+                + [(f"idx_search_new_trgm_{k}", f"idx_search_trgm_{k}")
+                   for k in ("meet", "course", "venue", "school")])
             conn.commit()
             print("search_index: swapped in", flush=True)
 

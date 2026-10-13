@@ -9224,19 +9224,17 @@ def _run_search(q, kind, year_filter, offset):
                 if year:
                     count_where.append("(sort_year = %(y)s OR search_text LIKE %(yp)s)")
                     cparams["y"] = int(year); cparams["yp"] = f"%{year}%"
-                kinds_sql = ", ".join(f"('{k}')" for k in SEARCH_KINDS)
-                cur.execute(f"""
-                    SELECT k.kind, c.n
-                    FROM   (VALUES {kinds_sql}) AS k(kind)
-                    CROSS  JOIN LATERAL (
-                        SELECT count(*) AS n FROM (
+                # ! THE KIND AS A LITERAL, ONE BRANCH EACH (2026-10-13): a
+                #   kind joined in from VALUES is a parameter the planner
+                #   cannot match to search_index.py's per-kind partial
+                #   trigram indexes, so every kind scanned the full index.
+                #   SEARCH_KINDS are constants, never user input.
+                cw = " AND ".join(count_where)
+                cur.execute(" UNION ALL ".join(
+                    f"""(SELECT '{k}'::text AS kind, count(*) AS n FROM (
                             SELECT 1 FROM search_index s
-                            WHERE  s.kind = k.kind
-                              AND  {' AND '.join(count_where)}
-                            LIMIT  %(cap)s
-                        ) t
-                    ) c
-                """, cparams)
+                            WHERE  s.kind = '{k}' AND {cw}
+                            LIMIT  %(cap)s) t)""" for k in SEARCH_KINDS), cparams)
                 counts = {r["kind"]: r["n"] for r in cur.fetchall() if r["n"]}
 
                 # distinct years -- from q+kind ONLY, never the year filter itself,

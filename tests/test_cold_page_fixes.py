@@ -30,3 +30,19 @@ def test_search_counts_one_pass_with_fallback():
     # the per-kind capped counts are still there for a common token or a year
     assert re.search(r"else:\n\s+count_where = list\(where_base\)", body)
     assert re.search(r"^SEARCH_ONE_PASS = \d+$", src, re.M)
+
+
+def test_tab_counts_name_each_kind_literally():
+    # a kind joined from VALUES cannot use a partial index; a literal can
+    src = open(os.path.join(ROOT, "racecast", "app.py"), encoding="utf-8").read()
+    body = src[src.index("def _run_search"):src.index("PAGE_SIZE = 30")]
+    assert "AS k(kind)" not in body
+    assert "s.kind = '{k}'" in body and '" UNION ALL ".join(' in body
+
+
+def test_small_kinds_have_their_own_trigram_index():
+    src = open(os.path.join(ROOT, "racecast", "search_index.py"), encoding="utf-8").read()
+    for k in ("meet", "course", "venue", "school"):
+        assert f"{{prefix}}_trgm_{k}\n    ON {{table}} USING gin (search_text gin_trgm_ops) WHERE kind = '{k}'" in src
+        assert f'("idx_search_new_trgm_{k}", "idx_search_trgm_{k}")' not in src  # built by the comprehension
+    assert 'f"idx_search_new_trgm_{k}", f"idx_search_trgm_{k}"' in src

@@ -6352,3 +6352,12 @@ Chromium against the old script (readout 15:00, label under the pointer
   token past 5000 rows, or a picked year, keeps the old queries.
 - ⏳ Next run of 17a to confirm; race_xc p95 684 ms and athlete p95 366 ms
   are the next looks.
+- Second run (owner): home page off the list; /search?q=smith still 1.9 s.
+  "smith" passes 5000 matches, so it took the old per-kind counts (1071 ms),
+  each a bitmap over the WHOLE trigram index -- the kind came in from a
+  VALUES join, which the planner cannot match to a partial index. Now one
+  UNION ALL branch per kind with the kind as a literal, and search_index.py
+  builds a partial trigram index for each small kind (meet, course, venue,
+  school; athletes keep the full one). Checked on a scratch table: the meet
+  branch uses its partial index.
+
