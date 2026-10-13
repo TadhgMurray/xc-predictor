@@ -6185,3 +6185,18 @@ Chromium against the old script (readout 15:00, label under the pointer
   XCP_DAY_SOFT=t applies one. Pick the t where sd AND robust both fall.
 - Era: the fit printed nothing -- it was run from ~ after the ^C, not
   /srv/xc-predictor. Rerun from the repo.
+- Distance holdout, the rest (same run): the TRACK distances are fine (hs
+  800 -0.5%, 1600 +0.6%, 3200 -0.1%; college 1500/1600/3000 within 0.7%).
+  Every CROSS COUNTRY distance held out reads ~3% FASTER than predicted, in
+  BOTH directions (hs 4000 -3.8% and 5000 -3.0%; college_m 6000 -3.2% and
+  8000 -2.9%; ms 3000/3200 -3.2/-2.6%), every month (Aug-Dec -3.2..-3.5%),
+  and by gap: nearest raced distance within 0.25 log -3.0%, 0.5-0.75 +0.2%.
+  The same sign whichever XC distance is held out is NOT the distance law's
+  slope (that flips sign). Suspects: the holdout's own XC structure (cells
+  keyed by distance, the athlete's sport offset under its prior) or a real
+  XC level offset for multi-distance athlete-seasons. By rating: <70 -7.2%
+  ... 120-130 -0.2%, 140-150 +0.9% (partly regression to the mean: the band
+  is read off the same noisy training rows).
+  NEW: the distance holdout now prints "by what the athlete-season kept in
+  training" -- XC predicted from XC vs from track only (and TF likewise),
+  which separates the two suspects on the next run.

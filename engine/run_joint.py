@@ -1653,6 +1653,34 @@ def distanceBreakdown(err, pool, dist_te, gap, min_rows=200):
     return out
 
 
+def trainingSportBreakdown(err, sport_te, season_te, season_tr, sport_tr,
+                           min_rows=200):
+    """★ SAME SPORT OR ACROSS (owner's run 20261011_150217: every cross
+    country distance held out read ~3% FASTER than predicted -- 4000 AND
+    5000, 6000 AND 8000 -- while the track distances sat near zero). A bias
+    with the same sign whichever XC distance is held out is not the distance
+    law's slope. This splits each held-out sport by what its athlete-season
+    kept in training: the same sport (XC from XC: the distance law and the
+    XC cells) or only the other (XC from track: the sport gap and the
+    athlete's sport offset). Pure."""
+    err = np.asarray(err, dtype=np.float64)
+    sport_te = np.asarray(sport_te)
+    season_te = np.asarray(season_te, dtype=np.int64)
+    has = {}
+    for code in (0, 1):
+        has[code] = np.isin(season_te, np.unique(np.asarray(season_tr)[np.asarray(sport_tr) == code]))
+    out = ["        by what the athlete-season kept in training (+ = SLOWER than predicted):"]
+    for code, name, other in ((0, "XC", 1), (1, "TF", 0)):
+        for label, m in ((f"{name} from {name} (+ maybe {'TF' if code == 0 else 'XC'})",
+                          (sport_te == code) & has[code]),
+                         (f"{name} from {'TF' if code == 0 else 'XC'} only",
+                          (sport_te == code) & ~has[code] & has[other])):
+            if int(m.sum()) >= min_rows:
+                out.append(f"          {label:<26} mean {100 * err[m].mean():+.2f}%  "
+                           f"median {100 * np.median(err[m]):+.2f}%  ({int(m.sum()):,})")
+    return out
+
+
 def nearestTrainingGap(season_te, logd_te, season_tr, logd_tr):
     """|log distance| from each held-out row to the nearest distance its
     athlete-season raced in training (inf when none)."""
@@ -1902,6 +1930,11 @@ def holdout(cols, keep, args, athlete_pool, D_full):
         _gap = nearestTrainingGap(_season[te_local], _logd_te,
                                   _season[~te_local], _logd_tr)
         for line in distanceBreakdown(err, pool_te[cov], _dist_all[keep_te][cov], _gap[cov]):
+            print(line)
+        _sp_all = np.asarray(cols["sport"])[idx]
+        for line in trainingSportBreakdown(
+                err, _sp_all[te_local][cov], _season[te_local][cov],
+                _season[~te_local], _sp_all[~te_local]):
             print(line)
     if kind in ("sport", "sport-xc") and "dist_m" in cols:
         for line in crossSportBreakdown(err, pool_te[cov],
