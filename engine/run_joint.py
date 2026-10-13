@@ -1653,6 +1653,56 @@ def distanceBreakdown(err, pool, dist_te, gap, min_rows=200):
     return out
 
 
+CE_BANDS = ((-1.0, 0.0), (0.0, 0.03), (0.03, 0.06), (0.06, 0.09), (0.09, 1.0))
+
+
+def directionCourseBreakdown(err, sport_te, ce, season_te, logd_te,
+                             season_tr, logd_tr, min_rows=200):
+    """Two splits that tell the distance law from everything else.
+
+    1. DIRECTION: was the held-out distance predicted from SHORTER races
+       only, LONGER only, or both? A wrong slope errs one way from below and
+       the other from above; runners choosing their best events (an 800
+       type's 1600) errs the same. A bias with one sign either way is not
+       the law.
+    2. COURSE EFFECT of the held-out row (h * (d + u) from the training
+       fit, log-time): a bias that grows with the course charged is the
+       course term over- or under-applied; flat across bands is an
+       athlete-level offset. Pure."""
+    err = np.asarray(err, dtype=np.float64)
+    sport_te = np.asarray(sport_te)
+    ce = np.asarray(ce, dtype=np.float64)
+    season_te = np.asarray(season_te, dtype=np.int64)
+    season_tr = np.asarray(season_tr, dtype=np.int64)
+    logd_te = np.asarray(logd_te, dtype=np.float64)
+    logd_tr = np.asarray(logd_tr, dtype=np.float64)
+    n = int(max(season_te.max(initial=-1), season_tr.max(initial=-1))) + 1
+    lo = np.full(n, np.inf)
+    hi = np.full(n, -np.inf)
+    np.minimum.at(lo, season_tr, logd_tr)
+    np.maximum.at(hi, season_tr, logd_tr)
+    below = lo[season_te] < logd_te - 0.02
+    above = hi[season_te] > logd_te + 0.02
+    out = ["        by direction (held-out distance predicted from ...; + = SLOWER):"]
+    for code, name in ((0, "XC"), (1, "TF")):
+        for label, m in (("shorter only", below & ~above), ("longer only", above & ~below),
+                         ("both sides", below & above)):
+            m = m & (sport_te == code)
+            if int(m.sum()) >= min_rows:
+                out.append(f"          {name} from {label:<13} mean {100 * err[m].mean():+.2f}%  "
+                           f"median {100 * np.median(err[m]):+.2f}%  ({int(m.sum()):,})")
+    out.append("        by the course effect charged to the held-out row (h*(d+u), log-time):")
+    for code, name in ((0, "XC"), (1, "TF")):
+        for a, b in CE_BANDS:
+            m = (sport_te == code) & (ce >= a) & (ce < b)
+            if int(m.sum()) >= min_rows:
+                lab = f"{100 * a:+.0f}..{100 * b:+.0f}%" if abs(a) < 1 and abs(b) < 1 else (
+                    f"< {100 * b:+.0f}%" if a <= -1 else f">= {100 * a:+.0f}%")
+                out.append(f"          {name} {lab:<12} mean {100 * err[m].mean():+.2f}%  "
+                           f"median {100 * np.median(err[m]):+.2f}%  ({int(m.sum()):,})")
+    return out
+
+
 def trainingSportBreakdown(err, sport_te, season_te, season_tr, sport_tr,
                            min_rows=200):
     """★ SAME SPORT OR ACROSS (owner's run 20261011_150217: every cross
@@ -1931,6 +1981,23 @@ def holdout(cols, keep, args, athlete_pool, D_full):
                                   _season[~te_local], _logd_tr)
         for line in distanceBreakdown(err, pool_te[cov], _dist_all[keep_te][cov], _gap[cov]):
             print(line)
+        # ★ WHICH WAY, AND HOW HARD A COURSE (owner, 2026-10-13: "so what
+        #   seems to be the issue for xc?") -- see directionCourseBreakdown
+        try:
+            _b = D_tr.unpack(out["theta"])
+            _rcnt = np.bincount(D_tr.race, minlength=D_tr.n_race)
+            _u = np.where(_rcnt > 0, _b["u"], 0.0)
+            _h = (js.tiltRows(np.asarray(out["rating"])[D_te.athlete])
+                  if out.get("rating") is not None and not args.no_tilt
+                  else np.ones(D_te.n))
+            _ce = _h * (_b["d"][D_te.cell] + _u[D_te.race])
+            for line in directionCourseBreakdown(
+                    err, sport_te[cov], _ce[cov], _season[te_local][cov],
+                    _logd_te[cov], _season[~te_local], _logd_tr):
+                print(line)
+        except Exception as exc:                                  # noqa: BLE001
+            print(f"        (direction/course breakdown not computed: "
+                  f"{type(exc).__name__}: {exc})")
         _sp_all = np.asarray(cols["sport"])[idx]
         for line in trainingSportBreakdown(
                 err, _sp_all[te_local][cov], _season[te_local][cov],

@@ -6200,3 +6200,10 @@ Chromium against the old script (readout 15:00, label under the pointer
   NEW: the distance holdout now prints "by what the athlete-season kept in
   training" -- XC predicted from XC vs from track only (and TF likewise),
   which separates the two suspects on the next run.
+- NEW (distance holdout): two more splits. DIRECTION -- the held-out
+  distance predicted from shorter races only / longer only / both (a wrong
+  slope errs opposite ways; runners choosing their best events errs the
+  same way). COURSE EFFECT -- the bias by h*(d+u) charged to the held-out
+  row: growing with the course charged = the course term over-applied;
+  flat = an athlete-level offset. NOTE: the distance holdout's seasons are
+  per SPORT (athleteSeasonCodes with sport), so "from TF only" never prints.
