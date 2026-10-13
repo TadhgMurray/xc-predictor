@@ -76,6 +76,12 @@ INSERT INTO results VALUES (901, 6001, 'anet', 9, 91, 9, 23, 1135.1, '2021-10-16
 -- xc_placeholder: a track 1600 on the XC calendar
 INSERT INTO meets VALUES (11,111,'Mid-Season Mania 1600m Invitational (XC Calendar Placeholder)');
 INSERT INTO results VALUES (1111, 6101, 'anet', 11, 111, 11, 5, 269.4, '2022-10-05');
+-- ... and a meet that says it was on the track (2026-10-13), beside one
+-- that only has "Track" in a club's name: 1112 goes, 1113 stays
+INSERT INTO meets VALUES (12,112,'Darrell Lee 5000m (track) 2024'),
+  (13,113,'Eastside Track Club XC Invitational');
+INSERT INTO results VALUES (1112, 6102, 'anet', 12, 112, 12, 1, 937.8, '2024-11-18'),
+  (1113, 6103, 'anet', 13, 113, 13, 1, 960.0, '2024-09-14');
 -- dup_converted (TF): 2 miles 9:35.09 and its 3200m conversion 9:31.74, same meet and day;
 -- and a real 1600 + 3200 double the same day, which must stay
 INSERT INTO results_tf VALUES (1801, 9101, 'anet', 18, 181, 5, 18, 3, 575.09, '2025-12-13', NULL, NULL, NULL, '2miles', 0, 0),

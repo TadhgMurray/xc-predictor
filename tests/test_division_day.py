@@ -38,7 +38,8 @@ def test_divisions_that_agree_move_nothing():
 
 def test_divisions_that_differ_take_their_own_day():
     r, w, race, sub, u_loo, div_day = _world(0.03)
-    new, info = js.divisionDayRow(r, w, 1.0, race, sub, u_loo, SIG ** 2)
+    new, info = js.divisionDayRow(r, w, 1.0, race, sub, u_loo, SIG ** 2,
+                                  credit_only_down=False)
     assert 0.025 < info["sigma_v"] < 0.035            # measured, not set
     err_old = np.mean(np.abs(u_loo - div_day[sub]))
     err_new = np.mean(np.abs(new - div_day[sub]))
@@ -64,3 +65,25 @@ def test_switch_off(monkeypatch):
     assert not js.dayDivisionShrinkOn()
     monkeypatch.delenv("XCP_DAY_DIVISION_SHRINK")
     assert js.dayDivisionShrinkOn()
+
+
+def test_it_never_adds_credit():
+    """A tactical final is slow as a whole division: its venue day is 0,
+    its own reads slow, and the lean must not hand the tactics back."""
+    r, w, race, sub, u_loo, _ = _world(0.03)
+    new, _ = js.divisionDayRow(r, w, 1.0, race, sub, u_loo, SIG ** 2)
+    assert np.all(np.abs(new) <= np.abs(u_loo) + 1e-15)
+    assert np.all(new * u_loo >= 0)                    # never past zero
+    # tactical: venue day 0, the division ran 4% slow on its own
+    race2 = np.zeros(80, dtype=int)
+    sub2 = np.repeat([0, 1], 40)
+    r2 = np.where(sub2 == 1, 0.04, -0.04)
+    u0 = np.zeros(80)
+    out, _ = js.divisionDayRow(r2, np.ones(80), 1.0, race2, sub2, u0, SIG ** 2)
+    assert np.all(out == 0.0)
+    # the Midlothian shape: venue day dragged to +6% by another division,
+    # this division's own day ~0 -> its credit falls toward 0
+    r3 = np.where(sub2 == 1, 0.12, 0.0)
+    u3 = np.full(80, 0.06)
+    out3, _ = js.divisionDayRow(r3, np.ones(80), 1.0, race2, sub2, u3, SIG ** 2)
+    assert np.all(out3[sub2 == 0] < 0.03) and np.all(out3[sub2 == 1] <= 0.06)

@@ -389,6 +389,14 @@ DIVISION_TABLE_COLS = ("division", "race", "division_day", "info", "rows",
 #  ! A FLAGGED DIVISION (the guard's) keeps the venue day, as before: its
 #    own day is a broken sheet, not a day.
 #  ! A ONE-DIVISION RACE IS UNCHANGED: its division day IS the race day.
+#  ★★ IT ONLY EVER TAKES CREDIT AWAY (owner, 2026-10-13: "might [it] help
+#     tactical races too much?"). A sit-and-kick final is slow as a WHOLE
+#     DIVISION: its own day reads "slow", and leaning toward it would hand
+#     the tactics back as a day credit -- what the venue key exists to stop.
+#     So the applied day moves only between the venue's day and zero: a
+#     division the others dragged slow (Midlothian's correct races, a
+#     varsity beside a long JV loop) loses the borrowed credit; a division
+#     slower or faster than its venue on its own gains nothing.
 #  XCP_DAY_DIVISION_SHRINK=0 turns it off (ablation).
 def dayDivisionShrinkOn():
     return os.environ.get("XCP_DAY_DIVISION_SHRINK", "1").strip().lower() not in (
@@ -396,7 +404,7 @@ def dayDivisionShrinkOn():
 
 
 def divisionDayRow(r_pre, w, h, race, sub, u_row, sigma2, keep=None,
-                   min_rows=5):
+                   min_rows=5, credit_only_down=True):
     """Per row, the applied day leaned toward the row's own division.
 
     r_pre: per row residual before the day (h-units); w, h: weights, tilt;
@@ -455,6 +463,10 @@ def divisionDayRow(r_pre, w, h, race, sub, u_row, sigma2, keep=None,
         m_loo = (num_s[sub] - c * r) / np.where(W_loo > 0, W_loo, 1.0)
     k = np.where(ok, W_loo / (W_loo + sigma2 / sigma_v2), 0.0)
     new = u_row + k * np.where(ok, m_loo - u_row, 0.0)
+    if credit_only_down:
+        # between the venue's day and zero: less credit, never more
+        new = np.where(u_row > 0, np.clip(new, 0.0, u_row),
+                       np.where(u_row < 0, np.clip(new, u_row, 0.0), 0.0))
     moved = ok & (k > 0)
     info["rows_moved"] = int(moved.sum())
     info["k_median"] = float(np.median(k[moved])) if moved.any() else 0.0

@@ -693,6 +693,27 @@ fi
 #   on the same `--from 5` run writes the curve alone instead; the record
 #   carries which ("residual" in distance_applied_*.json), so the site and
 #   the solve follow it with nothing in /etc/xc-predictor.env.
+# ★ EVERY DISTANCE OVERRIDE IS RE-JUDGED BEFORE THE BACKFILL APPLIES IT
+#   (owner, 2026-10-13: Nike Hole in the Wall 2022, the varsity 5K "corrected"
+#   to 4506 m -- 2.8 miles, the JV races' distance -- and all 302 runners
+#   then read 8-12% under their own level). audit_overrides removes an
+#   override that is an outlier for its distance class AND whose removal
+#   brings the field back to its runners' normal (judged on last run's rows,
+#   which carry the override's effect); dump_overrides rebuilds dist_override
+#   from what is left, and 05 re-normalises with it. It ran only by hand.
+#   ! Needs engine/corrections.py (travels out of band, .gitignore); without
+#     it both are skipped. XCP_AUDIT_OVERRIDES=0 skips them.
+#   ⚠ XCP_BACKFILL_XC=changed does not re-normalise a division whose
+#     override was removed; the next full XC pass does.
+if [ "${XCP_AUDIT_OVERRIDES:-1}" != "0" ] && [ -f engine/corrections.py ]; then
+  step 04g_audit_overrides "$PY" -u engine/audit_overrides.py --rebuild --write
+  if ! failed 04g_audit_overrides; then
+    step 04g2_dump_overrides "$PY" -u engine/dump_overrides.py
+  fi
+else
+  echo "  04g_audit_overrides skipped (XCP_AUDIT_OVERRIDES=0 or no engine/corrections.py)" | tee -a "$SUMMARY"
+fi
+
 if [ "$SKIP_BACKFILL" -eq 1 ]; then
   echo "  05_backfill skipped (--skip-backfill)"
 else

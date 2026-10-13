@@ -102,7 +102,7 @@ _EXPECTED = {
     # 2026-10-08: the TwiKnight pair, a day apart; 1202 is in the smaller entry
     ("XC", "dup_adjacent_day"): [1202],
     ("TF", "dup_adjacent_day"): [],
-    ("XC", "xc_placeholder"): [1111],
+    ("XC", "xc_placeholder"): [1111, 1112],
     ("TF", "dup_same_day"):   [1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108],
     ("TF", "dup_converted"):  [1802],
     ("TF", "xc_placeholder"): [],

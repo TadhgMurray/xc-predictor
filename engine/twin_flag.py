@@ -713,19 +713,34 @@ def dupConvertedSql(table, sport):
     """
 
 
+# a meet name that says the race was run on a track (xcPlaceholderSql)
+TRACK_NAME_RX = (r"\(\s*track\s*\)"
+                 r"|\mtrack\s+(5000|5k|3200|1600|mile)"
+                 r"|\m(5000|3200|1600)\s*m?\s+track\M")
+
+
 def xcPlaceholderSql(table, sport):
     """A TRACK race put on the cross country calendar (owner's page,
     2026-09-28: "Mid-Season Mania 1600m Invitational (XC Calendar
     Placeholder)", a 1600 in the XC season with a course difficulty, and
     the same race again in track). The meet says what it is in its name;
-    its XC rows are not cross country."""
+    its XC rows are not cross country.
+
+    ★ AND A MEET THAT SAYS IT WAS ON THE TRACK (owner, 2026-10-13: "Darrell
+      Lee 5000m (track) 2024", Garfield HS, Nov 18 2024 -- a track 5000 on
+      the cross country calendar, rated as a course at +3.6% with a day term,
+      so a 15:37.8 on a track came out "15:05 on a track"). The name's own
+      words: "(track)", "track 5000/5k/3200/1600/mile", "5000m track".
+      A bare "Track" elsewhere in a name ("... Track Club Invitational") is
+      not one of these."""
     if sport != "XC":
         return f"SELECT result_id FROM {table} WHERE false"
     return f"""
         SELECT r.result_id
         FROM   {table} r
         WHERE  r.meet_id IN (SELECT DISTINCT meet_id FROM meets
-                             WHERE  meet_name ILIKE '%%placeholder%%'
+                             WHERE  (meet_name ILIKE '%%placeholder%%'
+                                     OR meet_name ~* '{TRACK_NAME_RX}')
                                AND  meet_id IS NOT NULL)
     """
 

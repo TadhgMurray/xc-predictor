@@ -6143,3 +6143,23 @@ Chromium against the old script (readout 15:00, label under the pointer
   XCP_DAY_DIVISION_SHRINK=0 turns it off.
   ⏳ Whether it explains the District 31 161.5 is unproven: if that race's
   own field (not another division) carries the bias, this does not move it.
+- CHANGED (same day): js.divisionDayRow only ever takes credit AWAY -- the
+  applied day stays between the venue's day and zero. A tactical final is
+  slow as a whole division; leaning toward its own day would have handed
+  the tactics back as credit (owner: "might [it] help tactical races too
+  much?"). tests/test_division_day.py::test_it_never_adds_credit.
+
+## 2026-10-13 -- Two wrong-distance races (owner)
+
+- Nike Hole in the Wall 2022, Men's Varsity Gold: the 5K carried an override
+  to 4506 m (2.8 mi -- the JV races' distance, almost certainly
+  propose_distances' sibling corroboration), and all 302 rows read 8-12%
+  under their level. FIXED (process): audit_overrides --rebuild --write and
+  dump_overrides now run before every backfill (04g / 04g2), so an override
+  whose removal brings the field back to its runners' normal is dropped
+  automatically. XCP_AUDIT_OVERRIDES=0 skips. ⏳ Next full run.
+- "Darrell Lee 5000m (track) 2024" (Garfield HS, Nov 18 2024): a track 5000
+  on the XC calendar, rated as an XC course at +3.6% plus a day term (15:37.8
+  -> "15:05 on a track"). FIXED: xc_placeholder (04c) also takes meets whose
+  name says track ("(track)", "track 5000/5k/3200/1600/mile", "5000m
+  track"); "Track Club" names are not caught.
