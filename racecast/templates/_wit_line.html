@@ -1,53 +1,62 @@
-{# The athlete header's WHAT IT TAKES line (athlete.html; cuts.athleteLine).
-   Its own file so the sentence can be rendered and pinned on its own
-   (tests/test_athlete_header_b.py). Needs `wit_line` and `athlete`.
+{# The athlete header's STATE block (athlete.html; cuts.athleteLine), what
+   it takes and the state odds in one place. Its own file so it can be
+   rendered and pinned on its own (tests/test_athlete_header_b.py). Needs
+   `wit_line` and `athlete`; reads the state_odds_athlete global when there
+   is one.
 
-   ★ IN PLAIN ENGLISH (header redesign B, 2026-10-10): what the athlete is
-     fast enough FOR, or how far short of it in points AND seconds over a
-     track 5K, then the mark as a clock and where they are:
-       above  "Fast enough for the OR Class 6A state podium — last year's
-               top 8 needed 117.8 (about a 15:40 5K on a track); Owen is at
-               124.6."
-       below  "About 2.1 points (≈ 12 s over 5K) short of the OR Class 6A
-               state podium mark: last year's top 8 needed ..."
-     The nouns are cuts.plainWords', the clocks cuts.stampClocks'
-     (conversions' own maths, never a typed-in seconds-per-point); a line
-     without them (an unkeyed rung) keeps the old words. #}
+   ★ ONE VERDICT, THEN THE DETAIL (owner, 2026-10-13, Marcelo: national #1
+     at 143.0, and the header said "Fast enough for the FL Class 3A state
+     podium", then "That mark is 16:13 at WakeMed", then on its own row
+     "if they make it, 99% to finish top 8" -- "that doesn't make sense",
+     and four wrapped rows of label and links). Now:
+       above  "Clear of the FL Class 3A podium line by 10.8 points (≈ 65 s
+               over 5K): last year's top 8 needed 132.2 (≈ 15:10 on a
+               track)."
+       below  "2.1 points (≈ 12 s over 5K) short of the OR Class 6A state
+               podium: last year's top 8 needed 126.7 (≈ 15:52 on a
+               track)."
+     and one muted line under it: the odds, then the links.
+   ! THE MARK AS A COURSE TIME ONLY WHEN IT IS STILL AHEAD. A clock for a
+     line the athlete is already past answers nothing and read as their
+     own time; it shows for the next rung only, labelled with its mark.
+   The nouns are cuts.plainWords', the clocks cuts.stampClocks'
+   (conversions' own maths, never a typed-in seconds-per-point); a line
+   without them (an unkeyed rung) keeps the old words. #}
 {% from "_scale.html" import rv %}
 {% if wit_line %}
-{% set _first = (athlete.name or "").split()[0] if athlete.name else "This athlete" %}
+{% set _first = (athlete.name or "").split()[0] if athlete.name else "this athlete" %}
 {% set _is = wit_line.rating if wit_line.rating is not none else athlete.rating %}
-<p class="rank-line wit-line{% if wit_line.goal %} wit-plain{% endif %}">
-    <span class="rl-lab">What it takes</span>
-    {% if wit_line.goal -%}
-    {% set _needed %}{{ wit_line.who }} needed {{ "%.1f"|format(wit_line.mark) }}{% if wit_line.mark_time %} (about a {{ wit_line.mark_time }} 5K on a track){% endif %}; {{ _first }} is at {{ "%.1f"|format(_is) }}.{% endset %}
-    {% if wit_line.kind == "off" -%}
-    <span class="wit-gap">About {{ "%.1f"|format(wit_line.gap) }} points{% if wit_line.gap_secs %} (&asymp; {{ wit_line.gap_secs }} s over 5K){% endif %} short</span> of {{ wit_line.goal_mark }}: {{ _needed }}
-    {%- else -%}
-    <span class="wit-ok">Fast enough {{ wit_line.goal }}</span> &mdash; {{ _needed }}
-    {%- endif %}
+{% set so = state_odds_athlete(athlete.person_id) if state_odds_athlete is defined else none %}
+<div class="rank-line wit-line{% if wit_line.goal %} wit-plain{% endif %}">
+  <span class="rl-lab">State</span>
+  <div class="wit-body">
+    <p class="wit-main">
+    {%- set _needed %}{{ wit_line.who }} needed {{ "%.1f"|format(wit_line.mark) }}{% if wit_line.mark_time %} (&asymp; {{ wit_line.mark_time }} on a track){% endif %}{% endset -%}
+    {%- if wit_line.goal and wit_line.kind == "off" -%}
+      <span class="wit-gap">{{ "%.1f"|format(wit_line.gap) }} points{% if wit_line.gap_secs %} (&asymp; {{ wit_line.gap_secs }} s over 5K){% endif %} short</span> of {{ wit_line.goal_mark }}: {{ _needed }}. {{ _first }} is at {{ "%.1f"|format(_is) }}.
+    {%- elif wit_line.goal -%}
+      <span class="wit-ok">Clear of {{ wit_line.goal_mark }}</span> by {{ "%.1f"|format(wit_line.gap) }} points{% if wit_line.gap_secs %} (&asymp; {{ wit_line.gap_secs }} s over 5K){% endif %}: {{ _needed }}.
     {%- elif wit_line.kind == "off" -%}
-    <strong>{{ "%.1f"|format(wit_line.gap) }}</strong> points{% if wit_line.gap_pct %} ({{ "%.1f"|format(wit_line.gap_pct) }}%){% endif %} off {{ wit_line.text }}
-    ({{ wit_line.label }}, {{ rv(wit_line.mark, wit_line.mark) }}){% if wit_line.cleared %}; clears {{ wit_line.cleared }}{% endif %}
+      <strong>{{ "%.1f"|format(wit_line.gap) }}</strong> points{% if wit_line.gap_pct %} ({{ "%.1f"|format(wit_line.gap_pct) }}%){% endif %} off {{ wit_line.text }}
+      ({{ wit_line.label }}, {{ rv(wit_line.mark, wit_line.mark) }}){% if wit_line.cleared %}; clears {{ wit_line.cleared }}{% endif %}
     {%- else -%}
-    <strong>{{ "%.1f"|format(wit_line.gap) }}</strong> points{% if wit_line.gap_pct %} ({{ "%.1f"|format(wit_line.gap_pct) }}%){% endif %} above {{ wit_line.text }}
-    ({{ wit_line.label }}, {{ rv(wit_line.mark, wit_line.mark) }})
-    {%- endif %}
-    <span class="sep">·</span><a href="{{ wit_line.href }}">Past marks</a>
-    <span class="sep">·</span><a href="/goal?athlete={{ athlete.person_id }}">Any goal, any course</a>
-    {# goal times: the mark as a clock where this athlete actually races,
-       and at the round's championship course (cuts.goalTimes) #}
-    {%- if wit_line.times %}
-    {# ★ NAME THE MARK (owner, 2026-10-13: "these marks are off" -- Marcelo
-       at 143.0, then "That mark is 16:13 at WakeMed", which read as HIS
-       time; it is the 132.2 podium line's). #}
-    <span class="wit-goal" style="display:block;margin-top:0.25rem"><span class="rl-lab">{% if wit_line.mark is not none %}The {{ "%.1f"|format(wit_line.mark) }} mark is{% else %}That mark is{% endif %}</span>
+      <strong>{{ "%.1f"|format(wit_line.gap) }}</strong> points{% if wit_line.gap_pct %} ({{ "%.1f"|format(wit_line.gap_pct) }}%){% endif %} above {{ wit_line.text }}
+      ({{ wit_line.label }}, {{ rv(wit_line.mark, wit_line.mark) }})
+    {%- endif -%}
+    </p>
+    {%- if wit_line.times and wit_line.kind == "off" %}
+    <p class="wit-times"><span class="wit-k">{{ "%.1f"|format(wit_line.mark) }} is</span>
     {%- for t in wit_line.times %}{% if not loop.first %}<span class="sep">·</span>{% endif %}
-        <span class="rk"><strong>{{ t.seconds|wit_time }}</strong> {% if t.course_name %}at {{ t.course_name }}{% else %}on a typical course{% endif %} <span class="rl-floor">{{ "%.0f"|format(t.distance) }} m{% if t.champ %}, {{ "the section final" if wit_line.rung.where == "section" else "the state course" }}{% endif %}</span></span>
-    {%- endfor %}
-    <span class="sep">·</span><a href="{{ wit_line.conv_href }}">Other courses</a></span>
-    {%- elif wit_line.conv_href %}
-    <span class="sep">·</span><a href="{{ wit_line.conv_href }}">As a time</a>
+      <span class="rk"><strong>{{ t.seconds|wit_time }}</strong> at {{ t.course_name or "a typical course" }}{% if t.champ %} <span class="rl-floor">({{ "section final" if wit_line.rung.where == "section" else "state course" }})</span>{% endif %}</span>
+    {%- endfor %}</p>
     {%- endif %}
-</p>
+    <p class="wit-sub">
+    {%- if so -%}
+      <span class="wit-odds">{% if so.qualify %}<strong>{{ so.qualify }}</strong> to qualify, {% endif %}<strong>{{ so.podium }}</strong> to finish top {{ so.podium_n }}{% if not so.qualify %} if {{ _first }} makes state{% endif %}</span> <span class="rl-floor">(<a href="{{ so.href }}">model estimate</a>)</span><span class="sep">·</span>
+    {%- endif -%}
+      <a href="{{ wit_line.href }}">Past marks</a><span class="sep">·</span><a href="/goal?athlete={{ athlete.person_id }}">Any goal, any course</a>
+      {%- if wit_line.conv_href %}<span class="sep">·</span><a href="{{ wit_line.conv_href }}">{{ "Other courses" if wit_line.times and wit_line.kind == "off" else "As a time" }}</a>{% endif %}
+    </p>
+  </div>
+</div>
 {% endif %}

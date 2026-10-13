@@ -836,6 +836,15 @@ main.ath-page.rc .stat-strip.ath-ss .s-sub.s-under,
 main.ath-page.rc .stat-strip.ath-ss .s-sub.s-pct { display: block; margin: .15rem 0 0; }
 main.ath-page.rc .stat-strip.ath-ss .s-lab .s-when { text-transform: none; letter-spacing: 0; }
 main.ath-page.rc .wit-line.wit-plain { line-height: 1.45; }
+/* the STATE block (2026-10-13): label column, verdict, muted detail */
+main.ath-page.rc .wit-line { display: flex; align-items: baseline; gap: 0 .5rem; }
+main.ath-page.rc .wit-line > .rl-lab { flex: none; margin-right: 0; }
+main.ath-page.rc .wit-line .wit-body { min-width: 0; }
+main.ath-page.rc .wit-line .wit-body p { margin: 0; }
+main.ath-page.rc .wit-line .wit-times, main.ath-page.rc .wit-line .wit-sub { margin-top: .15rem; font-size: .84rem; color: var(--muted); }
+main.ath-page.rc .wit-line .wit-times strong, main.ath-page.rc .wit-line .wit-odds strong { color: var(--ink); }
+main.ath-page.rc .wit-line .wit-k { margin-right: .35rem; }
+main.ath-page.rc .wit-line .wit-sub a, main.ath-page.rc .wit-line .wit-odds { white-space: nowrap; }
 main.ath-page.rc .wit-line .wit-ok { color: #1f6f3f; font-weight: 600; }
 main.ath-page.rc .wit-line .wit-gap { color: #92400e; font-weight: 600; }
 main.ath-page.rc .ath-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin: .9rem 0 0; padding-top: .8rem; border-top: 1px solid var(--line); }

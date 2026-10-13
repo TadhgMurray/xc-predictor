@@ -105,13 +105,37 @@ def test_clocks_come_from_the_conversion():
 
 def test_above_the_mark_wording():
     out = _render(_line(124.6, 117.8, "above"))
-    assert 'class="wit-ok">Fast enough for the OR Class 6A state podium</span>' in out
+    secs = int(round(_secs(117.8, "hs_m") - _secs(124.6, "hs_m")))
+    assert 'class="wit-ok">Clear of the OR Class 6A state podium mark</span>' in out
     assert _text(out).startswith(
-        "What it takes Fast enough for the OR Class 6A state podium — last year's top 8 "
-        "needed 117.8 (about a 15:40 5K on a track); Owen is at 124.6.")
+        f"State Clear of the OR Class 6A state podium mark by 6.8 points (≈ {secs} s over 5K): "
+        "last year's top 8 needed 117.8 (≈ 15:40 on a track).")
     assert 'href="/what-it-takes/or/6a">Past marks</a>' in out
     assert 'href="/goal?athlete=7">Any goal, any course</a>' in out
     assert "wit-gap" not in out
+
+
+def test_no_course_clocks_for_a_mark_already_cleared():
+    """Owner, 2026-10-13: a national #1 shown "That mark is 16:13 at WakeMed"
+    for the podium line he is 11 points past, which read as his own time."""
+    times = [{"course_name": "WakeMed Soccer Park", "distance": 5000.0,
+              "seconds": 973.0, "champ": False}]
+    above = _render(dict(_line(124.6, 117.8, "above"), times=times))
+    assert "WakeMed" not in above and "Other courses" not in above
+    below = _render(dict(_line(124.6, 126.7, "off"), times=times))
+    assert "126.7 is" in _text(below) and "16:13" in _text(below)
+
+
+def test_the_odds_sit_in_the_same_block():
+    pytest.importorskip("flask")
+    import app as A
+    so = {"qualify": None, "podium": "99%", "podium_n": 8, "href": "/state-odds/fl"}
+    with A.app.test_request_context("/athlete/7"):
+        out = A.app.jinja_env.get_template("_wit_line.html").render(
+            wit_line=_line(143.0, 132.2, "above"), state_odds_athlete=lambda pid: so,
+            athlete={"name": "Marcelo X", "person_id": 7, "rating": 143.0})
+    t = _text(out)
+    assert "99% to finish top 8 if Marcelo makes state" in t and "if they" not in t
 
 
 def test_below_the_mark_wording():
@@ -119,10 +143,10 @@ def test_below_the_mark_wording():
     secs = int(round(_secs(124.6, "hs_m") - _secs(126.7, "hs_m")))
     t = _text(_render(line))
     assert t.startswith(
-        f"What it takes About 2.1 points (≈ {secs} s over 5K) short of the OR Class 6A "
-        f"state podium mark: last year's top 8 needed 126.7 (about a {line['mark_time']} "
-        "5K on a track); Owen is at 124.6.")
-    assert 'class="wit-gap">About 2.1 points' in _render(line)
+        f"State 2.1 points (≈ {secs} s over 5K) short of the OR Class 6A "
+        f"state podium mark: last year's top 8 needed 126.7 (≈ {line['mark_time']} "
+        "on a track). Owen is at 124.6.")
+    assert 'class="wit-gap">2.1 points' in _render(line)
     assert "Past marks" in t and "Any goal, any course" in t
 
 
