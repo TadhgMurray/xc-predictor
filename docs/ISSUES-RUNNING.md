@@ -6255,3 +6255,13 @@ Chromium against the old script (readout 15:00, label under the pointer
   off the median XC cell, and prints those cells (key and how far off) for
   a distance fix. ⏳ Next go-live. The cell's divisions still need their
   real distances; the printed list is the work list.
+- Owner's race-days table for the course: Al Shirley 2026 (30 rated) day
+  +10.5% CAPPED, together +49.3%; Old Pueblo 2017/18/19 together +16..+19%.
+  So: 2-year eras -> the 2025-26 era cell is ONE race day, pulled toward the
+  course's history by PRIOR_RACES = 2 -- and that history is itself
+  inflated (+16..19% against a typical ~+6%: 6000 m filed as 5000 reads
+  +21%). Al Shirley's own reading ~+60%; shrunk to ~+35%; the day then took
+  the capped 10.5%. Shrinkage took a third off, toward the wrong target.
+- CHANGED: the course guard also checks course + applied day per row
+  (xcTogetherSuspect), so a +20% history with a capped day (+30% on the
+  row) is not rated either. ⏳ The Old Pueblo divisions likely want 6000 m.

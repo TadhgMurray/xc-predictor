@@ -89,6 +89,21 @@ def xcCourseSuspects(delta, cell, sport, solved, cap=None):
     return xc_cells[np.abs(delta[xc_cells] - med) > cap]
 
 
+def xcTogetherSuspect(delta, cell, sport, solved, u_row, cap=None):
+    """Per row: an XC row whose course + applied day is more than `cap` off
+    the median XC cell's difficulty. Pure."""
+    cap = XC_COURSE_SUSPECT if cap is None else cap
+    delta = np.asarray(delta, dtype=np.float64)
+    cell = np.asarray(cell, dtype=np.int64)
+    sport = np.asarray(sport)
+    xc_cells = np.unique(cell[sport == 0])
+    xc_cells = xc_cells[np.asarray(solved)[xc_cells]] if xc_cells.size else xc_cells
+    if xc_cells.size == 0 or cap <= 0:
+        return np.zeros(cell.size, dtype=bool)
+    med = float(np.median(delta[xc_cells]))
+    return (sport == 0) & (np.abs(delta[cell] + np.asarray(u_row, dtype=np.float64) - med) > cap)
+
+
 def dayModes(race_effect_sports):
     """{'XC': 'all' | 'fast'} from ('XC', 'TF:fast', ...); absent = out."""
     modes = {}
@@ -257,6 +272,7 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
             if mode == "fast":
                 fast_only |= sport == code
     eff_pre_day = eff.copy()
+    u_used = np.zeros(sport.size)       # the day each row's rating carries (course guard)
     if day_on.any():
         # tilted like the course (issue 156): the solve fitted h * u --
         # and CLIPPED for the rating (issue 187): a day beyond the cap is
@@ -274,6 +290,7 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
             print(f"[joint/live] race-day term: only the part of a day beyond "
                   f"{100 * soft:.1f}% reaches a rating (XCP_DAY_SOFT)")
         eff = eff + np.where(day_on, out["h"] * u_cl, 0.0)
+        u_used = np.where(day_on, u_cl, 0.0)
         dayConsistencyReport(np.log(norm), eff_pre_day, out, D, u_row, u_cl,
                              day_on, fast_only, sport)
     eff_venue = eff.copy()           # the venue's share, for engine_scale (177)
@@ -375,9 +392,18 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     #   a women's 5K both filed "5000 m"), and every rating on it is the
     #   course number's, not the runners'. Those rows are not rated, and the
     #   cells are printed for a distance fix.
+    # ★ COURSE AND DAY TOGETHER (owner, same race: "Field ran +10.5% capped,
+    #   Together +49.3%"). The cell alone is not the whole credit: a course at
+    #   +20% (an inflated history) with a capped slow day is +30% on the
+    #   row. A row whose course + day sits beyond the same cap off the
+    #   typical XC course is not rated either.
     suspect_cells = xcCourseSuspects(out["delta"], D.cell, sport, solved)
-    if suspect_cells.size:
-        bad_row = np.isin(D.cell, suspect_cells)
+    together_bad = xcTogetherSuspect(out["delta"], D.cell, sport, solved, u_used)
+    if suspect_cells.size or together_bad.any():
+        bad_row = np.isin(D.cell, suspect_cells) | together_bad
+        if together_bad.any():
+            print(f"[joint/live] course guard: {int((together_bad & ~np.isin(D.cell, suspect_cells)).sum()):,} "
+                  f"more XC rows whose course + day is beyond the cap")
         rated = rated & ~bad_row
         med = float(np.median(out["delta"][np.unique(D.cell[sport == 0])])) if (sport == 0).any() else 0.0
         top = sorted(suspect_cells, key=lambda c: -abs(out["delta"][c] - med))[:8]

@@ -108,3 +108,16 @@ def test_course_guard_flags_a_course_no_course_can_be():
     got = jg.xcCourseSuspects(delta, cell, sport, solved, cap=0.15)
     assert got.tolist() == [3, 5]          # +24% and -18% off the typical XC
     assert jg.xcCourseSuspects(delta, cell, np.ones(7), solved).size == 0
+
+
+def test_course_plus_day_guard():
+    """Al Shirley 2026: a course at +20% off typical is under the cap alone,
+    but with a capped slow day of +10% the row is +30% off and goes."""
+    import joint_golive as jg
+    delta = np.array([0.06, 0.06, 0.06, 0.20, 0.0])
+    cell = np.array([0, 1, 2, 3, 3, 4])
+    sport = np.array([0, 0, 0, 0, 0, 1])
+    solved = np.ones(5, dtype=bool)
+    u = np.array([0.0, 0.02, -0.03, 0.10, 0.0, 0.0])
+    got = jg.xcTogetherSuspect(delta, cell, sport, solved, u, cap=0.15)
+    assert got.tolist() == [False, False, False, True, False, False]
