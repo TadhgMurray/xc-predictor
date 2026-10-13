@@ -87,3 +87,13 @@ def test_it_never_adds_credit():
     u3 = np.full(80, 0.06)
     out3, _ = js.divisionDayRow(r3, np.ones(80), 1.0, race2, sub2, u3, SIG ** 2)
     assert np.all(out3[sub2 == 0] < 0.03) and np.all(out3[sub2 == 1] <= 0.06)
+
+
+def test_soft_threshold_switch(monkeypatch):
+    import joint_golive as jg
+    monkeypatch.delenv("XCP_DAY_SOFT", raising=False)
+    assert jg.daySoft() == 0.0
+    monkeypatch.setenv("XCP_DAY_SOFT", "0.02")
+    assert jg.daySoft() == 0.02
+    monkeypatch.setenv("XCP_DAY_SOFT", "junk")
+    assert jg.daySoft() == 0.0

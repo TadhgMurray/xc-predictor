@@ -57,6 +57,18 @@ from pair_write_results import poolMeanPerGroup, ratedMask
 # Output:    dict: diffs (course_difficulties dict), athletes (the
 #            saveAthleteRatings dict), per-sport (result_id, rating) pairs,
 #            the pair_difficulty-shaped arrays, and a summary.
+# the soft thresholds the consistency report tries (dayConsistencyReport)
+DAY_SOFT_TRIAL = (0.01, 0.02, 0.03)
+
+
+def daySoft():
+    """XCP_DAY_SOFT: a day's first t (log-time) never reaches a rating; 0 off."""
+    try:
+        return max(0.0, float(os.environ.get("XCP_DAY_SOFT", "0") or 0))
+    except ValueError:
+        return 0.0
+
+
 def dayModes(race_effect_sports):
     """{'XC': 'all' | 'fast'} from ('XC', 'TF:fast', ...); absent = out."""
     modes = {}
@@ -111,6 +123,17 @@ def dayConsistencyReport(y, eff_pre, out, D, u_row, u_applied, day_on,
             rows = []
             variants = [("day out", z_off), ("day in, leave-self-out", z_on),
                         ("day in, own race u", z_own)]
+            # ★ SMALL DAYS OFF, BIG DAYS IN (owner's run 20261011_150217:
+            #   the day term cut the sd 1.4% but RAISED the robust scatter
+            #   1.5% -- it fixes the mud days and adds noise to the ordinary
+            #   ones). A soft threshold keeps only the part of a day beyond
+            #   t: sign(u) * max(|u| - t, 0). Printed at three t's so the run
+            #   says which, if any, makes both numbers fall; XCP_DAY_SOFT=t
+            #   applies one.
+            for t in DAY_SOFT_TRIAL:
+                us = np.sign(u_applied) * np.maximum(np.abs(u_applied) - t, 0.0)
+                variants.append((f"day in, beyond {100 * t:.0f}% only",
+                                 z_off - np.where(day_on, h * us, 0.0)))
             ven = out.get("race_effect_row_venue")
             if ven is not None and np.asarray(ven).size == z_off.size:
                 # the venue-day alone, before js.divisionDayRow's lean
@@ -225,6 +248,11 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
             u_app = u_row
         u_cl = np.clip(u_app, -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
         u_cl = np.where(fast_only, np.minimum(u_cl, 0.0), u_cl)
+        soft = daySoft()
+        if soft > 0:
+            u_cl = np.sign(u_cl) * np.maximum(np.abs(u_cl) - soft, 0.0)
+            print(f"[joint/live] race-day term: only the part of a day beyond "
+                  f"{100 * soft:.1f}% reaches a rating (XCP_DAY_SOFT)")
         eff = eff + np.where(day_on, out["h"] * u_cl, 0.0)
         dayConsistencyReport(np.log(norm), eff_pre_day, out, D, u_row, u_cl,
                              day_on, fast_only, sport)

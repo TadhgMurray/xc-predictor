@@ -6163,3 +6163,25 @@ Chromium against the old script (readout 15:00, label under the pointer
   -> "15:05 on a track"). FIXED: xc_placeholder (04c) also takes meets whose
   name says track ("(track)", "track 5000/5k/3200/1600/mile", "5000m
   track"); "Track Club" names are not caught.
+
+## 2026-10-13 -- Owner's diagnostics read (run 20261011_150217)
+
+- Distance holdout (one distance of 10% of multi-distance athlete-seasons,
+  predicted from the others): bias -1.3% overall; XC -3.3% (held-out XC
+  races run 3.3% FASTER than predicted), TF +0.3%. By rating: <70 -7.2%,
+  70-80 -4.4% (more rows of the table were cut off). By training rows:
+  1 row -2.1% ... 6+ rows -0.7%. ⏳ needs the by-rating rest and a
+  by-distance split to place it (the XC side of the distance law / the
+  XC-TF link at low ability is the suspect).
+- Tilt: the clean test (courses with 4+ races, bracket) has implied/applied
+  within ~2% in every band (1.036/1.012 ... 0.894/0.898): the slope is
+  right. 1-race cells read under-charged (implied 1.158 vs 0.968) -- the
+  prior holding thin cells at the average, expected. The joint "tilt by
+  rating band" table (implied 0.2-0.66 everywhere) is attenuated by noise in
+  the course estimate (errors in variables) and is not a test of the slope.
+- Day term: sd -1.4% but robust scatter +1.5% ("adds noise"): it fixes the
+  big days and adds noise to ordinary ones. NEW: the consistency report now
+  also prints the day applied only beyond 1/2/3% (soft threshold);
+  XCP_DAY_SOFT=t applies one. Pick the t where sd AND robust both fall.
+- Era: the fit printed nothing -- it was run from ~ after the ^C, not
+  /srv/xc-predictor. Rerun from the repo.
