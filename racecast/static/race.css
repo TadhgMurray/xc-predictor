@@ -871,6 +871,10 @@ main.ath-page.rc .season table th:nth-child(4) { width: 5rem; }
 main.ath-page.rc .season table th { white-space: nowrap; }
 main.ath-page.rc .season table th:nth-child(5) { width: 4.8rem; }
 main.ath-page.rc .season table th:nth-child(6) { width: 5.4rem; }
+/* the equivalent column's header wraps (owner, 2026-10-13: "3200M EQUIV (i)"
+   ran under COURSE -- the middle school label is wider than the 5K one) */
+main.ath-page.rc .season table th.fk { white-space: normal; line-height: 1.25; }
+main.ath-page.rc .season table th.fk .info-i { white-space: nowrap; }
 main.ath-page.rc .season table th:nth-child(7) { width: 4.8rem; }
 /* ★ RECORDS: THREE PILLS TO A LINE (owner, 2026-10-11: "make the flags not
      make all the meets go multiple rows"). A row is already two lines (the

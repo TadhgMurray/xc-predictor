@@ -39,6 +39,10 @@ p  { color: rgb(82, 82, 82); }
    where the numbers appear, not about the numbers, so it must not read as
    an error red or blend in with the record flags. */
 .flag--warn { background: #a05a00; }
+/* "not counted" / "not ranked" (owner, 2026-10-13: the badge had no colour
+   of its own, so its white text sat invisible over the row). Slate: a note
+   about the row, not a record. #4b5563 is 7.6:1 against white. */
+.flag--out { background: #4b5563; }
 /* A slow rating_outlier (owner, 2026-09-29): the rating stays on the row,
    greyed, because it counts toward no season number. */
 .rating--uncounted { color: var(--muted, #6b7280); opacity: .7; }
@@ -1673,6 +1677,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .flag--csr { --tip: #1f6f8b; }
 .flag--rsr { --tip: #8b3f6b; }
 .flag--warn { --tip: #a05a00; }
+.flag--out { --tip: #4b5563; }
 
 .flag {
     position: relative;
