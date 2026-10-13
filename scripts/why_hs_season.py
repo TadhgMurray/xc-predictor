@@ -53,12 +53,21 @@ def main():
         cur.execute(f"""
             SELECT acad, sport, day, meet, school, grade, ceiling FROM (
               SELECT {_ACAD_R} AS acad, 'XC' AS sport, r.date AS day,
-                     (SELECT min(meet_name) FROM meets mm WHERE mm.meet_id = r.meet_id) AS meet,
+                     CASE WHEN r.source = 'tfrrs'
+                          THEN 'tfrrs: ' || (SELECT min(meet_name) FROM meets_tfrrs mt
+                                             WHERE mt.meet_id = r.meet_id AND mt.sport = 'XC')
+                          ELSE (SELECT min(meet_name) FROM meets mm WHERE mm.meet_id = r.meet_id)
+                     END AS meet,
                      r.school, r.grade::text AS grade, {top} AS ceiling
               FROM results r WHERE r.person_id = %(p)s
               UNION ALL
               SELECT {_ACAD_R}, 'TF', r.date,
-                     (SELECT min(meet_name) FROM meets_tf_meta mm WHERE mm.meet_id = r.meet_id),
+                     -- ! anet and tfrrs meet ids collide: name each by its own feed
+                     CASE WHEN r.source = 'tfrrs'
+                          THEN 'tfrrs: ' || (SELECT min(meet_name) FROM meets_tfrrs mt
+                                             WHERE mt.meet_id = r.meet_id AND mt.sport = 'TF')
+                          ELSE (SELECT min(meet_name) FROM meets_tf_meta mm WHERE mm.meet_id = r.meet_id)
+                     END,
                      r.school, r.grade::text, {top}
               FROM results_tf r WHERE r.person_id = %(p)s) x
             ORDER BY day""", {"p": pid})

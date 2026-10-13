@@ -205,3 +205,16 @@ def test_season_ceilings_on_postgres():
     got = GS.seasonCeilings(cur, [(1, 2025), (2, 2025), (3, 2025)])
     conn.rollback()
     assert got == {(1, 2025): (2, 1), (2, 2025): (0, 1)}, got
+
+
+def test_a_brand_run_into_elite_is_a_club():
+    # owner, 2026-10-13: Jake Ritter's 2024 season stayed high school on
+    # "rabbitELITE", which the word boundary before "elite" did not match
+    import re
+    rx = re.compile(GS.CLUB_NAME_RE.replace(r"\m", r"\b").replace(r"\M", r"\b"))
+    for club in ("rabbitelite", "rabbit elite", "nike elite", "railroad athletics",
+                 "bowerman track club"):
+        assert rx.search(club), club
+    for school in ("jesuit high school", "elk grove",
+                   "eliteville central"):
+        assert not rx.search(school), school

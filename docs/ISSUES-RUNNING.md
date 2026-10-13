@@ -6370,7 +6370,16 @@ Chromium against the old script (readout 15:00, label under the pointer
   fails. scripts/why_hs_season.py <athlete url> prints, per academic
   season, the verdict, the pools and each signal, with every race's ceiling
   (the race that blocks signal 2 is marked) and the club's adult share.
-- ⏳ Fix waits on its output.
+- Output: academic 2023 failed signal 1 only -- "rabbitELITE" read as a
+  school, because CLUB_NAME_RE wants a word boundary before "elite".
+  Signals 2 (every ceiling college/pro or none) and 3 (Railroad Athletics
+  90% pro/college) passed. FIXED: CLUB_NAME_RE (and build_ranking_results'
+  copy, kept equal by test_adult_club) also matches "...elite" at the end
+  of a word. Takes effect at the next 04_grade_sanity.
+- The diag now names tfrrs rows from meets_tfrrs (anet and tfrrs meet ids
+  collide: "season records 2004" was a tfrrs copy named by an anet meet).
+- FIXED in passing: grade_sanity.py:1721 SyntaxWarning (\s in a non-raw
+  f-string).
 
 ## 2026-10-13 -- 17a: SQL share, boards and movers, 500 ms work list
 

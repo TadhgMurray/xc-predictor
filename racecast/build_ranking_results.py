@@ -2917,7 +2917,11 @@ _SEASON_OUTLIER_PTS = 20.0
 # do not (\m \M are Postgres word boundaries). Used only to choose a
 # school-age season's label when the season also has a school row.
 _CLUB_NAME_RE = (r"\m(club|tc|ac|xtc|elite|striders|endurance|athletics|"
-                 r"track (and|&) field|racing|harriers|youth)\M")
+                 r"track (and|&) field|racing|harriers|youth)\M"
+                 # a brand run into "elite" (rabbitELITE, owner 2026-10-13, Jake
+                 # Ritter's 2024 season stayed a high school one on it): no word
+                 # boundary before it, and no school's name ends that way
+                 r"|elite\M")
 
 _ATHLETE_SEASON_SQL = f"""
 WITH season_med AS (

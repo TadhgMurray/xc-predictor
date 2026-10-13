@@ -1718,7 +1718,7 @@ def eliteFieldSeasons(cur):
                   -- digit 1-8 followed by a non-digit (schoolGrade's own
                   -- pattern, bandGrade's '7-8'), so the function stack
                   -- below runs only on those rows, not on every 9-12
-                  AND  r.grade ~ '^\s*0*[1-8]([^0-9]|$)'
+                  AND  r.grade ~ '^\\s*0*[1-8]([^0-9]|$)'
                   AND  gradeLevel(normGrade(r.grade)) IN ('elem', 'ms')
                   -- ★ a national team's grade is not one (ntschool)
                   AND  NOT EXISTS (SELECT 1 FROM {_NT_TABLE} nt
@@ -1793,7 +1793,11 @@ def eliteFieldSeasons(cur):
 # ! A VERDICT, NOT A DELETION: the season pools pro (method 'adult_club'),
 #   the rows stay rated and on the athlete's page.
 CLUB_NAME_RE = (r"\m(club|tc|ac|xtc|elite|striders|endurance|athletics|"
-                r"track (and|&) field|racing|harriers|youth)\M")
+                r"track (and|&) field|racing|harriers|youth)\M"
+                # a brand run into "elite" (rabbitELITE, owner 2026-10-13, Jake
+                # Ritter's 2024 season stayed a high school one on it): no word
+                # boundary before it, and no school's name ends that way
+                r"|elite\M")
 ADULT_CLUB_SHARE = 0.5          # a majority, the club rules' own gate
 # Rule 8's "not a school" (signal 1): unattached in any spelling, a blank or
 # placeholder, or a country -- the same list as college_flag._NOT_SCHOOLS,
