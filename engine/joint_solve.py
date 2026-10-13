@@ -3113,6 +3113,7 @@ def recentreLevels(b, D, merge=False):
     merge=True drops those means instead of banking them in mu: the sports
     are held to one level and the difference becomes fitness."""
     g = D.group_of_cell
+    d_before = np.asarray(b["d"], dtype=np.float64).copy()
     ind_cell = (getattr(D, "ind_cell", None)
                 if getattr(D, "ind_fixed", None) is not None else None)
     if ind_cell is not None and ind_cell.any():
@@ -3152,6 +3153,15 @@ def recentreLevels(b, D, merge=False):
     #   to come out [0, 0].
     if not merge:
         b["mu"] = b["mu"] + u_mean
+    else:
+        # ★ WHAT merge DROPS, KEPT (2026-10-13, the owner's holdouts: every
+        #   held-out XC race ~3.5% faster than predicted, the TRAINING rows'
+        #   own residuals too -- mean -3.46% XC, +0.53% TF). The drop comes
+        #   after the pass's solve, so the abilities were fitted WITH these
+        #   means; a prediction from the dropped d and u alone misses them.
+        #   predictHeldOut adds them back (per cell for d, per group for u).
+        b["_drop_d"] = d_before - b["d"]
+        b["_drop_u"] = u_mean.copy()
 
     # mu[0] is pinned at zero: whatever landed there is a global constant
     shift = float(b["mu"][0])
@@ -3807,6 +3817,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                if dayDivisionGuardOn() and D.n_race > 0 else None)
     div_off = None
     div_last = div_used = None
+    drop_d = drop_u = None              # what merge recentring drops (recentreLevels)
 
     for outer in range(n_outer):
         pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
@@ -3855,6 +3866,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         if D.n_beta:
             b, bbar = recentreSportOffset(b, D, w, delta=sport_gap_delta)
         b = recentreLevels(b, D, merge=merge_sports)
+        drop_d, drop_u = b.get("_drop_d"), b.get("_drop_u")
         theta = _pack(b, D)
         t_post = time.time()
         t_solve = t_post - t_solve
@@ -4123,6 +4135,9 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         "sigma2": sigma2, "sigma_u2": sigma_u2, "tau2": tau2,
         "weights": w, "robust_scale": scale, "h": h, "amp": amp,
         "rating": rating, "n_races": n_races,
+        # what the last pass's merge recentring dropped (recentreLevels):
+        # per cell for d, per group for u; None when nothing was dropped
+        "merge_drop_d": drop_d, "merge_drop_u": drop_u,
         "n_downweighted": int((w < 0.999).sum()),
         "theta": theta,
         # the season tie as the last pass carried it (None = untied): per
@@ -4253,6 +4268,12 @@ def predictHeldOut(out, D_train, D_test, athlete_pool=None, tilt=True):
             D_test.imp_idx, D_test.imp_mask, D_test.n_imp,
             centre=out.get("field_centre"))
     pred = rowPrediction(bb, D_test, h, amp)
+    # ★ THE LEVEL merge DROPPED AFTER THE LAST SOLVE (recentreLevels): the
+    #   abilities were fitted with it, so a prediction carries it too
+    if out.get("merge_drop_d") is not None:
+        pred = pred + h * np.asarray(out["merge_drop_d"])[D_test.cell]
+    if out.get("merge_drop_u") is not None:
+        pred = pred + h * np.asarray(out["merge_drop_u"])[D_test.group_row]
     ind_fixed = getattr(D_train, "ind_fixed", None)
     if ind_fixed is not None and getattr(D_test, "ind_w", None) is not None:
         pred = pred + h * D_test.ind_w * ind_fixed[D_test.ind_idx]

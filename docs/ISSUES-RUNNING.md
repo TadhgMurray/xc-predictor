@@ -6221,3 +6221,24 @@ Chromium against the old script (readout 15:00, label under the pointer
   median confirms it; and the ability x course table (owner: "can we check
   ability tilt at course difficulty?") -- bias by rating band x course
   effect, with each band's slope: flat rows = the tilt is right.
+- ★ FOUND (the XC -3.5%): a SCORING bug, not the model. With an asserted
+  sport level (XCP_SPORT_LEVEL, merge semantics) js.recentreLevels drops each
+  sport's mean d and u AFTER the pass's solve -- the abilities were fitted
+  WITH those means -- and predictHeldOut predicted from the dropped d/u. The
+  owner's run printed it: the TRAINING rows' own residuals, XC mean -3.46%
+  median -3.25%, TF +0.53% (a fitted model's in-sample residuals sit at 0).
+  Reproduced on a planted world (real gap 2.4%, asserted 5.83%): XC -2.75%
+  in sample before, -0.3% after. FIXED: recentreLevels records what it drops
+  (merge_drop_d per cell, merge_drop_u per group) and predictHeldOut adds it
+  back. tests/test_merge_drop_prediction.py.
+  ! Published ratings take a different path (bracket courses refit against
+    the abilities, then the go-live's per-level gains), and the cross-sport
+    checks on them (10c_gap D=-0.004; sport holdout +0.17%) say the level
+    there is right. What the drop DOES say: the joint solve's own data puts
+    the XC/TF gap ~3.5% under the asserted 5.83% -- the golive gain step is
+    what reconciles the two.
+- Tilt (ability x course, same run): XC flat in every band (slopes -0.01 to
+  +0.02) -- the tilt is right. TF slopes +0.18 to +0.28 in every band: track
+  cells' effects applied at ~80% of what the held-out rows show -- the cell
+  prior shrinking thin track venues toward average, same in every band, so
+  not the tilt.
