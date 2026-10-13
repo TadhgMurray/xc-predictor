@@ -989,3 +989,7 @@ main.rc.pred-page .pred-opts-in select { width: 100%; box-sizing: border-box; fo
 /* the season head's rating and the 5K it is worth in ONE colour (owner,
    2026-10-11: "why is rating and 5k equivalent different colors") */
 main.ath-page.rc .season-head .season-rating .fk-i { color: inherit; font-weight: inherit; font-size: inherit; }
+
+/* ★ venue_tf best performances: no sidebar, scroll on a phone (owner, 2026-10-13) */
+main.rc table.venue-best { width: 100%; }
+main.rc .vb-wrap { max-width: 100%; overflow-x: auto; }
