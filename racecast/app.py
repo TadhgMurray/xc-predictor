@@ -10554,6 +10554,10 @@ import uploads as _uploads                                     # noqa: E402
 import fixes as _fixes                                         # noqa: E402
 for _bp in (_uploads.bp, _fixes.bp):
     app.register_blueprint(_bp)
+# ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): the owner's page at
+#   /account/admin/social, see social.py; step 13g_social builds them.
+import social as _social                                       # noqa: E402
+app.register_blueprint(_social.bp)
 
 
 @app.route("/predictions")

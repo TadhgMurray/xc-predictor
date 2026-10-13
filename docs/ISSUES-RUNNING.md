@@ -6313,3 +6313,28 @@ Chromium against the old script (readout 15:00, label under the pointer
   statements; page_timing table. XCP_PAGE_TIMING=0 skips.
 - ⏳ First run's work list is the input for the fixes (indexes / query
   rewrites per slow statement).
+
+## 2026-10-13 -- Weekly Instagram posts (13g_social)
+
+- Owner: "make insta posts for national/state rankings and such"; the look
+  was settled over a round of renders (no condensed italic, no grain, the
+  USTFCCCA poll layout, upright names, title echoes, a colour per kind,
+  red/green only for down/up, the real logo on the photo frame's edge,
+  "the week" not a meet in the title).
+- racecast/social.py: five kinds -- state top 10 (rating, 5K equivalent,
+  move vs last week), state #1 (weeks at #1, lead over #2), risers (top 3
+  climbs on the board's first page), breakout (the week's race furthest
+  above its runner's level), national top 25. Every number is a board's:
+  season_rank_weekly (10g2) for ranks and moves, movers.digest for risers
+  and above-level, conversions.fiveK for the 5K. Captions are templates
+  that fire on facts (biggest climb first, #1 streak, within-a-point, new
+  entries, states counted), never tag anyone, end with hashtags.
+- racecast/build_social.py, step 13g_social after 13f_breakouts (report
+  only, XCP_SOCIAL=0 skips): every state with a top 10 x XCP_SOCIAL_POOLS
+  (default hs_m,hs_f) + national; PNGs (headless Chrome/Playwright) into
+  XCP_SOCIAL_DIR; social_post table, 8 weeks kept.
+- /account/admin/social (admin only): each post's image, caption with a
+  Copy button, Download, and the schools to tag.
+- ⏳ Photos: XCP_SOCIAL_PHOTOS folder of the owner's licensed photos
+  ("MI_*.jpg" preferred for Michigan); without one the frame is a plain
+  panel with the state code.

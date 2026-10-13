@@ -1,0 +1,87 @@
+{# admin_social.html -- this week's Instagram posts (social.py, build_social.py,
+   owner 2026-10-13). Each card: the image (the PNG the pipeline rendered, or
+   the live page scaled down when there is none), the caption with a Copy
+   button, and the schools on it to tag. Admins only (uploads.requireAdmin). #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Posts" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('contrib.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+<style>
+.sp-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0 20px}
+.sp-filters select{font:inherit;padding:4px 6px}
+.sp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:24px}
+.sp-card{border:1px solid var(--line, #ddd);border-radius:6px;padding:12px;background:var(--card, transparent)}
+.sp-card h3{font-size:14px;margin:0 0 8px;text-transform:capitalize}
+.sp-img{width:100%;aspect-ratio:1080/1350;display:block;background:#111;overflow:hidden;position:relative}
+.sp-img img{width:100%;height:100%;display:block}
+.sp-img iframe{width:1080px;height:1350px;border:0;transform-origin:0 0;position:absolute;left:0;top:0;pointer-events:none}
+.sp-cap{width:100%;min-height:150px;font:13px/1.4 system-ui,sans-serif;margin-top:10px;padding:6px;box-sizing:border-box}
+.sp-row{display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap;font-size:13px}
+.sp-tags{color:var(--muted, #666);font-size:12px;margin-top:6px}
+</style>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc account-page contrib-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone"><div class="rc-left">
+  <div class="rc-sport"><span class="sport-tag sport-tag--site">Admin · private</span></div>
+  <h1>Posts{% if week %} · week of {{ week }}{% endif %}</h1>
+  <div class="rc-meta">{{ posts|length }} shown · built by pipeline step 13g_social ·
+    <a href="/account/admin/uploads">Uploads</a> · <a href="/account/admin/fixes">Fixes</a></div>
+</div></div></header>
+
+{% if unready %}
+<p>No posts yet: run <code>racecast/build_social.py</code> (step 13g_social) once.</p>
+{% else %}
+<form class="sp-filters" method="get">
+  <select name="week">{% for w in weeks %}<option value="{{ w }}"{% if w == week %} selected{% endif %}>Week of {{ w }}</option>{% endfor %}</select>
+  <select name="pool"><option value="">All pools</option>{% for p, w in pools.items() %}<option value="{{ p }}"{% if p == pool %} selected{% endif %}>{{ w }}</option>{% endfor %}</select>
+  <select name="state"><option value="">All states</option>{% for s in scopes %}<option value="{{ s }}"{% if s == state %} selected{% endif %}>{{ "National" if s == "US" else s }}</option>{% endfor %}</select>
+  <select name="kind"><option value="">All kinds</option>{% for k in kinds %}<option value="{{ k }}"{% if k == kind %} selected{% endif %}>{{ k }}</option>{% endfor %}</select>
+  <button type="submit">Show</button>
+</form>
+
+<div class="sp-grid">
+{% for p in posts %}
+<div class="sp-card">
+  <h3>{{ p.title }}</h3>
+  <div class="sp-img">
+    {% if p.has_png %}<img src="/account/admin/social/{{ p.id }}.png" alt="" loading="lazy">
+    {% else %}<iframe src="/account/admin/social/{{ p.id }}.html" loading="lazy" scrolling="no"></iframe>{% endif %}
+  </div>
+  <textarea class="sp-cap" id="cap{{ p.id }}">{{ p.caption }}</textarea>
+  <div class="sp-row">
+    <button type="button" data-copy="cap{{ p.id }}">Copy caption</button>
+    {% if p.has_png %}<a href="/account/admin/social/{{ p.id }}.png?dl=1">Download image</a>
+    {% else %}<a href="/account/admin/social/{{ p.id }}.html" target="_blank">Open page</a> (no PNG this run: screenshot it at 1080×1350){% endif %}
+  </div>
+  {% if p.tags %}<div class="sp-tags">Tag: {{ p.tags|join(", ") }} · and the photographer</div>{% endif %}
+</div>
+{% endfor %}
+</div>
+{% endif %}
+</main>
+<script>
+document.querySelectorAll(".sp-img iframe").forEach(function (f) {
+  function fit() { f.style.transform = "scale(" + (f.parentNode.clientWidth / 1080) + ")"; }
+  fit(); window.addEventListener("resize", fit);
+});
+document.querySelectorAll("[data-copy]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    var t = document.getElementById(b.getAttribute("data-copy"));
+    navigator.clipboard.writeText(t.value).then(function () {
+      b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy caption"; }, 1500);
+    }, function () { t.select(); document.execCommand("copy"); });
+  });
+});
+</script>
+</body>
+</html>

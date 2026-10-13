@@ -1,0 +1,9 @@
+Fonts used by the Instagram post renderer (racecast/social.py), from Google Fonts,
+both under the SIL Open Font License 1.1 (https://openfontlicense.org):
+
+  BigShouldersDisplay-900.woff2  Copyright 2019 The Big Shoulders Project Authors
+                                 (https://github.com/xotypeco/big_shoulders)
+  ArchivoNarrow.woff2            Copyright 2019 The Archivo Narrow Project Authors
+                                 (https://github.com/Omnibus-Type/ArchivoNarrow)
+
+Latin subsets as served by fonts.googleapis.com; not modified.
