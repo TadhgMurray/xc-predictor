@@ -107,3 +107,10 @@ main.rc.contrib-page .rc-side p { font-size: .85rem; }
   main.rc.contrib-page .ct-card { padding: .8rem .85rem .9rem; }
   main.rc.contrib-page .ct-list li .ct-when { margin-left: 0; flex-basis: 100%; }
 }
+
+/* "How fixes work": numbered steps, a small circled number beside each */
+main.rc.contrib-page .rc-side .ct-how { list-style: none; counter-reset: ct-how; margin: .2rem 0 .9rem; padding: 0; font-size: .92rem; line-height: 1.45; }
+main.rc.contrib-page .rc-side .ct-how li { counter-increment: ct-how; position: relative; padding: 0 0 .7rem 2rem; }
+main.rc.contrib-page .rc-side .ct-how li::before { content: counter(ct-how); position: absolute; left: 0; top: .05rem;
+  width: 1.35rem; height: 1.35rem; border-radius: 50%; background: var(--ink, #111418); color: #fff;
+  font-size: .75rem; font-weight: 700; line-height: 1.35rem; text-align: center; }
