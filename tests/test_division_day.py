@@ -97,3 +97,14 @@ def test_soft_threshold_switch(monkeypatch):
     assert jg.daySoft() == 0.02
     monkeypatch.setenv("XCP_DAY_SOFT", "junk")
     assert jg.daySoft() == 0.0
+
+
+def test_course_guard_flags_a_course_no_course_can_be():
+    import joint_golive as jg
+    delta = np.array([0.05, 0.06, 0.07, 0.30, 0.0, -0.12, 0.002])
+    cell = np.array([0, 1, 2, 3, 4, 5, 6, 6])[:7]
+    sport = np.array([0, 0, 0, 0, 1, 0, 1])
+    solved = np.ones(7, dtype=bool)
+    got = jg.xcCourseSuspects(delta, cell, sport, solved, cap=0.15)
+    assert got.tolist() == [3, 5]          # +24% and -18% off the typical XC
+    assert jg.xcCourseSuspects(delta, cell, np.ones(7), solved).size == 0

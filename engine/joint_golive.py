@@ -69,6 +69,26 @@ def daySoft():
         return 0.0
 
 
+# ★ HOW FAR A CROSS COUNTRY CELL MAY SIT FROM THE TYPICAL ONE AND STILL BE A
+#   COURSE (log-time). See buildLive's course guard.
+XC_COURSE_SUSPECT = float(os.environ.get("XCP_XC_COURSE_SUSPECT", "0.15"))
+
+
+def xcCourseSuspects(delta, cell, sport, solved, cap=None):
+    """Cell ids of XC cells whose difficulty is more than `cap` from the
+    median XC cell's (both directions). Pure."""
+    cap = XC_COURSE_SUSPECT if cap is None else cap
+    delta = np.asarray(delta, dtype=np.float64)
+    cell = np.asarray(cell, dtype=np.int64)
+    sport = np.asarray(sport)
+    xc_cells = np.unique(cell[sport == 0])
+    xc_cells = xc_cells[np.asarray(solved)[xc_cells]] if xc_cells.size else xc_cells
+    if xc_cells.size == 0 or cap <= 0:
+        return np.zeros(0, dtype=np.int64)
+    med = float(np.median(delta[xc_cells]))
+    return xc_cells[np.abs(delta[xc_cells] - med) > cap]
+
+
 def dayModes(race_effect_sports):
     """{'XC': 'all' | 'fast'} from ('XC', 'TF:fast', ...); absent = out."""
     modes = {}
@@ -346,6 +366,25 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     solved = rows_per_cell > 0
     rated = ratedMask(rc, rs, D.athlete, rat["valid"], cell_solved=solved,
                       course=D.cell)
+    # ★ A COURSE NO COURSE CAN BE (owner, 2026-10-13: Al Shirley Invitational
+    #   2026, Pima CC West, "Course +35.1%" -- the collegiate women's 5K rated
+    #   152-167 for 21:00-23:00). The hardest real cross country courses sit a
+    #   few percent over the typical one (Mt. SAC +9.6% against a typical
+    #   ~+6%); a cell 15% or more off the typical XC cell is a stored
+    #   distance shared by races that were not that distance (a men's 8K and
+    #   a women's 5K both filed "5000 m"), and every rating on it is the
+    #   course number's, not the runners'. Those rows are not rated, and the
+    #   cells are printed for a distance fix.
+    suspect_cells = xcCourseSuspects(out["delta"], D.cell, sport, solved)
+    if suspect_cells.size:
+        bad_row = np.isin(D.cell, suspect_cells)
+        rated = rated & ~bad_row
+        med = float(np.median(out["delta"][np.unique(D.cell[sport == 0])])) if (sport == 0).any() else 0.0
+        top = sorted(suspect_cells, key=lambda c: -abs(out["delta"][c] - med))[:8]
+        print(f"[joint/live] course guard: {suspect_cells.size:,} XC cells more than "
+              f"{100 * XC_COURSE_SUSPECT:.0f}% off the typical XC course -- "
+              f"{int(bad_row.sum()):,} rows left unrated: "
+              + "; ".join(f"{keys[c]} {100 * (out['delta'][c] - med):+.1f}%" for c in top))
     chosen = rs if anchor == "seasonal" else rc
 
     # --- the difficulty, display-anchored ---------------------------------- #

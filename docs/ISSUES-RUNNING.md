@@ -6242,3 +6242,16 @@ Chromium against the old script (readout 15:00, label under the pointer
   cells' effects applied at ~80% of what the held-out rows show -- the cell
   prior shrinking thin track venues toward average, same in every band, so
   not the tilt.
+
+## 2026-10-13 -- Al Shirley Invitational 2026 (Pima CC West): "Course +35.1%"
+
+- Collegiate women's 5K rated 152-167 for 21:00-23:00 (+24..+41% "vs level")
+  on a course reading +35.1% and a day slow 10.5%. No XC course is +35%:
+  the cell's stored distance is shared by races that were not that distance
+  (most likely a longer race also filed "5000 m" there), and the cell number
+  is that mix.
+- FIXED (rating step): joint_golive's course guard leaves unrated every row
+  on an XC cell more than XCP_XC_COURSE_SUSPECT (0.15 log, both directions)
+  off the median XC cell, and prints those cells (key and how far off) for
+  a distance fix. ⏳ Next go-live. The cell's divisions still need their
+  real distances; the printed list is the work list.
