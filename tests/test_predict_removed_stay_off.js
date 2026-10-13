@@ -46,10 +46,9 @@ const lists = eval(`(() => {
 const html = lists({ school: "Crater", dropped: [
   { person_id: 1, name: "Bench Kid", rating: 120, bench: true },
   { person_id: 2, name: "Gone Senior", rating: 118 }] });
-ok(/1 more on the squad/.test(html), "the bench is its own list");
-ok(/1 not racing this season/.test(html), "the absent keep the old label");
-ok(html.indexOf("Bench Kid") < html.indexOf("not racing this season"),
-   "the bench runner is not under the not-racing label");
+ok(!/Bench Kid/.test(html), "the bench is not listed (it is under + Add)");
+ok(/1 not racing this season/.test(html) && /Gone Senior/.test(html),
+   "the absent keep their list");
 const PY = fs.readFileSync(path.join(__dirname, "..", "racecast", "predict.py"), "utf8");
 ok(/dict\(r, bench=True\) for r in sq\[cap:\]/.test(PY),
    "meetField marks the squad past the cap as bench");

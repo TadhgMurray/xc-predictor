@@ -2223,16 +2223,18 @@ function renderFieldBlock(sumEl, gridEl) {
   applyScale();
 }
 
-/* ★ TWO LISTS UNDER A CARD, NOT ONE (owner, 2026-10-13: "not racing this
+/* ★ ONLY THE ABSENT UNDER A CARD (owner, 2026-10-13: "not racing this
    season includes people who have raced this season"). `dropped` holds the
    bench -- this season's runners past the lineup size, marked bench by the
    server or by an add -- and the original runners with no race this
-   season. Each is labelled for what it is. */
+   season; only the second are listed. */
 function droppedLists(t) {
-  const bench = (t.dropped || []).filter((r) => r.bench);
+  /* ! THE BENCH IS NOT LISTED HERE (owner, 2026-10-13: "N more on the squad
+       is just in the add section"): "+ Add > from the squad" already lists
+       every current runner, so a second list of the same people was noise.
+       Only the original runners with no race this season stay. */
   const out = (t.dropped || []).filter((r) => !r.bench);
-  return droppedList(t, bench, `${bench.length} more on the squad`)
-       + droppedList(t, out, `${out.length} not racing this season`);
+  return droppedList(t, out, `${out.length} not racing this season`);
 }
 
 function droppedList(t, rows, label) {
