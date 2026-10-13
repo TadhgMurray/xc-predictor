@@ -222,3 +222,27 @@ def test_tfrrs_marks_only_its_own_rows_done():
     for n in defs:
         if n.name in ("_markMeetDone", "_markMeetFailed", "_deleteQueueRow"):
             assert "source = 'tfrrs'" in ast.get_source_segment(src, n), n.name
+
+
+def test_a_restart_does_not_ask_the_same_empty_meet_again(conn):
+    """Owner, 2026-10-13: "the scraper keeps doing a ton of 0 results races
+    again each time it restarts". The first launch re-queues the empty meet;
+    it is asked, comes back empty again, and the next launch leaves it be."""
+    cx, _ = conn
+    Q.seedAll(cx, source="anet", write=True, sports=["XC"],
+              do_new=False, verbose=False)
+    assert _state(cx, STRANDED) == 0
+    with cx.cursor() as c:                      # the scraper asks it: still empty
+        c.execute("UPDATE meet_queue SET scraped = 1 WHERE meet_id = %s",
+                  (STRANDED,))
+    cx.commit()
+    out = Q.seedAll(cx, source="anet", write=True, sports=["XC"],
+                    do_new=False, verbose=False)
+    assert out[0]["unrecorded"] == 0
+    assert _state(cx, STRANDED) == 1
+    with cx.cursor() as c:                      # a day later it is due again
+        c.execute("UPDATE meet_queue SET requeued_at = now() - interval '25 hours'")
+    cx.commit()
+    Q.seedAll(cx, source="anet", write=True, sports=["XC"],
+              do_new=False, verbose=False)
+    assert _state(cx, STRANDED) == 0

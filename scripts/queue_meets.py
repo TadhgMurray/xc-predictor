@@ -88,6 +88,14 @@ SOURCES = tuple(FEEDS)
 
 AHEAD = 500                # ids seeded per block
 RECENT_DAYS = 120          # the owner's "past 3-4 months"
+# ★ HOW LONG A RE-ASKED EMPTY MEET RESTS (owner, 2026-10-13: "the scraper
+#   keeps doing a ton of 0 results races again each time it restarts").
+#   Every launch runs the recent pass, and every pass re-queued every empty
+#   meet it found -- so a meet asked ten minutes ago and still empty was
+#   asked again on each restart. requeue() stamps meet_queue.requeued_at;
+#   the passes skip a meet stamped within this many hours. A meet that is
+#   empty because its results are not up yet gets one ask a day.
+REASK_HOURS = float(os.environ.get("SEED_REASK_HOURS", "24"))
 FRONTIER_BLOCK = 1000      # ids per density bucket
 FRONTIER_MIN_PER_BLOCK = 5 # real meets a bucket needs to count as corpus
 
@@ -204,6 +212,28 @@ def scheduledAbove(cur, sport, top, source="anet"):
 
 # ------------------------------------------------------------------ the work
 
+def ensureRequeuedAt(cur):
+    """Add meet_queue.requeued_at if it is missing. Looks before it alters:
+    ADD COLUMN IF NOT EXISTS still queues for ACCESS EXCLUSIVE, behind every
+    scraper holding the queue."""
+    cur.execute("""SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'meet_queue' AND column_name = 'requeued_at'""")
+    if cur.fetchone() is None:
+        cur.execute("ALTER TABLE meet_queue ADD COLUMN IF NOT EXISTS "
+                    "requeued_at timestamptz")
+
+
+def _rested(cur, a="q"):
+    """The SQL clause: not re-asked within REASK_HOURS. Empty when the column
+    is not there yet (a dry run against an old schema)."""
+    cur.execute("""SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'meet_queue' AND column_name = 'requeued_at'""")
+    if cur.fetchone() is None or REASK_HOURS <= 0:
+        return ""
+    return (f"AND ({a}.requeued_at IS NULL OR {a}.requeued_at < "
+            f"now() - interval '{float(REASK_HOURS)} hours')")
+
+
 def hasDateColumn(cur, sport, source="anet"):
     """Does this feed and sport's date table carry its date column yet?
 
@@ -233,6 +263,7 @@ def emptyRecent(cur, sport, since, source="anet"):
     """
     import datetime as _dt
     t = _t(source, sport)
+    rested = _rested(cur)
     cur.execute(f"""
         SELECT DISTINCT q.meet_id
         FROM   meet_queue q
@@ -244,6 +275,7 @@ def emptyRecent(cur, sport, since, source="anet"):
           AND  d.{t['date_col']} <= %s
           AND  NOT EXISTS (SELECT 1 FROM {t['results']} r
                            WHERE r.meet_id = q.meet_id AND r.source = %s)
+        {rested}
         ORDER  BY q.meet_id
     """, (source, sport, since, _dt.date.today().isoformat(), source))
     return [r[0] for r in cur.fetchall()]
@@ -267,6 +299,7 @@ def emptyUndated(cur, sport, top, span=UNDATED_SPAN, source="anet"):
       handed out as meets are created, so the last SEED_UNDATED_SPAN ids
       below the watermark are this season's and last."""
     t = _t(source, sport)
+    rested = _rested(cur)
     cur.execute(f"""
         SELECT DISTINCT q.meet_id
         FROM   meet_queue q
@@ -278,6 +311,7 @@ def emptyUndated(cur, sport, top, span=UNDATED_SPAN, source="anet"):
           AND  d.{t['date_col']} IS NULL
           AND  NOT EXISTS (SELECT 1 FROM {t['results']} r
                            WHERE r.meet_id = q.meet_id AND r.source = %s)
+        {rested}
         ORDER  BY q.meet_id
     """, (source, sport, max(0, top - span), top, source))
     return [r[0] for r in cur.fetchall()]
@@ -306,6 +340,7 @@ def emptyUnrecorded(cur, sport, top, span=UNDATED_SPAN, source="anet"):
       watermark, because there is no date to bound it by -- that is the bug.
     """
     t = _t(source, sport)
+    rested = _rested(cur)
     cur.execute(f"""
         SELECT q.meet_id
         FROM   meet_queue q
@@ -315,6 +350,7 @@ def emptyUnrecorded(cur, sport, top, span=UNDATED_SPAN, source="anet"):
           AND  NOT {_meetExistsSql(source, sport)}
           AND  NOT EXISTS (SELECT 1 FROM {t['results']} r
                            WHERE r.meet_id = q.meet_id AND r.source = %s)
+        {rested}
         ORDER  BY q.meet_id
     """, (source, sport, max(0, top - span), top, source))
     return [r[0] for r in cur.fetchall()]
@@ -386,6 +422,7 @@ def scheduledToRetry(cur, sport, above, has_date, source="anet"):
       results were posted.
     """
     t = _t(source, sport)
+    rested = _rested(cur)
     future = ""
     if has_date:
         future = f"""
@@ -403,6 +440,7 @@ def scheduledToRetry(cur, sport, above, has_date, source="anet"):
                            WHERE r.meet_id = q.meet_id
                              AND r.source = %(source)s)
           {future}
+        {rested}
         ORDER  BY q.meet_id
     """, {"source": source, "sport": sport, "above": above,
           "today": datetime.date.today().isoformat()})
@@ -467,10 +505,11 @@ def countFailed(cur, sport, source="anet"):
 
 
 def requeue(cur, sport, ids, source="anet", chunk=5000):
+    ensureRequeuedAt(cur)
     n = 0
     for i in range(0, len(ids), chunk):
         cur.execute("""
-            UPDATE meet_queue SET scraped = 0
+            UPDATE meet_queue SET scraped = 0, requeued_at = now()
             WHERE source = %s AND sport = %s AND meet_id = ANY(%s)
         """, (source, sport, ids[i:i + chunk]))
         n += cur.rowcount
@@ -539,6 +578,8 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
                 f"(state 4, failed or stuck)")
 
     if do_recent:
+        if write:
+            ensureRequeuedAt(cur)
         since = (datetime.date.today()
                  - datetime.timedelta(days=recent_days)).isoformat()
         has_date = hasDateColumn(cur, sport, source)
