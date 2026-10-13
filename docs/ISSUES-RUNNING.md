@@ -6338,3 +6338,17 @@ Chromium against the old script (readout 15:00, label under the pointer
 - ⏳ Photos: XCP_SOCIAL_PHOTOS folder of the owner's licensed photos
   ("MI_*.jpg" preferred for Michigan); without one the frame is a plain
   panel with the state code.
+
+## 2026-10-13 -- First cold-page work list (17a output)
+
+- Owner's run: every kind's p50 under 110 ms cold; two pages over 1 s.
+- Home (1.38 s): weekend.py's track count was a GROUP BY over all of
+  meets_tf (857 ms) before the date filter; now a lateral count per meet
+  through idx_meets_tf_meet. add_page_indexes (11b) adds date indexes on
+  meets.meet_date, meets_tf_meta.meet_date, meets_tfrrs.date.
+- /search?q=smith (1.36 s): the five capped per-kind tab counts each built
+  the whole trigram bitmap (761 ms), the year list a sixth (207 ms). With
+  no year picked, one pass (LIMIT 5000) gives counts and years; a common
+  token past 5000 rows, or a picked year, keeps the old queries.
+- ⏳ Next run of 17a to confirm; race_xc p95 684 ms and athlete p95 366 ms
+  are the next looks.

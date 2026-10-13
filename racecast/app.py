@@ -9187,40 +9187,71 @@ def _run_search(q, kind, year_filter, offset):
             #   results they label. Nobody reads a four-digit tab count; they
             #   read "lots". One capped scan per kind answers the only question
             #   the tabs actually ask, which is whether it is worth clicking.
-            count_where = list(where_base)
-            cparams = dict(params)
-            cparams["cap"] = SEARCH_COUNT_CAP + 1
-            if year:
-                count_where.append("(sort_year = %(y)s OR search_text LIKE %(yp)s)")
-                cparams["y"] = int(year); cparams["yp"] = f"%{year}%"
-            kinds_sql = ", ".join(f"('{k}')" for k in SEARCH_KINDS)
-            cur.execute(f"""
-                SELECT k.kind, c.n
-                FROM   (VALUES {kinds_sql}) AS k(kind)
-                CROSS  JOIN LATERAL (
-                    SELECT count(*) AS n FROM (
-                        SELECT 1 FROM search_index s
-                        WHERE  s.kind = k.kind
-                          AND  {' AND '.join(count_where)}
-                        LIMIT  %(cap)s
-                    ) t
-                ) c
-            """, cparams)
-            counts = {r["kind"]: r["n"] for r in cur.fetchall() if r["n"]}
+            # ★ ONE PASS WHEN NO YEAR IS PICKED (17a page timing, 2026-10-13:
+            #   /search?q=smith 1.36 s cold -- 761 ms of it the five capped
+            #   per-kind counts, 207 ms the year list). Each capped count
+            #   still builds the whole trigram bitmap before LIMIT can stop
+            #   it, so five kinds were five bitmaps, and the year list a
+            #   sixth. With no year filter the counts and the years read the
+            #   same rows, so one grouped scan answers both; the cap is
+            #   applied to its sums. A picked year keeps the two queries
+            #   below (the counts then filter on it, the years must not).
+            #   ! STILL CAPPED: the pass stops at SEARCH_ONE_PASS rows, and a
+            #   query that reaches it (a very common token) falls through to
+            #   the per-kind queries, which are what they were before.
+            one_pass = None
+            if not year:
+                cur.execute(f"""
+                    SELECT kind, sort_year
+                    FROM   search_index
+                    WHERE  {' AND '.join(where_base)}
+                    LIMIT  %(one)s
+                """, {**params, "one": SEARCH_ONE_PASS})
+                one_pass = cur.fetchall()
+            if one_pass is not None and len(one_pass) < SEARCH_ONE_PASS:
+                counts, yset = {}, set()
+                for r in one_pass:
+                    counts[r["kind"]] = counts.get(r["kind"], 0) + 1
+                    if (kind == "all" or r["kind"] == kind) and (r["sort_year"] or 0) > 0:
+                        yset.add(r["sort_year"])
+                counts = {k: min(n, SEARCH_COUNT_CAP + 1) for k, n in counts.items()
+                          if k in SEARCH_KINDS}
+                years = sorted(yset, reverse=True)
+            else:
+                count_where = list(where_base)
+                cparams = dict(params)
+                cparams["cap"] = SEARCH_COUNT_CAP + 1
+                if year:
+                    count_where.append("(sort_year = %(y)s OR search_text LIKE %(yp)s)")
+                    cparams["y"] = int(year); cparams["yp"] = f"%{year}%"
+                kinds_sql = ", ".join(f"('{k}')" for k in SEARCH_KINDS)
+                cur.execute(f"""
+                    SELECT k.kind, c.n
+                    FROM   (VALUES {kinds_sql}) AS k(kind)
+                    CROSS  JOIN LATERAL (
+                        SELECT count(*) AS n FROM (
+                            SELECT 1 FROM search_index s
+                            WHERE  s.kind = k.kind
+                              AND  {' AND '.join(count_where)}
+                            LIMIT  %(cap)s
+                        ) t
+                    ) c
+                """, cparams)
+                counts = {r["kind"]: r["n"] for r in cur.fetchall() if r["n"]}
 
-            # distinct years -- from q+kind ONLY, never the year filter itself,
-            # or picking a year collapses the dropdown to just that year.
-            yr_where = list(where_base)
-            yparams = dict(params)
-            if kind != "all":
-                yr_where.append("kind = %(k)s")
-                yparams["k"] = kind
-            cur.execute(f"""
-                SELECT DISTINCT sort_year FROM search_index
-                WHERE {' AND '.join(yr_where)} AND sort_year > 0
-                ORDER BY sort_year DESC
-            """, yparams)
-            years = [r["sort_year"] for r in cur.fetchall()]
+                # distinct years -- from q+kind ONLY, never the year filter itself,
+                # or picking a year collapses the dropdown to just that year.
+                yr_where = list(where_base)
+                yparams = dict(params)
+                if kind != "all":
+                    yr_where.append("kind = %(k)s")
+                    yparams["k"] = kind
+                cur.execute(f"""
+                    SELECT DISTINCT sort_year FROM search_index
+                    WHERE {' AND '.join(yr_where)} AND sort_year > 0
+                    ORDER BY sort_year DESC
+                """, yparams)
+                years = [r["sort_year"] for r in cur.fetchall()]
 
     # ★ THE CREST ON A SCHOOL HIT (305). The search index stores a link and
     #   a label, not a (school, state) pair, so the pair is read back off
@@ -9242,6 +9273,9 @@ PAGE_SIZE = 30
 #   exact count has to walk the whole match set, and the tabs are a
 #   worth-clicking signal, not a statistic.
 SEARCH_COUNT_CAP = 1000
+# the one-pass tab count's ceiling (see _run_search): past it, the per-kind
+# capped counts as before
+SEARCH_ONE_PASS = 5000
 
 # The tab order on the results page, and the kinds the counts are taken over.
 SEARCH_KINDS = ("athlete", "meet", "course", "venue", "school")

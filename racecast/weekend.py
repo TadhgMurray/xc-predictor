@@ -47,8 +47,13 @@ _SQL = {
         SELECT m.meet_id, m.meet_name, m.meet_date AS date, m.venue_name AS venue,
                m.state, COALESCE(d.n, 0) AS n_races, COALESCE(m.level_mask, 0) AS level_mask
         FROM   meets_tf_meta m
-        LEFT JOIN (SELECT meet_id, count(*) AS n FROM meets_tf GROUP BY meet_id) d
-               ON d.meet_id = m.meet_id
+        -- ! A LATERAL PER MEET, NOT A GROUP BY OF meets_tf (17a page timing,
+        --   2026-10-13: 857 ms of the home page's 1.4 s cold). The derived
+        --   table counted all 14M rows of meets_tf before the date filter
+        --   kept a week's meets; the lateral counts only theirs, through
+        --   idx_meets_tf_meet.
+        LEFT JOIN LATERAL (SELECT count(*) AS n FROM meets_tf t
+                           WHERE t.meet_id = m.meet_id) d ON true
         WHERE  m.meet_date ~ '{_ISO}' AND m.meet_date BETWEEN %(lo)s AND %(hi)s
           AND  m.meet_name IS NOT NULL""",
     # tfrrs (college), both sports in one table

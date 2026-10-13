@@ -233,6 +233,14 @@ WANTED = [
     #   and nothing location_id-leading served it: a 14M-row sequential
     #   scan per page view, twice.
     ("meets_tf",        "location_id", "idx_meets_tf_location", None),
+    # ★ THE CALENDAR READS (17a page timing, 2026-10-13: the home page's
+    #   "Coming up" block was its slowest part cold). weekend.py filters
+    #   each feed's meets by DATE -- meets.meet_date, meets_tf_meta.meet_date,
+    #   meets_tfrrs.date, all ISO text compared with BETWEEN -- and none of
+    #   the three had a date-leading index.
+    ("meets",           "meet_date", "idx_meets_date", None),
+    ("meets_tf_meta",   "meet_date", "idx_meets_tf_meta_date", None),
+    ("meets_tfrrs",     "date",      "idx_meets_tfrrs_date", None),
 
     ("results",         "meet_id", "idx_results_meet", None),
     # ★ THE ATHLETE PAGE'S PLACES (owner, 2026-10-11: "it's not very good
