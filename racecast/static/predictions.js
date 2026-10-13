@@ -2217,10 +2217,29 @@ function renderFieldBlock(sumEl, gridEl) {
         </details>
         <div class="squad-list hidden" data-squad-for="${esc(t.school)}"></div>
         <div class="squad-list hidden" data-anyone-for="${esc(t.school)}"></div>
-        ${t.dropped.length ? `
+        ${droppedLists(t)}
+      </div>
+    </details>`).join("");
+  applyScale();
+}
+
+/* ★ TWO LISTS UNDER A CARD, NOT ONE (owner, 2026-10-13: "not racing this
+   season includes people who have raced this season"). `dropped` holds the
+   bench -- this season's runners past the lineup size, marked bench by the
+   server or by an add -- and the original runners with no race this
+   season. Each is labelled for what it is. */
+function droppedLists(t) {
+  const bench = (t.dropped || []).filter((r) => r.bench);
+  const out = (t.dropped || []).filter((r) => !r.bench);
+  return droppedList(t, bench, `${bench.length} more on the squad`)
+       + droppedList(t, out, `${out.length} not racing this season`);
+}
+
+function droppedList(t, rows, label) {
+  return rows.length ? `
           <details class="dropped">
-            <summary>${t.dropped.length} not racing this season</summary>
-            ${t.dropped.map((r) => `
+            <summary>${label}</summary>
+            ${rows.map((r) => `
               <div class="runner-row is-out">
                 <span class="r-name"><a class="lnk"
                    href="/athlete/${r.person_id}">${esc(r.name)}</a></span>
@@ -2234,10 +2253,7 @@ function renderFieldBlock(sumEl, gridEl) {
                         data-hs="${r.hs_rating == null ? "" : r.hs_rating}"
                         data-school="${esc(t.school)}">add</button>
               </div>`).join("")}
-          </details>` : ""}
-      </div>
-    </details>`).join("");
-  applyScale();
+          </details>` : "";
 }
 
 
@@ -3917,7 +3933,7 @@ async function addTeam(school, div, st) {
       runners: squad.runners.slice(0, cap),
       // The rest of the squad, offered under the card rather than discarded --
       // "add anyone from their squad" is the point of having fetched it.
-      dropped: squad.runners.slice(cap),
+      dropped: squad.runners.slice(cap).map((r) => ({ ...r, bench: true })),
       added: true,
     });
     e.field.teams.sort((a, b) => a.school.localeCompare(b.school));

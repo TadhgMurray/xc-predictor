@@ -3033,8 +3033,16 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
                              #   what-ifs added beside them.
                              "entered": at_meet_counts.get(school, 0),
                              "runners": sq[:cap],
-                             "dropped": (list(sq[cap:])
-                                         + list(track_rest.get(school, [])))}
+                             # ★ bench=True: THIS SEASON'S runners past the
+                             #   cap (and a track school's athletes outside
+                             #   this event) -- on the squad, just not in
+                             #   the lineup. The page listed them with the
+                             #   absentees below as "not racing this season"
+                             #   (owner, 2026-10-13: "includes people who
+                             #   have raced this season").
+                             "dropped": ([dict(r, bench=True) for r in sq[cap:]]
+                                         + [dict(r, bench=True)
+                                            for r in track_rest.get(school, [])])}
     # ★ THE DROPPED NEED THEIR RATING MOST (owner, 2026-09-01). These are the
     #   people a human is deciding whether to add back, and that decision is
     #   "how good were they" -- which was rendered as a blank, because they

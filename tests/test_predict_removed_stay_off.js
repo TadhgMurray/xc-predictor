@@ -35,5 +35,24 @@ const handler = SRC.slice(k, SRC.indexOf("return;", k));
 ok(/removed\.add\(/.test(handler) && /saveState\(\)/.test(handler),
    "removing records the id and saves state");
 
+// (owner, 2026-10-13: "not racing this season includes people who have
+// raced this season") -- the bench and the absent are two lists
+const lists = eval(`(() => {
+  const esc = (x) => String(x); const rv = (x) => String(x ?? "");
+  ${body("droppedList")}
+  ${body("droppedLists")}
+  return droppedLists;
+})()`);
+const html = lists({ school: "Crater", dropped: [
+  { person_id: 1, name: "Bench Kid", rating: 120, bench: true },
+  { person_id: 2, name: "Gone Senior", rating: 118 }] });
+ok(/1 more on the squad/.test(html), "the bench is its own list");
+ok(/1 not racing this season/.test(html), "the absent keep the old label");
+ok(html.indexOf("Bench Kid") < html.indexOf("not racing this season"),
+   "the bench runner is not under the not-racing label");
+const PY = fs.readFileSync(path.join(__dirname, "..", "racecast", "predict.py"), "utf8");
+ok(/dict\(r, bench=True\) for r in sq\[cap:\]/.test(PY),
+   "meetField marks the squad past the cap as bench");
+
 if (failed) process.exit(1);
 console.log("ok");
