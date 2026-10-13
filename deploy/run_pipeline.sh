@@ -710,6 +710,11 @@ if [ "${XCP_AUDIT_OVERRIDES:-1}" != "0" ] && [ -f engine/corrections.py ]; then
   #   2026-10-13: Al Shirley 2026, men 35:40 vs women 23:17 at "5000 m" --
   #   the junior college men's 8K; engine/gender_pace_pin.py)
   step 04g0_gender_pin "$PY" -u engine/gender_pace_pin.py --write
+  # ★ THE DATA CHECKS (owner, 2026-10-13: "so many small data leaks ...
+  #   just a pipeline step that can be fixed"): each race against its own
+  #   runners (pins a corroborated distance), the two event-name parsers,
+  #   one person on both genders -- data_issue, ranked by impact
+  step 04g1_data_checks "$PY" -u engine/data_checks.py --write
   step 04g_audit_overrides "$PY" -u engine/audit_overrides.py --rebuild --write
   if ! failed 04g_audit_overrides; then
     step 04g2_dump_overrides "$PY" -u engine/dump_overrides.py

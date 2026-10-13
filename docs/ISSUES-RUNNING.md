@@ -6276,3 +6276,26 @@ Chromium against the old script (readout 15:00, label under the pointer
   ~1.15x the men's time at equal distance); Al Shirley men -> 8000. Writes
   its own block in corrections.py (_DISTANCE_PIN_GENDER), rewritten whole;
   hand overrides win; the audit can still drop a pin.
+
+## 2026-10-13 -- The data checks as a pipeline step (04g1)
+
+- Owner: "so many small data leaks ... wrong distance, wrong parser, wrong
+  gender, wrong age ... just a pipeline step that can be fixed."
+- engine/data_checks.py, step 04g1 (after 04g0 gender_pin, before the
+  override audit), on last run's ratings:
+    race_field    a division whose field sits 9%+ off its runners' own level
+                  (70%+ of them the same way, 8+ runners with 5+ rated races)
+                  -> PIN the implied standard distance when another division
+                  of the same meet runs it (sticky block in corrections.py,
+                  merged into _DISTANCE_OVERRIDES_BY_SPORT['XC'], hand
+                  overrides win, the audit removes a pin the field rejects);
+                  otherwise listed for review.
+    parser        event_parse vs the pack's SQL on every distinct track event.
+    person_gender a person holding men's and women's athlete records.
+  -> data_issue (replaced each run), ranked by impact = rows x disagreement.
+- FIXED in passing: gender_pace_pin's block only reached dump_overrides'
+  table, not the backfill's dict; both blocks now merge into
+  _DISTANCE_OVERRIDES_BY_SPORT['XC'] with setdefault.
+- ⏳ Not yet in the step: grade/age vs class year (grade_sanity covers the
+  rest), athletic.net vs tfrrs copies disagreeing on distance, pace past a
+  record. Each is one more function returning issue rows.

@@ -34,3 +34,11 @@ def test_block_is_replaced_whole():
     two = G.replaceBlock(one, G.block([]))
     assert "(1, 2)" not in two and two.count(G.BLOCK_START) == 1
     assert two.startswith("A = {}")
+
+
+def test_the_block_reaches_the_dict_the_backfill_reads():
+    ns = {"_DISTANCE_OVERRIDES_BY_SPORT": {"XC": {(1, 2): 6000.0}}}
+    exec(G.block([(1, 2, 5000.0, 8000.0, "x"), (3, 4, 5000.0, 8000.0, "y")]), ns)
+    xc = ns["_DISTANCE_OVERRIDES_BY_SPORT"]["XC"]
+    assert xc[(3, 4)] == 8000.0
+    assert xc[(1, 2)] == 6000.0          # a hand-written override wins

@@ -113,7 +113,13 @@ def block(found):
              "_DISTANCE_PIN_GENDER = {"]
     for meet, div, dist, s, why in found:
         lines.append(f"    ({meet}, {div}): {s:g},  # was {dist}: {why}")
-    lines += ["}", BLOCK_END]
+    # ! MERGED INTO THE DICT THE BACKFILL READS (_DISTANCE_OVERRIDES_BY_SPORT
+    #   ["XC"]); a dict of its own reaches dump_overrides' table but not the
+    #   backfill. setdefault: a hand-written override for the key wins.
+    lines += ["}",
+              "for _k, _v in _DISTANCE_PIN_GENDER.items():",
+              "    _DISTANCE_OVERRIDES_BY_SPORT['XC'].setdefault(_k, _v)",
+              BLOCK_END]
     return "\n".join(lines) + "\n"
 
 
