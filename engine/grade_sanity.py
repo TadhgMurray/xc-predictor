@@ -1152,6 +1152,132 @@ _FIELD_SQL = f"""
 
 
 # ------------------------------------------------------------------ #
+#  RULE 5f: A LONE SEASON ON A HIGH SCHOOL TEAM, IN HIGH SCHOOL FIELDS
+# ------------------------------------------------------------------ #
+#
+# ★ OWNER, 2026-10-14 (/athlete/29642348, "This Athlete is a freshman but
+#   appears as a 8th grade"): anet lists him on a high school team, in high
+#   school races, as grade 8. One season, so nothing in his own data says
+#   the 8 is wrong -- and nothing says it is right either. The owner chose
+#   ("2. makes so much sense"): the team's level wins over a school grade
+#   below it ONLY when the athlete has no other season to confirm the grade.
+#
+# ! NOT LUKE MORELLI OR MICHAEL LEIFERMAN (pool_resolve stage 1 and 1b): a
+#   K-12 school's middle schoolers race its high school meets on its high
+#   school team, and their grades are right. They have other seasons, and a
+#   grade that advances 6, 7, 8, 9 is its own confirmation, so this rule
+#   never sees them. A real one-season eighth grader on a high school team
+#   who races only high school fields is the cost: pooled with the high
+#   schoolers whose races he ran.
+#
+# ! EVERY ROW, BOTH WAYS. Every race of the season was for an anet team whose
+#   level is high school (a tfrrs row, team 0 or an unlevelled team fails
+#   it), and every event with a graded field (MIN_FIELD_GRADED) was a high
+#   school field, with at least one such event.
+#
+# The verdict is a LEVEL with no grade, like rule 4's: the raw grade stays
+# the feed's (the athlete page shows it, asterisked), and the pool is 'hs'.
+_TEAM_LEVEL_SQL = f"""
+    WITH teams AS (
+        SELECT r.person_id, {_ACAD_R} AS acad,
+               COALESCE(t.level = ANY(%(codes)s), false) AS hs
+        FROM   results r
+        JOIN   tl_cand c ON c.person_id = r.person_id
+        LEFT   JOIN anet_team t ON t.team_id = r.team_id
+        WHERE  r.date IS NOT NULL
+        UNION ALL
+        SELECT r.person_id, {_ACAD_R},
+               COALESCE(t.level = ANY(%(codes)s), false)
+        FROM   results_tf r
+        JOIN   tl_cand c ON c.person_id = r.person_id
+        LEFT   JOIN anet_team t ON t.team_id = r.team_id
+        WHERE  r.date IS NOT NULL
+    ),
+    team_ok AS (
+        SELECT t.person_id, t.acad
+        FROM   teams t
+        JOIN   tl_cand c ON c.person_id = t.person_id AND c.acad = t.acad
+        GROUP  BY 1, 2
+        HAVING bool_and(t.hs)
+    ),
+    mine AS (
+        SELECT a.person_id, a.acad, a.meet_id, a.div_id, a.source, a.event_key
+        FROM   allraces a
+        JOIN   team_ok k ON k.person_id = a.person_id AND k.acad = a.acad
+    ),
+    wanted AS (
+        SELECT DISTINCT meet_id, div_id, source, event_key FROM mine
+    ),
+    event_level AS (
+        SELECT w.meet_id, w.div_id, w.source, w.event_key,
+               mode() WITHIN GROUP (ORDER BY gradeLevel(a.grade))
+                   FILTER (WHERE gradeLevel(a.grade) IS NOT NULL) AS level
+        FROM   wanted w
+        JOIN   allraces a
+               ON a.meet_id = w.meet_id AND a.div_id = w.div_id
+              AND a.source = w.source AND a.event_key = w.event_key
+        GROUP  BY 1, 2, 3, 4
+        HAVING count(*) FILTER (WHERE gradeLevel(a.grade) IS NOT NULL)
+                   >= {MIN_FIELD_GRADED}
+    )
+    SELECT m.person_id, m.acad
+    FROM   mine m
+    JOIN   event_level e
+           ON e.meet_id = m.meet_id AND e.div_id = m.div_id
+          AND e.source = m.source AND e.event_key = m.event_key
+    GROUP  BY 1, 2
+    HAVING bool_and(e.level = 'hs')
+"""
+
+
+def teamLevelCandidates(acad, seasons_of):
+    """The athlete-seasons rule 5f may move: the athlete's only season, a
+    school grade 1-8 on the verdict, and not the owner's pin."""
+    out = []
+    for key, v in acad.items():
+        g = str(v.get("grade") or "").strip()
+        if (seasons_of.get(key[0]) == 1 and v.get("method") != "pinned"
+                and g.isdigit() and 1 <= int(g) <= 8):
+            out.append(key)
+    return out
+
+
+def _hsTeamCodes():
+    """anet_team.level codes that name a high school, from the engine's own
+    reading of them (speed_ratings_db.loadTeamLevels). Empty -- and rule 5f
+    inert -- when it cannot say."""
+    try:
+        from speed_ratings_db import loadTeamLevels
+        _by_team, meaning, _rows = loadTeamLevels()
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"    [5f] team levels unavailable ({type(exc).__name__}: {exc}); "
+              f"rule skipped", flush=True)
+        return []
+    return sorted(int(c) for c, lv in meaning.items() if lv == "hs")
+
+
+def teamLevelSeasons(cur, acad, seasons_of, hs_codes=None):
+    """{(person_id, acad)} rule 5f moves to 'hs'. See _TEAM_LEVEL_SQL."""
+    from psycopg2.extras import execute_values
+    cand = teamLevelCandidates(acad, seasons_of)
+    if not cand:
+        return set()
+    if hs_codes is None:
+        hs_codes = _hsTeamCodes()
+    if not hs_codes:
+        return set()
+    cur.execute("DROP TABLE IF EXISTS tl_cand")
+    cur.execute("CREATE TEMP TABLE tl_cand (person_id bigint, acad int, "
+                "PRIMARY KEY (person_id, acad))")
+    execute_values(cur, "INSERT INTO tl_cand VALUES %s", cand, page_size=10000)
+    cur.execute("ANALYZE tl_cand")
+    cur.execute(_TEAM_LEVEL_SQL, {"codes": list(hs_codes)})
+    got = {(int(p), int(a)) for p, a in cur.fetchall()}
+    cur.execute("DROP TABLE tl_cand")
+    return got
+
+
+# ------------------------------------------------------------------ #
 #  RULE 5: A GRADE THAT STOPPED ADVANCING
 # ------------------------------------------------------------------ #
 
@@ -2574,6 +2700,15 @@ def resolve(cur, audit=False):
             acad[key] = {"grade": None, "level": None, "method": "lone_word"}
             n_lone += 1
 
+    # RULE 5f: a lone season on a high school team, in high school fields
+    _tq = time.time()
+    moved5f = teamLevelSeasons(cur, acad, seasons_of)
+    for key in moved5f:
+        acad[key] = {"grade": None, "level": "hs", "method": "team_level"}
+    n_team = len(moved5f)
+    print(f"    [5f] {n_team:,} lone seasons on a high school team in high school "
+          f"fields: grade below 9 set aside ({time.time() - _tq:.0f}s)", flush=True)
+
     n_none = 0
     for key in race_count:
         if key in acad:
@@ -2626,6 +2761,7 @@ def resolve(cur, audit=False):
     print(f"    bare word, own grades    {n_bare:>10,}")
     print(f"    bare word, field's grades{n_bare_field:>10,}")
     print(f"    level of the field       {n_field:>10,}")
+    print(f"    team's level, lone season{n_team:>10,}")
     print(f"    nobody in the race graded{n_nograde:>10,}")
     print(f"    grade never advanced     {n_stale:>10,}")
     print(f"    school grade after college{n_postcoll:>9,}")
