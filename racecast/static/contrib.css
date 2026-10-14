@@ -97,8 +97,8 @@ main.rc.contrib-page .ct-pick-row .t { font-variant-numeric: tabular-nums; font-
 
 /* the side card */
 main.rc.contrib-page .rc-side .ct-facts { width: 100%; border-collapse: collapse; font-size: .88rem; table-layout: fixed; }
-main.rc.contrib-page .rc-side .ct-facts td { padding: .3rem 0; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
-main.rc.contrib-page .rc-side .ct-facts td:first-child { color: var(--muted); padding-right: .6rem; width: 40%; white-space: normal; }
+main.rc.contrib-page .rc-side .ct-facts td { padding: .4rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+main.rc.contrib-page .rc-side .ct-facts td:first-child { color: var(--muted); width: 31%; white-space: normal; }
 main.rc.contrib-page .rc-side p { font-size: .85rem; }
 
 @media (max-width: 700px) {
