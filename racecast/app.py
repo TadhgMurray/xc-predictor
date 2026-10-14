@@ -2136,7 +2136,7 @@ def athlete(person_id):
             #   turns these rows into the season flags.
             try:
                 cur.execute("""
-                    SELECT season, method, trust, level
+                    SELECT season, method, trust, level, grade
                     FROM   grade_fix
                     WHERE  person_id = %s
                 """, (person_id,))
@@ -3505,6 +3505,9 @@ def _attach_season_verdicts(seasons, verdicts):
         except ValueError:
             continue                       # malformed-date fallback label
         v = by_year.get(academic)
+        note = _gradeNote(season.get("grade"), season.get("pool"), v)
+        if note:
+            season["grade_note"] = note
         if v is None:
             continue
         if v.get("method") in _NO_POOL_VERDICTS:
@@ -3525,6 +3528,42 @@ def _attach_season_verdicts(seasons, verdicts):
                 not str(season.get("pool") or "").startswith(("hs_", "ms_", "elem_")):
             season["grade"] = None
             season["pro_verdict"] = True
+
+
+_SCHOOL_LEVEL_WORDS = {"elem": "elementary schoolers", "ms": "middle schoolers",
+                       "hs": "high schoolers"}
+
+
+def _schoolGradeLevel(grade):
+    """'8' -> 'ms', '9' -> 'hs', '4' -> 'elem'; None for anything that is
+    not a plain school grade 1-12 (a class word, a year, a dash)."""
+    g = str(grade or "").strip()
+    if not g.isdigit() or not 1 <= int(g) <= 12:
+        return None
+    return "elem" if int(g) <= 5 else "ms" if int(g) <= 8 else "hs"
+
+
+def _gradeNote(shown, pool, verdict):
+    """The tooltip for the grade's asterisk, or None.
+
+    ★ THE PAGE SHOWS THE FEED'S GRADE, THE BOARDS USE OURS (owner,
+      2026-10-14, /athlete/29642348: a freshman athletic.net lists in grade
+      8). The block keeps athletic.net's word and marks it when we rate or
+      rank the season as something else: an owner's grade pin that says
+      another grade, or a pool at another school level than the grade's.
+    """
+    level = _schoolGradeLevel(shown)
+    if level is None:
+        return None
+    if verdict and verdict.get("method") == "pinned" and verdict.get("grade") \
+            and str(verdict["grade"]).strip() != str(shown).strip():
+        return (f"athletic.net lists grade {shown}; it has been corrected to "
+                f"grade {verdict['grade']}, which our ratings and rankings use.")
+    pool_level = str(pool or "").split("|")[0].split("_")[0]
+    if pool_level in _SCHOOL_LEVEL_WORDS and pool_level != level:
+        return (f"athletic.net lists grade {shown}, but this season is rated "
+                f"and ranked with {_SCHOOL_LEVEL_WORDS[pool_level]}.")
+    return None
 
 
 def _isNationalTeam(school):
