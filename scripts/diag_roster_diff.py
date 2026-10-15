@@ -8,6 +8,11 @@ one of them. READ ONLY.
     /srv/venv/bin/python scripts/diag_roster_diff.py "Arkansas"
     /srv/venv/bin/python scripts/diag_roster_diff.py "Arkansas" --gender M --level college
     /srv/venv/bin/python scripts/diag_roster_diff.py "Amherst" --state MA --sport TF
+    /srv/venv/bin/python scripts/diag_roster_diff.py "Arkansas" --meet 158396 --div 659083 [--asran]
+
+  --meet/--div: the predictions side is the page's OWN fetch for that race
+  (app._squadsServed: the race's gender, levels, state and, with --asran,
+  its season) -- exactly the list the card and its expand button show.
 
 ★ WHY (owner, 2026-10-15: "On the predictions page the roster on the page
   isn't the same as the roster on the school page", Arkansas). The two
@@ -82,6 +87,10 @@ def main():
     ap.add_argument("--gender", choices=("M", "F"))
     ap.add_argument("--level", help="hs, ms, college, pro")
     ap.add_argument("--state", help="the state chip, e.g. AR")
+    ap.add_argument("--meet", type=int, help="the predicted race's meet id")
+    ap.add_argument("--div", help="the predicted race's division id")
+    ap.add_argument("--asran", action="store_true",
+                    help="the page's 'as it ran' mode")
     a = ap.parse_args()
     import psycopg2.extras
     from database import getConn
@@ -96,7 +105,24 @@ def main():
             levels={a.level} if a.level else None,
             states={a.school: a.state} if a.state else None, isolated=True)
         p_rows = squads.get(a.school, [])
+        served = None
+        if a.meet:
+            os.environ.setdefault("XCP_DB_QUIET", "1")
+            import app as app_mod
+            div_n, ev_n = app_mod.splitRaceKey(a.div or "")
+            params = {"sport": a.sport, "gender": a.gender,
+                      "levels": {a.level} if a.level else None,
+                      "levels_given": bool(a.level), "as_ran": a.asran,
+                      "meet_id": a.meet, "div_id": div_n, "event_id": ev_n,
+                      "alt": None, "src": None}
+            served = app_mod._squadsServed(cur, [(a.school, a.state)], params)[0]
+            p_rows = [dict(r, school=a.school) for r in served.get("runners") or []]
+            y_pred = served.get("season_year")
         conn.rollback()
+    if served is not None:
+        print(f"page fetch for meet {a.meet} div {a.div}: season {served.get('season_year')}, "
+              f"gender {served.get('gender')}, {len(p_rows)} runners"
+              + (f", {served.get('other_gender')} of the other gender" if served.get("other_gender") else ""))
     print(f"{a.school} {a.sport}: school page season {y_school}, {len(s_rows)} runners; "
           f"predictions season {y_pred}, {len(p_rows)} runners"
           + (f" (gender {a.gender})" if a.gender else "")
@@ -107,7 +133,8 @@ def main():
     for r in s_rows:
         by_pool[r.get("pool")] = by_pool.get(r.get("pool"), 0) + 1
     print("  school page pools: " + ", ".join(f"{p}: {n}" for p, n in sorted(by_pool.items(), key=str)))
-    diff = explain(s_rows, p_rows, a.gender, a.level)
+    gender = (served or {}).get("gender") or a.gender
+    diff = explain(s_rows, p_rows, gender, a.level)
     if not diff:
         print("  same runners on both")
         return
