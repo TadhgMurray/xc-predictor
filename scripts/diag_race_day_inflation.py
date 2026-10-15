@@ -34,6 +34,19 @@ field above their level. READ ONLY.
      the whole day term the way Midlothian's three did.
 
     /srv/venv/bin/python scripts/diag_race_day_inflation.py --div 1083503 --sections 4
+
+  5. THE COVID WINDOW (--covid; owner, 2026-10-15: "I wonder if covid
+     messing up the schedule might mess up the ratings"). Every XC row of
+     Sep 2020 - Jun 2021 (college XC ran January to March; several states
+     moved high school XC to spring) against the same months of 2018-19
+     and 2021-22, by level and month: the median here-vs-level (q80 of the
+     365 days before) and here-vs-later (median of the 60 days after),
+     both sources -- ranking_results, so tfrrs rows too. A COVID month
+     several points off the normal years is the season mis-rated; the
+     normal years' own drift by month is the baseline to read it against.
+     A 1-in-N sample (--sample, default 20).
+
+    /srv/venv/bin/python scripts/diag_race_day_inflation.py --covid
 """
 import argparse
 import os
@@ -51,12 +64,20 @@ def main():
     ap.add_argument("--year", type=int, default=2026)
     ap.add_argument("--sections", default="0123",
                     help="which sections to print, e.g. --sections 0")
+    ap.add_argument("--covid", action="store_true",
+                    help="section 5 only: the COVID season against normal years")
+    ap.add_argument("--sample", type=int, default=20,
+                    help="section 5: read 1 row in N (default 20)")
     a = ap.parse_args()
+    if a.covid:
+        a.sections = "5"
     from database import getConn
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("SET statement_timeout = '900s'")
         if a.div:
             divs = [a.div]
+        elif not a.meet and not set(a.sections) & set("01"):
+            divs = []
         else:
             cur.execute("""SELECT r.div_id, m.meet_name, m.division, count(*)
                            FROM results r JOIN meets m ON m.div_id = r.div_id
@@ -149,6 +170,8 @@ def main():
                 print(f"  {d}  {str(c)[:44]:44} {dm or '':>6}  day {dp:>6}  course {cp}  rows {n}")
         if "4" in a.sections and a.div:
             _venueDay(cur, a.div)
+        if "5" in a.sections:
+            _covidWindow(cur, max(1, a.sample))
         conn.rollback()
 
 
@@ -163,6 +186,72 @@ _LATER = """
     SELECT count(*) n, count(later) nl,
            round((100 * percentile_cont(0.5) WITHIN GROUP (ORDER BY here / later - 1))::numeric, 1) hl
     FROM x"""
+
+
+# the COVID season and the two normal seasons either side, Sep - Jun
+_ERAS = (("2018-19", "2018-09-01", "2019-06-30"),
+         ("COVID", "2020-09-01", "2021-06-30"),
+         ("2021-22", "2021-09-01", "2022-06-30"))
+_COVID_SQL = """
+    WITH s AS (
+        SELECT rr.person_id, rr.speed_rating::float here, rr.race_date dy,
+               split_part(split_part(rr.pool, '|', 1), '_', 1) lvl_name,
+               CASE WHEN rr.race_date BETWEEN %(c0)s AND %(c1)s THEN 'COVID'
+                    WHEN rr.race_date BETWEEN %(a0)s AND %(a1)s THEN %(an)s
+                    ELSE %(bn)s END era
+        FROM   ranking_results rr
+        WHERE  rr.sport = 'XC' AND rr.speed_rating > 0
+          AND  rr.result_id %% %(k)s = 0
+          AND  (rr.race_date BETWEEN %(a0)s AND %(a1)s
+                OR rr.race_date BETWEEN %(c0)s AND %(c1)s
+                OR rr.race_date BETWEEN %(b0)s AND %(b1)s)),
+    x AS (
+        SELECT s.*,
+          (SELECT percentile_cont(0.8) WITHIN GROUP (ORDER BY o.speed_rating)
+           FROM ranking_results o WHERE o.person_id = s.person_id AND o.sport = 'XC'
+             AND o.race_date < s.dy AND o.race_date >= s.dy - 365) lvl,
+          (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY o.speed_rating)
+           FROM ranking_results o WHERE o.person_id = s.person_id AND o.sport = 'XC'
+             AND o.race_date > s.dy AND o.race_date < s.dy + 60) later
+        FROM s)
+    SELECT lvl_name, extract(month FROM dy)::int mon, era, count(*),
+           round((100 * percentile_cont(0.5) WITHIN GROUP (ORDER BY here / lvl - 1)
+                  FILTER (WHERE lvl > 0))::numeric, 1),
+           count(lvl),
+           round((100 * percentile_cont(0.5) WITHIN GROUP (ORDER BY here / later - 1)
+                  FILTER (WHERE later > 0))::numeric, 1),
+           count(later)
+    FROM   x
+    GROUP  BY 1, 2, 3
+"""
+
+
+def _covidWindow(cur, k):
+    print(f"\n5. THE COVID WINDOW: XC, Sep - Jun, 1 row in {k} "
+          f"(median %: here vs level / here vs later, n in brackets)")
+    (an, a0, a1), (_, c0, c1), (bn, b0, b1) = _ERAS
+    cur.execute(_COVID_SQL, dict(a0=a0, a1=a1, an=an, c0=c0, c1=c1,
+                                 b0=b0, b1=b1, bn=bn, k=k))
+    got = {}
+    for lv, mon, era, n, hv, nv, hl, nl in cur.fetchall():
+        got[(lv, mon, era)] = (n, hv, nv, hl, nl)
+    names = [e[0] for e in _ERAS]
+
+    def cell(v):
+        if v is None:
+            return f"{'':>28}"
+        n, hv, nv, hl, nl = v
+        fmt = lambda x: "  -  " if x is None else f"{x:+5.1f}"
+        return f"{fmt(hv)} ({nv:>5}) / {fmt(hl)} ({nl:>5})".rjust(28)
+
+    for lv in sorted({k_[0] for k_ in got}):
+        print(f"\n  {lv}")
+        print(f"    {'month':<6}" + "".join(f"{n:>30}" for n in names))
+        for mon in (9, 10, 11, 12, 1, 2, 3, 4, 5, 6):
+            row = [got.get((lv, mon, e)) for e in names]
+            if not any(row):
+                continue
+            print(f"    {mon:<6}" + "".join("  " + cell(v) for v in row))
 
 
 def _clock(sec):
