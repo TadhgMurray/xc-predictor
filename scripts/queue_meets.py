@@ -41,6 +41,7 @@ import sys
 import argparse
 import datetime
 import os
+import time
 
 sys.path.insert(0, "scripts")
 
@@ -614,10 +615,30 @@ def requeue(cur, sport, ids, source="anet", chunk=5000):
 #   with no named athletes row for COALESCE(person_id, athlete_id) and no
 #   name of its own; track relays never count. A due meet WITH results, not
 #   stamped by a re-ask pass, and no nameless row left goes back to done.
-_NAMELESS = {
-    "XC": "",
-    "TF": "AND COALESCE(r.is_relay, 0) = 0",
-}
+def _namedIds(cur):
+    """qm_named(id): every id the site can put a name to -- built ONCE per
+    connection and indexed, as requeue_blank_athletes does. A per-row probe
+    of athletes on person_id (no index there) is what hung the first
+    version on results_tf."""
+    cur.execute("SELECT to_regclass('pg_temp.qm_named')")
+    if cur.fetchone()[0] is not None:
+        return
+    t0 = time.time()
+    print("    building the named-id table from athletes ...", end="", flush=True)
+    cur.execute("""
+        CREATE TEMP TABLE qm_named AS
+        SELECT DISTINCT k AS id FROM (
+            SELECT person_id AS k FROM athletes
+            WHERE  NULLIF(btrim(concat_ws(' ', first_name, last_name)), '') IS NOT NULL
+              AND  person_id IS NOT NULL
+            UNION ALL
+            SELECT athlete_id FROM athletes
+            WHERE  NULLIF(btrim(concat_ws(' ', first_name, last_name)), '') IS NOT NULL) x
+        WHERE  k IS NOT NULL;
+        CREATE UNIQUE INDEX ON qm_named (id);
+        ANALYZE qm_named
+    """)
+    print(f" {time.time() - t0:.0f}s", flush=True)
 
 
 def shedRepaired(cur, sport, source="anet", write=False):
@@ -626,46 +647,47 @@ def shedRepaired(cur, sport, source="anet", write=False):
     if source != "anet":
         return 0
     t = _t(source, sport)
+    t0 = time.time()
+    cur.execute("SET LOCAL statement_timeout = 0")
+    cur.execute("SET LOCAL work_mem = '512MB'")
     cur.execute("""SELECT 1 FROM information_schema.columns
                    WHERE table_name = 'meet_queue' AND column_name = 'requeued_at'""")
     unstamped = "AND q.requeued_at IS NULL" if cur.fetchone() is not None else ""
+    _namedIds(cur)
     cur.execute("DROP TABLE IF EXISTS qm_repair")
     cur.execute(f"""
         CREATE TEMP TABLE qm_repair AS
         SELECT q.meet_id FROM meet_queue q
         WHERE  q.source = %(source)s AND q.sport = %(sport)s AND q.scraped = 0
           {unstamped}
-          AND  EXISTS (SELECT 1 FROM {t['results']} r
-                       WHERE r.meet_id = q.meet_id AND r.source = %(source)s)
     """, {"source": source, "sport": sport})
-    cur.execute("CREATE INDEX ON qm_repair (meet_id)")
+    cur.execute("CREATE UNIQUE INDEX ON qm_repair (meet_id)")
+    cur.execute("ANALYZE qm_repair")
+    print(f"    {sport}: one pass over {t['results']} for the queued meets' "
+          f"rows ...", end="", flush=True)
+    # ONE pass: per queued meet, does it have rows, and any nameless one
     cur.execute(f"""
-        DELETE FROM qm_repair m
-        WHERE EXISTS (
-            SELECT 1 FROM {t['results']} r
-            WHERE  r.meet_id = m.meet_id AND r.source = %(source)s
-              {_NAMELESS[sport]}
-              AND  NULLIF(btrim(r.athlete_name), '') IS NULL
-              -- two lookups, one per index (an OR across them scans)
-              AND  NOT EXISTS (
-                     SELECT 1 FROM athletes a
-                     WHERE  a.person_id = COALESCE(r.person_id, r.athlete_id)
-                       AND  NULLIF(btrim(concat_ws(' ', a.first_name, a.last_name)), '')
-                            IS NOT NULL)
-              AND  NOT EXISTS (
-                     SELECT 1 FROM athletes a
-                     WHERE  a.athlete_id = COALESCE(r.person_id, r.athlete_id)
-                       AND  NULLIF(btrim(concat_ws(' ', a.first_name, a.last_name)), '')
-                            IS NOT NULL))
+        CREATE TEMP TABLE qm_rows AS
+        SELECT r.meet_id,
+               bool_or(n.id IS NULL AND NULLIF(btrim(r.athlete_name), '') IS NULL
+                       {"AND COALESCE(r.is_relay, 0) = 0" if sport == "TF" else ""})
+                   AS nameless
+        FROM   {t['results']} r
+        JOIN   qm_repair m ON m.meet_id = r.meet_id
+        LEFT   JOIN qm_named n ON n.id = COALESCE(r.person_id, r.athlete_id)
+        WHERE  r.source = %(source)s
+        GROUP  BY r.meet_id
     """, {"source": source})
-    cur.execute("SELECT count(*) FROM qm_repair")
+    print(f" {time.time() - t0:.0f}s", flush=True)
+    cur.execute("SELECT count(*) FROM qm_rows WHERE NOT nameless")
     n = cur.fetchone()[0]
     if write and n:
-        cur.execute("""UPDATE meet_queue q SET scraped = 1 FROM qm_repair m
-                       WHERE q.meet_id = m.meet_id AND q.source = %s
-                         AND q.sport = %s AND q.scraped = 0""", (source, sport))
+        cur.execute("""UPDATE meet_queue q SET scraped = 1 FROM qm_rows m
+                       WHERE q.meet_id = m.meet_id AND NOT m.nameless
+                         AND q.source = %s AND q.sport = %s AND q.scraped = 0""",
+                    (source, sport))
         n = cur.rowcount
-    cur.execute("DROP TABLE qm_repair")
+    cur.execute("DROP TABLE qm_repair; DROP TABLE qm_rows")
     return n
 
 
