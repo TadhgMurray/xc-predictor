@@ -104,6 +104,106 @@ def xcTogetherSuspect(delta, cell, sport, solved, u_row, cap=None):
     return (sport == 0) & (np.abs(delta[cell] + np.asarray(u_row, dtype=np.float64) - med) > cap)
 
 
+# ★ THE FIELD CHECK (owner, 2026-10-15, Marmonte League Finals 2018 at
+#   Pepper Tree Playfield: "usually marmonte would be a league meet, so they
+#   run slower, and if someone doesn't the rating goes a bit crazy"). A venue
+#   raced mostly at league effort teaches the solve that its course is hard
+#   and its days slow; the one meet there raced hard then rates its whole
+#   field above itself. scripts/diag_race_day_inflation.py measured it: the
+#   boys' varsity +3.4% over their level and +3.1% over their next races,
+#   the girls' +3.6%, day +1.94% credited -- and Nico Young's 142.9 there
+#   was the best race of a season his State 138.4 ended.
+#
+# ★ THE RUNNERS' OWN OTHER RACES ARE THE EVIDENCE. Per race (the solve's
+#   own key: a venue on a day), the median over its runners of this row's
+#   rating against the mean of the same athlete-season's EARLIER races, and
+#   against the mean of its LATER ones. A field above both is a race the
+#   model credited more than its runners' seasons support, and the race is
+#   pulled down by the smaller gap. Above the earlier races alone is a
+#   field getting fitter; above the later ones alone, a field that peaked.
+#
+# ! ONE WAY ONLY (owner, 2026-10-15). A field can run under itself -- mud,
+#   heat, a tactical race -- and that is a real slow race; it cannot run
+#   collectively over itself. Only a deflation is applied. NXN 2019 (here vs
+#   level -0.2%) does not move.
+# ! CROSS COUNTRY ONLY, where the course and day terms carry the effort
+#   problem; XCP_FIELD_CHECK=0 turns it off.
+FIELD_CHECK_MIN = int(os.environ.get("XCP_FIELD_CHECK_MIN", "10"))
+FIELD_CHECK_FLOOR = float(os.environ.get("XCP_FIELD_CHECK_FLOOR", "0.01"))
+FIELD_CHECK_CAP = float(os.environ.get("XCP_FIELD_CHECK_CAP", "0.06"))
+
+
+def fieldCheckOn():
+    return os.environ.get("XCP_FIELD_CHECK", "1").strip() not in ("0", "", "off")
+
+
+def _groupMedian(group, values, n_group):
+    """(median, count) of values per group id; NaN where a group has none."""
+    group = np.asarray(group, dtype=np.int64)
+    values = np.asarray(values, dtype=np.float64)
+    med = np.full(n_group, np.nan)
+    cnt = np.bincount(group, minlength=n_group)
+    if group.size == 0:
+        return med, cnt
+    order = np.lexsort((values, group))
+    g, v = group[order], values[order]
+    start = np.concatenate([[0], np.cumsum(cnt)[:-1]])
+    has = cnt > 0
+    lo = start[has] + (cnt[has] - 1) // 2
+    hi = start[has] + cnt[has] // 2
+    med[has] = 0.5 * (v[lo] + v[hi])
+    assert (g[lo] == np.flatnonzero(has)).all()
+    return med, cnt
+
+
+def fieldCheck(x, athlete, days_ago, race, n_race, mask,
+               min_field=None, floor=None, cap=None):
+    """Per race, the log-rating deflation the field check applies (>= 0).
+
+    x: each row's log rating up to a per-athlete-season constant; athlete:
+    the athlete-season; days_ago: larger is older; race: the race id; mask:
+    the rows that count. Pure. Returns (corr[n_race], gap_before[n_race],
+    gap_after[n_race], n_before[n_race], n_after[n_race])."""
+    min_field = FIELD_CHECK_MIN if min_field is None else min_field
+    floor = FIELD_CHECK_FLOOR if floor is None else floor
+    cap = FIELD_CHECK_CAP if cap is None else cap
+    idx = np.flatnonzero(np.asarray(mask))
+    corr = np.zeros(n_race)
+    if idx.size == 0:
+        z = np.full(n_race, np.nan)
+        return corr, z, z.copy(), np.zeros(n_race, int), np.zeros(n_race, int)
+    a = np.asarray(athlete)[idx]
+    t = -np.asarray(days_ago, dtype=np.float64)[idx]      # larger is later
+    v = np.asarray(x, dtype=np.float64)[idx]
+    order = np.lexsort((t, a))
+    a, t, v, idx = a[order], t[order], v[order], idx[order]
+    n = a.size
+    cs = np.concatenate([[0.0], np.cumsum(v)])
+    pos = np.arange(n)
+    new_a = np.concatenate([[True], a[1:] != a[:-1]])
+    new_run = new_a | np.concatenate([[True], t[1:] != t[:-1]])
+    a_start = np.maximum.accumulate(np.where(new_a, pos, 0))
+    r_start = np.maximum.accumulate(np.where(new_run, pos, 0))
+    # ends: the same, read from the right
+    end_a = np.concatenate([a[1:] != a[:-1], [True]])
+    end_run = end_a | np.concatenate([t[1:] != t[:-1], [True]])
+    a_end = np.minimum.accumulate(np.where(end_a, pos + 1, n)[::-1])[::-1]
+    r_end = np.minimum.accumulate(np.where(end_run, pos + 1, n)[::-1])[::-1]
+    n_b = r_start - a_start
+    n_l = a_end - r_end
+    with np.errstate(divide="ignore", invalid="ignore"):
+        d_b = v - (cs[r_start] - cs[a_start]) / n_b
+        d_l = v - (cs[a_end] - cs[r_end]) / n_l
+    rc = np.asarray(race)[idx]
+    mb = n_b > 0
+    ml = n_l > 0
+    gap_b, nb = _groupMedian(rc[mb], d_b[mb], n_race)
+    gap_l, nl = _groupMedian(rc[ml], d_l[ml], n_race)
+    ok = (nb >= min_field) & (nl >= min_field) & (gap_b > floor) & (gap_l > floor)
+    corr[ok] = np.minimum(np.minimum(gap_b[ok], gap_l[ok]), cap)
+    return corr, gap_b, gap_l, nb, nl
+
+
 def dayModes(race_effect_sports):
     """{'XC': 'all' | 'fast'} from ('XC', 'TF:fast', ...); absent = out."""
     modes = {}
@@ -375,6 +475,29 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
                 print(f"    {attrs['pool_names'][p]:<10}{b:>6}{int(n_g[p, b]):>10,}"
                       f"{gap[p, b]:>+10.4f}{-float(gains_mat[p, b]):>+9.4f}"
                       f"{shift[p, b]:>+9.4f}")
+    # ★ THE FIELD CHECK, last, on the rating every other term made (see
+    #   fieldCheck): a race whose runners rated above both their earlier and
+    #   their later races of the season is pulled down by the smaller gap.
+    field_corr = np.zeros(int(D.race.max()) + 1 if D.race.size else 0)
+    if fieldCheckOn() and "days" in cols and (sport == 0).any():
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x = eff - np.log(norm)
+        ok_cell = np.bincount(D.cell, minlength=D.n_cell)[D.cell] > 0
+        fmask = ((sport == 0) & np.isfinite(x)
+                 & np.asarray(rat["valid"])[D.athlete] & ok_cell)
+        field_corr, gap_b, gap_l, nb, nl = fieldCheck(
+            x, D.athlete, np.asarray(cols["days"][keep]), D.race,
+            field_corr.size, fmask)
+        hit = field_corr > 0
+        eff = eff - np.where(sport == 0, field_corr[D.race], 0.0)
+        rows_hit = int((hit[D.race] & (sport == 0)).sum())
+        print(f"[joint/live] field check: {int(hit.sum()):,} XC races whose "
+              f"field rated above both its earlier and its later races "
+              f"(>= {FIELD_CHECK_MIN} runners each, gap > "
+              f"{100 * FIELD_CHECK_FLOOR:.0f}%), {rows_hit:,} rows pulled down; "
+              f"median {100 * float(np.median(field_corr[hit])) if hit.any() else 0:.2f}%, "
+              f"max {100 * float(field_corr.max()) if hit.any() else 0:.2f}% "
+              f"(cap {100 * FIELD_CHECK_CAP:.0f}%)")
     adjusted = norm / np.exp(eff)
     with np.errstate(divide="ignore", invalid="ignore"):
         rc = 100.0 * pm_c[D.athlete] / adjusted
@@ -614,7 +737,11 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
         #   row's rating used its own era's cell; the page now shows the
         #   number the rating actually used.
         day_rows = (keys, pair_cell, days_all[first],
-                    out["race_effect"][pair_race].astype(np.float32),
+                    # the page's day is the day the rating used: the
+                    # field check's deflation comes off it
+                    (out["race_effect"][pair_race]
+                     - (field_corr[pair_race] if field_corr.size else 0.0)
+                     ).astype(np.float32),
                     pair_n, pack_date,
                     np.where(solved[pair_cell],
                              difficulty[pair_cell], np.nan).astype(np.float32))
