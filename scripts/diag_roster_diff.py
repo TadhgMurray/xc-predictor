@@ -118,8 +118,30 @@ def main():
             served = app_mod._squadsServed(cur, [(a.school, a.state)], params)[0]
             p_rows = [dict(r, school=a.school) for r in served.get("runners") or []]
             y_pred = served.get("season_year")
+            # ★ AND THE CARD ITSELF: /api/predict/field (meetField), both
+            #   modes -- its runners and its bench ("dropped", the expand)
+            import predict as _pr
+            src, _alt = app_mod._predictSourceFor(cur, a.meet, a.sport, None,
+                                                  div_n, None)
+            cards = {}
+            for when in ("thisyear", "asran"):
+                out = _pr.meetField(cur, a.meet, div_n, a.sport, when=when,
+                                    source=src, event_id=ev_n)
+                cards[when] = next((t for t in out.get("teams") or []
+                                    if t.get("school") == a.school), None)
         conn.rollback()
     if served is not None:
+        for when, t in cards.items():
+            if t is None:
+                print(f"card ({when}): {a.school} is not a team in this race's field")
+                continue
+            print(f"card ({when}): {len(t.get('runners') or [])} on the card, "
+                  f"{len(t.get('dropped') or [])} on the bench (the expand), "
+                  f"entered {t.get('entered')}")
+            on = {r.get("person_id") for r in (t.get("runners") or []) + (t.get("dropped") or [])}
+            missing = [r for r in p_rows if r["person_id"] not in on]
+            for r in missing:
+                print(f"    not on this card at all: {r['person_id']} {r.get('name')}")
         print(f"page fetch for meet {a.meet} div {a.div}: season {served.get('season_year')}, "
               f"gender {served.get('gender')}, {len(p_rows)} runners"
               + (f", {served.get('other_gender')} of the other gender" if served.get("other_gender") else ""))
