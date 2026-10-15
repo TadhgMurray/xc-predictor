@@ -1588,6 +1588,9 @@ RETRY_FAILED = os.environ.get("ANET_RETRY_FAILED", "") not in ("", "0", "false")
 #   meet"; 0 is "never tried", which a retry must leave alone.
 CLAIM_STATES = (2, 3) if RETRY_FAILED else (0,)
 SEED_AHEAD = int(os.environ.get("SEED_AHEAD", 500))
+# ★ THE RE-ASK PASSES LOOK BACK ONE WEEK; ANET_DEEP_RECHECK=1 is the old
+#   120-day and undated sweep (owner, 2026-10-15; queue_meets.RECENT_DAYS)
+DEEP_RECHECK = os.environ.get("ANET_DEEP_RECHECK", "") not in ("", "0", "false")
 DRY_BLOCKS_TO_STOP = int(os.environ.get("DRY_BLOCKS_TO_STOP", 2))
 
 
@@ -1704,7 +1707,9 @@ def _prepareQueue():
             seedAll(conn, source="anet", write=True,
                     sports=[ANET_SPORT] if ANET_SPORT else None,
                     ahead=SEED_AHEAD, do_new=SEED_AHEAD > 0,
-                    recent_days=int(os.environ.get("SEED_RECENT_DAYS", 120)))
+                    deep=DEEP_RECHECK,
+                    recent_days=(int(os.environ["SEED_RECENT_DAYS"])
+                                 if os.environ.get("SEED_RECENT_DAYS") else None))
 
         print("[queue] anet meet_queue:")
         for sport, state, n in _queueState(conn):

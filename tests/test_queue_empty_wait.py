@@ -60,3 +60,31 @@ def test_empty_meets_wait_for_their_date_on_postgres():
         cur.execute("DROP SCHEMA IF EXISTS queue_empty_test CASCADE")
         conn.commit()
         conn.close()
+
+
+def test_the_default_pass_is_one_week_and_deep_is_the_old_sweep_on_postgres():
+    conn, cur = _pg()
+    try:
+        cur.execute("""
+            CREATE TABLE meet_queue (meet_id bigint, sport text, source text,
+                                     scraped int, PRIMARY KEY (meet_id, sport, source));
+            CREATE TABLE meets (meet_id bigint, source text);
+            CREATE TABLE results (meet_id bigint, source text);
+        """)
+        Q.ensureEmptyColumns(cur)
+        # asked two days ago, empty, no meet row: dated 3 days ago, dated 14
+        # days ago (outside the week, not yet stale), and never dated (asked
+        # before the date was kept)
+        for mid, d in ((201, "current_date - 3"), (202, "current_date - 14"),
+                       (203, "NULL")):
+            cur.execute(f"""INSERT INTO meet_queue VALUES ({mid}, 'XC', 'anet', 1,
+                            now() - interval '48 hours', {d}, NULL)""")
+        import datetime
+        week = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+        assert Q.emptyUnrecorded(cur, "XC", top=300, span=1000, since=week) == [201]
+        assert Q.emptyUnrecorded(cur, "XC", top=300, span=1000) == [201, 202, 203]
+    finally:
+        conn.rollback()
+        cur.execute("DROP SCHEMA IF EXISTS queue_empty_test CASCADE")
+        conn.commit()
+        conn.close()

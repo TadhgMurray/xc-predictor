@@ -87,7 +87,15 @@ SPORTS = ("XC", "TF")
 SOURCES = tuple(FEEDS)
 
 AHEAD = 500                # ids seeded per block
-RECENT_DAYS = 120          # the owner's "past 3-4 months"
+# ★ ONE WEEK BY DEFAULT, THE DEEP PASS ON A FLAG (owner, 2026-10-15: "it
+#   should only do the past week and only do more if I pass a flag"). The
+#   re-ask passes reached back 120 days by date and 30,000 ids with no date
+#   at all, and nearly everything they woke came back empty. A normal launch
+#   now re-asks only meets DATED in the last RECENT_DAYS; ANET_DEEP_RECHECK=1
+#   (launcher) / --deep (this script) runs the old sweep: DEEP_RECENT_DAYS by
+#   date, plus the undated and unrecorded id sweeps.
+RECENT_DAYS = 7
+DEEP_RECENT_DAYS = 120     # the owner's "past 3-4 months", on --deep
 # ★ HOW LONG A RE-ASKED EMPTY MEET RESTS (owner, 2026-10-13: "the scraper
 #   keeps doing a ton of 0 results races again each time it restarts").
 #   Every launch runs the recent pass, and every pass re-queued every empty
@@ -364,7 +372,8 @@ def emptyUndated(cur, sport, top, span=UNDATED_SPAN, source="anet"):
     return [r[0] for r in cur.fetchall()]
 
 
-def emptyUnrecorded(cur, sport, top, span=UNDATED_SPAN, source="anet"):
+def emptyUnrecorded(cur, sport, top, span=UNDATED_SPAN, source="anet",
+                    since=None):
     """Meets marked DONE with 0 results that left NO meet row at all, within
     `span` ids below the watermark.
 
@@ -388,6 +397,17 @@ def emptyUnrecorded(cur, sport, top, span=UNDATED_SPAN, source="anet"):
     """
     t = _t(source, sport)
     rested = _rested(cur)
+    # ! since: only the meets whose OWN date (meet_queue.empty_date, kept
+    #   since 2026-10-15) is in [since, today] -- the default one-week pass.
+    #   None is the deep sweep by id.
+    dated, params = "", [source, sport, max(0, top - span), top, source]
+    if since is not None:
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'meet_queue' AND column_name = 'empty_date'""")
+        if cur.fetchone() is None:
+            return []
+        dated = "AND q.empty_date BETWEEN %s AND current_date"
+        params.append(since)
     cur.execute(f"""
         SELECT q.meet_id
         FROM   meet_queue q
@@ -397,16 +417,17 @@ def emptyUnrecorded(cur, sport, top, span=UNDATED_SPAN, source="anet"):
           AND  NOT {_meetExistsSql(source, sport)}
           AND  NOT EXISTS (SELECT 1 FROM {t['results']} r
                            WHERE r.meet_id = q.meet_id AND r.source = %s)
+          {dated}
         {rested}
         ORDER  BY q.meet_id
-    """, (source, sport, max(0, top - span), top, source))
+    """, params)
     return [r[0] for r in cur.fetchall()]
 
 
 _SANE_DATE = r"^(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}"
 
 
-def seasonRange(cur, sport, source="anet", recent_days=RECENT_DAYS):
+def seasonRange(cur, sport, source="anet", recent_days=DEEP_RECENT_DAYS):
     """(lo, hi, how) -- the ids this season's meets occupy in one feed/sport.
 
     lo is the lowest id of a meet DATED in the last recent_days (the same
@@ -459,7 +480,7 @@ def deletedIds(cur, sport, lo, hi, source="tfrrs"):
     return [r[0] for r in cur.fetchall()]
 
 
-def scheduledToRetry(cur, sport, above, has_date, source="anet"):
+def scheduledToRetry(cur, sport, above, has_date, source="anet", since=None):
     """Scheduled meets worth asking again: real meets above the watermark with
     no results, minus any we know are still in the future.
 
@@ -471,7 +492,18 @@ def scheduledToRetry(cur, sport, above, has_date, source="anet"):
     t = _t(source, sport)
     rested = _rested(cur)
     future = ""
-    if has_date:
+    # ! since: only meets DATED in [since, today] (the default one-week
+    #   pass); an undated meet waits for --deep
+    if since is not None:
+        if not has_date:
+            return []
+        future = f"""
+          AND EXISTS (SELECT 1 FROM {t['dates']} d
+                      WHERE d.meet_id = q.meet_id
+                        {_clause(t['dates_where'], 'd')}
+                        AND d.{t['date_col']} >= %(since)s
+                        AND d.{t['date_col']} <= %(today)s)"""
+    elif has_date:
         future = f"""
           AND NOT EXISTS (SELECT 1 FROM {t['dates']} d
                           WHERE d.meet_id = q.meet_id
@@ -489,7 +521,7 @@ def scheduledToRetry(cur, sport, above, has_date, source="anet"):
           {future}
         {rested}
         ORDER  BY q.meet_id
-    """, {"source": source, "sport": sport, "above": above,
+    """, {"source": source, "sport": sport, "above": above, "since": since,
           "today": datetime.date.today().isoformat()})
     return [r[0] for r in cur.fetchall()]
 
@@ -566,8 +598,8 @@ def requeue(cur, sport, ids, source="anet", chunk=5000):
 # ------------------------------------------------------------------ the plan
 
 def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
-              recent_days=RECENT_DAYS, do_new=True, do_recent=True,
-              do_failed=False, verbose=True, **_ignored):
+              recent_days=None, do_new=True, do_recent=True,
+              do_failed=False, verbose=True, deep=False, **_ignored):
     """Seed one (feed, sport). Returns a dict of what it found and did.
 
     ! CALLED BY BOTH LAUNCHERS, so a scrape night cannot get a different answer
@@ -627,8 +659,13 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
     if do_recent:
         if write:
             ensureRequeuedAt(cur)
+        if recent_days is None:
+            recent_days = DEEP_RECENT_DAYS if deep else RECENT_DAYS
         since = (datetime.date.today()
                  - datetime.timedelta(days=recent_days)).isoformat()
+        say(f"  [{tag}] re-asking empty meets dated since {since}"
+            + (" (deep: plus the undated and unrecorded id sweeps)" if deep
+               else " (ANET_DEEP_RECHECK=1 / --deep for the 120-day sweep)"))
         has_date = hasDateColumn(cur, sport, source)
         if has_date:
             dated = emptyRecent(cur, sport, since, source)
@@ -637,15 +674,18 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
             t = _t(source, sport)
             say(f"  [{tag}] {t['dates']}.{t['date_col']} does not exist yet "
                 f"-- no dated pass; the scheduled pass below still runs.")
-        sched_retry = scheduledToRetry(cur, sport, top, has_date, source)
-        undated = emptyUndated(cur, sport, top, source=source) if has_date else []
+        sched_retry = scheduledToRetry(cur, sport, top, has_date, source,
+                                       since=None if deep else since)
+        undated = (emptyUndated(cur, sport, top, source=source)
+                   if has_date and deep else [])
         out["undated"] = len(undated)
         say(f"  [{tag}] undated with 0 results in the last {UNDATED_SPAN:,} ids: "
             f"{len(undated):,}")
         # ★ AND THE EMPTY MEETS THAT LEFT NO ROW (owner, 2026-10-08) -- see
         #   emptyUnrecorded. Not gated on has_date: having no row is exactly
         #   why no date exists for them.
-        unrecorded = emptyUnrecorded(cur, sport, top, source=source)
+        unrecorded = emptyUnrecorded(cur, sport, top, source=source,
+                                     since=None if deep else since)
         out["unrecorded"] = len(unrecorded)
         say(f"  [{tag}] done with 0 results and no meet row in the last "
             f"{UNDATED_SPAN:,} ids: {len(unrecorded):,}")
@@ -725,7 +765,7 @@ class ForwardWalk:
     """
 
     def __init__(self, source="anet", sports=None, ahead=AHEAD,
-                 dry_blocks=2, recent_days=RECENT_DAYS):
+                 dry_blocks=2, recent_days=DEEP_RECENT_DAYS):
         self.source = source
         self.sports = list(sports or SPORTS)
         self.ahead = ahead
@@ -817,7 +857,10 @@ def main():
     ap.add_argument("--source", choices=SOURCES, default="anet")
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--ahead", type=int, default=AHEAD)
-    ap.add_argument("--recent-days", type=int, default=RECENT_DAYS)
+    ap.add_argument("--recent-days", type=int, default=None,
+                    help=f"default {RECENT_DAYS}, or {DEEP_RECENT_DAYS} with --deep")
+    ap.add_argument("--deep", action="store_true",
+                    help="the full re-ask sweep: 120 days, undated and unrecorded ids")
     ap.add_argument("--new-only", action="store_true")
     ap.add_argument("--recent-only", action="store_true")
     ap.add_argument("--sport", choices=SPORTS)
@@ -829,7 +872,7 @@ def main():
     with getConn() as conn:
         seedAll(conn, source=args.source, write=args.write,
                 sports=[args.sport] if args.sport else None,
-                ahead=args.ahead, recent_days=args.recent_days,
+                ahead=args.ahead, recent_days=args.recent_days, deep=args.deep,
                 do_new=not args.recent_only, do_recent=not args.new_only)
         if args.write:
             print(f"\n  {args.source} queue now due:")
