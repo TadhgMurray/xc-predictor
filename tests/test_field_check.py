@@ -60,6 +60,28 @@ def test_the_cap():
     assert np.isclose(_run([0.0, 0.20, 0.0])[1], 0.06)
 
 
+def test_an_opener_above_its_later_races_is_pulled_down():
+    # Wyoming - CSU 2021: the first race, then the season
+    corr = _run([0.05, 0.0, 0.0])
+    assert np.isclose(corr[0], 0.05)
+    assert np.allclose(corr[1:], 0.0)
+
+
+def test_an_opener_a_little_above_is_left_alone():
+    assert np.allclose(_run([0.015, 0.0, 0.0]), 0.0)     # under the 2% floor
+
+
+def test_a_last_race_above_the_earlier_ones_alone_is_a_peak():
+    assert np.allclose(_run([0.0, 0.0, 0.05]), 0.0)
+
+
 def test_same_day_races_are_neither_before_nor_after():
-    # races 0 and 1 on one day, race 2 later: race 1 has no earlier race
-    assert np.allclose(_run([0.0, 0.04, 0.0], days=(30, 30, 10)), 0.0)
+    # races 0 and 1 on one day, race 2 later: neither has an earlier race,
+    # so both are openers -- judged by the best later race alone
+    corr = _run([0.0, 0.04, 0.0], days=(30, 30, 10))
+    assert np.allclose(corr, [0.0, 0.04, 0.0])
+
+
+def test_an_opener_is_judged_by_the_best_later_race_not_the_mean():
+    # a mud race later does not make an honest opener look inflated
+    assert np.allclose(_run([0.02, -0.06, 0.02], days=(60, 30, 10)), 0.0)

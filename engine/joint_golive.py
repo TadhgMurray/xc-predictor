@@ -131,6 +131,17 @@ def xcTogetherSuspect(delta, cell, sport, solved, u_row, cap=None):
 FIELD_CHECK_MIN = int(os.environ.get("XCP_FIELD_CHECK_MIN", "10"))
 FIELD_CHECK_FLOOR = float(os.environ.get("XCP_FIELD_CHECK_FLOOR", "0.01"))
 FIELD_CHECK_CAP = float(os.environ.get("XCP_FIELD_CHECK_CAP", "0.06"))
+# ★ A SEASON OPENER IS JUDGED BY THE LATER RACES ALONE (owner, 2026-10-15:
+#   Wyoming - CSU Dual, Jan 23 2021 at Laramie, 19°F and snow, "Day slow
+#   10.5%" on a +6.0% course -- a dual meet's whole field rated 145-164,
+#   the first race of the COVID season, so no runner had an earlier race and
+#   the two-sided check never looked). A field that rates above its OWN
+#   LATER races in its first race has not peaked -- fields get faster
+#   through a season -- so with no earlier side the field's margin over
+#   each runner's BEST later race decides, at the stricter
+#   FIELD_CHECK_FLOOR_OPENER. The reverse (a last race above the
+#   earlier ones alone) is a championship peak and stays untouched.
+FIELD_CHECK_FLOOR_OPENER = float(os.environ.get("XCP_FIELD_CHECK_FLOOR_OPENER", "0.02"))
 
 
 def fieldCheckOn():
@@ -194,13 +205,33 @@ def fieldCheck(x, athlete, days_ago, race, n_race, mask,
     with np.errstate(divide="ignore", invalid="ignore"):
         d_b = v - (cs[r_start] - cs[a_start]) / n_b
         d_l = v - (cs[a_end] - cs[r_end]) / n_l
+    # ! THE OPENER IS MEASURED AGAINST THE BEST LATER RACE, not their mean:
+    #   one slow race later (mud) pulls a mean under an honest opener. Above
+    #   a runner's own best of the season, in race one, is not form.
+    #   Suffix max within each athlete-season, strictly after this day:
+    #   reversed running max with a per-athlete offset so groups cannot mix.
+    grp = np.cumsum(new_a) - 1
+    span_v = float(np.nanmax(v) - np.nanmin(v)) + 1.0 if n else 1.0
+    # later athletes sit LOWER (offset falls with the group), so a suffix max
+    # over j..end never reaches past this athlete's own rows
+    shifted = v - grp * span_v
+    sufmax = np.maximum.accumulate(shifted[::-1])[::-1]   # max over j..end
+    best_later = np.where(r_end < a_end,
+                          sufmax[np.minimum(r_end, n - 1)] + grp * span_v, np.nan)
+    with np.errstate(invalid="ignore"):
+        d_best = v - best_later
     rc = np.asarray(race)[idx]
     mb = n_b > 0
     ml = n_l > 0
     gap_b, nb = _groupMedian(rc[mb], d_b[mb], n_race)
     gap_l, nl = _groupMedian(rc[ml], d_l[ml], n_race)
+    gap_best, _nbest = _groupMedian(rc[ml], d_best[ml], n_race)
     ok = (nb >= min_field) & (nl >= min_field) & (gap_b > floor) & (gap_l > floor)
     corr[ok] = np.minimum(np.minimum(gap_b[ok], gap_l[ok]), cap)
+    # the opener: no earlier side worth the name, the best later race decides
+    opener = ((nb < min_field) & (nl >= min_field)
+              & (gap_best > max(floor, FIELD_CHECK_FLOOR_OPENER)))
+    corr[opener] = np.minimum(gap_best[opener], cap)
     return corr, gap_b, gap_l, nb, nl
 
 
@@ -493,6 +524,7 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
         rows_hit = int((hit[D.race] & (sport == 0)).sum())
         print(f"[joint/live] field check: {int(hit.sum()):,} XC races whose "
               f"field rated above both its earlier and its later races "
+              f"(or, in an opener, above its later ones) "
               f"(>= {FIELD_CHECK_MIN} runners each, gap > "
               f"{100 * FIELD_CHECK_FLOOR:.0f}%), {rows_hit:,} rows pulled down; "
               f"median {100 * float(np.median(field_corr[hit])) if hit.any() else 0:.2f}%, "
