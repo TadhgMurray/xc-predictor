@@ -680,6 +680,13 @@ function restoreState() {
   syncPerTeam();
   state.pick = saved.pick === "rating" ? "rating" : "predicted";
   syncPick();
+  /* ★ AND THE TOGGLE SAYS SO (owner, 2026-10-15: "it goes as as it ran even
+       though it doesn't show it's on as it ran"). state.when came back from
+       the save, but the buttons kept the template's "this year" lit -- the
+       page ran the field that ran (no squad, no bench) under a label saying
+       otherwise. showWhen sets both, as the shared-link restore does; after
+       the two syncs, so its hiding of the size and pick boxes stands. */
+  showWhen(state.when);
   state.athletes = saved.athletes || [];
 
   resetEdits();
