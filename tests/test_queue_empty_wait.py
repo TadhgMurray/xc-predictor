@@ -109,17 +109,24 @@ def test_shed_stale_puts_old_re_asks_back_and_keeps_this_week_on_postgres():
             (305, 3, True,  "current_date - 40"),  # claimed right now: kept
             (306, 0, True,  "NULL"),               # meet row dated this week: kept
             (307, 0, True,  "NULL"),               # has results now: kept
+            (308, 0, False, "NULL"),               # unstamped, saved meet row
+                                                   # dated long ago: shed
         ]
         for mid, st, rq, d in rows:
             cur.execute(f"""INSERT INTO meet_queue VALUES ({mid}, 'XC', 'anet', {st},
                             {"now() - interval '3 days'" if rq else "NULL"}, {d}, NULL)""")
         cur.execute("INSERT INTO meets VALUES (306, 'anet', "
                     "to_char(current_date - 1, 'YYYY-MM-DD'))")
+        cur.execute("INSERT INTO meets VALUES (308, 'anet', "
+                    "to_char(current_date - 60, 'YYYY-MM-DD'))")
         cur.execute("INSERT INTO results VALUES (307, 'anet')")
-        assert Q.shedStale(cur, "XC") == 2
-        assert Q.shedStale(cur, "XC", write=True) == 2
+        assert Q.dueBreakdown(cur, "XC") == {
+            "re-asked by a pass": 5, "a saved meet, not stamped": 1,
+            "never saved, not stamped (new ids, or re-queued before 10-13)": 1}
+        assert Q.shedStale(cur, "XC") == 3
+        assert Q.shedStale(cur, "XC", write=True) == 3
         cur.execute("SELECT meet_id FROM meet_queue WHERE scraped = 1 ORDER BY 1")
-        assert [r[0] for r in cur.fetchall()] == [301, 302]
+        assert [r[0] for r in cur.fetchall()] == [301, 302, 308]
     finally:
         conn.rollback()
         cur.execute("DROP SCHEMA IF EXISTS queue_empty_test CASCADE")

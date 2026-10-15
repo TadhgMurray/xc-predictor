@@ -87,14 +87,14 @@ SPORTS = ("XC", "TF")
 SOURCES = tuple(FEEDS)
 
 AHEAD = 500                # ids seeded per block
-# ★ ONE WEEK BY DEFAULT, THE DEEP PASS ON A FLAG (owner, 2026-10-15: "it
+# ★ ELEVEN DAYS BY DEFAULT, THE DEEP PASS ON A FLAG (owner, 2026-10-15: "it
 #   should only do the past week and only do more if I pass a flag"). The
 #   re-ask passes reached back 120 days by date and 30,000 ids with no date
 #   at all, and nearly everything they woke came back empty. A normal launch
 #   now re-asks only meets DATED in the last RECENT_DAYS; ANET_DEEP_RECHECK=1
 #   (launcher) / --deep (this script) runs the old sweep: DEEP_RECENT_DAYS by
 #   date, plus the undated and unrecorded id sweeps.
-RECENT_DAYS = 7
+RECENT_DAYS = 11          # owner, 2026-10-15: "can we make it 11?"
 DEEP_RECENT_DAYS = 120     # the owner's "past 3-4 months", on --deep
 # ★ HOW LONG A RE-ASKED EMPTY MEET RESTS (owner, 2026-10-13: "the scraper
 #   keeps doing a ton of 0 results races again each time it restarts").
@@ -605,6 +605,25 @@ def requeue(cur, sport, ids, source="anet", chunk=5000):
 #   last `days` days. A never-asked id (no requeued_at: the forward walk, a
 #   new block) and a claimed one (state 3) are left alone. The next deep
 #   pass (--deep / ANET_DEEP_RECHECK=1) can always queue them again.
+def dueBreakdown(cur, sport, source="anet"):
+    """{label: count} of what is due: re-asks, saved meets, and the rest."""
+    cur.execute("""SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'meet_queue' AND column_name = 'requeued_at'""")
+    stamped = ("q.requeued_at IS NOT NULL" if cur.fetchone() is not None
+               else "false")
+    cur.execute(f"""
+        SELECT count(*) FILTER (WHERE {stamped}),
+               count(*) FILTER (WHERE NOT ({stamped}) AND {_meetExistsSql(source, sport)}),
+               count(*) FILTER (WHERE NOT ({stamped})
+                                  AND NOT {_meetExistsSql(source, sport)})
+        FROM   meet_queue q
+        WHERE  q.source = %s AND q.sport = %s AND q.scraped = 0
+    """, (source, sport))
+    a, b, c = cur.fetchone()
+    return {"re-asked by a pass": a, "a saved meet, not stamped": b,
+            "never saved, not stamped (new ids, or re-queued before 10-13)": c}
+
+
 def shedStale(cur, sport, source="anet", days=RECENT_DAYS, write=False):
     """How many due re-asks are outside the last `days` days; with write,
     sets them back to done (scraped = 1)."""
@@ -627,9 +646,14 @@ def shedStale(cur, sport, source="anet", days=RECENT_DAYS, write=False):
                             {_clause(t['dates_where'], 'd')}
                             AND d.{t['date_col']} >= %(since)s
                             AND d.{t['date_col']} <= %(today)s)"""
+    # ! ASKED BEFORE: stamped by a re-ask pass, OR the meet already has a
+    #   meet row -- only a scrape writes one, so it has been asked. A row
+    #   with neither (requeued before requeued_at existed and never saved,
+    #   or a never-asked id) is left due; --shed-stale prints how many.
     where = f"""
         WHERE  q.source = %(source)s AND q.sport = %(sport)s
-          AND  q.scraped = 0 AND q.requeued_at IS NOT NULL
+          AND  q.scraped = 0
+          AND  (q.requeued_at IS NOT NULL OR {_meetExistsSql(source, sport)})
           AND  NOT EXISTS (SELECT 1 FROM {t['results']} r
                            WHERE r.meet_id = q.meet_id AND r.source = %(source)s)
           {dated}
@@ -922,6 +946,9 @@ def main():
         with getConn() as conn:
             with conn.cursor() as cur:
                 for sp in ([args.sport] if args.sport else SPORTS):
+                    print(f"  {args.source}/{sp} due now:")
+                    for what, k in dueBreakdown(cur, sp, args.source).items():
+                        print(f"    {k:>10,}  {what}")
                     n = shedStale(cur, sp, args.source, days, write=args.write)
                     print(f"  {args.source}/{sp}: {n:,} due re-asks dated outside "
                           f"the last {days} days "
