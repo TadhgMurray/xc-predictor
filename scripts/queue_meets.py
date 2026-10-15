@@ -223,15 +223,62 @@ def ensureRequeuedAt(cur):
                     "requeued_at timestamptz")
 
 
+# ★ AN EMPTY MEET WAITS FOR ITS OWN DATE (owner, 2026-10-15: "the queue has
+#   barely gone down bcs most of the meets are skips ... there must be some
+#   way to tell apart"). The launcher now keeps what an empty meet's own meet
+#   info said -- its date and athletic.net's HasResults
+#   (scrape_results.EMPTY_FACTS) -- on its queue row, and every re-ask pass
+#   reads it:
+#     - a meet dated AFTER TODAY is not asked: it has not been run, and the
+#       daily ask was the bulk of the "skips";
+#     - a meet more than STALE_EMPTY_DAYS past its date that athletic.net
+#       itself says has NO results is asked once a week, not once a day --
+#       most of those never post;
+#     - HasResults true with nothing saved is a real miss and keeps the
+#       daily ask.
+#   A row asked before this existed has no date and is asked as before.
+STALE_EMPTY_DAYS = int(os.environ.get("SEED_STALE_EMPTY_DAYS", "21"))
+STALE_REASK_HOURS = float(os.environ.get("SEED_STALE_REASK_HOURS", "168"))
+
+
+def ensureEmptyColumns(cur):
+    """Add meet_queue.empty_date / empty_has_results if missing (looks
+    first, like ensureRequeuedAt)."""
+    ensureRequeuedAt(cur)
+    for col, typ in (("empty_date", "date"), ("empty_has_results", "boolean")):
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'meet_queue' AND column_name = %s""", (col,))
+        if cur.fetchone() is None:
+            cur.execute(f"ALTER TABLE meet_queue ADD COLUMN IF NOT EXISTS {col} {typ}")
+
+
+def _emptyClause(a="q"):
+    """The SQL for the rule above (needs requeued_at and the two columns)."""
+    return (f"AND NOT ({a}.empty_date IS NOT NULL AND {a}.empty_date > current_date) "
+            f"AND NOT ({a}.empty_date IS NOT NULL "
+            f"AND {a}.empty_date < current_date - {int(STALE_EMPTY_DAYS)} "
+            f"AND {a}.empty_has_results IS NOT TRUE "
+            f"AND {a}.requeued_at IS NOT NULL "
+            f"AND {a}.requeued_at > now() - interval '{float(STALE_REASK_HOURS)} hours')")
+
+
 def _rested(cur, a="q"):
-    """The SQL clause: not re-asked within REASK_HOURS. Empty when the column
-    is not there yet (a dry run against an old schema)."""
-    cur.execute("""SELECT 1 FROM information_schema.columns
-                   WHERE table_name = 'meet_queue' AND column_name = 'requeued_at'""")
-    if cur.fetchone() is None or REASK_HOURS <= 0:
+    """The SQL clause: not re-asked within REASK_HOURS, and not an empty meet
+    waiting for its date (above). Empty when the columns are not there yet
+    (a dry run against an old schema)."""
+    cur.execute("""SELECT column_name FROM information_schema.columns
+                   WHERE table_name = 'meet_queue'
+                     AND column_name IN ('requeued_at', 'empty_date', 'empty_has_results')""")
+    cols = {r[0] for r in cur.fetchall()}
+    if "requeued_at" not in cols:
         return ""
-    return (f"AND ({a}.requeued_at IS NULL OR {a}.requeued_at < "
-            f"now() - interval '{float(REASK_HOURS)} hours')")
+    out = ""
+    if REASK_HOURS > 0:
+        out = (f"AND ({a}.requeued_at IS NULL OR {a}.requeued_at < "
+               f"now() - interval '{float(REASK_HOURS)} hours')")
+    if {"empty_date", "empty_has_results"} <= cols:
+        out += " " + _emptyClause(a)
+    return out
 
 
 def hasDateColumn(cur, sport, source="anet"):

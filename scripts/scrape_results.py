@@ -7,6 +7,7 @@
 # SQLite db. Uses the meet_queue in the db to get ids for the meets.
 
 import asyncio
+import re
 import random
 import sys
 import psycopg2
@@ -1291,6 +1292,24 @@ async def _scrapeMeetTFPerDiv(page, meet_id: int, meet_info: dict,
 #         exists=True, n>=0: meet exists, n results saved (0 is valid —
 #                        an empty meet).
 #         exists=True, n==-1: meet exists, but scraping or saving failed.
+# ★ WHAT AN EMPTY MEET SAID ABOUT ITSELF (owner, 2026-10-15: "most of the
+#   meets are skips ... there must be some way to tell apart"). A meet that
+#   exists with nothing in it is marked done and re-asked by the recent
+#   passes (queue_meets) every day, and it leaves no meets row, so nothing
+#   remembers WHEN it is. The meet info it was fetched with has the date and
+#   athletic.net's own HasResults; this keeps them for the launcher to write
+#   on its queue row (database.recordEmptyMeet), so the passes can wait for
+#   race day instead of asking daily. {(meet_id, sport): (date, has_results)}
+EMPTY_FACTS = {}
+
+
+def _noteEmpty(meet_id, sport, meet_info):
+    raw = str((meet_info or {}).get("MeetDate") or "")[:10]
+    date = raw if re.match(r"^(19|20)\d\d-\d\d-\d\d$", raw) else None
+    hr = (meet_info or {}).get("HasResults")
+    EMPTY_FACTS[(meet_id, sport)] = (date, None if hr is None else bool(hr))
+
+
 async def scrapeMeetBySport(page, meet_id: int, sport: str, 
                             label: str, vpn_rotator) -> tuple:
 
@@ -1356,6 +1375,7 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
             #   divisions EMPTY    -> genuinely no XC results: success, 0, no retry.
             #   divisions NON-EMPTY -> claims results but got none: real miss, retry.
             if not divisions:
+                _noteEmpty(meet_id, "XC", meet_info)
                 return 0, True
             print(f"{label} [!] Meet {meet_id} (XC) claims {len(divisions)} "
                   f"divisions but GetAllResultsData returned no flatEvents — failed")
@@ -1394,6 +1414,8 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
         if n == -1:
             print(f"{label} Meet {meet_id} (TF): failed")
         else:
+            if n == 0:
+                _noteEmpty(meet_id, "TF", meet_info)
             print(f"{label} Meet {meet_id} (TF): saved {n} results")
                   
         return n, True

@@ -1177,6 +1177,14 @@ async def _processMeetResult(n: int, exists: bool, meet_id: int, sport: str,
     # if there are no or some results, prints progress.
     if n >= 0:
         await runDbCall(markScraped, meet_id, sport, status=1)
+        # an empty meet's own date and HasResults, for the re-ask passes
+        # (looked up here, not imported at the top: the tests stub both
+        # modules with the names the launcher has always used)
+        import scrape_results as _sr
+        facts = getattr(_sr, "EMPTY_FACTS", {}).pop((meet_id, sport), None)
+        if n == 0 and facts is not None:
+            import database as _db
+            await runDbCall(_db.recordEmptyMeet, meet_id, sport, *facts)
         processed += 1
         results_saved += n
         consecutive_failures = 0
@@ -1673,10 +1681,13 @@ def _prepareQueue():
       ANET_NO_SEED=1 to drain the queue exactly as it stands.
     """
     from database import getConn
-    from queue_meets import seedAll, dueCounts, failedCounts
+    from queue_meets import seedAll, dueCounts, failedCounts, ensureEmptyColumns
 
     skip = os.environ.get("ANET_NO_SEED", "") not in ("", "0", "false")
     with getConn() as conn:
+        with conn.cursor() as cur:
+            ensureEmptyColumns(cur)
+        conn.commit()
         if RETRY_FAILED:
             print("[queue] ANET_RETRY_FAILED=1 -- failed and stranded meets "
                   "only. Nothing seeded, nothing reset, no forward walk.")

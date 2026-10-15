@@ -2986,6 +2986,32 @@ def markScraped(meet_id: int, sport: str, status: int = 1):
         """, (meet_id, sport, status, "anet"))
         conn.commit()
 
+# recordEmptyMeet
+# Purpose: Keep an empty meet's own date and HasResults on its queue row
+#          (scrape_results.EMPTY_FACTS says why). No-op until the columns
+#          exist -- queue_meets.ensureEmptyColumns adds them at launch, so a
+#          scraper never queues an ALTER behind the others.
+_EMPTY_COLS = {"ok": None}
+
+
+def recordEmptyMeet(meet_id: int, sport: str, date, has_results):
+    with getConn() as conn:
+        cursor = conn.cursor()
+        if _EMPTY_COLS["ok"] is None:
+            cursor.execute("""SELECT count(*) FROM information_schema.columns
+                              WHERE table_name = 'meet_queue'
+                                AND column_name IN ('empty_date', 'empty_has_results')""")
+            _EMPTY_COLS["ok"] = cursor.fetchone()[0] == 2
+        if not _EMPTY_COLS["ok"]:
+            conn.rollback()
+            return
+        executeWithRetry(cursor, """
+            UPDATE meet_queue SET empty_date = %s, empty_has_results = %s
+            WHERE  meet_id = %s AND sport = %s AND source = 'anet'
+        """, (date, has_results, meet_id, sport))
+        conn.commit()
+
+
 # resetInProgress
 # Purpose: Resets any meets stuck in-progress (scraped=3) back to
 #          unscraped (scraped=0).
