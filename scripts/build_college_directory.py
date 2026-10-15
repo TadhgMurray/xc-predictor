@@ -177,6 +177,16 @@ def _pick(cands, strong, weak):
         here = [c for c in cands if c[0] == weak]
         if len(here) == 1:
             return here[0][1]
+    # ★ SEVERAL THAT AGREE ARE NO CHOICE (owner, 2026-10-15: Shadrack
+    #   Kiptoo-Biwott, Oregon SR-4 2008, ranked "#1 in WI"). "Oregon" token-
+    #   matches the University of Oregon, Oregon State, Southern Oregon,
+    #   Western Oregon -- every one in OR -- and this answered None, so
+    #   build_school_identity's directory leg abstained and a college season
+    #   with no anet link fell to the name's most-raced state: Oregon High
+    #   School, Wisconsin. When every candidate gives the same value the
+    #   answer does not depend on which school it is.
+    if all(c[1] == cands[0][1] for c in cands[1:]):
+        return cands[0][1]
     return None
 
 
