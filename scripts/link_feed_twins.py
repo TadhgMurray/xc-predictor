@@ -207,13 +207,53 @@ Member = namedtuple("Member", "pid name genders kind runs")
 Verdict = namedtuple("Verdict", "target movers reason", defaults=((), ""))
 
 
+# ★ ONE LETTER IS A TYPO, NOT ANOTHER RUNNER (owner, 2026-10-15: Allen
+#   Bonnessen, Arkansas, anet 24243215, and tfrrs's "Allen Bonnesen"
+#   1009423894 -- one run on 2026-09-25 at 23:15.90 in both feeds, refused as
+#   "names disagree"). The run is the evidence (same day, same time to the
+#   printed tenth, same school, one partner); the name only has to not
+#   contradict it. Two spellings agree when the same name parts differ in
+#   ONE part by one letter (in, out or changed), that part five letters or
+#   longer -- 'Bonnessen'/'Bonnesen', 'Mcdonald'/'Mcdonnald' -- never a
+#   different first name of four ('Jon'/'Jan', 'Anna'/'Anne').
+NAME_TYPO_MIN = 5
+
+
+def _oneEdit(a, b):
+    """True when a and b differ by exactly one insertion, deletion or
+    substitution."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) > len(b):
+        a, b = b, a
+    i = 0
+    while i < len(a) and a[i] == b[i]:
+        i += 1
+    return a[i + (len(a) == len(b)):] == b[i + 1:]
+
+
+def namesAgree(a, b):
+    """Two normName names that name one person: equal, or one long part
+    one letter apart and every other part equal."""
+    if a == b:
+        return True
+    pa, pb = a.split(), b.split()
+    if len(pa) != len(pb):
+        return False
+    diff = [(x, y) for x, y in zip(pa, pb) if x != y]
+    if len(diff) != 1:
+        return False
+    x, y = diff[0]
+    return min(len(x), len(y)) >= NAME_TYPO_MIN and _oneEdit(x, y)
+
+
 def decideGroup(members):
     """Verdict(target or None, mover pids, reason) for one group of persons
     joined through paired runs. See the header for the rule."""
     if len(members) < 2:
         return Verdict(None, (), "alone")
-    names = {normName(m.name) for m in members if normName(m.name)}
-    if len(names) > 1:
+    names = sorted({normName(m.name) for m in members if normName(m.name)})
+    if any(not namesAgree(names[0], n) for n in names[1:]):
         return Verdict(None, (), "names disagree")
     sexes = set().union(*(set(m.genders or ()) for m in members)) - {None, ""}
     if len(sexes) > 1:

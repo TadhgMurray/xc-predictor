@@ -86,6 +86,27 @@ def test_names_that_disagree_are_refused():
     assert L.decideGroup([t, a]).reason == "names disagree"
 
 
+def test_one_letter_in_a_long_name_part_is_a_typo():
+    # Allen Bonnessen (anet) and Allen Bonnesen (tfrrs), Arkansas 2026-09-25
+    a = M(24243215, "Allen Bonnessen", ["M"], L.CAREER,
+          [R(1, "2026-09-25", 1395.9, "anet")])
+    t = M(1009423894, "Allen Bonnesen", ["M"], L.MINTED,
+          [R(-1, "2026-09-25", 1395.9, "tfrrs")])
+    v = L.decideGroup([a, t])
+    assert v.reason == L.MATCH, v
+    assert v.target == 24243215 and v.movers == (1009423894,)
+
+
+def test_names_agree_only_on_one_letter_in_one_long_part():
+    assert L.namesAgree("allen bonnessen", "allen bonnesen")
+    assert L.namesAgree("sam mcdonald", "sam mcdonnald")
+    assert L.namesAgree("tyler smiht", "tyler smith") is False   # two letters
+    assert not L.namesAgree("jon smith", "jan smith")           # short part
+    assert not L.namesAgree("anna smith", "anne smith")
+    assert not L.namesAgree("allen bonnessen", "alan bonnesen")  # two parts
+    assert not L.namesAgree("allen bonnessen", "allen b bonnessen")
+
+
 def test_sexes_that_disagree_are_refused():
     t = RACHAEL_T
     a = UNKNOWN_A._replace(genders=["M"])
