@@ -146,7 +146,7 @@ def _pg():
 FIXTURE = """
 CREATE TABLE results (result_id bigint, athlete_id bigint, person_id bigint,
   source text, date text, time_seconds real, school text, athlete_name text,
-  team_slug text);
+  team_slug text, grade text);
 CREATE TABLE results_tf (result_id bigint, athlete_id bigint, person_id bigint,
   source text, date text);
 CREATE TABLE athletes (athlete_id bigint, first_name text, last_name text,
@@ -253,12 +253,13 @@ def test_gather_write_undo_on_postgres():
 NAME_FIXTURE = """
 CREATE TABLE results (result_id bigint, athlete_id bigint, person_id bigint,
   source text, date text, time_seconds real, school text, athlete_name text,
-  team_slug text);
+  team_slug text, grade text);
 CREATE TABLE results_tf (result_id bigint, athlete_id bigint, person_id bigint,
   source text, date text);
 CREATE TABLE athletes (athlete_id bigint, first_name text, last_name text,
   gender text, school text, person_id bigint);
 INSERT INTO athletes VALUES
+  (33500004, 'Kai', 'Moss', 'M', 'Oregon High School', 33500004),
   (33048450, 'Emma', 'Chepngetich', 'F', 'Arkansas', 33048450),
   (33500001, 'Sam', 'Lee', 'M', 'Arkansas', 33500001),
   (33500002, 'Sam', 'Lee', 'M', 'Arkansas', 33500002),
@@ -277,7 +278,13 @@ INSERT INTO results VALUES
   -- the same name at another school: no pair
   (-3, NULL, 1009500002, 'tfrrs', '2026-09-18', 1300.0, 'Arkansas', 'Jo Park',
    'AR_college_f_Arkansas'),
-  (4, 33500003, 33500003, 'anet', '2026-10-02', 1290.0, 'Tulsa', NULL, NULL);
+  (4, 33500003, 33500003, 'anet', '2026-10-02', 1290.0, 'Tulsa', NULL, NULL),
+  -- a high school senior of the same name at a same-word school: no pair
+  (-4, NULL, 1009500003, 'tfrrs', '2026-09-18', 1450.0, 'Oregon', 'Kai Moss',
+   'OR_college_m_Oregon');
+INSERT INTO results VALUES
+  (5, 33500004, 33500004, 'anet', '2026-10-02', 990.0, 'Oregon High School',
+   NULL, NULL, '12');
 """
 
 

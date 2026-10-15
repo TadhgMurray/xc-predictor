@@ -434,6 +434,11 @@ def namePairs(cur, since):
         WHERE  r.source = 'anet' AND r.person_id IS NOT NULL AND r.person_id < %(lo)s
           AND  r.date >= %(since)s AND r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
           AND  r.school IS NOT NULL
+          -- ! NOT A HIGH SCHOOL ROW: 'Oregon High School' (WI) and tfrrs's
+          --   'Oregon' share the school word, and a senior there and a
+          --   collegian of one name in one season are two runners. A tfrrs
+          --   person is a collegian; an anet row graded 9-12 is not.
+          AND  COALESCE(btrim(r.grade), '') !~ '^(9|10|11|12)$'
     """, {"lo": MINT_LO, "since": since})
     cur.execute("DELETE FROM fn_a WHERE nm IS NULL OR cardinality(sw) = 0 "
                 "OR nm NOT IN (SELECT nm FROM fn_t)")
