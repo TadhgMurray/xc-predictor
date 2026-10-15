@@ -88,3 +88,40 @@ def test_the_default_pass_is_one_week_and_deep_is_the_old_sweep_on_postgres():
         cur.execute("DROP SCHEMA IF EXISTS queue_empty_test CASCADE")
         conn.commit()
         conn.close()
+
+
+def test_shed_stale_puts_old_re_asks_back_and_keeps_this_week_on_postgres():
+    conn, cur = _pg()
+    try:
+        cur.execute("""
+            CREATE TABLE meet_queue (meet_id bigint, sport text, source text,
+                                     scraped int, PRIMARY KEY (meet_id, sport, source));
+            CREATE TABLE meets (meet_id bigint, source text, meet_date text);
+            CREATE TABLE results (meet_id bigint, source text);
+        """)
+        Q.ensureEmptyColumns(cur)
+        rows = [
+            # id, state, requeued?, empty_date
+            (301, 0, True,  "current_date - 40"),  # old re-ask: shed
+            (302, 0, True,  "NULL"),               # undated re-ask: shed
+            (303, 0, True,  "current_date - 2"),   # this week's: kept
+            (304, 0, False, "NULL"),               # never asked (a new id): kept
+            (305, 3, True,  "current_date - 40"),  # claimed right now: kept
+            (306, 0, True,  "NULL"),               # meet row dated this week: kept
+            (307, 0, True,  "NULL"),               # has results now: kept
+        ]
+        for mid, st, rq, d in rows:
+            cur.execute(f"""INSERT INTO meet_queue VALUES ({mid}, 'XC', 'anet', {st},
+                            {"now() - interval '3 days'" if rq else "NULL"}, {d}, NULL)""")
+        cur.execute("INSERT INTO meets VALUES (306, 'anet', "
+                    "to_char(current_date - 1, 'YYYY-MM-DD'))")
+        cur.execute("INSERT INTO results VALUES (307, 'anet')")
+        assert Q.shedStale(cur, "XC") == 2
+        assert Q.shedStale(cur, "XC", write=True) == 2
+        cur.execute("SELECT meet_id FROM meet_queue WHERE scraped = 1 ORDER BY 1")
+        assert [r[0] for r in cur.fetchall()] == [301, 302]
+    finally:
+        conn.rollback()
+        cur.execute("DROP SCHEMA IF EXISTS queue_empty_test CASCADE")
+        conn.commit()
+        conn.close()

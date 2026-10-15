@@ -595,6 +595,54 @@ def requeue(cur, sport, ids, source="anet", chunk=5000):
     return n
 
 
+# ★ SHED THE BACKLOG THE OLD PASSES QUEUED (owner, 2026-10-15: "the queue has
+#   barely gone down"). The one-week rule stops the 120-day and id sweeps
+#   from queueing more, but what they already set due stays due until a
+#   session asks it once more -- thousands of meets that will come back
+#   empty. This puts a due re-ask back to done when nothing says it is this
+#   week's: re-queued by a pass (requeued_at set), still no results, and
+#   neither its meet row's date nor its own kept date (empty_date) in the
+#   last `days` days. A never-asked id (no requeued_at: the forward walk, a
+#   new block) and a claimed one (state 3) are left alone. The next deep
+#   pass (--deep / ANET_DEEP_RECHECK=1) can always queue them again.
+def shedStale(cur, sport, source="anet", days=RECENT_DAYS, write=False):
+    """How many due re-asks are outside the last `days` days; with write,
+    sets them back to done (scraped = 1)."""
+    t = _t(source, sport)
+    since = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+    cur.execute("""SELECT column_name FROM information_schema.columns
+                   WHERE table_name = 'meet_queue'
+                     AND column_name IN ('requeued_at', 'empty_date')""")
+    cols = {r[0] for r in cur.fetchall()}
+    if "requeued_at" not in cols:
+        return 0
+    kept = ("AND NOT (q.empty_date IS NOT NULL "
+            "AND q.empty_date BETWEEN %(since)s AND current_date)"
+            if "empty_date" in cols else "")
+    dated = ""
+    if hasDateColumn(cur, sport, source):
+        dated = f"""
+          AND NOT EXISTS (SELECT 1 FROM {t['dates']} d
+                          WHERE d.meet_id = q.meet_id
+                            {_clause(t['dates_where'], 'd')}
+                            AND d.{t['date_col']} >= %(since)s
+                            AND d.{t['date_col']} <= %(today)s)"""
+    where = f"""
+        WHERE  q.source = %(source)s AND q.sport = %(sport)s
+          AND  q.scraped = 0 AND q.requeued_at IS NOT NULL
+          AND  NOT EXISTS (SELECT 1 FROM {t['results']} r
+                           WHERE r.meet_id = q.meet_id AND r.source = %(source)s)
+          {dated}
+          {kept}"""
+    params = {"source": source, "sport": sport, "since": since,
+              "today": datetime.date.today().isoformat()}
+    if write:
+        cur.execute(f"UPDATE meet_queue q SET scraped = 1 {where}", params)
+        return cur.rowcount
+    cur.execute(f"SELECT count(*) FROM meet_queue q {where}", params)
+    return cur.fetchone()[0]
+
+
 # ------------------------------------------------------------------ the plan
 
 def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
@@ -864,7 +912,28 @@ def main():
     ap.add_argument("--new-only", action="store_true")
     ap.add_argument("--recent-only", action="store_true")
     ap.add_argument("--sport", choices=SPORTS)
+    ap.add_argument("--shed-stale", action="store_true",
+                    help="put due re-asks dated outside the last --recent-days "
+                         f"(default {RECENT_DAYS}) back to done; with --write")
     args = ap.parse_args()
+
+    if args.shed_stale:
+        days = args.recent_days or RECENT_DAYS
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                for sp in ([args.sport] if args.sport else SPORTS):
+                    n = shedStale(cur, sp, args.source, days, write=args.write)
+                    print(f"  {args.source}/{sp}: {n:,} due re-asks dated outside "
+                          f"the last {days} days "
+                          + ("set back to done" if args.write else "(dry run)"))
+            if args.write:
+                conn.commit()
+                for sp, n in sorted(dueCounts(conn, args.source).items()):
+                    print(f"  {args.source} queue now due: {sp} {n:,}")
+            else:
+                conn.rollback()
+                print("\n  DRY RUN -- pass --write to shed them.")
+        return
 
     # ★ CREATE DECLARED-BUT-MISSING COLUMNS BEFORE QUERYING THEM.
     ensureCoreColumns(verbose=True)
