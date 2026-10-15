@@ -255,9 +255,10 @@ summarise() {
 #   XCP_LINK_TFRRS=0 turns it off; every stamp is logged in person_link_log
 #   and `scripts/link_tfrrs_rows.py --undo fanout|freshman|mint` reverses it.
 # ★ 04a2_link_teamless TOO, for the same reason: it moves ids (2026-09-29).
+# ★ 04a2b_feed_twins TOO: it moves ids (2026-10-15).
 # ★ 04a3_pins TOO: it keeps the owner's detaches where he put them (2026-10-10).
 # ★ 00_integrity TOO: a damaged page is damaged whichever step reads it first.
-_ALWAYS="00_integrity 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a4_unsplit 04a3_pins 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
+_ALWAYS="00_integrity 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a2b_feed_twins 04a4_unsplit 04a3_pins 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
 step() {
   name="$1"; shift
@@ -569,6 +570,19 @@ step 04a_link_tfrrs   "$PY" -u scripts/link_tfrrs_rows.py --apply
 #   XCP_LINK_TEAMLESS=0 turns it off; every move is in person_link_log rule
 #   'teamless'; `scripts/link_teamless.py --undo <id>|all` reverses it.
 step 04a2_link_teamless "$PY" -u scripts/link_teamless.py --apply
+# ★ ONE RUNNER IN BOTH FEEDS IS ONE PERSON (owner, 2026-10-15: "do those
+#   two" -- Arkansas's Allen Bonnessen/Bonnesen, Emma Chepngetich and
+#   Makenna Herbst, each an anet person beside a tfrrs person 04a minted).
+#   A tfrrs person and an anet person join on a run both feeds carried (same
+#   day, same time to the printed tenth, same school, one partner) or, for a
+#   minted tfrrs person with no shared run, the same name, school and season
+#   with exactly one candidate each way; names, sexes, a second time on one
+#   day and two careers all refuse. AFTER 04a/04a2 (the persons it joins
+#   exist), BEFORE grade_sanity, twins and the pack. Always: it moves ids.
+#   XCP_LINK_FEED_TWINS=0 turns it off; every move is in person_link_log
+#   rule 'feed_twin'; `scripts/link_feed_twins.py --undo <id>|all` reverses.
+[ "${XCP_LINK_FEED_TWINS:-1}" = "0" ] || \
+  step 04a2b_feed_twins "$PY" -u scripts/link_feed_twins.py --write
 # ★ THE OWNER'S DETACHES, AFTER EVERY LINKER (2026-10-10). A result an
 #   athlete reported "not mine" and the owner approved (racecast/fixes.py)
 #   sits on a fresh person (result_detach, scripts/person_pins.py). The

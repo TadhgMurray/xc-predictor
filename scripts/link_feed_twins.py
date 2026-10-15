@@ -102,8 +102,9 @@ because athletic.net and tfrrs each carried her races, becomes one person.
   when every profile is blank). --undo X puts X back and VETOES it
   (feed_twin_veto); --undo all reverses every merge.
 
-! RUN BY HAND: not a pipeline step until the owner says so. Read-only
-  without --write / --undo.
+! A PIPELINE STEP SINCE 2026-10-15 (owner: "do those two"): 04a1b, after
+  04a mints and before grade_sanity reads who a row belongs to;
+  XCP_LINK_FEED_TWINS=0 turns it off. Read-only without --write / --undo.
 """
 import argparse
 import datetime
@@ -376,6 +377,83 @@ def pairRows(cur, since, persons=None):
     return cur.fetchall()
 
 
+# ★ THE SAME NAME, SCHOOL AND SEASON, WHEN NO RUN IS SHARED (owner,
+#   2026-10-15: Emma Chepngetich and Makenna Herbst, Arkansas -- a tfrrs-only
+#   minted person and an anet person each, "Fr" and "FR-1", no race both
+#   feeds carried, so pairRows found nothing). A MINTED person (every row
+#   tfrrs, an id 04a made up) and an anet person pair when, in one academic
+#   year: the normalised names are equal, the school words of a row of each
+#   sit one inside the other (the run rule's 2), and each has exactly ONE
+#   such partner -- two same-named athletes at one school pair nobody. The
+#   pair then goes through decideGroup like a run pair: names, sexes, a
+#   second time on one day, two careers -- every refusal stands.
+# ! ONLY A MINTED tfrrs SIDE. A minted person exists because 04a found no
+#   one; a career on both sides is a question for a human, as before.
+_NAME_SQL = """lower(btrim(regexp_replace(regexp_replace(
+    CASE WHEN strpos({c}, ',') > 0 THEN split_part({c}, ',', 2) || ' ' || split_part({c}, ',', 1)
+         ELSE {c} END, '-', ' ', 'g'), '[^A-Za-z ]+', '', 'g')))"""
+
+
+def _normNameSql(col):
+    n = _NAME_SQL.format(c=col)
+    return f"NULLIF(regexp_replace({n}, ' +', ' ', 'g'), '')"
+
+
+def namePairs(cur, since):
+    """[(None, minted pid, None, anet pid, 'name', None, None)]: one-partner
+    same-name, same-school, same-season pairs (see above). Temp tables only."""
+    from season_year import seasonYearSqlInt
+    acad = seasonYearSqlInt(None, "r.date")
+    for t in ("fn_t", "fn_a"):
+        cur.execute(f"DROP TABLE IF EXISTS {t}")
+    cur.execute(f"""
+        CREATE TEMP TABLE fn_t AS
+        SELECT DISTINCT r.person_id, {acad} AS ay,
+               {_normNameSql('r.athlete_name')} AS nm,
+               {_schoolWordsSql('r.school')} AS sw
+        FROM   results r
+        WHERE  r.source = 'tfrrs' AND r.person_id >= %(lo)s AND r.person_id < %(hi)s
+          AND  r.date >= %(since)s AND r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+          AND  NOT EXISTS (SELECT 1 FROM results x WHERE x.person_id = r.person_id
+                             AND x.source <> 'tfrrs')
+          AND  NOT EXISTS (SELECT 1 FROM results_tf x WHERE x.person_id = r.person_id
+                             AND x.source <> 'tfrrs')
+    """, {"lo": MINT_LO, "hi": MINT_HI, "since": since})
+    cur.execute("DELETE FROM fn_t WHERE nm IS NULL OR position(' ' in nm) = 0 "
+                "OR cardinality(sw) = 0")
+    cur.execute("CREATE INDEX ON fn_t (nm, ay)")
+    cur.execute("ANALYZE fn_t")
+    cur.execute(f"""
+        CREATE TEMP TABLE fn_a AS
+        SELECT DISTINCT r.person_id, {acad} AS ay,
+               COALESCE({_normNameSql("concat_ws(' ', a.first_name, a.last_name)")},
+                        {_normNameSql('r.athlete_name')}) AS nm,
+               {_schoolWordsSql('r.school')} AS sw
+        FROM   results r
+        LEFT   JOIN athletes a ON a.athlete_id = r.athlete_id
+        WHERE  r.source = 'anet' AND r.person_id IS NOT NULL AND r.person_id < %(lo)s
+          AND  r.date >= %(since)s AND r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+          AND  r.school IS NOT NULL
+    """, {"lo": MINT_LO, "since": since})
+    cur.execute("DELETE FROM fn_a WHERE nm IS NULL OR cardinality(sw) = 0 "
+                "OR nm NOT IN (SELECT nm FROM fn_t)")
+    cur.execute("CREATE INDEX ON fn_a (nm, ay)")
+    cur.execute("ANALYZE fn_a")
+    cur.execute("""
+        WITH c AS (
+            SELECT DISTINCT t.person_id AS t_pid, a.person_id AS a_pid
+            FROM   fn_t t JOIN fn_a a ON a.nm = t.nm AND a.ay = t.ay
+            WHERE  t.sw <@ a.sw OR a.sw <@ t.sw)
+        SELECT t_pid, a_pid FROM (
+            SELECT c.*, count(*) OVER (PARTITION BY t_pid) AS nt,
+                        count(*) OVER (PARTITION BY a_pid) AS na
+            FROM c) x
+        WHERE nt = 1 AND na = 1
+        ORDER BY t_pid
+    """)
+    return [(None, t, None, a, "name", None, None) for t, a in cur.fetchall()]
+
+
 def members(cur, pids):
     """{pid: Member} with name, sexes, kind and every cross country run."""
     from psycopg2.extras import execute_values
@@ -434,15 +512,18 @@ def members(cur, pids):
             for p, f in facts.items()}
 
 
-def gather(cur, since, person=None):
+def gather(cur, since, person=None, by_name=True):
     """({group: [Member]}, {group: [pair rows]}); the caller rolls back."""
     veto = set()
     if _hasTable(cur, "feed_twin_veto"):
         cur.execute("SELECT old_id FROM feed_twin_veto")
         veto = {r[0] for r in cur.fetchall()}
+    names = namePairs(cur, since) if by_name else []
 
     def grouped(persons):
         ps = [p for p in pairRows(cur, since, persons)
+              + [n for n in names if persons is None
+                 or n[1] in persons or n[3] in persons]
               if p[1] not in veto and p[3] not in veto]
         return ps, groupsOf([(p[1], p[3]) for p in ps])
 
@@ -645,6 +726,10 @@ def report(groups, pairs, verdicts, show):
                   f"{'/'.join(sorted(m.genders)) or '?'} {m.kind} "
                   f"{len(m.runs)} XC rows  {tag}")
         for t_rid, t_pid, a_rid, a_pid, d, t_ts, a_ts in pairs[i][:6]:
+            if t_rid is None:
+                print(f"      tfrrs ({t_pid}) = anet ({a_pid}): same name, "
+                      f"school and season, no shared run")
+                continue
             print(f"      {d}  tfrrs {t_rid} ({t_pid}) {_clock(t_ts)}  =  "
                   f"anet {a_rid} ({a_pid}) {_clock(a_ts)}")
 
@@ -658,6 +743,8 @@ def main():
     ap.add_argument("--show", type=int, default=40)
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--undo", metavar="ID|all")
+    ap.add_argument("--no-names", action="store_true",
+                    help="run pairs only: skip the same name/school/season pass")
     a = ap.parse_args()
     from database import getConn
     with getConn() as conn:
@@ -667,7 +754,7 @@ def main():
         since = seasonStart(a.seasons)
         print(f"[feed-twin] cross country rows since {since}", flush=True)
         with conn.cursor() as cur:
-            groups, pairs = gather(cur, since, a.person)
+            groups, pairs = gather(cur, since, a.person, by_name=not a.no_names)
         conn.rollback()                          # temp tables only
         verdicts = judge(groups)
         report(groups, pairs, verdicts, a.show)

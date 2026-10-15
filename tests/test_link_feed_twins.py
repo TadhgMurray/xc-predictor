@@ -248,3 +248,59 @@ def test_gather_write_undo_on_postgres():
         cur.execute("DROP SCHEMA IF EXISTS feed_twin_test CASCADE")
         conn.commit()
         conn.close()
+
+
+NAME_FIXTURE = """
+CREATE TABLE results (result_id bigint, athlete_id bigint, person_id bigint,
+  source text, date text, time_seconds real, school text, athlete_name text,
+  team_slug text);
+CREATE TABLE results_tf (result_id bigint, athlete_id bigint, person_id bigint,
+  source text, date text);
+CREATE TABLE athletes (athlete_id bigint, first_name text, last_name text,
+  gender text, school text, person_id bigint);
+INSERT INTO athletes VALUES
+  (33048450, 'Emma', 'Chepngetich', 'F', 'Arkansas', 33048450),
+  (33500001, 'Sam', 'Lee', 'M', 'Arkansas', 33500001),
+  (33500002, 'Sam', 'Lee', 'M', 'Arkansas', 33500002),
+  (33500003, 'Jo', 'Park', 'F', 'Tulsa', 33500003);
+INSERT INTO results VALUES
+  -- Emma: tfrrs-only minted person and an anet profile, no race in common
+  (-1, NULL, 1009435739, 'tfrrs', '2026-09-18', 1200.0, 'Arkansas',
+   'Chepngetich, Emma', 'AR_college_f_Arkansas'),
+  (1, 33048450, 33048450, 'anet', '2026-10-02', 1190.0,
+   'University of Arkansas', NULL, NULL),
+  -- two anet Sam Lees at one school: the minted Sam Lee pairs nobody
+  (-2, NULL, 1009500001, 'tfrrs', '2026-09-18', 1000.0, 'Arkansas', 'Sam Lee',
+   'AR_college_m_Arkansas'),
+  (2, 33500001, 33500001, 'anet', '2026-10-02', 990.0, 'Arkansas', NULL, NULL),
+  (3, 33500002, 33500002, 'anet', '2026-10-02', 1010.0, 'Arkansas', NULL, NULL),
+  -- the same name at another school: no pair
+  (-3, NULL, 1009500002, 'tfrrs', '2026-09-18', 1300.0, 'Arkansas', 'Jo Park',
+   'AR_college_f_Arkansas'),
+  (4, 33500003, 33500003, 'anet', '2026-10-02', 1290.0, 'Tulsa', NULL, NULL);
+"""
+
+
+def test_same_name_school_and_season_without_a_shared_run_on_postgres():
+    conn = _pg()
+    cur = conn.cursor()
+    try:
+        cur.execute(NAME_FIXTURE)
+        conn.commit()
+        groups, pairs = L.gather(cur, "2026-08-01")
+        conn.rollback()
+        verdicts = L.judge(groups)
+        by = {tuple(m.pid for m in groups[i]): v for i, v in verdicts.items()}
+        assert set(by) == {(33048450, 1009435739)}, by
+        v = by[(33048450, 1009435739)]
+        assert v.reason == L.MATCH, v
+        # off: run pairs only, and there are none
+        g2, _p2 = L.gather(cur, "2026-08-01", by_name=False)
+        conn.rollback()
+        assert g2 == {}
+    finally:
+        conn.rollback()
+        cur = conn.cursor()
+        cur.execute("DROP SCHEMA IF EXISTS feed_twin_test CASCADE")
+        conn.commit()
+        conn.close()
