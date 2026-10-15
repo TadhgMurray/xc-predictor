@@ -132,3 +132,39 @@ def test_shed_stale_puts_old_re_asks_back_and_keeps_this_week_on_postgres():
         cur.execute("DROP SCHEMA IF EXISTS queue_empty_test CASCADE")
         conn.commit()
         conn.close()
+
+
+def test_shed_repaired_drops_name_repairs_with_nothing_left_on_postgres():
+    conn, cur = _pg()
+    try:
+        cur.execute("""
+            CREATE TABLE meet_queue (meet_id bigint, sport text, source text,
+                                     scraped int, PRIMARY KEY (meet_id, sport, source));
+            CREATE TABLE results (meet_id bigint, source text, person_id bigint,
+                                  athlete_id bigint, athlete_name text);
+            CREATE TABLE results_tf (meet_id bigint, source text, person_id bigint,
+                                     athlete_id bigint, athlete_name text, is_relay int);
+            CREATE TABLE athletes (athlete_id bigint, person_id bigint,
+                                   first_name text, last_name text);
+            INSERT INTO athletes VALUES (1, 1, 'Ann', 'Lee'), (2, 2, '', '');
+        """)
+        Q.ensureEmptyColumns(cur)
+        for mid in (401, 402, 403, 404):
+            cur.execute(f"INSERT INTO meet_queue VALUES ({mid}, 'TF', 'anet', 0, NULL, NULL, NULL)")
+        cur.execute("UPDATE meet_queue SET requeued_at = now() WHERE meet_id = 404")
+        cur.execute("""INSERT INTO results_tf VALUES
+            (401, 'anet', 1, 1, NULL, 0),      -- every row named: shed
+            (402, 'anet', 2, 2, NULL, 0),      -- a blank athlete, no own name: kept
+            (403, 'anet', 2, 2, 'Bo Diaz', 0), -- named on the row itself: shed
+            (403, 'anet', NULL, NULL, NULL, 1),-- a relay never counts
+            (404, 'anet', 1, 1, NULL, 0)       -- a re-ask pass's row: not this rule
+        """)
+        assert Q.shedRepaired(cur, "TF") == 2
+        assert Q.shedRepaired(cur, "TF", write=True) == 2
+        cur.execute("SELECT meet_id FROM meet_queue WHERE scraped = 1 ORDER BY 1")
+        assert [r[0] for r in cur.fetchall()] == [401, 403]
+    finally:
+        conn.rollback()
+        cur.execute("DROP SCHEMA IF EXISTS queue_empty_test CASCADE")
+        conn.commit()
+        conn.close()

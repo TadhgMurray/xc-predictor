@@ -605,6 +605,70 @@ def requeue(cur, sport, ids, source="anet", chunk=5000):
 #   last `days` days. A never-asked id (no requeued_at: the forward walk, a
 #   new block) and a claimed one (state 3) are left alone. The next deep
 #   pass (--deep / ANET_DEEP_RECHECK=1) can always queue them again.
+# ★ A NAME REPAIR THAT HAS NOTHING LEFT TO REPAIR (owner, 2026-10-15: "we
+#   gota be able to shed more"; 54,672 TF and 7,903 XC due rows were saved
+#   meets with results). requeue_blank_athletes.py set those due so a
+#   re-scrape fills nameless results in -- by a plain UPDATE, no stamp -- and
+#   a name is filled across meets (one athletes row per runner), so many of
+#   them have no nameless row left. Its own test, here per due meet: a result
+#   with no named athletes row for COALESCE(person_id, athlete_id) and no
+#   name of its own; track relays never count. A due meet WITH results, not
+#   stamped by a re-ask pass, and no nameless row left goes back to done.
+_NAMELESS = {
+    "XC": "",
+    "TF": "AND COALESCE(r.is_relay, 0) = 0",
+}
+
+
+def shedRepaired(cur, sport, source="anet", write=False):
+    """How many due name-repair re-scrapes have nothing left to repair;
+    with write, sets them back to done (scraped = 1)."""
+    if source != "anet":
+        return 0
+    t = _t(source, sport)
+    cur.execute("""SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'meet_queue' AND column_name = 'requeued_at'""")
+    unstamped = "AND q.requeued_at IS NULL" if cur.fetchone() is not None else ""
+    cur.execute("DROP TABLE IF EXISTS qm_repair")
+    cur.execute(f"""
+        CREATE TEMP TABLE qm_repair AS
+        SELECT q.meet_id FROM meet_queue q
+        WHERE  q.source = %(source)s AND q.sport = %(sport)s AND q.scraped = 0
+          {unstamped}
+          AND  EXISTS (SELECT 1 FROM {t['results']} r
+                       WHERE r.meet_id = q.meet_id AND r.source = %(source)s)
+    """, {"source": source, "sport": sport})
+    cur.execute("CREATE INDEX ON qm_repair (meet_id)")
+    cur.execute(f"""
+        DELETE FROM qm_repair m
+        WHERE EXISTS (
+            SELECT 1 FROM {t['results']} r
+            WHERE  r.meet_id = m.meet_id AND r.source = %(source)s
+              {_NAMELESS[sport]}
+              AND  NULLIF(btrim(r.athlete_name), '') IS NULL
+              -- two lookups, one per index (an OR across them scans)
+              AND  NOT EXISTS (
+                     SELECT 1 FROM athletes a
+                     WHERE  a.person_id = COALESCE(r.person_id, r.athlete_id)
+                       AND  NULLIF(btrim(concat_ws(' ', a.first_name, a.last_name)), '')
+                            IS NOT NULL)
+              AND  NOT EXISTS (
+                     SELECT 1 FROM athletes a
+                     WHERE  a.athlete_id = COALESCE(r.person_id, r.athlete_id)
+                       AND  NULLIF(btrim(concat_ws(' ', a.first_name, a.last_name)), '')
+                            IS NOT NULL))
+    """, {"source": source})
+    cur.execute("SELECT count(*) FROM qm_repair")
+    n = cur.fetchone()[0]
+    if write and n:
+        cur.execute("""UPDATE meet_queue q SET scraped = 1 FROM qm_repair m
+                       WHERE q.meet_id = m.meet_id AND q.source = %s
+                         AND q.sport = %s AND q.scraped = 0""", (source, sport))
+        n = cur.rowcount
+    cur.execute("DROP TABLE qm_repair")
+    return n
+
+
 def dueBreakdown(cur, sport, source="anet"):
     """{label: count} of what is due: re-asks, saved meets, and the rest."""
     cur.execute("""SELECT 1 FROM information_schema.columns
@@ -953,6 +1017,11 @@ def main():
                     print(f"  {args.source}/{sp}: {n:,} due re-asks dated outside "
                           f"the last {days} days "
                           + ("set back to done" if args.write else "(dry run)"))
+                    k = shedRepaired(cur, sp, args.source, write=args.write)
+                    print(f"  {args.source}/{sp}: {k:,} due name repairs with no "
+                          f"nameless result left "
+                          + ("set back to done" if args.write else "(dry run)"),
+                          flush=True)
             if args.write:
                 conn.commit()
                 for sp, n in sorted(dueCounts(conn, args.source).items()):
