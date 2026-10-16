@@ -109,6 +109,10 @@
   });
   w.addEventListener("unhandledrejection", function (ev) {
     var r = ev && ev.reason;
+    /* an extension's rejection is not ours: its stack lives in the
+       extension (chrome-extension://, moz-extension://, safari-web-extension://) */
+    var stack = r && r.stack ? String(r.stack) : "";
+    if (/-extension:\/\//.test(stack)) return;
     var msg = r && r.message ? r.message : String(r);
     reportError("Unhandled rejection: " + msg, "(promise)", 0);
   });

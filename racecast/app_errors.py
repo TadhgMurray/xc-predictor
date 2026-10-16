@@ -137,6 +137,21 @@ def jsFingerprint(message, script, line):
 
 _SCRIPT = re.compile(r"^/static/[A-Za-z0-9_.-]+\.js$")
 
+# ★ NOT OURS, EVEN WHEN IT ARRIVES AS "(promise)" (owner, 2026-10-16: three
+#   groups of "Zotero Connector: Failed to send message ... to background
+#   page", and Safari's "Load failed" on /compare). An unhandled rejection
+#   carries no script, so the same-origin test never sees it: a browser
+#   extension's rejection, and a fetch the browser abandoned (the reader
+#   left the page, the connection dropped), both read as the site's. usage.js
+#   now drops an extension's by its stack; this catches the rest, and every
+#   reader still running an old cached usage.js.
+_NOT_OURS = re.compile(
+    r"(-extension://|zotero connector|background page|"
+    r"^unhandled rejection: (load failed|failed to fetch|"
+    r"networkerror when attempting to fetch resource\.?|"
+    r"the network connection was lost\.?|cancelled|aborted)$)",
+    re.I)
+
 
 def parseJsError(payload):
     """A k="x" beacon -> (message, script, line) or None. usage.js sends
@@ -154,6 +169,8 @@ def parseJsError(payload):
     except (TypeError, ValueError):
         line = 0
     if not msg or msg.lower().startswith("script error"):
+        return None
+    if _NOT_OURS.search(msg):
         return None
     if script not in ("(inline)", "(promise)") and not _SCRIPT.match(script):
         return None

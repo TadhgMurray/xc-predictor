@@ -422,3 +422,19 @@ def test_a_slow_request_carries_its_query_string():
                         query="board=ability&pool=college_m&sport=both")
     g = next(iter(buf._g.values()))
     assert "query: board=ability&pool=college_m&sport=both" in g["detail"]
+
+
+def test_extension_and_abandoned_fetch_rejections_are_not_ours():
+    # owner, 2026-10-16: Zotero Connector's rejections and Safari's
+    # "Load failed" were three open groups
+    def x(m):
+        return E.parseJsError({"k": "x", "x": {"m": m, "f": "(promise)", "l": 0}})
+    assert x("Unhandled rejection: Zotero Connector: Failed to send message "
+             "i18n.getStrings to background page. It may be dead.") is None
+    assert x("Unhandled rejection: Load failed") is None
+    assert x("Unhandled rejection: Failed to fetch") is None
+    assert x("Unhandled rejection: NetworkError when attempting to fetch resource.") is None
+    assert x("Unhandled rejection: TypeError at chrome-extension://abc/x.js") is None
+    # ours still counts
+    got = x("Unhandled rejection: TypeError: rows.map is not a function")
+    assert got is not None and got[1] == "(promise)"
