@@ -33,7 +33,6 @@ p  { color: rgb(82, 82, 82); }
 
 .star { color: #b8860b; margin-left: 4px; }
 .star--rating { color: #6b3fa0; }
-.flag--csr { background: #1f6f8b; }
 .flag--rsr { background: #8b3f6b; }
 /* warn — board-eligibility notes ("Unranked"). Amber: it is a caution about
    where the numbers appear, not about the numbers, so it must not read as
@@ -1674,7 +1673,6 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .flag--sr  { --tip: #4b7a34; }
 .flag--cpr { --tip: #2e53e6; }
 .flag--rpr { --tip: #6b3fa0; }
-.flag--csr { --tip: #1f6f8b; }
 .flag--rsr { --tip: #8b3f6b; }
 .flag--warn { --tip: #a05a00; }
 .flag--out { --tip: #4b5563; }

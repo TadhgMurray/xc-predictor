@@ -2205,7 +2205,6 @@ def athlete(person_id):
     rating_of   = lambda r: r["speed_rating"]
     faster      = lambda new, best: new < best
     higher      = lambda new, best: new > best
-    by_season_course = lambda r: (r["season_label"], r["sport"], r["meet"], r["event"])
     by_season        = lambda r: (r["season_label"], r["sport"])
 
     # 3. compute the record sets
@@ -2213,7 +2212,6 @@ def athlete(person_id):
     sr_ids        = flag_records(races, by_season_d, time_of,   faster)
     course_pr_ids = flag_records(races, by_course,   time_of,   faster)
     rating_pr_ids = flag_records(races, career_wide, rating_of, higher)
-    course_sr_ids = flag_records(races, by_season_course, time_of,   faster)
     rating_sr_ids = flag_records(races, by_season,        rating_of, higher)
     # current record holders (the stars)
     star_pr_ids     = find_current_records(races, by_distance, time_of,   faster)
@@ -2227,7 +2225,6 @@ def athlete(person_id):
         race["is_sr"]        = rid in sr_ids
         race["is_course_pr"] = rid in course_pr_ids
         race["is_rating_pr"] = rid in rating_pr_ids
-        race["is_course_sr"] = rid in course_sr_ids
         race["is_rating_sr"] = rid in rating_sr_ids
         race["is_star_pr"]     = rid in star_pr_ids
         race["is_star_course"] = rid in star_course_ids
@@ -2277,7 +2274,7 @@ def athlete(person_id):
                 race["rank_outlier"] = side
                 if side != "slow":
                     for k in ("is_pr", "is_sr", "is_course_pr", "is_rating_pr",
-                              "is_course_sr", "is_rating_sr", "is_star_pr",
+                              "is_rating_sr", "is_star_pr",
                               "is_star_course", "is_star_rating"):
                         race[k] = False
     except Exception as exc:                         # noqa: BLE001

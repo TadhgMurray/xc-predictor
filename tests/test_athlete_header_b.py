@@ -266,13 +266,15 @@ def _race(**kw):
     return r
 
 
-def test_all_six_record_badges_and_the_legend():
-    # owner, 2026-10-11: "what happened to all the other flags?"
+def test_the_record_badges_and_the_legend():
+    # owner, 2026-10-11: "what happened to all the other flags?"; and
+    # 2026-10-16: "remove course season records"
     out = _season_block(_race(is_pr=True, is_sr=True, is_course_pr=True,
                               is_rating_pr=True, is_rating_sr=True, is_course_sr=True))
     assert "<th>Records</th>" in out and "<th>Course</th>" in out
-    for css in ("flag--rpr", "flag--rsr", "flag--csr"):
+    for css in ("flag--pr", "flag--sr", "flag--cpr", "flag--rpr", "flag--rsr"):
         assert css in out
+    assert "flag--csr" not in out and "CSR" not in out
     # the legend: once per tab under the last season, not under every one
     assert "flag-legend" not in out
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

@@ -45,7 +45,7 @@
 {# ===================================================================== #}
 {#  FLAG DICTIONARY -- the single source of every flag's words.          #}
 {#                                                                       #}
-{#  TITLES SPELL OUT THE ABBREVIATION -- CSR is COURSE SEASON RECORD, and #}
+{#  TITLES SPELL OUT THE ABBREVIATION -- RSR is RATING SEASON RECORD, and #}
 {#  the tooltip says exactly that. A title that paraphrases instead of     #}
 {#  expanding ("Course season best") leaves the reader still guessing what #}
 {#  the letters stand for, which is the whole reason they hovered.         #}
@@ -85,13 +85,6 @@
     'title_current': 'Season Record',
     'blurb': 'Their fastest time at this distance in this season.',
     'blurb_current': 'Their fastest time at this distance in this season.'
-  },
-  'csr': {
-    'code': 'CSR', 'css': 'csr',
-    'title': 'Course Season Record',
-    'title_current': 'Course Season Record',
-    'blurb': 'Their fastest run on this course in this season.',
-    'blurb_current': 'Their fastest run on this course in this season.'
   },
   'rsr': {
     'code': 'RSR', 'css': 'rsr',
@@ -296,7 +289,8 @@
                         {% if race.is_course_pr and race.sport == 'XC' %}{{ flag('cpr', race.is_star_course) }}{% endif %}
                         {% if race.is_rating_pr %}{{ flag('rpr', race.is_star_rating) }}{% endif %}
                         {% if race.is_sr %}{{ flag('sr') }}{% endif %}
-                        {% if race.is_course_sr and race.sport == 'XC' %}{{ flag('csr') }}{% endif %}
+                        {# ! NO COURSE SEASON RECORD (owner, 2026-10-16: "remove course
+                           season records") #}
                         {% if race.is_rating_sr %}{{ flag('rsr') }}{% endif %}
                         {% if race.rank_outlier == 'slow' %}<span class="flag flag--out" tabindex="0" data-title="Not counted" data-blurb="Far slower than this athlete's neighbouring races -- a jog, a race run easy, a bad day. It stays here with its rating, but counts toward no season number, ranking or prediction." aria-label="Not counted: far off this athlete's neighbouring races">not counted</span>{% elif race.rank_outlier %}<span class="flag flag--out" tabindex="0" data-title="Not ranked" data-blurb="Far faster than this athlete's neighbouring races -- usually a wrong distance, a wrong time, or two people's results under one name. It keeps its rating here but stays off the rankings and out of predictions until it is checked." aria-label="Not ranked: far faster than this athlete's neighbouring races">not ranked</span>{% endif %}
                         {% if race.season_outlier %}<span class="flag flag--out" tabindex="0" data-title="Left out of season averages" data-blurb="More than twenty points under this season's median: not a run at the right distance on the right day, so it does not count toward the season's numbers." aria-label="Left out of season averages">out</span>{% endif %}
@@ -516,7 +510,7 @@
     {% endfor %}
     {# the badges spelled out ONCE per tab, under its last season (owner,
        2026-10-11: one legend under every season was clutter) #}
-    <p class="flag-legend"><b>PR</b> personal record &middot; <b>SR</b> season record &middot; <b>CR</b> course record &middot; <b>CSR</b> course season record &middot; <b>R</b> rating record &middot; <b>RSR</b> rating season record &middot; &#9733; still standing</p>
+    <p class="flag-legend"><b>PR</b> personal record &middot; <b>SR</b> season record &middot; <b>CR</b> course record &middot; <b>R</b> rating record &middot; <b>RSR</b> rating season record &middot; &#9733; still standing</p>
   </section>
   {% endif %}
 
@@ -555,7 +549,7 @@
     {% endfor %}
     {# the badges spelled out ONCE per tab, under its last season (owner,
        2026-10-11: one legend under every season was clutter) #}
-    <p class="flag-legend"><b>PR</b> personal record &middot; <b>SR</b> season record &middot; <b>CR</b> course record &middot; <b>CSR</b> course season record &middot; <b>R</b> rating record &middot; <b>RSR</b> rating season record &middot; &#9733; still standing</p>
+    <p class="flag-legend"><b>PR</b> personal record &middot; <b>SR</b> season record &middot; <b>CR</b> course record &middot; <b>R</b> rating record &middot; <b>RSR</b> rating season record &middot; &#9733; still standing</p>
   </section>
   {% endif %}
 
