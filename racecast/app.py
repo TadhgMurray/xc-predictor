@@ -2198,7 +2198,7 @@ def athlete(person_id):
     #   race of THAT block, never outranked by an XC race from some calendar
     #   year.
     by_distance = lambda r: r["event"]
-    by_course   = lambda r: (r["meet"], r["event"])
+    by_course   = _courseKey
     career_wide = lambda r: "ALL"
     by_season_d = lambda r: (r["season_label"], r["sport"], r["event"])
     time_of     = lambda r: r["time_raw"]
@@ -3709,6 +3709,20 @@ def season_rating(races, key="speed_rating"):
     if not rated:                      # a season with no rated races
         return None                    # -> template shows " - ", not a crash
     return sum(rated) / len(rated)
+
+
+def _courseKey(r):
+    """The group a course record is kept in: the COURSE and the distance.
+
+    ★ NOT THE MEET (owner, 2026-10-16: a De La Salle senior with a starred
+      CR on nearly every race -- Newhall twice in one season, Woodward Park
+      three times). The key was (meet name, event), and a meet is renamed
+      every year and every invitational at one venue ("EBAL Championships",
+      "De La Salle Nike Invitational", both Newhall Community Park), so each
+      race was alone in its group and held its "record". The course the page
+      prints under the meet is the venue; a row without one keeps its meet."""
+    course = " ".join(str(r.get("course") or "").split()).lower()
+    return (course or r.get("meet"), r.get("event"))
 
 
 def flag_records(races, key_fn, value_fn, better):
