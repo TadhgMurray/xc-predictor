@@ -177,7 +177,11 @@ def _finish(_exc=None):
                         key=lambda q: -q["ms"])[:3]
         except Exception:                                # noqa: BLE001
             qs = []
-        E.recordSlow(_template(), ms, qs, _STATE["slow_ms"])
+        try:
+            query = request.query_string.decode("utf-8", "replace")
+        except Exception:                                # noqa: BLE001
+            query = None
+        E.recordSlow(_template(), ms, qs, _STATE["slow_ms"], query=query)
         _ensureThread()
     except Exception:                                    # noqa: BLE001
         pass

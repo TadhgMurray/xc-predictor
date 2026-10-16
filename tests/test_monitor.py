@@ -412,3 +412,13 @@ def test_tables_come_from_init_never_a_request():
     assert len(calls) == 1 and calls[0] > src.index("def main(")
     topbar = open(os.path.join(ROOT, "racecast", "templates", "_topbar.html"), encoding="utf-8").read()
     assert topbar.count("static_v('usage.js')") == 1
+
+
+def test_a_slow_request_carries_its_query_string():
+    # owner, 2026-10-16: /api/rankings took 46 s and the notice could not
+    # say which board
+    buf = E.Groups()
+    assert E.recordSlow("/api/rankings", 46300, [], 27500, buf=buf,
+                        query="board=ability&pool=college_m&sport=both")
+    g = next(iter(buf._g.values()))
+    assert "query: board=ability&pool=college_m&sport=both" in g["detail"]

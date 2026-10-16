@@ -226,14 +226,21 @@ def recordException(exc, path, buf=None):
         return False
 
 
-def recordSlow(path, ms, queries=(), threshold=None, buf=None):
+def recordSlow(path, ms, queries=(), threshold=None, buf=None, query=None):
     """A request over the slow line: one group per route template. The
     detail names the slowest statements db_timing saw in it (their SQL text
-    as written -- parameters are bound by the driver and never in it)."""
+    as written -- parameters are bound by the driver and never in it).
+
+    ★ AND THE QUERY STRING (owner, 2026-10-16: /api/rankings took 46 s and
+      the notice could not say which board). The group stays per route; the
+      detail carries the request's own query string, so
+      scripts/explain_board.py can replay exactly that board."""
     buf = BUFFER if buf is None else buf
     try:
         key = fingerprintKey("slow|" + (path or ""))
         lines = [f"took {ms / 1000:.1f} s (slow line {(threshold or slowRequestMs()) / 1000:.1f} s)"]
+        if query:
+            lines.append(f"query: {str(query)[:400]}")
         for q in queries:
             lines.append(f"  {q['ms'] / 1000:6.2f} s  {q['sql']}")
         return buf.add(key, "slow", f"Slow request {path}", path, "\n".join(lines))
