@@ -1935,10 +1935,19 @@ async function loadField() {
 
   const missing = blocks.filter((d) => !editsFor(d).field);
   if (missing.length) {
+    /* ★ AN ANSWER COUNTS ONLY FOR WHAT IT WAS ASKED (owner, 2026-10-18:
+         "set 10 runners per school, it goes for a second and then
+         unapplies and goes back to 7. But the text box still says 10").
+         The field takes seconds; a size, order or date changed while the
+         first ask was out sent a second one -- and whichever came back
+         LAST was kept, so the slower seven-runner answer overwrote the
+         ten. Each answer is kept only if the page still asks the same. */
+    const asks = missing.map((d) => fieldQuery(d).toString());
     const got = await Promise.all(missing.map((d) => fetchField(d)));
     if (state.meet !== meet) return;
     missing.forEach((d, i) => {
-      if (got[i]) editsFor(d).field = got[i];
+      if (got[i] && !editsFor(d).field
+          && fieldQuery(d).toString() === asks[i]) editsFor(d).field = got[i];
     });
   }
   renderField();
@@ -1977,7 +1986,8 @@ function showBasis(blocks) {
 
 /* One division's field. Returns the data, or null; renders nothing and
    mutates no state, so the caller decides when the page changes. */
-async function fetchField(div) {
+/* The field request for one race as the page now stands. */
+function fieldQuery(div) {
   const q = new URLSearchParams({ meet_id: state.meet.id,
                                   sport: state.meet.sport,
                                   when: state.when });
@@ -1994,6 +2004,11 @@ async function fetchField(div) {
     if ($("t-date") && $("t-date").value) q.set("date", $("t-date").value);
     if (state.course && !isTrack()) q.set("course", state.course);
   }
+  return q;
+}
+
+async function fetchField(div) {
+  const q = fieldQuery(div);
   try {
     const res = await fetch("/api/predict/field?" + q.toString());
     const data = await readJson(res);

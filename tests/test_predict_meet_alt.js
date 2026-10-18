@@ -51,6 +51,7 @@ const sb = eval(`(() => {
   ${grab("editsFor")}
   ${grab("parseMeetLink")}
   ${grab("buildQuery")}
+  ${grab("fieldQuery")}
   ${grab("fetchField", "async function ")}
   ${grab("squadCtx")}
   ${grab("squadKey")}
