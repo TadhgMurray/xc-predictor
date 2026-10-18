@@ -86,6 +86,11 @@ def pipelineRun(path, now=None):
         name = os.path.basename(log)[:-4]
         if name == "summary" or name in done:
             continue
+        # a shard's log (12b_course_pages_shard0) is finished when its step
+        # is: shards() writes one summary line for the whole step
+        base = re.sub(r"_shard\d+$", "", name)
+        if base != name and base in done:
+            continue
         open_steps.append({"step": name,
                            "idle_s": int(now - os.path.getmtime(log)),
                            "tail": _tail(log, 4)})

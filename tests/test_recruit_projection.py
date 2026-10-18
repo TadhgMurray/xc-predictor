@@ -156,11 +156,13 @@ def test_the_build_is_a_pipeline_step_that_does_not_need_a_model_to_pass():
     # ! bgstep since 2026-09-22: a leaf (only the recruiting page reads the
     #   table), so it runs beside the later steps and is collected by bgwait
     assert 'bgstep 10f2_projection "$PY" -u racecast/build_recruit_projection.py' in sh
-    # it runs after the recruits table it sits beside
-    assert sh.index("step 10f_recruits") < sh.index("bgstep 10f2_projection")
-    # and is collected before the run's last checks and its summary
-    assert sh.index("bgstep 10f2_projection") < sh.index("\nbgwait\n") \
-        < sh.index("step 17_checklist")
+    # it reads only athlete_season, so it starts the moment that exists
+    #   (2026-10-18: it was the run's last 71 idle minutes, started after 11b)
+    assert sh.index("step 10_rankings_finish") < sh.index("bgstep 10f2_projection") \
+        < sh.index("step 10a_board_sanity")
+    # and is collected at the very end: nothing in 17-18 reads its table
+    assert sh.index("bgstep 10f2_projection") < sh.index("step 18_vacuum") \
+        < sh.index("\nbgwait\n") < sh.index("\nsummarise\n")
     src = open(os.path.join(_ROOT, "racecast",
                             "build_recruit_projection.py")).read()
     assert "no model, skipped" in src and "return 0" in src

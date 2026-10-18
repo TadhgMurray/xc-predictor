@@ -185,3 +185,17 @@ class Route(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_a_finished_shard_is_not_open(tmp_path):
+    """shards() writes one summary line for the step; its shard logs are not
+    'probably dead' (owner's status page, 2026-10-18)."""
+    import site_status as S
+    run = tmp_path / "20261017_005658"
+    run.mkdir()
+    (run / "summary.log").write_text("  12b_course_pages ok (1440s)\n")
+    for k in range(3):
+        (run / f"12b_course_pages_shard{k}.log").write_text("done\n")
+    (run / "13c_search_index.log").write_text("still going\n")
+    got = S.pipelineRun(str(run))
+    assert [o["step"] for o in got["open"]] == ["13c_search_index"]

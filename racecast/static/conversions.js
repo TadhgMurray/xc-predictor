@@ -729,6 +729,25 @@
     // ★ THE DEFAULT COURSES FOLLOW THE POOL (owner, 2026-10-11): a college
     //   pool lists the courses run most at 8K / 6K, at those distances
     //   (/api/xc_courses). Rows the reader added stay.
+    /* ! THE DIFFICULTY HEADER, IF THE PAGE CAME WITHOUT ONE (owner,
+         2026-10-18: the % sat under "Time"). Static files update at once,
+         templates only on a restart, so a new script can meet an old page. */
+    (function ensureDiffHeader() {
+        var row = document.querySelector('#xc-table thead tr');
+        if (!row || row.querySelector('.th-diff') || row.cells.length !== 3) return;
+        var th = document.createElement('th');
+        th.className = 'th-diff';
+        th.textContent = 'Difficulty';
+        row.insertBefore(th, row.cells[2]);
+        Array.prototype.forEach.call(document.querySelectorAll('#xc-body tr'), function (tr) {
+            if (tr.querySelector('.cell-diff')) return;
+            var td = document.createElement('td');
+            td.className = 'cell-diff';
+            td.textContent = pct(tr.getAttribute('data-difficulty'));
+            tr.insertBefore(td, tr.querySelector('.cell-time'));
+        });
+    })();
+
     function loadDefaultCourses(then) {
         if (!poolSel) { if (then) then(); return; }
         fetch('/api/xc_courses?pool=' + encodeURIComponent(poolSel.value))

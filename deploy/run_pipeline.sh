@@ -484,9 +484,30 @@ bgstep() {
   _live "$name" "$LOGDIR/$name.log" $NICE "$@" &
   BG_PIDS+=("$!"); BG_NAMES+=("$name"); BG_T0+=("$(date +%s)")
 }
+# bgjoin <name> -- wait for ONE background step now (its reader is next),
+#   write its summary line; bgwait then skips it. A name never started (by
+#   --from, --skip or --dry-run) is a no-op.
+bgjoin() {
+  local i rc el
+  for i in "${!BG_PIDS[@]}"; do
+    [ "${BG_NAMES[$i]}" = "$1" ] && [ -n "${BG_PIDS[$i]}" ] || continue
+    echo "  waiting for background step $1..."
+    if wait "${BG_PIDS[$i]}"; then rc=0; else rc=1; fi
+    el=$(( $(date +%s) - ${BG_T0[$i]} ))
+    tail -n 2 "$LOGDIR/$1.log"
+    if [ "$rc" -ne 0 ]; then
+      echo "  $1 FAILED after ${el}s (background)" | tee -a "$SUMMARY"
+      FAILED="$FAILED $1"
+    else
+      echo "  $1 ok (${el}s, background)" | tee -a "$SUMMARY"
+    fi
+    BG_PIDS[$i]=""
+  done
+}
 bgwait() {
   local i rc el
   for i in "${!BG_PIDS[@]}"; do
+    [ -n "${BG_PIDS[$i]}" ] || continue          # already collected by bgjoin
     echo "  waiting for background step ${BG_NAMES[$i]}..."
     if wait "${BG_PIDS[$i]}"; then rc=0; else rc=1; fi
     el=$(( $(date +%s) - ${BG_T0[$i]} ))
@@ -534,6 +555,16 @@ if failed 00_integrity; then
 fi
 step 00_meet_dates    "$PY" -u engine/meet_date_fix.py --write --show 20
 step 01_season_year   "$PY" -u engine/season_year.py
+# ★ THE WEATHER GRID IN THE BACKGROUND FROM HERE (2026-10-18, 23 min off
+#   the critical path). It reads the meets' dates and venues (corrected by
+#   the two steps above) and writes only the weather grid, which nothing
+#   reads until 04f/05; bgjoin collects it right before them. The comments
+#   on why it exists sit where it used to run, above 04f.
+if [ -x "$WXPY" ]; then
+  bgstep 04e_weather_grid "$WXPY" -u backfill/atmost_era5_zarr.py
+else
+  echo "  04e_weather_grid skipped ($WXPY not found; see deploy/run_pipeline.sh)" | tee -a "$SUMMARY"
+fi
 # ★ WHERE EVERY ATHLETE'S ROWS ARE, BEFORE ANYTHING MOVES THEM (2026-09-26).
 #   Twins, tfrrs links and mints all change person ids, and the old id's page
 #   404s. 13c0 compares against this and 301s each vanished id to its
@@ -636,11 +667,9 @@ step 04d_gender       "$PY" -u engine/person_gender.py --write
 #   the run went on with no 2026 weather. The venv needs the codec:
 #       /srv/wxvenv/bin/pip install pcodec
 #   and the fetcher now fails the step when every tile failed.
-if [ -x "$WXPY" ]; then
-  step 04e_weather_grid "$WXPY" -u backfill/atmost_era5_zarr.py
-else
-  echo "  04e_weather_grid skipped ($WXPY not found; see deploy/run_pipeline.sh)" | tee -a "$SUMMARY"
-fi
+# (started in the background after 01_season_year; collected here, before
+#  the refit and the backfill read the grid)
+bgjoin 04e_weather_grid
 # ! THE REFIT IS OPT-IN. fit_weather_correction is the heavy stage (hours)
 #   and its answer only changes when the grid's numbers do -- after
 #   scripts/recompute_apparent_temp.py, or a new season's worth of rows.
@@ -1399,6 +1428,13 @@ stepsN 10_rankings_xc_a "$PY -u racecast/build_ranking_results.py --stage stream
        10_rankings_tf_a "$PY -u racecast/build_ranking_results.py --stage stream --sport TF --until ${XCP_RANK_SEAM:-2018-01-01}" \
        10_rankings_tf_b "$PY -u racecast/build_ranking_results.py --stage stream --sport TF --since ${XCP_RANK_SEAM:-2018-01-01}"
 step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finish
+# ★ THE RECRUIT PROJECTION STARTS AS SOON AS athlete_season EXISTS (2026-10-18;
+#   it was the run's last 71 idle minutes: 2h41m started after 11b). It
+#   reads only athlete_season, only the recruiting and comps PAGES read its
+#   table, and it commits per slice -- so 11b's CREATE INDEX CONCURRENTLY no
+#   longer waits on it (the 626-minute stall of 2026-09-26 was one long
+#   transaction). Collected by bgwait at the very end.
+bgstep 10f2_projection "$PY" -u racecast/build_recruit_projection.py
 # ★ THE BOARDS, CHECKED BEFORE ANYONE READS THEM (owner, 2026-09-14: college
 #   boards headed at 170 by rows ranked against another pool's mean, clubs
 #   with professionals among colleges, a 5:12 "mile"). Top rows per pool:
@@ -1463,7 +1499,6 @@ step 11b_indexes      "$PY" -u scripts/add_page_indexes.py
 #   waits for every older open transaction in the database; with this
 #   running beside it, 11b_indexes took 626 minutes. The script now commits
 #   per slice too, so 13c's concurrent index build does not wait on it either.
-bgstep 10f2_projection "$PY" -u racecast/build_recruit_projection.py
 step 12_courses       "$PY" -u racecast/build_course_rank.py
 # ★ COURSE PAGES IN THREE SHARDS (issue 140). One process building 1,200
 #   courses in a row was mostly waiting on the database; three workers on
@@ -1538,9 +1573,18 @@ steps2 15_rowguard_diag_xc "$PY -u scripts/diag_suspects.py --sport XC" \
 step 15_rowguard_triage_xc "$PY" -u scripts/triage_suspects.py --sport XC
 step 15_rowguard_triage_tf "$PY" -u scripts/triage_suspects.py --sport TF
 step 16_rowguard_apply     "$PY" -u scripts/apply_triage.py
+# ★ THE DATA WATCHDOG, IN THE BACKGROUND (2026-10-18: 53 min in line before
+#   the vacuum). Every step that writes what readers see is done by here;
+#   report only. FAILED is the run's failures so far (17* are reports).
+if [ "${XCP_WATCHDOG:-1}" != "0" ]; then
+  bgstep 17d_watchdog "$PY" -u racecast/watchdog.py --log-dir "$LOGDIR" --kind full \
+                      --step-name 17d_watchdog --failed "$FAILED" --send --ensure-indexes
+fi
 
 # ---- the owner's go/no-go ------------------------------------------- #
-bgwait
+# ! bgwait MOVED TO THE END (2026-10-18). Nothing in 17-18 reads the
+#   background steps' tables (recruit_projection, record_books), so the
+#   reports and the vacuum no longer idle behind them.
 # the evidence chain (08a..08d), started after the go-live
 if [ -n "${EVID_PID:-}" ]; then
   echo "  waiting for the evidence chain (08a..08d)..."
@@ -1578,16 +1622,16 @@ step 17c_report       "$PY" -u scripts/run_report.py --log-dir "$LOGDIR" || true
 #   10a_board_sanity's cause class when 10a failed (racecast/watchdog.py
 #   classify10a). Mails only on new items and only when nothing FAILED --
 #   otherwise summarise()'s notify_owner mail carries WATCHDOG.txt.
-if [ "${XCP_WATCHDOG:-1}" != "0" ]; then
-  step 17d_watchdog   "$PY" -u racecast/watchdog.py --log-dir "$LOGDIR" --kind full \
-                      --step-name 17d_watchdog --failed "$FAILED" --send --ensure-indexes
-fi
+# (17d_watchdog runs in the background since 2026-10-18 -- started after 16)
 
 # ---- the gentle vacuum, last ----------------------------------------- #
 # the boards tables are built with autovacuum off (createShadow); this is
 # the one pass they need, at a trickle, after everything the site is
 # waiting for has shipped. See scripts/gentle_vacuum.py.
 step 18_vacuum        "$PY" -u scripts/gentle_vacuum.py
+
+# the background steps (10f2, 13j, 17d): collected last
+bgwait
 
 # ---- summary -------------------------------------------------------- #
 summarise
