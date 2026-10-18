@@ -21,6 +21,9 @@
 #                         refit against them stop being what ratings read)
 #   XCP_FIELD_CHECK=0, XCP_ISLAND_CHECK=0   the patches above, off
 #   XCP_ALTITUDE_FIT=1    (already the default) altitude fitted
+#   XCP_TF_TAU=0.001      every track at its group's centre -- outdoor 0.0,
+#                         indoor +0.3% (XCP_INDOOR_LEVEL): the owner's track
+#                         design, which lived in the bracket engine's gauge
 #
 # ⚠ DECIDE ON THE SCORECARD FIRST, PUBLISH SECOND. Before a full run with
 #   these settings, score them forward against production on held-out races:
@@ -35,4 +38,5 @@ export XCP_DIFFICULTY=joint
 export XCP_FIELD_CHECK=0
 export XCP_ISLAND_CHECK=0
 export XCP_ALTITUDE_FIT=1
-echo "  solve_env_v2: effort on, race day per division, season tie, one engine (joint), field and island checks off"
+export XCP_TF_TAU=0.001
+echo "  solve_env_v2: effort on, race day per division, season tie, one engine (joint), field and island checks off, tracks at their group's centre"

@@ -3765,6 +3765,17 @@ SIGMA_U_FLOOR = {0: 0.0, 1: 0.0}            # 0 = XC, 1 = TF
 #     thin cells, which is where the noise is -- and the ladder's
 #     `free-tau` rung measures what either costs.
 TAU_MAX_DEFAULT = {0: 0.0364, 1: 0.0161}         # 0 = XC, 1 = TF
+# ★ A TRACK IS A TRACK (owner, 2026-09-19: "we're gonna make all flat outdoor
+#   400m tracks 0.0, and indoor tracks on avg +0.3 slower"; 2026-09-10: "maybe
+#   we just say nixsay on track difficulty"). That design lived in the
+#   bracket engine's gauge; under XCP_DIFFICULTY=joint (solve_env_v2) the
+#   joint solve publishes its own track cells, each with up to a 1.61% spread
+#   of its own -- the "indoor track 4% easy" noise, back on the athlete pages
+#   (2026-10-18). XCP_TF_TAU caps the TRACK course spread: near zero, every
+#   track sits at its group's centre -- outdoor 0.0, indoor at
+#   XCP_INDOOR_LEVEL (+0.3%) -- which is the design.
+if os.environ.get("XCP_TF_TAU"):
+    TAU_MAX_DEFAULT[1] = float(os.environ["XCP_TF_TAU"])
 
 # ★★★ COURSES CHANGE, AND UNTIL NOW ONE NUMBER HAD TO COVER EVERY YEAR THEY
 #     EXISTED (owner, asked three times: "difficulty per every couple years",
