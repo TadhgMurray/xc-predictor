@@ -73,11 +73,13 @@ import pair_engine as pe                                        # noqa: E402
 #   pace went out are shared by everyone on the course that day, across
 #   divisions; and the pack carries `days` (days ago) per row where a meet id
 #   is not available. Coarser than a division, right for conditions.
+#   (--race-key division keys it (meet, div, day) instead -- owner,
+#   2026-10-18; see the note above raceCodes.)
 # set from --no-race-term before the design is built; a module-level flag
 # for the same reason _ALT_FIT is one -- buildDesign is called from three
 # places and threading a bool through all of them buys nothing.
 _NO_RACE_TERM = {"on": False}
-_RACE_KEY = {"by": "cell"}          # or "venue"; see venueOfCell
+_RACE_KEY = {"by": "cell"}          # or "venue" (venueOfCell) or "division" (raceCodes)
 
 
 # ★★ WHAT SHARES A RACE-DAY EFFECT, and it is a real modelling choice.
@@ -116,14 +118,42 @@ def venueOfCell(course_keys):
     return inv.astype(np.int64)
 
 
-def raceCodes(course, day, venue_of_cell=None):
-    """Dense id per (cell or venue, day), numbered in (unit, day) order.
+# ★★ --race-key division: ONE DAY PER DIVISION (owner, 2026-10-18). The
+#    published ratings showed the day credit too big for fast runners and
+#    too small for slow ones -- inside one runner's season, b_day ~ +0.18
+#    at 120+ and -0.24 under 90 -- because one venue-day number is read off
+#    the whole field (JV, frosh, the league meets where most jog) and
+#    credited to everyone. Keyed (meet_id, div_id, day), a varsity race
+#    gets its own day, read off its own runners, and a JV loop or a frosh
+#    jog moves only its own.
+#  ! A ROW WITHOUT A MEET OR A DIVISION (meet_id < 0, or div_id < 0, or a
+#    pack from before 2026-10-08 that carries neither) FALLS BACK TO ITS
+#    (cell, day) race -- never into a division's. The two kinds are
+#    numbered apart: the fallback races first in (cell, day) order, then
+#    the divisions in (meet, div, day) order.
+#  ! WHAT ASSUMES A VENUE-DAY, AND WHY IT STILL WORKS. The day guard
+#    (js.raceDayDivisions) and the division lean (js.divisionDayRow) read
+#    D.subrace INSIDE a race; under this key nearly every race is one
+#    division, and both leave a one-division race exactly alone (a race
+#    whose one division spans two stored distances is still split by cell
+#    and still guarded). The leave-one-out day and dayLeanReport only need
+#    a race to sit inside one cell, which a division does. venueOfCell is
+#    not read.
+#  ⚠ THINNER DAYS: a division of 25 has far less information than its
+#    venue-day of 300, so its day is shrunk harder toward 0 under the same
+#    sigma_u2 -- the price of not borrowing the JV's afternoon.
+def raceCodes(course, day, venue_of_cell=None, meet=None, div=None):
+    """Dense id per (cell or venue, day), numbered in (unit, day) order;
+    with `meet` and `div` (per row), (meet, div, day) wherever both are
+    >= 0 and the (cell, day) fallback elsewhere (see the note above).
 
     ! ONE COMPOSITE int64 KEY (2026-09-12). np.unique(axis=0) on the stacked
       pair took 19 s per ten million rows, ninety on the corpus, in every
       script that needed a race id. The composite key takes under two and
       numbers the races identically (unit first, then day), so the
       holdout split, which draws by race id, is the same split."""
+    if meet is not None and div is not None:
+        return _divisionRaceCodes(course, day, meet, div)
     unit = (np.asarray(course).astype(np.int64) if venue_of_cell is None
             else np.asarray(venue_of_cell)[np.asarray(course).astype(np.int64)])
     d = np.asarray(day).astype(np.int64)
@@ -134,6 +164,47 @@ def raceCodes(course, day, venue_of_cell=None):
     _, inv = np.unique(unit * span + (d - d0), return_inverse=True)
     inv = inv.reshape(-1).astype(np.int64)
     return inv, int(inv.max()) + 1
+
+
+def _divisionRaceCodes(course, day, meet, div):
+    """raceCodes under --race-key division: (meet, div, day) where both ids
+    are >= 0, (cell, day) elsewhere, the fallback races numbered first."""
+    course = np.asarray(course).astype(np.int64)
+    d = np.asarray(day).astype(np.int64)
+    meet = np.asarray(meet).astype(np.int64)
+    div = np.asarray(div).astype(np.int64)
+    if d.size == 0:
+        return np.zeros(0, dtype=np.int64), 0
+    has = (meet >= 0) & (div >= 0)
+    kind = has.astype(np.int64)
+    k1 = np.where(has, meet, course)
+    k2 = np.where(has, div, 0)
+    order = np.lexsort((d, k2, k1, kind))
+    a0, a1, a2, a3 = kind[order], k1[order], k2[order], d[order]
+    new = np.r_[True, (a0[1:] != a0[:-1]) | (a1[1:] != a1[:-1])
+                | (a2[1:] != a2[:-1]) | (a3[1:] != a3[:-1])]
+    inv = np.empty(d.size, dtype=np.int64)
+    inv[order] = np.cumsum(new) - 1
+    return inv, int(new.sum())
+
+
+def raceCodesFor(cols, by=None):
+    """(race id per pack row, n) under --race-key `by` (default _RACE_KEY):
+    'cell', 'venue' (venueOfCell) or 'division' (meet_id, div_id; a pack
+    without them falls back to 'cell' whole, with a line saying so)."""
+    by = by or _RACE_KEY["by"]
+    if by == "venue":
+        return raceCodes(cols["course"], cols["days"],
+                         venueOfCell(cols["course_keys"]))
+    if by == "division":
+        n_all = np.asarray(cols["course"]).shape[0]
+        if all(k in cols and np.asarray(cols[k]).shape[0] == n_all
+               for k in ("meet_id", "div_id")):
+            return raceCodes(cols["course"], cols["days"],
+                             meet=cols["meet_id"], div=cols["div_id"])
+        print("[joint] --race-key division: the pack has no meet_id/div_id -- "
+              "every race falls back to (cell, day)")
+    return raceCodes(cols["course"], cols["days"])
 
 
 # ★ THE DIVISION INSIDE A RACE (owner, 2026-10-08; js.raceDayDivisions).
@@ -186,6 +257,20 @@ def divisionCodes(cols, keep, race, cell, pool_row):
 # Purpose:   one shrinkage group per CELL. XC is group 0 -- the REFERENCE
 #            level the abilities carry -- and TF is group 1, whose mu is the
 #            track-versus-XC surface level.
+def effortGroups(cols, keep):
+    """(per kept row the effort group, names): sport * 4 + meet class,
+    meet class clipped to 0..3 (ordinary, league, state/qualifier, final)
+    -- js.EFFORT_GROUP_NAMES."""
+    n_all = np.asarray(cols["course"]).shape[0]
+    mc_all = (np.asarray(cols["meet_class"]).astype(np.int64)
+              if "meet_class" in cols and np.asarray(cols["meet_class"]).shape[0] == n_all
+              else np.zeros(n_all, dtype=np.int64))
+    sp_all = ((np.asarray(cols["sport"]) > 0).astype(np.int64)
+              if "sport" in cols else np.zeros(n_all, dtype=np.int64))
+    mc = np.clip(mc_all[keep], 0, len(js.EFFORT_CLASS_NAMES) - 1)
+    return sp_all[keep] * len(js.EFFORT_CLASS_NAMES) + mc, js.EFFORT_GROUP_NAMES
+
+
 def cellGroups(course, sport, n_cells):
     if sport is None:
         return np.zeros(n_cells, dtype=np.int64), 1
@@ -827,10 +912,9 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
         (cols["sport"] if split_ability and "sport" in cols else None))
     athlete = athlete[keep]                       # codes over ALL rows: aligned
     # see venueOfCell: --race-key venue pools the day effect across every
-    #   distance raced at that venue on that day
-    _voc = (venueOfCell(cols["course_keys"])
-            if _RACE_KEY["by"] == "venue" else None)
-    race_all, n_race = raceCodes(cols["course"], cols["days"], _voc)
+    #   distance raced at that venue on that day; --race-key division keys
+    #   it (meet, div, day) (raceCodes)
+    race_all, n_race = raceCodesFor(cols)
     race = race_all[keep]
     # ★ A REAL ABLATION OF THE RACE-DAY TERM, which did not exist before.
     #   --no-race-effect only stops the term reaching the per-result RATING;
@@ -986,6 +1070,11 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                             if alt is not None and "dist_m" in cols else None))
     D.course_keys = course_keys
     D.imp_labels = imp_labels
+    D.race_key = _RACE_KEY["by"]
+    # the effort term's groups (js.EFFORT_GROUP_NAMES): meet class x sport,
+    # per row; read only under --effort. A pack without meet_class reads
+    # every meet as ordinary.
+    D.effort_group, D.effort_group_names = effortGroups(cols, keep)
     # the divisions inside each race, for the day guard (divisionCodes,
     # js.raceDayDivisions); none when the race term is ablated to one id
     D.subrace = None
@@ -1427,6 +1516,9 @@ def solveKwargs(args, athlete_pool, verbose):
         # set by main() once the pool names are known (tiltScaleInputs);
         # None is the own-pool tilt, the shipped behaviour
         tilt_scale=getattr(args, "_tilt_scale_inputs", None),
+        # the effort term (js.THETA_RACE_PRIOR_N); getattr, because other
+        # scripts build their namespaces without it
+        effort=bool(getattr(args, "effort", False)),
     )
 
 
@@ -1882,9 +1974,7 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     idx = np.flatnonzero(keep)
     # ★ THE GROUPS THE LADDER HOLDS OUT TOGETHER. race is (cell, day) as the
     #   solve sees it; athlete and cell come straight off the pack.
-    race_all, _ = raceCodes(cols["course"], cols["days"],
-                            venueOfCell(cols["course_keys"])
-                            if _RACE_KEY["by"] == "venue" else None)
+    race_all, _ = raceCodesFor(cols)
     kind = getattr(args, "holdout_kind", "race")
     fwd = None
     if kind == "forward":
@@ -1999,7 +2089,7 @@ def holdout(cols, keep, args, athlete_pool, D_full):
     # ★ THE SCORECARD'S UNIT OF HEAD-TO-HEAD, AND ITS BOOTSTRAP CLUSTER: the
     #   (cell, day) race whatever --race-key says, split by pool and distance
     #   (fh.pairGroups says why)
-    race_cd = (race_all if _RACE_KEY["by"] != "venue"
+    race_cd = (race_all if _RACE_KEY["by"] == "cell"
                else raceCodes(cols["course"], cols["days"])[0])[keep_te]
     sport_te = (np.asarray(cols["sport"])[keep_te].astype(np.int8)
                 if "sport" in cols else np.zeros(int(keep_te.sum()), dtype=np.int8))
@@ -2524,11 +2614,26 @@ def buildParser():
                     help="estimate tau2/sigma_u2 from every cell including "
                          "one-race cells -- the pre-2026-09-10 behaviour, "
                          "kept only for comparison")
-    ap.add_argument("--race-key", default="cell", choices=("cell", "venue"),
+    ap.add_argument("--race-key", default="cell",
+                    choices=("cell", "venue", "division"),
                     help="what shares a race-day effect: the (venue, "
-                         "distance) CELL and day as today, or the VENUE and "
+                         "distance) CELL and day as today, the VENUE and "
                          "day, which pools every distance raced there that "
-                         "day. See venueOfCell")
+                         "day (see venueOfCell), or the DIVISION -- (meet_id, "
+                         "div_id, day), rows without them on their (cell, "
+                         "day) race (see raceCodes)")
+    # ★ THE EFFORT TERM (owner, 2026-10-18; js.THETA_RACE_PRIOR_N): each
+    #   row's residual is noise plus a one-sided shortfall, fitted by EM, so
+    #   a league meet where most of the field jogs is not read as a slow day
+    #   and credited to the few who raced. Off by default; XCP_EFFORT=1
+    #   turns it on for every run_joint step (the go-live and the holdouts).
+    ap.add_argument("--effort", action="store_true",
+                    default=os.environ.get("XCP_EFFORT", "0").strip().lower()
+                    in ("1", "true", "on", "yes"),
+                    help="fit the effort (shortfall) term: e = v + s, s >= 0 "
+                         "exponential with a scale per (meet class, sport) and "
+                         "per race; slow residuals keep weight 1 (env "
+                         "XCP_EFFORT=1)")
     ap.add_argument("--no-race-term", action="store_true",
                     help="collapse every row to one race id, removing the "
                          "race-day effect FROM THE SOLVE. Distinct from "
