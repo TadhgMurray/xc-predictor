@@ -44,7 +44,7 @@ def test_rules_key_on_the_right_things():
                                         "dup_cross_date", "dup_race_copy",
                                         "dup_same_day", "dup_adjacent_day",
                                         "dup_converted", "xc_placeholder",
-                                        "level_conflict"], \
+                                        "xc_track_copy", "level_conflict"], \
         "cross-feed reasons file first; the primary key keeps the first"
 
 
@@ -106,6 +106,11 @@ _EXPECTED = {
     ("TF", "dup_same_day"):   [1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108],
     ("TF", "dup_converted"):  [1802],
     ("TF", "xc_placeholder"): [],
+    # 2026-10-18: the 2026 Mid-Season Mania, no "placeholder" in its name;
+    # 1121's XC 1600 is its person's track 1600 to the tenth (1122 is a real
+    # XC race the same person ran another day)
+    ("XC", "xc_track_copy"): [1121],
+    ("TF", "xc_track_copy"): [],
     # the NESCAC review (2026-09-29): 9005 the review's Middlesex League row,
     # 9014 a college row on a high schooler; 7102's April.
     # ! 9021/9022, a tie, were flagged here until the first server run showed

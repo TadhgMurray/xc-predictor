@@ -49,6 +49,8 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
     dup_converted a track race stored as run and again converted to the
                   neighbouring distance, 2 mile / 3200 (dupConvertedSql).
     xc_placeholder a track race on the XC calendar (xcPlaceholderSql).
+    xc_track_copy an XC row whose person has a track row the same day at
+                  the same time: the track race's copy (xcTrackCopySql).
     level_conflict a high school row inside a college athlete's season, or
                   the reverse: one person_id, one sport, one academic year,
                   rows that can only be college AND rows that can only be
@@ -744,6 +746,31 @@ def xcPlaceholderSql(table, sport):
                                AND  meet_id IS NOT NULL)
     """
 
+def xcTrackCopySql(table, sport):
+    """A cross country row that is a TRACK race's copy: the same person has
+    a track row the same day at the same time (to 0.15 s).
+
+    ★ THE NAME CANNOT BE TRUSTED TO SAY SO (owner, 2026-10-18: Chase
+      Nickens, /athlete/29463797 -- "2026 Mid-Season Mania 1600m
+      Invitational", this year without "(XC Calendar Placeholder)", rated
+      as a course at +2.6% and his XC season record at 130.7, beside the
+      same 4:17.4 in track). xc_placeholder reads meet names; this reads
+      the runs. Nobody runs an XC race and a track race to the tenth on one
+      day, so the XC copy goes and the track row stands."""
+    if sport != "XC":
+        return f"SELECT result_id FROM {table} WHERE false"
+    return f"""
+        SELECT r.result_id
+        FROM   {table} r
+        WHERE  r.person_id IS NOT NULL
+          AND  r.time_seconds > 0 AND r.time_seconds < 100000
+          AND  EXISTS (SELECT 1 FROM results_tf t
+                       WHERE t.person_id = r.person_id
+                         AND substr(t.date, 1, 10) = substr(r.date, 1, 10)
+                         AND abs(t.time_seconds - r.time_seconds) < 0.15)
+    """
+
+
 # ★ NOT A TWIN, AND IN THIS TABLE ANYWAY (the NESCAC review, 2026-09-29:
 #   four college runners each carrying the same 2025 Middlesex League high
 #   school race, and one of them a season 3 points high because of it). A
@@ -766,6 +793,7 @@ RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("dup_adjacent_day", dupAdjacentDaySql),
          ("dup_converted", dupConvertedSql),
          ("xc_placeholder", xcPlaceholderSql),
+         ("xc_track_copy", xcTrackCopySql),
          (LC.REASON, LC.ruleSql))
 
 

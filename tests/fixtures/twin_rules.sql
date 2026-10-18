@@ -82,6 +82,12 @@ INSERT INTO meets VALUES (12,112,'Darrell Lee 5000m (track) 2024'),
   (13,113,'Eastside Track Club XC Invitational');
 INSERT INTO results VALUES (1112, 6102, 'anet', 12, 112, 12, 1, 937.8, '2024-11-18'),
   (1113, 6103, 'anet', 13, 113, 13, 1, 960.0, '2024-09-14');
+-- xc_track_copy (2026-10-18): the 2026 Mid-Season Mania, no "placeholder";
+-- 1121 is the track row 1921 to the tenth; 1122 a real XC race another day
+INSERT INTO meets VALUES (14,114,'2026 Mid-Season Mania 1600m Invitational');
+INSERT INTO results VALUES (1121, 6110, 'anet', 14, 114, 14, 2, 257.4, '2026-09-30'),
+  (1122, 6110, 'anet', 15, 115, 15, 4, 972.6, '2026-09-23');
+INSERT INTO results_tf VALUES (1921, 6110, 'anet', 19, 191, 7, 19, 2, 257.4, '2026-09-30', NULL, NULL, NULL, '1600m', 0, 0);
 -- dup_converted (TF): 2 miles 9:35.09 and its 3200m conversion 9:31.74, same meet and day;
 -- and a real 1600 + 3200 double the same day, which must stay
 INSERT INTO results_tf VALUES (1801, 9101, 'anet', 18, 181, 5, 18, 3, 575.09, '2025-12-13', NULL, NULL, NULL, '2miles', 0, 0),
