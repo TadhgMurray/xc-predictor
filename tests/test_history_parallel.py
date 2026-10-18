@@ -135,28 +135,64 @@ def test_rating_rows_parallel_and_fallback_agree(monkeypatch):
 # ---- byPrediction hands the model the history it read beside the ratings
 
 def test_by_prediction_passes_the_prefetched_history(monkeypatch):
-    from concurrent.futures import Future
     seen = {}
     hist = {1: [{"date": "2026-09-01"}], 2: [{"date": "2026-09-02"}]}
 
-    def now(fn):
-        f = Future()
-        f.set_result(fn(None))
-        return f
-    monkeypatch.setattr(P, "_ownConnFuture", now)
-    monkeypatch.setattr(P, "_historyRows", lambda c, ids: hist)
+    class FakeRead:
+        wait_s = merge_s = 0.0
+
+        def __init__(self, cur, ids):
+            seen["order"] = list(ids)
+
+        def keep(self, wanted):
+            seen["kept"] = set(wanted)
+
+        def finish(self, cur):
+            return hist
+    monkeypatch.setattr(P, "_historyStart", FakeRead)
     monkeypatch.setattr(P, "_targetSpec", lambda cur, t: {"date": "2026-10-17"})
     monkeypatch.setattr(P, "_ratingTimes", lambda cur, ids, spec, cut: {
-        1: {"seconds": 900.0}, 2: {"seconds": 910.0}})
+        1: {"seconds": 900.0}, 2: {"seconds": 910.0}, 3: {"seconds": 905.0}})
 
     def fake_predict(cur, ids, target, spec=None, history=None):
         seen["history"] = history
         return [{"seconds": 905.0 - i} for i, _ in enumerate(ids)]
     monkeypatch.setattr(P, "_predictTimes", fake_predict)
-    squads = {"A": [{"person_id": 1}, {"person_id": 2}]}
-    out, note = P.byPrediction(None, squads, {"A": 7}, {})
+    squads = {"A": [{"person_id": 1}, {"person_id": 2}], "B": [{"person_id": 3}]}
+    out, note = P.byPrediction(None, squads, {"A": 7, "B": 7}, {})
     assert note is None and seen["history"] is hist
+    assert seen["order"] == [1, 3, 2]        # every team's first, then second
+    assert seen["kept"] == {1, 2, 3}         # the contenders
     assert [e["person_id"] for e in out["A"]] == [2, 1]   # by the model's times
+
+
+def test_keep_drops_runners_not_yet_read(monkeypatch):
+    """Batches already taken are read whole; the rest only if kept."""
+    import threading
+    gate, calls = threading.Event(), []
+
+    def read(c, batch):
+        calls.append(list(batch))
+        gate.wait(2)
+        return [{"person_id": i} for i in batch]
+    import database
+
+    @contextlib.contextmanager
+    def fake_getconn():
+        yield _Conn()
+    monkeypatch.setattr(database, "getConn", fake_getconn)
+    q = P._IdQueue(range(1, 11))
+    started = P._queueStart(q, read, 3, 1)
+    import time
+    for _ in range(100):                     # the worker has its first batch
+        if calls:
+            break
+        time.sleep(0.01)
+    q.keep({2, 9})
+    gate.set()
+    rows = P._queueFinish(_Cur(), started)
+    assert calls == [[1, 2, 3], [9]]
+    assert sorted(r["person_id"] for r in rows) == [1, 2, 3, 9]
 
 
 # ---- a big field is read in shards: the same rows, runner by runner
@@ -210,7 +246,8 @@ def test_pieces_read_the_same_rows(monkeypatch):
     pieces = _sharded(monkeypatch, 75)
     assert sorted(_ShardCur.calls) == [("TF", 75)] * 4 + [("XC", 75)] * 4
     assert pieces == one and len(pieces) == 300 and len(pieces[17]) == 3
-    odd = _sharded(monkeypatch, 70)                  # 5 pieces of 60
-    assert sorted(_ShardCur.calls) == [("TF", 60)] * 5 + [("XC", 60)] * 5
+    odd = _sharded(monkeypatch, 70)                  # 4 batches of 70, then 20
+    assert sorted(_ShardCur.calls) == ([("TF", 20)] + [("TF", 70)] * 4
+                                       + [("XC", 20)] + [("XC", 70)] * 4)
     assert odd == one
     assert _sharded(monkeypatch, 75, second_conn_ok=False) == one   # all in line

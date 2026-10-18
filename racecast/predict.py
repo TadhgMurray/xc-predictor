@@ -336,6 +336,20 @@ def stagesRows():
     return list(getattr(_STAGES, "rows", None) or [])
 
 
+def _stageAdd(name, seconds):
+    """A stage timed elsewhere (a read finished on another thread)."""
+    rows = getattr(_STAGES, "rows", None)
+    if rows is not None:
+        rows.append((name, 1000.0 * seconds))
+
+
+def _stageCount(name, n):
+    """A count beside the stages ("count-..."; the dur is the count)."""
+    rows = getattr(_STAGES, "rows", None)
+    if rows is not None:
+        rows.append((name, float(n)))
+
+
 class _stage:
     """with _stage("name"): ... -- adds (name, ms) when a request is timing."""
     def __init__(self, name):
@@ -2013,11 +2027,11 @@ def _clampYear(ctx, fx):
 #   sport)] runners a query, the pieces shared round-robin between
 #   READ_WORKERS connections, each working through its share in turn.
 #   kind: "hist" the model's history rows, "rate" the season ratings.
-READ_CHUNK = {("hist", "XC"): int(os.environ.get("XCP_HISTORY_CHUNK_XC") or 200),
-              ("hist", "TF"): int(os.environ.get("XCP_HISTORY_CHUNK_TF") or 100),
+READ_CHUNK = {("hist", "XC"): int(os.environ.get("XCP_HISTORY_CHUNK_XC") or 150),
+              ("hist", "TF"): int(os.environ.get("XCP_HISTORY_CHUNK_TF") or 150),
               ("rate", "XC"): int(os.environ.get("XCP_RATING_CHUNK_XC") or 200),
               ("rate", "TF"): int(os.environ.get("XCP_RATING_CHUNK_TF") or 150)}
-READ_WORKERS = {("hist", "XC"): 2, ("hist", "TF"): 3,
+READ_WORKERS = {("hist", "XC"): 2, ("hist", "TF"): 2,
                 ("rate", "XC"): 1, ("rate", "TF"): 2}
 
 
@@ -2054,14 +2068,120 @@ def _chunkedFinish(fallback, started):
     return rows
 
 
+class _IdQueue:
+    """Ids still to read, in priority order, shared by a read's workers.
+    keep() drops the ones no longer wanted; a batch already taken is read
+    whole."""
+    def __init__(self, ids):
+        self._ids, self._lock = list(ids), _threading.Lock()
+
+    def take(self, n):
+        with self._lock:
+            got, self._ids = self._ids[:n], self._ids[n:]
+            return got
+
+    def keep(self, wanted):
+        with self._lock:
+            self._ids = [i for i in self._ids if i in wanted]
+
+
+def _queueStart(queue, read, chunk, workers):
+    """Up to `workers` pooled connections reading read(cursor, batch) over
+    batches of at most `chunk` taken from `queue` until it is empty. Each
+    worker's batches are recorded as taken, so _queueFinish can read again
+    in line whatever a failed worker took and did not deliver."""
+    jobs = []
+    for _w in range(max(1, workers)):
+        state = []                                   # [batch, rows | None]
+
+        def work(c, state=state):
+            while True:
+                batch = queue.take(chunk)
+                if not batch:
+                    return
+                entry = [batch, None]
+                state.append(entry)
+                entry[1] = read(c, batch)
+        jobs.append((state, _ownConnFuture(work)))
+    return queue, read, chunk, jobs
+
+
+def _queueFinish(fallback, started):
+    """Every row of a _queueStart, reading in line on `fallback` what a
+    failed worker took and what no worker got to."""
+    queue, read, chunk, jobs = started
+    rows = []
+    for state, fut in jobs:
+        if fut is not None:
+            try:
+                fut.result()
+            except Exception:                            # noqa: BLE001 -- in line instead
+                pass
+        for batch, got in state:
+            rows.extend(got if got is not None else read(fallback, batch))
+    while True:
+        batch = queue.take(chunk)
+        if not batch:
+            return rows
+        rows.extend(read(fallback, batch))
+
+
+class _HistoryRead:
+    """_historyRows in two halves, so a caller can work while it reads:
+    _historyStart sets the reads going, keep() drops runners no longer
+    wanted that are not read yet, finish() returns the same dict
+    _historyRows does (for the runners read). wait_s / merge_s say where
+    finish() spent its time."""
+    def __init__(self, fx, ids, hours, plain_rows, queues, started):
+        self.fx, self.ids, self.hours = fx, ids, hours
+        self._plain_rows, self._queues, self._started = plain_rows, queues, started
+        self.wait_s = self.merge_s = 0.0
+
+    def keep(self, wanted):
+        wanted = {int(p) for p in wanted if p}
+        for q in self._queues.values():
+            q.keep(wanted)
+
+    def finish(self, cur):
+        import time
+        t0 = time.perf_counter()
+        if not self.ids:
+            return {}
+        cur.execute("SET LOCAL join_collapse_limit = 16")
+        cur.execute("SET LOCAL from_collapse_limit = 16")
+        with cur.connection.cursor() as plain:
+            got = {sp: _queueFinish(plain, self._started[sp]) for sp in ("XC", "TF")}
+        t1 = time.perf_counter()
+        out = {}
+        for row in got["XC"] + got["TF"]:
+            pid = row.get("person_id") or row.get("athlete_id")
+            out.setdefault(pid, []).append(row)
+        # ★ ON THE SCALE THE MODEL WAS TRAINED ON -- the same function the
+        #   extraction ran, fed the loaded model's own record of which scale.
+        scale = _normScale()
+        fx = self.fx
+        for rows in out.values():
+            for row in rows:
+                fx.toCommonScale(row, scale=scale)
+            rows.sort(key=lambda r: r["date"])
+        self.wait_s, self.merge_s = t1 - t0, time.perf_counter() - t1
+        return out
+
+
 def _historyRows(cur, person_ids):
-    """{person_id: [corpus rows, chronological]} for a whole field in
-    two queries -- feature_extraction's own row SQL with an id filter,
-    both sports merged by date, exactly the shape training grouped."""
+    """{person_id: [corpus rows, chronological]} for a whole field --
+    feature_extraction's own row SQL with an id filter, both sports merged
+    by date, exactly the shape training grouped."""
+    return _historyStart(cur, person_ids).finish(cur)
+
+
+def _historyStart(cur, person_ids):
+    """Set _historyRows' reads going (see _HistoryRead). `person_ids` in
+    priority order: the first are read first."""
     fx = _fx()
-    ids = sorted({int(p) for p in person_ids if p})
+    ids = list(dict.fromkeys(int(p) for p in person_ids if p))
     if not ids:
-        return {}
+        return _HistoryRead(fx, [], {}, None, {}, {})
     # a database with no weather table serves NULL weather, same as an
     # unfetched meet -- the guard training itself runs under
     cur.execute("SELECT to_regclass('public.weather')")
@@ -2103,8 +2223,11 @@ def _historyRows(cur, person_ids):
     #   plain dicts: a RealDictCursor row copied into a dict was 2.7 million
     #   __setitem__ calls for one field. Same rows, same dicts.
     #
-    # ★ AND EACH SPORT IN PIECES OF THE FIELD, READ ON SEVERAL CONNECTIONS
-    #   AT ONCE (2026-10-18): see READ_CHUNK and _chunkedStart.
+    # ★ AND EACH SPORT IN BATCHES OF THE FIELD, READ ON SEVERAL CONNECTIONS
+    #   AT ONCE (2026-10-18): see READ_CHUNK. Batches are taken from a queue
+    #   in the caller's order, so a caller that learns some runners are not
+    #   needed (byPrediction, once the ratings pick the contenders) can drop
+    #   them before they are read (_HistoryRead.keep).
     def _plainRows(c, sport, hour, some):
         c.execute(fx.personResultsSql(sport, has_weather=has_weather),
                   (hour, fx.MIN_NORMALIZED_TIME, some, some))
@@ -2112,25 +2235,12 @@ def _historyRows(cur, person_ids):
         return [dict(zip(cols, r)) for r in c.fetchall()]
 
     hours = {"XC": fx.XC_DEFAULT_HOUR, "TF": fx.TF_DEFAULT_HOUR}
-    # both sports' workers start before either is waited on
-    started = {sp: _chunkedStart(ids, lambda c, pc, sp=sp: _plainRows(c, sp, hours[sp], pc),
-                                 READ_CHUNK[("hist", sp)], READ_WORKERS[("hist", sp)])
+    queues = {sp: _IdQueue(ids) for sp in ("XC", "TF")}
+    started = {sp: _queueStart(queues[sp],
+                               lambda c, pc, sp=sp: _plainRows(c, sp, hours[sp], pc),
+                               READ_CHUNK[("hist", sp)], READ_WORKERS[("hist", sp)])
                for sp in ("XC", "TF")}
-    with cur.connection.cursor() as plain:
-        got = {sp: _chunkedFinish(plain, started[sp]) for sp in ("XC", "TF")}
-    xc_rows, tf_rows = got["XC"], got["TF"]
-    out = {}
-    for row in xc_rows + tf_rows:
-        pid = row.get("person_id") or row.get("athlete_id")
-        out.setdefault(pid, []).append(row)
-    # ★ ON THE SCALE THE MODEL WAS TRAINED ON -- the same function the
-    #   extraction ran, fed the loaded model's own record of which scale.
-    scale = _normScale()
-    for rows in out.values():
-        for row in rows:
-            fx.toCommonScale(row, scale=scale)
-        rows.sort(key=lambda r: r["date"])
-    return out
+    return _HistoryRead(fx, ids, hours, _plainRows, queues, started)
 
 
 def _normScale():
@@ -3000,13 +3110,28 @@ def byPrediction(cur, squads, caps, target):
     #   for every squad member on connections of its own while the ratings
     #   pick the contenders; the model then takes the contenders' rows out
     #   of it. Any failure and _predictTimes reads its own, as before.
-    hist_future = _ownConnFuture(lambda c: _historyRows(c, ids))
+    # ★ AND MOSTLY ONLY THE CONTENDERS' (2026-10-18, fifth profile: the
+    #   history still cost 4.8 s, read for every squad member though only
+    #   the contenders are modelled). Read in rank order -- every team's
+    #   first runner, then every team's second -- so what is read while the
+    #   ratings run is mostly contenders, and once the contenders are known
+    #   the rest still waiting are dropped (_HistoryRead.keep).
+    by_rank = sorted(((k, e["person_id"]) for sch in schools
+                      for k, e in enumerate(squads[sch])), key=lambda t: t[0])
+    try:
+        hist = _historyStart(cur, [pid for _k, pid in by_rank])
+    except Exception:                             # noqa: BLE001 -- read in line later
+        _rollback(cur)
+        hist = None
+    _stageCount("count-squad", len(ids))
     try:
         spec = _targetSpec(cur, target)
         with _stage("pick:ratings"):
             rated = _ratingTimes(cur, ids, spec, _asDate(spec.get("date")))
     except Exception as exc:                      # noqa: BLE001 -- keep the field
         _rollback(cur)
+        if hist is not None:
+            hist.keep(())                         # nothing more to read
         return squads, f"no predictions ({type(exc).__name__})"
 
     def form(pid):
@@ -3036,13 +3161,19 @@ def byPrediction(cur, squads, caps, target):
 
     model = {}
     note = None
+    _stageCount("count-contenders", len(contenders))
+    if hist is not None and not contenders:
+        hist.keep(())
     if contenders:
         history = None
-        if hist_future is not None:
+        if hist is not None:
+            hist.keep(contenders)
             try:
-                with _stage("pick:history-wait"):
-                    history = hist_future.result()
+                history = hist.finish(cur)
+                _stageAdd("pick:history-wait", hist.wait_s)
+                _stageAdd("pick:history-merge", hist.merge_s)
             except Exception:                     # noqa: BLE001 -- read in line
+                _rollback(cur)
                 history = None
         try:
             with _stage("pick:model"):

@@ -53,7 +53,7 @@ def test_the_caller_binds_the_ids_twice():
     assert body.count("ANY(%s)") == 2, body.count("ANY(%s)")
 
     pred = read("racecast", "predict.py")
-    j = pred.index("def _historyRows")
+    j = pred.index("def _historyStart")
     call = pred[j:pred.index("\ndef ", j + 10)]
     assert "fx.MIN_NORMALIZED_TIME, some, some" in call, call
 

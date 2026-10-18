@@ -60,9 +60,11 @@ def main():
     #   each stage's real elapsed time, as the route measured it
     st = resp.headers.get("Server-Timing")
     if st:
+        parts = [(p.split(";dur=")[0].strip(), float(p.split(";dur=")[1]))
+                 for p in st.split(",") if ";dur=" in p]
         print("[profile] stages: " + "  ".join(
-            f"{p.split(';dur=')[0].strip()} {float(p.split(';dur=')[1]) / 1000:.2f}s"
-            for p in st.split(",") if ";dur=" in p))
+            f"{n} {v:,.0f}" if n.startswith("count-") else f"{n} {v / 1000:.2f}s"
+            for n, v in parts))
     print(flush=True)
     prof.dump_stats("/tmp/profile_request.prof")
     for key in (a.sort, "tottime" if a.sort == "cumulative" else "cumulative"):
