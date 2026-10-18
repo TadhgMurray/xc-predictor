@@ -951,6 +951,31 @@ def _score(field, preds):
 #  THE PARTS THAT NEED THE TRAINED MODEL
 # ------------------------------------------------------------------ #
 
+def _torchThreadsNow(cpus=None, load=None):
+    """Threads for this forward pass: the cores the box is not using now,
+    up to half of them, never fewer than one worker's share.
+
+    ★ WHY (owner, 2026-10-18, seventh profile: the network was 2.4 s of a
+      7.1 s field). _loadModel gives each gunicorn worker cpu_count // 8
+      threads so eight workers predicting at once cannot swamp the box
+      Postgres runs on -- on an 8-core box that is ONE thread, while the
+      other seven sit idle nearly all the time. A worker serves one request
+      at a time, so the count can follow the 1-minute load: an idle box
+      lends this prediction its spare cores; a busy one gets the old share.
+    ! XCP_TORCH_THREADS, when set, is the count, always (as before)."""
+    fixed = os.environ.get("XCP_TORCH_THREADS")
+    if fixed:
+        return max(1, int(fixed))
+    cpus = cpus or os.cpu_count() or 1
+    share = max(1, cpus // 8)
+    if load is None:
+        try:
+            load = os.getloadavg()[0]
+        except (AttributeError, OSError):
+            return share
+    return int(max(share, min(cpus // 2, cpus - math.ceil(load))))
+
+
 def _predictTimes(cur, person_ids, target, spec=None, history=None):
     """[{seconds, ...}] -- one per person_id, in order. `spec` is the
     target's _targetSpec when the caller already resolved it; `history` is
@@ -982,6 +1007,7 @@ def _predictTimes(cur, person_ids, target, spec=None, history=None):
     _loadModel()
     model, art = _model, _artifacts
     encoders, vocab = art["encoders"], art["vocab"]
+    torch.set_num_threads(_torchThreadsNow())
 
     if history is not None:
         by_person = {int(p): history[int(p)] for p in person_ids
