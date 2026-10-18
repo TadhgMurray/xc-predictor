@@ -719,6 +719,15 @@ def main():
     ap.add_argument("--show", type=int, default=40)
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--undo", metavar="ID|all")
+    # ★ THE DECISIONS ON FILE, AGAIN, AND NOTHING NEW (owner, 2026-10-18:
+    #   one merge by hand moved 13,219 XC and 15,844 TF rows). An anet row
+    #   is seeded person_id = athlete_id at insert, so a merged profile's new
+    #   races land back on the merged-away id -- whose page redirects -- and
+    #   nothing re-applied the merges until the next one was approved.
+    #   Pipeline step 04a3b runs this every night; no grouping, no judging.
+    ap.add_argument("--reapply", action="store_true",
+                    help="re-apply every merge on file (profile_school_merge); "
+                         "no new merges")
     ap.add_argument("--only-careers", action="store_true",
                     help="with --careers: print only the groups that join two careers")
     ap.add_argument("--careers", action="store_true",
@@ -729,6 +738,15 @@ def main():
     with getConn() as conn:
         if a.undo:
             print(f"[profile-school] undone {a.undo}: {undo(conn, a.undo)}")
+            return
+        if a.reapply:
+            with conn.cursor() as cur:
+                have = _hasTable(cur, "profile_school_merge")
+            conn.rollback()
+            if not have:
+                print("[profile-school] no merges on file")
+                return
+            print(f"[profile-school] re-applied the merges on file: {write(conn, [])}")
             return
         with conn.cursor() as cur:
             groups, keys = gather(cur, a.person)

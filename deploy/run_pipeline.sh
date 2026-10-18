@@ -258,7 +258,7 @@ summarise() {
 # ★ 04a2b_feed_twins TOO: it moves ids (2026-10-15).
 # ★ 04a3_pins TOO: it keeps the owner's detaches where he put them (2026-10-10).
 # ★ 00_integrity TOO: a damaged page is damaged whichever step reads it first.
-_ALWAYS="00_integrity 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a2b_feed_twins 04a4_unsplit 04a3_pins 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
+_ALWAYS="00_integrity 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a2b_feed_twins 04a4_unsplit 04a3_pins 04a3b_merges 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
 step() {
   name="$1"; shift
@@ -630,6 +630,10 @@ step 04a2_link_teamless "$PY" -u scripts/link_teamless.py --apply
 #   Logged in person_link_log rule 'unsplit'; `engine/unlink.py --rejoin --undo`.
 step 04a4_unsplit     "$PY" -u engine/unlink.py --rejoin --write
 step 04a3_pins        "$PY" -u scripts/person_pins.py --apply
+# ★ AND THE APPROVED MERGES, AGAIN (owner, 2026-10-18: one merge by hand moved
+#   29k rows that had drifted back onto merged-away ids -- an anet row is seeded
+#   person_id = athlete_id, and nothing re-applied the merges between approvals)
+step 04a3b_merges     "$PY" -u scripts/link_profile_school.py --reapply
 step 04_grade_sanity  "$PY" -u engine/grade_sanity.py --write
 
 # ⚠ THIS STEP WAS MISSING, AND THAT IS HOW CHAIR ATHLETES CAME BACK (owner,
