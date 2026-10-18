@@ -33,6 +33,7 @@ TEAM SCORING IS NOT A SEPARATE MODEL
 """
 
 import datetime
+import functools
 import math
 import os
 
@@ -1084,38 +1085,59 @@ def _predictTimes(cur, person_ids, target, spec=None):
                     "actual_is_normalized": not raw}
 
     if batch:
-        longest = max(len(s) for _i, s, _c, _v, _d in batch)
         width = (_artifacts or {}).get("sequence_features") or fx.SEQUENCE_FEATURES
-        seqs = torch.zeros(len(batch), longest, width)
-        masks = torch.zeros(len(batch), longest, dtype=torch.bool)
-        vens = torch.zeros(len(batch), dtype=torch.long)
-        for i, (_slot, s, _c, v, _d) in enumerate(batch):
-            seqs[i, :len(s)] = torch.tensor(s, dtype=torch.float32)
-            masks[i, :len(s)] = True
-            vens[i] = v
+        # ★ BY LENGTH, IN CHUNKS (owner, 2026-10-18: a 786-runner field spent
+        #   7.7 s in the encoder). One batch padded every history to the
+        #   field's LONGEST -- one 300-race career made all 786 cost 300 rows,
+        #   and attention is quadratic in that. Sorted by length and run
+        #   PRED_CHUNK at a time, each chunk pads only to its own longest.
+        #   Padding is masked, so each runner's numbers are the same.
+        n_b = len(batch)
+        order = sorted(range(n_b), key=lambda i: len(batch[i][1]))
+        chunks = [order[k:k + PRED_CHUNK] for k in range(0, n_b, PRED_CHUNK)]
+
+        def _chunkTensors(idx):
+            longest = max(len(batch[i][1]) for i in idx)
+            seqs = torch.zeros(len(idx), longest, width)
+            masks = torch.zeros(len(idx), longest, dtype=torch.bool)
+            vens = torch.zeros(len(idx), dtype=torch.long)
+            for j, i in enumerate(idx):
+                s, v = batch[i][1], batch[i][3]
+                seqs[j, :len(s)] = torch.tensor(s, dtype=torch.float32)
+                masks[j, :len(s)] = True
+                vens[j] = v
+            return seqs, masks, vens
+        chunk_t = [(idx, _chunkTensors(idx)) for idx in chunks]
         # ★ WHAT THIS CHECKPOINT ANCHORS ON, RECORDED (2026-09-17). The
         #   prediction is baselineSeconds * exp(mu), so "the baseline alone"
         #   is the do-nothing benchmark the network has to beat -- and under
         #   --baseline ewma it is no longer "their last race", so a
         #   diagnostic cannot reconstruct it from the history any more. The
         #   model is the only thing that knows its own rule.
+        bases = torch.zeros(n_b)
         with torch.no_grad():
-            bases = model.baselineSeconds(seqs, masks)
+            for idx, (seqs, masks, _v) in chunk_t:
+                bases[idx] = model.baselineSeconds(seqs, masks).reshape(-1).to(torch.float32)
 
         by_variant = {}
+        interval = art.get("kind") == "log_ratio" and hasattr(model, "predictInterval")
         for name in variants:
-            ctxs = torch.zeros(len(batch), len(batch[0][2][name]))
-            for i, (_slot, _s, c, _v, _d) in enumerate(batch):
-                ctxs[i] = torch.tensor(c[name], dtype=torch.float32)
-            with torch.no_grad():
-                if art.get("kind") == "log_ratio" and hasattr(model,
-                                                              "predictInterval"):
-                    secs, lo, hi, sig = model.predictInterval(seqs, masks, ctxs,
-                                                              vens)
-                else:
-                    secs = model(seqs, masks, ctxs, vens) * art["std"] + art["mean"]
-                    lo = hi = sig = None
-            by_variant[name] = (secs, lo, hi, sig)
+            ctx_w = len(batch[0][2][name])
+            full = [torch.zeros(n_b)] + ([torch.zeros(n_b) for _k in range(3)]
+                                         if interval else [None, None, None])
+            for idx, (seqs, masks, vens) in chunk_t:
+                ctxs = torch.zeros(len(idx), ctx_w)
+                for j, i in enumerate(idx):
+                    ctxs[j] = torch.tensor(batch[i][2][name], dtype=torch.float32)
+                with torch.no_grad():
+                    if interval:
+                        got = model.predictInterval(seqs, masks, ctxs, vens)
+                    else:
+                        got = (model(seqs, masks, ctxs, vens) * art["std"] + art["mean"],)
+                for k, t in enumerate(got):
+                    if full[k] is not None and t is not None:
+                        full[k][idx] = t.reshape(-1).to(torch.float32)
+            by_variant[name] = tuple(full)
         secs, lo, hi, sig = by_variant[headline]
         for i, ((slot, s, _c, _v, clock), si) in enumerate(zip(batch, secs)):
             entry = entries[slot] or {}
@@ -1803,6 +1825,10 @@ def _denormContext(spec, last_row):
 #   second shape would take the whole prediction down over a type.
 # ! None FOR ANYTHING UNREADABLE, and the caller treats that as "not after the
 #   cut" -- a row with no usable date is not evidence that it happened later.
+# runners per encoder call (see _predictBatch's "BY LENGTH, IN CHUNKS")
+PRED_CHUNK = int(os.environ.get("XCP_PRED_CHUNK") or 128)
+
+
 def _asDate(value):
     import datetime as _dt
     if value is None or value == "":
@@ -1812,9 +1838,19 @@ def _asDate(value):
     if isinstance(value, _dt.date):
         return value
     try:
-        return _dt.datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+        return _isoDate(str(value)[:10])
     except (ValueError, TypeError):
         return None
+
+
+@functools.lru_cache(maxsize=65536)
+def _isoDate(text):
+    """'YYYY-MM-DD' -> date, once per string (fromisoformat; see
+    feature_extraction._parseDate). ValueError for anything else."""
+    import datetime as _dt
+    if len(text) != 10 or text[4] != "-" or text[7] != "-":
+        return _dt.datetime.strptime(text, "%Y-%m-%d").date()
+    return _dt.date.fromisoformat(text)
 
 
 def _weatherVariants(cur, spec, want):
@@ -1969,16 +2005,49 @@ def _historyRows(cur, person_ids):
     cur.execute("SET LOCAL join_collapse_limit = 16")
     cur.execute("SET LOCAL from_collapse_limit = 16")
 
+    # ★ THE TWO SPORTS AT ONCE, AS PLAIN ROWS (owner, 2026-10-18: 8 s of a
+    #   33 s prediction was this function). The track query runs on its own
+    #   pooled connection beside the XC one -- psycopg2 lets go of the GIL
+    #   while Postgres works -- and rows come back as tuples zipped into
+    #   plain dicts: a RealDictCursor row copied into a dict was 2.7 million
+    #   __setitem__ calls for one field. Same rows, same dicts.
+    def _plainRows(c, sport, hour):
+        c.execute(fx.personResultsSql(sport, has_weather=has_weather),
+                  (hour, fx.MIN_NORMALIZED_TIME, ids, ids))
+        cols = [d[0] for d in c.description]
+        return [dict(zip(cols, r)) for r in c.fetchall()]
+
+    def _tfOwnConnection():
+        from database import getConn
+        with getConn() as conn2, conn2.cursor() as c2:
+            c2.execute("SET LOCAL join_collapse_limit = 16")
+            c2.execute("SET LOCAL from_collapse_limit = 16")
+            rows = _plainRows(c2, "TF", fx.TF_DEFAULT_HOUR)
+            conn2.rollback()
+            return rows
+
+    tf_rows = None
+    tf_future = None
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        _ex = ThreadPoolExecutor(1)
+        tf_future = _ex.submit(_tfOwnConnection)
+        _ex.shutdown(wait=False)
+    except Exception:                                    # noqa: BLE001
+        tf_future = None
+    with cur.connection.cursor() as plain:
+        xc_rows = _plainRows(plain, "XC", fx.XC_DEFAULT_HOUR)
+        if tf_future is not None:
+            try:
+                tf_rows = tf_future.result()
+            except Exception:                            # noqa: BLE001 -- in line instead
+                tf_rows = None
+        if tf_rows is None:
+            tf_rows = _plainRows(plain, "TF", fx.TF_DEFAULT_HOUR)
     out = {}
-    for sport, hour in (("XC", fx.XC_DEFAULT_HOUR), ("TF", fx.TF_DEFAULT_HOUR)):
-        # ids TWICE: the filter is two indexable branches now, not one
-        # COALESCE the planner cannot index through. See personResultsSql.
-        cur.execute(fx.personResultsSql(sport, has_weather=has_weather),
-                    (hour, fx.MIN_NORMALIZED_TIME, ids, ids))
-        for r in cur.fetchall():
-            row = dict(r)
-            pid = row.get("person_id") or row.get("athlete_id")
-            out.setdefault(pid, []).append(row)
+    for row in xc_rows + tf_rows:
+        pid = row.get("person_id") or row.get("athlete_id")
+        out.setdefault(pid, []).append(row)
     # ★ ON THE SCALE THE MODEL WAS TRAINED ON -- the same function the
     #   extraction ran, fed the loaded model's own record of which scale.
     scale = _normScale()

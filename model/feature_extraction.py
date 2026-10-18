@@ -30,6 +30,7 @@ import os
 import sys
 import heapq
 from bisect import bisect_left
+import functools
 import pickle
 import zlib
 import torch
@@ -1893,10 +1894,15 @@ def buildVenueVocabFromDB(conn) -> dict:
 # Arguments:
 #           date_str: date string, e.g. "2025-10-04"
 # Output: a datetime.date object
+@functools.lru_cache(maxsize=131072)
 def _parseDate(date_str: str) -> date:
-    # strptime parses a string into a datetime according to the format
-    # string. .date() drops the time-of-day part, leaving just the date.
-    return datetime.strptime(date_str, "%Y-%m-%d").date()
+    # ★ fromisoformat, ONCE PER STRING (2026-10-18: 141,000 strptime calls,
+    #   1.4 s, in one predictions request -- a field's histories repeat the
+    #   same few thousand race dates). Same answer as strptime("%Y-%m-%d")
+    #   for every YYYY-MM-DD; anything else still raises ValueError.
+    if len(date_str) != 10 or date_str[4] != "-" or date_str[7] != "-":
+        return datetime.strptime(date_str, "%Y-%m-%d").date()
+    return date.fromisoformat(date_str)
 
 # _daysAgo
 # Purpose: Computes how many days before the target race a prior race
