@@ -2334,6 +2334,11 @@ def athlete(person_id):
     #   is the higher of the two.
     if class_season and (class_season.get("pool") or "").startswith("college"):
         athlete["grade"] = _classGrade(seasons, class_season) or athlete["grade"]
+    # ★ THE GRADE THEY ARE IN NOW, NOT THE ONE THEY LAST RACED IN (owner,
+    #   2026-10-18, /athlete/29642348: "Still 8" -- a freshman, injured, whose
+    #   newest races are his eighth-grade season)
+    athlete["grade"], athlete["grade_note"] = _gradeNow(
+        athlete["grade"], class_season.get("year") if class_season else None)
     athlete["header_pool"] = (season_rating.get("pool") if season_rating else None)
     athlete["header_state"] = (season_rating.get("state") if season_rating else None)
     # ★ THE CLASS AND THE TEAM ARE SPELLED IN THEIR OWN LEVEL (2026-10-02).
@@ -3342,6 +3347,25 @@ def _classGrade(seasons, season_rating):
         s = seasons.get(k) or seasons.get((str(k[0]), k[1]))
         grades.append((s or {}).get("grade"))
     return _grade_label.classGrade(grades, season_rating.get("pool"))
+
+
+def _gradeNow(grade, season_year, today=None):
+    """(grade to show, note or None). A school grade 1-11 from a season
+    before this school year moves on by the years since; the note says what
+    it was. Grade 12 and college classes are left as raced: moving them on
+    is a guess about graduating."""
+    import datetime as _dt
+    from season_year import academicYear
+    g = str(grade or "").strip()
+    if not g.isdigit() or season_year is None:
+        return grade, None
+    now = academicYear(today or _dt.date.today())
+    gap = now - int(season_year)
+    if gap < 1 or not 1 <= int(g) <= 11 or int(g) + gap > 12:
+        return grade, None
+    return (str(int(g) + gap),
+            f"Grade {g} in the {season_year}-{(int(season_year) + 1) % 100:02d} "
+            f"season, the last one raced; shown as this school year's grade.")
 
 
 def _headerClassSeason(season_rating, latest_team):

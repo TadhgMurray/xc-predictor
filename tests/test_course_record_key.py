@@ -55,3 +55,16 @@ def test_a_row_with_no_course_keeps_its_meet():
     assert app._courseKey({"meet": "Dual", "course": None, "event": "5000m"}) == ("Dual", "5000m")
     assert app._courseKey({"meet": "A", "course": " Woodward  Park ", "event": "5000m"}) == \
         ("woodward park", "5000m")
+
+
+def test_the_header_grade_is_this_school_years():
+    # owner, 2026-10-18, /athlete/29642348: "Still 8" -- a freshman whose
+    # newest races are his eighth-grade season
+    import datetime
+    d = datetime.date(2026, 10, 18)
+    g, note = app._gradeNow("8", 2025, d)
+    assert g == "9" and "Grade 8 in the 2025-26 season" in note
+    assert app._gradeNow("10", 2026, d) == ("10", None)       # this season
+    assert app._gradeNow("12", 2024, d) == ("12", None)       # graduated
+    assert app._gradeNow("11", 2024, d) == ("11", None)       # would be 13
+    assert app._gradeNow("SO-2", 2025, d) == ("SO-2", None)   # college
