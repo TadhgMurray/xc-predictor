@@ -180,8 +180,10 @@ def render(now, prev):
         if k.startswith("meta") or (k.endswith("/ n") or k == "n"):
             continue
         p = b.get(k)
-        fmt = lambda x: "-" if x is None else (f"{x:+.4f}" if isinstance(x, float) and abs(x) < 1
-                                               else str(x))
+        # slopes (b_*) to 4 places, percents to 2, ratings as stored
+        fmt = lambda x: ("-" if x is None else
+                         f"{x:+.4f}" if "/ b_" in k else
+                         f"{x:+.2f}" if ("pct" in k and isinstance(x, (int, float))) else str(x))
         lines.append(f"{k:<62}{fmt(v):>10}{fmt(p):>10}")
     return "\n".join(lines)
 
