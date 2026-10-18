@@ -1058,15 +1058,30 @@ def writeRaceDays(day_rows):
     pack_date = pack_date or date.today()
     names = loadCanonicalNames()
     split = {}
-    rows = []
+    # ★ ONE ROW PER COURSE-DAY, as every reader joins it (owner, 2026-10-18,
+    #   /athlete/29751562: one Southern Showcase race 16 times in a season
+    #   table). Under XCP_RACE_KEY=division a "race" is a division, so this
+    #   wrote a row per division of the day -- and the athlete page, the race
+    #   page and the course history all join on (course, distance, date),
+    #   so each race came back once per division run that day. A day's
+    #   divisions are combined here: their terms weighted by their rows.
+    acc = {}
     for c, d, uu, nn, ce in zip(cell.tolist(), days.tolist(), u.tolist(), n.tolist(),
                                 np.asarray(course, dtype=np.float64).tolist()):
         if c not in split:
             split[c] = _splitVenueKey(keys[c], names)
         name, cid, dist = split[c]
-        rows.append((_escape(name), cid, dist, (pack_date - timedelta(days=int(d))).isoformat(),
-                     round(float(uu), 5), int(nn),
-                     None if not math.isfinite(ce) else round(float(ce), 5)))
+        k = (name, cid, dist, (pack_date - timedelta(days=int(d))).isoformat())
+        a = acc.setdefault(k, [0.0, 0, 0.0, 0])
+        a[0] += float(uu) * int(nn)
+        a[1] += int(nn)
+        if math.isfinite(ce):
+            a[2] += float(ce) * int(nn)
+            a[3] += int(nn)
+    rows = [(_escape(name), cid, dist, day,
+             round(su / max(nn, 1), 5), int(nn),
+             round(sc / nc, 5) if nc else None)
+            for (name, cid, dist, day), (su, nn, sc, nc) in acc.items()]
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS race_day_effect_new")
         cur.execute(_DAY_DDL.replace("race_day_effect", "race_day_effect_new"))
