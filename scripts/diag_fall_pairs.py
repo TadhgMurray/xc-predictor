@@ -6,6 +6,8 @@ cross country races that fortnight? READ ONLY, seconds.
     set -a; . /etc/xc-predictor.env; set +a
     /srv/venv/bin/python scripts/diag_fall_pairs.py
     /srv/venv/bin/python scripts/diag_fall_pairs.py --days 10 --pool hs_m
+    /srv/venv/bin/python scripts/diag_fall_pairs.py --before 10-18   # every year cut
+                         # at this year's date, so a season in progress compares fairly
 
 ★ WHY (owner, 2026-10-18: Mid-Season Mania's 4:17.4 rated 130.7 as cross
   country and 134.6 as track -- "how can you show those two facts?"). The
@@ -45,6 +47,7 @@ _SQL = """
           AND  extract(month FROM race_date::date) BETWEEN 8 AND 11
           AND  distance BETWEEN 750 AND 10100
           AND  (%(pool)s IS NULL OR split_part(pool, '|', 1) = %(pool)s)
+          AND  (%(before)s IS NULL OR to_char(race_date::date, 'MM-DD') < %(before)s)
     ), xc AS (
         SELECT person_id, race_date::date AS d, speed_rating AS r, time_seconds AS t
         FROM   ranking_results
@@ -94,10 +97,11 @@ def main():
     ap.add_argument("--days", type=int, default=14)
     ap.add_argument("--pool", help="e.g. hs_m (default: every pool)")
     ap.add_argument("--min", type=int, default=30, help="rows before a cell is printed")
+    ap.add_argument("--before", help="MM-DD: only track races before this date in every year")
     a = ap.parse_args()
     from database import getConn
     with getConn() as conn, conn.cursor() as cur:
-        cur.execute(_SQL, {"days": a.days, "pool": a.pool})
+        cur.execute(_SQL, {"days": a.days, "pool": a.pool, "before": a.before})
         got = cur.fetchall()
         conn.rollback()
     pairs = []
