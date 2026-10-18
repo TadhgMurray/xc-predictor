@@ -325,18 +325,20 @@ def venueLabel(cur):
 def parser(cur):
     import event_parse as ep
     import speed_ratings_db as sdb
-    cur.execute(f"""SELECT r.event_short, {sdb._eventMetersSql('r')}
-                    FROM (SELECT DISTINCT event_short FROM results_tf
-                          WHERE event_short IS NOT NULL) r""")
-    pairs = []
-    for ev, sql_m in cur.fetchall():
+    # ! THE ROW COUNTS IN THE SAME PASS (2026-10-18): a count(*) per flagged
+    #   event was one more full scan of results_tf each (no event_short index)
+    cur.execute(f"""SELECT r.event_short, {sdb._eventMetersSql('r')}, r.n
+                    FROM (SELECT event_short, count(*) AS n FROM results_tf
+                          WHERE event_short IS NOT NULL GROUP BY 1) r""")
+    pairs, counts = [], {}
+    for ev, sql_m, n in cur.fetchall():
         py = ep.distanceFromEventShort(ev)
         py = py[0] if isinstance(py, tuple) else py
         pairs.append((ev, py, sql_m))
+        counts[ev] = int(n)
     out = []
     for ev, py_m, sql_m in parserIssues(pairs):
-        cur.execute("SELECT count(*) FROM results_tf WHERE event_short = %s", (ev,))
-        n = int(cur.fetchone()[0])
+        n = counts.get(ev, 0)
         mag = (abs(float(sql_m) / float(py_m) - 1) if sql_m else 1.0)
         out.append(("parser", "TF", ev, n, mag, n * mag,
                     f"event_parse {py_m} m vs the pack's SQL {sql_m} m", "review"))
