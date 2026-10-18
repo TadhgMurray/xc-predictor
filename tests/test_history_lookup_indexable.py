@@ -55,7 +55,7 @@ def test_the_caller_binds_the_ids_twice():
     pred = read("racecast", "predict.py")
     j = pred.index("def _historyRows")
     call = pred[j:pred.index("\ndef ", j + 10)]
-    assert "fx.MIN_NORMALIZED_TIME, ids, ids" in call, call
+    assert "fx.MIN_NORMALIZED_TIME, some, some" in call, call
 
 
 def test_both_id_columns_of_both_tables_are_indexed():

@@ -157,3 +157,54 @@ def test_by_prediction_passes_the_prefetched_history(monkeypatch):
     out, note = P.byPrediction(None, squads, {"A": 7}, {})
     assert note is None and seen["history"] is hist
     assert [e["person_id"] for e in out["A"]] == [2, 1]   # by the model's times
+
+
+# ---- a big field is read in shards: the same rows, runner by runner
+
+class _ShardCur(_Cur):
+    calls = []
+
+    def execute(self, sql, params=None):
+        if "to_regclass" in sql:
+            self.rows = [(None,)]
+        elif "SET LOCAL" in sql:
+            self.rows = []
+        else:
+            sport = "TF" if "TFSQL" in sql else "XC"
+            want = set(params[2])
+            _ShardCur.calls.append((sport, len(want)))
+            self.rows = [(pid, None, f"2026-{m:02d}-{pid % 27 + 1:02d}")
+                         for pid in sorted(want)
+                         for m in ((4, 5) if sport == "TF" else (9,))]
+
+
+class _ShardConn(_Conn):
+    def cursor(self, *a, **k):
+        return _ShardCur()
+
+
+def _sharded(monkeypatch, shards, second_conn_ok=True):
+    import database
+    monkeypatch.setattr(P, "_fx", lambda: _Fx)
+    monkeypatch.setattr(P, "_normScale", lambda: None)
+    monkeypatch.setattr(P, "HISTORY_SHARDS", {"XC": shards, "TF": shards})
+
+    @contextlib.contextmanager
+    def fake_getconn():
+        if not second_conn_ok:
+            raise RuntimeError("no pool here")
+        yield _ShardConn()
+    monkeypatch.setattr(database, "getConn", fake_getconn)
+    cur = _ShardCur()
+    cur.connection = _ShardConn()
+    _ShardCur.calls = []
+    return P._historyRows(cur, list(range(1, 301)))
+
+
+def test_shards_read_the_same_rows(monkeypatch):
+    one = _sharded(monkeypatch, 1)
+    assert _ShardCur.calls == [("XC", 300), ("TF", 300)]
+    four = _sharded(monkeypatch, 4)
+    assert sorted(_ShardCur.calls) == [("TF", 75)] * 4 + [("XC", 75)] * 4
+    assert four == one and len(four) == 300 and len(four[17]) == 3
+    assert _sharded(monkeypatch, 4, second_conn_ok=False) == one   # all in line

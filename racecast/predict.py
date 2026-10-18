@@ -2007,6 +2007,14 @@ def _clampYear(ctx, fx):
         ctx[idx] = float(ceiling)
 
 
+# How many pieces each sport's history read is split into (_historyRows),
+# and the fewest runners worth a piece of their own. Track histories are
+# about twice the rows of cross country ones.
+HISTORY_SHARDS = {"XC": int(os.environ.get("XCP_HISTORY_SHARDS_XC") or 2),
+                  "TF": int(os.environ.get("XCP_HISTORY_SHARDS_TF") or 4)}
+HISTORY_SHARD_MIN = 50
+
+
 def _historyRows(cur, person_ids):
     """{person_id: [corpus rows, chronological]} for a whole field in
     two queries -- feature_extraction's own row SQL with an id filter,
@@ -2055,39 +2063,43 @@ def _historyRows(cur, person_ids):
     #   while Postgres works -- and rows come back as tuples zipped into
     #   plain dicts: a RealDictCursor row copied into a dict was 2.7 million
     #   __setitem__ calls for one field. Same rows, same dicts.
-    def _plainRows(c, sport, hour):
+    #
+    # ★ AND EACH SPORT IN SHARDS OF THE FIELD (2026-10-18, third profile:
+    #   the history was 8.4 s of a 12.4 s field, 6.5 s of it ONE track
+    #   query). One Postgres query works on about one core; the field split
+    #   round-robin into HISTORY_SHARDS[sport] pieces, each on a pooled
+    #   connection of its own, runs on several. A runner's rows all come
+    #   from one shard, so each runner's rows and their order are the same
+    #   as from one query. Any shard that fails is read again in line.
+    def _plainRows(c, sport, hour, shard_ids=None):
+        some = ids if shard_ids is None else shard_ids
         c.execute(fx.personResultsSql(sport, has_weather=has_weather),
-                  (hour, fx.MIN_NORMALIZED_TIME, ids, ids))
+                  (hour, fx.MIN_NORMALIZED_TIME, some, some))
         cols = [d[0] for d in c.description]
         return [dict(zip(cols, r)) for r in c.fetchall()]
 
-    def _tfOwnConnection():
-        from database import getConn
-        with getConn() as conn2, conn2.cursor() as c2:
-            c2.execute("SET LOCAL join_collapse_limit = 16")
-            c2.execute("SET LOCAL from_collapse_limit = 16")
-            rows = _plainRows(c2, "TF", fx.TF_DEFAULT_HOUR)
-            conn2.rollback()
-            return rows
-
-    tf_rows = None
-    tf_future = None
-    try:
-        from concurrent.futures import ThreadPoolExecutor
-        _ex = ThreadPoolExecutor(1)
-        tf_future = _ex.submit(_tfOwnConnection)
-        _ex.shutdown(wait=False)
-    except Exception:                                    # noqa: BLE001
-        tf_future = None
+    hours = {"XC": fx.XC_DEFAULT_HOUR, "TF": fx.TF_DEFAULT_HOUR}
+    jobs = []                                   # (sport, shard ids, future)
+    for sport in ("XC", "TF"):
+        n = max(1, min(HISTORY_SHARDS[sport], len(ids) // HISTORY_SHARD_MIN or 1))
+        for k in range(n):
+            part = ids[k::n]
+            fut = _ownConnFuture(
+                lambda c, sp=sport, pt=part: _plainRows(c, sp, hours[sp], pt))
+            jobs.append((sport, part, fut))
+    got = {"XC": [], "TF": []}
     with cur.connection.cursor() as plain:
-        xc_rows = _plainRows(plain, "XC", fx.XC_DEFAULT_HOUR)
-        if tf_future is not None:
-            try:
-                tf_rows = tf_future.result()
-            except Exception:                            # noqa: BLE001 -- in line instead
-                tf_rows = None
-        if tf_rows is None:
-            tf_rows = _plainRows(plain, "TF", fx.TF_DEFAULT_HOUR)
+        for sport, part, fut in jobs:
+            rows = None
+            if fut is not None:
+                try:
+                    rows = fut.result()
+                except Exception:                        # noqa: BLE001 -- in line instead
+                    rows = None
+            if rows is None:
+                rows = _plainRows(plain, sport, hours[sport], part)
+            got[sport].extend(rows)
+    xc_rows, tf_rows = got["XC"], got["TF"]
     out = {}
     for row in xc_rows + tf_rows:
         pid = row.get("person_id") or row.get("athlete_id")
