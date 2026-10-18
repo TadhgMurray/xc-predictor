@@ -43,26 +43,72 @@ import numpy as np
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ROOT, "scripts"))
 
-_SQL = """
-    SELECT rr.person_id, split_part(rr.pool, '|', 1), rr.year,
-           ln(rr.speed_rating), rde.course_effect, rde.day_effect,
-           rr.race_date::date - make_date(rr.year, 8, 1)
-    FROM   ranking_results rr
-    JOIN   results r ON r.result_id = rr.result_id
-    JOIN   meets m ON m.meet_id = r.meet_id AND m.div_id = r.div_id AND m.source = r.source
-    JOIN   course_canonical cc
-           ON cc.course_name = m.course_name
-          AND round(cc.gps_lat::numeric,  5) = round(m.gps_lat::numeric,  5)
-          AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
-    JOIN   race_day_effect rde
-           ON rde.canonical_id = cc.canonical_id
-          AND rde.distance_m   = (round(m.distance / 100.0) * 100)::int
-          AND rde.race_date    = rr.race_date::date
-    WHERE  rr.sport = 'XC' AND rr.speed_rating > 0 AND rr.year >= %(since)s
-      AND  rr.person_id %% %(sample)s = 0
-      AND  rde.course_effect IS NOT NULL
-      AND  (%(pool)s IS NULL OR split_part(rr.pool, '|', 1) = %(pool)s)
+# ! FETCHED IN STEPS, JOINED IN PYTHON (2026-10-18: the one-statement join
+#   hung twice on the server, sampled or not). Each step is an indexed read
+#   or a small table; the planner never sees the five-way join.
+_RR_SQL = """
+    SELECT result_id, person_id, split_part(pool, '|', 1), year,
+           ln(speed_rating), race_date::date, race_date::date - make_date(year, 8, 1)
+    FROM   ranking_results
+    WHERE  sport = 'XC' AND speed_rating > 0 AND year >= %(since)s
+      AND  result_id > 0 AND person_id %% %(sample)s = 0
+      AND  (%(pool)s IS NULL OR split_part(pool, '|', 1) = %(pool)s)
 """
+_RES_SQL = """SELECT result_id, meet_id, div_id FROM results
+              WHERE result_id = ANY(%s) AND source = 'anet'"""
+_MEET_SQL = """SELECT meet_id, div_id, course_name, round(gps_lat::numeric, 5),
+                      round(gps_long::numeric, 5), distance
+               FROM meets WHERE source = 'anet' AND meet_id = ANY(%s)"""
+_CC_SQL = """SELECT course_name, round(gps_lat::numeric, 5), round(gps_long::numeric, 5),
+                    canonical_id FROM course_canonical"""
+_RDE_SQL = """SELECT canonical_id, distance_m, race_date, course_effect, day_effect
+              FROM race_day_effect
+              WHERE canonical_id = ANY(%s) AND course_effect IS NOT NULL"""
+
+
+def _chunks(xs, n=20000):
+    xs = list(xs)
+    for i in range(0, len(xs), n):
+        yield xs[i:i + n]
+
+
+def load(cur, since, sample, pool, say=print):
+    """[(person, pool, year, ln rating, course, day, days into season)]."""
+    cur.execute(_RR_SQL, {"since": since, "pool": pool, "sample": max(1, sample)})
+    rr = cur.fetchall()
+    say(f"  {len(rr):,} XC races in the sample")
+    res = {}
+    for ch in _chunks([r[0] for r in rr]):
+        cur.execute(_RES_SQL, (ch,))
+        res.update({rid: (m, d) for rid, m, d in cur.fetchall()})
+    say(f"  {len(res):,} of them athletic.net rows with a meet")
+    meets = {}
+    for ch in _chunks({m for m, _d in res.values()}):
+        cur.execute(_MEET_SQL, (ch,))
+        for m, d, name, lat, lon, dist in cur.fetchall():
+            meets[(m, d)] = (name, lat, lon, dist)
+    cur.execute(_CC_SQL)
+    cc = {(n, lat, lon): cid for n, lat, lon, cid in cur.fetchall()}
+    cell = {}
+    for key, (name, lat, lon, dist) in meets.items():
+        cid = cc.get((name, lat, lon))
+        if cid is not None and dist:
+            cell[key] = (cid, int(round(float(dist) / 100.0) * 100))
+    rde = {}
+    for ch in _chunks({c for c, _d in cell.values()}):
+        cur.execute(_RDE_SQL, (ch,))
+        for cid, dm, day, ce, de in cur.fetchall():
+            rde[(cid, dm, day)] = (float(ce), float(de))
+    say(f"  {len(cell):,} divisions on a known course, {len(rde):,} course-days")
+    out = []
+    for rid, pid, pl, yr, lny, day, din in rr:
+        md = res.get(rid)
+        c = cell.get(md) if md else None
+        e = rde.get((c[0], c[1], day)) if c else None
+        if e:
+            out.append((pid, pl, yr, float(lny), e[0], e[1], float(din)))
+    return out
+
 
 BANDS = (0, 90, 100, 110, 120, 130, 140, 999)
 
@@ -104,9 +150,9 @@ def main():
     t0 = time.time()
     print(f"reading XC races since {a.since}, 1 runner in {a.sample} ...", flush=True)
     with getConn() as conn, conn.cursor() as cur:
-        cur.execute("SET LOCAL statement_timeout = '15min'")
-        cur.execute(_SQL, {"since": a.since, "pool": a.pool, "sample": max(1, a.sample)})
-        rows = cur.fetchall()
+        cur.execute("SET LOCAL statement_timeout = '10min'")
+        rows = load(cur, a.since, a.sample, a.pool,
+                    say=lambda m: print(f"{m}  ({time.time() - t0:.0f}s)", flush=True))
         conn.rollback()
     print(f"  {len(rows):,} rows in {time.time() - t0:.0f}s", flush=True)
     if not rows:

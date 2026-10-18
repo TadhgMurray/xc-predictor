@@ -35,3 +35,34 @@ def test_none_when_charged_right():
     g, y, X = _data(0.0, seed=2)
     b, se, _n = D.withinFit(g, y, X)
     assert abs(b[0]) < 4 * se[0]
+
+
+class _Cur:
+    """Answers the five reads load() makes, in order."""
+    def __init__(self):
+        from datetime import date
+        d = date(2024, 10, 26)
+        self.answers = {
+            "ranking_results": [(1, 7, "hs_m", 2024, 4.9, d, 86), (2, 7, "hs_m", 2024, 4.88, d, 86)],
+            "FROM results": [(1, 100, 5), (2, 100, 6)],
+            "FROM meets": [(100, 5, "Mt. San Antonio College", 34.05, -117.8, 4828.0),
+                           (100, 6, "Somewhere Else", 1.0, 2.0, 5000.0)],
+            "course_canonical": [("Mt. San Antonio College", 34.05, -117.8, 13433)],
+            "race_day_effect": [(13433, 4800, d, 0.089, 0.034)],
+        }
+        self.rows = []
+
+    def execute(self, sql, params=None):
+        for k, v in self.answers.items():
+            if k in sql:
+                self.rows = v
+                return
+        self.rows = []
+
+    def fetchall(self):
+        return self.rows
+
+
+def test_load_joins_in_python():
+    got = D.load(_Cur(), 2023, 1, None, say=lambda m: None)
+    assert got == [(7, "hs_m", 2024, 4.9, 0.089, 0.034, 86.0)]   # row 2's course is unknown
