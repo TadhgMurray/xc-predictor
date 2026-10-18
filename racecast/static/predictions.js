@@ -1903,7 +1903,7 @@ function activeBlocks() {
    *   them apart, combined scores them together, and the edits are per
    *   division in both -- which is what mergedEdits was already written to
    *   read. */
-  return state.divs.length ? state.divs.slice() : [state.meet.div ?? null];
+  return state.divs.length ? state.divs.slice() : [state.meet ? state.meet.div ?? null : null];
 }
 
 
@@ -1918,6 +1918,11 @@ function activeBlocks() {
  *   working unchanged and edits land on the right race.
  */
 function renderField() {
+  /* ! NO MEET, NOTHING TO DRAW (2026-10-18, "Cannot read properties of null
+       (reading 'div')" back on /predictions after loadRaces' guard): a field
+       or squad request that lands after the meet was cleared calls here
+       with state.meet null. The page has already gone back to the picker. */
+  if (!state.meet) return;
   saveState();            // every edit path lands here
   const blocks = activeBlocks();
   /* Headed whenever there is more than one race on screen -- a single block
