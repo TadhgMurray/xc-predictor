@@ -281,17 +281,20 @@ def detachedPersonsSql():
     return "SELECT to_person FROM result_detach"
 
 
-def detach(cur, sport, result_id, from_person, fix_id=None, actor=None):
+def detach(cur, sport, result_id, from_person, fix_id=None, actor=None,
+           to_person=None):
     """Record the owner's decision and move the row now. -> the fresh
     person id, or None when the row is not on from_person any more (it was
-    moved since the request; nothing is written)."""
+    moved since the request; nothing is written). `to_person`: the person
+    an earlier row of the same decision went to, so a batch (--detach) is
+    ONE other athlete, not one per row."""
     table = dict(TABLES)[sport]
     ensure(cur)
     cur.execute(f"SELECT person_id FROM {table} WHERE result_id = %s FOR UPDATE", (result_id,))
     now = _v(cur.fetchone(), "person_id")
     if now is None or int(now) != int(from_person):
         return None
-    to = nextFreshId(cur)
+    to = int(to_person) if to_person else nextFreshId(cur)
     cur.execute("""INSERT INTO result_detach (sport, result_id, from_person, to_person,
                                               fix_request_id, decided_by)
                    VALUES (%s, %s, %s, %s, %s, %s)
@@ -356,6 +359,28 @@ def undoDetach(cur, which, actor=None):
 # ------------------------------------------------------------------ #
 #  THE COMMAND LINE
 # ------------------------------------------------------------------ #
+def detachRows(cur, person, sport, since=None, until=None, write=False, actor=None):
+    """Every `sport` row of `person` dated in [since, until] -- one other
+    athlete's races on this page -- printed, and with write=True detached
+    together onto ONE fresh person. -> (rows, the new person or None)."""
+    table = dict(TABLES)[sport]
+    cur.execute(f"""SELECT result_id, date, school, meet_id
+                    FROM {table} WHERE person_id = %(p)s
+                      AND (%(a)s::text IS NULL OR date >= %(a)s)
+                      AND (%(b)s::text IS NULL OR date <= %(b)s)
+                    ORDER BY date""", {"p": person, "a": since, "b": until})
+    rows = cur.fetchall()
+    to = None
+    for r in rows:
+        rid = _v(r, "result_id")
+        if write:
+            got = detach(cur, sport, rid, person, actor=actor, to_person=to)
+            to = to or got
+        print(f"    {_v(r, 'date', 1)}  {(_v(r, 'school', 2) or '')[:34]:<34} "
+              f"meet {_v(r, 'meet_id', 3)}  result {rid}")
+    return rows, to
+
+
 def _list(cur):
     for table, cols in (("grade_pin", "person_id, season, grade, level, fix_request_id, pinned_by"),
                         ("school_pin", "person_id, season, sport, school, fix_request_id, pinned_by"),
@@ -378,6 +403,22 @@ def main(argv=None):
     ap.add_argument("--undo-detach", metavar="RESULT_ID|all")
     ap.add_argument("--unpin", nargs="+", metavar=("KIND", "ARGS"),
                     help="grade PERSON SEASON | school PERSON SEASON [XC|TF]")
+    # ★ BY HAND, IN A BATCH (owner, 2026-10-18: two Eli Hernandez pages --
+    #   a North Carolina boy's 2022-23 track on the California one's, and
+    #   the California one split across his club and his high school). The
+    #   fix form detaches one result per request and merges one pair; these
+    #   are the same two mechanisms from the command line. Dry run unless
+    #   --write.
+    ap.add_argument("--detach", type=int, metavar="PERSON",
+                    help="move PERSON's rows in --sport between --since and --until "
+                         "onto ONE fresh person (another athlete's races)")
+    ap.add_argument("--sport", choices=("XC", "TF"))
+    ap.add_argument("--since", metavar="YYYY-MM-DD")
+    ap.add_argument("--until", metavar="YYYY-MM-DD")
+    ap.add_argument("--merge", nargs=2, type=int, metavar=("OLD", "KEEP"),
+                    help="the same athlete: OLD's rows join KEEP and OLD's page redirects "
+                         "(link_profile_school, undo: link_profile_school.py --undo OLD)")
+    ap.add_argument("--write", action="store_true")
     a = ap.parse_args(argv)
     from database import getConn
     actor = os.environ.get("USER") or "cli"
@@ -398,6 +439,46 @@ def main(argv=None):
                           a.unpin[3].upper() if len(a.unpin) > 3 else None, actor)
                 conn.commit()
                 print(f"[pins] {kind} pin removed ({n}); the next rebuild reverts that season")
+                return 0
+            if a.detach:
+                if not a.sport or not (a.since or a.until):
+                    ap.error("--detach PERSON --sport XC|TF --since/--until (one or both)")
+                ensure(cur)
+                print(f"[pins] {a.sport} rows of person {a.detach}"
+                      f" from {a.since or 'the start'} to {a.until or 'now'}:")
+                rows, to = detachRows(cur, a.detach, a.sport, a.since, a.until,
+                                      write=a.write, actor=actor)
+                if a.write:
+                    conn.commit()
+                    print(f"[pins] {len(rows)} rows detached to person {to} "
+                          f"(--undo-detach <result id>|all)")
+                else:
+                    conn.rollback()
+                    print(f"[pins] DRY RUN: {len(rows)} rows would move to one new person; --write")
+                return 0
+            if a.merge:
+                old, keep = a.merge
+                for pid in (old, keep):
+                    cur.execute("""SELECT (SELECT count(*) FROM results WHERE person_id = %(p)s) AS xc,
+                                          (SELECT count(*) FROM results_tf WHERE person_id = %(p)s) AS tf,
+                                          (SELECT max(concat_ws(' ', first_name, last_name)) FROM athletes WHERE person_id = %(p)s) AS name
+                                """, {"p": pid})
+                    r = cur.fetchone()
+                    print(f"[pins] person {pid}: {_v(r, 'name', 2)}  XC {_v(r, 'xc', 0)}  TF {_v(r, 'tf', 1)}")
+                if not a.write:
+                    conn.rollback()
+                    print(f"[pins] DRY RUN: {old} would join {keep} (its page redirecting); --write")
+                    return 0
+                conn.rollback()
+                sys.path.insert(0, _HERE)
+                import link_profile_school as LPS
+                cur.execute("SELECT max(concat_ws(' ', first_name, last_name)) AS name "
+                            "FROM athletes WHERE person_id = %s", (keep,))
+                name = _v(cur.fetchone(), "name")
+                conn.rollback()
+                out = LPS.write(conn, [(old, keep, name, f"person_pins --merge by {actor}")])
+                print(f"[pins] merged {old} into {keep}: {out} "
+                      f"(undo: scripts/link_profile_school.py --undo {old})")
                 return 0
             if a.apply:
                 ensure(cur)
