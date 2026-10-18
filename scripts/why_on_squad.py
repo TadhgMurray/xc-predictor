@@ -56,6 +56,40 @@ def main():
         print(f"\n  rated {a.sport} races, {season - 1}-{season}: {len(rows)}")
         for r in rows[:15]:
             print(f"    {r['day']}  {r['year']}  {r['school']:<32} meet {r['meet_id']:<9} {r['rating']}")
+        # ★ AND HIS RAW RESULTS, RATED OR NOT (owner, 2026-10-18: "none of
+        #   his races have ever been rated"). What each row carries that the
+        #   engine needs -- a normalized time, a pool, a distance, a course
+        #   -- and whether a check set it aside, so the reason shows.
+        cur.execute("SELECT to_regclass('public.rating_outlier') IS NOT NULL AS o, "
+                    "to_regclass('public.result_twin') IS NOT NULL AS t")
+        have = cur.fetchone()
+        out_sql = ("EXISTS (SELECT 1 FROM rating_outlier ro WHERE ro.sport = %(sp)s "
+                   "AND ro.result_id = r.result_id)" if have["o"] else "false")
+        twin_sql = ("EXISTS (SELECT 1 FROM result_twin x WHERE x.sport = %(sp)s "
+                    "AND x.result_id = r.result_id)" if have["t"] else "false")
+        cur.execute(f"""
+            SELECT r.result_id, r.date, r.source, r.meet_id, r.div_id, r.school, r.grade,
+                   r.time_seconds, r.normalized_time, r.speed_rating, r.rating_pool,
+                   m.distance AS meet_distance, m.course_name,
+                   {out_sql} AS outlier, {twin_sql} AS twin
+            FROM   results r
+            LEFT   JOIN meets m ON r.source = 'anet' AND m.meet_id = r.meet_id
+                               AND m.div_id = r.div_id
+            WHERE  r.person_id = %(p)s
+            ORDER  BY r.date DESC LIMIT 25""", {"p": a.person, "sp": a.sport})
+        raw = cur.fetchall()
+        print(f"\n  his {a.sport} results rows (rated or not): {len(raw)}")
+        for r in raw:
+            why = ("RATED" if r["speed_rating"] else
+                   "no normalized time" if r["normalized_time"] is None else
+                   "no rating pool" if not r["rating_pool"] else
+                   "outlier (set aside)" if r["outlier"] else
+                   "twin (counted on its copy)" if r["twin"] else "unrated: ?")
+            print(f"    {r['date']}  {r['source']:<5} {r['meet_id']}/{r['div_id']}  "
+                  f"{(r['school'] or '')[:22]:<22} gr {r['grade'] or '-':<4} "
+                  f"t {r['time_seconds']}  norm {r['normalized_time'] and round(float(r['normalized_time']), 1)}  "
+                  f"rating {r['speed_rating']}  pool {r['rating_pool']}  "
+                  f"dist {r['meet_distance']}  course {(r['course_name'] or '')[:24]}  -> {why}")
         schools = sorted({r["school"] for r in rows if r["year"] == season and r["school"]})
         if schools:
             print(f"\n  schools this season: {', '.join(schools)}")
@@ -99,10 +133,14 @@ def main():
                            else "this season's squad")
                     pred = r.get("pred_seconds")
                     print(f"    {t['school']}: {where} #{i + 1}  {r.get('name')}  "
-                          f"rating {r.get('rating')}  pred {pred and round(float(pred), 1)}  -- {how}")
-                    order = [(e.get("name"), e.get("pred_seconds") and round(float(e["pred_seconds"]), 1),
-                              e.get("rating")) for e in t["runners"]]
-                    print(f"      {t['school']} lineup (name, predicted s, rating): {order}")
+                          f"rating {r.get('rating')}  pred {pred and round(float(pred), 1)} "
+                          f"({r.get('pred_basis') or '-'})  -- {how}")
+                    print(f"      {t['school']} lineup:")
+                    for e in t["runners"]:
+                        ps = e.get("pred_seconds")
+                        print(f"        {(e.get('name') or '')[:24]:<24} "
+                              f"{ps and round(float(ps), 1)!s:>8}  rating {e.get('rating')!s:<6} "
+                              f"{e.get('pred_basis') or ''}")
         if not found:
             print("    not in the field (no squad row for this race's schools, gender or level)")
         print(f"\n  rule: benched once their team has run {CARRY_RACES} varsity meets since "

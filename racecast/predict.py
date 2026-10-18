@@ -3170,6 +3170,7 @@ def byPrediction(cur, squads, caps, target):
     contenders = list(dict.fromkeys(contenders))
 
     model = {}
+    basis = {}
     note = None
     _stageCount("count-contenders", len(contenders))
     if hist is not None and not contenders:
@@ -3189,8 +3190,19 @@ def byPrediction(cur, squads, caps, target):
             with _stage("pick:model"):
                 preds = _predictTimes(cur, contenders, target, spec=spec,
                                       history=history)
+            # ★ RACE TIMES ONLY (owner, 2026-10-18, why_on_squad on WPI:
+            #   894 s beside 1367 s for runners rated 105.7 and 107.3). An
+            #   entry whose time could not be put on this race's clock
+            #   carries the model's 5K-equivalent in `seconds`
+            #   (is_race_time False), and sorting those against real 8K
+            #   times scrambled the lineup. Such a runner is ordered by their
+            #   form at this race instead, the same clock as everyone else.
             model = {pid: p.get("seconds") for pid, p
-                     in zip(contenders, preds or []) if p.get("seconds")}
+                     in zip(contenders, preds or [])
+                     if p.get("seconds") and p.get("is_race_time", True)}
+            basis = {pid: ("model:" + str(p.get("time_basis") or "?")
+                           if pid in model else "form (no race clock)")
+                     for pid, p in zip(contenders, preds or [])}
         except Exception as exc:                  # noqa: BLE001 -- form order stands
             _rollback(cur)
             note = (f"the model could not run ({type(exc).__name__}), "
@@ -3207,6 +3219,7 @@ def byPrediction(cur, squads, caps, target):
         out[sch] = mod + rest
         for e in out[sch]:
             e["pred_seconds"] = model.get(e["person_id"], form(e["person_id"]))
+            e["pred_basis"] = basis.get(e["person_id"], "form")
     return out, note
 
 

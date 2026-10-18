@@ -23,7 +23,7 @@ FORM = {1: (900, 880, 920), 2: (910, 890, 930), 3: (940, 925, 960),
 SQUADS = {"A": [{"person_id": i} for i in (1, 2, 3, 4, 5)]}
 
 
-def run(model, model_raises=False, form=FORM):
+def run(model, model_raises=False, form=FORM, no_clock=()):
     sent = []
 
     def rating_times(cur, ids, spec, cut):
@@ -34,7 +34,8 @@ def run(model, model_raises=False, form=FORM):
         sent.extend(ids)
         if model_raises:
             raise RuntimeError("no model")
-        return [{"seconds": model.get(i)} for i in ids]
+        return [{"seconds": model.get(i), "is_race_time": i not in no_clock,
+                 "time_basis": "own"} for i in ids]
     real = (P._ratingTimes, P._predictTimes, P._targetSpec)
     P._ratingTimes, P._predictTimes = rating_times, predict_times
     P._targetSpec = lambda cur, target: {"date": "2026-10-17"}
@@ -61,3 +62,12 @@ def test_model_failure_falls_back_to_form_order():
 def test_no_form_and_no_model_leaves_the_squad():
     order, _sent, note = run({}, form={})
     assert order == [1, 2, 3, 4, 5] and "season rating" in note
+
+
+def test_a_time_off_the_race_clock_never_orders_the_lineup():
+    """owner, 2026-10-18 (WPI: 894 s beside 1367 s): a model time that could
+    not be put on this race's clock is a 5K-equivalent, and sorted against
+    real race times it jumped the queue. That runner goes by form instead."""
+    # 3's model "time" is a 5K-equivalent (600) -- by it, 3 would lead
+    order, _sent, note = run({1: 905, 2: 912, 3: 600, 5: 920}, no_clock=(3,))
+    assert order[:2] == [1, 2] and note is None
