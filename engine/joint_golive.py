@@ -235,6 +235,73 @@ def fieldCheck(x, athlete, days_ago, race, n_race, mask,
     return corr, gap_b, gap_l, nb, nl
 
 
+# ★★ THE ISLAND CHECK (owner, 2026-10-17/18: the all-time college men's
+#    board's top eight were Colorado State and Wyoming runners from the
+#    2020-21 COVID season). Those teams raced almost only each other, at
+#    altitude: an island the course and day terms cannot tie to anyone, so
+#    its level floats -- and every race of the season floats together, which
+#    the field check above (one season against itself) cannot see. What can
+#    see it is the runners' OWN seasons either side: a race whose field rated
+#    above both its runners' previous season AND their next one (same pool,
+#    so the same scale) is pulled down by the smaller gap.
+#  ! A RUNNER IMPROVING is above last season and below next: no correction.
+#    A runner who PEAKED is above both, which is why it takes a field
+#    (ISLAND_CHECK_MIN runners with both neighbours) and a floor of 3%: a
+#    whole field peaking together by that much is the island, not form.
+#  ! ONE WAY ONLY and capped, as the field check. XCP_ISLAND_CHECK=0 turns
+#    it off. Cross country only.
+ISLAND_CHECK_MIN = int(os.environ.get("XCP_ISLAND_CHECK_MIN", "10"))
+ISLAND_CHECK_FLOOR = float(os.environ.get("XCP_ISLAND_CHECK_FLOOR", "0.03"))
+ISLAND_CHECK_CAP = float(os.environ.get("XCP_ISLAND_CHECK_CAP", "0.06"))
+
+
+def islandCheckOn():
+    return os.environ.get("XCP_ISLAND_CHECK", "1").strip() not in ("0", "", "off")
+
+
+def islandCheck(x, person, season, race, n_race, mask,
+                min_field=None, floor=None, cap=None):
+    """Per race, the log-rating deflation the island check applies (>= 0).
+
+    x: each row's log rating (on one scale per `person`); person: the
+    athlete in one pool, across seasons; season: the row's season year;
+    race: race id; mask: the rows that count. Pure. Returns (corr[n_race],
+    gap_prev[n_race], gap_next[n_race], n[n_race])."""
+    min_field = ISLAND_CHECK_MIN if min_field is None else min_field
+    floor = ISLAND_CHECK_FLOOR if floor is None else floor
+    cap = ISLAND_CHECK_CAP if cap is None else cap
+    corr = np.zeros(n_race)
+    nan = np.full(n_race, np.nan)
+    idx = np.flatnonzero(np.asarray(mask))
+    if idx.size == 0:
+        return corr, nan, nan.copy(), np.zeros(n_race, int)
+    p = np.asarray(person, dtype=np.int64)[idx]
+    y = np.asarray(season, dtype=np.int64)[idx]
+    v = np.asarray(x, dtype=np.float64)[idx]
+    rc = np.asarray(race, dtype=np.int64)[idx]
+    # one id per (person, season); the neighbours are found by key lookup
+    y0 = int(y.min()) - 1
+    span = int(y.max()) - y0 + 2
+    key = p * span + (y - y0)
+    uk, inv = np.unique(key, return_inverse=True)
+    mean = np.bincount(inv, weights=v) / np.bincount(inv)
+
+    def _side(dy):
+        want = key + dy
+        pos = np.searchsorted(uk, want)
+        pos_c = np.minimum(pos, uk.size - 1)
+        hit = uk[pos_c] == want
+        return np.where(hit, mean[pos_c], np.nan)
+
+    prev, nxt = _side(-1), _side(+1)
+    both = np.isfinite(prev) & np.isfinite(nxt)
+    gap_p, n = _groupMedian(rc[both], (v - prev)[both], n_race)
+    gap_n, _n2 = _groupMedian(rc[both], (v - nxt)[both], n_race)
+    ok = (n >= min_field) & (gap_p > floor) & (gap_n > floor)
+    corr[ok] = np.minimum(np.minimum(gap_p[ok], gap_n[ok]), cap)
+    return corr, gap_p, gap_n, n
+
+
 def dayModes(race_effect_sports):
     """{'XC': 'all' | 'fast'} from ('XC', 'TF:fast', ...); absent = out."""
     modes = {}
@@ -530,6 +597,29 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
               f"median {100 * float(np.median(field_corr[hit])) if hit.any() else 0:.2f}%, "
               f"max {100 * float(field_corr.max()) if hit.any() else 0:.2f}% "
               f"(cap {100 * FIELD_CHECK_CAP:.0f}%)")
+    # ★ THE ISLAND CHECK, after it: the season against its neighbours (see
+    #   islandCheck). On the log rating itself, so seasons of one athlete
+    #   compare on one scale; folded into field_corr so the race's published
+    #   day is the day the rating used.
+    if islandCheckOn() and (sport == 0).any() and field_corr.size:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            xr = np.log(pm_c[D.athlete]) + eff - np.log(norm)
+        ok_cell = np.bincount(D.cell, minlength=D.n_cell)[D.cell] > 0
+        imask = ((sport == 0) & np.isfinite(xr)
+                 & np.asarray(rat["valid"])[D.athlete] & ok_cell)
+        island_corr, _gp, _gn, _ni = islandCheck(
+            xr, athlete_raw, year, D.race, field_corr.size, imask)
+        ihit = island_corr > 0
+        eff = eff - np.where(sport == 0, island_corr[D.race], 0.0)
+        field_corr = field_corr + island_corr
+        print(f"[joint/live] island check: {int(ihit.sum()):,} XC races whose "
+              f"field rated above both its runners' previous and next seasons "
+              f"(>= {ISLAND_CHECK_MIN} runners with both, gap > "
+              f"{100 * ISLAND_CHECK_FLOOR:.0f}%), "
+              f"{int((ihit[D.race] & (sport == 0)).sum()):,} rows pulled down; "
+              f"median {100 * float(np.median(island_corr[ihit])) if ihit.any() else 0:.2f}%, "
+              f"max {100 * float(island_corr.max()) if ihit.any() else 0:.2f}% "
+              f"(cap {100 * ISLAND_CHECK_CAP:.0f}%)")
     adjusted = norm / np.exp(eff)
     with np.errstate(divide="ignore", invalid="ignore"):
         rc = 100.0 * pm_c[D.athlete] / adjusted
