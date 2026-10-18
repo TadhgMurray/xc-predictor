@@ -6,6 +6,12 @@ diag_course_credit.py -- within one runner's season, do harder courses and
     set -a; . /etc/xc-predictor.env; set +a
     /srv/venv/bin/python scripts/diag_course_credit.py
     /srv/venv/bin/python scripts/diag_course_credit.py --since 2023 --pool hs_m
+    /srv/venv/bin/python scripts/diag_course_credit.py --sample 50   # 1 runner in 50
+
+! A SAMPLE OF RUNNERS BY DEFAULT (1 in 20, whole seasons kept). The full
+  join -- every XC race since 2021 through results, meets, the canonical
+  course and the day table -- hung for the owner (2026-10-18); the slopes
+  need thousands of runner-seasons, not millions.
 
 ★ WHY (owner, 2026-10-18). The go-live's "tilt by rating band" report read
   implied h 0.2-0.7 against applied 0.9-1.1 in every band -- courses charged
@@ -53,6 +59,7 @@ _SQL = """
           AND rde.distance_m   = (round(m.distance / 100.0) * 100)::int
           AND rde.race_date    = rr.race_date::date
     WHERE  rr.sport = 'XC' AND rr.speed_rating > 0 AND rr.year >= %(since)s
+      AND  rr.person_id %% %(sample)s = 0
       AND  rde.course_effect IS NOT NULL
       AND  (%(pool)s IS NULL OR split_part(rr.pool, '|', 1) = %(pool)s)
 """
@@ -88,14 +95,20 @@ def withinFit(group, y, X):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--since", type=int, default=2021)
+    ap.add_argument("--since", type=int, default=2023)
+    ap.add_argument("--sample", type=int, default=20, help="1 runner in N (1 = everyone)")
     ap.add_argument("--pool")
     a = ap.parse_args()
     from database import getConn
+    import time
+    t0 = time.time()
+    print(f"reading XC races since {a.since}, 1 runner in {a.sample} ...", flush=True)
     with getConn() as conn, conn.cursor() as cur:
-        cur.execute(_SQL, {"since": a.since, "pool": a.pool})
+        cur.execute("SET LOCAL statement_timeout = '15min'")
+        cur.execute(_SQL, {"since": a.since, "pool": a.pool, "sample": max(1, a.sample)})
         rows = cur.fetchall()
         conn.rollback()
+    print(f"  {len(rows):,} rows in {time.time() - t0:.0f}s", flush=True)
     if not rows:
         print("no rows (race_day_effect empty, or no anet XC rows matched)")
         return
