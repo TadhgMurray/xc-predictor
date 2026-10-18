@@ -3210,9 +3210,64 @@ def byPrediction(cur, squads, caps, target):
     return out, note
 
 
+def _stoppedRacing(cur, squads, sport, season_year, today=None):
+    """{person_id: varsity meets missed} for the squad members who have
+    stopped racing: raced this season, then sat out CARRY_RACES or more of
+    their team's varsity meets since (roster.CARRY_RACES, the rule that ends
+    a returner's carry-forward: "until they don't run the first 3 races").
+
+    A team's VARSITY meets are the ones at least two of its seven best (the
+    squad's own order) ran, so a JV-only invitational is not a race a
+    varsity runner "missed". Only for the season in progress: a finished one
+    is the whole roster as it was. Runners with no race this season (the
+    carried) are the carry-forward's business, not this."""
+    from roster import CARRY_RACES
+    from season_year import academicYear
+    if season_year != academicYear(today or datetime.date.today()):
+        return {}
+    schools = [s for s, sq in squads.items() if sq]
+    if not schools:
+        return {}
+    cur.execute("""SELECT school, person_id, meet_id, race_date::date AS day
+                   FROM ranking_results
+                   WHERE school = ANY(%s) AND sport = %s AND year = %s
+                     AND person_id IS NOT NULL""",
+                (schools, sport, season_year))
+    ran = {}                                   # (school, pid) -> {(meet, day)}
+    for r in cur.fetchall():
+        row = r if isinstance(r, dict) else dict(
+            zip(("school", "person_id", "meet_id", "day"), r))
+        ran.setdefault((row["school"], row["person_id"]), set()).add(
+            (row["meet_id"], row["day"]))
+    return stoppedFrom(squads, ran, CARRY_RACES)
+
+
+def stoppedFrom(squads, ran, n_missed):
+    """The pure half of _stoppedRacing: squads {school: [runners best
+    first]}, ran {(school, person_id): {(meet, day)}}."""
+    out = {}
+    for school, sq in squads.items():
+        top = [r.get("person_id") for r in sq[:7]]
+        count = {}
+        for pid in top:
+            for m in ran.get((school, pid), ()):
+                count[m] = count.get(m, 0) + 1
+        varsity = [m for m, c in count.items() if c >= 2]
+        for r in sq:
+            pid = r.get("person_id")
+            mine = ran.get((school, pid))
+            if not mine:
+                continue
+            last = max(d for _m, d in mine)
+            missed = sum(1 for _m, d in varsity if d > last)
+            if missed >= n_missed:
+                out[pid] = missed
+    return out
+
+
 def meetField(cur, meet_id, div_id, sport, season_year=None,
               when="thisyear", source=None, per_team=None, event_id=None,
-              pick=None, target=None):
+              pick=None, target=None, skip_top=0):
     """The field for a re-run, grouped by school -- and WHEN decides who.
 
     ★ `source` IS WHICH MEET (owner, 2026-10-05). The anet and tfrrs ids
@@ -3321,13 +3376,42 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
                      if track_m else squadCap(at_meet_counts.get(school, 0),
                                               per_team))
             for school in at_meet}
+    # ★ WHO HAS STOPPED RACING SITS OUT (owner, 2026-10-18: Everett Mosher
+    #   "is no longer running"). See _stoppedRacing: a runner whose team has
+    #   raced CARRY_RACES varsity meets since his last race goes behind
+    #   everyone still racing -- on the bench, addable by hand -- and is
+    #   not asked of the model.
+    idle = {}
+    if not track_m:
+        try:
+            gone = _stoppedRacing(cur, squads, sport, season_year)
+        except Exception:                               # noqa: BLE001 -- keep the squad
+            _rollback(cur)
+            gone = {}
+        for school, sq in list(squads.items()):
+            out_ = [dict(r, stopped=gone[r["person_id"]]) for r in sq
+                    if r.get("person_id") in gone]
+            if out_:
+                squads[school] = [r for r in sq if r.get("person_id") not in gone]
+                idle[school] = out_
+    # ★ SKIP EACH TEAM'S TOP N (owner, 2026-10-18: "for jv races you remove
+    #   the top 7 that are gonna run in the varsity race"). The lineup is
+    #   the next `cap` after the first `skip`; the skipped wait on the
+    #   bench. The model is asked for skip + cap a team, so the JV seven
+    #   are picked by predicted time too.
+    skip = max(0, int(skip_top or 0))
     pick_note = None
     if pick == "predicted" and target is not None:
-        squads, pick_note = byPrediction(cur, squads, caps, target)
+        squads, pick_note = byPrediction(
+            cur, squads, {k: v + skip for k, v in caps.items()}, target)
+    for school, rows in idle.items():
+        squads[school] = squads.get(school, []) + rows
     by_school = {}
     for school in at_meet:
         sq = squads.get(school, [])
         cap = caps[school]
+        active = [r for r in sq if not r.get("stopped")]
+        sat_out = [r for r in sq if r.get("stopped")]
         by_school[school] = {"school": school,
                              "state": states.get(school) or _stateOf(school),
                              # ! HOW MANY THIS SCHOOL ACTUALLY HAD ON THE
@@ -3335,7 +3419,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
                              #   tell a team from a lone qualifier with six
                              #   what-ifs added beside them.
                              "entered": at_meet_counts.get(school, 0),
-                             "runners": sq[:cap],
+                             "runners": active[skip:skip + cap],
                              # ★ bench=True: THIS SEASON'S runners past the
                              #   cap (and a track school's athletes outside
                              #   this event) -- on the squad, just not in
@@ -3343,7 +3427,10 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
                              #   absentees below as "not racing this season"
                              #   (owner, 2026-10-13: "includes people who
                              #   have raced this season").
-                             "dropped": ([dict(r, bench=True) for r in sq[cap:]]
+                             "dropped": ([dict(r, bench=True, skipped=True)
+                                          for r in active[:skip]]
+                                         + [dict(r, bench=True)
+                                            for r in active[skip + cap:] + sat_out]
                                          + [dict(r, bench=True)
                                             for r in track_rest.get(school, [])])}
     # ★ THE DROPPED NEED THEIR RATING MOST (owner, 2026-09-01). These are the
@@ -3408,6 +3495,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     #   2026-10-06): the page says so under the meet, so nobody takes last
     #   year's teams for an entry list.
     out = {"season_year": season_year, "when": when, "teams": teams,
+           "skip_top": skip,
            "gender": gender, "levels": sorted(levels), "basis": basis,
            "pick": ("predicted" if pick == "predicted" and target is not None
                     else "rating"),

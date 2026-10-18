@@ -2400,6 +2400,12 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .r-x { border: 0; background: none; color: #bbb; cursor: pointer;
                  font-size: 0.95rem; line-height: 1; padding: 0 2px; }
 .predict2 .r-x:hover { color: #a32d2d; }
+/* the predicted time a lineup was picked by, and a card's own skip
+   (predictions.js renderFieldBlock / applyTeamSkip) */
+.predict2 .r-pred { color: #222; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.predict2 .skip-team { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px;
+                       font-size: 0.78rem; color: #666; }
+.predict2 .skip-team input { width: 3.2em; font: inherit; padding: 1px 4px; }
 .predict2 .runner-row.is-out { color: #767676; }
 .predict2 .runner-row.is-back { color: #222; }
 .predict2 .r-add { border: 1px solid #ccc; background: #fff; border-radius: 3px;

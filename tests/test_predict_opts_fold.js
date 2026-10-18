@@ -69,6 +69,8 @@ function page(opts) {
     const normalizeGroups = (d, g) => g;
     const groupsForMode = () => [];
     const syncPerTeam = () => {};
+    const syncSkip = () => {};
+    ${grab("parseSkip")}
     const syncPick = () => {};
     const loadRaces = async () => { el("t-date").value = "${PROPOSED}"; };
     const loadField = async () => {};

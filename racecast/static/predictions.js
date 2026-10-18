@@ -39,6 +39,12 @@ const state = {
      it ran is the field that ran. The server (predict.squadCap) gives every
      school that brought a scoring team this many; scoring still takes seven. */
   perTeam: null,
+  /* ★ SKIP EACH TEAM'S BEST N (owner, 2026-10-18: "for jv races you remove
+     the top 7 that are gonna run in the varsity race"). 0 is nobody; the
+     server fields each team's next N after these (predict.meetField
+     skip_top). A team's own number, set on its card, is in its race's
+     edits (skipTeam) and wins over this for that team. Only "this year". */
+  skipTop: 0,
   /* ★ HOW EACH TEAM'S TOP N IS CHOSEN (owner, 2026-10-11: "predict best
      athletes for every team, but you only present/show the top x"):
      "predicted" orders every squad by its predicted time at this race
@@ -504,14 +510,14 @@ function writeState() {
     for (const [k, e] of _edits) {
       edits[k] = { removed: [...e.removed], open: [...e.open],
                    droppedTeams: e.droppedTeams, added: e.added,
-                   view: e.view };
+                   view: e.view, skipTeam: e.skipTeam || {} };
     }
     sessionStorage.setItem(SESSION_KEY, JSON.stringify({
       meet: state.meet, when: state.when, who: state.who,
       divs: state.divs, raceMode: state.raceMode,
       groups: state.groups,
       coalesce: state.coalesce, course: state.course,
-      perTeam: state.perTeam, pick: state.pick,
+      perTeam: state.perTeam, pick: state.pick, skipTop: state.skipTop,
       athletes: state.athletes,
       date: $("t-date") ? $("t-date").value : null,
       labels: [..._divLabels], edits,
@@ -543,6 +549,8 @@ function showWhen(when) {
   if (pt) pt.hidden = when !== "thisyear";
   const pb = $("pick-by-box");
   if (pb) pb.hidden = when !== "thisyear";
+  const sk = $("skip-top-box");
+  if (sk) sk.hidden = when !== "thisyear";
 }
 
 /* "10" -> 10; blank, junk or 7 and under -> null (the rulebook seven).
@@ -553,6 +561,15 @@ function parsePerTeam(v) {
   const n = parseInt(v, 10);
   const floor = state.meet && state.meet.sport === "TF" ? 1 : 8;
   return Number.isFinite(n) && n >= floor ? Math.min(n, 99) : null;
+}
+/* "7" -> 7; blank or junk -> 0. */
+function parseSkip(v) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 20) : 0;
+}
+function syncSkip() {
+  const el = $("skip-top");
+  if (el) el.value = state.skipTop ? String(state.skipTop) : "";
 }
 function syncPerTeam() {
   const el = $("per-team");
@@ -619,6 +636,8 @@ async function restoreFromQuery(p, names, snap) {
   if ($("coalesce")) $("coalesce").checked = state.coalesce;
   state.perTeam = parsePerTeam(p.get("per_team"));
   syncPerTeam();
+  state.skipTop = parseSkip(p.get("skip_top"));
+  syncSkip();
   // a link without pick= is a lineup chosen by rating (made before, or asked)
   state.pick = p.get("pick") === "predicted" ? "predicted" : "rating";
   syncPick();
@@ -631,7 +650,7 @@ async function restoreFromQuery(p, names, snap) {
   /* a date that is not the one the page would propose counts as set: a
      "this year" link always carries its date */
   openOpts((!!p.get("date") && p.get("date") !== proposed)
-           || !!state.course || !!state.perTeam);
+           || !!state.course || !!state.perTeam || !!state.skipTop);
 
   /* ★ A SAVED LINK WITH ITS SNAPSHOT IS DRAWN NOW (owner, 2026-10-18:
        "snapshot."): the prediction the sender saw, before the field (the
@@ -797,6 +816,8 @@ function restoreState() {
   state.course = saved.course || null;
   state.perTeam = saved.perTeam || null;
   syncPerTeam();
+  state.skipTop = parseSkip(saved.skipTop);
+  syncSkip();
   state.pick = saved.pick === "rating" ? "rating" : "predicted";
   syncPick();
   /* ★ AND THE TOGGLE SAYS SO (owner, 2026-10-15: "it goes as as it ran even
@@ -816,6 +837,7 @@ function restoreState() {
     rec.droppedTeams = e.droppedTeams || [];
     rec.added = e.added || [];
     rec.view = e.view || "teams";
+    rec.skipTeam = e.skipTeam || {};
   }
   _divLabels.clear();
   for (const [k, v] of (saved.labels || [])) _divLabels.set(k, v);
@@ -834,7 +856,7 @@ function restoreState() {
        text in it after a reload was the "still in the search bar but not
        picked" report -- it looked chosen and was not. */
   if ($("t-course")) $("t-course").value = state.course || "";
-  openOpts(!!state.course || !!state.perTeam);
+  openOpts(!!state.course || !!state.perTeam || !!state.skipTop);
 
   loadRaces();            // rebuilds the chips, and re-applies the mode
   /* The fields are not stored -- they are refetched, which is also what keeps
@@ -1947,7 +1969,13 @@ async function loadField() {
     if (state.meet !== meet) return;
     missing.forEach((d, i) => {
       if (got[i] && !editsFor(d).field
-          && fieldQuery(d).toString() === asks[i]) editsFor(d).field = got[i];
+          && fieldQuery(d).toString() === asks[i]) {
+        editsFor(d).field = got[i];
+        const own = editsFor(d).skipTeam || {};
+        for (const t of got[i].teams || []) {
+          if (own[t.school] !== undefined) applyTeamSkip(t, own[t.school]);
+        }
+      }
     });
   }
   renderField();
@@ -1998,6 +2026,7 @@ function fieldQuery(div) {
   if (state.meet.alt) q.set("alt", state.meet.alt);
   if (state.meet.src) q.set("src", state.meet.src);
   if (state.when === "thisyear" && state.perTeam) q.set("per_team", state.perTeam);
+  if (state.when === "thisyear" && state.skipTop) q.set("skip_top", state.skipTop);
   /* the squads ordered at this race: its date and course go with the ask */
   if (state.when === "thisyear" && state.pick === "predicted") {
     q.set("pick", "predicted");
@@ -2350,10 +2379,22 @@ function renderFieldBlock(sumEl, gridEl) {
           <div class="runner-row" data-pid="${r.person_id}">
             <span class="r-name"><a class="lnk"
                href="/athlete/${r.person_id}">${esc(r.name)}</a></span>
+            ${/* ★ THE TIME THE LINEUP WAS PICKED BY (owner, 2026-10-18: "it
+                  shouldn't be by rating"): under Pick runners by Prediction
+                  the order is each runner's predicted time at this race,
+                  so the card shows it, beside the rating */""}
+            ${r.pred_seconds != null && f.pick === "predicted"
+              ? `<span class="r-pred" title="Predicted time at this race (the lineup's order)">${
+                  fmtTime(r.pred_seconds)}</span>` : ""}
             <span class="r-rating">${rv(r.rating, r.hs_rating)}</span>
             <button class="r-x" data-remove="${r.person_id}"
                     title="Remove">&times;</button>
           </div>`).join("")}
+        ${f.when === "asran" ? "" : `<label class="skip-team"
+            title="Leave out ${esc(t.school)}'s best runners (say, the varsity seven at a JV race): the card fields the next ones instead. 0 puts them back.">Skip top
+          <input type="number" min="0" max="20" step="1" inputmode="numeric"
+                 data-skip-team="${esc(t.school)}"
+                 value="${t.skip !== undefined ? t.skip : (f.skip_top || 0)}"></label>`}
         <details class="add-menu">
           <summary class="squad-btn">+ Add</summary>
           <div class="add-menu-body">
@@ -2369,6 +2410,30 @@ function renderFieldBlock(sumEl, gridEl) {
       </div>
     </details>`).join("");
   applyScale();
+}
+
+/* ★ ONE TEAM'S OWN SKIP (owner, 2026-10-18: "some option to do that for
+   an entire race, and for individual teams"). The card's lineup becomes the
+   next `cap` after the team's best `n`, read off the order the server sent
+   -- the skipped first, then the lineup, then the rest of the bench -- so
+   it is instant and undoes itself (n = 0). Hand-added runners stay on;
+   who sat out for having stopped racing stays out. Absolute: it replaces
+   the race's skip for this team. */
+function applyTeamSkip(t, n) {
+  const dropped = t.dropped || [];
+  const added = (t.runners || []).filter((r) => r.added);
+  const order = [...dropped.filter((r) => r.skipped),
+                 ...(t.runners || []).filter((r) => !r.added),
+                 ...dropped.filter((r) => r.bench && !r.skipped && !r.stopped)];
+  if (t._cap === undefined) t._cap = (t.runners || []).filter((r) => !r.added).length;
+  const cap = t._cap;
+  n = Math.max(0, Math.min(Number(n) || 0, order.length));
+  t.runners = [...order.slice(n, n + cap).map((r) => ({ ...r, skipped: false })),
+               ...added];
+  t.dropped = [...order.slice(0, n).map((r) => ({ ...r, bench: true, skipped: true })),
+               ...order.slice(n + cap).map((r) => ({ ...r, bench: true, skipped: false })),
+               ...dropped.filter((r) => !r.bench || r.stopped)];
+  t.skip = n;
 }
 
 /* ★ ONLY THE ABSENT UNDER A CARD (owner, 2026-10-13: "not racing this
@@ -2466,6 +2531,8 @@ function buildQuery(div) {
   if (state.when === "thisyear" && state.course && !isTrack()) q.set("course", state.course);
   // the same lineup size the field on screen was read at (fetchField)
   if (state.when === "thisyear" && state.perTeam) q.set("per_team", state.perTeam);
+  // and whose best were skipped (a shared link reopens the same field)
+  if (state.when === "thisyear" && state.skipTop) q.set("skip_top", state.skipTop);
   // and how each team's top N was chosen (the field's own order)
   if (state.when === "thisyear" && state.pick === "predicted") q.set("pick", "predicted");
 
@@ -4828,6 +4895,41 @@ document.addEventListener("DOMContentLoaded", restoreState);
     if (v === state.perTeam) { el.value = v ? String(v) : ""; return; }
     state.perTeam = v;
     el.value = v ? String(v) : "";
+    if (!state.meet) { saveState(); return; }
+    for (const e of _edits.values()) e.field = null;
+    clearOutput();
+    loadField().then(() => { renderSquadBoxes(); saveState(); });
+  });
+})();
+
+/* A card's own "Skip top": instant, on that card only (applyTeamSkip),
+   remembered in its race's edits so a reloaded field keeps it. */
+document.addEventListener("change", (e) => {
+  const inp = e.target.closest && e.target.closest("[data-skip-team]");
+  if (!inp) return;
+  const card = inp.closest(".team-card");
+  const ed = editsFor(card && card.dataset.div ? card.dataset.div : null);
+  const school = inp.dataset.skipTeam;
+  const team = (ed.field?.teams || []).find((t) => t.school === school);
+  if (!team) return;
+  const n = parseSkip(inp.value.trim());
+  applyTeamSkip(team, n);
+  ed.skipTeam = { ...(ed.skipTeam || {}), [school]: n };
+  ed.open.add(school);          // keep the card you are editing open
+  renderField();
+  saveState();
+});
+
+/* ★ SKIP EACH TEAM'S TOP N: a new field, read again like a new size;
+   the hand edits and each card's own skip are kept. */
+(function () {
+  const el = $("skip-top");
+  if (!el) return;
+  el.addEventListener("change", () => {
+    const v = parseSkip(el.value.trim());
+    el.value = v ? String(v) : "";
+    if (v === state.skipTop) return;
+    state.skipTop = v;
     if (!state.meet) { saveState(); return; }
     for (const e of _edits.values()) e.field = null;
     clearOutput();

@@ -243,6 +243,18 @@
          squad's fastest predicted time at this race first
          (predict.byPrediction), or the season rating. One more box in the
          options row, shaped like the team size beside it. #}
+      {# ★ SKIP EACH TEAM'S BEST (owner, 2026-10-18: "for jv races you
+         remove the top 7 that are gonna run in the varsity race"): the
+         lineup is the next N after these (predict.meetField skip_top). A
+         card's own Skip top box changes one team. #}
+      <div class="pred-opt" id="skip-top-box">
+      <label class="per-team"><span>Skip each team's top</span>
+        <input type="number" id="skip-top" min="0" max="20" step="1"
+               inputmode="numeric" placeholder="0"
+               title="Leave out each team's best runners -- say 7 for a JV race whose varsity runs elsewhere. The lineup is the next ones after them. 0 or blank is nobody.">
+      </label>
+      </div>
+
       <div class="pred-opt" id="pick-by-box">
       <label for="pick-by">Pick runners by</label>
       <select id="pick-by" title="Which of each team's runners make the field: the fastest predicted at this race, or the best season ratings.">

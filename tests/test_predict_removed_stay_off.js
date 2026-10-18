@@ -50,7 +50,7 @@ ok(!/Bench Kid/.test(html), "the bench is not listed (it is under + Add)");
 ok(/1 not racing this season/.test(html) && /Gone Senior/.test(html),
    "the absent keep their list");
 const PY = fs.readFileSync(path.join(__dirname, "..", "racecast", "predict.py"), "utf8");
-ok(/dict\(r, bench=True\) for r in sq\[cap:\]/.test(PY),
+ok(/dict\(r, bench=True\)\s+for r in active\[skip \+ cap:\]/.test(PY),
    "meetField marks the squad past the cap as bench");
 
 if (failed) process.exit(1);

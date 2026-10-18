@@ -11237,13 +11237,23 @@ def api_predict_field():
                 out = meetField(cur, int(meet), div_n,
                                 sport, when=when, source=src,
                                 per_team=_perTeam(request.args),
-                                event_id=event_n, pick=pick, target=target)
+                                event_id=event_n, pick=pick, target=target,
+                                skip_top=_skipTop(request.args))
     out["alt"] = alt_idx
     resp = jsonify(out)
     # the live split, as /api/predict/team gives it (predict._stage)
     resp.headers["Server-Timing"] = ", ".join(
         f"{n};dur={ms:.0f}" for n, ms in _predict.stagesRows())
     return resp
+
+
+def _skipTop(args):
+    """?skip_top=N: each team's best N sit out (a JV race whose varsity
+    runs elsewhere). 0-20; junk is 0."""
+    try:
+        return max(0, min(int(args.get("skip_top") or 0), 20))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _fillRaceGenders(cur, meet_id, source, races):

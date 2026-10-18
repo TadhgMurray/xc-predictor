@@ -70,6 +70,8 @@ function page(share) {
     const setStatus = () => {};
     const openOpts = () => {};
     const parsePerTeam = () => null;
+    const parseSkip = () => 0;
+    const syncSkip = () => {};
     const renderTeam = (d) => "<table>" + d.teams[0].team + " " + d.teams[0].score + "</table>";
     const showChamps = (d) => { log.champs = d; };
     const applyScale = () => {};
