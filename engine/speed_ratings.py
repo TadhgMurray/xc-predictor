@@ -253,6 +253,25 @@ _DIV = 16           # speed_ratings_db.COLUMNS: div_id
 _ANET_LEVELS = None
 
 
+def teamKey(r):
+    """A row's team as one string, or None: anet's TeamID when it names a
+    team ('a:<id>'; 0 is unattached), else tfrrs's slug ('t:<slug>'), else
+    the school string ('s:<lowered>'). Unattached and blank are no team."""
+    tid = r[_TEAM] if len(r) > _TEAM else None
+    try:
+        if tid is not None and int(tid) > 0:
+            return f"a:{int(tid)}"
+    except (TypeError, ValueError):
+        pass
+    slug = r[_SLUG] if len(r) > _SLUG else None
+    if slug:
+        return f"t:{slug}"
+    sch = (r[_SCHOOL] or "").strip().lower() if len(r) > _SCHOOL else ""
+    if not sch or sch.startswith("unattached"):
+        return None
+    return f"s:{sch}"
+
+
 _CLUB_PROS = None
 
 
@@ -1428,6 +1447,7 @@ def packResults(batches, today, merge=False):
     _rollover = RolloverLedger()
     a_lookup, a_uniq = {}, []
     v_lookup, v_uniq = {}, []
+    t_lookup, t_uniq = {}, []    # the row's TEAM (2026-10-18), see teamKey
     chunks = []
 
     # ★ WHERE THE PACK'S TWO HOURS GO (2026-09-22: "stream + pack: 7324.8s",
@@ -1464,6 +1484,7 @@ def packResults(batches, today, merge=False):
         dists = []
         mcls = []                                # meet_class per row (issue #22)
         meets, divs = [], []                     # the division (2026-10-08), -1 = none
+        teams = []                               # the team code, -1 = none (2026-10-18)
         for r in rows:
             n_rows += 1
             # ⚠ DATE FIRST. The pool now depends on the SEASON, because a
@@ -1630,6 +1651,15 @@ def packResults(batches, today, merge=False):
             dv_ = r[_DIV] if len(r) > _DIV else None
             meets.append(int(mt_) if mt_ is not None else -1)
             divs.append(int(dv_) if dv_ is not None else -1)
+            tk = teamKey(r)
+            if tk is None:
+                teams.append(-1)
+            else:
+                tc = t_lookup.get(tk)
+                if tc is None:
+                    tc = t_lookup[tk] = len(t_uniq)
+                    t_uniq.append(tk)
+                teams.append(tc)
             census["kept"] += 1
 
         census["tf_rollover_moved"] = _rollover.moved
@@ -1651,6 +1681,7 @@ def packResults(batches, today, merge=False):
                 np.asarray(mcls, dtype=np.int8),     # meet class 0/1/2 (issue #22)
                 np.asarray(meets, dtype=np.int64),   # meet_id, -1 = none (2026-10-08)
                 np.asarray(divs, dtype=np.int64),    # div_id, -1 = none
+                np.asarray(teams, dtype=np.int32),   # team code, -1 = none
             ))
 
     _us = 1e6 / max(n_rows, 1)
@@ -1673,6 +1704,7 @@ def packResults(batches, today, merge=False):
     meet_class = np.concatenate([c[9] for c in chunks])
     meet_id = np.concatenate([c[10] for c in chunks])
     div_id = np.concatenate([c[11] for c in chunks])
+    team = np.concatenate([c[12] for c in chunks])
     n_ath, n_crs = len(a_uniq), len(v_uniq)
 
     # Two decay curves from one day count, computed vectorised in float64.
@@ -1711,6 +1743,7 @@ def packResults(batches, today, merge=False):
     meet_class = meet_class[order]
     meet_id = meet_id[order]
     div_id = div_id[order]
+    team = team[order]
     w_ath = w_ath[order]
     w_crs_norm = w_crs_norm[order]
 
@@ -1780,6 +1813,11 @@ def packResults(batches, today, merge=False):
         "meet_class": meet_class,    # 0 ordinary, 1 league-level, 2 state-level (#22)
         "meet_id":   meet_id,        # the row's division (day guard), -1 = none
         "div_id":    div_id,
+        # ★ THE ROW'S TEAM (owner, 2026-10-18: league meets where "an entire
+        #   team" runs tempo while others race). A dense code into team_keys,
+        #   -1 = no team; for a shortfall shared by a team in one race.
+        "team":      team,
+        "team_keys": t_uniq,
         "athlete_keys": a_uniq,
         "course_keys":  v_uniq,
         "cell_days": cell_days,      # PER CELL: distinct race days, length n_crs
@@ -1796,7 +1834,7 @@ def packResults(batches, today, merge=False):
     n_rows = len(out["athlete"])
     for k in ("result_id", "course", "norm", "weight", "cweight",
               "days", "sport", "doy", "year", "dist_m", "meet_class",
-              "meet_id", "div_id"):
+              "meet_id", "div_id", "team"):
         assert len(out[k]) == n_rows, f"packResults: {k} length mismatch"
     # cell_days is indexed by CELL, so it gets its own check rather than
     # joining the row loop above -- a length bug here would surface as a
