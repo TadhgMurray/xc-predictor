@@ -1118,7 +1118,8 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_WINTER_GAIN_BANDS:+--winter-gain-bands "$XCP_WINTER_GAIN_BANDS"} \
       ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
       $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) \
-      $([ "${XCP_ALTITUDE:-1}" != "0" ] && echo --altitude)
+      $([ "${XCP_ALTITUDE:-1}" != "0" ] && echo --altitude) \
+      $([ "${XCP_ALTITUDE:-1}" != "0" ] && [ "${XCP_ALTITUDE_FIT:-0}" = "1" ] && echo --altitude-fit)
   # ★★ THE EVIDENCE STEPS RUN BESIDE THE BOARDS, NOT BEFORE THEM (owner,
   #    2026-10-07: "make it faster"). 08a_holdout, 08a_sport_holdout,
   #    08b_ladder, 08d_diagnose and 08c_anchor_check publish nothing: they

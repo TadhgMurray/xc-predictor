@@ -34,6 +34,13 @@
 : "${XCP_SPORT_LEVEL:=0.0583}"      # the cross-sport scalar (ex-winter-gain)
 : "${XCP_ERA_YEARS:=2}"             # course eras, in years
 : "${XCP_ALTITUDE:=1}"              # altitude correction on
+# ★ THE ALTITUDE COEFFICIENT FITTED, NOT HELD (owner, 2026-10-18: "chosen
+#   numbers out of ass"). scripts/diag_altitude_credit.py on the published
+#   ratings: visitors' altitude races rate 1.0-2.0% per km LOW against
+#   their own sea-level races (implied ~4.5%/km against the held 3.5%);
+#   residents about right (share 0.59 against 0.5). --altitude-fit lets the
+#   athletes who race at both elevations move k. XCP_ALTITUDE_FIT=0 holds it.
+: "${XCP_ALTITUDE_FIT:=1}"
 : "${XCP_INDOOR_LEVEL:=0.003}"      # indoor's level against outdoor
 
 # ★★ THE GAUGE, AND THE SAME INDOOR NUMBER REACHING THE BRACKET ENGINE (plan
@@ -240,7 +247,7 @@
 # --- housekeeping the pipeline expects -----------------------------------
 : "${XCP_DB_QUIET:=1}"
 
-export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
+export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE XCP_ALTITUDE_FIT \
        XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
        XCP_GAUGE_UNKNOWN_LENGTH XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE \
        XCP_BRACKET_XC_LEVEL XCP_BRACKET_XC_LEVEL_MODE \
@@ -256,7 +263,7 @@ export XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
 #   list, and the progress log could not answer "was the new pooling on?"
 #   about the run whose ratings were being diagnosed. It is SET above since
 #   2026-09-24 (it was deliberately unset until the owner decided).
-SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE \
+SOLVE_ENV_VARS="XCP_DIFFICULTY XCP_SPORT_LEVEL XCP_ERA_YEARS XCP_ALTITUDE XCP_ALTITUDE_FIT \
 XCP_INDOOR_LEVEL XCP_GAUGE XCP_BRACKET_INDOOR_CENTRE XCP_DAY_NOISE \
 XCP_IMPORTANCE XCP_TEAM_POOL XCP_GAUGE_UNKNOWN_LENGTH \
 XCP_BRACKET_INDOOR_MODE XCP_GAUGE_SCOPE XCP_BRACKET_INDOOR_GATES \
