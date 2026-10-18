@@ -1295,7 +1295,7 @@ _STALE_SQL = """
                count(*)  AS years
         FROM   per_year GROUP BY 1, 2
     )
-    SELECT p.person_id, p.acad
+    SELECT p.person_id, p.acad, p.grade
     FROM   per_year p
     JOIN   runs r ON r.person_id = p.person_id AND r.grade = p.grade
     WHERE  r.years > %(maxy)s
@@ -2076,7 +2076,28 @@ POST_ELIGIBILITY_SEASONS = 7
 
 
 # the verdicts whose level pastSchoolLevel decides
-_PAST_SCHOOL = ("graduated", "past_school")
+_PAST_SCHOOL = ("graduated", "past_school", "stale_class")
+
+
+def staleVerdict(grade):
+    """Rule 5's verdict for a grade held too long. A school grade is a
+    record nobody maintains: professional. A COLLEGE CLASS WORD is
+    'stale_class', which the past-school re-level decides by the season's
+    races (pastSchoolLevel) -- still pro there unless they were college.
+
+    ★ WHY (owner, 2026-10-18, /athlete/24413256: Ryan Wilson's fifth MIT
+      season, NCAA DIII nationals, labelled Professional and unrated).
+      The COVID year made a third 'SR' ordinary: a senior in 2021, a fifth-
+      year senior in 2022, and the feed's word does not move. Three years
+      at SR is not a professional; on college start lines it is a college
+      season with no class to trust."""
+    try:
+        from normalize_distance import isCollegeClass
+        college = isCollegeClass(grade)
+    except Exception:                                    # noqa: BLE001
+        college = False
+    return {"grade": None, "level": "pro",
+            "method": "stale_class" if college else "stale_grade"}
 
 
 def pastEligibilitySeasons(acad, college_start, gap=None):
@@ -2385,14 +2406,14 @@ def resolve(cur, audit=False):
     _tq = time.time()
     cur.execute(_STALE_SQL, {"maxy": MAX_YEARS_AT_GRADE})
     print(f"    [5] stale grades read ({time.time() - _tq:.0f}s)", flush=True)
-    stale = {(int(p), int(a)) for p, a in cur.fetchall()}
+    stale = {(int(p), int(a)): g for p, a, g in cur.fetchall()}
     n_stale = 0
-    for key in stale:
+    for key, g in stale.items():
         # ! STALE OVERRIDES A CORROBORATED GRADE, and it has to. A record that
         #   says SR for four years IS well corroborated -- that is exactly the
         #   problem with it. Rule 5 is about the grade being unmaintained, not
         #   about it being unattested.
-        acad[key] = {"grade": None, "level": "pro", "method": "stale_grade"}
+        acad[key] = staleVerdict(g)
         n_stale += 1
 
     # ★ RULE 7, THE ELITE FIELD (owner, 2026-09-26, the David Hemery Valentine
