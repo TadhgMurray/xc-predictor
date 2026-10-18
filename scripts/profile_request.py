@@ -54,7 +54,16 @@ def main():
     resp = client.get(a.url)
     prof.disable()
     el = time.time() - t1
-    print(f"[profile] {resp.status_code} in {el:.1f}s, {len(resp.data):,} bytes\n", flush=True)
+    print(f"[profile] {resp.status_code} in {el:.1f}s, {len(resp.data):,} bytes", flush=True)
+    # ★ THE STAGES BY THE WALL CLOCK (2026-10-18): cProfile folds the reads
+    #   running on other threads into this one's numbers; Server-Timing is
+    #   each stage's real elapsed time, as the route measured it
+    st = resp.headers.get("Server-Timing")
+    if st:
+        print("[profile] stages: " + "  ".join(
+            f"{p.split(';dur=')[0].strip()} {float(p.split(';dur=')[1]) / 1000:.2f}s"
+            for p in st.split(",") if ";dur=" in p))
+    print(flush=True)
     prof.dump_stats("/tmp/profile_request.prof")
     for key in (a.sort, "tottime" if a.sort == "cumulative" else "cumulative"):
         s = io.StringIO()

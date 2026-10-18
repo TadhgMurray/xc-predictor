@@ -11213,6 +11213,8 @@ def api_predict_field():
     if when not in ("thisyear", "asran"):
         when = "thisyear"
 
+    import predict as _predict
+    _predict.stagesStart()
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # ★ THE ONE MEET (2026-10-05): see _predictSource; and the feed
@@ -11231,12 +11233,17 @@ def api_predict_field():
                 target, _err = _target(a)
                 if target is not None:
                     target["source"], target["alt"] = src, alt_idx
-            out = meetField(cur, int(meet), div_n,
-                            sport, when=when, source=src,
-                            per_team=_perTeam(request.args),
-                            event_id=event_n, pick=pick, target=target)
+            with _predict._stage("total"):
+                out = meetField(cur, int(meet), div_n,
+                                sport, when=when, source=src,
+                                per_team=_perTeam(request.args),
+                                event_id=event_n, pick=pick, target=target)
     out["alt"] = alt_idx
-    return jsonify(out)
+    resp = jsonify(out)
+    # the live split, as /api/predict/team gives it (predict._stage)
+    resp.headers["Server-Timing"] = ", ".join(
+        f"{n};dur={ms:.0f}" for n, ms in _predict.stagesRows())
+    return resp
 
 
 def _fillRaceGenders(cur, meet_id, source, races):

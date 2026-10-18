@@ -3003,7 +3003,8 @@ def byPrediction(cur, squads, caps, target):
     hist_future = _ownConnFuture(lambda c: _historyRows(c, ids))
     try:
         spec = _targetSpec(cur, target)
-        rated = _ratingTimes(cur, ids, spec, _asDate(spec.get("date")))
+        with _stage("pick:ratings"):
+            rated = _ratingTimes(cur, ids, spec, _asDate(spec.get("date")))
     except Exception as exc:                      # noqa: BLE001 -- keep the field
         _rollback(cur)
         return squads, f"no predictions ({type(exc).__name__})"
@@ -3039,12 +3040,14 @@ def byPrediction(cur, squads, caps, target):
         history = None
         if hist_future is not None:
             try:
-                history = hist_future.result()
+                with _stage("pick:history-wait"):
+                    history = hist_future.result()
             except Exception:                     # noqa: BLE001 -- read in line
                 history = None
         try:
-            preds = _predictTimes(cur, contenders, target, spec=spec,
-                                  history=history)
+            with _stage("pick:model"):
+                preds = _predictTimes(cur, contenders, target, spec=spec,
+                                      history=history)
             model = {pid: p.get("seconds") for pid, p
                      in zip(contenders, preds or []) if p.get("seconds")}
         except Exception as exc:                  # noqa: BLE001 -- form order stands

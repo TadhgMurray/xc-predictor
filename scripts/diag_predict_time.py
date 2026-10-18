@@ -129,6 +129,40 @@ def explain(a):
             cur.connection.rollback()   # drop the SET LOCAL
 
 
+def ownTimes(lines):
+    """[(own ms, rows, loops, node, detail lines)], most first, from an
+    EXPLAIN ANALYZE text plan. A node's own time is its total (last-row
+    time x loops) less its children's totals: where the time is spent, not
+    what it is spent under. Pure.
+
+    ! rows=10.00 on Postgres 18 (a fraction), rows=10 before."""
+    import re
+    nodes = []                       # [indent, total, rows, loops, text, detail]
+    for ln in lines:
+        m = re.search(r"actual time=[\d.]+\.\.([\d.]+) rows=([\d.]+) loops=(\d+)", ln)
+        if m:
+            indent = ln.index("->") if "->" in ln else 0
+            text = re.sub(r"\s+\(cost=.*|\s+\(actual.*", "", ln.strip().lstrip("-> "))
+            nodes.append([indent, float(m.group(1)) * int(m.group(3)),
+                          float(m.group(2)), int(m.group(3)), text[:90], []])
+        elif nodes and re.match(r"\s*(Index Cond|Filter|Join Filter|Hash Cond|Rows Removed"
+                                r"|Recheck Cond|Heap Fetches|Sort Method|Merge Cond)", ln):
+            if len(nodes[-1][5]) < 3:
+                nodes[-1][5].append(ln.strip()[:100])
+    out = []
+    for i, (indent, total, rows, loops, text, detail) in enumerate(nodes):
+        kids, child_indent = 0.0, None
+        for j in range(i + 1, len(nodes)):
+            if nodes[j][0] <= indent:
+                break
+            if child_indent is None:
+                child_indent = nodes[j][0]
+            if nodes[j][0] == child_indent:
+                kids += nodes[j][1]
+        out.append((max(total - kids, 0.0), rows, loops, text, detail))
+    return sorted(out, key=lambda r: -r[0])
+
+
 def plan(a):
     """Is the history lookup's cost in the ROWS or in the QUERY?
 
@@ -186,10 +220,12 @@ def plan(a):
                             nodes.append((ms, float(m.group(2)), int(m.group(3)), node[:90]))
                     tail = [ln.strip() for ln in lines
                             if ln.startswith(("Planning Time", "Execution Time"))]
-                    print(f"\n  {sport} {label}: slowest plan nodes "
-                          f"(ms incl. children, rows, loops)")
-                    for ms, rows, loops, node in sorted(nodes, reverse=True)[:14]:
-                        print(f"    {ms:10.1f} {rows:>11,.0f} {loops:>7}  {node}")
+                    print(f"\n  {sport} {label}: the nodes the time is spent IN "
+                          f"(own ms, without their children; rows, loops)")
+                    for own, rows, loops, node, detail in ownTimes(lines)[:10]:
+                        print(f"    {own:10.1f} {rows:>11,.0f} {loops:>7}  {node}")
+                        for d in detail:
+                            print(f"    {'':>30}{d}")
                     print("    " + "   ".join(tail))
                     print(f"    full plan: {out}", flush=True)
                 print()
