@@ -741,6 +741,63 @@ def eraCells(course, year, years, n_cells, group, course_keys):
     return (new, n_new, group_new, keys_new, era_pairs, era_w, eras_per_base)
 
 
+# ★★ ONE VENUE'S DISTANCES ARE TIED (owner, 2026-10-18: "the ratings just
+#    feel off"). A cross country cell is (venue, distance), and the only
+#    prior a cell had was the sport's one level: a thin cell shrank to the
+#    flat typical course (+6.0% -- Keene Park 3200, Mt. SAC 3900/4000/6000,
+#    Connell HS's short loops all read exactly that) whatever its own venue
+#    runs at its other distances, and two well-raced cells of one venue
+#    could sit 7% apart on the SAME day (Laramie, Jan 23 2021: the men's
+#    6000 +9.5%, the women's 5000 +2.1%, one shared day term) -- the course
+#    absorbing what the field or the curve did. Same ground is the best
+#    prior a cell has. So the distances of one venue (and era) are chained
+#    in distance order by the same spring the eras use, with sd
+#    VENUE_DIST_SD per 0.2 of log-distance (4000 -> 5000 is 0.22): a thin
+#    cell rests on its siblings, a thick one still moves. Different loops at
+#    one venue keep their difference when their rows show it.
+#    XCP_VENUE_DIST_SD=0 turns it off.
+VENUE_DIST_SD = float(os.environ.get("XCP_VENUE_DIST_SD", "0.025"))
+VENUE_DIST_REF = 0.2           # log-distance the sd is stated per
+VENUE_DIST_MIN_GAP = 0.1       # a near-same distance is tied no tighter than this share
+
+
+def venueDistancePairs(course_keys, sd=None, era_sd=None):
+    """(pairs (2, M), w (M,)) tying neighbouring distances of one cross
+    country venue (and era), or (None, None). w is relative to the era
+    walk's stiffness (sigma2 / era_sd^2), so the tie's sd is
+    sd * sqrt(max(gap / VENUE_DIST_REF, VENUE_DIST_MIN_GAP)). Pure."""
+    sd = VENUE_DIST_SD if sd is None else sd
+    if era_sd is None:
+        era_sd = float(os.environ.get("XCP_ERA_DRIFT") or js.ERA_DRIFT_SD)
+    if not sd or sd <= 0:
+        return None, None
+    groups = {}
+    for i, k in enumerate(course_keys):
+        k = str(k)
+        if not k.startswith("XC:"):
+            continue
+        base, at, era = k.partition("@e")
+        head, tag, dist = base.rpartition(":d")
+        if not tag or not dist.isdigit() or int(dist) <= 0:
+            continue
+        groups.setdefault((head, era), []).append((int(dist), i))
+    a, b, w = [], [], []
+    for cells in groups.values():
+        if len(cells) < 2:
+            continue
+        cells.sort()
+        for (d0, i0), (d1, i1) in zip(cells, cells[1:]):
+            gap = abs(np.log(d1 / d0))
+            var = sd * sd * max(gap / VENUE_DIST_REF, VENUE_DIST_MIN_GAP)
+            a.append(i0)
+            b.append(i1)
+            w.append(era_sd * era_sd / var)
+    if not a:
+        return None, None
+    return np.vstack([np.array(a, dtype=np.int64), np.array(b, dtype=np.int64)]), \
+        np.array(w, dtype=np.float64)
+
+
 def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                 sizes=None, dist=True, slope=True, link=True, altitude=False,
                 dist_bands=True, split_ability=False, era_years=0,
@@ -805,6 +862,13 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
               f"(course, era) cells, {0 if era_pairs is None else era_pairs.shape[1]:,} "
               f"adjacent pairs tied by a random walk "
               f"(drift sd {js.ERA_DRIFT_SD:g}/era)")
+    vpairs, vw = venueDistancePairs(course_keys)
+    if vpairs is not None:
+        era_pairs = vpairs if era_pairs is None else np.hstack([era_pairs, vpairs])
+        era_w = vw if era_w is None else np.concatenate([era_w, vw])
+        print(f"[joint] venue distances: {vpairs.shape[1]:,} neighbouring "
+              f"distances of one venue tied (sd {VENUE_DIST_SD:g} per "
+              f"{VENUE_DIST_REF:g} of log-distance)")
 
     sc = (pe.sportCentered(sport, athlete, n_ath)
           if sport_offset and sport is not None else None)
