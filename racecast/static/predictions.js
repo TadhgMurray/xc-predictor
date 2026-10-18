@@ -421,6 +421,71 @@ function mergedEdits(divs) {
  *   that cannot remember is worth far more than one that will not load.
  */
 const SESSION_KEY = "rc-predict-v1";
+/* ★ AND THE PREDICTION ITSELF (owner, 2026-10-18: "when you press the back
+     button after leaving the predictions page, leave it as it was when you
+     left it rather than resetting it"). The edits came back but the result
+     did not: Back landed on the form and the reader waited ~30 s for the
+     same prediction again. The rendered output, the results the Best 7 and
+     head-to-head tools read, and the scroll position are kept under their
+     own key -- a result too big for the quota is simply not kept, and never
+     costs the edits. This tab's own answer, in this tab's own storage. */
+const OUTPUT_KEY = SESSION_KEY + ":output";
+
+function writeOutput() {
+  try {
+    const out = $("output");
+    if (!out || !out.innerHTML.trim() || !state.lastResults || !state.lastResults.length) {
+      sessionStorage.removeItem(OUTPUT_KEY);
+      return;
+    }
+    sessionStorage.setItem(OUTPUT_KEY, JSON.stringify({
+      meet: state.meet ? String(state.meet.id) : "",
+      who: state.who, html: out.innerHTML,
+      targets: state.lastTargets, results: state.lastResults,
+      champs: state.who === "team" && state.lastTargets
+              && state.lastTargets.length === 1,
+    }));
+  } catch (err) {
+    try { sessionStorage.removeItem(OUTPUT_KEY); } catch (e2) { /* nothing */ }
+  }
+}
+
+function writeScroll() {
+  try { sessionStorage.setItem(SESSION_KEY + ":scroll", String(window.scrollY || 0)); }
+  catch (err) { /* nothing */ }
+}
+
+/* The page is going away: write now, not after the throttle (pagehide, not
+   unload -- unload would keep the browser from restoring the page whole). */
+window.addEventListener("pagehide", () => {
+  clearTimeout(_saveTimer);
+  writeState();
+  writeScroll();
+});
+
+function restoreOutput() {
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem(OUTPUT_KEY) || "null"); }
+  catch (err) { return false; }
+  if (!saved || !saved.html || !state.meet || saved.meet !== String(state.meet.id)
+      || saved.who !== state.who) return false;
+  state.lastTargets = saved.targets || [];
+  state.lastResults = saved.results || [];
+  $("output").innerHTML = saved.html;
+  if (typeof window.rcTabs === "function") {
+    document.querySelectorAll("#output .team-result").forEach((el) => window.rcTabs(el));
+  }
+  if (saved.champs && state.lastResults[0]) showChamps(state.lastResults[0]);
+  applyScale();
+  if (state.who === "team" && state.lastTargets.length) {
+    headShare(buildQuery(state.lastTargets[0]));
+  }
+  let y = 0;
+  try { y = Number(sessionStorage.getItem(SESSION_KEY + ":scroll")) || 0; }
+  catch (err) { y = 0; }
+  if (y > 0) requestAnimationFrame(() => window.scrollTo(0, y));
+  return true;
+}
 
 /* ! THROTTLED, AND THE FIELDS ARE NOT IN IT. renderField calls this, and
      renderField runs several times a load -- serialising every cached field
@@ -721,6 +786,8 @@ function restoreState() {
   /* The fields are not stored -- they are refetched, which is also what keeps
      a restored session from showing a roster that has since changed. */
   loadField();
+  // and the prediction that was on screen, as it was (OUTPUT_KEY)
+  restoreOutput();
 }
 
 /* Forget every division's edits -- a different meet is a different world. */
@@ -2501,6 +2568,7 @@ async function predict() {
       headShare(buildQuery(targets[0]));
       saveShare(buildQuery(targets[0]));
     }
+    writeOutput();
   } catch (err) {
     /* ! A REAL NETWORK FAILURE AND A BAD RESPONSE READ DIFFERENTLY. fetch
          itself rejects with a TypeError when the request never landed;
@@ -2583,6 +2651,7 @@ function showChamps(d) {
    winners, and the header's Share back to the page itself. */
 function clearOutput() {
   $("output").innerHTML = "";
+  try { sessionStorage.removeItem(OUTPUT_KEY); } catch (err) { /* nothing */ }
   showChamps(null);
   headShare(null);
 }

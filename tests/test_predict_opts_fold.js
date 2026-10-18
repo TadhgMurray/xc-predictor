@@ -72,6 +72,7 @@ function page(opts) {
     const syncPick = () => {};
     const loadRaces = async () => { el("t-date").value = "${PROPOSED}"; };
     const loadField = async () => {};
+    const restoreOutput = () => false;     // the kept prediction (OUTPUT_KEY)
     const applySharedField = () => {};
     const renderField = () => {};
     const renderAthletes = () => {};
