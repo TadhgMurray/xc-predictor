@@ -23,7 +23,7 @@ FORM = {1: (900, 880, 920), 2: (910, 890, 930), 3: (940, 925, 960),
 SQUADS = {"A": [{"person_id": i} for i in (1, 2, 3, 4, 5)]}
 
 
-def run(model, model_raises=False, form=FORM, no_clock=()):
+def run(model, model_raises=False, form=FORM, no_clock=(), sigma=None):
     sent = []
 
     def rating_times(cur, ids, spec, cut):
@@ -35,7 +35,7 @@ def run(model, model_raises=False, form=FORM, no_clock=()):
         if model_raises:
             raise RuntimeError("no model")
         return [{"seconds": model.get(i), "is_race_time": i not in no_clock,
-                 "time_basis": "own"} for i in ids]
+                 "time_basis": "own", "sigma_pct": (sigma or {}).get(i)} for i in ids]
     real = (P._ratingTimes, P._predictTimes, P._targetSpec)
     P._ratingTimes, P._predictTimes = rating_times, predict_times
     P._targetSpec = lambda cur, target: {"date": "2026-10-17"}
@@ -48,7 +48,8 @@ def run(model, model_raises=False, form=FORM, no_clock=()):
     return [e["person_id"] for e in out["A"]], sorted(sent), note
 
 
-def test_model_only_for_contenders_and_it_decides():
+def test_model_only_for_contenders_and_it_decides(monkeypatch):
+    monkeypatch.setenv("XCP_PREDICT_BASIS", "model")      # the raw network
     order, sent, note = run({1: 905, 2: 930, 3: 915, 5: 920})
     assert sent == [1, 2, 3, 5]          # 4 is out of reach, never modelled
     assert order[:2] == [1, 3] and note is None
@@ -71,3 +72,27 @@ def test_a_time_off_the_race_clock_never_orders_the_lineup():
     # 3's model "time" is a 5K-equivalent (600) -- by it, 3 would lead
     order, _sent, note = run({1: 905, 2: 912, 3: 600, 5: 920}, no_clock=(3,))
     assert order[:2] == [1, 2] and note is None
+
+
+def test_by_default_the_order_is_what_the_prediction_serves(monkeypatch):
+    """owner, 2026-10-18 (WPI): the lineup is ordered by the times the
+    prediction would serve -- basis "rating", the default: a rated runner
+    by their rating's time, the model only for the unrated, and only when
+    it is on the race clock and sure (_GUARD_MAX_SIGMA)."""
+    monkeypatch.delenv("XCP_PREDICT_BASIS", raising=False)
+    # the model would put 3 first (850) -- but 3 is rated, so 3 goes by form
+    order, sent, note = run({1: 905, 2: 930, 3: 850, 5: 890}, sigma={5: 4.0})
+    assert sent == [5]                   # only the unrated runner is modelled
+    assert order[:3] == [5, 1, 2] and note is None   # 5's sure 890 leads
+
+    # an unrated runner whose model band is not a prediction goes after
+    order, sent, _ = run({5: 890}, sigma={5: 15.0})
+    assert order[:2] == [1, 2] and order.index(5) > order.index(2)
+
+
+def test_guard_keeps_the_model_only_where_it_agrees(monkeypatch):
+    monkeypatch.setenv("XCP_PREDICT_BASIS", "guard")
+    # 1: model 905 vs form 900 agrees; 2: model 700 vs form 910, 23% off
+    order, sent, _ = run({1: 905, 2: 700, 3: 915, 5: 920},
+                         sigma={1: 4.0, 2: 4.0, 3: 4.0, 5: 4.0})
+    assert order[:2] == [1, 2]            # 2 by its form (910), not the 700

@@ -109,3 +109,17 @@ def test_a_predicted_time_reads_as_the_rating_it_is_worth_here(monkeypatch):
     # outside the scale, or no pool: nothing
     assert P._secondsToRating(10.0, "college_m", {}, 2026) is None
     assert P._secondsToRating(800.0, None, {}, 2026) is None
+
+
+def test_rows_left_off_the_common_scale_do_not_set_the_ratio():
+    """owner, 2026-10-18 (WPI at 894 s for an 8K): a row toCommonScale
+    could not move (norm_unshifted) still holds its pool-anchor time, so
+    raw / normalized there is ~1.0, not the ~1.6 an 8K takes from a
+    5K-equivalent. Only rescaled rows measure the athlete's ratio."""
+    good = [{"distance_meters": 8000, "time_seconds": 1500.0,
+             "normalized_time": 920.0, "is_xc": True}] * 2
+    bad = [{"distance_meters": 8000, "time_seconds": 1500.0,
+            "normalized_time": 1498.0, "is_xc": True, "norm_unshifted": True}] * 3
+    r = P._distanceRatio(good + bad, 8000.0, True)
+    assert abs(r - 1500.0 / 920.0) < 1e-9
+    assert P._distanceRatio(bad, 8000.0, True) is None   # then the curve decides

@@ -1185,6 +1185,7 @@ def _predictTimes(cur, person_ids, target, spec=None, history=None):
                 "is_race_time": race is not None,
                 "time_basis": (clock or {}).get("basis"),
                 "time_pool": (clock or {}).get("pool"),
+                "clock_ratio": (clock or {}).get("ratio"),
                 "n_races": len(s),
                 "weather_basis": headline})
             if sig is not None:
@@ -1735,6 +1736,14 @@ def _distanceRatio(rows, distance, is_xc=None):
         #   not a hilly park. The median mixed both for anyone who ran both.
         if is_xc is not None and r.get("is_xc") is not None \
                 and bool(r.get("is_xc")) != bool(is_xc):
+            continue
+        # ⚠ NOT A ROW LEFT OFF THE COMMON SCALE (owner, 2026-10-18: WPI's
+        #   lineup at 894 s for an 8K). toCommonScale keeps the pool-anchor
+        #   value of a row whose pool it cannot tell (norm_unshifted), so
+        #   raw / normalized there is raw / (an 8K-anchor time) ~= 1.0, not
+        #   raw / (its 5K-equivalent) ~= 1.6 -- and a prediction on the
+        #   common scale times that came out a 5K time printed as an 8K.
+        if r.get("norm_unshifted"):
             continue
         d = r.get("distance_meters")
         raw, norm = r.get("time_seconds"), r.get("normalized_time")
@@ -3169,16 +3178,31 @@ def byPrediction(cur, squads, caps, target):
                 contenders.append(e["person_id"])
     contenders = list(dict.fromkeys(contenders))
 
+    # ★ THE TIMES THE PREDICTION ITSELF WOULD SERVE (owner, 2026-10-18:
+    #   WPI's lineup ordered 894 s, 935 s ... 1392 s, a runner with no rated
+    #   race sixth). The lineup was ordered by the raw network for every
+    #   contender, while the prediction a reader then runs serves each
+    #   rated runner the time their rating gives (_servedTimes, basis
+    #   "rating", the default while the model runs ~20% fast at college 8K)
+    #   and the model only for runners with no rating -- and only when its
+    #   time is on this race's clock and its band is a prediction
+    #   (_GUARD_MAX_SIGMA). The order now follows the same rule, per
+    #   _predictBasis: "rating" models only the unrated, "guard" keeps the
+    #   model where it agrees with the rating (_GUARD_MAX_GAP), "model" is
+    #   the raw network (race-clock times only).
+    served_basis = _predictBasis()
     model = {}
     basis = {}
     note = None
+    need = ([pid for pid in contenders if form(pid) is None]
+            if served_basis == "rating" else list(contenders))
     _stageCount("count-contenders", len(contenders))
-    if hist is not None and not contenders:
-        hist.keep(())
-    if contenders:
+    _stageCount("count-modelled", len(need))
+    if hist is not None:
+        hist.keep(need)                     # () stops what is not needed
+    if need:
         history = None
         if hist is not None:
-            hist.keep(contenders)
             try:
                 history = hist.finish(cur)
                 _stageAdd("pick:history-wait", hist.wait_s)
@@ -3188,25 +3212,36 @@ def byPrediction(cur, squads, caps, target):
                 history = None
         try:
             with _stage("pick:model"):
-                preds = _predictTimes(cur, contenders, target, spec=spec,
+                preds = _predictTimes(cur, need, target, spec=spec,
                                       history=history)
-            # ★ RACE TIMES ONLY (owner, 2026-10-18, why_on_squad on WPI:
-            #   894 s beside 1367 s for runners rated 105.7 and 107.3). An
-            #   entry whose time could not be put on this race's clock
-            #   carries the model's 5K-equivalent in `seconds`
-            #   (is_race_time False), and sorting those against real 8K
-            #   times scrambled the lineup. Such a runner is ordered by their
-            #   form at this race instead, the same clock as everyone else.
-            model = {pid: p.get("seconds") for pid, p
-                     in zip(contenders, preds or [])
-                     if p.get("seconds") and p.get("is_race_time", True)}
-            basis = {pid: ("model:" + str(p.get("time_basis") or "?")
-                           if pid in model else "form (no race clock)")
-                     for pid, p in zip(contenders, preds or [])}
+            for pid, p in zip(need, preds or []):
+                secs, sig, r = p.get("seconds"), p.get("sigma_pct"), form(pid)
+                on_clock = bool(secs) and p.get("is_race_time", True)
+                sure = sig is not None and float(sig) / 100.0 <= _GUARD_MAX_SIGMA
+                if served_basis == "model":
+                    keep = on_clock
+                elif r is None:
+                    keep = on_clock and sure
+                else:
+                    keep = (on_clock and sure and
+                            abs(math.log(float(secs) / float(r))) <= _GUARD_MAX_GAP)
+                if keep:
+                    model[pid] = secs
+                    basis[pid] = ("model:" + str(p.get("time_basis") or "?")
+                                  + (f" x{p['clock_ratio']:.3f}" if p.get("clock_ratio") else "")
+                                  + (f" ({p['time_pool']})" if p.get("time_pool") else ""))
+                elif r is None:
+                    basis[pid] = ("no rating; model off the race clock" if not on_clock
+                                  else "no rating; model too unsure")
         except Exception as exc:                  # noqa: BLE001 -- form order stands
             _rollback(cur)
             note = (f"the model could not run ({type(exc).__name__}), "
                     f"so by recent form")
+    # a rated contender the model did not serve: their rating's time
+    for pid in contenders:
+        if pid not in model and form(pid) is not None:
+            model[pid] = form(pid)
+            basis.setdefault(pid, "rating")
     if not model and not any(form(pid) is not None for pid in ids):
         return squads, "no predictions for this field, so by season rating"
 

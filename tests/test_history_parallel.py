@@ -136,6 +136,7 @@ def test_rating_rows_parallel_and_fallback_agree(monkeypatch):
 # ---- byPrediction hands the model the history it read beside the ratings
 
 def test_by_prediction_passes_the_prefetched_history(monkeypatch):
+    monkeypatch.setenv("XCP_PREDICT_BASIS", "model")     # every contender modelled
     seen = {}
     hist = {1: [{"date": "2026-09-01"}], 2: [{"date": "2026-09-02"}]}
 
