@@ -66,3 +66,16 @@ def test_both_id_columns_of_both_tables_are_indexed():
                        ("results_tf", "person_id"),
                        ("results_tf", "athlete_id")):
         assert re.search(rf'\("{table}",\s*"{col}"', idx), f"{table}.{col}"
+
+
+def test_the_time_floor_never_drives_the_read():
+    """owner, 2026-10-18 (diag_predict_time --plan): a 378-runner field had
+    the planner walk 31M entries of idx_results_tf_normalized_time for
+    "normalized_time > 600" -- 3.9 s of a 4.65 s query. The per-runner SQL
+    writes the floor as `+ 0` (same rows, no index matches it), so the ids
+    drive the read; the corpus extraction keeps its own SQL."""
+    fx = read("model", "feature_extraction.py")
+    i = fx.index("def personResultsSql")
+    body = re.sub(r"#.*", "", fx[i:fx.index("\ndef ", i + 10)])
+    assert '"r.normalized_time + 0 > %s"' in body, body
+    assert '"(r.normalized_time + 0) IS NOT NULL"' in body, body

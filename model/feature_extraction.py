@@ -1213,6 +1213,21 @@ def personResultsSql(sport, has_weather=True):
     #
     # ⚠ THE ID ARRAY IS NOW BOUND TWICE, so callers pass it twice. There is
     #   one caller (racecast/predict._historyRows) and it does.
+    #
+    # ★ AND THE TIME FLOOR KEPT OFF ITS INDEX (owner, 2026-10-18,
+    #   diag_predict_time --plan). For a 378-runner field the planner
+    #   BitmapAnded the runners' rows with idx_results_tf_normalized_time on
+    #   "normalized_time > 600" -- 31,189,004 index entries walked, 3.9 s of
+    #   a 4.65 s query -- to drop a few hundred rows the id lookup would
+    #   have filtered for nothing (a quarter of the field planned it as a
+    #   Filter: 0.1 s). `+ 0` is the same value, so the same rows, but no
+    #   index matches it: the ids drive the read at every field size.
+    # ! ONLY HERE. The corpus extraction reads every row and plans its own.
+    for col_test in ("r.normalized_time IS NOT NULL", "r.normalized_time > %s"):
+        assert base.count(col_test) == 1, col_test
+    base = (base.replace("r.normalized_time IS NOT NULL",
+                         "(r.normalized_time + 0) IS NOT NULL")
+                .replace("r.normalized_time > %s", "r.normalized_time + 0 > %s"))
     return base.replace(
         _ORDER_BY,
         "        AND (r.person_id = ANY(%s)\n"
