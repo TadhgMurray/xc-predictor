@@ -2977,6 +2977,17 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .div-field .fg.hidden { display: none; }
 .predict2 #field-summary.hidden { display: none; }
 
+/* A shared link's snapshot: when it was made, and a rerun (predictions.js
+   snapNote). */
+.predict2 .snap-note { display: flex; flex-wrap: wrap; gap: 0.25rem 0.7rem;
+                       align-items: baseline; margin: 0 0 0.9rem;
+                       padding: 0.45rem 0.7rem; font-size: 0.88rem;
+                       color: var(--muted, #6b7280);
+                       border: 1px solid var(--line, #e5e7eb); border-radius: 6px; }
+.predict2 .snap-note button { font: inherit; padding: 0; border: 0;
+                              background: none; color: inherit; cursor: pointer;
+                              text-decoration: underline; font-weight: 600; }
+
 .predict2 .div-result { margin: 0 0 1.6rem; }
 .predict2 .div-result + .div-result { border-top: 1px solid #e5e7eb;
                                       padding-top: 1.1rem; }

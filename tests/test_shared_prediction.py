@@ -19,6 +19,9 @@ except ImportError:
     _HAVE = False
 
 STORE = {}
+SNAPS = {}
+MADE = __import__("datetime").datetime(2026, 10, 18, 14, 5,
+                                       tzinfo=__import__("datetime").timezone.utc)
 
 
 class Cur:
@@ -26,8 +29,20 @@ class Cur:
         self.last = None
 
     def execute(self, sql, params=None):
+        import json
         if "to_regclass" in sql:
             self.last = [("shared_prediction",)]
+        elif sql.lstrip().startswith("INSERT INTO prediction_snapshot"):
+            SNAPS[params[0]] = json.loads(params[1])
+            self.last = []
+        elif "SELECT made_at FROM prediction_snapshot" in sql:
+            self.last = [(MADE,)] if params[0] in SNAPS else []
+        elif "FROM   prediction_snapshot s" in sql:
+            sid, q, names, key = params
+            extra = dict(json.loads(names), snapshot=SNAPS[key],
+                         snapshot_at=MADE.isoformat())
+            STORE.setdefault(sid, (q, json.dumps(extra)))
+            self.last = []
         elif sql.lstrip().startswith("INSERT INTO shared_prediction"):
             sid, q, extra = params
             STORE.setdefault(sid, (q, extra))
@@ -77,6 +92,7 @@ class Share(unittest.TestCase):
         self._saved = A.getConn
         A.getConn = lambda: Conn()
         STORE.clear()
+        SNAPS.clear()
         self.c = A.app.test_client()
         # the page's own fetch() sends Origin on a POST (sweep 2026-10-10)
         self.c.environ_base["HTTP_ORIGIN"] = "http://localhost"
@@ -118,6 +134,45 @@ class Share(unittest.TestCase):
             r = c.post("/api/predict/share", json={"query": QUERY}, headers=hdrs)
             self.assertEqual(r.status_code, 403, hdrs)
         self.assertEqual(STORE, {})
+
+    def test_a_share_carries_the_result_the_server_computed(self):
+        """owner, 2026-10-18: "snapshot." The prediction this server ran for
+        the request rides in the link; the browser never supplies it."""
+        from werkzeug.datastructures import MultiDict
+        import urllib.parse
+        result = {"teams": [{"team": "Jesuit", "score": 41}], "runners": []}
+        self.A._keepSnapshot(MultiDict(urllib.parse.parse_qsl(QUERY)), result)
+        r = self.c.post("/api/predict/share",
+                        json={"query": QUERY, "extra": {"names": {"12": "New Kid"},
+                                                        "snapshot": {"teams": "forged"}}})
+        sid = r.get_json()["id"]
+        got = self.c.get(f"/api/predict/share/{sid}").get_json()
+        self.assertEqual(got["extra"]["snapshot"], result)
+        self.assertEqual(got["extra"]["snapshot_at"], MADE.isoformat())
+        self.assertEqual(got["extra"]["names"], {"12": "New Kid"})
+        # each snapshot is its own link: not the bare request's id
+        self.assertNotEqual(sid, self.A._shareId(QUERY))
+
+    def test_no_snapshot_is_the_old_link(self):
+        sid = self.c.post("/api/predict/share", json={"query": QUERY}).get_json()["id"]
+        self.assertEqual(sid, self.A._shareId(QUERY))
+        self.assertNotIn("snapshot",
+                         self.c.get(f"/api/predict/share/{sid}").get_json()["extra"])
+
+    def test_one_key_however_the_request_arrived(self):
+        """A GET's query string, a POSTed form (sendQuery past 1,800 bytes)
+        and the query the Share box saves name the same snapshot."""
+        import urllib.parse
+        A = self.A
+        want = A._predKey(urllib.parse.parse_qsl(QUERY))
+        with A.app.test_request_context("/api/predict/team?" + QUERY):
+            self.assertEqual(A._predKey(A.request.values.items(multi=True)), want)
+        with A.app.test_request_context("/api/predict/team", method="POST", data=QUERY,
+                                        content_type="application/x-www-form-urlencoded"):
+            self.assertEqual(A._predKey(A.request.values.items(multi=True)), want)
+        # a blank value (URLSearchParams keeps it, parse_qsl drops it)
+        self.assertEqual(A._predKey(urllib.parse.parse_qsl(QUERY + "&course=",
+                                                           keep_blank_values=True)), want)
 
     def test_an_unknown_id_is_a_404_not_a_crash(self):
         self.assertEqual(self.c.get("/api/predict/share/zzzzzzzzzzzz").status_code, 404)

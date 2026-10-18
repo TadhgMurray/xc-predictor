@@ -10613,6 +10613,65 @@ def _shareId(query):
     return base64.b32encode(raw).decode("ascii").lower().rstrip("=")[:12]
 
 
+# ★ A SHARED LINK SHOWS THE PREDICTION THAT WAS SHARED (owner, 2026-10-18:
+#   "snapshot."). A ?s= link used to restore the request and run it again,
+#   so the recipient waited ~20 s and, after a nightly update, read numbers
+#   the sender never saw. Now every team prediction keeps what it computed
+#   in prediction_snapshot under its request's key, and a Share copies that
+#   result into the link's row (extra.snapshot, extra.snapshot_at). The page
+#   draws it at once, dated, with a button to run it again on today's data.
+#
+# ! THE SERVER'S OWN ANSWER, NEVER THE BROWSER'S. The page could post the
+#   result it was shown, but then anyone could post any table to a link on
+#   this site (and that table is drawn into the page). Only rows this code
+#   wrote from predictTeam are ever copied into a share.
+# ! ONE ROW PER REQUEST, overwritten by the next run of the same request and
+#   pruned after a day: it holds a result until somebody shares it, nothing
+#   more. A share copies it, so a link's snapshot never changes afterwards.
+# ! EACH SNAPSHOT IS ITS OWN LINK: the id hashes the request AND the moment
+#   it was predicted, so re-sharing after an update is a new link and the
+#   old one still shows what it showed.
+_SNAP_MAX = 4 * 1024 * 1024
+_SNAP_FRESH = "6 hours"
+_SNAP_DDL = """CREATE TABLE IF NOT EXISTS prediction_snapshot (
+                   pred_key text PRIMARY KEY,
+                   result   jsonb NOT NULL,
+                   made_at  timestamptz NOT NULL DEFAULT now())"""
+
+
+def _predKey(pairs):
+    """One key for one request, however it arrived: a GET's query string, a
+    POSTed form, or the query the Share box saves. Blank values are dropped
+    (parse_qs drops them; URLSearchParams and forms keep them)."""
+    import hashlib
+    items = sorted((str(k), str(v)) for k, v in pairs if v not in (None, ""))
+    return hashlib.sha256(json.dumps(items).encode("utf-8")).hexdigest()
+
+
+def _keepSnapshot(args, out):
+    """Keep a team prediction's result under its request's key, for a Share
+    that follows. Never fails the prediction."""
+    try:
+        body = app.json.dumps(out)
+        if len(body) > _SNAP_MAX:
+            return
+        key = _predKey(args.items(multi=True) if hasattr(args, "items") else args)
+        with getConn() as conn:
+            _ensureTable(conn, "prediction_snapshot", _SNAP_DDL)
+            with conn.cursor() as cur:
+                cur.execute("""INSERT INTO prediction_snapshot (pred_key, result)
+                               VALUES (%s, %s::jsonb)
+                               ON CONFLICT (pred_key) DO UPDATE
+                               SET result = EXCLUDED.result, made_at = now()""",
+                            (key, body))
+                if int.from_bytes(os.urandom(1), "big") < 4:    # ~1 in 64
+                    cur.execute("DELETE FROM prediction_snapshot "
+                                "WHERE made_at < now() - interval '1 day'")
+            conn.commit()
+    except Exception:                                   # noqa: BLE001
+        app.logger.exception("prediction snapshot not kept")
+
+
 def _loadShare(share_id, count=False):
     """(query, extra) for a saved prediction, or (None, None)."""
     if not share_id or not re.fullmatch(r"[a-z2-7]{6,32}", share_id):
@@ -10771,15 +10830,39 @@ def api_predict_share():
              for k, v in list((extra.get("names") or {}).items())[:400]
              if str(k).isdigit()}
     sid = _shareId(query)
+    names_json = json.dumps({"names": names}, ensure_ascii=False)
     try:
         with getConn() as conn:
             _ensureTable(conn, "shared_prediction", _SHARE_DDL)
+            made = None
             with conn.cursor() as cur:
-                cur.execute("""INSERT INTO shared_prediction
-                                   (share_id, query, extra)
-                               VALUES (%s, %s, %s)
-                               ON CONFLICT (share_id) DO NOTHING""",
-                            (sid, query, json.dumps({"names": names}, ensure_ascii=False)))
+                # the result this request just got, if this server computed
+                # one lately (_keepSnapshot): it rides in the link's row
+                cur.execute("SELECT to_regclass('public.prediction_snapshot')")
+                if cur.fetchone()[0] is not None:
+                    cur.execute(f"""SELECT made_at FROM prediction_snapshot
+                                    WHERE pred_key = %s
+                                      AND made_at > now() - interval '{_SNAP_FRESH}'""",
+                                (_predKey(urllib.parse.parse_qsl(query)),))
+                    row = cur.fetchone()
+                    made = row[0] if row else None
+                if made is not None:
+                    sid = _shareId(query + "|" + made.isoformat())
+                    cur.execute("""INSERT INTO shared_prediction (share_id, query, extra)
+                                   SELECT %s, %s, %s::jsonb
+                                          || jsonb_build_object('snapshot', s.result,
+                                                                'snapshot_at', s.made_at)
+                                   FROM   prediction_snapshot s
+                                   WHERE  s.pred_key = %s
+                                   ON CONFLICT (share_id) DO NOTHING""",
+                                (sid, query, names_json,
+                                 _predKey(urllib.parse.parse_qsl(query))))
+                else:
+                    cur.execute("""INSERT INTO shared_prediction
+                                       (share_id, query, extra)
+                                   VALUES (%s, %s, %s)
+                                   ON CONFLICT (share_id) DO NOTHING""",
+                                (sid, query, names_json))
             conn.commit()
     except Exception:                                   # noqa: BLE001
         app.logger.exception("/api/predict/share failed")
@@ -11854,6 +11937,9 @@ def api_predict_team():
         app.logger.exception("/api/predict/team failed")
         return jsonify({"error": "The prediction failed. This has been "
                                  "logged."}), 500
+    # what a Share of this request will show (_keepSnapshot)
+    if isinstance(out, dict) and out.get("available") is not False:
+        _keepSnapshot(args, out)
     resp = jsonify(out)
     # ★ THE LIVE SPLIT, READABLE WITH curl -D - (2026-10-05): see
     #   predict._stage. Names and milliseconds only -- nothing about the data.

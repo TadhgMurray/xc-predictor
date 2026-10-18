@@ -573,7 +573,7 @@ function showWho(who) {
     pn.classList.toggle("hidden", pn.dataset.pane !== who));
 }
 
-async function restoreFromQuery(p, names) {
+async function restoreFromQuery(p, names, snap) {
   names = names || {};
   const id = (p.get("meet_id") || "").trim();
   if (!/^\d+$/.test(id)) return false;
@@ -633,6 +633,20 @@ async function restoreFromQuery(p, names) {
   openOpts((!!p.get("date") && p.get("date") !== proposed)
            || !!state.course || !!state.perTeam);
 
+  /* ★ A SAVED LINK WITH ITS SNAPSHOT IS DRAWN NOW (owner, 2026-10-18:
+       "snapshot."): the prediction the sender saw, before the field (the
+       slow request) has even loaded. The cards fill in behind it, so the
+       Rerun button, Best 7 and head-to-head have the lineup to ask with. */
+  if (snap && snap.data && !pids.length) {
+    showSnapshot(snap);
+    state.fieldReady = loadField().then(() => {
+      applySharedField(p, names);
+      renderField();
+      saveState();
+    });
+    await state.fieldReady;
+    return true;
+  }
   if (pids.length) {
     state.athletes = pids.map((pid) => ({
       id: pid, name: names[pid] || `Athlete ${pid}`, school: null,
@@ -647,6 +661,45 @@ async function restoreFromQuery(p, names) {
   predict();
   return true;
 }
+
+/* The shared prediction, as the server computed it when it was shared
+   (app._keepSnapshot): drawn the way predict() draws one race, under a
+   line saying when it was made and offering to run it again. */
+function showSnapshot(snap) {
+  state.lastTargets = [state.groups.length ? state.groups[0].slice() : null];
+  state.lastResults = [snap.data];
+  $("output").innerHTML = snapNote(snap.at)
+    + `<div class="team-result" data-t="0">${renderTeam(snap.data)}</div>`;
+  if (typeof window.rcTabs === "function") {
+    document.querySelectorAll("#output .team-result").forEach((el) => window.rcTabs(el));
+  }
+  showChamps(snap.data);
+  applyScale();
+  setStatus("", false);
+  // Share keeps sharing this link (the page's own URL), titled as a prediction
+  const b = $("pred-share");
+  if (b && state.meet && state.meet.label) {
+    b.dataset.shareTitle = `${state.meet.label} predicted on Racecast`;
+  }
+  writeOutput();
+}
+
+function snapNote(at) {
+  const d = at ? new Date(at) : null;
+  const when = d && !isNaN(d)
+    ? d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    : "";
+  return `<p class="snap-note"><span>The prediction as it was shared${
+    when ? `, made ${esc(when)}` : ""}.</span>`
+    + `<button type="button" data-snap-rerun>Run it again on today's data</button></p>`;
+}
+
+/* ! DELEGATED: the note is in #output, which Back restores as HTML
+     (restoreOutput), so a listener on the button itself would be lost. */
+document.getElementById("output")?.addEventListener("click", (ev) => {
+  if (!ev.target.closest || !ev.target.closest("[data-snap-rerun]")) return;
+  Promise.resolve(state.fieldReady).then(() => predict());
+});
 
 /* The cards made to match a shared request's `field` -- the lineup the
    sender pressed Predict on: whoever is not in it comes off, whoever is in
@@ -704,8 +757,9 @@ function restoreState() {
       .then((r) => r.json())
       .then((d) => {
         if (d && d.query) {
-          restoreFromQuery(new URLSearchParams(d.query),
-                           (d.extra && d.extra.names) || {});
+          const x = d.extra || {};
+          restoreFromQuery(new URLSearchParams(d.query), x.names || {},
+                           x.snapshot ? { data: x.snapshot, at: x.snapshot_at } : null);
         } else {
           setStatus(d.error || "That shared prediction was not found.", true);
         }
