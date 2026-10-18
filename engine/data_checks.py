@@ -24,6 +24,18 @@ the previous run's numbers, before the backfill that would carry a fix:
                fixed race no longer shows the gap, so a rewritten block
                would drop its own fix); 04g's audit removes a pin the field
                rejects. Anything else is listed for review.
+  venue_label  a division against its own VENUE (owner, 2026-10-18: a
+               wrong distance "hasn't been caught or corrected, and then
+               this making it go down affects other races' race day
+               term"). race_field only sees a field 9%+ off; a course
+               stored at its "3 miles" (4828) when the venue's own record
+               says 2.93 mi (4715) is 2.4% -- under every bar we had, and
+               it moves every rating that day and the day's term with it.
+               FIX: the division is pinned to the venue's SHORTER well-
+               attested label when the two are 1.2-4% apart, its field ran
+               high (gap >= 1%, most of it the same way), and the distance
+               that gap implies is nearer the shorter label than the stored
+               one. Downward only, like every override. Same sticky block.
   parser       two parsers of one event name. event_parse (normalized_time)
                against speed_ratings_db._eventMetersSql (the pack's
                distance) on every distinct track event_short: a
@@ -137,9 +149,10 @@ def readPins(text):
 
 def block(pins):
     lines = [BLOCK_START,
-             "# XC divisions whose whole field ran 15%+ off its own level, pinned to",
+             "# XC divisions whose whole field ran 9%+ off its own level, pinned to",
              "# the distance that gap implies when another division of the same meet",
-             "# runs it (engine/data_checks.py). STICKY: kept until 04g's audit",
+             "# runs it; and divisions stored at a venue's longer label that ran like",
+             "# its shorter one (venue_label). engine/data_checks.py. STICKY: kept until 04g's audit",
              "# removes one; a hand-written override for the key wins.",
              "_DISTANCE_PIN_FIELD = {"]
     for (meet, div), d in sorted(pins.items()):
@@ -158,6 +171,38 @@ def replaceBlock(text, new_block):
     return text.rstrip("\n") + "\n\n" + new_block
 
 
+# venue_label thresholds (see the header)
+LABEL_MIN_GAP, LABEL_MAX_GAP = 0.012, 0.04   # how far apart two labels of a venue are
+LABEL_MIN_ROWS = 150                         # results behind the label it snaps to
+LABEL_MIN_YEARS = 2                          # ... across this many seasons
+LABEL_FIELD_GAP = 0.01                       # the division's field ran this high
+LABEL_FIELD_SHARE = 0.60                     # ... with this share of it the same way
+
+
+def venueLabelVerdict(stored, n, gap, share_up, labels):
+    """The venue label to pin a division to, or None, and the evidence.
+    labels: [(distance, rows, years)] the venue's own stored distances.
+    Pure."""
+    if not stored or n is None or n < FIELD_MIN or gap is None:
+        return None, None
+    stored = float(stored)
+    if gap < LABEL_FIELD_GAP or (share_up or 0) < LABEL_FIELD_SHARE:
+        return None, None
+    implied = impliedDistance(stored, gap)
+    cands = [(d, rows, yrs) for d, rows, yrs in labels
+             if d and d < stored and rows >= LABEL_MIN_ROWS and yrs >= LABEL_MIN_YEARS
+             and LABEL_MIN_GAP <= stored / d - 1 <= LABEL_MAX_GAP]
+    if not cands:
+        return None, None
+    d, rows, yrs = max(cands, key=lambda c: c[1])
+    if abs(implied - d) >= abs(implied - stored):
+        return None, None
+    ev = (f"{n} runners, field {100 * gap:+.1f}% vs their own level "
+          f"({100 * share_up:.0f}% high); stored {stored:g} m implies {implied:,.0f}; "
+          f"the venue runs {d:g} m ({rows:,} results over {yrs} seasons)")
+    return float(d), ev
+
+
 def parserIssues(pairs, tol=0.01):
     """[(event, python_m, sql_m)] where the two parsers disagree; rows the
     Python parser does not rate (None) are not the pack's concern. Pure."""
@@ -174,7 +219,11 @@ def parserIssues(pairs, tol=0.01):
 #  the checks against the database
 # ------------------------------------------------------------------ #
 
-def raceField(cur):
+def _base(cur):
+    """dc_base(person_id, b): each runner's typical rating, once a run."""
+    cur.execute("SELECT to_regclass('pg_temp.dc_base')")
+    if cur.fetchone()[0] is not None:
+        return
     cur.execute("""
         CREATE TEMP TABLE dc_base ON COMMIT DROP AS
         SELECT person_id, exp(avg(ln(speed_rating))) AS b
@@ -185,6 +234,10 @@ def raceField(cur):
                WHERE speed_rating > 0 AND person_id IS NOT NULL) x
         GROUP BY person_id HAVING count(*) >= %s""", (BASE_MIN,))
     cur.execute("CREATE INDEX ON dc_base (person_id)")
+
+
+def raceField(cur):
+    _base(cur)
     cur.execute("""
         SELECT r.meet_id, r.div_id, r.source, max(m.distance)::float, count(*),
                percentile_cont(0.5) WITHIN GROUP (ORDER BY r.speed_rating / b.b - 1),
@@ -212,6 +265,60 @@ def raceField(cur):
             pins[(int(meet), int(div))] = s
         issues.append(("race_field", "XC", f"{source} {meet}/{div}", int(n),
                        float(gap), int(n) * abs(float(gap)), ev, action))
+    return issues, pins
+
+
+_VENUE_SQL = """
+    CREATE TEMP TABLE dc_venue ON COMMIT DROP AS
+    SELECT m.meet_id, m.div_id, max(m.distance)::float AS distance,
+           max(cc.canonical_id) AS cid
+    FROM   meets m
+    JOIN   course_canonical cc
+           ON cc.course_name = m.course_name
+          AND round(cc.gps_lat::numeric,  5) = round(m.gps_lat::numeric,  5)
+          AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
+    WHERE  m.distance > 0
+    GROUP  BY m.meet_id, m.div_id
+"""
+
+
+def venueLabel(cur):
+    """Divisions stored at a venue's longer label that run like its
+    shorter one (see the header). Returns (issues, pins)."""
+    _base(cur)
+    cur.execute("DROP TABLE IF EXISTS dc_venue")
+    cur.execute(_VENUE_SQL)
+    cur.execute("CREATE INDEX ON dc_venue (meet_id, div_id)")
+    # each venue's own labels: rows and seasons behind each stored distance
+    cur.execute("""
+        SELECT v.cid, v.distance, count(*), count(DISTINCT left(r.date::text, 4))
+        FROM   dc_venue v
+        JOIN   results r ON r.source = 'anet' AND r.meet_id = v.meet_id
+                        AND r.div_id = v.div_id
+        GROUP  BY 1, 2""")
+    labels = {}
+    for cid, d, n, yrs in cur.fetchall():
+        labels.setdefault(cid, []).append((float(d), int(n), int(yrs)))
+    cur.execute("""
+        SELECT v.meet_id, v.div_id, v.cid, v.distance, count(*),
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY r.speed_rating / b.b - 1),
+               avg(((r.speed_rating / b.b - 1) > 0)::int)
+        FROM   dc_venue v
+        JOIN   results r ON r.source = 'anet' AND r.meet_id = v.meet_id
+                        AND r.div_id = v.div_id
+        JOIN   dc_base b ON b.person_id = r.person_id
+        WHERE  r.speed_rating > 0
+        GROUP  BY 1, 2, 3, 4
+        HAVING count(*) >= %s""", (FIELD_MIN,))
+    issues, pins = [], {}
+    for meet, div, cid, stored, n, gap, up in cur.fetchall():
+        d, ev = venueLabelVerdict(stored, int(n), float(gap), float(up),
+                                  labels.get(cid, ()))
+        if d is None:
+            continue
+        pins[(int(meet), int(div))] = d
+        issues.append(("venue_label", "XC", f"anet {meet}/{div}", int(n),
+                       float(gap), int(n) * float(gap), ev, "pin"))
     return issues, pins
 
 
@@ -258,12 +365,14 @@ def main():
     from database import getConn
     issues, pins = [], {}
     with getConn() as c, c.cursor() as cur:
-        for name, fn in (("race_field", raceField), ("parser", parser),
-                         ("person_gender", personGender)):
+        for name, fn in (("race_field", raceField), ("venue_label", venueLabel),
+                         ("parser", parser), ("person_gender", personGender)):
             try:
                 got = fn(cur)
-                if name == "race_field":
-                    got, pins = got
+                if name in ("race_field", "venue_label"):
+                    got, more = got
+                    for k, v in more.items():
+                        pins.setdefault(k, v)
                 issues += got
                 print(f"[data_checks] {name}: {len(got):,} issues", flush=True)
             except Exception as exc:                          # noqa: BLE001
