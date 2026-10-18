@@ -166,26 +166,33 @@ def plan(a):
                     n = len(cur.fetchall())
                     print(f"  {sport} {label:<12} {len(some):>5} athletes "
                           f"{n:>8,} rows  {time.perf_counter() - t0:7.2f} s", flush=True)
-                cur.execute("EXPLAIN (ANALYZE, BUFFERS) " + sql,
-                            (hour, fx.MIN_NORMALIZED_TIME, ids, ids))
-                lines = [list(r.values())[0] for r in cur.fetchall()]
-                out = f"/tmp/history_plan_{sport}.txt"
-                with open(out, "w", encoding="utf-8") as fh:
-                    fh.write("\n".join(lines) + "\n")
-                # each node's total time = its last-row time x loops
-                nodes = []
-                for ln in lines:
-                    m = re.search(r"actual time=[\d.]+\.\.([\d.]+) rows=(\d+) loops=(\d+)", ln)
-                    if m:
-                        ms = float(m.group(1)) * int(m.group(3))
-                        node = re.sub(r"\s+\(cost=.*", "", ln.strip().lstrip("-> "))
-                        nodes.append((ms, int(m.group(2)), int(m.group(3)), node[:90]))
-                tail = [ln.strip() for ln in lines if ln.startswith(("Planning", "Execution"))]
-                print(f"\n  {sport}: slowest plan nodes (ms incl. children, rows, loops)")
-                for ms, rows, loops, node in sorted(nodes, reverse=True)[:18]:
-                    print(f"    {ms:10.1f} {rows:>9,} {loops:>6}  {node}")
-                print("    " + "   ".join(tail))
-                print(f"    full plan: {out}\n", flush=True)
+                for label, some in (("whole field", ids), ("a quarter", ids[::4])):
+                    cur.execute("EXPLAIN (ANALYZE, BUFFERS) " + sql,
+                                (hour, fx.MIN_NORMALIZED_TIME, some, some))
+                    lines = [list(r.values())[0] for r in cur.fetchall()]
+                    tag = "whole" if some is ids else "quarter"
+                    out = f"/tmp/history_plan_{sport}_{tag}.txt"
+                    with open(out, "w", encoding="utf-8") as fh:
+                        fh.write("\n".join(lines) + "\n")
+                    # each node's total time = its last-row time x loops
+                    # ! rows=10.00 on Postgres 18 (a fraction), rows=10 before
+                    nodes = []
+                    for ln in lines:
+                        m = re.search(r"actual time=[\d.]+\.\.([\d.]+) "
+                                      r"rows=([\d.]+) loops=(\d+)", ln)
+                        if m:
+                            ms = float(m.group(1)) * int(m.group(3))
+                            node = re.sub(r"\s+\(cost=.*", "", ln.strip().lstrip("-> "))
+                            nodes.append((ms, float(m.group(2)), int(m.group(3)), node[:90]))
+                    tail = [ln.strip() for ln in lines
+                            if ln.startswith(("Planning Time", "Execution Time"))]
+                    print(f"\n  {sport} {label}: slowest plan nodes "
+                          f"(ms incl. children, rows, loops)")
+                    for ms, rows, loops, node in sorted(nodes, reverse=True)[:14]:
+                        print(f"    {ms:10.1f} {rows:>11,.0f} {loops:>7}  {node}")
+                    print("    " + "   ".join(tail))
+                    print(f"    full plan: {out}", flush=True)
+                print()
             conn.rollback()
 
 

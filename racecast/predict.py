@@ -1417,7 +1417,7 @@ def _ratingRows(cur, person_ids, lo_date, hi_date):
     skips = {sp: _outlierFilter(cur, sp) for sp in ("XC", "TF")}
     cols = ("pid", "date", "speed_rating", "pool", "event_short", "meet_id")
 
-    def read(c, sport, table):
+    def read(c, sport, table, some):
         skip = skips[sport]
         # ★ A TRACK ROW SAYS WHICH RACE IT WAS (2026-10-10): its event name,
         #   for the distance _formRating weights by, and its meet, so a
@@ -1435,20 +1435,17 @@ def _ratingRows(cur, person_ids, lo_date, hi_date):
               AND  r.date >= %s AND r.date < %s
               AND  (r.time_seconds IS NULL OR r.time_seconds < 19999)
               {skip}
-        """, (ids, ids, lo_date or "0000", hi_date))
+        """, (some, some, lo_date or "0000", hi_date))
         return [r if isinstance(r, dict) else dict(zip(cols, tuple(r)))
                 for r in c.fetchall()]
 
-    # ★ THE TRACK READ BESIDE THE XC ONE (2026-10-18: 5.2 s of a field,
-    #   the two in turn), on its own connection; in line if that fails
-    tf_future = _ownConnFuture(lambda c: read(c, "TF", "results_tf"))
-    got = {"XC": read(cur, "XC", "results")}
-    try:
-        got["TF"] = tf_future.result() if tf_future is not None else None
-    except Exception:                                    # noqa: BLE001
-        got["TF"] = None
-    if got["TF"] is None:
-        got["TF"] = read(cur, "TF", "results_tf")
+    # ★ BOTH SPORTS AT ONCE, IN PIECES (2026-10-18: 5.2 s of a field, the
+    #   two in turn; a big field also plans worse): READ_CHUNK, _chunkedStart
+    tables = {"XC": "results", "TF": "results_tf"}
+    started = {sp: _chunkedStart(ids, lambda c, pc, sp=sp: read(c, sp, tables[sp], pc),
+                                 READ_CHUNK[("rate", sp)], READ_WORKERS[("rate", sp)])
+               for sp in ("XC", "TF")}
+    got = {sp: _chunkedFinish(cur, started[sp]) for sp in ("XC", "TF")}
     for sport in ("XC", "TF"):
         ep = None
         for row in got[sport]:
@@ -2007,12 +2004,54 @@ def _clampYear(ctx, fx):
         ctx[idx] = float(ceiling)
 
 
-# How many pieces each sport's history read is split into (_historyRows),
-# and the fewest runners worth a piece of their own. Track histories are
-# about twice the rows of cross country ones.
-HISTORY_SHARDS = {"XC": int(os.environ.get("XCP_HISTORY_SHARDS_XC") or 2),
-                  "TF": int(os.environ.get("XCP_HISTORY_SHARDS_TF") or 4)}
-HISTORY_SHARD_MIN = 50
+# ★ AT MOST SO MANY RUNNERS PER QUERY, NOT SO MANY PIECES (owner,
+#   2026-10-18, diag_predict_time --plan on a 378-runner field: the track
+#   history took 0.27 s for a quarter of it and 4.46 s for all of it --
+#   four times the runners, sixteen times the time). Past some field size
+#   Postgres picks a far worse plan, so a big field read in four pieces was
+#   still four slow queries. Every read is now cut to READ_CHUNK[(kind,
+#   sport)] runners a query, the pieces shared round-robin between
+#   READ_WORKERS connections, each working through its share in turn.
+#   kind: "hist" the model's history rows, "rate" the season ratings.
+READ_CHUNK = {("hist", "XC"): int(os.environ.get("XCP_HISTORY_CHUNK_XC") or 200),
+              ("hist", "TF"): int(os.environ.get("XCP_HISTORY_CHUNK_TF") or 100),
+              ("rate", "XC"): int(os.environ.get("XCP_RATING_CHUNK_XC") or 200),
+              ("rate", "TF"): int(os.environ.get("XCP_RATING_CHUNK_TF") or 150)}
+READ_WORKERS = {("hist", "XC"): 2, ("hist", "TF"): 3,
+                ("rate", "XC"): 1, ("rate", "TF"): 2}
+
+
+def _chunkedStart(ids, read, chunk, workers):
+    """Start read(cursor, some_ids) -> rows over `ids` cut into pieces of at
+    most `chunk`, on up to `workers` pooled connections of their own; hand
+    the result to _chunkedFinish. Every id's rows come from one piece, so
+    each id's rows and their order are those of one query over all."""
+    if not ids:
+        return read, []
+    n = max(1, -(-len(ids) // max(1, chunk)))
+    pieces = [ids[k::n] for k in range(n)]
+    w = max(1, min(workers, n))
+    shares = [pieces[k::w] for k in range(w)]
+    return read, [(sh, _ownConnFuture(
+        lambda c, sh=sh: [r for pc in sh for r in read(c, pc)])) for sh in shares]
+
+
+def _chunkedFinish(fallback, started):
+    """The rows of a _chunkedStart, in piece order; a worker that failed has
+    its pieces read again on `fallback` (the caller's own cursor)."""
+    read, jobs = started
+    rows = []
+    for sh, fut in jobs:
+        got = None
+        if fut is not None:
+            try:
+                got = fut.result()
+            except Exception:                            # noqa: BLE001 -- in line instead
+                got = None
+        if got is None:
+            got = [r for pc in sh for r in read(fallback, pc)]
+        rows.extend(got)
+    return rows
 
 
 def _historyRows(cur, person_ids):
@@ -2064,41 +2103,21 @@ def _historyRows(cur, person_ids):
     #   plain dicts: a RealDictCursor row copied into a dict was 2.7 million
     #   __setitem__ calls for one field. Same rows, same dicts.
     #
-    # ★ AND EACH SPORT IN SHARDS OF THE FIELD (2026-10-18, third profile:
-    #   the history was 8.4 s of a 12.4 s field, 6.5 s of it ONE track
-    #   query). One Postgres query works on about one core; the field split
-    #   round-robin into HISTORY_SHARDS[sport] pieces, each on a pooled
-    #   connection of its own, runs on several. A runner's rows all come
-    #   from one shard, so each runner's rows and their order are the same
-    #   as from one query. Any shard that fails is read again in line.
-    def _plainRows(c, sport, hour, shard_ids=None):
-        some = ids if shard_ids is None else shard_ids
+    # ★ AND EACH SPORT IN PIECES OF THE FIELD, READ ON SEVERAL CONNECTIONS
+    #   AT ONCE (2026-10-18): see READ_CHUNK and _chunkedStart.
+    def _plainRows(c, sport, hour, some):
         c.execute(fx.personResultsSql(sport, has_weather=has_weather),
                   (hour, fx.MIN_NORMALIZED_TIME, some, some))
         cols = [d[0] for d in c.description]
         return [dict(zip(cols, r)) for r in c.fetchall()]
 
     hours = {"XC": fx.XC_DEFAULT_HOUR, "TF": fx.TF_DEFAULT_HOUR}
-    jobs = []                                   # (sport, shard ids, future)
-    for sport in ("XC", "TF"):
-        n = max(1, min(HISTORY_SHARDS[sport], len(ids) // HISTORY_SHARD_MIN or 1))
-        for k in range(n):
-            part = ids[k::n]
-            fut = _ownConnFuture(
-                lambda c, sp=sport, pt=part: _plainRows(c, sp, hours[sp], pt))
-            jobs.append((sport, part, fut))
-    got = {"XC": [], "TF": []}
+    # both sports' workers start before either is waited on
+    started = {sp: _chunkedStart(ids, lambda c, pc, sp=sp: _plainRows(c, sp, hours[sp], pc),
+                                 READ_CHUNK[("hist", sp)], READ_WORKERS[("hist", sp)])
+               for sp in ("XC", "TF")}
     with cur.connection.cursor() as plain:
-        for sport, part, fut in jobs:
-            rows = None
-            if fut is not None:
-                try:
-                    rows = fut.result()
-                except Exception:                        # noqa: BLE001 -- in line instead
-                    rows = None
-            if rows is None:
-                rows = _plainRows(plain, sport, hours[sport], part)
-            got[sport].extend(rows)
+        got = {sp: _chunkedFinish(plain, started[sp]) for sp in ("XC", "TF")}
     xc_rows, tf_rows = got["XC"], got["TF"]
     out = {}
     for row in xc_rows + tf_rows:

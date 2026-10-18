@@ -183,11 +183,12 @@ class _ShardConn(_Conn):
         return _ShardCur()
 
 
-def _sharded(monkeypatch, shards, second_conn_ok=True):
+def _sharded(monkeypatch, chunk, second_conn_ok=True):
     import database
     monkeypatch.setattr(P, "_fx", lambda: _Fx)
     monkeypatch.setattr(P, "_normScale", lambda: None)
-    monkeypatch.setattr(P, "HISTORY_SHARDS", {"XC": shards, "TF": shards})
+    monkeypatch.setattr(P, "READ_CHUNK", {("hist", "XC"): chunk, ("hist", "TF"): chunk})
+    monkeypatch.setattr(P, "READ_WORKERS", {("hist", "XC"): 2, ("hist", "TF"): 3})
 
     @contextlib.contextmanager
     def fake_getconn():
@@ -201,10 +202,15 @@ def _sharded(monkeypatch, shards, second_conn_ok=True):
     return P._historyRows(cur, list(range(1, 301)))
 
 
-def test_shards_read_the_same_rows(monkeypatch):
-    one = _sharded(monkeypatch, 1)
-    assert _ShardCur.calls == [("XC", 300), ("TF", 300)]
-    four = _sharded(monkeypatch, 4)
+def test_pieces_read_the_same_rows(monkeypatch):
+    """At most `chunk` runners a query (owner, 2026-10-18: a quarter of the
+    field 0.27 s, all of it 4.46 s); the rows per runner never change."""
+    one = _sharded(monkeypatch, 1000)
+    assert sorted(_ShardCur.calls) == [("TF", 300), ("XC", 300)]
+    pieces = _sharded(monkeypatch, 75)
     assert sorted(_ShardCur.calls) == [("TF", 75)] * 4 + [("XC", 75)] * 4
-    assert four == one and len(four) == 300 and len(four[17]) == 3
-    assert _sharded(monkeypatch, 4, second_conn_ok=False) == one   # all in line
+    assert pieces == one and len(pieces) == 300 and len(pieces[17]) == 3
+    odd = _sharded(monkeypatch, 70)                  # 5 pieces of 60
+    assert sorted(_ShardCur.calls) == [("TF", 60)] * 5 + [("XC", 60)] * 5
+    assert odd == one
+    assert _sharded(monkeypatch, 75, second_conn_ok=False) == one   # all in line
