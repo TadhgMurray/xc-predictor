@@ -129,6 +129,66 @@ def explain(a):
             cur.connection.rollback()   # drop the SET LOCAL
 
 
+def plan(a):
+    """Is the history lookup's cost in the ROWS or in the QUERY?
+
+    ★ WHY (owner, 2026-10-18, fourth profile: the field's history read split
+      four ways across connections went only from 8.4 s to 7.3 s). If a
+      quarter of the field costs a quarter of the time, the cost is the rows
+      and splitting works; if it costs about the same, something in the
+      14-way join is a fixed cost per query (a scan that does not depend on
+      the ids) and splitting only repeats it. This times the real field
+      whole and in a quarter, per sport, then prints the plan's slowest
+      nodes with their real timings (the full plan goes to /tmp).
+    """
+    import re
+    import predict as P
+    fx = P._fx()
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT to_regclass('public.weather')")
+            has_weather = list(cur.fetchone().values())[0] is not None
+            target = {"mode": "rerun", "meet_id": int(a.meet), "sport": a.sport}
+            if a.div:
+                target["div_id"] = a.div
+            field = P._fullField(
+                cur, P._teamRosters(cur, [], target, set(), set()), target)
+            ids = sorted({r["person_id"] for r in field if r.get("person_id")})
+            print(f"\n  the real field: {len(ids)} athletes\n")
+            cur.execute("SET LOCAL join_collapse_limit = 16")
+            cur.execute("SET LOCAL from_collapse_limit = 16")
+            for sport in ("XC", "TF"):
+                sql = fx.personResultsSql(sport, has_weather=has_weather)
+                hour = fx.XC_DEFAULT_HOUR if sport == "XC" else fx.TF_DEFAULT_HOUR
+                for label, some in (("whole field", ids), ("a quarter", ids[::4])):
+                    t0 = time.perf_counter()
+                    cur.execute(sql, (hour, fx.MIN_NORMALIZED_TIME, some, some))
+                    n = len(cur.fetchall())
+                    print(f"  {sport} {label:<12} {len(some):>5} athletes "
+                          f"{n:>8,} rows  {time.perf_counter() - t0:7.2f} s", flush=True)
+                cur.execute("EXPLAIN (ANALYZE, BUFFERS) " + sql,
+                            (hour, fx.MIN_NORMALIZED_TIME, ids, ids))
+                lines = [list(r.values())[0] for r in cur.fetchall()]
+                out = f"/tmp/history_plan_{sport}.txt"
+                with open(out, "w", encoding="utf-8") as fh:
+                    fh.write("\n".join(lines) + "\n")
+                # each node's total time = its last-row time x loops
+                nodes = []
+                for ln in lines:
+                    m = re.search(r"actual time=[\d.]+\.\.([\d.]+) rows=(\d+) loops=(\d+)", ln)
+                    if m:
+                        ms = float(m.group(1)) * int(m.group(3))
+                        node = re.sub(r"\s+\(cost=.*", "", ln.strip().lstrip("-> "))
+                        nodes.append((ms, int(m.group(2)), int(m.group(3)), node[:90]))
+                tail = [ln.strip() for ln in lines if ln.startswith(("Planning", "Execution"))]
+                print(f"\n  {sport}: slowest plan nodes (ms incl. children, rows, loops)")
+                for ms, rows, loops, node in sorted(nodes, reverse=True)[:18]:
+                    print(f"    {ms:10.1f} {rows:>9,} {loops:>6}  {node}")
+                print("    " + "   ".join(tail))
+                print(f"    full plan: {out}\n", flush=True)
+            conn.rollback()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--meet", required=True)
@@ -145,6 +205,10 @@ def main():
                     help="both (the page's default), normal, or none -- "
                          "'both' costs a second forward pass and a forecast "
                          "fetch, so it is worth timing separately")
+    ap.add_argument("--plan", action="store_true",
+                    help="time the history lookup on the field and on a "
+                         "quarter of it, per sport, and print the slowest "
+                         "plan nodes with real timings")
     a = ap.parse_args()
 
     import predict as P
@@ -158,6 +222,9 @@ def main():
 
     if a.explain:
         explain(a)
+        return
+    if a.plan:
+        plan(a)
         return
 
     print(f"\n  meet {a.meet} {a.sport} date={a.date} weather={a.weather}\n")
