@@ -108,7 +108,13 @@ def main():
     for pool, m, yr, r, xr, _n in got:
         b = bucket(float(m))
         if b and r and xr:
-            pairs.append((pool, b, int(yr), float(r), math.log(float(r) / float(xr))))
+            # ! THE LEVEL IS THE GEOMETRIC MEAN OF THE TWO SIDES, not the track
+            #   rating: binning by the track rating puts a lucky track race in
+            #   the top quartile and calls its luck "track rates high" -- a
+            #   slope out of nothing. The mean of both carries each side's
+            #   noise with opposite signs into the gap, so it cancels.
+            pairs.append((pool, b, int(yr), math.sqrt(float(r) * float(xr)),
+                          math.log(float(r) / float(xr))))
     print(f"{len(pairs):,} autumn track races with the same runner's cross country "
           f"within {a.days} days (duplicates of one run left out)")
     print("gap = track rating vs their XC ratings that fortnight; 0 = the scales agree, "
@@ -131,7 +137,7 @@ def main():
     if rs:
         cut = [rs[int(q * (len(rs) - 1))] for q in (0.25, 0.5, 0.75)]
         band = lambda r: ("Q1" if r < cut[0] else "Q2" if r < cut[1] else "Q3" if r < cut[2] else "Q4")
-        show(f"BY ABILITY (track rating quartiles; cuts {cut[0]:.0f}/{cut[1]:.0f}/{cut[2]:.0f})",
+        show(f"BY ABILITY (quartiles of the runner's level, the mean of both sides; cuts {cut[0]:.0f}/{cut[1]:.0f}/{cut[2]:.0f})",
              [(band(r), g) for _p, _b, _y, r, g in pairs])
     show("BY YEAR (a jump between years is a run that moved the stitching)",
          [(y, g) for _p, _b, y, _r, g in pairs])
