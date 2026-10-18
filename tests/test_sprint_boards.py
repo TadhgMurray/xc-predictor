@@ -76,7 +76,7 @@ def test_sprint_boards():
     # three unrated returns now -- field mark, hurdle/steeple, sprint -- and
     # every one carries the same unit spread in the same place
     # (_unitsOf takes the row's pool since 124cf70: units by level)
-    ok(pr.count("*_unitsOf(school, row.state, pool)") == 3,
+    ok(pr.count("*_unitsOf(school, home, pool)") == 3,
        "and every published tuple carries the same unit spread")
 
     # ---- 3. the column must accept NULL ------------------------------------- #

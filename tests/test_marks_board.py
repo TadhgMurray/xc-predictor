@@ -76,10 +76,10 @@ def test_marks_board():
                src.index("# ★ AND A RATING OUTSIDE ITS OWN POOL")]
     # ! _unitsOf TAKES THE POOL since 124cf70 (shared school names: units by
     #   level, not by name), so every return spells it with the pool.
-    ok(body.count("*_unitsOf(school, row.state, pool)") == 3,
+    ok(body.count("*_unitsOf(school, home, pool)") == 3,
        "field, hurdle/steeple and sprint returns all carry the units")
     rated_tail = src[src.index("# ★ AND A RATING OUTSIDE ITS OWN POOL"):]
-    ok(rated_tail.count("*_unitsOf(school, row.state, pool)") == 1
+    ok(rated_tail.count("*_unitsOf(school, home, pool)") == 1
        and "None, None)" in rated_tail, "and so does the rated return")
     ok("key, float(metres))" in body and "kind, None)" in body
        and "None, None)" in body,

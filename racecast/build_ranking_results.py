@@ -848,10 +848,50 @@ def _campusState(school):
     return st
 
 
+def _homeStateOf(school, state, pool):
+    """A board row's state: the athlete's, not the meet's -- the rule
+    _homeStates applies to a season, applied to each row (owner's boards,
+    2026-10-18: Nuttycombe's whole field read "Colorado WI", "BYU WI").
+    A college row takes its campus's state; a row raced in a state its
+    school has never been seen in takes the school's primary state; any
+    other row, and an unattached or unknown school, keeps the race's."""
+    if not school:
+        return state
+    if _isCollegePool(pool):
+        st = _campusState(school)
+        if st and len(str(st).strip()) == 2:
+            return str(st).strip().upper()
+    if str(school).lower().startswith("unattached"):
+        return state
+    have = _UNITS.get("si_states", {}).get(school)
+    if have and state not in have:
+        return _UNITS["si_primary"].get(school, state)
+    return state
+
+
 def _loadUnits(conn):
     if _UNITS["loaded"]:
         return
     _UNITS["loaded"] = True
+    # the school_identity clusters, for _homeStateOf (the previous run's
+    # table, as _homeStates reads it); absent, rows keep the race state
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.school_identity')")
+            if cur.fetchone()[0] is not None:
+                cur.execute("SELECT school, state, is_primary FROM school_identity")
+                si, prim = {}, {}
+                for school, state, is_primary in cur:
+                    si.setdefault(school, set()).add(state)
+                    if is_primary:
+                        prim[school] = state
+                _UNITS["si_states"], _UNITS["si_primary"] = si, prim
+    except Exception as exc:                        # noqa: BLE001
+        print(f"    school_identity unreadable ({exc}) -- rows keep the race state")
+        try:
+            conn.rollback()
+        except Exception:                           # noqa: BLE001
+            pass
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT to_regclass('public.school_unit')")
@@ -1498,6 +1538,9 @@ def prepareRow(row, sport):
             _GATE[sport]["outside_band"] += 1
             return None
 
+    # ★ THE ATHLETE'S STATE, NOT THE MEET'S (see _homeStateOf).
+    home = _homeStateOf(school, row.state, pool)
+
     # ★ A CORRECTED DIVISION IS DISPLAYED, NEVER RANKED (owner's rule,
     #   2026-08-27). Its recorded distance was wrong once already; a board
     #   place built on a corrected number is a claim the correction
@@ -1645,10 +1688,10 @@ def prepareRow(row, sport):
                 return None
             _GATE[sport]["field_mark"] += 1
             return (sport, row.result_id, row.person_id, pool, None,
-                    row.date, season, row.state, school, row.grade,
+                    row.date, season, home, school, row.grade,
                     row.meet_id, row.div_id, row.canon_meet_id,
                     None, None, row.event_id,
-                    *_unitsOf(school, row.state, pool),
+                    *_unitsOf(school, home, pool),
                     key, float(metres))
         # ★ A TIMED NON-FLAT EVENT: hurdles or the steeple, metres from the
         #   name, kind stamped so the 100 m board never lists the 100 m
@@ -1657,20 +1700,20 @@ def prepareRow(row, sport):
         if kind is not None:
             _GATE[sport]["time_only"] += 1
             return (sport, row.result_id, row.person_id, pool, None,
-                    row.date, season, row.state, school, row.grade,
+                    row.date, season, home, school, row.grade,
                     row.meet_id, row.div_id, row.canon_meet_id,
                     row.time_seconds, kind_d, row.event_id,
-                    *_unitsOf(school, row.state, pool),
+                    *_unitsOf(school, home, pool),
                     kind, None)
         if distance is None \
                 or not (0 < float(distance) < _SPRINT_MAX_DISTANCE):
             return None
         _GATE[sport]["time_only"] += 1
         return (sport, row.result_id, row.person_id, pool, None,
-                row.date, season, row.state, school, row.grade,
+                row.date, season, home, school, row.grade,
                 row.meet_id, row.div_id, row.canon_meet_id,
                 row.time_seconds, distance, row.event_id,
-                *_unitsOf(school, row.state, pool),
+                *_unitsOf(school, home, pool),
                 None, None)
 
 
@@ -1723,7 +1766,7 @@ def prepareRow(row, sport):
             # it, which is what stops one real season showing as two rows on
             # the boards. XC is unaffected -- see season_year.py.
             season,
-            row.state,
+            home,
             school,
             row.grade,
             row.meet_id,
@@ -1736,7 +1779,7 @@ def prepareRow(row, sport):
             #   positional, so these two orderings are one fact written
             #   twice -- _UNIT_COLS is the copy that _COLUMNS quotes, so a
             #   unit added there flows to both.
-            *_unitsOf(school, row.state, pool),
+            *_unitsOf(school, home, pool),
             # a rated row is a flat race with no mark
             None, None)
 

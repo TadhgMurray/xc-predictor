@@ -49,3 +49,17 @@ def test_college_seasons_take_the_campus_state(monkeypatch):
     assert n == 2
     upd = [s for s in cur.sql if s.lstrip().startswith("UPDATE")]
     assert upd and "starts_with(s.pool, 'college')" in upd[0]
+
+
+def test_a_board_row_takes_the_athletes_state():
+    B._UNITS["campus"] = {"colorado": [("CO", "CO")]}
+    B._UNITS.pop("campus_cache", None)
+    B._UNITS["si_states"] = {"Whitehall": {"MI"}, "Jesuit": {"CA", "OR"}}
+    B._UNITS["si_primary"] = {"Whitehall": "MI", "Jesuit": "CA"}
+    D._ANSWERS.clear()
+    D._POSTINGS.clear()
+    assert B._homeStateOf("Colorado", "WI", "college_m") == "CO"     # campus
+    assert B._homeStateOf("Whitehall", "IN", "hs_m") == "MI"         # never seen in IN
+    assert B._homeStateOf("Jesuit", "OR", "hs_m") == "OR"            # one of its own
+    assert B._homeStateOf("Unattached", "WI", "hs_m") == "WI"
+    assert B._homeStateOf("Nowhere HS", "TX", "hs_m") == "TX"        # unknown school
