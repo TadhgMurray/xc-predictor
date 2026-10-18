@@ -1616,6 +1616,14 @@ if [ "${XCP_PAGE_TIMING:-1}" != "0" ]; then
   step 17a_page_timing  "$PY" -u scripts/page_timing.py --write --n "${XCP_PAGE_TIMING_N:-6}" || true
 fi
 step 17c_report       "$PY" -u scripts/run_report.py --log-dir "$LOGDIR" || true
+# ★ THE RATINGS' STANDING TESTS (owner, 2026-10-18): course and day credit
+#   inside a runner's season, track vs XC that fortnight, altitude credit,
+#   and the owner's flagged races -- each beside the last run's
+#   (engine/data/scoreboard.jsonl, $LOGDIR/SCOREBOARD.txt). Report only, a
+#   few minutes. XCP_SCOREBOARD=0 skips.
+if [ "${XCP_SCOREBOARD:-1}" != "0" ]; then
+  step 17e_scoreboard "$PY" -u scripts/scoreboard.py --log-dir "$LOGDIR" || true
+fi
 # ★ THE DATA WATCHDOG (owner, 2026-10-10): after the boards swap and every
 #   step that writes what readers see, before the vacuum. Report only; its
 #   board churn and row counts are judged against FULL runs' own history
