@@ -90,6 +90,27 @@ def main():
                   f"t {r['time_seconds']}  norm {r['normalized_time'] and round(float(r['normalized_time']), 1)}  "
                   f"rating {r['speed_rating']}  pool {r['rating_pool']}  "
                   f"dist {r['meet_distance']}  course {(r['course_name'] or '')[:24]}  -> {why}")
+        # ★ AND THE GRADE VERDICTS THE ROWS ARE POOLED BY (owner, 2026-10-18:
+        #   Everett Mosher, a WPI junior, shows "Grade 10/11/12" from the
+        #   2025 season on, every one of those seasons unrated). grade_fix is
+        #   grade_sanity's verdict per academic year; `method` names the rule.
+        cur.execute("SELECT to_regclass('public.grade_fix') IS NOT NULL AS g")
+        if cur.fetchone()["g"]:
+            cur.execute("""SELECT season, grade, level, method, trust FROM grade_fix
+                           WHERE person_id = %s ORDER BY season""", (a.person,))
+            gf = cur.fetchall()
+            print(f"\n  grade verdicts (grade_fix): {len(gf) or 'none'}")
+            for g in gf:
+                print(f"    {g['season']}  grade {g['grade'] or '-':<4} level {g['level'] or '-':<8} "
+                      f"method {g['method']:<16} trust {g['trust']}")
+        cur.execute("""SELECT sport, year, grade, pool, school, n_races,
+                              round(mean_rating::numeric, 1) AS mean_rating
+                       FROM athlete_season WHERE person_id = %s ORDER BY year, sport""",
+                    (a.person,))
+        print("\n  athlete_season rows (the boards'):")
+        for g in cur.fetchall():
+            print(f"    {g['year']}  {g['sport']:<3} grade {g['grade'] or '-':<5} pool {g['pool'] or '-':<12} "
+                  f"{(g['school'] or '')[:24]:<24} races {g['n_races']}  mean {g['mean_rating']}")
         schools = sorted({r["school"] for r in rows if r["year"] == season and r["school"]})
         if schools:
             print(f"\n  schools this season: {', '.join(schools)}")
