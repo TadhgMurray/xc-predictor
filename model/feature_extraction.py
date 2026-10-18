@@ -783,26 +783,48 @@ def _ratedTime(row, scale):
     return k / rating if k else None
 
 
-def rowPool(row):
+def rowPool(row, memo=None):
     """The pool a corpus row's normalized time is on -- the backfill's own
     resolver (school, season level, grade fix, college veto), so a row with a
-    blank or class-year grade still gets one. None when it cannot be told."""
+    blank or class-year grade still gets one. None when it cannot be told.
+
+    `memo`, a dict the caller keeps for one batch of rows (the predictions
+    page: racecast/predict._HistoryRead), remembers the answer by exactly
+    the fields it is computed from -- a runner's races repeat them season
+    after season. Same answer either way; without one, nothing is kept."""
     from normalize_distance import (normPoolFor, academicYearOfDate,
                                     firstCollegeSeason)
+    untrusted = bool(row.get("grade_untrusted"))
+    key = None
+    if memo is not None:
+        date = row.get("date")
+        season = memo.get(("ay", date))
+        if season is None:
+            season = memo[("ay", date)] = (academicYearOfDate(date),)
+        key = (row.get("grade"), row.get("gender"), row.get("source"),
+               row.get("school"), row.get("season_level"), untrusted,
+               row.get("fixed_grade") if untrusted else None,
+               row.get("fixed_level") if untrusted else None,
+               season[0], row.get("college_first"))
+        if key in memo:
+            return memo[key]
     fixed = ((row.get("fixed_grade"), row.get("fixed_level"))
-             if row.get("grade_untrusted") else None)
+             if untrusted else None)
     # ! THE SEASON AND THE FIRST COLLEGE SEASON TOO (2026-09-29), exactly as
     #   the backfill passes them, or the college veto would move this row's
     #   anchor differently from the one the backfill wrote it on.
-    return normPoolFor(row.get("grade"), row.get("gender"), row.get("source"),
+    pool = normPoolFor(row.get("grade"), row.get("gender"), row.get("source"),
                        row.get("school"), season_level=row.get("season_level"),
                        fixed=fixed,
                        season=academicYearOfDate(row.get("date")),
                        college_first_ay=firstCollegeSeason(
                            row.get("college_first")))
+    if key is not None:
+        memo[key] = pool
+    return pool
 
 
-def storedPool(row):
+def storedPool(row, memo=None):
     """The pool a corpus row's STORED normalized_time is on, or None.
 
     ★ sweep 2026-10-10: THE RATED POOL FIRST. engine/anchor_repair (pipeline
@@ -832,7 +854,7 @@ def storedPool(row):
                            or None)
     if rated == "unknown_level":
         rated = None
-    backfill = rowPool(row)
+    backfill = rowPool(row, memo)
     if rated is None or backfill is None or rated == backfill:
         return rated or backfill
     sport = "XC" if row.get("is_xc") else "TF"
@@ -854,7 +876,7 @@ def storedPool(row):
     return rated
 
 
-def toCommonScale(row, scale=None):
+def toCommonScale(row, scale=None, memo=None):
     """The row with normalized_time on the common anchor. Pure but for the
     spline artifact; a row whose pool cannot be told keeps its value and is
     marked. `scale` overrides NORM_SCALE -- inference passes the scale the
@@ -867,7 +889,7 @@ def toCommonScale(row, scale=None):
     from normalize_distance import anchorShift
     # ★ sweep 2026-10-10: the pool the STORED value is on (storedPool), not
     #   the backfill's -- 05b has moved repaired rows onto the rated pool.
-    pool = storedPool(row)
+    pool = storedPool(row, memo)
     if pool is None:
         row["norm_unshifted"] = True
         return row

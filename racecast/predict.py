@@ -2152,17 +2152,14 @@ class _HistoryRead:
         with cur.connection.cursor() as plain:
             got = {sp: _queueFinish(plain, self._started[sp]) for sp in ("XC", "TF")}
         t1 = time.perf_counter()
+        # ★ ON THE SCALE THE MODEL WAS TRAINED ON -- the same function the
+        #   extraction ran, fed the loaded model's own record of which scale
+        #   (toCommonScale, applied to each batch as it was read).
         out = {}
         for row in got["XC"] + got["TF"]:
             pid = row.get("person_id") or row.get("athlete_id")
             out.setdefault(pid, []).append(row)
-        # ★ ON THE SCALE THE MODEL WAS TRAINED ON -- the same function the
-        #   extraction ran, fed the loaded model's own record of which scale.
-        scale = _normScale()
-        fx = self.fx
         for rows in out.values():
-            for row in rows:
-                fx.toCommonScale(row, scale=scale)
             rows.sort(key=lambda r: r["date"])
         self.wait_s, self.merge_s = t1 - t0, time.perf_counter() - t1
         return out
@@ -2228,11 +2225,24 @@ def _historyStart(cur, person_ids):
     #   in the caller's order, so a caller that learns some runners are not
     #   needed (byPrediction, once the ratings pick the contenders) can drop
     #   them before they are read (_HistoryRead.keep).
+    #
+    # ★ EACH BATCH PUT ON THE MODEL'S SCALE AS IT ARRIVES (2026-10-18, sixth
+    #   profile: 1.48 s of merging after the reads, nearly all of it
+    #   toCommonScale at ~20 us a row). The readers mostly wait on Postgres,
+    #   so the per-row work done in them overlaps the ratings read instead
+    #   of following it. Same function, same rows; `memo` (rowPool by its
+    #   inputs) is shared by this field's readers.
+    scale = _normScale()
+    memo = {}
+
     def _plainRows(c, sport, hour, some):
         c.execute(fx.personResultsSql(sport, has_weather=has_weather),
                   (hour, fx.MIN_NORMALIZED_TIME, some, some))
         cols = [d[0] for d in c.description]
-        return [dict(zip(cols, r)) for r in c.fetchall()]
+        rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        for row in rows:
+            fx.toCommonScale(row, scale=scale, memo=memo)
+        return rows
 
     hours = {"XC": fx.XC_DEFAULT_HOUR, "TF": fx.TF_DEFAULT_HOUR}
     queues = {sp: _IdQueue(ids) for sp in ("XC", "TF")}

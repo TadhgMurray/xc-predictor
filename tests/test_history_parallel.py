@@ -63,7 +63,8 @@ class _Fx:
         return "TFSQL" if sport == "TF" else "XCSQL"
 
     @staticmethod
-    def toCommonScale(row, scale=None):
+    def toCommonScale(row, scale=None, memo=None):
+        row["scaled"] = row.get("scaled", 0) + 1       # once per row, exactly
         return row
 
 
@@ -246,6 +247,7 @@ def test_pieces_read_the_same_rows(monkeypatch):
     pieces = _sharded(monkeypatch, 75)
     assert sorted(_ShardCur.calls) == [("TF", 75)] * 4 + [("XC", 75)] * 4
     assert pieces == one and len(pieces) == 300 and len(pieces[17]) == 3
+    assert {r["scaled"] for rows in pieces.values() for r in rows} == {1}
     odd = _sharded(monkeypatch, 70)                  # 4 batches of 70, then 20
     assert sorted(_ShardCur.calls) == ([("TF", 20)] + [("TF", 70)] * 4
                                        + [("XC", 20)] + [("XC", 70)] * 4)
