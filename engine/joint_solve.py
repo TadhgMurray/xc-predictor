@@ -572,6 +572,294 @@ def dayMixturePosterior(m, v, fit):
     r1 = 1.0 / (1.0 + np.exp(l2 - l1))
     out[ok] = (r1 * t1 / s1 + (1.0 - r1) * t2 / s2) * mm
     return out
+
+
+# ★★ THE EFFORT (SHORTFALL) TERM (owner, 2026-10-18: published-rating
+#    diagnostics -- inside one runner's season, the race-day credit runs
+#    b_day ~ +0.18 for 120+ rated runners and -0.24 under 90). The day is
+#    ONE number per race, read off the WHOLE field -- JV, frosh, and the
+#    California league meets where most of the field jogs at tempo -- and
+#    credited to everyone. A field that jogged reads as a slow day, and the
+#    few who raced it are handed the joggers' slowness as a credit.
+#
+#  THE MODEL, a normal-exponential composed error (a stochastic frontier,
+#  Aigner-Lovell-Schmidt 1977). Each row's residual, log-time, + = slow:
+#
+#      e = v + s,   v ~ N(0, sigma_v^2),   s >= 0 ~ Exponential(mean theta)
+#
+#  v is the ordinary noise of a race run flat out; s is how far short of
+#  full effort the runner ran -- never negative: nobody beats their own
+#  ability by jogging. The abilities become the FRONTIER (full effort), the
+#  day is set by those who ran to it, and the solve fits y - E[s|e] (a fixed
+#  offset like the division guard's) by EM inside the outer loop:
+#    E-step: E[s|e] and Var[s|e] per row, closed form (Jondrow, Lovell,
+#            Materov & Schmidt 1982; effortPosterior)
+#    M-step: the next weighted least-squares pass on y - E[s]; theta per
+#            group = mean E[s|e] over its rows; sigma_v^2 = mean((e -
+#            E[s])^2 + Var[s|e]).
+#  Groups: meet class (ordinary, league, state/qualifier, final) x sport --
+#  a league dual is where tempo running lives, a final is where nobody jogs.
+#
+#  ★ A SCALE PER RACE, SHRUNK TO ITS GROUP (the league-meet case). With one
+#    theta per group, a meet where 27 of 30 run tempo is still cheaper to
+#    explain as a slow day: the 27 are "ordinary" rows of a slow race and
+#    the 3 who raced are fast outliers, which the robust weights forgive.
+#    So theta is also fitted per RACE (the race-day unit), shrunk toward its
+#    group by THETA_RACE_PRIOR_N pseudo-rows:
+#        theta_race = (sum_i E[s_i] + k * theta_g) / (n_race + k)
+#    and the E-step reads theta_race. A smeared field with a sharp front
+#    then reads as many shortfalls and the day is set by the front; a tight
+#    field shifted as a whole (mud, heat) has no front to hold the day down
+#    and reads as a day.
+#  ! k = 10: a race needs about ten rows before its own shortfalls weigh as
+#    much as its group's, so a dual meet of six cannot declare itself a
+#    jog, and a 30-runner league meet can.
+#  ! THE ROBUST WEIGHTS GO ONE-SIDED under the term (robustWeights slow=
+#    False): a slow outlier is what s is for, so it keeps weight 1; the
+#    fast side keeps its Huber cut -- a fast outlier is still a short course
+#    or a wrong distance, never effort.
+#  ⚠ THE ABILITIES MOVE: they are the frontier now, faster than the old
+#    mean by about the mean shortfall of the athlete's rows. Nothing in the
+#    go-live or the published ratings reads the term yet: the solve returns
+#    E[s] per row ("effort") and theta per race ("effort_theta_race") for a
+#    later go-live to use. --effort / XCP_EFFORT=1; off by default.
+THETA_RACE_PRIOR_N = 10.0
+EFFORT_THETA_FLOOR = 1e-4
+EFFORT_SHORT_CUT = 0.02           # the log's "share of rows short of full effort"
+# E/M sweeps per outer pass on the error law (sigma_v, theta) AND each
+# race's day, the abilities and courses held (effortFit): the race-level
+# EM is a few bincounts a sweep and the outer pass is a CG solve, and its
+# one slow direction -- a day trading against its runners' shortfalls --
+# moves only a fraction of sigma_v^2 / theta a sweep
+EFFORT_INNER_ITERS = 40
+# ★ THE FAST SIDE IS ALSO JUDGED BEFORE THE DAY under the term (2026-10-18,
+#   found on the synthetic tempo meet of tests/test_effort_term.py). The
+#   front of a jogged race is fast only against the DAY the joggers made;
+#   cut against it, the front loses its say, the day drifts toward the
+#   joggers, the front gets faster still against it, and the solve walked
+#   back to "slow day" in ~40 passes (tempo day +1.6% at 8 passes, +5.0% at
+#   40). A row is now cut only where it is fast both against its day (r,
+#   the old test) and before it (r + h u): a short course or a wrong time is
+#   fast both ways and still cut; a runner who ran their level on a jogged
+#   afternoon, or anyone on a genuinely fast day, is not. Never cuts a row
+#   the old rule would not have; the scale is the full residual's, as
+#   before. False restores the cut against the day alone.
+EFFORT_FAST_BEFORE_DAY = True
+EFFORT_CLASS_NAMES = ("ordinary", "league", "state", "final")
+EFFORT_GROUP_NAMES = tuple(f"{s}:{c}" for s in ("XC", "TF")
+                           for c in EFFORT_CLASS_NAMES)
+
+# erfc(x) = t exp(-x^2 + P(t)), t = 1 / (1 + x/2), for x >= 0, fractional
+# error < 1.2e-7 everywhere (Numerical Recipes' erfcc). numpy has no erfc,
+# scipy is not a dependency, and the form is already the log domain.
+_ERFC_COEF = (-1.26551223, 1.00002368, 0.37409196, 0.09678418, -0.18628806,
+              0.27886807, -1.13520398, 1.48851587, -0.82215223, 0.17087277)
+_SQRT2 = np.sqrt(2.0)
+_SQRT2PI = np.sqrt(2.0 * np.pi)
+# below this z the inverse Mills ratio comes from Laplace's continued
+# fraction instead (no cancellation in z + lam or in the variance); terms
+# by |z|, each tier within ~1e-9 of the 400-term fraction
+_MILLS_CF_Z = -3.0
+_MILLS_CF_TIERS = ((5.0, 32), (9.0, 16), (np.inf, 8))
+
+
+def _erfcPoly(x):
+    """(t, P(t)) of the erfc approximation at x >= 0."""
+    t = 1.0 / (1.0 + 0.5 * x)
+    p = np.full(np.shape(x), _ERFC_COEF[-1])
+    for c in _ERFC_COEF[-2::-1]:
+        p = c + t * p
+    return t, p
+
+
+def truncNormalMoments(z):
+    """For a normal truncated to s >= 0 whose untruncated mean is z sds
+    above zero: (z + lam, 1 - z lam - lam^2), lam = phi(z) / Phi(z). The
+    truncated mean is sd * (z + lam), the variance sd^2 * (1 - z lam -
+    lam^2). Stable for every z: Phi never underflows (log-domain erfc),
+    and for z < _MILLS_CF_Z both come from Laplace's continued fraction
+    for the Mills ratio, arranged so neither is a difference of near-equal
+    numbers -- at z = -30 the plain formula loses every digit of the
+    variance, which is then ~1/z^2."""
+    z = np.asarray(z, dtype=np.float64)
+    zz = np.atleast_1d(z)
+    delta = np.empty(zz.shape)
+    vfac = np.empty(zz.shape)
+    lo = zz < _MILLS_CF_Z
+    x_lo = -zz
+    prev = -_MILLS_CF_Z
+    for x_hi, n_terms in _MILLS_CF_TIERS:
+        sel = lo & (x_lo >= prev) & (x_lo < x_hi)
+        prev = x_hi
+        if not sel.any():
+            continue
+        x = x_lo[sel]
+        # R(x) = (1 - Phi(x)) / phi(x) = 1/(x+ 1/(x+ 2/(x+ 3/(x+ ...))))
+        t = np.zeros(x.shape)
+        for k in range(n_terms, 2, -1):
+            np.add(x, t, out=t)
+            np.divide(float(k), t, out=t)
+        L = t                                   # 3/(x + 4/(x + ...))
+        J = 2.0 / (x + L)
+        K = 1.0 / (x + J)                       # lam = x + K, so z + lam = K
+        delta[sel] = K
+        # 1 - z lam - lam^2 = 1 - xK - K^2 = K (J - K), J - K without the
+        # cancellation
+        vfac[sel] = K * (x + 2.0 * J - L) / ((x + L) * (x + J))
+    hi = ~lo
+    if hi.any():
+        zh = zz[hi]
+        neg = zh < 0
+        pos = ~neg
+        xx = np.abs(zh) / _SQRT2
+        t, p = _erfcPoly(xx)
+        lam = np.empty(zh.shape)
+        with np.errstate(over="ignore", under="ignore"):
+            # z < 0: Phi = erfc(xx)/2 = t exp(-xx^2 + P)/2, phi = exp(-xx^2)/sqrt(2 pi)
+            lam[neg] = 2.0 * np.exp(-p[neg]) / (_SQRT2PI * t[neg])
+            # z >= 0: Phi = 1 - erfc(xx)/2
+            zp, xp = zh[pos], xx[pos]
+            lam[pos] = (np.exp(-0.5 * zp * zp) / _SQRT2PI
+                        / (1.0 - 0.5 * t[pos] * np.exp(-xp * xp + p[pos])))
+        delta[hi] = zh + lam
+        vfac[hi] = 1.0 - zh * lam - lam * lam
+    delta = np.maximum(delta, 0.0)
+    vfac = np.clip(vfac, 0.0, 1.0)
+    if z.ndim == 0:
+        return float(delta[0]), float(vfac[0])
+    return delta.reshape(z.shape), vfac.reshape(z.shape)
+
+
+def millsRatio(z):
+    """lam = phi(z) / Phi(z), stable for every z (truncNormalMoments)."""
+    delta, _v = truncNormalMoments(z)
+    return delta - np.asarray(z, dtype=np.float64)
+
+
+def effortPosterior(e, sigma_v, theta):
+    """E[s | e] and Var[s | e] for e = v + s, v ~ N(0, sigma_v^2), s ~
+    Exponential(mean theta) -- Jondrow et al. 1982. With mu* = e -
+    sigma_v^2 / theta and z = mu* / sigma_v, s | e is N(mu*, sigma_v^2)
+    truncated to s >= 0:
+        E[s|e]   = mu* + sigma_v lam(z) = sigma_v (z + lam)
+        Var[s|e] = sigma_v^2 (1 - z lam - lam^2),  lam = phi(z) / Phi(z).
+    Arrays broadcast; theta is floored at EFFORT_THETA_FLOOR."""
+    e = np.asarray(e, dtype=np.float64)
+    sv = np.maximum(np.asarray(sigma_v, dtype=np.float64), 1e-12)
+    th = np.maximum(np.asarray(theta, dtype=np.float64), EFFORT_THETA_FLOOR)
+    z = (e - sv * sv / th) / sv
+    delta, vfac = truncNormalMoments(z)
+    return sv * delta, sv * sv * vfac
+
+
+def effortStart(e):
+    """(sigma_v^2, theta): the method-of-moments start (Olson, Schmidt &
+    Waldman 1980). An exponential has third central moment 2 theta^3 and
+    a normal none, so theta = (m3 / 2)^(1/3) and sigma_v^2 = m2 - theta^2.
+    ! theta is capped at 0.7 of the residual sd: a heavy slow tail (a
+    broken sheet) would otherwise size the start alone."""
+    e = np.asarray(e, dtype=np.float64)
+    c = e - e.mean()
+    m2 = max(float(np.mean(c * c)), 1e-10)
+    m3 = float(np.mean(c * c * c))
+    th = float(np.cbrt(max(m3, 0.0) / 2.0))
+    th = min(max(th, 1e-3), 0.7 * np.sqrt(m2))
+    return max(m2 - th * th, 0.1 * m2), max(th, EFFORT_THETA_FLOOR)
+
+
+def effortFit(e, group, race, n_group, n_race, sigma_v2, theta_g,
+              theta_race=None, iters=EFFORT_INNER_ITERS,
+              k=THETA_RACE_PRIOR_N, day=None):
+    """The race-level EM: e per row (the composed residual, y less
+    everything but s -- and, with `day`, less everything but s and the
+    race's day), group and race per row. Starts at (sigma_v2, theta_g per
+    group, theta_race per race -- None = its group's), runs `iters` E/M
+    sweeps, and ends with an E-step at the returned law, so `s` and `var`
+    are the posterior the law implies.
+
+    day: None holds the location (e is the residual); or a dict {h, w,
+    pen, u} -- per row tilt and weight, per race prior precision and
+    starting day -- and each sweep also re-takes each race's day exactly
+    as the solve's u-block would, from y - E[s]:
+        u_j = sum w h (e - s) / (sum w h^2 + pen_j)
+    (block coordinate on the solve's own objective, abilities and courses
+    held), with e - h u the residual the E-step reads.
+
+    Returns {s, var, sigma_v2, theta_g, theta_race, group_of_race, u}."""
+    e = np.asarray(e, dtype=np.float64)
+    group = np.asarray(group, dtype=np.int64)
+    race = np.asarray(race, dtype=np.int64)
+    n_group, n_race = int(n_group), int(n_race)
+    u = None
+    e_pre = e
+    if day is not None:
+        h_d = np.broadcast_to(np.asarray(day["h"], dtype=np.float64), e.shape)
+        c_d = np.broadcast_to(np.asarray(day["w"], dtype=np.float64), e.shape) * h_d
+        P_d = (np.bincount(race, weights=c_d * h_d, minlength=n_race)
+               + np.broadcast_to(np.asarray(day["pen"], dtype=np.float64), (n_race,)))
+        P_d = np.maximum(P_d, 1e-12)
+        u = np.asarray(day["u"], dtype=np.float64).copy()
+        e = e_pre - h_d * u[race]
+    theta_g = np.maximum(np.broadcast_to(np.asarray(theta_g, dtype=np.float64),
+                                         (n_group,)).copy(), EFFORT_THETA_FLOOR)
+    # a race's group: its rows' (a race is one meet, so one class and sport;
+    # a mixed race takes its last row's)
+    g_race = np.zeros(n_race, dtype=np.int64)
+    g_race[race] = group
+    n_g = np.bincount(group, minlength=n_group).astype(np.float64)
+    n_r = np.bincount(race, minlength=n_race).astype(np.float64)
+    th_r = (theta_g[g_race] if theta_race is None
+            else np.maximum(np.asarray(theta_race, dtype=np.float64), EFFORT_THETA_FLOOR))
+    sv2 = max(float(sigma_v2), 1e-10)
+    for _ in range(max(int(iters), 0)):
+        s, v = effortPosterior(e, np.sqrt(sv2), th_r[race])
+        sum_g = np.bincount(group, weights=s, minlength=n_group)
+        theta_g = np.where(n_g > 0, sum_g / np.maximum(n_g, 1.0), theta_g)
+        theta_g = np.maximum(theta_g, EFFORT_THETA_FLOOR)
+        th_old, sv2_old = th_r, sv2
+        th_r = ((np.bincount(race, weights=s, minlength=n_race) + k * theta_g[g_race])
+                / (n_r + k))
+        th_r = np.maximum(th_r, EFFORT_THETA_FLOOR)
+        sv2 = max(float(np.mean((e - s) ** 2 + v)), 1e-10)
+        du = 0.0
+        if u is not None:
+            u_new = np.bincount(race, weights=c_d * (e_pre - s), minlength=n_race) / P_d
+            du = float(np.max(np.abs(u_new - u))) if n_race else 0.0
+            u = u_new
+            e = e_pre - h_d * u[race]
+        # converged: days within 1e-6 log-time, every theta within 1e-4 of
+        # itself, sigma_v^2 within 1e-6 of itself
+        if (du < 1e-6 and abs(sv2 - sv2_old) <= 1e-6 * sv2_old
+                and float(np.max(np.abs(th_r - th_old) / th_old)) < 1e-4):
+            break
+    s, v = effortPosterior(e, np.sqrt(sv2), th_r[race])
+    return {"s": s, "var": v, "sigma_v2": sv2, "theta_g": theta_g,
+            "theta_race": th_r, "group_of_race": g_race, "u": u}
+
+
+def effortLines(fit, names=EFFORT_GROUP_NAMES, top=10, race_rows=None):
+    """Lines for the log: sigma_v, theta per group (with rows), the share
+    of rows short by more than EFFORT_SHORT_CUT, and the `top` races by
+    theta_race (race id, rows, group)."""
+    s = fit["s"]
+    th_g = fit["theta_g"]
+    lab = [names[g] if g < len(names) else str(g) for g in range(th_g.size)]
+    rows_g = fit.get("rows_g")
+    out = [f"sigma_v {np.sqrt(fit['sigma_v2']):.5f}; theta per group "
+           + ", ".join(f"{lab[g]} {th_g[g]:.4f}"
+                       + (f" ({int(rows_g[g]):,})" if rows_g is not None else "")
+                       for g in range(th_g.size)
+                       if rows_g is None or rows_g[g] > 0)
+           + f"; {100 * float(np.mean(s > EFFORT_SHORT_CUT)):.1f}% of rows "
+             f"E[s] > {EFFORT_SHORT_CUT:g}"]
+    th_r = fit["theta_race"]
+    order = np.argsort(-th_r)[:top]
+    out.append("largest theta_race: " + ", ".join(
+        f"race {int(j)}"
+        + (f" ({int(race_rows[j])} rows" if race_rows is not None else " (")
+        + f", {lab[int(fit['group_of_race'][j])]}) {th_r[j]:.4f}"
+        for j in order))
+    return out
 # ★ BY RATING BAND (issue 167, 2026-09-04, the owner's option 1). One
 #   number per pool and event was the AVERAGE runner's exchange rate; a
 #   4:13 1600 rated under a 15:40 at Mt. SAC because the top needs more
@@ -2571,7 +2859,10 @@ def topFractionWeights(y, race, frac):
     return w
 
 
-def robustWeights(resid, scale=None):
+def robustWeights(resid, scale=None, slow=True):
+    # slow=False: the slow side keeps weight 1 (the effort term, solveJoint
+    #   effort=True, explains slow rows as shortfall); the fast side's cut
+    #   is unchanged
     if scale is None:
         mad = float(np.median(np.abs(resid - np.median(resid))))
         scale = max(1.4826 * mad, 1e-9)
@@ -2579,6 +2870,8 @@ def robustWeights(resid, scale=None):
     cut = np.where(z >= 0, HUBER_SLOW, HUBER_FAST)
     w = np.ones_like(z)
     big = np.abs(z) > cut
+    if not slow:
+        big &= z < 0
     w[big] = cut[big] / np.abs(z[big])
     return w, scale
 
@@ -3663,6 +3956,12 @@ def raceEffectLeaveOneOut(out, D, y):
     h = np.full(D.n, float(h)) if h.ndim == 0 else h
     w = np.asarray(out["weights"], dtype=np.float64)
     pred = rowPrediction(b, D, h, out["amp"]) + D.fixedOffset(h)
+    # ★ UNDER THE EFFORT TERM the solve's u was taken from y - E[s] (2026-10-18):
+    #   the same sums here, or a jogger's own shortfall would read as its
+    #   pull on the day. Absent (the term off) this is the old line.
+    eff = out.get("effort")
+    if eff is not None and np.asarray(eff).size == D.n:
+        pred = pred + np.asarray(eff, dtype=np.float64)
     r = np.asarray(y, dtype=np.float64) - pred + h * u[D.race]
     s_u2 = np.asarray(out["sigma_u2"], dtype=np.float64)
     if s_u2.ndim == 0:
@@ -3712,7 +4011,11 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                merge_sports=False, centre_curve=False,
                identified_priors=True, sigma_u_floor="default",
                ability_weight=False, top_frac=0.0, nested_var=True,
-               season_tie_sd=None, tilt_scale=None):
+               season_tie_sd=None, tilt_scale=None, effort=False):
+    # effort: the shortfall term (THETA_RACE_PRIOR_N): each row's residual
+    #   is noise plus a one-sided shortfall s >= 0, fitted by EM; the solve
+    #   fits y - E[s|e]. Groups from D.effort_group (run_joint: meet class x
+    #   sport, EFFORT_GROUP_NAMES), else the sport group.
     # season_tie_sd: with a design carrying the season tie (attachSeasonTie),
     #   a STATED walk sd for every transition; None fits it (seasonTieFit).
     # tilt_scale: None reads the tilt at the own-pool rating; a dict
@@ -3818,6 +4121,29 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     div_off = None
     div_last = div_used = None
     drop_d = drop_u = None              # what merge recentring drops (recentreLevels)
+    # ★ THE EFFORT TERM (THETA_RACE_PRIOR_N): E[s|e] per row, held off y
+    #   like the division guard's offset from the pass after it is found;
+    #   eff_last is the law that produced it, eff_used the one the current
+    #   pass solves with (what is published)
+    eff_s = None
+    eff_last = eff_used = None
+    eff_group = eff_names = None
+    if effort:
+        eff_group = getattr(D, "effort_group", None)
+        if eff_group is None:
+            eff_group = D.group_row * len(EFFORT_CLASS_NAMES)   # sport, ordinary
+            eff_names = EFFORT_GROUP_NAMES
+        else:
+            eff_names = getattr(D, "effort_group_names", None) or EFFORT_GROUP_NAMES
+        eff_group = np.asarray(eff_group, dtype=np.int64)
+        assert eff_group.size == n, "effort_group wants one group per row"
+        eff_n_group = max(int(eff_group.max()) + 1 if n else 1, len(eff_names))
+        eff_race_rows = np.bincount(D.race, minlength=D.n_race)
+        if verbose:
+            print(f"[joint] effort term ON: e = v + s, s >= 0 exponential, theta per "
+                  f"(meet class, sport) and per race shrunk by "
+                  f"{THETA_RACE_PRIOR_N:g} pseudo-rows; slow residuals keep "
+                  f"weight 1", flush=True)
 
     for outer in range(n_outer):
         pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
@@ -3847,6 +4173,11 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         if div_off is not None:
             y_fit = y_fit - h * div_off
         div_used = div_last
+        # the shortfall the last E-step found: untilted, it is the runner's
+        # own, not the course's
+        if eff_s is not None:
+            y_fit = y_fit - eff_s
+        eff_used = eff_last
         t_solve = time.time()
         # the last outer carries the published numbers; see CG_TOL_OUTER
         _tol = CG_TOL if outer == n_outer - 1 else CG_TOL_OUTER
@@ -3964,9 +4295,64 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
             for _c in checkPriors(tau2, sigma_u2):
                 print(f"[joint] ⚠⚠ {_c}", flush=True)
 
+        # --- the effort term's E and M steps, for the next pass ------- #
+        # ! NOT AFTER THE LAST PASS, like the guard: the published E[s] and
+        #   theta are the ones that pass solved with.
+        # ! AFTER THE VARIANCE COMPONENTS: the day step inside effortFit
+        #   takes each race's prior from this pass's sigma2 / sigma_u2, not
+        #   from the first pass's placeholder (sigma2 = 1).
+        # ★ THE FIRST E-STEP STARTS FROM THE FRONTIER: every race's day at
+        #   zero, so every race is first read as its runners' shortfalls and
+        #   a day has to earn its way back. A field shifted as a whole (no
+        #   front at zero) does, within the sweeps; a jogged field with a
+        #   front at its level does not -- the front holds it. Started from
+        #   the solve's own days instead, the EM begins at the "slow day"
+        #   reading of a jogged meet and stays there (it is a local fixed
+        #   point: the joggers' residuals are ~0 against it).
+        if effort and outer < n_outer - 1:
+            e_pre = resid + h * b["u"][D.race]
+            if eff_s is not None:
+                e_pre = e_pre + eff_s
+            pen_eff = sigma2 / np.maximum(sigma_u2[group_of_race], 1e-12)
+            day = {"h": h, "w": w, "pen": pen_eff,
+                   "u": (np.zeros(D.n_race) if eff_last is None
+                         else np.asarray(b["u"], dtype=np.float64))}
+            if eff_last is None:
+                # the law at the frontier first (every day held at zero),
+                # then the days released from it: released at once, a day
+                # races its own theta_race from the moment-start and a
+                # jogged meet is decided by which moves first
+                sv2_0, th_0 = effortStart(e_pre)
+                law = effortFit(e_pre, eff_group, D.race, eff_n_group,
+                                D.n_race, sv2_0, th_0)
+                eff_last = effortFit(e_pre, eff_group, D.race, eff_n_group,
+                                     D.n_race, law["sigma_v2"], law["theta_g"],
+                                     law["theta_race"], day=day)
+            else:
+                eff_last = effortFit(e_pre, eff_group, D.race, eff_n_group,
+                                     D.n_race, eff_last["sigma_v2"],
+                                     eff_last["theta_g"], eff_last["theta_race"],
+                                     day=day)
+            eff_last["rows_g"] = np.bincount(eff_group, minlength=eff_n_group)
+            eff_s = eff_last["s"]
+            if verbose:
+                for line in effortLines(eff_last, eff_names, race_rows=eff_race_rows):
+                    print(f"  [joint] effort, for pass {outer + 2}: {line}", flush=True)
+
         # --- robust reweighting (replaces rowguard) ------------------ #
         if robust:
-            w, scale = robustWeights(resid)
+            if not effort:
+                w, scale = robustWeights(resid)
+            else:
+                # under the effort term the slow side is s's, not a
+                # weight's; the fast side is cut only where a row is fast
+                # against its day AND before it (EFFORT_FAST_BEFORE_DAY)
+                _r_fast = resid
+                if EFFORT_FAST_BEFORE_DAY and b["u"].size == D.n_race:
+                    _r_fast = np.maximum(resid, resid + h * b["u"][D.race])
+                _mad = float(np.median(np.abs(resid - np.median(resid))))
+                w, scale = robustWeights(_r_fast, scale=max(1.4826 * _mad, 1e-9),
+                                         slow=False)
         # ! ABILITY WEIGHTING ON TOP, and it needs the ratings, so it can
         #   only run once they exist (athlete_pool given, second outer on).
         #   See abilityWeights.
@@ -4167,6 +4553,20 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                                else divisionTable(div_used)),
         "tilt_rating": (None if tilt_factor is None or rating is None
                         else rating * tilt_factor[athlete_pool]),
+        # the effort term as the last pass solved with it (None = off, or
+        # a one-pass solve): per row E[s|e] (log-time, + = short of full
+        # effort; NOT in the ability, which is the frontier) and Var[s|e];
+        # per race theta, per group theta, sigma_v
+        "effort": None if eff_used is None else eff_used["s"].copy(),
+        "effort_var": None if eff_used is None else eff_used["var"].copy(),
+        "effort_theta_race": (None if eff_used is None
+                              else eff_used["theta_race"].copy()),
+        "effort_theta_group": (None if eff_used is None
+                               else eff_used["theta_g"].copy()),
+        "effort_sigma_v": (None if eff_used is None
+                           else float(np.sqrt(eff_used["sigma_v2"]))),
+        "effort_group_names": (None if eff_used is None
+                               else [str(x) for x in eff_names]),
     }
     if D.has_curve:
         c = b["c"].reshape(D.n_pool, D.n_knot)
@@ -4277,4 +4677,18 @@ def predictHeldOut(out, D_train, D_test, athlete_pool=None, tilt=True):
     ind_fixed = getattr(D_train, "ind_fixed", None)
     if ind_fixed is not None and getattr(D_test, "ind_w", None) is not None:
         pred = pred + h * D_test.ind_w * ind_fixed[D_test.ind_idx]
+    # ★ THE EFFORT TERM (THETA_RACE_PRIOR_N): the ability is the frontier, so
+    #   the expected time is it plus the expected shortfall -- the race's
+    #   theta where the race was fitted, its group's otherwise
+    th_g = out.get("effort_theta_group")
+    g_te = getattr(D_test, "effort_group", None)
+    if th_g is not None and g_te is not None:
+        th_g = np.asarray(th_g, dtype=np.float64)
+        g_te = np.minimum(np.asarray(g_te, dtype=np.int64), th_g.size - 1)
+        th = th_g[g_te]
+        th_r = out.get("effort_theta_race")
+        if th_r is not None and np.asarray(th_r).size == r_cnt.size:
+            seen = r_cnt[D_test.race] > 0
+            th = np.where(seen, np.asarray(th_r, dtype=np.float64)[D_test.race], th)
+        pred = pred + th
     return pred, covered

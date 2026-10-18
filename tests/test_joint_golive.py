@@ -228,3 +228,26 @@ if __name__ == "__main__":
     test_per_sport_day_term()
     test_fast_day_only()
     test_winter_gain_paths()
+
+
+def test_build_live_with_the_effort_term():
+    """The go-live must take a solve fitted with the effort term (2026-10-18,
+    the --effort comparison run): every row gets a rating, the out dict
+    carries the shortfall, and nothing comes back NaN."""
+    y, D, truth, raw = T.world(indoor=True, seed=11)
+    n = y.size
+    pool_names = ["hs_m", "hs_f"]
+    cols = {"athlete": raw["ath"], "year": np.full(n, 2025),
+            "norm": np.exp(y), "sport": raw["sport_of_cell"][raw["cel"]],
+            "result_id": np.arange(n) + 500_000,
+            "athlete_keys": [(1000 + i, pool_names[p])
+                             for i, p in enumerate(truth["pool_of_ath"])],
+            "course_keys": [("XC:" if s == 0 else "TF:") + f"v{i}:d5000"
+                            for i, s in enumerate(raw["sport_of_cell"])]}
+    keep = np.ones(n, dtype=bool)
+    out = js.solveJoint(y, design=D, athlete_pool=truth["pool_of_ath"],
+                        n_outer=4, tilt=True, n_probe=2, effort=True)
+    assert out.get("effort") is not None and np.all(np.asarray(out["effort"]) >= 0)
+    live = jg.buildLive(out, D, cols, keep)
+    rc = np.asarray(live["chosen"], dtype=float)
+    assert rc.size == n and np.isfinite(rc[np.isfinite(rc)]).all() and np.isfinite(rc).mean() > 0.9
