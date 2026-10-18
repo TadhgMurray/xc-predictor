@@ -30,7 +30,7 @@ def run(model, model_raises=False, form=FORM):
         return {i: {"seconds": f[0], "lo": f[1], "hi": f[2]}
                 for i, f in form.items() if i in ids}
 
-    def predict_times(cur, ids, target, spec=None):
+    def predict_times(cur, ids, target, spec=None, history=None):
         sent.extend(ids)
         if model_raises:
             raise RuntimeError("no model")

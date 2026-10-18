@@ -937,9 +937,11 @@ def _score(field, preds):
 #  THE PARTS THAT NEED THE TRAINED MODEL
 # ------------------------------------------------------------------ #
 
-def _predictTimes(cur, person_ids, target, spec=None):
+def _predictTimes(cur, person_ids, target, spec=None, history=None):
     """[{seconds, ...}] -- one per person_id, in order. `spec` is the
-    target's _targetSpec when the caller already resolved it.
+    target's _targetSpec when the caller already resolved it; `history` is
+    _historyRows for a superset of person_ids, when the caller fetched it
+    already (byPrediction, beside the ratings).
 
     ★ THE SWAP POINT, NOW SWAPPED. Builds the same feature vectors
       feature_extraction.py writes -- the corpus row SQL filtered to
@@ -967,7 +969,11 @@ def _predictTimes(cur, person_ids, target, spec=None):
     model, art = _model, _artifacts
     encoders, vocab = art["encoders"], art["vocab"]
 
-    by_person = _historyRows(cur, person_ids)
+    if history is not None:
+        by_person = {int(p): history[int(p)] for p in person_ids
+                     if p and int(p) in history}
+    else:
+        by_person = _historyRows(cur, person_ids)
     if spec is None:
         spec = _targetSpec(cur, target)
 
@@ -1377,6 +1383,30 @@ def _outlierFilter(cur, sport):
             f"WHERE ro.sport = '{sport}' AND ro.result_id = r.result_id)")
 
 
+def _ownConnFuture(fn):
+    """fn(cursor) run in a thread on a pooled connection of its own (plain
+    tuple cursor, the join limits _historyRows needs, rolled back after);
+    a Future, or None when no thread could be started. psycopg2 lets go of
+    the GIL while Postgres works, so two reads overlap for real."""
+    def run():
+        from database import getConn
+        with getConn() as conn2, conn2.cursor() as c2:
+            try:
+                c2.execute("SET LOCAL join_collapse_limit = 16")
+                c2.execute("SET LOCAL from_collapse_limit = 16")
+                return fn(c2)
+            finally:
+                conn2.rollback()
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        ex = ThreadPoolExecutor(1)
+        fut = ex.submit(run)
+        ex.shutdown(wait=False)
+        return fut
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
 def _ratingRows(cur, person_ids, lo_date, hi_date):
     """{pid: [(date, rating, pool, sport), newest first]} over both result
     tables, strictly before hi_date (and from lo_date, when given)."""
@@ -1384,14 +1414,17 @@ def _ratingRows(cur, person_ids, lo_date, hi_date):
     out = {}
     if not ids:
         return out
-    for sport, table in (("XC", "results"), ("TF", "results_tf")):
-        skip = _outlierFilter(cur, sport)
+    skips = {sp: _outlierFilter(cur, sp) for sp in ("XC", "TF")}
+    cols = ("pid", "date", "speed_rating", "pool", "event_short", "meet_id")
+
+    def read(c, sport, table):
+        skip = skips[sport]
         # ★ A TRACK ROW SAYS WHICH RACE IT WAS (2026-10-10): its event name,
         #   for the distance _formRating weights by, and its meet, so a
         #   prelim and its final count once
         extra = (", r.event_short, r.meet_id" if sport == "TF"
                  else ", NULL AS event_short, NULL AS meet_id")
-        cur.execute(f"""
+        c.execute(f"""
             SELECT COALESCE(r.person_id, r.athlete_id) AS pid, r.date,
                    r.speed_rating, split_part(r.rating_pool, '|', 1) AS pool
                    {extra}
@@ -1403,11 +1436,22 @@ def _ratingRows(cur, person_ids, lo_date, hi_date):
               AND  (r.time_seconds IS NULL OR r.time_seconds < 19999)
               {skip}
         """, (ids, ids, lo_date or "0000", hi_date))
+        return [r if isinstance(r, dict) else dict(zip(cols, tuple(r)))
+                for r in c.fetchall()]
+
+    # ★ THE TRACK READ BESIDE THE XC ONE (2026-10-18: 5.2 s of a field,
+    #   the two in turn), on its own connection; in line if that fails
+    tf_future = _ownConnFuture(lambda c: read(c, "TF", "results_tf"))
+    got = {"XC": read(cur, "XC", "results")}
+    try:
+        got["TF"] = tf_future.result() if tf_future is not None else None
+    except Exception:                                    # noqa: BLE001
+        got["TF"] = None
+    if got["TF"] is None:
+        got["TF"] = read(cur, "TF", "results_tf")
+    for sport in ("XC", "TF"):
         ep = None
-        for row in cur.fetchall():
-            row = (row if isinstance(row, dict) else
-                   dict(zip(("pid", "date", "speed_rating", "pool",
-                             "event_short", "meet_id"), tuple(row))))
+        for row in got[sport]:
             pid, d, rating, pool = (row["pid"], row["date"],
                                     row["speed_rating"], row["pool"])
             metres = None
@@ -2918,6 +2962,14 @@ def byPrediction(cur, squads, caps, target):
                              for e in squads[sch]))
     if not ids:
         return squads, None
+    # ★ THE HISTORIES LOAD WHILE THE RATINGS DO (owner, 2026-10-18: "there
+    #   must be some other way to speed up"). The model's history rows and
+    #   the season ratings are two independent reads, and they ran one after
+    #   the other: 6.4 s then 5.2 s of a 16.7 s field. The history is read
+    #   for every squad member on connections of its own while the ratings
+    #   pick the contenders; the model then takes the contenders' rows out
+    #   of it. Any failure and _predictTimes reads its own, as before.
+    hist_future = _ownConnFuture(lambda c: _historyRows(c, ids))
     try:
         spec = _targetSpec(cur, target)
         rated = _ratingTimes(cur, ids, spec, _asDate(spec.get("date")))
@@ -2953,8 +3005,15 @@ def byPrediction(cur, squads, caps, target):
     model = {}
     note = None
     if contenders:
+        history = None
+        if hist_future is not None:
+            try:
+                history = hist_future.result()
+            except Exception:                     # noqa: BLE001 -- read in line
+                history = None
         try:
-            preds = _predictTimes(cur, contenders, target, spec=spec)
+            preds = _predictTimes(cur, contenders, target, spec=spec,
+                                  history=history)
             model = {pid: p.get("seconds") for pid, p
                      in zip(contenders, preds or []) if p.get("seconds")}
         except Exception as exc:                  # noqa: BLE001 -- form order stands
