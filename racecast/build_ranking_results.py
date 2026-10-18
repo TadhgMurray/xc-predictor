@@ -3180,6 +3180,7 @@ def _homeStates(conn, season_table):
             print("    home states: no school_identity yet, race states kept")
             return 0
         t0 = time.time()
+        n_campus = _campusStates(cur, season_table)
         cur.execute(f"""
             UPDATE {season_table} s
             SET    state = si.state
@@ -3189,12 +3190,62 @@ def _homeStates(conn, season_table):
               AND  lower(s.school) NOT LIKE 'unattached%%'
               AND  s.state IS DISTINCT FROM si.state
               AND  NOT EXISTS (SELECT 1 FROM school_identity x
-                               WHERE x.school = s.school AND x.state = s.state)""")
+                               WHERE x.school = s.school AND x.state = s.state)
+              AND  NOT (starts_with(s.pool, 'college')
+                        AND EXISTS (SELECT 1 FROM tmp_campus_state c
+                                    WHERE c.school = s.school))""")
         n = cur.rowcount
     conn.commit()
-    print(f"    [{time.time() - t0:7.1f}s] home states: {n:,} seasons moved from the "
-          f"meets' state to their school's")
-    return n
+    print(f"    [{time.time() - t0:7.1f}s] home states: {n_campus:,} college seasons "
+          f"put in their campus's state, {n:,} seasons moved from the meets' state "
+          f"to their school's")
+    return n + n_campus
+
+
+def _campusStates(cur, season_table):
+    """A COLLEGE season's state is its campus's (the college directory),
+    whatever the race state. Returns the rows moved; leaves tmp_campus_state
+    (school, state) for _homeStates' own pass to skip.
+
+    ★ WHY (owner's boards, 2026-10-18: "Seth Bruxvoort, Wyoming MI",
+      "Elsingi Kipruto, Louisville NE"). The rule above moves a season
+      whose race state is not one of its school's clusters to the school's
+      PRIMARY cluster -- and for a name a high school and a college share,
+      the primary is whichever has more athletes: Wyoming (MI) HS outnumbers
+      the University of Wyoming, Louisville (NE) HS the University of
+      Louisville. Wyoming's 2020 season was raced in Colorado, CO is
+      neither cluster, so it went to MI. And a college that raced in its
+      namesake high school's state kept that state outright. The directory
+      knows where the campus is; a name it cannot settle (two colleges in
+      two states) is left to the rule above."""
+    cur.execute("DROP TABLE IF EXISTS tmp_campus_state")
+    cur.execute("CREATE TEMP TABLE tmp_campus_state (school text PRIMARY KEY, state text)")
+    try:
+        from build_college_directory import lookup, loadDirectory
+        campus = loadDirectory(cur, "state")
+    except ImportError:
+        return 0
+    if not campus:
+        return 0
+    cur.execute(f"SELECT DISTINCT school FROM {season_table} "
+                f"WHERE school IS NOT NULL AND starts_with(pool, 'college')")
+    pairs = []
+    for (sch,) in cur.fetchall():
+        st = lookup(campus, sch)
+        if st and len(str(st).strip()) == 2:
+            pairs.append((sch, str(st).strip().upper()))
+    if not pairs:
+        return 0
+    psycopg2.extras.execute_values(
+        cur, "INSERT INTO tmp_campus_state (school, state) VALUES %s", pairs)
+    cur.execute(f"""
+        UPDATE {season_table} s
+        SET    state = c.state
+        FROM   tmp_campus_state c
+        WHERE  c.school = s.school
+          AND  starts_with(s.pool, 'college')
+          AND  s.state IS DISTINCT FROM c.state""")
+    return cur.rowcount
 
 
 def _stampSeasonUnits(conn, season_table):
