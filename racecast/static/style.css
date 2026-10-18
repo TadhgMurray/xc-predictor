@@ -2402,6 +2402,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .predict2 .r-x:hover { color: #a32d2d; }
 /* the predicted time a lineup was picked by, and a card's own skip
    (predictions.js renderFieldBlock / applyTeamSkip) */
+.predict2 .fs-refine { color: #767676; font-weight: normal; }
 .predict2 .r-pred { color: #222; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 .predict2 .skip-team { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px;
                        font-size: 0.78rem; color: #666; }

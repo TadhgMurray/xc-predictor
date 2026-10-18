@@ -1964,24 +1964,71 @@ async function loadField() {
          first ask was out sent a second one -- and whichever came back
          LAST was kept, so the slower seven-runner answer overwrote the
          ten. Each answer is kept only if the page still asks the same. */
+    /* ★ THE FIELD AT ONCE, THEN BY PREDICTION (owner, 2026-10-18: "can we
+         fix the field loading speed?"). Ordering every squad by predicted
+         time runs the model on hundreds of runners (~7 s for a 34-team
+         championship); by season rating the same field is a fraction of
+         a second. So a "Pick runners by: Prediction" field is asked for
+         by rating first and drawn, and the predicted order is asked for
+         beside it and swapped in when it lands (refineFields) -- the hand
+         edits made meanwhile carry over. Predict waits for it. */
+    const quick = state.when === "thisyear" && state.pick === "predicted";
     const asks = missing.map((d) => fieldQuery(d).toString());
-    const got = await Promise.all(missing.map((d) => fetchField(d)));
+    const got = await Promise.all(missing.map((d) => fetchField(d, quick)));
     if (state.meet !== meet) return;
     missing.forEach((d, i) => {
       if (got[i] && !editsFor(d).field
           && fieldQuery(d).toString() === asks[i]) {
-        editsFor(d).field = got[i];
-        const own = editsFor(d).skipTeam || {};
-        for (const t of got[i].teams || []) {
-          if (own[t.school] !== undefined) applyTeamSkip(t, own[t.school]);
-        }
+        if (quick) got[i].quick = true;
+        setField(d, got[i]);
       }
     });
+    if (quick) state.refine = refineFields(meet, missing, asks);
   }
   renderField();
   showBasis(blocks);
 }
 
+
+/* A race's field, with its cards' own skips put back on. */
+function setField(d, field) {
+  editsFor(d).field = field;
+  const own = editsFor(d).skipTeam || {};
+  for (const t of field.teams || []) {
+    if (own[t.school] !== undefined) applyTeamSkip(t, own[t.school]);
+  }
+}
+
+/* The predicted order for fields drawn by rating (loadField): each lands
+   on its race if the page still asks the same and the race still shows
+   the quick field. Hand-added runners go back on their cards (removals
+   are ids, and stay); the card a person is editing stays open. */
+async function refineFields(meet, divs, asks) {
+  const got = await Promise.all(divs.map((d) => fetchField(d)));
+  if (state.meet !== meet) return;
+  let swapped = false;
+  divs.forEach((d, i) => {
+    const e = editsFor(d);
+    const old = e.field;
+    if (!got[i] || !old || !old.quick || fieldQuery(d).toString() !== asks[i]) return;
+    setField(d, got[i]);
+    for (const a of e.added || []) {
+      const t = (got[i].teams || []).find((x) => x.school === a.school);
+      const pid = String(a.person_id);
+      if (!t || t.runners.some((r) => String(r.person_id) === pid)) continue;
+      const was = (old.teams || []).flatMap((x) => x.runners || [])
+        .find((r) => String(r.person_id) === pid);
+      t.runners.push(was || { person_id: pid, name: a.name, added: true });
+      t.dropped = (t.dropped || []).filter((r) => String(r.person_id) !== pid);
+    }
+    swapped = true;
+  });
+  if (swapped) {
+    renderField();
+    showBasis(activeBlocks());
+    saveState();
+  }
+}
 
 /* ★ SAY WHERE THE FIELD CAME FROM WHEN IT IS NOT AN ENTRY LIST (owner,
    2026-10-06: "predicting upcoming races doesn't work bcs where does the roster come from?"). A meet not yet run
@@ -2036,8 +2083,10 @@ function fieldQuery(div) {
   return q;
 }
 
-async function fetchField(div) {
+async function fetchField(div, quick) {
   const q = fieldQuery(div);
+  /* the fast first look: by season rating, no model (loadField) */
+  if (quick) { q.delete("pick"); q.delete("date"); q.delete("course"); }
   try {
     const res = await fetch("/api/predict/field?" + q.toString());
     const data = await readJson(res);
@@ -2303,6 +2352,7 @@ function renderFieldBlock(sumEl, gridEl) {
     `<strong>${teams.length}</strong> teams, ` +
     `<strong>${kept}</strong> runners` +
     (f.when === "asran" ? ` - as raced` : ` - current squads`) +
+    (f.quick ? ` <span class="fs-refine" title="Shown by season rating while each team is ordered by predicted time">- ordering by prediction\u2026</span>` : "") +
     `</span>` +
 
     /* ⚠ THE Show: CONTROL IS NOT HERE ANY MORE -- see renderViewSel. It was
@@ -2610,6 +2660,12 @@ async function predict() {
   const missing = whatIsMissing();
   if (missing) { setStatus(missing, true); return; }
   if (state.busy) return;
+  /* the lineup by prediction, if the field is still ordering (loadField) */
+  if (state.refine) {
+    setStatus("Ordering each team by prediction\u2026", false);
+    try { await state.refine; } catch (err) { /* the rating order stands */ }
+    state.refine = null;
+  }
   window.rcUse && rcUse("predict:run");   // ★ usage count (2026-10-10)
 
   state.busy = true;

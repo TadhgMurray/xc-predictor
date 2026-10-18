@@ -43,6 +43,8 @@ const sb = eval(`(() => {
   const fetch = (url) => new Promise((res) => pending.push({ url, res }));
   ${grab("fieldQuery")}
   ${grab("fetchField", "async function ")}
+  const applyTeamSkip = () => {};
+  ${grab("setField")}
   ${grab("loadField", "async function ")}
   return { state, editsFor, loadField };
 })()`);
