@@ -331,6 +331,14 @@
     // ---- build the source spec from the visible fields ------------------
     var chosenInCourse = { course: null, difficulty: 0, canonical_id: null };
 
+    /* A distance in km with no trailing zeros: 8000 -> "8k", 4800 -> "4.8k",
+       4828 -> "4.83k" (owner, 2026-10-18: "8k" and "8.00k" side by side). */
+    function km(m) {
+        m = parseFloat(m);
+        if (!(m > 0)) return '?';
+        return String(Math.round(m / 10) / 100) + 'k';
+    }
+
     /* A course difficulty as the site shows it everywhere else: a signed
        percentage, how much slower than an average course (+) or faster (-). */
     function pct(d) {
@@ -349,8 +357,8 @@
                    '" data-cid="' + esc(c.canonical_id) +
                    '" data-dist="' + esc(d.distance) + '">' +
                    esc(c.name) +
-                   ' <span class="drop-meta">' + (d.distance/1000).toFixed(2) +
-                   'k · ' + pct(dd) + ' · ' + d.n + ' races</span></div>';
+                   ' <span class="drop-meta">' + km(d.distance) +
+                   ' · ' + pct(dd) + ' · ' + d.n + ' races</span></div>';
         }).join('');
     }
 
@@ -555,7 +563,7 @@
         lastBase = { pool: data.base_rating, hs: data.base_rating_hs,
                      tail: data.source_difficulty != null
                          ? ' \u00b7 your course taken as ' + pct(data.source_difficulty) +
-                           (data.source_difficulty_m ? ' at ' + (data.source_difficulty_m / 1000).toFixed(2) + 'k' : '')
+                           (data.source_difficulty_m ? ' at ' + km(data.source_difficulty_m) : '')
                          : '' };   /* the engine's internal 5K normalised time is not a reader's number */
         paintBaseRating();
         fill('#xc-body', data.xc);
@@ -777,7 +785,7 @@
         tr.setAttribute('data-distance', dist);
         tr.innerHTML =
             '<td><a href="/course/' + encodeURIComponent(name) + '">' + esc(name) + '</a></td>' +
-            '<td class="cell-dist">' + (Math.round(dist / 10) / 100) + 'k</td>' +
+            '<td class="cell-dist">' + km(dist) + '</td>' +
             '<td class="cell-diff">' + pct(diff) + '</td>' +
             '<td class="cell-time"> - </td>';
         return tr;
@@ -791,7 +799,7 @@
         tr.setAttribute('data-distance', dist);
         tr.innerHTML =
             '<td><a href="/course/' + encodeURIComponent(name) + '">' + esc(name) + '</a></td>' +
-            '<td class="cell-dist">' + (dist/1000).toFixed(2) + 'k</td>' +
+            '<td class="cell-dist">' + km(dist) + '</td>' +
             '<td class="cell-diff">' + pct(diff) + '</td>' +
             '<td class="cell-time"> - </td>';
         tr.setAttribute('data-added', '1');

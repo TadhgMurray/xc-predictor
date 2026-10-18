@@ -238,7 +238,7 @@
                 data-difficulty="{{ c.difficulty }}"
                 data-distance="{{ c.distance }}">
                 <td><a href="/course/{{ c.course_name|urlencode }}">{{ c.course_name }}</a></td>
-                <td class="cell-dist">{{ (c.distance / 1000)|round(2) }}k</td>
+                <td class="cell-dist">{{ "%g"|format((c.distance / 1000)|round(2)) }}k</td>
                 <td class="cell-diff">{% if c.difficulty is not none %}{{ "%+.1f"|format(c.difficulty * 100) }}%{% else %}?{% endif %}</td>
                 <td class="cell-time"> - </td>
             </tr>

@@ -72,8 +72,9 @@ def _chunks(xs, n=20000):
         yield xs[i:i + n]
 
 
-def load(cur, since, sample, pool, say=print):
-    """[(person, pool, year, ln rating, course, day, days into season)]."""
+def load(cur, since, sample, pool, say=print, extra=False):
+    """[(person, pool, year, ln rating, course, day, days into season)];
+    extra=True appends (canonical id, (meet, div)) for the altitude check."""
     cur.execute(_RR_SQL, {"since": since, "pool": pool, "sample": max(1, sample)})
     rr = cur.fetchall()
     say(f"  {len(rr):,} XC races in the sample")
@@ -106,7 +107,8 @@ def load(cur, since, sample, pool, say=print):
         c = cell.get(md) if md else None
         e = rde.get((c[0], c[1], day)) if c else None
         if e:
-            out.append((pid, pl, yr, float(lny), e[0], e[1], float(din)))
+            row = (pid, pl, yr, float(lny), e[0], e[1], float(din))
+            out.append(row + (c[0], md) if extra else row)
     return out
 
 
