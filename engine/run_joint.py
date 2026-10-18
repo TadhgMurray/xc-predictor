@@ -1187,18 +1187,25 @@ def reportTiltByBand(out, D, y):
         pred = js.rowPrediction(b, D, out["h"], out["amp"])
         pred = pred + D.fixedOffset(out["h"])
         resid = np.asarray(y, dtype=np.float64) - pred
-        x = out["delta"][D.cell]
+        # ! THE DELTA THE PREDICTION USED, AND CROSS COUNTRY ONLY (2026-10-18).
+        #   Under XCP_DIFFICULTY=bracket out["delta"] is the BRACKET engine's
+        #   course numbers while pred is the joint theta's, and x carried both
+        #   sports' level -- the report read implied h 0.2-0.7 against applied
+        #   0.9-1.1 in every band, which measured the two engines (and the
+        #   XC/TF level) against each other, not the tilt.
+        x = np.asarray(out.get("delta_joint", out["delta"]), dtype=np.float64)[D.cell]
+        xc_row = np.asarray(D.group_of_cell)[D.cell] == 0
         r = out["rating"][D.athlete]
         h = np.asarray(out["h"], dtype=np.float64)
         w = np.asarray(out["weights"], dtype=np.float64)
         edges = (-np.inf,) + TILT_REPORT_BANDS + (np.inf,)
-        print("[joint] tilt by rating band: the applied course multiplier h "
+        print("[joint] tilt by rating band (XC rows, the joint solve's own courses): the applied course multiplier h "
               "against the one the residuals imply (implied = applied + "
               "slope of residual on the course effect; a line past 140 "
               "means the extrapolation holds)")
         print(f"    {'band':>10} {'rows':>11} {'applied h':>10} {'implied h':>10} {'se':>7}")
         for lo, hi in zip(edges, edges[1:]):
-            m = (r >= lo) & (r < hi) & (np.abs(x) > 1e-9)
+            m = (r >= lo) & (r < hi) & (np.abs(x) > 1e-9) & xc_row
             n = int(m.sum())
             if n < 2000:
                 continue
