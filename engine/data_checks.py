@@ -363,12 +363,27 @@ def personGender(cur):
 
 
 def main():
+    import time
     write = "--write" in sys.argv
     from database import getConn
     issues, pins = [], {}
+    t0 = time.time()
     with getConn() as c, c.cursor() as cur:
+        # ★ SAY WHAT IT IS DOING (owner, 2026-10-18: "30 minutes and printed
+        #   nothing"). Each check is one or two whole-table aggregates; the
+        #   first builds every runner's typical rating over both result
+        #   tables. A line as each starts, and the time it took.
         for name, fn in (("race_field", raceField), ("venue_label", venueLabel),
                          ("parser", parser), ("person_gender", personGender)):
+            if name == "race_field":
+                print("[data_checks] typical ratings (both result tables) ...", flush=True)
+                try:
+                    _base(cur)
+                    print(f"[data_checks]   done ({time.time() - t0:.0f}s)", flush=True)
+                except Exception as exc:                      # noqa: BLE001
+                    c.rollback()        # the checks that need it say NOT RUN below
+                    print(f"[data_checks]   failed ({type(exc).__name__}: {exc})", flush=True)
+            print(f"[data_checks] {name} ...", flush=True)
             try:
                 got = fn(cur)
                 if name in ("race_field", "venue_label"):
@@ -376,7 +391,8 @@ def main():
                     for k, v in more.items():
                         pins.setdefault(k, v)
                 issues += got
-                print(f"[data_checks] {name}: {len(got):,} issues", flush=True)
+                print(f"[data_checks] {name}: {len(got):,} issues "
+                      f"({time.time() - t0:.0f}s)", flush=True)
             except Exception as exc:                          # noqa: BLE001
                 c.rollback()
                 print(f"[data_checks] {name}: NOT RUN ({type(exc).__name__}: {exc})")
