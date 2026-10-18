@@ -858,6 +858,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 }
 /* numeric columns right-aligned with tabular figures, like the boards */
 .conv-table .cell-dist,
+.conv-table .cell-diff,
 .conv-table .cell-time {
     font-variant-numeric: tabular-nums;
 }

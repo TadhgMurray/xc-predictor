@@ -9630,6 +9630,25 @@ def api_convert():
         # is absent too. Never assert 0.0 -- see the note above.
         return c.get("difficulty")
 
+    # ★ THE SOURCE COURSE TOO, AT THE DISTANCE TYPED (owner, 2026-10-18,
+    #   Coonskin -> Keene). The picker sent one difficulty per course (its
+    #   busiest cell), so a 5K at a course whose 3K is the busy cell was
+    #   charged the 3K's. With a canonical_id the cell at the typed
+    #   distance wins; the client's number stays only as the fallback.
+    src_m = None
+    if source.get("canonical_id") and source.get("distance") \
+            and (source.get("sport") or "XC").upper() == "XC":
+        try:
+            src_m = float(source["distance"])
+            exact = _cv.venue_difficulty("XC", canonical_id=int(source["canonical_id"]),
+                                         distance_meters=src_m)
+        except Exception:                                # noqa: BLE001
+            exact = None
+        if exact is not None:
+            source["difficulty"] = exact
+        else:
+            src_m = None
+
     xc_targets = []
     for c in body.get("xc_courses", []):
         xc_targets.append({
@@ -9663,6 +9682,13 @@ def api_convert():
         })
 
     result = convert_spread(source, xc_targets, tf_targets)
+    # the difficulty each XC row was converted at, for the page's column
+    # (None: no fitted cell, the sport's typical race)
+    for cell, t in zip(result.get("xc") or [], xc_targets):
+        cell["difficulty"] = t["difficulty"]
+    if source.get("course") and source.get("difficulty") is not None:
+        result["source_difficulty"] = source["difficulty"]
+        result["source_difficulty_m"] = src_m
     return jsonify(result)
 
 # ★ THE EQUIVALENCE LINE for the race and course pages (owner, 2026-09-25):

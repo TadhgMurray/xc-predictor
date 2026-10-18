@@ -329,24 +329,50 @@
     }
 
     // ---- build the source spec from the visible fields ------------------
-    var chosenInCourse = { course: null, difficulty: 0 };
+    var chosenInCourse = { course: null, difficulty: 0, canonical_id: null };
 
+    /* A course difficulty as the site shows it everywhere else: a signed
+       percentage, how much slower than an average course (+) or faster (-). */
+    function pct(d) {
+        if (d == null || d === '' || isNaN(d)) return '?';
+        d = parseFloat(d);
+        return (d >= 0 ? '+' : '\u2212') + Math.abs(d * 100).toFixed(1) + '%';
+    }
+
+    /* One drop item per (course, distance): course_difficulties is keyed on
+       both, and a course's 3K and 5K can differ by several percent. */
+    function courseItems(c) {
+        return c.distances.slice(0, 4).map(function (d) {
+            var dd = (d.difficulty != null ? d.difficulty : c.difficulty);
+            return '<div class="drop-item" data-name="' + esc(c.name) +
+                   '" data-diff="' + esc(dd) +
+                   '" data-cid="' + esc(c.canonical_id) +
+                   '" data-dist="' + esc(d.distance) + '">' +
+                   esc(c.name) +
+                   ' <span class="drop-meta">' + (d.distance/1000).toFixed(2) +
+                   'k · ' + pct(dd) + ' · ' + d.n + ' races</span></div>';
+        }).join('');
+    }
+
+    /* ★ THE SOURCE COURSE IS A COURSE AT A DISTANCE (owner, 2026-10-18:
+         "convert from Coon to Keene"). This picker used to offer one row per
+         course carrying the course's busiest cell, so a 5K typed at
+         Coonskin Park was converted as if run on its 3K (+3.3% where its
+         5K is +6.4%), and Coonskin -> Coonskin came back slower. It now
+         sends the canonical_id; /api/convert resolves the cell at the
+         distance typed, and this item's number is only the fallback. */
     typeahead(
         document.getElementById('in-course'),
         document.getElementById('in-course-drop'),
         '/api/course_search?q=',
-        function (c) {
-            // input course: one row per COURSE (not per distance) -- we only
-            // need its difficulty; the distance comes from the time field.
-            return '<div class="drop-item" data-name="' + esc(c.name) +
-                   '" data-diff="' + esc(c.difficulty) + '">' +
-                   esc(c.name) + ' <span class="drop-meta">diff ' +
-                   (c.difficulty != null ? c.difficulty.toFixed(3) : '?') +
-                   '</span></div>';
-        },
+        courseItems,
         function (item) {
             chosenInCourse.course = item.getAttribute('data-name');
             chosenInCourse.difficulty = parseFloat(item.getAttribute('data-diff')) || 0;
+            chosenInCourse.canonical_id = parseInt(item.getAttribute('data-cid'), 10) || null;
+            var dist = parseFloat(item.getAttribute('data-dist')) || null;
+            var din = document.getElementById('in-distance');
+            if (din && !din.value && dist) din.value = dist;
             document.getElementById('in-course').value = chosenInCourse.course;
             document.getElementById('in-course-chosen').textContent =
                 'On: ' + chosenInCourse.course;
@@ -417,6 +443,7 @@
             if (chosenInCourse.course) {
                 src.course = chosenInCourse.course;
                 src.difficulty = chosenInCourse.difficulty;
+                if (chosenInCourse.canonical_id) src.canonical_id = chosenInCourse.canonical_id;
             }
         } else if (t === 'rating') {
             src.rating = parseFloat(document.getElementById('in-rating').value);
@@ -526,7 +553,10 @@
             return;
         }
         lastBase = { pool: data.base_rating, hs: data.base_rating_hs,
-                     tail: '' };   /* the engine's internal 5K normalised time is not a reader's number */
+                     tail: data.source_difficulty != null
+                         ? ' \u00b7 your course taken as ' + pct(data.source_difficulty) +
+                           (data.source_difficulty_m ? ' at ' + (data.source_difficulty_m / 1000).toFixed(2) + 'k' : '')
+                         : '' };   /* the engine's internal 5K normalised time is not a reader's number */
         paintBaseRating();
         fill('#xc-body', data.xc);
         fill('#tf-body', data.tf);
@@ -664,6 +694,10 @@
             if (!rows[i]) return;
             rows[i].querySelector('.cell-time').textContent =
                 c.time != null ? fmt(c.time) : ' - ';
+            // the difficulty the server used, which is the one that counts
+            var dc = rows[i].querySelector('.cell-diff');
+            if (dc && c.difficulty !== undefined)
+                dc.textContent = c.difficulty == null ? 'typical' : pct(c.difficulty);
         });
     }
 
@@ -682,24 +716,7 @@
         document.getElementById('add-course'),
         document.getElementById('course-drop'),
         '/api/course_search?q=',
-        function (c) {
-            return c.distances.slice(0, 4).map(function (d) {
-                /* per-distance difficulty: course_difficulties is keyed on
-                   (canonical_id, distance_m), so a course fitted at 4.0k and
-                   5.0k has two, and showing one for both was wrong even
-                   before the stale-table bug. */
-                var dd = (d.difficulty != null ? d.difficulty : c.difficulty);
-                return '<div class="drop-item" data-name="' + esc(c.name) +
-                       '" data-diff="' + esc(dd) +
-                       '" data-cid="' + esc(c.canonical_id) +
-                       '" data-dist="' + esc(d.distance) + '">' +
-                       esc(c.name) +
-                       ' <span class="drop-meta">' + (d.distance/1000).toFixed(2) +
-                       'k · ' + d.n + ' races · diff ' +
-                       (dd != null ? dd.toFixed(3) : '?') +
-                       '</span></div>';
-            }).join('');
-        },
+        courseItems,
         function (item) {
             addCourseRow(item.getAttribute('data-name'),
                          parseFloat(item.getAttribute('data-diff')) || 0,
@@ -742,6 +759,7 @@
         tr.innerHTML =
             '<td><a href="/course/' + encodeURIComponent(name) + '">' + esc(name) + '</a></td>' +
             '<td class="cell-dist">' + (Math.round(dist / 10) / 100) + 'k</td>' +
+            '<td class="cell-diff">' + pct(diff) + '</td>' +
             '<td class="cell-time"> - </td>';
         return tr;
     }
@@ -755,6 +773,7 @@
         tr.innerHTML =
             '<td><a href="/course/' + encodeURIComponent(name) + '">' + esc(name) + '</a></td>' +
             '<td class="cell-dist">' + (dist/1000).toFixed(2) + 'k</td>' +
+            '<td class="cell-diff">' + pct(diff) + '</td>' +
             '<td class="cell-time"> - </td>';
         tr.setAttribute('data-added', '1');
         document.getElementById('xc-body').appendChild(tr);

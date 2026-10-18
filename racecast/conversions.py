@@ -322,7 +322,13 @@ def venueEffect(pool, sport, rating, chosen_difficulty, distance_meters):
     if chosen_difficulty is None and (sport or "").upper() == "TF":
         chosen_difficulty = 0.0
     if chosen_difficulty is None:
-        base = med
+        # ★ TILTED LIKE ANY COURSE (2026-10-18). The typical race's effect
+        #   was the bare median, the same for every runner, while a named
+        #   course's scales with the tilt -- so a course near average read
+        #   harder than "typical" for a slow time and easier for a fast one,
+        #   and which way a conversion leaned depended on the time typed.
+        #   tilt(100) is 1, so a 100 is charged exactly the median as before.
+        base = _tilt(rating, pool) * med
     else:
         base = _tilt(rating, pool) * (math.log1p(float(chosen_difficulty)) + shift)
     return (base + distance_offset(pool, sport, distance_meters, rating=rating)

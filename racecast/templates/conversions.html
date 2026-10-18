@@ -227,7 +227,7 @@
   {# XC table -- most common courses, extensible #}
   <section class="rc-panel" id="xc" data-panel="xc">
     <table class="conv-table" id="xc-table">
-        <thead><tr><th>Course</th><th>Distance</th><th>Time</th></tr></thead>
+        <thead><tr><th>Course</th><th>Distance</th><th title="How much slower than an average course this course runs at this distance (+), or faster (-)">Difficulty</th><th>Time</th></tr></thead>
         <tbody id="xc-body">
             {% for c in xc_courses %}
             {# canonical_id rides along so /api/convert can re-resolve
@@ -239,6 +239,7 @@
                 data-distance="{{ c.distance }}">
                 <td><a href="/course/{{ c.course_name|urlencode }}">{{ c.course_name }}</a></td>
                 <td class="cell-dist">{{ (c.distance / 1000)|round(2) }}k</td>
+                <td class="cell-diff">{% if c.difficulty is not none %}{{ "%+.1f"|format(c.difficulty * 100) }}%{% else %}?{% endif %}</td>
                 <td class="cell-time"> - </td>
             </tr>
             {% endfor %}

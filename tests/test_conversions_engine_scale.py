@@ -161,5 +161,5 @@ def test_an_unnamed_track_is_the_zero_not_the_median_row():
     assert abs(t_none - t_zero) < 1e-9
     xc_none = cv.venueEffect("hs_m", "XC", 120.0, None, 5000.0)
     xc_sc = cv.engineScale("hs_m", "XC")
-    assert abs(xc_none - (xc_sc[1] + cv.distance_offset("hs_m", "XC", 5000.0, rating=120.0)
+    assert abs(xc_none - (cv._tilt(120.0, "hs_m") * xc_sc[1] + cv.distance_offset("hs_m", "XC", 5000.0, rating=120.0)
                           + cv.sport_gain("hs_m", "XC", 120.0))) < 1e-12
