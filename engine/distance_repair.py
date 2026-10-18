@@ -312,7 +312,7 @@ _MEETS_ALL = """
            mt.venue_name                                 AS course_name,
            (d.value ->> 'distance')::real                 AS distance
     FROM   meets_tfrrs mt
-    CROSS  JOIN LATERAL jsonb_each(mt.division_distances) d
+    CROSS  JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(mt.division_distances) = 'object' THEN mt.division_distances ELSE '{}'::jsonb END) d
     WHERE  mt.sport = 'XC'
       AND  mt.venue_name IS NOT NULL
       AND  (d.value ->> 'distance')::real > 0

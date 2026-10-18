@@ -370,7 +370,11 @@ def test_the_pipeline_reapplies_detaches_after_the_linkers():
     assert "04a3_pins" in re.search(r'_ALWAYS="([^"]*)"', sh).group(1).split()
     ni = read("deploy", "nightly_update.sh")
     assert ni.index("step 04a2_link_teamless") < ni.index("step 04a3_pins") < ni.index("step 04c_twins")
-    assert "04a2_link_teamless 04a3_pins 04b_wheelchair" in ni
+    # the people steps the nightly refuses to price past (04a2b, the feed
+    # twins, sits between the linkers and the pins since 2026-10-15)
+    gate = re.search(r"for _s in ([^;]*); do", ni).group(1).split()
+    assert gate.index("04a2_link_teamless") < gate.index("04a3_pins") < gate.index("04b_wheelchair")
+    assert "04a2b_feed_twins" in gate
 
 
 # ======================================================== 5. twins

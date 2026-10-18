@@ -147,7 +147,7 @@ WITH own AS (
 --   Windsor 8K, tfrrs 26094/1 and anet 270077/1075582). At a canon-linked
 --   meet the backfill keeps the anet copy and skips the tfrrs twin
 --   (DEDUP_TWIN), so a fully twinned tfrrs division is never on a board and
---   read here as 0% rated -- it was dropped, and the backfill's dropped-twin
+--   read here as zero percent rated -- it was dropped, and the backfill's dropped-twin
 --   rule then dropped the anet copy too: neither copy rated. A row whose
 --   other-feed copy of the same race is on a board counts as rated.
 twin_rated AS (

@@ -58,9 +58,12 @@ from collections import defaultdict
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
-for _p in (_HERE, _ROOT, os.path.join(_ROOT, "engine")):
+# ! AND racecast/: jumpBands reads pool_view.repFactor, and without it 04a
+#   died (pipeline 2026-10-17: "No module named 'pool_view'")
+for _p in (_HERE, _ROOT, os.path.join(_ROOT, "engine"),
+           os.path.join(_ROOT, "racecast")):
     if _p not in sys.path:
-        sys.path.insert(0, _p)
+        sys.path.append(_p)
 
 from database import getConn                                  # noqa: E402
 # ★ THE LEVEL OF A ROW HAS ONE DEFINITION (engine/level_conflict.py), and the

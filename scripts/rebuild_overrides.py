@@ -2804,7 +2804,7 @@ FROM (
     UNION ALL
     SELECT mt.meet_id, (d.value ->> 'distance')::real AS distance
     FROM   meets_tfrrs mt,
-           jsonb_each(mt.division_distances::jsonb) d
+           jsonb_each(CASE WHEN jsonb_typeof(mt.division_distances::jsonb) = 'object' THEN mt.division_distances::jsonb ELSE '{}'::jsonb END) d
     WHERE  mt.meet_id = ANY(%(meets)s) AND mt.sport = 'XC'
       AND  (d.value ->> 'distance')::real > 0
 ) x
@@ -3050,7 +3050,7 @@ def pass3(cur, sigma, t3, vs_field, limit, max_per_div=3,
             UNION ALL
             SELECT mt.meet_id, (d.value ->> 'distance')::real AS distance
             FROM   meets_tfrrs mt,
-                   jsonb_each(mt.division_distances::jsonb) d
+                   jsonb_each(CASE WHEN jsonb_typeof(mt.division_distances::jsonb) = 'object' THEN mt.division_distances::jsonb ELSE '{}'::jsonb END) d
             WHERE  mt.meet_id = ANY(%(meets)s) AND mt.sport = 'XC'
               AND  (d.value ->> 'distance')::real > 0
         ) x

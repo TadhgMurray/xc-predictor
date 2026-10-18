@@ -667,20 +667,34 @@ def write(conn, decisions):
             print(f"[teamless] ⚠ {len(stuck)} merged profiles have since grown a "
                   f"real-team row and were NOT re-applied (check them; --undo "
                   f"<id> if the merge was wrong): {stuck[:10]}")
+        # ★ A ROW THE TARGET ALREADY HOLDS STAYS BEHIND (pipeline 2026-10-17:
+        #   UniqueViolation idx_results_tf_nodup, the whole step lost). The
+        #   same race scraped under both ids is a copy, not a missing result;
+        #   person_move drops it from the move, as link_feed_twins does.
+        from person_move import MOVE_DDL, dropCollisions
         for sport, table in TABLES:
+            cur.execute(MOVE_DDL)
             cur.execute(f"""
-                INSERT INTO person_link_log (sport, result_id, from_person,
-                                             to_person, rule)
-                SELECT %s, r.result_id, m.old_id, m.new_id, %s
+                INSERT INTO pm_move (result_id, new_id)
+                SELECT r.result_id, m.new_id
                 FROM   {table} r JOIN tm_map m ON r.person_id = m.old_id
                 WHERE  r.source = 'anet' AND r.athlete_id = m.old_id
                 ON CONFLICT DO NOTHING
+            """)
+            kept = dropCollisions(cur, table)
+            if kept:
+                out[f"{sport} rows kept back (target holds a copy)"] = sum(kept.values())
+            cur.execute(f"""
+                INSERT INTO person_link_log (sport, result_id, from_person,
+                                             to_person, rule)
+                SELECT %s, r.result_id, r.person_id, mv.new_id, %s
+                FROM   {table} r JOIN pm_move mv ON mv.result_id = r.result_id
+                ON CONFLICT DO NOTHING
             """, (sport, RULE))
             cur.execute(f"""
-                UPDATE {table} r SET person_id = m.new_id
-                FROM   tm_map m
-                WHERE  r.person_id = m.old_id
-                  AND  r.source = 'anet' AND r.athlete_id = m.old_id
+                UPDATE {table} r SET person_id = mv.new_id
+                FROM   pm_move mv
+                WHERE  r.result_id = mv.result_id
             """)
             out[f"{sport} rows moved"] = cur.rowcount
         cur.execute("""

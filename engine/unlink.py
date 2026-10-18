@@ -503,17 +503,29 @@ def rejoin(cur, do_write=False, show=25):
     execute_values(cur, "INSERT INTO rj_back VALUES %s",
                    [(o, n, y) for o, n, ss in back for y in ss], page_size=10000)
     moved = {}
+    # ★ A ROW THE OLD ID ALREADY HOLDS STAYS ON THE SPLIT ID (pipeline
+    #   2026-10-17: UniqueViolation idx_results_tf_nodup, the step lost) --
+    #   the same race twice is a copy; person_move drops it from the move.
+    from person_move import MOVE_DDL, dropCollisions
     for sport, table in (("XC", "results"), ("TF", "results_tf")):
+        cur.execute(MOVE_DDL)
         cur.execute(f"""
-            INSERT INTO person_link_log (sport, result_id, from_person, to_person, rule)
-            SELECT %s, r.result_id, b.new_id, b.old_id, %s
+            INSERT INTO pm_move (result_id, new_id)
+            SELECT r.result_id, b.old_id
             FROM   {table} r JOIN rj_back b
                    ON r.person_id = b.new_id AND substr(r.date, 1, 4)::int = b.season
+            ON CONFLICT DO NOTHING""")
+        kept = dropCollisions(cur, table)
+        if kept:
+            moved[f"{sport} kept back"] = sum(kept.values())
+        cur.execute(f"""
+            INSERT INTO person_link_log (sport, result_id, from_person, to_person, rule)
+            SELECT %s, r.result_id, r.person_id, mv.new_id, %s
+            FROM   {table} r JOIN pm_move mv ON mv.result_id = r.result_id
             ON CONFLICT DO NOTHING""", (sport, REJOIN_RULE))
         cur.execute(f"""
-            UPDATE {table} r SET person_id = b.old_id
-            FROM   rj_back b
-            WHERE  r.person_id = b.new_id AND substr(r.date, 1, 4)::int = b.season""")
+            UPDATE {table} r SET person_id = mv.new_id
+            FROM   pm_move mv WHERE r.result_id = mv.result_id""")
         moved[sport] = cur.rowcount
     cur.execute("""DELETE FROM person_split s USING rj_back b
                    WHERE s.old_person_id = b.old_id AND s.season = b.season

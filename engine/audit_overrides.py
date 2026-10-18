@@ -116,7 +116,7 @@ _DISTANCES = """
         SELECT m.meet_id, (kv.key)::bigint, m.source, m.meet_name,
                m.venue_name, (kv.value ->> 'distance')::float
         FROM   meets_tfrrs m,
-               LATERAL jsonb_each(m.division_distances) kv
+               LATERAL jsonb_each(CASE WHEN jsonb_typeof(m.division_distances) = 'object' THEN m.division_distances ELSE '{}'::jsonb END) kv
         WHERE  m.division_distances IS NOT NULL
           AND  kv.value ->> 'distance' IS NOT NULL
           AND  kv.key ~ '^[0-9]+$';
