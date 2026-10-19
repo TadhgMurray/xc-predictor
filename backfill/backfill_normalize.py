@@ -129,6 +129,17 @@ class _SkipReason:
                                          #  of synthetic/corrupt rows (meet 233746:
                                          #  0.01s-incrementing times, future date).
                                          #  A merely ABSENT date does NOT trip this.
+    VIRTUAL         = "virtual"          # a VIRTUAL meet (owner, 2026-10-19:
+                                         #  "covid inflation" -- Nike Cross Virtual,
+                                         #  2020). Self-timed, run anywhere, filed
+                                         #  under one real course whose difficulty
+                                         #  every time then took (+5.5% at Alton
+                                         #  Baker Park): a 17:13 rated 149.1 for a
+                                         #  runner whose real seasons read ~115.
+                                         #  No course, no verified time, so no
+                                         #  normalized_time -- as WHEELCHAIR, for
+                                         #  the engine, the fill, the boards and
+                                         #  the model alike.
     UNKNOWN_POOL    = "unknown_pool"     # grade+gender+source -> no competitive pool
     LIBRARY_DROP    = "library_drop"     # normalizeResult itself returned drop/None
     WRITTEN         = "written"          # produced a value (not a skip; here for totals)
@@ -141,6 +152,7 @@ _SKIP_ORDER = [
     _SkipReason.DEDUP_TWIN,
     _SkipReason.SENTINEL_TIME,
     _SkipReason.WHEELCHAIR,
+    _SkipReason.VIRTUAL,
     _SkipReason.NO_DISTANCE,
     _SkipReason.INSANE_DISTANCE,
     _SkipReason.INSANE_PACE,
@@ -1148,6 +1160,29 @@ def _loadWheelchairDivs(cur):
     return frozenset(d for (d,) in cur)
 
 
+# ★ A VIRTUAL MEET IS NOT A RACE ON A COURSE (owner, 2026-10-19; see
+#   _SkipReason.VIRTUAL). Matched on the meet's own NAME -- the venue is a
+#   real course (that is the whole problem), so the placeholder-venue list in
+#   speed_ratings_db never sees it. The word alone, as a word: "Nike Cross
+#   Virtual", "Virtual Time Trial", "XC Virtual Challenge".
+_VIRTUAL_RX = r"\mvirtual\M"
+
+
+def _loadVirtualMeets(cur, sport):
+    """{(source, meet_id)} of the meets named virtual, for this sport's
+    result table (anet and tfrrs XC; track)."""
+    if sport == "XC":
+        cur.execute(f"""SELECT DISTINCT source, meet_id FROM meets
+                        WHERE meet_name ~* '{_VIRTUAL_RX}'
+                        UNION
+                        SELECT 'tfrrs', meet_id FROM meets_tfrrs
+                        WHERE sport = 'XC' AND meet_name ~* '{_VIRTUAL_RX}'""")
+    else:
+        cur.execute(f"""SELECT DISTINCT source, meet_id FROM meets_tf
+                        WHERE meet_name ~* '{_VIRTUAL_RX}'""")
+    return frozenset((src, int(mid)) for src, mid in cur.fetchall() if mid is not None)
+
+
 # ★ THE PERSON CARRIES IT, NOT THE RACE (2026-08-27, owner's call).
 #   Division titles only label SOME of a wheelchair athlete's races. The
 #   unlabelled ones were being priced on the running scale -- a chair
@@ -1989,7 +2024,8 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
                tfrrs_distances,
                matched_twins, canon_distances, wx_idx,
                wheel_divs=frozenset(), wheel_persons=frozenset(),
-               wheel_athletes=frozenset(), dropped_twins=None):
+               wheel_athletes=frozenset(), dropped_twins=None,
+               virtual_meets=frozenset()):
     # PER-SPORT selection happens HERE, once, in the closure's constant pool --
     # the per-row checks below stay bare set/dict membership tests, so the
     # sport fix costs the hot loop nothing.
@@ -2053,6 +2089,11 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
                 return row[_ID], None, _SkipReason.WHEELCHAIR, None
         elif row[_DIV] in wheel_divs:
             return row[_ID], None, _SkipReason.WHEELCHAIR, None
+
+        # 1c) VIRTUAL MEET -- self-timed, anywhere, under a borrowed course
+        #     (see _SkipReason.VIRTUAL)
+        if virtual_meets and (row[_SRC], row[_MEET]) in virtual_meets:
+            return row[_ID], None, _SkipReason.VIRTUAL, None
 
         # 2) NO DISTANCE — can't put a time on the 5K scale without a distance.
         #    tfrrs XC falls back to the division_distances blob (keyed by
@@ -3341,6 +3382,12 @@ def _buildLookups(read_conn, cfg):
         wx_idx = WeatherIndex.build(cur, cfg.sport) if _weatherEnabled(cfg.sport) else None
         dropped_twins = _loadDroppedTwins(cur, cfg.table, cfg.sport,
                                           meet_distances, tfrrs_distances)
+        try:
+            virtual_meets = _loadVirtualMeets(cur, cfg.sport)
+        except Exception as exc:                          # noqa: BLE001
+            read_conn.rollback()
+            print(f"  virtual meets: not loaded ({type(exc).__name__}: {exc})")
+            virtual_meets = frozenset()
     print(f"  lookups: {len(genders):,} genders, "
           f"{len(season_levels[0]) + len(season_levels[1]):,} season levels, "
           f"{len(season_levels[2]):,} grade verdicts, "
@@ -3361,10 +3408,13 @@ def _buildLookups(read_conn, cfg):
               "by title")
     print(f"  wheelchair athletes: {len(wheel_persons):,} linked people + "
           f"{len(wheel_athletes):,} unlinked -- ALL their races withheld")
+    print(f"  virtual meets: {len(virtual_meets):,} -- their races withheld")
+    # ! virtual_meets LAST: callers pass this tuple to _makeRowFn by position
+    #   (why_unrated, amnesty_result_drops), and it is _makeRowFn's last
     return (geom_idx, genders, season_levels, meet_distances,
             tfrrs_distances,
             matched_twins, canon_distances, wx_idx, wheel_divs,
-            wheel_persons, wheel_athletes, dropped_twins)
+            wheel_persons, wheel_athletes, dropped_twins, virtual_meets)
 
 
 # _accumulate
@@ -3446,14 +3496,15 @@ def _runBackfill(read_conn, write_conn, cfg, apply, limit):
 
     (geom_idx, genders, season_levels, meet_distances, tfrrs_distances,
      matched_twins, canon_distances, wx_idx,
-     wheel_divs, wheel_persons, wheel_athletes, dropped_twins) = _buildLookups(
-        read_conn, cfg)
+     wheel_divs, wheel_persons, wheel_athletes, dropped_twins,
+     virtual_meets) = _buildLookups(read_conn, cfg)
     row_fn = _makeRowFn(cfg, geom_idx, genders, season_levels,
                         meet_distances, tfrrs_distances, matched_twins,
                         canon_distances, wx_idx, wheel_divs=wheel_divs,
                         wheel_persons=wheel_persons,
                         wheel_athletes=wheel_athletes,
-                        dropped_twins=dropped_twins)
+                        dropped_twins=dropped_twins,
+                        virtual_meets=virtual_meets)
 
     # ⚠⚠ END THE LOOKUP TRANSACTION BEFORE THE STREAM OPENS (2026-09-24). The
     #    lookups ran on read_conn, and psycopg2 keeps one transaction open until

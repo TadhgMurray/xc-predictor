@@ -63,7 +63,7 @@ def test_the_lookup_transaction_ends_before_the_stream_opens(monkeypatch):
 
     def lookups(conn, cfg):
         log.append(f"lookups on {conn.name}")
-        return (None,) * 12       # + dropped_twins (2026-09-29)
+        return (None,) * 13       # + dropped_twins (2026-09-29), virtual_meets (10-19)
 
     monkeypatch.setattr(B, "_buildLookups", lookups)
     monkeypatch.setattr(B, "_makeRowFn", lambda *a, **k: None)
