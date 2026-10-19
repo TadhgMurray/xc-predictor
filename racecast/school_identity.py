@@ -240,15 +240,36 @@ def schoolLabelIn(school, state, trusted=False):
     return withState(school, st)
 
 
-def _collegeState(school):
+def _collegeState(school, state=None):
+    """The directory's state for a college name, or None when it does not
+    know the name.
+
+    ★ A NAME TWO COLLEGES SHARE IS STILL ONE OF THEIR STATES (owner,
+      2026-10-19: the college men's board read "Georgetown (TX)").
+      Georgetown is DC and KY in the directory, so the plain lookup gave
+      up, and teamState fell through to the name's biggest cluster: a
+      Texas high school. Now: the row's own state when it is one of the
+      candidates (Georgetown College racing at home in KY), else the
+      candidate where the name's athletes cluster most (the university's
+      DC), else the first -- never a state no college of that name is
+      in."""
     college = _LABELS.get("college")
     if not college or not school:
         return None
     try:
-        from build_college_directory import lookup
+        from build_college_directory import lookup, candidateStates
     except ImportError:                  # scripts/ not on the path: no directory
         return None
-    return lookup(college, school)
+    st = lookup(college, school, state)
+    if st:
+        return st
+    cands = candidateStates(college, school)
+    if not cands:
+        return None
+    if state in cands:
+        return state
+    clusters = (_LABELS.get("clusters") or {}).get(school) or {}
+    return max(cands, key=lambda c: (clusters.get(c, 0.0), -cands.index(c)))
 
 
 def teamState(school, pool=None, state=None):
@@ -287,7 +308,7 @@ def teamState(school, pool=None, state=None):
     p = (pool or "").lower()
     college = p.startswith("college") or p.startswith("pro")
     if college:
-        st = _collegeState(school)
+        st = _collegeState(school, state)
         if st:
             return st
     if state:

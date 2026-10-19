@@ -260,6 +260,48 @@ def _lookup(entries, name, state):
     return _pick(cands, strong, weak)
 
 
+def candidateStates(entries, name):
+    """Every state the directory could mean by a feed's spelling: one for
+    a name it can place, several for one it cannot (Georgetown is DC and
+    KY), [] for a name it does not know. Same two steps as lookup, same
+    filter by a state written in the name, and no tie-break.
+
+    ★ WHY (owner, 2026-10-19: "this should be georgetown (DC)" on the
+      college men's team board, which read Georgetown (TX)). lookup
+      answers None for a name two colleges share, and every caller then
+      fell back to the name's biggest cluster of athletes -- for
+      Georgetown, Trinity, Cornell, Augustana, Wheaton, a HIGH SCHOOL.
+      "Ambiguous" still says it is one of these states, never a third:
+      the caller chooses among them (school_identity.teamState,
+      build_school_identity.applyCollegeDirectory)."""
+    if not name or "club" in name.lower():
+        return []
+    ck = (id(entries), "cands", name)
+    if ck in _ANSWERS:
+        return _ANSWERS[ck]
+    strong = parenState(name)
+    key = normName(name)
+    cands = list(_candidates(entries, key))
+    if not cands:
+        toks = [_ABBR.get(t, t) for t in key.split() if t]
+        toks = [t for t in toks if t and t not in _NOISE]
+        post = _postings(entries) if toks else {}
+        keys = None
+        for t in toks:
+            ks = post.get(t)
+            if not ks:
+                keys = set()
+                break
+            keys = ks if keys is None else keys & ks
+        for k in sorted(keys or ()):
+            cands.extend(_candidates(entries, k))
+    if strong:
+        cands = [c for c in cands if c[0] == strong]
+    out = sorted({c[1] for c in cands if c[1]})
+    _ANSWERS[ck] = out
+    return out
+
+
 _NOISE = {"state", "st", "univ", "u", "suny", "cuny", "club"}
 _ABBR = {"wis": "wisconsin", "cal": "california", "mt": "mount",
          "ft": "fort", "no": "north", "so": "south", "univ": "", "u": "",
