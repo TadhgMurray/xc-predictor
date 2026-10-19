@@ -7,6 +7,7 @@ diag_course_credit.py -- within one runner's season, do harder courses and
     /srv/venv/bin/python scripts/diag_course_credit.py
     /srv/venv/bin/python scripts/diag_course_credit.py --since 2023 --pool hs_m
     /srv/venv/bin/python scripts/diag_course_credit.py --sample 50   # 1 runner in 50
+    /srv/venv/bin/python scripts/diag_course_credit.py --effort --pool college_m
 
 ! A SAMPLE OF RUNNERS BY DEFAULT (1 in 20, whole seasons kept). The full
   join -- every XC race since 2021 through results, meets, the canonical
@@ -33,6 +34,22 @@ diag_course_credit.py -- within one runner's season, do harder courses and
   tilt: if fast runners show b > 0 and slow runners b < 0, the course is
   scaled by ability the wrong way. The date term keeps "championships are
   late and on hard courses" from posing as course credit.
+
+★ --effort: IS IT THE COURSES OR THE EFFORT? (owner, 2026-10-19: college XC
+  over-credited, Hopkinton +8.9%, Keene +5.6%; the tilt on the HS scale
+  changed nothing on the held-out scorecard). College teams run early meets
+  as tempo or in packs, often on easy courses, and race championships all
+  out, often on hard ones. That reads as "hard course, high rating" even if
+  every course number is right. The date term cannot separate it: a tempo
+  meet and an all-out invitational can share a date. So three fits:
+    base         the fit above
+    + champ      a championship term beside the course term. If b course
+                 falls toward 0, the course credit was the effort gap.
+    champs only  only championship races (all out by definition; 2+ in the
+                 runner-season). b course here is the course charge with
+                 effort held fixed.
+  Championship = racecast.build_meet_units.isChampionship on the meet name,
+  the rule the meet units use.
 """
 import argparse
 import os
@@ -57,7 +74,7 @@ _RR_SQL = """
 _RES_SQL = """SELECT result_id, meet_id, div_id FROM results
               WHERE result_id = ANY(%s) AND source = 'anet'"""
 _MEET_SQL = """SELECT meet_id, div_id, course_name, round(gps_lat::numeric, 5),
-                      round(gps_long::numeric, 5), distance
+                      round(gps_long::numeric, 5), distance, meet_name
                FROM meets WHERE source = 'anet' AND meet_id = ANY(%s)"""
 _CC_SQL = """SELECT course_name, round(gps_lat::numeric, 5), round(gps_long::numeric, 5),
                     canonical_id FROM course_canonical"""
@@ -72,9 +89,10 @@ def _chunks(xs, n=20000):
         yield xs[i:i + n]
 
 
-def load(cur, since, sample, pool, say=print, extra=False):
+def load(cur, since, sample, pool, say=print, extra=False, names=None):
     """[(person, pool, year, ln rating, course, day, days into season)];
-    extra=True appends (canonical id, (meet, div)) for the altitude check."""
+    extra=True appends (canonical id, (meet, div)) for the altitude check.
+    names: a dict filled with (meet, div) -> meet name, for --effort."""
     cur.execute(_RR_SQL, {"since": since, "pool": pool, "sample": max(1, sample)})
     rr = cur.fetchall()
     say(f"  {len(rr):,} XC races in the sample")
@@ -86,8 +104,10 @@ def load(cur, since, sample, pool, say=print, extra=False):
     meets = {}
     for ch in _chunks({m for m, _d in res.values()}):
         cur.execute(_MEET_SQL, (ch,))
-        for m, d, name, lat, lon, dist in cur.fetchall():
+        for m, d, name, lat, lon, dist, meet_name in cur.fetchall():
             meets[(m, d)] = (name, lat, lon, dist)
+            if names is not None:
+                names[(m, d)] = meet_name
     cur.execute(_CC_SQL)
     cc = {(n, lat, lon): cid for n, lat, lon, cid in cur.fetchall()}
     cell = {}
@@ -108,6 +128,8 @@ def load(cur, since, sample, pool, say=print, extra=False):
         e = rde.get((c[0], c[1], day)) if c else None
         if e:
             row = (pid, pl, yr, float(lny), e[0], e[1], float(din))
+            if names is not None:
+                row = row + (md,)
             out.append(row + (c[0], md) if extra else row)
     return out
 
@@ -115,12 +137,12 @@ def load(cur, since, sample, pool, say=print, extra=False):
 BANDS = (0, 90, 100, 110, 120, 130, 140, 999)
 
 
-def withinFit(group, y, X):
+def withinFit(group, y, X, min_n=3):
     """Least squares of y on X after removing each group's mean from both
     (the runner-season level). Returns (b, se, n). Pure."""
     group = np.asarray(group)
     _, inv, cnt = np.unique(group, return_inverse=True, return_counts=True)
-    keep = cnt[inv] >= 3
+    keep = cnt[inv] >= min_n
     inv, y, X = inv[keep], np.asarray(y, float)[keep], np.asarray(X, float)[keep]
     if y.size < X.shape[1] + 10:
         return None, None, int(y.size)
@@ -146,6 +168,8 @@ def main():
     ap.add_argument("--since", type=int, default=2023)
     ap.add_argument("--sample", type=int, default=20, help="1 runner in N (1 = everyone)")
     ap.add_argument("--pool")
+    ap.add_argument("--effort", action="store_true",
+                    help="courses or effort: add a championship term, and fit championships alone")
     a = ap.parse_args()
     from database import getConn
     import time
@@ -153,7 +177,8 @@ def main():
     print(f"reading XC races since {a.since}, 1 runner in {a.sample} ...", flush=True)
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("SET LOCAL statement_timeout = '10min'")
-        rows = load(cur, a.since, a.sample, a.pool,
+        names = {} if a.effort else None
+        rows = load(cur, a.since, a.sample, a.pool, names=names,
                     say=lambda m: print(f"{m}  ({time.time() - t0:.0f}s)", flush=True))
         conn.rollback()
     print(f"  {len(rows):,} rows in {time.time() - t0:.0f}s", flush=True)
@@ -193,8 +218,35 @@ def main():
     for lo, hi in zip(BANDS, BANDS[1:]):
         lab = f"<{hi}" if lo == 0 else (f"{lo}+" if hi == 999 else f"{lo}-{hi}")
         line(lab, (lvl >= lo) & (lvl < hi))
+    if a.effort:
+        effortReport(rows, names, pool, grp, y, X)
     print("\n  reading: b course 0.3 means a +10% course rates 3% higher than the same "
           "runner on a flat one.")
+
+
+def effortReport(rows, names, pool, grp, y, X):
+    """--effort: the three fits of the docstring, per pool."""
+    sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+    from build_meet_units import isChampionship
+    champ = np.array([isChampionship(names.get(r[7])) for r in rows], dtype=bool)
+    print(f"\n  courses or effort? {int(champ.sum()):,} of {len(rows):,} races are "
+          f"championships")
+    print(f"  {'':<14}{'':<12}{'races':>11}{'b course':>10}{'±':>7}{'b champ':>10}{'±':>7}")
+    Xc = np.column_stack([X, champ.astype(float)])
+    for p in ["all"] + sorted(set(pool.tolist())):
+        m = np.ones(len(rows), bool) if p == "all" else pool == p
+        for label, mm, XX, kw in (("base", m, X, {}),
+                                  ("+ champ", m, Xc, {}),
+                                  ("champs only", m & champ, X, {"min_n": 2})):
+            b, se, n = withinFit(grp[mm], y[mm], XX[mm], **kw)
+            if b is None:
+                print(f"  {p:<14}{label:<12}{n:>11,}   too few")
+                continue
+            tail = (f"{b[3]:>+10.3f}{se[3]:>7.3f}" if XX.shape[1] > 3 else "")
+            print(f"  {p:<14}{label:<12}{n:>11,}{b[0]:>+10.3f}{se[0]:>7.3f}{tail}")
+    print("  reading: b champ +0.02 = the same runner rates 2% higher in a championship."
+          "\n  If b course falls toward 0 with the champ term, or in champs only, the"
+          "\n  course credit was effort, not the course numbers.")
 
 
 if __name__ == "__main__":
