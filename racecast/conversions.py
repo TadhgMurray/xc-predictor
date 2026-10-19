@@ -1352,7 +1352,20 @@ def ratingClock(rating, pool, sport="XC", distance=None):
         level = (_bare(pool) or "").partition("_")[0]
         if readerDistance(pool, "XC") is None or level not in XC_TRACK_M:
             return None
-        sport, distance = "TF", XC_TRACK_M[level]
+        # ★ NO CURVE WHERE NONE IS NEEDED (owner, 2026-10-19: Rose City,
+        #   14:20.61 rated 138.1, its breakdown "14:20.6 ... a 136.5 on an
+        #   average outdoor track" -- and the 5K column read 14:22, slower
+        #   than the race). Read through the TRACK curve, a high schooler's
+        #   5K is extrapolated past that curve's 3200 m fit; on the XC scale
+        #   it is the pool's own anchor, no curve at all, and the course
+        #   zero is the average outdoor track -- the breakdown's own
+        #   arithmetic. So where the quoted distance IS the pool's XC
+        #   anchor (high school 5000, middle school 3200) the XC scale says
+        #   it; college (8000/6000 anchors) keeps the track curve, which is
+        #   fitted through 5000 m.
+        if readerDistance(pool, "XC") != XC_TRACK_M[level]:
+            sport = "TF"
+        distance = XC_TRACK_M[level]
         where = "on a track"
     else:
         where = None
