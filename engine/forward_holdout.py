@@ -529,6 +529,11 @@ def pairGroups(race, pool, dist_m=None):
     return inv.reshape(-1).astype(np.int64)
 
 
+# a group bigger than this many runners is scored on a sample of pairs
+PAIR_CAP = 2000
+PAIR_SAMPLE = 2_000_000
+
+
 def pairwiseCounts(group, y, pred, labels=(), n_labels=()):
     """Per group: concordant pairs and pairs, over pairs of rows of one
     group with distinct y. Concordant = the predicted order is the actual
@@ -558,7 +563,23 @@ def pairwiseCounts(group, y, pred, labels=(), n_labels=()):
         lo, hi = starts[i], ends[i]
         yy, pp = ys[lo:hi], ps[lo:hi]
         n = hi - lo
-        iu, ju = np.triu_indices(n, k=1)
+        # ★ A HUGE FIELD IS SAMPLED, NOT ENUMERATED (owner, 2026-10-19: the
+        #   comparison "hanging" inside np.triu_indices). Every pair of a
+        #   group is n^2/2 -- fine for a field of hundreds, hundreds of
+        #   millions for one group of tens of thousands of rows. Past
+        #   PAIR_CAP runners a fixed-seed sample of PAIR_SAMPLE pairs stands
+        #   for the group, its sums scaled to the full pair count, so the
+        #   concordance is an unbiased estimate and the weights unchanged.
+        scale = 1.0
+        if n > PAIR_CAP:
+            rng = np.random.default_rng(int(group[order][lo]) + 1)
+            a = rng.integers(0, n, PAIR_SAMPLE)
+            b = rng.integers(0, n, PAIR_SAMPLE)
+            keep = a != b
+            iu, ju = np.minimum(a, b)[keep], np.maximum(a, b)[keep]
+            scale = (n * (n - 1) / 2.0) / max(iu.size, 1)
+        else:
+            iu, ju = np.triu_indices(n, k=1)
         dy = np.sign(yy[iu] - yy[ju])
         live = dy != 0
         if not live.any():
@@ -567,14 +588,14 @@ def pairwiseCounts(group, y, pred, labels=(), n_labels=()):
         dy = dy[live]
         score = np.where(dp == 0, 0.5, (dp == dy).astype(np.float64))
         gi = g[lo]
-        conc[gi] = score.sum()
-        pairs[gi] = score.size
+        conc[gi] = score.sum() * scale
+        pairs[gi] = score.size * scale
         for (mc, mp), lab, nl in zip(per, labs, n_labels):
             ll = lab[lo:hi]
             pl = np.minimum(ll[iu], ll[ju])[live]
             okl = pl >= 0
-            mc[gi] += np.bincount(pl[okl], weights=score[okl], minlength=nl)
-            mp[gi] += np.bincount(pl[okl], minlength=nl)
+            mc[gi] += np.bincount(pl[okl], weights=score[okl], minlength=nl) * scale
+            mp[gi] += np.bincount(pl[okl], minlength=nl) * scale
     return conc, pairs, per
 
 
