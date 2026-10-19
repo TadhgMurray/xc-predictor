@@ -268,10 +268,9 @@ def checkWheelchairPeople(cur):
             WHERE  NOT EXISTS (SELECT 1 FROM _ck_wcp c
                                WHERE c.person_id = w.person_id)""")
         n_wcp = cur.rowcount
-    bad = []
+    bad, shown = [], []
     for t in ("results", "results_tf"):
-        cur.execute(f"""
-            SELECT count(*) FROM {t}
+        where = f"""
             WHERE {t}.speed_rating IS NOT NULL
               AND (EXISTS (SELECT 1 FROM _ck_wcp w
                            WHERE w.person_id IS NOT NULL
@@ -279,10 +278,22 @@ def checkWheelchairPeople(cur):
                 OR ({t}.person_id IS NULL AND EXISTS (
                      SELECT 1 FROM _ck_wcp w
                      WHERE w.person_id IS NULL AND w.source = {t}.source
-                       AND w.athlete_id = {t}.athlete_id)))""")
+                       AND w.athlete_id = {t}.athlete_id)))"""
+        cur.execute(f"SELECT count(*) FROM {t} {where}")
         n = cur.fetchone()[0]
         if n:
             bad.append(f"{t}: {n:,}")
+            # ★ NAME THE ROWS (2026-10-19: "results: 1; results_tf: 1" for
+            #   days, and nothing to act on without a database session).
+            #   Enough to open the athlete page and the race, and to see
+            #   whether the row came back through a merge or a pin.
+            cur.execute(f"""
+                SELECT {t}.result_id, {t}.person_id, {t}.source, {t}.meet_id,
+                       {t}.speed_rating
+                FROM {t} {where}
+                ORDER BY {t}.result_id LIMIT 5""")
+            shown += [f"{t} result {rid} person {pid} ({src} meet {mid}) "
+                      f"rated {float(sr):.1f}" for rid, pid, src, mid, sr in cur.fetchall()]
     via = (f" (labels + {n_wcp:,} more from wheelchair_person)" if n_wcp
            else " (labels only; wheelchair_person absent or adds nobody)")
     _mark("FAIL" if bad else "PASS", "wheelchair athletes",
@@ -290,6 +301,8 @@ def checkWheelchairPeople(cur):
            "division: " + "; ".join(bad) if bad
            else "no rated row for any athlete who raced a wheelchair "
                 "division") + via)
+    for line in shown:
+        print(f"      {line}")
 
 
 # ---- 4a-ii. IS THE LIST ITSELF CURRENT? (2026-09-08) ------------------ #

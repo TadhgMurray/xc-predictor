@@ -265,8 +265,18 @@ def recordSlow(path, ms, queries=(), threshold=None, buf=None, query=None):
         return False
 
 
+# ★ BROWSER NOISE, NOT BUGS (owner's error mail, 2026-10-18). "ResizeObserver
+#   loop completed with undelivered notifications" is the browser saying a
+#   resize callback changed layout and it deferred the rest to the next
+#   frame -- nothing failed, and no page can stop every browser saying it.
+#   usage.js drops it too; this catches pages still running the old script.
+_JS_NOISE_RX = re.compile(r"^ResizeObserver loop (completed|limit exceeded)")
+
+
 def recordJs(message, script, line, path, buf=None):
     buf = BUFFER if buf is None else buf
+    if _JS_NOISE_RX.search(str(message or "")):
+        return False
     try:
         key, title = jsFingerprint(message, script, line)
         return buf.add(key, "js", title, path, f"{message}\n  at {script}:{line}")

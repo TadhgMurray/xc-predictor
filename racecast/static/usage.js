@@ -85,6 +85,9 @@
   function reportError(message, file, line) {
     if (OFF || errs >= MAX_ERRS || !message) return;
     if (!file) return;
+    /* the browser deferring resize callbacks a frame -- not a failure
+       (app_errors._JS_NOISE_RX drops it server-side too) */
+    if (/^ResizeObserver loop (completed|limit exceeded)/.test(String(message))) return;
     errs++;
     send({ k: "x", x: { m: String(message).slice(0, 200), f: file, l: line | 0 } });
   }
