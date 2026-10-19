@@ -6388,3 +6388,23 @@ Chromium against the old script (readout 15:00, label under the pointer
   loading times just the db query?") and SQL vs other ms per slow page;
   times random /rankings boards (state x pool x sport) and /movers too; the
   work list threshold is 500 ms.
+
+## 2026-10-19 -- 💤 parked: two ideas from horse-racing figures
+
+From the owner's "what else can we take, like from horse racing" (the other
+three -- per-runner form trend, line-runner weighting, effort/isolation
+term -- are the live engine candidates; the --effort course test decides
+which first).
+
+- 💤 **Bounce after a big PR (predictions).** Thoro-Graph's "bounce": after
+  a career-best effort the next race typically comes in lower. Measure it
+  first: for each race that beat the runner's prior best rating by X, the
+  next race's residual against the model, by margin and days between. If
+  it is real, shrink the forecast toward the pre-PR level by that amount
+  in racecast/predict.py (_predictTimes), not in the ratings.
+- 💤 **Show how sure a rating is.** A 2-race rating and a 12-race one look
+  the same. Timeform's "p" (likely to improve) and "?" (unreliable) are
+  the model: a ± from the race count and the runner's residual spread, and
+  a "likely to improve" marker for young, few-race, rising runners. Needs
+  the per-athlete variance written by the go-live (it is not stored today);
+  the athlete header and the predictions page would read it.

@@ -62,3 +62,16 @@ def test_a_name_that_already_says_its_state_gets_no_second_suffix():
     # a parenthesis that is not a state still gets one
     assert S.withState("Moorpark (Varsity)", "CA") == "Moorpark (Varsity) (CA)"
     assert S.withState("Kingston", "MO") == "Kingston (MO)"
+
+
+def test_college_race_is_never_state_teams():
+    # NCAA DI Indoors 5000m (2026-10-19): 8 of 14 teams are universities
+    # named for their states; the rows' pools say college, so no state teams
+    schools = ["BYU", "Alabama", "New Mexico", "Florida", "Eastern Kentucky",
+               "West Virginia", "Arkansas", "Oregon", "Notre Dame",
+               "North Dakota", "Stanford", "Iowa State", "Washington",
+               "Oklahoma State"]
+    assert si.isStateTeamRace(schools)                      # names alone
+    assert not si.isStateTeamRace(schools, ["college_f"] * len(schools))
+    # a youth all-star meet with its pools still reads as state teams
+    assert si.isStateTeamRace(["Arkansas", "Texas", "Ohio"], ["hs_f", "hs_f", None])

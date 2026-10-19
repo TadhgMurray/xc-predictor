@@ -4773,7 +4773,9 @@ def race_xc(meet_id, div_id):
             "-".join(str(x) for x in (header.get("meet_name"), header.get("division"),
                                       race_date) if x) + ".csv")
     return render_template("race.html", hl_school=hl_school,
-                           state_teams=school_identity.isStateTeamRace(r.get("school") for r in results),
+                           state_teams=school_identity.isStateTeamRace(
+                               [r.get("school") for r in results],
+                               [r.get("rating_pool") for r in results]),
                            story=story, finishers=_fin,
                            above_spec=_aboveSpec("XC", results, header.get("distance") if header else None),
                            has_hs_view=has_hs_view,
@@ -5397,7 +5399,9 @@ def compiled_race(meet_id, distance, gender):
         [(k, v) for k, v in request.args.items(multi=True) if k != "level"])
     return render_template("compiled.html", header=header, group=group,
                            level=level, keep_qs=keep_qs,
-                           state_teams=school_identity.isStateTeamRace(r.get("school") for r in level["results"]),
+                           state_teams=school_identity.isStateTeamRace(
+                               [r.get("school") for r in level["results"]],
+                               [r.get("rating_pool") for r in level["results"]]),
                            has_hs_view=has_hs_view)
 
 
@@ -5952,7 +5956,9 @@ def race_tf(meet_id, event_id, div_id):
     school_states = {k: c.most_common(1)[0][0] for k, c in _st.items()}
     return render_template("race_tf.html", hl_school=hl_school,
                            school_states=school_states,
-                           state_teams=school_identity.isStateTeamRace(r.get("school") for r in results),
+                           state_teams=school_identity.isStateTeamRace(
+                               [r.get("school") for r in results],
+                               [r.get("rating_pool") for r in results]),
                            story=story, tf_champ=tf_champ, tf_is_field=tf_is_field, tf_how=tf_how,
                            school_points=school_points,
                            above_spec=_aboveSpec("TF", results, equiv_dist or (header or {}).get("distance_meters")),

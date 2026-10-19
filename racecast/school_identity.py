@@ -665,7 +665,7 @@ def _stateNames():
     return frozenset(n.lower() for n in STATE_NAMES.values())
 
 
-def isStateTeamRace(schools):
+def isStateTeamRace(schools, pools=None):
     """True when most of a race's teams are US states ("Arkansas",
     "Texas") -- an all-star or state-team meet.
 
@@ -675,7 +675,20 @@ def isStateTeamRace(schools):
       the team name already says where it is from, so no suffix is drawn.
       It is a RACE-level verdict, not a name-level one: Oregon (IL) is a
       real high school, and on an ordinary race it keeps its "(IL)".
-      "Most" is a plain majority of the race's distinct teams."""
+      "Most" is a plain majority of the race's distinct teams.
+
+    ★ NEVER A COLLEGE RACE (owner, 2026-10-19: NCAA DI Indoors 5000m had
+      no crest or link for Alabama, Florida, Oregon, Arkansas, New Mexico,
+      West Virginia, North Dakota, Washington). Eight of its fourteen
+      teams are universities named for their states -- a majority -- so
+      the race read as an all-star meet. State teams are a youth format;
+      `pools` (each row's rating pool) says when most rows are college or
+      pro, and then no team is a state."""
+    if pools is not None:
+        ps = [str(p).lower() for p in pools if p]
+        grown = sum(1 for p in ps if p.startswith(("college", "pro")))
+        if ps and 2 * grown > len(ps):
+            return False
     names = _stateNames()
     teams = {str(s).strip().lower() for s in schools if s and str(s).strip()}
     if not teams or not names:
