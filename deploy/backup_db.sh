@@ -63,6 +63,11 @@ STAMP=$(date +%Y%m%d_%H%M%S)
 OUT="$DEST/$STAMP"
 mkdir -p "$OUT"
 chmod 700 "$DEST"
+# ! A FAILED DUMP MUST NOT COUNT AS ONE OF THE $KEEP. The rotation below
+#   keeps the newest $KEEP directories by name, so a half-written one left
+#   here would push a good backup off the disk (2026-10-19: a corrupt page
+#   in ranking_results stopped pg_dump and left 20261019_110701 behind).
+trap 'rm -rf "$OUT"' ERR
 t0=$(date +%s)
 echo "backup: dumping $DB to $OUT/db ..."
 nice -n 10 pg_dump -Fd -j 4 -Z 5 -f "$OUT/db" "$DB"
@@ -78,6 +83,7 @@ echo "backup: files ..."
   echo "commit:   $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null)"
 } > "$OUT/MANIFEST"
 cat "$OUT/MANIFEST"
+trap - ERR                                  # complete: keep it
 
 # the newest $KEEP stay on this disk
 ls -1d "$DEST"/2* | head -n -"$KEEP" | xargs -r rm -rf
