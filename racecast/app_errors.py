@@ -243,6 +243,46 @@ def recordException(exc, path, buf=None):
         return False
 
 
+# ★ WHAT ELSE THE SERVER WAS DOING (owner, 2026-10-20: a TF race page took
+#   28.6 s while its statements took 0.03 s -- the time went to waiting, not
+#   to its own SQL, and the notice could not say on what). A slow request
+#   during a pipeline step is the pipeline's cost, not the page's: each one
+#   now names the steps whose logs moved in the last two minutes (the newest
+#   run under logs/, the status page's own reading) and the load average
+#   against the cores, so the list can be read for what the PAGE did wrong.
+_LOG_ROOT = os.environ.get("XCP_LOG_ROOT") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+
+
+def serverContext(now=None, log_root=None, fresh_s=120):
+    """'pipeline: 10_rankings_finish, 13j_record_books running; load 31.2 / 32
+    cores' -- or just the load. Never raises."""
+    import glob
+    import time as _time
+    now = now or _time.time()
+    parts = []
+    try:
+        root = log_root or _LOG_ROOT
+        runs = sorted((d for d in glob.glob(os.path.join(root, "2*")) if os.path.isdir(d)),
+                      reverse=True)
+        if runs:
+            live = sorted(os.path.basename(f)[:-4]
+                          for f in glob.glob(os.path.join(runs[0], "*.log"))
+                          if not f.endswith("summary.log")
+                          and now - os.path.getmtime(f) <= fresh_s)
+            if live:
+                parts.append(f"pipeline {os.path.basename(runs[0])}: "
+                             f"{', '.join(live[:6])}{' ...' if len(live) > 6 else ''} running")
+    except Exception:                                    # noqa: BLE001
+        pass
+    try:
+        l1, l5, _l15 = os.getloadavg()
+        parts.append(f"load {l1:.1f} (5 min {l5:.1f}) on {os.cpu_count()} cores")
+    except (OSError, AttributeError):
+        pass
+    return "; ".join(parts)
+
+
 def recordSlow(path, ms, queries=(), threshold=None, buf=None, query=None):
     """A request over the slow line: one group per route template. The
     detail names the slowest statements db_timing saw in it (their SQL text
@@ -256,6 +296,9 @@ def recordSlow(path, ms, queries=(), threshold=None, buf=None, query=None):
     try:
         key = fingerprintKey("slow|" + (path or ""))
         lines = [f"took {ms / 1000:.1f} s (slow line {(threshold or slowRequestMs()) / 1000:.1f} s)"]
+        ctx = serverContext()
+        if ctx:
+            lines.append(ctx)
         if query:
             lines.append(f"query: {str(query)[:400]}")
         for q in queries:
