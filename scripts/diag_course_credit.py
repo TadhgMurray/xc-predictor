@@ -8,6 +8,7 @@ diag_course_credit.py -- within one runner's season, do harder courses and
     /srv/venv/bin/python scripts/diag_course_credit.py --since 2023 --pool hs_m
     /srv/venv/bin/python scripts/diag_course_credit.py --sample 50   # 1 runner in 50
     /srv/venv/bin/python scripts/diag_course_credit.py --effort --pool college_m
+    /srv/venv/bin/python scripts/diag_course_credit.py --loso --pool college_m
 
 ! A SAMPLE OF RUNNERS BY DEFAULT (1 in 20, whole seasons kept). The full
   join -- every XC race since 2021 through results, meets, the canonical
@@ -50,6 +51,22 @@ diag_course_credit.py -- within one runner's season, do harder courses and
                  effort held fixed.
   Championship = racecast.build_meet_units.isChampionship on the meet name,
   the rule the meet units use.
+
+★ --loso: IS IT THE COURSE NUMBERS' OWN NOISE? (2026-10-20: --effort said
+  no to effort -- b course +0.113, +0.106 with the championship term,
+  +0.125 in championships alone.) A course number is an ESTIMATE, d + e,
+  and the same season's races are in it. Where e is high the course is
+  over-charged, so every rating there is high: ln(rating) rises with the
+  estimate by var(e)/var(d + e) even when nothing is wrong on average --
+  the signature of a course prior that is too wide (the value-added
+  literature's forecast-bias test, Chetty, Friedman & Rockoff 2014). So
+  the same fit with the course regressor replaced by the course's number
+  from OTHER seasons only (2+ years away, so no shared 2-year era): that
+  carries the course's real difficulty and none of this season's noise.
+    b falls to ~0   the credit was estimation noise: tighten the course
+                    and era priors until it stays at 0.
+    b stays         the course numbers are too big for these runners: a
+                    real bias (the tilt, or college-only courses).
 """
 import argparse
 import os
@@ -89,10 +106,32 @@ def _chunks(xs, n=20000):
         yield xs[i:i + n]
 
 
-def load(cur, since, sample, pool, say=print, extra=False, names=None):
+def otherSeasons(rde, gap=2):
+    """{(cid, dist, season): mean course effect over the course's OTHER
+    seasons, gap+ years away}, from rde {(cid, dist, day): (course, day)}.
+    Each season counts once (its days' mean), whatever its number of
+    days. Pure."""
+    by = {}
+    for (cid, dm, day), (ce, _de) in rde.items():
+        yr = day.year if day.month >= 8 else day.year - 1
+        by.setdefault((cid, dm), {}).setdefault(yr, []).append(ce)
+    out = {}
+    for key, seasons in by.items():
+        means = {y: sum(v) / len(v) for y, v in seasons.items()}
+        for y in means:
+            other = [m for yy, m in means.items() if abs(yy - y) >= gap]
+            if other:
+                out[key + (y,)] = sum(other) / len(other)
+    return out
+
+
+def load(cur, since, sample, pool, say=print, extra=False, names=None,
+         loso=None):
     """[(person, pool, year, ln rating, course, day, days into season)];
     extra=True appends (canonical id, (meet, div)) for the altitude check.
-    names: a dict filled with (meet, div) -> meet name, for --effort."""
+    names: a dict filled with (meet, div) -> meet name, for --effort.
+    loso: a list filled with each returned row's other-season course
+    effect (None where the course has no other season), for --loso."""
     cur.execute(_RR_SQL, {"since": since, "pool": pool, "sample": max(1, sample)})
     rr = cur.fetchall()
     say(f"  {len(rr):,} XC races in the sample")
@@ -121,6 +160,7 @@ def load(cur, since, sample, pool, say=print, extra=False, names=None):
         for cid, dm, day, ce, de in cur.fetchall():
             rde[(cid, dm, day)] = (float(ce), float(de))
     say(f"  {len(cell):,} divisions on a known course, {len(rde):,} course-days")
+    other = otherSeasons(rde) if loso is not None else {}
     out = []
     for rid, pid, pl, yr, lny, day, din in rr:
         md = res.get(rid)
@@ -130,6 +170,9 @@ def load(cur, since, sample, pool, say=print, extra=False, names=None):
             row = (pid, pl, yr, float(lny), e[0], e[1], float(din))
             if names is not None:
                 row = row + (md,)
+            if loso is not None:
+                season = day.year if day.month >= 8 else day.year - 1
+                loso.append(other.get((c[0], c[1], season)))
             out.append(row + (c[0], md) if extra else row)
     return out
 
@@ -168,6 +211,9 @@ def main():
     ap.add_argument("--since", type=int, default=2023)
     ap.add_argument("--sample", type=int, default=20, help="1 runner in N (1 = everyone)")
     ap.add_argument("--pool")
+    ap.add_argument("--loso", action="store_true",
+                    help="the course regressor from the course's OTHER seasons: "
+                         "is the credit the course numbers' own noise?")
     ap.add_argument("--effort", action="store_true",
                     help="courses or effort: add a championship term, and fit championships alone")
     a = ap.parse_args()
@@ -178,7 +224,8 @@ def main():
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("SET LOCAL statement_timeout = '10min'")
         names = {} if a.effort else None
-        rows = load(cur, a.since, a.sample, a.pool, names=names,
+        loso = [] if a.loso else None
+        rows = load(cur, a.since, a.sample, a.pool, names=names, loso=loso,
                     say=lambda m: print(f"{m}  ({time.time() - t0:.0f}s)", flush=True))
         conn.rollback()
     print(f"  {len(rows):,} rows in {time.time() - t0:.0f}s", flush=True)
@@ -220,8 +267,33 @@ def main():
         line(lab, (lvl >= lo) & (lvl < hi))
     if a.effort:
         effortReport(rows, names, pool, grp, y, X)
+    if a.loso:
+        losoReport(loso, pool, grp, y, X)
     print("\n  reading: b course 0.3 means a +10% course rates 3% higher than the same "
           "runner on a flat one.")
+
+
+def losoReport(loso, pool, grp, y, X):
+    """--loso: the same fit on the rows whose course has another season,
+    with this season's course number, then with the other seasons'."""
+    have = np.array([v is not None for v in loso], dtype=bool)
+    oth = np.array([v if v is not None else 0.0 for v in loso], dtype=float)
+    print(f"\n  the course's own noise? {int(have.sum()):,} of {len(loso):,} races are on "
+          f"a course with a season 2+ years away")
+    print(f"  {'':<14}{'course number':<20}{'races':>9}{'b course':>10}{'±':>7}"
+          f"{'b day':>9}{'±':>7}")
+    Xo = np.column_stack([oth, X[:, 1], X[:, 2]])
+    for p in ["all"] + sorted(set(pool.tolist())):
+        m = have & (np.ones(len(loso), bool) if p == "all" else pool == p)
+        for label, XX in (("this season's", X), ("other seasons'", Xo)):
+            b, se, n = withinFit(grp[m], y[m], XX[m])
+            if b is None:
+                print(f"  {p:<14}{label:<20}{n:>9,}   too few")
+                continue
+            print(f"  {p:<14}{label:<20}{n:>9,}{b[0]:>+10.3f}{se[0]:>7.3f}"
+                  f"{b[1]:>+9.3f}{se[1]:>7.3f}")
+    print("  reading: if b course falls to ~0 with the other seasons' number, the credit"
+          "\n  was this season's estimation noise (course prior too wide), not a biased course.")
 
 
 def effortReport(rows, names, pool, grp, y, X):

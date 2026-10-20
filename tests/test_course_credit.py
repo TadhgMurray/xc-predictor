@@ -45,8 +45,10 @@ class _Cur:
         self.answers = {
             "ranking_results": [(1, 7, "hs_m", 2024, 4.9, d, 86), (2, 7, "hs_m", 2024, 4.88, d, 86)],
             "FROM results": [(1, 100, 5), (2, 100, 6)],
-            "FROM meets": [(100, 5, "Mt. San Antonio College", 34.05, -117.8, 4828.0),
-                           (100, 6, "Somewhere Else", 1.0, 2.0, 5000.0)],
+            # (the meet name last: --effort reads it, 2026-10-19)
+            "FROM meets": [(100, 5, "Mt. San Antonio College", 34.05, -117.8, 4828.0,
+                            "CIF Southern Section Finals"),
+                           (100, 6, "Somewhere Else", 1.0, 2.0, 5000.0, "Dual")],
             "course_canonical": [("Mt. San Antonio College", 34.05, -117.8, 13433)],
             "race_day_effect": [(13433, 4800, d, 0.089, 0.034)],
         }
@@ -66,3 +68,20 @@ class _Cur:
 def test_load_joins_in_python():
     got = D.load(_Cur(), 2023, 1, None, say=lambda m: None)
     assert got == [(7, "hs_m", 2024, 4.9, 0.089, 0.034, 86.0)]   # row 2's course is unknown
+
+
+def test_load_names_and_other_seasons():
+    names, loso = {}, []
+    got = D.load(_Cur(), 2023, 1, None, say=lambda m: None, names=names, loso=loso)
+    assert len(got) == 1 and names[(100, 5)] == "CIF Southern Section Finals"
+    assert loso == [None]                    # the course has no other season
+
+
+def test_other_seasons_skip_the_shared_era():
+    from datetime import date
+    rde = {(1, 5000, date(2021, 9, 1)): (0.05, 0.0), (1, 5000, date(2022, 9, 1)): (0.07, 0.0),
+           (1, 5000, date(2024, 9, 1)): (0.03, 0.0), (1, 5000, date(2024, 10, 1)): (0.05, 0.0)}
+    got = D.otherSeasons(rde)
+    assert got[(1, 5000, 2021)] == 0.04       # 2024 only: 2022 may share its era
+    assert abs(got[(1, 5000, 2024)] - 0.06) < 1e-12
+
