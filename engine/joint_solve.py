@@ -1146,6 +1146,31 @@ DIST_CAL_MIN_PAIRS = 150
 #   a season racing one distance has every lz = 0 and the slope is exactly
 #   zero, which is the pool's law.
 SLOPE_RIDGE = 2.0
+# ★ THE RUNNER'S OWN FORM TREND (owner, 2026-10-19: "what else can we take,
+#   like from horse racing" -- a handicapper rates a horse on its CURRENT
+#   form, not its season's average). The form curve is one per pool: every
+#   runner in a pool is assumed to improve through the season at the same
+#   rate, and a runner who improves faster than the pool (a freshman, a
+#   breakthrough) leaves the excess in the residuals -- where the late
+#   season's harder courses and championships soak it up as "course
+#   credit" (diag_course_credit: b course +0.12 within college seasons).
+#   q[athlete-season] * tz, tz = (day - the athlete-season's mean day IN
+#   THAT SPORT) / 100: a per-runner slope about the pool's curve, centred
+#   within the runner's own season and sport so it is orthogonal to the
+#   ability and the sport offset, ridge-shrunk toward the pool's curve.
+#   Like the endurance slope it stays in every race's rating (the go-live's
+#   effect never removes it): a race rates the form the runner was in.
+#   XCP_FORM_TREND=<ridge> turns it on; unset or 0 is the old model. The
+#   ridge is in row-weight units like SLOPE_RIDGE: prior sd on q is
+#   sqrt(sigma2 / ridge), so at sigma ~0.03, 1 is ~3% per 100 days (start
+#   there), 4 is ~1.5%. A season of 8 races over 90 days carries about 0.5
+#   of information, so a ridge of 4 would shrink most runners to the curve.
+def formTrendRidge():
+    try:
+        v = float(os.environ.get("XCP_FORM_TREND", "0") or 0)
+    except ValueError:
+        return 0.0
+    return v if v > 0 else 0.0
 
 # ★ THE SEASON LINK (issue 154). Consecutive athlete-seasons of one person
 #   (same person, same pool) are tied by a zero-mean difference penalty of
@@ -1473,7 +1498,7 @@ class Design:
                  mu_fixed=None, imp=None, n_imp=None, imp_prior=None,
                  ind=None, e_table=None, alt_dist=None, imp_w=None,
                  dist_pairs=None, dist_pair_w=None, dist_zero_w=None,
-                 imp_kind=None, ind_fixed=None):
+                 imp_kind=None, ind_fixed=None, tz=None):
         self.athlete = np.asarray(athlete, dtype=np.int64)
         self.cell = np.asarray(cell, dtype=np.int64)
         self.race = np.asarray(race, dtype=np.int64)
@@ -1630,6 +1655,11 @@ class Design:
         if self.has_slope:
             self.lz = np.asarray(lz, dtype=np.float64)
             self.n_g = self.n_ath
+        # the form trend (formTrendRidge): per row the centred season day
+        self.n_q = 0
+        if tz is not None:
+            self.tz = np.asarray(tz, dtype=np.float64)
+            self.n_q = self.n_ath
         # the season link (LINK_WEIGHT): pairs of athlete-season indices and
         # a weight per pair (1 / years apart)
         self.has_link = link is not None and len(link[0]) > 0
@@ -1750,7 +1780,8 @@ class Design:
         self.n_r = self.n_pool if self.has_rust else 0
         self.o_e = self.o_r + self.n_r
         self.o_g = self.o_e + self.n_e
-        self.o_k = self.o_g + self.n_g
+        self.o_q = self.o_g + self.n_g
+        self.o_k = self.o_q + self.n_q
         self.o_imp = self.o_k + self.n_k
         self.o_ind = self.o_imp + self.n_imp
         self.n_total = self.o_ind + self.n_ind
@@ -1949,7 +1980,8 @@ class Design:
             b["c"] = None
         b["r"] = theta[self.o_r:self.o_e] if self.n_r else None
         b["e"] = theta[self.o_e:self.o_g] if self.n_e else None
-        b["g"] = theta[self.o_g:self.o_k] if self.n_g else None
+        b["g"] = theta[self.o_g:self.o_q] if self.n_g else None
+        b["q"] = theta[self.o_q:self.o_k] if getattr(self, "n_q", 0) else None
         b["k"] = theta[self.o_k:self.o_imp] if self.n_k else None
         b["imp"] = theta[self.o_imp:self.o_ind] if self.n_imp else None
         b["ind"] = theta[self.o_ind:self.n_total] if self.n_ind else None
@@ -1987,6 +2019,8 @@ def _predictSlice(b, D, h, amp, sl, out):
         row += D.e_w[sl] * b["e"][D.e_idx[sl]]
     if b.get("g") is not None and getattr(D, "n_g", 0):
         row += b["g"][ath] * D.lz[sl]
+    if b.get("q") is not None and getattr(D, "n_q", 0):
+        row += b["q"][ath] * D.tz[sl]
     if b.get("k") is not None and getattr(D, "n_k", 0):
         row += b["k"][grp] * D.alt[sl]
     if b.get("imp") is not None and getattr(D, "n_imp", 0):
@@ -2142,7 +2176,7 @@ class _Operator:
 
     def __init__(self, D, w, h, amp, pen_cell, pen_race, ridge, lam,
                  lam_gap=None, gap_target=0.0, pen_dist=0.0,
-                 ridge_slope=0.0, link_weight=0.0,
+                 ridge_slope=0.0, link_weight=0.0, ridge_trend=0.0,
                  alt_prior_mean=ALT_PRIOR_MEAN, alt_prior_pen=ALT_PRIOR_PEN_FIXED,
                  pen_era=0.0, imp_prior_pen=None, ind_prior_pen=None,
                  pen_walk=0.0, tie_w=None, tie_mean=None):
@@ -2205,6 +2239,7 @@ class _Operator:
                         + np.bincount(b_, weights=D.dist_pair_w, minlength=D.n_e))
             self._dist_deg = deg
         self.ridge_slope = float(ridge_slope)
+        self.ridge_trend = float(ridge_trend)
         self.link_weight = float(link_weight)
         self.alt_prior_mean = float(alt_prior_mean)
         self.alt_prior_pen = float(alt_prior_pen)
@@ -2251,6 +2286,9 @@ class _Operator:
                                             minlength=D.n_e))
         if D.n_g:
             jobs.append(lambda: np.bincount(D.athlete, weights=wr * D.lz,
+                                            minlength=D.n_ath))
+        if getattr(D, "n_q", 0):
+            jobs.append(lambda: np.bincount(D.athlete, weights=wr * D.tz,
                                             minlength=D.n_ath))
         if D.n_k:
             jobs.append(lambda: np.bincount(D.group_row, weights=wr * D.alt,
@@ -2310,7 +2348,9 @@ class _Operator:
         if D.n_e:
             out[D.o_e:D.o_g] += self.pen_dist * b["e"]
         if D.n_g:
-            out[D.o_g:D.o_k] += self.ridge_slope * b["g"]
+            out[D.o_g:D.o_q] += self.ridge_slope * b["g"]
+        if getattr(D, "n_q", 0):
+            out[D.o_q:D.o_k] += self.ridge_trend * b["q"]
         if D.n_k:
             out[D.o_k:D.o_imp] += (ALT_RIDGE + self.alt_prior_pen) * b["k"]
         if D.n_imp:
@@ -2386,6 +2426,10 @@ class _Operator:
             jobs.append(lambda: np.bincount(D.athlete, weights=w * D.lz * D.lz,
                                             minlength=D.n_ath)
                         + self.ridge_slope)
+        if getattr(D, "n_q", 0):
+            jobs.append(lambda: np.bincount(D.athlete, weights=w * D.tz * D.tz,
+                                            minlength=D.n_ath)
+                        + self.ridge_trend)
         if D.n_k:
             jobs.append(lambda: np.bincount(D.group_row, weights=w * D.alt * D.alt,
                                             minlength=D.n_group)
@@ -2562,6 +2606,10 @@ class _AthleteBlocks:
             feats.append(D.lz)
             ridge.append(op.ridge_slope)
             offs.append(D.o_g)
+        if getattr(D, "n_q", 0):
+            feats.append(D.tz)
+            ridge.append(op.ridge_trend)
+            offs.append(D.o_q)
         m = len(feats)
         self.m, self.feats, self.offs = m, feats, offs
         B = np.empty((na, m, m))
@@ -3477,6 +3525,8 @@ def _pack(b, D):
         parts.append(b["e"])
     if D.n_g:
         parts.append(b["g"])
+    if getattr(D, "n_q", 0):
+        parts.append(b["q"])
     if D.n_k:
         parts.append(b["k"])
     if getattr(D, "n_imp", 0):
@@ -4022,7 +4072,8 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                merge_sports=False, centre_curve=False,
                identified_priors=True, sigma_u_floor="default",
                ability_weight=False, top_frac=0.0, nested_var=True,
-               season_tie_sd=None, tilt_scale=None, effort=False):
+               season_tie_sd=None, tilt_scale=None, effort=False,
+               ridge_trend=None):
     # effort: the shortfall term (THETA_RACE_PRIOR_N): each row's residual
     #   is noise plus a one-sided shortfall s >= 0, fitted by EM; the solve
     #   fits y - E[s|e]. Groups from D.effort_group (run_joint: meet class x
@@ -4032,6 +4083,10 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     # tilt_scale: None reads the tilt at the own-pool rating; a dict
     #   {hs_of_pool, f_ratio} (run_joint.tiltScaleInputs) reads it at the
     #   HS-equivalent rating (TILT_SCALES).
+    # ridge_trend: the form trend's ridge (formTrendRidge); None reads
+    #   XCP_FORM_TREND. Only a design built with tz carries the block.
+    if ridge_trend is None:
+        ridge_trend = formTrendRidge()
     y = np.asarray(y, dtype=np.float64)
     D = design if design is not None else Design(athlete, cell, race,
                                                  group_of_cell=group)
@@ -4168,6 +4223,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam,
                        lam_gap, gap_target, pen_dist=pen_dist,
                        ridge_slope=ridge_slope, link_weight=link_weight,
+                       ridge_trend=ridge_trend,
                        alt_prior_pen=alt_prior_pen, pen_era=pen_era,
                        imp_prior_pen=sigma2 / IMP_PRIOR_SD ** 2,
                        ind_prior_pen=sigma2 / IND_PRIOR_SD ** 2,
@@ -4475,6 +4531,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
     op = _Operator(D, w, h, amp, pen_cell, pen_race, ridge, lam, lam_gap,
                    gap_target, pen_dist=pen_dist,
                    ridge_slope=ridge_slope, link_weight=link_weight,
+                   ridge_trend=ridge_trend,
                    alt_prior_pen=alt_prior_pen, pen_era=pen_era,
                    imp_prior_pen=sigma2 / IMP_PRIOR_SD ** 2,
                    ind_prior_pen=sigma2 / IND_PRIOR_SD ** 2,
@@ -4526,6 +4583,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         "dist_cal_n": D.e_cal_n.copy() if D.n_e else None,
         "dist_cal_via": D.e_cal_via.copy() if D.n_e else None,
         "slope": b["g"],
+        "form_trend": b.get("q"),
         "altitude_coef": b["k"],
         "cell_var": cell_var, "cell_se": np.sqrt(cell_var),
         "cell_var_nested": nested_d, "race_var": nested_u,

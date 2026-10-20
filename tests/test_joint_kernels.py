@@ -56,6 +56,7 @@ def _fakeDesign(n=60_000, n_ath=6_000, n_cell=500, n_race=3_000, seed=3,
     D.n_e, D.e_idx = 17, rng.integers(0, 17, n)
     D.e_w = (rng.random(n) > .3).astype(float)
     D.n_g, D.lz = n_ath, rng.normal(size=n)
+    D.n_q, D.tz = n_ath, rng.normal(size=n)      # the form trend (2026-10-20)
     D.n_k, D.alt = n_group, rng.random(n) * .01
     D.n_imp, D.imp_idx, D.imp_w = 5, rng.integers(0, 5, n), rng.random(n)
     D.n_ind, D.ind_idx = n_pool, D.pool_row
@@ -68,7 +69,8 @@ def _fakeDesign(n=60_000, n_ath=6_000, n_cell=500, n_race=3_000, seed=3,
     D.o_r = D.o_c + D.n_c
     D.o_e = D.o_r + D.n_r
     D.o_g = D.o_e + D.n_e
-    D.o_k = D.o_g + D.n_g
+    D.o_q = D.o_g + D.n_g
+    D.o_k = D.o_q + D.n_q
     D.o_imp = D.o_k + D.n_k
     D.o_ind = D.o_imp + D.n_imp
     D.n_total = D.o_ind + D.n_ind
@@ -95,12 +97,13 @@ def test_every_term_matches_the_numpy_matvec():
 
 def test_optional_terms_off_still_match():
     D, rng = _fakeDesign(seed=5)
-    D.n_beta = D.n_g = D.n_imp = D.n_ind = 0
+    D.n_beta = D.n_g = D.n_q = D.n_imp = D.n_ind = 0
     D.o_beta = D.o_mu + D.n_mu
     D.o_c = D.o_beta
     D.o_r = D.o_c + D.n_c
     D.o_e = D.o_r + D.n_r
     D.o_g = D.o_e + D.n_e
+    D.o_q = D.o_g
     D.o_k = D.o_g
     D.o_imp = D.o_k + D.n_k
     D.o_ind = D.o_imp

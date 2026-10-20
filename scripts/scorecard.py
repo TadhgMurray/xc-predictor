@@ -76,6 +76,8 @@ PRODUCTION_ENV = (
     ("XCP_WINTER_GAIN", "--winter-gain", True),
     ("XCP_WINTER_GAIN_BANDS", "--winter-gain-bands", True),
     ("XCP_TILT_SCALE", "--tilt-scale", True),
+    # the runner's own form trend (js.formTrendRidge): a different solve
+    ("XCP_FORM_TREND", "--form-trend", True),
     # one day effect per VENUE and day instead of per (venue, distance)
     # and day: a different solve, so the scorecard must fit it
     ("XCP_RACE_KEY", "--race-key", True),

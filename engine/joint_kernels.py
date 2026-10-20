@@ -56,10 +56,11 @@ if _HAVE_NUMBA:
                 has_r, first, pool_row, r,
                 has_e, e_idx, e_w, e,
                 has_g, lz, g,
+                has_q, tz, q,
                 has_k, alt, kk,
                 has_imp, imp_idx, imp_w, imp,
                 has_ind, ind_idx, ind_w, ind,
-                out_a, out_beta, out_g,
+                out_a, out_beta, out_g, out_q,
                 p_d, p_u, p_mu, p_c, p_r, p_e, p_k, p_imp, p_ind, n_mu):
         nch = edges.size - 1
         for t in prange(nch):
@@ -80,6 +81,8 @@ if _HAVE_NUMBA:
                     row += e_w[i] * e[e_idx[i]]
                 if has_g:
                     row += g[at] * lz[i]
+                if has_q:
+                    row += q[at] * tz[i]
                 if has_k:
                     row += kk[gr] * alt[i]
                 if has_imp:
@@ -105,6 +108,8 @@ if _HAVE_NUMBA:
                     p_e[t, e_idx[i]] += wr * e_w[i]
                 if has_g:
                     out_g[at] += wr * lz[i]
+                if has_q:
+                    out_q[at] += wr * tz[i]
                 if has_k:
                     p_k[t, gr] += wr * alt[i]
                 if has_imp:
@@ -183,6 +188,7 @@ def fusedMatvec(D, w, h, amp, b):
     has_r = bool(D.n_r) and b.get("r") is not None
     has_e = bool(getattr(D, "n_e", 0)) and b.get("e") is not None
     has_g = bool(getattr(D, "n_g", 0)) and b.get("g") is not None
+    has_q = bool(getattr(D, "n_q", 0)) and b.get("q") is not None
     has_k = bool(getattr(D, "n_k", 0)) and b.get("k") is not None
     has_imp = bool(getattr(D, "n_imp", 0)) and b.get("imp") is not None
     has_ind = bool(getattr(D, "n_ind", 0)) and b.get("ind") is not None
@@ -190,6 +196,7 @@ def fusedMatvec(D, w, h, amp, b):
     out_a = np.zeros(D.n_ath)
     out_beta = np.zeros(D.n_ath if has_beta else 1)
     out_g = np.zeros(D.n_ath if has_g else 1)
+    out_q = np.zeros(D.n_ath if has_q else 1)
     p_d, p_u, p_mu = priv(D.n_cell), priv(D.n_race), priv(n_mu)
     p_c = priv(D.n_c if has_c else 1)
     p_r = priv(D.n_pool if has_r else 1)
@@ -213,12 +220,13 @@ def fusedMatvec(D, w, h, amp, b):
             has_e, D.e_idx if has_e else I, D.e_w if has_e else F,
             b["e"] if has_e else F,
             has_g, D.lz if has_g else F, b["g"] if has_g else F,
+            has_q, D.tz if has_q else F, b["q"] if has_q else F,
             has_k, D.alt if has_k else F, b["k"] if has_k else F,
             has_imp, D.imp_idx if has_imp else I, D.imp_w if has_imp else F,
             b["imp"] if has_imp else F,
             has_ind, D.ind_idx if has_ind else I, D.ind_w if has_ind else F,
             b["ind"] if has_ind else F,
-            out_a, out_beta, out_g,
+            out_a, out_beta, out_g, out_q,
             p_d, p_u, p_mu, p_c, p_r, p_e, p_k, p_imp, p_ind, n_mu)
     if not _ANNOUNCED:
         print(f"[joint] kernels: fused matvec on, {nch} chunks", flush=True)
@@ -236,6 +244,8 @@ def fusedMatvec(D, w, h, amp, b):
         parts.append(p_e.sum(axis=0)[:D.n_e])
     if getattr(D, "n_g", 0):
         parts.append(out_g if has_g else np.zeros(D.n_ath))
+    if getattr(D, "n_q", 0):
+        parts.append(out_q if has_q else np.zeros(D.n_ath))
     if getattr(D, "n_k", 0):
         parts.append(p_k.sum(axis=0)[:D.n_group])
     if getattr(D, "n_imp", 0):

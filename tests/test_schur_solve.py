@@ -36,15 +36,19 @@ def _solve(monkeypatch, schur, pre, slope=False, **kw):
     monkeypatch.setenv("XCP_SCHUR", schur)
     monkeypatch.setenv("XCP_PRECOND", pre)
     y, ath, cel, rac = _world()
-    lz = None
+    lz = tz = None
     if slope:
         # the endurance slope's per-row feature: a centred log distance
         lz = np.random.default_rng(9).normal(0, 0.3, ath.size)
-    D = js.Design(ath, cel, rac, lz=lz)
+    if slope == "trend":
+        # and the form trend's: a centred season day (2026-10-20)
+        tz = np.random.default_rng(10).normal(0, 0.4, ath.size)
+        kw = dict(kw, ridge_trend=2.0)
+    D = js.Design(ath, cel, rac, lz=lz, tz=tz)
     return js.solveJoint(y, design=D, n_outer=3, tilt=False, n_probe=1, **kw)
 
 
-@pytest.mark.parametrize("slope", [False, True])
+@pytest.mark.parametrize("slope", [False, True, "trend"])
 @pytest.mark.parametrize("schur,pre", [("1", "jacobi"), ("0", "arrow"), ("1", "arrow")])
 def test_same_answer_as_the_plain_solve(monkeypatch, schur, pre, slope):
     base = _solve(monkeypatch, "0", "jacobi", slope=slope)

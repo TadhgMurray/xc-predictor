@@ -409,6 +409,36 @@ def logDistCentered(cols, keep, athlete, n_ath):
     return out
 
 
+def seasonDayCentered(cols, keep, athlete, n_ath):
+    """The form trend's covariate (joint_solve.formTrendRidge): the row's
+    day minus its athlete-season's mean day IN THE ROW'S SPORT, in units of
+    100 days. Centred within (athlete-season, sport), so it is orthogonal
+    to the ability and to the sport offset.
+
+    ! THE MEAN IS OVER EVERY ROW OF THE PACK, not only `keep`: a held-out
+      design (buildDesign on keep_te) must centre its rows where the
+      training design centred the same season's, or the slope fitted on
+      the training rows predicts the held-out ones about the wrong day.
+      Only dates enter the mean, never times."""
+    days = np.asarray(cols["days"], dtype=np.float64)          # days AGO
+    sport = (np.asarray(cols["sport"], dtype=np.int64) if "sport" in cols
+             else np.zeros(days.size, dtype=np.int64))
+    # (athlete, year, sport) of every pack row: the season and sport the
+    # centring is within
+    # (one int64 per row: a 1-D unique over 60M rows, not a row-wise one)
+    yr = np.asarray(cols["year"], dtype=np.int64)
+    key = ((np.asarray(cols["athlete"], dtype=np.int64) * 256
+            + (yr - yr.min())) * 2 + sport)
+    _uk, inv = np.unique(key, return_inverse=True)
+    tot = np.bincount(inv, weights=days)
+    cnt = np.bincount(inv)
+    mean = tot / np.maximum(cnt, 1)
+    # later in the season = POSITIVE (days is days ago, so the sign flips):
+    # q < 0 is a runner improving faster than the pool's curve
+    tz = (mean[inv] - days) / 100.0
+    return tz[keep]
+
+
 SEASON_END_DAYS = 14          # a race in the last two weeks of the athlete's season
 SEASON_END_MIN_RACES = 3      # athlete-seasons that vote on a race's share
 SEASON_CLOSED_DAYS = 21       # a season whose last race is more recent may still be running
@@ -977,6 +1007,8 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
 
     lz = (logDistCentered(cols, keep, athlete, n_ath)
           if slope and "dist_m" in cols else None)
+    tz = (seasonDayCentered(cols, keep, athlete, n_ath)
+          if js.formTrendRidge() > 0 and "days" in cols else None)
     links = (seasonLinks(athlete_raw, year, athlete, n_ath)
              if link else None)
     alt, alt_known, alt_cells, alt_home = None, 0, 0, None
@@ -1054,7 +1086,7 @@ def buildDesign(cols, keep, sport_offset=True, curve=True, rust=True,
                   day=day, first=first,
                   n_ath=n_ath, n_cell=n_cells, n_race=n_race, n_pool=n_pool,
                   dist=dist_row, n_e=len(dist_labels) if dist_row is not None
-                  else None, lz=lz, link=links, alt=alt,
+                  else None, lz=lz, tz=tz, link=links, alt=alt,
                   dist_banded=dist_bands, dist_ref=dist_ref_row,
                   dist_pairs=d_pairs, dist_pair_w=d_pair_w, dist_zero_w=d_zero_w,
                   alt_home=alt_home,
@@ -1143,6 +1175,12 @@ def reportLevelAndCurve(out, D, pool_names, old_gap=None):
               f"share > 0.02: {(np.abs(g) > 0.02).mean():.1%}, "
               f"share exactly 0 (one distance raced): "
               f"{(g == 0).mean():.1%}")
+    if out.get("form_trend") is not None:
+        q = np.asarray(out["form_trend"])
+        print(f"[joint] form trend (ridge {js.formTrendRidge():g}): per runner-season "
+              f"log-time per 100 days about the pool's curve: |q| mean "
+              f"{np.abs(q).mean():.4f}, p10 {np.percentile(q, 10):+.4f}, p90 "
+              f"{np.percentile(q, 90):+.4f} (negative = improving faster than the pool)")
     if getattr(D, "has_link", False):
         print(f"[joint] season link: {D.link_k0.size:,} consecutive-season "
               f"pairs at weight {js.LINK_WEIGHT} / year")
@@ -2449,6 +2487,15 @@ def buildParser():
                     help="the rating the course tilt reads: own (the athlete's "
                          "own pool's scale, default) or hs (the HS-equivalent: "
                          "own x the pool's HS factor)")
+    # ★ THE RUNNER'S OWN FORM TREND (js.formTrendRidge, 2026-10-20). The
+    #   flag is the one source: run_joint sets XCP_FORM_TREND from it (0 when
+    #   absent), so a scorecard side without it is the old model even when
+    #   the shell carries the variable. The pipeline passes XCP_FORM_TREND
+    #   here like XCP_TILT_SCALE.
+    ap.add_argument("--form-trend", type=float, default=0.0, metavar="RIDGE",
+                    help="a per-runner slope over the season about the pool's "
+                         "curve, with this ridge (1 = prior sd ~3%% per 100 "
+                         "days); 0 = off (default)")
     ap.add_argument("--no-sport-offset", action="store_true")
     # ★ THE MEASURED XC/TF GAP (owner, 2026-09-09: "mainly the fact that most
     #   of the best seasons of all time are tf"). scripts/measure_sport_gap.py
@@ -3869,6 +3916,7 @@ def pairEngineDelta(old_path, solved):
 def main():
     ap = buildParser()
     args = applyImplications(ap.parse_args(), ap)
+    os.environ["XCP_FORM_TREND"] = repr(float(args.form_trend or 0.0))
 
     if not os.path.exists(args.pack):
         sys.exit(f"[joint] no pack at {args.pack} -- run 07_pack first")

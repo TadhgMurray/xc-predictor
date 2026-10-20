@@ -1121,6 +1121,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"} \
       ${XCP_WINTER_GAIN_BANDS:+--winter-gain-bands "$XCP_WINTER_GAIN_BANDS"} \
       ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
+      ${XCP_FORM_TREND:+--form-trend "$XCP_FORM_TREND"} \
       $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) \
       $([ "${XCP_ALTITUDE:-1}" != "0" ] && echo --altitude) \
       $([ "${XCP_ALTITUDE:-1}" != "0" ] && [ "${XCP_ALTITUDE_FIT:-0}" = "1" ] && echo --altitude-fit)
@@ -1174,6 +1175,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
       ${XCP_NO_DIST_TABLE:+--no-dist-table} \
       ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
+      ${XCP_FORM_TREND:+--form-trend "$XCP_FORM_TREND"} \
       ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
       $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
   # ★ THE CROSS-SPORT HOLDOUT (owner, 2026-10-04: "we holdout certain things
@@ -1196,6 +1198,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
       ${XCP_NO_DIST_TABLE:+--no-dist-table} \
       ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
+      ${XCP_FORM_TREND:+--form-trend "$XCP_FORM_TREND"} \
       ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
       $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
   # ★ THE DISTANCE HOLDOUT (owner, 2026-10-07: "how can we score the accuracy
@@ -1218,6 +1221,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
         ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
         ${XCP_NO_DIST_TABLE:+--no-dist-table} \
         ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
+      ${XCP_FORM_TREND:+--form-trend "$XCP_FORM_TREND"} \
         ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
         $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
   fi
