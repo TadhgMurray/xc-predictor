@@ -5,6 +5,14 @@ damaged (Postgres' amcheck, verify_heapam). Exit 1 if one is.
 
     /srv/venv/bin/python scripts/integrity_check.py              # every table
     /srv/venv/bin/python scripts/integrity_check.py --tables results_tf,results
+    /srv/venv/bin/python scripts/integrity_check.py --indexes    # + every btree index
+
+★ --indexes (2026-10-20: an athlete page failed on "invalid page in block
+  4450431 of relation base/76828/934188" while every TABLE read clean --
+  verify_heapam reads tables, never their indexes). bt_index_check reads
+  each btree index of the tables checked; a damaged one is listed with its
+  repair, REINDEX INDEX CONCURRENTLY, which rebuilds it from the table with
+  the site serving and loses nothing.
 
 ★ WHY (owner, 2026-09-30: "THis is the 2nd time I've had data get messed up
   on this server"). Block 491889 of results_tf went bad, and nothing said so
@@ -30,7 +38,7 @@ IF IT FAILS -- the recipe that worked on 2026-09-30 (docs/ISSUES-RUNNING.md):
            --table <table> --block <block> --requeue tfrrs
   2. rewrite the table without the damaged page (locks the table):
        runuser -u postgres -- psql -d xc_predictor -c \\
-           "SET zero_damaged_pages = on; VACUUM FULL <table>"
+           "SET zero_damaged_pages = on" -c "VACUUM FULL <table>"
   3. a plain VACUUM (ANALYZE) of the same table -- the site keeps serving:
        runuser -u postgres -- psql -d xc_predictor -c "VACUUM (ANALYZE) <table>"
      ! NOT OPTIONAL (2026-10-01). VACUUM FULL leaves the rewritten table
@@ -111,10 +119,41 @@ def checkRange(cur, name, start, end):
     return checkRange(cur, name, start, mid) + checkRange(cur, name, mid + 1, end)
 
 
+def checkIndexes(cur, tables):
+    """[(index, message)] for every btree index on `tables` that
+    bt_index_check rejects, printing as it goes."""
+    import psycopg2
+    cur.execute("""
+        SELECT i.indexrelid::regclass::text, pg_relation_size(i.indexrelid)
+        FROM   pg_index i
+        JOIN   pg_class c ON c.oid = i.indexrelid
+        JOIN   pg_am am ON am.oid = c.relam
+        WHERE  am.amname = 'btree' AND i.indrelid = ANY(%s::regclass[])
+          AND  i.indisvalid AND i.indisready
+        ORDER  BY 2 DESC""", ([t for t, _p in tables],))
+    bad = []
+    for idx, size in cur.fetchall():
+        t0 = time.time()
+        try:
+            cur.execute("SELECT bt_index_check(%s::regclass)", (idx,))
+            if size > 2**30 or time.time() - t0 >= 1:
+                print(f"  ✓ index {idx} ({size / 2**30:,.1f} GB, {time.time() - t0:.0f}s)",
+                      flush=True)
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            raise
+        except psycopg2.DatabaseError as exc:
+            msg = (exc.pgerror or str(exc)).strip().splitlines()[0]
+            bad.append((idx, msg.removeprefix("ERROR:").strip()))
+            print(f"  ✗ index {idx}: {bad[-1][1]}", flush=True)
+    return bad
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tables", default="", help="comma-separated; default every table")
+    ap.add_argument("--indexes", action="store_true",
+                    help="also bt_index_check every btree index of those tables")
     a = ap.parse_args()
 
     t_all = time.time()
@@ -162,8 +201,17 @@ def main():
                     print(f"      ... {len(blocks) - _SHOW} more blocks")
             elif pages > seg or el >= 1:
                 print(f"  ✓ {name} ({pages:,} pages, {el:.0f}s)")
+        bad_idx = checkIndexes(cur, tables) if a.indexes else []
 
     el = time.time() - t_all
+    if bad_idx:
+        print("\n[integrity] ✗ DAMAGED INDEXES: " + ", ".join(i for i, _m in bad_idx))
+        print("  rebuild each from its table (the site keeps serving, nothing is lost):")
+        for idx, _m in bad_idx:
+            print(f"       runuser -u postgres -- psql -d xc_predictor -c"
+                  f" \"REINDEX INDEX CONCURRENTLY {idx}\"")
+        if not bad:
+            sys.exit(1)
     if bad:
         print("\n[integrity] ✗ DAMAGED: "
               + ", ".join(f"{t} ({len(b)} block(s))" for t, b in bad.items()) + f". {el:.0f}s.")
@@ -176,15 +224,18 @@ def main():
                       f" --table {t} --block {blk} --requeue tfrrs")
         print("  2. rewrite each table without the damaged pages (locks the table):")
         for t in bad:
+            # ! TWO -c FLAGS: one -c with both statements is ONE transaction,
+            #   and VACUUM refuses to run inside one (2026-10-20)
             print(f"       runuser -u postgres -- psql -d xc_predictor -c"
-                  f" \"SET zero_damaged_pages = on; VACUUM FULL {t}\"")
+                  f" \"SET zero_damaged_pages = on\" -c \"VACUUM FULL {t}\"")
         print("  3. then a plain vacuum of each, or later steps crawl (the site keeps serving):")
         for t in bad:
             print(f"       runuser -u postgres -- psql -d xc_predictor -c"
                   f" \"VACUUM (ANALYZE) {t}\"")
         print("  4. this script again, then the pipeline.")
         sys.exit(1)
-    print(f"\n[integrity] ✓ every page of {len(tables)} tables reads clean ({el:.0f}s)")
+    print(f"\n[integrity] ✓ every page of {len(tables)} tables reads clean"
+          + (" and every btree index on them checks" if a.indexes else "") + f" ({el:.0f}s)")
 
 if __name__ == "__main__":
     main()
