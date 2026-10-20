@@ -2693,6 +2693,61 @@ def setLogged(conn, table):
     print(f"    [{time.time() - t0:7.1f}s] {table}: set logged (before its indexes)")
 
 
+def verifyShadow(conn, tables):
+    """Every page of the shadow tables reads clean (amcheck), or raise.
+
+    ★ NEVER SWAP IN A DAMAGED TABLE (owner, 2026-10-19 and 10-20: the
+      freshly built ranking_results had an invalid page both times -- block
+      1588052, then block 199191 of the next build -- found by the backup's
+      pg_dump and by the next morning's scripts). Whatever damages the page,
+      yesterday's table is the better one to serve: this reads each shadow
+      segment by segment with scripts/integrity_check.checkRange, the
+      pipeline's 00_integrity check, and raises before the renames, so the
+      live tables stay as they were and the step fails loudly."""
+    sys.path.insert(0, "scripts")
+    from integrity_check import checkRange
+    t0 = time.time()
+    # ! AUTOCOMMIT: checkRange splits a range that ERRORS (a page too broken
+    #   to read stops the statement), and inside a transaction the first
+    #   error would abort every check after it
+    conn.commit()
+    was = conn.autocommit
+    conn.autocommit = True
+    try:
+        bad = _verifyPages(conn, tables, checkRange)
+    finally:
+        conn.autocommit = was
+    if bad:
+        for t, rows in bad.items():
+            blocks = sorted({r[0] for r in rows})
+            print(f"    ✗ {t}: {len(blocks)} damaged block(s): {blocks[:10]} "
+                  f"-- first: {rows[0][3]}")
+        raise RuntimeError(
+            "the new ranking tables have damaged pages; NOT swapping them in "
+            "(the live tables are unchanged). Re-run 10_rankings_prepare, the "
+            "stream stages and 10_rankings_finish.")
+    print(f"    [{time.time() - t0:7.1f}s] every page of {', '.join(tables)} reads clean")
+
+
+def _verifyPages(conn, tables, checkRange):
+    """{table: [(block, offset, column, message)]} for the damaged ones."""
+    bad = {}
+    with conn.cursor() as cur:
+        cur.execute("CREATE EXTENSION IF NOT EXISTS amcheck")
+        cur.execute("SELECT current_setting('block_size')::bigint,"
+                    " pg_size_bytes(current_setting('segment_size'))")
+        bsz, seg_bytes = cur.fetchone()
+        seg = seg_bytes // bsz
+        for t in tables:
+            cur.execute("SELECT pg_relation_size(%s::regclass) / %s", (t, bsz))
+            pages = int(cur.fetchone()[0])
+            for start in range(0, pages, seg):
+                got = checkRange(cur, t, start, min(start + seg, pages) - 1)
+                if got:
+                    bad.setdefault(t, []).extend(got)
+    return bad
+
+
 def swapIn(conn):
     """Four renames in ONE transaction. This is the only visible moment.
 
@@ -3560,6 +3615,8 @@ def main():
 
         with phase("athlete_season"):
             refreshAthleteSeason(conn)
+        with phase("verify the new tables"):
+            verifyShadow(conn, (_LOAD_TABLE, _LOAD_SEASON))
         with phase("swap in + drop old"):
             swapIn(conn)
         # ! VACUUM AFTER THE SWAP, OUTSIDE A TRANSACTION. A freshly built table
