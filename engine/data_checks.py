@@ -220,20 +220,34 @@ def parserIssues(pairs, tol=0.01):
 # ------------------------------------------------------------------ #
 
 def _base(cur):
-    """dc_base(person_id, b): each runner's typical rating, once a run."""
+    """dc_base(person_id, pool, b): each runner's typical rating IN ONE
+    POOL, once a run.
+
+    ★ PER POOL, NOT PER CAREER (owner, 2026-10-19: Catholic Athletic League
+      State Championship 2019, a 2-mile race of 5th-8th graders pinned to
+      1609 m -- a 6th grader's winning 11:25.8 "verified" as a mile). A
+      speed_rating is on its row's OWN pool's scale (100 = that pool's
+      average runner), so one mean over elementary, middle-school and
+      high-school rows is no runner's level at all. For a child who later
+      raced in high school it read the whole field about twice its "own
+      level", and twice the rating is half the distance: 3218 snapped to
+      1609, corroborated by the meet's own mile race for the little ones.
+      Within one pool the scale is one scale."""
     cur.execute("SELECT to_regclass('pg_temp.dc_base')")
     if cur.fetchone()[0] is not None:
         return
     cur.execute("""
         CREATE TEMP TABLE dc_base ON COMMIT DROP AS
-        SELECT person_id, exp(avg(ln(speed_rating))) AS b
-        FROM  (SELECT person_id, speed_rating FROM results
+        SELECT person_id, pool, exp(avg(ln(speed_rating))) AS b
+        FROM  (SELECT person_id, rating_pool AS pool, speed_rating FROM results
                WHERE speed_rating > 0 AND person_id IS NOT NULL
+                 AND rating_pool IS NOT NULL
                UNION ALL
-               SELECT person_id, speed_rating FROM results_tf
-               WHERE speed_rating > 0 AND person_id IS NOT NULL) x
-        GROUP BY person_id HAVING count(*) >= %s""", (BASE_MIN,))
-    cur.execute("CREATE INDEX ON dc_base (person_id)")
+               SELECT person_id, rating_pool, speed_rating FROM results_tf
+               WHERE speed_rating > 0 AND person_id IS NOT NULL
+                 AND rating_pool IS NOT NULL) x
+        GROUP BY person_id, pool HAVING count(*) >= %s""", (BASE_MIN,))
+    cur.execute("CREATE INDEX ON dc_base (person_id, pool)")
 
 
 def raceField(cur):
@@ -244,13 +258,21 @@ def raceField(cur):
                avg(((r.speed_rating / b.b - 1) > 0.05)::int),
                avg(((r.speed_rating / b.b - 1) < -0.05)::int)
         FROM   results r
-        JOIN   dc_base b ON b.person_id = r.person_id
+        JOIN   dc_base b ON b.person_id = r.person_id AND b.pool = r.rating_pool
         LEFT   JOIN meets m ON r.source = 'anet' AND m.meet_id = r.meet_id
                            AND m.div_id = r.div_id
         WHERE  r.speed_rating > 0
         GROUP  BY r.meet_id, r.div_id, r.source
         HAVING count(*) >= %s""", (FIELD_MIN,))
     cands = fieldCandidates(cur.fetchall())
+    # ★ A PIN THE FIELD STILL REJECTS COMES OFF (2026-10-19). Pins are
+    #   sticky because a fixed race stops showing its gap. So a PINNED race
+    #   that still reads 9%+ off its own level was not fixed by its pin --
+    #   a wrong pin shows the gap the other way (the Catholic League's
+    #   2 miles pinned to 1609 rates its field at half their level). Every
+    #   race past the bars goes back to main, which drops the ones it had
+    #   pinned and lets the next run judge them at their stored distance.
+    rejects = {(int(c[0]), int(c[1])) for c in cands if c[2] == "anet"}
     meets = sorted({c[0] for c in cands if c[2] == "anet"})
     md = {}
     if meets:
@@ -265,7 +287,7 @@ def raceField(cur):
             pins[(int(meet), int(div))] = s
         issues.append(("race_field", "XC", f"{source} {meet}/{div}", int(n),
                        float(gap), int(n) * abs(float(gap)), ev, action))
-    return issues, pins
+    return issues, pins, rejects
 
 
 _VENUE_SQL = """
@@ -306,7 +328,7 @@ def venueLabel(cur):
         FROM   dc_venue v
         JOIN   results r ON r.source = 'anet' AND r.meet_id = v.meet_id
                         AND r.div_id = v.div_id
-        JOIN   dc_base b ON b.person_id = r.person_id
+        JOIN   dc_base b ON b.person_id = r.person_id AND b.pool = r.rating_pool
         WHERE  r.speed_rating > 0
         GROUP  BY 1, 2, 3, 4
         HAVING count(*) >= %s""", (FIELD_MIN,))
@@ -366,7 +388,7 @@ def main():
     import time
     write = "--write" in sys.argv
     from database import getConn
-    issues, pins = [], {}
+    issues, pins, rejects = [], {}, set()
     t0 = time.time()
     with getConn() as c, c.cursor() as cur:
         # ★ SAY WHAT IT IS DOING (owner, 2026-10-18: "30 minutes and printed
@@ -386,7 +408,11 @@ def main():
             print(f"[data_checks] {name} ...", flush=True)
             try:
                 got = fn(cur)
-                if name in ("race_field", "venue_label"):
+                if name == "race_field":
+                    got, more, rejects = got
+                    for k, v in more.items():
+                        pins.setdefault(k, v)
+                elif name == "venue_label":
                     got, more = got
                     for k, v in more.items():
                         pins.setdefault(k, v)
@@ -415,11 +441,17 @@ def main():
     if os.path.exists(PATH):
         text = io.open(PATH, encoding="utf-8", newline="").read()
         old = readPins(text)
-        merged = dict(old)
+        merged = {k: v for k, v in old.items() if k not in rejects}
+        dropped = sorted(set(old) - set(merged))
         for k, v in pins.items():
-            merged.setdefault(k, v)
+            if k not in dropped:
+                merged.setdefault(k, v)
         io.open(PATH, "w", encoding="utf-8", newline="").write(replaceBlock(text, block(merged)))
-        print(f"[data_checks] pins: {len(merged) - len(old):,} new, {len(merged):,} in the block")
+        print(f"[data_checks] pins: {len(set(merged) - set(old)):,} new, "
+              f"{len(dropped):,} dropped (their field still reads 9%+ off its "
+              f"own level at the pinned distance), {len(merged):,} in the block")
+        for meet, div in dropped[:20]:
+            print(f"    dropped ({meet}, {div}): was {old[(meet, div)]:g} m")
     else:
         print(f"[data_checks] {PATH} missing -- pins not written")
 

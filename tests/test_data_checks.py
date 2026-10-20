@@ -73,8 +73,10 @@ def test_the_checks_on_a_database():
         with cx.cursor() as c:
             c.execute("""
                 CREATE TABLE results (result_id bigint, meet_id bigint, div_id bigint,
-                    source text, person_id bigint, athlete_id bigint, speed_rating real);
-                CREATE TABLE results_tf (person_id bigint, speed_rating real, event_short text);
+                    source text, person_id bigint, athlete_id bigint, speed_rating real,
+                    rating_pool text DEFAULT 'hs_m');
+                CREATE TABLE results_tf (person_id bigint, speed_rating real, event_short text,
+                    rating_pool text DEFAULT 'hs_m');
                 CREATE TABLE meets (meet_id bigint, div_id bigint, distance real);
                 CREATE TABLE athletes (athlete_id bigint, gender text);
                 -- 20 runners rated ~100 in 5 races each; meet 9 div 91 reads ~10% low
@@ -82,12 +84,17 @@ def test_the_checks_on_a_database():
                     100 + (g % 3) FROM generate_series(1,20) g, generate_series(1,5) k;
                 INSERT INTO results SELECT 9000+g, 9, 91, 'anet', g, g, 89
                     FROM generate_series(1,20) g;
+                -- the same runners in another pool, on that pool's scale (2026-10-19:
+                -- one career mean over pools read a children's 2 miles as a mile)
+                INSERT INTO results SELECT 50000+g*10+k, 500+k, 5000+k, 'anet', g, g,
+                    200, 'ms_m' FROM generate_series(1,20) g, generate_series(1,5) k;
                 INSERT INTO meets VALUES (9, 91, 4506), (9, 92, 5000);
                 INSERT INTO athletes SELECT g, 'M' FROM generate_series(1,20) g;
                 INSERT INTO results_tf VALUES (1, 100, '880y'), (1, 100, '800m');
             """)
-            issues, pins = DC.raceField(c)
+            issues, pins, rejects = DC.raceField(c)
             assert pins == {(9, 91): 5000.0}, (issues, pins)
+            assert rejects == {(9, 91)}
             got = DC.parser(c)
             assert [g[2] for g in got] == []          # the SQL reads yards now
             assert DC.personGender(c) == []
