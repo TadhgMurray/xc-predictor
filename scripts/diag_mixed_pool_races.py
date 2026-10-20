@@ -40,7 +40,11 @@ _RACES_SQL = """
            array_agg(person_id), array_agg(split_part(pool, '|', 1)),
            array_agg(year), array_agg(speed_rating)
     FROM   ranking_results
-    WHERE  sport = 'XC' AND speed_rating > 0 AND result_id > 0
+    -- ! NO result_id > 0 (2026-10-20, first run: 591 races, not one at
+    --   8k). tfrrs rows carry NEGATIVE result ids, and most college and
+    --   pro runners are tfrrs rows -- the filter kept only athletic.net's
+    --   college runners and lost the races this check exists for.
+    WHERE  sport = 'XC' AND speed_rating > 0
       AND  person_id IS NOT NULL AND year >= %(since)s
     GROUP  BY meet_id, div_id, round(distance)
     HAVING count(*) FILTER (WHERE pool LIKE 'college%%' OR pool LIKE 'pro%%') >= %(min_adult)s
