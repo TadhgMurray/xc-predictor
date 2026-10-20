@@ -1646,6 +1646,15 @@ fi
 # the one pass they need, at a trickle, after everything the site is
 # waiting for has shipped. See scripts/gentle_vacuum.py.
 step 18_vacuum        "$PY" -u scripts/gentle_vacuum.py
+# ★ AND THE BOARDS TABLES READ AGAIN, AFTER IT (2026-10-20). Two builds in a
+#   row put a ranking_results live that read clean at build time and had a
+#   bad page hours later -- the server log said "page verification failed,
+#   calculated checksum 58904 but expected 61754": the page changed AFTER
+#   Postgres wrote it, on a drive with no errors. The vacuum is the last
+#   writer of those pages; this reads every one of them once more (~20 s),
+#   so a bad page FAILS tonight's run and mails, instead of turning up days
+#   later in a backup or a script. The repair is in its log.
+step 18b_integrity_boards "$PY" -u scripts/integrity_check.py --tables ranking_results,athlete_season
 
 # the background steps (10f2, 13j, 17d): collected last
 bgwait
