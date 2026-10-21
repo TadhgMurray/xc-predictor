@@ -1615,6 +1615,15 @@ if [ "${XCP_LACCTIC:-1}" != "0" ]; then
   step 16b_lacctic      "$PY" -u scripts/lacctic_compare.py \
       --race "${XCP_LACCTIC_RACES:-12194,12158,11632}" --runners 150 || true
 fi
+# ★ OUR PREDICTIONS FOR KAILO'S UPCOMING MEETS, SAVED BEFORE THE RACE (owner,
+#   2026-10-21: "compare our accuracy to Kailo's"). scripts/kailo_compare.py
+#   --record writes engine/data/kailo/<race>.json for each race Kailo has
+#   published and not yet run, once; the comparison scores those as
+#   "recorded" -- neither system saw the result. A few meets, a few dozen
+#   requests. XCP_KAILO=0 skips.
+if [ "${XCP_KAILO:-1}" != "0" ]; then
+  step 16c_kailo_record "$PY" -u scripts/kailo_compare.py --record || true
+fi
 # ★ PAGE TIMES WITH NOTHING CACHED (owner, 2026-10-13: "it should be fast
 #   w or w/o a cache"): a fresh process renders random pages of every kind
 #   and times each page and every SQL statement in it; the slow pages and
