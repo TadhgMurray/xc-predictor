@@ -7,6 +7,17 @@ races and the same runners. READ-ONLY (our database; LACCTiC's public API).
     /srv/venv/bin/python scripts/lacctic_compare.py --race 12194
     /srv/venv/bin/python scripts/lacctic_compare.py --race 12194,12158 --runners 60
     /srv/venv/bin/python scripts/lacctic_compare.py --runner 144903
+    /srv/venv/bin/python scripts/lacctic_compare.py --season 2025 --top 40 --runners 600
+
+★ --season Y --top N (owner, 2026-10-21: "we should do more"; the nightly
+  3 races give 10,000 pairs but only 3 races, and races are the unit that
+  varies). The N most important cross country races of the Y season
+  (15 Aug - 15 Dec), from LACCTiC's own race list (league_races: every
+  race, newest first, 100 a page -- the season's pages are found by a
+  binary search on the page number, a dozen requests). The ORDER result
+  then carries a 95% interval on (ours - theirs) from resampling whole
+  races, so a gap can be told from noise. Slow on purpose: one request a
+  runner, --sleep apart (600 runners ~ 15 minutes).
 
 ★ WHY (owner, 2026-10-04: "lacctic just seems more authoritative, even if
   it also feels off"). LACCTiC is college only and states every result as a
@@ -248,6 +259,57 @@ def runner_perfs(lac_id, person, ours, sleep):
     return out
 
 
+def seasonRaces(year, top, sleep):
+    """The `top` most important LACCTiC races dated 15 Aug - 15 Dec of
+    `year`, as [(id, date, meet, section, importance)]."""
+    lo, hi = f"{year}-08-15", f"{year}-12-15"
+    first = fetch("league_races/", sleep)
+    n_pages = max(1, math.ceil(first["count"] / max(len(first["results"]), 1)))
+
+    def page(i):
+        return fetch(f"league_races/?page={i}", sleep)["results"]
+
+    # newest first: the first page whose OLDEST race is on/before `hi`
+    a, b = 1, n_pages
+    while a < b:
+        mid = (a + b) // 2
+        rows = page(mid)
+        if rows and rows[-1]["date"] > hi:
+            a = mid + 1
+        else:
+            b = mid
+    out, i = [], a
+    while i <= n_pages:
+        rows = page(i)
+        out += [r for r in rows if lo <= r["date"] <= hi]
+        if not rows or rows[-1]["date"] < lo:
+            break
+        i += 1
+    out.sort(key=lambda r: -(r.get("importance") or 0))
+    print(f"[lacctic] {year} season: {len(out):,} races; the {min(top, len(out))} most important")
+    return [(r["id"], r["date"], r["meet_name"], r["section"], r.get("importance"))
+            for r in out[:top]]
+
+
+def raceBootstrap(order_rows, n=2000, seed=7):
+    """95% interval of (ours - theirs) pair accuracy, resampling whole
+    races. order_rows: [(ours, theirs, pairs)] per race. Pure."""
+    import random
+    rnd = random.Random(seed)
+    k = len(order_rows)
+    if k < 3:
+        return None
+    diffs = []
+    for _ in range(n):
+        smp = [order_rows[rnd.randrange(k)] for _ in range(k)]
+        npair = sum(p for _, _, p in smp)
+        if not npair:
+            continue
+        diffs.append(sum((o - t) * p for o, t, p in smp) / npair)
+    diffs.sort()
+    return diffs[int(0.025 * len(diffs))], diffs[int(0.975 * len(diffs)) - 1]
+
+
 def pairwise(rows):
     """Share of pairs a system orders right: rows of (place, ours, theirs)
     abilities (ln 5K, lower = faster). Returns (ours, theirs, pairs)."""
@@ -268,6 +330,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--race", default="", help="LACCTiC race ids, comma separated")
+    ap.add_argument("--season", type=int, default=None,
+                    help="instead of --race: the season's most important races")
+    ap.add_argument("--top", type=int, default=40, help="with --season: how many races")
     ap.add_argument("--runner", default="", help="LACCTiC runner ids: compare their races")
     ap.add_argument("--runners", type=int, default=150,
                     help="runners sampled from the races for the consistency and "
@@ -276,6 +341,11 @@ def main():
     ap.add_argument("--sleep", type=float, default=1.0, help="seconds between requests")
     a = ap.parse_args()
     races = [int(x) for x in a.race.split(",") if x.strip()]
+    if a.season:
+        picked = seasonRaces(a.season, a.top, a.sleep)
+        for rid, day, meet, sec, imp in picked:
+            print(f"   {rid:>6}  {day}  {imp:5.2f}  {meet[:44]} -- {sec[:40]}")
+        races += [r[0] for r in picked]
     lac_runners = [int(x) for x in a.runner.split(",") if x.strip()]
     if not races and not lac_runners:
         ap.error("--race or --runner")
@@ -375,6 +445,11 @@ def main():
                   f"runner's OTHER races, {n_pairs:,} pairs in {races_used} races:")
             print(f"     ours {100 * go:.1f}%   theirs {100 * gt:.1f}%   (higher = better; "
                   f"--runners 150+ for a firmer number)")
+            ci = raceBootstrap(order_rows)
+            if ci:
+                print(f"     ours - theirs {100 * (go - gt):+.2f} points, 95% interval "
+                      f"{100 * ci[0]:+.2f} to {100 * ci[1]:+.2f} (whole races resampled; "
+                      f"an interval across 0 is a tie)")
         if trk_o:
             print(f"   XC -> TRACK 5000 (the conversion against the clock), "
                   f"{len(trk_o)} runner-seasons: XC number minus the actual 5000 time")
