@@ -214,8 +214,9 @@ def ourResults(cur, meet_id, div_id):
             for pid, sec, sch, nm, an in cur.fetchall()]
 
 
-def ourPredictions(cur, person_ids, target):
-    """{person_id: seconds} from the predictor every page serves.
+def ourPredictions(cur, person_ids, target, detail=None):
+    """{person_id: seconds} from the predictor every page serves. `detail`,
+    a dict, also gets each runner's whole entry (form pool, races, basis).
 
     ! ON A DICT CURSOR (2026-10-22, first server run: "dictionary update
       sequence element #0 has length 28"). predict reads rows by column
@@ -225,8 +226,52 @@ def ourPredictions(cur, person_ids, target):
     from psycopg2.extras import RealDictCursor
     dcur = cur.connection.cursor(cursor_factory=RealDictCursor)
     preds = P._servedTimes(dcur, list(person_ids), target)
-    return {pid: float(e["seconds"]) for pid, e in zip(person_ids, preds)
-            if e and e.get("seconds") and e.get("is_race_time", True)}
+    out = {}
+    for pid, e in zip(person_ids, preds):
+        if e and e.get("seconds") and e.get("is_race_time", True):
+            out[pid] = float(e["seconds"])
+            if detail is not None:
+                detail[pid] = e
+    return out
+
+
+def runnerGroups(e):
+    """[(table, group)] a runner's misses are filed under, from their
+    predictor entry. Pure."""
+    e = e or {}
+    pool = (e.get("form_pool") or "?").split("|", 1)[0].split("_", 1)[0] or "?"
+    n = e.get("n_races")
+    nb = "?" if n is None else ("1-2" if n <= 2 else "3-5" if n <= 5 else "6+")
+    return [("form pool", pool), ("races in form", nb),
+            ("basis", e.get("basis") or e.get("time_basis") or "?"),
+            ("stale", "yes" if (e.get("stale_years") or 0) > 0 else "no")]
+
+
+def breakdown(recs):
+    """recs: [(groups, miss_ours, miss_theirs)]. {(table, group): (n, mean
+    |ours|, mean |theirs|, bias ours, bias theirs)}. Pure."""
+    acc = {}
+    for groups, mo, mt in recs:
+        for g in groups:
+            acc.setdefault(g, []).append((mo, mt))
+    out = {}
+    for g, v in acc.items():
+        n = len(v)
+        out[g] = (n, sum(abs(a) for a, _b in v) / n, sum(abs(b) for _a, b in v) / n,
+                  sum(a for a, _b in v) / n, sum(b for _a, b in v) / n)
+    return out
+
+
+def spread(miss_by_race):
+    """Average miss once each race's own mean miss is taken off: how well
+    the runners are placed against each other, with the course and the
+    day's level set aside. Pure."""
+    xs = []
+    for ms in miss_by_race:
+        if ms:
+            m = sum(ms) / len(ms)
+            xs += [abs(x - m) for x in ms]
+    return sum(xs) / len(xs) if xs else None
 
 
 def matchRunners(kailo_rows, athletes, ours):
@@ -253,7 +298,7 @@ def matchRunners(kailo_rows, athletes, ours):
 #  the two modes
 # ------------------------------------------------------------------ #
 
-def compareSeason(cur, season, sleep, show):
+def compareSeason(cur, season, sleep, show, csv_path=None):
     tr = fetch("/track-record", sleep, params={"season": season} if season else None)
     today = datetime.date.today().isoformat()
     races = [r for r in tr.get("races", []) if r.get("state") in SCORED
@@ -265,6 +310,7 @@ def compareSeason(cur, season, sleep, show):
     meets = {}
     all_o, all_t, order = [], [], [0, 0, 0]
     per_race = []
+    recs, by_race_o, by_race_t, csv_rows = [], [], [], []
     for r in races:
         mk = r["meet_key"]
         if mk not in meets:
@@ -283,13 +329,15 @@ def compareSeason(cur, season, sleep, show):
         mid, mname, divs = found
         div = pickDivision(divs, float(r["distance_m"]), r["sex"], r["section"])
         if div is None:
-            print(f"  ✗ {label}: our meet {mid} ({mname}) has no matching division")
+            print(f"  ✗ {label}: our meet {mid} ({mname}) has no matching division "
+                  f"({r['distance_m']} m, {r['sex']}); ours: "
+                  + "; ".join(f"{d}={nm} {dist}" for d, (dist, nm) in sorted(divs.items())))
             continue
         ours = ourResults(cur, mid, div)
         trip = matchRunners(ver["rows"], m.get("athletes") or {}, ours)
         store = os.path.join(STORE, f"{r['race_key'].replace(':', '_')}.json")
         how = "rebuilt"
-        recorded = {}
+        recorded, detail = {}, {}
         if os.path.exists(store):
             try:
                 recorded = {int(k): v for k, v in json.load(open(store))["ours"].items()}
@@ -300,13 +348,22 @@ def compareSeason(cur, season, sleep, show):
             recorded = ourPredictions(cur, [p for _t, p, _a in trip],
                                       {"mode": "meet", "meet_id": mid, "div_id": div,
                                        "sport": "XC", "source": "tfrrs",
-                                       "history_before": r["race_date"]})
+                                       "history_before": r["race_date"]}, detail)
             cur.connection.rollback()
-        rows = [(recorded[p], t, a) for t, p, a in trip if p in recorded]
+        kept = [(p, recorded[p], t, a) for t, p, a in trip if p in recorded]
+        rows = [(o, t, a) for _p, o, t, a in kept]
         if len(rows) < 5:
             print(f"  ✗ {label}: {len(rows)} runners predicted by both")
             continue
         mo, mt_, (go, gt, n) = scores(rows)
+        by_race_o.append(mo)
+        by_race_t.append(mt_)
+        for (p, o, t, a), x, y in zip(kept, mo, mt_):
+            e = detail.get(p) or {}
+            recs.append((runnerGroups(e), x, y))
+            csv_rows.append((label, p, round(a, 1), o, t, round(x, 2), round(y, 2),
+                             e.get("form_pool"), e.get("form_rating"), e.get("n_races"),
+                             e.get("stale_years"), e.get("basis")))
         all_o += mo
         all_t += mt_
         order = [order[0] + go, order[1] + gt, order[2] + n]
@@ -331,8 +388,27 @@ def compareSeason(cur, season, sleep, show):
     if order[2]:
         print(f"    order: ours {100 * order[0] / order[2]:.1f}%   Kailo "
               f"{100 * order[1] / order[2]:.1f}%   ({order[2]:,} pairs)")
+    so_, st_ = spread(by_race_o), spread(by_race_t)
+    if so_ is not None:
+        print(f"    with each race's own level taken off: ours {so_:.2f}%   Kailo {st_:.2f}%"
+              "   (the runners against each other; the course and day aside)")
     print("  (miss = |predicted - actual| / actual; Kailo's own track record uses the "
           "average. 'rebuilt' = ours from results before race day only.)")
+    if recs and any(g for g, _a, _b in recs):
+        print(f"\n  where ours misses ('?' = recorded races, no entry kept)\n  {'':<16}{'group':<12}{'runners':>8}"
+              f"{'miss ours':>11}{'Kailo':>8}{'bias ours':>11}{'Kailo':>8}")
+        bd = breakdown(recs)
+        for (tab, grp), (n, ao, at, bo, bt) in sorted(bd.items()):
+            print(f"  {tab:<16}{str(grp):<12}{n:>8}{ao:>10.2f}%{at:>7.2f}%{bo:>+10.2f}%{bt:>+7.2f}%")
+    if csv_path and csv_rows:
+        import csv
+        with open(csv_path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["race", "person_id", "actual_s", "ours_s", "kailo_s", "miss_ours",
+                        "miss_kailo", "form_pool", "form_rating", "n_races", "stale_years",
+                        "basis"])
+            w.writerows(csv_rows)
+        print(f"  {len(csv_rows)} runners written to {csv_path}")
 
 
 def recordUpcoming(cur, season, sleep):
@@ -402,6 +478,7 @@ def main():
                     help="save our predictions for Kailo's upcoming races now")
     ap.add_argument("--show", type=int, default=0, help="races listed (0 = all)")
     ap.add_argument("--sleep", type=float, default=1.0)
+    ap.add_argument("--csv", default=None, help="write every runner's row here")
     a = ap.parse_args()
     from database import getConn
     with getConn() as conn:
@@ -409,7 +486,7 @@ def main():
         if a.record:
             recordUpcoming(cur, a.season, a.sleep)
         else:
-            compareSeason(cur, a.season, a.sleep, a.show)
+            compareSeason(cur, a.season, a.sleep, a.show, a.csv)
         conn.rollback()
 
 

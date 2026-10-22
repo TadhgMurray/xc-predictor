@@ -49,3 +49,20 @@ def test_match_runners_by_name_then_school():
             (9, K.nameKey("Smith, Sam"), "Oklahoma St.", 1490.0)]
     got = K.matchRunners(kailo_rows, athletes, ours)
     assert got == [(1450.0, 7, 1440.0), (1500.0, 9, 1490.0)]
+
+
+def test_runner_groups_and_breakdown():
+    e = {"form_pool": "college_m|XC", "n_races": 2, "basis": "rating", "stale_years": 0.0}
+    g = K.runnerGroups(e)
+    assert ("form pool", "college") in g and ("races in form", "1-2") in g
+    assert ("stale", "no") in g
+    assert ("form pool", "?") in K.runnerGroups({})
+    bd = K.breakdown([(g, -4.0, 2.0), (g, 2.0, -1.0)])
+    n, ao, at, bo, bt = bd[("form pool", "college")]
+    assert n == 2 and ao == 3.0 and at == 1.5 and bo == -1.0 and bt == 0.5
+
+
+def test_spread_takes_off_each_races_level():
+    # every runner 4% fast in one race, 2% slow in the other: no spread at all
+    assert K.spread([[-4.0, -4.0, -4.0], [2.0, 2.0]]) == 0.0
+    assert abs(K.spread([[-5.0, -3.0]]) - 1.0) < 1e-12
