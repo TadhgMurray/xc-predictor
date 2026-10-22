@@ -12792,6 +12792,70 @@ def status_watchdog():
                            now=datetime.datetime.now(datetime.timezone.utc))
 
 
+# ★ WHAT'S NEW, FOR READERS (owner, 2026-10-22: "why would it be admin only,
+#   it's supposed to inform the ppl"). New results with their meets, when
+#   ratings were recomputed, and the plain accuracy number -- activity
+#   .publicEvent decides what a reader sees. Edge-cacheable like every
+#   public page: NOTHING ABOUT THE READER IS IN THE MARKUP. "New since your
+#   last visit" is marked in the browser (localStorage), and the bar's dot
+#   comes from /api/updates/latest (topbar-search.js).
+@app.route("/updates")
+def updates_page():
+    import activity
+    try:
+        fd = activity.publicFeedCached(getConn)
+    except Exception:                                   # noqa: BLE001
+        app.logger.exception("updates feed failed")
+        fd = {"events": [], "n_new": 0, "latest": None}
+    return render_template("updates.html", fd=fd)
+
+
+@app.route("/api/updates/latest")
+def updates_latest():
+    import activity
+    try:
+        latest = activity.publicFeedCached(getConn).get("latest")
+    except Exception:                                   # noqa: BLE001
+        latest = None
+    resp = jsonify({"latest": latest.isoformat(timespec="seconds") if latest else None})
+    resp.headers["Cache-Control"] = "public, max-age=300"
+    return resp
+
+
+# ★ THE ACTIVITY FEED (owner, 2026-10-22: "something on the site that shows
+#   notifications, like when a pipeline step runs, what changed and how it
+#   changed accuracy, the latest scraped races"). Pipeline and nightly runs,
+#   each full run's accuracy against the one before, the scraped meets and
+#   the Kailo recordings, newest first -- see activity.py. "New" is since
+#   this browser's last visit (a cookie), so it reads as a notification list
+#   with no table behind it. Same admin gate as /account/status.
+_ACTIVITY_COOKIE = "rc_activity_seen"
+
+
+@app.route("/account/status/activity")
+def status_activity():
+    import datetime
+    import activity
+    import site_status
+    _sess, go = _statusAdmin()
+    if go:
+        return go
+    try:
+        seen = datetime.datetime.fromisoformat(request.cookies.get(_ACTIVITY_COOKIE, ""))
+    except ValueError:
+        seen = None
+    with getConn() as conn:
+        fd = activity.feed(conn, seen)
+    resp = make_response(render_template(
+        "status_activity.html", fd=fd, seen=seen, ago=site_status.ago,
+        now=datetime.datetime.now(),
+        kind=(request.args.get("kind") or "")[:20]))
+    resp.set_cookie(_ACTIVITY_COOKIE, datetime.datetime.now().isoformat(timespec="seconds"),
+                    max_age=400 * 86400, httponly=True, samesite="Lax", secure=request.is_secure,
+                    path="/account/status")
+    return resp
+
+
 @app.route("/account/status/resolve", methods=["POST"])
 def status_resolve():
     import site_status

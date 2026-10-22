@@ -1,0 +1,85 @@
+{# updates.html -- What's new: the reader's activity feed (activity.publicFeed).
+   ★ (owner, 2026-10-22: "it's supposed to inform the ppl") New results with
+     their meets, when every rating was recomputed, and the plain accuracy
+     number, newest first.
+   ! EDGE-CACHED LIKE EVERY PUBLIC PAGE: nothing about the reader is in the
+     markup. "New since your last visit" is marked by the script at the end
+     from localStorage, which also clears the bar's dot (topbar-search.js). #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+{% set meta_title = "What's new" %}
+{% set meta_description = "New results on Racecast, when every rating was last recomputed, and how accurate the ratings are." %}
+{% set meta_crumbs = [("What's new", none)] %}
+{% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+<style>
+  .upd-list { list-style: none; padding: 0; margin: 0; }
+  .upd-list li { border-bottom: 1px solid var(--line, #e5e5e5); padding: .6rem 0; }
+  .upd-list details summary { cursor: pointer; list-style: none; }
+  .upd-list details summary::-webkit-details-marker { display: none; }
+  .upd-list ul { margin: .35rem 0 0; padding-left: 1.1rem; font-size: .9rem; }
+  .upd-new { display: none; font-size: .7rem; font-weight: 700; letter-spacing: .04em;
+             padding: 0 .35rem; border-radius: 3px; background: var(--accent, #c0392b); color: #fff; margin-right: .3rem; }
+  li.is-new .upd-new { display: inline-block; }
+  .upd-bad { color: var(--bad, #b03a2e); }
+</style>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc about-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <h1>What's new</h1>
+    <div class="rc-meta">New results, rating updates and accuracy, newest first.
+      <span id="upd-count"></span></div>
+  </div>
+</div></header>
+<div class="rc-grid">
+<div class="rc-mainc">
+{% if not fd.events %}
+  <p class="meta">Nothing to show right now.</p>
+{% endif %}
+<ul class="upd-list">
+{% for e in fd.events[:150] %}
+  <li data-at="{{ e.at.isoformat(timespec='seconds') }}">
+    {% if e.detail or e.links %}<details><summary>{% else %}<div>{% endif %}
+      <span class="upd-new">NEW</span>
+      <b class="{{ 'upd-bad' if e.level == 'bad' else '' }}">{{ e.title }}</b>
+      <span class="meta no-break">· {{ e.at.strftime("%b %-d, %H:%M") }} UTC</span>
+      {% if e.summary %}<br><span class="meta">{{ e.summary }}</span>{% endif %}
+    {% if e.detail or e.links %}</summary>
+      <ul>
+      {% for l in e.links %}{% if l[1] %}<li><a href="{{ l[1] }}">{{ l[0] }}</a></li>{% endif %}{% endfor %}
+      {% for d in e.detail %}{% if not e.links or loop.index > e.links|length %}<li>{{ d }}</li>{% endif %}{% endfor %}
+      </ul>
+    </details>{% else %}</div>{% endif %}
+  </li>
+{% endfor %}
+</ul>
+</div>
+</div>
+</main>
+<script>
+(function () {
+  var KEY = "rc_updates_seen", seen = null;
+  try { seen = localStorage.getItem(KEY); } catch (e) {}
+  var items = document.querySelectorAll(".upd-list > li[data-at]"), n = 0, newest = null;
+  for (var i = 0; i < items.length; i++) {
+    var at = items[i].getAttribute("data-at");
+    if (!newest || at > newest) newest = at;
+    if (seen && at > seen) { items[i].classList.add("is-new"); n++; }
+  }
+  var c = document.getElementById("upd-count");
+  if (c && seen) c.textContent = n ? "· " + n + " new since your last visit" : "· nothing new since your last visit";
+  if (newest) { try { localStorage.setItem(KEY, newest); } catch (e) {} }
+  var dots = document.querySelectorAll(".upd-dot");
+  for (var j = 0; j < dots.length; j++) dots[j].remove();
+})();
+</script>
+</body>
+</html>

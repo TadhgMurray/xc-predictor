@@ -297,3 +297,57 @@ function escAttr(s) {
     }
   });
 })();
+
+/* ★ THE WHAT'S NEW DOT (owner, 2026-10-22: updates are "supposed to inform
+     the ppl"). The bar is edge-cached, so it knows nothing about the reader:
+     a dot goes on the Tools button and the "What's new" link when the
+     newest update is after the reader's last look at /updates (localStorage,
+     set by that page). /api/updates/latest is asked at most every 10 minutes
+     per browser and is itself cached for 5. A first visit starts the clock
+     (the newest update is taken as seen), so the dot marks what is new to
+     THIS reader, never the whole history. */
+(function () {
+  if (location.pathname === '/updates') return;
+  var SEEN = 'rc_updates_seen', CHECK = 'rc_updates_check';
+  function ls(k, v) {
+    try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); }
+    catch (e) { return null; }
+  }
+  function dot(latest) {
+    var seen = ls(SEEN);
+    if (!latest || !seen || latest <= seen) return;
+    var links = document.querySelectorAll('a[href="/updates"]');
+    var targets = Array.prototype.slice.call(links);
+    var sum = document.querySelector('.topnav-tools > summary');
+    if (sum) targets.push(sum);
+    for (var i = 0; i < targets.length; i++) {
+      if (targets[i].querySelector('.upd-dot')) continue;
+      var d = document.createElement('span');
+      d.className = 'upd-dot';
+      d.setAttribute('aria-label', 'new');
+      d.style.cssText = 'display:inline-block;width:7px;height:7px;border-radius:50%;' +
+                        'background:#d64933;margin-left:5px;vertical-align:middle';
+      targets[i].appendChild(d);
+    }
+  }
+  function run() {
+    var now = Date.now(), last = ls(CHECK), cached = null;
+    if (last) {
+      var parts = last.split('|');
+      if (now - (+parts[0] || 0) < 600000) cached = parts[1] || '';
+    }
+    if (cached !== null) { dot(cached); return; }
+    fetch('/api/updates/latest', { credentials: 'omit' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        var latest = (j && j.latest) || '';
+        ls(CHECK, now + '|' + latest);
+        // a first visit starts the clock: the next update after today dots
+        if (latest && !ls(SEEN)) ls(SEEN, latest);
+        dot(latest);
+      })
+      .catch(function () {});
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
+  else run();
+})();

@@ -73,7 +73,9 @@ def test_the_tools_menu_links(A):
         ("/scale", "Rating to time"),
         ("/goal", "Goal calculator"),
     ]
-    assert links(ref) == [("/about", "About"), ("/report", "Report an issue")]
+    # "What's new" (owner, 2026-10-22): the reader's update feed, under the divider
+    assert [u for u, _t in links(ref)] == ["/updates", "/about", "/report"]
+    assert [t for _u, t in links(ref)][1:] == ["About", "Report an issue"]
     # "Who wins state" is the predictions page's state-meets mode
     assert dict((t, u) for u, t in links(tools))["Who wins state"] == A.app.url_map.bind("x").build("pages2.projections_index")
 

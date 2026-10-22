@@ -1,0 +1,70 @@
+{# status_activity.html -- the owner's activity feed (activity.py), admins
+   only, under /account/status. ★ (owner, 2026-10-22) Pipeline and nightly
+   runs, accuracy against the run before, scraped meets and Kailo
+   recordings, newest first; NEW = since this browser's last visit.
+   ! READ ONLY. Same shape as watchdog.html. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Activity" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+<style>
+  .act-list { list-style: none; padding: 0; margin: 0; }
+  .act-list li { border-bottom: 1px solid var(--line, #e5e5e5); padding: .55rem 0; }
+  .act-list details summary { cursor: pointer; list-style: none; }
+  .act-list details summary::-webkit-details-marker { display: none; }
+  .act-list pre { white-space: pre-wrap; font-size: .8rem; margin: .4rem 0 0; }
+  .act-kind { display: inline-block; min-width: 5.5rem; font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; }
+  .act-new { font-weight: 700; }
+</style>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc status-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Admin · private</span></div>
+    <h1>Activity</h1>
+    <div class="rc-meta"><a href="/account/status">Site status</a> · <a href="/account/status/watchdog">Watchdog</a> ·
+      {% for k, label in [("", "All"), ("pipeline", "Pipeline"), ("nightly", "Nightly"), ("accuracy", "Accuracy"), ("scraped", "Scraped"), ("kailo", "Kailo")] %}
+        {% if kind == k %}<b>{{ label }}</b>{% else %}<a href="?kind={{ k }}">{{ label }}</a>{% endif %}{% if not loop.last %} · {% endif %}
+      {% endfor %}</div>
+    <p class="st-head {{ 'st-head-bad' if fd.events|selectattr('new')|selectattr('level', 'equalto', 'bad')|list else 'st-head-ok' }}">
+      {{ fd.n_new }} new since {% if seen %}your last visit ({{ ago((now - seen).total_seconds()) }} ago){% else %}ever{% endif %}</p>
+  </div>
+</div></header>
+<div class="rc-grid">
+<div class="rc-mainc">
+{% for src, msg in fd.errors.items() %}
+  <p class="st-err">Could not read the {{ src }} events: {{ msg }}</p>
+{% endfor %}
+{% set shown = fd.events if not kind else fd.events|selectattr("kind", "equalto", kind)|list %}
+{% if not shown %}<p class="meta">Nothing yet.</p>{% endif %}
+<ul class="act-list">
+{% for e in shown[:200] %}
+  <li{% if e.new %} class="act-new"{% endif %}>
+    <details>
+      <summary>
+        <span class="act-kind meta">{{ e.kind }}</span>
+        {% if e.new %}<span class="st-warn">NEW</span> {% endif %}
+        <span class="{{ 'st-err' if e.level == 'bad' else 'st-warn' if e.level == 'warn' else 'st-ok' if e.level == 'ok' else '' }}">{{ e.title }}</span>
+        <span class="meta no-break">· {{ e.at.strftime("%b %d %H:%M") }} ({{ ago((now - e.at).total_seconds()) }} ago)</span>
+        {% if e.summary %}<br><span class="meta">{{ e.summary }}</span>{% endif %}
+      </summary>
+      {% if e.links %}<div class="meta">{% for l in e.links %}{% if l[1] %}<a href="{{ l[1] }}">{{ l[0] }}</a>{% else %}{{ l[0] }}{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+      {% if e.detail %}<pre>{{ e.detail|join("\n") }}</pre>{% endif %}
+    </details>
+  </li>
+{% endfor %}
+</ul>
+</div>
+</div>
+</main>
+</body>
+</html>
