@@ -215,9 +215,16 @@ def ourResults(cur, meet_id, div_id):
 
 
 def ourPredictions(cur, person_ids, target):
-    """{person_id: seconds} from the predictor every page serves."""
+    """{person_id: seconds} from the predictor every page serves.
+
+    ! ON A DICT CURSOR (2026-10-22, first server run: "dictionary update
+      sequence element #0 has length 28"). predict reads rows by column
+      name, as the site's RealDictCursor gives them; this script's own
+      queries unpack tuples."""
     import predict as P
-    preds = P._servedTimes(cur, list(person_ids), target)
+    from psycopg2.extras import RealDictCursor
+    dcur = cur.connection.cursor(cursor_factory=RealDictCursor)
+    preds = P._servedTimes(dcur, list(person_ids), target)
     return {pid: float(e["seconds"]) for pid, e in zip(person_ids, preds)
             if e and e.get("seconds") and e.get("is_race_time", True)}
 
