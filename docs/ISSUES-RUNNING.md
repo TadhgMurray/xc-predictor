@@ -6591,3 +6591,8 @@ results_tf 295235013 (person 18506492, 800m 2026-05-27 unattached, 134.6).
 Both people are in wheelchair_person (Ambulatory; T13). The engine and
 fill_ratings exclude by person, so the likely path is a row re-linked to
 the person after it was rated. Not traced yet.
+- Applied on NEW: tier 2 placed 788 meets; 2026 college races with their
+  own course cell 0% -> 65.1% (71.0% of finishers), 13.5% "no cell" (the
+  Sunday solve fits them), 21.4% still no gps. Then a no-state fallback:
+  a meet with an empty state (Gans Creek, Gil Dodds) matches on the name
+  alone when that name is one location everywhere we know it.

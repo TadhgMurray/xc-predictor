@@ -226,11 +226,20 @@ def _knownCourses(cur, tier1_stamps):
             add(_key(raw, state), loc, lat, lon)
 
     index, conflicts = {}, 0
+    by_name = {}                    # name alone -> {location_id: (loc,lat,lon)}
     for key, variants in counts.items():
         if len(variants) > 1:
             conflicts += 1
         best = max(variants.items(), key=lambda kv: kv[1])[0]   # most common
         index[key] = best
+        for v in variants:
+            by_name.setdefault(key[0], {})[v[0]] = v
+    # ★ A MEET WITH NO STATE (2026-10-22: Gans Creek Classic, Gil Dodds at
+    #   St. James Farm -- tfrrs left the state empty) matches on the name
+    #   alone, only when that name is ONE location everywhere we know it.
+    for name, locs in by_name.items():
+        if len(locs) == 1:
+            index.setdefault((name, None), next(iter(locs.values())))
     return index, conflicts
 
 
@@ -258,6 +267,8 @@ def _tier2(cur, known, tier1_meets):
         if meet_id in tier1_meets:
             continue
         hit = known.get(_key(raw, state)) or known.get(_key(venue, state))
+        if hit is None and not (state or "").strip():
+            hit = known.get(_key(raw, None)) or known.get(_key(venue, None))
         if hit is not None:
             loc, lat, lon = hit
             stamps.append((meet_id, loc, lat, lon))
