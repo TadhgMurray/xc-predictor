@@ -6506,3 +6506,31 @@ OPEN:
   the scorecard alone. Re-judge it with A in place, on the same checks as A
   plus the season-rating lag (late-season order on the backtest), at a
   couple of ridges (1, 4).
+
+## 2026-10-22 -- HS -> college: the public-scale rating and the 5K column disagree (OPEN)
+
+Owner's case: a Notre Dame freshman, HS 149.3 = 16:50, college 149.2 =
+16:02 (same public-scale rating, 5K column 5% apart). Her own races side
+with the clock (flat-course 5K ~16:56 at HS state, ~16:04 at Burke).
+scripts/diag_hs_to_college.py, 2019-2025:
+
+- A. 25,357 runners, last HS -> first college season. Public-scale rating
+  change median +0.00% (women +0.14, men -0.10); the 5K column's change
+  +1.23%; gap +1.33% (sd 0.8%). The factor is ONE number per pool
+  (pool_view.hsFactor: college_m 1.2033, college_f 1.2029), the clocks are
+  not proportional, so the gap grows at the top -- hers is ~5%.
+- B. Each pool's clock against the next spring's track (predicted -
+  actual): hs_f -1.54% (slowest third +0.79, fastest -1.80), college_f
+  -2.33%, hs_m -0.97% (+0.94 / -1.11), college_m -1.61%. Every clock
+  reads fast (part may be soft once-a-year 3200/5000 bests); college ~0.7%
+  more than HS (the course credit), and the HS clock gets faster than the
+  track as the rating rises.
+- C. The median gap is about half the college clock (course credit), half
+  the constant factor.
+
+📋 Proposed: (1) the public scale by EQUAL TIME, not one factor: a
+college rating's HS-equivalent is the HS rating with the same track 5K
+(monotone within a pool, so no board reorders; the rating and the 5K
+column then agree everywhere -- her college season would read ~156).
+(2) The college course credit (XCP_TILT_SCALE=hs trial). (3) The HS
+clock's slope at the top end (fastest third -1.8% vs slowest +0.8%).
