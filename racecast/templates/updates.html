@@ -19,10 +19,13 @@
 <script defer src="{{ static_v('topbar-search.js') }}"></script>
 <style>
   .upd-list { list-style: none; padding: 0; margin: 0; }
-  .upd-list li { border-bottom: 1px solid var(--line, #e5e5e5); padding: .6rem 0; }
+  .upd-list > li { border-bottom: 1px solid var(--line, #e5e5e5); padding: .6rem 0; }
   .upd-list details summary { cursor: pointer; list-style: none; }
   .upd-list details summary::-webkit-details-marker { display: none; }
-  .upd-list ul { margin: .35rem 0 0; padding-left: 1.1rem; font-size: .9rem; }
+  .upd-more { font-size: .8rem; }
+  details[open] .upd-more { display: none; }
+  .upd-items { list-style: none; margin: .4rem 0 0; padding: 0; font-size: .92rem; }
+  .upd-items li { padding: .15rem 0; }
   .upd-new { display: none; font-size: .7rem; font-weight: 700; letter-spacing: .04em;
              padding: 0 .35rem; border-radius: 3px; background: var(--accent, #c0392b); color: #fff; margin-right: .3rem; }
   li.is-new .upd-new { display: inline-block; }
@@ -47,15 +50,17 @@
 <ul class="upd-list">
 {% for e in fd.events[:150] %}
   <li data-at="{{ e.at.isoformat(timespec='seconds') }}">
-    {% if e.detail or e.links %}<details><summary>{% else %}<div>{% endif %}
+    {% set more = e["items"] or e.detail %}
+    {% if more %}<details><summary>{% else %}<div>{% endif %}
       <span class="upd-new">NEW</span>
       <b class="{{ 'upd-bad' if e.level == 'bad' else '' }}">{{ e.title }}</b>
       <span class="meta no-break">· {{ e.at.strftime("%b %-d, %H:%M") }} UTC</span>
       {% if e.summary %}<br><span class="meta">{{ e.summary }}</span>{% endif %}
-    {% if e.detail or e.links %}</summary>
-      <ul>
-      {% for l in e.links %}{% if l[1] %}<li><a href="{{ l[1] }}">{{ l[0] }}</a></li>{% endif %}{% endfor %}
-      {% for d in e.detail %}{% if not e.links or loop.index > e.links|length %}<li>{{ d }}</li>{% endif %}{% endfor %}
+      {% if e["items"] %}<span class="meta upd-more"> · show the meets</span>{% endif %}
+    {% if more %}</summary>
+      <ul class="upd-items">
+      {% for name, href, meta in e["items"] %}<li><a href="{{ href }}">{{ name }}</a> <span class="meta">· {{ meta }}</span></li>{% endfor %}
+      {% for d in e.detail %}<li class="meta">{{ d }}</li>{% endfor %}
       </ul>
     </details>{% else %}</div>{% endif %}
   </li>

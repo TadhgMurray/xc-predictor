@@ -125,7 +125,7 @@ def test_the_admin_page_shows_the_feed_and_hides_from_readers(monkeypatch):
     r = client.get("/account/status/activity")
     assert r.status_code == 200, r.data[:400]
     html = r.get_data(as_text=True)
-    assert "1 new since" in html and "NEW</span>" in html
+    assert "1 new (first visit" in html and "NEW</span>" in html
     assert "1 failed: 02_b &lt;x&gt;" in html and 'href="/meet/xc/5"' in html
     assert "Could not read the scraped events: timeout" in html
     assert "rc_activity_seen=" in r.headers.get("Set-Cookie", "")
@@ -151,15 +151,15 @@ def test_public_events_hide_internals():
     pub = AC.publicEvent(sc)
     assert pub["title"] == "New results: 1 meet, 900 results"
     assert pub["summary"] == "cross country 1 meet" and "tfrrs" not in json.dumps(pub, default=str)
-    assert pub["detail"] == ["XC · 2026-10-17 · Pre-Nats (900)"]
+    assert pub["items"] == [("Pre-Nats", "/meet/xc/7", "XC · Oct 17 · 900 results")]
 
 
 def test_the_public_page_and_latest_api(monkeypatch):
     import app as A
     t = datetime.datetime(2026, 10, 22, 3, 0, 0)
     pub = {"events": [{"at": t, "kind": "scraped", "level": "info", "title": "New results: 1 meet, 900 results",
-                       "summary": "cross country 1 meet", "detail": ["XC · 2026-10-17 · Pre-Nats (900)"],
-                       "links": [("Pre-Nats", "/meet/xc/7")]}],
+                       "summary": "cross country 1 meet", "detail": [],
+                       "items": [("Pre-Nats", "/meet/xc/7", "XC · Oct 17 · 900 results")]}],
            "n_new": 1, "latest": t}
     monkeypatch.setattr(AC, "publicFeedCached", lambda get_conn: pub)
     client = A.app.test_client()

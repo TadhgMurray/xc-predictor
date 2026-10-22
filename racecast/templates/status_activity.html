@@ -36,7 +36,7 @@
         {% if kind == k %}<b>{{ label }}</b>{% else %}<a href="?kind={{ k }}">{{ label }}</a>{% endif %}{% if not loop.last %} · {% endif %}
       {% endfor %}</div>
     <p class="st-head {{ 'st-head-bad' if fd.events|selectattr('new')|selectattr('level', 'equalto', 'bad')|list else 'st-head-ok' }}">
-      {{ fd.n_new }} new since {% if seen %}your last visit ({{ ago((now - seen).total_seconds()) }} ago){% else %}ever{% endif %}</p>
+      {{ fd.n_new }} new {% if seen %}since your last visit ({{ ago((now - seen).total_seconds()) }} ago){% else %}(first visit from this browser){% endif %}</p>
   </div>
 </div></header>
 <div class="rc-grid">

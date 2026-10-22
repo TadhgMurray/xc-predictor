@@ -301,9 +301,11 @@ def scrapeDays(rows, names):
                     "pub_title": f"New results: {len(items):,} meet{'s' if len(items) != 1 else ''}, "
                                  f"{n_rows:,} results",
                     "pub_summary": " · ".join(pub_bits),
-                    "pub_detail": [f"{'XC' if sp == 'XC' else 'Track'} · {(day or '')[:10]} · "
-                                   f"{names.get((sp, src, mid)) or 'meet ' + str(mid)} ({n:,})"
-                                   for n, sp, src, mid, day, _s in items[:40]],
+                    # (meet, its page, "XC · Oct 18 · 2,210 results") -- one line each
+                    "pub_items": [(names.get((sp, src, mid)) or f"Meet {mid}",
+                                   f"/meet/{sp.lower()}/{mid}",
+                                   f"{'XC' if sp == 'XC' else 'Track'} · {_day(day)} · {n:,} results")
+                                  for n, sp, src, mid, day, _s in items[:40]],
                     "title": f"Scraped {key}: {len(items):,} meet{'s' if len(items) != 1 else ''}, "
                              f"{n_rows:,} results",
                     "summary": " · ".join(f"{sp} {src} {k}" for (sp, src), k in sorted(by_feed.items())),
@@ -313,6 +315,15 @@ def scrapeDays(rows, names):
                                f"/meet/{sp.lower()}/{mid}")
                               for n, sp, src, mid, day, _s in items[:8]]})
     return out
+
+
+def _day(d):
+    """'2026-10-18' -> 'Oct 18'. Pure."""
+    try:
+        x = datetime.date.fromisoformat(str(d)[:10])
+    except ValueError:
+        return str(d or "")[:10]
+    return f"{x:%b} {x.day}"
 
 
 def kailoEvents(store=KAILO_STORE, days=14):
@@ -349,29 +360,25 @@ PUBLIC_METRICS = {
 def publicEvent(e):
     """The reader's version of one feed event, or None to leave it out. Pure."""
     kind, level = e.get("kind"), e.get("level")
-    base = {"at": e.get("at"), "kind": kind, "level": level, "links": e.get("links") or []}
+    base = {"at": e.get("at"), "kind": kind, "level": level, "items": [], "detail": []}
     if kind == "scraped":
         return dict(base, title=e.get("pub_title") or e.get("title"),
-                    summary=e.get("pub_summary") or "", detail=e.get("pub_detail") or [])
+                    summary=e.get("pub_summary") or "", items=e.get("pub_items") or [])
     if kind == "pipeline":
         if level == "bad":
             return dict(base, title="A full ratings update ran into a problem",
-                        summary="The site keeps the last good numbers until it is fixed.",
-                        detail=[], links=[])
+                        summary="The site keeps the last good numbers until it is fixed.")
         if level == "warn":
             return dict(base, title="Full ratings update in progress",
-                        summary="Every result is being re-rated; pages update when it finishes.",
-                        detail=[], links=[])
+                        summary="Every result is being re-rated; pages update when it finishes.")
         return dict(base, title="Every rating recomputed",
-                    summary="A full update: every result re-rated, courses and conditions refitted.",
-                    detail=[], links=[])
+                    summary="A full update: every result re-rated, courses and conditions refitted.")
     if kind == "nightly":
         if level == "bad":
             return dict(base, title="Last night's update ran into a problem",
-                        summary="Some new results may wait for the next one.", detail=[], links=[])
+                        summary="Some new results may wait for the next one.")
         return dict(base, title="New results rated",
-                    summary="Last night's update: newly scraped races rated and the boards refreshed.",
-                    detail=[], links=[])
+                    summary="Last night's update: newly scraped races rated and the boards refreshed.")
     if kind == "accuracy":
         lines = []
         for key, (label, scale, better) in PUBLIC_METRICS.items():
@@ -386,7 +393,7 @@ def publicEvent(e):
         if not lines:
             return None
         return dict(base, title="Accuracy after the latest full update", summary=lines[0],
-                    detail=lines[1:], links=[])
+                    detail=lines[1:])
     return None
 
 
