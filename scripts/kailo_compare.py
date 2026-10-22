@@ -9,6 +9,10 @@ database; Kailo's public API.
     /srv/venv/bin/python scripts/kailo_compare.py --season 2026 --show 10
     /srv/venv/bin/python scripts/kailo_compare.py --record       # save OUR predictions for
                                                                  # their upcoming races, now
+    /srv/venv/bin/python scripts/kailo_compare.py --basis model  # score one basis of ours
+    sudo bash deploy/install_kailo_record_timer.sh               # --record every 6 hours
+
+  The RATINGS alone (no course, no day): scripts/kailo_ratings.py.
 
 ★ WHY (owner, 2026-10-21: "how can we compare our accuracy to Kailo's").
   Kailo publishes, per college meet, every runner's predicted time with the
@@ -71,6 +75,7 @@ _S.headers.update({"User-Agent": "racecast-compare/1.0 (read-only research)",
 #   before the start all the same, and the results are in our tfrrs rows.
 SCORED = {"scored", "results_unavailable", "awaiting_results", "held", "locked"}
 UPCOMING = {"published", "locked"}
+BASES = ("rating", "guard", "model")
 _STOP = {"the", "of", "and", "at", "xc", "cross", "country", "invitational",
          "invite", "meet", "championship", "championships", "college", "open"}
 
@@ -118,11 +123,28 @@ def finalVersion(race):
     return latest
 
 
+_SEX_WORDS = {"women", "woman", "womens", "female", "girls", "men", "man", "mens", "male",
+              "boys"}
+
+
+def _divSimilarity(a, b):
+    """A section name against a division name: the words that tell sections
+    apart ("Maize", "Navy Championship", "Open"), with the apostrophes, the
+    sex and the distance taken out. No stop list: "Open" is a section here."""
+    def w(x):
+        toks = re.findall(r"[a-z0-9]+", (x or "").lower().replace("'", "").replace("’", ""))
+        return {t for t in toks if t not in _SEX_WORDS and not re.search(r"\d", t)}
+    wa, wb = w(a), w(b)
+    return len(wa & wb) / len(wa | wb) if wa and wb else 0.0
+
+
 def pickDivision(divs, distance_m, sex, section):
     """divs: {div_id: (distance, name)}. The division of the race: distance
     within 3%, the sex's word, then most of the section's own words."""
-    want_sex = {"F": ("women", "woman", "female", "girls"),
-                "M": ("men", "man", "male", "boys")}.get(sex, ())
+    # ! "Womens"/"Mens" WITHOUT THE APOSTROPHE (2026-10-22: all five Running
+    #   of the Cows sections unmatched, ours read "Womens Maize 6000M")
+    want_sex = {"F": ("women", "woman", "womens", "female", "girls"),
+                "M": ("men", "man", "mens", "male", "boys")}.get(sex, ())
     best, best_score = None, -1.0
     for div, (dist, name) in divs.items():
         if not dist or abs(float(dist) - distance_m) > 0.03 * distance_m:
@@ -131,9 +153,9 @@ def pickDivision(divs, distance_m, sex, section):
         toks = set(re.findall(r"[a-z]+", low))
         if want_sex and not (toks & set(want_sex)):
             continue
-        if sex == "M" and toks & {"women", "woman", "female", "girls"}:
+        if sex == "M" and toks & {"women", "woman", "womens", "female", "girls"}:
             continue
-        score = similarity(section, name)
+        score = _divSimilarity(section, name)
         if score > best_score:
             best, best_score = div, score
     return best
@@ -170,20 +192,26 @@ def summary(miss):
 #  our side
 # ------------------------------------------------------------------ #
 
-def ourMeet(cur, name, day):
+def ourMeet(cur, name, day, lo_days=-1, hi_days=1, course=None):
     """(meet_id, meet_name, {div: (distance, name)}) of the tfrrs XC meet
-    that is this race, or None."""
+    that is this race (dated within [day + lo_days, day + hi_days]), or None.
+
+    ★ OR THE SAME VENUE (2026-10-22: "NCAA Division II Pre-Nationals" found
+      nothing; a meet's name is the host's to choose, the course is not).
+      Kailo's course name against our venue name counts as a fair match."""
     d = datetime.date.fromisoformat(day)
     cur.execute("""
-        SELECT meet_id, meet_name, division_distances
+        SELECT meet_id, meet_name, division_distances, venue_name
         FROM   meets_tfrrs
         WHERE  sport = 'XC'
           AND  substr(date::text, 1, 10) BETWEEN %s AND %s""",
-                ((d - datetime.timedelta(days=1)).isoformat(),
-                 (d + datetime.timedelta(days=1)).isoformat()))
+                ((d + datetime.timedelta(days=lo_days)).isoformat(),
+                 (d + datetime.timedelta(days=hi_days)).isoformat()))
     best, best_s = None, 0.25
-    for mid, mname, divs in cur.fetchall():
+    for mid, mname, divs, venue in cur.fetchall():
         s = similarity(name, mname)
+        if course and similarity(course, venue) >= 0.5:
+            s = max(s, 0.5)
         if s > best_s:
             best, best_s = (mid, mname, divs), s
     if not best:
@@ -314,7 +342,7 @@ def matchRunners(kailo_rows, athletes, ours):
 #  the two modes
 # ------------------------------------------------------------------ #
 
-def compareSeason(cur, season, sleep, show, csv_path=None):
+def compareSeason(cur, season, sleep, show, csv_path=None, basis=None):
     tr = fetch("/track-record", sleep, params={"season": season} if season else None)
     today = datetime.date.today().isoformat()
     races = [r for r in tr.get("races", []) if r.get("state") in SCORED
@@ -338,7 +366,8 @@ def compareSeason(cur, season, sleep, show, csv_path=None):
         if ver is None:
             print(f"  ✗ {label}: no prediction published before the start")
             continue
-        found = ourMeet(cur, r["meet_name"], r["race_date"])
+        found = ourMeet(cur, r["meet_name"], r["race_date"],
+                        course=((m.get("meet") or {}).get("venue") or {}).get("course_name"))
         if not found:
             print(f"  ✗ {label}: no tfrrs meet of ours matches")
             continue
@@ -356,7 +385,9 @@ def compareSeason(cur, season, sleep, show, csv_path=None):
         recorded, detail = {}, {}
         if os.path.exists(store):
             try:
-                recorded = {int(k): v for k, v in json.load(open(store))["ours"].items()}
+                saved = json.load(open(store))
+                pick = (saved.get("by_basis") or {}).get(basis) if basis else None
+                recorded = {int(k): v for k, v in (pick or saved["ours"]).items()}
                 how = "recorded"
             except (OSError, ValueError, KeyError):
                 recorded = {}
@@ -444,7 +475,10 @@ def recordUpcoming(cur, season, sleep):
             if race.get("state") not in UPCOMING or not (race.get("latest") or {}).get("rows"):
                 continue
             store = os.path.join(STORE, f"{race['race_key'].replace(':', '_')}.json")
-            if os.path.exists(store):
+            # ★ RE-RECORDED UNTIL THE GUN, so ours is as late as Kailo's final
+            #   version (published the morning of); never after the start
+            now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            if not race.get("start_at") or race["start_at"] <= now:
                 continue
             day = (race.get("start_at") or "")[:10]
             people = {}
@@ -455,19 +489,57 @@ def recordUpcoming(cur, season, sleep):
                     people[pid] = row["athlete_key"]
             if not people:
                 continue
-            target = {"mode": "manual", "sport": "XC", "date": day,
-                      "distance": race.get("distance_m"), "course": course,
-                      "history_before": day}
-            got = ourPredictions(cur, list(people), target)
-            cur.connection.rollback()
+            target = upcomingTarget(cur, m, race, day, course)
+            # ★ EVERY BASIS, so the clean test can say which one to serve
+            #   (2026-10-22: guard 4.70%, model 3.71% on Cowboy Jamboree)
+            served = os.environ.get("XCP_PREDICT_BASIS")
+            by_basis = {}
+            for b in BASES:
+                os.environ["XCP_PREDICT_BASIS"] = b
+                by_basis[b] = {str(p): s for p, s in
+                               ourPredictions(cur, list(people), target).items()}
+                cur.connection.rollback()
+            if served is None:
+                os.environ.pop("XCP_PREDICT_BASIS", None)
+            else:
+                os.environ["XCP_PREDICT_BASIS"] = served
+            got = by_basis.get(served or "rating") or by_basis["rating"]
             json.dump({"race_key": race["race_key"], "recorded_at":
                        datetime.datetime.utcnow().isoformat() + "Z",
-                       "target": target, "ours": {str(p): s for p, s in got.items()}},
+                       "target": target, "served_basis": served or "rating",
+                       "ours": got, "by_basis": by_basis},
                       open(store, "w"))
             n_saved += 1
             print(f"  ✓ {race['race_key']}: {len(got)} of {len(race['latest']['rows'])} "
-                  f"runners predicted ({day}, {course})")
+                  f"runners predicted ({day}, {target['mode']}: "
+                  f"{target.get('meet_id') or course})")
     print(f"[kailo] {n_saved} upcoming races recorded under {STORE}")
+
+
+def upcomingTarget(cur, meet, race, day, course):
+    """The predictor's target for a race not yet run.
+
+    ★ LAST YEAR'S EDITION, RE-RUN ON THIS YEAR'S DATE (2026-10-22). A
+      'manual' target finds its course by the anet meets table's exact
+      course name, which Kailo's venue name almost never is -- so the race
+      would be predicted on a neutral course, the conversion that came out
+      8% fast at Cowboy Jamboree. The same meet a year earlier is in
+      meets_tfrrs with its venue, distance and course cell; 'rerun' keeps
+      that and moves the date. Manual only when there is no last edition."""
+    name = (meet.get("meet") or {}).get("name") or race.get("meet_name") or ""
+    dist = float(race.get("distance_m") or 0) or None
+    for years in (1, 2):
+        found = (ourMeet(cur, name, day, -365 * years - 21, -365 * years + 21, course=course)
+                 if name else None)
+        if not found or not dist:
+            continue
+        mid, _mname, divs = found
+        div = pickDivision(divs, dist, race.get("sex"), race.get("section") or "")
+        if div is not None:
+            return {"mode": "rerun", "meet_id": mid, "div_id": div, "sport": "XC",
+                    "source": "tfrrs", "date": day, "history_before": day}
+    return {"mode": "manual", "sport": "XC", "date": day, "distance": dist,
+            "course": course, "history_before": day}
 
 
 def findPerson(cur, name, school):
@@ -495,14 +567,19 @@ def main():
     ap.add_argument("--show", type=int, default=0, help="races listed (0 = all)")
     ap.add_argument("--sleep", type=float, default=1.0)
     ap.add_argument("--csv", default=None, help="write every runner's row here")
+    ap.add_argument("--basis", choices=BASES, default=None,
+                    help="score this basis of ours (default: what the site serves, "
+                         "XCP_PREDICT_BASIS)")
     a = ap.parse_args()
+    if a.basis:
+        os.environ["XCP_PREDICT_BASIS"] = a.basis
     from database import getConn
     with getConn() as conn:
         cur = conn.cursor()
         if a.record:
             recordUpcoming(cur, a.season, a.sleep)
         else:
-            compareSeason(cur, a.season, a.sleep, a.show, a.csv)
+            compareSeason(cur, a.season, a.sleep, a.show, a.csv, a.basis)
         conn.rollback()
 
 

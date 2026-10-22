@@ -66,3 +66,13 @@ def test_spread_takes_off_each_races_level():
     # every runner 4% fast in one race, 2% slow in the other: no spread at all
     assert K.spread([[-4.0, -4.0, -4.0], [2.0, 2.0]]) == 0.0
     assert abs(K.spread([[-5.0, -3.0]]) - 1.0) < 1e-12
+
+
+def test_pick_division_without_apostrophes():
+    ours = {0: (6000.0, "Womens Maize 6000M"), 1: (6000.0, "Womens Navy Championship 6000M"),
+            2: (8000.0, "Mens Maize 8000M"), 3: (8000.0, "Mens Navy Championship 8000M"),
+            4: (8000.0, "Mens Open 8000M")}
+    assert K.pickDivision(ours, 6000, "F", "Women's Maize 6K") == 0
+    assert K.pickDivision(ours, 6000, "F", "Women's Navy Championship 6K") == 1
+    assert K.pickDivision(ours, 8000, "M", "Men's Navy Championship 8K") == 3
+    assert K.pickDivision(ours, 8000, "M", "Men's Open 8K") == 4
