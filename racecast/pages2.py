@@ -156,14 +156,20 @@ def breakouts_page():
     # ★ BOTH SCALES (owner, 2026-10-09). One level is one pool, so one
     #   factor covers every number in the jumps list; differences scale by
     #   it too. No factor: the HS twins stay None and rv() shows own.
-    from pool_view import repFactor
-    factor = repFactor(B.LEVELS[level][0], sport)
+    from pool_view import toHs, mapMoves
+    lvl_pool = B.LEVELS[level][0]
     for r in breakouts:
-        for key in ("speed_rating", "jump", "prev_best", "base"):
-            v = r.get(key)
-            r["hs_" + key] = (round(float(v) * factor, 1)
-                              if v is not None and factor is not None else None)
-    has_hs_view = factor is not None and abs(factor - 1.0) > 0.005
+        for key in ("speed_rating", "prev_best", "base"):
+            h = toHs(r.get(key), lvl_pool, sport)
+            r["hs_" + key] = round(h, 1) if h is not None else None
+        # a jump is a difference of two ratings: the difference of their
+        # public-scale numbers, not the jump scaled (the map is not linear)
+        if r.get("hs_speed_rating") is not None and r.get("jump") is not None:
+            prev = toHs(float(r["speed_rating"]) - float(r["jump"]), lvl_pool, sport)
+            r["hs_jump"] = round(r["hs_speed_rating"] - prev, 1) if prev is not None else None
+        else:
+            r["hs_jump"] = None
+    has_hs_view = mapMoves(lvl_pool, sport)
     return render_template(
         "breakouts.html", data=data, level=level, has_hs_view=has_hs_view,
         level_words=B.LEVELS[level][1], levels=B.LEVELS,

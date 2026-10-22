@@ -347,9 +347,9 @@ def athleteCard(cur, pid):
             best_5k = None
     # ★ THE HS BEST IS ITS OWN MAX (owner, 2026-10-09): seasons span pools,
     #   so the best race on the HS scale need not be the own-pool best.
-    from pool_view import repFactor
-    best_hs = max((float(s["best_rating"])
-                   * (repFactor(s.get("pool"), s["sport"]) or 1.0)
+    from pool_view import toHs
+    best_hs = max(((toHs(s["best_rating"], s.get("pool"), s["sport"])
+                    or float(s["best_rating"]))
                    for s in seasons if s.get("best_rating") is not None),
                   default=None)
 

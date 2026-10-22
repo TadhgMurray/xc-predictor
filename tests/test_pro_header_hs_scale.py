@@ -90,7 +90,28 @@ def _run(rating, factors, races=None):
     athlete = {}
     ns = {"athlete": athlete, "rating": rating, "races": races or [],
           "repFactor": spy.repFactor, "seasonFactor": spy.seasonFactor}
-    exec(compile(_elseBlock(), "<app.py:else>", "exec"), ns)   # noqa: S102
+    # ★ THE HEADER CALLS pool_view.toHs (2026-10-22, the equal-time map);
+    #   with the map off that is own x repFactor, which is what the spy
+    #   stands for -- a stub module so the block imports no database
+    import sys
+    import types
+    saved = sys.modules.get("pool_view")
+    stub = types.ModuleType("pool_view")
+
+    def toHs(r, pool, sport=None):
+        if r is None:
+            return None
+        f = spy.repFactor(pool, sport)
+        return float(r) * f if f else None
+    stub.toHs = toHs
+    sys.modules["pool_view"] = stub
+    try:
+        exec(compile(_elseBlock(), "<app.py:else>", "exec"), ns)   # noqa: S102
+    finally:
+        if saved is None:
+            sys.modules.pop("pool_view", None)
+        else:
+            sys.modules["pool_view"] = saved
     return athlete, spy
 
 

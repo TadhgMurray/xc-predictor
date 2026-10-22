@@ -5474,16 +5474,13 @@ def _bestFirst(rows, sport):
     pools = {r.get("pool") for r in rows}
     if len(pools) < 2:
         return rows
-    from pool_view import repFactor
-    factors = {}
+    from pool_view import hsMap, toHs
     for pl in pools:
-        f = repFactor(pl, sport) if pl else None
-        if not f:
+        if not pl or hsMap(pl, sport) is None:
             return rows                 # cannot compare honestly -- do not
-        factors[pl] = float(f)
     return sorted(
         rows,
-        key=lambda r: -((r["rating"] or 0) * factors[r["pool"]]))
+        key=lambda r: -(toHs(r["rating"] or 0, r["pool"], sport) or 0))
 
 
 def meetSeason(cur, meet_id, sport, source=None):

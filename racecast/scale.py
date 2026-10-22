@@ -183,6 +183,28 @@ def buildTable(pool, ends, factor, step=STEP, convert=cellTime):
     the OWN scale; `factor` the pool's HS factor (None = no HS twin, and the
     rows are then own-scale numbers)."""
     f = float(factor) if factor else 1.0
+
+    # own <-> public scale: pool_view's map (hs = a * own ** b; with the
+    # equal-time map off that is x factor, as before)
+    def up(v):
+        if not factor:
+            return v
+        try:
+            from pool_view import toHs
+            h = toHs(v, pool)
+        except Exception:                               # noqa: BLE001
+            h = None
+        return h if h is not None else v * f
+
+    def down(h):
+        if not factor:
+            return h
+        try:
+            from pool_view import fromHs
+            o = fromHs(h, pool)
+        except Exception:                               # noqa: BLE001
+            o = None
+        return o if o is not None else h / f
     cols = columnsFor(pool)
     out = {"pool": pool, "label": dict(POOLS).get(pool, pool),
            "words": POOL_WORDS.get(pool, pool), "factor": factor,
@@ -192,7 +214,7 @@ def buildTable(pool, ends, factor, step=STEP, convert=cellTime):
     if not ends:
         return out
     lo, hi, info = ends
-    out.update(lo=round(lo * f, 1), hi=round(hi * f, 1), board=info,
+    out.update(lo=round(up(lo), 1), hi=round(up(hi), 1), board=info,
                n=(info or {}).get("n"))
     # each landmark marks the row it falls in: the row whose rating is at or
     # under it, within one step
@@ -202,13 +224,13 @@ def buildTable(pool, ends, factor, step=STEP, convert=cellTime):
                             ("median", "Median", "The middle of the board")):
         v = (info or {}).get(key)
         if v is not None:
-            marks.setdefault(int(math.floor(v * f / step) * step), []).append((tag, words))
-    span = roundedSpan(lo * f, hi * f, step)
+            marks.setdefault(int(math.floor(up(v) / step) * step), []).append((tag, words))
+    span = roundedSpan(up(lo), up(hi), step)
     if not span:
         return out
     first, last = span
     for hs in range(last, first - 1, -step):
-        own = hs / f
+        own = down(hs)
         times = {k: convert(own, pool, d, s) for k, _lab, d, s in cols}
         if not any(times.values()):
             continue

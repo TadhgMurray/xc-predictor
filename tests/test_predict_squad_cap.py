@@ -378,6 +378,12 @@ def _stubPoolView(factor_of):
     saved = sys.modules.get("pool_view")
     mod = types.ModuleType("pool_view")
     mod.repFactor = lambda pool, sport: factor_of(pool)
+    # the public scale's map (2026-10-22): with the equal-time map off it is
+    # (factor, 1), so these stand-ins carry the same arithmetic
+    mod.hsMap = lambda pool, sport=None: ((factor_of(pool), 1.0)
+                                          if factor_of(pool) else None)
+    mod.toHs = lambda r, pool, sport=None: (float(r) * factor_of(pool)
+                                            if factor_of(pool) else None)
     sys.modules["pool_view"] = mod
 
     def undo():

@@ -494,15 +494,15 @@ def _stampMeetHs(row, sport):
       each rating takes ITS pool's factor before the average. A rating with
       no factor keeps its own number, as rv() does.
     """
-    from pool_view import repFactor
+    from pool_view import toHs
     pools = row.pop("r_pools", None) or []
     ratings = row.pop("r_ratings", None) or []
     hs = []
     for p, v in zip(pools, ratings):
         if v is None:
             continue
-        f = repFactor(p, sport)
-        hs.append(float(v) * f if f is not None else float(v))
+        h = toHs(v, p, sport)
+        hs.append(h if h is not None else float(v))
     row["hs_avg_rating"] = round(sum(hs) / len(hs), 1) if hs else None
     row["hs_best_rating"] = round(max(hs), 1) if hs else None
 

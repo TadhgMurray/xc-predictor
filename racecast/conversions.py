@@ -1184,6 +1184,19 @@ def equivalenceLine(pool, course_distance, target_distance,
 FIVE_K_M = 5000.0
 
 
+def _baseHs(base_rating, pool, sport, hs_factor):
+    """A conversion's own-pool rating on the public scale (pool_view.toHs),
+    rounded; None without a factor."""
+    if not base_rating or not hs_factor:
+        return None
+    try:
+        from pool_view import toHs
+        h = toHs(base_rating, pool, sport)
+    except Exception:                                   # noqa: BLE001
+        h = None
+    return round(h if h is not None else base_rating * hs_factor, 1)
+
+
 def fiveKForRating(rating, pool, distance=FIVE_K_M):
     """{'rating', 'pool', 'norm', 'xc', 'track'} for a rating on `pool`'s
     scale: seconds at `distance` on an average XC course and on a typical
@@ -1519,7 +1532,11 @@ def convert_spread(source, xc_targets, tf_targets):
         from pool_view import repFactor
         hs_factor = repFactor(pool, source.get("sport"))
         if hs_factor and source.get("rating"):
-            source = dict(source, rating=float(source["rating"]) / hs_factor)
+            # the public scale back onto the pool's own (pool_view.fromHs:
+            # the equal-time map when on, / factor otherwise)
+            from pool_view import fromHs
+            own = fromHs(source["rating"], pool, source.get("sport"))
+            source = dict(source, rating=own if own else float(source["rating"]) / hs_factor)
 
     norm = source_to_normalized(source)
     if norm is None:
@@ -1600,8 +1617,7 @@ def convert_spread(source, xc_targets, tf_targets):
         "normalized_time": round(norm, 2),
         "base_rating": round(base_rating, 1) if base_rating else None,
         # the same number on the HS scale, for the page's toggle (issue 49)
-        "base_rating_hs": (round(base_rating * hs_factor, 1)
-                           if base_rating and hs_factor else None),
+        "base_rating_hs": _baseHs(base_rating, pool, source.get("sport"), hs_factor),
         # ★ THE FITTED LADDER WHEN THE SOURCE NAMES SOMEBODY, THE PROJECTED
         #   ONE OTHERWISE. Both are built from something measured -- an
         #   athlete's own critical speed, or this performance projected to

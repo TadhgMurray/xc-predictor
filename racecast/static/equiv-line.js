@@ -81,6 +81,12 @@
     var selPool = root.querySelector(".eq-pool");
     var fieldKey = root.querySelector(".eqc-field-key");
 
+    // own -> public scale: hs = a * own ** b (pool_view.hsMap)
+    function toHsView(r) {
+      var m = st.hsMap || (st.hs ? [st.hs, 1] : null);
+      return m ? m[0] * Math.pow(r, m[1]) : r;
+    }
+
     var st = {
       sport: root.dataset.sport || "XC",
       dist: parseFloat(root.dataset.dist) || null,
@@ -160,14 +166,14 @@
       if (r) {
         var hs = hsOn();
         var txt = (hs ? "HS-equivalent rating " : "Rating ") +
-                  (hs ? r * st.hs : r).toFixed(1);
+                  (hs ? toHsView(r) : r).toFixed(1);
         // ★ BOTH NUMBERS WHEN THEY DIFFER (owner, 2026-09-29): the rating
         //   the group reads on its own scale is the one thing a group
         //   change moves, so say which is which rather than leave one
         //   number to jump
         if (st.hs && Math.abs(st.hs - 1) > 0.005) {
           txt += hs ? " · " + r.toFixed(1) + " on the " + groupName() + " scale"
-                    : " (" + groupName() + ") · HS-equivalent " + (r * st.hs).toFixed(1);
+                    : " (" + groupName() + ") · HS-equivalent " + toHsView(r).toFixed(1);
         }
         ratingEl.textContent = txt;
       } else {
@@ -236,6 +242,9 @@
           status.hidden = true;
           st.points = body.points;
           st.hs = body.hs_factor || null;
+          // the public scale is hs = a * own ** b (pool_view.hsMap); b = 1
+          // when the equal-time map is off, and a is then the factor
+          st.hsMap = body.hs_map || (st.hs ? [st.hs, 1] : null);
           draw();
           // open on the race's winner, else a rating-100 runner (the group's
           // average) -- points run fastest first, rating descending

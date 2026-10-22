@@ -1152,17 +1152,23 @@ def _scaleActive(f):
     return f.get("scale") == "hs" and f.get("pool") == "all"
 
 
-def _hsScaleCase(prefix):
-    """CASE over (pool, sport) -> representative HS factor, or None when no
-    pool moves. `prefix` is the table alias with its dot, or ''."""
-    from pool_view import repFactor
+def _hsScaleCase(prefix, part=0):
+    """CASE over (pool, sport) -> the public-scale map's `part` (0: a, the
+    multiplier; 1: b, the exponent -- pool_view.hsMap, hs = a * own ** b),
+    or None when no pool moves. `prefix` is the table alias with its dot,
+    or ''. Switch off, a is the representative factor and b is 1."""
+    from pool_view import hsMap
     arms = []
+    neutral = 1.0
     for pool in _SCALE_POOLS:
         for sport in ("XC", "TF"):
-            fac = repFactor(pool, sport)
-            if fac is not None and abs(fac - 1.0) > 1e-9:
+            m = hsMap(pool, sport)
+            if m is None:
+                continue
+            v = float(m[part])
+            if abs(v - neutral) > 1e-9:
                 arms.append(f"WHEN {prefix}pool = '{pool}' AND "
-                            f"{prefix}sport = '{sport}' THEN {fac:.6f}")
+                            f"{prefix}sport = '{sport}' THEN {v:.6f}")
     if not arms:
         return None
     return "(CASE " + " ".join(arms) + " ELSE 1.0 END)"
@@ -1176,8 +1182,15 @@ def _scaleExpr(f, expr):
     alias, dot, col = expr.rpartition(".")
     if col not in _SCALED_COLS:
         return expr
-    case = _hsScaleCase(f"{alias}." if dot else "")
-    return expr if case is None else f"({expr} * {case})"
+    pre = f"{alias}." if dot else ""
+    case = _hsScaleCase(pre)
+    exp = _hsScaleCase(pre, 1)
+    if case is None and exp is None:
+        return expr
+    # ★ hs = a * own ** b (pool_view.hsMap): the equal-time map is a power
+    #   curve, so a board sorts on exactly the number the page shows
+    shown = f"power({expr}, {exp})" if exp is not None else expr
+    return shown if case is None else f"({shown} * {case})"
 
 
 _EVENT_KIND_PRESENT = None

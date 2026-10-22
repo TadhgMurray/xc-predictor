@@ -671,7 +671,10 @@ def test_follow_button_sits_beside_the_name_and_says_what_it_does():
 
 def test_alert_rating_is_on_the_hs_equivalent_scale(monkeypatch):
     import alert_email as AE
-    monkeypatch.setattr(AE, "hsScale", lambda pool: 0.5 if pool == "ms_m" else 1.0)
+    # the public scale is a map now (pool_view.toHs); a multiplier is its
+    # b = 1 case, so the arithmetic below is the same
+    monkeypatch.setattr(AE, "hsValue",
+                        lambda r, pool: float(r) * (0.5 if pool == "ms_m" else 1.0))
     p = {"type": "race", "pool": "ms_m", "rating": 120.0, "prev_rating": 110.0, "time": 600,
          "flags": {"jump": {"by": 22.0}}}
     facts = dict(AE.raceFacts(p))

@@ -115,11 +115,11 @@ def _hsEquivalent(value, pool, sport):
     if value is None:
         return None
     try:
-        from pool_view import repFactor
-        f = repFactor(pool, sport)
+        from pool_view import toHs
+        hs = toHs(value, pool, sport)
     except Exception:                                 # noqa: BLE001
-        f = None
-    return float(value) * f if f else float(value)
+        hs = None
+    return hs if hs is not None else float(value)
 
 
 def _hsOrOwn(row, key="speed_rating"):

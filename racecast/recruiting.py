@@ -406,14 +406,13 @@ def collegePlacements(cur, sport, hs_pool, rating, label_year):
     from urllib.parse import urlencode
     from werkzeug.datastructures import MultiDict
     from rankings import parseFilters as boardFilters, countOf
-    from pool_view import hsFactor
+    from pool_view import fromHs
     if rating is None:
         return []
     college = "college_m" if hs_pool.endswith("_m") else "college_f"
-    factor = hsFactor(college, sport, None)
-    if not factor:
+    equiv = fromHs(rating, college, sport)
+    if not equiv:
         return []
-    equiv = float(rating) / float(factor)
     # the latest college season on the board at or before this one
     # ! THE NEWEST year WITH A RATED SEASON IN IT (2026-09-21). Without the
     #   filter this can land on a year whose only college seasons are

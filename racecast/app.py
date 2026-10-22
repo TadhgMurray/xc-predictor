@@ -2439,10 +2439,9 @@ def athlete(person_id):
         #   is not an approximation of the right answer, it IS the right
         #   answer -- hsFactor being one number per pool. The median could
         #   only ever have reproduced it, or been dragged off it.
-        _sf = repFactor(season_rating["pool"], season_rating["sport"])
-        athlete["rating_hs"] = (float(athlete["rating"]) * _sf
-                                if athlete["rating"] is not None and _sf
-                                else None)
+        from pool_view import toHs as _toHs
+        athlete["rating_hs"] = _toHs(athlete["rating"], season_rating["pool"],
+                                     season_rating["sport"])
     else:
         athlete["rating"] = rating["speed_rating"] if rating else None
         athlete["rating_note"] = None
@@ -2478,11 +2477,10 @@ def athlete(person_id):
         #   and hsFactor says so; the page then shows the own-pool number,
         #   which is the posture every other caller takes.
         _pool = rating.get("pool") if rating else None
-        _sf = repFactor(_pool, (_pool.split("|", 1)[1]
-                                if _pool and "|" in _pool else None))
-        athlete["rating_hs"] = (float(athlete["rating"]) * _sf
-                                if athlete["rating"] is not None and _sf
-                                else None)
+        from pool_view import toHs as _toHs
+        athlete["rating_hs"] = _toHs(athlete["rating"], _pool,
+                                     _pool.split("|", 1)[1]
+                                     if _pool and "|" in _pool else None)
 
     # ⚠ A PROFESSIONAL SEASON NEWER THAN THE HEADER'S (owner, 2026-09-25,
     #   Jared Nuguse: "147.5 · 2022 TF season · top 0.1% of college men" over
@@ -9881,10 +9879,26 @@ def api_equivalence():
         # the points' rating column is the HS model's rating; the picked
         # group's own number is that over its factor -- the same relation
         # (own x factor = HS) every other page uses, read backwards
-        pts = [(round(r * ref_factor / hs_factor, 2), tc, tt) for r, tc, tt in pts]
+        # HS model rating -> the public scale (conv_pool's map) -> the picked
+        # group's own number (its map, read backwards): pool_view.toHs /
+        # fromHs, which are ref_factor and 1/hs_factor when the equal-time
+        # map is off
+        from pool_view import toHs as _toHs, fromHs as _fromHs
+
+        def _own(r):
+            pub = _toHs(r, conv_pool, sport)
+            own = _fromHs(pub if pub is not None else r * ref_factor, pool, sport)
+            return own if own is not None else r * ref_factor / hs_factor
+        pts = [(round(_own(r), 2), tc, tt) for r, tc, tt in pts]
+    try:
+        from pool_view import hsMap as _hsMap
+        _m = _hsMap(pool, sport)
+    except Exception:                                 # noqa: BLE001
+        _m = None
     body = {"pool": pool, "sport": sport, "tsport": tsport, "dist": dist,
             "target": target, "difficulty": diff, "points": pts,
-            "hs_factor": hs_factor, "converted_as": conv_pool}
+            "hs_factor": hs_factor, "hs_map": list(_m) if _m else None,
+            "converted_as": conv_pool}
     _EQUIV_CACHE[key] = (time.time(), body)
     if len(_EQUIV_CACHE) > _EQUIV_MAX:
         _EQUIV_CACHE.pop(min(_EQUIV_CACHE, key=lambda k: _EQUIV_CACHE[k][0]),

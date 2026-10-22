@@ -77,6 +77,20 @@ def hsScale(pool):
     return float(f) if f else 1.0
 
 
+def hsValue(rating, pool):
+    """`rating` (own scale) on the public scale -- pool_view.toHs, the
+    equal-time map when it is on; the number itself when the pool has no
+    HS twin or the map cannot be had."""
+    if rating is None:
+        return None
+    try:
+        from pool_view import toHs
+        h = toHs(rating, pool)
+    except Exception:                                   # noqa: BLE001
+        h = None
+    return float(h) if h is not None else float(rating)
+
+
 def clock(sec):
     """A result time as a results sheet prints it: 15:12.4, 4:21.5."""
     from recruiting import fmtTime
@@ -135,10 +149,11 @@ def raceFacts(p):
                 if f:
                     bits.append(f)
             out.append((label, ", ".join(bits) if bits else "yes"))
-    k = hsScale(p.get("pool"))
-    r = f"{float(p['rating']) * k:.1f}"
+    pool = p.get("pool")
+    shown = hsValue(p["rating"], pool)
+    r = f"{shown:.1f}"
     if p.get("prev_rating") is not None:
-        d = (float(p["rating"]) - float(p["prev_rating"])) * k
+        d = shown - hsValue(p["prev_rating"], pool)
         if abs(d) >= 0.05:
             r += f", {'up' if d > 0 else 'down'} {abs(d):.1f} from the previous race"
         else:
@@ -147,7 +162,7 @@ def raceFacts(p):
     if "jump" in fl:
         by = (fl.get("jump") or {}).get("by")
         if by is not None:
-            out.append(("Breakout", f"{float(by) * k:.1f} above the median of earlier races this season"))
+            out.append(("Breakout", f"{shown - hsValue(float(p['rating']) - float(by), pool):.1f} above the median of earlier races this season"))
     t = p.get("team")
     if t and not t.get("runners"):
         out.append(("Team", f"{t['school']} {ordinal(t['place'])} of {t['n_teams']} teams, {t['points']} points"))

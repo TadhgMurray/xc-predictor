@@ -704,14 +704,11 @@ def stampHsRatings(pool_rows, races):
                 pool = None
         race["pool"] = pool
 
-        factor = hsFactor(pool, sport, _raceDistance(race))
         rating = race.get("speed_rating")
-        if rating is not None and factor is not None:
-            race["hs_rating"] = float(rating) * factor
-            if abs(factor - 1.0) > _MOVES:
-                has_alt = True
-        else:
-            race["hs_rating"] = None
+        hs = toHs(rating, pool, sport)
+        race["hs_rating"] = hs
+        if hs is not None and mapMoves(pool, sport):
+            has_alt = True
     return has_alt
 
 
@@ -813,6 +810,139 @@ def repFactor(pool, sport):
     return hsFactor(pool, sport, _REP_DIST.get(sport))
 
 
+# ------------------------------------------------------------------ #
+#  THE PUBLIC SCALE AS A MAP, NOT A MULTIPLIER
+# ------------------------------------------------------------------ #
+#
+# ★ EQUAL TIME (owner, 2026-10-22, a Notre Dame freshman: HS 149.3 = 16:50
+#   and college 149.2 = 16:02 -- one public scale, two clocks 5% apart).
+#   The About page says "a high schooler and a collegian rated 140 ran as
+#   fast as each other". One multiplier per pool says that only on average:
+#   scripts/diag_hs_to_college.py found the rating and the 5K column 1.3%
+#   apart for the median HS -> college runner and ~5% at the top, because
+#   the pools' clocks are not proportional. Under XCP_EQUAL_TIME_SCALE=1 a
+#   rating's HS-equivalent is the HS rating whose track 5K (the 5K column,
+#   conversions.fiveKForRating) is the same time, so the rating and the
+#   column agree everywhere.
+#
+# ★ A POWER CURVE, hs = a * own ** b, FITTED ONCE PER POOL to the exact
+#   equal-time answer on a grid of ratings. Monotone, so a pool's own order
+#   is its HS order on every board (the property ONE FACTOR PER POOL above
+#   exists for); the same two numbers work in Python, in a board's SQL
+#   (rankings._scaleExpr) and in the browser (equiv-line.js). Switch off,
+#   it is exactly today's multiplier: (factor, 1).
+_MAP_CACHE = {}
+_MAP_GRID = tuple(range(40, 202, 4))
+
+
+def equalTimeOn():
+    import os
+    return os.environ.get("XCP_EQUAL_TIME_SCALE", "0").strip() == "1"
+
+
+def _trackSeconds(rating, pool):
+    import conversions
+    r = conversions.fiveKForRating(float(rating), pool, 5000.0)
+    return (r or {}).get("track")
+
+
+def _equalTimeHs(rating, pool, hs_pool, lo=10.0, hi=400.0):
+    """The HS rating whose track 5K equals `rating`'s on `pool`'s clock, or
+    None. Bisection: a higher rating is a faster time."""
+    t = _trackSeconds(rating, pool)
+    if not t:
+        return None
+    t_lo, t_hi = _trackSeconds(lo, hs_pool), _trackSeconds(hi, hs_pool)
+    if not t_lo or not t_hi or not (t_hi <= t <= t_lo):
+        return None
+    for _ in range(50):
+        mid = 0.5 * (lo + hi)
+        tm = _trackSeconds(mid, hs_pool)
+        if not tm:
+            return None
+        if tm > t:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def fitPowerMap(pairs):
+    """(a, b, max |log error| in %) of hs = a * own ** b over (own, hs)
+    pairs, least squares in logs. Pure."""
+    import math
+    xs = [math.log(o) for o, h in pairs if o > 0 and h and h > 0]
+    ys = [math.log(h) for o, h in pairs if o > 0 and h and h > 0]
+    n = len(xs)
+    if n < 3:
+        return None
+    mx, my = sum(xs) / n, sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx if sxx else 1.0
+    a = math.exp(my - b * mx)
+    err = max(abs(y - (math.log(a) + b * x)) for x, y in zip(xs, ys))
+    return a, b, 100.0 * err
+
+
+def hsMap(pool, sport=None):
+    """(a, b) with hs = a * own ** b for `pool`, or None when the pool has
+    no HS twin. Switch off (or no clock): (repFactor, 1.0)."""
+    f = repFactor(pool, sport)
+    if f is None:
+        return None
+    bare = (pool or "").split("|", 1)[0]
+    if bare in ("hs_m", "hs_f") or not equalTimeOn():
+        return (float(f), 1.0)
+    if bare in _MAP_CACHE:
+        return _MAP_CACHE[bare]
+    out = (float(f), 1.0)
+    try:
+        from normalize_distance import ratedScalePool
+        clock_pool = ratedScalePool(bare)
+        hs_pool = "hs_" + bare.rsplit("_", 1)[-1]
+        pairs = [(r, _equalTimeHs(r, clock_pool, hs_pool)) for r in _MAP_GRID]
+        fit = fitPowerMap([(o, h) for o, h in pairs if h])
+        if fit and fit[2] < 3.0:           # a curve that does not fit is no map
+            out = (fit[0], fit[1])
+            _FACTOR_WHY[bare + "|map"] = (f"equal time on the track 5K: hs = {fit[0]:.4f} * "
+                                          f"own^{fit[1]:.4f} (worst fit {fit[2]:.2f}%)")
+    except Exception as exc:                            # noqa: BLE001
+        _FACTOR_WHY[bare + "|map"] = f"equal-time map failed ({type(exc).__name__}); factor kept"
+    _MAP_CACHE[bare] = out
+    return out
+
+
+def toHs(rating, pool, sport=None):
+    """A rating on `pool`'s own scale as the public (HS-equivalent) number,
+    or None when the pool has no HS twin."""
+    if rating is None:
+        return None
+    m = hsMap(pool, sport)
+    if m is None:
+        return None
+    r = float(rating)
+    return m[0] * r ** m[1] if r > 0 else r * m[0]
+
+
+def fromHs(hs_rating, pool, sport=None):
+    """The inverse of toHs: a public-scale number back on `pool`'s own
+    scale, or None."""
+    if hs_rating is None:
+        return None
+    m = hsMap(pool, sport)
+    if m is None:
+        return None
+    h = float(hs_rating)
+    return (h / m[0]) ** (1.0 / m[1]) if h > 0 else h / m[0]
+
+
+def mapMoves(pool, sport=None):
+    """Whether the public scale changes this pool's numbers (the toggle's
+    reason to exist)."""
+    m = hsMap(pool, sport)
+    return m is not None and (abs(m[0] - 1.0) > _MOVES or abs(m[1] - 1.0) > 1e-6)
+
+
 def stampRowsHs(cur, sport, rows, distance=None, distance_key=None,
                 event_key=None, rating_key="speed_rating"):
     """Stamp row["hs_rating"] onto server-rendered RESULT rows (race, course,
@@ -865,13 +995,9 @@ def stampRowsHs(cur, sport, rows, distance=None, distance_key=None,
             d = row.get(distance_key)
         if d is None and event_key is not None and row.get(event_key):
             d, _label = _tfEvent(row[event_key])
-        factor = hsFactor(pool, sport, d)
-        if factor is not None:
-            row["hs_rating"] = float(rating) * factor
-            if abs(factor - 1.0) > _MOVES:
-                has_alt = True
-        else:
-            row["hs_rating"] = None
+        row["hs_rating"] = toHs(rating, pool, sport)
+        if row["hs_rating"] is not None and mapMoves(pool, sport):
+            has_alt = True
     return has_alt
 
 
@@ -887,16 +1013,11 @@ def stampBoardRows(rows, rating_keys=("rating",), pool=None, sport=None):
         s = row.get("sport", sport)
         # A row that knows its race distance gets the exact factor; a
         # season/career aggregate takes the representative one.
-        d = row.get("distance")
-        factor = hsFactor(p, s, d) if d else repFactor(p, s)
         for key in rating_keys:
-            rating = row.get(key)
-            if rating is not None and factor is not None:
-                row["hs_" + key] = round(float(rating) * factor, 1)
-                if abs(factor - 1.0) > _MOVES:
-                    has_alt = True
-            else:
-                row["hs_" + key] = None
+            hs = toHs(row.get(key), p, s)
+            row["hs_" + key] = round(hs, 1) if hs is not None else None
+            if hs is not None and mapMoves(p, s):
+                has_alt = True
     return has_alt
 
 

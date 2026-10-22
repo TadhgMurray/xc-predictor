@@ -32,8 +32,8 @@ def test_scale_sort():
        "_orderBy scales the sort column AND the tiebreak")
     ok('f.get("pool") == "all"' in body(R, "_scaleActive"),
        "scaling only on pool=all, where two factors can interleave")
-    ok("repFactor(pool, sport)" in body(R, "_hsScaleCase"),
-       "the CASE uses the same representative factor stampBoardRows uses")
+    ok("hsMap(pool, sport)" in body(R, "_hsScaleCase"),
+       "the CASE uses the same public-scale map stampBoardRows uses (pool_view.hsMap)")
     ok("cmp = _scaleExpr(f, col)" in body(R, "_rankInResults")
        and "({cmp} {beats} %(target)s" in body(R, "_rankInResults"),
        "the performance rank compares on the scaled column")

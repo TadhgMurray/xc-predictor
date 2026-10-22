@@ -273,7 +273,10 @@ def shapeRows(raw, factors, directory=None):
             dropped["grade"] += 1
             continue
         factor = factors.get(pool)
-        hs_equiv = float(r["first_rating"]) * factor if factor else None
+        hs_equiv = None
+        if factor:
+            from pool_view import toHs
+            hs_equiv = toHs(r["first_rating"], pool) or float(r["first_rating"]) * factor
         if hs_equiv is None and r["hs_rating"] is None:
             dropped["no_scale"] += 1
             continue
