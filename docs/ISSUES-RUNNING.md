@@ -6408,3 +6408,27 @@ which first).
   a "likely to improve" marker for young, few-race, rising runners. Needs
   the per-athlete variance written by the go-live (it is not stored today);
   the athlete header and the predictions page would read it.
+
+## 2026-10-22 -- Against Kailo: ratings tie, our level is off (OPEN)
+
+kailo_ratings.py / kailo_compare.py (college XC, the same runners):
+- RATINGS, pre-season (ours as of 08-01, Kailo's pre_season_fitness):
+  order 82.4% vs 83.1%, spread 3.25% vs 3.11% -- Kailo slightly ahead.
+  Today's ratings on the season (in-sample), college form: 91.8% vs
+  92.3%, spread 1.70% vs 1.77% -- a tie.
+- PREDICTIONS, 9 races / 1,945 runners, rating basis: order 85.5% vs
+  85.9%, level-free spread 1.95% vs 2.09% (ours better) -- but bias
+  -6.37%, average miss 6.50% vs 2.30%. All the loss is the LEVEL.
+- Backtest after the model's date (80 races, mostly HS): model 2.98%,
+  rating 3.44% (bias +2.06%), but the rating orders better (within-race
+  2.32% vs 2.42%). -> XCP_PREDICT_BASIS=blend (ac58897), to be scored.
+
+OPEN:
+1. Every tfrrs course in the 9 races has canonical None / no cell
+   (_tfrrsXcSpecSql joins course_canonical on venue_name + rounded gps):
+   college courses convert as a neutral course, 6% fast.
+2. ~1,950 college runners (of 69,500) are still served off a HIGH-SCHOOL
+   form rating after racing college this fall: spread 5.04% vs Kailo's
+   1.63%. Their 2026 college rows are not rated, or not theirs.
+3. Kailo's xc_return runners (back after a season away) pre-season:
+   ours 4.39% vs 3.89% -- the return-from-a-gap band.
