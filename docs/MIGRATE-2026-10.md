@@ -80,7 +80,11 @@ rsync -aHAX --info=progress2 /srv/venv/ root@NEW:/srv/venv/
 [ -d /srv/wxvenv ] && rsync -aHAX --info=progress2 /srv/wxvenv/ root@NEW:/srv/wxvenv/
 rsync -a /etc/xc-predictor.env root@NEW:/etc/xc-predictor.env.old
 rsync -aR /root/.config/rclone root@NEW:/ 2>/dev/null || true
+[ -d /srv/models ] && rsync -aHAX --info=progress2 /srv/models/ root@NEW:/srv/models/
 ```
+
+`/srv/models` holds the live prediction model (`RACECAST_MODEL` in the env
+file points there); it is outside the checkout.
 
 ## 4. Postgres 18, the service, nginx (on NEW)
 
