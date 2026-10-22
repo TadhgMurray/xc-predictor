@@ -18,16 +18,27 @@ sudo dmidecode -t memory | grep -m1 "Error Correction Type"
 sudo dmesg | grep -i edac
 ```
 
-- `/` should be about 1.8 TB (RAID 10). If it is ~900 GB it was installed as
-  a 4-way mirror: reinstall with RAID 10 before going on.
+- `/` should be about 1.8 TB (RAID 10). If it is ~880 GB, OVH sized the
+  RAID partition at half of each disk (2026-10-22: md3 on 446 GB of each
+  894 GB NVMe). Reinstall from the OVH panel (Server -> Reinstall -> Ubuntu
+  24.04 -> customise partitions): RAID 10 for `/`, size "use remaining
+  space". Re-add the ssh key; on the PC, `ssh-keygen -R NEW` if ssh then
+  complains about a changed host key.
 - The ECC line must not say `None`; the EDAC line should name a memory
   controller.
 
 ## 1. Freeze the old server's writers (on OLD)
 
 ```
-systemctl disable --now xcp-nightly.timer xcp-backup.timer xcp-ovh-watch.timer
+for t in xcp-nightly xcp-backup xcp-ovh-watch; do systemctl disable --now $t.timer 2>/dev/null && echo "off: $t"; done
+systemctl list-timers --all --no-pager | grep -iE 'xcp|racecast|pipeline'
+crontab -l 2>/dev/null | grep -v '^#'
 ```
+
+One unit missing must not stop the others (2026-10-22: OLD has no
+`xcp-nightly.timer`, and a single `disable` of all three turned off none).
+Anything the last two lines still print that runs the pipeline, a scrape or
+a backup: disable it too.
 
 No pipeline or scrape runs until the move is done, so the dump stays the
 truth. The site keeps serving.
