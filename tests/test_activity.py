@@ -150,7 +150,7 @@ def test_public_events_only_runs_that_published():
     # accuracy is said only on its published run's entry, never alone
     assert AC.publicEvent({"at": t, "kind": "accuracy", "metrics": {"holdout_race_sd": 0.03}}) is None
     assert AC.accuracyLines({"holdout_race_sd": 0.0301}, {"holdout_race_sd": 0.0312}) == \
-        ["Typical miss on a race the ratings had not seen: 3.01% (down from 3.12%)"]
+        ["Typical miss on a race the ratings had not seen: 3.01% (was 3.12%)"]
     sc = AC.scrapeDays([("XC", "tfrrs", 7, "2026-10-17", 900, "2026-10-20 02:00:00"),
                         ("TF", "anet", 8, "2062-10-18", 40, "2026-10-20 03:00:00"),
                         ("XC", "anet", 9, "2026-10-18", 60, "2026-10-20 03:30:00")],
@@ -187,7 +187,8 @@ def test_recompute_text_says_what_moved_and_why(monkeypatch):
     p = AC.publicEvent(e)
     assert p["title"] == "Every rating recomputed"
     # only the accuracy, the method and big pool moves (owner: "too much")
-    assert p["summary"] == "Typical miss on a race the ratings had not seen: 3.01% (down from 3.12%)"
+    assert p["summary"] == "Typical miss on a race the ratings had not seen: 3.01% (was 3.12%)"
+    assert p["summary_verdict"] == "improved" and p["acc"] == []
     assert p["detail"] == ["What we changed: Course note."]          # no level is 0.5+ off
     e["changes"]["athletes"][1]["mean"] = 0.62
     p = AC.publicEvent(e)
@@ -231,10 +232,11 @@ def test_accuracy_lines_use_every_test_a_run_has():
     m = {"backtest_blend_mae": 2.97, "backtest_blend_order": 0.922, "lacctic_order_ours": 86.1,
          "lacctic_5000_ours": 2.12, "owner_3200": 138.0}
     p = {"backtest_blend_mae": 3.44, "backtest_blend_order": 0.922, "lacctic_order_ours": 85.9}
-    lines = AC.accuracyLines(m, p)
-    assert lines[0] == "Predicted race times, the last two weeks' races: typical miss: 2.97% (down from 3.44%)"
-    assert lines[1] == "Predicted finishing order, the same races: 92.2"
-    assert lines[2] == "Finishing order called right from ratings, college races: 86.1% (up from 85.9%)"
-    assert lines[3] == "Cross country ratings against the same runners' track 5000s: 2.12%"
-    assert len(lines) == 4 and not any("LACCTiC" in l or "owner" in l for l in lines)
-    assert all(why for _l, why in AC.metricGuide())
+    rows = AC.accuracyRows(m, p)
+    assert rows[0] == ("Predicted race times, the last two weeks' races: typical miss: 2.97% (was 3.44%)", "improved")
+    assert rows[1] == ("Predicted finishing order, the same races: 92.2", None)        # unchanged
+    assert rows[2] == ("Finishing order called right from ratings, college races: 86.1% (was 85.9%)", "improved")
+    assert rows[3] == ("Cross country ratings against the same runners' track 5000s: 2.12%", None)
+    assert AC.accuracyRows({"lacctic_order_ours": 85.0}, {"lacctic_order_ours": 86.0})[0][1] == "worse"
+    assert len(rows) == 4 and not any("LACCTiC" in t or "owner" in t for t, _v in rows)
+    assert all(why and way.endswith("is better") for _l, way, why in AC.metricGuide())

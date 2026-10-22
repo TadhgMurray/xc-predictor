@@ -143,6 +143,52 @@ def athleteChanges(rows):
     return out
 
 
+# ★ DID THE ENGINE ITSELF CHANGE (owner, 2026-10-22: "does it say if the
+#   engine itself actually changes and how?"). The "how" is a person's
+#   sentence (racecast/public_changes.py); this records the commit each run
+#   ran and which method files changed since the run before, so a change
+#   with no sentence is flagged in the log and on the admin page.
+ENGINE_PATHS = ("engine", "model", "racecast/predict.py", "racecast/conversions.py",
+                "racecast/build_ranking_results.py", "racecast/tilt.py")
+
+
+def _git(*args):
+    import subprocess
+    try:
+        return subprocess.run(["git", "-C", _ROOT, *args], capture_output=True,
+                              text=True, timeout=30).stdout.strip()
+    except Exception:                                   # noqa: BLE001
+        return ""
+
+
+def engineChanges(run):
+    """{"commit", "previous_commit", "engine_files", "public_notes"}."""
+    commit = _git("rev-parse", "HEAD")
+    prev = None
+    for path in sorted(glob.glob(os.path.join(OUT_DIR, "*.json")), reverse=True):
+        if os.path.basename(path)[:-5] >= run:
+            continue
+        try:
+            prev = json.load(open(path)).get("commit")
+        except (OSError, ValueError):
+            prev = None
+        if prev:
+            break
+    out = {"commit": commit, "previous_commit": prev, "engine_files": []}
+    if commit and prev and prev != commit:
+        names = _git("diff", "--name-only", f"{prev}..{commit}", "--", *ENGINE_PATHS)
+        out["engine_files"] = [n for n in names.splitlines() if n.strip()]
+    try:
+        sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+        import public_changes
+        prev_at = previousRunStart(os.path.join(_ROOT, "logs", run))
+        out["public_notes"] = len(public_changes.between(
+            prev_at.date() if prev_at else None, datetime.date.today()))
+    except Exception:                                   # noqa: BLE001
+        out["public_notes"] = None
+    return out
+
+
 def previousRunStart(log_dir):
     """The start of the full run before `log_dir`, from the sibling folder
     names (20261019_143556), or None. Pure on the names."""
@@ -198,6 +244,7 @@ def report(conn, log_dir):
         cur.execute(_COURSE_SQL)
         out["courses"] = courseChanges(cur.fetchall())
     conn.rollback()
+    out.update(engineChanges(run))
     os.makedirs(OUT_DIR, exist_ok=True)
     path = os.path.join(OUT_DIR, f"{run}.json")
     with open(path, "w", encoding="utf-8") as f:
@@ -212,6 +259,13 @@ def report(conn, log_dir):
           f"{c['new']:,} new")
     for b in c["biggest"]:
         print(f"[changes]   {b['course']} {b['distance_m']} m: {b['change_pct']:+.2f}%")
+    if out.get("engine_files"):
+        print(f"[changes] engine code changed since {out.get('previous_commit', '?')[:8]}: "
+              f"{len(out['engine_files'])} file(s); public notes this run: "
+              f"{out.get('public_notes', 0)}")
+        if not out.get("public_notes"):
+            print("[changes] ! no racecast/public_changes.py entry since the last run -- "
+                  "What's new will not say how the method changed")
     print(f"[changes] wrote {path}")
     return out
 

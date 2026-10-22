@@ -35,3 +35,22 @@ def test_previous_run_start(tmp_path):
     import datetime
     assert RC.previousRunStart(str(tmp_path / "20261022_010000")) == datetime.datetime(2026, 10, 19, 14, 35, 56)
     assert RC.previousRunStart(str(tmp_path / "20261012_154900")) is None
+
+
+def test_engine_changes_reads_the_previous_runs_commit(tmp_path, monkeypatch):
+    import json
+    monkeypatch.setattr(RC, "OUT_DIR", str(tmp_path))
+    (tmp_path / "20261019_143556.json").write_text(json.dumps({"commit": "aaa"}))
+    (tmp_path / "20261030_010000.json").write_text(json.dumps({"commit": "zzz"}))   # later: ignored
+    calls = []
+
+    def git(*args):
+        calls.append(args)
+        if args[0] == "rev-parse":
+            return "bbb"
+        return "engine/joint_solve.py\nracecast/predict.py\n"
+    monkeypatch.setattr(RC, "_git", git)
+    out = RC.engineChanges("20261026_010000")
+    assert out["commit"] == "bbb" and out["previous_commit"] == "aaa"
+    assert out["engine_files"] == ["engine/joint_solve.py", "racecast/predict.py"]
+    assert ("diff", "--name-only", "aaa..bbb", "--") == calls[1][:4]

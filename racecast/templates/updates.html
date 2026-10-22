@@ -30,6 +30,9 @@
              padding: 0 .35rem; border-radius: 3px; background: var(--accent, #c0392b); color: #fff; margin-right: .3rem; }
   li.is-new .upd-new { display: inline-block; }
   .upd-bad { color: var(--bad, #b03a2e); }
+  .upd-v { font-size: .72rem; font-weight: 700; padding: 0 .3rem; border-radius: 3px; }
+  .upd-v-improved { color: #1d6b35; background: #e3f3e8; }
+  .upd-v-worse { color: #9b2c1f; background: #fbe7e4; }
   .upd-guide { margin: 0 0 1rem; padding: .6rem .8rem; border: 1px solid var(--line, #e5e5e5); border-radius: 6px; }
   .upd-guide summary { cursor: pointer; }
   .upd-guide dt { font-weight: 600; margin-top: .6rem; }
@@ -57,7 +60,7 @@
 <details class="upd-guide">
   <summary><b>Reading the accuracy numbers</b> <span class="meta">· what each one measures</span></summary>
   <dl>
-  {% for label, why in fd.guide %}<dt>{{ label }}</dt><dd>{{ why }}</dd>{% endfor %}
+  {% for label, way, why in fd.guide %}<dt>{{ label }} <span class="meta">({{ way }})</span></dt><dd>{{ why }}</dd>{% endfor %}
   </dl>
   <p class="meta">Every Sunday the whole rating system is refitted from every result; each entry below
     shows these numbers for that update and how they moved from the one before. Open an entry for
@@ -67,16 +70,17 @@
 <ul class="upd-list">
 {% for e in fd.events[:150] %}
   <li data-at="{{ e.at.isoformat(timespec='seconds') }}">
-    {% set more = e["items"] or e.detail %}
+    {% set more = e["items"] or e.detail or e.acc %}
     {% if more %}<details><summary>{% else %}<div>{% endif %}
       <span class="upd-new">NEW</span>
       <b class="{{ 'upd-bad' if e.level == 'bad' else '' }}">{{ e.title }}</b>
       <span class="meta no-break">· {{ e.at.strftime("%b %-d, %H:%M") }} UTC</span>
-      {% if e.summary %}<br><span class="meta">{{ e.summary }}</span>{% endif %}
+      {% if e.summary %}<br><span class="meta">{{ e.summary }}</span>{% if e.summary_verdict %} <span class="upd-v upd-v-{{ e.summary_verdict }}">{{ e.summary_verdict }}</span>{% endif %}{% endif %}
       {% if more %}<span class="meta upd-more"> · what changed</span>{% endif %}
     {% if more %}</summary>
       <ul class="upd-items">
       {% for name, href, meta in e["items"] %}<li><a href="{{ href }}">{{ name }}</a> <span class="meta">· {{ meta }}</span></li>{% endfor %}
+      {% for t, v in e.acc or [] %}<li class="meta">{{ t }}{% if v %} <span class="upd-v upd-v-{{ v }}">{{ v }}</span>{% endif %}</li>{% endfor %}
       {% for d in e.detail %}<li class="meta">{{ d }}</li>{% endfor %}
       </ul>
     </details>{% else %}</div>{% endif %}

@@ -187,6 +187,14 @@ def pipelineEvents(log_root=LOG_ROOT, runs=10):
                 e["changes"] = json.loads(text)
             except ValueError:
                 pass
+        ef = (e.get("changes") or {}).get("engine_files") or []
+        if ef:
+            # admin only: which method files this run's code changed, and a
+            # warning when no public note says how (scripts/run_changes.py)
+            note = (e.get("changes") or {}).get("public_notes")
+            e["detail"] = [f"engine code changed since the run before: {len(ef)} file(s)"
+                           + ("" if note else " -- NO public note (racecast/public_changes.py)")] \
+                + [f"  {f}" for f in ef[:30]] + e["detail"]
         out.append(e)
     nightly = sorted((d for d in glob.glob(os.path.join(log_root, "nightly_*"))
                       if os.path.isdir(d)), reverse=True)[:runs]
@@ -404,28 +412,32 @@ def kailoEvents(store=KAILO_STORE, days=14):
 #   this order leads the entry; every one present is listed in its detail.
 #   The explanation of each is on the page once (updates.html), not on
 #   every entry. Only OUR numbers: the comparison tests name no other site.
-#   key: (label, scale, decimals, explanation)
+#   key: (label, scale, decimals, better: "low" | "high", explanation)
+# ★ GOOD OR BAD, SAID (owner, 2026-10-22: "put if something is bad or good,
+#   because we have two different scales"): some are better lower (a miss),
+#   some higher (an order). Each line carries "improved" / "worse" against
+#   the update before, and the guide says which way is better.
 PUBLIC_METRICS = {
     "backtest_blend_mae": (
-        "Predicted race times, the last two weeks' races: typical miss", 1.0, 2,
+        "Predicted race times, the last two weeks' races: typical miss", 1.0, 2, "low",
         "We re-predict the last two weeks' finished races as if they had not "
         "been run yet (each runner's history cut off the day before) and "
         "compare with the times they ran. Half of all runners finished closer "
         "to their predicted time than this."),
     "backtest_blend_order": (
-        "Predicted finishing order, the same races", 100.0, 1,
+        "Predicted finishing order, the same races", 100.0, 1, "high",
         "How well the predicted order matched the real finishing order, as a "
         "rank correlation (100 would be every place right)."),
     "lacctic_order_ours": (
-        "Finishing order called right from ratings, college races", 1.0, 1,
+        "Finishing order called right from ratings, college races", 1.0, 1, "high",
         "Of every pair of runners in a set of championship races, how often the "
         "one with the better rating from their other races finished ahead."),
     "lacctic_5000_ours": (
-        "Cross country ratings against the same runners' track 5000s", 1.0, 2,
+        "Cross country ratings against the same runners' track 5000s", 1.0, 2, "low",
         "How far a college runner's cross country rating, turned into a track "
         "5000 time, typically sits from the 5000 they actually ran."),
     "holdout_race_sd": (
-        "Typical miss on a race the ratings had not seen", 100.0, 2,
+        "Typical miss on a race the ratings had not seen", 100.0, 2, "low",
         "Races held out of the rating fit, predicted from everything else: how "
         "far a race typically lands from where the ratings put it."),
 }
@@ -454,16 +466,6 @@ def publicEvent(e):
         # only on the run whose ratings went live (attachAccuracy); a run
         # that never published has no accuracy a reader saw
         return None
-        lines = []
-        for key in PUBLIC_METRICS:
-            new, old = (e.get("metrics") or {}).get(key), (e.get("prev_metrics") or {}).get(key)
-            if new is None:
-                continue
-            lines += accuracyLines({key: new}, {key: old} if old is not None else {})
-        if not lines:
-            return None
-        return dict(base, title="Accuracy after the latest full update", summary=lines[0],
-                    detail=lines[1:])
     return None
 
 
@@ -472,24 +474,34 @@ _LEVELS = {"hs": "High school", "college": "College", "ms": "Middle school",
 _SPORTS = {"XC": "cross country", "TF": "track"}
 
 
-def accuracyLines(metrics, prev):
-    """The public accuracy numbers, one line each. Pure."""
-    lines = []
-    for key, (label, scale, dec, _why) in PUBLIC_METRICS.items():
+def accuracyRows(metrics, prev):
+    """[(text, verdict)] for the public accuracy numbers; verdict is
+    'improved', 'worse' or None (no earlier number, or no change). Pure."""
+    rows = []
+    for key, (label, scale, dec, better, _why) in PUBLIC_METRICS.items():
         new, old = (metrics or {}).get(key), (prev or {}).get(key)
         if new is None:
             continue
         unit = "" if key.endswith("_order") else "%"
-        line = f"{label}: {new * scale:.{dec}f}{unit}"
+        text = f"{label}: {new * scale:.{dec}f}{unit}"
+        v = None
         if old is not None and abs(new - old) * scale >= 0.5 * 10 ** -dec:
-            line += f" ({'down' if new < old else 'up'} from {old * scale:.{dec}f}{unit})"
-        lines.append(line)
-    return lines
+            text += f" (was {old * scale:.{dec}f}{unit})"
+            v = "improved" if verdict(old, new, better) == "better" else "worse"
+        rows.append((text, v))
+    return rows
+
+
+def accuracyLines(metrics, prev):
+    """The rows' text alone. Pure."""
+    return [t for t, _v in accuracyRows(metrics, prev)]
 
 
 def metricGuide():
-    """[(label, explanation)] for the page's "reading the numbers". Pure."""
-    return [(lab, why) for lab, _s, _d, why in PUBLIC_METRICS.values()]
+    """[(label, which way is better, explanation)] for the page's "reading
+    the numbers". Pure."""
+    return [(lab, "lower is better" if b == "low" else "higher is better", why)
+            for lab, _s, _d, b, why in PUBLIC_METRICS.values()]
 
 
 # A level's ratings moved enough to say so: the mean change of a pool with
@@ -510,7 +522,6 @@ def recomputeText(e):
       public_changes."""
     import public_changes
     ch = e.get("changes") or {}
-    acc = accuracyLines(e.get("metrics"), e.get("prev_metrics"))
     detail = []
     try:
         prev = datetime.datetime.fromisoformat(ch["previous_run_at"]).date() \
@@ -524,9 +535,11 @@ def recomputeText(e):
             detail.append(f"{_LEVELS.get(a['level'], a['level'].title())} "
                           f"{_SPORTS.get(a['sport'], a['sport'])} ratings "
                           f"{'rose' if a['mean'] > 0 else 'fell'} {abs(a['mean']):.1f} points on average")
-    return {"summary": acc[0] if acc else
+    rows = accuracyRows(e.get("metrics"), e.get("prev_metrics"))
+    return {"summary": rows[0][0] if rows else
             "Every result re-rated from scratch; accuracy was not measured on this update.",
-            "detail": acc[1:] + detail}
+            "summary_verdict": rows[0][1] if rows else None,
+            "acc": rows[1:], "detail": detail}
 
 
 def publicFeed(conn, seen=None):
