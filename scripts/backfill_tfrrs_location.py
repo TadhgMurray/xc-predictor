@@ -279,6 +279,43 @@ def _applyStamps(conn, stamps, write_gps):
     return len(stamps)
 
 
+# _fillGpsFromLocation
+# Purpose : a tfrrs meet that HAS a location_id but no gps takes that
+#           location's gps from anet's meets. Tiers 1-2 only ever touch rows
+#           whose location_id IS NULL, so a meet stamped once without gps
+#           (--no-gps, or a location with no coordinate that day) stayed
+#           without it for good.
+# ★ WHY (owner, 2026-10-22): every tfrrs XC race of 2026 -- 1,994 races,
+#   184,766 finishers -- had no gps, so none found its course in
+#   course_canonical and every college prediction converted at difficulty
+#   0.0, the fast end of the scale (diag_tfrrs_course_cells.py).
+# Output  : how many meets were (or would be) filled.
+def _fillGpsFromLocation(conn, apply):
+    src = """
+        SELECT DISTINCT ON (location_id) location_id, gps_lat, gps_long
+        FROM   meets
+        WHERE  location_id IS NOT NULL
+          AND  gps_lat IS NOT NULL AND gps_lat <> 0
+          AND  gps_long IS NOT NULL AND gps_long <> 0
+          AND  gps_lat BETWEEN -90 AND 90 AND gps_long BETWEEN -180 AND 180
+        ORDER  BY location_id, meet_id DESC"""
+    with conn.cursor() as cur:
+        if not apply:
+            cur.execute(f"""
+                SELECT count(*) FROM meets_tfrrs mt JOIN ({src}) a
+                  ON a.location_id = mt.location_id
+                WHERE mt.sport = 'XC' AND (mt.gps_lat IS NULL OR mt.gps_lat = 0)""")
+            return cur.fetchone()[0]
+        cur.execute(f"""
+            UPDATE meets_tfrrs mt SET gps_lat = a.gps_lat, gps_long = a.gps_long
+            FROM ({src}) a
+            WHERE mt.sport = 'XC' AND mt.location_id = a.location_id
+              AND (mt.gps_lat IS NULL OR mt.gps_lat = 0)""")
+        n = cur.rowcount
+    conn.commit()
+    return n
+
+
 # ================================================================== #
 # CHUNK 8 -- TIER 3: THE GEOCODE LIST
 # ================================================================== #
@@ -356,6 +393,10 @@ def _run(apply, write_gps, out_dir):
                   f"(gps {'written' if write_gps else 'skipped'})")
         else:
             print("  [dry-run] no rows written")
+        if write_gps:
+            n_fill = _fillGpsFromLocation(conn, apply)
+            print(f"  located but no gps:         {n_fill:,} tfrrs meets "
+                  f"{'given their location' + chr(39) + 's gps' if apply else '(dry run)'}")
 
         resolved = t1_meets | {s[0] for s in t2}
         with conn.cursor() as cur:

@@ -151,8 +151,14 @@ cd /srv/xc-predictor && set -a; . /etc/xc-predictor.env; set +a
 ### 5c. Rebuild the rankings and everything after them (on NEW, ~3-4 h)
 
 ```
-cd /srv/xc-predictor && bash deploy/run_pipeline.sh --from 10
+cd /srv/xc-predictor && set -a; . /etc/xc-predictor.env; set +a
+/srv/venv/bin/python scripts/backfill_tfrrs_location.py --apply --out logs
+/srv/venv/bin/python scripts/build_course_canonical.py --incremental --apply
+bash deploy/run_pipeline.sh --from 10
 ```
+
+The first two give the college (tfrrs) courses their gps and course ids
+(2026-10-22: none had any), so the solve in step 10 fits their difficulty.
 
 ### 5d. Look at it before anyone else does (from your PC)
 

@@ -906,6 +906,13 @@ fi
 #   meets_tf on the row's own keys, and tfrrs rows had rows there only
 #   where a geometry stamp existed, unnamed. Idempotent, seconds.
 step 06_tfrrs_meets   "$PY" -u scripts/land_tfrrs_meet_names.py --apply
+# ★ EVERY tfrrs XC MEET GETS ITS COURSE'S GPS FIRST (owner, 2026-10-22:
+#   all 1,994 college races of 2026 had none -- TFRRS pages carry no
+#   coordinates -- so none found its course and every college prediction
+#   converted at difficulty 0.0). The same meet on athletic.net, or a known
+#   course by its exact name and state; never a guess (the fuzzy pass stays
+#   by hand). Idempotent; the leftovers list goes to the run's log folder.
+step 06a_tfrrs_location "$PY" -u scripts/backfill_tfrrs_location.py --apply --out "$LOGDIR"
 # ★ EVERY COURSE GETS A CANONICAL ID BEFORE THE PACK (2026-09-26: Penrose
 #   Park had no difficulty -- this table was last built by hand, before the
 #   course was first raced, and the build was never in the pipeline).

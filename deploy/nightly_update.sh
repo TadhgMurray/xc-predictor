@@ -145,6 +145,8 @@ step 04a3_pins        "$PY" -u scripts/person_pins.py --apply
 step 04b_wheelchair   "$PY" -u engine/wheelchair_flag.py --write
 step 04c_twins        "$PY" -u engine/twin_flag.py --write
 step 06_tfrrs_meets   "$PY" -u scripts/land_tfrrs_meet_names.py --apply
+# the night's new tfrrs XC meets find their course's gps (run_pipeline 06a)
+step 06a_tfrrs_location "$PY" -u scripts/backfill_tfrrs_location.py --apply --out "$LOGDIR"
 step 06b_course_canonical "$PY" -u scripts/build_course_canonical.py --incremental --apply
 
 # ---- 3. price the new rows ---------------------------------------------- #
