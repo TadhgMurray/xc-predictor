@@ -146,20 +146,69 @@ def test_public_events_hide_internals():
                               "(down from 3.12%, better)")
     assert "owner" not in json.dumps(acc, default=str)
     assert AC.publicEvent({"at": t, "kind": "accuracy", "metrics": {"owner_3200": 1}}) is None
-    sc = AC.scrapeDays([("XC", "tfrrs", 7, "2026-10-17", 900, "2026-10-20 02:00:00")],
+    sc = AC.scrapeDays([("XC", "tfrrs", 7, "2026-10-17", 900, "2026-10-20 02:00:00"),
+                        ("TF", "anet", 8, "2062-10-18", 40, "2026-10-20 03:00:00"),
+                        ("XC", "anet", 9, "2026-10-18", 60, "2026-10-20 03:30:00")],
                        {("XC", "tfrrs", 7): "Pre-Nats"})[0]
     pub = AC.publicEvent(sc)
-    assert pub["title"] == "New results: 1 meet, 900 results"
-    assert pub["summary"] == "cross country 1 meet" and "tfrrs" not in json.dumps(pub, default=str)
-    assert pub["items"] == [("Pre-Nats", "/meet/xc/7", "XC · Oct 17 · 900 results")]
+    # the newest REAL race date (not the typo'd 2062), and no meet list
+    assert pub["title"] == "New results through Sun, Oct 18"
+    assert pub["summary"] == "3 meets, 1,000 results added (cross country 2, track 1)"
+    assert pub["items"] == [] and "Pre-Nats" not in json.dumps(pub, default=str)
+
+
+def test_latest_race_day():
+    assert AC.latestRaceDay(["2026-10-17", "2026-10-18", "2026-11-30"], "2026-10-20") == "2026-10-18"
+    assert AC.latestRaceDay([None, "1900-01-01"], "2026-10-20") is None
+
+
+def test_recompute_text_says_what_moved_and_why(monkeypatch):
+    import public_changes as PC
+    monkeypatch.setattr(PC, "CHANGES", [("2026-10-20", "Old note."), ("2026-10-22", "Course note.")])
+    e = {"kind": "pipeline", "level": "ok", "at": datetime.datetime(2026, 10, 22, 9),
+         "metrics": {"holdout_race_sd": 0.0301}, "prev_metrics": {"holdout_race_sd": 0.0312},
+         "changes": {"previous_run_at": "2026-10-20T14:00:00", "new_results": 48210,
+                     "athletes": [{"level": "hs", "sport": "XC", "compared": 400000, "median_abs": 0.31,
+                                   "mean": 0.1, "moved_2": 21400, "moved_5": 3100, "up": 230000,
+                                   "down": 160000, "new": 9000},
+                                  {"level": "college", "sport": "XC", "compared": 60000, "median_abs": 0.52,
+                                   "mean": 0.4, "moved_2": 4100, "moved_5": 300, "up": 40000,
+                                   "down": 19000, "new": 0},
+                                  {"level": "elem", "sport": "XC", "compared": 80, "median_abs": 1,
+                                   "mean": 0, "moved_2": 9, "moved_5": 1, "up": 40, "down": 40, "new": 0}],
+                     "courses": {"compared": 30000, "moved_1pct": 212, "new": 37,
+                                 "biggest": [{"course": "Greiner Family XC Course", "distance_m": 8000,
+                                              "change_pct": -2.14}]}}}
+    p = AC.publicEvent(e)
+    assert p["title"] == "Every rating recomputed"
+    assert p["summary"] == ("48,210 new results since the last full update · 25,500 athletes' "
+                            "ratings moved 2+ points · typical miss on a race the ratings had "
+                            "not seen: 3.01% (down from 3.12%, better)")
+    d = "\n".join(p["detail"])
+    assert ("High school cross country: 400,000 athletes this season; the typical rating moved "
+            "0.3 points (58% up, 40% down), 21,400 by 2+ points; 9,000 rated for the first time") in d
+    assert "College cross country: 60,000" in d and "Elementary" not in d     # too few to say
+    assert "212 of 30,000 course numbers moved by 1% or more; 37 courses rated" in d
+    assert "Greiner Family XC Course (8,000 m) now reads 2.1% easier" in d
+    assert "What we changed: Course note." in d and "Old note." not in d      # since the last run
+
+
+def test_a_full_runs_accuracy_rides_on_it():
+    t = datetime.datetime(2026, 10, 22, 9)
+    ev = [{"kind": "pipeline", "run": "20261022_010000", "at": t},
+          {"kind": "accuracy", "run": "20261022_010000", "at": t, "metrics": {"x": 1},
+           "prev_metrics": {"x": 2}},
+          {"kind": "accuracy", "run": "20261001_010000", "at": t, "metrics": {"holdout_race_sd": 0.03}}]
+    AC.attachAccuracy(ev)
+    assert ev[0]["metrics"] == {"x": 1} and ev[1]["carried"] and not ev[2].get("carried")
+    assert AC.publicEvent(ev[1]) is None and AC.publicEvent(ev[2]) is not None
 
 
 def test_the_public_page_and_latest_api(monkeypatch):
     import app as A
     t = datetime.datetime(2026, 10, 22, 3, 0, 0)
     pub = {"events": [{"at": t, "kind": "scraped", "level": "info", "title": "New results: 1 meet, 900 results",
-                       "summary": "cross country 1 meet", "detail": [],
-                       "items": [("Pre-Nats", "/meet/xc/7", "XC · Oct 17 · 900 results")]}],
+                       "summary": "1 meet, 900 results added", "detail": ["a line"], "items": []}],
            "n_new": 1, "latest": t}
     monkeypatch.setattr(AC, "publicFeedCached", lambda get_conn: pub)
     client = A.app.test_client()
@@ -167,7 +216,7 @@ def test_the_public_page_and_latest_api(monkeypatch):
     assert r.status_code == 200
     html = r.get_data(as_text=True)
     assert "What&#39;s new" in html or "What's new" in html
-    assert 'data-at="2026-10-22T03:00:00"' in html and 'href="/meet/xc/7"' in html
+    assert 'data-at="2026-10-22T03:00:00"' in html and "a line" in html
     assert "rc_updates_seen" in html                       # marked in the browser
     assert "public" in r.headers.get("Cache-Control", "")  # edge-cacheable
     j = client.get("/api/updates/latest")

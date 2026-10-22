@@ -300,7 +300,7 @@ function escAttr(s) {
 
 /* ★ THE WHAT'S NEW DOT (owner, 2026-10-22: updates are "supposed to inform
      the ppl"). The bar is edge-cached, so it knows nothing about the reader:
-     a dot goes on the Tools button and the "What's new" link when the
+     a dot goes on the bar's "What's new" tab (and the phone menu button) when the
      newest update is after the reader's last look at /updates (localStorage,
      set by that page). /api/updates/latest is asked at most every 10 minutes
      per browser and is itself cached for 5. A first visit starts the clock
@@ -316,10 +316,12 @@ function escAttr(s) {
   function dot(latest) {
     var seen = ls(SEEN);
     if (!latest || !seen || latest <= seen) return;
+    // the bar's "What's new" tab, and the phone menu's button (the tab is
+    // hidden inside its panel until it opens)
     var links = document.querySelectorAll('a[href="/updates"]');
     var targets = Array.prototype.slice.call(links);
-    var sum = document.querySelector('.topnav-tools > summary');
-    if (sum) targets.push(sum);
+    var burger = document.querySelector('[aria-controls="topnav"]');
+    if (burger) targets.push(burger);
     for (var i = 0; i < targets.length; i++) {
       if (targets[i].querySelector('.upd-dot')) continue;
       var d = document.createElement('span');

@@ -55,7 +55,8 @@ def test_one_nav_no_edition_switch(A):
         # the same five sections for every reader, coach pages included
         nav = h.split('<nav class="topnav"', 1)[1].split("</nav>", 1)[0]
         tabs = [t for _, t in links(nav.split("<details", 1)[0])]
-        assert tabs == ["Rankings", "Meets", "Predictions", "Conversions", "Recruiting"], path
+        assert tabs == ["Rankings", "Meets", "Predictions", "Conversions", "Recruiting",
+                        "What's new"], path
         assert "Find recruits" not in h and ">More<" not in h, path
 
 
@@ -73,9 +74,7 @@ def test_the_tools_menu_links(A):
         ("/scale", "Rating to time"),
         ("/goal", "Goal calculator"),
     ]
-    # "What's new" (owner, 2026-10-22): the reader's update feed, under the divider
-    assert [u for u, _t in links(ref)] == ["/updates", "/about", "/report"]
-    assert [t for _u, t in links(ref)][1:] == ["About", "Report an issue"]
+    assert links(ref) == [("/about", "About"), ("/report", "Report an issue")]
     # "Who wins state" is the predictions page's state-meets mode
     assert dict((t, u) for u, t in links(tools))["Who wins state"] == A.app.url_map.bind("x").build("pages2.projections_index")
 

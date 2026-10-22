@@ -285,6 +285,11 @@ td.no-break { white-space: nowrap; }
 .hm-what a { color: #fff; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
 .hm-facts { margin: .6rem 0 0; color: rgba(255,255,255,.62); font-size: .82rem; }
 .hm-facts b { color: #fff; font-weight: 700; }
+/* What's new, one line under the facts (owner, 2026-10-22) */
+.hm-updates { margin: .45rem 0 0; font-size: .82rem; }
+.hm-updates a { color: rgba(255,255,255,.78); text-decoration: none; border-bottom: 1px solid rgba(255,255,255,.3); }
+.hm-updates a:hover { color: #fff; border-bottom-color: #fff; }
+.hm-updates b { color: #fff; font-weight: 700; }
 
 /* photos: one 5 x 2 grid, Bolt's panorama spans two cells */
 .hm-photos {

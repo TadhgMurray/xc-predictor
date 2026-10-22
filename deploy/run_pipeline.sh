@@ -258,7 +258,7 @@ summarise() {
 # ★ 04a2b_feed_twins TOO: it moves ids (2026-10-15).
 # ★ 04a3_pins TOO: it keeps the owner's detaches where he put them (2026-10-10).
 # ★ 00_integrity TOO: a damaged page is damaged whichever step reads it first.
-_ALWAYS="00_integrity 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a2b_feed_twins 04a4_unsplit 04a3_pins 04a3b_merges 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
+_ALWAYS="00_integrity 00b_run_snapshot 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a2b_feed_twins 04a4_unsplit 04a3_pins 04a3b_merges 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
 step() {
   name="$1"; shift
@@ -547,6 +547,11 @@ bgwait() {
 #   every --from. The daily backup's pg_dump is the other reader of every
 #   page, and it emails on failure.
 step 00_integrity     "$PY" -u scripts/integrity_check.py
+# ★ WHAT THE SITE SHOWED BEFORE THIS RUN (owner, 2026-10-22: "say what
+#   changed in the recomputed ratings vs the last pipeline run"): this
+#   season's athlete ratings and every XC course number, kept so 17c0 can
+#   tell readers what the recompute moved (What's new). On every --from.
+step 00b_run_snapshot "$PY" -u scripts/run_changes.py --snapshot || true
 if failed 00_integrity; then
   echo "" | tee -a "$SUMMARY"
   echo "FATAL: 00_integrity found damaged pages (or could not check). Nothing" | tee -a "$SUMMARY"
@@ -1639,6 +1644,7 @@ fi
 if [ "${XCP_PAGE_TIMING:-1}" != "0" ]; then
   step 17a_page_timing  "$PY" -u scripts/page_timing.py --write --n "${XCP_PAGE_TIMING_N:-6}" || true
 fi
+step 17c0_run_changes "$PY" -u scripts/run_changes.py --report --log-dir "$LOGDIR" || true
 step 17c_report       "$PY" -u scripts/run_report.py --log-dir "$LOGDIR" || true
 # ★ THE RATINGS' STANDING TESTS (owner, 2026-10-18): course and day credit
 #   inside a runner's season, track vs XC that fortnight, altitude credit,

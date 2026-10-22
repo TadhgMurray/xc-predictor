@@ -214,6 +214,10 @@
        and this owns the LABEL. meta.get(key, ' - ') so a key panels.py has
        not written yet degrades to a dash rather than printing None. #}
     <p class="hm-facts">{% for key, label in [('fact_results', 'rated results'), ('fact_courses', 'courses'), ('fact_years', 'years, era-adjusted')] %}<b>{{ meta.get(key, ' - ') }}</b> {{ label }}{% if not loop.last %} <span aria-hidden="true">&middot;</span> {% endif %}{% endfor %}</p>
+    {# ★ WHAT'S NEW (owner, 2026-10-22): how fresh the site is, one line #}
+    {% if updates and (updates.through_text or updates.recomputed) %}
+    <p class="hm-updates"><a href="{{ url_for('updates_page') }}">{% if updates.through_text %}Results through <b>{{ updates.through_text }}</b>{% endif %}{% if updates.through_text and updates.recomputed %} <span aria-hidden="true">&middot;</span> {% endif %}{% if updates.recomputed %}ratings recomputed {{ updates.recomputed.strftime("%b") }} {{ updates.recomputed.day }}{% endif %} <span aria-hidden="true">&middot;</span> <span class="rc-nowrap">What's new &rarr;</span></a></p>
+    {% endif %}
   </div>
   <div class="hm-photos" aria-hidden="true">
     {% for slot, alt in PHOTOS %}<img class="hp hp-{{ slot }}" src="{{ static_v(slot ~ ('.webp' if static_exists(slot ~ '.webp') else '.png')) }}" alt="" title="{{ alt }}" decoding="async">{% endfor %}

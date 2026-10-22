@@ -1181,8 +1181,17 @@ def home():
         for m in d["meets"]:
             coming_n[m["sport"]] = coming_n.get(m["sport"], 0) + 1
 
+    # ★ WHAT'S NEW, ON THE FRONT PAGE (owner, 2026-10-22: "more
+    #   prominent"): results through <date> and the last full recompute,
+    #   from the same cached feed as /updates
+    try:
+        import activity as _activity
+        updates = _activity.publicFeedCached(getConn).get("headline") or {}
+    except Exception:                                   # noqa: BLE001
+        updates = {}
+
     return render_template("home.html",
-                           teams=teams, otd=otd,
+                           teams=teams, otd=otd, updates=updates,
                            hero_5k=hero_5k,
                            hero_example=HERO_EXAMPLE_RATING,
                            coming_n=coming_n,

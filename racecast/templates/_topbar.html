@@ -27,7 +27,7 @@
        Two editions meant two bars to learn, a "Recruiting" on one side and a
        "Find recruits" on the other, and a coach who clicked Rankings landed
        in the other edition. Now the sections are the same five for every
-       reader. ! NO "For coaches" LINK IN THE BAR (owner, 2026-10-11: it looked
+       reader (and What's new, 2026-10-22). ! NO "For coaches" LINK IN THE BAR (owner, 2026-10-11: it looked
        off); /coaches is still there, and keeps "Recruit search".
        Still keyed on request.path alone, so every page stays edge-cacheable:
        nothing about the reader reaches this markup.
@@ -49,7 +49,6 @@
         (url_for('goal.goal_page'), 'Goal calculator', '/goal'),
     ] %}
     {% set ref = [
-        (url_for('updates_page'), "What's new", '/updates'),
         (url_for('about_page'), 'About', '/about'),
         (url_for('report_page'), 'Report an issue', '/report'),
     ] %}
@@ -71,6 +70,10 @@
         {# athlete-side college fit (/recruiting); the coaches' search is
            "Recruit search" on /coaches, not a second Recruiting here #}
         <a href="/recruiting" class="{{ 'is-here' if here.startswith('/recruit') }}">Recruiting</a>
+        {# ★ WHAT'S NEW IN THE BAR (owner, 2026-10-22: "more prominent"): new
+           results, each full recompute and what it changed. The dot beside
+           it is topbar-search.js's, from /api/updates/latest. #}
+        <a href="{{ url_for('updates_page') }}" class="{{ 'is-here' if here.startswith('/updates') }}">What's new</a>
         <details class="topnav-more topnav-tools">
             <summary class="{{ 'is-here' if ns.tools_here }}">Tools</summary>
             <div class="topnav-menu">

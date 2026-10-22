@@ -223,6 +223,38 @@
   {# ! THE REBUILD DATE IS SAID ONCE, in the header's meta line (owner,
        2026-10-10); it used to repeat here. #}
 
+  {# ★ WHEN RESULTS SHOW UP (owner, 2026-10-22: "when we get results
+       usually, when we hope to, how long it may take, and link What's new").
+       The schedule is deploy/install_nightly_timer.sh (01:17 Pacific, the
+       scrape bounded at three hours by nightly_update.sh); keep the two
+       in step. #}
+  <h2 class="rc-sec" id="when">When new results show up</h2>
+  <p>
+    Every night, starting around 1:15&nbsp;a.m. Pacific, Racecast collects new
+    results from athletic.net (high school and middle school, and some
+    college) and TFRRS (college), rates them, and puts them on the site. A
+    race whose results are posted on either site during the day is usually
+    here, rated, by the next morning: a Saturday invitational by Sunday
+    morning.
+  </p>
+  <p>
+    It can take longer when a meet posts its results late (some take days),
+    when results are only on a timing company's own site and never reach
+    athletic.net or TFRRS, or on the busiest weekends, when a night's
+    collecting runs out of time and the rest waits for the next night.
+  </p>
+  <p>
+    A race added overnight is rated against the current course numbers.
+    Every few days a full update recomputes every rating from scratch, with
+    the new races helping set each course's difficulty, so a new race's
+    rating can still move a little after the next full update.
+  </p>
+  <p>
+    <a href="{{ url_for('updates_page') }}">What's new</a> shows each night's
+    new results, the latest race date they reach, and what each full update
+    changed.
+  </p>
+
   <h2 class="rc-sec" id="glossary">Glossary</h2>
   <dl class="glossary">
     <dt>Rating</dt><dd>A race corrected for course, distance, weather and era. 100 is an average high-school runner, and every level is shown on that one scale; 133 means 33% faster than that runner. Roughly, a high-school boy rated 146 runs a 15:05 5K.</dd>
@@ -254,6 +286,7 @@
     {% set toc = [("rating", "What a rating is"), ("how", "How a result becomes a rating")]
        + ([("accuracy", "How accurate is it")] if accuracy or weekly else [])
        + [("limits", "Where it is still wrong"), ("data", "The data"),
+          ("when", "When new results show up"),
           ("glossary", "Glossary"), ("report", "Found something wrong?")] %}
     {% for id, label in toc %}
     <tr class="rc-jump"><td class="tp">{{ loop.index }}</td><td class="tn"><a href="#{{ id }}">{{ label }}</a></td></tr>

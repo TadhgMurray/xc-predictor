@@ -37,6 +37,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_ROOT = os.environ.get("XCP_LOG_ROOT") or os.path.join(ROOT, "logs")
 HISTORY = os.path.join(ROOT, "engine", "data", "run_history.jsonl")
 KAILO_STORE = os.path.join(ROOT, "engine", "data", "kailo")
+CHANGES_DIR = os.path.join(ROOT, "engine", "data", "run_changes")   # scripts/run_changes.py
 
 _NIGHTLY_LINE = re.compile(r"^\s+(\S+) (ok|FAILED)\s*(?:\(exit (\d+)\))?\s*(?:after\s*)?\(?(\d+)s\)?")
 
@@ -136,7 +137,7 @@ def accuracyEvent(rec, prev, specs):
         at = datetime.datetime.fromisoformat(rec.get("at") or "")
     except ValueError:
         at = runStarted(rec.get("run"))
-    return {"at": at, "kind": "accuracy", "level": level,
+    return {"at": at, "kind": "accuracy", "level": level, "run": rec.get("run"),
             "metrics": rec.get("metrics") or {},
             "prev_metrics": (prev or {}).get("metrics") or {},
             "title": f"Accuracy after run {rec.get('run') or '?'}",
@@ -176,8 +177,15 @@ def pipelineEvents(log_root=LOG_ROOT, runs=10):
     out = []
     for d in site_status.runDirs(log_root)[:runs]:
         r = site_status.pipelineRun(d)
-        out.append(runEvent("pipeline", r["dir"], r["steps"],
-                            [s["step"] for s in r["open"]]))
+        e = runEvent("pipeline", r["dir"], r["steps"], [s["step"] for s in r["open"]])
+        e["run"] = r["dir"]
+        text = _read(os.path.join(CHANGES_DIR, r["dir"] + ".json"))
+        if text:
+            try:
+                e["changes"] = json.loads(text)
+            except ValueError:
+                pass
+        out.append(e)
     nightly = sorted((d for d in glob.glob(os.path.join(log_root, "nightly_*"))
                       if os.path.isdir(d)), reverse=True)[:runs]
     for d in nightly:
@@ -295,17 +303,17 @@ def scrapeDays(rows, names):
             by_feed[(i[1], i[2])] = by_feed.get((i[1], i[2]), 0) + 1
         n_xc = sum(1 for i in items if i[1] == "XC")
         n_tf = len(items) - n_xc
-        pub_bits = ([f"cross country {n_xc} meet{'s' if n_xc != 1 else ''}"] if n_xc else []) + \
-                   ([f"track {n_tf} meet{'s' if n_tf != 1 else ''}"] if n_tf else [])
-        out.append({"at": at, "kind": "scraped", "level": "info",
-                    "pub_title": f"New results: {len(items):,} meet{'s' if len(items) != 1 else ''}, "
-                                 f"{n_rows:,} results",
-                    "pub_summary": " · ".join(pub_bits),
-                    # (meet, its page, "XC · Oct 18 · 2,210 results") -- one line each
-                    "pub_items": [(names.get((sp, src, mid)) or f"Meet {mid}",
-                                   f"/meet/{sp.lower()}/{mid}",
-                                   f"{'XC' if sp == 'XC' else 'Track'} · {_day(day)} · {n:,} results")
-                                  for n, sp, src, mid, day, _s in items[:40]],
+        latest = latestRaceDay([i[4] for i in items], key)
+        counts = f"{len(items):,} meet{'s' if len(items) != 1 else ''}, {n_rows:,} results added"
+        split = ([f"cross country {n_xc}"] if n_xc else []) + ([f"track {n_tf}"] if n_tf else [])
+        out.append({"at": at, "kind": "scraped", "level": "info", "latest_day": latest,
+                    # ★ THE NEWEST RACE, NOT THE MEETS (owner, 2026-10-22: "do
+                    #   not individually put the meets... only the latest meet
+                    #   date scraped"): "results through Sat Oct 18" says what
+                    #   a reader wants to know -- is my race in yet.
+                    "pub_title": (f"New results through {_longDay(latest)}" if latest
+                                  else "New results added"),
+                    "pub_summary": counts + (f" ({', '.join(split)})" if len(split) > 1 else ""),
                     "title": f"Scraped {key}: {len(items):,} meet{'s' if len(items) != 1 else ''}, "
                              f"{n_rows:,} results",
                     "summary": " · ".join(f"{sp} {src} {k}" for (sp, src), k in sorted(by_feed.items())),
@@ -315,6 +323,24 @@ def scrapeDays(rows, names):
                                f"/meet/{sp.lower()}/{mid}")
                               for n, sp, src, mid, day, _s in items[:8]]})
     return out
+
+
+def latestRaceDay(days, scraped_day):
+    """The newest race date among a scrape's meets that is a REAL one: not
+    after the day it was scraped (a typo'd 2062, a meet's planned date).
+    None when there is none. Pure."""
+    upto = (scraped_day or "")[:10] or datetime.date.today().isoformat()
+    ok = [str(d)[:10] for d in days if d and str(d)[:10] <= upto and str(d)[:4] >= "2000"]
+    return max(ok) if ok else None
+
+
+def _longDay(d):
+    """'2026-10-18' -> 'Sat, Oct 18'. Pure."""
+    try:
+        x = datetime.date.fromisoformat(str(d)[:10])
+    except ValueError:
+        return str(d or "")
+    return f"{x:%a}, {x:%b} {x.day}"
 
 
 def _day(d):
@@ -371,8 +397,7 @@ def publicEvent(e):
         if level == "warn":
             return dict(base, title="Full ratings update in progress",
                         summary="Every result is being re-rated; pages update when it finishes.")
-        return dict(base, title="Every rating recomputed",
-                    summary="A full update: every result re-rated, courses and conditions refitted.")
+        return dict(base, title="Every rating recomputed", **recomputeText(e))
     if kind == "nightly":
         if level == "bad":
             return dict(base, title="Last night's update ran into a problem",
@@ -380,6 +405,8 @@ def publicEvent(e):
         return dict(base, title="New results rated",
                     summary="Last night's update: newly scraped races rated and the boards refreshed.")
     if kind == "accuracy":
+        if e.get("carried"):
+            return None                      # said on its run's own entry
         lines = []
         for key, (label, scale, better) in PUBLIC_METRICS.items():
             new, old = (e.get("metrics") or {}).get(key), (e.get("prev_metrics") or {}).get(key)
@@ -397,6 +424,75 @@ def publicEvent(e):
     return None
 
 
+_LEVELS = {"hs": "High school", "college": "College", "ms": "Middle school",
+           "pro": "Open and pro", "elem": "Elementary"}
+_SPORTS = {"XC": "cross country", "TF": "track"}
+
+
+def accuracyLines(metrics, prev):
+    """The public accuracy numbers, one line each. Pure."""
+    lines = []
+    for key, (label, scale, better) in PUBLIC_METRICS.items():
+        new, old = (metrics or {}).get(key), (prev or {}).get(key)
+        if new is None:
+            continue
+        line = f"{label}: {new * scale:.2f}%"
+        v = verdict(old, new, better)
+        if v in ("better", "worse") and old is not None:
+            line += f" ({'down' if new < old else 'up'} from {old * scale:.2f}%, {v})"
+        lines.append(line)
+    return lines
+
+
+def recomputeText(e):
+    """{"summary", "detail"} for a finished full update, from what it
+    measurably changed (run_changes) and what we changed in the method
+    (public_changes). Pure apart from reading public_changes."""
+    import public_changes
+    ch = e.get("changes") or {}
+    acc = accuracyLines(e.get("metrics"), e.get("prev_metrics"))
+    head, detail = [], []
+    if ch.get("new_results"):
+        head.append(f"{ch['new_results']:,} new results since the last full update")
+    groups = [a for a in ch.get("athletes") or [] if a.get("compared", 0) >= 500]
+    moved2 = sum(a.get("moved_2", 0) for a in groups)
+    if groups:
+        head.append(f"{moved2:,} athletes' ratings moved 2+ points")
+    if acc:
+        head.append(acc[0][0].lower() + acc[0][1:])
+    for a in groups[:6]:
+        n = a["compared"]
+        up = round(100 * a.get("up", 0) / n) if n else 0
+        down = round(100 * a.get("down", 0) / n) if n else 0
+        line = (f"{_LEVELS.get(a['level'], a['level'].title())} {_SPORTS.get(a['sport'], a['sport'])}: "
+                f"{n:,} athletes this season; the typical rating moved {a['median_abs']:.1f} points "
+                f"({up}% up, {down}% down), {a.get('moved_2', 0):,} by 2+ points")
+        if a.get("new"):
+            line += f"; {a['new']:,} rated for the first time"
+        detail.append(line)
+    c = ch.get("courses") or {}
+    if c.get("compared"):
+        detail.append(f"Course difficulty: {c.get('moved_1pct', 0):,} of {c['compared']:,} course "
+                      f"numbers moved by 1% or more; {c.get('new', 0):,} courses rated for the first time")
+        for b in c.get("biggest") or []:
+            d = b["change_pct"]
+            detail.append(f"{b['course']} ({b['distance_m']:,} m) now reads {abs(d):.1f}% "
+                          f"{'harder' if d > 0 else 'easier'}")
+    detail += acc[1:]
+    try:
+        prev = datetime.datetime.fromisoformat(ch["previous_run_at"]).date() \
+            if ch.get("previous_run_at") else None
+    except ValueError:
+        prev = None
+    notes = public_changes.between(prev, (e.get("at") or datetime.datetime.now()).date())
+    detail += [f"What we changed: {t}" for t in notes]
+    if not head and not detail:
+        return {"summary": "A full update: every result re-rated, courses and conditions refitted.",
+                "detail": []}
+    return {"summary": " · ".join(head) or "A full update: every result re-rated.",
+            "detail": detail}
+
+
 def publicFeed(conn, seen=None):
     """The reader's feed: {"events", "n_new", "latest"}; a source that fails
     is left out quietly (the admin page says why)."""
@@ -404,7 +500,20 @@ def publicFeed(conn, seen=None):
     events = [p for p in (publicEvent(e) for e in fd["events"]) if p and p.get("at")]
     n_new = markNew(events, seen)
     return {"events": events, "n_new": n_new,
-            "latest": events[0]["at"] if events else None}
+            "latest": events[0]["at"] if events else None,
+            "headline": headline(fd["events"])}
+
+
+def headline(events):
+    """{"through": newest real race date collected, "through_text",
+    "recomputed": when every rating was last recomputed} for the home page
+    and the What's new header. Pure."""
+    days = [e.get("latest_day") for e in events if e.get("kind") == "scraped" and e.get("latest_day")]
+    full = [e["at"] for e in events
+            if e.get("kind") == "pipeline" and e.get("level") == "ok" and e.get("at")]
+    through = max(days) if days else None
+    return {"through": through, "through_text": _longDay(through) if through else None,
+            "recomputed": max(full) if full else None}
 
 
 _PUBLIC_CACHE = {"at": None, "data": None}
@@ -441,6 +550,18 @@ def feed(conn, seen=None):
             except Exception:                           # noqa: BLE001
                 pass
     events = [e for e in events if e.get("at")]
+    attachAccuracy(events)
     events.sort(key=lambda e: e["at"], reverse=True)
     n_new = markNew(events, seen)
     return {"events": events, "n_new": n_new, "errors": errors}
+
+
+def attachAccuracy(events):
+    """Each full run gets its own accuracy numbers (the run_history line of
+    the same run), and that accuracy event is marked as carried. Pure."""
+    runs = {e.get("run"): e for e in events if e.get("kind") == "pipeline" and e.get("run")}
+    for e in events:
+        if e.get("kind") == "accuracy" and e.get("run") in runs:
+            p = runs[e["run"]]
+            p["metrics"], p["prev_metrics"] = e.get("metrics"), e.get("prev_metrics")
+            e["carried"] = True

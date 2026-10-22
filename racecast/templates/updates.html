@@ -38,7 +38,7 @@
 <header class="rc-hd"><div class="rc-hgrid rc-hone">
   <div class="rc-left">
     <h1>What's new</h1>
-    <div class="rc-meta">New results, rating updates and accuracy, newest first.
+    <div class="rc-meta">{% if fd.headline and fd.headline.through_text %}Results through <b>{{ fd.headline.through_text }}</b> · {% endif %}{% if fd.headline and fd.headline.recomputed %}every rating last recomputed {{ fd.headline.recomputed.strftime("%b") }} {{ fd.headline.recomputed.day }} · {% endif %}<a href="{{ url_for('about_page') }}#when">when results show up</a>
       <span id="upd-count"></span></div>
   </div>
 </div></header>
@@ -56,7 +56,7 @@
       <b class="{{ 'upd-bad' if e.level == 'bad' else '' }}">{{ e.title }}</b>
       <span class="meta no-break">· {{ e.at.strftime("%b %-d, %H:%M") }} UTC</span>
       {% if e.summary %}<br><span class="meta">{{ e.summary }}</span>{% endif %}
-      {% if e["items"] %}<span class="meta upd-more"> · show the meets</span>{% endif %}
+      {% if more %}<span class="meta upd-more"> · what changed</span>{% endif %}
     {% if more %}</summary>
       <ul class="upd-items">
       {% for name, href, meta in e["items"] %}<li><a href="{{ href }}">{{ name }}</a> <span class="meta">· {{ meta }}</span></li>{% endfor %}
