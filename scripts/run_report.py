@@ -51,6 +51,12 @@ LOG_METRICS = [
      "08a_sport_holdout.log", r"\[joint\] scorecard: bias ([-+0-9.]+)", "abs"),
     ("sport_holdout_sd", "cross-sport holdout error (sd, log)", "08a_sport_holdout.log",
      r"\[joint\] error sd ([0-9.]+)", "low"),
+    # ★ PREDICTIONS ON THE LAST TWO WEEKS' RACES (16d, 2026-10-22): the
+    #   served basis (blend), median |error| % and mean within-race Spearman
+    ("backtest_blend_mae", "predicted times, last 2 weeks: median miss (%)", "16d_backtest.log",
+     r"(?m)^blend\s+0w\s+\d+\s+\d+\s+([0-9.]+)%", "low"),
+    ("backtest_blend_order", "predicted order, last 2 weeks (Spearman)", "16d_backtest.log",
+     r"(?m)^blend\s+0w\s+\d+\s+\d+\s+[0-9.]+%\s+[-+0-9.]+%\s+([0-9.]+)", "high"),
     ("lacctic_order_ours", "LACCTiC order test: ours (%)", "16b_lacctic.log",
      r"ours ([0-9.]+)%\s+theirs [0-9.]+%\s+\(higher", "high"),
     ("lacctic_order_theirs", "LACCTiC order test: theirs (%)", "16b_lacctic.log",

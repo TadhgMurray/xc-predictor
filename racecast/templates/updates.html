@@ -30,6 +30,10 @@
              padding: 0 .35rem; border-radius: 3px; background: var(--accent, #c0392b); color: #fff; margin-right: .3rem; }
   li.is-new .upd-new { display: inline-block; }
   .upd-bad { color: var(--bad, #b03a2e); }
+  .upd-guide { margin: 0 0 1rem; padding: .6rem .8rem; border: 1px solid var(--line, #e5e5e5); border-radius: 6px; }
+  .upd-guide summary { cursor: pointer; }
+  .upd-guide dt { font-weight: 600; margin-top: .6rem; }
+  .upd-guide dd { margin: .15rem 0 0; }
 </style>
 </head>
 <body>
@@ -46,6 +50,19 @@
 <div class="rc-mainc">
 {% if not fd.events %}
   <p class="meta">Nothing to show right now.</p>
+{% endif %}
+{# ★ WHAT THE NUMBERS MEAN, ONCE (owner, 2026-10-22: "very little
+     explanation"): each accuracy line an entry can carry, in a sentence. #}
+{% if fd.guide %}
+<details class="upd-guide">
+  <summary><b>Reading the accuracy numbers</b> <span class="meta">· what each one measures</span></summary>
+  <dl>
+  {% for label, why in fd.guide %}<dt>{{ label }}</dt><dd>{{ why }}</dd>{% endfor %}
+  </dl>
+  <p class="meta">Every Sunday the whole rating system is refitted from every result; each entry below
+    shows these numbers for that update and how they moved from the one before. Open an entry for
+    all of them and for what we changed in how ratings are made.</p>
+</details>
 {% endif %}
 <ul class="upd-list">
 {% for e in fd.events[:150] %}

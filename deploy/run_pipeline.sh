@@ -1636,6 +1636,16 @@ fi
 if [ "${XCP_KAILO:-1}" != "0" ]; then
   step 16c_kailo_record "$PY" -u scripts/kailo_compare.py --record || true
 fi
+# ★ HOW GOOD THE PREDICTIONS WERE, EVERY RUN (owner, 2026-10-22: "how come no
+#   accuracy numbers show up"): the last two weeks' finished XC races
+#   re-predicted with each runner's history cut the day before, on the new
+#   ratings; run_report reads the blend line into the run's history and
+#   What's new says it. 40 races, a few minutes each. XCP_BACKTEST=0 skips.
+if [ "${XCP_BACKTEST:-1}" != "0" ]; then
+  step 16d_backtest "$PY" -u scripts/backtest_predictions.py \
+      --from "$(date -d '14 days ago' +%F)" --to "$(date -d 'yesterday' +%F)" \
+      --weeks 0 --divs "${XCP_BACKTEST_DIVS:-40}" --no-breakdown || true
+fi
 # ★ PAGE TIMES WITH NOTHING CACHED (owner, 2026-10-13: "it should be fast
 #   w or w/o a cache"): a fresh process renders random pages of every kind
 #   and times each page and every SQL statement in it; the slow pages and

@@ -447,8 +447,12 @@ def test_mail_failure_log_can_name_the_account_not_the_address(monkeypatch, caps
 def test_pipeline_step_is_optional_and_after_breakouts():
     for f in ("deploy/nightly_update.sh", "deploy/run_pipeline.sh"):
         src = read(*f.split("/"))
-        assert 'if [ "${XCP_ALERTS:-0}" = "1" ]; then' in src
+        assert '[ "${XCP_ALERTS:-0}" = "1" ]' in src
         assert src.index("13f_breakouts") < src.index("13g_follow_alerts")
+    # ! weeknights wait for Sunday's full update unless asked (2026-10-22)
+    assert '[ "${XCP_NIGHTLY_ALERTS:-0}" = "1" ]' in read("deploy", "nightly_update.sh")
+    for f in ("deploy/nightly_update.sh", "deploy/run_pipeline.sh"):
+        src = read(*f.split("/"))
         assert "racecast/follow_alerts.py --send --prewarm" in src
     # ! the alert switch and secret must not re-trigger the ladder
     assert "LACCTIC|ALERT)" in read("deploy", "run_pipeline.sh")

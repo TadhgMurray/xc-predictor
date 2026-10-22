@@ -398,9 +398,36 @@ def kailoEvents(store=KAILO_STORE, days=14):
 #   accuracy number that needs no glossary. NOT on it: step names and logs,
 #   the owner's sentinel cases (named athletes' results), competitor
 #   comparisons, the Kailo recordings -- those stay on the admin page.
+# ★ THE ACCURACY A READER CAN USE (owner, 2026-10-22: "how come no accuracy
+#   numbers show up? there is very little explanation"). Each full run's
+#   own tests (scripts/run_report.py's history), the first one present in
+#   this order leads the entry; every one present is listed in its detail.
+#   The explanation of each is on the page once (updates.html), not on
+#   every entry. Only OUR numbers: the comparison tests name no other site.
+#   key: (label, scale, decimals, explanation)
 PUBLIC_METRICS = {
-    # key: (label, scale, better)
-    "holdout_race_sd": ("Typical miss on a race the ratings had not seen", 100.0, "low"),
+    "backtest_blend_mae": (
+        "Predicted race times, the last two weeks' races: typical miss", 1.0, 2,
+        "We re-predict the last two weeks' finished races as if they had not "
+        "been run yet (each runner's history cut off the day before) and "
+        "compare with the times they ran. Half of all runners finished closer "
+        "to their predicted time than this."),
+    "backtest_blend_order": (
+        "Predicted finishing order, the same races", 100.0, 1,
+        "How well the predicted order matched the real finishing order, as a "
+        "rank correlation (100 would be every place right)."),
+    "lacctic_order_ours": (
+        "Finishing order called right from ratings, college races", 1.0, 1,
+        "Of every pair of runners in a set of championship races, how often the "
+        "one with the better rating from their other races finished ahead."),
+    "lacctic_5000_ours": (
+        "Cross country ratings against the same runners' track 5000s", 1.0, 2,
+        "How far a college runner's cross country rating, turned into a track "
+        "5000 time, typically sits from the 5000 they actually ran."),
+    "holdout_race_sd": (
+        "Typical miss on a race the ratings had not seen", 100.0, 2,
+        "Races held out of the rating fit, predicted from everything else: how "
+        "far a race typically lands from where the ratings put it."),
 }
 
 
@@ -428,7 +455,7 @@ def publicEvent(e):
         # that never published has no accuracy a reader saw
         return None
         lines = []
-        for key, (label, scale, better) in PUBLIC_METRICS.items():
+        for key in PUBLIC_METRICS:
             new, old = (e.get("metrics") or {}).get(key), (e.get("prev_metrics") or {}).get(key)
             if new is None:
                 continue
@@ -448,15 +475,21 @@ _SPORTS = {"XC": "cross country", "TF": "track"}
 def accuracyLines(metrics, prev):
     """The public accuracy numbers, one line each. Pure."""
     lines = []
-    for key, (label, scale, better) in PUBLIC_METRICS.items():
+    for key, (label, scale, dec, _why) in PUBLIC_METRICS.items():
         new, old = (metrics or {}).get(key), (prev or {}).get(key)
         if new is None:
             continue
-        line = f"{label}: {new * scale:.2f}%"
-        if old is not None and abs(new - old) * scale >= 0.005:
-            line += f" ({'down' if new < old else 'up'} from {old * scale:.2f}%)"
+        unit = "" if key.endswith("_order") else "%"
+        line = f"{label}: {new * scale:.{dec}f}{unit}"
+        if old is not None and abs(new - old) * scale >= 0.5 * 10 ** -dec:
+            line += f" ({'down' if new < old else 'up'} from {old * scale:.{dec}f}{unit})"
         lines.append(line)
     return lines
+
+
+def metricGuide():
+    """[(label, explanation)] for the page's "reading the numbers". Pure."""
+    return [(lab, why) for lab, _s, _d, why in PUBLIC_METRICS.values()]
 
 
 # A level's ratings moved enough to say so: the mean change of a pool with
@@ -491,7 +524,8 @@ def recomputeText(e):
             detail.append(f"{_LEVELS.get(a['level'], a['level'].title())} "
                           f"{_SPORTS.get(a['sport'], a['sport'])} ratings "
                           f"{'rose' if a['mean'] > 0 else 'fell'} {abs(a['mean']):.1f} points on average")
-    return {"summary": acc[0] if acc else "Every result re-rated from scratch.",
+    return {"summary": acc[0] if acc else
+            "Every result re-rated from scratch; accuracy was not measured on this update.",
             "detail": acc[1:] + detail}
 
 
@@ -503,7 +537,7 @@ def publicFeed(conn, seen=None):
     n_new = markNew(events, seen)
     return {"events": events, "n_new": n_new,
             "latest": events[0]["at"] if events else None,
-            "headline": headline(fd["events"])}
+            "headline": headline(fd["events"]), "guide": metricGuide()}
 
 
 def headline(events):

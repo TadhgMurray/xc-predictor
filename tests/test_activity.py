@@ -225,3 +225,16 @@ def test_the_public_page_and_latest_api(monkeypatch):
     j = client.get("/api/updates/latest")
     assert j.get_json() == {"latest": "2026-10-22T03:00:00"}
     assert j.headers["Cache-Control"] == "public, max-age=300"
+
+
+def test_accuracy_lines_use_every_test_a_run_has():
+    m = {"backtest_blend_mae": 2.97, "backtest_blend_order": 0.922, "lacctic_order_ours": 86.1,
+         "lacctic_5000_ours": 2.12, "owner_3200": 138.0}
+    p = {"backtest_blend_mae": 3.44, "backtest_blend_order": 0.922, "lacctic_order_ours": 85.9}
+    lines = AC.accuracyLines(m, p)
+    assert lines[0] == "Predicted race times, the last two weeks' races: typical miss: 2.97% (down from 3.44%)"
+    assert lines[1] == "Predicted finishing order, the same races: 92.2"
+    assert lines[2] == "Finishing order called right from ratings, college races: 86.1% (up from 85.9%)"
+    assert lines[3] == "Cross country ratings against the same runners' track 5000s: 2.12%"
+    assert len(lines) == 4 and not any("LACCTiC" in l or "owner" in l for l in lines)
+    assert all(why for _l, why in AC.metricGuide())
