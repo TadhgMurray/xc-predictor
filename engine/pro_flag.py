@@ -295,6 +295,14 @@ def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
     if rows:
         execute_values(cur, "INSERT INTO tmp_team_level VALUES %s", rows,
                        page_size=10000)
+    # the level by name, for buildPostCollegiate (college vs club)
+    cur.execute("DROP TABLE IF EXISTS tmp_team_lv")
+    cur.execute("CREATE TEMP TABLE tmp_team_lv "
+                "(team_id bigint PRIMARY KEY, level text NOT NULL)")
+    rows = [(int(t), str(lv)) for t, lv in (team_levels or {}).items() if lv]
+    if rows:
+        execute_values(cur, "INSERT INTO tmp_team_lv VALUES %s", rows,
+                       page_size=10000)
     cur.execute("DROP TABLE IF EXISTS tmp_pro_team")
     cur.execute("CREATE TEMP TABLE tmp_pro_team (team_id bigint PRIMARY KEY)")
     if pro_teams:
@@ -431,6 +439,27 @@ def raceGrain(cur, table):
 # CHUNK 2 -- SEED
 # ------------------------------------------------------------------ #
 
+def buildNcaaSeasons(cur):
+    """The veto set tmp_ncaa_season: (person, year) pairs with any
+    NCAA-named race."""
+    cur.execute("DROP TABLE IF EXISTS tmp_ncaa_season")
+    cur.execute("CREATE TEMP TABLE tmp_ncaa_season (person_id bigint, yr int)")
+    for results, meets in (("results", "meets"), ("results_tf", "meets_tf")):
+        cur.execute(f"""
+            INSERT INTO tmp_ncaa_season (person_id, yr)
+            SELECT DISTINCT r.person_id, {_YR}
+            FROM {results} r
+            JOIN {meets} m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
+            WHERE m.meet_name ~* %s AND r.date ~ '^(19|20)[0-9]{{2}}'
+              AND r.person_id IS NOT NULL
+        """, (_NCAA,))
+    cur.execute("CREATE INDEX ON tmp_ncaa_season (person_id, yr)")
+    cur.execute("ANALYZE tmp_ncaa_season")
+    cur.execute("SELECT count(*) FROM tmp_ncaa_season")
+    print(f"    NCAA veto: {cur.fetchone()[0]:,} athlete-seasons with an "
+          f"NCAA race")
+
+
 def buildSeed(cur, min_pro_races=_MIN_PRO_RACES, team_levels=None,
               pro_teams=None):
     """
@@ -468,23 +497,7 @@ def buildSeed(cur, min_pro_races=_MIN_PRO_RACES, team_levels=None,
         """, (_INCLUDE, _EXCLUDE))
         print(f"    {results}: {cur.rowcount:,} rows at seeded meets")
 
-    # The veto set: (person, year) pairs with any NCAA-named race.
-    cur.execute("DROP TABLE IF EXISTS tmp_ncaa_season")
-    cur.execute("CREATE TEMP TABLE tmp_ncaa_season (person_id bigint, yr int)")
-    for results, meets in (("results", "meets"), ("results_tf", "meets_tf")):
-        cur.execute(f"""
-            INSERT INTO tmp_ncaa_season (person_id, yr)
-            SELECT DISTINCT r.person_id, {_YR}
-            FROM {results} r
-            JOIN {meets} m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
-            WHERE m.meet_name ~* %s AND r.date ~ '^(19|20)[0-9]{{2}}'
-              AND r.person_id IS NOT NULL
-        """, (_NCAA,))
-    cur.execute("CREATE INDEX ON tmp_ncaa_season (person_id, yr)")
-    cur.execute("ANALYZE tmp_ncaa_season")
-    cur.execute("SELECT count(*) FROM tmp_ncaa_season")
-    print(f"    NCAA veto: {cur.fetchone()[0]:,} athlete-seasons with an "
-          f"NCAA race")
+    buildNcaaSeasons(cur)
 
     cur.execute("DROP TABLE IF EXISTS tmp_pro_season")
     cur.execute(f"""
@@ -752,6 +765,244 @@ def propagate(cur, grains, rounds=_MAX_ROUNDS, frac=_FIELD_FRAC,
 
 
 # ------------------------------------------------------------------ #
+# CHUNK 4b -- POST-COLLEGIATE SEASONS
+# ------------------------------------------------------------------ #
+
+# ★ AFTER COLLEGE, A CLUB SEASON IS A PROFESSIONAL SEASON (owner,
+#   2026-10-22: "agreed with new rules"). Rynard Swanepoel (32542423) raced
+#   all of 2026 for Atlanta Track Club / ATC Elite / South Africa and sat
+#   10th on the college_m board at 147.8. Nothing here could reach him: he
+#   ran no seeded meet, his fields are not 70% confirmed pros, and the club
+#   rule in pool_resolve keeps a club row with a grade at that grade -- and
+#   tfrrs writes his "SR-4" where a grade goes, a college class word.
+#
+#   A season is post-collegiate, and so professional, when
+#     1. the athlete raced for a college team in an EARLIER season (or an
+#        NCAA meet),
+#     2. this season has no race for a school or college team and no NCAA
+#        race, and
+#     3. this season has >= _MIN_PRO_RACES races for a team that is not a
+#        school: a club, an elite squad, a national team.
+#
+# ! NO TEAM IS NOT A CLUB. team_id 0 (unattached) is left out of 3, so a
+#   redshirt racing unattached for a year never qualifies -- and those rows
+#   are already professional by pool_resolve's no_team rule, row by row.
+# ! AFTER PROPAGATION, NOT BEFORE. These seasons are not used as confirmed
+#   pros in anybody's field: a post-collegiate club runner is not evidence
+#   that a race was professional. round = _POST_COLLEGIATE_ROUND marks them.
+# ! ENV-GATED until the dry run is read: XCP_POST_COLLEGIATE=1 writes them.
+#   `pro_flag.py --post-collegiate` lists who would move, and writes nothing.
+_POST_COLLEGIATE_ROUND = -1
+_ROW_LEVELS = ("hs", "ms", "elem", "college", "club")
+
+
+def postCollegiateOn():
+    return os.environ.get("XCP_POST_COLLEGIATE", "0").strip() == "1"
+
+
+def _rowLevelSql(cur, results):
+    """(joins, expr): the level of a row's team -- 'none' (team_id 0),
+    'pro' (a professional team), anet's level name, else the tfrrs slug's,
+    else NULL. Needs tmp_team_lv and tmp_pro_team (buildSchoolSeasons)."""
+    from pool_resolve import _PRO_TEAMS
+    has_team = hasColumn(cur, results, "team_id")
+    has_slug = hasColumn(cur, results, "team_slug")
+    lv_list = ", ".join(f"'{x}'" for x in _ROW_LEVELS)
+    slug = (f"CASE WHEN split_part(r.team_slug, '_', 3) <> '' AND "
+            f"lower(split_part(r.team_slug, '_', 2)) IN ({lv_list}) "
+            f"THEN lower(split_part(r.team_slug, '_', 2)) END"
+            if has_slug else "NULL::text")
+    if has_team:
+        joins = """
+            LEFT JOIN tmp_team_lv tv ON tv.team_id = r.team_id
+            LEFT JOIN tmp_pro_team pt ON pt.team_id = r.team_id"""
+        level = f"""CASE WHEN r.team_id = 0 THEN 'none'
+                         WHEN pt.team_id IS NOT NULL THEN 'pro'
+                         WHEN tv.team_id IS NOT NULL THEN tv.level
+                         ELSE {slug} END"""
+    else:
+        joins, level = "", slug
+    norm = ("btrim(regexp_replace(regexp_replace(lower(COALESCE(r.school, '')),"
+            " '[^a-z0-9 ]+', '', 'g'), '\\s+', ' ', 'g'))")
+    names = ", ".join("'" + n.replace("'", "''") + "'" for n in sorted(_PRO_TEAMS))
+    team = ("(r.team_id IS NOT NULL AND r.team_id <> 0)" if has_team else "FALSE")
+    if has_slug:
+        team = f"({team} OR r.team_slug IS NOT NULL)"
+    expr = f"""CASE WHEN {norm} IN ({names}) THEN 'pro'
+                    WHEN ({level}) IS NOT NULL THEN ({level})
+                    WHEN {team} THEN 'other'
+               END"""
+    return joins, expr
+
+
+def buildTeamSeasons(cur):
+    """tmp_team_season (person_id, yr, n_school, n_college, n_club, n_other):
+    each athlete-season's races by the level of the team they ran for.
+    'other' is a team nobody has levelled; 'none' (unattached) is not
+    counted."""
+    cur.execute("DROP TABLE IF EXISTS tmp_team_rows")
+    cur.execute("""CREATE TEMP TABLE tmp_team_rows
+                   (person_id bigint, yr int, n_school int, n_college int,
+                    n_club int, n_other int)""")
+    for results in ("results", "results_tf"):
+        joins, lv = _rowLevelSql(cur, results)
+        cur.execute(f"""
+            INSERT INTO tmp_team_rows
+            SELECT person_id, yr,
+                   count(*) FILTER (WHERE lv IN ('hs', 'ms', 'elem')),
+                   count(*) FILTER (WHERE lv = 'college'),
+                   count(*) FILTER (WHERE lv IN ('club', 'pro')),
+                   count(*) FILTER (WHERE lv = 'other')
+            FROM (SELECT r.person_id, {_YR} AS yr, {lv} AS lv
+                  FROM {results} r
+                  {joins}
+                  WHERE r.person_id IS NOT NULL
+                    AND r.date ~ '^(19|20)[0-9]{{2}}') x
+            GROUP BY 1, 2""")
+    cur.execute("DROP TABLE IF EXISTS tmp_team_season")
+    cur.execute("""CREATE TEMP TABLE tmp_team_season AS
+                   SELECT person_id, yr, sum(n_school)::int AS n_school,
+                          sum(n_college)::int AS n_college,
+                          sum(n_club)::int AS n_club,
+                          sum(n_other)::int AS n_other
+                   FROM tmp_team_rows GROUP BY 1, 2""")
+    cur.execute("CREATE INDEX ON tmp_team_season (person_id, yr)")
+    cur.execute("ANALYZE tmp_team_season")
+
+
+def buildPostCollegiate(cur, min_races=_MIN_PRO_RACES):
+    """tmp_post_collegiate (person_id, yr, n_club, n_other, first_college,
+    last_college): the seasons the rule above makes professional and that
+    nothing else already has. Needs tmp_ncaa_season, tmp_school_season,
+    tmp_team_lv, tmp_pro_team and tmp_pro_season."""
+    buildTeamSeasons(cur)
+    cur.execute("DROP TABLE IF EXISTS tmp_post_collegiate")
+    cur.execute(f"""
+        CREATE TEMP TABLE tmp_post_collegiate AS
+        WITH col AS (
+            SELECT person_id, yr FROM tmp_team_season WHERE n_college > 0
+            UNION SELECT person_id, yr FROM tmp_ncaa_season)
+        SELECT s.person_id, s.yr, s.n_club, s.n_other,
+               min(c.yr) AS first_college, max(c.yr) AS last_college
+        FROM tmp_team_season s
+        JOIN col c ON c.person_id = s.person_id AND c.yr < s.yr
+        WHERE s.n_school = 0 AND s.n_college = 0
+          AND s.n_club + s.n_other >= {int(min_races)}
+          AND NOT EXISTS (SELECT 1 FROM tmp_ncaa_season n
+                          WHERE n.person_id = s.person_id AND n.yr = s.yr)
+          AND NOT EXISTS (SELECT 1 FROM tmp_school_season n
+                          WHERE n.person_id = s.person_id AND n.yr = s.yr)
+          AND NOT EXISTS (SELECT 1 FROM tmp_pro_season p
+                          WHERE p.person_id = s.person_id AND p.yr = s.yr)
+        GROUP BY s.person_id, s.yr, s.n_club, s.n_other""")
+    n = cur.rowcount
+    cur.execute("SELECT count(DISTINCT person_id) FROM tmp_post_collegiate")
+    print(f"    post-collegiate: {n:,} athlete-seasons "
+          f"({cur.fetchone()[0]:,} athletes) -- earlier college, this season "
+          f"no school team and >= {min_races} races for a club")
+    return n
+
+
+def addPostCollegiate(cur):
+    """The post-collegiate seasons into tmp_pro_season (see above)."""
+    cur.execute(f"""INSERT INTO tmp_pro_season (person_id, yr, pro_races, round)
+                    SELECT person_id, yr, n_club + n_other,
+                           {_POST_COLLEGIATE_ROUND}
+                    FROM tmp_post_collegiate""")
+    return cur.rowcount
+
+
+def reportPostCollegiate(cur, limit=60, person=None):
+    """Who the rule moves, by the pool each season sits in today, and the
+    highest-rated of them with the teams they ran for."""
+    cur.execute("SELECT to_regclass('athlete_season')")
+    has_as = cur.fetchone()[0] is not None
+    if has_as:
+        cur.execute("""
+            SELECT COALESCE(split_part(a.pool, '|', 1), '(not rated)') AS pool,
+                   count(DISTINCT (p.person_id, p.yr))
+            FROM tmp_post_collegiate p
+            LEFT JOIN athlete_season a ON a.person_id::text = p.person_id::text
+                                      AND a.year = p.yr
+            GROUP BY 1 ORDER BY 2 DESC""")
+        print("\n[post-collegiate] seasons by today's pool:")
+        for pool, n in cur.fetchall():
+            print(f"    {pool:<16}{n:>8,}")
+        cur.execute(f"""
+            SELECT p.person_id, an.name, p.yr, p.n_club, p.n_other,
+                   p.first_college, p.last_college,
+                   string_agg(DISTINCT split_part(a.pool, '|', 1)
+                              || ' ' || a.sport || ' '
+                              || round(a.mean_rating::numeric, 1)::text, ', ')
+                       AS today,
+                   max(a.mean_rating) AS top
+            FROM tmp_post_collegiate p
+            JOIN athlete_season a ON a.person_id::text = p.person_id::text
+                                 AND a.year = p.yr
+            LEFT JOIN athlete_named an ON an.person_id = p.person_id
+            WHERE a.pool NOT LIKE 'pro%%'
+            GROUP BY 1, 2, 3, 4, 5, 6, 7
+            ORDER BY top DESC NULLS LAST LIMIT {int(limit)}""")
+        rows = cur.fetchall()
+        print(f"\n[post-collegiate] highest-rated seasons that would move "
+              f"(not already pro), top {limit}:")
+        print(f"    {'person':>9}  {'season':>6} {'club':>4} {'unlv':>4}  "
+              f"{'college':<9}  {'today':<34} name")
+        for pid, name, yr, nc, no, f0, f1, today, _top in rows:
+            print(f"    {pid:>9}  {yr:>6} {nc:>4} {no:>4}  {f0}-{f1:<4}  "
+                  f"{(today or '')[:34]:<34} {name or '?'}")
+        if rows:
+            ids = [r[0] for r in rows[:25]]
+            print("\n[post-collegiate] the teams they ran for (top 25):")
+            for results in ("results", "results_tf"):
+                cur.execute(f"""
+                    SELECT r.person_id, string_agg(DISTINCT r.school, ' / ')
+                    FROM {results} r JOIN tmp_post_collegiate p
+                      ON p.person_id = r.person_id AND p.yr = {_YR}
+                    WHERE r.person_id = ANY(%s)
+                      AND r.date ~ '^(19|20)[0-9]{{2}}'
+                    GROUP BY 1""", (ids,))
+                for pid, teams in cur.fetchall():
+                    print(f"    {results:<11}{pid:>9}  {(teams or '')[:110]}")
+    if person:
+        cur.execute("""SELECT yr, n_school, n_college, n_club, n_other
+                       FROM tmp_team_season WHERE person_id = %s
+                       ORDER BY yr""", (person,))
+        print(f"\n[post-collegiate] person {person}: season, races by team "
+              f"level (school, college, club, unlevelled)")
+        for yr, a, b, c, d in cur.fetchall():
+            cur.execute("SELECT 1 FROM tmp_post_collegiate "
+                        "WHERE person_id = %s AND yr = %s", (person, yr))
+            hit = "  <- post-collegiate" if cur.fetchone() else ""
+            print(f"    {yr}  {a:>4} {b:>4} {c:>4} {d:>4}{hit}")
+
+
+def mainPostCollegiate(person=None):
+    """--post-collegiate: the dry run. Builds only what the rule reads (no
+    seed or propagation; an existing pro_athlete_season stands in for
+    tmp_pro_season) and lists who would move. Writes nothing."""
+    from database import getConn
+    with getConn() as conn, conn.cursor() as cur:
+        buildNcaaSeasons(cur)
+        buildSchoolSeasons(cur)
+        cur.execute("DROP TABLE IF EXISTS tmp_pro_season")
+        cur.execute("CREATE TEMP TABLE tmp_pro_season "
+                    "(person_id bigint, yr int, pro_races int, round int)")
+        cur.execute("SELECT to_regclass('pro_athlete_season')")
+        if cur.fetchone()[0] is not None:
+            cur.execute("""INSERT INTO tmp_pro_season
+                           SELECT person_id, season, pro_races, round
+                           FROM pro_athlete_season
+                           WHERE round IS DISTINCT FROM %s""",
+                        (_POST_COLLEGIATE_ROUND,))
+        buildPostCollegiate(cur)
+        reportPostCollegiate(cur, person=person)
+        conn.rollback()
+    print(f"\n[post-collegiate] DRY RUN -- nothing written. "
+          f"XCP_POST_COLLEGIATE={'1 (on)' if postCollegiateOn() else '0 (off)'}")
+
+
+# ------------------------------------------------------------------ #
 # CHUNK 5 -- OUTPUT
 # ------------------------------------------------------------------ #
 
@@ -857,6 +1108,11 @@ def main(write=False, rounds=_MAX_ROUNDS, show_dist=True, since=None):
             print(f"[pro] total {cur.fetchone()[0]:,} athlete-seasons "
                   f"({new:,} from propagation)")
 
+            if postCollegiateOn():
+                print("\n[pro] post-collegiate seasons (XCP_POST_COLLEGIATE=1)...")
+                buildPostCollegiate(cur)
+                print(f"    added {addPostCollegiate(cur):,} athlete-seasons")
+
             reportTop(cur)
 
             if write:
@@ -869,6 +1125,13 @@ def main(write=False, rounds=_MAX_ROUNDS, show_dist=True, since=None):
 
 
 if __name__ == "__main__":
+    if "--post-collegiate" in sys.argv:
+        _person = None
+        for a in sys.argv[1:]:
+            if a.startswith("--person="):
+                _person = int(a.split("=", 1)[1])
+        mainPostCollegiate(person=_person)
+        sys.exit(0)
     # Each round is a full scan of both results tables, so rounds dominate the
     # runtime. Propagation converges fast -- 2 is usually enough.
     rounds = _MAX_ROUNDS

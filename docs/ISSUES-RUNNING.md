@@ -6546,3 +6546,26 @@ clock's slope at the top end (fastest third -1.8% vs slowest +0.8%).
   XCP_TILT_SCALE=hs trial, not the scale. Part D of diag_hs_to_college
   (the stopwatch: HS 1600/3200 -> college mile/3000) decides how much
   freshmen really improve.
+- **Part D, the stopwatch (NEW, 2026-10-22):** the same runners' own track
+  times, HS 3200 -> college 3000 (Riegel 1.06): women +0.79% faster,
+  rating +0.79% -- agree. Men +0.94%, rating +0.31% -- the rating
+  under-credits the men's freshman jump by ~0.6%. The clock (+1.23% over
+  all of A) over-credits by ~0.3%. So for women the rating is right and the
+  college XC clock is fast (B: -1.76% with 3+ races); for men both are off,
+  in opposite directions, by less. The XCP_TILT_SCALE=hs trial is still the
+  next lever (it moves the clock, not the rating).
+
+### Post-collegiate seasons go pro (owner approved 2026-10-22)
+Rynard Swanepoel (32542423) raced all of 2026 for Atlanta Track Club / ATC
+Elite / South Africa and sat 10th on the college_m board: no seeded meet,
+fields under 70% pros, and tfrrs writes "SR-4" where a grade goes, so the
+club rule kept his club rows college. pro_flag.buildPostCollegiate: a season
+is professional when the athlete raced for a college team (or an NCAA meet)
+in an EARLIER season, this season has no school/college race and no NCAA
+race, and >= 3 races for a club/elite squad/national team (unattached,
+team_id 0, does not count -- a redshirt stays put). Added after propagation,
+round = -1, so they never make a field professional.
+- 📋 OFF until the dry run is read: `engine/pro_flag.py --post-collegiate
+  --person=32542423` lists who would move (writes nothing). Then
+  XCP_POST_COLLEGIATE=1 in /etc/xc-predictor.env and the next pipeline's
+  03_pro_flag writes them.
