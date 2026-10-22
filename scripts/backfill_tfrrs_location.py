@@ -197,6 +197,20 @@ def _knownCourses(cur, tier1_stamps):
     for name, state, loc, lat, lon in cur.fetchall():
         add(_key(name, state), loc, lat, lon)
 
+    # ★ AND THE TFRRS MEETS ALREADY PLACED (2026-10-22). The index held only
+    #   anet venues and this run's tier 1, so a venue tfrrs had placed in an
+    #   earlier season taught nothing to this season's meet there. Keyed on
+    #   both strings tfrrs writes, location_raw and venue_name.
+    cur.execute("""
+        SELECT location_raw, venue_name, state, location_id, gps_lat, gps_long
+        FROM meets_tfrrs
+        WHERE sport = 'XC' AND location_id IS NOT NULL
+    """)
+    for raw, venue, state, loc, lat, lon in cur.fetchall():
+        add(_key(raw, state), loc, lat, lon)
+        if _normRaw(venue) != _normRaw(raw):
+            add(_key(venue, state), loc, lat, lon)
+
     # tfrrs courses tier 1 just resolved: key on THEIR location_raw + state, so a
     # different tfrrs meet at the same raw string can inherit it in tier 2.
     if tier1_stamps:
@@ -230,16 +244,20 @@ def _knownCourses(cur, tier1_stamps):
 #           about to stamp (they are resolved) so precedence holds.
 # Output  : [(tf_meet, loc, lat, lon)].
 def _tier2(cur, known, tier1_meets):
+    # ★ location_raw, ELSE venue_name (2026-10-22): every 2026 tfrrs XC meet
+    #   -- 756 since August -- matched nothing on location_raw alone, while
+    #   their venue_name ("Agri Park", "Goodman Campus XC Course") is a
+    #   venue tfrrs and anet already place.
     cur.execute("""
-        SELECT meet_id, location_raw, state
+        SELECT meet_id, location_raw, venue_name, state
         FROM meets_tfrrs
         WHERE sport = 'XC' AND location_id IS NULL
     """)
     stamps = []
-    for meet_id, raw, state in cur.fetchall():
+    for meet_id, raw, venue, state in cur.fetchall():
         if meet_id in tier1_meets:
             continue
-        hit = known.get(_key(raw, state))
+        hit = known.get(_key(raw, state)) or known.get(_key(venue, state))
         if hit is not None:
             loc, lat, lon = hit
             stamps.append((meet_id, loc, lat, lon))

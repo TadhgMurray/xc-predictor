@@ -787,6 +787,11 @@ def propagate(cur, grains, rounds=_MAX_ROUNDS, frac=_FIELD_FRAC,
 # ! NO TEAM IS NOT A CLUB. team_id 0 (unattached) is left out of 3, so a
 #   redshirt racing unattached for a year never qualifies -- and those rows
 #   are already professional by pool_resolve's no_team rule, row by row.
+# ! A SCHOOL RACE AFTER COLLEGE IS TWO PEOPLE, NOT ONE (dry run,
+#   2026-10-22: Noah Johnson, college 2021 then ms_m 2022 on a youth club).
+#   Nobody races for a high or middle school after a college season, so a
+#   person who does is a merge of a collegian and a kid, and the kid's club
+#   season is left where it is.
 # ! AFTER PROPAGATION, NOT BEFORE. These seasons are not used as confirmed
 #   pros in anybody's field: a post-collegiate club runner is not evidence
 #   that a race was professional. round = _POST_COLLEGIATE_ROUND marks them.
@@ -881,7 +886,13 @@ def buildPostCollegiate(cur, min_races=_MIN_PRO_RACES):
         CREATE TEMP TABLE tmp_post_collegiate AS
         WITH col AS (
             SELECT person_id, yr FROM tmp_team_season WHERE n_college > 0
-            UNION SELECT person_id, yr FROM tmp_ncaa_season)
+            UNION SELECT person_id, yr FROM tmp_ncaa_season),
+        two AS (
+            SELECT DISTINCT t.person_id
+            FROM tmp_team_season t
+            JOIN (SELECT person_id, min(yr) AS y0 FROM col GROUP BY 1) f
+              ON f.person_id = t.person_id
+            WHERE t.n_school > 0 AND t.yr > f.y0)
         SELECT s.person_id, s.yr, s.n_club, s.n_other,
                min(c.yr) AS first_college, max(c.yr) AS last_college
         FROM tmp_team_season s
@@ -894,6 +905,7 @@ def buildPostCollegiate(cur, min_races=_MIN_PRO_RACES):
                           WHERE n.person_id = s.person_id AND n.yr = s.yr)
           AND NOT EXISTS (SELECT 1 FROM tmp_pro_season p
                           WHERE p.person_id = s.person_id AND p.yr = s.yr)
+          AND NOT EXISTS (SELECT 1 FROM two WHERE two.person_id = s.person_id)
         GROUP BY s.person_id, s.yr, s.n_club, s.n_other""")
     n = cur.rowcount
     cur.execute("SELECT count(DISTINCT person_id) FROM tmp_post_collegiate")

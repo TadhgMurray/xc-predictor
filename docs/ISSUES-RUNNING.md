@@ -6569,3 +6569,25 @@ round = -1, so they never make a field professional.
   --person=32542423` lists who would move (writes nothing). Then
   XCP_POST_COLLEGIATE=1 in /etc/xc-predictor.env and the next pipeline's
   03_pro_flag writes them.
+- **Dry run on NEW (2026-10-22):** 4,384 athlete-seasons, 2,488 athletes
+  (3,036 unrated; college 1,154, hs 137, ms/elem 59). Rynard's 2025 season
+  (fall 2025 + spring 2026) is caught. The top of the list is real pros
+  mis-pooled today: Karissa Schweizer 2019 in ms_f at 153.3, Athing Mu
+  2024 college_f, Roisin Willis, Nia Akins, Parker Wolfe, Makenna Myler.
+  Most of their club rows are on teams nobody has levelled ('unlv').
+  Guard added after it: a school-team race after the first college season
+  means two people on one id (Noah Johnson, college 2021 then ms_m 2022),
+  and that person is skipped.
+
+### College course gps: tier 2 matched nothing in 2026 (2026-10-22)
+All 756 tfrrs XC meets since August: location_id 0, gps 0, no canon link.
+Tier 2 keyed on location_raw only, and learned only from anet venues + this
+run's tier 1. Now it learns from every tfrrs meet already placed (13,163)
+and falls back to venue_name.
+
+### Wheelchair check: 2 rated rows (open)
+results 76237729 (person 23676345, Mt. Spokane JV 2026-10-14, 100.9) and
+results_tf 295235013 (person 18506492, 800m 2026-05-27 unattached, 134.6).
+Both people are in wheelchair_person (Ambulatory; T13). The engine and
+fill_ratings exclude by person, so the likely path is a row re-linked to
+the person after it was rated. Not traced yet.

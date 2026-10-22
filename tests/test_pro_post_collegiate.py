@@ -45,6 +45,7 @@ MIXED = 5               # college, then a club season with one college race
 FEW = 6                 # college, then only two club races
 NCAA_ONLY = 7           # an NCAA meet, then a season on an anet club
 PRO_ALREADY = 8         # college, then club -- and already pro_flag's
+MERGED = 9              # a collegian and a kid on one id: a school race after
 NIKE, CLUB, HS = 901, 902, 903
 
 COLLEGE = "GA_college_m_Georgia"
@@ -95,6 +96,10 @@ def _seed(cur):
     run(NCAA_ONLY, "2025-11-22", "Somewhere", meet=2)
     for d in days[:3]:
         run(NCAA_ONLY, d, "Boulder Club", team_id=CLUB, meet=3)
+    run(MERGED, "2021-10-02", "Georgia", slug=COLLEGE, grade="FR")
+    run(MERGED, "2025-10-02", "Lone Peak MS", team_id=HS, grade="7")
+    for d in days[:3]:
+        run(MERGED, d, "Youth Club", team_id=CLUB, grade="8", meet=3)
     cur.executemany("""INSERT INTO results (person_id, meet_id, div_id, date,
                        grade, school, team_id, team_slug)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""", xc)
