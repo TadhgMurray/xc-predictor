@@ -187,6 +187,7 @@ NEW (keep them proxied, orange cloud). Pages come from NEW within a minute.
 cd /srv/xc-predictor
 sudo bash deploy/install_nightly_timer.sh
 sudo bash deploy/install_backup_timer.sh
+sudo bash deploy/install_kailo_record_timer.sh   # (and disable it on OLD)
 sudo bash deploy/origin_firewall.sh        # web traffic only via Cloudflare
 sudo systemctl start xcp-backup && journalctl -u xcp-backup -n 5 --no-pager
 ```
