@@ -179,6 +179,8 @@ def pipelineEvents(log_root=LOG_ROOT, runs=10):
         r = site_status.pipelineRun(d)
         e = runEvent("pipeline", r["dir"], r["steps"], [s["step"] for s in r["open"]])
         e["run"] = r["dir"]
+        e["published"] = published(r["steps"])
+        e["active"] = any((o.get("idle_s") or 1e9) < ACTIVE_IDLE_S for o in r["open"])
         text = _read(os.path.join(CHANGES_DIR, r["dir"] + ".json"))
         if text:
             try:
@@ -192,8 +194,27 @@ def pipelineEvents(log_root=LOG_ROOT, runs=10):
         text = _read(os.path.join(d, "SUMMARY.txt"))
         if text is None:
             continue
-        out.append(runEvent("nightly", os.path.basename(d), parseNightly(text)))
+        e = runEvent("nightly", os.path.basename(d), parseNightly(text))
+        e["published"] = published(parseNightly(text))
+        out.append(e)
     return out
+
+
+# ★ WHAT "THE RATINGS WENT LIVE" MEANS (owner, 2026-10-22, the live page:
+#   five runs read "ran into a problem" and three "in progress" forever).
+#   A full run's new ratings are on the site once 10_rankings_finish (the
+#   swap, the same step in the overnight update) is done; a failed step after it -- a report, a comparison, a
+#   page warm-up -- leaves them live, and a run stopped by hand before it
+#   published nothing. Readers see only the runs that published, and an
+#   in-progress run only while one of its steps is still writing.
+PUBLISH_STEPS = ("10_rankings_finish",)      # the swap, in both runs
+ACTIVE_IDLE_S = 45 * 60
+
+
+def published(steps, names=PUBLISH_STEPS):
+    """Whether a run's ratings reached the site: one of `names` finished ok.
+    Pure."""
+    return any(s.get("ok") and s.get("step") in names for s in steps or [])
 
 
 def _metricSpecs():
@@ -391,22 +412,21 @@ def publicEvent(e):
         return dict(base, title=e.get("pub_title") or e.get("title"),
                     summary=e.get("pub_summary") or "", items=e.get("pub_items") or [])
     if kind == "pipeline":
-        if level == "bad":
-            return dict(base, title="A full ratings update ran into a problem",
-                        summary="The site keeps the last good numbers until it is fixed.")
-        if level == "warn":
-            return dict(base, title="Full ratings update in progress",
+        if e.get("published"):
+            return dict(base, level="ok", title="Every rating recomputed", **recomputeText(e))
+        if e.get("active"):
+            return dict(base, level="info", title="Full ratings update in progress",
                         summary="Every result is being re-rated; pages update when it finishes.")
-        return dict(base, title="Every rating recomputed", **recomputeText(e))
+        return None                          # stopped before publishing: nothing changed
     if kind == "nightly":
-        if level == "bad":
-            return dict(base, title="Last night's update ran into a problem",
-                        summary="Some new results may wait for the next one.")
-        return dict(base, title="New results rated",
+        if not e.get("published"):
+            return None
+        return dict(base, level="ok", title="New results rated",
                     summary="Last night's update: new races rated and the boards refreshed.")
     if kind == "accuracy":
-        if e.get("carried"):
-            return None                      # said on its run's own entry
+        # only on the run whose ratings went live (attachAccuracy); a run
+        # that never published has no accuracy a reader saw
+        return None
         lines = []
         for key, (label, scale, better) in PUBLIC_METRICS.items():
             new, old = (e.get("metrics") or {}).get(key), (e.get("prev_metrics") or {}).get(key)
@@ -492,7 +512,7 @@ def headline(events):
     and the What's new header. Pure."""
     days = [e.get("latest_day") for e in events if e.get("kind") == "scraped" and e.get("latest_day")]
     full = [e["at"] for e in events
-            if e.get("kind") == "pipeline" and e.get("level") == "ok" and e.get("at")]
+            if e.get("kind") == "pipeline" and e.get("published") and e.get("at")]
     through = max(days) if days else None
     return {"through": through, "through_text": _longDay(through) if through else None,
             "recomputed": max(full) if full else None}

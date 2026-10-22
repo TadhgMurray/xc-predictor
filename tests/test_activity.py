@@ -131,21 +131,26 @@ def test_the_admin_page_shows_the_feed_and_hides_from_readers(monkeypatch):
     assert "rc_activity_seen=" in r.headers.get("Set-Cookie", "")
 
 
-def test_public_events_hide_internals():
+def test_public_events_only_runs_that_published():
     t = datetime.datetime(2026, 10, 22, 3)
-    bad = AC.publicEvent({"at": t, "kind": "pipeline", "level": "bad", "title": "Full pipeline x",
-                          "summary": "1 failed: 08_golive", "detail": ["FAIL 08_golive (3s)"]})
-    assert "08_golive" not in json.dumps(bad, default=str) and bad["title"].startswith("A full ratings")
-    assert AC.publicEvent({"at": t, "kind": "pipeline", "level": "ok"})["title"] == "Every rating recomputed"
-    assert AC.publicEvent({"at": t, "kind": "nightly", "level": "ok"})["title"] == "New results rated"
+    # a failed report AFTER the swap: the ratings are live -- recomputed
+    live = AC.publicEvent({"at": t, "kind": "pipeline", "level": "bad", "published": True,
+                           "summary": "1 failed: 16b_lacctic"})
+    assert live["title"] == "Every rating recomputed" and "16b" not in json.dumps(live, default=str)
+    # stopped before the swap: nothing changed for a reader
+    assert AC.publicEvent({"at": t, "kind": "pipeline", "level": "bad", "published": False}) is None
+    assert AC.publicEvent({"at": t, "kind": "pipeline", "level": "warn", "published": False}) is None
+    run = AC.publicEvent({"at": t, "kind": "pipeline", "level": "warn", "active": True})
+    assert run["title"] == "Full ratings update in progress"
+    assert AC.publicEvent({"at": t, "kind": "nightly", "level": "bad", "published": True})["title"] == "New results rated"
+    assert AC.publicEvent({"at": t, "kind": "nightly", "level": "ok", "published": False}) is None
+    assert AC.published([{"step": "10_rankings_finish", "ok": True}, {"step": "16b", "ok": False}])
+    assert not AC.published([{"step": "10_rankings_finish", "ok": False}])
     assert AC.publicEvent({"at": t, "kind": "kailo", "level": "info"}) is None
-    acc = AC.publicEvent({"at": t, "kind": "accuracy", "level": "ok",
-                          "metrics": {"holdout_race_sd": 0.0301, "owner_3200": 133.0},
-                          "prev_metrics": {"holdout_race_sd": 0.0312}})
-    assert acc["summary"] == ("Typical miss on a race the ratings had not seen: 3.01% "
-                              "(down from 3.12%)")
-    assert "owner" not in json.dumps(acc, default=str)
-    assert AC.publicEvent({"at": t, "kind": "accuracy", "metrics": {"owner_3200": 1}}) is None
+    # accuracy is said only on its published run's entry, never alone
+    assert AC.publicEvent({"at": t, "kind": "accuracy", "metrics": {"holdout_race_sd": 0.03}}) is None
+    assert AC.accuracyLines({"holdout_race_sd": 0.0301}, {"holdout_race_sd": 0.0312}) == \
+        ["Typical miss on a race the ratings had not seen: 3.01% (down from 3.12%)"]
     sc = AC.scrapeDays([("XC", "tfrrs", 7, "2026-10-17", 900, "2026-10-20 02:00:00"),
                         ("TF", "anet", 8, "2062-10-18", 40, "2026-10-20 03:00:00"),
                         ("XC", "anet", 9, "2026-10-18", 60, "2026-10-20 03:30:00")],
@@ -165,7 +170,7 @@ def test_latest_race_day():
 def test_recompute_text_says_what_moved_and_why(monkeypatch):
     import public_changes as PC
     monkeypatch.setattr(PC, "CHANGES", [("2026-10-20", "Old note."), ("2026-10-22", "Course note.")])
-    e = {"kind": "pipeline", "level": "ok", "at": datetime.datetime(2026, 10, 22, 9),
+    e = {"kind": "pipeline", "level": "ok", "published": True, "at": datetime.datetime(2026, 10, 22, 9),
          "metrics": {"holdout_race_sd": 0.0301}, "prev_metrics": {"holdout_race_sd": 0.0312},
          "changes": {"previous_run_at": "2026-10-20T14:00:00", "new_results": 48210,
                      "athletes": [{"level": "hs", "sport": "XC", "compared": 400000, "median_abs": 0.31,
@@ -199,7 +204,7 @@ def test_a_full_runs_accuracy_rides_on_it():
           {"kind": "accuracy", "run": "20261001_010000", "at": t, "metrics": {"holdout_race_sd": 0.03}}]
     AC.attachAccuracy(ev)
     assert ev[0]["metrics"] == {"x": 1} and ev[1]["carried"] and not ev[2].get("carried")
-    assert AC.publicEvent(ev[1]) is None and AC.publicEvent(ev[2]) is not None
+    assert AC.publicEvent(ev[1]) is None and AC.publicEvent(ev[2]) is None
 
 
 def test_the_public_page_and_latest_api(monkeypatch):
