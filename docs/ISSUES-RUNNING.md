@@ -6534,3 +6534,15 @@ college rating's HS-equivalent is the HS rating with the same track 5K
 column then agree everywhere -- her college season would read ~156).
 (2) The college course credit (XCP_TILT_SCALE=hs trial). (3) The HS
 clock's slope at the top end (fastest third -1.8% vs slowest +0.8%).
+- **Equal-time map built, NOT switched on** (9e9058c, XCP_EQUAL_TIME_SCALE).
+  diag_equal_time.py on the live clocks: on the TRACK 5K the map LOWERS
+  college at the top (own 150: today 180.4 = 13:11 on the HS clock vs the
+  college clock's 13:37; map 176.6), while the athlete page's 5K column for
+  an XC season is the XC clock (conversions.fiveK -> ratingClock XC), where
+  the Notre Dame runner's college season reads 5% FASTER. The XC and track
+  clocks disagree across pools, so a map on either cannot make every 5K
+  agree. Her XC gap points at the college XC course credit (her raw times on
+  pool-blind course numbers agree with the XC column), which is the
+  XCP_TILT_SCALE=hs trial, not the scale. Part D of diag_hs_to_college
+  (the stopwatch: HS 1600/3200 -> college mile/3000) decides how much
+  freshmen really improve.
