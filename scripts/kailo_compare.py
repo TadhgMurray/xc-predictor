@@ -235,6 +235,22 @@ def ourPredictions(cur, person_ids, target, detail=None):
     return out
 
 
+def targetLine(cur, target):
+    """What our predictor thinks the race is: course, distance, the venue's
+    difficulty cell -- the conversion every rating-served time goes through."""
+    import predict as P
+    from psycopg2.extras import RealDictCursor
+    try:
+        sp = P._targetSpec(cur.connection.cursor(cursor_factory=RealDictCursor), target)
+    except Exception as exc:                                    # noqa: BLE001
+        cur.connection.rollback()
+        return f"(spec failed: {exc})"
+    cur.connection.rollback()
+    return (f"course {sp.get('course_name')!r}  {sp.get('distance_meters')} m  "
+            f"canonical {sp.get('canonical_id')}  difficulty {sp.get('course_difficulty')}  "
+            f"cell {sp.get('venue_cell')}  date {sp.get('date')}")
+
+
 def runnerGroups(e):
     """[(table, group)] a runner's misses are filed under, from their
     predictor entry. Pure."""
@@ -345,11 +361,11 @@ def compareSeason(cur, season, sleep, show, csv_path=None):
             except (OSError, ValueError, KeyError):
                 recorded = {}
         if not recorded:
-            recorded = ourPredictions(cur, [p for _t, p, _a in trip],
-                                      {"mode": "meet", "meet_id": mid, "div_id": div,
-                                       "sport": "XC", "source": "tfrrs",
-                                       "history_before": r["race_date"]}, detail)
+            target = {"mode": "meet", "meet_id": mid, "div_id": div, "sport": "XC",
+                      "source": "tfrrs", "history_before": r["race_date"]}
+            recorded = ourPredictions(cur, [p for _t, p, _a in trip], target, detail)
             cur.connection.rollback()
+            print(f"  · {label}: {targetLine(cur, target)}")
         kept = [(p, recorded[p], t, a) for t, p, a in trip if p in recorded]
         rows = [(o, t, a) for _p, o, t, a in kept]
         if len(rows) < 5:
