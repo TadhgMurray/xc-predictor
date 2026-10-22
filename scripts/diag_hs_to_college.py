@@ -54,7 +54,10 @@ for _p in (_HERE, os.path.join(_ROOT, "racecast"), os.path.join(_ROOT, "engine")
         sys.path.insert(0, _p)
 
 TRACK_DIST = {"hs": 3200.0, "college": 5000.0}   # each level's own distance race
-TIME_RANGE = {3200.0: (500, 1100), 5000.0: (780, 1500)}   # seconds, sane bests
+TIME_RANGE = {3200.0: (500, 1100), 5000.0: (780, 1500),   # seconds, sane bests
+              1500.0: (210, 420), 1600.0: (230, 450), 1609.344: (230, 450),
+              3000.0: (470, 900)}
+RIEGEL = 1.06       # only across distances a few % apart (part D), where it barely matters
 DIST_TOL = 0.01
 
 _SEASONS_SQL = """
@@ -254,7 +257,59 @@ def main():
                     bands[(pool, t)].append(b)
                 print(f"   {yr} {pool}: {len(partB[pool]) - n0:,} runners with a "
                       f"{int(metres)} the next spring", flush=True)
+        # ---- D: the same runners' own track times, HS senior -> college freshman ----
+        # ★ NO SCALE IN IT (owner, 2026-10-22: "most athletes barely moving
+        #   seems very off"). A's "rating change" and "clock change" are both
+        #   our numbers; this is the stopwatch. The spring after the last HS
+        #   cross country season (year Y+1) against the spring after the first
+        #   college one (Y+2): 1600 against the college mile or 1500, 3200
+        #   against the 3000 -- distances a few % apart, put on one with
+        #   Riegel's 1.06, which over 1-7% of distance moves a time by well
+        #   under the effects measured here.
+        last_hs = {pid: max(y for p, y, _r in seasons[pid] if level(p) == "hs") for pid, *_x in mv}
+        rated_change = {pid: logPct(cr * factor[cp], hr * factor[hp]) for pid, hp, hr, cp, cr in mv}
+        sex = {pid: hp[-1] for pid, hp, *_x in mv}
+        ids = list(last_hs)
+        springs = defaultdict(lambda: defaultdict(list))   # pid -> year -> [(ev, sec)]
+        for i in range(0, len(ids), 20000):
+            cur.execute(_TRACK_SQL, {"ids": ids[i:i + 20000]})
+            for pid, ty, ev, sec in cur.fetchall():
+                if ty in (last_hs[pid] + 1, last_hs[pid] + 2):
+                    springs[pid][ty].append((ev, sec))
+        partD = defaultdict(lambda: {"actual": [], "rated": []})
+        for pid, by in springs.items():
+            y = last_hs[pid]
+            for event, hs_d, col_ds in (("mile", 1600.0, (1609.344, 1500.0)),
+                                        ("3000", 3200.0, (3000.0,))):
+                t_hs = bestAt(by.get(y + 1, []), hs_d)
+                if not t_hs:
+                    continue
+                cands = []
+                for d in col_ds:
+                    t = bestAt(by.get(y + 2, []), d)
+                    if t:
+                        cands.append(t * (hs_d / d) ** RIEGEL)    # on the HS distance
+                if not cands:
+                    continue
+                actual = logPct(t_hs, min(cands))                # + = faster in college
+                for k in (sex[pid], "all"):
+                    partD[(event, k)]["actual"].append(actual)
+                    partD[(event, k)]["rated"].append(rated_change[pid])
         conn.rollback()
+
+    print("\n== D. The same runners' own track times, HS senior spring -> college freshman spring")
+    print("   (+ = faster in college; 'rating' is A's public-scale XC rating change for the same runners)")
+    print(f"   {'':<14}{'runners':>9}{'stopwatch':>11}{'rating':>9}{'faster':>9}")
+    for event in ("mile", "3000"):
+        for k in ("f", "m", "all"):
+            d = partD.get((event, k))
+            if not d or not d["actual"]:
+                continue
+            up = 100.0 * sum(1 for x in d["actual"] if x > 0) / len(d["actual"])
+            name = {"f": "women", "m": "men", "all": "all"}[k]
+            print(f"   {(('1600 -> mile' if event == 'mile' else '3200 -> 3000') + ' ' + name):<22}"
+                  f"{len(d['actual']):>5,}{statistics.median(d['actual']):>+10.2f}%"
+                  f"{statistics.median(d['rated']):>+8.2f}%{up:>8.0f}%")
 
     print("\n== B. Each pool's clock against the next spring's track "
           "(predicted - actual, % of time; - = the clock says faster than they ran)")
