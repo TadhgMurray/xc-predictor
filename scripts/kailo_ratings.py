@@ -25,8 +25,8 @@ times with the course and the day in them); this does the RATINGS alone.
   "seconds of a flat 5K-equivalent on a typical rated course and a typical
   day"; ours is the form rating the race pages use (predict._formRating:
   the last six rated races of the year before the cut, recency-weighted),
-  put on the same footing by conversions._norm_from_rating at difficulty 0
-  -- a flat-5K normalized time. Within one race the course, the distance
+  put on the same footing by predict._ratingToSeconds as a 5K at no
+  particular venue (each pool through its own curve, as the pages do). Within one race the course, the distance
   and the day are the same for everyone, so a rating is judged only on:
     order    of every pair of finishers, how often the faster rating
              finished ahead
@@ -193,11 +193,17 @@ def ourRunners(cur, since):
 def ourRatings(cur, pids, cut):
     """{pid: (flat-5K seconds, rating, pool, n)} -- our form rating as of
     `cut` (strictly before), as the rating basis builds it, at difficulty 0."""
-    import conversions
     import predict as P
     from psycopg2.extras import RealDictCursor
     dcur = cur.connection.cursor(cursor_factory=RealDictCursor)
     hi = datetime.date.fromisoformat(cut)
+    # ★ THROUGH THE PAGES' OWN CLOCK, NOT _norm_from_rating ALONE (2026-10-22,
+    #   first run: freshmen on a high-school form rating read +24% "slow").
+    #   A normalized time is on its RATED pool's scale (anchor_repair, 05b),
+    #   so two pools' norms are not one clock; _ratingToSeconds puts each
+    #   through its own pool's curve to real seconds -- here a 5K at no
+    #   particular venue, the shape of Kailo's flat-5K fitness.
+    spec = {"sport": "XC", "is_xc": True, "distance_meters": 5000.0}
     lo = (hi - datetime.timedelta(days=P._RATING_WINDOW_DAYS)).isoformat()
     out = {}
     pids = sorted(set(pids))
@@ -209,9 +215,9 @@ def ourRatings(cur, pids, cut):
             if not form:
                 continue
             rating, _sig, pool, n = form
-            norm = conversions._norm_from_rating(rating, pool, 0.0, "XC")
-            if norm:
-                out[pid] = (float(norm), round(float(rating), 1), pool, n)
+            secs = P._ratingToSeconds(rating, pool, spec, hi.year)
+            if secs:
+                out[pid] = (float(secs), round(float(rating), 1), pool, n)
     cur.connection.rollback()
     return out
 
@@ -239,9 +245,11 @@ def races(cur, lo, hi, min_field):
 #  scoring
 # ------------------------------------------------------------------ #
 
-def score(title, race_list, kailo_by_pid, ours_by_pid, info, min_both):
+def score(title, race_list, kailo_by_pid, ours_by_pid, info, min_both, keep=None):
     """kailo_by_pid: {pid: 5k s}; ours_by_pid: {pid: (5k s, ...)}; info:
-    {pid: kailo athlete}."""
+    {pid: kailo athlete}; keep(pid) -> bool narrows the runners."""
+    if keep is not None:
+        kailo_by_pid = {p: v for p, v in kailo_by_pid.items() if keep(p)}
     sex_of = {p: a.get("sex") for p, a in info.items()}
     per_race, recs = [], []
     n_run = n_k = n_o = 0
@@ -290,6 +298,11 @@ def score(title, race_list, kailo_by_pid, ours_by_pid, info, min_both):
             print(f"  {tab:<16}{str(grp):<12}{cnt:>8}{ak:>13.2f}%{ao:>7.2f}%{bk:>+11.2f}%"
                   f"{bo:>+7.2f}%")
     print("  (bias + = ran slower than the rating said, against the rest of the field)")
+
+
+def _isCollege(ours, pid):
+    v = ours.get(pid)
+    return bool(v) and (v[2] or "").startswith(("college", "pro"))
 
 
 def main():
@@ -343,15 +356,25 @@ def main():
             pids = {p for _m, _d, _day, f in rl for p in f} & set(info)
             if a.preseason:
                 ours = ourRatings(cur, pids, start)
+                # ! NOT KAILO'S "xc2026" RUNNERS (2026-10-22, first run: 1.75%
+                #   spread, better than their in-season 1.88%). A runner whose
+                #   whole record is this season has no pre-season; the number
+                #   in that field is built from the races it is scored on.
                 kk = {p: info[p]["pre_season_fitness_5k_s"] for p in pids
-                      if info[p].get("pre_season_fitness_5k_s")}
-                score(f"PRE-SEASON ratings (ours as of {start}) on races {start} .. {today}",
-                      rl, kk, ours, info, a.min_both)
+                      if info[p].get("pre_season_fitness_5k_s")
+                      and info[p].get("basis") != "xc2026"}
+                t = f"PRE-SEASON ratings (ours as of {start}) on races {start} .. {today}"
+                score(t, rl, kk, ours, info, a.min_both)
+                score(t + " -- runners on a COLLEGE form rating of ours", rl, kk, ours,
+                      info, a.min_both, keep=lambda p: _isCollege(ours, p))
             if a.now:
                 ours = ourRatings(cur, pids, today)
                 kk = {p: info[p]["fitness_5k_s"] for p in pids if info[p].get("fitness_5k_s")}
-                score(f"TODAY's ratings on races both have seen ({start} .. {today}) -- fit, "
-                      "not foresight", rl, kk, ours, info, a.min_both)
+                t = (f"TODAY's ratings on races both have seen ({start} .. {today}) -- fit, "
+                     "not foresight")
+                score(t, rl, kk, ours, info, a.min_both)
+                score(t + " -- runners on a COLLEGE form rating of ours", rl, kk, ours,
+                      info, a.min_both, keep=lambda p: _isCollege(ours, p))
             return
 
         snaps = sorted(glob.glob(SNAP_GLOB))
