@@ -219,7 +219,12 @@ def main():
                 base = {p: {"seconds": model[p].get("baseline_race"),
                             "time_basis": model[p].get("time_basis")}
                         for p in both if model[p].get("baseline_race")}
-                for basis, got in (("rating", rated), ("model", model), ("base", base)):
+                # ★ BLEND: the rating's order at the model's level (predict
+                #   XCP_PREDICT_BASIS=blend, the same factor)
+                f = P.blendFactor([(model[p]["seconds"], rated[p]["seconds"]) for p in both])
+                blend = {p: {"seconds": float(rated[p]["seconds"]) * f} for p in both}
+                for basis, got in (("rating", rated), ("model", model), ("base", base),
+                                   ("blend", blend)):
                     if basis == "base" and len(base) < len(both):
                         continue
                     pred = [float(got[p]["seconds"]) for p in both]

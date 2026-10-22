@@ -75,7 +75,7 @@ _S.headers.update({"User-Agent": "racecast-compare/1.0 (read-only research)",
 #   before the start all the same, and the results are in our tfrrs rows.
 SCORED = {"scored", "results_unavailable", "awaiting_results", "held", "locked"}
 UPCOMING = {"published", "locked"}
-BASES = ("rating", "guard", "model")
+BASES = ("rating", "guard", "model", "blend")
 _STOP = {"the", "of", "and", "at", "xc", "cross", "country", "invitational",
          "invite", "meet", "championship", "championships", "college", "open"}
 

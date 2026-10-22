@@ -1244,7 +1244,18 @@ def _predictTimes(cur, person_ids, target, spec=None, history=None):
 #   diagnostics call _predictTimes directly, so the model's own quality stays
 #   measurable and nothing trains on the guard's output.
 #
-# XCP_PREDICT_BASIS: rating (default) | guard | model (the raw network).
+# XCP_PREDICT_BASIS: rating (default) | guard | model (the raw network)
+#                    | blend (the rating's order at the model's level).
+#
+# ★ BLEND (owner, 2026-10-22: "whatever we can do"). Measured the same day:
+#   the RATING orders a field best -- within-race miss 2.32% vs the model's
+#   2.42% (80 races after the model's date), 85.5% of college pairs right
+#   vs Kailo's 85.9% and the model's 79.6% -- but its LEVEL is off: +2.1%
+#   slow on high-school races, -6.4% fast on college courses that have no
+#   course cell. The model's level is the better one (bias -0.2%). Blend
+#   keeps every rated runner's time relative to the field and moves the
+#   whole field by one factor: the median model/rating ratio over the
+#   runners both price (blendFactor).
 #
 # ⚠ RATING IS THE DEFAULT WHILE THE MODEL IS THE ONE IT IS (owner,
 #   2026-09-25, Tufts v Williams: a 104.3 predicted two minutes ahead of a
@@ -1269,7 +1280,23 @@ _RATING_SIGMA_STALE_MAX = 0.12
 
 def _predictBasis():
     b = (os.environ.get("XCP_PREDICT_BASIS") or "rating").strip().lower()
-    return b if b in ("guard", "model", "rating") else "rating"
+    return b if b in ("guard", "model", "rating", "blend") else "rating"
+
+
+_BLEND_MIN_PAIRS = 5
+_BLEND_MAX_SHIFT = 0.12    # a field moved more than 12% is the model being wrong
+
+
+def blendFactor(pairs):
+    """The one factor that moves a field of rating times to the model's
+    level: exp(median ln(model / rating)) over (model_s, rating_s) pairs,
+    clamped to +-12%; 1.0 with fewer than five pairs. Pure."""
+    xs = sorted(math.log(m / r) for m, r in pairs if m and r and m > 0 and r > 0)
+    if len(xs) < _BLEND_MIN_PAIRS:
+        return 1.0
+    n = len(xs)
+    med = xs[n // 2] if n % 2 else 0.5 * (xs[n // 2 - 1] + xs[n // 2])
+    return math.exp(max(-_BLEND_MAX_SHIFT, min(_BLEND_MAX_SHIFT, med)))
 
 
 def _servedTimes(cur, person_ids, target):
@@ -1359,6 +1386,15 @@ def _servedTimes(cur, person_ids, target):
             entry["model_seconds"] = secs
         entry.update(r)
         entry.pop("reason", None)
+    if basis == "blend":
+        rated_rows = [e for e in preds if e.get("basis") == "rating" and e.get("seconds")]
+        f = blendFactor([(e.get("model_seconds"), e["seconds"]) for e in rated_rows])
+        nd = 2 if (spec or {}).get("sport") == "TF" else 1
+        for e in rated_rows:
+            for k in ("seconds", "lo", "hi"):
+                if e.get(k):
+                    e[k] = round(float(e[k]) * f, nd)
+            e["level_shift_pct"] = round(100.0 * (f - 1.0), 2)
     # the rating a model-served time is worth here (_secondsToRating)
     if spec is not None:
         season = (_asDate(spec.get("date")) or datetime.date.today()).year
