@@ -160,11 +160,29 @@ bash deploy/run_pipeline.sh --from 10
 The first two give the college (tfrrs) courses their gps and course ids
 (2026-10-22: none had any), so the solve in step 10 fits their difficulty.
 
+### 5c+. Right after the pipeline finishes (on NEW)
+
+The code that landed during the run (What's new, the overnight schedule,
+blend) and a check of the college course numbers:
+
+```
+cd /srv/xc-predictor && git pull -q && systemctl restart xc-predictor
+grep -E '^XCP_(ALERTS|NIGHTLY_ALERTS|PREDICT_BASIS|PREDICT_VENUE_DIFFICULTY)=' /etc/xc-predictor.env
+/srv/venv/bin/python scripts/diag_tfrrs_course_cells.py 2>&1 | sed -n 3,10p
+```
+
+Expect `XCP_PREDICT_BASIS=blend` and `XCP_PREDICT_VENUE_DIFFICULTY=xc`, and
+"cell" as the big row of the diag (college races with their own course
+number). This run started before 00b_run_snapshot existed, so What's new
+says only "Every rating recomputed" for it; the next Sunday's run says what
+changed.
+
 ### 5d. Look at it before anyone else does (from your PC)
 
 Add `NEW racecast.co` to `C:\Windows\System32\drivers\etc\hosts`, open
 https://racecast.co (an athlete page, a race page, rankings, a school page),
-then remove the line again.
+then remove the line again. Look at What's new and About -> "When new
+results show up" too.
 
 ## 6. Cut over (about 10 minutes of downtime)
 
@@ -195,12 +213,16 @@ NEW (keep them proxied, orange cloud). Pages come from NEW within a minute.
 
 ```
 cd /srv/xc-predictor
-sudo bash deploy/install_nightly_timer.sh
+sudo bash deploy/install_nightly_timer.sh       # Mon-Sat 01:17 Pacific, not Saturday night
 sudo bash deploy/install_backup_timer.sh
 sudo bash deploy/install_kailo_record_timer.sh   # (and disable it on OLD)
 sudo bash deploy/origin_firewall.sh        # web traffic only via Cloudflare
 sudo systemctl start xcp-backup && journalctl -u xcp-backup -n 5 --no-pager
+systemctl list-timers --all | grep xcp     # xcp-nightly next on a weekday morning, backup, kailo
 ```
+
+And on OLD: `systemctl disable --now xcp-kailo-record.timer` (the recorder
+moves to NEW with the line above).
 
 Keep OLD powered for a week with the site stopped
 (`systemctl disable --now xc-predictor` on OLD), then cancel it.
