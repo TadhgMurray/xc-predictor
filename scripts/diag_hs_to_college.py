@@ -113,9 +113,15 @@ def movers(seasons):
 def bestAt(rows, metres):
     """The best time at `metres` (within 1%) among (event_short, seconds)
     rows, or None. distance from event_parse. Pure apart from the parser."""
+    return bestAndCount(rows, metres)[0]
+
+
+def bestAndCount(rows, metres):
+    """(best time at `metres`, how many races at it). Pure apart from the
+    parser."""
     from event_parse import distanceFromEventShort
     lo, hi = TIME_RANGE[metres]
-    best = None
+    best, n = None, 0
     for ev, sec in rows:
         try:
             d, _g = distanceFromEventShort(ev or "")
@@ -124,9 +130,11 @@ def bestAt(rows, metres):
         if not d or abs(float(d) - metres) > DIST_TOL * metres:
             continue
         s = float(sec)
-        if lo <= s <= hi and (best is None or s < best):
-            best = s
-    return best
+        if lo <= s <= hi:
+            n += 1
+            if best is None or s < best:
+                best = s
+    return best, n
 
 
 def summarize(xs):
@@ -206,6 +214,7 @@ def main():
         # ---- B: each pool's clock against the next spring's track ----
         rnd = random.Random(7)
         partB = defaultdict(list)                     # pool -> [bias %]
+        serious = defaultdict(list)                   # the same, 3+ races at the distance
         bands = defaultdict(list)                     # (pool, tercile) -> [bias %]
         for yr in range(a.since, a.until + 1):
             for pool in ("hs_f", "hs_m", "college_f", "college_m"):
@@ -228,12 +237,19 @@ def main():
                 cuts = (rs[len(rs) // 3], rs[(2 * len(rs)) // 3]) if len(rs) >= 3 else (0, 0)
                 n0 = len(partB[pool])
                 for pid, rows_tf in tracks.items():
-                    actual = bestAt(rows_tf, metres)
+                    actual, n_at = bestAndCount(rows_tf, metres)
                     pred = track(rating[pid], pool, metres)
                     if not actual or not pred:
                         continue
                     b = logPct(pred, actual)          # - = clock faster than they ran
                     partB[pool].append(b)
+                    # ★ A ONE-OFF BEST IS SOFT (owner, 2026-10-22: "every
+                    #   conversion is fast?"): a runner who raced the distance
+                    #   once may never have run it hard. The same test on
+                    #   runners with 3+ races at it says how much of "fast"
+                    #   is the clock and how much the soft best.
+                    if n_at >= 3:
+                        serious[pool].append(b)
                     t = 0 if rating[pid] < cuts[0] else 1 if rating[pid] < cuts[1] else 2
                     bands[(pool, t)].append(b)
                 print(f"   {yr} {pool}: {len(partB[pool]) - n0:,} runners with a "
@@ -258,6 +274,13 @@ def main():
                                               if i == 1 else
                                               f"{(x['median'] if x else float('nan')):>+14.2f}%"
                                               for i, x in enumerate(t)))
+
+    print("\n   the same, only runners with 3+ races at the distance that spring (a real best):")
+    for pool in ("hs_f", "college_f", "hs_m", "college_m"):
+        s = summarize(serious.get(pool) or [])
+        if s:
+            print(f"   {pool:<11}{int(TRACK_DIST[level(pool)]):>9}{s['n']:>9,}{s['median']:>+8.2f}%"
+                  f"{s['sd']:>7.2f}%")
 
     print("\n== C. Reading it")
     for g, name in (("f", "women"), ("m", "men")):
