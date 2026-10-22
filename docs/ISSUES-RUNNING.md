@@ -6473,3 +6473,36 @@ OPEN:
   course numbers, not only the scorecard; (2) a curve per pool AND class
   year (first-years apart), the cheaper middle ground; (3) after the
   migration's first solve, which college course numbers carry the leak.
+- **How the per-pool curve treats a runner who improves faster than it**
+  (owner, 2026-10-22). Model: log time = season ability + pool curve(day) +
+  course + day. Three effects:
+  1. RACE RATINGS mostly right: they correct for course and day but leave
+     the curve out, so a breakthrough's later races read higher.
+  2. SEASON RATING lags: one number per season, about their mid-season
+     level; late in the season it under-ranks someone still climbing. The
+     prediction's form rating (last six races, recency-weighted) only half
+     catches up.
+  3. COURSE NUMBERS absorb it, and everyone pays: against the pool curve a
+     fast improver's early races look slow and late races fast, and the
+     solve blames part of that on course and day. One runner is outvoted;
+     a group (college first-years in early autumn, 9th graders) is not --
+     early courses read hard (UCSB), late and championship courses easy
+     (the +0.11 college course credit), and every runner on those courses
+     gets a slightly wrong race rating.
+- 📋 **Fix A, try first: a season curve per pool AND class year**
+  (first-years apart from upperclassmen in college; 9th graders apart from
+  seniors in high school). A handful of extra curve parameters, each well
+  measured; aims straight at effect 3 (the group leak into course numbers),
+  not individual breakthroughs. Judge on: diag_course_credit (the within-
+  season course term toward 0), early-season course numbers (UCSB-type
+  courses down), late-season/championship courses up, then the scorecard,
+  kailo_ratings and the backtest. Needs the class year on every
+  athlete-season row in the pack (grade for high school; tfrrs class year
+  or years since first college season for college).
+- 📋 **Fix B, on top of A: the per-runner form trend** (XCP_FORM_TREND,
+  built in joint_solve/run_joint, off by default). Each runner's own slope,
+  shrunk toward their (class-year) curve; fixes all three effects, but 5-8
+  races a season make the slopes noisy -- likely why it scored neutral on
+  the scorecard alone. Re-judge it with A in place, on the same checks as A
+  plus the season-rating lag (late-season order on the backtest), at a
+  couple of ridges (1, 4).
