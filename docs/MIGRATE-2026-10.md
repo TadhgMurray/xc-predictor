@@ -226,3 +226,26 @@ moves to NEW with the line above).
 
 Keep OLD powered for a week with the site stopped
 (`systemctl disable --now xc-predictor` on OLD), then cancel it.
+
+## The probe check (any time, read-only)
+
+The overnight update looks 150 ids past the newest athletic.net meet per
+sport (two empty blocks to stop) and 300 past the newest TFRRS meet
+(deploy/nightly_update.sh). That is enough only if real meets are never
+further apart than that. The widest gaps between consecutive real meets
+among the newest 20,000 ids of each queue:
+
+```
+sudo -u postgres psql -d xc_predictor -c "
+WITH m AS (
+  SELECT source, sport, meet_id FROM meet_queue q
+  WHERE scraped = 1 AND meet_id > (SELECT max(meet_id) - 20000 FROM meet_queue
+                                   WHERE source = q.source AND sport = q.sport AND scraped = 1)),
+g AS (SELECT source, sport, meet_id - lag(meet_id) OVER (PARTITION BY source, sport ORDER BY meet_id) AS gap FROM m)
+SELECT source, sport, count(*) AS meets, max(gap) AS widest,
+       percentile_cont(0.99) WITHIN GROUP (ORDER BY gap) AS p99
+FROM g WHERE gap IS NOT NULL GROUP BY 1, 2 ORDER BY 1, 2;"
+```
+
+anet: `widest` should stay under 300 (two blocks of 150); tfrrs: under 300.
+If not, raise XCP_NIGHTLY_SEED_AHEAD / XCP_NIGHTLY_TFRRS_AHEAD in the env file.

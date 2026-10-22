@@ -127,6 +127,19 @@ if [ "$SCRAPE" -eq 1 ]; then
   export TFRRS_SESSIONS="${XCP_NIGHTLY_SESSIONS:-2}"
   export PER_MEET_DELAY="${XCP_NIGHTLY_DELAY:-5,10}"
   export TFRRS_PER_MEET_DELAY="${XCP_NIGHTLY_DELAY:-5,10}"
+  # ★ A SHORT PROBE PAST THE NEWEST MEET (owner, 2026-10-22: "lower probe
+  #   for both"). Every id asked waits the 5-10 s above, a miss included, so
+  #   the full run's probe (anet 500-id blocks until two come back empty --
+  #   up to 1,000 misses a sport, an hour each at this pace; tfrrs 2,000 ids
+  #   past the highest seen) would eat the night. A night only has to reach
+  #   the meets created since the last one: anet blocks of 150, two empty
+  #   to stop (at most 300 misses a sport, ~20 min); tfrrs 300 ids ahead.
+  #   ! If a night misses new meets, the gap between real ids is wider than
+  #   a block: raise XCP_NIGHTLY_SEED_AHEAD. The widest recent gaps:
+  #   docs/MIGRATE-2026-10.md, "the probe check".
+  export SEED_AHEAD="${XCP_NIGHTLY_SEED_AHEAD:-150}"
+  export DRY_BLOCKS_TO_STOP="${XCP_NIGHTLY_DRY_BLOCKS:-2}"
+  export TFRRS_SEED_AHEAD="${XCP_NIGHTLY_TFRRS_AHEAD:-300}"
   scrape scrape_anet "$PY" -u scripts/launcher.py &
   pa=$!
   scrape scrape_tfrrs "$PY" -u tfrrs/driver/launch_tfrrs.py &
