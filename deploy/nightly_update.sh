@@ -254,7 +254,14 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
       #   XCP_ALERTS=1 in the env file. After the breakouts it reads; mails
       #   one digest per follower who is due, fills My page's next-meet
       #   cache (--prewarm). See racecast/follow_alerts.py.
-      if [ "${XCP_ALERTS:-0}" = "1" ]; then
+      # ★ NOT ON A WEEKNIGHT BY DEFAULT (owner, 2026-10-22: "should it wait
+      #   for the big computation on Sunday?"). An overnight rating is the
+      #   last full run's course numbers and no race-day term, and a race is
+      #   never mailed twice (follow_alerts: a key is sent once), so a
+      #   weeknight digest would carry a rating Sunday then changes. The
+      #   week's races wait as pending and go out with Sunday's, on final
+      #   ratings. XCP_NIGHTLY_ALERTS=1 mails weeknights too.
+      if [ "${XCP_ALERTS:-0}" = "1" ] && [ "${XCP_NIGHTLY_ALERTS:-0}" = "1" ]; then
         step 13g_follow_alerts "$PY" -u racecast/follow_alerts.py --send --prewarm
       fi
     fi
