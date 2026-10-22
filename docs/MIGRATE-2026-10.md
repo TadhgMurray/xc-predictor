@@ -6,7 +6,7 @@ New: OVH RISE-3, Ryzen 9 5900X, 128 GB ECC, 4x 960 GB NVMe, Ubuntu 24.04.
 The site keeps serving from the OLD server until step 6. Nothing on the old
 server is deleted; it stays as the fallback for a week.
 
-In every command below, replace `NEW` with the new server's IP.
+In every command below, replace `NEW` with the new server's IP: `15.204.196.219`.
 
 ---
 
@@ -32,12 +32,26 @@ systemctl disable --now xcp-nightly.timer xcp-backup.timer xcp-ovh-watch.timer
 No pipeline or scrape runs until the move is done, so the dump stays the
 truth. The site keeps serving.
 
-## 2. Let OLD reach NEW over ssh (on OLD)
+## 2. Let OLD reach NEW over ssh
 
+OVH's Ubuntu takes no root password, so OLD's key goes in by hand.
+
+On OLD:
 ```
 [ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
-ssh-copy-id root@NEW
-ssh root@NEW true && echo ok
+cat ~/.ssh/id_ed25519.pub
+```
+
+Copy the one line it prints. On NEW (as root, after `sudo -i`):
+```
+mkdir -p /root/.ssh && chmod 700 /root/.ssh
+echo 'PASTE THE LINE HERE' >> /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+```
+
+Back on OLD:
+```
+ssh -o StrictHostKeyChecking=accept-new root@NEW true && echo ok
 ```
 
 ## 3. Copy everything git does not hold (on OLD)
