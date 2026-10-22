@@ -115,8 +115,18 @@ scrape() {
   fi
 }
 if [ "$SCRAPE" -eq 1 ]; then
-  echo "== scrape (anet + tfrrs, at most ${SCRAPE_MIN} min)    $(date +%H:%M:%S)"
-  export PER_MEET_DELAY="${PER_MEET_DELAY:-3,6}"
+  echo "== scrape (anet + tfrrs, at most ${SCRAPE_MIN} min, ${XCP_NIGHTLY_SESSIONS:-2} sessions each, ${XCP_NIGHTLY_DELAY:-5,10} s between meets)    $(date +%H:%M:%S)"
+  # ★ SLOW AND FEW (owner, 2026-10-22: "make those scrapes go slowly so
+  #   they don't get banned, like 2 sessions, 5-10 seconds"). The night runs
+  #   from the server's own address (NO_VPN), so the sources see one IP:
+  #   two sessions per feed, 5-10 s between meets. About 15 meets a minute
+  #   per feed -- a weeknight's new meets in well under the 3-hour bound.
+  #   The XCP_NIGHTLY_* names win over the full run's NUM_SESSIONS /
+  #   PER_MEET_DELAY in the env file, which are sized for the VPN pool.
+  export NUM_SESSIONS="${XCP_NIGHTLY_SESSIONS:-2}"
+  export TFRRS_SESSIONS="${XCP_NIGHTLY_SESSIONS:-2}"
+  export PER_MEET_DELAY="${XCP_NIGHTLY_DELAY:-5,10}"
+  export TFRRS_PER_MEET_DELAY="${XCP_NIGHTLY_DELAY:-5,10}"
   scrape scrape_anet "$PY" -u scripts/launcher.py &
   pa=$!
   scrape scrape_tfrrs "$PY" -u tfrrs/driver/launch_tfrrs.py &

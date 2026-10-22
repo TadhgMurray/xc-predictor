@@ -403,7 +403,7 @@ def publicEvent(e):
             return dict(base, title="Last night's update ran into a problem",
                         summary="Some new results may wait for the next one.")
         return dict(base, title="New results rated",
-                    summary="Last night's update: newly scraped races rated and the boards refreshed.")
+                    summary="Last night's update: new races rated and the boards refreshed.")
     if kind == "accuracy":
         if e.get("carried"):
             return None                      # said on its run's own entry
@@ -412,11 +412,7 @@ def publicEvent(e):
             new, old = (e.get("metrics") or {}).get(key), (e.get("prev_metrics") or {}).get(key)
             if new is None:
                 continue
-            line = f"{label}: {new * scale:.2f}%"
-            v = verdict(old, new, better)
-            if v in ("better", "worse") and old is not None:
-                line += f" ({'down' if new < old else 'up'} from {old * scale:.2f}%, {v})"
-            lines.append(line)
+            lines += accuracyLines({key: new}, {key: old} if old is not None else {})
         if not lines:
             return None
         return dict(base, title="Accuracy after the latest full update", summary=lines[0],
@@ -437,48 +433,32 @@ def accuracyLines(metrics, prev):
         if new is None:
             continue
         line = f"{label}: {new * scale:.2f}%"
-        v = verdict(old, new, better)
-        if v in ("better", "worse") and old is not None:
-            line += f" ({'down' if new < old else 'up'} from {old * scale:.2f}%, {v})"
+        if old is not None and abs(new - old) * scale >= 0.005:
+            line += f" ({'down' if new < old else 'up'} from {old * scale:.2f}%)"
         lines.append(line)
     return lines
 
 
+# A level's ratings moved enough to say so: the mean change of a pool with
+# at least this many athletes this season, in rating points
+POOL_MOVE_PTS = 0.5
+POOL_MOVE_MIN = 1000
+
+
 def recomputeText(e):
-    """{"summary", "detail"} for a finished full update, from what it
-    measurably changed (run_changes) and what we changed in the method
-    (public_changes). Pure apart from reading public_changes."""
+    """{"summary", "detail"} for a finished Sunday update.
+
+    ★ ONLY WHAT A READER CAN USE (owner, 2026-10-22: "you put too much
+      there, just mention what changed methodology-wise and how that
+      changed accuracy / big pool moves"): the accuracy line, what we
+      changed in the method (public_changes), and a whole level's ratings
+      moving at least POOL_MOVE_PTS on average. The full counts stay in
+      engine/data/run_changes for the admin page. Pure apart from reading
+      public_changes."""
     import public_changes
     ch = e.get("changes") or {}
     acc = accuracyLines(e.get("metrics"), e.get("prev_metrics"))
-    head, detail = [], []
-    if ch.get("new_results"):
-        head.append(f"{ch['new_results']:,} new results since the last full update")
-    groups = [a for a in ch.get("athletes") or [] if a.get("compared", 0) >= 500]
-    moved2 = sum(a.get("moved_2", 0) for a in groups)
-    if groups:
-        head.append(f"{moved2:,} athletes' ratings moved 2+ points")
-    if acc:
-        head.append(acc[0][0].lower() + acc[0][1:])
-    for a in groups[:6]:
-        n = a["compared"]
-        up = round(100 * a.get("up", 0) / n) if n else 0
-        down = round(100 * a.get("down", 0) / n) if n else 0
-        line = (f"{_LEVELS.get(a['level'], a['level'].title())} {_SPORTS.get(a['sport'], a['sport'])}: "
-                f"{n:,} athletes this season; the typical rating moved {a['median_abs']:.1f} points "
-                f"({up}% up, {down}% down), {a.get('moved_2', 0):,} by 2+ points")
-        if a.get("new"):
-            line += f"; {a['new']:,} rated for the first time"
-        detail.append(line)
-    c = ch.get("courses") or {}
-    if c.get("compared"):
-        detail.append(f"Course difficulty: {c.get('moved_1pct', 0):,} of {c['compared']:,} course "
-                      f"numbers moved by 1% or more; {c.get('new', 0):,} courses rated for the first time")
-        for b in c.get("biggest") or []:
-            d = b["change_pct"]
-            detail.append(f"{b['course']} ({b['distance_m']:,} m) now reads {abs(d):.1f}% "
-                          f"{'harder' if d > 0 else 'easier'}")
-    detail += acc[1:]
+    detail = []
     try:
         prev = datetime.datetime.fromisoformat(ch["previous_run_at"]).date() \
             if ch.get("previous_run_at") else None
@@ -486,11 +466,13 @@ def recomputeText(e):
         prev = None
     notes = public_changes.between(prev, (e.get("at") or datetime.datetime.now()).date())
     detail += [f"What we changed: {t}" for t in notes]
-    if not head and not detail:
-        return {"summary": "A full update: every result re-rated, courses and conditions refitted.",
-                "detail": []}
-    return {"summary": " · ".join(head) or "A full update: every result re-rated.",
-            "detail": detail}
+    for a in ch.get("athletes") or []:
+        if a.get("compared", 0) >= POOL_MOVE_MIN and abs(a.get("mean") or 0) >= POOL_MOVE_PTS:
+            detail.append(f"{_LEVELS.get(a['level'], a['level'].title())} "
+                          f"{_SPORTS.get(a['sport'], a['sport'])} ratings "
+                          f"{'rose' if a['mean'] > 0 else 'fell'} {abs(a['mean']):.1f} points on average")
+    return {"summary": acc[0] if acc else "Every result re-rated from scratch.",
+            "detail": acc[1:] + detail}
 
 
 def publicFeed(conn, seen=None):

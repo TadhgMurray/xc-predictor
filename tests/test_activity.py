@@ -143,7 +143,7 @@ def test_public_events_hide_internals():
                           "metrics": {"holdout_race_sd": 0.0301, "owner_3200": 133.0},
                           "prev_metrics": {"holdout_race_sd": 0.0312}})
     assert acc["summary"] == ("Typical miss on a race the ratings had not seen: 3.01% "
-                              "(down from 3.12%, better)")
+                              "(down from 3.12%)")
     assert "owner" not in json.dumps(acc, default=str)
     assert AC.publicEvent({"at": t, "kind": "accuracy", "metrics": {"owner_3200": 1}}) is None
     sc = AC.scrapeDays([("XC", "tfrrs", 7, "2026-10-17", 900, "2026-10-20 02:00:00"),
@@ -181,16 +181,14 @@ def test_recompute_text_says_what_moved_and_why(monkeypatch):
                                               "change_pct": -2.14}]}}}
     p = AC.publicEvent(e)
     assert p["title"] == "Every rating recomputed"
-    assert p["summary"] == ("48,210 new results since the last full update · 25,500 athletes' "
-                            "ratings moved 2+ points · typical miss on a race the ratings had "
-                            "not seen: 3.01% (down from 3.12%, better)")
-    d = "\n".join(p["detail"])
-    assert ("High school cross country: 400,000 athletes this season; the typical rating moved "
-            "0.3 points (58% up, 40% down), 21,400 by 2+ points; 9,000 rated for the first time") in d
-    assert "College cross country: 60,000" in d and "Elementary" not in d     # too few to say
-    assert "212 of 30,000 course numbers moved by 1% or more; 37 courses rated" in d
-    assert "Greiner Family XC Course (8,000 m) now reads 2.1% easier" in d
-    assert "What we changed: Course note." in d and "Old note." not in d      # since the last run
+    # only the accuracy, the method and big pool moves (owner: "too much")
+    assert p["summary"] == "Typical miss on a race the ratings had not seen: 3.01% (down from 3.12%)"
+    assert p["detail"] == ["What we changed: Course note."]          # no level is 0.5+ off
+    e["changes"]["athletes"][1]["mean"] = 0.62
+    p = AC.publicEvent(e)
+    assert p["detail"] == ["What we changed: Course note.",
+                           "College cross country ratings rose 0.6 points on average"]
+    assert "Greiner" not in json.dumps(p, default=str) and "48,210" not in json.dumps(p, default=str)
 
 
 def test_a_full_runs_accuracy_rides_on_it():

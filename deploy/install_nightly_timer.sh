@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# deploy/install_nightly_timer.sh -- run deploy/nightly_update.sh every night.
+# deploy/install_nightly_timer.sh -- run deploy/nightly_update.sh overnight,
+# Monday to Saturday mornings.
 #
-#   sudo bash deploy/install_nightly_timer.sh            # nightly at 01:17 Pacific
+# ★ NOT SATURDAY NIGHT (owner, 2026-10-22: "the full rating is done every
+#   Sunday, so there should not be an overnight thing on Saturday"): the
+#   Sunday full update scrapes and re-rates everything itself. About's
+#   "When new results show up" says this schedule; keep the two in step.
+#
+#   sudo bash deploy/install_nightly_timer.sh            # 01:17 Pacific, Mon-Sat
 #   sudo bash deploy/install_nightly_timer.sh 02:17      # or at this time (Pacific)
 #   systemctl list-timers xcp-nightly                    # when it runs next
 #   journalctl -u xcp-nightly                            # what it said (logs/nightly_*/ too)
@@ -33,7 +39,7 @@ cat > /etc/systemd/system/xcp-nightly.timer <<UNIT
 Description=Racecast nightly light update
 
 [Timer]
-OnCalendar=*-*-* $AT:00 America/Los_Angeles
+OnCalendar=Mon..Sat *-*-* $AT:00 America/Los_Angeles
 Persistent=false
 
 [Install]

@@ -225,34 +225,33 @@
 
   {# ★ WHEN RESULTS SHOW UP (owner, 2026-10-22: "when we get results
        usually, when we hope to, how long it may take, and link What's new").
-       The schedule is deploy/install_nightly_timer.sh (01:17 Pacific, the
-       scrape bounded at three hours by nightly_update.sh); keep the two
-       in step. #}
+       ! The schedule is deploy/install_nightly_timer.sh (overnight, Monday
+       to Saturday mornings) and the full update every Sunday; keep the two
+       in step. ! NO SOURCE SITES BY NAME (owner). #}
   <h2 class="rc-sec" id="when">When new results show up</h2>
   <p>
-    Every night, starting around 1:15&nbsp;a.m. Pacific, Racecast collects new
-    results from athletic.net (high school and middle school, and some
-    college) and TFRRS (college), rates them, and puts them on the site. A
-    race whose results are posted on either site during the day is usually
-    here, rated, by the next morning: a Saturday invitational by Sunday
-    morning.
+    New results are collected and rated overnight every night except
+    Saturday night, so a race whose results are posted during the week is
+    usually here by the next morning.
+  </p>
+  <p>
+    Saturday's meets arrive with the full update on Sunday, when every
+    rating is recomputed from scratch; they appear once it finishes, later
+    that day.
   </p>
   <p>
     It can take longer when a meet posts its results late (some take days),
-    when results are only on a timing company's own site and never reach
-    athletic.net or TFRRS, or on the busiest weekends, when a night's
-    collecting runs out of time and the rest waits for the next night.
+    when results are only published somewhere we do not collect from, or
+    when a busy week has more meets than one night gets through.
   </p>
   <p>
     A race added overnight is rated against the current course numbers.
-    Every few days a full update recomputes every rating from scratch, with
-    the new races helping set each course's difficulty, so a new race's
-    rating can still move a little after the next full update.
+    Sunday's update refits every course with the new races included, so a
+    race's rating can still move a little then.
   </p>
   <p>
-    <a href="{{ url_for('updates_page') }}">What's new</a> shows each night's
-    new results, the latest race date they reach, and what each full update
-    changed.
+    <a href="{{ url_for('updates_page') }}">What's new</a> shows the newest
+    race date we have results through, and what each Sunday update changed.
   </p>
 
   <h2 class="rc-sec" id="glossary">Glossary</h2>
