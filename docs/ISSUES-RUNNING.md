@@ -6432,3 +6432,44 @@ OPEN:
    1.63%. Their 2026 college rows are not rated, or not theirs.
 3. Kailo's xc_return runners (back after a season away) pre-season:
    ours 4.39% vs 3.89% -- the return-from-a-gap band.
+
+## 2026-10-22 -- LACCTiC's in-season fitness change: before/after, and our version of it
+
+- **What they changed** (their FAQ, "since October 2026"): fitness was held
+  fixed per season, so in-season improvement went into the courses -- a
+  course looked easier every week and a November race converted slow. Now
+  each race is scored against the field's expected fitness that day, one
+  rate for everyone, +0.2%/week. Applied to past seasons too.
+- **When:** between Oct 19 and Oct 21. Their numbers on the nightly 16b
+  races were identical every run Oct 4-19, then moved with the race's
+  date: D3 nationals (11-22) Leblond 13:55.9 -> 13:43.6 (-1.5%), D3 Midwest
+  (11-15) vanWestrienen 14:22.3 -> 14:11.3 (-1.3%), Interregional (10-18)
+  14:08.3 -> 14:04.2 (-0.5%). The Oct 21 top-40 run (lacctic2025.txt) is
+  AFTER the change.
+- **Before/after, same 3 races** (12194, 12158, 11632; OLD's ratings frozen
+  since the Oct 19 run, so only their side should move):
+
+  |                    | Oct 19 ours | Oct 19 theirs | Oct 22 ours | Oct 22 theirs |
+  |--------------------|------------:|--------------:|------------:|--------------:|
+  | order              | 85.9%       | 86.0%         | 86.1%       | 85.9%         |
+  | XC -> 5000 spread  | 2.54%       | 2.39%         | 2.12%       | 2.13%         |
+  | consistency        | 1.35%       | 1.00%         | 1.27%       | 1.09%         |
+
+  Order: a tie before and after (+0.18, 95% -0.19 to +1.06). Our side moved
+  too, so the runner sample changed (10,697 pairs, 167 runner-seasons):
+  read the GAPS -- 5000 spread from theirs 0.15 better to even;
+  consistency lead 0.35 -> 0.18. Their change bought them nothing measurable
+  here; three races only.
+- **Ours:** the joint solve has had a fitted per-pool season curve (by
+  academic day) all along; race ratings leave it out, so a race rates the
+  form the runner was in. What it cannot hold is a runner improving FASTER
+  than their pool (freshmen, breakthroughs): the excess lands in course and
+  day terms -- early-season courses read hard (the UCSB signature, owner:
+  "an easy course at the start of the year looks way too high, and then the
+  state course shows easier"), late-season ones get credit
+  (diag_course_credit: +0.11-0.12 within college seasons).
+- 📋 **Next:** (1) the per-runner form trend (XCP_FORM_TREND, built, off;
+  scorecard-neutral) judged on the course-credit check and early-season
+  course numbers, not only the scorecard; (2) a curve per pool AND class
+  year (first-years apart), the cheaper middle ground; (3) after the
+  migration's first solve, which college course numbers carry the leak.
