@@ -55,10 +55,11 @@ def test_load_and_flags(tmp_path):
             w.writerow({"name": name, "states": "KS", "platform": plat})
     src = R.load(str(p))
     assert [s.slug for s in src] == ["a-timing", "a-timing-2", "c-results", "primetime-timing"]
+    # MeetPro is enabled (its parser exists) but FloSports-owned, not independent
     assert [(s.independent, s.enabled) for s in src] == \
-        [(True, True), (False, False), (True, False), (False, False)]
+        [(False, True), (False, False), (True, False), (False, False)]
     sm = R.summary(src)
-    assert sm["independent"] == 2 and sm["enabled"] == 1 and "KS" not in sm["states_without_independent"]
+    assert sm["independent"] == 1 and sm["enabled"] == 1 and "KS" not in sm["states_without_independent"]
 
 
 def test_the_real_file_loads():

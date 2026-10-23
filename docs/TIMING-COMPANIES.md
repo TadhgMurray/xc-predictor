@@ -323,3 +323,19 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
 - MileSplit pages carry a bot-detection script that names claudebot. They were read only through search snippets.
 - athletic.net returns 403 to plain fetches, including its terms pages.
 - No timer site checked had terms forbidding bots, except PTTiming (first pass).
+
+---
+
+## Third pass and AthleticLIVE (2026-10-23)
+
+- **MeetPro is not independent.** `results.tfmeetpro.com` is MeetPro's results host. MeetPro belongs to DirectAthletics, which FloSports (MileSplit) bought in June 2023; DirectAthletics also runs TFRRS, which we already scrape.
+  - The platform pass found about 84 US MeetPro accounts and 46 new rows.
+  - It also added MeetPro to about 35 existing timers (Elite Timing FL, TimingInc, Rapid Results — which timed CHSAA 5A state XC 2025 — Snake River ID, Athletic Timing OR, and others).
+  - `sources/registry.py` keeps MeetPro enabled, since its parser exists like TFRRS's, but does not count it as independent.
+  - With that, the list has 1,100 timers: 61 independent, 86 on MeetPro.
+- **TimerHub** (Red Cap Timing's live results) has terms that forbid collecting results without permission. It is off.
+- **AthleticLIVE, 2025-26.** `docs/athleticlive/meets_2025_26.csv` comes from AthleticLIVE's public meet list, one request per week (53 in total).
+  - 19,262 meets: 3,428 cross country, 13,795 outdoor track and 2,039 indoor.
+  - 234 timers; 99% of meets link to an athletic.net meet.
+  - That is roughly 45% of athletic.net's 28,786 spring track meets.
+  - `scripts/diag_athleticlive_coverage.py` measures the share of athletic.net's meets and results it covers, by meet size and by state.

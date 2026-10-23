@@ -274,3 +274,4 @@ engine/data/group_scale.json.tmp
 
 # measured on the server by indoor_outdoor_check --write-levels
 engine/data/indoor_geometry_levels.json
+.claude/settings.local.json

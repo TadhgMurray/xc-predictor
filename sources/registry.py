@@ -10,7 +10,8 @@
 #
 # KINDS (from the research file's platform column, first match wins)
 #   blocked       terms forbid bots (PTTiming and its white labels): never
-#   meetpro       MeetPro HTML (results.tfmeetpro.com, or a timer's own copy)
+#   meetpro       MeetPro HTML (results.tfmeetpro.com, or a timer's own copy);
+#                 DirectAthletics, i.e. FloSports since 2023
 #   hytek         Hy-Tek Meet Manager reports on the timer's own site
 #                 (HTML, <pre>, PDF)
 #   custom        an own-site system needing its own adapter (Finished
@@ -21,9 +22,8 @@
 #   dead          the domain is gone or repurposed
 #   unknown       nothing confirmed
 #
-# ★ INDEPENDENT = a kind that is the timer's OWN publication (meetpro,
-#   hytek, custom): results that do not pass through athletic.net or
-#   FloSports. ENABLED = independent AND its parser exists today (meetpro,
+# ★ INDEPENDENT = a kind that is the timer's OWN publication (hytek,
+#   custom): results that do not pass through athletic.net or FloSports. ENABLED = independent AND its parser exists today (meetpro,
 #   hytek); custom sources switch on as their adapters land
 #   (ADAPTERS below).
 
@@ -37,7 +37,13 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CSV_PATH = os.path.join(_ROOT, "docs", "timing_companies.csv")
 
 ADAPTERS = {"meetpro", "hytek"}             # parsers that exist (sources/*.py)
-INDEPENDENT = {"meetpro", "hytek", "custom"}
+# ⚠ MEETPRO IS NOT INDEPENDENT (platform pass, 2026-10-23): results.tfmeetpro
+#   .com is MeetPro's results host, MeetPro is DirectAthletics', and FloSports
+#   (MileSplit) bought DirectAthletics in June 2023 -- the owner of TFRRS too,
+#   which we already scrape. Still enabled (its parser exists, like TFRRS);
+#   just not counted as independent of athletic.net and FloSports.
+INDEPENDENT = {"hytek", "custom"}
+FLOSPORTS = {"meetpro", "milesplit"}
 
 # terms that forbid bots and scrapers: never fetched, whatever else they post
 BLOCKED_NAMES = re.compile(r"pttiming|primetime timing|leone timing", re.I)
