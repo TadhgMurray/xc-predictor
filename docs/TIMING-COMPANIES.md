@@ -372,3 +372,25 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
   - **NC:** AthleticLIVE 59%, MeetPro (Mitchell) 29%. `nchsaa.org` posts state Hy-Tek PDFs.
   - **SC:** MeetPro (Mitchell) 54%. CFPI's own site has region pages.
   - Corrections (Half-Mile = TrackScoreboard and FHSAA state track; AllTrax = UIL state track; GC Racing = WIAA state XC; Perfect Timing Group = AthleticLIVE `perfecttiming`; Fulton Accurate Timing also NJ) are listed in the pass report and not yet applied.
+- **State associations and results hubs (2026-10-23):** `docs/timing_passes/results_hubs.csv` has 109 rows: 56 associations, 15 sections, 5 leagues, 8 coaches associations, 19 hubs and 6 stats sites. It is thin where the web-search limit ran out.
+  - **Largest by volume:**
+    - TFRRS high school state sites: `fl.tfrrs.org` (the full FHSAA series since 2019, Broward weeklies) and `indiana.tfrrs.org` (100+ meets a year).
+    - Tully Runners (NY, ~200 XC meets a year; reposts Leone/PTTiming output, so ask first).
+    - ohstrack.com (OK, ~285 Hy-Tek PDFs a year).
+    - mctrack.org (NJ).
+    - montanatrack.com (~130 track meets a year).
+    - WIAA Wisconsin (state and sectional PDFs since 2000).
+    - RunMichigan.
+    - KHSAA (XC region Hy-Tek HTML).
+    - Baum's Page (OH).
+    - Sub5 (ME).
+    - Ocean State Running (RI).
+    - IHSA (state finals since 1996).
+  - **Do not collect without permission:**
+    - Terms ban scraping or commercial use: CIAC (CT), MPA (ME), WyoPreps.
+    - robots.txt bars all crawlers: PrepCalTrack, AHSAA, VHSL.
+    - robots.txt bars ClaudeBot and AI crawlers by name: chsaanow (CO), IHSAA (IN).
+    - Personal or non-commercial use only: LHSAA, MHSAA (MI), SIDEARM-hosted sites (NYSPHSAA, NY sections II/III/V, PIAA D3, WPIAL).
+    - robots.txt disallows the results folder: PIAA, NYSPHSAA, FHSAA, KHSAA, UIL.
+    - Bot challenges or 403s: the CIF PrestoSports sites, NIAA, DIAA, MHSAA (MS), IHSAA (IA), NMAA, OSAA, SDHSAA, VPA.
+  - **FloSports' terms for TFRRS** need reading, since the project already scrapes TFRRS.
