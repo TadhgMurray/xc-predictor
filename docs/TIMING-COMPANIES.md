@@ -401,3 +401,17 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
   - **The one self-hosted find:** Liberty University's HS indoor invitationals, as Hy-Tek PDFs on libertyflames.com (2-3 a year). It is a SIDEARM site, which allows personal or non-commercial use only, so ask first.
   - **Mt. SAC XC:** runmtsac.com now links to Finished Results, TrackScoreboard and RunnerSpace. This replaces the dead URLs in self_hosted.csv.
   - **To check:** gap_states.csv puts the 2025 NXR Northwest at Lake Wilderness; RunBlogRun says Spokane.
+- **ID, NC and SC finished, plus results platforms (2026-10-23):** `docs/timing_passes/platforms_more.csv` has 124 rows: 107 state rows (ID 33, NC 44, SC 30) and 17 platforms. 73 of the state rows come from the AthleticLIVE meet list rather than new web checks.
+  - **Idaho:** 76 of its 90 AthleticLIVE meets name no timer; host schools time their own meets. There is still no independent Idaho source. State XC 2025 was at Lewis-Clark State (AthleticLIVE meet 58742).
+  - **North Carolina:** Foothills Timing timed NCHSAA state XC 2025 (Hy-Tek PDFs on nchsaa.org, with grade and school). Rhodes Race Timing timed the 2026 state track and indoor meets. Regional timers include TimingInc, 910 Athletics and Foothills.
+  - **South Carolina:** SCHSL state XC and track appear on MileSplit only, timer unconfirmed. SCISA state XC was timed by Perfect Timing Group. Strictly Running posts to scrunners.com, a possible SC hub that the research proxy could not reach.
+  - **Platforms, by estimated HS volume:**
+    - TrackScoreboard: 500-1,000 meets a year. It is in the MeetPro/FloSports family; ask first.
+    - RunSignup: 300-600 XC meets a year, usually with no grade.
+    - RACE RESULT: 200-400. It carries Michigan state XC finals, NY Section 2 and UIL districts. robots.txt bars its JSON endpoints, so ask the timers for event API keys.
+    - Arrow Live Results (Agee): 200-500, heavy in Indiana including IHSAA sectionals. No robots.txt or terms; worth asking for a feed.
+    - Webscorer: 100-300.
+    - RunnerCard (UT): 100-200.
+    - Race Roster: 50-200. One JSON call returns a whole meet as Hy-Tek text, including Nebraska state XC 2012-2025. robots.txt allows everything.
+    - OnlineRaceResults: 50-150. Every plain fetch answers 403.
+  - **Do not fetch:** ChronoTrack (robots.txt names ClaudeBot), ItsYourRace (robots.txt bars results), TimerHub (terms).
