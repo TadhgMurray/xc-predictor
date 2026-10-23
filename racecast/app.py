@@ -12860,10 +12860,13 @@ def updates_page():
 def updates_latest():
     import activity
     try:
-        latest = activity.publicFeedCached(getConn).get("latest")
+        fd = activity.publicFeedCached(getConn)
     except Exception:                                   # noqa: BLE001
-        latest = None
-    resp = jsonify({"latest": latest.isoformat(timespec="seconds") if latest else None})
+        fd = {}
+    latest = fd.get("latest")
+    # `stamp` decides the dot (activity.stampOf); `latest` stays for old pages
+    resp = jsonify({"latest": latest.isoformat(timespec="seconds") if latest else None,
+                    "stamp": fd.get("stamp") or ""})
     resp.headers["Cache-Control"] = "public, max-age=300"
     return resp
 

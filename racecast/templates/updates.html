@@ -103,6 +103,8 @@
   var c = document.getElementById("upd-count");
   if (c && seen) c.textContent = n ? "· " + n + " new since your last visit" : "· nothing new since your last visit";
   if (newest) { try { localStorage.setItem(KEY, newest); } catch (e) {} }
+  // what the bar's dot compares (topbar-search.js): seen once this page is
+  try { localStorage.setItem("rc_updates_stamp", {{ (fd.stamp or "")|tojson }}); } catch (e) {}
   var dots = document.querySelectorAll(".upd-dot");
   for (var j = 0; j < dots.length; j++) dots[j].remove();
 })();

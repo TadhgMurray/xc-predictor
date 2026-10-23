@@ -213,7 +213,7 @@ def test_the_public_page_and_latest_api(monkeypatch):
     t = datetime.datetime(2026, 10, 22, 3, 0, 0)
     pub = {"events": [{"at": t, "kind": "scraped", "level": "info", "title": "New results: 1 meet, 900 results",
                        "summary": "1 meet, 900 results added", "detail": ["a line"], "items": []}],
-           "n_new": 1, "latest": t}
+           "n_new": 1, "latest": t, "stamp": "2026-10-18|2026-10-19T08:00:00"}
     monkeypatch.setattr(AC, "publicFeedCached", lambda get_conn: pub)
     client = A.app.test_client()
     r = client.get("/updates")
@@ -224,7 +224,9 @@ def test_the_public_page_and_latest_api(monkeypatch):
     assert "rc_updates_seen" in html                       # marked in the browser
     assert "public" in r.headers.get("Cache-Control", "")  # edge-cacheable
     j = client.get("/api/updates/latest")
-    assert j.get_json() == {"latest": "2026-10-22T03:00:00"}
+    assert j.get_json() == {"latest": "2026-10-22T03:00:00",
+                            "stamp": "2026-10-18|2026-10-19T08:00:00"}
+    assert 'rc_updates_stamp", "2026-10-18|2026-10-19T08:00:00"' in html
     assert j.headers["Cache-Control"] == "public, max-age=300"
 
 
@@ -240,3 +242,16 @@ def test_accuracy_lines_use_every_test_a_run_has():
     assert AC.accuracyRows({"lacctic_order_ours": 85.0}, {"lacctic_order_ours": 86.0})[0][1] == "worse"
     assert len(rows) == 4 and not any("LACCTiC" in t or "owner" in t for t, _v in rows)
     assert all(why and way.endswith("is better") for _l, way, why in AC.metricGuide())
+
+
+def test_the_dot_stamp_moves_only_on_new_results_or_a_recompute():
+    """owner, 2026-10-23: the dot only when something is actually new"""
+    rec = datetime.datetime(2026, 10, 19, 8, 0, 0)
+    assert AC.stampOf({"through": "2026-10-18", "recomputed": rec}) == "2026-10-18|2026-10-19T08:00:00"
+    assert AC.stampOf({"through": None, "recomputed": None}) == "|"
+    # a re-scrape that touches rows but adds no later race day: same stamp
+    ev = [{"kind": "scraped", "latest_day": "2026-10-18", "at": datetime.datetime(2026, 10, 23, 1)},
+          {"kind": "scraped", "latest_day": "2026-10-18", "at": datetime.datetime(2026, 10, 22, 1)},
+          {"kind": "pipeline", "published": True, "at": rec}]
+    again = ev + [{"kind": "scraped", "latest_day": "2026-10-11", "at": datetime.datetime(2026, 10, 23, 2)}]
+    assert AC.stampOf(AC.headline(ev)) == AC.stampOf(AC.headline(again))

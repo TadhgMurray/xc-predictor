@@ -299,25 +299,30 @@ function escAttr(s) {
 })();
 
 /* ★ THE WHAT'S NEW DOT (owner, 2026-10-22: updates are "supposed to inform
-     the ppl"). The bar is edge-cached, so it knows nothing about the reader:
-     a dot goes on the bar's "What's new" tab (and the phone menu button) when the
-     newest update is after the reader's last look at /updates (localStorage,
-     set by that page). /api/updates/latest is asked at most every 10 minutes
-     per browser and is itself cached for 5. A first visit starts the clock
-     (the newest update is taken as seen), so the dot marks what is new to
-     THIS reader, never the whole history. */
+     the ppl"; 2026-10-23: "only ... when something is actually new"). The bar
+     is edge-cached, so it knows nothing about the reader: a dot goes on every
+     link to /updates (the bar's tab, the home page line) and the phone menu
+     button when the site's stamp -- '<results through day>|<last full
+     recompute>' (activity.stampOf) -- has moved forward in either half since
+     the reader's last look at /updates (localStorage, set by that page). A
+     re-scrape that adds nothing a reader would see does not move it.
+     /api/updates/latest is asked at most every 10 minutes per browser and is
+     itself cached for 5. A first visit starts the clock. */
 (function () {
   if (location.pathname === '/updates') return;
-  var SEEN = 'rc_updates_seen', CHECK = 'rc_updates_check';
+  var SEEN = 'rc_updates_stamp', CHECK = 'rc_updates_check2';
   function ls(k, v) {
     try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); }
     catch (e) { return null; }
   }
-  function dot(latest) {
-    var seen = ls(SEEN);
-    if (!latest || !seen || latest <= seen) return;
-    // the bar's "What's new" tab, and the phone menu's button (the tab is
-    // hidden inside its panel until it opens)
+  // newer when either half is later (ISO dates and times compare as text)
+  function newer(stamp, seen) {
+    if (!stamp || !seen) return false;
+    var a = stamp.split('|'), b = seen.split('|');
+    return (a[0] || '') > (b[0] || '') || (a[1] || '') > (b[1] || '');
+  }
+  function dot(stamp) {
+    if (!newer(stamp, ls(SEEN))) return;
     var links = document.querySelectorAll('a[href="/updates"]');
     var targets = Array.prototype.slice.call(links);
     var burger = document.querySelector('[aria-controls="topnav"]');
@@ -335,18 +340,18 @@ function escAttr(s) {
   function run() {
     var now = Date.now(), last = ls(CHECK), cached = null;
     if (last) {
-      var parts = last.split('|');
-      if (now - (+parts[0] || 0) < 600000) cached = parts[1] || '';
+      var cut = last.indexOf('~');
+      if (cut > 0 && now - (+last.slice(0, cut) || 0) < 600000) cached = last.slice(cut + 1);
     }
     if (cached !== null) { dot(cached); return; }
     fetch('/api/updates/latest', { credentials: 'omit' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
-        var latest = (j && j.latest) || '';
-        ls(CHECK, now + '|' + latest);
-        // a first visit starts the clock: the next update after today dots
-        if (latest && !ls(SEEN)) ls(SEEN, latest);
-        dot(latest);
+        var stamp = (j && j.stamp) || '';
+        ls(CHECK, now + '~' + stamp);
+        // a first visit starts the clock: the next real update dots
+        if (stamp && !ls(SEEN)) ls(SEEN, stamp);
+        dot(stamp);
       })
       .catch(function () {});
   }

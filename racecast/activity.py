@@ -548,9 +548,10 @@ def publicFeed(conn, seen=None):
     fd = feed(conn, None)
     events = [p for p in (publicEvent(e) for e in fd["events"]) if p and p.get("at")]
     n_new = markNew(events, seen)
+    head = headline(fd["events"])
     return {"events": events, "n_new": n_new,
             "latest": events[0]["at"] if events else None,
-            "headline": headline(fd["events"]), "guide": metricGuide()}
+            "headline": head, "stamp": stampOf(head), "guide": metricGuide()}
 
 
 def headline(events):
@@ -563,6 +564,23 @@ def headline(events):
     through = max(days) if days else None
     return {"through": through, "through_text": _longDay(through) if through else None,
             "recomputed": max(full) if full else None}
+
+
+def stampOf(head):
+    """'<results through day>|<last full recompute>' -- what the What's new
+    dot compares (topbar-search.js). Pure.
+
+    ★ ONLY WHAT A READER WOULD CALL NEW (owner, 2026-10-23: "what's new
+      should only have the orange dot when something is actually new"). The
+      newest feed item's time moved whenever a scrape touched rows -- a
+      re-scrape of a meet already in, a retried failure -- so the dot came
+      back with nothing new to read. The results-through date moving
+      forward, or every rating recomputed, is new; each half compares on
+      its own."""
+    head = head or {}
+    rec = head.get("recomputed")
+    rec = rec.isoformat(timespec="seconds") if hasattr(rec, "isoformat") else (rec or "")
+    return f"{str(head.get('through') or '')[:10]}|{rec}"
 
 
 _PUBLIC_CACHE = {"at": None, "data": None}
