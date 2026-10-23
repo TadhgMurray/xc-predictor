@@ -81,6 +81,10 @@ rsync -aHAX --info=progress2 /srv/venv/ root@NEW:/srv/venv/
 rsync -a /etc/xc-predictor.env root@NEW:/etc/xc-predictor.env.old
 rsync -aR /root/.config/rclone root@NEW:/ 2>/dev/null || true
 [ -d /srv/models ] && rsync -aHAX --info=progress2 /srv/models/ root@NEW:/srv/models/
+# ★ DATA OUTSIDE THE REPO AND THE DATABASE (2026-10-23: missed, and every
+#   school logo vanished after the cutover): the crests the logo scraper
+#   writes, and the generated social images. Restart the site after.
+for d in /var/lib/racecast /var/lib/xc-predictor; do [ -d $d ] && rsync -aHAX $d/ root@NEW:$d/; done
 ```
 
 `/srv/models` holds the live prediction model (`RACECAST_MODEL` in the env
