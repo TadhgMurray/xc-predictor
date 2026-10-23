@@ -30,8 +30,10 @@ import datetime
 import glob
 import json
 import os
+import pickle
 import re
 import sys
+import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_ROOT = os.environ.get("XCP_LOG_ROOT") or os.path.join(ROOT, "logs")
@@ -614,19 +616,81 @@ def stampOf(head):
 
 _PUBLIC_CACHE = {"at": None, "data": None}
 PUBLIC_TTL_S = 300
+# ★ NEVER MAKE A READER WAIT FOR THE FEED (owner, 2026-10-23: "What's new
+#   takes way too long"). Building it reads the run logs and asks the results
+#   tables what was scraped in the last days -- tens of millions of rows,
+#   since the migration restore and the pipeline's rebuilds left the
+#   scraped_at BRIN index nothing to prune -- and the home page asks for it
+#   too. So the last finished feed is served at once and a stale one is
+#   rebuilt in a background thread, one at a time. It is kept on disk as
+#   well, so every gunicorn worker and a restart start from it instead of
+#   each rebuilding; only a server that has never built one waits, once.
+PUBLIC_CACHE_FILE = os.environ.get("XCP_UPDATES_CACHE", "/var/tmp/racecast-updates.pkl")
+_REFRESH = {"running": False}
+_REFRESH_LOCK = threading.Lock()
 
 
-def publicFeedCached(get_conn):
-    """publicFeed, built at most every PUBLIC_TTL_S per process (the page is
-    public; the logs and the scrape query are not free). `seen` is applied
-    by the caller, per reader."""
-    now = datetime.datetime.now()
-    if _PUBLIC_CACHE["data"] is None or _PUBLIC_CACHE["at"] is None or \
-            (now - _PUBLIC_CACHE["at"]).total_seconds() > PUBLIC_TTL_S:
+def _diskFeed():
+    """(built_at, feed) from the shared file, or (None, None)."""
+    try:
+        with open(PUBLIC_CACHE_FILE, "rb") as f:
+            at, data = pickle.load(f)
+        return at, data
+    except Exception:                                       # noqa: BLE001
+        return None, None
+
+
+def _saveFeed(at, data):
+    tmp = f"{PUBLIC_CACHE_FILE}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "wb") as f:
+            pickle.dump((at, data), f)
+        os.replace(tmp, PUBLIC_CACHE_FILE)       # readers never see half a file
+    except Exception:                                       # noqa: BLE001
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _rebuild(get_conn):
+    try:
         with get_conn() as conn:
-            _PUBLIC_CACHE["data"] = publicFeed(conn, None)
-        _PUBLIC_CACHE["at"] = now
-    return _PUBLIC_CACHE["data"]
+            data = publicFeed(conn, None)
+        at = datetime.datetime.now()
+        _PUBLIC_CACHE["data"], _PUBLIC_CACHE["at"] = data, at
+        _saveFeed(at, data)
+    except Exception:                                       # noqa: BLE001
+        pass                                     # keep serving the last good one
+    finally:
+        _REFRESH["running"] = False
+
+
+def _stale(at, now):
+    return at is None or (now - at).total_seconds() > PUBLIC_TTL_S
+
+
+def publicFeedCached(get_conn, wait=False):
+    """publicFeed, served from memory or the shared file at once; when older
+    than PUBLIC_TTL_S it is rebuilt in the background. `seen` is applied by
+    the caller, per reader. wait=True rebuilds in line (tests, scripts)."""
+    now = datetime.datetime.now()
+    if _stale(_PUBLIC_CACHE["at"], now):
+        at, data = _diskFeed()                   # another worker may have built it
+        if data is not None and (_PUBLIC_CACHE["at"] is None or at > _PUBLIC_CACHE["at"]):
+            _PUBLIC_CACHE["data"], _PUBLIC_CACHE["at"] = data, at
+    if wait or _PUBLIC_CACHE["data"] is None:
+        _REFRESH["running"] = True
+        _rebuild(get_conn)                       # the very first build, or asked to
+    elif _stale(_PUBLIC_CACHE["at"], now):
+        with _REFRESH_LOCK:
+            start = not _REFRESH["running"]
+            if start:
+                _REFRESH["running"] = True
+        if start:
+            threading.Thread(target=_rebuild, args=(get_conn,), daemon=True).start()
+    return _PUBLIC_CACHE["data"] or {"events": [], "n_new": 0, "latest": None,
+                                     "headline": {}, "stamp": "", "guide": metricGuide()}
 
 
 def feed(conn, seen=None):

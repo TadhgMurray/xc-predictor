@@ -267,3 +267,47 @@ def test_the_newest_race_of_a_day_comes_from_every_row_not_the_sample():
     assert ev[0]["pub_title"] == "New results through Sun, Oct 18"
     # without the whole-day answer, the sample's still decides (old behaviour)
     assert AC.scrapeDays(rows, {})[0]["latest_day"] == "2012-11-03"
+
+
+def test_the_feed_is_served_at_once_and_rebuilt_in_the_background(monkeypatch, tmp_path):
+    """owner, 2026-10-23: 'What's new takes way too long'"""
+    import threading
+    import time
+    builds = []
+    gate = threading.Event()
+
+    def slowFeed(conn, seen):
+        builds.append(1)
+        gate.wait(5)
+        return {"events": [], "n_new": 0, "latest": None, "headline": {}, "stamp": f"s{len(builds)}"}
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(AC, "publicFeed", slowFeed)
+    monkeypatch.setattr(AC, "PUBLIC_CACHE_FILE", str(tmp_path / "feed.pkl"))
+    monkeypatch.setattr(AC, "_PUBLIC_CACHE", {"at": None, "data": None})
+    gate.set()
+    first = AC.publicFeedCached(lambda: Conn())           # nothing yet: builds in line
+    assert first["stamp"] == "s1" and (tmp_path / "feed.pkl").exists()
+    # stale: the old feed comes back at once while a rebuild runs behind it
+    monkeypatch.setattr(AC, "PUBLIC_TTL_S", -1)         # memory and disk copies both stale
+    gate.clear()
+    t0 = time.monotonic()
+    again = AC.publicFeedCached(lambda: Conn())
+    assert again["stamp"] == "s1" and time.monotonic() - t0 < 0.5
+    AC.publicFeedCached(lambda: Conn())                   # no second rebuild while one runs
+    gate.set()
+    for _ in range(50):
+        if AC._PUBLIC_CACHE["data"]["stamp"] == "s2":
+            break
+        time.sleep(0.05)
+    assert AC._PUBLIC_CACHE["data"]["stamp"] == "s2" and len(builds) == 2
+    # another worker starts from the file, not from scratch
+    monkeypatch.setattr(AC, "PUBLIC_TTL_S", 300)
+    monkeypatch.setattr(AC, "_PUBLIC_CACHE", {"at": None, "data": None})
+    assert AC.publicFeedCached(lambda: Conn())["stamp"] == "s2" and len(builds) == 2
