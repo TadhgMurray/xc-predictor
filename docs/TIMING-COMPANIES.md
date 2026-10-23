@@ -1,0 +1,255 @@
+# US HS/MS/college timing companies: where results are published
+
+Research date: 2026-10-23. This is a catalog only. No scrapers were written. Each site got at most a few
+page fetches. Full per-company data is in `docs/timing_companies.csv`: 334 rows, made up of 201
+researched companies or organizations plus 133 AthleticLIVE tenants that are listed by tenant slug and
+URL only. Anything not checked directly is marked **unconfirmed**.
+
+Sources used:
+- Web searches, state by state.
+- HY-TEK's list of authorized independent timing contractors: https://hytek.active.com/support-tf-itc.html (88 contractors).
+- MileSplit Virginia's list of timing companies.
+- The AthleticLIVE tenant map. Every AthleticLIVE page embeds a JS map named `imagesByOrigin` that lists every timer site on the platform (261 entries).
+- One fetch of a homepage or results page per company, plus a sample meet page where needed.
+
+## Key findings
+
+1. **AthleticLIVE is the biggest platform by far.** It has 261 tenant sites, and roughly 230 of them look
+   like US timers, schools or leagues. It is owned and run by Athletic.net: the bundle and assets come from
+   `livestatic.athletic.net` and the API is at `api.athletic.live`. Of the 201 companies researched, 102
+   publish there. This is the same company that just removed the compiled-results API, so it is **not an
+   independent source**. Treat it as a business and terms-of-service question, not just a parser question.
+2. **Hy-Tek Meet Manager output is the most common artifact format.** Hy-Tek PDFs are posted by timers,
+   meet hosts and **state associations** (GHSA, NCHSAA, TSSAA, MHSAA-MS, NHIAA, WHSAA, NMAA, OSSAA via
+   ohstrack.com, Iowa coaches association). Only a handful of timers publish Hy-Tek **HTML** on their own
+   sites: YenTiming, TRXC, Eagle Eye, Leone and Ticker (historic).
+3. **MeetPro HTML is the second Meet Manager format, and it is very consistent.** It is used by
+   `results.tfmeetpro.com/<Timer>/<Meet>/` (hosted on S3, no index), CFPI, RT Results (CIF State XC),
+   MAC-FAT (PIAA District 3), Mitchell Timing (about 740 links) and B&B Race KC (about 350 links).
+   - Every page has the same layout: `Race #`, `Team Scoring Summary`, then `Individual Results: Athlete | Yr. | Team | Score | Time`.
+   - Grade and team are always present.
+   - Its live companion is **TrackScoreboard** (`<tenant>.trackscoreboard.com`).
+4. **PTTiming (PrimeTime Timing, Wisconsin) runs its own platform and explicitly bans automated access.**
+   - It times MSHSAA (MO) state XC, FHSAA state XC (2023), WIAA sectionals, NCAA meets, and the NYSPHSAA XC Championships through the Leone white label.
+   - The terms (seen at results.leonetiming.com/terms.html) forbid bots, scrapers, scripts, pulling data from endpoints, and AI use.
+   - Do not ingest it without written permission.
+   - Note: "PTTiming" is **not** the Perfect Timing Group (GA, ptgrouponline.com). Perfect Timing Group publishes on AthleticLIVE and as Hy-Tek PDFs.
+5. **MileSplit Live (`milesplit.live/meets/<id>`, timer index at `milesplit.live/timers/<id>`) is the
+   second most common destination.** It is FloSports-owned and not independent. Several timers in VA,
+   TN, KS, IN, TX and PA post mainly there.
+6. **The best independent own-site sources found:**
+   - YenTiming (NY): open directory listings of Hy-Tek HTML, with grade and school.
+   - Black Squirrel (NE): NSAA district and state Hy-Tek PDFs.
+   - Finished Results (CA/AZ): custom meet database, about 1,400 meets.
+   - GSE Timing (MN): ASP results database with `meet_id`.
+   - TRXC (MO).
+   - CFPI (SC/TN).
+   - SportTrax/MeetTrax (UT state XC): full results as JSON embedded in each page, with grade and school, and an exposed `can_access_public_api` flag.
+
+## 1. Shared results platforms, ranked by how many timers they carry
+
+| # | Platform | Owner | Timers seen | URL patterns | Meet index? | Format | Independent of athletic.net / MileSplit? |
+|---|---|---|---|---|---|---|---|
+| 1 | **AthleticLIVE** | Athletic.net | 261 tenant sites (about 230 US); 102 of the 201 researched companies | `https://<timer>.anet.live/meets/<id>`, CNAMEs such as `live.<timer>.com/meets/<id>` and `results.<timer>.com/meets/<id>`, and the main site `live.athletic.net/meets/<id>`. Meet IDs are global (examples: 45347, 58504, 79072, 711288). | Yes: `live.athletic.net/meet-list` and `/<tenant>/meet-list` on each tenant | Angular single-page app. Data comes from `api.athletic.live/api/...` plus Firebase and Elastic endpoints. The tenant list is embedded in every page (`imagesByOrigin`). | **No** (Athletic.net). robots.txt disallows `/meets/*/athletes`, `/live`, `/teams`, `/follow`. Terms not reviewed; check them. |
+| 2 | **MileSplit Live / MileSplit timer pages** | FloSports | 18+ researched companies (Trojan, Final Lap, Eagle Eye, Heartland, Above & Beyond, Elite FL, NTX, Tidewater, MAC-FAT, Mitchell, Red Cap, Exact...) | `milesplit.live/meets/<id>`, `milesplit.live/timers/<id>`, `<st>.milesplit.com/timing/<id>/<slug>?year=` | Per-timer index at `milesplit.live/timers/<id>` | JS live app. Accepts Hy-Tek (multi-user), MeetPro, EasyMeet and FinishLynx feeds. | **No** |
+| 3 | **MeetPro results host + TrackScoreboard** | MeetPro (tfmeetpro.com) / TrackScoreboard | MeetPro HTML: CFPI, RT Results, MAC-FAT, Mitchell, B&B Race KC. TrackScoreboard tenants: rt, finishedresults, lancer, gc, finishtiming. | `results.tfmeetpro.com/<Timer_Account>/<Meet_Name>/` (static S3) and `<tenant>.trackscoreboard.com/meets/<id>/events` (IDs up to about 113k) | MeetPro host: **no index** (S3 returns NoSuchKey); links have to be collected from timer sites. TrackScoreboard: tenant meet list at `/`. | MeetPro: static HTML with consistent structure, grade and team present. TrackScoreboard: Angular single-page app with `api.trackscoreboard.com` and Firebase RTDB. | **Yes** |
+| 4 | **PTTiming** | PrimeTime Timing (WI) | PrimeTime itself, the Leone white label, and the flotrack redirect | `pttiming.com/event.php?mid=<n>&pt=results`, `pttiming.com/event/<n>?pt=results`, `live.pttiming.com/xc-ptt.html?mid=<n>`, `results.leonetiming.com/xc.html?mid=<n>` | Yes (`pttiming.com/results`) | JS bundle with a Firebase REST (`.json`) backend | Yes, but **the terms forbid automated access**. Requires permission. |
+| 5 | **RunnerSpace / DyeStat / ResultsCentral** | RunnerSpace | Many state-championship pages; timer "walls" such as `scullion-s-timing-nj-timing.runnerspace.com` | `<state>-cross-country-state-championships.runnerspace.com`, `runnerspace.com/eprofile.php?event_id=<n>` | Per event | HTML news posts with attached results. Mostly historic (2012-2019). Current activity unconfirmed. | Yes |
+| 6 | **TFRRS (HS state subdomains)** | TFRRS/DirectAthletics | Lancer (NHIAA), Racemaker (IHSAA), FHSAA, IHSAA sectionals | `indiana.tfrrs.org`, `florida.tfrrs.org`, `nh.tfrrs.org`, `tf.tfrrs.org`; `/results/xc/<id>/<name>` | Yes | HTML tables, college-style, with grade | Yes. The repo already has a `tfrrs/` module, so check whether HS subdomains are covered. |
+| 7 | **RACE RESULT** | raceresult.com | Superior (MI), RealTiming (IL), Pacific Sport (HI), Bulldog, On The Mark, Pelican | `my.raceresult.com/<id>/...` | Per organizer | JSON behind the page | Yes |
+| 8 | **RunSignup results** | RunSignup | Kinetic (IL), Endurance Sports (FL), Pelican (LA), CK | `runsignup.com/Race/Results/<id>` | Per race | HTML, with an API available | Yes, but mostly road races; little HS XC grade data |
+| 9 | **ChronoTrack** | ChronoTrack | Bullseye, Leone, Motion, Big River | `sites.chronotrack.com/event/<id>/results?raceId=` | Per event | JS + JSON | Yes |
+| 10 | **SportTrax (MeetTrax)** | SportTrax | UHSAA state XC 2024-25 | `meettrax.com/meets/<id>/results/by-event/<eventId>` (redirects to sporttrax.com) | Meet list | Laravel/Inertia. Full JSON in the `data-page` attribute, including grade, school and gender. Has a "public API" feature flag. | Yes |
+| 11 | **RunnerCard** | RunnerCard | UT/West, El Paso TX | `runnercard.com/e/runner.Main?results=<year>`, `runnercard.com/ViewResults.html...`, uploaded `.txt`, `.htm`, `.docx` and `.pdf` files | Yes, by year from 1997 | Mixed | Yes |
+| 12 | **Flash Results** | Flash Results Inc. | Flash Results only; Flash Results Texas uses AthleticLIVE | `flashresults.com/<YYYY>_Meets/<xc|Indoor|Outdoor>/<MM-DD_Name>/index.htm` | Homepage list | Static HTML with JS status files | Yes. Mostly college and elite meets. |
+| 13 | trackmeet.io | trackmeet.io | Bullseye (mobile results partner), All-American (PDF hosting at static.trackmeetio.com) | `static.trackmeetio.com/meetFiles/<id>/<hash>.pdf` | unconfirmed | PDF and app | Yes |
+
+## 2. Formats ranked by number of companies (parser priority)
+
+These counts are over the 201 researched companies; one company can use several formats. Of these, 41 had
+no confirmable publishing format: the site was unreachable, dead, or only historic.
+
+| Rank | Format | Companies | Notes |
+|---|---|---|---|
+| 1 | AthleticLIVE | 102 | Not independent (see above). Another roughly 133 tenants are known by URL only. |
+| 2 | **Hy-Tek Meet Manager PDF** (printed report) | 29 confirmed, plus most state-association postings | Fixed-width text inside the PDF. "Contractor License ... Hy-Tek's MEET MANAGER" header; columns Name, Year, School, Finals, Points. Posted by GHSA, NCHSAA, TSSAA, MHSAA-MS, NHIAA, WHSAA, NMAA, ohstrack.com (OSSAA), iatrackcoaches.org and others. |
+| 3 | MileSplit / MileSplit Live | 18 | Not independent. |
+| 4 | Custom own-site (bespoke HTML or a database) | 17 | Finished Results, GSE, Just In Time Racing, elitefeats (ASP), Y Timing, ActNow, FLT Results, ScoreYourRace, and others. Each needs its own adapter. |
+| 5 | RACE RESULT | 7 | JSON. Mostly road races and chip-timed XC. |
+| 6 | **MeetPro HTML** (+ TrackScoreboard live) | 5 MeetPro + 5 TrackScoreboard (overlapping) | Very uniform HTML; large volume (Mitchell about 740 meets, B&B about 350, MAC-FAT about 200). |
+| 7 | **Hy-Tek HTML on the timer's own site** | 5 | Two variants: (a) real-time results frameset `index.htm` -> `evtindex.htm` -> `<YYMMDD>F001.htm` (Eagle Eye); (b) a report saved as HTML, either `<pre>` text or absolutely positioned divs (YenTiming, TRXC, Leone, Ticker). Same text layout as the PDF. |
+| 8 | ChronoTrack | 5 | JSON. |
+| 9 | RunSignup | 4 | |
+| 10 | TFRRS | 4 | |
+| 11 | PTTiming | 2 platforms (plus white label) | Terms ban automated access. |
+| 12 | SportTrax JSON, RunnerCard | 1 each | |
+
+**Takeaway:** a single **Hy-Tek report text parser** covers PDFs (after pdftotext), saved-HTML reports
+and RTR event pages. It covers more independent results than anything else, because state associations
+and coaches' sites re-host the PDFs. **MeetPro HTML** comes next: one parser, very regular structure.
+
+## 3. State associations that post official state-meet results themselves
+
+| State | Where | Format |
+|---|---|---|
+| AK | asaa.org `/wp-content/uploads/<year>-State-XCR-Team-Results.pdf` | PDF |
+| CO | chsaanow.com/results/cross-country (2006 onward) | HTML |
+| GA | ghsa.net `/2024-2025-ghsa-cross-country-results`, `/...-track-results` | Hy-Tek PDF (Perfect Timing Group) |
+| HI | hhsaa.org/sports/cross_country/tournament/<year> | HTML |
+| IL | ihsa.org records/archives (state series results) | HTML |
+| IN | ihsaa.org tournament pages link to results; older Hy-Tek PDFs at ihsaa.org/sites/default/files/documents/ | links / PDF |
+| KS | (KSHSAA uses Midwest Timing as official provider) | via Midwest Timing |
+| KY | khsaa.org state results posts **and region Hy-Tek `.mdb` database files** (khsaa.org/2025-2026-cross-country-hytek-data/) | HTML + Hy-Tek MDB (readable with mdbtools) |
+| LA | lhsaa.org `siteuploads/.../2022 LHSAA Cross Country State Meet Results.pdf` | PDF |
+| MA | miaa.net (programs and rosters); results unconfirmed | PDF |
+| MD | mpssaa.org/2025-cross-country-championships | unconfirmed |
+| MI | mhsaa.com (links to Superior Timing / AthleticLIVE for LP finals) | links |
+| MN | mshsl.org/2025-cross-country-state-tournament-results | HTML |
+| MO | mshsaa.org/Activities/PostseasonResult.aspx?alg=<n>&id=<n> | HTML (team and individual) |
+| MS | misshsaa.com cross-country-results posts | Hy-Tek (Pirate Timing) |
+| NC | nchsaa.org/wp-content/uploads/<yyyy>/<mm>/<class>-Boys-Results.pdf | Hy-Tek PDF |
+| ND | ndhsaa.com/tournaments/crosscountry-boys (links to Hero's Timing; 2025 PDFs) | PDF / links |
+| NE | nsaahome.org (links to Black Squirrel; live on athletic.net) | links |
+| NH | nhiaa.org/ckfinder/userfiles/files/*.pdf | Hy-Tek PDF (Lancer) |
+| NJ | njsiaa.org history books; mctrack.org/NJSIAAMeets/SeasonIndex.htm (coaches association) | PDF / HTML |
+| NM | nmact.org/file/2025_CC_Results.pdf, 2026_A3A_Day1_Results.pdf | Hy-Tek PDF |
+| NV | niaa.com/sports/xc/archive | HTML / PDF |
+| OH | ohsaa.org/sports/cc/pastresults (district, regional, state) | PDF / HTML |
+| OK | ossaaillustrated.com (partners with MileSplit); state TF PDFs on ohstrack.com | Hy-Tek PDF |
+| OR | osaa.org/championships?view=bxc (live results by Athletic Timing) | links |
+| PA | piaa.org past champions | HTML |
+| SC | schsl.org/archives/20734 (qualifier and championship hub) | PDF |
+| SD | sdhsaa.com (results link to athletic.net / Dakota Timing) | links |
+| TN | tssaasports.com/event/file.cfm?championshipid=<yyyymm..>&type=results | Hy-Tek PDF (AllTrax) |
+| UT | uhsaa.org records book; state meet results on SportTrax / RunnerCard | PDF / platform |
+| WI | wiaawi.org State Results Archive (sectionals from 2002) | PDF |
+| WV | wvssac.org/<year>-cross-country-championship-central | links |
+| WY | whsaa.org/track/1aboys.pdf etc. | Hy-Tek PDF |
+
+## 4. Per-state coverage
+
+"Own-site" means the timer publishes results somewhere other than athletic.net, AthleticLIVE or MileSplit.
+
+| State | Companies found (see CSV) | Own-site / independent publishers |
+|---|---|---|
+| AL | Xpress Timing, C.F.P.I. (historic), High Performance Timing | none confirmed (Xpress uses AthleticLIVE) |
+| AK | Skinny Raven (historic) | ASAA PDFs only |
+| AZ | Finished Results (AIA state XC), Meetregister, NTS-Timing | **Finished Results** |
+| AR | Y Timing, MacDonald Timing, ActNow | **Y Timing** (custom event pages), ActNow (custom) |
+| CA | Finished Results, RT Results, Record Timing, Diablo, Red Cap, AdkinsTrak West, Mentzer, Royal Results, Speed Timing, EPI, About Timing, Extra Mile, Meetregister | **Finished Results**, **RT Results** (MeetPro, CIF State), **Diablo** (Hy-Tek PDF) |
+| CO | Finish Line Timing, Colorado Race Timing, Rapid Results, Colorado Elite, Denver Athletics, Altitude Endurance | **Finish Line Timing** (fltresults.com) |
+| CT | Northeast Sports Timing, Hartford Timing, Ellington Timing | none confirmed (mysportsresults.com is a CT results site, not checked) |
+| DE | M&D, Ultimate Sports, Bullseye, Pioneer, Tumey, Motion | none confirmed |
+| DC | M&D, Bullseye | none confirmed |
+| FL | Half-Mile, Elite Timing, Endurance Sports, CK, Big Dawg, GunLap, Track Timing & Data Mgmt, MOGO, PrimeTime (state XC 2023) | Elite Timing (posts), Endurance (RunSignup); FHSAA state XC on florida.tfrrs.org |
+| GA | Perfect Timing Group, Exact Timing, FastFeet, High Performance | **FastFeet** (PDF); GHSA re-hosts Perfect Timing Hy-Tek PDFs |
+| HI | Pacific Sport Events & Timing | **PSE** (RaceResult) |
+| ID | Snake River Timing (unconfirmed location) | **none found** |
+| IL | RealTiming, Kinetic, Palatine Pack, TRXC, Absolute, Lakeshore, Michiana, Timing MD, Big River | **RealTiming** (RaceResult/PDF), Kinetic (RunSignup) |
+| IN | Above and Beyond, Timing MD, Racemaker, T&H Timing, Photo Finish, Michiana, A2, Creative | Above and Beyond (PDF + MileSplit); IHSAA on indiana.tfrrs.org |
+| IA | All-American, Wayzata, Sub4Sports, AccuRace, ADE, GSE, Lakeshore | **All-American** (Hy-Tek PDFs on iatrackcoaches.org), **AccuRace** (PDF) |
+| KS | Midwest Timing, Heartland, B&B Race KC, Ticker, Eagle Eye, Power E, Sub4Sports, ActNow | **B&B** (MeetPro), **Heartland** (PDF), **Eagle Eye** (Hy-Tek HTML, to 2024), Ticker (historic) |
+| KY | DC Timing, Timing King, Network Timing | KHSAA (Hy-Tek MDB + HTML) |
+| LA | Crescent City, Pelican, AdkinsTrak, Big River, CFPI | **Crescent City** (about 570 PDFs) |
+| ME | (no timer identified) | Sub5 hub |
+| MD | M&D, Maryland Race Timing, Bullseye, On Track, Western MD, BCPS, Baltimore City, Mantronix | Bullseye (ChronoTrack) |
+| MA | Mercury, First Time Out, MSTCA, Lancer, TRXC (historic) | Lancer (PDF) |
+| MI | Superior, Michiana, A2, Lakeshore, Mac's Sports, Mitten, ADE | **Michiana** (own posts), **A2** (own pages), **Superior** (RaceResult) |
+| MN | Wayzata, GSE, Hero's, Gopher State, Northstar, Mankato East, White River | **GSE** (ASP database), **Hero's** (PDF) |
+| MS | Pirate Timing, Xpress | MHSAA posts Pirate's Hy-Tek results |
+| MO | TRXC, Midwest, Big River, PrimeTime (state XC), Eagle Eye, ActNow, Xplosion, Championship Timing, 417 Running, MoFast, Ticker | **TRXC** (Hy-Tek HTML), **Eagle Eye**; MSHSAA posts state results |
+| MT | Beartooth Track, Grizzly Peak (both unconfirmed) | **none found** |
+| NE | Black Squirrel, Sub4Sports, Run Nebraska | **Black Squirrel** (Hy-Tek PDF) |
+| NV | NTS-Timing, Mentzer, Finished Results, Meetregister | none confirmed (NIAA archive) |
+| NH | Lancer | **Lancer** (PDF); NHIAA |
+| NJ | Fraulo, Scullion's, JBAC, Pioneer, Tumey, M&D, Wil-Time, elitefeats | mctrack.org (NJSIAA results, coaches association) |
+| NM | Track Timing & Data Mgmt, CCR (historic) | NMAA (nmact.org Hy-Tek PDFs) |
+| NY | YenTiming, Leone, elitefeats, Just In Time Racing, ScoreYourRace, FMTiming, CFPI, Armory, Batavia, 802, Wil-Time | **YenTiming** (Hy-Tek HTML, open directories), **Just In Time Racing**, **elitefeats**, **ScoreYourRace**, Leone (PTTiming; terms ban) |
+| NC | Foothills, Rhodes, Big Kahuna, Pierre, Charlotte Flights, Scullion's, Mitchell, Network, Mantronix, Flash Results | **Big Kahuna** (PDF), **Mitchell** (MeetPro); NCHSAA PDFs |
+| ND | Hero's, Wayzata, Dakota, GSE | **Hero's** (PDF) |
+| OH | Timing Crew, Bulldog, On The Mark, Finish Timing, Lightning, Creative, GHG, SEO, Timing First, A2, Lakeshore | **On The Mark** (PDF), **Finish Timing** (TrackScoreboard); OHSAA posts |
+| OK | Midwest, NTX, Enduro, Red Dirt | ohstrack.com (OSSAA state TF PDFs) |
+| OR | Athletic Timing, PNTFO, USATF Oregon | **none found** (all AthleticLIVE) |
+| PA | MAC-FAT, Motion, Tumey, Wil-Time, On Track, Bullseye, M&D, Pioneer, Bucknell, Pymatuning Valley | **MAC-FAT** (MeetPro), Motion (own pages) |
+| RI | Wilbur Race Systems (historic) | Ocean State Running hub (ocean.staterunning.net/results/) |
+| SC | Mitchell, CFPI, Split Second, Coastal Timing, Charlotte Flights, Network | **Mitchell** (MeetPro), **CFPI** (MeetPro HTML) |
+| SD | Dakota Timing, Wayzata, GSE | **none found** (Dakota uses AthleticLIVE) |
+| TN | AllTrax, Trojan, Slipstream, Knoxville Youth Athletics, Xpress, CFPI, Network | **CFPI** (TN meets), Slipstream (own pages); TSSAA re-hosts AllTrax Hy-Tek PDFs |
+| TX | Flash Results Texas, NTX, Pro-Fit, satrackresults, Hill Country, ATX, Track Timing & Data Mgmt, Enduro, AllTrax, Cowtown (unconfirmed), Live Running Results, RunnerCard (El Paso) | Flash Results (UIL region); otherwise mostly AthleticLIVE/MileSplit. **Weak for the state's size.** |
+| UT | SportTrax/MeetTrax, RunnerCard, NTS | **SportTrax** (JSON), **RunnerCard** |
+| VT | 802 Timing, TrackLife | 802 Timing (older own HTML archive; current results on AthleticLIVE) |
+| VA | Atlantic Coast, Blue Ridge, Final Lap, Snap, Mantronix, Xcelerating, Raintree, Glen Allen, Dan Ward, PMV, Dinwiddie, WEW, Tidewater, Trojan, Network, Runner's High (historic), New River | none confirmed (mostly AthleticLIVE and MileSplit Live) |
+| WA | GC Racing, Metro League, Gold Medal, PNTFO | **GC Racing** (TrackScoreboard) |
+| WV | KVT&FOA, Mountain Timing, New River, BoComServ (dead) | Mountain Timing (some PDFs) |
+| WI | PrimeTime, Performance Timing, OnYourMarks, Badger State, 3B/WiscoTrack, K2, ADE, AccuRace, Absolute, Tortoise & Hare, UW-Whitewater, TrackSide | **Performance Timing** (PDF; portal behind Cloudflare), **AccuRace** (PDF); WIAA archive; PrimeTime (terms ban) |
+| WY | Finish Line Timing + Timberline Events | **FLT Results**; WHSAA Hy-Tek PDFs |
+
+## 5. States with no independent source found
+
+These are states where every timer found publishes only to AthleticLIVE, athletic.net or MileSplit, or
+where no timer was found at all:
+
+- **No timer identified, or location unconfirmed:** ID, MT, ME (hub only), AK (association PDFs only).
+- **AthleticLIVE / athletic.net / MileSplit only:** SD, OR, NV, VA, AL, CT, DE, DC.
+- **Thin relative to size:** TX, FL, GA, OH, PA, IL. Each has at least one own-site timer or association
+  posting, but most volume goes through AthleticLIVE or MileSplit.
+
+These gaps partly reflect search reach, not absence. There are 133 AthleticLIVE tenants whose names and
+states were not researched; resolving them (from each tenant's `/about` page) would fill many state cells.
+Even so, all of them would still sit behind Athletic.net.
+
+## 6. Notes on terms and access (not exhaustive)
+
+- **PTTiming platform:** the terms explicitly forbid automated access, endpoint extraction and AI use.
+  This covers results.leonetiming.com, live.pttiming.com and pttiming.com. **Do not scrape.**
+- **AthleticLIVE:** robots.txt disallows `/meets/*/athletes`, `/live`, `/teams` and `/follow`. It is
+  Athletic.net infrastructure. Terms not reviewed.
+- **Red Cap Timing** has a `websiteuse.html` terms page (not read). **Flash Results** robots.txt blocks a
+  few named bots only.
+- **Performance Timing**'s results portal is behind a Cloudflare JS challenge. **Wayzata Results** and
+  **Big River** returned 403 to a plain fetch.
+- **Unreachable or dead sites** (502 or connection reset from our proxy; may be proxy-related): Atlantic
+  Coast, Enduro, EPI, GunLap, Creative, Fraulo, M&D main site, Meetregister, Photo Finish, Power E, Speed
+  Timing main site, Steeple, Timing MD main site, TrackLife, Track Timing & Data Mgmt, Tumey, XMG,
+  Xplosion.
+  - Confirmed dead: alltraxtiming.com (parked) and bcstrack.com (repurposed).
+
+## 7. What to build first
+
+1. **Hy-Tek report parser**, text-based. One parser fed from three inputs:
+   - PDF via `pdftotext -layout`.
+   - Saved-HTML reports (strip tags; handle both `<pre>` and absolutely positioned div variants).
+   - Hy-Tek real-time result event pages (`<YYMMDD>F###.htm`).
+
+   This unlocks:
+   - State-association postings in GA, NC, TN, MS, NH, NM, WY and OK (ohstrack), plus iatrackcoaches.org.
+   - Black Squirrel, Crescent City, Hero's, Diablo, Big Kahuna, AccuRace, Heartland, On The Mark.
+   - YenTiming, TRXC, Eagle Eye.
+
+   Header line and column layout are consistent ("Name Year School Finals Points"; relays and field
+   events differ).
+2. **MeetPro HTML parser.** It handles `results.tfmeetpro.com/<Timer>/<Meet>/` plus the same format on
+   CFPI and rtspt.com (CIF State XC). The structure is regular and includes Yr and Team. Meet URLs have
+   to be collected from timer pages (Mitchell, B&B, MAC-FAT) because the S3 host has no index.
+3. **Source adapters for the best own-site timers.** Each lists meets cheaply:
+   - YenTiming open directories.
+   - Black Squirrel PDF lists.
+   - Finished Results `/meets/<id>`.
+   - GSE `cc_rslts.asp`.
+   - TRXC yearly pages.
+   - SportTrax: ask about the public API first; the embedded JSON is already structured.
+4. **Hy-Tek `.mdb` reader** (mdbtools) for KHSAA region files. A small, cheap win.
+5. **State-association pages** for official state meets, as a backstop in every state.
+6. **Decide on AthleticLIVE deliberately.** It has the largest coverage (about half of all timers), but it
+   is Athletic.net's product. Options: ask Athletic.net for permission or a license, or contact timers
+   directly. Most timers keep the original Hy-Tek/MeetPro/Lynx files and might share exports (`.hy3`,
+   semicolon, or Lynx `.lif`); none of the sites checked publish those exports publicly. Do not build
+   against PTTiming without permission.
+
+## Appendix: how the AthleticLIVE tenant list was obtained
+
+Every AthleticLIVE page (for example https://results.wayzatatiming.com/meets/58504) includes an inline
+script with `imagesByOrigin = { "<origin>": "<logo url with /assets/sites/<slug>/>" ... }`. A single page
+fetch yields all 261 origin-to-slug pairs. They are in the CSV as "AthleticLIVE tenant: <slug>" rows for
+any tenant not already researched by name. Non-US tenants (Canada, NZ, Australia, UK, Cayman, Caribbean)
+were excluded from the CSV.
