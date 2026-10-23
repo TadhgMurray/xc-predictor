@@ -12784,6 +12784,76 @@ def api_report():
     return jsonify({"ok": True, "report_id": report_id})
 
 
+# ★ CONTACT, NOT A REPORT (owner, 2026-10-23: "there should probably be a way
+#   to contact us without a report"). A question, a partnership or data
+#   offer, press, help with an upload or an account: an email to reply to
+#   and a message. Kept where reports are kept (issue_reports, kind
+#   'contact:<topic>', so the status page lists it) and mailed to every
+#   admin (XCP_ADMIN_EMAILS) with Reply-To set to the sender, so a reply is
+#   one click. The report form's limits apply (_reportThrottled), and a
+#   hidden field that only a bot fills is refused.
+_CONTACT_TOPICS = {"question": "A question or feedback", "data": "Results, data or a partnership",
+                   "press": "Press", "help": "Help with an account or an upload", "other": "Something else"}
+
+
+@app.route("/contact")
+def contact_page():
+    topic = (request.args.get("topic") or "").strip()
+    return render_template("contact.html", topics=_CONTACT_TOPICS,
+                           topic=topic if topic in _CONTACT_TOPICS else "question")
+
+
+def _mailAdmins(subject, text, reply_to):
+    """The contact message to every admin, off the request thread."""
+    def go():
+        for to in sorted(_accounts.adminEmails()):
+            try:
+                _accounts.sendMail(to, subject, text, headers={"Reply-To": reply_to}, log_as="contact")
+            except Exception:                           # noqa: BLE001
+                app.logger.exception("contact mail failed")
+    threading.Thread(target=go, daemon=True).start()
+
+
+@app.route("/api/contact", methods=["POST"])
+def api_contact():
+    data = request.get_json(silent=True) or {}
+    if (data.get("website") or "").strip():             # the hidden field
+        return jsonify({"ok": True})
+    email = _accounts.normEmail(data.get("email"))
+    if not email:
+        return jsonify({"error": "Add your email address, so we can reply."}), 400
+    message = (data.get("message") or "").strip()
+    if len(message) < 5:
+        return jsonify({"error": "Write your message first."}), 400
+    if len(message) > 4000:
+        return jsonify({"error": "That is too long -- 4000 characters max."}), 400
+    topic = (data.get("topic") or "other").strip()
+    if topic not in _CONTACT_TOPICS:
+        topic = "other"
+    name = " ".join((data.get("name") or "").split())[:120]
+    ip = _reporterIp()
+    if _reportThrottled(ip):
+        return jsonify({"error": "You have sent a few already -- give it an hour."}), 429
+    try:
+        with getConn() as conn:
+            _ensureTable(conn, "issue_reports", _REPORT_DDL)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO issue_reports (kind, page, detail, email, remote_ip, user_agent)
+                    VALUES (%s, %s, %s, %s, %s, %s) RETURNING report_id
+                """, (f"contact:{topic}", None, (f"From: {name}\n\n" if name else "") + message,
+                      email, ip, (request.headers.get("User-Agent") or "")[:400]))
+                rid = cur.fetchone()[0]
+            conn.commit()
+    except Exception:
+        app.logger.exception("contact insert failed")
+        return jsonify({"error": "Could not send that -- nothing was recorded. Try again shortly."}), 500
+    _mailAdmins(f"Racecast contact: {_CONTACT_TOPICS[topic]}" + (f" from {name}" if name else ""),
+                f"{message}\n\n--\nFrom: {name + ' ' if name else ''}<{email}>\nTopic: {_CONTACT_TOPICS[topic]}\n"
+                f"Message #{rid}. Reply to this email to answer them.\n", email)
+    return jsonify({"ok": True})
+
+
 # ★ THE OWNER'S STATUS PAGE (owner, 2026-09-25). The last pipeline run, the
 #   tfrrs identity gap, rated rows, blank athletes, long-running queries and
 #   the open issue reports, on one page -- see site_status.py.

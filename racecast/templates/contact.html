@@ -1,0 +1,117 @@
+{# ===================================================================== #}
+{#  contact.html -- a message to the people who run the site (owner,      #}
+{#  2026-10-23: "a way to contact us without a report"). report.html's    #}
+{#  shape and its fetch-and-stay post: a failed send shows why and keeps  #}
+{#  what was typed. app.api_contact stores it and mails the admins.       #}
+{#  ! THE "website" BOX IS FOR BOTS: hidden from people, refused when     #}
+{#    filled.                                                            #}
+{# ===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+{% set meta_title = "Contact" %}
+{% set meta_description = "Get in touch with Racecast: questions, results and data, press, or help with an account or an upload." %}
+{% set meta_crumbs = [("Contact", none)] %}
+{% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+
+<main class="page-wide rc report-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Help</span></div>
+    <h1>Contact us</h1>
+    <div class="rc-meta">No account needed · we reply by email · something wrong on a page? <a href="{{ url_for('report_page') }}">Report an issue</a> instead</div>
+  </div>
+</div></header>
+
+<div class="rc-grid">
+<div class="rc-mainc rc-form">
+  <h2 class="rc-sec">Your message</h2>
+
+  <div class="form-row">
+    <label for="topic">What it is about</label>
+    <select id="topic">
+      {% for k, label in topics.items() %}<option value="{{ k }}" {{ "selected" if k == topic }}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+
+  <div class="form-row">
+    <label for="name">Your name <span class="opt">optional</span></label>
+    <input id="name" type="text" maxlength="120" autocomplete="name">
+  </div>
+
+  <div class="form-row">
+    <label for="email">Your email</label>
+    <input id="email" type="email" maxlength="254" autocomplete="email" placeholder="you@example.com" required>
+  </div>
+
+  <div class="form-row">
+    <label for="message">Message</label>
+    <textarea id="message" rows="7" maxlength="4000"></textarea>
+  </div>
+
+  <div class="form-row" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">
+    <label for="website">Leave this empty</label>
+    <input id="website" type="text" tabindex="-1" autocomplete="off">
+  </div>
+
+  <button class="go" id="send">Send message</button>
+  <div class="form-status" id="status"></div>
+</div>
+<aside class="rc-side">
+  <h2>Other ways in</h2>
+  <div class="rc-side-card">
+    <ol>
+      <li><b>A rating or result looks wrong:</b> <a href="{{ url_for('report_page') }}">report it</a> from the page, so the link comes with it.</li>
+      <li><b>A meet is missing:</b> <a href="/account/uploads/new">add the results</a> yourself, as a file or a link.</li>
+      <li><b>Your own page:</b> claim it from your athlete page to fix your grade or school.</li>
+    </ol>
+  </div>
+</aside>
+</div>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+async function send() {
+  const email = $("email").value.trim(), message = $("message").value.trim();
+  if (!email) { show("Add your email address, so we can reply.", true); $("email").focus(); return; }
+  if (!message) { show("Write your message first.", true); $("message").focus(); return; }
+  $("send").disabled = true;
+  show("Sending…", false);
+  try {
+    const res = await fetch("/api/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic: $("topic").value, name: $("name").value.trim(), email: email,
+                             message: message, website: $("website").value })
+    });
+    const data = await res.json();
+    if (!res.ok) { show(data.error || res.statusText, true); $("send").disabled = false; return; }
+    show("Sent. We will reply to " + email + ".", false);
+    $("message").value = "";
+  } catch (err) {
+    show("Could not reach the server: " + err.message, true);
+    $("send").disabled = false;
+  }
+}
+
+function show(msg, isError) {
+  const el = $("status");
+  el.textContent = msg;
+  el.className = "form-status show" + (isError ? " error" : "");
+}
+
+$("send").addEventListener("click", send);
+</script>
+</body>
+</html>
