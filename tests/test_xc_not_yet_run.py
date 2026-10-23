@@ -56,6 +56,12 @@ def test_has_results_false_is_empty(monkeypatch):
     assert SR.EMPTY_FACTS[(288380, "XC")] == (LAST_WEEK, False)
 
 
+def test_has_results_zero_is_empty(monkeypatch):
+    got = _run(monkeypatch, {"ID": 288341, "MeetDate": LAST_WEEK,
+                             "HasResults": 0}, {})
+    assert got == (0, True)
+
+
 def test_a_past_meet_with_results_but_no_payload_still_fails(monkeypatch, capsys):
     got = _run(monkeypatch, {"ID": 288380, "MeetDate": LAST_WEEK,
                              "HasResults": True}, {"error": "x"})
@@ -63,3 +69,4 @@ def test_a_past_meet_with_results_but_no_payload_still_fails(monkeypatch, capsys
     assert (288380, "XC") not in SR.EMPTY_FACTS
     out = capsys.readouterr().out
     assert "failed" in out and LAST_WEEK in out and "['error']" in out
+    assert "HTTP" in out

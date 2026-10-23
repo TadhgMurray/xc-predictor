@@ -215,6 +215,9 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
 #           flatEvents, teams, eventTypes, relayLegs. Returns {} if the response
 #           is empty/non-JSON. Raises CloudflareException on an IP block so the
 #           caller can rotate VPN.
+LAST_XC_RESPONSE = {"status": None, "head": ""}
+
+
 async def getAllResultsXC(page, meet_id: int, jwt_token: str): 
 
     # Timeout for the in-browser fetch — same 15s budget as the other fetchers.
@@ -252,6 +255,11 @@ async def getAllResultsXC(page, meet_id: int, jwt_token: str):
  
     status = data.get("status")
     text = data.get("text", "")
+    # what came back, for the caller's failure line (2026-10-23: past meets
+    # with HasResults=1 came back as {} on the new server, and the log could
+    # not say whether that was an empty body, a 401 or a changed shape)
+    LAST_XC_RESPONSE["status"] = status
+    LAST_XC_RESPONSE["head"] = (text or "")[:160].replace("\n", " ")
  
     # Empty body — treat as "no fast-path payload"; caller falls back to per-div.
     if not text:

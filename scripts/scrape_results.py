@@ -1389,16 +1389,19 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
             raw_date = str(meet_info.get("MeetDate") or "")[:10]
             has_results = meet_info.get("HasResults")
             today = datetime.date.today().isoformat()
-            if has_results is False or (re.match(r"^(19|20)\d\d-\d\d-\d\d$", raw_date)
+            if (has_results is not None and not has_results) or (re.match(r"^(19|20)\d\d-\d\d-\d\d$", raw_date)
                                         and raw_date > today):
                 _noteEmpty(meet_id, "XC", meet_info)
                 print(f"{label} Meet {meet_id} (XC): no results yet "
                       f"({raw_date or 'no date'}, HasResults={has_results})")
                 return 0, True
             keys = sorted(payload)[:6] if isinstance(payload, dict) else type(payload).__name__
+            import scraper as _scraper
+            resp = getattr(_scraper, "LAST_XC_RESPONSE", {})
             print(f"{label} [!] Meet {meet_id} (XC) claims {len(divisions)} "
                   f"divisions but GetAllResultsData returned no flatEvents — failed "
-                  f"({raw_date or 'no date'}, HasResults={has_results}, payload {keys})")
+                  f"({raw_date or 'no date'}, HasResults={has_results}, payload {keys}, "
+                  f"HTTP {resp.get('status')}, body {resp.get('head')!r})")
             return -1, True
 
         if n == -1:
