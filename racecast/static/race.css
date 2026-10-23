@@ -43,6 +43,27 @@ main.rc .rc-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; g
 main.rc .rc-grid.rc-grid-one { grid-template-columns: minmax(0, 1fr); }
 main.rc .rc-tbar { display: flex; align-items: center; gap: .6rem 1rem; flex-wrap: wrap; margin-bottom: .4rem; }
 main.rc .rc-tabs { margin: 0; }
+/* ★ THE TABS ARE ONE ROW, AT EVERY WIDTH (owner, 2026-10-23: "On the track"
+     alone on a second row -- "it should be on one row when possible, and
+     when not it should look like it was made for two rows"). A bar that
+     does not fit tightens first (race-page.js fitTabs: .rc-tight, then
+     .rc-tighter -- the main column is ~770 px even on a wide screen, so a
+     viewport query cannot tell), and only when even that cannot fit does
+     it scroll inside itself, the cut edge fading (fadeEdges), as the phone
+     bar always has. A bar that fits keeps the full padding. */
+main.rc .rc-tabs { flex-wrap: nowrap; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+main.rc .rc-tabs::-webkit-scrollbar { display: none; }
+main.rc .rc-tabs .seg-btn { white-space: nowrap; flex: 0 0 auto; }
+main.rc .rc-tabs.rc-tight .seg-btn { padding-left: .75rem; padding-right: .75rem; }
+main.rc .rc-tabs.rc-tighter { gap: .2rem; }
+main.rc .rc-tabs.rc-tighter .seg-btn { padding-left: .55rem; padding-right: .55rem; font-size: .84rem; }
+main.rc .rc-tabs.rc-fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+                                     mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+main.rc .rc-tabs.rc-fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px);
+                                     mask-image: linear-gradient(to right, transparent, #000 32px); }
+main.rc .rc-tabs.rc-fade-l.rc-fade-r {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+          mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
 main.rc .rc-tabs .n { margin-left: .35rem; opacity: .65; font-variant-numeric: tabular-nums; }
 main.rc .rc-out { font-weight: 600; font-size: .9rem; white-space: nowrap; }
 main.rc .rc-find { margin-left: auto; width: 230px; padding: .4rem .6rem; font-size: .9rem; border: 1px solid var(--line-2); border-radius: 3px; }
@@ -171,18 +192,8 @@ main.rc .rec-pair table { table-layout: auto; }
 main.rc .rec-pair .rec-gender { margin: .6rem 0 .3rem; }
 main.rc .rec-pair td.rt, main.rc .rec-pair td .rv { font-weight: 600; }
 @media (max-width: 760px) {
-  /* a long tab bar or a wide records table scrolls inside itself, never
-     the page */
-  main.rc .rc-tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  main.rc .rc-tabs .seg-btn { white-space: nowrap; flex: 0 0 auto; }
-  /* more tabs past an edge: that edge fades (race-page.js fadeEdges) */
-  main.rc .rc-tabs.rc-fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
-                                       mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
-  main.rc .rc-tabs.rc-fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px);
-                                       mask-image: linear-gradient(to right, transparent, #000 32px); }
-  main.rc .rc-tabs.rc-fade-l.rc-fade-r {
-    -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
-            mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
+  /* a wide records table scrolls inside itself, never the page (the tab
+     bar does at every width now: see .rc-tabs at the top) */
   main.rc .rec-pair > div, main.rc .rc-panel table.meets-table { overflow-x: auto; }
   main.rc .rec-pair table { min-width: 0; }
 }
@@ -870,11 +881,14 @@ main.ath-page.rc .season table th:nth-child(4) { width: 5rem; }
      still goes to the next row"), and no header wraps */
 main.ath-page.rc .season table th { white-space: nowrap; }
 main.ath-page.rc .season table th:nth-child(5) { width: 4.8rem; }
-main.ath-page.rc .season table th:nth-child(6) { width: 5.4rem; }
-/* the equivalent column's header wraps (owner, 2026-10-13: "3200M EQUIV (i)"
-   ran under COURSE -- the middle school label is wider than the 5K one) */
-main.ath-page.rc .season table th.fk { white-space: normal; line-height: 1.25; }
-main.ath-page.rc .season table th.fk .info-i { white-space: nowrap; }
+/* ★ THE EQUIVALENT'S HEADER ON ONE LINE TOO (owner, 2026-10-23: two rows
+     "annoys me ... it should be on one row when possible"). 2026-10-13 let
+     it wrap because "3200M EQUIV (i)" ran under COURSE; the column is sized
+     to its label instead, measured in Chromium: "5K equiv ⓘ" 79 px and
+     "3200m equiv ⓘ" 105 px of text, plus .9rem of padding. */
+main.ath-page.rc .season table th:nth-child(6) { width: 6rem; }
+main.ath-page.rc .season table th.fk.fk-long { width: 7.6rem; }
+main.ath-page.rc .season table th.fk { white-space: nowrap; }
 main.ath-page.rc .season table th:nth-child(7) { width: 4.8rem; }
 /* ★ RECORDS: THREE PILLS TO A LINE (owner, 2026-10-11: "make the flags not
      make all the meets go multiple rows"). A row is already two lines (the
@@ -883,12 +897,12 @@ main.ath-page.rc .season table th:nth-child(7) { width: 4.8rem; }
 main.ath-page.rc .season table th:nth-child(8) { width: 6.6rem; }
 main.ath-page.rc .season td.res-cell .res-ev { display: block; font-size: .8rem; line-height: 1.2; color: var(--muted); }
 /* ⚠ AND THE MEET NEVER SQUEEZED TO A LETTER (owner, 2026-10-11: "meet names
-     are all cut off. Entirely."). The sized columns sum to ~41rem (border-box,
+     are all cut off. Entirely."). The sized columns sum to ~43rem (border-box,
      athlete-charts.css), less than before the 5K and the ⓘ came in; the
      table keeps at least 8rem for the meet on top of them and scrolls
      sideways in its .tscroll below that, instead of eating the meet. */
 @media (min-width: 701px) {
-  main.ath-page.rc .season table { min-width: 49rem; }
+  main.ath-page.rc .season table { min-width: 51rem; }
 }
 main.ath-page.rc .season td.flags .flag { margin: 0 1px 2px 0; padding: 1px 4px; font-size: 10.5px; }
 /* "· 1st on team" under the place, as a small sub-line */

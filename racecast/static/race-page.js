@@ -25,14 +25,28 @@
        edge that has more behind it fades out (race.css .rc-fade-l/-r), and
        the open tab is scrolled into the strip -- the strip only, never the
        page, so arriving on #teams does not jump the page. */
+  // ★ ONE ROW, TIGHTENED BEFORE IT SCROLLS (owner, 2026-10-23): the full
+  //   padding when the tabs fit, .rc-tight then .rc-tighter when they do
+  //   not (race.css), and the scroll with its fading edges only past that
+  function fitTabs(strip) {
+    strip.classList.remove("rc-tight", "rc-tighter");
+    if (strip.scrollWidth - strip.clientWidth > 1) strip.classList.add("rc-tight");
+    if (strip.scrollWidth - strip.clientWidth > 1) strip.classList.add("rc-tighter");
+  }
   function fadeEdges(strip) {
     function paint() {
       var more = strip.scrollWidth - strip.clientWidth;
       strip.classList.toggle("rc-fade-l", more > 1 && strip.scrollLeft > 1);
       strip.classList.toggle("rc-fade-r", more > 1 && strip.scrollLeft < more - 1);
     }
+    var pending = 0;
+    function refit() {
+      if (pending) return;
+      pending = requestAnimationFrame(function () { pending = 0; fitTabs(strip); paint(); });
+    }
     strip.addEventListener("scroll", paint, { passive: true });
-    window.addEventListener("resize", paint);
+    window.addEventListener("resize", refit);
+    fitTabs(strip);
     paint();
   }
   function keepInView(a) {

@@ -195,7 +195,7 @@
                        in middle school). Kept on phones -- the season block
                        scrolls inside itself, never the page. #}
                     {% set fk_label = five_k_label(season.races|map(attribute="pool")) %}
-                    {{ fk_th(fk_label) }}
+                    {{ fk_th(fk_label, "fk-long" if (fk_label or "5K")|length > 3 else "") }}
                     {# ★ COURSE, IN A WORD; RECORDS, THE THREE A PARENT
                        KNOWS (header redesign B, 2026-10-10). See the cells. #}
                     <th>Course</th>
