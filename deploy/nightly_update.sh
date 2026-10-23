@@ -114,6 +114,26 @@ scrape() {
     echo "  $name ok (${el}s)" | tee -a "$SUMMARY"
   fi
 }
+# ★ CTRL-C STOPS THE SCRAPERS TOO (owner, 2026-10-23: "Why did the ctrl c
+#   not stop it???"). They run in the background (`&`), and a non-interactive
+#   bash starts background jobs with SIGINT ignored -- and timeout puts them
+#   in their own process group besides -- so Ctrl-C ended this script and
+#   left both launchers scraping, holding the lock it had passed down to
+#   them. timeout leads its own process group (xvfb-run, Xvfb, python and
+#   Chrome under it), so the trap signals each timeout's group: the children
+#   of the two background subshells ($pa, $pb).
+# ! NOT pkill -f ON THE LAUNCHER'S PATH: that also kills any shell whose
+#   command line merely mentions it (a grep, a tail in a one-liner).
+_stopScrapers() {
+  echo "[nightly] interrupted -- stopping the scrapers" >&2
+  for p in ${pa:-} ${pb:-}; do
+    for t in $(pgrep -P "$p" 2>/dev/null); do
+      kill -TERM -- "-$t" 2>/dev/null || kill -TERM "$t" 2>/dev/null
+    done
+  done
+  exit 130
+}
+[ "$DRY" -eq 0 ] && trap _stopScrapers INT TERM
 if [ "$SCRAPE" -eq 1 ] && [ "$DRY" -eq 0 ]; then
   for need in xvfb-run google-chrome; do
     if ! command -v "$need" >/dev/null 2>&1; then
