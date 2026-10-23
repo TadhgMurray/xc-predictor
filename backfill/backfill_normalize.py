@@ -2627,12 +2627,18 @@ def _copyToStaging(write_conn, table, updates):
 #   Passing page_size >= len(page) guarantees exactly one statement, so
 #   cur.rowcount is the true match count for this page. (This is the bug that
 #   made a 50,000-row batch report `written 10,000`.)
+# ⚠ THE CASTS (2026-10-23, the nightly's 05_normalize_new: "column
+#   normalized_time is of type real but expression is of type text"). A
+#   VALUES list takes its column types from its values, and a page whose nt
+#   are ALL None -- every row withheld, e.g. a page of only age-banded or
+#   wheelchair rows -- types nt as text. The casts name the types whatever
+#   the page holds.
 def _flushPage(cur, table, page):
     psycopg2.extras.execute_values(cur, f"""
         UPDATE {table}
-        SET normalized_time = data.nt
+        SET normalized_time = data.nt::real
         FROM (VALUES %s) AS data(nt, rid)
-        WHERE {table}.result_id = data.rid
+        WHERE {table}.result_id = data.rid::bigint
     """, page, page_size=len(page))        # one statement <=> trustworthy rowcount
     return cur.rowcount
 
