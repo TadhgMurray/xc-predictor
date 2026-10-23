@@ -316,10 +316,60 @@ _LATEST_SQL = """
 """
 
 
+# ★ FAST: THE SAVERS' OWN RECORD (owner, 2026-10-23: "is there no way to
+#   make activity and what's new just fast to compute?"). Every saver adds
+#   (day, sport, source, meet) to scrape_activity as it saves
+#   (database.noteScraped), so the feed reads a few hundred rows. The
+#   results tables are asked only for days before that record starts --
+#   once, by --backfill-scrape-activity, or by the old query on a server
+#   that has not run it.
+_ACTIVITY_SQL = """
+    SELECT sport, source, meet_id, min_date, n, last_at::text, day::text, max_date
+    FROM   scrape_activity
+    WHERE  day >= %(since)s
+    ORDER  BY last_at DESC
+"""
+
+
+def _fromActivity(cur, since, limit):
+    """(rows, latest by day) from scrape_activity, or None when it does not
+    cover `since` (no table, or it starts after that day)."""
+    cur.execute("SELECT to_regclass('public.scrape_activity_meta') IS NOT NULL")
+    if not cur.fetchone()[0]:
+        return None
+    cur.execute("SELECT v FROM scrape_activity_meta WHERE k = 'covered_from'")
+    first = (cur.fetchone() or [None])[0]
+    if not first or first > since:
+        return None
+    cur.execute(_ACTIVITY_SQL, {"since": since})
+    rows, latest, per = [], {}, {}
+    for sport, source, mid, d0, n, at, day, d1 in cur.fetchall():
+        per[sport] = per.get(sport, 0) + 1
+        if per[sport] <= limit:
+            rows.append((sport, source, mid, d0, n, at))
+        # the newest real race of the day (latestRaceDay's rule)
+        for d in (d1, d0):
+            if d and "2000" <= d[:10] <= day and (day not in latest or d[:10] > latest[day]):
+                latest[day] = d[:10]
+                break
+    return rows, latest
+
+
 def scrapeEvents(conn, days=3, limit=400):
     """One event per day: the meets scraped (or re-scraped) that day, both
     sports and both feeds, the biggest first."""
     since = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+    with conn.cursor() as cur:
+        try:
+            got = _fromActivity(cur, since, limit)
+        except Exception:                                   # noqa: BLE001
+            conn.rollback()
+            got = None
+        if got is not None:
+            rows, latest = got
+            names = _meetNames(cur, rows)
+            conn.rollback()
+            return scrapeDays(rows, names, latest)
     rows, latest = [], {}
     with conn.cursor() as cur:
         cur.execute("SET LOCAL statement_timeout = '8s'")
@@ -616,7 +666,7 @@ def stampOf(head):
 
 
 _PUBLIC_CACHE = {"at": None, "data": None, "raw": None}
-PUBLIC_TTL_S = 300
+PUBLIC_TTL_S = 60
 # ★ NEVER MAKE A READER WAIT FOR THE FEED (owner, 2026-10-23: "What's new
 #   takes way too long"). Building it reads the run logs and asks the results
 #   tables what was scraped in the last days -- tens of millions of rows,
@@ -750,3 +800,54 @@ def attachAccuracy(events):
             p = runs[e["run"]]
             p["metrics"], p["prev_metrics"] = e.get("metrics"), e.get("prev_metrics")
             e["carried"] = True
+
+
+# ---- command line ------------------------------------------------------------
+
+_BACKFILL_SQL = """
+    INSERT INTO scrape_activity (day, sport, source, meet_id, n, min_date, max_date, last_at)
+    SELECT left(scraped_at::text, 10)::date, %(sport)s, COALESCE(source, 'anet'), meet_id, count(*),
+           min(left(date, 10)), max(left(date, 10)), max(scraped_at)
+    FROM   {table}
+    WHERE  scraped_at >= %(since)s AND meet_id IS NOT NULL
+    GROUP  BY 1, 3, 4
+    ON CONFLICT (day, sport, source, meet_id) DO UPDATE SET
+        n        = GREATEST(scrape_activity.n, EXCLUDED.n),
+        min_date = LEAST(scrape_activity.min_date, EXCLUDED.min_date),
+        max_date = GREATEST(scrape_activity.max_date, EXCLUDED.max_date),
+        last_at  = GREATEST(scrape_activity.last_at, EXCLUDED.last_at)
+"""
+
+
+def backfillScrapeActivity(conn, days=7):
+    """The days before the savers started recording, from the results
+    tables themselves: the slow read, once. -> rows written per table."""
+    import database
+    since = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+    out = {}
+    with conn.cursor() as cur:
+        cur.execute(database._SCRAPE_ACTIVITY_DDL)
+        for sport, table in (("XC", "results"), ("TF", "results_tf")):
+            cur.execute(_BACKFILL_SQL.format(table=table), {"sport": sport, "since": since})
+            out[table] = cur.rowcount
+            conn.commit()
+        cur.execute("""UPDATE scrape_activity_meta SET v = LEAST(v, %s) WHERE k = 'covered_from'""",
+                    (since,))
+        conn.commit()
+    return out
+
+
+def main(argv):
+    if "--backfill-scrape-activity" in argv:
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        from database import getConn
+        days = next((int(a.split("=", 1)[1]) for a in argv if a.startswith("--days=")), 7)
+        with getConn() as conn:
+            print(backfillScrapeActivity(conn, days))
+        return 0
+    print("python racecast/activity.py --backfill-scrape-activity [--days=7]")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -2155,6 +2155,86 @@ def _ensureResultsStatus(conn, table="results"):
     _RESULTS_STATUS_READY.add(table)
 
 
+# ★ WHAT WAS SCRAPED, WRITTEN AS IT IS SAVED (owner, 2026-10-23: "is there
+#   no way to make activity and what's new just fast to compute?"). Both
+#   feeds asked results and results_tf -- 39M and 191M rows -- which meets
+#   had a scraped_at in the last three days; no index can answer that well
+#   (re-scrapes update rows in place, so the BRIN on scraped_at prunes
+#   nothing). Every saver now adds one row per (day, sport, source, meet)
+#   to scrape_activity as it saves: rows written, the race dates, the last
+#   save. The feeds read a few hundred rows instead.
+#   racecast/activity.py --backfill-scrape-activity fills the days before.
+# ! NEVER BREAKS A SAVE. Its own savepoint; a failure is printed once and
+#   the results it describes are kept.
+_SCRAPE_ACTIVITY_DDL = """
+    CREATE TABLE IF NOT EXISTS scrape_activity (
+        day       date   NOT NULL,
+        sport     text   NOT NULL,
+        source    text   NOT NULL,
+        meet_id   bigint NOT NULL,
+        n         integer NOT NULL DEFAULT 0,
+        min_date  text,
+        max_date  text,
+        last_at   timestamptz,
+        PRIMARY KEY (day, sport, source, meet_id));
+    -- the first day it is complete from: the day recording began, or the
+    -- earliest day a backfill read (activity.py --backfill-scrape-activity)
+    CREATE TABLE IF NOT EXISTS scrape_activity_meta (k text PRIMARY KEY, v text);
+    INSERT INTO scrape_activity_meta VALUES ('covered_from', current_date::text)
+        ON CONFLICT (k) DO NOTHING"""
+_SCRAPE_ACTIVITY = {"ready": False, "warned": False}
+
+
+def noteScraped(conn, sport, entries):
+    """Record saved rows in scrape_activity. entries: (source, meet_id,
+    race date, scraped_at) per row. The caller commits."""
+    agg = {}
+    for source, meet_id, date, at in entries:
+        if meet_id is None or at is None:
+            continue
+        day = at.date() if hasattr(at, "date") else str(at)[:10]
+        k = (day, sport, source or "anet", int(meet_id))
+        d = (str(date)[:10] or None) if date else None
+        a = agg.get(k)
+        if a is None:
+            agg[k] = [1, d, d, at]
+        else:
+            a[0] += 1
+            if d and (a[1] is None or d < a[1]):
+                a[1] = d
+            if d and (a[2] is None or d > a[2]):
+                a[2] = d
+            if at > a[3]:
+                a[3] = at
+    if not agg:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("SAVEPOINT scrape_activity")
+    except Exception:                                       # noqa: BLE001
+        return
+    try:
+        if not _SCRAPE_ACTIVITY["ready"]:
+            cur.execute(_SCRAPE_ACTIVITY_DDL)
+            _SCRAPE_ACTIVITY["ready"] = True
+        psycopg2.extras.execute_values(cur, """
+            INSERT INTO scrape_activity (day, sport, source, meet_id, n, min_date, max_date, last_at)
+            VALUES %s
+            ON CONFLICT (day, sport, source, meet_id) DO UPDATE SET
+                n        = scrape_activity.n + EXCLUDED.n,
+                min_date = LEAST(scrape_activity.min_date, EXCLUDED.min_date),
+                max_date = GREATEST(scrape_activity.max_date, EXCLUDED.max_date),
+                last_at  = GREATEST(scrape_activity.last_at, EXCLUDED.last_at)
+        """, [k + tuple(v) for k, v in agg.items()])
+        cur.execute("RELEASE SAVEPOINT scrape_activity")
+    except Exception as exc:                                # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT scrape_activity")
+        if not _SCRAPE_ACTIVITY["warned"]:
+            print(f"[DB] scrape_activity not written ({type(exc).__name__}: {exc}); "
+                  "the results are saved", flush=True)
+            _SCRAPE_ACTIVITY["warned"] = True
+
+
 def saveResultsBulk(conn, results: list):
     _ensureResultsStatus(conn)
 
@@ -2328,6 +2408,7 @@ def saveResultsBulk(conn, results: list):
             school_source = COALESCE(EXCLUDED.school_source, results.school_source),
             scraped_at    = EXCLUDED.scraped_at
         """, rows)
+        noteScraped(conn, "XC", ((r[20], r[2], r[6], r[9]) for r in rows))
     except Exception as e:
         print(f"[FK-FAIL] {e}", flush=True)
         for r in rows:
@@ -2557,6 +2638,7 @@ def saveResultsTFBulk(conn, results: list):
             status        = COALESCE(EXCLUDED.status, results_tf.status),
             scraped_at    = EXCLUDED.scraped_at
     """, rows)
+    noteScraped(conn, "TF", ((r[29], r[2], r[8], r[12]) for r in rows))
 
 # _cleanJson
 # Purpose: Recursively strip NUL (0x00) from every string inside a JSON-able

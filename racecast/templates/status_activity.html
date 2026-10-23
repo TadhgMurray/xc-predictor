@@ -37,7 +37,7 @@
       {% endfor %}</div>
     <p class="st-head {{ 'st-head-bad' if fd.events|selectattr('new')|selectattr('level', 'equalto', 'bad')|list else 'st-head-ok' }}">
       {{ fd.n_new }} new {% if seen %}since your last visit ({{ ago((now - seen).total_seconds()) }} ago){% else %}(first visit from this browser){% endif %}
-      {% if fd.built_at %}<span class="muted"> · built {{ ago((now - fd.built_at).total_seconds()) }} ago, rebuilt every 5 minutes</span>{% endif %}</p>
+      {% if fd.built_at %}<span class="muted"> · built {{ ago((now - fd.built_at).total_seconds()) }} ago, rebuilt every minute</span>{% endif %}</p>
   </div>
 </div></header>
 <div class="rc-grid">

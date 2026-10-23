@@ -654,6 +654,7 @@ def applyUpload(cur, up, rows, events):
                                      school, school_source, place, scraped_at, status)
                 VALUES %s ON CONFLICT (result_id) DO NOTHING""", res, page_size=2000)
             out["results"] = cur.rowcount
+            _noteScraped(cur, "XC", res, meet_id, up["meet_date"], now)
         return out
 
     # track: one meets_tf row per race (div_id, event_id), the meet's own
@@ -695,7 +696,18 @@ def applyUpload(cur, up, rows, events):
                                     school, place, scraped_at, status)
             VALUES %s ON CONFLICT (result_id) DO NOTHING""", res, page_size=2000)
         out["results"] = cur.rowcount
+        _noteScraped(cur, "TF", res, meet_id, up["meet_date"], now)
     return out
+
+
+def _noteScraped(cur, sport, res, meet_id, date, now):
+    """An approved upload is new results too: What's new and Activity read
+    scrape_activity (database.noteScraped). Best effort."""
+    try:
+        from database import noteScraped
+    except Exception:                                    # noqa: BLE001
+        return
+    noteScraped(cur.connection, sport, ((SOURCE, meet_id, date, now) for _ in res))
 
 
 def decide(cur, uid, action, admin_email, note=None):

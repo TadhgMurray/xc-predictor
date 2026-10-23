@@ -430,6 +430,8 @@ def saveTFRRSResultsBulk(conn, rows: list) -> None:
             -- that has no team link must not wipe a slug we already have.
             team_slug     = COALESCE(EXCLUDED.team_slug, results_tf.team_slug)
     """, tuples)
+    from database import noteScraped        # What's new / Activity (database.py)
+    noteScraped(conn, "TF", ((t[3], t[7], t[15], t[21]) for t in tuples))
 
 # saveTFRRSMeetMeta
 # Purpose: Upsert one TFRRS meet's metadata row from the parseXCMeetMeta dict.
@@ -624,6 +626,8 @@ def saveTFRRSResultsXCBulk(conn, rows: list) -> None:
                 -- with no team link must not null a slug already stored.
                 team_slug     = COALESCE(EXCLUDED.team_slug, results.team_slug)
         """, tuples)
+        from database import noteScraped    # What's new / Activity (database.py)
+        noteScraped(conn, "XC", ((t[3], t[7], t[11], t[17]) for t in tuples))
     except Exception as e:
         # `results` may constrain athlete_id (NOT NULL / FK) differently from
         # results_tf, which happily takes NULL. If this fires on a test rescrape,
