@@ -120,3 +120,16 @@ def test_distances(title, meters):
 @pytest.mark.skipif(shutil.which("pdftotext") is None, reason="poppler-utils not installed")
 def test_pdf_goes_through_pdftotext():
     assert callable(H.textFromPdf)
+
+
+def test_gender_last_on_the_event_line():
+    """LiveTrackResults youth pages: 'Event 1  2000 Meter Run CC 8 & Under Division Girls'"""
+    text = REPORT.replace("Event 6  Boys 5k Run CC Varsity",
+                          "Event 6  2000 Meter Run CC 8 & Under Division Boys")
+    ev = H.parseReport(text).events[0]
+    assert (ev.number, ev.gender, ev.meters, len(ev.rows)) == (6, "M", 2000.0, 6)
+
+
+def test_a_line_that_merely_starts_with_event_is_not_an_event():
+    m = H.parseReport(REPORT.replace("Results\n", "Event schedule changed due to weather\n", 1))
+    assert [e.number for e in m.events] == [6, 7]

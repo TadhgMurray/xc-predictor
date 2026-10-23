@@ -347,3 +347,17 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
     - Indexes onto MeetPro/DirectAthletics: FT Timing TX (~150 DFW meets), Pure Gold FL, Bv Timing FL, MP Timing NC.
     - Others.
   - Corrections are in `docs/timing_passes/timing_corrections_ownsite.csv` and have been applied. The list now counts 87 independent sources.
+- **Self-hosted results (2026-10-23):** `docs/timing_passes/self_hosted.csv`, 66 rows: schools, leagues, colleges, coaches associations, venues and hubs.
+  - **Current and high-volume:**
+    - Ocean Breeze (NYC indoor, ~70 meets a season, Hy-Tek PDFs)
+    - LSU HS meets (Hy-Tek PDFs, dated file names)
+    - Concordia NE indoor series
+    - Wayne-Finger Lakes League (NY dual meets)
+    - Spotlight On Berks (PA dual meets)
+    - PSAL (NYC; database, school but no grade)
+    - Baum's Page (OH database)
+    - Tully Runners (NY; copies Leone/PTTiming output, so ask first)
+  - **Historical:** MichTrack (scans), DyeStat archive, KTCCCA (2000–10), NCPrepTrack.
+  - **Restricted:** Penn Relays results only with its permission.
+  - The existing Hy-Tek parser read Ocean Breeze, LSU, Concordia and RITCA samples. Event lines with the gender last (youth pages) are now read too.
+  - The pass hit the session's web-search limit before Brooks PR, Glenbard, the Nike regionals and the Kansas/Texas Relays.

@@ -119,6 +119,11 @@ class Meet:
 
 _HEADER = re.compile(r"hy-tek'?s\s+meet\s+manager", re.I)
 _EVENT = re.compile(r"^\s*Event\s+(\d+)\s+(Girls|Boys|Women|Men|Mixed|Coed)\b\s*(.*)$", re.I)
+# ★ THE GENDER CAN COME LAST (2026-10-23, LiveTrackResults' youth meets:
+#   "Event 1  2000 Meter Run CC 8 & Under Division Girls"): the first pattern
+#   read no events at all on those pages
+_EVENT_ANY = re.compile(r"^\s*Event\s+(\d+)\s+(\S.*?)\s*$", re.I)
+_GENDER_WORD = re.compile(r"\b(Girls|Boys|Women|Men|Mixed|Coed)\b", re.I)
 _TITLE_DATE = re.compile(r"^(.*?)\s+-\s+(\d{1,2})/(\d{1,2})/(\d{4})(?:\s+to\s+\S+)?\s*$")
 _MARK = r"(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d{1,2})?|\d{2,3}\.\d{1,2}"
 _ROW_TAIL = re.compile(rf"\s+(?P<mark>{_MARK}|DNF|DQ|DNS|NT|SCR)\s*(?:[*#xXqQ]\s*)?(?P<pts>\d+)?\s*$")
@@ -237,9 +242,16 @@ def parseReport(text):
                     meet.venue = nxt[1]
             continue
         ev = _EVENT.match(line)
-        if ev:
-            num, title = int(ev.group(1)), ev.group(3).strip()
-            gender = _GENDER.get(ev.group(2).lower(), "")
+        if not ev:
+            anyev = _EVENT_ANY.match(line)
+            gw = _GENDER_WORD.search(anyev.group(2)) if anyev else None
+        if ev or (anyev and gw):
+            if ev:
+                num, title = int(ev.group(1)), ev.group(3).strip()
+                gender = _GENDER.get(ev.group(2).lower(), "")
+            else:
+                num, title = int(anyev.group(1)), anyev.group(2).strip()
+                gender = _GENDER.get(gw.group(1).lower(), "")
             # a report page break repeats the event header: keep adding to it
             if not (event and event.number == num):
                 event = Event(number=num, gender=gender, title=title, meters=metersOf(title))
