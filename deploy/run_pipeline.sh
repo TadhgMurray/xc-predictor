@@ -1554,6 +1554,12 @@ if [ "${XCP_SOCIAL:-1}" != "0" ]; then step 13g_social "$PY" -u racecast/build_s
 #   XCP_STATE_ODDS=1: time a first build by hand (it simulates every state).
 if [ "${XCP_STATE_ODDS:-0}" = "1" ]; then step 13i_state_odds "$PY" -u racecast/build_state_odds.py; fi
 step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
+# ★ THE 5K COLUMN AGAINST THE TRACK (owner, 2026-10-23: "the 5k equivs on my
+#   race were abt 15-20s faster"): the time the site prints for a season,
+#   against what the same runners ran on the track the next spring, per pool
+#   and rating band; the site takes the gap back out (conversions.clockBias).
+#   After the go-live, on its ratings. Display only.
+step 13b1_clock_cal   "$PY" -u racecast/build_clock_calibration.py --write
 # ★ THE SEARCH INDEX, REBUILT EVERY RUN (issue 140). It was never in the
 #   pipeline, so new athletes and meets stayed unsearchable until someone
 #   rebuilt it by hand. Built into a shadow table and swapped, so search
