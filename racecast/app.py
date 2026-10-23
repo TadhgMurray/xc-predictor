@@ -12963,8 +12963,7 @@ def status_activity():
         seen = datetime.datetime.fromisoformat(request.cookies.get(_ACTIVITY_COOKIE, ""))
     except ValueError:
         seen = None
-    with getConn() as conn:
-        fd = activity.feed(conn, seen)
+    fd = activity.feedCached(getConn, seen)      # built behind the page (activity._rebuild)
     resp = make_response(render_template(
         "status_activity.html", fd=fd, seen=seen, ago=site_status.ago,
         now=datetime.datetime.now(),

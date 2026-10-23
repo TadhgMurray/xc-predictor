@@ -6615,3 +6615,11 @@ the person after it was rated. Not traced yet.
 - 📋 Next: local timing companies as an independent source (research in
   docs/TIMING-COMPANIES.md, docs/timing_companies.csv). New rows go through
   the id-less linkers the TFRRS feed already uses.
+
+## Postgres restarts itself for security updates (owner, 2026-10-23)
+
+Ubuntu's automatic updates (`apt-daily-upgrade.timer`, about 06:00-07:00) install new PostgreSQL 18 point releases, and the package restarts the database (2026-10-23 06:56:17). The owner chose to leave this as it is: **"just remember that next time you think something we run might be stopped by it to tell me."**
+
+- **What it breaks:** anything holding a database connection at that moment. That means a nightly step still running past 06:00, a scrape in the middle of saving, a long backfill, or a migration.
+- **What it doesn't:** the site. It shows the 503 "back in a minute" page for the few seconds the database is down (`database.PoolUnavailable`).
+- **So:** when proposing or starting a job that may run through 06:00-07:00, say so to the owner first.

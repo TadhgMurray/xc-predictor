@@ -276,7 +276,7 @@ def test_the_feed_is_served_at_once_and_rebuilt_in_the_background(monkeypatch, t
     builds = []
     gate = threading.Event()
 
-    def slowFeed(conn, seen):
+    def slowFeed(conn, seen, fd=None):
         builds.append(1)
         gate.wait(5)
         return {"events": [], "n_new": 0, "latest": None, "headline": {}, "stamp": f"s{len(builds)}"}
@@ -289,6 +289,7 @@ def test_the_feed_is_served_at_once_and_rebuilt_in_the_background(monkeypatch, t
             return False
 
     monkeypatch.setattr(AC, "publicFeed", slowFeed)
+    monkeypatch.setattr(AC, "feed", lambda conn, seen=None: {"events": [], "n_new": 0, "errors": {}})
     monkeypatch.setattr(AC, "PUBLIC_CACHE_FILE", str(tmp_path / "feed.pkl"))
     monkeypatch.setattr(AC, "_PUBLIC_CACHE", {"at": None, "data": None})
     gate.set()
@@ -311,3 +312,34 @@ def test_the_feed_is_served_at_once_and_rebuilt_in_the_background(monkeypatch, t
     monkeypatch.setattr(AC, "PUBLIC_TTL_S", 300)
     monkeypatch.setattr(AC, "_PUBLIC_CACHE", {"at": None, "data": None})
     assert AC.publicFeedCached(lambda: Conn())["stamp"] == "s2" and len(builds) == 2
+
+
+def test_the_owners_feed_is_cached_too_and_new_is_per_reader(monkeypatch, tmp_path):
+    """owner, 2026-10-23: the admin Activity page 'takes way too long to load'"""
+    import datetime as dt
+    t1, t2 = dt.datetime(2026, 10, 22, 3), dt.datetime(2026, 10, 23, 3)
+    reads = []
+
+    def rawFeed(conn, seen=None):
+        reads.append(1)
+        return {"events": [{"at": t2, "kind": "pipeline"}, {"at": t1, "kind": "pipeline"}],
+                "n_new": 0, "errors": {}}
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(AC, "feed", rawFeed)
+    monkeypatch.setattr(AC, "PUBLIC_CACHE_FILE", str(tmp_path / "feed.pkl"))
+    monkeypatch.setattr(AC, "_PUBLIC_CACHE", {"at": None, "data": None, "raw": None})
+    a = AC.feedCached(lambda: Conn(), seen=dt.datetime(2026, 10, 22, 12))
+    b = AC.feedCached(lambda: Conn(), seen=None)
+    assert len(reads) == 1                                  # one read serves both, and What's new
+    assert a["n_new"] == 1 and b["n_new"] == 2 and a["events"][1]["new"] is False
+    assert AC.publicFeedCached(lambda: Conn()) and len(reads) == 1
+    # another worker starts from the file
+    monkeypatch.setattr(AC, "_PUBLIC_CACHE", {"at": None, "data": None, "raw": None})
+    assert AC.feedCached(lambda: Conn())["n_new"] == 2 and len(reads) == 1

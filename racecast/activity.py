@@ -573,10 +573,11 @@ def recomputeText(e):
             "acc": rows[1:], "detail": detail}
 
 
-def publicFeed(conn, seen=None):
+def publicFeed(conn, seen=None, fd=None):
     """The reader's feed: {"events", "n_new", "latest"}; a source that fails
-    is left out quietly (the admin page says why)."""
-    fd = feed(conn, None)
+    is left out quietly (the admin page says why). fd: the owner's feed
+    when it is already built (the cache builds both from one read)."""
+    fd = fd if fd is not None else feed(conn, None)
     events = [p for p in (publicEvent(e) for e in fd["events"]) if p and p.get("at")]
     n_new = markNew(events, seen)
     head = headline(fd["events"])
@@ -614,7 +615,7 @@ def stampOf(head):
     return f"{str(head.get('through') or '')[:10]}|{rec}"
 
 
-_PUBLIC_CACHE = {"at": None, "data": None}
+_PUBLIC_CACHE = {"at": None, "data": None, "raw": None}
 PUBLIC_TTL_S = 300
 # ★ NEVER MAKE A READER WAIT FOR THE FEED (owner, 2026-10-23: "What's new
 #   takes way too long"). Building it reads the run logs and asks the results
@@ -631,20 +632,22 @@ _REFRESH_LOCK = threading.Lock()
 
 
 def _diskFeed():
-    """(built_at, feed) from the shared file, or (None, None)."""
+    """(built_at, public feed, owner's feed) from the shared file, or Nones.
+    A file from before the owner's feed was kept has two parts."""
     try:
         with open(PUBLIC_CACHE_FILE, "rb") as f:
-            at, data = pickle.load(f)
-        return at, data
+            got = pickle.load(f)
+        at, data, raw = (tuple(got) + (None,))[:3]
+        return at, data, raw
     except Exception:                                       # noqa: BLE001
-        return None, None
+        return None, None, None
 
 
-def _saveFeed(at, data):
+def _saveFeed(at, data, raw=None):
     tmp = f"{PUBLIC_CACHE_FILE}.{os.getpid()}.tmp"
     try:
         with open(tmp, "wb") as f:
-            pickle.dump((at, data), f)
+            pickle.dump((at, data, raw), f)
         os.replace(tmp, PUBLIC_CACHE_FILE)       # readers never see half a file
     except Exception:                                       # noqa: BLE001
         try:
@@ -654,12 +657,17 @@ def _saveFeed(at, data):
 
 
 def _rebuild(get_conn):
+    # ★ BOTH FEEDS FROM ONE READ (owner, 2026-10-23: the admin Activity page
+    #   "takes way too long to load" -- it built the owner's feed in line on
+    #   every visit, the same slow read What's new had). The owner's feed is
+    #   kept beside the public one and served the same way (feedCached).
     try:
         with get_conn() as conn:
-            data = publicFeed(conn, None)
+            raw = feed(conn, None)
+            data = publicFeed(conn, None, fd=raw)
         at = datetime.datetime.now()
-        _PUBLIC_CACHE["data"], _PUBLIC_CACHE["at"] = data, at
-        _saveFeed(at, data)
+        _PUBLIC_CACHE["data"], _PUBLIC_CACHE["raw"], _PUBLIC_CACHE["at"] = data, raw, at
+        _saveFeed(at, data, raw)
     except Exception:                                       # noqa: BLE001
         pass                                     # keep serving the last good one
     finally:
@@ -674,12 +682,31 @@ def publicFeedCached(get_conn, wait=False):
     """publicFeed, served from memory or the shared file at once; when older
     than PUBLIC_TTL_S it is rebuilt in the background. `seen` is applied by
     the caller, per reader. wait=True rebuilds in line (tests, scripts)."""
+    _refreshCache(get_conn, wait, need="data")
+    return _PUBLIC_CACHE["data"] or {"events": [], "n_new": 0, "latest": None,
+                                     "headline": {}, "stamp": "", "guide": metricGuide()}
+
+
+def feedCached(get_conn, seen=None, wait=False):
+    """feed(), served like publicFeedCached: the last built copy at once, a
+    stale one rebuilt behind it. `seen` marks this reader's new events on a
+    copy, so readers never share flags."""
+    import copy
+    _refreshCache(get_conn, wait, need="raw")
+    fd = copy.deepcopy(_PUBLIC_CACHE.get("raw") or {"events": [], "n_new": 0, "errors": {}})
+    fd["n_new"] = markNew(fd["events"], seen)
+    fd["built_at"] = _PUBLIC_CACHE.get("at")
+    return fd
+
+
+def _refreshCache(get_conn, wait, need):
     now = datetime.datetime.now()
-    if _stale(_PUBLIC_CACHE["at"], now):
-        at, data = _diskFeed()                   # another worker may have built it
-        if data is not None and (_PUBLIC_CACHE["at"] is None or at > _PUBLIC_CACHE["at"]):
-            _PUBLIC_CACHE["data"], _PUBLIC_CACHE["at"] = data, at
-    if wait or _PUBLIC_CACHE["data"] is None:
+    if _stale(_PUBLIC_CACHE["at"], now) or _PUBLIC_CACHE.get(need) is None:
+        at, data, raw = _diskFeed()              # another worker may have built it
+        if data is not None and (_PUBLIC_CACHE["at"] is None or at > _PUBLIC_CACHE["at"]
+                                 or (_PUBLIC_CACHE.get(need) is None and raw is not None)):
+            _PUBLIC_CACHE["data"], _PUBLIC_CACHE["raw"], _PUBLIC_CACHE["at"] = data, raw, at
+    if wait or _PUBLIC_CACHE.get(need) is None:
         _REFRESH["running"] = True
         _rebuild(get_conn)                       # the very first build, or asked to
     elif _stale(_PUBLIC_CACHE["at"], now):
@@ -689,8 +716,6 @@ def publicFeedCached(get_conn, wait=False):
                 _REFRESH["running"] = True
         if start:
             threading.Thread(target=_rebuild, args=(get_conn,), daemon=True).start()
-    return _PUBLIC_CACHE["data"] or {"events": [], "n_new": 0, "latest": None,
-                                     "headline": {}, "stamp": "", "guide": metricGuide()}
 
 
 def feed(conn, seen=None):
