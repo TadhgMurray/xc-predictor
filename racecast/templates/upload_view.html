@@ -5,7 +5,9 @@
    ★ THE RACE PAGE'S SHAPE: header with the status, the races as the race
      page lists results, a side card with the counts.
    ! NOTHING FROM THE FILE IS RENDERED AS HTML: every value goes through
-     Jinja's autoescape. #}
+     Jinja's autoescape.
+   ★ base IS WHERE THE FORMS POST: /account/uploads/<id> for an account,
+     /account/uploads/g/<token> for an upload without one (guest, 2026-10-23). #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -34,7 +36,8 @@
       {% if up.location %} · {{ up.location }}{% endif %}
       · {{ {"XC": "Cross country", "TF": "Track"}.get(up.sport, "sport not set") }}
       · read from {{ up.file_name }}{% if up.software %} ({{ up.software }}){% endif %}
-      · <a href="/account/uploads">Your uploads</a></div>
+      {% if not guest %}· <a href="/account/uploads">Your uploads</a>{% endif %}</div>
+    {% if guest %}<p class="ct-muted">This page's address is your private link to the upload: keep it to yourself.</p>{% endif %}
     {% if up.status == "draft" %}
     <ol class="ct-step" aria-label="Steps"><li class="is-done">1 Uploaded</li><li class="is-on">2 Check what we read</li><li>3 Send for review</li></ol>
     {% endif %}
@@ -54,7 +57,7 @@
   {% if editable %}
   <section class="acct-block">
     <h2>The meet</h2>
-    <form method="post" action="/account/uploads/{{ up.id }}/submit">
+    <form method="post" action="{{ base }}/submit">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <div class="ct-form">
         <label class="ct-wide">Meet name <input type="text" name="meet_name" value="{{ up.meet_name or '' }}" maxlength="200" required></label>
@@ -77,7 +80,7 @@
         <button type="submit" name="action" value="save" class="go quiet">Save details</button>
       </div>
     </form>
-    <form method="post" action="/account/uploads/{{ up.id }}/discard" class="ct-actions">
+    <form method="post" action="{{ base }}/discard" class="ct-actions">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button type="submit" class="acct-x">Discard this upload</button>
     </form>

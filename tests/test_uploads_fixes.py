@@ -359,7 +359,7 @@ def test_reject_and_the_states_that_cannot_be_decided():
 
 def test_signed_out_goes_to_login_and_strangers_get_a_404(monkeypatch):
     c = client(monkeypatch, sess=None)
-    for path in ("/account/uploads", "/account/uploads/new", "/account/admin/uploads", "/account/admin/fixes"):
+    for path in ("/account/uploads", "/account/admin/uploads", "/account/admin/fixes"):
         r = c.get(path)
         assert r.status_code == 302 and "/login?next=" in r.headers["Location"], path
     c = client(monkeypatch, sess=KID)
@@ -443,6 +443,105 @@ def test_sending_a_draft_puts_it_in_the_queue(monkeypatch):
     assert r.status_code == 302 and "Sent" in r.headers["Location"]
     p = cur.ran(r"UPDATE result_upload SET meet_name")[0]
     assert p[0] == "Lakeside XC" and p[-3] is True and conn.commits == 1
+
+
+# ---------------------------------------------------------------- no account
+
+def guestClient(monkeypatch, mails):
+    c = client(monkeypatch, sess=None)
+    monkeypatch.setitem(UP._READY, "guest", True)
+    monkeypatch.setattr(AC, "turnstileOk", lambda tok: True)
+    monkeypatch.setattr(UP, "mailGuestLink", lambda email, url, meet: mails.append((email, url)) or "sent")
+    return c
+
+
+def test_signed_out_sees_the_form_with_an_email_box(monkeypatch):
+    c = client(monkeypatch, sess=None)
+    r = c.get("/account/uploads/new?sport=XC")
+    out = json.loads(r.data)
+    assert r.status_code == 200 and out["guest"] is True and out["mode"] == "new"
+    html = read("racecast", "templates", "uploads.html")
+    assert 'name="email"' in html and "cf-turnstile" in html
+
+
+def test_an_upload_without_an_account_needs_an_email_and_this_origin(monkeypatch):
+    mails = []
+    c = guestClient(monkeypatch, mails)
+    cur = Cur([(r"count\(\*\)", [{"h": 0, "d": 0}]), (r"INSERT INTO result_upload \(", [{"id": 7}])])
+    fakeDb(monkeypatch, cur)
+    body = lambda **kw: {"file": (io.BytesIO(fixture("mm_xc_lakeside.txt")), "results.txt"), **kw}
+    r = c.post("/account/uploads/new", data=body(email="coach@example.com"),
+               content_type="multipart/form-data")
+    assert r.status_code == 400                                   # no Origin
+    r = c.post("/account/uploads/new", data=body(email="not an email"), headers=ORIGIN,
+               content_type="multipart/form-data")
+    assert r.status_code == 400 and "email" in r.headers["Location"]
+    monkeypatch.setattr(AC, "turnstileOk", lambda tok: False)
+    r = c.post("/account/uploads/new", data=body(email="coach@example.com"), headers=ORIGIN,
+               content_type="multipart/form-data")
+    assert r.status_code == 400 and not cur.sql and not mails
+
+
+def test_an_upload_without_an_account_is_staged_and_the_link_is_mailed(monkeypatch):
+    mails = []
+    c = guestClient(monkeypatch, mails)
+    cur = Cur([(r"count\(\*\)", [{"h": 0, "d": 0}]), (r"INSERT INTO result_upload \(", [{"id": 7}])])
+    conn = fakeDb(monkeypatch, cur)
+    r = c.post("/account/uploads/new", headers=ORIGIN, content_type="multipart/form-data",
+               data={"email": " Coach@Example.com ",
+                     "file": (io.BytesIO(fixture("mm_xc_lakeside.txt")), "results.txt")})
+    assert r.status_code == 302 and "/account/uploads/g/" in r.headers["Location"]
+    token = r.headers["Location"].split("/account/uploads/g/")[1].split("?")[0]
+    ins = cur.ran(r"INSERT INTO result_upload \(")[0]
+    assert ins[0] is None                                          # no account
+    assert ins[-3:] == ("coach@example.com", AC.hashToken(token), "127.0.0.1")
+    assert token not in json.dumps([p for _, p in cur.sql], default=str)   # only the hash is stored
+    assert conn.commits == 1 and mails == [("coach@example.com", AC.siteOrigin() + "/account/uploads/g/" + token)]
+    # the limit is per IP and per address
+    cur2 = Cur([(r"count\(\*\)", [{"h": UP.UPLOADS_PER_HOUR, "d": UP.UPLOADS_PER_HOUR}])])
+    fakeDb(monkeypatch, cur2)
+    r = c.post("/account/uploads/new", headers=ORIGIN, content_type="multipart/form-data",
+               data={"email": "coach@example.com",
+                     "file": (io.BytesIO(fixture("mm_xc_lakeside.txt")), "results.txt")})
+    assert r.status_code == 429 and cur2.ran(r"guest_ip = %s OR guest_email = %s")[0] == \
+        ("127.0.0.1", "coach@example.com")
+
+
+def test_the_secret_link_is_the_guests_whole_access(monkeypatch):
+    parsed = parsedXC()
+    c = guestClient(monkeypatch, [])
+    up = uploadRow(parsed, status="draft", account_id=None, guest_email="coach@example.com")
+    cur = Cur([(r"guest_token_hash = %s", [up]), (r"FROM result_upload_row", [])])
+    fakeDb(monkeypatch, cur)
+    r = c.get("/account/uploads/g/secret-tok")
+    out = json.loads(r.data)
+    assert r.status_code == 200 and out["base"] == "/account/uploads/g/secret-tok" and out["guest"] is True
+    assert cur.ran(r"guest_token_hash = %s")[0] == (AC.hashToken("secret-tok"),)
+    # a wrong link is a 404
+    fakeDb(monkeypatch, Cur([(r"guest_token_hash = %s", [])]))
+    assert c.get("/account/uploads/g/wrong").status_code == 404
+    # sending: this site's request, and the row locked by the link
+    cur = Cur([(r"guest_token_hash = %s", [up])])
+    conn = fakeDb(monkeypatch, cur)
+    form = {"action": "send", "meet_name": "Lakeside XC", "meet_date": "2025-10-04", "sport": "XC"}
+    assert c.post("/account/uploads/g/secret-tok/submit", data=form).status_code == 400
+    r = c.post("/account/uploads/g/secret-tok/submit", data=form, headers=ORIGIN)
+    assert r.status_code == 302 and "Sent" in r.headers["Location"]
+    assert cur.ran(r"FOR UPDATE") and conn.commits == 1
+    # discarding
+    cur = Cur([(r"RETURNING id", [{"id": 7}])])
+    fakeDb(monkeypatch, cur)
+    r = c.post("/account/uploads/g/secret-tok/discard", headers=ORIGIN)
+    assert r.status_code == 302 and "Discarded" in r.headers["Location"]
+    assert cur.ran(r"DELETE FROM result_upload_row")[0] == (7,)
+
+
+def test_a_guests_decision_mail_goes_to_their_address_without_an_account_link():
+    up = {"id": 7, "account_id": None, "account_email": "coach@example.com",
+          "guest_email": "coach@example.com", "meet_name": "Lakeside XC",
+          "meet_date": "2025-10-04", "n_rows": 22}
+    subject, text, html = DE.uploadDecision(up, "approved", None, "https://racecast.co")
+    assert "/account/uploads/7" not in text and "Lakeside XC" in subject
 
 
 def test_the_owner_decides_and_the_uploader_is_emailed(monkeypatch):

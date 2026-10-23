@@ -62,6 +62,16 @@
 # ! RATE LIMITED PER ACCOUNT: UPLOADS_PER_HOUR and UPLOADS_PER_DAY, counted
 #   from the table itself, so eight workers agree without shared memory.
 #   Every POST is CSRF + same origin (accounts.csrfOk).
+#
+# ★ NO ACCOUNT NEEDED (owner, 2026-10-23: "you should be able to upload
+#   without an account, just need to put an email in that case"). Signed
+#   out, the form asks for an email address (and Turnstile, when it is on).
+#   The upload is the same draft, with account_id NULL, guest_email and the
+#   hash of a secret link: /account/uploads/g/<token>, mailed to that address and
+#   shown at once. The link is the guest's whole access -- view, send,
+#   discard -- the way a login link is; only its hash is stored. The same
+#   limits apply, counted per IP and per email address. The owner's review
+#   is unchanged, and the decision mail goes to the guest's address.
 
 import datetime
 import difflib
@@ -138,6 +148,13 @@ CREATE TABLE IF NOT EXISTS result_upload (
 );
 CREATE INDEX IF NOT EXISTS result_upload_account_idx ON result_upload (account_id, created_at);
 CREATE INDEX IF NOT EXISTS result_upload_status_idx ON result_upload (status, submitted_at);
+ALTER TABLE result_upload ADD COLUMN IF NOT EXISTS guest_email text;
+ALTER TABLE result_upload ADD COLUMN IF NOT EXISTS guest_token_hash text;
+ALTER TABLE result_upload ADD COLUMN IF NOT EXISTS guest_ip text;
+CREATE UNIQUE INDEX IF NOT EXISTS result_upload_guest_token_idx ON result_upload (guest_token_hash)
+    WHERE guest_token_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS result_upload_guest_ip_idx ON result_upload (guest_ip, created_at)
+    WHERE account_id IS NULL;
 CREATE TABLE IF NOT EXISTS result_upload_row (
     upload_id     bigint NOT NULL REFERENCES result_upload(id) ON DELETE CASCADE,
     n             integer NOT NULL,
@@ -172,7 +189,7 @@ def initTables(conn):
     conn.commit()
 
 
-_READY = {"checked": False, "ready": False}
+_READY = {"checked": False, "ready": False, "guest": False}
 
 
 def tablesReady(cur):
@@ -183,13 +200,25 @@ def tablesReady(cur):
                         "to_regclass('public.result_upload_row') AS r")
             row = AC._one(cur)
             _READY["ready"] = bool(row and row.get("u") and row.get("r"))
+            if _READY["ready"]:
+                cur.execute("""SELECT 1 AS ok FROM information_schema.columns
+                               WHERE table_name = 'result_upload' AND column_name = 'guest_token_hash'""")
+                _READY["guest"] = bool(AC._one(cur))
         except Exception:                               # noqa: BLE001
             cur.connection.rollback()
             _READY["ready"] = False
         _READY["checked"] = True
         if not _READY["ready"]:
             print("[uploads] tables are not there: run racecast/uploads.py --init", flush=True)
+        elif not _READY["guest"]:
+            print("[uploads] no guest columns: run racecast/uploads.py --init for uploads "
+                  "without an account", flush=True)
     return _READY["ready"]
+
+
+def guestReady(cur):
+    """The guest columns are there (an --init after 2026-10-23)."""
+    return tablesReady(cur) and _READY["guest"]
 
 
 # ---- admin gate (app._statusAdmin's rule, for the blueprints) -----------
@@ -362,8 +391,21 @@ def recentCount(cur, account_id):
     return int(row.get("h") or 0), int(row.get("d") or 0)
 
 
-def stage(cur, account_id, filename, data, parsed, form):
-    """Write one parsed file to staging as a draft -> its id."""
+def recentGuestCount(cur, ip, email):
+    """recentCount for uploads without an account: per IP and per email
+    address, whichever is higher."""
+    cur.execute("""SELECT count(*) FILTER (WHERE created_at > now() - interval '1 hour') AS h,
+                          count(*) AS d
+                   FROM   result_upload
+                   WHERE  account_id IS NULL AND (guest_ip = %s OR guest_email = %s)
+                     AND  created_at > now() - interval '1 day'""", (ip, email))
+    row = AC._one(cur) or {}
+    return int(row.get("h") or 0), int(row.get("d") or 0)
+
+
+def stage(cur, account_id, filename, data, parsed, form, guest=None):
+    """Write one parsed file to staging as a draft -> its id. guest =
+    (email, token hash, ip) for an upload without an account."""
     from psycopg2.extras import execute_values
     from jsonb import J as Json   # SQL_ASCII-safe, NUL-free (jsonb.py)
     meta, _errs = checkMeta(form, parsed["meet"], parsed.get("sport"))
@@ -372,15 +414,17 @@ def stage(cur, account_id, filename, data, parsed, form):
     cur.execute("""
         INSERT INTO result_upload (account_id, file_name, file_kind, file_bytes, file_sha256, raw_text,
                                    software, sport, meet_name, meet_date, meet_date_end, location,
-                                   state, distance_m, n_rows, n_events, events, warnings, note)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        RETURNING id""",
+                                   state, distance_m, n_rows, n_events, events, warnings, note
+                                   {guest_cols})
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s{guest_vals})
+        RETURNING id""".format(guest_cols=", guest_email, guest_token_hash, guest_ip" if guest else "",
+                               guest_vals=", %s, %s, %s" if guest else ""),
                 (account_id, (filename or "")[:200], parsed["format"], len(data),
                  hashlib.sha256(data).hexdigest(), text, parsed.get("software"), meta["sport"],
                  meta["meet_name"], meta["meet_date"], meta["meet_date_end"], meta["location"],
                  meta["state"], meta["distance_m"], len(parsed["rows"]), len(events),
                  Json(events), Json(parsed["warnings"][:500]),
-                 (form.get("note") or "").strip()[:1000] or None))
+                 (form.get("note") or "").strip()[:1000] or None) + tuple(guest or ()))
     uid = AC._one(cur)["id"]
     evs = {e["n"]: e for e in events}
     rows = []
@@ -402,9 +446,20 @@ def stage(cur, account_id, filename, data, parsed, form):
 
 
 def loadUpload(cur, uid):
-    cur.execute("""SELECT u.*, a.email AS account_email, a.name AS account_name
+    cur.execute("""SELECT u.*, COALESCE(a.email, u.guest_email) AS account_email, a.name AS account_name
                    FROM result_upload u LEFT JOIN account a ON a.id = u.account_id
                    WHERE u.id = %s""", (uid,))
+    return AC._one(cur)
+
+
+def loadGuestUpload(cur, token, lock=False):
+    """The upload a guest's secret link names, or None."""
+    if not token or len(token) > 100:
+        return None
+    cur.execute("""SELECT u.*, u.guest_email AS account_email, NULL AS account_name
+                   FROM result_upload u
+                   WHERE u.guest_token_hash = %s AND u.account_id IS NULL"""
+                + (" FOR UPDATE" if lock else ""), (AC.hashToken(token),))
     return AC._one(cur)
 
 
@@ -619,7 +674,18 @@ def notifyUploader(up, status, note=None):
         return False
     subject, text, html = DE.uploadDecision(up, status, note, AC.siteOrigin())
     return AC.sendMail(up["account_email"], subject, text, html=html,
-                       log_as=f"account {up.get('account_id')}")
+                       log_as=f"account {up.get('account_id')}" if up.get("account_id") else "guest upload")
+
+
+def mailGuestLink(email, url, meet_name):
+    """The guest's private link, so they can come back to it."""
+    meet = meet_name or "your meet"
+    text = (f"Hi,\n\nYou uploaded results to Racecast ({meet}). This private link is how you "
+            f"check what we read, send it for review, or discard it:\n\n{url}\n\n"
+            "Anyone with the link can see and change the upload until it is decided, so keep it "
+            "to yourself. Nothing goes live until the site owner reviews it, and you will get an "
+            "email either way.\n\nIf you did not upload anything, ignore this message.\n")
+    return AC.sendMailWithin(email, f"Your upload to Racecast: {meet}", text)
 
 
 # ---- routes: the uploader ------------------------------------------------
@@ -653,11 +719,10 @@ def uploads_page():
 
 @bp.route("/account/uploads/new")
 def upload_new():
-    sess, go = AC._requireSession()
-    if go:
-        return go
+    sess = AC.currentSession()
     sport = (request.args.get("sport") or "").upper()
-    return _page("uploads.html", mode="new", uploads=[], csrf=sess["csrf"],
+    return _page("uploads.html", mode="new", uploads=[], csrf=sess["csrf"] if sess else "",
+                 guest=not sess, turnstile=AC.turnstileSitekey() if not sess else "",
                  sport=sport if sport in SPORTS else "", school=(request.args.get("school") or "")[:120],
                  max_mb=MAX_UPLOAD_BYTES // (1024 * 1024), per_day=UPLOADS_PER_DAY,
                  notice="", error=request.args.get("error", "")[:200])
@@ -670,23 +735,15 @@ def _back(path, **q):
 
 @bp.route("/account/uploads/new", methods=["POST"])
 def upload_post():
-    sess, go = AC._requireSession()
-    if go:
-        return go
+    sess = AC.currentSession()
+    if not sess:
+        return _guestPost()
     if not AC.csrfOk(sess):
         return _back("/account/uploads/new", error="That request did not come from this site."), 400
-    f = request.files.get("file")
-    if not f or not f.filename:
-        return _back("/account/uploads/new", error="Choose a results file."), 400
-    data = f.read(MAX_UPLOAD_BYTES + 1)
-    if len(data) > MAX_UPLOAD_BYTES:
-        return _back("/account/uploads/new", error="That file is over 9 MB."), 400
-    if not data.strip():
-        return _back("/account/uploads/new", error="That file is empty."), 400
     try:
-        parsed = RP.parse(f.filename, data)
-    except RP.ParseError as exc:
-        return _back("/account/uploads/new", error=str(exc)), 400
+        f, data, parsed = _readFile()
+    except _Refused as r:
+        return r.response, 400
     with AC._db() as (conn, cur):
         if not tablesReady(cur):
             return _notReady()
@@ -699,6 +756,70 @@ def upload_post():
                     detail={"upload": uid, "rows": len(parsed["rows"]), "format": parsed["format"]})
         conn.commit()
     return redirect(f"/account/uploads/{uid}")
+
+
+class _Refused(Exception):
+    def __init__(self, response):
+        super().__init__("refused")
+        self.response = response
+
+
+def _readFile():
+    """(file, bytes, parsed); _Refused carries the error response."""
+    f = request.files.get("file")
+    if not f or not f.filename:
+        raise _Refused(_back("/account/uploads/new", error="Choose a results file."))
+    data = f.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise _Refused(_back("/account/uploads/new", error="That file is over 9 MB."))
+    if not data.strip():
+        raise _Refused(_back("/account/uploads/new", error="That file is empty."))
+    try:
+        parsed = RP.parse(f.filename, data)
+    except RP.ParseError as exc:
+        raise _Refused(_back("/account/uploads/new", error=str(exc))) from None
+    return f, data, parsed
+
+
+def _guestPost():
+    """An upload without an account: an email address instead."""
+    if not AC.sameOrigin():
+        return _back("/account/uploads/new", error="That request did not come from this site."), 400
+    email = AC.normEmail(request.form.get("email"))
+    if not email:
+        return _back("/account/uploads/new",
+                     error="Add your email address, so we can tell you what happened."), 400
+    if not AC.turnstileOk(request.form.get("cf-turnstile-response")):
+        return _back("/account/uploads/new", error="The check that you are a person did not pass: "
+                                                   "try again."), 400
+    try:
+        f, data, parsed = _readFile()
+    except _Refused as r:
+        return r.response, 400
+    ip = AC.clientIp()
+    raw, token_hash = AC.newToken()
+    with AC._db() as (conn, cur):
+        if not tablesReady(cur):
+            return _notReady()
+        if not guestReady(cur):
+            return _back("/login?" + urllib.parse.urlencode({"next": "/account/uploads/new"}))
+        hour, day = recentGuestCount(cur, ip, email)
+        if hour >= UPLOADS_PER_HOUR or day >= UPLOADS_PER_DAY:
+            return _back("/account/uploads/new",
+                         error="That is a lot of uploads at once: try again later today."), 429
+        uid = stage(cur, None, f.filename, data, parsed, request.form, guest=(email, token_hash, ip))
+        AC.logEvent(cur, "upload", None, email=email,
+                    detail={"upload": uid, "rows": len(parsed["rows"]), "format": parsed["format"],
+                            "guest": True})
+        conn.commit()
+    here = f"/account/uploads/g/{raw}"
+    mailed = "failed"
+    try:
+        mailed = mailGuestLink(email, AC.siteOrigin() + here, parsed["meet"].get("name"))
+    except Exception as exc:                            # noqa: BLE001
+        print(f"[uploads] guest link mail for {uid} failed ({type(exc).__name__}: {exc})", flush=True)
+    return _back(here, notice="We emailed you this page's link, so you can come back to it."
+                 if mailed != "failed" else "Keep this page's address: it is your link back to the upload.")
 
 
 def _mayView(sess, up):
@@ -718,10 +839,15 @@ def upload_view(uid):
             abort(404)
         rows = loadRows(cur, uid, PREVIEW_ROWS)
         conn.commit()
+    return _viewPage(up, rows, sess["csrf"], mine=up.get("account_id") == sess["account"]["id"],
+                     base=f"/account/uploads/{uid}")
+
+
+def _viewPage(up, rows, csrf, mine, base, guest=False):
     events = up.get("events") or []
-    return _page("upload_view.html", up=up, rows=rows, events=events, csrf=sess["csrf"],
+    return _page("upload_view.html", up=up, rows=rows, events=events, csrf=csrf,
                  gaps=readyToApply(up, events), preview_rows=PREVIEW_ROWS, sports=SPORTS,
-                 mine=up.get("account_id") == sess["account"]["id"],
+                 mine=mine, base=base, guest=guest,
                  notice=request.args.get("notice", "")[:200], error=request.args.get("error", "")[:200])
 
 
@@ -742,32 +868,39 @@ def upload_submit(uid):
         up = AC._one(cur)
         if up is None:
             abort(404)
-        if up["status"] not in ("draft", "submitted"):
-            return _back(here, error="This upload has been decided; it cannot change now."), 400
-        meta, errors = checkMeta(request.form, {"name": up["meet_name"], "date": up["meet_date"],
-                                                "date_end": up["meet_date_end"],
-                                                "location": up["location"]}, up["sport"])
-        if errors:
-            return _back(here, error=" ".join(errors)), 400
-        events = up.get("events") or []
-        send = request.form.get("action") == "send"
-        cur.execute("""UPDATE result_upload SET meet_name = %s, meet_date = %s, meet_date_end = %s,
-                              location = %s, state = %s, sport = %s, distance_m = %s,
-                              note = COALESCE(%s, note),
-                              status = CASE WHEN %s THEN 'submitted' ELSE status END,
-                              submitted_at = CASE WHEN %s THEN now() ELSE submitted_at END
-                       WHERE id = %s""",
-                    (meta["meet_name"], meta["meet_date"], meta["meet_date_end"], meta["location"],
-                     meta["state"], meta["sport"], meta["distance_m"],
-                     (request.form.get("note") or "").strip()[:1000] or None, send, send, uid))
-        up.update(meta)
-        gaps = readyToApply(up, events)
-        if send and gaps:
-            conn.rollback()
-            return _back(here, error="Before sending: " + "; ".join(gaps) + "."), 400
-        if send:
-            AC.logEvent(cur, "upload_sent", sess["account"]["id"], detail={"upload": uid})
-        conn.commit()
+        return _submit(conn, cur, up, here, sess["account"]["id"])
+
+
+def _submit(conn, cur, up, here, account_id, email=None):
+    """Save the meet's details, and send the upload when asked. The
+    caller has locked the row and checked it is this uploader's."""
+    uid = up["id"]
+    if up["status"] not in ("draft", "submitted"):
+        return _back(here, error="This upload has been decided; it cannot change now."), 400
+    meta, errors = checkMeta(request.form, {"name": up["meet_name"], "date": up["meet_date"],
+                                            "date_end": up["meet_date_end"],
+                                            "location": up["location"]}, up["sport"])
+    if errors:
+        return _back(here, error=" ".join(errors)), 400
+    events = up.get("events") or []
+    send = request.form.get("action") == "send"
+    cur.execute("""UPDATE result_upload SET meet_name = %s, meet_date = %s, meet_date_end = %s,
+                          location = %s, state = %s, sport = %s, distance_m = %s,
+                          note = COALESCE(%s, note),
+                          status = CASE WHEN %s THEN 'submitted' ELSE status END,
+                          submitted_at = CASE WHEN %s THEN now() ELSE submitted_at END
+                   WHERE id = %s""",
+                (meta["meet_name"], meta["meet_date"], meta["meet_date_end"], meta["location"],
+                 meta["state"], meta["sport"], meta["distance_m"],
+                 (request.form.get("note") or "").strip()[:1000] or None, send, send, uid))
+    up.update(meta)
+    gaps = readyToApply(up, events)
+    if send and gaps:
+        conn.rollback()
+        return _back(here, error="Before sending: " + "; ".join(gaps) + "."), 400
+    if send:
+        AC.logEvent(cur, "upload_sent", account_id, email=email, detail={"upload": uid})
+    conn.commit()
     return _back(here, notice="Sent. The site owner reviews every upload before it goes live; "
                               "you will get an email when it is decided." if send else "Saved.")
 
@@ -793,6 +926,56 @@ def upload_discard(uid):
                  error="" if n else "That upload has been decided; it cannot be discarded.")
 
 
+# ---- routes: the uploader without an account (their secret link) ------------
+
+@bp.route("/account/uploads/g/<token>")
+def guest_view(token):
+    with AC._db() as (conn, cur):
+        if not guestReady(cur):
+            abort(404)
+        up = loadGuestUpload(cur, token)
+        if up is None or up["status"] == "discarded":
+            abort(404)
+        rows = loadRows(cur, up["id"], PREVIEW_ROWS)
+        conn.commit()
+    return _viewPage(up, rows, "", mine=True, base=f"/account/uploads/g/{token}", guest=True)
+
+
+@bp.route("/account/uploads/g/<token>/submit", methods=["POST"])
+def guest_submit(token):
+    """The link is the credential; the request must still be this site's."""
+    here = f"/account/uploads/g/{token}"
+    if not AC.sameOrigin():
+        return _back(here, error="That request did not come from this site."), 400
+    with AC._db() as (conn, cur):
+        if not guestReady(cur):
+            abort(404)
+        up = loadGuestUpload(cur, token, lock=True)
+        if up is None:
+            abort(404)
+        return _submit(conn, cur, up, here, None, email=up.get("guest_email"))
+
+
+@bp.route("/account/uploads/g/<token>/discard", methods=["POST"])
+def guest_discard(token):
+    if not AC.sameOrigin():
+        return _back(f"/account/uploads/g/{token}", error="That request did not come from this site."), 400
+    with AC._db() as (conn, cur):
+        if not guestReady(cur):
+            abort(404)
+        cur.execute("""UPDATE result_upload SET status = 'discarded', raw_text = NULL
+                       WHERE guest_token_hash = %s AND account_id IS NULL
+                         AND status IN ('draft', 'submitted')
+                       RETURNING id""", (AC.hashToken(token),))
+        row = AC._one(cur)
+        if row:
+            cur.execute("DELETE FROM result_upload_row WHERE upload_id = %s", (row["id"],))
+        conn.commit()
+    if not row:
+        return _back(f"/account/uploads/g/{token}", error="That upload has been decided; it cannot be discarded.")
+    return _back("/account/uploads/new", notice="Discarded.")
+
+
 @bp.route("/account/uploads/template.csv")
 def upload_template():
     resp = make_response(RP.CSV_TEMPLATE)
@@ -814,13 +997,15 @@ def admin_uploads():
         cur.execute("""SELECT u.id, u.status, u.meet_name, u.meet_date, u.sport, u.location, u.n_rows,
                               u.n_events, u.software, u.file_kind, u.submitted_at, u.decided_at,
                               jsonb_array_length(COALESCE(u.warnings, '[]'::jsonb)) AS n_warn,
-                              a.email AS account_email
+                              COALESCE(a.email, u.guest_email) AS account_email,
+                              u.account_id IS NULL AS guest
                        FROM result_upload u LEFT JOIN account a ON a.id = u.account_id
                        WHERE u.status IN ('submitted', 'flagged')
                        ORDER BY u.submitted_at NULLS LAST, u.id""")
         waiting = [dict(r) for r in cur.fetchall()]
         cur.execute("""SELECT u.id, u.status, u.meet_name, u.meet_date, u.sport, u.n_rows, u.decided_at,
-                              u.decided_by, a.email AS account_email
+                              u.decided_by, COALESCE(a.email, u.guest_email) AS account_email,
+                              u.account_id IS NULL AS guest
                        FROM result_upload u LEFT JOIN account a ON a.id = u.account_id
                        WHERE u.status IN ('approved', 'rejected')
                        ORDER BY u.decided_at DESC NULLS LAST LIMIT 30""")
@@ -913,15 +1098,19 @@ def main(argv):
     if "--init" in argv:
         with getConn() as conn:
             initTables(conn)
-        print("  result_upload, result_upload_row: ready")
+        print("  result_upload, result_upload_row: ready (with the guest columns)")
         return 0
     if "--check" in argv:
         with getConn() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT to_regclass('public.result_upload'), to_regclass('public.result_upload_row')")
                 a, b = cur.fetchone()
-        print(f"  result_upload: {'ok' if a else 'MISSING'}   result_upload_row: {'ok' if b else 'MISSING'}")
-        return 0 if (a and b) else 1
+                cur.execute("""SELECT count(*) FROM information_schema.columns
+                               WHERE table_name = 'result_upload' AND column_name = 'guest_token_hash'""")
+                g = cur.fetchone()[0]
+        print(f"  result_upload: {'ok' if a else 'MISSING'}   result_upload_row: {'ok' if b else 'MISSING'}"
+              f"   guest columns: {'ok' if g else 'MISSING (run --init)'}")
+        return 0 if (a and b and g) else 1
     print("python racecast/uploads.py --init | --check")
     return 2
 

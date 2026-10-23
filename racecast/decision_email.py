@@ -77,7 +77,10 @@ def uploadDecision(up, status, note, origin):
         facts.append(("File", up["file_name"]))
     if note:
         facts.append(("Note", note))
-    button = (f"{origin}/account/uploads/{up['id']}", "See the upload")
+    # an upload without an account has no page to sign in to: its secret
+    # link went out with the first mail, and only its hash is kept
+    button = (f"{origin}/account/uploads/{up['id']}", "See the upload") \
+        if not up.get("guest_email") else None
     foot = ("You're getting this because you uploaded results to Racecast. "
             "Reply to this email if something is wrong.")
     return _wrap(subject, hi, lead, facts, button, foot)

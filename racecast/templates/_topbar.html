@@ -73,7 +73,7 @@
         {# ★ WHAT'S NEW IN THE BAR (owner, 2026-10-22: "more prominent"): new
            results, each full recompute and what it changed. The dot beside
            it is topbar-search.js's, from /api/updates/latest. #}
-        <a href="{{ url_for('updates_page') }}" class="{{ 'is-here' if here.startswith('/updates') }}">What's new</a>
+        <a href="/updates" class="{{ 'is-here' if here.startswith('/updates') }}">What's new</a>
         <details class="topnav-more topnav-tools">
             <summary class="{{ 'is-here' if ns.tools_here }}">Tools</summary>
             <div class="topnav-menu">

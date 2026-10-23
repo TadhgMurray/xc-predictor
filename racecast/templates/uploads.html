@@ -5,7 +5,10 @@
      a side card saying what happens next (hidden on a phone below it).
    ! THE FORM IS multipart, ONE FILE, THE SESSION'S CSRF TOKEN. The size cap
      is the app's (9 MB, MAX_CONTENT_LENGTH); the accept list is a hint, the
-     server checks the file itself. #}
+     server checks the file itself.
+   ★ SIGNED OUT (guest, owner 2026-10-23): no account needed, an email box
+     instead (and Turnstile when it is on); the request must still come
+     from this site. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -18,18 +21,20 @@
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
 <link rel="stylesheet" href="{{ static_v('contrib.css') }}">
 <script defer src="{{ static_v('topbar-search.js') }}"></script>
+{% if guest and turnstile and mode == "new" %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endif %}
 </head>
 <body>
 {% include "_topbar.html" %}
 <main class="page-wide rc account-page contrib-page">
 <header class="rc-hd"><div class="rc-hgrid rc-hone">
   <div class="rc-left">
-    <div class="rc-sport"><span class="sport-tag sport-tag--site">Your account · results</span></div>
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">{{ "Results" if guest else "Your account · results" }}</span></div>
     <h1>{{ "Add missing results" if mode == "new" else "Your uploads" }}</h1>
     <div class="rc-meta">
       {% if mode == "new" %}A meet that is not on Racecast: upload the results file the timer posted.
       {% else %}Meets you sent, and where each one stands.{% endif %}
-      · <a href="/account">Settings</a>{% if mode != "new" %} · <a href="/account/uploads/new">Add missing results</a>{% else %} · <a href="/account/uploads">Your uploads</a>{% endif %}{% if admin %} · <a href="/account/admin/uploads">Review queue</a>{% endif %}
+      {% if guest %}· No account needed. Have one? <a href="/login?next=/account/uploads/new">Sign in</a>
+      {% else %}· <a href="/account">Settings</a>{% if mode != "new" %} · <a href="/account/uploads/new">Add missing results</a>{% else %} · <a href="/account/uploads">Your uploads</a>{% endif %}{% if admin %} · <a href="/account/admin/uploads">Review queue</a>{% endif %}{% endif %}
     </div>
     {% if mode == "new" %}
     <ol class="ct-step" aria-label="Steps"><li class="is-on">1 Upload the file</li><li>2 Check what we read</li><li>3 Send for review</li></ol>
@@ -49,7 +54,7 @@
   <section class="acct-block">
     <h2>The results file</h2>
     <form method="post" action="/account/uploads/new" enctype="multipart/form-data" id="up-form">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% if not guest %}<input type="hidden" name="csrf" value="{{ csrf }}">{% endif %}
       <div class="ct-file">
         <input type="file" name="file" required accept=".txt,.htm,.html,.csv,text/plain,text/html,text/csv" aria-label="Results file">
         <span class="ct-muted">.txt, .htm or .csv, up to {{ max_mb }} MB</span>
@@ -64,9 +69,12 @@
         <label>Meet name <input type="text" name="meet_name" maxlength="200" placeholder="From the file if blank"></label>
         <label>Date <input type="date" name="meet_date"></label>
         <label>Course or venue <input type="text" name="location" maxlength="200" placeholder="From the file if blank"></label>
+        {% if guest %}<label class="ct-wide">Your email <input type="email" name="email" required maxlength="254" autocomplete="email" placeholder="you@example.com">
+          <span class="ct-muted">We email you a private link to this upload, and the decision. Nothing else.</span></label>{% endif %}
         <label class="ct-wide">Anything the owner should know (optional)
           <textarea name="note" maxlength="1000" placeholder="{{ ('e.g. our team (' ~ school ~ ') ran this; the timer never posted it to athletic.net') if school else 'e.g. the timer never posted this meet to athletic.net' }}"></textarea></label>
       </div>
+      {% if guest and turnstile %}<div class="cf-turnstile" data-sitekey="{{ turnstile }}"></div>{% endif %}
       <div class="ct-actions"><button type="submit" class="go">Upload and check</button>
         <span class="ct-muted">Nothing goes live from here: you see what we read first.</span></div>
     </form>
