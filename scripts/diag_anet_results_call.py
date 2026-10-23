@@ -110,11 +110,34 @@ async def main(meet_id, div_id):
             page_calls = list(calls)
 
         # what the page used, to replay
-        page_appinfo = page_token = None
+        page_appinfo = page_token = page_roles = None
         for c in page_calls[::-1] + calls[::-1]:
             h = {k.lower(): v for k, v in c["headers"].items()}
             page_appinfo = page_appinfo or h.get("anet-appinfo")
             page_token = page_token or h.get("anettokens")
+            page_roles = page_roles or h.get("anet-site-roles-token")
+
+        # ★ WHERE THE PAGE KEEPS anet-site-roles-token (run 2, 2026-10-23: the
+        #   site sends it on every API call; we never did): local/session
+        #   storage keys and cookies whose value is that token
+        print("\n== where anet-site-roles-token lives")
+        if page_roles:
+            where = await page.evaluate("""(tok) => {
+                const out = [];
+                for (const [name, st] of [['localStorage', localStorage], ['sessionStorage', sessionStorage]]) {
+                    for (let i = 0; i < st.length; i++) {
+                        const k = st.key(i), v = st.getItem(k) || '';
+                        if (v.includes(tok.slice(0, 60)) || /role/i.test(k)) out.push(name + ':' + k + ' (' + v.length + ')');
+                    }
+                }
+                return out;
+            }""", page_roles)
+            cookies = [c["name"] for c in await ctx.cookies()
+                       if page_roles[:60] in (c.get("value") or "") or "role" in c["name"].lower()]
+            print(f"   storage: {where or 'none'}")
+            print(f"   cookies: {cookies or 'none'}")
+        else:
+            print("   the pages sent none")
 
         print(f"\n== 2. the scraper's call, then variants (meet {meet_id})")
         info, divisions = await S.getMeetData(page, meet_id)
@@ -131,6 +154,12 @@ async def main(meet_id, div_id):
             ("the page's own anettokens",
              {"anettokens": page_token or jwt, "anet-appinfo": page_appinfo or "web:web:0:240"}),
             ("no token at all", {"anet-appinfo": page_appinfo or "web:web:0:240"}),
+            ("+ anet-site-roles-token (our jwtMeet, page's appinfo)",
+             {"anettokens": jwt, "anet-appinfo": page_appinfo or "web:web:0:0",
+              "anet-site-roles-token": page_roles or ""}),
+            ("+ anet-site-roles-token, our appinfo web:web:0:240",
+             {"anettokens": jwt, "anet-appinfo": "web:web:0:240",
+              "anet-site-roles-token": page_roles or ""}),
         ]
         for name, headers in variants:
             try:
@@ -141,10 +170,27 @@ async def main(meet_id, div_id):
                 print(f"   ERR {name}: {type(exc).__name__}: {exc}")
             await asyncio.sleep(3)
 
+        # does the page's per-division call need the roles token too?
+        for name, headers in (
+                ("GetResultsData3 without anet-site-roles-token",
+                 {"anettokens": jwt, "anet-appinfo": page_appinfo or "web:web:0:0",
+                  "content-type": "application/json"}),
+                ("GetResultsData3 with it",
+                 {"anettokens": jwt, "anet-appinfo": page_appinfo or "web:web:0:0",
+                  "content-type": "application/json",
+                  "anet-site-roles-token": page_roles or ""})):
+            r = await page.evaluate(_FETCH_JS, {"url": "/api/v1/Meet/GetResultsData3",
+                                                "method": "POST", "headers": headers,
+                                                "body": json.dumps({"divId": div_id})})
+            print(f"   {r['status']}  {name}   {r['text'][:60]!r}")
+            await asyncio.sleep(3)
+
         print("\n== 3. jwtMeet claims")
         print(f"   {_claims(jwt)}")
         if page_token and page_token != jwt:
             print(f"   the page's token differs; its claims: {_claims(page_token)}")
+        if page_roles:
+            print(f"   anet-site-roles-token claims: {_claims(page_roles)}")
         await browser.close()
 
 
