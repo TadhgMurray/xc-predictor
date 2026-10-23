@@ -42,7 +42,14 @@ echo "== packages =="
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -yq \
     postgresql postgresql-contrib nginx git \
-    python3-pip python3-venv certbot python3-certbot-nginx ufw
+    python3-pip python3-venv certbot python3-certbot-nginx ufw xvfb wget
+# ★ THE SCRAPERS DRIVE REAL CHROME on a virtual display (requirements-scrape.txt
+#   says why; 2026-10-23 the new server had neither, and the first nightly
+#   died on "xvfb-run: No such file or directory")
+if ! command -v google-chrome >/dev/null 2>&1; then
+  wget -qO /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+  DEBIAN_FRONTEND=noninteractive apt-get install -yq /tmp/chrome.deb && rm -f /tmp/chrome.deb
+fi
 
 echo "== firewall =="
 ufw allow OpenSSH >/dev/null
@@ -97,6 +104,7 @@ python3 -m venv /srv/venv 2>/dev/null || true
 /srv/venv/bin/pip install -q --upgrade pip
 /srv/venv/bin/pip install -q flask gunicorn psycopg2-binary numpy scipy torch Pillow \
     --extra-index-url https://download.pytorch.org/whl/cpu
+/srv/venv/bin/pip install -q -r "$(dirname "$0")/../requirements-scrape.txt"
 
 echo "== env + service =="
 cat > /etc/xc-predictor.env <<EOF

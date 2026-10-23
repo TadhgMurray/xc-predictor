@@ -114,6 +114,14 @@ scrape() {
     echo "  $name ok (${el}s)" | tee -a "$SUMMARY"
   fi
 }
+if [ "$SCRAPE" -eq 1 ] && [ "$DRY" -eq 0 ]; then
+  for need in xvfb-run google-chrome; do
+    if ! command -v "$need" >/dev/null 2>&1; then
+      echo "[nightly] FATAL: $need is not installed -- see requirements-scrape.txt" | tee -a "$SUMMARY" >&2
+      exit 1
+    fi
+  done
+fi
 if [ "$SCRAPE" -eq 1 ]; then
   echo "== scrape (anet + tfrrs, at most ${SCRAPE_MIN} min, ${XCP_NIGHTLY_SESSIONS:-2} sessions each, ${XCP_NIGHTLY_DELAY:-5,10} s between meets)    $(date +%H:%M:%S)"
   # ★ SLOW AND FEW (owner, 2026-10-22: "make those scrapes go slowly so
