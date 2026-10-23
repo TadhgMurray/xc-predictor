@@ -432,3 +432,20 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
   - **Smaller:** Texas 1A Fan (district qualifiers), Cross Country Scoreboard (GA private schools, 2012-2024), NCSAA nationals (times written 15:08:30 for 15:08.30), Lexington MA (2012-2017).
   - **Off limits:** ScoreATL (bot challenge), Section IV NY (robots.txt disallows its /api/ for every crawler).
   - **To settle:** both midwesttiming.net (IN) and Midwest Timing & Results (KS/MO/OK) point at mwt.live.
+- **More timers in the thin states (2026-10-23):** `docs/timing_passes/timers_more.csv` has 27 rows, merged into `docs/timing_companies.csv`: 15 new companies, and 12 known ones updated with an own-site archive (the new platform text first, the old kept after "|| before 2026-10-23:").
+  - **Arrow Live Results** (arrowliveresults.com, Agee's platform; not athletic.net or FloSports) names the timer on each race. 19 timers use it. It is its own registry kind, `arrow`: one adapter covers them all.
+    - 12:1 Running (OK): ~200 school races including OSSAA regionals.
+    - athletic Scoring providers (FL): ~170.
+    - Above and Beyond, RCC Timing and Terkhorn (IN), with IHSAA sectionals.
+    - MOGO (FL), Hardy (GA, GHSA regions), RTS (CA).
+    - Rows come from `/Results/pvResults?pEventId=<n>`; the per-state index is `/Home/pvRecentEvents?pStateId=<n>&pCountryId=1&showAll=true`. No robots.txt or terms.
+  - **Own-site archives:**
+    - T&H Timing (IN): IHSAA sectional PDFs back to 2008, with grade.
+    - Live Running Results: Track Timing and Data's Hy-Tek site; NMAA state meets.
+    - Maryland Race Timing: .TXT files 1991-2025.
+    - CCR Timing, Snake River (Idaho's only source off athletic.net), APTiming (JSON API).
+  - **Registry fixes:**
+    - "own" alone now counts as an own site: Wingfoot Finish, Michiana, Motion, A2 and others are independent now.
+    - A timer's own copy of MeetPro pages is independent.
+    - "off limits" in a row's notes blocks it; Mac's Sports Timing is blocked for its bot challenge.
+    - Independent sources went from 87 to 142. The states with none are now AK, DC, HI and MT.

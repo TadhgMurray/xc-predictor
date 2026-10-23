@@ -16,6 +16,10 @@
 #                 (HTML, <pre>, PDF)
 #   custom        an own-site system needing its own adapter (Finished
 #                 Results, GSE, SportTrax, Flash Results ...)
+#   arrow         Arrow Live Results (arrowliveresults.com, Agee Race
+#                 Timing's platform; not athletic.net or FloSports): one
+#                 adapter covers every timer on it, its index names the timer
+#   raceroster    Race Roster: one JSON call is a whole meet as Hy-Tek text
 #   athleticlive  posts to AthleticLIVE -- athletic.net's own live results
 #   milesplit     posts to MileSplit / MileSplit Live (FloSports)
 #   road          RunSignup, ChronoTrack, RaceResult: road-race platforms
@@ -42,7 +46,7 @@ ADAPTERS = {"meetpro", "hytek"}             # parsers that exist (sources/*.py)
 #   (MileSplit) bought DirectAthletics in June 2023 -- the owner of TFRRS too,
 #   which we already scrape. Still enabled (its parser exists, like TFRRS);
 #   just not counted as independent of athletic.net and FloSports.
-INDEPENDENT = {"hytek", "custom"}
+INDEPENDENT = {"hytek", "custom", "arrow", "raceroster"}
 FLOSPORTS = {"meetpro", "milesplit"}
 
 # terms that forbid bots and scrapers: never fetched, whatever else they post
@@ -68,6 +72,12 @@ class Source:
 
     @property
     def independent(self):
+        # ★ A TIMER'S OWN COPY OF MEETPRO PAGES (timers pass, 2026-10-23:
+        #   Snake River's self-hosted archive) is its own publication, not
+        #   FloSports': independent when no FloSports host is named
+        if self.kind == "meetpro":
+            urls = " ".join((self.website, self.results_url, self.sample_url)).lower()
+            return "own site" in self.platform.lower() and not re.search(r"tfmeetpro\.com|rtspt\.com", urls)
         return self.kind in INDEPENDENT
 
     @property
@@ -89,9 +99,12 @@ def statesOf(text):
     return sorted(outside or codes(text))
 
 
-def kindsOf(platform, name="", urls=""):
+def kindsOf(platform, name="", urls="", notes=""):
     """Every kind a platform description names, best (most useful) first."""
     p = (platform or "").lower()
+    # ★ WHAT A LATER PASS FOUND LEADS (2026-10-23): "<new> || before <date>:
+    #   <old>" -- the old text is kept for reading, not for the kind
+    p = p.split("|| before ")[0]
     u = (urls or "").lower()
     kinds = []
     # "... own site unconfirmed" (the MileSplit timer directories, 580 rows)
@@ -106,17 +119,32 @@ def kindsOf(platform, name="", urls=""):
         return ["road", "milesplit"] if "milesplit" in p else ["road"]
     p = re.sub(r"no (working )?own[- ]site found|own[- ]site is a [^);]*|"
                r"own[- ]site (\([^)]*\) )?links out[^);]*", "", p)
-    if BLOCKED_NAMES.search(name or "") or "pttiming" in p:
+    # a timer's own RunSignup page is RunSignup's (road), and TimerHub's
+    # terms forbid collection: neither is an own site to scrape
+    p = re.sub(r"own runsignup[^;+)]*|timerhub[^;]*", "", p)
+    # ★ OFF LIMITS (owner, 2026-10-23: "if it doesn't outright say no results
+    #   scraping it is fine"): terms that forbid bots, robots.txt barring the
+    #   results for every crawler, or a bot challenge -- what a pass marks
+    #   "off limits" in its notes
+    if BLOCKED_NAMES.search(name or "") or "pttiming" in p or "off limits" in (notes or "").lower() \
+            or "off limits" in p:
         return ["blocked"]
+    if "arrowliveresults" in p or "arrow live" in p or "arrowliveresults" in u:
+        kinds.append("arrow")
+    if "race roster" in p or "raceroster.com" in u:
+        kinds.append("raceroster")
     if "meetpro" in p or "tfmeetpro.com" in u:
         kinds.append("meetpro")
     if re.search(r"hy-?tek", p) and re.search(r"own site|own-site|posted on (its|their) own|pdf \(own", p):
         kinds.append("hytek")
     elif re.search(r"hy-?tek", p) and not re.search(r"athleticlive|milesplit", p):
         kinds.append("hytek")
-    if re.search(r"custom|own site|own-site|own results|sporttrax|flash results|runnercard|"
-                 r"trackscoreboard|own meet db|own database|static html", p) \
-            and not ({"meetpro", "hytek"} & set(kinds)):
+    # "own" alone counts too (timers pass: "OWN ColdFusion results DB", "Own
+    # WordPress posts", "Own yearly event index pages"); the phrases saying
+    # there is NO own site were dropped above
+    if re.search(r"custom|\bown\b|sporttrax|flash results|runnercard|"
+                 r"trackscoreboard|static html", p) \
+            and not ({"meetpro", "hytek", "arrow", "raceroster"} & set(kinds)):
         kinds.append("custom")
     if "athleticlive" in p or ".anet.live" in u or "athletic.live" in u:
         kinds.append("athleticlive")
@@ -143,7 +171,7 @@ def load(path=CSV_PATH):
                 slug = f"{slug}-{seen[slug]}"
             urls = " ".join((r.get("website") or "", r.get("results_url") or "",
                              r.get("sample_meet_url") or ""))
-            kinds = kindsOf(r.get("platform"), name, urls)
+            kinds = kindsOf(r.get("platform"), name, urls, r.get("notes"))
             if "dead" in kinds:
                 kinds = ["dead"]
             out.append(Source(slug=slug, name=name, states=statesOf(r.get("states")),

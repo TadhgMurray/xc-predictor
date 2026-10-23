@@ -69,3 +69,37 @@ def test_load_and_flags(tmp_path):
 def test_the_real_file_loads():
     src = R.load()
     assert len(src) > 1000 and not any(s.kind == "blocked" and s.enabled for s in src)
+
+
+# ---- the timers pass (2026-10-23) ---------------------------------------
+
+def test_arrow_and_race_roster_are_their_own_independent_kinds():
+    from sources.registry import kindsOf, INDEPENDENT
+    assert kindsOf("Arrow Live Results (arrowliveresults.com; Agee's platform)")[0] == "arrow"
+    assert kindsOf("PDF on own Wix event pages (+ RaceRoster for road)", urls="https://raceroster.com/x")[0] \
+        == "raceroster"
+    assert {"arrow", "raceroster"} <= INDEPENDENT
+
+
+def test_a_later_pass_leads_and_own_alone_is_an_own_site():
+    from sources.registry import kindsOf
+    assert kindsOf("Own yearly event index pages || before 2026-10-23: AthleticLIVE")[0] == "custom"
+    assert kindsOf("AthleticLIVE + OWN ColdFusion results DB with PDFs")[0] == "custom"
+    # not an own site: a RunSignup page, TimerHub (terms forbid collection)
+    assert "custom" not in kindsOf("RunSignup results (own RunSignup timer site; road) + MileSplit")
+    assert "custom" not in kindsOf("MileSplit-hosted only; TimerHub (Red Cap's own multi-timer service)")
+
+
+def test_off_limits_in_the_notes_is_blocked():
+    from sources.registry import kindsOf
+    assert kindsOf("Own yearly 'Event Results' pages (Wix)", notes="OFF LIMITS: bot challenge") == ["blocked"]
+
+
+def test_a_timers_own_copy_of_meetpro_is_independent():
+    from sources.registry import Source
+    own = Source(slug="s", name="Snake River", states=["ID"], website="https://snakerivertiming.com",
+                 results_url="https://snakerivertiming.com/2016/", sample_url="", kind="meetpro",
+                 platform="MeetPro-style HTML (own site, historic)")
+    hosted = Source(slug="m", name="M", states=["OH"], website="", sample_url="",
+                    results_url="https://results.tfmeetpro.com/M/", kind="meetpro", platform="MeetPro (own site links)")
+    assert own.independent and not hosted.independent
