@@ -48,9 +48,12 @@
         (url_for('scale.scale_page'), 'Rating to time', '/scale'),
         (url_for('goal.goal_page'), 'Goal calculator', '/goal'),
     ] %}
+    {# ★ ADD MISSING RESULTS IN THE MENU (owner, 2026-10-23: "where can you
+       upload?"): no account is needed, so it is reachable from every page #}
     {% set ref = [
         (url_for('about_page'), 'About', '/about'),
         (url_for('report_page'), 'Report an issue', '/report'),
+        ('/account/uploads/new', 'Add missing results', '/account/uploads'),
     ] %}
     {% set ns = namespace(tools_here=false) %}
     {% for t in tools + ref %}{% if t[2] and here.startswith(t[2]) %}{% set ns.tools_here = true %}{% endif %}{% endfor %}

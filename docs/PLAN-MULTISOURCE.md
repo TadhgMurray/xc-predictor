@@ -50,3 +50,16 @@ becomes one source among many, used for what no one else has.
 - A 5xx disallows that host for the run (RFC 9309).
 - **YenTiming exception.** YenTiming's robots.txt answers 500. The owner approved an exception (2026-10-23): it is crawled as if it had no robots.txt, at twice the usual interval (`ROBOTS_ERROR_ALLOW`, or `XCP_ROBOTS_ERROR_ALLOW` for more hosts).
 - **Defaults.** 10 s between one host's requests, at most 8 hosts in flight ("let's just try to be nice to all these sites").
+
+## What counts as off limits (owner, 2026-10-23)
+
+"If it doesn't outright say no results scraping it is fine."
+
+- **Off limits:**
+  - Terms that explicitly forbid scraping, bots or automated collection (PTTiming and its white labels, Leone, TimerHub).
+  - A robots.txt that disallows the results pages for every crawler (`*`) or for us (ItsYourRace's results, eccathletics.org's results pages).
+  - A bot challenge (Cloudflare, WatchAthletics). It is never worked around.
+- **Fine:**
+  - "Personal or non-commercial use" terms (SIDEARM college and association sites).
+  - A robots.txt that blocks only named AI crawlers (ClaudeBot, GPTBot, CCBot), since our fetcher is not one. This covers SIDtools leagues, chsaanow, IHSAA and ChronoTrack. The fetcher reads robots.txt for "racecast-results" and "*", so the rules a site writes for all crawlers still apply.
+  - No terms or robots.txt at all.
