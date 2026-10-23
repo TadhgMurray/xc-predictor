@@ -29,15 +29,6 @@ class CloudflareException(Exception):
 #          without parsing error message strings. Same pattern as
 #          CloudflareException — a type carries information that a
 #          string message can't reliably carry.
-# ★ THE WHOLE-MEET CALL REFUSED (2026-10-23, the new server: GetAllResultsData
-#   answered 403 with an empty body for meet 288317 while the same browser's
-#   GetMeetData and the results page's own per-division GetResultsData3 call
-#   were 200). The callers fall back to the per-division calls the results
-#   page itself makes, instead of reading the empty body as "no results".
-class FastPathRefused(Exception):
-    pass
-
-
 class RateLimitException(Exception):
     pass
 
@@ -270,9 +261,6 @@ async def getAllResultsXC(page, meet_id: int, jwt_token: str):
     LAST_XC_RESPONSE["status"] = status
     LAST_XC_RESPONSE["head"] = (text or "")[:160].replace("\n", " ")
  
-    if status in (401, 403):
-        raise FastPathRefused(f"GetAllResultsData HTTP {status} for meet {meet_id}")
-
     # Empty body — treat as "no fast-path payload"; caller falls back to per-div.
     if not text:
         return {}
@@ -804,9 +792,6 @@ async def getAllResultsTF(page, meet_id: int, jwt_token: str):
     status = data.get("status")
     text = data.get("text", "")
  
-    if status in (401, 403):
-        raise FastPathRefused(f"GetAllResultsData HTTP {status} for meet {meet_id}")
-
     # Empty body — treat as "no fast-path payload"; caller falls back to per-div.
     if not text:
         return {}
