@@ -394,3 +394,10 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
     - robots.txt disallows the results folder: PIAA, NYSPHSAA, FHSAA, KHSAA, UIL.
     - Bot challenges or 403s: the CIF PrestoSports sites, NIAA, DIAA, MHSAA (MS), IHSAA (IA), NMAA, OSAA, SDHSAA, VPA.
   - **FloSports' terms for TFRRS** need reading, since the project already scrapes TFRRS.
+- **Invitationals, venues and colleges (2026-10-23):** `docs/timing_passes/events_venues.csv` has 44 rows: national meets, big venues and colleges that host HS meets. Few post HS results on their own sites.
+  - **National meets** (NXR, Nike and New Balance Nationals, Brooks PR, the Kansas/Texas/Drake/Mt. SAC Relays) are indexed on WatchAthletics and link out to the timer. Most are on AthleticLIVE. WatchAthletics answers bots with a Cloudflare 403, so it is not fetched.
+  - **Venues** (Reggie Lewis/MSTCA, Bennett in Toms River, Virginia Beach, PG Complex, CrossPlex) send results to MileSplit or athletic.net.
+  - **Colleges' HS meets land on the main TFRRS site** (Kansas Relays HS, YSU WATTS, MSSU HS Open, SPIRE Scholastic). The TFRRS scraper already reaches them; filtering meet names on "High School|HS|Scholastic" would size them.
+  - **The one self-hosted find:** Liberty University's HS indoor invitationals, as Hy-Tek PDFs on libertyflames.com (2-3 a year). It is a SIDEARM site, which allows personal or non-commercial use only, so ask first.
+  - **Mt. SAC XC:** runmtsac.com now links to Finished Results, TrackScoreboard and RunnerSpace. This replaces the dead URLs in self_hosted.csv.
+  - **To check:** gap_states.csv puts the 2025 NXR Northwest at Lake Wilderness; RunBlogRun says Spokane.
