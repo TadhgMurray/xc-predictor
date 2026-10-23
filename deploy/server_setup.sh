@@ -42,7 +42,7 @@ echo "== packages =="
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -yq \
     postgresql postgresql-contrib nginx git \
-    python3-pip python3-venv certbot python3-certbot-nginx ufw xvfb wget
+    python3-pip python3-venv certbot python3-certbot-nginx ufw xvfb wget poppler-utils
 # ★ THE SCRAPERS DRIVE REAL CHROME on a virtual display (requirements-scrape.txt
 #   says why; 2026-10-23 the new server had neither, and the first nightly
 #   died on "xvfb-run: No such file or directory")
