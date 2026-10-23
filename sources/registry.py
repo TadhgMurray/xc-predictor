@@ -97,6 +97,15 @@ def kindsOf(platform, name="", urls=""):
     # "... own site unconfirmed" (the MileSplit timer directories, 580 rows)
     # says nothing is known about an own site: drop the phrase before matching
     p = re.sub(r"own[- ]site (is )?(unconfirmed|unknown|not found)", "", p)
+    # the own-site check (2026-10-23) wrote what it did NOT find in the same
+    # words: "MileSplit only (no own site found)", "Road only on own site ...;
+    # HS XC/TF only via MileSplit", "(own site is a contact-form landing page)"
+    if p.startswith("milesplit only"):
+        return ["milesplit"]
+    if re.match(r"road(/multisport)? only", p):
+        return ["road", "milesplit"] if "milesplit" in p else ["road"]
+    p = re.sub(r"no (working )?own[- ]site found|own[- ]site is a [^);]*|"
+               r"own[- ]site (\([^)]*\) )?links out[^);]*", "", p)
     if BLOCKED_NAMES.search(name or "") or "pttiming" in p:
         return ["blocked"]
     if "meetpro" in p or "tfmeetpro.com" in u:

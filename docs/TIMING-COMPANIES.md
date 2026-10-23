@@ -339,3 +339,11 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
   - 234 timers; 99% of meets link to an athletic.net meet.
   - That is roughly 45% of athletic.net's 28,786 spring track meets.
   - `scripts/diag_athleticlive_coverage.py` measures the share of athletic.net's meets and results it covers, by meet size and by state.
+- **Own-site check of the MileSplit-directory timers (2026-10-23).** 348 checked: every timing company in TX, FL, GA, PA, NC, NY, NJ, VA, TN and SC, plus 18 others.
+  - About 75% put school meets only on MileSplit. 253 have no own site found; about 56 run road-race-only sites; 13 link out to MileSplit.
+  - 15 post XC/TF on or from their own site:
+    - Hy-Tek HTML: Pirate Timing NC, Triangle Timing MA, trXCky KY.
+    - PDF archives: DVGTCA PA, BAYTAF FL, Run Texas TX.
+    - Indexes onto MeetPro/DirectAthletics: FT Timing TX (~150 DFW meets), Pure Gold FL, Bv Timing FL, MP Timing NC.
+    - Others.
+  - Corrections are in `docs/timing_passes/timing_corrections_ownsite.csv` and have been applied. The list now counts 87 independent sources.

@@ -29,6 +29,10 @@ from sources import registry as R                                 # noqa: E402
     ("RunSignup timer site", "Road Co", "", "road"),
     ("dead (domain now unrelated blog)", "Gone Timing", "", "dead"),
     ("unconfirmed", "Mystery Timing", "", "unknown"),
+    ("MileSplit only (no own site found)", "Quiet Timing", "", "milesplit"),
+    ("MileSplit only (own site is a contact-form landing page, no results)", "Q2", "", "milesplit"),
+    ("Road only on own site (RunSignup results); HS XC/TF only via MileSplit", "Road Two", "", "road"),
+    ("Hy-Tek PDF (own site blacksquirrelresults.com); AthleticLIVE", "Black Squirrel", "", "hytek"),
 ])
 def test_kinds(platform, name, urls, first):
     assert R.kindsOf(platform, name, urls)[0] == first
