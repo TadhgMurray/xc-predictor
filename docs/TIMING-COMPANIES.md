@@ -505,3 +505,11 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
   - **TAPPS (TX private schools) and MTCCCA (MO):** the files are on Google Drive, whose download host bars all crawlers. Use the Drive API or ask.
   - **Off limits:** NSAA (NE; Cloudflare "you have been blocked" on the files, so ask NSAA), MIAA/IAAM (MD) and WCAC (DC) (CloudFront 403).
   - **States with nothing new:** AR, CO, CT, DE, FL, HI, IA, ID, IL, IN, ME, MN, NJ, NM, NV, OK, OR, RI, TN, UT, VA, VT, WA, WY.
+- **Race Roster, mapped (2026-10-23):** `docs/timing_passes/raceroster_meets.csv` (306 meets), `raceroster_timers.csv` (12 new timers, merged into the registry) and `raceroster_adapter_notes.md` (the API, for the adapter).
+  - **Size:** 301 HS/MS school meets with results, 2019-2026, every one cross country. They come from a state-by-state sweep of the search index; 105 more terms added nothing, which was the stop condition.
+    - By state: IL 52, MO 38, WI 36, IA 20, IN 18, OH 18, NH 17, SC 17, TX 17, LA 12, NE 11.
+    - Grade and school in 159 of them, school only in 75.
+  - **Biggest timers:** J3 Timing (IL) 42, a northern WI/U.P. timer (account 387) 38, Start 2 Finish St. Louis 37, Granite State Race Services (New England) 23, Chuck Magera (SC) 17, TimingSpot (Cincinnati) 17.
+  - **Imported OnlineRaceResults archive:** walkable by sequential id through `results.raceroster.com/redirect/third-party?source=onlineraceresults&entity=event&id=<n>`. About 7,000 requests (~5 h) would add ~600 school meets for 2019-2025 (IA, NE, IN, CO, OK).
+  - **Track:** school track meets are listed but none has posted results; recheck in spring.
+  - **Terms:** nothing off limits (robots allows all). The registrant terms' general "Site Content" copying clause is noted.
