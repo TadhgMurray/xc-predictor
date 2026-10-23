@@ -415,3 +415,12 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
     - Race Roster: 50-200. One JSON call returns a whole meet as Hy-Tek text, including Nebraska state XC 2012-2025. robots.txt allows everything.
     - OnlineRaceResults: 50-150. Every plain fetch answers 403.
   - **Do not fetch:** ChronoTrack (robots.txt names ClaudeBot), ItsYourRace (robots.txt bars results), TimerHub (terms).
+- **League and conference archives (2026-10-23):** `docs/timing_passes/leagues.csv` has 23 rows. It is incomplete: the search limit ran out before GA, FL, VA and NC were searched.
+  - **Ohio:** most rows are SIDtools sites, which share one layout (`ccMeet.aspx?sat=9|10&year=`, plus season-best pages with grade). Each has one championship per league per year, going back to 2004-2013. Their robots.txt blocks AI crawlers by name, so treat them as reference only and ask first.
+  - **The few with depth:**
+    - Carlisle Area SD (PA): about 150 Mid-Penn meet pages, 2008-2026, with no grade.
+    - Suburban One (PA): prose recaps.
+    - PIAA District II.
+    - Southern Connecticut Conference: Hy-Tek from Paynes Corner, 2007-2026.
+  - **Many league domains are gone:** they redirect to Arbiter or are parked. The CSV lists them so nobody re-checks them.
+  - **Blocked:** the Eastern Connecticut Conference's robots.txt disallows its results pages.
