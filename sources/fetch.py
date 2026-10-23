@@ -46,8 +46,15 @@ from dataclasses import dataclass
 
 import requests
 
-USER_AGENT = ("racecast-results/1.0 (+https://racecast.co/about#results; "
-              "results for high school runners; contact via the site)")
+# ★ THE SAME BROWSER STRING AS THE athletic.net AND TFRRS SCRAPERS (owner,
+#   2026-10-23: "keep the same settings as anet and tfrrs ... the new ones
+#   too"). XCP_SOURCE_UA overrides it.
+USER_AGENT = os.environ.get("XCP_SOURCE_UA", (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"))
+# ! ROBOTS.TXT IS STILL READ FOR OUR OWN NAME: rules a site writes for
+#   "racecast" or for every crawler ("*") both apply.
+ROBOTS_AGENT = "racecast-results"
 
 # ★ GENTLE BY DEFAULT (owner, 2026-10-23: "let's just try to be nice to all
 #   these sites"): 10 s between one host's requests, and never more than 8
@@ -150,7 +157,7 @@ class Robots:
             if ok == "error-allowed":
                 return True, 2 * DEFAULT_INTERVAL      # allowed, and gentler
             return ok, None
-        return rp.can_fetch(USER_AGENT, url), rp.crawl_delay(USER_AGENT)
+        return rp.can_fetch(ROBOTS_AGENT, url), rp.crawl_delay(ROBOTS_AGENT)
 
 
 # ------------------------------------------------------------------ #
