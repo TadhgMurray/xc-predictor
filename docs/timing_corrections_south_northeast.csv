@@ -1,0 +1,149 @@
+name,field,old,new,source_url
+AthleticLIVE tenant: bloomfield,name,AthleticLIVE tenant: bloomfield,Bloomfield Timing,https://ct.milesplit.com/timing/745/bloomfield-timing
+AthleticLIVE tenant: bloomfield,states,unconfirmed (US assumed),CT (Bloomfield),https://ct.milesplit.com/timing/745/bloomfield-timing
+AthleticLIVE tenant: bloomfield,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Bloomfield Timing: name/domain match (inferred).,https://ct.milesplit.com/timing/745/bloomfield-timing
+AthleticLIVE tenant: grimestimes,name,AthleticLIVE tenant: grimestimes,GrimesTimes,https://ct.milesplit.com/timing/714/grimestimes
+AthleticLIVE tenant: grimestimes,states,unconfirmed (US assumed),CT (Newtown),https://ct.milesplit.com/timing/714/grimestimes
+AthleticLIVE tenant: grimestimes,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as GrimesTimes: name/domain match (inferred); grimestimes.net returned 503.,https://ct.milesplit.com/timing/714/grimestimes
+AthleticLIVE tenant: pct,name,AthleticLIVE tenant: pct,"Port City Timing, LLC (Kevin Jones)",https://portcitytiming.com/live-results/
+AthleticLIVE tenant: pct,states,unconfirmed (US assumed),AL (Spanish Fort / Mobile; 251 area code),https://portcitytiming.com/live-results/
+AthleticLIVE tenant: pct,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,"Identified as Port City Timing, LLC (Kevin Jones): confirmed: portcitytiming.com links live.portcitytiming.com; timed Azalea City Classic, Mobile 2025 (al.milesplit.com/meets/696263).",https://portcitytiming.com/live-results/
+AthleticLIVE tenant: m3timing,name,AthleticLIVE tenant: m3timing,McCorory Meet Management Solutions (M3),https://va.milesplit.com/timing/1126/mccorory-meet-management
+AthleticLIVE tenant: m3timing,states,unconfirmed (US assumed),VA (Hampton),https://va.milesplit.com/timing/1126/mccorory-meet-management
+AthleticLIVE tenant: m3timing,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as McCorory Meet Management Solutions (M3): domain match (live.mccororymeetmanagement.com); founded 2019 by Francena McCorory; TF + XC.,https://va.milesplit.com/timing/1126/mccorory-meet-management
+AthleticLIVE tenant: cnutfx,name,AthleticLIVE tenant: cnutfx,Christopher Newport University T&F/XC (CNU),https://va.milesplit.com/timing/339/cnu
+AthleticLIVE tenant: cnutfx,states,unconfirmed (US assumed),VA (Newport News),https://va.milesplit.com/timing/339/cnu
+AthleticLIVE tenant: cnutfx,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,"Identified as Christopher Newport University T&F/XC (CNU): inferred from slug cnutfxc + MileSplit VA profile ""CNU"".",https://va.milesplit.com/timing/339/cnu
+AthleticLIVE tenant: jactiming,name,AthleticLIVE tenant: jactiming,JAC Timing,https://fl.milesplit.com/timing/896/jac-timing
+AthleticLIVE tenant: jactiming,states,unconfirmed (US assumed),FL (Jacksonville),https://fl.milesplit.com/timing/896/jac-timing
+AthleticLIVE tenant: jactiming,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as JAC Timing: name/domain match (inferred).,https://fl.milesplit.com/timing/896/jac-timing
+AthleticLIVE tenant: onthedottiming,name,AthleticLIVE tenant: onthedottiming,OnTheDot Timing,https://onthedottiming.com/results/
+AthleticLIVE tenant: onthedottiming,states,unconfirmed (US assumed),"FL (Lakeland); also GA, AL (South region)",https://onthedottiming.com/results/
+AthleticLIVE tenant: onthedottiming,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as OnTheDot Timing: confirmed: own site links results.onthedottiming.com/meet-list.,https://onthedottiming.com/results/
+AthleticLIVE tenant: 2lrs,name,AthleticLIVE tenant: 2lrs,2L Race Services,https://www.2lraceservices.com/
+AthleticLIVE tenant: 2lrs,states,unconfirmed (US assumed),PA (West Chester),https://www.2lraceservices.com/
+AthleticLIVE tenant: 2lrs,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as 2L Race Services: name/domain match; MileSplit pa profile 615.,https://www.2lraceservices.com/
+AthleticLIVE tenant: gingerbread,name,AthleticLIVE tenant: gingerbread,Gingerbread Timing (Gingerbread Man Running Co.),https://www.gingerbreadtiming.com/results
+AthleticLIVE tenant: gingerbread,states,unconfirmed (US assumed),"PA (Indiana, western PA)",https://www.gingerbreadtiming.com/results
+AthleticLIVE tenant: gingerbread,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Gingerbread Timing (Gingerbread Man Running Co.): confirmed: own site links live.gingerbreadtiming.com; archives on athletic.net SchoolID=77627.,https://www.gingerbreadtiming.com/results
+AthleticLIVE tenant: runtf,name,AthleticLIVE tenant: runtf,run.tf,https://run.tf/
+AthleticLIVE tenant: runtf,states,unconfirmed (US assumed),"PA (Philadelphia / Greater Philadelphia, since 2008)",https://run.tf/
+AthleticLIVE tenant: runtf,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as run.tf: name/domain match; MileSplit pa profile 813.,https://run.tf/
+AthleticLIVE tenant: firstlane,name,AthleticLIVE tenant: firstlane,First Lane Timing,https://md.milesplit.com/timing/886/first-lane-timing
+AthleticLIVE tenant: firstlane,states,unconfirmed (US assumed),MD (Baltimore),https://md.milesplit.com/timing/886/first-lane-timing
+AthleticLIVE tenant: firstlane,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as First Lane Timing: name/domain match (inferred).,https://md.milesplit.com/timing/886/first-lane-timing
+AthleticLIVE tenant: qwtiming,name,AthleticLIVE tenant: qwtiming,QW Timing,https://md.milesplit.com/timing/372/qw-timing
+AthleticLIVE tenant: qwtiming,states,unconfirmed (US assumed),MD (Columbia),https://md.milesplit.com/timing/372/qw-timing
+AthleticLIVE tenant: qwtiming,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as QW Timing: name/domain match (inferred).,https://md.milesplit.com/timing/372/qw-timing
+AthleticLIVE tenant: smac,name,AthleticLIVE tenant: smac,SMAC League Timing (Southern Maryland Athletic Conference),https://md.milesplit.com/timing/386/smac-league-timing
+AthleticLIVE tenant: smac,states,unconfirmed (US assumed),MD (Southern MD),https://md.milesplit.com/timing/386/smac-league-timing
+AthleticLIVE tenant: smac,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as SMAC League Timing (Southern Maryland Athletic Conference): slug match (inferred).,https://md.milesplit.com/timing/386/smac-league-timing
+AthleticLIVE tenant: lexicon,name,AthleticLIVE tenant: lexicon,Lexicon Timing,https://nj.milesplit.com/timing/333/lexicon-timing
+AthleticLIVE tenant: lexicon,states,unconfirmed (US assumed),NJ (New Milford); also PA (Central League XC champs 2019),https://nj.milesplit.com/timing/333/lexicon-timing
+AthleticLIVE tenant: lexicon,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Lexicon Timing: name match; PA meet: pa.milesplit.com/meets/365808.,https://nj.milesplit.com/timing/333/lexicon-timing
+AthleticLIVE tenant: tomahawktiming,name,AthleticLIVE tenant: tomahawktiming,Tomahawk Timing,https://nj.milesplit.com/timing/83/tomahawk-timing
+AthleticLIVE tenant: tomahawktiming,states,unconfirmed (US assumed),NJ (Haddon Twp),https://nj.milesplit.com/timing/83/tomahawk-timing
+AthleticLIVE tenant: tomahawktiming,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Tomahawk Timing: name/domain match (inferred).,https://nj.milesplit.com/timing/83/tomahawk-timing
+AthleticLIVE tenant: viper,name,AthleticLIVE tenant: viper,Viper Timing Systems,https://nj.milesplit.com/timing/273/viper-timing-systems
+AthleticLIVE tenant: viper,states,unconfirmed (US assumed),NJ (Howell),https://nj.milesplit.com/timing/273/viper-timing-systems
+AthleticLIVE tenant: viper,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Viper Timing Systems: name/domain match (inferred).,https://nj.milesplit.com/timing/273/viper-timing-systems
+AthleticLIVE tenant: finishright,name,AthleticLIVE tenant: finishright,Finish Right Timing,https://ny.milesplit.com/timing/27/finish-right-timing
+AthleticLIVE tenant: finishright,states,unconfirmed (US assumed),NY (Saratoga Springs),https://ny.milesplit.com/timing/27/finish-right-timing
+AthleticLIVE tenant: finishright,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Finish Right Timing: name/domain match (inferred).,https://ny.milesplit.com/timing/27/finish-right-timing
+AthleticLIVE tenant: trackqua,name,AthleticLIVE tenant: trackqua,Trackqua,https://ny.milesplit.com/timing/661/trackqua
+AthleticLIVE tenant: trackqua,states,unconfirmed (US assumed),NY (Jamestown),https://ny.milesplit.com/timing/661/trackqua
+AthleticLIVE tenant: trackqua,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Trackqua: name/domain match (inferred).,https://ny.milesplit.com/timing/661/trackqua
+AthleticLIVE tenant: harrier,name,AthleticLIVE tenant: harrier,Harrier Race Management,https://ma.milesplit.com/timing/113/harrier-race-mangement
+AthleticLIVE tenant: harrier,states,unconfirmed (US assumed),MA,https://ma.milesplit.com/timing/113/harrier-race-mangement
+AthleticLIVE tenant: harrier,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Harrier Race Management: name/domain match (inferred).,https://ma.milesplit.com/timing/113/harrier-race-mangement
+AthleticLIVE tenant: ic4a,name,AthleticLIVE tenant: ic4a,IC4A Timing,https://ma.milesplit.com/timing/1525/ic4a-timing
+AthleticLIVE tenant: ic4a,states,unconfirmed (US assumed),MA (Westfield),https://ma.milesplit.com/timing/1525/ic4a-timing
+AthleticLIVE tenant: ic4a,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as IC4A Timing: name/domain match (inferred).,https://ma.milesplit.com/timing/1525/ic4a-timing
+AthleticLIVE tenant: kttf,name,AthleticLIVE tenant: kttf,"Kick To The Finish, LLC",https://ma.milesplit.com/timing/1580/kick-to-the-finish-llc
+AthleticLIVE tenant: kttf,states,unconfirmed (US assumed),MA (Attleboro),https://ma.milesplit.com/timing/1580/kick-to-the-finish-llc
+AthleticLIVE tenant: kttf,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,"Identified as Kick To The Finish, LLC: domain match (live.kicktothefinish.com).",https://ma.milesplit.com/timing/1580/kick-to-the-finish-llc
+AthleticLIVE tenant: upstarttiming,name,AthleticLIVE tenant: upstarttiming,UpStart Timing,https://nh.milesplit.com/timing/1589/upstart-timing
+AthleticLIVE tenant: upstarttiming,states,unconfirmed (US assumed),NH (Weare),https://nh.milesplit.com/timing/1589/upstart-timing
+AthleticLIVE tenant: upstarttiming,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as UpStart Timing: name/domain match (inferred).,https://nh.milesplit.com/timing/1589/upstart-timing
+AthleticLIVE tenant: mill,name,AthleticLIVE tenant: mill,Millennium Running,https://newengland.usatf.org/USATF-New-England/media/USATF-New-England/2021%20results/21-11-21-Region-1-JO-xc.pdf
+AthleticLIVE tenant: mill,states,unconfirmed (US assumed),NH (Bedford) / New England,https://newengland.usatf.org/USATF-New-England/media/USATF-New-England/2021%20results/21-11-21-Region-1-JO-xc.pdf
+AthleticLIVE tenant: mill,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Millennium Running: timer of USATF-NE Region 1 JO XC 2021; domain millenniumrunning.com; NH base from general knowledge (unconfirmed).,https://newengland.usatf.org/USATF-New-England/media/USATF-New-England/2021%20results/21-11-21-Region-1-JO-xc.pdf
+AthleticLIVE tenant: belllap,name,AthleticLIVE tenant: belllap,Bell Lap Timing,https://nc.milesplit.com/timing/334/bell-lap-timing
+AthleticLIVE tenant: belllap,states,unconfirmed (US assumed),NC (Apex),https://nc.milesplit.com/timing/334/bell-lap-timing
+AthleticLIVE tenant: belllap,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Bell Lap Timing: name/domain match (inferred).,https://nc.milesplit.com/timing/334/bell-lap-timing
+AthleticLIVE tenant: tdeming,name,AthleticLIVE tenant: tdeming,TDeming Timing and Events,https://nc.milesplit.com/timing/1807/tdeming-timing-and-events
+AthleticLIVE tenant: tdeming,states,unconfirmed (US assumed),NC (Charlotte),https://nc.milesplit.com/timing/1807/tdeming-timing-and-events
+AthleticLIVE tenant: tdeming,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as TDeming Timing and Events: name/domain match (inferred).,https://nc.milesplit.com/timing/1807/tdeming-timing-and-events
+AthleticLIVE tenant: anythingathletics,name,AthleticLIVE tenant: anythingathletics,Anything Athletics,https://ms.milesplit.com/timing/1435/anything-athletics
+AthleticLIVE tenant: anythingathletics,states,unconfirmed (US assumed),MS (Hattiesburg),https://ms.milesplit.com/timing/1435/anything-athletics
+AthleticLIVE tenant: anythingathletics,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Anything Athletics: name match (inferred).,https://ms.milesplit.com/timing/1435/anything-athletics
+AthleticLIVE tenant: cbchoice,name,AthleticLIVE tenant: cbchoice,Champion By Choice Timing,https://ms.milesplit.com/timing/664/champion-by-choice-timing
+AthleticLIVE tenant: cbchoice,states,unconfirmed (US assumed),MS (Ridgeland),https://ms.milesplit.com/timing/664/champion-by-choice-timing
+AthleticLIVE tenant: cbchoice,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Champion By Choice Timing: name/domain match (championbychoice.net).,https://ms.milesplit.com/timing/664/champion-by-choice-timing
+AthleticLIVE tenant: clockittiming,name,AthleticLIVE tenant: clockittiming,Clock It Timing,https://la.milesplit.com/timing/1432/clock-it-timing
+AthleticLIVE tenant: clockittiming,states,unconfirmed (US assumed),LA (Shreveport),https://la.milesplit.com/timing/1432/clock-it-timing
+AthleticLIVE tenant: clockittiming,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Clock It Timing: name match (inferred).,https://la.milesplit.com/timing/1432/clock-it-timing
+AthleticLIVE tenant: midsouth,name,AthleticLIVE tenant: midsouth,Mid South Race Timing,https://ky.milesplit.com/timing/1058/mid-south-race-timing
+AthleticLIVE tenant: midsouth,states,unconfirmed (US assumed),KY (Murray),https://ky.milesplit.com/timing/1058/mid-south-race-timing
+AthleticLIVE tenant: midsouth,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as Mid South Race Timing: name/domain match (inferred).,https://ky.milesplit.com/timing/1058/mid-south-race-timing
+AthleticLIVE tenant: twelveone,name,AthleticLIVE tenant: twelveone,12:1 Running,https://ok.milesplit.com/timing/1798/121-running
+AthleticLIVE tenant: twelveone,states,unconfirmed (US assumed),OK (Fletcher),https://ok.milesplit.com/timing/1798/121-running
+AthleticLIVE tenant: twelveone,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as 12:1 Running: domain match (twelve1running.com).,https://ok.milesplit.com/timing/1798/121-running
+AthleticLIVE tenant: flextimingpro,name,AthleticLIVE tenant: flextimingpro,FlexTiming.Pro (TriStateRacer.com),https://wv.milesplit.com/timing/1168/flextimingpro-tristateracercom
+AthleticLIVE tenant: flextimingpro,states,unconfirmed (US assumed),WV (Huntington); tri-state WV/OH/KY,https://wv.milesplit.com/timing/1168/flextimingpro-tristateracercom
+AthleticLIVE tenant: flextimingpro,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as FlexTiming.Pro (TriStateRacer.com): domain match (live.flextiming.pro).,https://wv.milesplit.com/timing/1168/flextimingpro-tristateracercom
+AthleticLIVE tenant: kjtiming,name,AthleticLIVE tenant: kjtiming,"K&J Timing, LLC",https://wv.milesplit.com/timing/756/kandj-timing-llc
+AthleticLIVE tenant: kjtiming,states,unconfirmed (US assumed),WV (Wheeling),https://wv.milesplit.com/timing/756/kandj-timing-llc
+AthleticLIVE tenant: kjtiming,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,"Identified as K&J Timing, LLC: domain match (kandjtiming.com).",https://wv.milesplit.com/timing/756/kandj-timing-llc
+AthleticLIVE tenant: windsortiming,name,AthleticLIVE tenant: windsortiming,"Windsor Running, LLC",https://windsorrunning.com/2025.html
+AthleticLIVE tenant: windsortiming,states,unconfirmed (US assumed),"DC, MD, VA (Washington DC)",https://windsorrunning.com/2025.html
+AthleticLIVE tenant: windsortiming,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,"Identified as Windsor Running, LLC: confirmed: ~190 track/XC meets on 2025 calendar link results.windsorrunning.com/meets/<id> (an AthleticLIVE page); DC gap filled.",https://windsorrunning.com/2025.html
+AthleticLIVE tenant: jwtiming,name,AthleticLIVE tenant: jwtiming,JW Timing Group LLC,https://jwtimingllc.com/
+AthleticLIVE tenant: jwtiming,states,unconfirmed (US assumed),TX (Rosharon / Houston area),https://jwtimingllc.com/
+AthleticLIVE tenant: jwtiming,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as JW Timing Group LLC: domain match; MileSplit tx profile 954.,https://jwtimingllc.com/
+AthleticLIVE tenant: runfar,name,AthleticLIVE tenant: runfar,"RunFAR Racing Services, Inc.",https://www.mychiptime.com/
+AthleticLIVE tenant: runfar,states,unconfirmed (US assumed),"TX (Mansfield/DFW; timers in DFW, Austin, Houston)",https://www.mychiptime.com/
+AthleticLIVE tenant: runfar,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,"Identified as RunFAR Racing Services, Inc.: confirmed: runfarusa.com; results DB mychiptime.com ""Powered by RunFAR Race Services"".",https://www.mychiptime.com/
+AthleticLIVE tenant: domoreraces,name,AthleticLIVE tenant: domoreraces,"DoMore Race Services, Inc",https://tx.milesplit.com/timing/613/domore-race-services-inc
+AthleticLIVE tenant: domoreraces,states,unconfirmed (US assumed),TX (Houston),https://tx.milesplit.com/timing/613/domore-race-services-inc
+AthleticLIVE tenant: domoreraces,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,"Identified as DoMore Race Services, Inc: name match (inferred); RaceDirectorsHQ says it times cross-country.",https://tx.milesplit.com/timing/613/domore-race-services-inc
+AthleticLIVE tenant: speedy,name,AthleticLIVE tenant: speedy,Speedy Sneakers,https://www.racedirectorshq.com/reviews/speedy-sneakers-240/
+AthleticLIVE tenant: speedy,states,unconfirmed (US assumed),OH (Columbus) - outside this region,https://www.racedirectorshq.com/reviews/speedy-sneakers-240/
+AthleticLIVE tenant: speedy,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,"Identified as Speedy Sneakers: RaceDirectorsHQ: chip timing for road, college/HS/MS XC.",https://www.racedirectorshq.com/reviews/speedy-sneakers-240/
+AthleticLIVE tenant: wingfoot,name,AthleticLIVE tenant: wingfoot,Wingfoot Finish,https://wingfootfinish.com
+AthleticLIVE tenant: wingfoot,states,unconfirmed (US assumed),AZ (Mesa) - outside this region,https://wingfootfinish.com
+AthleticLIVE tenant: wingfoot,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,"Identified as Wingfoot Finish: own site; chip/manual/FAT for XC, road, track.",https://wingfootfinish.com
+AthleticLIVE tenant: shazam,name,AthleticLIVE tenant: shazam,ShaZam Racing,https://shazamracing.com/xc-tf
+AthleticLIVE tenant: shazam,states,unconfirmed (US assumed),"IL (inferred from Detweiller at Dark, Peoria) - outside this region",https://shazamracing.com/xc-tf
+AthleticLIVE tenant: shazam,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Identified as ShaZam Racing: own site: times 150+ XC and track events a year (FinishLynx + MYLAPS).,https://shazamracing.com/xc-tf
+AthleticLIVE tenant: runfar,website,,https://runfarusa.com,https://runfarusa.com/index.php/results
+AthleticLIVE tenant: runfar,results_url,https://live.runfarusa.com,https://www.mychiptime.com/,https://www.mychiptime.com/
+AthleticLIVE tenant: runfar,platform,AthleticLIVE,"MyChipTime.com custom results DB (own, independent; searchevent.php?id=<n>) + AthleticLIVE (live.runfarusa.com) for live track",https://www.mychiptime.com/searchevent.php?id=17279
+AthleticLIVE tenant: runfar,volume,unconfirmed,"event ids to ~17,300 on MyChipTime (all sports); fall 2026 includes many UIL district XC champs and UIL Region I, II&III-1A, III XC",https://www.mychiptime.com/
+AthleticLIVE tenant: windsortiming,website,,https://windsorrunning.com,https://windsorrunning.com/
+AthleticLIVE tenant: windsortiming,platform,AthleticLIVE,"AthleticLIVE (results.windsorrunning.com, live.windsortiming.com); occasional MeetPro (results.tfmeetpro.com/WindsorRunning/)",https://windsorrunning.com/2025.html
+AthleticLIVE tenant: windsortiming,volume,unconfirmed,"~190 track/XC meets on 2025 calendar (DCIAA, WCAC, ISL/IAC, FCPS MS, Patriot/Liberty districts, Occoquan Region, MPSSAA 3A West Region, UDel XC Inv)",https://windsorrunning.com/2025.html
+AthleticLIVE tenant: pct,website,,https://portcitytiming.com,https://portcitytiming.com/live-results/
+AthleticLIVE tenant: onthedottiming,website,,https://onthedottiming.com,https://onthedottiming.com/results/
+AthleticLIVE tenant: gingerbread,website,,https://www.gingerbreadtiming.com,https://www.gingerbreadtiming.com/results
+NTX Timing,notes,OSSAA 5A-6A state TF 2025; UIL districts.,"OSSAA 5A-6A state TF 2025; UIL districts. Rebranding to RUN|TIME Results from Jan 2027 (runtimeresults.com; MileSplit profile ""RunTime Results"", Springtown TX).",https://runtimeresults.com/
+Cowtown Timing,states,TX? (unconfirmed),"TX (Fort Worth / DFW), OK",https://tx.milesplit.com/timing/967/cowtown-timing
+Cowtown Timing,notes,," RaceDirectorsHQ: timing for XC, track and field and road races in DFW; also an OK MileSplit profile (ok.milesplit.com/timing/1610).",https://www.racedirectorshq.com/us/race-timers/texas/?page=2
+Fulton Accurate Timing,states,unconfirmed,NY (New Paltz),https://ny.milesplit.com/timing/419/fulton-accurate-timing
+Timing Inc.,name,Timing Inc.,TimingInc.com (Timing Inc.),https://sc.milesplit.com/timing/789/timinginccom
+Timing Inc.,states,unconfirmed,SC (Newberry),https://sc.milesplit.com/timing/789/timinginccom
+Delta Timing Group,states,unconfirmed,TN (Seymour),https://tn.milesplit.com/timing/70/delta-timing-group
+Wilbur Race Systems,states,RI,MA (Charlton); RI (2013 RIIL state XC),https://ma.milesplit.com/timing/216/wilbur-race-systems
+Ellington Timing,name,Ellington Timing,Knight Timing of Ellington (probable owner of ellingtontiming.anet.live),https://ct.milesplit.com/timing/734/knight-timing-of-ellington
+Ellington Timing,states,CT (inferred),CT (Ellington),https://ct.milesplit.com/timing/734/knight-timing-of-ellington
+Northeast Sports Timing,states,CT (New Britain),CT (Kensington / New Britain),https://ct.milesplit.com/timing/108/north-east-sports-timing-service
+Northeast Sports Timing,notes,Hy-Tek authorized contractor.,"Hy-Tek authorized contractor. MileSplit name ""North East Sports Timing Service""; provided live results for CIAC Open championships (per search snippet).",https://ct.milesplit.com/timing/108/north-east-sports-timing-service
+FastFeet,states,GA,"GA (Winder); probable branches ""FFT Timing"" AL (Gadsden), NC (Franklin), SC (Anderson), TN (Chattanooga)",https://al.milesplit.com/timing/1551/fft-timing-alabama
+AllTrax Timing,states,"TN (TSSAA state XC/TF), TX Relays","KY (Lexington base per MileSplit), TN (TSSAA state XC/TF), TX Relays",https://ky.milesplit.com/timing/17/alltrax-timing
+Western MD Track Timing,notes,," Probably the MileSplit profiles ""Western Maryland F.A.T."" (Washington County MD) / ""wmtiming"".",https://md.milesplit.com/timing/257/western-maryland-fat
+Precision Timing Services,notes,Own site expired.,"Own site expired. Tenant slug p1timing may instead belong to Precision One Timing (Gretna LA, MileSplit la profile 933) - unconfirmed.",https://la.milesplit.com/timing/933/precision-one-timing
+Atlantic Coast Timing Systems,states,VA (Hampton),VA (Virginia Beach / Hampton); also an SC MileSplit profile,https://va.milesplit.com/timing/121/atlantic-coast-timing
+Ultimate Sports (USP Sports),name,Ultimate Sports (USP Sports),Ultimate Sports Productions (USP Sports),https://de.milesplit.com/timing/131/ultimate-sports-productions
+Ultimate Sports (USP Sports),states,DE,DE (Wilmington),https://de.milesplit.com/timing/131/ultimate-sports-productions
+Runner's High,notes,, Possibly The Runner's High / RunHigh.com of Grove City PA (own-site HTML results; PIAA D9 XC) - see new-rows file; unconfirmed.,https://www.runhigh.com
+Xpress Timing,notes,, Also timed USATF Alabama XC 2024 (alabama.usatf.org PDF).,https://alabama.usatf.org/USATF-Alabama/media/USATF-Alabama/2024-11-16-Alabama-Cross-Country-Results.pdf
