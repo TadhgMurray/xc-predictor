@@ -134,7 +134,7 @@ def secondsOf(mark):
     s = 0.0
     for p in parts:
         s = s * 60 + p
-    return s
+    return round(s, 3)
 
 
 def metersOf(title):
@@ -143,7 +143,7 @@ def metersOf(title):
     m = re.search(r"(\d+(?:\.\d+)?)\s*(k|km)\b", t)
     if m:
         return float(m.group(1)) * 1000
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(meter|metre|m)\b", t)
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(meters?|metres?|m)\b", t)
     if m:
         return float(m.group(1))
     m = re.search(r"(\d+(?:\.\d+)?)\s*mile", t)
