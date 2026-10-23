@@ -101,6 +101,11 @@ async def main(meet_id):
         print(f"   landed on {page.url}")
         for method, status, n, u, body in calls:
             print(f"   {method} {status} {n:>8,}  {u[:120]}" + (f"  body {body[:100]!r}" if body else ""))
+        # what the track results page loads instead of results
+        r = await page.evaluate("""async () => {
+            const r = await fetch('/api/v1/Meet/GetEventListData', {headers: {'anet-appinfo': 'web:web:0:0'}});
+            return (await r.text()).slice(0, 400); }""")
+        print(f"   GetEventListData starts: {r!r}")
 
         info, events, event_divs = await S.getMeetDataTF(page, meet_id)
         jwt = info.get("jwtMeet", "")
@@ -111,13 +116,20 @@ async def main(meet_id):
             await browser.close()
             return
         div_id, n_events = by_div.most_common(1)[0]
-        one = next(ed for ed in event_divs if ed.get("d") == div_id)
-        short = (events.get(one.get("e")) or {}).get("event_short")
-        print(f"   division {div_id}: {n_events} events (one of them {short!r})")
-        for name, body in (("divId + eventShort (today's call)", {"divId": div_id, "eventShort": short}),
-                           ("divId alone", {"divId": div_id}),
-                           ("divId + empty eventShort", {"divId": div_id, "eventShort": ""}),
-                           ("meetId alone", {"meetId": meet_id})):
+        one = next(ed for ed in event_divs
+                   if ed.get("d") == div_id and ed.get("e") in events)
+        short = events[one["e"]]["event_short"]
+        gender = events[one["e"]]["gender"]
+        print(f"   division {div_id}: {n_events} events (one of them {short!r}, gender {gender!r})")
+        # ! THE BODY getMeetResultsTF SENDS (run 1 left out gender and the two
+        #   flags, and even today's call came back empty)
+        flags = {"rawResults": False, "showTips": False}
+        for name, body in (
+                ("today's call: gender+divId+eventShort", {"gender": gender, "divId": div_id, "eventShort": short, **flags}),
+                ("gender+divId, no event", {"gender": gender, "divId": div_id, **flags}),
+                ("gender+divId, empty event", {"gender": gender, "divId": div_id, "eventShort": "", **flags}),
+                ("divId, no gender, no event", {"divId": div_id, **flags}),
+                ("gender+eventShort, no division", {"gender": gender, "eventShort": short, **flags})):
             r = await page.evaluate(_POST_JS, {"token": jwt, "body": body})
             rows, evs = [], Counter()
             try:
