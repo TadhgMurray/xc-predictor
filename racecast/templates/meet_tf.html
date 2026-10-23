@@ -176,7 +176,7 @@
    (owner, 2026-10-09): the first scored division's top five per gender;
    "All team scores" opens the tab with every division and team. #}
 {% set d0 = scored.divisions|selectattr('teams')|first %}
-<aside class="rc-side">
+<aside class="rc-side" data-repeats="teams">
   <h2>Team scores <small>{{ d0.name if d0.name and d0.name != "All divisions" else "top 5" }}</small></h2>
   {% for g, g_label in [("M", "Boys"), ("F", "Girls")] %}
   {% set st = (d0.official and d0.official[g]) or d0.teams[g] %}

@@ -159,7 +159,7 @@
 {# ★ THE TEAM FIGHT BESIDE THE EVENTS, as meet_tf.html's card: the first
    scored division's top five per gender; "All team points" opens the tab
    with every division and team. #}
-<aside class="rc-side">
+<aside class="rc-side" data-repeats="teams">
   <h2>Team points <small>{{ d0.name if d0.name and d0.name != "All divisions" else "top 5" }}</small></h2>
   {% for g, g_label in [("M", "Boys"), ("F", "Girls")] %}
   {% set st = (official_on and d0.official and d0.official[g]) or d0.teams[g] %}

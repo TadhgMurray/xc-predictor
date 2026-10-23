@@ -235,9 +235,11 @@ main.rc .rc-findlist .none { padding: .5rem .75rem; font-size: .85rem; color: va
   main.rc .rc-findlist { left: 0; right: auto; width: 100%; }
 }
 
-/* the Teams tab open: the sidebar's top ten would repeat it (race-page.js) */
-main.rc.rc-on-teams .rc-side { display: none; }
-main.rc.rc-on-teams .rc-grid { grid-template-columns: minmax(0, 1fr); }
+/* the open tab is what the side card shows (its data-repeats names the
+   tab: race-page.js sets rc-side-away), so the card steps aside. Every
+   other side card stays, whatever the tab is called. */
+main.rc.rc-side-away .rc-side { display: none; }
+main.rc.rc-side-away .rc-grid { grid-template-columns: minmax(0, 1fr); }
 
 /* "All N teams" is a button that reads as the link it replaced */
 main.rc button.rc-more-teams { background: none; border: 0; padding: 0; cursor: pointer;
@@ -311,9 +313,9 @@ main.rc .rc-win .mk { color: var(--muted); font-variant-numeric: tabular-nums; m
 main.rc .rc-tscores-plain tr { cursor: default; }
 main.rc .rc-side .rec-gender { margin: .8rem 0 .3rem; }
 /* the course page's Recent meets card has no conversion to swap in on the
-   track tab: the grid goes to one column instead of an empty sidebar */
-main.rc.rc-on-track .rc-grid:has(> .rc-side:not(:has(.rc-conv))) { grid-template-columns: minmax(0, 1fr); }
-main.rc.rc-on-track .rc-side:not(:has(.rc-conv)) { display: none; }
+   track tab, so it simply stays (2026-10-23: race-page.js sets rc-on-track
+   only where a .rc-conv card exists; a side card no longer vanishes with a
+   tab -- owner, "make it so that things like that don't happen") */
 /* the plain sidebar cards (course, venue, TF meet): long meet names wrap
    inside the 280px column instead of pushing past it */
 main.rc .rc-tscores-plain { width: 100%; table-layout: fixed; }
@@ -402,13 +404,6 @@ main.rc.home-rc .rc-side h2 { font-size: 1.1rem; }
 main.rc.home-rc .recent-block { margin-top: 0; }
 main.rc.home-rc .hm-more { font-weight: 600; color: var(--link, #1a4f8b); text-decoration: none; font-size: .92rem; white-space: nowrap; }
 main.rc.home-rc .hm-more:hover { text-decoration: underline; }
-/* ! THE TEAMS TAB KEEPS THE SIDE CARD. race-page.js marks <main>
-     rc-on-teams for a race's Teams tab, whose full table replaces the
-     sidebar's top ten; here the side card is Latest results, not teams. */
-main.rc.home-rc.rc-on-teams .rc-side { display: block; }
-@media (min-width: 761px) {
-  main.rc.home-rc.rc-on-teams .rc-grid { grid-template-columns: minmax(0, 1fr) 280px; }
-}
 
 /* ★ ONE ROW OF LEVEL TABS (owner, 2026-10-10): home.js sets data-level on
    .rankings and marks it hm-levels-on; only then do the other levels hide,
@@ -785,9 +780,9 @@ main.pred-page.rc #output .rc-tscores td.tpts small { display: block; font-weigh
 main.pred-page.rc #output .rc-tscores-plain td.tpts { width: 3.6rem; }
 main.pred-page.rc #output .rc-lead { margin: 0 0 .5rem; }
 /* the Teams tab open: that race's side card steps aside (race-page.js puts
-   rc-on-teams on the race's own .team-result, not on <main>) */
-main.pred-page.rc .team-result.rc-on-teams .rc-side { display: none; }
-main.pred-page.rc .team-result.rc-on-teams .rc-grid { grid-template-columns: minmax(0, 1fr); }
+   rc-side-away on the race's own .team-result, not on <main>) */
+main.pred-page.rc .team-result.rc-side-away .rc-side { display: none; }
+main.pred-page.rc .team-result.rc-side-away .rc-grid { grid-template-columns: minmax(0, 1fr); }
 /* the finder (2026-10-10): race.html's box, ending the tab bar after the
    scoring line, a step narrower so the bar stays one line beside the card */
 main.pred-page.rc #output .rc-tbar .pred-find { margin-left: 0; width: 190px; }

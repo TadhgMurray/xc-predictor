@@ -3453,7 +3453,7 @@ function teamSideCard(d) {
   const tip = (anySim
     ? `Win chances from ${(d.sim.draws || 0).toLocaleString()} simulated races. ` : "")
     + "The full table is under Teams; the dual meet and best seven have their own tab.";
-  return `<aside class="rc-side">
+  return `<aside class="rc-side" data-repeats="teams">
       <h2>Team scores <small>top 5 places</small></h2>
       <table class="rc-tscores rc-tscores-plain"><tbody>${rows}</tbody></table>
       <p class="rc-tip">${tip}</p>
@@ -3499,7 +3499,7 @@ function pointsSideCard(d, teams) {
       esc(t.score_display ?? String(t.score))}${
       win ? `<small>${win} win</small>` : ""}</td></tr>`;
   }).join("");
-  return `<aside class="rc-side">
+  return `<aside class="rc-side" data-repeats="teams">
       <h2>Event points <small>places that scored</small></h2>
       <table class="rc-tscores rc-tscores-plain"><tbody>${rows}</tbody></table>
       <p class="rc-tip">Most points wins: 10-8-6-5-4-3-2-1 to the first eight

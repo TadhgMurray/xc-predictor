@@ -205,7 +205,7 @@
       <a href="/report?about={{ request.path|urlencode }}">Report it →</a></div>
 </div>
 
-<aside class="rc-side">
+<aside class="rc-side"{% if scores and scores.teams %} data-repeats="teams"{% endif %}>
   {% if scores and scores.teams %}
   <h2>Team scores <small>top 5 places</small></h2>
   <table class="rc-tscores">

@@ -14,7 +14,7 @@
   //   fetch, long after this script ran). wireTabs(root) wires the tabs and
   //   panels inside one root; the page's own <main> is the first root, and
   //   window.rcTabs(root) wires one drawn later. A root other than <main>
-  //   carries its own rc-on-teams / rc-on-track, so two predicted races on
+  //   carries its own rc-side-away / data-rc-tab, so two predicted races on
   //   one page do not fold each other's side cards.
   var roots = [];
   var panelSeq = 0;
@@ -95,8 +95,19 @@
       panels.forEach(function (p) { p.hidden = p.dataset.panel !== name; });
       // ! THE FULL TEAMS TABLE AND THE SIDEBAR'S TOP TEN ARE ONE LIST TWICE
       //   (owner, 2026-10-07, on "All teams"): with the Teams tab open the
-      //   sidebar steps aside and the table takes the width
-      root.classList.toggle("rc-on-teams", name === "teams");
+      //   sidebar steps aside and the table takes the width.
+      // ★ ONLY A SIDE CARD THAT SAYS SO (owner, 2026-10-23: the course page's
+      //   Team bests was "the only tab without the recent meets on the side
+      //   ... make it so that things like that don't happen all over the
+      //   site"). It went by the tab's NAME, so every page with a "teams" tab
+      //   lost its side card, whatever the card held -- Recent meets, On this
+      //   day. Now a card that repeats a tab carries data-repeats="<tab>",
+      //   and only it steps aside.
+      var away = false;
+      root.querySelectorAll(".rc-side[data-repeats]").forEach(function (side) {
+        if ((" " + side.dataset.repeats + " ").indexOf(" " + name + " ") >= 0) away = true;
+      });
+      root.classList.toggle("rc-side-away", away);
       // ★ WHICH TAB IS OPEN, for CSS (owner, 2026-10-12, the Teams tab: the
       //   finder and the grade select filter result rows only, so on Teams
       //   and On the track they sat in the bar doing nothing -- hidden there)
@@ -108,9 +119,12 @@
         var mine = el.dataset.sideFor;
         el.hidden = has(name) && (name === "xc" || name === "tf") && has(mine) && mine !== name;
       });
-      // the conversion tab swaps the sidebar for the finishers (fillConv)
-      root.classList.toggle("rc-on-track", name === "track");
-      if (name === "track" && root === main && typeof fillConv === "function") fillConv();
+      // the conversion tab swaps the sidebar for the finishers (fillConv) --
+      // ! ONLY WHERE THERE IS A FINISHERS CARD (2026-10-23): the course
+      //   page's On the track has none, and its whole side card went blank
+      var conv = name === "track" && !!root.querySelector(".rc-conv");
+      root.classList.toggle("rc-on-track", conv);
+      if (conv && root === main && typeof fillConv === "function") fillConv();
       root.querySelectorAll(".rc-tabs [data-tab]").forEach(function (a) {
         var on = a.dataset.tab === name;
         a.classList.toggle("is-on", on);   // the site's .seg-btn.is-on
