@@ -168,11 +168,19 @@ if [ "$SCRAPE" -eq 1 ]; then
   export SEED_AHEAD="${XCP_NIGHTLY_SEED_AHEAD:-150}"
   export DRY_BLOCKS_TO_STOP="${XCP_NIGHTLY_DRY_BLOCKS:-2}"
   export TFRRS_SEED_AHEAD="${XCP_NIGHTLY_TFRRS_AHEAD:-300}"
-  scrape scrape_anet "$PY" -u scripts/launcher.py &
-  pa=$!
+  # ! XCP_NIGHTLY_ANET=0 leaves athletic.net out (2026-10-23): athletic.net
+  #   blocked the old server and agreed only to a small scrape from the
+  #   owner's side computer (ISSUES-RUNNING, 2026-10-12), so the server
+  #   scrapes it only once they have said the server may.
+  if [ "${XCP_NIGHTLY_ANET:-1}" = "0" ]; then
+    echo "  scrape_anet: off (XCP_NIGHTLY_ANET=0)" | tee -a "$SUMMARY"
+  else
+    scrape scrape_anet "$PY" -u scripts/launcher.py &
+    pa=$!
+  fi
   scrape scrape_tfrrs "$PY" -u tfrrs/driver/launch_tfrrs.py &
   pb=$!
-  wait "$pa"; wait "$pb"
+  [ -n "${pa:-}" ] && wait "$pa"; wait "$pb"
   for nm in scrape_anet scrape_tfrrs; do
     [ -f "$LOGDIR/$nm.failed" ] && FAILED="$FAILED $nm"
   done
