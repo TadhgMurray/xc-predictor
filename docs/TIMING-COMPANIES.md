@@ -361,3 +361,14 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
   - **Restricted:** Penn Relays results only with its permission.
   - The existing Hy-Tek parser read Ocean Breeze, LSU, Concordia and RITCA samples. Event lines with the gender last (youth pages) are now read too.
   - The pass hit the session's web-search limit before Brooks PR, Glenbard, the Nike regionals and the Kansas/Texas Relays.
+- **Low-AthleticLIVE states (2026-10-23):** `docs/timing_passes/gap_states.csv` checked 226 big 2025-26 meets in GA, FL, UT, TX, NJ, WA, ID, NC and SC. ID, NC and SC are thin because the session's web-search limit ran out.
+  - **FL:** `florida.tfrrs.org` carries 73% of the big meets. FHSAA uses TFRRS for official stats: all district, region and state track meets via `state_series.html?year=2026`, XC regions and state, and the big invitationals, with grade. TFRRS is DirectAthletics/FloSports, which we already scrape for college, but our tfrrs module has no HS state subdomain support.
+  - **UT:** SportTrax/MeetTrax has 100%: state, divisional, region and invitationals, with full JSON (grade and team) in the page. Run It Green Timing is new.
+  - **NJ:** `mctrack.org`, a coaches' site, has every NJSIAA sectional, group and Meet of Champions result, 1996–2026, as HTML.
+  - **WA:** WIAA posts state meets as PDFs (GC Racing XC; Hy-Tek track under the PNTFO license).
+  - **GA:** MileSplit has 96%. Only `ghsa.net` state Hy-Tek PDFs are independent.
+  - **TX:** AthleticLIVE 66%. MyChipTime (RunFAR) carries the UIL regions and state, but duplicates AthleticLIVE. `uiltexas.org` posts state XC as HTML.
+  - **ID:** AthleticLIVE has all the big meets.
+  - **NC:** AthleticLIVE 59%, MeetPro (Mitchell) 29%. `nchsaa.org` posts state Hy-Tek PDFs.
+  - **SC:** MeetPro (Mitchell) 54%. CFPI's own site has region pages.
+  - Corrections (Half-Mile = TrackScoreboard and FHSAA state track; AllTrax = UIL state track; GC Racing = WIAA state XC; Perfect Timing Group = AthleticLIVE `perfecttiming`; Fulton Accurate Timing also NJ) are listed in the pass report and not yet applied.
