@@ -156,3 +156,18 @@ def test_a_meet_with_no_results_in_any_division_is_noted_empty(monkeypatch):
                      [{"IDMeetDiv": 1}], perDiv)
     assert got == (0, True)
     assert (288317, "XC") in SR.EMPTY_FACTS
+
+
+def test_results_posted_win_over_a_later_listed_date(monkeypatch):
+    """owner, 2026-10-23: meet 270331's results were up on Tuesday while its
+    listed date was later -- 'skipping bcs the date is today'."""
+    asked = []
+
+    async def perDiv(page, meet_id, div_id, token):
+        asked.append(div_id)
+        return [{"AthleteID": 1, "IDResult": 5}], None, None
+
+    got, saved = _perDiv(monkeypatch,
+                         {"ID": 9, "MeetDate": TOMORROW, "HasResults": 1, "jwtMeet": "t"},
+                         [{"IDMeetDiv": 1, "Result": 1}], perDiv)
+    assert got == (1, True) and asked == [1]

@@ -1395,8 +1395,13 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
             raw_date = str(meet_info.get("MeetDate") or "")[:10]
             has_results = meet_info.get("HasResults")
             today = datetime.date.today().isoformat()
+            # ! HasResults TRUE WINS OVER THE DATE (owner, 2026-10-23: a meet
+            #   whose listed date is later than the day its results went up
+            #   was "skipping bcs the date is today"): the date only decides
+            #   when athletic.net does not say
             if (has_results is not None and not has_results) or (
-                    re.match(r"^(19|20)\d\d-\d\d-\d\d$", raw_date) and raw_date > today):
+                    has_results is None and re.match(r"^(19|20)\d\d-\d\d-\d\d$", raw_date)
+                    and raw_date > today):
                 _noteEmpty(meet_id, "XC", meet_info)
                 print(f"{label} Meet {meet_id} (XC): no results yet "
                       f"({raw_date or 'no date'}, HasResults={has_results})")
@@ -1460,8 +1465,13 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
             raw_date = str(meet_info.get("MeetDate") or "")[:10]
             has_results = meet_info.get("HasResults")
             today = datetime.date.today().isoformat()
-            if (has_results is not None and not has_results) or (re.match(r"^(19|20)\d\d-\d\d-\d\d$", raw_date)
-                                        and raw_date > today):
+            # ! HasResults TRUE WINS OVER THE DATE (owner, 2026-10-23: a meet
+            #   whose listed date is later than the day its results went up
+            #   was "skipping bcs the date is today"): the date only decides
+            #   when athletic.net does not say
+            if (has_results is not None and not has_results) or (
+                    has_results is None and re.match(r"^(19|20)\d\d-\d\d-\d\d$", raw_date)
+                    and raw_date > today):
                 _noteEmpty(meet_id, "XC", meet_info)
                 print(f"{label} Meet {meet_id} (XC): no results yet "
                       f"({raw_date or 'no date'}, HasResults={has_results})")

@@ -31,6 +31,7 @@ import sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 os.environ.setdefault("XCP_DB_QUIET", "1")
+import database                                               # noqa: E402
 from database import getConn                                  # noqa: E402
 
 STATES = {0: "due", 1: "done", 2: "failed", 3: "claimed", 4: "no meet here"}
@@ -117,7 +118,9 @@ def main():
                         INSERT INTO meet_queue (meet_id, sport, source, scraped)
                         VALUES (%s, %s, %s, 0)
                         ON CONFLICT DO NOTHING""", (mid, sport, source))
-                    cur.execute("""UPDATE meet_queue SET scraped = 0
+                    # ahead of the backlog (database.ensureQueuePriority)
+                    pri = ", priority = 1" if database.ensureQueuePriority(cur) else ""
+                    cur.execute(f"""UPDATE meet_queue SET scraped = 0{pri}
                                    WHERE meet_id = %s AND sport = %s
                                      AND source = %s""", (mid, sport, source))
                     done += cur.rowcount

@@ -2926,9 +2926,72 @@ _CLAIM_ORDER = ("ASC" if os.environ.get("ANET_OLDEST_FIRST", "") not in ("", "0"
                 else "DESC")
 
 
+# ★ A MEET SOMEONE ASKED FOR IS SCRAPED FIRST (owner, 2026-10-23: two meets
+#   approved as missing results were requeued and the night's scrape never
+#   reached them). Claims go newest id first, and the frontier keeps the
+#   queue thousands deep, so a requeued older meet (270331) waited behind
+#   every newer one until the time bound. meet_queue.priority > 0 marks the
+#   asks -- fixes' "missing" approval, an upload's athletic.net/tfrrs link,
+#   find_meet.py --requeue -- and each claim takes those first. A claim
+#   clears the mark.
+_QUEUE_PRIORITY = {"checked": False, "ready": False}
+
+
+def ensureQueuePriority(cursor):
+    """meet_queue.priority exists (added once, cheaply: a constant default
+    is a catalog change) -> True; False when the table is not there."""
+    if _QUEUE_PRIORITY["checked"]:
+        return _QUEUE_PRIORITY["ready"]
+    cursor.execute("""SELECT
+        (SELECT count(*) FROM information_schema.tables WHERE table_name = 'meet_queue'),
+        (SELECT count(*) FROM information_schema.columns
+          WHERE table_name = 'meet_queue' AND column_name = 'priority')""")
+    row = cursor.fetchone() or (0, 0)
+    has_table, has_col = (row[0], row[1]) if not isinstance(row, dict) else tuple(row.values())[:2]
+    if has_table and not has_col:
+        cursor.execute("ALTER TABLE meet_queue ADD COLUMN IF NOT EXISTS priority smallint NOT NULL DEFAULT 0")
+        cursor.execute("CREATE INDEX IF NOT EXISTS meet_queue_priority_idx ON meet_queue (meet_id) "
+                       "WHERE priority > 0")
+        has_col = 1
+    _QUEUE_PRIORITY["checked"] = True
+    _QUEUE_PRIORITY["ready"] = bool(has_table and has_col)
+    return _QUEUE_PRIORITY["ready"]
+
+
 def _claimOneSport(cursor, limit, sport, states=(0,)):
     if limit <= 0:
         return []
+    asked = []
+    # its own savepoint: a failure here must not undo the claims this
+    # transaction already made (the other sport's half)
+    cursor.execute("SAVEPOINT claim_asked")
+    try:
+        if ensureQueuePriority(cursor):
+            cursor.execute(
+                """
+                UPDATE meet_queue
+                SET scraped = 3, priority = 0
+                WHERE (meet_id, sport, source) IN (
+                    SELECT meet_id, sport, source
+                    FROM meet_queue
+                    WHERE priority > 0 AND scraped = ANY(%s) AND source = 'anet' AND sport = %s
+                    ORDER BY meet_id DESC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT %s
+                )
+                RETURNING meet_id, sport
+                """,
+                (list(states), sport, limit),
+            )
+            asked = list(cursor.fetchall())
+        cursor.execute("RELEASE SAVEPOINT claim_asked")
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[DB] priority claim skipped ({type(e).__name__}: {e})", flush=True)
+        cursor.execute("ROLLBACK TO SAVEPOINT claim_asked")
+        asked = []
+    limit -= len(asked)
+    if limit <= 0:
+        return asked
     cursor.execute(
         f"""
         UPDATE meet_queue
@@ -2945,7 +3008,7 @@ def _claimOneSport(cursor, limit, sport, states=(0,)):
         """,
         (list(states), sport, limit),
     )
-    return list(cursor.fetchall())
+    return asked + list(cursor.fetchall())
 
 # _buildMeetSportDict
 # Purpose: Reshapes flat (meet_id, sport) rows into a dict grouping all

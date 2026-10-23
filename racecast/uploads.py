@@ -731,8 +731,7 @@ def decide(cur, uid, action, admin_email, note=None):
         if up["status"] not in ("submitted", "flagged") or not target:
             return up["status"], "Only a waiting athletic.net or tfrrs meet link can be queued."
         mid, sport, src = target
-        cur.execute("""INSERT INTO meet_queue (meet_id, sport, scraped, source) VALUES (%s, %s, 0, %s)
-                       ON CONFLICT (meet_id, sport, source) DO UPDATE SET scraped = 0""", (mid, sport, src))
+        FX.requeue(cur, mid, sport, src)
         applied = {"mechanism": "meet_queue", "meet_id": mid, "sport": sport, "source": src}
         cur.execute("""UPDATE result_upload SET status = 'approved', decided_at = now(), decided_by = %s,
                               decision_note = %s, applied = %s WHERE id = %s""",

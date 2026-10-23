@@ -398,13 +398,30 @@ def applySamePerson(conn, fx, keep):
             "undo": f"python scripts/link_profile_school.py --undo {old}"}
 
 
+def requeue(cur, mid, sport, src):
+    """Back into the scrape queue, ahead of the backlog (database.
+    ensureQueuePriority: claims take priority rows first)."""
+    try:
+        import database
+        first = database.ensureQueuePriority(cur)
+    except Exception:                                    # noqa: BLE001
+        first = False
+    if first:
+        cur.execute("""INSERT INTO meet_queue (meet_id, sport, scraped, source, priority)
+                       VALUES (%s, %s, 0, %s, 1)
+                       ON CONFLICT (meet_id, sport, source) DO UPDATE SET scraped = 0, priority = 1""",
+                    (mid, sport, src))
+    else:
+        cur.execute("""INSERT INTO meet_queue (meet_id, sport, scraped, source) VALUES (%s, %s, 0, %s)
+                       ON CONFLICT (meet_id, sport, source) DO UPDATE SET scraped = 0""", (mid, sport, src))
+
+
 def applyMissing(cur, fx):
     q = fx["detail"].get("queue")
     if not q:
         return None
     mid, sport, src = q
-    cur.execute("""INSERT INTO meet_queue (meet_id, sport, scraped, source) VALUES (%s, %s, 0, %s)
-                   ON CONFLICT (meet_id, sport, source) DO UPDATE SET scraped = 0""", (mid, sport, src))
+    requeue(cur, mid, sport, src)
     return {"mechanism": "meet_queue (find_meet.py --requeue)", "meet_id": mid, "sport": sport,
             "source": src}
 
