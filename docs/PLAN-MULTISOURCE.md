@@ -17,7 +17,7 @@ becomes one source among many, used for what no one else has.
 
 | Piece | File | What it does |
 |---|---|---|
-| Polite parallel fetcher | `sources/fetch.py` | Allows one request in flight per host, `XCP_SOURCE_INTERVAL` (default 6 s) apart with jitter. Runs hosts in parallel under a global cap (`XCP_SOURCE_IN_FLIGHT`, default 16). Honours robots.txt and its Crawl-delay. A 429 or 503 doubles that host's interval. Keeps every body under `XCP_RAW_DIR` (`/srv/raw`): gzipped, indexed in sqlite, refetched with If-None-Match / If-Modified-Since. A finished meet is never fetched twice (`max_age`). |
+| Polite parallel fetcher | `sources/fetch.py` | Allows one request in flight per host, `XCP_SOURCE_INTERVAL` (default 10 s) apart with jitter. Runs hosts in parallel under a global cap (`XCP_SOURCE_IN_FLIGHT`, default 8). Honours robots.txt and its Crawl-delay. A 429 or 503 doubles that host's interval. Keeps every body under `XCP_RAW_DIR` (`/srv/raw`): gzipped, indexed in sqlite, refetched with If-None-Match / If-Modified-Since. A finished meet is never fetched twice (`max_age`). |
 | Hy-Tek report parser | `sources/hytek.py` | Reads Meet Manager results reports from Crystal Reports HTML (positioned divs), `<pre>` pages and PDFs (`pdftotext -layout`, poppler-utils). Gives the meet name, date, venue and timer, plus each event's gender, distance and rows (place, name, grade, school, time, points). Team scores are skipped. Checked on a real YenTiming page: 44 of 44 rows parsed. |
 | Tests | `tests/test_sources_fetch.py`, `tests/test_sources_hytek.py` | Use synthetic names. |
 
@@ -48,4 +48,5 @@ becomes one source among many, used for what no one else has.
 
 - A 4xx means there is no robots.txt, so fetching is allowed.
 - A 5xx disallows that host for the run (RFC 9309).
-- YenTiming's robots.txt currently answers 500. The strict rule skips YenTiming until that changes, or until the owner decides on a per-host exception in the registry. RFC 9309 allows treating a robots.txt that has errored for 30+ days as absent.
+- **YenTiming exception.** YenTiming's robots.txt answers 500. The owner approved an exception (2026-10-23): it is crawled as if it had no robots.txt, at twice the usual interval (`ROBOTS_ERROR_ALLOW`, or `XCP_ROBOTS_ERROR_ALLOW` for more hosts).
+- **Defaults.** 10 s between one host's requests, at most 8 hosts in flight ("let's just try to be nice to all these sites").

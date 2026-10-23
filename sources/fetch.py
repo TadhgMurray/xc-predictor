@@ -15,10 +15,12 @@
 #
 # THE PIECES
 #   HostLimiter   one request in flight per host, at least `interval` seconds
+#                 (default 10)
 #                 between a host's requests (jittered); hosts run in parallel
 #   Robots        robots.txt per host, honoured, its Crawl-delay raises the
-#                 host's interval; an unreachable robots.txt allows (the
-#                 RFC 9309 rule for 4xx), a 5xx disallows for the run
+#                 host's interval; a missing robots.txt (4xx) allows, a 5xx
+#                 disallows for the run (RFC 9309) unless the host is on
+#                 ROBOTS_ERROR_ALLOW
 #   RawStore      every fetched body, gzipped on disk by content hash, with a
 #                 sqlite index (url -> status, etag, last-modified, sha); a
 #                 refetch sends If-None-Match / If-Modified-Since, a 304 costs
@@ -47,7 +49,11 @@ import requests
 USER_AGENT = ("racecast-results/1.0 (+https://racecast.co/about#results; "
               "results for high school runners; contact via the site)")
 
-DEFAULT_INTERVAL = float(os.environ.get("XCP_SOURCE_INTERVAL", "6"))   # s per host
+# ★ GENTLE BY DEFAULT (owner, 2026-10-23: "let's just try to be nice to all
+#   these sites"): 10 s between one host's requests, and never more than 8
+#   hosts in flight at once. A busy week is still hours, not days, because
+#   the hosts run side by side.
+DEFAULT_INTERVAL = float(os.environ.get("XCP_SOURCE_INTERVAL", "10"))  # s per host
 JITTER = 0.3                                                       # +-30%
 TIMEOUT = 30
 RAW_DIR = os.environ.get("XCP_RAW_DIR", "/srv/raw")
@@ -97,14 +103,25 @@ class HostLimiter:
 # Robots
 # ------------------------------------------------------------------ #
 
+# ★ A BROKEN robots.txt THE OWNER HAS LOOKED AT (2026-10-23): YenTiming's
+#   answers 500 (nginx), which RFC 9309 reads as "disallow everything" --
+#   a server fault, not a wish. The owner: "you can make an exception for
+#   it." These hosts are crawled as if they had no robots.txt, at twice the
+#   usual interval, and any real robots.txt they publish later wins again.
+#   XCP_ROBOTS_ERROR_ALLOW adds more (comma-separated hosts).
+ROBOTS_ERROR_ALLOW = {"results.yentiming.com"} | {
+    h.strip().lower() for h in os.environ.get("XCP_ROBOTS_ERROR_ALLOW", "").split(",") if h.strip()}
+
+
 class Robots:
     """robots.txt per host, fetched once per run. get(url) -> (allowed,
     crawl_delay or None)."""
 
-    def __init__(self, getter=None):
+    def __init__(self, getter=None, allow_on_error=None):
         self._getter = getter or (lambda u: requests.get(
             u, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT))
         self._cache = {}
+        self.allow_on_error = ROBOTS_ERROR_ALLOW if allow_on_error is None else set(allow_on_error)
 
     def _load(self, scheme, host):
         url = f"{scheme}://{host}/robots.txt"
@@ -113,6 +130,8 @@ class Robots:
             status, text = r.status_code, r.text
         except Exception:                                   # noqa: BLE001
             return None, False          # unreachable host: skip it this run
+        if status >= 500 and host in self.allow_on_error:
+            return None, "error-allowed"
         if status >= 500:
             return None, False
         if status >= 400:
@@ -128,6 +147,8 @@ class Robots:
             self._cache[host] = self._load(parts.scheme or "https", host)
         rp, ok = self._cache[host]
         if rp is None:
+            if ok == "error-allowed":
+                return True, 2 * DEFAULT_INTERVAL      # allowed, and gentler
             return ok, None
         return rp.can_fetch(USER_AGENT, url), rp.crawl_delay(USER_AGENT)
 
@@ -211,7 +232,7 @@ class Fetcher:
     """fetch(url) politely; fetchAll(urls) in parallel across hosts."""
 
     def __init__(self, store, limiter=None, robots=None, getter=None,
-                 max_in_flight=int(os.environ.get("XCP_SOURCE_IN_FLIGHT", "16"))):
+                 max_in_flight=int(os.environ.get("XCP_SOURCE_IN_FLIGHT", "8"))):
         self.store = store
         self.limiter = limiter or HostLimiter()
         self.robots = robots or Robots()

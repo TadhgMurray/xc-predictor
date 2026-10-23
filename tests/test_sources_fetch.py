@@ -111,3 +111,14 @@ def test_a_429_doubles_that_hosts_interval(tmp_path):
     asyncio.run(f.fetch("https://busy.example/m"))
     assert f.limiter.intervalFor("busy.example") == 0.1
     assert f.limiter.intervalFor("other.example") == 0.05
+
+
+def test_a_host_on_the_error_allow_list_is_crawled_gently(tmp_path):
+    r = F.Robots(getter=lambda u: Resp(500), allow_on_error={"results.yentiming.com"})
+    assert r.get("https://results.yentiming.com/2026/cross/") == (True, 2 * F.DEFAULT_INTERVAL)
+    assert r.get("https://other.example/x") == (False, None)
+    assert "results.yentiming.com" in F.ROBOTS_ERROR_ALLOW
+
+
+def test_gentle_defaults():
+    assert F.DEFAULT_INTERVAL >= 10
