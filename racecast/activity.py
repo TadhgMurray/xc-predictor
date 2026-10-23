@@ -296,24 +296,53 @@ def _meetNames(cur, rows):
     return names
 
 
+# ★ THE NEWEST RACE OF A SCRAPE DAY, FROM EVERY ROW, NOT THE SAMPLE (owner,
+#   2026-10-23: What's new read "New results through Sat, Nov 3" -- 2012).
+#   _SCRAPED_SQL keeps the 400 most recently scraped meets per sport for the
+#   listing, and a night that ends with the tfrrs retry list re-scraping
+#   hundreds of old meets fills all 400 with them: the night's 380 new cross
+#   country meets fell outside, and the newest race left in the sample was
+#   from 2012. This asks the whole day; a race dated after the day it was
+#   scraped, or before 2000, is not a real one (latestRaceDay's rule).
+_LATEST_SQL = """
+    SELECT left(scraped_at::text, 10) AS day,
+           max(left(date, 10)) FILTER (WHERE left(date, 10) <= left(scraped_at::text, 10)
+                                         AND left(date, 10) >= '2000')
+    FROM   {table}
+    WHERE  scraped_at >= %(since)s
+    GROUP  BY 1
+"""
+
+
 def scrapeEvents(conn, days=3, limit=400):
     """One event per day: the meets scraped (or re-scraped) that day, both
     sports and both feeds, the biggest first."""
     since = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
-    rows = []
+    rows, latest = [], {}
     with conn.cursor() as cur:
         cur.execute("SET LOCAL statement_timeout = '8s'")
         for sport, table in (("XC", "results"), ("TF", "results_tf")):
             cur.execute(_SCRAPED_SQL.format(table=table),
                         {"sport": sport, "since": since, "lim": limit})
             rows += cur.fetchall()
+        for table in ("results", "results_tf"):
+            try:
+                cur.execute(_LATEST_SQL.format(table=table), {"since": since})
+                for day, d in cur.fetchall():
+                    if d and (day not in latest or d > latest[day]):
+                        latest[day] = d
+            except Exception:                               # noqa: BLE001
+                conn.rollback()
+                cur.execute("SET LOCAL statement_timeout = '8s'")
         names = _meetNames(cur, rows)
     conn.rollback()
-    return scrapeDays(rows, names)
+    return scrapeDays(rows, names, latest)
 
 
-def scrapeDays(rows, names):
-    """rows: (sport, source, meet_id, race_date, n, scraped_at text). Pure."""
+def scrapeDays(rows, names, latest_by_day=None):
+    """rows: (sport, source, meet_id, race_date, n, scraped_at text);
+    latest_by_day: {scrape day: newest real race date} over EVERY row scraped
+    that day (scrapeEvents), which wins over the sample's. Pure."""
     by_day = {}
     for sport, source, mid, day, n, scraped in rows:
         key = (scraped or "")[:10]
@@ -332,7 +361,7 @@ def scrapeDays(rows, names):
             by_feed[(i[1], i[2])] = by_feed.get((i[1], i[2]), 0) + 1
         n_xc = sum(1 for i in items if i[1] == "XC")
         n_tf = len(items) - n_xc
-        latest = latestRaceDay([i[4] for i in items], key)
+        latest = (latest_by_day or {}).get(key) or latestRaceDay([i[4] for i in items], key)
         counts = f"{len(items):,} meet{'s' if len(items) != 1 else ''}, {n_rows:,} results added"
         split = ([f"cross country {n_xc}"] if n_xc else []) + ([f"track {n_tf}"] if n_tf else [])
         out.append({"at": at, "kind": "scraped", "level": "info", "latest_day": latest,

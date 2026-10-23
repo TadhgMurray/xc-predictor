@@ -255,3 +255,15 @@ def test_the_dot_stamp_moves_only_on_new_results_or_a_recompute():
           {"kind": "pipeline", "published": True, "at": rec}]
     again = ev + [{"kind": "scraped", "latest_day": "2026-10-11", "at": datetime.datetime(2026, 10, 23, 2)}]
     assert AC.stampOf(AC.headline(ev)) == AC.stampOf(AC.headline(again))
+
+
+def test_the_newest_race_of_a_day_comes_from_every_row_not_the_sample():
+    """owner, 2026-10-23: 'New results through Sat, Nov 3' (2012) -- the
+    sample held only the tfrrs retry list's old meets"""
+    rows = [("TF", "tfrrs", 417, "2012-11-03", 30, "2026-10-23 09:20:00"),
+            ("TF", "tfrrs", 1934, "2011-05-01", 20, "2026-10-23 09:21:00")]
+    ev = AC.scrapeDays(rows, {}, {"2026-10-23": "2026-10-18"})
+    assert ev[0]["latest_day"] == "2026-10-18"
+    assert ev[0]["pub_title"] == "New results through Sun, Oct 18"
+    # without the whole-day answer, the sample's still decides (old behaviour)
+    assert AC.scrapeDays(rows, {})[0]["latest_day"] == "2012-11-03"
