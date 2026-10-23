@@ -50,3 +50,13 @@ def test_slow_names_running_pipeline_steps(tmp_path):
     b = _Buf()
     AE.recordSlow("/race/tf/:m", 28600, [], buf=b)
     assert b.got == ["Slow request /race/tf/:m"]
+
+
+def test_extension_and_in_app_browser_noise_is_dropped():
+    b = _Buf()
+    for msg in ("Unhandled rejection: Invalid call to runtime.sendMessage(). Tab not found.",
+                "ReferenceError: Can't find variable: _AutofillCallbackHandler",
+                "Unhandled rejection: Extension context invalidated."):
+        assert AE.recordJs(msg, "(inline)", 1, "/", buf=b) is False, msg
+    assert b.got == []
+    assert AE.recordJs("TypeError: x is undefined", "/static/a.js", 3, "/", buf=b) is True

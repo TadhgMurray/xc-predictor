@@ -313,7 +313,14 @@ def recordSlow(path, ms, queries=(), threshold=None, buf=None, query=None):
 #   resize callback changed layout and it deferred the rest to the next
 #   frame -- nothing failed, and no page can stop every browser saying it.
 #   usage.js drops it too; this catches pages still running the old script.
-_JS_NOISE_RX = re.compile(r"^ResizeObserver loop (completed|limit exceeded)")
+#   ★ 2026-10-23, two more that are not ours: "Invalid call to
+#   runtime.sendMessage(). Tab not found." is a browser EXTENSION's message
+#   to its own background page, and "_AutofillCallbackHandler" is a script
+#   iOS in-app browsers (Facebook, Instagram) inject for autofill. Neither
+#   is code this site ships.
+_JS_NOISE_RX = re.compile(r"^ResizeObserver loop (completed|limit exceeded)"
+                          r"|runtime\.sendMessage\(\)|_AutofillCallbackHandler"
+                          r"|^(Unhandled rejection: )?Extension context invalidated")
 
 
 def recordJs(message, script, line, path, buf=None):

@@ -87,7 +87,9 @@
     if (!file) return;
     /* the browser deferring resize callbacks a frame -- not a failure
        (app_errors._JS_NOISE_RX drops it server-side too) */
-    if (/^ResizeObserver loop (completed|limit exceeded)/.test(String(message))) return;
+    // and a browser extension's or an in-app browser's own script (2026-10-23;
+    // app_errors._JS_NOISE_RX has the same list)
+    if (/^ResizeObserver loop (completed|limit exceeded)|runtime\.sendMessage\(\)|_AutofillCallbackHandler|Extension context invalidated/.test(String(message))) return;
     errs++;
     send({ k: "x", x: { m: String(message).slice(0, 200), f: file, l: line | 0 } });
   }

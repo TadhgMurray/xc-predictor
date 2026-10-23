@@ -248,7 +248,18 @@ def initPool():
         print(f"[DB] Connection pool created ({MIN_CONN}-{MAX_CONN} connections)")
     except Exception as e:
         # Pool creation failure is fatal — nothing can run without it.
-        raise RuntimeError(f"[DB] Failed to create connection pool: {e}")
+        raise PoolUnavailable(f"[DB] Failed to create connection pool: {e}") from e
+
+# ★ A DATABASE THAT IS DOWN OR STARTING UP IS A 503, NOT A 500 (owner,
+#   2026-10-23: 37 "the database system is starting up" errors mailed in one
+#   minute after Postgres restarted). The pool's failure was a bare
+#   RuntimeError, so the site's OperationalError handler (app._db_blip: the
+#   branded 503 with Retry-After) never saw it and every page was a 500 and
+#   an error report. It is both now: still a RuntimeError for the scripts
+#   that catch one, and an OperationalError for the site.
+class PoolUnavailable(RuntimeError, psycopg2.OperationalError):
+    pass
+
 
 # closePool
 # Purpose: Closes all connections in the pool.
