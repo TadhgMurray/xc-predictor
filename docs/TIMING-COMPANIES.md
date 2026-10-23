@@ -465,3 +465,32 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
     - Results come from `/Results/pvResults?pEventId=<n>&pDivision=<name>`, every runner in one response. School is the Team column. There is never a grade.
     - The state index is complete only from about 2026-09-19. About 14,000 races since September 2023 can be reached by sequential event id, a ~16 h walk at one request every 4 s.
     - The state field is unreliable (",AR" is the form's default); take the state from the timer or the venue.
+- **Hubs, league platforms and results platforms (2026-10-23):** `docs/timing_passes/hubs_more.csv` has 49 rows. Most of the new volume is on Race Roster.
+  - **Race Roster:**
+    - **Listing:** `search.raceroster.com/search?q=<term>&l=100&p=<n>` gives event ids. `results.raceroster.com/v2/api/events/redirect/<id>` turns an id into a results code, and `/v2/api/events/<code>` gives the sub-events and the timer.
+    - **Size:** about 550 US events for 2023-2026, roughly 130-200 of them HS/MS meets (WI 62, MO 41, IL 35, TX 17, KY 15).
+    - **Rows:** structured, from `/v2/api/result-events/<id>/sub-events/<id>/results?start=0&limit=50` (limit at least 50), with a Grade column when the timer adds one.
+    - **Terms:** none on the search host; the results host allows all.
+  - **OnlineRaceResults now redirects into Race Roster** (`view_race.php?race_id=<n>` 301s to `results.raceroster.com/redirect/third-party?...`). Its ~25,700-event archive (NE, IA, OK, CO, IN) is reachable that way, so the old "every fetch 403" note is out of date.
+  - **Timers on Race Roster:**
+    - ERC Timing Solutions (SE Iowa and Quad Cities, including an IHSA regional)
+    - Start 2 Finish St. Louis and Memphis
+    - northern Wisconsin conferences
+    - Alan and Robin (NE)
+    - Negative Split (TX)
+    - Threshold (LA)
+    - C3 (KY), IW2R (IN)
+  - **Other platforms:**
+    - **RunnerCard:** `runner.Main?results=<YYYY>&class=11` lists 115 HS meets for 2025 (UT 63, El Paso 46).
+    - **RunSignup:** about 150-250 HS meets per fall, including PIAA District 1 XC. Its API contract (2026-09-03) bans bulk extraction and competing products, so only its HTML result pages are usable.
+    - **rSchoolToday RST7:** `<domain>/wp-json/wp/v2/media?per_page=100&search=<term>` lists every uploaded PDF on a league site; Fox River Classic has 310 results files.
+  - **Archives:**
+    - GIAA (GA private schools): state XC 2003-2020, track 2003-2024.
+    - Washington Track: WA state track 1960-2025.
+    - Seashore Striders: Delaware's first independent source.
+    - AISA (AL private schools): state XC.
+  - **Off limits:**
+    - Bot challenges: Webscorer (AWS WAF, a correction), DigitalSports league sites (Sucuri), sjtrack.org.
+    - robots.txt bars results for every crawler: TrackConference/Teammates, the Nassau County results database.
+    - Bound (WAF 403).
+    - RACE RESULT's data endpoints (robots.txt).
