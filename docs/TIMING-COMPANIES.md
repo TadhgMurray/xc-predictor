@@ -513,3 +513,23 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
   - **Imported OnlineRaceResults archive:** walkable by sequential id through `results.raceroster.com/redirect/third-party?source=onlineraceresults&entity=event&id=<n>`. About 7,000 requests (~5 h) would add ~600 school meets for 2019-2025 (IA, NE, IN, CO, OK).
   - **Track:** school track meets are listed but none has posted results; recheck in spring.
   - **Terms:** nothing off limits (robots allows all). The registrant terms' general "Site Content" copying clause is noted.
+- **Where athletic.net's results go, measured (2026-10-23):** `docs/timing_passes/where_results_go.csv` traces 181 of 300 random athletic.net XC meets from fall 2025 (`anet_sample_2025.csv`); 165 are counted.
+  - **Only on athletic.net's systems (with AthleticLIVE): 72%.** HS/MS meets alone: 74%. Meets not on AthleticLIVE: 74% have no other full copy.
+  - **Full copies elsewhere, share of meets:**
+    - AthleticLIVE 23%
+    - MileSplit 18%
+    - other platforms 7% (mostly TFRRS)
+    - timer's own site 5%
+    - league or association site 2%
+    - school site 1%
+    - none found on Drive, social media, Race Roster, Arrow or RunSignup
+    - Newspapers carry top finishers only.
+  - **By meet size:** small meets (MS, duals, jamborees) 14% independent; invitationals 40% (mostly MileSplit uploads); championships 27%.
+  - **The timer is rarely named:** identifiable for 46 of 165 meets, and for only 12 of the 127 not on AthleticLIVE.
+  - **Places that do post full results:**
+    - **Associations:** KHSAA (regions, HTM/PDF and .mdb), IESA (IL middle school sectionals, PDFs), MPSSAA regions, USATF Pacific Northwest.
+    - **Timers:** Black Squirrel (open `/2025/XC/` directory, 115 files), Wingfoot Finish (~55 AZ PDFs).
+    - **TFRRS mirrors:** nh./indiana.tfrrs.org.
+  - **Washington:** 9 of 10 meets athletic.net-only.
+  - **Do not crawl:** endurancesplits.com (TX) shows a captcha.
+  - **Not done:** rows 182-300 are untraced (the search limit ran out).
