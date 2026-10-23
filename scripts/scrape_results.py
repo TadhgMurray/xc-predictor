@@ -7,6 +7,7 @@
 # SQLite db. Uses the meet_queue in the db to get ids for the meets.
 
 import asyncio
+import datetime
 import re
 import random
 import sys
@@ -1377,8 +1378,27 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
             if not divisions:
                 _noteEmpty(meet_id, "XC", meet_info)
                 return 0, True
+            # ★ A MEET THAT HAS NOT HAPPENED YET IS EMPTY, NOT FAILED (owner,
+            #   2026-10-23, the first scrape on the new server: 50 of these
+            #   on the newest ids, 288369-288386). athletic.net sets a meet's
+            #   divisions up before race day, so divisions alone cannot say
+            #   results exist. HasResults false, or a date after today, is a
+            #   meet still to come: noted empty (state 1 + its date), and the
+            #   re-ask passes come back after race day -- as for a meet with
+            #   no divisions -- instead of a failure retried on every start.
+            raw_date = str(meet_info.get("MeetDate") or "")[:10]
+            has_results = meet_info.get("HasResults")
+            today = datetime.date.today().isoformat()
+            if has_results is False or (re.match(r"^(19|20)\d\d-\d\d-\d\d$", raw_date)
+                                        and raw_date > today):
+                _noteEmpty(meet_id, "XC", meet_info)
+                print(f"{label} Meet {meet_id} (XC): no results yet "
+                      f"({raw_date or 'no date'}, HasResults={has_results})")
+                return 0, True
+            keys = sorted(payload)[:6] if isinstance(payload, dict) else type(payload).__name__
             print(f"{label} [!] Meet {meet_id} (XC) claims {len(divisions)} "
-                  f"divisions but GetAllResultsData returned no flatEvents — failed")
+                  f"divisions but GetAllResultsData returned no flatEvents — failed "
+                  f"({raw_date or 'no date'}, HasResults={has_results}, payload {keys})")
             return -1, True
 
         if n == -1:
