@@ -61,6 +61,10 @@ NUM_SESSIONS = int(_envFloat("NUM_SESSIONS", 25))
 #   meet, XC and TF alike. _scrapeMeetTFPerDiv is no longer called, so this
 #   number paces nothing today; PER_MEET_DELAY and NUM_SESSIONS set the pace
 #   for both sports.
+# ★ AND IT PACES AGAIN (2026-10-23): athletic.net closed the whole-meet call,
+#   so a cross country meet is one GetResultsData3 per division
+#   (scrape_results._scrapeXCByDivision), and this sets the gap between them.
+#   The overnight update sets it to 0.5 (deploy/nightly_update.sh).
 TARGET_REQUESTS_PER_SEC_PER_IP = _envFloat(
     "TARGET_REQUESTS_PER_SEC_PER_IP", 3.0)
 

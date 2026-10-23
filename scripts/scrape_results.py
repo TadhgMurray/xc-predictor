@@ -11,6 +11,7 @@ import datetime
 import re
 import random
 import sys
+import os
 import psycopg2
 
 from playwright.async_api import async_playwright
@@ -230,6 +231,45 @@ async def _fetchXCDivisionResults(page, meet_id: int, div_id: int,
         
     return results
 
+# _scrapeXCByDivision
+# Purpose: One XC meet through the per-division call (GetResultsData3), the
+#          one athletic.net's own results page makes -- the only way it
+#          answers since the whole-meet call closed (2026-10-23). Paced
+#          between divisions; any division failing fails the meet, so it
+#          retries whole rather than saving a meet with races missing.
+# Output:  results saved, 0 for a meet whose divisions are all empty, or -1.
+async def _scrapeXCByDivision(page, meet_id: int, meet_info: dict,
+                              divisions: list, jwt_token: str, label: str) -> int:
+    collected_meets, collected_athletes, collected_results = [], [], []
+    teams, team_scores = None, []
+    asked = 0
+    for div in divisions:
+        div_id = div.get("IDMeetDiv")
+        # an entries-only division (athletic.net's Result 0) has nothing to ask
+        if not div_id or div.get("Result") == 0:
+            continue
+        if asked:
+            low, high = perRequestDelayRange()
+            await asyncio.sleep(random.uniform(low, high))
+        asked += 1
+        try:
+            results, div_teams, div_scores = await getMeetResults(
+                page, meet_id, div_id, jwt_token)
+        except (CloudflareException, asyncio.CancelledError):
+            raise
+        except Exception as e:                              # noqa: BLE001
+            print(f"{label} [!] getMeetResults failed for meet {meet_id} "
+                  f"div {div_id}: {e}")
+            return -1
+        teams = teams or div_teams
+        if div_scores:
+            team_scores.extend(div_scores)
+        _collectXCDivision(meet_info, div, results or [], collected_meets,
+                           collected_athletes, collected_results)
+    return _saveXCMeet(meet_id, label, collected_meets, collected_athletes,
+                       collected_results, teams=teams,
+                       team_scores=team_scores or None)
+
 # _collectXCDivision
 # Purpose: Collects meet, athlete, and result data for one XC division
 #          into the collector lists. Does not touch the DB.
@@ -244,7 +284,6 @@ async def _fetchXCDivisionResults(page, meet_id: int, div_id: int,
 def _collectXCDivision(meet_info: dict, div: dict, results: list,
                         collected_meets: list, collected_athletes: list,
                         collected_results: list):
-    print("[COLLECT] _collectXCDivision", flush=True)
     # Collect the meet row for this division.
     collected_meets.append((meet_info, div))
 
@@ -1339,6 +1378,38 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
             print(f"{label} Meet {meet_id} (XC): skipped (doesn't exist)")
             return 0, False
         
+        # ---- Per division: the only way athletic.net answers now ----------- #
+        # ★ THE WHOLE-MEET CALL IS GONE (owner, 2026-10-23: "they got rid of
+        #   compiled results"). GetAllResultsData answers 403 to anyone not
+        #   signed in, whatever headers or tokens are sent, and the site's own
+        #   "all results" page now redirects to the meet info page
+        #   (scripts/diag_anet_results_call.py). The results page asks per
+        #   division (GetResultsData3), and so does this: GetMeetData plus one
+        #   call per division with results -- 4.6 a meet in fall 2025, ~2,900
+        #   requests in its busiest week. XCP_ANET_WHOLE_MEET=1 tries the old
+        #   call first, should athletic.net bring it back.
+        if os.environ.get("XCP_ANET_WHOLE_MEET", "0") != "1":
+            if not divisions:
+                _noteEmpty(meet_id, "XC", meet_info)
+                return 0, True
+            raw_date = str(meet_info.get("MeetDate") or "")[:10]
+            has_results = meet_info.get("HasResults")
+            today = datetime.date.today().isoformat()
+            if (has_results is not None and not has_results) or (
+                    re.match(r"^(19|20)\d\d-\d\d-\d\d$", raw_date) and raw_date > today):
+                _noteEmpty(meet_id, "XC", meet_info)
+                print(f"{label} Meet {meet_id} (XC): no results yet "
+                      f"({raw_date or 'no date'}, HasResults={has_results})")
+                return 0, True
+            n = await _scrapeXCByDivision(page, meet_id, meet_info, divisions,
+                                          meet_info.get("jwtMeet", ""), label)
+            if n == 0:
+                _noteEmpty(meet_id, "XC", meet_info)
+            print(f"{label} Meet {meet_id} (XC): "
+                  + ("failed" if n == -1 else f"saved {n} results")
+                  + f" ({len(divisions)} divisions)")
+            return n, True
+
         # ---- Fast path: one getAllResultsData call for the whole meet ---- #
         # Mirrors scrapeMeetTF: token from meet_info, same exception contract,
         # NO fallback to the per-division loop (per the 6/22 TF precedent —

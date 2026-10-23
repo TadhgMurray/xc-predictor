@@ -6596,3 +6596,22 @@ the person after it was rated. Not traced yet.
   Sunday solve fits them), 21.4% still no gps. Then a no-state fallback:
   a meet with an empty state (Gans Creek, Gil Dodds) matches on the name
   alone when that name is one location everywhere we know it.
+
+## 2026-10-23 -- athletic.net closed compiled results; cross country only, per division
+- GetAllResultsData answers 403 (empty body) to anyone not signed in, with
+  every header/token combination the site itself sends
+  (scripts/diag_anet_results_call.py); the "all results" page now redirects
+  to the meet info page. GetResultsData3 per division still answers.
+- Track answers only per EVENT (diag_anet_tf_calls.py: a division or meet
+  without an event returns nothing): 39 calls a meet, ~150,000 requests in
+  spring 2026's busiest week (3,885 meets). 16% of track event-divisions are
+  >= 800 m and not relays. Cross country: 4.6 divisions a meet, ~2,900
+  requests in fall 2025's busiest week (540 meets).
+- Owner: athletic.net cross country only for now, per division
+  (scrape_results._scrapeXCByDivision; XCP_ANET_WHOLE_MEET=1 tries the old
+  call first). The overnight update sets ANET_SPORT=XC
+  (XCP_NIGHTLY_ANET_SPORT) and 0.5 requests/s per IP between division calls
+  (XCP_NIGHTLY_REQ_PER_SEC). TFRRS is unaffected.
+- 📋 Next: local timing companies as an independent source (research in
+  docs/TIMING-COMPANIES.md, docs/timing_companies.csv). New rows go through
+  the id-less linkers the TFRRS feed already uses.

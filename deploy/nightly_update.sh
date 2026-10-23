@@ -143,7 +143,7 @@ if [ "$SCRAPE" -eq 1 ] && [ "$DRY" -eq 0 ]; then
   done
 fi
 if [ "$SCRAPE" -eq 1 ]; then
-  echo "== scrape (anet + tfrrs, at most ${SCRAPE_MIN} min, ${XCP_NIGHTLY_SESSIONS:-2} sessions each, ${XCP_NIGHTLY_DELAY:-5,10} s between meets)    $(date +%H:%M:%S)"
+  echo "== scrape (anet ${XCP_NIGHTLY_ANET_SPORT-XC} + tfrrs, at most ${SCRAPE_MIN} min, ${XCP_NIGHTLY_SESSIONS:-2} sessions each, ${XCP_NIGHTLY_DELAY:-5,10} s between meets)    $(date +%H:%M:%S)"
   # ★ SLOW AND FEW (owner, 2026-10-22: "make those scrapes go slowly so
   #   they don't get banned, like 2 sessions, 5-10 seconds"). The night runs
   #   from the server's own address (NO_VPN), so the sources see one IP:
@@ -165,6 +165,17 @@ if [ "$SCRAPE" -eq 1 ]; then
   #   ! If a night misses new meets, the gap between real ids is wider than
   #   a block: raise XCP_NIGHTLY_SEED_AHEAD. The widest recent gaps:
   #   docs/MIGRATE-2026-10.md, "the probe check".
+  # ★ ONE CALL PER DIVISION NOW (2026-10-23: athletic.net closed its
+  #   whole-meet results call), so the gap between a meet's division calls
+  #   matters too: 0.5 requests a second for the IP is ~3-5 s between them
+  #   with two sessions. A fall 2025 week at its busiest (540 meets, 2,335
+  #   divisions) is about two hours at this pace.
+  export TARGET_REQUESTS_PER_SEC_PER_IP="${XCP_NIGHTLY_REQ_PER_SEC:-0.5}"
+  # ★ CROSS COUNTRY ONLY FOR NOW (owner, 2026-10-23: "for rn let's only scrape
+  #   xc results"). A track meet is one call per EVENT now -- 39 a meet,
+  #   ~150,000 requests in spring's busiest week. XCP_NIGHTLY_ANET_SPORT=
+  #   (empty) scrapes both again; TF scrapes track only.
+  export ANET_SPORT="${XCP_NIGHTLY_ANET_SPORT-XC}"
   export SEED_AHEAD="${XCP_NIGHTLY_SEED_AHEAD:-150}"
   export DRY_BLOCKS_TO_STOP="${XCP_NIGHTLY_DRY_BLOCKS:-2}"
   export TFRRS_SEED_AHEAD="${XCP_NIGHTLY_TFRRS_AHEAD:-300}"
