@@ -494,3 +494,14 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
     - robots.txt bars results for every crawler: TrackConference/Teammates, the Nassau County results database.
     - Bound (WAF 403).
     - RACE RESULT's data endpoints (robots.txt).
+- **State and private-school association archives (2026-10-23):** `docs/timing_passes/assoc_archives.csv` has 36 rows. Private and Christian associations mostly post to MileSplit. The finds are deep state-meet archives that results_hubs.csv listed for a year or two:
+  - **KHSAA (KY):** XC 1997-2026 and track 1997-2026, state and regions, Hy-Tek HTML with grade. Files are `khsaa.org/cross_country/<YYYY>/class<1a|2a|3a><boys|girls>finalindividualresults.htm` and `/track/<YYYY>/class<..>detailed.htm`. Only `/wp*` is disallowed in robots.txt.
+  - **GHSA (GA):** state XC 2000-2024, 320 PDFs.
+  - **LHSAA (LA):** XC 2002-2021, outdoor 2003-2026, indoor 2005-2026; Hy-Tek with grade.
+  - **MHSA (MT):** XC and track 2002-2026, on rSchoolToday. Montana's first source.
+  - **SDHSAA (SD):** yearbook PDFs 2004-2025 (placers only), South Dakota's first independent source.
+  - **ASAA (AK):** XC 1973-2026, full fields about 2004-2021. Alaska's first source.
+  - **Smaller:** NCHSAA (via its WordPress media listing, 2016-2022), Perfect Timing Group's old Hy-Tek live archive (2015-2018), the Wisconsin coaches' all-time list.
+  - **TAPPS (TX private schools) and MTCCCA (MO):** the files are on Google Drive, whose download host bars all crawlers. Use the Drive API or ask.
+  - **Off limits:** NSAA (NE; Cloudflare "you have been blocked" on the files, so ask NSAA), MIAA/IAAM (MD) and WCAC (DC) (CloudFront 403).
+  - **States with nothing new:** AR, CO, CT, DE, FL, HI, IA, ID, IL, IN, ME, MN, NJ, NM, NV, OK, OR, RI, TN, UT, VA, VT, WA, WY.
