@@ -253,3 +253,73 @@ script with `imagesByOrigin = { "<origin>": "<logo url with /assets/sites/<slug>
 fetch yields all 261 origin-to-slug pairs. They are in the CSV as "AthleticLIVE tenant: <slug>" rows for
 any tenant not already researched by name. Non-US tenants (Canada, NZ, Australia, UK, Cayman, Caribbean)
 were excluded from the CSV.
+
+---
+
+## Second pass (2026-10-23): West + Midwest, South + Northeast
+
+`docs/timing_companies.csv` now has **1,054 rows**:
+- 334 from the first pass
+- 720 new timers, mostly from MileSplit's per-state timer directories (`<st>.milesplit.com/timing`)
+- 239 field corrections applied, about 94 of them naming AthleticLIVE tenants
+- 15 conflicts between the two passes, left in place and marked "CONFLICT between research passes"
+
+The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, with no website found and the platform unconfirmed. About 20 publish results on their own sites.
+
+### Independent sources found in the second pass, by meet volume
+
+| Source | Area | How it publishes | Volume / coverage |
+|---|---|---|---|
+| Wingfoot Finish | AZ | own ColdFusion database `result_details.cfm?ResultsID=`, PDFs under `/results/<YYYY>/` | ~1,400 results, 2008–2026 |
+| Extra Mile Timing | CA LA / Ventura / Orange | static HTML `meetresults.net/extramile/meets/<MMDDYYYY><name>.htm`, yearly indexes since 2016 | ~170–180 meets/yr; LA City Section finals |
+| Westside Timing | CA LA Westside | MeetPro (`results.tfmeetpro.com/Santa_Monica_Times/`) | ~170 meets |
+| MyChipTime (RunFAR) | TX | own database `searchevent.php?id=`, JS-loaded | UIL district and region XC |
+| Huber Timing | OR | own HTML `hubertiming.com/results/<YYYY><Event>` | ~670 pages, mostly road; Central Oregon district XC. First OR independent source |
+| Apple Raceberry JaM | MN / WI | plain-text HTML | ~360 pages |
+| The Runner's High | PA | static HTML and a database | PIAA District 9 XC |
+| Platt Systems Timing | CT | own HTML (`pslive.php?eventid=`) | CT XC/TF. Fills the CT gap |
+| CAG's Timing | VA | MeetPro on its own site | ~10 meets |
+| Hawkeye (WI), River City Races (CO), Kandu (CO), RacePenguin (OH) | | PDFs / HTML | smaller |
+
+- **MeetPro now covers six timers:** Mitchell, B&B, MAC-FAT, CFPI, Westside and CAG's. TF Meet Pro, the company behind MeetPro (Goddard, KS), is worth contacting about an index or feed for `results.tfmeetpro.com`.
+
+### California: who times each CIF section's XC finals
+
+| Section | Timer | Publishes on |
+|---|---|---|
+| Southern | Finished Results | own site |
+| San Diego | Finished Results | own site |
+| LA City | Extra Mile Timing | own site |
+| Central Coast (2025) | Record Timing | AthleticLIVE |
+| North Coast (2024–25) | Diablo Timing | own-site PDFs |
+| Sac-Joaquin (2025) | Red Cap Timing | MileSplit |
+| Oakland | Rogue Timing (track) | MileSplit Live |
+| San Francisco | not confirmed | — |
+| Central | not found (Buchanan Timing and CalTiming time track) | — |
+| Northern | not found | — |
+
+### Gaps that remain
+
+| State | What the second pass found |
+|---|---|
+| ID | Only Snake River Timing (track) |
+| MT | AthleticLIVE only |
+| SD | Nothing independent |
+| NV | Mentzer times the NIAA state meet; platform unconfirmed |
+| OH | Mostly MileSplit and RunSignup |
+| IL | The IHSA state XC timer was not identified |
+| DE | DIAA PDFs, which returned 403 to a fetch |
+| RI | MileSplit Live |
+
+### Conflicts to settle
+
+- **windsortiming:** one pass says Windsor Running (DC/MD/VA, ~190 meets); the other says Windsor, Ontario (Canada).
+- **kjtiming:** the domain is now a spam site.
+- **Michigan LP XC Finals 2025:** credited to Superior Timing in the first pass, to Michiana Timing by MileSplit.
+- **nestiming:** duplicates the Northeast Sports Timing row.
+
+### Access notes
+
+- MileSplit pages carry a bot-detection script that names claudebot. They were read only through search snippets.
+- athletic.net returns 403 to plain fetches, including its terms pages.
+- No timer site checked had terms forbidding bots, except PTTiming (first pass).

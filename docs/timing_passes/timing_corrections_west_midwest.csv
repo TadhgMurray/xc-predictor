@@ -1,0 +1,128 @@
+name,field,old,new,source_url
+Snake River Timing,states,ID? (unconfirmed),ID (Boise; Treasure Valley track & field),https://www.racedirectorshq.com/us/race-timers/idaho/
+Snake River Timing,notes,Location unconfirmed.,"Boise-based; works local T&F in the Treasure Valley (RaceDirectorsHQ). Credited as Timing/Results on id.milesplit (e.g. Kuna, Rocky Mtn @ Ridgevue 2020).",https://id.milesplit.com/meets/398626-kuna-rocky-mtn-ridgevue-2020/results/704865/raw
+Extra Mile Timing,states,CA (Sunland),CA (LA-Ventura-Orange; CIF Los Angeles City Section XC champs 2023-2025 and City Section TF finals 2024/2026); some NorCal and NV,https://ca.milesplit.com/timing/975/extra-mile-timing
+Extra Mile Timing,website,,https://www.extramiletiming.com (redirects to https://www.meetresults.net/extramile/),https://www.extramiletiming.com
+Extra Mile Timing,results_url,,"https://meetresults.net/extramile/ (yearly index pages /extramile/<YYYY>.html, 2016-2026)",https://www.meetresults.net/extramile/
+Extra Mile Timing,platform,unconfirmed,Own site: static HTML result pages (meetresults.net/extramile/meets/<MMDDYYYY><name>.htm) + some MileSplit links,https://www.meetresults.net/extramile/
+Extra Mile Timing,sample_meet_url,,https://meetresults.net/extramile/meets/02072026wolverun.htm,https://meetresults.net/extramile/meets/02072026wolverun.htm
+Extra Mile Timing,sports,TF,"TF, XC, road, triathlon",https://ca.milesplit.com/timing/975/extra-mile-timing
+Extra Mile Timing,volume,unconfirmed,"~170-180 meets/yr (180 meet links on 2024 page, 168 on 2025 page)",https://meetresults.net/extramile/2024.html
+Mentzer Timing,states,"Northern NV, CA","NV (Sparks/Reno; NIAA Northern Region), Northern CA",https://nv.milesplit.com/timing/953/mentzer-timing
+Mentzer Timing,notes,"Older NIAA state results timed by Mentzer, posted via athletic.net.","Timed NIAA 5A State TF 2024 (Carson City) and 2026 (Hug HS, Reno) and NIAA 2A State 2026; certified Hy-Tek contractor; FinishLynx + RFID. Older NIAA results via athletic.net.",https://nv.milesplit.com/meets/736238-niaa-5a-state-championship-2026/info
+Red Cap Timing,states,CA (Sac-Joaquin Section),"CA (Roseville; Sac-Joaquin Section incl. SJS XC Championships 2025 at Willow Hills, Folsom; Sierra foothills to Bay Area)",https://ca.milesplit.com/meets/716564-sac-joaquin-section-xc-championships-2025/info
+Record Timing (RT Timing Solutions),states,"CA (Mt SAC, Stanford, CIF); also NE college","CA (Bay Area; CIF State XC 2021-2025, CIF CCS XC Championships 2025, CIF State TF, Mt SAC, Stanford); also NE college",https://ca.milesplit.com/meets/718110-cif-ccs-xc-championships-2025/info
+Diablo Timing,states,"CA (NorCal: NCS, East Bay)","CA (Livermore; NorCal: CIF North Coast Section XC Championships 2024 and 2025, East Bay)",https://ca.milesplit.com/meets/716625-cif-north-coast-section-championships-2025/info
+Superior Timing,states,MI (Marquette; UP + MHSAA LP XC Finals 2025),MI (Marquette; UP). MHSAA LP XC Finals 2025 credit conflicts: MileSplit lists Michiana Timing as Timing/Results for MHSAA LP Finals 2025,https://mi.milesplit.com/meets/712762-mhsaa-lp-finals-2025
+Michiana Timing,notes,,Credited Timing/Results on MileSplit for MHSAA LP XC Finals 2025 (Michigan International Speedway) and LP regionals (e.g. Region 04-1 Brighton 2022). Based Grand Rapids MI per MileSplit.,https://mi.milesplit.com/meets/712762-mhsaa-lp-finals-2025
+Northeast Sports Timing,states,CT (New Britain),CT (Middlefield),https://www.nestiming.com/
+Northeast Sports Timing,platform,RunnerSpace postings (CIAC class XC 2016-2019); current unconfirmed,AthleticLIVE (live.nestiming.com = tenant 'nestiming'); historic RunnerSpace postings,https://www.nestiming.com/
+TrackSide Timing,states,WI? (has milesplit-wi page),WI (Eagle; southeastern WI),https://wi.milesplit.com/TIMING
+Grizzly Peak Timing,states,MT? (unconfirmed),"OR (listed under Oregon race timers; road, XC, T&F; RFID chip timing)",https://www.racedirectorshq.com/reviews/grizzly-peak-timing-1530/
+Grizzly Peak Timing,website,,https://grizzlypeaktiming.com,https://www.racedirectorshq.com/reviews/grizzly-peak-timing-1530/
+CCR Timing,notes,,"Possibly the 'CCR Timing' listed in Colorado Springs, CO on co.milesplit.com/timing/526 (no 2026 meets) - low confidence that it is the same entity as the NM state-XC timer.",https://co.milesplit.com/timing/526/ccr-timing
+Tortoise and Hare Race Management,states,WI,"WI (Minocqua); also MI (MHSAA Middle School Regional Zone 8, 2023)",https://mi.milesplit.com/meets/557411-mhsaa-middle-school-regional-zone-8-2023/results
+Midwest Timing & Results,notes,Official KSHSAA timing & results provider; OSSAA 1A-2A state TF 2025. Has llms.txt.,"Also KSHSAA State XC 2025 (both sites: Rim Rock Farm Lawrence and Wamego), IHSAA (IN) XC Sectional 17 2025 (Fortville) and Omaha NE meets 2025 per MileSplit credits.",https://ks.milesplit.com/meets/698496-kshsaa-state-cross-country-championship-3a-5a-6a-results-2025/info
+AthleticLIVE tenant: caltiming,name,AthleticLIVE tenant: caltiming,CalTiming,https://ca.milesplit.com/timing/1069/caltiming
+AthleticLIVE tenant: caltiming,states,unconfirmed (US assumed),"CA (Hanford; Central Valley: Lemoore Kiwanis Inv, Bret Harte Frogtown Inv)",https://ca.milesplit.com/timing/1069/caltiming
+AthleticLIVE tenant: westside,name,AthleticLIVE tenant: westside,Westside Timing,https://www.westsidetiming.com/
+AthleticLIVE tenant: westside,states,unconfirmed (US assumed),"CA (Marina del Rey; LA Westside: Santa Monica, Beverly Hills, Palisades, Venice)",https://www.westsidetiming.com/
+AthleticLIVE tenant: westside,platform,AthleticLIVE,"MeetPro HTML (results.tfmeetpro.com/Santa_Monica_Times/<Meet>/, ~170 links on homepage) + AthleticLIVE",https://www.westsidetiming.com/
+AthleticLIVE tenant: westside,website,,https://www.westsidetiming.com,https://www.westsidetiming.com/
+AthleticLIVE tenant: westside,sample_meet_url,,http://results.tfmeetpro.com/Santa_Monica_Times/Beverly_Hills_Coastal_Meet/,https://www.westsidetiming.com/
+AthleticLIVE tenant: speedingbullet,name,AthleticLIVE tenant: speedingbullet,Speeding Bullet Timing,https://ca.milesplit.com/timing/573/speeding-bullet-timing
+AthleticLIVE tenant: speedingbullet,states,unconfirmed (US assumed),"CA (Los Angeles / Long Beach: California Relays, Long Beach Relays, Bay League and Ocean League finals)",https://ca.milesplit.com/timing/573/speeding-bullet-timing
+AthleticLIVE tenant: mastiming,name,AthleticLIVE tenant: mastiming,MAStiming.net,https://ca.milesplit.com/timing/920/mastimingnet
+AthleticLIVE tenant: mastiming,states,unconfirmed (US assumed),CA (Victorville; High Desert / Mojave: High Desert League finals),https://ca.milesplit.com/timing/920/mastimingnet
+AthleticLIVE tenant: 5north,name,AthleticLIVE tenant: 5north,5 North Timing (5 North Track),https://ca.milesplit.com/timing
+AthleticLIVE tenant: 5north,states,unconfirmed (US assumed),CA (Tracy),https://ca.milesplit.com/timing
+AthleticLIVE tenant: cca,name,AthleticLIVE tenant: cca,CCA TF (probable),https://ca.milesplit.com/timing
+AthleticLIVE tenant: cca,states,unconfirmed (US assumed),"CA (San Diego) - mapping from MileSplit CA directory name 'CCA TF', unconfirmed",https://ca.milesplit.com/timing
+AthleticLIVE tenant: sangertimes,name,AthleticLIVE tenant: sangertimes,Sanger Track and Field (Sanger HS),https://sangertrackandfield.com
+AthleticLIVE tenant: sangertimes,states,unconfirmed (US assumed),CA (Sanger; Central Section) - school program,https://sangertrackandfield.com
+AthleticLIVE tenant: competitivetiming,name,AthleticLIVE tenant: competitivetiming,Competitive Timing LLC,https://mt.milesplit.com/timing/944/competitive-timing
+AthleticLIVE tenant: competitivetiming,states,unconfirmed (US assumed),"MT (Whitefish; Flathead Inv, Bozeman Inv), WY (Sheridan)",https://mt.milesplit.com/timing/944/competitive-timing
+AthleticLIVE tenant: competitivetiming,notes,Listed only in AthleticLIVE's tenant config (imagesByOrigin map). Company name/state not researched.,Only MT timer found. Credited on mt.milesplit Flathead Invitational 2019 and Bozeman Invitational 2019.,https://mt.milesplit.com/timing/944/competitive-timing
+AthleticLIVE tenant: wingfoot,name,AthleticLIVE tenant: wingfoot,Wingfoot Finish,https://wingfootfinish.com/results.cfm
+AthleticLIVE tenant: wingfoot,states,unconfirmed (US assumed),AZ (Phoenix / Mesa / East Valley; also White Mountains),https://wingfootfinish.com/results.cfm
+AthleticLIVE tenant: wingfoot,platform,AthleticLIVE,"AthleticLIVE (results.wingfootfinish.com) + OWN ColdFusion results DB with PDFs (wingfootfinish.com/results.cfm, result_details.cfm?ResultsID=<n> -> /results/<YYYY>/<file>.pdf), years 2008-2026",https://wingfootfinish.com/results.cfm
+AthleticLIVE tenant: wingfoot,sample_meet_url,,https://wingfootfinish.com/result_details.cfm?ResultsID=1395,https://wingfootfinish.com/result_details.cfm?ResultsID=1395
+AthleticLIVE tenant: wingfoot,volume,unconfirmed,"~1,400 result IDs since 2008 (XC, TF, road)",https://wingfootfinish.com/results.cfm
+AthleticLIVE tenant: roadrunner,name,AthleticLIVE tenant: roadrunner,Roadrunner Race Timing (probable),https://az.milesplit.com/timing
+AthleticLIVE tenant: roadrunner,states,unconfirmed (US assumed),AZ,https://az.milesplit.com/timing
+AthleticLIVE tenant: racetimers,name,AthleticLIVE tenant: racetimers,Race Timers (probable),https://az.milesplit.com/timing/1217/race-timers
+AthleticLIVE tenant: racetimers,states,unconfirmed (US assumed),AZ (chip-timed via RFID Timing Systems 'Ultra'),https://az.milesplit.com/timing/1217/race-timers
+AthleticLIVE tenant: scoles,name,AthleticLIVE tenant: scoles,Scoles Sports Timing,https://mi.milesplit.com/timing
+AthleticLIVE tenant: scoles,states,unconfirmed (US assumed),MI,https://mi.milesplit.com/timing
+AthleticLIVE tenant: chttiming,name,AthleticLIVE tenant: chttiming,CHT Timing,https://www.chttiming.com/
+AthleticLIVE tenant: chttiming,states,unconfirmed (US assumed),"MI (mid-Michigan; chip timing, track/XC live results)",https://www.chttiming.com/
+AthleticLIVE tenant: operacing,name,AthleticLIVE tenant: operacing,OPE Racing (operacing.com),https://operacing.com/
+AthleticLIVE tenant: operacing,states,unconfirmed (US assumed),MI (Metro Detroit / SE Michigan; XC and T&F),https://operacing.com/
+AthleticLIVE tenant: dlprotiming,name,AthleticLIVE tenant: dlprotiming,DL Pro Timing,https://dlprotiming.org/
+AthleticLIVE tenant: dlprotiming,states,unconfirmed (US assumed),"MI (Michigan Indoor Track Series at Eastern Michigan University), OH",https://dlprotiming.org/
+AthleticLIVE tenant: happypacetiming,name,AthleticLIVE tenant: happypacetiming,Happy Pace Timing,https://happypacetiming.com/
+AthleticLIVE tenant: happypacetiming,states,unconfirmed (US assumed),"MI (SE Michigan; road, XC, track, cycling)",https://happypacetiming.com/
+AthleticLIVE tenant: labtiming,name,AthleticLIVE tenant: labtiming,L.A.B. Track Club (LAB TC) timing,https://mi.milesplit.com/teams/52463-lab-track-club
+AthleticLIVE tenant: labtiming,states,unconfirmed (US assumed),MI (Detroit area; LAB indoor meets),https://mi.milesplit.com/teams/52463-lab-track-club
+AthleticLIVE tenant: wwstiming,name,AthleticLIVE tenant: wwstiming,WWS Timing,https://il.milesplit.com/timing
+AthleticLIVE tenant: wwstiming,states,unconfirmed (US assumed),IL (Wheaton-Warrenville),https://il.milesplit.com/timing
+AthleticLIVE tenant: rivercity,name,AthleticLIVE tenant: rivercity,River City Race Management (Race Results Plus),https://raceresultsplus.com/
+AthleticLIVE tenant: rivercity,states,unconfirmed (US assumed),IL (Peoria),https://raceresultsplus.com/
+AthleticLIVE tenant: shazam,name,AthleticLIVE tenant: shazam,ShaZam Racing,https://il.milesplit.com/timing/997/shazam-racing
+AthleticLIVE tenant: shazam,states,unconfirmed (US assumed),IL (Peoria); also GA events,https://il.milesplit.com/timing/997/shazam-racing
+AthleticLIVE tenant: lttiming,name,AthleticLIVE tenant: lttiming,LT Timing (probable),https://il.milesplit.com/timing/890/lt-timing
+AthleticLIVE tenant: lttiming,states,unconfirmed (US assumed),IL (Chicago; Proviso West indoor quads),https://il.milesplit.com/timing/890/lt-timing
+AthleticLIVE tenant: endurance,name,AthleticLIVE tenant: endurance,Endurance Race Timing (probable),https://il.milesplit.com/timing/366/endurance-race-timing
+AthleticLIVE tenant: endurance,states,unconfirmed (US assumed),IL (listed in IL MileSplit directory),https://il.milesplit.com/timing/366/endurance-race-timing
+AthleticLIVE tenant: alphatiming,name,AthleticLIVE tenant: alphatiming,Alpha Timing LLC,https://in.milesplit.com/meets/690763-ihsaa-boys-state-track-and-field-meet-2025/info
+AthleticLIVE tenant: alphatiming,states,unconfirmed (US assumed),"IN (Shelbyville/Indianapolis; IHSAA Boys and Girls State TF 2025, IHSAA regional XC)",https://in.milesplit.com/meets/690763-ihsaa-boys-state-track-and-field-meet-2025/info
+AthleticLIVE tenant: temporun,name,AthleticLIVE tenant: temporun,Tempo Run Timing,https://temporuntiming.com/
+AthleticLIVE tenant: temporun,states,unconfirmed (US assumed),"IN (NW Indiana; road, trail, XC)",https://temporuntiming.com/
+AthleticLIVE tenant: stuart,name,AthleticLIVE tenant: stuart,Stuart Road Racing LLC,https://stuartroadracing.com/
+AthleticLIVE tenant: stuart,states,unconfirmed (US assumed),IN (SE Indiana),https://stuartroadracing.com/
+AthleticLIVE tenant: kauder,name,AthleticLIVE tenant: kauder,"Kauder Racing, LLC (Kauder Racing Results Service)",https://kauderresults.com/
+AthleticLIVE tenant: kauder,states,unconfirmed (US assumed),"IA (Cedar Rapids; XC, TF, road)",https://kauderresults.com/
+AthleticLIVE tenant: pellaschools,name,AthleticLIVE tenant: pellaschools,Pella Community Schools (Pella Dutch athletics),https://results.pelladutchlive.com
+AthleticLIVE tenant: pellaschools,states,unconfirmed (US assumed),IA (Pella) - school program,https://results.pelladutchlive.com
+AthleticLIVE tenant: advantagetiming,name,AthleticLIVE tenant: advantagetiming,Advantage Timing (probable),https://mn.milesplit.com/timing
+AthleticLIVE tenant: advantagetiming,states,unconfirmed (US assumed),MN (listed in MN MileSplit directory),https://mn.milesplit.com/timing
+AthleticLIVE tenant: ffr,name,AthleticLIVE tenant: ffr,Fast Finish Results,https://fastfinishresults.com/
+AthleticLIVE tenant: ffr,states,unconfirmed (US assumed),MN (Farmington),https://fastfinishresults.com/
+AthleticLIVE tenant: runaround,name,AthleticLIVE tenant: runaround,Runaround Racing,https://mo.milesplit.com/timing/1230/runaround-racing
+AthleticLIVE tenant: runaround,states,unconfirmed (US assumed),"MO (Joplin; timing since 2013, RFID); own domain runaroundracing.com now expired",https://mo.milesplit.com/timing/1230/runaround-racing
+AthleticLIVE tenant: letsgoruntiming,name,AthleticLIVE tenant: letsgoruntiming,LetsGoRun.com,https://letsgorun.com/
+AthleticLIVE tenant: letsgoruntiming,states,unconfirmed (US assumed),KS (Manhattan; Kansas Approved Schools XC Championships),https://letsgorun.com/
+AthleticLIVE tenant: usaracetiming,name,AthleticLIVE tenant: usaracetiming,USA Race Timing & Event Management,https://oh.milesplit.com/timing/1537/usa-race-timing-and-event-management
+AthleticLIVE tenant: usaracetiming,states,unconfirmed (US assumed),OH (Columbus; FAT for track and XC),https://oh.milesplit.com/timing/1537/usa-race-timing-and-event-management
+AthleticLIVE tenant: speedy,name,AthleticLIVE tenant: speedy,Speedy Sneakers Racing,https://oh.milesplit.com/timing/641/speedy-sneakers-racing
+AthleticLIVE tenant: speedy,states,unconfirmed (US assumed),OH (Columbus; HS and MS track and XC),https://oh.milesplit.com/timing/641/speedy-sneakers-racing
+AthleticLIVE tenant: timingspot,name,AthleticLIVE tenant: timingspot,TimingSpot,https://www.timingspot.com/
+AthleticLIVE tenant: timingspot,states,unconfirmed (US assumed),OH (southwest Ohio),https://www.timingspot.com/
+AthleticLIVE tenant: racepenguin,name,AthleticLIVE tenant: racepenguin,RacePenguin,https://racepenguin.com/results/
+AthleticLIVE tenant: racepenguin,states,unconfirmed (US assumed),OH (also KY); own-site PDFs on racepenguin.com/results/ incl. some HS XC,https://racepenguin.com/results/
+AthleticLIVE tenant: advancedsports,name,AthleticLIVE tenant: advancedsports,Advanced Sports Timing LLC,https://oh.milesplit.com/meets/701974-huron-cross-country-invitational-2025/teams/9777
+AthleticLIVE tenant: advancedsports,states,unconfirmed (US assumed),"OH (north-central; Huron XC Invitational 2025, Sandusky)",https://oh.milesplit.com/meets/701974-huron-cross-country-invitational-2025/teams/9777
+AthleticLIVE tenant: sbracetiming,name,AthleticLIVE tenant: sbracetiming,SB Race Timing,https://sbracetiming.com/
+AthleticLIVE tenant: sbracetiming,states,unconfirmed (US assumed),WA (Deer Park / Loon Lake; Spokane area),https://sbracetiming.com/
+AthleticLIVE tenant: olympicsedge,name,AthleticLIVE tenant: olympicsedge,Olympics Edge Timing,https://www.racedirectorshq.com/reviews/olympics-edge-timing-2928/
+AthleticLIVE tenant: olympicsedge,states,unconfirmed (US assumed),WA (Western Washington),https://www.racedirectorshq.com/reviews/olympics-edge-timing-2928/
+AthleticLIVE tenant: peakperf,name,AthleticLIVE tenant: peakperf,Peak Performance Timing (probable WA),https://www.racedirectorshq.com/reviews/peak-performance-timing-1857/
+AthleticLIVE tenant: peakperf,states,unconfirmed (US assumed),WA (listed under Washington race timers),https://www.racedirectorshq.com/reviews/peak-performance-timing-1857/
+AthleticLIVE tenant: nestiming,name,AthleticLIVE tenant: nestiming,Northeast Sports Timing (duplicate of existing row),https://www.nestiming.com/
+AthleticLIVE tenant: nestiming,states,unconfirmed (US assumed),CT (Middlefield),https://www.nestiming.com/
+AthleticLIVE tenant: firstlane,name,AthleticLIVE tenant: firstlane,First Lane Timing,https://firstlanetiming.com/
+AthleticLIVE tenant: firstlane,states,unconfirmed (US assumed),MD (Reisterstown),https://firstlanetiming.com/
+AthleticLIVE tenant: 2lrs,name,AthleticLIVE tenant: 2lrs,2L Race Services,https://2lraceservices.com/
+AthleticLIVE tenant: 2lrs,states,unconfirmed (US assumed),PA (West Chester; Mid-Atlantic),https://2lraceservices.com/
+AthleticLIVE tenant: pctiming,name,AthleticLIVE tenant: pctiming,Payne's Corner Timing,https://pctiming.com/
+AthleticLIVE tenant: pctiming,states,unconfirmed (US assumed),CT,https://pctiming.com/
+AthleticLIVE tenant: mill,name,AthleticLIVE tenant: mill,Millennium Running,https://millenniumrunning.com/
+AthleticLIVE tenant: mill,states,unconfirmed (US assumed),NH,https://millenniumrunning.com/
+AthleticLIVE tenant: windsortiming,name,AthleticLIVE tenant: windsortiming,Windsor Timing,https://www.racedirectorshq.com/race-timing/windsor-running
+AthleticLIVE tenant: windsortiming,states,unconfirmed (US assumed),"NON-US: Windsor, Ontario, Canada (exclude)",https://www.racedirectorshq.com/race-timing/windsor-running
+AthleticLIVE tenant: tomahawktiming,name,AthleticLIVE tenant: tomahawktiming,Tomahawk Timing,https://nj.milesplit.com/meets/124519-olympic-conf-week-1-tue-2012/results/210478
+AthleticLIVE tenant: tomahawktiming,states,unconfirmed (US assumed),NJ (Hy-Tek contractor headers on nj.milesplit 2011-2012),https://nj.milesplit.com/meets/124519-olympic-conf-week-1-tue-2012/results/210478
+AthleticLIVE tenant: flextimingpro,name,AthleticLIVE tenant: flextimingpro,TriStateRacer (flextiming.pro),https://flextiming.pro/
+AthleticLIVE tenant: flextimingpro,states,unconfirmed (US assumed),Tri-State area (state unconfirmed),https://flextiming.pro/
+AthleticLIVE tenant: kjtiming,name,AthleticLIVE tenant: kjtiming,K&J Timing (domain dead),https://kandjtiming.com/
+AthleticLIVE tenant: kjtiming,states,unconfirmed (US assumed),unknown - kandjtiming.com now a gambling spam site,https://kandjtiming.com/
