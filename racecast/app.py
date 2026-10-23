@@ -2754,6 +2754,39 @@ def _hasResultsStatus(cur, table="results"):
     return _RESULTS_STATUS[key]
 
 
+def _dayJoins():
+    """(XC, TF) LEFT JOIN LATERAL fragments exposing `rde`, the race-day row
+    for a result -- at most ONE per race. The XC one reads `cd` (the course
+    cell) and `cdc` (the championship cell); the TF one reads `cd`."""
+    # ⚠ ONE ROW, WHATEVER THE TABLE HOLDS (owner, 2026-10-23: every
+    #   race of a college runner listed twice). A plain join repeats the
+    #   race once per matching race-day row, and the canonical branch
+    #   matches one row per course NAME: after the 2026-10-22 course
+    #   rebuild merged spellings into one venue (Lehigh's Goodman Campus,
+    #   Hopkinton), and the tfrrs location backfill gave those meets
+    #   that venue, a day stored under two spellings came back twice.
+    #   The 2026-10-18 division keys did the same (collapse_race_days).
+    #   The day covering the most results stands for the course-day.
+    xc = ("""LEFT JOIN LATERAL (
+               SELECT rde0.* FROM race_day_effect rde0
+               WHERE  rde0.race_date::text = r.date
+                 AND  ((cdc.course_name IS NOT NULL
+                        AND rde0.course_name = cdc.course_name
+                        AND rde0.distance_m  = cdc.distance_m)
+                    OR (cdc.course_name IS NULL
+                        AND rde0.canonical_id = cd.canonical_id
+                        AND rde0.distance_m   = cd.distance_m))
+               ORDER  BY rde0.n_rows DESC NULLS LAST
+               LIMIT  1) rde ON TRUE""")
+    tf = ("""LEFT JOIN LATERAL (
+               SELECT rde0.* FROM race_day_effect rde0
+               WHERE  rde0.course_name = cd.course_name
+                 AND  rde0.race_date::text = r.date
+               ORDER  BY rde0.n_rows DESC NULLS LAST
+               LIMIT  1) rde ON TRUE""")
+    return xc, tf
+
+
 def get_races(cur, person_id):
     """Return one athlete's FULL competition history, both sports, newest first.
 
@@ -2789,17 +2822,7 @@ def get_races(cur, person_id):
         #   writes a championship cell's days under 'XC:<name>' with no
         #   canonical id, so the id join found none and those races had no
         #   race-day hover. `cdc` is the page's championship cell.
-        day_join_xc = ("""LEFT JOIN race_day_effect rde
-               ON rde.race_date::text = r.date
-              AND ((cdc.course_name IS NOT NULL
-                    AND rde.course_name = cdc.course_name
-                    AND rde.distance_m  = cdc.distance_m)
-                OR (cdc.course_name IS NULL
-                    AND rde.canonical_id = cd.canonical_id
-                    AND rde.distance_m   = cd.distance_m))""")
-        day_join_tf = ("""LEFT JOIN race_day_effect rde
-               ON rde.course_name = cd.course_name
-              AND rde.race_date::text = r.date""")
+        day_join_xc, day_join_tf = _dayJoins()
     else:
         day_col, day_join_xc, day_join_tf = "NULL::real", "", ""
         era_col = "NULL::real"
