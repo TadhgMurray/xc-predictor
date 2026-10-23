@@ -892,12 +892,17 @@ main.ath-page.rc .season table th:nth-child(7) { width: 4.8rem; }
 main.ath-page.rc .season table th:nth-child(8) { width: 6.6rem; }
 main.ath-page.rc .season td.res-cell .res-ev { display: block; font-size: .8rem; line-height: 1.2; color: var(--muted); }
 /* ⚠ AND THE MEET NEVER SQUEEZED TO A LETTER (owner, 2026-10-11: "meet names
-     are all cut off. Entirely."). The sized columns sum to ~43rem (border-box,
+     are all cut off. Entirely."). The sized columns sum to ~38.5rem (615 px) (border-box,
      athlete-charts.css), less than before the 5K and the ⓘ came in; the
      table keeps at least 8rem for the meet on top of them and scrolls
      sideways in its .tscroll below that, instead of eating the meet. */
 @media (min-width: 701px) {
-  main.ath-page.rc .season table { min-width: 51rem; }
+  /* ! AND NEVER WIDER THAN ITS COLUMN (owner, 2026-10-23: the table ran
+       into the side card). The column is 774 px at every desktop width
+       (page-wide's cap); the fixed columns measure 615 px in Chromium, so
+       47rem (752 px) keeps the meet its 8rem and fits. 51rem (816 px) did
+       not, and the old 49rem stuck out 10 px into the gap. */
+  main.ath-page.rc .season table { min-width: 47rem; }
 }
 main.ath-page.rc .season td.flags .flag { margin: 0 1px 2px 0; padding: 1px 4px; font-size: 10.5px; }
 /* "· 1st on team" under the place, as a small sub-line */
