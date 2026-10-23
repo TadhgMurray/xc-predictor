@@ -424,3 +424,11 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
     - Southern Connecticut Conference: Hy-Tek from Paynes Corner, 2007-2026.
   - **Many league domains are gone:** they redirect to Arbiter or are parked. The CSV lists them so nobody re-checks them.
   - **Blocked:** the Eastern Connecticut Conference's robots.txt disallows its results pages.
+- **More leagues and coach-run hubs (2026-10-23):** `docs/timing_passes/leagues_more.csv` has 26 rows, about 12 of them collectable. It was run under the owner's rule.
+  - **Best finds:**
+    - **Carroll County Running (MD):** Hy-Tek text pages with grade and school; ~140 meet pages a year, seasons back to 2000, plus a MD state-meet archive and an On Track Timing archive of 470+ meets. No robots.txt and no terms.
+    - **MN Prep Track:** conference track PDFs 2010-2025, state XC 1943-2025.
+    - **Fox River Classic Conference (WI):** XC PDFs 2007-2026, on rSchoolToday RST7, whose other league sites may have the same archive pages.
+  - **Smaller:** Texas 1A Fan (district qualifiers), Cross Country Scoreboard (GA private schools, 2012-2024), NCSAA nationals (times written 15:08:30 for 15:08.30), Lexington MA (2012-2017).
+  - **Off limits:** ScoreATL (bot challenge), Section IV NY (robots.txt disallows its /api/ for every crawler).
+  - **To settle:** both midwesttiming.net (IN) and Midwest Timing & Results (KS/MO/OK) point at mwt.live.
