@@ -54,6 +54,11 @@
   {% elif up.status == "submitted" %}<p class="ct-warn ct-ok">Sent{% if up.submitted_at %} on {{ up.submitted_at.strftime("%b %-d, %Y") }}{% endif %}. The site owner reviews every upload; you can still correct the details below until then.</p>
   {% endif %}
 
+  {% if up.file_kind == "url" %}
+  <p class="ct-warn ct-ok">You sent a link: <a href="{{ up.source_url }}" rel="nofollow noopener noreferrer" target="_blank">{{ up.source_url }}</a>.
+    The site owner reads it and adds the results; you will get an email when it is decided. Nothing more to do here, though the details below help.</p>
+  {% endif %}
+
   {% if editable %}
   <section class="acct-block">
     <h2>The meet</h2>
@@ -74,7 +79,7 @@
         <label>Race distance, if the file has none <input type="text" name="distance_m" value="{{ '%g'|format(up.distance_m) if up.distance_m else '' }}" placeholder="5000 or 3 mi"></label>
         <label class="ct-wide">Note for the owner <textarea name="note" maxlength="1000">{{ up.note or '' }}</textarea></label>
       </div>
-      {% if gaps %}<p class="ct-gap">Before it can be sent: {{ gaps|join("; ") }}.</p>{% endif %}
+      {% if gaps and up.file_kind != "url" %}<p class="ct-gap">Before it can be sent: {{ gaps|join("; ") }}.</p>{% endif %}
       <div class="ct-actions">
         {% if up.status == "draft" %}<button type="submit" name="action" value="send" class="go">Send for review</button>{% endif %}
         <button type="submit" name="action" value="save" class="go quiet">Save details</button>
@@ -115,14 +120,14 @@
     </table>
     </div>
   {% else %}
-    <p class="ct-warn ct-bad">No results were read from this file.</p>
+    {% if up.file_kind != "url" %}<p class="ct-warn ct-bad">No results were read from this file.</p>{% endif %}
   {% endfor %}
   {% if up.n_rows > rows|length %}<p class="ct-muted">Showing the first {{ rows|length }} of {{ up.n_rows }} results.</p>{% endif %}
 </div>
 <aside class="rc-side">
   <h2>What we read</h2>
   <table class="ct-facts"><tbody>
-    <tr><td>Format</td><td>{{ {"hytek_text": "Hy-Tek text", "hytek_html": "Hy-Tek HTML", "csv": "CSV"}.get(up.file_kind, up.file_kind) }}</td></tr>
+    <tr><td>Format</td><td>{{ {"hytek_text": "Hy-Tek text", "hytek_html": "Hy-Tek HTML", "csv": "CSV", "url": "A link, not read yet"}.get(up.file_kind, up.file_kind) }}</td></tr>
     <tr><td>Races</td><td>{{ events|selectattr("kind", "equalto", "running")|list|length }}{% set skipped = events|rejectattr("kind", "equalto", "running")|list %}{% if skipped %} <span class="ct-muted">(+{{ skipped|length }} skipped)</span>{% endif %}</td></tr>
     <tr><td>Results</td><td>{{ up.n_rows }}</td></tr>
     <tr><td>To check</td><td>{{ warns|length }}{% if flagged_rows %} <span class="ct-muted">({{ flagged_rows|length }} rows)</span>{% endif %}</td></tr>

@@ -68,6 +68,49 @@
   </section>
 
 {% else %}
+  {# ★ A LINK UPLOAD (2026-10-23): queue it (athletic.net / tfrrs), fetch and
+     read it, or attach the file by hand; then the meet's details, which a
+     fetched file may not carry. Each is a POST of this page's CSRF token. #}
+  {% if up.source_url %}
+  <section class="acct-block">
+    <h2>The link</h2>
+    <p><a href="{{ up.source_url }}" rel="nofollow noopener noreferrer" target="_blank">{{ up.source_url }}</a></p>
+    {% if up.status in ("submitted", "flagged") %}
+      {% if queue_target %}
+      <form method="post" action="/account/admin/uploads/{{ up.id }}/decide" class="ct-actions">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" name="action" value="queue" class="go ok">Queue it for the scrape</button>
+        <span class="ct-muted">{{ queue_target[2] }} {{ queue_target[1] }} meet {{ queue_target[0] }}: the nightly scrape reads it, no review of rows needed.</span>
+      </form>
+      {% else %}
+      <form method="post" action="/account/admin/uploads/{{ up.id }}/fetch" class="ct-actions">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit" class="go">{{ "Fetch and read again" if up.n_rows else "Fetch and read" }}</button>
+        <span class="ct-muted">Hy-Tek pages, Crystal Reports pages and PDFs. The rows land below for you to check.</span>
+      </form>
+      <form method="post" action="/account/admin/uploads/{{ up.id }}/file" enctype="multipart/form-data" class="ct-actions">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="file" name="file" accept=".txt,.htm,.html,.csv,.pdf" aria-label="Results file">
+        <button type="submit" class="go quiet">Attach the file</button>
+        <span class="ct-muted">When the fetch cannot read it: save the results yourself.</span>
+      </form>
+      {% endif %}
+      <form method="post" action="/account/admin/uploads/{{ up.id }}/details" class="ct-form">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="ct-wide">Meet name <input type="text" name="meet_name" value="{{ up.meet_name or '' }}" maxlength="200"></label>
+        <label>Date <input type="date" name="meet_date" value="{{ up.meet_date or '' }}"></label>
+        <label>Course or venue <input type="text" name="location" value="{{ up.location or '' }}" maxlength="200"></label>
+        <label>State <input type="text" name="state" value="{{ up.state or '' }}" maxlength="2"></label>
+        <label>Sport <select name="sport"><option value="">Pick one</option>
+          <option value="XC" {{ "selected" if up.sport == "XC" }}>Cross country</option>
+          <option value="TF" {{ "selected" if up.sport == "TF" }}>Track</option></select></label>
+        <label>Distance, if the file has none <input type="text" name="distance_m" value="{{ '%g'|format(up.distance_m) if up.distance_m else '' }}" placeholder="5000 or 3 mi"></label>
+        <div class="ct-actions"><button type="submit" class="go quiet">Save details</button></div>
+      </form>
+    {% endif %}
+  </section>
+  {% endif %}
+
   {# ---- the decision first: what it may duplicate, and the buttons ---- #}
   <section class="acct-block">
     <h2>Already on the site?</h2>
@@ -94,6 +137,8 @@
         {% endif %}
         <button type="submit" name="action" value="reject" class="go no">Reject</button>
       </form>
+    {% elif up.status == "approved" and (up.applied or {}).mechanism == "meet_queue" %}
+      <p class="ct-warn ct-ok">Queued by {{ up.decided_by }} for the nightly scrape: {{ up.applied.source }} {{ up.applied.sport }} meet {{ up.applied.meet_id }}.</p>
     {% elif up.status == "approved" %}
       <p class="ct-warn ct-ok">Approved by {{ up.decided_by }}{% if up.decided_at %} on {{ up.decided_at.strftime("%b %-d %H:%M") }}{% endif %}:
         {% set a = up.applied or {} %}{{ a.races }} races and {{ a.results }} results written as meet {{ a.meet_id }} ({{ a.sport }}, source 'upload'){% if a.forced %}, inserted over a duplicate warning{% endif %}.</p>

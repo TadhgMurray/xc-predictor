@@ -56,9 +56,15 @@
     <form method="post" action="/account/uploads/new" enctype="multipart/form-data" id="up-form">
       {% if not guest %}<input type="hidden" name="csrf" value="{{ csrf }}">{% endif %}
       <div class="ct-file">
-        <input type="file" name="file" required accept=".txt,.htm,.html,.csv,text/plain,text/html,text/csv" aria-label="Results file">
-        <span class="ct-muted">.txt, .htm or .csv, up to {{ max_mb }} MB</span>
+        <input type="file" name="file" accept=".txt,.htm,.html,.csv,text/plain,text/html,text/csv" aria-label="Results file">
+        <span class="ct-muted">.txt, .htm or .csv, up to {{ max_mb }} MB. A file is best: you see what we read straight away.</span>
       </div>
+      {# ★ OR A LINK (owner, 2026-10-23): no file to hand -> the results page's
+         address; the owner reads it from the queue #}
+      <label class="ct-file">Or, if you have no file, a link to the results
+        <input type="url" name="url" maxlength="1000" inputmode="url" placeholder="https://timer.example.com/2025/meet/results.htm">
+        <span class="ct-muted">The results page or PDF the timer posted. It goes to the site owner to read, so it takes longer than a file.</span>
+      </label>
       <div class="ct-form">
         <label>Sport
           <select name="sport">

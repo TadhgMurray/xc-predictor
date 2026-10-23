@@ -72,6 +72,18 @@
 #   discard -- the way a login link is; only its hash is stored. The same
 #   limits apply, counted per IP and per email address. The owner's review
 #   is unchanged, and the decision mail goes to the guest's address.
+#
+# ★ A LINK INSTEAD OF A FILE (owner, 2026-10-23: "add a way to upload a url
+#   ... then we can manually do it (just say file is preferred)"). The form
+#   takes a results link when there is no file: the upload goes straight to
+#   the queue as file_kind 'url', no rows, source_url set. The owner then
+#     - queues it for the scrape, when it is an athletic.net or tfrrs meet
+#       (fixes.queueTarget, meet_queue -- what a 'missing meet' fix does);
+#     - "Fetch and read": upload_fetch.fetchResults, once, safely; the rows
+#       land in the same upload, which is then reviewed like any other;
+#     - or attaches the file by hand when the fetch cannot read it.
+#   The server never fetches on the uploader's submit, only on the owner's
+#   button.
 
 import datetime
 import difflib
@@ -151,6 +163,7 @@ CREATE INDEX IF NOT EXISTS result_upload_status_idx ON result_upload (status, su
 ALTER TABLE result_upload ADD COLUMN IF NOT EXISTS guest_email text;
 ALTER TABLE result_upload ADD COLUMN IF NOT EXISTS guest_token_hash text;
 ALTER TABLE result_upload ADD COLUMN IF NOT EXISTS guest_ip text;
+ALTER TABLE result_upload ADD COLUMN IF NOT EXISTS source_url text;
 CREATE UNIQUE INDEX IF NOT EXISTS result_upload_guest_token_idx ON result_upload (guest_token_hash)
     WHERE guest_token_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS result_upload_guest_ip_idx ON result_upload (guest_ip, created_at)
@@ -369,6 +382,8 @@ def eventDistances(events, meet_distance):
 def readyToApply(up, events):
     """What stops an upload being written, as sentences (empty: none)."""
     why = []
+    if "n_rows" in up and not up["n_rows"]:
+        why.append("no results read yet" if up.get("source_url") else "no results")
     if not up.get("meet_name") or not up.get("meet_date"):
         why.append("no meet name or date")
     if up.get("sport") not in SPORTS:
@@ -426,6 +441,14 @@ def stage(cur, account_id, filename, data, parsed, form, guest=None):
                  Json(events), Json(parsed["warnings"][:500]),
                  (form.get("note") or "").strip()[:1000] or None) + tuple(guest or ()))
     uid = AC._one(cur)["id"]
+    _insertRows(cur, uid, parsed)
+    return uid
+
+
+def _insertRows(cur, uid, parsed):
+    """The parsed rows into result_upload_row for one upload."""
+    from psycopg2.extras import execute_values
+    events = parsed["events"]
     evs = {e["n"]: e for e in events}
     rows = []
     for n, r in enumerate(parsed["rows"], start=1):
@@ -442,7 +465,63 @@ def stage(cur, account_id, filename, data, parsed, form, guest=None):
                                            round, place, name, name_raw, grade, school, time_text,
                                            time_seconds, status, line, warning)
             VALUES %s""", rows, page_size=2000)
-    return uid
+
+
+URL_MAX = 1000
+
+
+def cleanUrl(text):
+    """A results link as sent: http(s), a host, no spaces -> the url or None.
+    Nothing is fetched here."""
+    u = (text or "").strip()
+    if not u or len(u) > URL_MAX or any(c.isspace() for c in u):
+        return None
+    if not re.match(r"^https?://", u, re.I):
+        u = "https://" + u
+    parts = urllib.parse.urlsplit(u)
+    if parts.scheme.lower() not in ("http", "https") or not parts.hostname or "." not in parts.hostname:
+        return None
+    return u
+
+
+def stageUrl(cur, account_id, url, form, guest=None):
+    """A results link, straight into the owner's queue -> its id."""
+    sport = (form.get("sport") or "").upper()
+    cur.execute("""
+        INSERT INTO result_upload (account_id, status, file_name, file_kind, file_bytes, sport,
+                                   meet_name, meet_date, location, note, source_url, submitted_at
+                                   {guest_cols})
+        VALUES (%s, 'submitted', %s, 'url', 0, %s, %s, %s, %s, %s, %s, now(){guest_vals})
+        RETURNING id""".format(guest_cols=", guest_email, guest_token_hash, guest_ip" if guest else "",
+                               guest_vals=", %s, %s, %s" if guest else ""),
+                (account_id, urllib.parse.urlsplit(url).hostname[:200], sport if sport in SPORTS else None,
+                 (form.get("meet_name") or "").strip()[:200] or None,
+                 RP.parseDate(form.get("meet_date") or ""),
+                 (form.get("location") or "").strip()[:200] or None,
+                 (form.get("note") or "").strip()[:1000] or None, url) + tuple(guest or ()))
+    return AC._one(cur)["id"]
+
+
+def restage(cur, up, filename, data, parsed):
+    """A link's results, read (fetched or attached by the owner), into the
+    same upload: the file's fields, the meet's details where the uploader
+    left them blank, and every row. Its status does not change."""
+    from jsonb import J as Json
+    meta, _errs = checkMeta({}, parsed["meet"], parsed.get("sport"))
+    text = RP.decode(data).replace("\x00", "")
+    cur.execute("DELETE FROM result_upload_row WHERE upload_id = %s", (up["id"],))
+    cur.execute("""UPDATE result_upload SET file_name = %s, file_kind = %s, file_bytes = %s,
+                          file_sha256 = %s, raw_text = %s, software = %s,
+                          sport = COALESCE(sport, %s), meet_name = COALESCE(meet_name, %s),
+                          meet_date = COALESCE(meet_date, %s), meet_date_end = COALESCE(meet_date_end, %s),
+                          location = COALESCE(location, %s), state = COALESCE(state, %s),
+                          n_rows = %s, n_events = %s, events = %s, warnings = %s
+                   WHERE id = %s""",
+                ((filename or "")[:200], parsed["format"], len(data), hashlib.sha256(data).hexdigest(),
+                 text, parsed.get("software"), meta["sport"], meta["meet_name"], meta["meet_date"],
+                 meta["meet_date_end"], meta["location"], meta["state"], len(parsed["rows"]),
+                 len(parsed["events"]), Json(parsed["events"]), Json(parsed["warnings"][:500]), up["id"]))
+    _insertRows(cur, up["id"], parsed)
 
 
 def loadUpload(cur, uid):
@@ -634,6 +713,19 @@ def decide(cur, uid, action, admin_email, note=None):
         cur.execute("""UPDATE result_upload SET status = 'rejected', decided_at = now(), decided_by = %s,
                               decision_note = %s WHERE id = %s""", (admin_email, note, uid))
         return "rejected", None
+    if action == "queue":
+        import fixes as FX
+        target = FX.queueTarget(up.get("source_url"))
+        if up["status"] not in ("submitted", "flagged") or not target:
+            return up["status"], "Only a waiting athletic.net or tfrrs meet link can be queued."
+        mid, sport, src = target
+        cur.execute("""INSERT INTO meet_queue (meet_id, sport, scraped, source) VALUES (%s, %s, 0, %s)
+                       ON CONFLICT (meet_id, sport, source) DO UPDATE SET scraped = 0""", (mid, sport, src))
+        applied = {"mechanism": "meet_queue", "meet_id": mid, "sport": sport, "source": src}
+        cur.execute("""UPDATE result_upload SET status = 'approved', decided_at = now(), decided_by = %s,
+                              decision_note = %s, applied = %s WHERE id = %s""",
+                    (admin_email, note, Json(applied), uid))
+        return "approved", None
     if action not in ("approve", "force"):
         return up["status"], "Unknown action."
     if up["status"] == "approved":
@@ -740,6 +832,21 @@ def upload_post():
         return _guestPost()
     if not AC.csrfOk(sess):
         return _back("/account/uploads/new", error="That request did not come from this site."), 400
+    url = _urlInstead()
+    if url is not None:
+        if not url:
+            return _back("/account/uploads/new", error="That link does not look like a web address."), 400
+        with AC._db() as (conn, cur):
+            if not tablesReady(cur):
+                return _notReady()
+            hour, day = recentCount(cur, sess["account"]["id"])
+            if hour >= UPLOADS_PER_HOUR or day >= UPLOADS_PER_DAY:
+                return _back("/account/uploads/new",
+                             error="That is a lot of uploads at once: try again later today."), 429
+            uid = stageUrl(cur, sess["account"]["id"], url, request.form)
+            AC.logEvent(cur, "upload", sess["account"]["id"], detail={"upload": uid, "url": True})
+            conn.commit()
+        return _back(f"/account/uploads/{uid}", notice=URL_SENT)
     try:
         f, data, parsed = _readFile()
     except _Refused as r:
@@ -758,6 +865,22 @@ def upload_post():
     return redirect(f"/account/uploads/{uid}")
 
 
+URL_SENT = ("Got the link. The site owner reads it and adds the results; you will get an email "
+            "when it is decided. A file is quicker to check, if you have one.")
+
+
+def _urlInstead():
+    """None when a file was chosen (or nothing at all); else the cleaned
+    link, '' when it is not a web address."""
+    f = request.files.get("file")
+    if f and f.filename:
+        return None
+    raw = (request.form.get("url") or "").strip()
+    if not raw:
+        return None
+    return cleanUrl(raw) or ""
+
+
 class _Refused(Exception):
     def __init__(self, response):
         super().__init__("refused")
@@ -768,7 +891,7 @@ def _readFile():
     """(file, bytes, parsed); _Refused carries the error response."""
     f = request.files.get("file")
     if not f or not f.filename:
-        raise _Refused(_back("/account/uploads/new", error="Choose a results file."))
+        raise _Refused(_back("/account/uploads/new", error="Choose a results file, or paste a link to the results."))
     data = f.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
         raise _Refused(_back("/account/uploads/new", error="That file is over 9 MB."))
@@ -792,10 +915,15 @@ def _guestPost():
     if not AC.turnstileOk(request.form.get("cf-turnstile-response")):
         return _back("/account/uploads/new", error="The check that you are a person did not pass: "
                                                    "try again."), 400
-    try:
-        f, data, parsed = _readFile()
-    except _Refused as r:
-        return r.response, 400
+    url = _urlInstead()
+    if url == "":
+        return _back("/account/uploads/new", error="That link does not look like a web address."), 400
+    f = data = parsed = None
+    if url is None:
+        try:
+            f, data, parsed = _readFile()
+        except _Refused as r:
+            return r.response, 400
     ip = AC.clientIp()
     raw, token_hash = AC.newToken()
     with AC._db() as (conn, cur):
@@ -807,19 +935,24 @@ def _guestPost():
         if hour >= UPLOADS_PER_HOUR or day >= UPLOADS_PER_DAY:
             return _back("/account/uploads/new",
                          error="That is a lot of uploads at once: try again later today."), 429
-        uid = stage(cur, None, f.filename, data, parsed, request.form, guest=(email, token_hash, ip))
-        AC.logEvent(cur, "upload", None, email=email,
-                    detail={"upload": uid, "rows": len(parsed["rows"]), "format": parsed["format"],
-                            "guest": True})
+        if url:
+            uid = stageUrl(cur, None, url, request.form, guest=(email, token_hash, ip))
+            detail = {"upload": uid, "url": True, "guest": True}
+        else:
+            uid = stage(cur, None, f.filename, data, parsed, request.form, guest=(email, token_hash, ip))
+            detail = {"upload": uid, "rows": len(parsed["rows"]), "format": parsed["format"], "guest": True}
+        AC.logEvent(cur, "upload", None, email=email, detail=detail)
         conn.commit()
     here = f"/account/uploads/g/{raw}"
     mailed = "failed"
+    meet = (request.form.get("meet_name") or "").strip() or (parsed["meet"].get("name") if parsed else None)
     try:
-        mailed = mailGuestLink(email, AC.siteOrigin() + here, parsed["meet"].get("name"))
+        mailed = mailGuestLink(email, AC.siteOrigin() + here, meet)
     except Exception as exc:                            # noqa: BLE001
         print(f"[uploads] guest link mail for {uid} failed ({type(exc).__name__}: {exc})", flush=True)
-    return _back(here, notice="We emailed you this page's link, so you can come back to it."
-                 if mailed != "failed" else "Keep this page's address: it is your link back to the upload.")
+    kept = ("We emailed you this page's link, so you can come back to it." if mailed != "failed"
+            else "Keep this page's address: it is your link back to the upload.")
+    return _back(here, notice=(URL_SENT + " " + kept) if url else kept)
 
 
 def _mayView(sess, up):
@@ -1043,7 +1176,9 @@ def admin_upload(uid):
                 dupes = [{"error": f"{type(exc).__name__}: {exc}"}]
         conn.commit()
     events = up.get("events") or []
+    import fixes as FX
     return _page("admin_uploads.html", mode="one", up=up, rows=rows, events=events, dupes=dupes,
+                 queue_target=FX.queueTarget(up.get("source_url")) if up.get("source_url") else None,
                  csrf=sess["csrf"], gaps=PIPELINE_GAPS, steps=PIPELINE_STEPS, linking=linking,
                  apply_gaps=readyToApply(up, events),
                  raw=(up.get("raw_text") or "")[:60000],
@@ -1087,6 +1222,108 @@ def admin_upload_decide(uid):
     words = {"approved": "Approved and written", "rejected": "Rejected",
              "flagged": "Held: it looks like a meet we already have (see the matches)"}[status]
     return _back(here, notice=words + ("; the uploader was emailed." if mailed else "."))
+
+
+def _adminLinkUpload(uid):
+    """(session, upload, None) for a waiting link upload, or (.., .., response)."""
+    sess, go = requireAdmin()
+    if go:
+        return None, None, go
+    here = f"/account/admin/uploads/{uid}"
+    if not AC.csrfOk(sess):
+        abort(403)
+    with AC._db() as (conn, cur):
+        if not tablesReady(cur):
+            return sess, None, _notReady()
+        up = loadUpload(cur, uid)
+        conn.commit()
+    if up is None:
+        abort(404)
+    if up["status"] not in ("submitted", "flagged"):
+        return sess, up, (_back(here, error="Only a waiting upload can be read again."), 400)
+    return sess, up, None
+
+
+def _restageAndBack(sess, up, filename, data, how):
+    here = f"/account/admin/uploads/{up['id']}"
+    try:
+        parsed = RP.parse(filename, data)
+    except RP.ParseError as exc:
+        return _back(here, error=f"{how}, but it could not be read: {exc}"), 400
+    with AC._db() as (conn, cur):
+        cur.execute("SELECT * FROM result_upload WHERE id = %s FOR UPDATE", (up["id"],))
+        locked = AC._one(cur)
+        if locked is None or locked["status"] not in ("submitted", "flagged"):
+            conn.rollback()
+            return _back(here, error="It was decided meanwhile."), 400
+        restage(cur, locked, filename, data, parsed)
+        AC.logEvent(cur, "upload_read", sess["account"]["id"],
+                    detail={"upload": up["id"], "rows": len(parsed["rows"]), "how": how})
+        conn.commit()
+    return _back(here, notice=f"{how}: {len(parsed['rows'])} results in {len(parsed['events'])} events. "
+                              "Check them, then approve.")
+
+
+@bp.route("/account/admin/uploads/<int:uid>/details", methods=["POST"])
+def admin_upload_details(uid):
+    """The owner sets the meet's details: a link's file often has none."""
+    sess, up, go = _adminLinkUpload(uid)
+    if go:
+        return go
+    here = f"/account/admin/uploads/{uid}"
+    meta, errors = checkMeta(request.form, {"name": up["meet_name"], "date": up["meet_date"],
+                                            "date_end": up["meet_date_end"], "location": up["location"]},
+                             up["sport"])
+    if errors:
+        return _back(here, error=" ".join(errors)), 400
+    with AC._db() as (conn, cur):
+        cur.execute("""UPDATE result_upload SET meet_name = %s, meet_date = %s, meet_date_end = %s,
+                              location = %s, state = COALESCE(%s, state), sport = %s,
+                              distance_m = COALESCE(%s, distance_m)
+                       WHERE id = %s AND status IN ('submitted', 'flagged')""",
+                    (meta["meet_name"], meta["meet_date"], meta["meet_date_end"], meta["location"],
+                     meta["state"], meta["sport"], meta["distance_m"], uid))
+        conn.commit()
+    return _back(here, notice="Saved.")
+
+
+@bp.route("/account/admin/uploads/<int:uid>/fetch", methods=["POST"])
+def admin_upload_fetch(uid):
+    """The owner's "Fetch and read" for a link upload."""
+    import upload_fetch as UF
+    sess, up, go = _adminLinkUpload(uid)
+    if go:
+        return go
+    if not up.get("source_url"):
+        return _back(f"/account/admin/uploads/{uid}", error="This upload has no link."), 400
+    try:
+        filename, data = UF.fetchResults(up["source_url"])
+    except UF.FetchError as exc:
+        return _back(f"/account/admin/uploads/{uid}",
+                     error=f"Could not fetch it: {exc} Download it yourself and attach the file."), 400
+    return _restageAndBack(sess, up, filename, data, "Fetched")
+
+
+@bp.route("/account/admin/uploads/<int:uid>/file", methods=["POST"])
+def admin_upload_file(uid):
+    """The owner attaches the file for a link the fetch could not read."""
+    sess, up, go = _adminLinkUpload(uid)
+    if go:
+        return go
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return _back(f"/account/admin/uploads/{uid}", error="Choose a results file."), 400
+    data = f.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        return _back(f"/account/admin/uploads/{uid}", error="That file is over 9 MB."), 400
+    name = f.filename
+    if data[:5] == b"%PDF-":
+        import upload_fetch as UF
+        try:
+            data, name = UF._pdfText(data), "attached.txt"
+        except UF.FetchError as exc:
+            return _back(f"/account/admin/uploads/{uid}", error=str(exc)), 400
+    return _restageAndBack(sess, up, name, data, "Attached")
 
 
 # ---- command line ------------------------------------------------------
