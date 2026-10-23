@@ -449,3 +449,19 @@ The raw passes are in `docs/timing_passes/`. Most new rows are directory-only, w
     - A timer's own copy of MeetPro pages is independent.
     - "off limits" in a row's notes blocks it; Mac's Sports Timing is blocked for its bot challenge.
     - Independent sources went from 87 to 142. The states with none are now AK, DC, HI and MT.
+- **Arrow Live Results, every state (2026-10-23):** `docs/timing_passes/arrow_timers.csv` (15 timers, merged into the registry: 10 new rows, 5 known timers now marked as on Arrow) and `docs/timing_passes/arrow_adapter_notes.md`, which describes how Arrow is built for the adapter.
+  - **Volume:** 33 timers post school XC to Arrow. The biggest by HS races in the index:
+    - 12:1 Running (OK): 165
+    - athletic Scoring providers (FL): 135
+    - Above and Beyond (IN): 75
+    - MOGO (FL): 69
+    - RCC (IN): 55
+    - Advantage Timing (MN): 35
+    - Run Roanoke (VA): 27
+    - XM Timing (WI): 24
+  - **Terms:** none. robots.txt is a 404, there is no terms page, and "The results are free to the general public."
+  - **For the adapter:**
+    - Every page is HTML. One race is one event; meets have to be rebuilt from timer, date, venue and race names.
+    - Results come from `/Results/pvResults?pEventId=<n>&pDivision=<name>`, every runner in one response. School is the Team column. There is never a grade.
+    - The state index is complete only from about 2026-09-19. About 14,000 races since September 2023 can be reached by sequential event id, a ~16 h walk at one request every 4 s.
+    - The state field is unreliable (",AR" is the form's default); take the state from the timer or the venue.
