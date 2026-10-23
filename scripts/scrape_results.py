@@ -29,7 +29,7 @@ from scraper import (
     getMeetData, getMeetResults,
     getMeetDataTF, getMeetResultsTF,
     getAllResultsTF, getAllResultsXC,
-    CloudflareException, RateLimitException
+    CloudflareException, RateLimitException, FastPathRefused
 )
 from scrape_tuning import perRequestDelayRange
  
@@ -229,6 +229,45 @@ async def _fetchXCDivisionResults(page, meet_id: int, div_id: int,
             return -1
         
     return results
+
+# _scrapeXCByDivision
+# Purpose: One XC meet through the per-division call (GetResultsData3), the
+#          one athletic.net's own results page makes, for when the whole-meet
+#          call is refused (scraper.FastPathRefused). Paced between divisions
+#          like the TF per-div loop; any division failing fails the meet, so
+#          it retries whole rather than saving a meet with races missing.
+# Output:  results saved, 0 for a meet whose divisions are all empty, or -1.
+async def _scrapeXCByDivision(page, meet_id: int, meet_info: dict,
+                              divisions: list, jwt_token: str, label: str) -> int:
+    collected_meets, collected_athletes, collected_results = [], [], []
+    teams, team_scores = None, []
+    asked = 0
+    for div in divisions:
+        div_id = div.get("IDMeetDiv")
+        # an entries-only division (athletic.net's Result 0) has nothing to ask
+        if not div_id or div.get("Result") == 0:
+            continue
+        if asked:
+            low, high = perRequestDelayRange()
+            await asyncio.sleep(random.uniform(low, high))
+        asked += 1
+        try:
+            results, div_teams, div_scores = await getMeetResults(
+                page, meet_id, div_id, jwt_token)
+        except (CloudflareException, asyncio.CancelledError):
+            raise
+        except Exception as e:                              # noqa: BLE001
+            print(f"{label} [!] getMeetResults failed for meet {meet_id} "
+                  f"div {div_id}: {e}")
+            return -1
+        teams = teams or div_teams
+        if div_scores:
+            team_scores.extend(div_scores)
+        _collectXCDivision(meet_info, div, results or [], collected_meets,
+                           collected_athletes, collected_results)
+    return _saveXCMeet(meet_id, label, collected_meets, collected_athletes,
+                       collected_results, teams=teams,
+                       team_scores=team_scores or None)
 
 # _collectXCDivision
 # Purpose: Collects meet, athlete, and result data for one XC division
@@ -1026,6 +1065,11 @@ async def scrapeMeetTF(page, meet_id: int, meet_info: dict,
         payload = await getAllResultsTF(page, meet_id, jwt_token)
     except CloudflareException:
         raise   # IP block — bubble up for rotation
+    except FastPathRefused:
+        # the whole-meet call refused: the per-division calls, as the results
+        # page itself makes them (see scraper.FastPathRefused)
+        return await _scrapeMeetTFPerDiv(page, meet_id, meet_info, events_dict,
+                                         event_divs, label, vpn_rotator)
     except RateLimitException:
         # Per-session/IP 429. Distinct [429] line so you can grep the rate while
         # tuning perMeetDelayRange. Marked failed -> retried later via meet_queue
@@ -1350,6 +1394,13 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
             payload = await getAllResultsXC(page, meet_id, jwt_token)
         except CloudflareException:
             raise   # IP block — bubble up for rotation
+        except FastPathRefused:
+            n = await _scrapeXCByDivision(page, meet_id, meet_info, divisions,
+                                          jwt_token, label)
+            print(f"{label} Meet {meet_id} (XC): "
+                  + ("failed" if n == -1 else f"saved {n} results")
+                  + f" (per division, {len(divisions)})")
+            return n, True
         except RateLimitException:
             # Per-session/IP 429. Distinct [429] line for grepping the rate
             # while tuning perMeetDelayRange. Marked failed -> retried later

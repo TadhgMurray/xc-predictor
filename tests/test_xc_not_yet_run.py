@@ -70,3 +70,94 @@ def test_a_past_meet_with_results_but_no_payload_still_fails(monkeypatch, capsys
     out = capsys.readouterr().out
     assert "failed" in out and LAST_WEEK in out and "['error']" in out
     assert "HTTP" in out
+
+
+# ---- the whole-meet call refused: per division (2026-10-23) --------------- #
+
+def test_a_refused_whole_meet_call_falls_back_to_per_division(monkeypatch, capsys):
+    """GetAllResultsData answered 403 for 288317 (results on the page); the
+    per-division call the results page itself makes still answered."""
+    divisions = [{"IDMeetDiv": 1149714, "Result": 1}, {"IDMeetDiv": 1149715, "Result": 1},
+                 {"IDMeetDiv": 1149716, "Result": 0}]
+
+    async def meetData(page, meet_id):
+        return {"ID": meet_id, "MeetDate": LAST_WEEK, "HasResults": 1,
+                "jwtMeet": "t"}, divisions
+
+    async def refused(page, meet_id, token):
+        raise SR.FastPathRefused("HTTP 403")
+
+    asked = []
+
+    async def perDiv(page, meet_id, div_id, token):
+        asked.append(div_id)
+        return ([{"AthleteID": div_id * 10, "IDResult": div_id}], [{"t": 1}],
+                [{"score": div_id}])
+
+    saved = {}
+
+    def save(meet_id, label, meets, athletes, results, teams=None, team_scores=None):
+        saved.update(meets=meets, results=results, teams=teams, scores=team_scores)
+        return len(results)
+
+    async def noSleep(_):
+        return None
+
+    monkeypatch.setattr(SR, "getMeetData", meetData)
+    monkeypatch.setattr(SR, "getAllResultsXC", refused)
+    monkeypatch.setattr(SR, "getMeetResults", perDiv)
+    monkeypatch.setattr(SR, "_saveXCMeet", save)
+    monkeypatch.setattr(SR.asyncio, "sleep", noSleep)
+    got = asyncio.run(SR.scrapeMeetBySport(None, 288317, "XC", "[t]", None))
+    assert got == (2, True)
+    assert asked == [1149714, 1149715]              # the entries-only one skipped
+    assert [r[3] for r in saved["results"]] == [1149714, 1149715]
+    assert saved["scores"] == [{"score": 1149714}, {"score": 1149715}]
+    assert "per division" in capsys.readouterr().out
+
+
+def test_one_division_failing_fails_the_whole_meet(monkeypatch):
+    async def meetData(page, meet_id):
+        return {"ID": meet_id, "MeetDate": LAST_WEEK, "HasResults": 1,
+                "jwtMeet": "t"}, [{"IDMeetDiv": 1}, {"IDMeetDiv": 2}]
+
+    async def refused(page, meet_id, token):
+        raise SR.FastPathRefused("HTTP 403")
+
+    async def perDiv(page, meet_id, div_id, token):
+        if div_id == 2:
+            raise Exception("API returned status 403")
+        return [], None, None
+
+    async def noSleep(_):
+        return None
+
+    monkeypatch.setattr(SR, "getMeetData", meetData)
+    monkeypatch.setattr(SR, "getAllResultsXC", refused)
+    monkeypatch.setattr(SR, "getMeetResults", perDiv)
+    monkeypatch.setattr(SR, "_saveXCMeet", lambda *a, **k: pytest_fail())
+    monkeypatch.setattr(SR.asyncio, "sleep", noSleep)
+    assert asyncio.run(SR.scrapeMeetBySport(None, 9, "XC", "[t]", None)) == (-1, True)
+
+
+def pytest_fail():
+    raise AssertionError("a meet with a failed division must not be saved")
+
+
+def test_track_refused_goes_per_division_not_to_recovery(monkeypatch):
+    async def refused(page, meet_id, token):
+        raise SR.FastPathRefused("HTTP 403")
+
+    called = {}
+
+    async def perDiv(page, meet_id, meet_info, events_dict, event_divs, label, rot):
+        called["yes"] = (meet_id, len(event_divs))
+        return 17
+
+    monkeypatch.setattr(SR, "getAllResultsTF", refused)
+    monkeypatch.setattr(SR, "_scrapeMeetTFPerDiv", perDiv)
+    monkeypatch.setattr(SR, "_saveDivisionsForRecovery",
+                        lambda *a: (_ for _ in ()).throw(AssertionError("recovery")))
+    got = asyncio.run(SR.scrapeMeetTF(None, 676765, {"jwtMeet": "t"}, {1: {}},
+                                      [{"e": 1, "d": 2}], "[t]", None))
+    assert got == 17 and called["yes"] == (676765, 1)
