@@ -402,3 +402,62 @@ carry is at most about 1.9% in those units; the rest is the day.
     runners, seasons before this one).
 - **B2 and C1-for-order wait** until E1 and E2 show room outside the
   season opener.
+
+### E0b, run 2026-10-24 (owner): where the room is, per runner, and college
+
+Median |within-race miss| per runner, prior → nearest (hindsight), with
+last race beside it.
+
+**"Share of room"** is each band's share of the squared error that
+hindsight removes: runners × (prior² − nearest²). It is a rough split,
+not an exact one.
+
+| Band | All levels 2024-25 | College 2024-25 | College 2023-24 |
+|---|---|---|---|
+| In season, last race ≤21 days ago | 2.30 → 1.89 (last 2.35) · 79% of runners · **42% of room** | 2.25 → 1.80 · 72% · 43% | 2.27 → 1.82 · 72% · 37% |
+| In season, >21 days | 3.13 → 2.63 · 8% · 7% | 2.68 → 2.22 · 14% · 10% | 3.19 → 2.42 · 10% · 12% |
+| Season opener, ≤120 days (spring track) | 3.15 → 1.97 · 4% · 7% | 2.45 → 1.87 · 4% · 3% | 2.84 → 1.75 · 4% · 6% |
+| **Season opener, 121–365 days** (off a summer) | **4.15 → 2.47** · 9% · **30%** | 3.81 → 2.32 · 10% · 30% | 4.19 → 2.85 · 13% · 35% |
+| Season opener, >1 year | 8.22 → 3.40 · 1% · 14% | 7.07 → 2.22 · 1% · 14% | 6.47 → 2.71 · 1% · 10% |
+| **Openers, total** | 13% of runners, **51% of room** | 15%, 47% | 18%, 51% |
+
+**College, pairs in order** (148 tfrrs races each):
+
+| Season | Prior | Nearest | Gap |
+|---|---|---|---|
+| 2024-25 | 86.9% | 90.0% | **+3.09** [+2.57, +3.64] |
+| 2023-24 | 86.2% | 89.5% | **+3.32** [+2.87, +3.78] |
+
+### What it means
+
+1. **Half of the room sits in one runner in seven: the season opener.**
+   - These are mostly runners coming off a summer (121–365 days), plus
+     returners after a year or more.
+   - Their miss today is 4–8%, against 2.3% for everyone else. Last race
+     and the rating average are equally lost on them.
+   - This is the network's natural job: careers, grade progression,
+     summer improvement, and spring track as evidence.
+2. **The other half is spread thin over mid-season runners,** about 0.4
+   points each.
+   - There, the rating average barely beats the last race (2.30% against
+     2.35%).
+   - Some of the hindsight gain is just "seeing next week's race", which
+     no forecast can, so the reachable part is smaller than it looks.
+   - The engine's in-season fitness (form curve, per-runner trend) is the
+     natural owner of it.
+3. **College has more room than overall** (+3.1 to +3.3 points against
+   +2.4), with the same opener pattern. That is the ground on which to
+   beat Kailo.
+
+### Next: E1a, the current network on the same test (no GPU, ~1 h)
+
+`diag_order_headroom.py --with-model` adds model.pt as a fifth basis,
+split by the same runner bands. model.pt was trained on these seasons, so
+this is its best case: athlete-held-out with `--val-only`, and fully
+in-sample without it.
+
+- **If it cannot beat prior on openers even here,** the network has to
+  be retrained before it can own them (E3 onward).
+- **If it beats prior on openers,** a hybrid (the network for openers,
+  ratings in season) is the first real use of it, and E1 confirms it on
+  the date-split bench.

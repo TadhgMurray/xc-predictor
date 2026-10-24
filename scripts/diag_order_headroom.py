@@ -39,6 +39,13 @@ READ ONLY.
   then the means over races, the paired differences with a 90% interval
   by resampling races, and the same by level and by month.
 
+★ --with-model ADDS THE NETWORK (E1a, 2026-10-24): model.pt through the
+  page's own path, history cut the day before. model.pt trained on every
+  season, so its numbers here are in-sample unless --val-only keeps only
+  the runners it never trained on -- and even then the venue and the
+  races were seen through other runners. Read it as the network's best
+  case: if it cannot beat prior here, it does not beat it.
+
 ⚠ TODAY'S SOLVE FOR EVERY RATING. Every basis reads ratings that saw these
   races, the hindsight bases on purpose and prior mildly (sweep A9).
   Compare the bases; read the absolute numbers as optimistic.
@@ -140,7 +147,7 @@ def raceScores(got):
     from backtest_predictions import _spearman
     act = [a for a, _p in got]
     out = {}
-    for b in BASES:
+    for b in got[0][1]:
         pred = [p[b] for _a, p in got]
         e = [math.log(x / a) for x, a in zip(pred, act)]
         m = statistics.median(e)
@@ -155,11 +162,11 @@ def runnerMisses(got):
     left. Pure."""
     act = [a for a, _p in got]
     cols = {}
-    for b in BASES:
+    for b in got[0][1]:
         e = [math.log(p[b] / a) for (_a, p), a in zip(got, act)]
         m = statistics.median(e)
         cols[b] = [100.0 * (x - m) for x in e]
-    return [{b: cols[b][i] for b in BASES} for i in range(len(got))]
+    return [{b: cols[b][i] for b in cols} for i in range(len(got))]
 
 
 # ★ WHERE THE ROOM IS, PER RUNNER (owner's E0, 2026-10-24: the month split
@@ -201,7 +208,8 @@ def summarize(races):
         return ["nothing scorable"]
     lines.append(f"{'basis':8} {'pairs':>7} {'rho':>6} {'spread':>7}")
     mean = {}
-    for b in BASES:
+    bases = list(races[0]["scores"])
+    for b in bases:
         ps = [r["scores"][b][0] for r in races if r["scores"][b][0] is not None]
         rs = [r["scores"][b][1] for r in races if r["scores"][b][1] is not None]
         ss = [r["scores"][b][2] for r in races]
@@ -209,7 +217,10 @@ def summarize(races):
         lines.append(f"{b:8} {100 * statistics.fmean(ps):>6.1f}% {statistics.fmean(rs):>6.3f} "
                      f"{statistics.median(ss):>6.2f}%")
     lines.append("\npaired by race, pairs in order (points; 90% interval)")
-    for x, y in (("prior", "last"), ("season", "prior"), ("nearest", "prior")):
+    for x, y in (("prior", "last"), ("season", "prior"), ("nearest", "prior"),
+                 ("model", "prior"), ("nearest", "model")):
+        if x not in bases or y not in bases:
+            continue
         got = paired([100 * r["scores"][x][0] for r in races if r["scores"][x][0] is not None],
                      [100 * r["scores"][y][0] for r in races if r["scores"][y][0] is not None])
         if got:
@@ -228,14 +239,16 @@ def summarize(races):
             ms = [m for b, m in rows if b == band]
             if len(ms) < 50:
                 continue
-            med = {b: statistics.median(abs(m[b]) for m in ms) for b in BASES}
+            med = {b: statistics.median(abs(m[b]) for m in ms) for b in bases}
+            extra = f", model {med['model']:.2f}%" if "model" in med else ""
             lines.append(f"  {band:26} {len(ms):>6}  {med['prior']:.2f}% -> "
-                         f"{med['nearest']:.2f}%   (last {med['last']:.2f}%)")
+                         f"{med['nearest']:.2f}%   (last {med['last']:.2f}%{extra})")
     for title, key in (("level", "level"), ("month", "month")):
         groups = {}
         for r in races:
             groups.setdefault(r[key], []).append(r)
-        lines.append(f"\nby {title}: races, pairs prior -> nearest")
+        lines.append(f"\nby {title}: races, pairs prior -> nearest"
+                     + (" (model)" if "model" in bases else ""))
         for g, rs in sorted(groups.items()):
             if len(rs) < 5:
                 continue
@@ -243,7 +256,10 @@ def summarize(races):
                                  if r["scores"]["prior"][0] is not None)
             c = statistics.fmean(r["scores"]["nearest"][0] for r in rs
                                  if r["scores"]["nearest"][0] is not None)
-            lines.append(f"  {str(g):12} {len(rs):>4}  {100 * a:5.1f}% -> {100 * c:5.1f}%")
+            mo = ""
+            if "model" in bases:
+                mo = (f"  ({100 * statistics.fmean(r['scores']['model'][0] for r in rs if r['scores']['model'][0] is not None):5.1f}%)")
+            lines.append(f"  {str(g):12} {len(rs):>4}  {100 * a:5.1f}% -> {100 * c:5.1f}%{mo}")
     return lines
 
 
@@ -259,7 +275,7 @@ def _seasonBounds(day):
             datetime.date(y + 1, ACADEMIC_START_MONTH, 1))
 
 
-def scoreRace(cur, P, race):
+def scoreRace(cur, P, race, with_model=False, val_only=False, min_matched=MIN_MATCHED):
     from backtest_baseline import finishers
     day = datetime.date.fromisoformat(race["day"])
     fin = finishers(cur, race)
@@ -271,6 +287,11 @@ def scoreRace(cur, P, race):
     lo, hi = _seasonBounds(day)
     rows = P._ratingRows(cur, ids, lo.isoformat(), hi.isoformat())
     every = P._ratingRows(cur, ids, None, day.isoformat())     # for "last"
+    # the network as the page runs it, the race's own result excluded by
+    # the cut (history_before = the day)
+    model = (dict(zip(ids, P._predictTimes(cur, ids, dict(target, history_before=race["day"]),
+                                           spec=spec)))
+             if with_model else {})
     cur.connection.rollback()
 
     def secs(form):
@@ -282,16 +303,23 @@ def scoreRace(cur, P, race):
     for pid, actual, _school in fin:
         mine = [(str(r[0])[:10], r[1], r[2]) for r in rows.get(pid) or [] if r[3] == "XC"]
         past = [(str(r[0])[:10], r[1], r[2]) for r in every.get(pid) or [] if r[3] == "XC"]
-        pred = {"prior": (prior.get(pid) or {}).get("seconds"),
-                "last": secs(lastForm(past, race["day"])),
+        pred = {"last": secs(lastForm(past, race["day"])),
+                "prior": (prior.get(pid) or {}).get("seconds"),
                 "season": secs(seasonForm(mine, race["day"])),
                 "nearest": secs(nearestForm(mine, race["day"]))}
+        if with_model:
+            m = model.get(pid) or {}
+            pred["model"] = m.get("seconds") if m.get("is_race_time") else None
+        if val_only:
+            from feature_extraction import isValPerson
+            if not isValPerson(pid):
+                continue
         if all(pred.values()):
             got.append((actual, pred))
             levels.append((prior[pid].get("form_pool") or "?").split("|")[0])
             bands.append(runnerBand([str(r[0])[:10] for r in every.get(pid) or []],
                                     [d for d, _r, _p in mine], race["day"]))
-    if len(got) < MIN_MATCHED:
+    if len(got) < min_matched:
         return None
     return {"scores": raceScores(got), "n": len(got),
             "runners": list(zip(bands, runnerMisses(got))),
@@ -308,6 +336,13 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--source", choices=("anet", "tfrrs"), default=None,
                     help="only this feed's races (tfrrs = college, Kailo's world)")
+    ap.add_argument("--with-model", action="store_true",
+                    help="add the network (model.pt) as a fifth basis, a few s a race")
+    ap.add_argument("--val-only", action="store_true",
+                    help="only runners on the network's validation side (the 10%% "
+                         "of athletes train.py never trained on); pair it with "
+                         "--min-matched 4, as a race keeps about a tenth of its field")
+    ap.add_argument("--min-matched", type=int, default=MIN_MATCHED)
     a = ap.parse_args()
 
     import psycopg2.extras
@@ -328,7 +363,7 @@ def main():
         print(f"{len(races)} races {a.lo}..{a.hi} (fields >= {a.min_field})", flush=True)
         for n, race in enumerate(races, 1):
             try:
-                got = scoreRace(cur, P, race)
+                got = scoreRace(cur, P, race, a.with_model, a.val_only, a.min_matched)
             except Exception as exc:                 # noqa: BLE001
                 conn.rollback()
                 print(f"  {race['meet_id']}/{race['div_id']}: {exc}", flush=True)
