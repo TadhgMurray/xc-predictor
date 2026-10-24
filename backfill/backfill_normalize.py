@@ -1716,6 +1716,9 @@ def _parseRowDate(raw):
 from corrections import (_DISTANCE_OVERRIDES_BY_SPORT, _DISTANCE_DROP_BY_SPORT,
                          _RESULT_DROP_BY_SPORT, _GENDER_OVERRIDES_BY_SPORT,
                          _RESULT_OVERRIDE_BY_SPORT)
+import corrections as _corrections
+# data_checks.py's tfrrs XC pins; absent from an older corrections.py
+_TFRRS_DISTANCE_PINS = getattr(_corrections, "_DISTANCE_PIN_FIELD_TFRRS", {})
 
 
 # Individual COOKED rows to drop by result_id. Unlike _DISTANCE_DROP (whole
@@ -1830,6 +1833,9 @@ def _resolveDistanceGender(cfg, row, meet_distances, tfrrs_blob):
     if key in _DISTANCE_DROP_BY_SPORT[cfg.sport]:    # unfixable -> skip the row
         return None, None
     override = _DISTANCE_OVERRIDES_BY_SPORT[cfg.sport].get(key)
+    # ★ data_checks' tfrrs pins (2026-10-23): their own dict, tfrrs rows only
+    if cfg.sport == "XC" and row[_SRC] == "tfrrs" and key in _TFRRS_DISTANCE_PINS:
+        override = _TFRRS_DISTANCE_PINS[key]
 
     # The stored resolution runs even when an override exists, because the
     # override is now judged AGAINST it -- see the clamp below.

@@ -75,6 +75,27 @@ SNAP_TOL = 0.06
 CORROB_TOL = 0.02
 STANDARD = (1609.0, 2000.0, 2414.0, 3000.0, 3218.0, 4000.0, 4828.0,
             5000.0, 6000.0, 6437.0, 8000.0, 10000.0)
+# ★ OVERWHELMING EVIDENCE NEEDS NO SIBLING (owner, 2026-10-23: Miner
+#   Invitational 2007, "just a 5k listed as a 6k" -- 15:28.1 rated 166.6 for
+#   a runner whose other races read 131-137). Corroboration by another
+#   division of the meet is the safe bar, but a tfrrs college meet often
+#   lists one race per gender and nothing else. A field this far above its
+#   own level, nearly all of it the same way, whose gap lands on a standard
+#   distance BELOW the stored one, is pinned without it. Downward only, the
+#   overrides' own policy. STRONG_TOL is wider than CORROB_TOL because the
+#   wrong label drags its own course number part of the way (the course
+#   reads easy), so the implied distance sits a little long.
+STRONG_GAP = 0.15
+STRONG_SHARE = 0.85
+STRONG_TOL = 0.04
+# ! AND ONLY WHERE THE VENUE ITSELF RUNS TRUE. A whole field 30% above its
+#   level at a real 5000 happens when the COURSE number is wrong (Al Shirley,
+#   test_data_checks) -- then every race there reads high. So the strong arm
+#   also needs VENUE_MIN other races at the same course, at other meets,
+#   whose median field gap is within VENUE_OK: the venue is fine, so this
+#   race's label is what is wrong.
+VENUE_MIN = 2
+VENUE_OK = 0.05
 
 _DDL = """
     CREATE TABLE IF NOT EXISTS data_issue (
@@ -105,24 +126,34 @@ def impliedDistance(stored, gap):
     return stored * (1.0 + gap) ** (-1.0 / K)
 
 
-def fieldVerdict(row, meet_distances):
+def fieldVerdict(row, meet_distances, venue=None):
     """(action, pinned_distance or None, evidence) for one division's row
-    (meet, div, source, stored, n, gap, share_up, share_down)."""
+    (meet, div, source, stored, n, gap, share_up, share_down). venue: (other
+    races at the same course at other meets, their median field gap), or
+    None when unknown -- the strong arm then never pins."""
     meet, div, source, stored, n, gap, up, down = row
     share = up if gap > 0 else down
     ev = (f"{n} runners, field {100 * gap:+.1f}% vs their own level "
           f"({100 * share:.0f}% of them the same way)")
-    if source != "anet" or not stored:
-        return "review", None, ev + "; no stored anet distance to fix"
+    if source not in ("anet", "tfrrs") or not stored:
+        return "review", None, ev + "; no stored distance to fix"
     implied = impliedDistance(float(stored), gap)
     s = snap(implied)
     ev += f"; stored {float(stored):g} m implies {implied:,.0f}"
     if s is None or abs(s - float(stored)) <= CORROB_TOL * s:
         return "review", None, ev + " (no standard distance there)"
-    sibs = [d for d in meet_distances.get(meet, ()) if d and abs(d - s) <= CORROB_TOL * s]
-    if not sibs:
-        return "review", None, ev + f" -> {s:g}, but no other division of the meet runs it"
-    return "pin", s, ev + f" -> {s:g}, as another division of the meet"
+    sibs = [d for d in meet_distances.get((source, meet), meet_distances.get(meet, ()))
+            if d and abs(d - s) <= CORROB_TOL * s]
+    if sibs:
+        return "pin", s, ev + f" -> {s:g}, as another division of the meet"
+    venue_true = bool(venue) and venue[0] >= VENUE_MIN and abs(venue[1]) <= VENUE_OK
+    if (gap >= STRONG_GAP and share >= STRONG_SHARE and s < float(stored)
+            and abs(implied - s) <= STRONG_TOL * s and venue_true):
+        return "pin", s, ev + (f" -> {s:g}: the whole field {100 * gap:.0f}% above its own "
+                               f"level, a standard distance below the label")
+    if venue:
+        ev += f"; {venue[0]} other races at the course read {100 * venue[1]:+.1f}%"
+    return "review", None, ev + f" -> {s:g}, but no other division of the meet runs it"
 
 
 def fieldCandidates(rows):
@@ -138,13 +169,25 @@ def fieldCandidates(rows):
     return out
 
 
+def pinKey(source, meet, div):
+    """anet pins are (meet, div), as every hand-written override; tfrrs
+    pins ("tfrrs", meet, div), because the two feeds' ids collide."""
+    return (int(meet), int(div)) if source == "anet" else ("tfrrs", int(meet), int(div))
+
+
 def readPins(text):
-    """{(meet, div): distance} already in the sticky block."""
+    """{key: distance} already in the sticky block (pinKey's keys)."""
     m = re.search(re.escape(BLOCK_START) + r"(.*?)" + re.escape(BLOCK_END), text, re.S)
     if not m:
         return {}
-    return {(int(a), int(b)): float(c) for a, b, c in
-            re.findall(r"\((\d+),\s*(\d+)\):\s*([0-9.]+)", m.group(1))}
+    body = m.group(1)
+    t = body.find("_DISTANCE_PIN_FIELD_TFRRS")
+    anet_part, tfrrs_part = (body[:t], body[t:]) if t >= 0 else (body, "")
+    out = {(int(a), int(b)): float(c) for a, b, c in
+           re.findall(r"\((\d+),\s*(\d+)\):\s*([0-9.]+)", anet_part)}
+    out.update({("tfrrs", int(a), int(b)): float(c) for a, b, c in
+                re.findall(r"\((\d+),\s*(\d+)\):\s*([0-9.]+)", tfrrs_part)})
+    return out
 
 
 def block(pins):
@@ -155,12 +198,17 @@ def block(pins):
              "# its shorter one (venue_label). engine/data_checks.py. STICKY: kept until 04g's audit",
              "# removes one; a hand-written override for the key wins.",
              "_DISTANCE_PIN_FIELD = {"]
-    for (meet, div), d in sorted(pins.items()):
-        lines.append(f"    ({meet}, {div}): {d:g},")
+    for k, d in sorted((k, v) for k, v in pins.items() if len(k) == 2):
+        lines.append(f"    ({k[0]}, {k[1]}): {d:g},")
     lines += ["}",
               "for _k, _v in _DISTANCE_PIN_FIELD.items():",
               "    _DISTANCE_OVERRIDES_BY_SPORT['XC'].setdefault(_k, _v)",
-              BLOCK_END]
+              "# tfrrs XC divisions, (meet, div ordinal): read by backfill_normalize for",
+              "# tfrrs rows only -- the feeds' ids collide",
+              "_DISTANCE_PIN_FIELD_TFRRS = {"]
+    for k, d in sorted((k, v) for k, v in pins.items() if len(k) == 3):
+        lines.append(f"    ({k[1]}, {k[2]}): {d:g},")
+    lines += ["}", BLOCK_END]
     return "\n".join(lines) + "\n"
 
 
@@ -252,8 +300,14 @@ def _base(cur):
 
 def raceField(cur):
     _base(cur)
+    # ★ TFRRS TOO (2026-10-23): its stored distance is the division's entry
+    #   in meets_tfrrs.division_distances, keyed by the div_id ordinal as
+    #   text -- speed_ratings_db._xcQuery's own expression.
     cur.execute("""
-        SELECT r.meet_id, r.div_id, r.source, max(m.distance)::float, count(*),
+        SELECT r.meet_id, r.div_id, r.source,
+               COALESCE(max(m.distance)::float,
+                        max((mt.division_distances -> r.div_id::text ->> 'distance')::float)),
+               count(*),
                percentile_cont(0.5) WITHIN GROUP (ORDER BY r.speed_rating / b.b - 1),
                avg(((r.speed_rating / b.b - 1) > 0.05)::int),
                avg(((r.speed_rating / b.b - 1) < -0.05)::int)
@@ -261,10 +315,15 @@ def raceField(cur):
         JOIN   dc_base b ON b.person_id = r.person_id AND b.pool = r.rating_pool
         LEFT   JOIN meets m ON r.source = 'anet' AND m.meet_id = r.meet_id
                            AND m.div_id = r.div_id
+        LEFT   JOIN meets_tfrrs mt ON r.source = 'tfrrs' AND mt.meet_id = r.meet_id
+                                  AND mt.sport = 'XC'
+                                  AND jsonb_typeof(mt.division_distances) = 'object'
         WHERE  r.speed_rating > 0
         GROUP  BY r.meet_id, r.div_id, r.source
         HAVING count(*) >= %s""", (FIELD_MIN,))
-    cands = fieldCandidates(cur.fetchall())
+    allrows = cur.fetchall()
+    cands = fieldCandidates(allrows)
+    venues = venueGaps(cur, allrows, cands)
     # ★ A PIN THE FIELD STILL REJECTS COMES OFF (2026-10-19). Pins are
     #   sticky because a fixed race stops showing its gap. So a PINNED race
     #   that still reads 9%+ off its own level was not fixed by its pin --
@@ -272,22 +331,73 @@ def raceField(cur):
     #   2 miles pinned to 1609 rates its field at half their level). Every
     #   race past the bars goes back to main, which drops the ones it had
     #   pinned and lets the next run judge them at their stored distance.
-    rejects = {(int(c[0]), int(c[1])) for c in cands if c[2] == "anet"}
+    rejects = {pinKey(c[2], c[0], c[1]) for c in cands if c[2] in ("anet", "tfrrs")}
     meets = sorted({c[0] for c in cands if c[2] == "anet"})
+    tmeets = sorted({c[0] for c in cands if c[2] == "tfrrs"})
     md = {}
     if meets:
         cur.execute("""SELECT meet_id, array_agg(DISTINCT distance::float)
                        FROM meets WHERE meet_id = ANY(%s) GROUP BY 1""", (meets,))
-        md = {m: list(ds or []) for m, ds in cur.fetchall()}
+        md.update({("anet", m): list(ds or []) for m, ds in cur.fetchall()})
+    if tmeets:
+        cur.execute("""SELECT mt.meet_id, array_agg(DISTINCT (kv.value ->> 'distance')::float)
+                       FROM meets_tfrrs mt,
+                            LATERAL jsonb_each(CASE WHEN jsonb_typeof(mt.division_distances) = 'object'
+                                                    THEN mt.division_distances ELSE '{}'::jsonb END) kv
+                       WHERE mt.sport = 'XC' AND mt.meet_id = ANY(%s) GROUP BY 1""", (tmeets,))
+        md.update({("tfrrs", m): list(ds or []) for m, ds in cur.fetchall()})
     issues, pins = [], {}
     for c in cands:
-        action, s, ev = fieldVerdict(c, md)
         meet, div, source, stored, n, gap = c[:6]
+        # a sibling is ANOTHER division: this one's own stored label is not one
+        sib = dict(md)
+        if (source, meet) in sib:
+            sib[(source, meet)] = [d for d in sib[(source, meet)]
+                                   if not (stored and abs(d - float(stored)) < 1)] or []
+        action, s, ev = fieldVerdict(c, sib, venues.get((source, meet, div)))
         if action == "pin":
-            pins[(int(meet), int(div))] = s
+            pins[pinKey(source, meet, div)] = s
         issues.append(("race_field", "XC", f"{source} {meet}/{div}", int(n),
                        float(gap), int(n) * abs(float(gap)), ev, action))
     return issues, pins, rejects
+
+
+def venueGaps(cur, allrows, cands):
+    """{(source, meet, div): (n other races at the course, their median field
+    gap)} for the strong candidates only: the course is meets.course_name
+    (anet) or meets_tfrrs.venue_name (tfrrs); "other" means another meet."""
+    strong = [c for c in cands if c[5] is not None and c[5] >= STRONG_GAP]
+    if not strong:
+        return {}
+    gap = {(r[2], int(r[0]), int(r[1])): float(r[5]) for r in allrows if r[5] is not None}
+    a_meets = sorted({int(r[0]) for r in allrows if r[2] == "anet"})
+    t_meets = sorted({int(r[0]) for r in allrows if r[2] == "tfrrs"})
+    course = {}
+    if a_meets:
+        cur.execute("""SELECT meet_id, div_id, lower(btrim(max(course_name))) FROM meets
+                       WHERE meet_id = ANY(%s) AND course_name IS NOT NULL GROUP BY 1, 2""", (a_meets,))
+        course.update({("anet", int(m), int(d)): c for m, d, c in cur.fetchall() if c})
+    if t_meets:
+        cur.execute("""SELECT meet_id, lower(btrim(max(venue_name))) FROM meets_tfrrs
+                       WHERE sport = 'XC' AND meet_id = ANY(%s) AND venue_name IS NOT NULL
+                       GROUP BY 1""", (t_meets,))
+        tv = {int(m): c for m, c in cur.fetchall() if c}
+        course.update({k: tv[k[1]] for k in gap if k[0] == "tfrrs" and k[1] in tv})
+    by_course = {}
+    for k, c in course.items():
+        if k in gap:
+            by_course.setdefault(c, []).append(k)
+    out = {}
+    import statistics
+    for c in strong:
+        key = (c[2], int(c[0]), int(c[1]))
+        here = course.get(key)
+        if not here:
+            continue
+        others = [gap[k] for k in by_course.get(here, ()) if k[1] != key[1]]
+        if others:
+            out[key] = (len(others), statistics.median(others))
+    return out
 
 
 _VENUE_SQL = """
@@ -450,8 +560,8 @@ def main():
         print(f"[data_checks] pins: {len(set(merged) - set(old)):,} new, "
               f"{len(dropped):,} dropped (their field still reads 9%+ off its "
               f"own level at the pinned distance), {len(merged):,} in the block")
-        for meet, div in dropped[:20]:
-            print(f"    dropped ({meet}, {div}): was {old[(meet, div)]:g} m")
+        for k in dropped[:20]:
+            print(f"    dropped {k}: was {old[k]:g} m")
     else:
         print(f"[data_checks] {PATH} missing -- pins not written")
 
