@@ -218,3 +218,31 @@ def test_a_brand_run_into_elite_is_a_club():
     for school in ("jesuit high school", "elk grove",
                    "eliteville central"):
         assert not rx.search(school), school
+
+
+# ---- 2026-10-23: initials, Spanish club words, grades 6-12, one-man clubs ----
+
+def test_a_clubs_initials_are_the_club():
+    got = GS.clubAliases({(1, 2022): {"royal city athletics club"}, (2, 2024): {"zap endurance"},
+                          (3, 2024): {"the ab club"}})
+    assert (1, "rcac", "royal city athletics club") in got
+    assert not any(a == "ze" for _p, a, _c in got)            # under three letters: never an alias
+    assert (3, "abc", "the ab club") in got
+
+
+def test_spanish_club_words_are_clubs():
+    rx = re.compile(GS.CLUB_NAME_RE.replace(r"\m", r"\b").replace(r"\M", r"\b"))
+    assert rx.search("equipo albatros tlalpan") and rx.search("club deportivo toluca")
+    assert not rx.search("jesuit high school")
+
+
+def test_a_one_man_club_at_pro_meets_is_adult_but_a_junior_with_a_school_race_is_not():
+    k1, k2 = (2, 2024), (3, 2024)
+    facts = {k1: (False, True), k2: (False, True)}
+    clubs = {k1: {"equipo albatros tlalpan"}, k2: {"youth tc"}}
+    got = GS._adultClubDecide([k1, k2], facts, clubs, set(), {k1: 12, k2: 10},
+                              never_school={2}, pro_seasons={k1, k2})
+    assert got == {k1: "equipo albatros tlalpan"}
+    # no professional race that season: kept
+    assert GS._adultClubDecide([k1], facts, clubs, set(), {k1: 12},
+                               never_school={2}, pro_seasons=set()) == {}

@@ -159,6 +159,7 @@ THE SPEC, IN ONE PLACE
 """
 
 import os
+import re
 import sys
 import time
 
@@ -1919,7 +1920,11 @@ def eliteFieldSeasons(cur):
 # ! A VERDICT, NOT A DELETION: the season pools pro (method 'adult_club'),
 #   the rows stay rated and on the athlete's page.
 CLUB_NAME_RE = (r"\m(club|tc|ac|xtc|elite|striders|endurance|athletics|"
-                r"track (and|&) field|racing|harriers|youth)\M"
+                r"track (and|&) field|racing|harriers|youth|"
+                # Spanish/Portuguese club words (owner, 2026-10-23: "Equipo
+                # Albatros Tlalpan", a Mexican club at Bryan Clay, read as a
+                # school and pooled hs_m "Grade 12")
+                r"equipo|deportivo|atletismo)\M"
                 # a brand run into "elite" (rabbitELITE, owner 2026-10-13, Jake
                 # Ritter's 2024 season stayed a high school one on it): no word
                 # boundary before it, and no school's name ends that way
@@ -1971,6 +1976,30 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
     club_seasons = {}
     for pid, ay, club in cur.fetchall():
         club_seasons.setdefault((int(pid), int(ay)), set()).add(club)
+    # ★ A CLUB'S INITIALS ARE THE CLUB (owner, 2026-10-23, /athlete/2000003359:
+    #   "Royal City Athletics Club" one season, "RCAC" the next, and RCAC
+    #   read as a school, so the second season stayed hs_m "Grade 9"). A
+    #   team spelled as the initials of a club the same athlete ran for, in
+    #   any season, is that club: its rows join the club side here and do
+    #   not count as a school in signal 1.
+    alias_rows = clubAliases(club_seasons)
+    cur.execute("DROP TABLE IF EXISTS tmp_club_alias; "
+                "CREATE TEMP TABLE tmp_club_alias (person_id bigint, alias text, club text)")
+    if alias_rows:
+        from psycopg2.extras import execute_values as _ev
+        _ev(cur, "INSERT INTO tmp_club_alias VALUES %s", alias_rows, page_size=10000)
+        cur.execute(f"""
+            SELECT DISTINCT r.person_id, r.acad, a.club
+            FROM   (SELECT r.person_id, {_ACAD_R} AS acad, lower(btrim(r.school)) AS team
+                    FROM results r WHERE r.date IS NOT NULL
+                      AND r.person_id IN (SELECT person_id FROM tmp_club_alias)
+                    UNION ALL
+                    SELECT r.person_id, {_ACAD_R}, lower(btrim(r.school))
+                    FROM results_tf r WHERE r.date IS NOT NULL
+                      AND r.person_id IN (SELECT person_id FROM tmp_club_alias)) r
+            JOIN   tmp_club_alias a ON a.person_id = r.person_id AND a.alias = r.team""")
+        for pid, ay, club in cur.fetchall():
+            club_seasons.setdefault((int(pid), int(ay)), set()).add(club)
     # the clubs' adult share, two ways, either enough:
     #   (a) of each club's (athlete, season)s, how many come after that
     #       athlete's college began;
@@ -2021,9 +2050,11 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
                -- a SCHOOL row blocks the move; a club, unattached, blank or
                -- country row does not (signal 1, owner 2026-10-11)
                bool_or(NOT (lower(btrim(COALESCE(r.school, ''))) ~ '{CLUB_NAME_RE}'
-                            OR lower(btrim(COALESCE(r.school, ''))) ~ '{NOT_SCHOOL_RE}'))
+                            OR lower(btrim(COALESCE(r.school, ''))) ~ '{NOT_SCHOOL_RE}'
+                            OR ca.alias IS NOT NULL))
                                                                            AS has_school,
-               bool_and(rl.top_level IN ('college', 'pro'))                AS all_senior
+               bool_and(rl.top_level IN ('college', 'pro'))                AS all_senior,
+               bool_or(rl.top_level = 'pro')                               AS any_pro
         FROM   tmp_club_cand c
         JOIN   (SELECT r.person_id, {_ACAD_R} AS acad, r.school, r.meet_id, r.div_id, r.source
                 FROM results r WHERE r.person_id IN (SELECT person_id FROM tmp_club_cand)
@@ -2032,11 +2063,32 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
                 FROM results_tf r WHERE r.person_id IN (SELECT person_id FROM tmp_club_cand)) r
                ON r.person_id = c.person_id AND r.acad = c.acad
         LEFT   JOIN race_top_level rl ON rl.race = {_raceKeyExpr('r')}
+        LEFT   JOIN tmp_club_alias ca ON ca.person_id = r.person_id
+                                     AND ca.alias = lower(btrim(COALESCE(r.school, '')))
         GROUP  BY 1, 2""")
-    facts = {(int(p), int(a)): (bool(hs), bool(sen)) for p, a, hs, sen in cur.fetchall()}
+    facts, pro_seasons = {}, set()
+    for p, a, hs, sen, pro in cur.fetchall():
+        facts[(int(p), int(a))] = (bool(hs), bool(sen))
+        if pro:
+            pro_seasons.add((int(p), int(a)))
+    # the candidates who never ran a race with school runners on top, any
+    # season, either sport (_adultClubDecide's never_school)
+    cur.execute(f"""
+        SELECT c.person_id
+        FROM   (SELECT DISTINCT person_id FROM tmp_club_cand) c
+        WHERE  NOT EXISTS (
+            SELECT 1 FROM (SELECT r.meet_id, r.div_id, r.source FROM results r
+                           WHERE r.person_id = c.person_id
+                           UNION ALL
+                           SELECT r.meet_id, r.div_id, r.source FROM results_tf r
+                           WHERE r.person_id = c.person_id) r
+            JOIN race_top_level rl ON rl.race = {_raceKeyExpr('r')}
+            WHERE rl.top_level IN ('elem', 'ms', 'hs'))""")
+    never_school = {int(p) for (p,) in cur.fetchall()}
     cur.execute("RESET enable_nestloop")
-    cur.execute("DROP TABLE tmp_club_rows; DROP TABLE tmp_club_cand")
-    out = _adultClubDecide(cand, facts, club_seasons, adult, hs_grade, adult_from)
+    cur.execute("DROP TABLE tmp_club_rows; DROP TABLE tmp_club_cand; DROP TABLE tmp_club_alias")
+    out = _adultClubDecide(cand, facts, club_seasons, adult, hs_grade, adult_from,
+                           never_school, pro_seasons)
     n_un = sum(1 for v in out.values() if not v)
     print(f"    [8] {len(cand):,} high school seasons on a club or past school, "
           f"{len(adult):,} adult clubs, {len(out) - n_un:,} moved on a club, "
@@ -2116,6 +2168,22 @@ def pastEligibilitySeasons(acad, college_start, gap=None):
     return sorted(out)
 
 
+_ALIAS_SKIP = {"the", "and", "of", "&", "de", "del", "la", "el", "y"}
+
+
+def clubAliases(club_seasons):
+    """[(person_id, initials, club)] for every club a person ran for whose
+    initials are 3+ letters ("royal city athletics club" -> "rcac"). Pure."""
+    out = set()
+    for (pid, _ay), clubs in club_seasons.items():
+        for c in clubs:
+            words = [w for w in re.split(r"[^a-z0-9]+", c or "") if w and w not in _ALIAS_SKIP]
+            ini = "".join(w[0] for w in words)
+            if len(ini) >= 3:
+                out.add((pid, ini, c))
+    return sorted(out)
+
+
 def _graduations(hs_grade):
     """{pid: [academic year each high school grade says they graduate]}."""
     grads = {}
@@ -2134,11 +2202,23 @@ def _pastSchoolBy(key, grads, adult_from):
             or (first is not None and first < ay))
 
 
-def _adultClubDecide(cand, facts, club_seasons, adult, hs_grade, adult_from=None):
+def _adultClubDecide(cand, facts, club_seasons, adult, hs_grade, adult_from=None,
+                     never_school=None, pro_seasons=None):
     """Rule 8's decision, pure. {(pid, acad): club} of the seasons moved;
-    the club is '' for the unattached arm (a season with no club row)."""
+    the club is '' for the unattached arm (a season with no club row).
+
+    ★ never_school / pro_seasons (owner, 2026-10-23, /athlete/28420869: a
+      Mexican club runner, only ever at Bryan Clay, "Grade 12" two years
+      running): a club nobody else in the corpus runs for cannot be shown
+      adult by its members. An athlete who has NEVER run a race with school
+      runners on top (never_school: persons), on a club, in a season with a
+      professional race in it (pro_seasons: keys), is an adult club runner
+      too. A junior on a youth club at college meets has no pro race, and
+      one school race anywhere keeps them."""
     grads = _graduations(hs_grade)
     adult_from = adult_from or {}
+    never_school = never_school or set()
+    pro_seasons = pro_seasons or set()
     out = {}
     for key in cand:
         has_school, all_senior = facts.get(key, (True, False))
@@ -2147,7 +2227,7 @@ def _adultClubDecide(cand, facts, club_seasons, adult, hs_grade, adult_from=None
         clubs = club_seasons.get(key, set())
         past = _pastSchoolBy(key, grads, adult_from)
         if clubs:
-            if clubs & adult or past:
+            if clubs & adult or past or (key[0] in never_school and key in pro_seasons):
                 out[key] = sorted(clubs)[0]
         elif past:
             out[key] = ""
@@ -2537,8 +2617,12 @@ def resolve(cur, audit=False):
 
     # ★ RULE 8, THE ADULT CLUB (see adultClubSeasons). After 5b, on the high
     #   school verdicts still standing; college starts are 5b's own.
+    # ★ GRADES 6-12, NOT 9-12 (owner, 2026-10-23, /athlete/2000003359: a
+    #   Royal City AC adult at Track Night NYC, "Grade 7", rated ms_m 159.7).
+    #   A club's grade column is years with the club at any number; signal 2
+    #   (only college and pro races) is what keeps a real middle schooler.
     hs_grade = {k: int(v["grade"]) for k, v in acad.items()
-                if v["grade"] and str(v["grade"]).isdigit() and 9 <= int(v["grade"]) <= 12}
+                if v["grade"] and str(v["grade"]).isdigit() and 6 <= int(v["grade"]) <= 12}
     # ★ AND THE UNATTACHED ARM (owner, 2026-10-12, /athlete/2000002438 and
     #   2000002910): Jason Intravaia, a professional in 2024 (PDC), then
     #   "Grade 10" unattached at the UW indoor meets and #3 on the HS
