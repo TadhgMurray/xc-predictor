@@ -1,0 +1,352 @@
+# Python files no pipeline step (run_pipeline.sh, nightly_update.sh, the timers) or route reaches.
+# Built 2026-10-24 from imports and every '<name>.py' mention in .sh/.ps1/.py. Category is from the file name, a guess.
+# code_refs / doc_refs: other files that mention the name (-1: reached by tests only, not counted).
+category	path	lines	code_refs	doc_refs
+builds-something-the-pipeline-reads	backfill/elevation_backfill.py	325	0	0
+builds-something-the-pipeline-reads	engine/fit_era_corrections.py	1941	5	0
+builds-something-the-pipeline-reads	engine/propagate_tfrrs_geometry.py	411	1	0
+builds-something-the-pipeline-reads	scripts/build_school_levels.py	258	2	1
+builds-something-the-pipeline-reads	scripts/weather_from_grid.py	222	-1	-1
+junk/renamed copy	engine/_sizes.py	3	1	0
+junk/renamed copy	scripts/_drop_old.py	9	5	0
+junk/renamed copy	scripts/fuck2.py	509	1	0
+junk/renamed copy	scripts/fuck3.py	319	0	0
+junk/renamed copy	scripts/fuck4.py	258	0	0
+junk/renamed copy	scripts/fuck5.py	199	0	0
+junk/renamed copy	scripts/fuck6.py	254	0	0
+junk/renamed copy	scripts/fuck7.py	145	0	0
+junk/renamed copy	scripts/fuck8.py	327	0	0
+junk/renamed copy	scripts/fuck9.py	130	0	0
+diagnostic	scripts/q.py	32	397	13
+one-off fix/migration	backfill/backfill_tf_teams.py	103	0	0
+one-off fix/migration	backfill/recover_tf_events.py	356	2	0
+one-off fix/migration	engine/kill_bad_overrides.py	238	0	0
+one-off fix/migration	scripts/apply_passes.py	196	3	2
+one-off fix/migration	scripts/backfill_tfrrs_location_fuzzy.py	318	1	0
+one-off fix/migration	scripts/backfill_tfrrs_location_recover.py	250	0	0
+one-off fix/migration	scripts/cull_db.py	241	0	1
+one-off fix/migration	scripts/dedup.py	284	48	6
+one-off fix/migration	scripts/dedup_add_canon_meet_id.py	179	0	0
+one-off fix/migration	scripts/dedup_inspect.py	150	0	0
+one-off fix/migration	scripts/dedup_launch.py	393	1	0
+one-off fix/migration	scripts/drop_old_tables.py	124	0	0
+one-off fix/migration	scripts/ensure_ranking_indexes.py	125	1	1
+one-off fix/migration	scripts/ensure_weather_table.py	33	0	0
+one-off fix/migration	scripts/fill_deadend_venues.py	582	2	0
+one-off fix/migration	scripts/finish_gps.py	212	0	0
+one-off fix/migration	scripts/finish_gps_overseas.py	182	0	0
+one-off fix/migration	scripts/fix_anet_gps_manual.py	169	0	0
+one-off fix/migration	scripts/fix_ballooned_distance.py	256	0	0
+one-off fix/migration	scripts/fix_school_search_links.py	48	1	0
+one-off fix/migration	scripts/geocode_anet_venue.py	335	0	0
+one-off fix/migration	scripts/geocode_deadend_us.py	496	0	0
+one-off fix/migration	scripts/geocode_tfrrs_venues.py	570	0	0
+one-off fix/migration	scripts/kill_backends.py	43	0	0
+one-off fix/migration	scripts/land_tfrrs_geometry_in_meets_tf.py	374	1	0
+one-off fix/migration	scripts/link_idless_tfrrs.py	174	1	0
+one-off fix/migration	scripts/make_app_icons.py	74	1	1
+one-off fix/migration	scripts/make_weather_grid.py	67	0	0
+one-off fix/migration	scripts/merge_pages.py	95	0	0
+one-off fix/migration	scripts/migrate_meets_tfrrs_add_distance.py	219	0	0
+one-off fix/migration	scripts/migrate_to_postgres.py	199	0	0
+one-off fix/migration	scripts/null_gross_gps.py	76	0	0
+one-off fix/migration	scripts/pardon_divisions.py	183	0	0
+one-off fix/migration	scripts/pin_division_distance.py	98	0	1
+one-off fix/migration	scripts/rebuild_entity_links.py	217	1	0
+one-off fix/migration	scripts/rebuild_entity_links_dated.py	452	0	0
+one-off fix/migration	scripts/recover_nulls.py	186	0	0
+one-off fix/migration	scripts/refix_gps.py	192	2	0
+one-off fix/migration	scripts/repair_constraints.py	318	2	0
+one-off fix/migration	scripts/reset_tfrrs_test.py	279	0	0
+one-off fix/migration	scripts/resolve_corrections_conflict.py	83	0	0
+one-off fix/migration	scripts/resolve_fanout.py	713	3	2
+one-off fix/migration	scripts/restore_old_overrides.py	170	2	0
+one-off fix/migration	scripts/restore_schema_guards.py	340	0	0
+one-off fix/migration	scripts/retract_regressed_stamps.py	236	0	0
+one-off fix/migration	scripts/rollback_shifted_stamps.py	83	0	0
+one-off fix/migration	scripts/scrub_stale.py	227	0	1
+one-off fix/migration	scripts/shrink_images.py	37	0	1
+one-off fix/migration	scripts/shrinkage_audit.py	398	2	1
+one-off fix/migration	scripts/vacuum_now.py	22	0	0
+one-off fix/migration	tfrrs/migrate_source_identity.py	357	0	0
+experiment/fit	engine/ability_slope.py	218	4	3
+experiment/fit	engine/compare_slaney.py	343	1	2
+experiment/fit	engine/distance_apply.py	259	0	0
+experiment/fit	engine/distance_bake.py	339	2	1
+experiment/fit	engine/distance_repair.py	814	3	1
+experiment/fit	engine/field_shift.py	356	8	0
+experiment/fit	engine/fit_bayes_courses.py	458	0	0
+experiment/fit	engine/global_solve.py	215	0	1
+experiment/fit	engine/pair_distance_check.py	120	0	0
+experiment/fit	engine/pair_report.py	158	3	1
+experiment/fit	engine/pair_sportoffset.py	171	2	1
+experiment/fit	engine/pair_sportsplit.py	157	0	0
+experiment/fit	engine/pair_stage0.py	258	0	0
+experiment/fit	engine/season_split.py	143	0	0
+experiment/fit	engine/slope_fit.py	341	2	0
+experiment/fit	scripts/adjudicate_overrides.py	218	0	0
+experiment/fit	scripts/adjudicate_regressions.py	756	11	0
+experiment/fit	scripts/adjudicated_overrides_tf.py	5	0	0
+experiment/fit	scripts/adjudicated_overrides_xc.py	12	4	0
+experiment/fit	scripts/calibrate_shape.py	221	2	0
+experiment/fit	scripts/compare_overrides.py	182	2	1
+experiment/fit	scripts/course_era_break.py	311	0	0
+experiment/fit	scripts/cs_sweep.py	136	0	0
+experiment/fit	scripts/fit_critical_speed.py	209	2	0
+experiment/fit	scripts/fit_rust_amplitude.py	136	1	0
+experiment/fit	scripts/fit_states_offsets.py	430	1	0
+experiment/fit	scripts/indoor_outdoor.py	186	0	1
+experiment/fit	scripts/result_drop_oneoff_tf.py	709	2	0
+experiment/fit	scripts/result_drop_slow_tf.py	119	2	0
+experiment/fit	scripts/result_drop_tf.py	268859	0	0
+experiment/fit	scripts/result_drop_xc.py	47862	0	0
+experiment/fit	scripts/result_override_gender_xc.py	42	1	0
+experiment/fit	scripts/result_override_xc.py	258	0	0
+experiment/fit	scripts/score_suspects.py	562	2	0
+experiment/fit	scripts/sweep_knob_sensitive.py	248	0	0
+experiment/fit	scripts/sweep_meet_thresh.py	60	0	0
+experiment/fit	scripts/sweep_pages.py	139	0	0
+experiment/fit	scripts/triage_gender_splits.py	638	2	0
+experiment/fit	scripts/triage_gps_suspects.py	80	0	0
+experiment/fit	scripts/triage_regressions.py	709	7	0
+experiment/fit	scripts/weather_card.py	127	0	1
+experiment/fit	tfrrs/sweep/sweep_tfrrs_meets.py	226	1	0
+diagnostic	backfill/find_failed_tf_events.py	146	2	0
+diagnostic	engine/audit_distance_scaling.py	231	0	0
+diagnostic	engine/audit_pool_means.py	188	0	0
+diagnostic	engine/census_pair_direction.py	258	0	0
+diagnostic	engine/census_tf_venue.py	92	0	0
+diagnostic	engine/count_weather_work.py	60	0	0
+diagnostic	engine/diag_connectivity.py	287	2	3
+diagnostic	engine/diag_course_island.py	283	0	1
+diagnostic	engine/diag_exponent_by_ability.py	221	2	2
+diagnostic	engine/diag_exponent_season_best.py	162	1	2
+diagnostic	engine/diag_pro_rule.py	201	0	1
+diagnostic	engine/diagnose_geometry_pairs.py	717	1	0
+diagnostic	engine/explain_row.py	341	0	2
+diagnostic	engine/smoke_artifacts.py	282	0	0
+diagnostic	engine/test_eps_synthetic.py	477	0	0
+diagnostic	engine/test_pools.py	312	1	0
+diagnostic	scripts/audit_columns.py	120	0	0
+diagnostic	scripts/audit_distance_overrides.py	485	2	0
+diagnostic	scripts/audit_gps_buffered.py	70	1	0
+diagnostic	scripts/audit_gps_sanity.py	92	4	0
+diagnostic	scripts/audit_slow_division.py	235	1	0
+diagnostic	scripts/audit_snapper.py	292	1	0
+diagnostic	scripts/census_ballooned_distance.py	392	1	0
+diagnostic	scripts/census_corrections.py	165	0	0
+diagnostic	scripts/census_no_distance.py	260	2	1
+diagnostic	scripts/census_transistions.py	104	0	0
+diagnostic	scripts/census_worklist.py	248	0	0
+diagnostic	scripts/check_bridge.py	112	0	0
+diagnostic	scripts/check_collisions.py	29	0	0
+diagnostic	scripts/check_conversions.py	7	0	0
+diagnostic	scripts/check_db.py	12	0	0
+diagnostic	scripts/check_label_short.py	149	1	1
+diagnostic	scripts/check_noop_xc.py	183	0	0
+diagnostic	scripts/check_override_coherence.py	279	2	1
+diagnostic	scripts/check_paces.py	148	0	0
+diagnostic	scripts/check_pair_duplication.py	60	0	0
+diagnostic	scripts/check_phase_bias.py	122	2	0
+diagnostic	scripts/check_race_monotone.py	243	2	1
+diagnostic	scripts/check_ranking_build.py	161	0	0
+diagnostic	scripts/check_rating_monotone.py	106	2	1
+diagnostic	scripts/check_sitemap.py	90	0	0
+diagnostic	scripts/count_all_four.py	49	0	0
+diagnostic	scripts/crawl_report.py	239	0	0
+diagnostic	scripts/diag_anet_results_call.py	200	2	1
+diagnostic	scripts/diag_anet_tf_calls.py	153	0	1
+diagnostic	scripts/diag_annual_gain.py	74	1	1
+diagnostic	scripts/diag_athlete_order.py	53	0	0
+diagnostic	scripts/diag_athleticlive_coverage.py	96	0	1
+diagnostic	scripts/diag_board_people.py	227	1	2
+diagnostic	scripts/diag_cell_days.py	101	0	2
+diagnostic	scripts/diag_chrome_launch.py	140	1	1
+diagnostic	scripts/diag_corrections.py	209	0	0
+diagnostic	scripts/diag_cross_sport_pairs.py	161	1	2
+diagnostic	scripts/diag_day_terms.py	283	0	1
+diagnostic	scripts/diag_difficulty_vs_distance.py	177	0	0
+diagnostic	scripts/diag_distance_labels.py	190	0	1
+diagnostic	scripts/diag_distance_source.py	202	0	0
+diagnostic	scripts/diag_drop_collisions.py	208	0	0
+diagnostic	scripts/diag_dual_sport_pack.py	54	0	1
+diagnostic	scripts/diag_engine_quality.py	319	1	0
+diagnostic	scripts/diag_equal_time.py	94	0	1
+diagnostic	scripts/diag_event_parse.py	218	0	0
+diagnostic	scripts/diag_extreme_courses.py	142	1	0
+diagnostic	scripts/diag_fuzzy_review.py	271	0	0
+diagnostic	scripts/diag_gender_census.py	205	0	0
+diagnostic	scripts/diag_geocode_misses.py	154	0	0
+diagnostic	scripts/diag_hs_equiv.py	208	0	3
+diagnostic	scripts/diag_meet_extras.py	130	0	0
+diagnostic	scripts/diag_meets_outliers.py	304	0	0
+diagnostic	scripts/diag_merged_ids.py	106	0	2
+diagnostic	scripts/diag_mixed_pool_races.py	166	0	0
+diagnostic	scripts/diag_one_scale.py	513	3	0
+diagnostic	scripts/diag_orphan_tf_results.py	170	0	1
+diagnostic	scripts/diag_override_check.py	203	1	0
+diagnostic	scripts/diag_override_collisions.py	221	0	0
+diagnostic	scripts/diag_person_id.py	300	0	0
+diagnostic	scripts/diag_person_pool.py	197	0	1
+diagnostic	scripts/diag_predict_gender.py	129	0	1
+diagnostic	scripts/diag_predict_time.py	389	3	1
+diagnostic	scripts/diag_race_day_inflation.py	332	1	1
+diagnostic	scripts/diag_race_teams.py	126	0	0
+diagnostic	scripts/diag_rain.py	172	0	1
+diagnostic	scripts/diag_rating_jumps.py	184	2	1
+diagnostic	scripts/diag_ratings_sanity.py	416	0	0
+diagnostic	scripts/diag_region_offset.py	143	0	1
+diagnostic	scripts/diag_repair_landing.py	317	0	0
+diagnostic	scripts/diag_roster_diff.py	172	0	0
+diagnostic	scripts/diag_school_collisions.py	252	1	1
+diagnostic	scripts/diag_team_board.py	136	0	0
+diagnostic	scripts/diag_tf_canon.py	56	0	0
+diagnostic	scripts/diag_tf_pardons.py	203	1	0
+diagnostic	scripts/diag_tfrrs_geo.py	89	0	0
+diagnostic	scripts/diag_title_distance.py	98	0	1
+diagnostic	scripts/diag_track_conversion.py	188	1	1
+diagnostic	scripts/diag_trajectory.py	647	1	2
+diagnostic	scripts/diag_twin_person.py	430	1	1
+diagnostic	scripts/diag_unnormalized.py	121	0	1
+diagnostic	scripts/diag_venue_days.py	204	0	1
+diagnostic	scripts/diag_venue_speed.py	105	1	1
+diagnostic	scripts/diag_venue_validate.py	127	0	0
+diagnostic	scripts/diag_xc_bridges.py	229	1	2
+diagnostic	scripts/diag_xc_in_tf.py	215	0	0
+diagnostic	scripts/diagnose_link_quality.py	197	0	0
+diagnostic	scripts/diagnose_meet_fanout.py	68	0	0
+diagnostic	scripts/explain_course_cell.py	114	0	1
+diagnostic	scripts/find_pro_meets.py	249	0	0
+diagnostic	scripts/find_weather.py	13	0	0
+diagnostic	scripts/location_audit.py	247	0	0
+diagnostic	scripts/log_gaps.py	54	0	1
+diagnostic	scripts/mask_agreement.py	212	0	0
+diagnostic	scripts/name_probe.py	103	0	1
+diagnostic	scripts/peek_override.py	171	2	1
+diagnostic	scripts/peek_pack.py	133	0	0
+diagnostic	scripts/peek_signups.py	65	1	1
+diagnostic	scripts/peek_weather.py	119	0	0
+diagnostic	scripts/probe_census.py	64	0	0
+diagnostic	scripts/probe_meet.py	385	2	1
+diagnostic	scripts/probe_store.py	27	0	0
+diagnostic	scripts/probe_tf.py	207	0	0
+diagnostic	scripts/probe_tf_meet.py	85	0	0
+diagnostic	scripts/profile_request.py	82	0	0
+diagnostic	scripts/recall_probe.py	277	1	1
+diagnostic	scripts/recall_probe_scored.py	315	0	0
+diagnostic	scripts/sample_fuzzy_links.py	157	0	0
+diagnostic	scripts/show_nulled.py	64	1	0
+diagnostic	scripts/siblings_check.py	237	0	0
+diagnostic	scripts/split_probe.py	259	0	0
+diagnostic	scripts/stray_rows.py	198	0	1
+diagnostic	scripts/test_keys.py	37	0	0
+diagnostic	scripts/test_suite_census.py	185	0	0
+diagnostic	scripts/time_race_page.py	85	0	1
+diagnostic	scripts/trace_normalize.py	239	0	0
+diagnostic	scripts/traffic_report.py	253	0	0
+diagnostic	scripts/verify_meet_pairs.py	300	0	1
+diagnostic	scripts/verify_merge_landed.py	302	1	0
+diagnostic	scripts/verify_redetect.py	318	7	0
+diagnostic	scripts/verify_tf_parser.py	143	0	0
+diagnostic	scripts/which_drop.py	89	0	0
+diagnostic	scripts/why_hs_season.py	149	0	1
+diagnostic	scripts/why_on_squad.py	173	0	0
+diagnostic	scripts/why_race_high.py	163	0	0
+diagnostic	scripts/why_race_unrated.py	127	0	0
+diagnostic	scripts/why_two_rows.py	156	0	0
+diagnostic	scripts/why_unrated.py	250	3	2
+diagnostic	tools/trace_person.py	155	0	0
+other	engine/build_college_list.py	206	0	0
+other	engine/component_check.py	401	1	2
+other	engine/era_cache.py	310	1	0
+other	engine/geometry_resolver.py	216	1	1
+other	engine/grade_ambiguity.py	160	0	0
+other	engine/location_merge.py	677	1	2
+other	engine/venue_slope.py	278	2	0
+other	scripts/athlete_dump.py	333	3	2
+other	scripts/atmost_oneshot.py	513	2	1
+other	scripts/backup_corrections.py	157	2	1
+other	scripts/collapse_race_days.py	68	1	0
+other	scripts/college_unmatched.py	54	0	2
+other	scripts/conversion_check.py	179	0	1
+other	scripts/convert_probe.py	141	1	4
+other	scripts/diff_season_q.py	178	0	0
+other	scripts/do_merge.py	58	6	0
+other	scripts/export_for_analysis.py	100	2	2
+other	scripts/extract_progress.py	72	0	0
+other	scripts/flag_slowrace_overrides.py	200	1	0
+other	scripts/fuzzy_pass.py	414	2	1
+other	scripts/optout.py	107	4	0
+other	scripts/override_diff.py	246	2	0
+other	scripts/pg_triage.py	170	0	0
+other	scripts/pipeline.py	363	216	35
+other	scripts/prep_for_merge.py	38	1	0
+other	scripts/replay_rating.py	272	1	0
+other	scripts/school_pro_census.py	293	0	0
+other	scripts/sitemap_budget.py	211	1	2
+other	scripts/solve_ratings.py	418	0	1
+other	scripts/spot_check_overrides.py	253	1	0
+other	scripts/stamp_fanout.py	289	4	0
+other	scripts/whats_running.py	26	1	0
+tests-only	backfill/backfill_normalize_tf.py	180	-1	-1
+tests-only	engine/diag_difficulty_calibration.py	332	-1	-1
+tests-only	engine/diag_joint_vs_bracket.py	163	-1	-1
+tests-only	engine/diag_pro_routes.py	228	-1	-1
+tests-only	engine/diagnose_rating.py	432	-1	-1
+tests-only	engine/dump_pack_row.py	170	-1	-1
+tests-only	engine/fit_geometry_correction.py	775	-1	-1
+tests-only	engine/fit_validate.py	194	-1	-1
+tests-only	engine/geometry_db.py	746	-1	-1
+tests-only	engine/impossible_distance.py	295	-1	-1
+tests-only	racecast/build_clock_calibration.py	212	-1	-1
+tests-only	racecast/diag_school_roster.py	489	-1	-1
+tests-only	scripts/amnesty_division_drops.py	188	-1	-1
+tests-only	scripts/amnesty_result_drops.py	290	-1	-1
+tests-only	scripts/audit_career_links.py	217	-1	-1
+tests-only	scripts/build_group_means.py	203	-1	-1
+tests-only	scripts/census_override_sources.py	305	-1	-1
+tests-only	scripts/curve_bakeoff.py	257	-1	-1
+tests-only	scripts/curve_window_gap.py	168	-1	-1
+tests-only	scripts/diag_crest.py	146	-1	-1
+tests-only	scripts/diag_crest_read.py	232	-1	-1
+tests-only	scripts/diag_event_pairs.py	119	-1	-1
+tests-only	scripts/diag_hs_to_college.py	375	-1	-1
+tests-only	scripts/diag_indoor_labels.py	193	-1	-1
+tests-only	scripts/diag_indoor_level.py	271	-1	-1
+tests-only	scripts/diag_island_seasons.py	114	-1	-1
+tests-only	scripts/diag_link_plan.py	195	-1	-1
+tests-only	scripts/diag_logo_pixels.py	209	-1	-1
+tests-only	scripts/diag_missing_meet.py	437	-1	-1
+tests-only	scripts/diag_model_quality.py	598	-1	-1
+tests-only	scripts/diag_race_difficulty.py	395	-1	-1
+tests-only	scripts/diag_row_weather.py	169	-1	-1
+tests-only	scripts/diag_sport_gap.py	377	-1	-1
+tests-only	scripts/diag_sport_gap_ability.py	27	-1	-1
+tests-only	scripts/diag_tfrrs_course_cells.py	120	-1	-1
+tests-only	scripts/diag_weather_credit.py	445	-1	-1
+tests-only	scripts/diag_weather_window.py	296	-1	-1
+tests-only	scripts/diag_winter_gain.py	238	-1	-1
+tests-only	scripts/distance_curve_support.py	379	-1	-1
+tests-only	scripts/distance_override_xc.py	3565	-1	-1
+tests-only	scripts/event_check.py	223	-1	-1
+tests-only	scripts/explain_joint_row.py	537	-1	-1
+tests-only	scripts/find_dropped_divisions.py	458	-1	-1
+tests-only	scripts/link_idless_by_name.py	240	-1	-1
+tests-only	scripts/page_forensics.py	342	-1	-1
+tests-only	scripts/purge_tfrrs_xc_in_tf.py	177	-1	-1
+tests-only	scripts/queue_status.py	142	-1	-1
+tests-only	scripts/rating_scale_probe.py	261	-1	-1
+tests-only	scripts/rebuild_overrides.py	3779	-1	-1
+tests-only	scripts/requeue_empty_meets.py	150	-1	-1
+tests-only	scripts/season_estimator_bakeoff.py	383	-1	-1
+tests-only	scripts/season_reliability.py	445	-1	-1
+tests-only	scripts/sport_gap_from_top.py	248	-1	-1
+tests-only	scripts/team_identity_census.py	215	-1	-1
+tests-only	scripts/tf_event_bias.py	407	-1	-1
+tests-only	scripts/verdict16.py	76	-1	-1
+tests-only	scripts/wipe_overrides.py	241	-1	-1
+tests-only	scripts/xc_tf_bridge.py	254	-1	-1
+tests-only	sources/meetpro.py	136	-1	-1
+tests-only	tfrrs/sweep/prefill_tfrrs_queue.py	105	-1	-1
+tests-only	tools/explain_rating.py	217	-1	-1
+tests-only	sources/registry.py	219	-1	-1
