@@ -377,6 +377,19 @@ main.rc.wit-page .wit-sec-tbl .wit-yr { display: inline-block; }
    (style.css keeps every first cell on one line) instead of pushing the
    Predict column under the card */
 main.meets-page.rc .cu-table td:first-child { white-space: normal; }
+/* ★ THE RESULTS LIST, ONE LINE A MEET (owner, 2026-10-23). Sized columns;
+   the meet and the course share what the date, state and count leave, and
+   a name too long for its cell is cut (title= holds it whole). A phone
+   keeps the wrapping table, which scrolls in its panel. */
+@media (min-width: 761px) {
+  main.meets-page.rc table.mt-list { table-layout: fixed; width: 100%; }
+  main.meets-page.rc table.mt-list th.mt-date { width: 8.2rem; }
+  main.meets-page.rc table.mt-list th.mt-course { width: 30%; }
+  main.meets-page.rc table.mt-list th.mt-state { width: 4.6rem; }
+  main.meets-page.rc table.mt-list th.mt-champ { width: 16%; }
+  main.meets-page.rc table.mt-list th.mt-n { width: 5.6rem; }
+  main.meets-page.rc table.mt-list td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
 main.meets-page.rc .rc-panel > .month-head:first-child,
 main.meets-page.rc .rc-panel > .coming-up:first-child > .meet-filters:first-child { margin-top: .6rem; }
 /* the rankings links: "Rankings:" reads as their label, not a fifth link */

@@ -2177,6 +2177,10 @@ function syncBoard(board) {
      same trap the hidden pool=all option sprang. */
   const sportSel = $("sport");
   sportSel.querySelector('option[value="both"]').hidden = board === "teams";
+  // arriving at the times board: track, unless the reader picked a sport
+  const toTrack = board === "pr" && previous !== "pr" && !state.sportTouched
+                  && sportSel.value !== "TF";
+  if (toTrack) sportSel.value = "TF";
   if (board === "teams" && sportSel.value === "both") sportSel.value = "XC";
 
   /* ⚠ "Any distance" IS PERFORMANCE-ONLY. The times board RANKS the clock
@@ -2201,7 +2205,9 @@ function syncBoard(board) {
                            || distSel.value.startsWith("field:"))) {
       distSel.value = "";
     }
-    if (board === "pr" && !distSel.value) distSel.value = "5000";
+    if (board === "pr" && (!distSel.value || (toTrack && distSel.value === "5000"))) {
+      distSel.value = sportSel.value === "TF" ? "1600" : "5000";
+    }
   }
 
 
@@ -2487,7 +2493,7 @@ $("min_races").addEventListener("change", applyNow);
 if ($("projected")) {
   $("projected").addEventListener("change", () => { state.offset = 0; applyNow(); });
 }
-$("sport").addEventListener("change", () => { syncMinRaces(); applyNow(); });
+$("sport").addEventListener("change", () => { state.sportTouched = true; syncMinRaces(); applyNow(); });
 
 /* Once touched, the pool is the user's and syncBoard stops overriding it. */
 $("pool").addEventListener("change", () => {
@@ -2627,6 +2633,14 @@ function applyUrlFilters(params) {
   setSelectFromUrl("pool",
     askedPool === "all" && state.board !== "pr" ? null : askedPool);
   setSelectFromUrl("sport", params.get("sport"));
+  /* ★ THE TIMES BOARD OPENS ON TRACK (owner, 2026-10-23: "the fastest times
+       board should really start with tf as default"). A cross country time
+       is its course as much as its runner; the track mile is the clock a
+       reader compares. A link that names a sport keeps it. */
+  if (state.board === "pr" && !params.get("sport")) {
+    $("sport").value = "TF";
+    if (!params.get("distance") && !params.get("event") && $("distance")) $("distance").value = "1600";
+  }
   /* ! RESTORED, OR A SHARED "EVERYONE" LINK QUIETLY OPENS AS USA. The select
        defaults to usa in the markup, so without this the one scope worth
        sharing is the one that does not survive being shared. */
