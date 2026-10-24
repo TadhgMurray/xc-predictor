@@ -1,0 +1,223 @@
+# Project: xc-predictor / engine
+# File:    statespace_world.py
+# Purpose: a planted world for engine/statespace.py -- high schoolers who
+#          get fitter through a season and from one season to the next, a
+#          few who go on to college, cross country in the fall, indoor and
+#          outdoor track after it, courses, venue-days, divisions with the
+#          occasional short course, bad days, a tilt, and a TRUE XC-to-track
+#          gap. Every number planted is returned, so a fit can be read
+#          against the truth.
+#
+# ★ WHAT IT IS FOR. Not to prove the engine on real data -- only the pack
+#   can do that (scripts/ss_eval.py). It shows (1) the fit recovers what it
+#   claims to fit (the gap, the walk, the tilt), and (2) on the same rows, an
+#   athlete-season ability with one day per venue scores worse on held-out
+#   races than a walk with nested heavy-tailed days, and by how much.
+import numpy as np
+
+import statespace as ss
+
+THETA_HS = np.log(18 * 60.0)       # an average HS boy, flat 5000 equivalent
+TRUE = dict(mu_xc=0.060, mu_in=0.010, kappa=0.30, sigma=0.015, s_beta=0.015,
+            tau=(0.035, 0.006, 0.005), s_w=(0.012, 0.005, 0.005), s_v=0.004,
+            bad_p=0.05, bad_mean=0.05, short_p=0.04, long_p=0.02,
+            hs_jump=-0.035, hs_jump_sd=0.025, col_jump=-0.015, col_jump_sd=0.015,
+            slope_sd=0.05)
+# the population's season, log-time against phase (days since 1 August):
+# XC fitness gain, a December break, the track build to June
+SHAPE = ((0, 0.030), (110, 0.000), (140, 0.012), (200, 0.000), (300, -0.020),
+         (366, -0.020))
+
+
+def _shape(phase):
+    xs, ys = zip(*SHAPE)
+    return np.interp(phase, xs, ys)
+
+
+def world(seed=0, n_regions=10, schools=24, per_school=14, n_seasons=5):
+    rng = np.random.default_rng(seed)
+    T = TRUE
+    # ---- people: HS entrants per school per season, some go on to college
+    rows = []
+    person_base, person_beta = [], []
+    persons = []                          # (pid, region, school, first season)
+    pid = 0
+    for reg in range(n_regions):
+        for sch in range(schools):
+            for s0 in range(-3, n_seasons):
+                for _ in range(per_school // 4 + rng.integers(0, 2)):
+                    persons.append((pid, reg, reg * schools + sch, s0))
+                    person_base.append(rng.normal(0, 0.08))
+                    person_beta.append(rng.normal(0, T["s_beta"]))
+                    pid += 1
+    n_p = pid
+    base = np.array(person_base); beta = np.array(person_beta)
+    # season-by-season ability: the seam steps, then a within-season slope
+    level = np.zeros((n_p, n_seasons))       # theta at phase 0, per season
+    slope = rng.normal(0, T["slope_sd"], (n_p, n_seasons))
+    lv = np.zeros((n_p, n_seasons), dtype=np.int64)
+    in_school = np.zeros((n_p, n_seasons), dtype=bool)
+    college = rng.random(n_p) < 0.0
+    for p, reg, sch, s0 in persons:
+        th = THETA_HS + 0.05 + base[p]
+        go_col = None
+        for g in range(8):                    # grades 9..12, then college 1..4
+            s = s0 + g
+            if g >= 4:
+                if go_col is None:
+                    go_col = (th < THETA_HS - 0.05) and rng.random() < 0.5
+                if not go_col:
+                    break
+            if 0 <= s < n_seasons:
+                level[p, s] = th
+                lv[p, s] = 1 if g >= 4 else 0
+                in_school[p, s] = True
+            th += (rng.normal(T["hs_jump"], T["hs_jump_sd"]) if g < 4
+                   else rng.normal(T["col_jump"], T["col_jump_sd"]))
+        college[p] = bool(go_col)
+
+    # ---- venues
+    xc_course = [[reg * 6 + k for k in range(6)] for reg in range(n_regions)]
+    col_course = [reg * 6 + k for reg in range(n_regions) for k in range(2)]
+    n_xc = n_regions * 6
+    cell_d = {}                                  # cell id -> (group, value)
+    def cellId(key, group, sd):
+        if key not in cell_d:
+            cell_d[key] = (len(cell_d), group, rng.normal(0, sd))
+        return cell_d[key][0]
+
+    out = dict(person=[], t=[], season=[], lv=[], phase=[], xc=[], group=[],
+               cell=[], day=[], race=[], y=[], truth_theta=[],
+               truth_perf=[], bad_race=[])
+    day_id = 0; race_id = 0
+    school_of = np.array([s for _, _, s, _ in persons])
+    region_of = np.array([r for _, r, _, _ in persons])
+
+    def run(members, s, phase, group, ckey, csd, sport_xc, divide=2):
+        nonlocal day_id, race_id
+        if len(members) < 4:
+            return
+        cell = cellId(ckey, group, csd)
+        g_val = cell_d[ckey][2]
+        mu = {ss.GROUP_XC: T["mu_xc"], ss.GROUP_OUT: 0.0, ss.GROUP_IN: T["mu_in"]}[group]
+        w = T["s_w"][group] * rng.standard_t(3) / np.sqrt(3.0)
+        members = np.array(members)
+        th_now = (level[members, s] + _shape(phase)
+                  + slope[members, s] * phase / 366.0)
+        # divisions: by ability, varsity / JV (or heats)
+        order = np.argsort(th_now)
+        for chunk in np.array_split(order, divide):
+            if chunk.size == 0:
+                continue
+            v = rng.normal(0, T["s_v"])
+            v0 = v
+            u = rng.random()
+            if u < T["short_p"]:
+                v += rng.uniform(-0.12, -0.03)
+            elif u < T["short_p"] + T["long_p"]:
+                v += rng.uniform(0.03, 0.08)
+            for j in chunk:
+                p = members[j]
+                th = th_now[j] + rng.normal(0, 0.004)
+                h = 1.0 + T["kappa"] * (th - THETA_HS)
+                e = rng.normal(0, T["sigma"])
+                if rng.random() < T["bad_p"]:
+                    e += rng.exponential(T["bad_mean"])
+                out["person"].append(p); out["t"].append(s * 366.0 + phase)
+                out["season"].append(s); out["lv"].append(lv[p, s])
+                out["phase"].append(phase); out["xc"].append(1 if sport_xc else 0)
+                out["group"].append(group); out["cell"].append(cell)
+                out["day"].append(day_id); out["race"].append(race_id)
+                out["truth_theta"].append(th)
+                # the performance a rating should read: the runner, their
+                # grass skill and their own day, with course and day removed
+                out["truth_perf"].append(th + beta[p] * sport_xc + e)
+                out["bad_race"].append(abs(v - v0) > 0)
+                out["y"].append(th + beta[p] * sport_xc + h * (mu + g_val + w + v) + e)
+            race_id += 1
+        day_id += 1
+
+    for s in range(n_seasons):
+        active = np.flatnonzero(in_school[:, s])
+        hs = active[lv[active, s] == 0]
+        col = active[lv[active, s] == 1]
+        xc_hs = hs[rng.random(hs.size) < 0.85]
+        tf_hs = hs[rng.random(hs.size) < 0.70]
+        in_hs = tf_hs[rng.random(tf_hs.size) < 0.20]
+        # HS cross country: Saturdays, two meets a region, schools pick one
+        for wk, phase in enumerate(range(25, 106, 7)):
+            for reg in range(n_regions):
+                here = xc_hs[region_of[xc_hs] == reg]
+                go = here[rng.random(here.size) < 0.75]
+                pick = rng.integers(0, 2, size=go.size)
+                # a school goes together
+                pick = (school_of[go] + wk) % 2
+                for m in range(2):
+                    crs = xc_course[reg][(wk + 3 * m) % 6]
+                    run(list(go[pick == m]), s, phase, ss.GROUP_XC, ("xc", crs), T["tau"][0], 1)
+                # the occasional visitor from the next region: the bridge
+                if wk % 4 == 0:
+                    vis = xc_hs[region_of[xc_hs] == (reg + 1) % n_regions]
+                    vis = vis[rng.random(vis.size) < 0.1]
+                    run(list(vis), s, phase, ss.GROUP_XC, ("xc", xc_course[reg][wk % 6]), T["tau"][0], 1, 1)
+        # state final: the faster half, one course
+        th_end = level[xc_hs, s] + slope[xc_hs, s] * 115 / 366.0
+        fin = xc_hs[th_end < np.median(th_end)]
+        run(list(fin), s, 115, ss.GROUP_XC, ("xc", "state"), T["tau"][0], 1, 4)
+        # college cross country
+        for wk, phase in enumerate(range(30, 110, 14)):
+            for reg in range(0, n_regions, 2):
+                here = col[(region_of[col] // 2) == reg // 2]
+                go = here[rng.random(here.size) < 0.85]
+                run(list(go), s, phase, ss.GROUP_XC, ("colxc", col_course[reg + wk % 2]), T["tau"][0], 1, 1)
+        # indoor: one facility per two regions, every other week
+        for phase in range(150, 211, 14):
+            for reg in range(0, n_regions, 2):
+                here = np.r_[in_hs, col[rng.random(col.size) < 0.5]]
+                here = here[(region_of[here] // 2) == reg // 2]
+                go = here[rng.random(here.size) < 0.6]
+                run(list(go), s, phase, ss.GROUP_IN, ("in", reg // 2), T["tau"][2], 0, 3)
+        # outdoor: weekly, three tracks a region
+        for wk, phase in enumerate(range(220, 306, 7)):
+            for reg in range(n_regions):
+                here = np.r_[tf_hs, col][np.r_[region_of[tf_hs], region_of[col]] == reg]
+                go = here[rng.random(here.size) < 0.6]
+                pick = (school_of[go] + wk) % 3
+                for m in range(3):
+                    run(list(go[pick == m]), s, phase, ss.GROUP_OUT,
+                        ("out", reg, (wk + m) % 5), T["tau"][1], 0, 3)
+
+    D = {k: np.asarray(v) for k, v in out.items()}
+    order = np.lexsort((D["t"], D["person"]))
+    D = {k: v[order] for k, v in D.items()}
+    # dense person ids
+    _, D["person"] = np.unique(D["person"], return_inverse=True)
+    D["person"] = D["person"].astype(np.int64)
+    for k in ("cell", "day", "race", "season", "lv", "group"):
+        D[k] = D[k].astype(np.int64)
+    D["t"] = D["t"].astype(np.float64); D["phase"] = D["phase"].astype(np.float64)
+    D["starts"] = ss.segments(D["person"])
+    return D
+
+
+def splits(D, seed=1, n_seasons=5):
+    """The three held-out designs, as train masks plus the scored rows.
+      race     a tenth of the venue-days of the last three seasons, whole
+      forward  fit on everything before mid-October of the last season,
+               score the rest of its cross country (the championships)
+      sport    fit on everything before the last season's outdoor track,
+               score that outdoor track (cross country predicts the track)"""
+    rng = np.random.default_rng(seed)
+    last = n_seasons - 1
+    n_day = int(D["day"].max()) + 1
+    held_day = rng.random(n_day) < 0.10
+    race_out = held_day[D["day"]] & (D["season"] >= last - 2)
+    t_fwd = last * 366.0 + 75
+    fwd_score = (D["t"] >= t_fwd) & (D["t"] < last * 366.0 + 140)
+    t_sp = last * 366.0 + 215
+    sp_score = (D["t"] >= t_sp)
+    return {
+        "race": (~race_out, race_out),
+        "forward": (D["t"] < t_fwd, fwd_score),
+        "sport": (D["t"] < t_sp, sp_score),
+    }
