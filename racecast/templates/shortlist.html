@@ -57,12 +57,12 @@
   <div class="rc-grid rc-grid-one">
   <div class="rc-mainc">
   {% if not ready %}
-  <p class="predict-status show error">The shortlist is not set up on this server yet (racecast/follows.py --init).</p>
+  <p class="predict-status show error">The shortlist isn't available right now. Please check back soon.</p>
   {% elif not cols %}
   <p class="meta">Nothing saved yet. Open a college from <a href="/recruiting">Recruiting</a> and press <b>Save to shortlist</b>. Save {{ min_n }} or more to see them side by side.</p>
   {% else %}
   {% if n < min_n %}<p class="meta">Save one more college to compare: open one from <a href="/recruiting">Recruiting</a> and press <b>Save to shortlist</b>.</p>{% endif %}
-  {% if not built %}<p class="meta">The recruiting numbers are not built on this server yet.</p>{% endif %}
+  {% if not built %}<p class="meta">The recruiting numbers aren't ready yet; check back tomorrow.</p>{% endif %}
   {% if programs|length > min_n %}
   {# which saved programs to compare: a GET form, so the choice is a link #}
   <form method="get" action="/account/shortlist" class="sl-pick">

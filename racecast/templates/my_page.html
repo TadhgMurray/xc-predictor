@@ -53,7 +53,7 @@
       <div class="rc-meta">{{ account.name or account.email.split("@")[0] }} · <a href="/account">Settings</a> · <a href="/account/shortlist">College shortlist</a></div>
       {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
       {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
-      {% if not ready %}<p class="predict-status show error">Following is not set up on this server yet (racecast/follows.py --init).</p>{% endif %}
+      {% if not ready %}<p class="predict-status show error">Following isn't available right now. Please check back soon.</p>{% endif %}
     </div>
   </div></header>
 

@@ -274,7 +274,7 @@
     renderSuggestions(d);
     const rows = d.rows || [];
     if (!d.built) {
-      $("r-out").innerHTML = `<p class="meta">The recruiting table has not been built yet.</p>`;
+      $("r-out").innerHTML = `<p class="meta">The recruiting numbers aren't ready yet; check back tomorrow.</p>`;
       return;
     }
     if (!rows.length) {

@@ -38,6 +38,36 @@
  *   when they arrive, once per animation frame however many arrive.
  * ! To go back to the zoomed page: git show ac072eb:racecast/static/layout.js.
  */
+/* The race-page shape's folded side cards, up to 1000px: the two-column
+   grid needs ~1,000px for a results table and its 280px card (race.css), so
+   below that the card folds above the main column, phone or tablet. */
+(function () {
+  "use strict";
+  if (!window.matchMedia || !window.matchMedia("(max-width: 1000px)").matches) return;
+  /* ★ AND THE RACE-PAGE SHAPE'S CARDS THAT ASK FOR IT (UX review,
+     2026-10-24: the athlete's PRs and a race's team scores sat under every
+     row on a phone -- .page-layout, which the fold looked for, is a layout
+     no template uses any more). An aside.rc-side[data-fold] folds into a
+     closed row above the page's main column, labelled by data-fold; the
+     other side cards (help, links) stay at the foot. */
+  function foldRcSides() {
+    var sides = document.querySelectorAll("main.rc .rc-grid > aside.rc-side[data-fold]");
+    for (var i = 0; i < sides.length; i++) {
+      var side = sides[i], grid = side.parentElement;
+      var d = document.createElement("details");
+      d.className = "side-fold side-fold-rc";
+      var s = document.createElement("summary");
+      s.textContent = side.getAttribute("data-fold");
+      d.appendChild(s);
+      grid.insertBefore(d, grid.firstElementChild);
+      d.appendChild(side);
+    }
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", foldRcSides);
+  else foldRcSides();
+})();
+
 (function () {
   "use strict";
   if (!window.matchMedia || !window.matchMedia("(max-width: 700px)").matches) return;

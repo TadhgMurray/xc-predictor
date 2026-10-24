@@ -59,8 +59,9 @@ document.querySelectorAll("table.staged").forEach(function (table) {
             tr.classList.toggle("row-hidden", i >= fold);
         });
         pressed = 0;
-        setLabel("Show " + step + " more",
-                 table.querySelectorAll("tr.row-hidden").length);
+        // ! never "Show 20 more (1 left)" (UX review, 2026-10-24)
+        var n = table.querySelectorAll("tr.row-hidden").length;
+        setLabel("Show " + Math.min(step, n) + " more", n > step ? n : 0);
     }
 
     btn.addEventListener("click", function () {
@@ -81,7 +82,7 @@ document.querySelectorAll("table.staged").forEach(function (table) {
             btn.dataset.act = "collapse";
             setLabel("Show less", 0);
         } else {
-            setLabel("Show the remaining " + left, left);
+            setLabel("Show the remaining " + left, 0);
         }
     });
 });

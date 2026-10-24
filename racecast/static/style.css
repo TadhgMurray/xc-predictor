@@ -5528,7 +5528,12 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
      (layout.js measures both and sets .tw-wrap). A table that cannot fit
      either way is not squeezed for nothing: it keeps one-line rows and
      scrolls in its box. Words never break. */
-  div.tscroll > table th, div.tscroll > table td, div.tscroll > table td *,
+  /* ! td *:not(.sr-only) (UX review, 2026-10-24): "td *" matched every PR
+     badge's hidden screen-reader sentence and laid it out at full size, so
+     the box came out ~90px taller than its table and a jump to a row
+     scrolled the box itself -- the header row gone for good under
+     overflow-y: hidden (the iPhone "cut off at the top"). */
+  div.tscroll > table th, div.tscroll > table td, div.tscroll > table td *:not(.sr-only),
   .season div.tscroll > table th, .season div.tscroll > table td,
   .season div.tscroll > table td.meet-cell .meet-course {
     white-space: nowrap; text-overflow: clip; overflow: visible; max-width: none;
@@ -5536,7 +5541,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   /* wrapping, a cell breaks between words, but the pieces the templates
      mark .no-break ("48th", "· 3rd on team") and the first column (a
      date, a place) stay whole */
-  div.tscroll.tw-wrap > table th, div.tscroll.tw-wrap > table td, div.tscroll.tw-wrap > table td *,
+  div.tscroll.tw-wrap > table th, div.tscroll.tw-wrap > table td, div.tscroll.tw-wrap > table td *:not(.sr-only),
   .season div.tscroll.tw-wrap > table th, .season div.tscroll.tw-wrap > table td,
   .season div.tscroll.tw-wrap > table td.meet-cell .meet-course { white-space: normal; }
   div.tscroll.tw-wrap > table td:first-child, div.tscroll.tw-wrap > table td .no-break,
@@ -5602,6 +5607,8 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .side-fold > summary::after { content: "\25BE"; float: right; color: #6b7280; }
   .side-fold[open] > summary::after { content: "\25B4"; }
   .side-fold > .sidebar { width: auto; flex: none; max-width: none; margin-top: 0.6rem; }
+  .side-fold-rc > .rc-side { margin-top: 0.6rem; position: static; max-height: none; }
+  main.rc.rc-side-away .side-fold-rc { display: none; }
 
   /* ★ FILTER BOXES, ONE WIDTH AND ONE LOOK (ui pass, 2026-10-04; owner:
        "elements of different widths on phone"). The meets filters were a

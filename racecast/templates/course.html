@@ -38,7 +38,8 @@
     {%- if rows|length > 15 %}
     <tr class="more-row"><td colspan="{{ span }}">
         <button type="button" class="more-btn">
-            Show 20 more <span class="more-left">({{ rows|length - 15 }} left)</span>
+            {%- set _left = rows|length - 15 %}
+            {% if _left > 20 %}Show 20 more <span class="more-left">({{ _left }} left)</span>{% else %}Show {{ _left }} more{% endif %}
         </button>
     </td></tr>
     {% endif -%}

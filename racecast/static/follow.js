@@ -107,8 +107,14 @@
     return first ? '<p class="rc-follow-help">' + esc(helper) + '</p>' : '';
   }
 
+  // ★ THE TAP SURVIVES THE SIGN-IN (UX review, 2026-10-24): a signed-out
+  //   Follow went through sign-in and back, and then the reader had to tap
+  //   it again. The way back carries #rc-follow (#rc-save); arriving signed
+  //   in with it, the button finishes what was asked, once, and the mark goes.
+  var MARK = shortlist ? '#rc-save' : '#rc-follow';
+
   function drawSignedOut(wrap) {
-    var back = location.pathname + location.search;
+    var back = location.pathname + location.search + MARK;
     var label = shortlist ? 'Save to shortlist' : 'Follow';
     var showHelp = !shortlist && !helpSeen();
     wrap.innerHTML = (shortlist && cfg.sep ? esc(cfg.sep) : '') + '<a class="rc-follow" href="/account/return?' + enc({ next: back }) +
@@ -170,6 +176,12 @@
         if (!st.signed_in) { drawSignedOut(wrap); return; }
         if (!st.ready || st.error) { wrap.remove(); return; }
         draw(wrap, st);
+        if (location.hash === MARK) {
+          history.replaceState(null, '', location.pathname + location.search);
+          var on = shortlist ? st.saved : st.following;
+          var btn = wrap.querySelector('button');
+          if (!on && btn) btn.click();
+        }
       })
       .catch(function () { wrap.remove(); });
   }

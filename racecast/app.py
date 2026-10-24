@@ -1684,9 +1684,12 @@ def buildRankLine(cur, person_id, season):
                   f"({type(exc).__name__}: {exc})", flush=True)
             return None
 
+    # ★ THE LINK OPENS ON THE ATHLETE (UX review, 2026-10-24: "National
+    #   #212" opened page 1 with nothing lit). jump= asks rankings.js to page
+    #   to them and light their row (its own find-an-athlete path, jumpTo).
     def boardHref(with_state):
         q = "&".join(f"{k}={v}" for k, v in boardArgs(with_state).items())
-        return "/rankings?" + q
+        return f"/rankings?{q}&jump={person_id}"
 
     # the athlete's own units, once -- three scopes read from this
     from school_units import unitsFor, applyUnitFilters, homeStateOf
@@ -1781,7 +1784,7 @@ def buildRankLine(cur, person_id, season):
                 q = "&".join(f"{k}={v}" for k, v
                              in unitArgs(u["kind"], u["raw"]).items())
                 entries.append({"label": u["label"], "rank": r,
-                                "href": "/rankings?" + q})
+                                "href": f"/rankings?{q}&jump={person_id}"})
         elif scope == "nation":
             r = boardRank(False)
             if r:
@@ -5296,7 +5299,9 @@ def meet_xc_find(meet_id):
                 ) x
                 WHERE  x.name ILIKE %(q)s OR x.school ILIKE %(q)s
                 ORDER  BY (x.name ILIKE %(q)s) DESC, x.time_seconds NULLS LAST
-                LIMIT  25
+                -- ! a school's whole team, not its first 25 (UX review,
+                --   2026-10-24): one meet's rows, so the cap costs nothing
+                LIMIT  200
             """, {"m": meet_id, "src": src, "q": "%" + q + "%"})
             rows = cur.fetchall()
     out = []
@@ -5342,7 +5347,7 @@ def meet_tf_find(meet_id):
                 ) x
                 WHERE  x.name ILIKE %(q)s OR x.school ILIKE %(q)s
                 ORDER  BY (x.name ILIKE %(q)s) DESC, x.name, x.event_short
-                LIMIT  40
+                LIMIT  200
             """, {"m": meet_id, "src": src, "q": "%" + q + "%"})
             rows = cur.fetchall()
     out = []
@@ -10381,8 +10386,7 @@ def api_teams():
                     conn.rollback()
                     app.logger.exception("/api/teams (course) failed")
                     return jsonify({"error": "Team rankings failed to load. "
-                                             "The server log has the "
-                                             "traceback."}), 500
+                                             "Try again in a minute."}), 500
         # Rows carry their race distance, so the exact factor applies
         # rather than the representative one.
         hs_movable = stampBoardRows(rows, rating_keys=("top5_mean",),

@@ -43,7 +43,7 @@
         <a href="{{ school_href(school, state) }}">School page</a>
         {% if has_other %} · <a href="/recruiting/school/{{ school|urlencode }}?gender={{ 'f' if gender == 'm' else 'm' }}{% if state %}&amp;state={{ state }}{% endif %}">{{ "Women" if gender == "m" else "Men" }}</a>{% endif %}
         · <a href="/recruiting">Every college</a>
-        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ school ~ ' recruiting on Racecast' }}"
+        <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ school ~ ' recruiting on Racecast' }}"
               data-share-url="{{ site_origin ~ '/recruiting/school/' ~ (school|urlencode) ~ '?gender=' ~ gender ~ (('&state=' ~ state) if state else '') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {# each sport's typical (median) recruit, and what that is in the

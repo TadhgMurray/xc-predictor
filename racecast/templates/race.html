@@ -57,8 +57,8 @@
       <a href="/course/{{ header.course_name|urlencode }}">{{ header.course_name }}</a> ·
       {{ header.distance|int if header.distance else " - " }}&nbsp;m{% if corrected %}<span class="dist-note" tabindex="0" aria-label="Distance corrected. This race was listed at {{ header.listed_distance|int }} meters; a verified correction rates it at {{ header.distance|int }} meters.">★<span class="dist-tip"><span class="dist-tip-box"><b>Distance corrected.</b> This race was listed at {{ header.listed_distance|int }}&thinsp;m; times are rated at the verified {{ header.distance|int }}&thinsp;m. <a href="/report?about={{ request.path|urlencode }}&kind=meet">Is the correction wrong? Report it →</a></span></span></span>{% endif %}
       · {{ race_date|mdy if race_date else " - " }}{% if header.state %} · {{ header.state }}{% endif %}
-      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"
-            data-share-url="{{ site_origin }}/race/xc/{{ header.meet_id }}/{{ header.div_id }}" title="Share this page; the preview is its card">
+      <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name|with_year(race_date) }} on Racecast"
+            data-share-url="{{ site_origin }}/race/xc/{{ header.meet_id }}/{{ header.div_id }}{% set _sr = request.args.get('r', '') %}{% if _sr.lstrip('-').isdigit() %}{{ '?r=' ~ (_sr|int) }}{% endif %}" title="Share this page; the preview is its card">
       <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
       <span>Share</span>
     </button></span>
@@ -205,7 +205,7 @@
       <a href="/report?about={{ request.path|urlencode }}">Report it →</a></div>
 </div>
 
-<aside class="rc-side"{% if scores and scores.teams %} data-repeats="teams"{% endif %}>
+<aside class="rc-side"{% if scores and scores.teams %} data-repeats="teams" data-fold="Team scores"{% endif %}>
   {% if scores and scores.teams %}
   <h2>Team scores <small>top 5 places</small></h2>
   <table class="rc-tscores">
@@ -244,7 +244,9 @@
 <script>(function () {
     var el = document.getElementById("r{{ rid|int }}");
     if (el) { el.classList.add("row-hi");
-              el.scrollIntoView({ block: "center" }); }
+              /* the window only: not the table's own box (UX review) */
+              var r = el.getBoundingClientRect();
+              window.scrollTo(0, window.pageYOffset + r.top - (window.innerHeight - r.height) / 2); }
 })();</script>
 {% endif %}
 {# ★ A TEAM'S RACE, ONE TAP AWAY (owner, 2026-10-07: "a pop up that has the

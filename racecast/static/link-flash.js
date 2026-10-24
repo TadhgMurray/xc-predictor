@@ -63,10 +63,19 @@
     el._lfT = setTimeout(function () { el.classList.remove("link-flash"); }, 1700);
   }
 
+  // ★ THE WINDOW ONLY (UX review, 2026-10-24): scrollIntoView also scrolls
+  //   a phone table's own box (div.tscroll, overflow-y hidden), and what it
+  //   scrolls off the top -- the header row -- cannot be scrolled back.
+  function centreRow(el, smooth) {
+    var r = el.getBoundingClientRect();
+    window.scrollTo({ top: window.pageYOffset + r.top - (window.innerHeight - r.height) / 2,
+                      behavior: smooth ? "smooth" : "auto" });
+  }
+
   function centre(el) {
     // a row is the thing to centre; anything else keeps the browser's own
     // fragment scroll
-    if (el.tagName === "TR" || !location.hash) el.scrollIntoView({ block: "center" });
+    if (el.tagName === "TR" || !location.hash) centreRow(el);
   }
 
   function go() {
@@ -104,8 +113,11 @@
     e.preventDefault();
     history.pushState(null, "", "#" + id);
     // an event heading leads its table: to the top, not the middle
-    el.scrollIntoView({ block: el.classList.contains("ev-head") ? "start" : "center",
-                        behavior: "smooth" });
+    if (el.classList.contains("ev-head")) {
+      window.scrollTo({ top: window.pageYOffset + el.getBoundingClientRect().top - 8, behavior: "smooth" });
+    } else {
+      centreRow(el, true);
+    }
     flashAfterScroll(el);
   });
 
@@ -129,7 +141,7 @@
   }
   window.addEventListener("hashchange", function () {
     var el = rowOf(document.getElementById(location.hash.slice(1)));
-    if (isRow(el)) { el.scrollIntoView({ block: "center" }); flash(el); }
+    if (isRow(el)) { centreRow(el); flash(el); }
   });
 
   if (document.readyState === "complete") {

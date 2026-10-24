@@ -1460,9 +1460,7 @@ function teamsNote(data) {
        over a rebuild is how a five-minute fix becomes an afternoon. */
     note.innerHTML =
       "<strong>Showing each squad's place in its own season.</strong> "
-      + "Racing seasons against each other needs the stored squad ratings, "
-      + "which this table was built without - rebuild with "
-      + "<code>racecast/build_team_season.py</code> to turn it on.";
+      + "Comparing squads across seasons isn't available yet.";
 
   } else if (data.raced && subset) {
     /* ★ A SCHOOL SEARCH IS A LOOKUP, NOT A SMALLER MEET. The searched teams
@@ -2741,6 +2739,10 @@ function initFromUrl() {
               .includes(asked) ? asked : "ability");
   applyUrlFilters(params);
 
+  // ★ jump=<person_id>: an athlete page's rank link opens on their row
+  //   (UX review, 2026-10-24) -- the find box's own path, which pages there
+  const jump = params.get("jump");
+  if (jump && /^-?\d+$/.test(jump)) { jumpTo(jump, "This athlete"); return; }
   load();
 }
 

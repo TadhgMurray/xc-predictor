@@ -44,7 +44,9 @@
   const FMT = {
     top5: (v) => Number(v).toFixed(1),
     gap15: (v) => Number(v).toFixed(1),
-    place: (v) => ordinal(-v)
+    // ! no "0th" at the top of the axis (UX review, 2026-10-24): a place
+    //   is drawn as -place, so ticks at 0 and above are no place at all
+    place: (v) => (-v >= 1 ? ordinal(-v) : "")
   };
 
   const drawn = [];

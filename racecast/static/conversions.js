@@ -557,7 +557,7 @@
 
     function render(data) {
         if (data.error || data.normalized_time == null) {
-            showNorm(data.error ? ('Error: ' + data.error) : 'Could not resolve source.');
+            showNorm(data.error ? data.error : "Couldn't convert that. Check the time and distance.");
             return;
         }
         lastBase = { pool: data.base_rating, hs: data.base_rating_hs,
