@@ -103,16 +103,42 @@ def robust_sd(v):
 
 
 class Ours:
-    """Our rows and their track-5K equivalents."""
+    """Our rows and their track-5K equivalents.
 
-    def __init__(self, cur):
+    ★ --ours-npz (2026-10-24): the state-space engine's ratings file
+      (scripts/ss_eval.py --mode ratings: result_id, sport, five_k_s), read
+      in place of the published speed_rating, so the new engine is compared
+      with LACCTiC on these very races without going live. Its 5K column is
+      already a flat-track 5000 on the day (no conversions.fiveKForRating).
+      A row the old engine left unrated still counts; a tfrrs row the
+      backfill dropped as the twin of an athletic.net row is found through
+      that twin."""
+
+    def __init__(self, cur, npz=None):
         self.cur = cur
+        self.npz = None
+        if npz:
+            import numpy as np
+            z = np.load(npz)
+            self.npz = {(int(sp), int(r)): math.log(float(f)) for sp, r, f in
+                        zip(z["sport"], z["result_id"], z["five_k_s"]) if f > 0}
+            print(f"[lacctic] ours from {npz}: {len(self.npz):,} results")
         cur.execute("""SELECT column_name FROM information_schema.columns
                        WHERE table_name = 'results' AND column_name = 'rating_pool'""")
         self.pool_col = "rating_pool" if cur.fetchone() else "NULL::text"
         import conversions as C
         self.C = C
         self._five = {}
+
+    def fiveRow(self, sport, *rids):
+        """ln seconds from the npz for the first of rids it holds; sport 0
+        XC (results), 1 track (results_tf)."""
+        for r in rids:
+            if r is not None:
+                v = self.npz.get((sport, int(r)))
+                if v is not None:
+                    return v
+        return None
 
     def five(self, rating, pool):
         """ln seconds of the rating's 5K on a typical outdoor track."""
@@ -136,20 +162,23 @@ class Ours:
           second of the same time, whichever feed it is."""
         tp = "t.rating_pool" if self.pool_col == "rating_pool" else "NULL::text"
         rp = "r.rating_pool" if self.pool_col == "rating_pool" else "NULL::text"
+        # with the npz any twin will do (rated or not): the pack keeps one copy
+        rated = "" if self.npz is not None else "AND r.speed_rating IS NOT NULL"
+        own = "TRUE" if self.npz is not None else "t.speed_rating IS NULL"
         self.cur.execute(f"""
             SELECT t.result_id, t.person_id, t.athlete_name, t.time_seconds,
                    COALESCE(t.speed_rating, o.speed_rating),
                    CASE WHEN t.speed_rating IS NOT NULL THEN {tp} ELSE o.pool END,
-                   t.date
+                   t.date, o.result_id
             FROM results t
             LEFT JOIN LATERAL (
-                SELECT r.speed_rating, {rp} AS pool
+                SELECT r.speed_rating, {rp} AS pool, r.result_id
                 FROM results r
                 WHERE r.person_id = t.person_id AND r.date = t.date
-                  AND r.speed_rating IS NOT NULL
+                  AND r.result_id <> t.result_id {rated}
                   AND abs(r.time_seconds - t.time_seconds) <= 1.0
                 ORDER BY abs(r.time_seconds - t.time_seconds) LIMIT 1) o
-              ON t.speed_rating IS NULL AND t.person_id IS NOT NULL
+              ON {own} AND t.person_id IS NOT NULL
             WHERE t.meet_id = %s AND t.source = 'tfrrs'""", (meet_id,))
         return self.cur.fetchall()
 
@@ -157,9 +186,10 @@ class Ours:
         out = []
         for table, sport, ev in (("results", "XC", "NULL::text"),
                                  ("results_tf", "TF", "event_short")):
+            rated = "" if self.npz is not None else "AND speed_rating IS NOT NULL"
             self.cur.execute(f"""
-                SELECT date, time_seconds, speed_rating, {self.pool_col}, {ev}
-                FROM {table} WHERE person_id = %s AND speed_rating IS NOT NULL""", (pid,))
+                SELECT date, time_seconds, speed_rating, {self.pool_col}, {ev}, result_id
+                FROM {table} WHERE person_id = %s {rated}""", (pid,))
             out += [(sport,) + tuple(r) for r in self.cur.fetchall()]
         return out
 
@@ -184,11 +214,11 @@ def compare_race(lac_id, ours, sleep, default_pool):
         if not hit:
             # a nickname or an accent: the one row at that exact time
             hit = [r for r in rows if r[3] and abs(float(r[3]) - float(x["time"])) <= 0.05]
-        if len(hit) != 1 or hit[0][4] is None:
+        if len(hit) != 1 or (hit[0][4] is None and ours.npz is None):
             continue
         r = hit[0]
         p = (r[5] or "").split("|", 1)[0] or pool
-        f = ours.five(r[4], p)
+        f = ours.fiveRow(0, r[0], r[7]) if ours.npz is not None else ours.five(r[4], p)
         if f is None or x.get("modern_tic") is None:
             continue
         matched.append({"lac_runner": rn.get("id"), "race": lac_id, "person": r[1],
@@ -250,7 +280,8 @@ def runner_perfs(lac_id, person, ours, sleep):
                 if len(hit) != 1:
                     continue
                 pool = (hit[0][4] or "").split("|", 1)[0]
-                f = ours.five(hit[0][3], pool)
+                f = (ours.fiveRow(0 if sport == "XC" else 1, hit[0][6]) if ours.npz is not None
+                     else ours.five(hit[0][3], pool))
                 if f is None:
                     continue
                 out.append({"season": season, "sport": sport, "race": race.get("id"),
@@ -339,6 +370,12 @@ def main():
                          "cross-sport checks")
     ap.add_argument("--pool", default=None, help="our pool if the rows carry none")
     ap.add_argument("--sleep", type=float, default=1.0, help="seconds between requests")
+    ap.add_argument("--ours-npz", default=None,
+                    help="the state-space engine's ratings (scripts/ss_eval.py --mode ratings) "
+                         "in place of the published ones")
+    ap.add_argument("--forward", action="store_true",
+                    help="the ORDER test from each runner's races BEFORE the scored race only "
+                         "(both systems), not the whole season around it")
     a = ap.parse_args()
     races = [int(x) for x in a.race.split(",") if x.strip()]
     if a.season:
@@ -351,7 +388,7 @@ def main():
         ap.error("--race or --runner")
     with getConn() as conn:
         cur = conn.cursor()
-        ours = Ours(cur)
+        ours = Ours(cur, a.ours_npz)
         matched = []
         for rid in races:
             matched += compare_race(rid, ours, a.sleep, a.pool)
@@ -429,7 +466,8 @@ def main():
                     continue
                 season = here[0]["season"]
                 other = [p_ for p_ in ps if p_["season"] == season and p_["sport"] == "XC"
-                         and p_["race"] != rid]
+                         and p_["race"] != rid
+                         and (not a.forward or p_["date"] < here[0]["date"])]
                 if not other:
                     continue
                 in_race.append((m_["place"], statistics.median(p_["o"] for p_ in other),

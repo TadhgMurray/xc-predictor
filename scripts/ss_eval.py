@@ -444,13 +444,93 @@ def modeRatings(rows, a, fitted=None):
     return path
 
 
+def asOfRows(D, cut_t, persons):
+    """D plus one held-out row per person on day cut_t: an outdoor 5000 m on
+    the flat gauge, no course, a day and a race of its own. The filter
+    predicts through it, so its prediction is that runner's flat-track 5K
+    fitness on the cut date from races before it alone. Returns (D', mask
+    of the new rows)."""
+    n = D["y"].size
+    k = persons.size
+    last = np.searchsorted(D["person"], persons, side="right") - 1
+    E = {}
+    for key, v in D.items():
+        if isinstance(v, np.ndarray) and v.shape[:1] == (n,):
+            E[key] = np.concatenate([v, np.zeros(k, dtype=v.dtype)])
+        else:
+            E[key] = v
+    i = np.arange(n, n + k)
+    E["person"][i] = persons
+    E["t"][i] = cut_t
+    season_cut = D["season"][last] + ((cut_t - D["t"][last]) > 330)
+    E["season"][i] = D["season"][last]
+    E["lv"][i] = D["lv"][last]
+    E["phase"][i] = np.clip(D["phase"][last] + (cut_t - D["t"][last]), 0, 365)
+    # ! a finite placeholder: held out, never trained on, but NaN x 0 is
+    #   still NaN in every weighted sum
+    E["y"][i] = D["y"][last]
+    E["xc"][i] = 0
+    E["group"][i] = ss.GROUP_OUT
+    E["cell"][i] = -1
+    E["day"][i] = D["day"].max() + 1 + np.arange(k)
+    E["race"][i] = D["race"].max() + 1 + np.arange(k)
+    E["dist_m"][i] = 5000.0
+    if "region" in E:
+        E["region"][i] = -1
+    if "alt_km" in E:
+        E["alt_km"][i] = 0.0
+    new = np.zeros(n + k, dtype=bool); new[i] = True
+    order = np.lexsort((E["t"], E["person"]))
+    for key, v in E.items():
+        if isinstance(v, np.ndarray) and v.shape[:1] == (n + k,):
+            E[key] = v[order]
+    E["starts"] = ss.segments(E["person"])
+    del season_cut
+    return E, new[order]
+
+
+def modeAsOf(rows, a):
+    """Per cut date: fit on races before it, then every runner's flat-track
+    5K fitness on that date -- the shape of Kailo's fitness_5k_s, for
+    scripts/kailo_ratings.py --ours-dir. ! A forward evaluation only: it is
+    the model's estimate of today's fitness from the past, never a rating."""
+    import json
+    keys = rows.cols["athlete_keys"]
+    pid_of_raw = np.array([int(k[0]) for k in keys])
+    for cut in a.cuts.split(","):
+        cut_d = np.datetime64(cut.strip(), "D")
+        use = rows.keep & (rows.dates < cut_d) & (
+            rows.season >= int(fh.seasonOf(np.array([cut_d]))[0]) - a.seasons_back)
+        D, idx = rows.build(use)
+        persons = np.unique(D["person"])
+        E, new = asOfRows(D, float(cut_d.astype(np.int64)), persons)
+        t0 = time.time()
+        R = ss.fitGLS(E, ~new, outer=a.outer, terms=TERMS)
+        print(fitLine(R, t0))
+        secs = np.exp(R["pred"][new])
+        # the person id of each dense person: any of their rows' raw athlete
+        first = np.searchsorted(D["person"], persons)
+        pid = pid_of_raw[rows.raw[idx[first]]]
+        nrace = np.bincount(D["person"], minlength=persons.size)
+        pools = rows.pool_of_raw[rows.raw[idx[np.searchsorted(D["person"], persons,
+                                                              side="right") - 1]]]
+        out = {str(int(p)): [float(s_), None, str(pl), int(nr)]
+               for p, s_, pl, nr in zip(pid, secs, pools, nrace) if np.isfinite(s_)}
+        os.makedirs(OUT_DIR, exist_ok=True)
+        path = os.path.join(OUT_DIR, f"ours_asof_{cut.strip()}.json")
+        json.dump(out, open(path, "w"))
+        print(f"[ss] as of {cut}: {len(out):,} runners' flat 5K fitness -> {path}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", default=REPO,
                     help="the checkout to read the engine, artifacts and pack from")
     ap.add_argument("--pack", default=PACK)
-    ap.add_argument("--mode", default="all", choices=("all", "gap", "score", "ratings"))
+    ap.add_argument("--mode", default="all", choices=("all", "gap", "score", "ratings", "asof"))
+    ap.add_argument("--cuts", default="",
+                    help="asof: comma-separated dates, e.g. the Kailo snapshots' cuts")
     ap.add_argument("--base-dump", help="run_joint's XCP_HOLDOUT_DUMP (forward), for score")
     ap.add_argument("--sample-pct", type=float, help="default: the dump's")
     ap.add_argument("--sample-seed", type=int, help="default: the dump's")
@@ -477,6 +557,9 @@ def main():
     if a.mode in ("all", "ratings"):
         print("\n================ RATINGS ================")
         modeRatings(rows, a, fitted)
+    if a.mode == "asof" or (a.mode == "all" and a.cuts):
+        print("\n================ AS OF (for Kailo) ================")
+        modeAsOf(rows, a)
 
 
 if __name__ == "__main__":

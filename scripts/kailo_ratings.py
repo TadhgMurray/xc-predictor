@@ -316,6 +316,12 @@ def main():
     ap.add_argument("--min-field", type=int, default=15, help="finishers in a race")
     ap.add_argument("--min-both", type=int, default=10, help="runners both rate, per race")
     ap.add_argument("--sleep", type=float, default=1.0)
+    # ★ THE STATE-SPACE ENGINE IN PLACE OF OURS (2026-10-24): for each saved
+    #   snapshot, scripts/ss_eval.py --mode asof --cuts <its cut> fitted on
+    #   races before the cut alone and wrote every runner's flat-track 5K
+    #   fitness on that day; scored here on the same races, beside ours.
+    ap.add_argument("--ours-dir", default=None,
+                    help="ss_eval's ours_asof_<cut>.json files, scored beside our published basis")
     a = ap.parse_args()
     from database import getConn
 
@@ -389,6 +395,13 @@ def main():
             rl = races(cur, s["cut"], today, a.min_field)
             score(f"SNAPSHOT {os.path.basename(path)} (both as of {s['cut']}) on races "
                   f"{s['cut']} .. {today}", rl, kk, ours, kin, a.min_both)
+            alt = os.path.join(a.ours_dir or "", f"ours_asof_{s['cut']}.json")
+            if a.ours_dir and os.path.exists(alt):
+                ss_ours = {int(p): tuple(v) for p, v in json.load(open(alt)).items()}
+                score(f"SNAPSHOT {os.path.basename(path)} -- the STATE-SPACE engine as of "
+                      f"{s['cut']} in place of ours", rl, kk, ss_ours, kin, a.min_both)
+            elif a.ours_dir:
+                print(f"[kailo] no {alt}: run scripts/ss_eval.py --mode asof --cuts {s['cut']}")
 
 
 if __name__ == "__main__":
