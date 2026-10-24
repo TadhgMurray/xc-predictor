@@ -25,3 +25,17 @@ def test_the_fit_recovers_a_scale_and_prefers_the_true_window():
 def test_within_course_takes_each_course_against_its_own_days():
     got = WW.withinCourse([1.0, 3.0, 5.0], ["a", "a", "b"], [1, 1, 1])
     assert got[0] == -1.0 and got[1] == 1.0 and np.isnan(got[2])
+
+
+def test_ability_by_heat_finds_a_front_over_credited_in_the_heat(capsys):
+    rng = np.random.default_rng(2)
+    keys, heat, race, gap, own = [0, 1], [0.0, 0.05], [], [], []
+    for k, h in zip(keys, heat):
+        lvl = rng.normal(0, 0.05, 200)
+        race += [k] * 200
+        own += list(lvl)
+        # in the hot race the faster runners gain 0.5 x their edge
+        gap += list((0.5 * lvl if h else 0 * lvl) + rng.normal(0, 0.002, 200))
+    race, gap, own = np.array(race), np.array(gap), np.array(own)
+    out = WW.abilityByHeat(keys, heat, race, np.ones(400, bool), gap, own)
+    assert abs(out[0][3]) < 0.05 and abs(out[-1][3] - 0.5) < 0.05

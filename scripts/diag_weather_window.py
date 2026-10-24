@@ -37,6 +37,17 @@ ran, and is the heat credit the right size? READ-ONLY.
   fit would read as the window's doing. Then the hot days alone (applied
   temperature credit past --hot), where the choice matters.
 
+★ AND BY ABILITY (owner, 2026-10-24: "one race is really bad, and that's
+  the issue" -- the average is right, Falfurrias is not). The heat credit is
+  one percentage for the whole field, and the race-day term then corrects
+  the field's AVERAGE; if heat costs slower runners more (longer in it),
+  the front of a hot field is left over-credited and the back under. Within
+  each race: every runner's gap against how fast they are relative to the
+  field (their own level less the race's median level), slope by race heat
+  band. Mild races give the baseline slope (regression to the mean puts one
+  there too); a hot band steeper than mild is the front over-credited, and
+  the difference is how much per 10% of ability.
+
 ! Nothing is written. A window or a scale is changed in the weather fit
   (engine/fit_weather_correction.py, RACE_LOCAL_HOURS_BY_SPORT) only after
   the owner has read this.
@@ -109,6 +120,47 @@ def withinCourse(vals, courses, w):
     return out
 
 
+def abilityByHeat(keys, applied_temp, race, has, gap_row, own, bands=(-1, 0.0, 0.01, 0.02, 0.04, 1)):
+    """Within-race slope of a runner's gap on their relative ability, by the
+    race's applied heat credit band (log). Prints the table."""
+    heat = dict(zip(keys, applied_temp))
+    rows = np.flatnonzero(has)
+    rows = rows[np.isin(race[rows], np.fromiter(heat.keys(), dtype=np.int64))]
+    by = {}
+    for i in rows:
+        by.setdefault(int(race[i]), []).append(i)
+    print("\nBY ABILITY: within each race, a runner's gap vs how fast they are against the field")
+    print(f"  {'heat credit band':<20} {'races':>7} {'runners':>9} {'slope':>8}   "
+          f"(+ = the faster runners rate above their other races)")
+    out = []
+    for lo, hi in zip(bands, bands[1:]):
+        xs, ys = [], []
+        nr = 0
+        for k, ii in by.items():
+            h = heat.get(k)
+            if h is None or not (lo <= h < hi) or len(ii) < 8:
+                continue
+            ii = np.array(ii)
+            rel = own[ii] - np.median(own[ii])
+            g = gap_row[ii] - np.mean(gap_row[ii])
+            xs.append(rel)
+            ys.append(g)
+            nr += 1
+        if not xs:
+            continue
+        x, y = np.concatenate(xs), np.concatenate(ys)
+        sl = float(np.sum(x * y) / np.sum(x * x)) if np.sum(x * x) > 0 else float("nan")
+        label = "no heat credit" if hi <= 0.0 else f"{100 * max(lo, 0):.0f}% to {100 * hi:.0f}%" if hi < 1 else f"{100 * lo:.0f}% and up"
+        print(f"  {label:<20} {nr:>7,} {x.size:>9,} {sl:>8.3f}")
+        out.append((label, nr, x.size, sl))
+    if len(out) >= 2:
+        base = out[0][3] if out[0][0] == "no heat credit" else out[1][3]
+        top = out[-1]
+        print(f"  hottest band minus the baseline: {top[3] - base:+.3f} -- per 10% faster than the "
+              f"field, {100 * 0.1 * (top[3] - base):+.2f}% more rating in the hottest races")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--sport", choices=("XC", "TF"), default="XC")
@@ -170,6 +222,7 @@ def main():
                   flush=True)
         conn.rollback()
 
+    own = np.where(has, s / np.maximum(c, 1), np.nan)      # each row's own level (log)
     keys, n, need_temp, course_of, lat, month, ct = [], [], [], [], [], [], {w: [] for w in wx_by}
     applied_temp = []
     for k, (s_, m_, iso_, clat, clon, course) in meta.items():
@@ -229,6 +282,7 @@ def main():
     table("SOUTH (below 35 N), across courses", south)
     early = (month >= 8) & (month <= 9)
     table("AUGUST-SEPTEMBER, across courses", early)
+    abilityByHeat(keys, applied_temp, race, has, gap_row, own)
     # the size of the hot-day credit as applied, against what the hot days needed
     if hot.any():
         w = n[hot]
