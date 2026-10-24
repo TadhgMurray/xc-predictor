@@ -1610,6 +1610,11 @@ def prepareRow(row, sport):
     #   None -- it would return "not a finding" on every TF row and the gate
     #   would silently never fire. A hand-corrected override still wins.
     distance = row.distance
+    # ! A STORED 0 IS NO DISTANCE (owner, 2026-10-24: Dan Conway Classic
+    #   2021, listed "0m", rated 156.9 and headed the hs_m single-race board
+    #   -- every "is None" below let a 0 through as a measured race).
+    if distance is not None and float(distance) <= 0:
+        distance = None
     if distance is None and sport == "TF":
         # ! getattr, NOT row.event_short: the XC query does not select it, and
         #   a namedtuple has no attribute it was not given. The TF guard is

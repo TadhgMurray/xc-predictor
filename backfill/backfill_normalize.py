@@ -1167,20 +1167,61 @@ def _loadWheelchairDivs(cur):
 #   Virtual", "Virtual Time Trial", "XC Virtual Challenge".
 _VIRTUAL_RX = r"\mvirtual\M"
 
+# ★ A TRACK TIME TRIAL FILED AS CROSS COUNTRY IS NOT A RACE ON THE COURSE
+#   EITHER (owner, 2026-10-24: Ridgefield, CT, autumn 2020 -- "Ridgefield 5K
+#   Track TT", 15:03 on the school's track, filed under the school's cross
+#   country course and credited its +7.7%: 141.8 for a runner whose real
+#   races read ~130). Cross country only: on the track side the same words
+#   name a real track race.
+_TRACK_IN_XC_RX = r"\mtrack\s+(tt|time\s*trials?)\M|\mtime\s*trials?\s+on\s+(the\s+)?track\M"
+
+# ★ AND ITS REPOST (same day): the same 15:03, same runner, three days later
+#   in "Ridgefield 5K" -- a weekly sheet that collected everyone's best
+#   time, rated 147.0 on the same course. A time equal to a withheld row's
+#   to the tenth, same runner, within REPOST_DAYS, is that row again and is
+#   withheld with it. The repost carries ("result", result_id) in the same
+#   set the meets ride in, so _makeRowFn's signature stays as callers have it.
+REPOST_DAYS = 7
+_RESULT_TABLE = {"XC": "results", "TF": "results_tf"}
+
 
 def _loadVirtualMeets(cur, sport):
-    """{(source, meet_id)} of the meets named virtual, for this sport's
-    result table (anet and tfrrs XC; track)."""
+    """{(source, meet_id)} of the meets named virtual (and, cross country,
+    named a track time trial), for this sport's result table (anet and tfrrs
+    XC; track) -- plus ("result", result_id) for each repost of one of their
+    times elsewhere."""
     if sport == "XC":
-        cur.execute(f"""SELECT DISTINCT source, meet_id FROM meets
-                        WHERE meet_name ~* '{_VIRTUAL_RX}'
+        rx = f"{_VIRTUAL_RX}|{_TRACK_IN_XC_RX}"
+        meets_sql = f"""SELECT DISTINCT source, meet_id FROM meets
+                        WHERE meet_name ~* '{rx}'
                         UNION
                         SELECT 'tfrrs', meet_id FROM meets_tfrrs
-                        WHERE sport = 'XC' AND meet_name ~* '{_VIRTUAL_RX}'""")
+                        WHERE sport = 'XC' AND meet_name ~* '{rx}'"""
     else:
-        cur.execute(f"""SELECT DISTINCT source, meet_id FROM meets_tf
-                        WHERE meet_name ~* '{_VIRTUAL_RX}'""")
-    return frozenset((src, int(mid)) for src, mid in cur.fetchall() if mid is not None)
+        meets_sql = f"""SELECT DISTINCT source, meet_id FROM meets_tf
+                        WHERE meet_name ~* '{_VIRTUAL_RX}'"""
+    cur.execute(meets_sql)
+    out = {(src, int(mid)) for src, mid in cur.fetchall() if mid is not None}
+    if out:
+        cur.execute(_REPOST_SQL.format(table=_RESULT_TABLE[sport], meets=meets_sql),
+                    {"days": REPOST_DAYS})
+        out |= {("result", rid) for (rid,) in cur.fetchall()}
+    return frozenset(out)
+
+
+_REPOST_SQL = """
+    WITH v AS ({meets}),
+    vr AS (
+        SELECT r.result_id, r.person_id, r.time_seconds, r.date::text::date AS d
+        FROM   {table} r JOIN v ON v.source = r.source AND v.meet_id = r.meet_id
+        WHERE  r.person_id IS NOT NULL AND r.time_seconds > 0
+          AND  r.date::text ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}')
+    SELECT DISTINCT r.result_id
+    FROM   vr JOIN {table} r ON r.person_id = vr.person_id AND r.result_id <> vr.result_id
+    WHERE  abs(r.time_seconds - vr.time_seconds) < 0.05
+      AND  r.date::text ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+      AND  abs(r.date::text::date - vr.d) <= %(days)s
+"""
 
 
 # ★ THE PERSON CARRIES IT, NOT THE RACE (2026-08-27, owner's call).
@@ -2098,7 +2139,8 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
 
         # 1c) VIRTUAL MEET -- self-timed, anywhere, under a borrowed course
         #     (see _SkipReason.VIRTUAL)
-        if virtual_meets and (row[_SRC], row[_MEET]) in virtual_meets:
+        if virtual_meets and ((row[_SRC], row[_MEET]) in virtual_meets
+                              or ("result", row[_ID]) in virtual_meets):
             return row[_ID], None, _SkipReason.VIRTUAL, None
 
         # 2) NO DISTANCE — can't put a time on the 5K scale without a distance.
@@ -2113,6 +2155,7 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         #    gets the men's (a meet often has both, e.g. 3-mile women + 4-mile
         #    men). A manual _DISTANCE_OVERRIDE already won inside resolve, so this
         #    only fills gaps the override table didn't cover.
+        borrowed = None
         if row[_SRC] == "anet" and row[_CANON] is not None \
                 and (distance is None or not _distanceSane(distance)):
             anet_gender = _rowGender(genders, row[_AID], row[_PERSON])
@@ -2239,6 +2282,16 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         if pool is None:                           # grade+gender+source -> no pool
             trace = _makeTrace(row, "unknown_pool", distance)
             return row[_ID], None, _SkipReason.UNKNOWN_POOL, trace
+
+        # 3-borrow) A BORROWED DISTANCE IS THE COLLEGE RACE'S (owner,
+        #    2026-10-24: Dan Conway Classic 2021, an hs_m 16:34 with no
+        #    distance anywhere rated 156.9 = 13:10). tfrrs carries only the
+        #    college races of a shared meet, so its twin's distance -- matched
+        #    on gender alone -- is the college men's or women's race, and a
+        #    high school or middle school division at the same meet ran its
+        #    own. Lent to a college row only; anyone else stays unmeasured.
+        if borrowed is not None and not str(pool).startswith("college"):
+            return row[_ID], None, _SkipReason.NO_DISTANCE, None
 
         # 3a) PER-POOL RAW-TIME FLOOR — now that the pool is known, reject any
         #     raw time faster than that pool's forgiving floor curve. This is the
