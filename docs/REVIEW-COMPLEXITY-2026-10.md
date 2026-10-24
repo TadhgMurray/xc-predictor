@@ -33,9 +33,9 @@ to the server or the database. The companion map of the system is
 4. **`app.py` is the cost engineers feel most, and the split is cheap
    except for the tests.** Most of its 85 routes fall into clean groups,
    and 19 modules are already blueprints. What makes moving code expensive
-   is that 57 test files assert on `app.py`'s source text, 59 import it,
-   and `_topbar.html`, which every page includes, calls `url_for` on ten
-   `app.py` endpoint names.
+   is that 57 test files assert on `app.py`'s source text, more than 50
+   import it, and `_topbar.html`, which every page includes, calls
+   `url_for` on six `app.py` endpoint names.
 5. **The pipeline's 9h22m is not recorded anywhere in the repo.** The best
    breakdown, from the 2026-10-08 notes, puts about 70% of the time in four
    steps: 08_golive (~2.5 h), 10_rankings (~1.5 h), 04_grade_sanity
