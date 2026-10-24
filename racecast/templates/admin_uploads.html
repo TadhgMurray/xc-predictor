@@ -130,7 +130,7 @@
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <textarea name="note" maxlength="1000" placeholder="Note for the uploader (optional; it goes in the email)"></textarea>
         {% if up.status == "submitted" %}
-        <button type="submit" name="action" value="approve" class="go ok">Approve</button>
+        <button type="submit" name="action" value="approve" class="go ok"{% if apply_gaps %} disabled title="Cannot be written yet: see above"{% endif %}>Approve</button>
         {% else %}
         <label class="ct-keep"><input type="checkbox" name="confirm" value="yes"> I checked: a different meet</label>
         <button type="submit" name="action" value="force" class="go ok">Insert anyway</button>

@@ -383,7 +383,9 @@ def readyToApply(up, events):
     """What stops an upload being written, as sentences (empty: none)."""
     why = []
     if "n_rows" in up and not up["n_rows"]:
-        why.append("no results read yet" if up.get("source_url") else "no results")
+        why.append("it is a link with no results read yet -- use \"Fetch and read\" or "
+                   "\"Attach the file\" under The link first (or \"Queue it for the scrape\" "
+                   "for an athletic.net or tfrrs meet)" if up.get("source_url") else "no results")
     if not up.get("meet_name") or not up.get("meet_date"):
         why.append("no meet name or date")
     if up.get("sport") not in SPORTS:

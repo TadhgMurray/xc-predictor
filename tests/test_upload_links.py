@@ -84,7 +84,8 @@ def test_the_owner_queues_an_athletic_net_link(monkeypatch):
 def test_a_link_upload_cannot_be_approved_before_it_is_read():
     up = {"meet_name": "X", "meet_date": "2025-10-04", "sport": "XC", "n_rows": 0,
           "source_url": "https://t.example.com/r"}
-    assert UP.readyToApply(up, []) == ["no results read yet"]
+    got = UP.readyToApply(up, [])
+    assert len(got) == 1 and "Fetch and read" in got[0] and "Attach the file" in got[0]
 
 
 def test_fetch_and_read_restages_the_rows_into_the_same_upload(monkeypatch):
