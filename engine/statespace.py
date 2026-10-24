@@ -580,6 +580,8 @@ RECOVERY_DAYS = 30.0
 BREAK_BINS = (21.0, 45.0, 90.0)
 EVENT_EDGES = (1000.0, 2000.0, 4000.0, 7000.0)   # classes; 1000-2000 is the pin
 PIN_PHASE = 60.0           # 1 October: the season curve's zero
+ALT_DIST_KNOTS = ((800.0, 0.21), (1600.0, 0.83), (3000.0, 0.93),
+                  (5000.0, 1.00), (10000.0, 1.05))   # joint_solve's, NCAA tables
 
 
 @njit(parallel=True, cache=True)
@@ -727,7 +729,7 @@ def sharedFeatures(D):
     dist = D.get("dist_m", np.zeros(n))
     ev = np.where((grp != GROUP_XC) & (dist > 0),
                   np.searchsorted(EVENT_EDGES, dist), -1)
-    return dict(peak=peak, gap_len=gap_len, since=since, ev=ev)
+    return dict(peak=peak, gap_len=gap_len, since=since, ev=ev, dist=np.asarray(dist, float))
 
 
 def sharedDesign(D, feats, ability, fix_mu=None, n_knots=None,
@@ -762,6 +764,7 @@ def sharedDesign(D, feats, ability, fix_mu=None, n_knots=None,
     rec = add("recovery", len(BREAK_BINS) - 1)
     ev_n = len(EVENT_EDGES) + 1
     ev = add("event", n_lv * ev_n).reshape(n_lv, ev_n)
+    alt = add("altitude", 2)          # per km above ALT_FLOOR_M: XC, track
     K = len(names)
 
     cols, vals = [], []
@@ -805,6 +808,19 @@ def sharedDesign(D, feats, ability, fix_mu=None, n_knots=None,
     pin_ev = 1
     on = (e >= 0) & (e != pin_ev) & ("event" in terms)
     put(np.where(on, ev[lv, np.maximum(e, 0)], -1), np.ones(n))
+    # ★ ALTITUDE, FITTED: km above the floor times the event's share of the
+    #   5000's cost (joint_solve.ALT_DIST_KNOTS, NCAA tables); identified by
+    #   runners seen at more than one elevation, each against their own
+    #   trajectory, so a resident's ability is not their altitude.
+    ak = D.get("alt_km")
+    if ak is not None:
+        share = np.interp(np.log(np.maximum(feats["dist"], 1.0)),
+                          np.log([k for k, _ in ALT_DIST_KNOTS]),
+                          [v for _, v in ALT_DIST_KNOTS])
+        share = np.where(feats["dist"] > 0, share, 1.0)
+        on = ak > 0
+        put(np.where(on, alt[(grp != GROUP_XC).astype(np.int64)], -1),
+            np.where(on, ak * np.where(grp == GROUP_XC, 1.0, share), 0.0))
     Xc = np.stack(cols, axis=1)
     Xv = np.stack(vals, axis=1)
     Xv[Xc < 0] = 0.0
@@ -942,7 +958,16 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
             if nm in blocks:
                 gap_cols[blocks[nm]] = True
         Gest = applyDesign(Xc, Xv, np.where(gap_cols, b, 0.0))
-        fitness = Xb - Gest                 # curve, seam, peak, recovery, event
+        # ★ CONDITIONS COME OUT OF A RATING, FITNESS STAYS IN. Altitude and
+        #   the track event offsets (what the distance curve gets wrong) are
+        #   conditions; the season curve, the summer step, the taper and the
+        #   post-break recovery are the runner's fitness that day.
+        cond_cols = np.zeros(b.size, dtype=bool)
+        for nm in ("altitude", "event"):
+            if nm in blocks:
+                cond_cols[blocks[nm]] = True
+        cond = applyDesign(Xc, Xv, np.where(cond_cols, b, 0.0))
+        fitness = Xb - Gest - cond          # curve, seam, peak, recovery
         # the gap's own slope with ability is the loading (1 + lam) on theta:
         # G = mu + lam * theta, read at the reference (theta - theta_ref)
         G0 = Gest + mu_fixed[grp]
@@ -963,7 +988,7 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
         level = th + fitness
         h = 1.0 + kappa * (level - theta_ref)
         G = G0 + lam[grp] * (th - C)                # the level at this runner's ability
-        base = y - th - be * xc - fitness - G       # = h (c + w + v) + e
+        base = y - th - be * xc - fitness - G - cond   # = h (c + w + v) + e
         ww = wrow * tr
         # courses, venue-days, races
         r = base - h * (w[day] + v[race])
@@ -1089,12 +1114,12 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
                   f"recovery {np.round(rc, 4)} curve sd {np.sqrt(curve_var):.4f}")
 
     eff_c = np.where(has_cell, c[cidx], 0.0)
-    pred_known = th + be * xc + fitness + G + h * eff_c
+    pred_known = th + be * xc + fitness + G + cond + h * eff_c
     day_trained = np.bincount(day, weights=tr, minlength=n_day) > 0
     race_trained = np.bincount(race, weights=tr, minlength=n_race) > 0
     pred = pred_known + h * (np.where(day_trained[day], w[day], 0.0)
                              + np.where(race_trained[race], v[race], 0.0))
-    perf = y - G - h * (eff_c + w[day] + v[race])
+    perf = y - G - cond - h * (eff_c + w[day] + v[race])
     out = dict(pred=pred, perf=perf, h=h, theta=th, beta=be, theta_var=vth, mu=mu,
                lam=lam, theta_ref=theta_ref, level=th + fitness,
                kappa=kappa, sigma2=sigma2, q_day=q_day, q_jump=q_jump,
@@ -1104,12 +1129,34 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
                cell_var=sigma2 * vc)
     for nm in ("mu_XC", "mu_in", "lam_XC", "lam_in"):
         out[nm + "_se"] = float(se[blocks[nm][0]]) if nm in blocks else 0.0
-    out["gap_by_level"] = {nm: (b[blocks[nm]], se[blocks[nm]])
-                           for nm in ("mu_XC", "mu_in") if nm in blocks}
+    # ★ EACH LEVEL READ AT ITS OWN TYPICAL RUNNER. With the slope in
+    #   ability, mu is the gap of a runner at C; a college man sits ~15%
+    #   faster than C and a middle schooler ~20% slower, and reading their
+    #   gap at C is reading it for nobody. Per level: mu_L + lam (median
+    #   theta of that level's rows of that surface - C).
+    out["gap_by_level"] = {}
+    for nm, g in (("mu_XC", GROUP_XC), ("mu_in", GROUP_IN)):
+        if nm not in blocks:
+            continue
+        ids = blocks[nm]
+        vals, ses, at = np.zeros(n_lv), np.zeros(n_lv), np.zeros(n_lv)
+        for L in range(n_lv):
+            m = (grp == g) & (D["lv"] == L) & train
+            if not m.any():
+                continue
+            k = ids[L] if ids.size > 1 else ids[0]
+            at[L] = float(np.median(th[m]))
+            vals[L] = b[k] + lam[g] * (at[L] - C)
+            ses[L] = se[k]
+        out["gap_by_level"][nm] = (vals, ses, at)
     # the gap at the reference runner (mu absorbs -lam * ref through the loading)
     out["C"] = C
     out["gap_ref"] = {g: float(mu[g]) for g in (GROUP_XC, GROUP_IN)}
     out["G"] = G
+    out["cond"] = cond
+    if "altitude" in blocks:
+        out["altitude"] = b[blocks["altitude"]]
+        out["altitude_se"] = se[blocks["altitude"]]
     out["base"] = base
     out["Dsum"] = Dsum
     return out
@@ -1214,3 +1261,44 @@ def subsetRows(D, keep):
             E[k] = inv.reshape(-1).astype(np.int64)
     E["starts"] = segments(E["person"])
     return E
+
+
+def regionCheck(D, R, region, min_people=30):
+    """Per region: does XC there sit right against the track, for the runners
+    who race both? Each such runner's grass offset (beta) plus their mean
+    XC residual less their mean track residual is how much faster their XC
+    reads than their track says it should; its mean over a region's dual
+    runners is that region's XC miscalibration (0 if right). The prior holds
+    beta's mean at 0 overall, not per region, so this is a real check.
+    region: per row a region code (-1 none); the XC rows' region counts.
+    Returns rows of (region, runners, mean, se), mean in log time."""
+    res = D["y"] - R["pred"]
+    xc = D["group"] == GROUP_XC
+    tf = ~xc
+    p = D["person"]
+    n_p = int(p.max()) + 1
+    nx = np.bincount(p, weights=xc.astype(float), minlength=n_p)
+    nt = np.bincount(p, weights=tf.astype(float), minlength=n_p)
+    rx = np.bincount(p, weights=np.where(xc, res, 0.0), minlength=n_p)
+    rt = np.bincount(p, weights=np.where(tf, res, 0.0), minlength=n_p)
+    beta = np.zeros(n_p)
+    beta[p] = R["beta"]
+    dual = (nx >= 2) & (nt >= 2)
+    d = beta + rx / np.maximum(nx, 1) - rt / np.maximum(nt, 1)
+    # a runner's region: the mode of their XC rows' regions
+    reg_p = np.full(n_p, -1)
+    m = xc & (region >= 0)
+    if m.any():
+        key = p[m].astype(np.int64) * (int(region.max()) + 1) + region[m]
+        u, cnt = np.unique(key, return_counts=True)
+        pp, rr = u // (int(region.max()) + 1), u % (int(region.max()) + 1)
+        order = np.lexsort((-cnt, pp))
+        first = np.r_[True, pp[order][1:] != pp[order][:-1]]
+        reg_p[pp[order][first]] = rr[order][first]
+    out = []
+    for r in np.unique(reg_p[dual & (reg_p >= 0)]):
+        v = d[dual & (reg_p == r)]
+        if v.size >= min_people:
+            out.append((int(r), int(v.size), float(v.mean()),
+                        float(v.std(ddof=1) / np.sqrt(v.size))))
+    return out

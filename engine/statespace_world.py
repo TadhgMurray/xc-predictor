@@ -242,7 +242,8 @@ def splits(D, seed=1, n_seasons=5):
 #   so a naive pair difference is biased by the break and the taper, in
 #   opposite directions depending on which way the runner crossed.
 HARD = dict(mu_xc=0.060, mu_in=0.010, peak=-0.010, brk=0.025,
-            dec_xc_top=0.10, indoor_share=0.30, fall_track=0.03, summer_track=0.12)
+            dec_xc_top=0.10, indoor_share=0.30, fall_track=0.03, summer_track=0.12,
+            alt_regions=(), alt_km=1.0, alt_coef=0.035)
 # the population's shape, continuous through the sport change
 HARD_SHAPE = ((0, 0.030), (110, 0.000), (200, -0.010), (300, -0.025), (366, -0.025))
 
@@ -404,21 +405,29 @@ def worldHard(seed=0, n_regions=10, schools=20, per_school=14, n_seasons=5, **ov
                 v += rng.uniform(-0.12, -0.03)
             elif u < T["short_p"] + T["long_p"]:
                 v += rng.uniform(0.03, 0.08)
-            divs[dv] = (len(meets) * 8 + dv, v, abs(v - v0) > 0)
+            divs[dv] = (day_id * 8 + dv, v, abs(v - v0) > 0)
         rid, v, bad = divs[dv]
         mu = {ss.GROUP_XC: T["mu_xc"], ss.GROUP_OUT: 0.0, ss.GROUP_IN: T["mu_in"]}[group]
         h = 1.0 + T["kappa"] * (th - THETA_HS)
         e = rng.normal(0, T["sigma"])
         if rng.random() < T["bad_p"]:
             e += rng.exponential(T["bad_mean"])
+        # altitude: a home region's own courses and tracks sit high; the
+        # championships, December XC, indoor and summer meets are low
+        reg_c = ckey[3] if ckey[1] == "xc" and len(ckey) > 3 else (
+            ckey[2] if ckey[1] in ("out", "falltf") else None)
+        akm = T["alt_km"] if (reg_c in T["alt_regions"] and key[0] in ("xc", "out", "falltf")) else 0.0
+        out.setdefault("alt_km", []).append(akm)
+        alt_eff = T["alt_coef"] * akm * (1.0 if k == 0 else 0.83)
         out["person"].append(p); out["t"].append(s * 366.0 + phz); out["season"].append(s)
         out["lv"].append(lv[p, s]); out["phase"].append(phz); out["xc"].append(int(k == 0))
         out["group"].append(group); out["cell"].append(cid); out["day"].append(day_id)
         out["race"].append(rid); out["truth_theta"].append(th)
         out["truth_perf"].append(th + beta[p] * (k == 0) + e); out["bad_race"].append(bad)
         out["dist_m"].append(5000.0 if k == 0 else 1600.0)
-        out["y"].append(th + beta[p] * (k == 0) + h * (mu + cval + w + v) + e)
+        out["y"].append(th + beta[p] * (k == 0) + h * (mu + cval + w + v) + e + alt_eff)
         out.setdefault("truth_course", []).append(cval)
+        out.setdefault("region", []).append(region_of[p])
         out.setdefault("truth_day", []).append(w)
         out.setdefault("truth_race", []).append(v)
     D = {k: np.asarray(v) for k, v in out.items()}
@@ -432,6 +441,8 @@ def worldHard(seed=0, n_regions=10, schools=20, per_school=14, n_seasons=5, **ov
         D[k] = D[k].reshape(-1).astype(np.int64)
     D["t"] = D["t"].astype(np.float64); D["phase"] = D["phase"].astype(np.float64)
     D["starts"] = ss.segments(D["person"])
+    if not T["alt_regions"]:
+        D.pop("alt_km", None)
     D["truth"] = T
     return D
 

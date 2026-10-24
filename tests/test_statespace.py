@@ -56,6 +56,34 @@ def test_the_tilt_comes_back_with_its_sign(world):
     assert 0.1 < R["kappa"] < 0.45
 
 
+def _realised(D):
+    """The planted gaps as the model defines them: against the AVERAGE
+    planted course of each group in this world (finite-sample draws)."""
+    tc = np.asarray(D["truth_course"]); g = D["group"]
+    _, first = np.unique(D["cell"], return_index=True)
+    cm = {gg: tc[first[g[first] == gg]].mean() for gg in range(3)}
+    T = D["truth"]
+    return T["mu_xc"] + cm[0] - cm[1], T["mu_in"] + cm[2] - cm[1]
+
+
+def test_the_gap_is_measured_through_the_runners_trajectories():
+    """The hard world: tapers, December breaks, only the best racing
+    December XC, the gap planted at 6% XC / 1% indoor. Naive pair
+    differences miss by up to 3.5%; the GLS through each runner's filter
+    lands within 1% of the realised gap, and holds without any one kind of
+    bridge but the fall / summer track ones (review §4.4)."""
+    D = sw.worldHard(seed=0)
+    rx, ri = _realised(D)
+    R = ss.fitGLS(D, np.ones(D["y"].size, dtype=bool), outer=15)
+    assert abs(R["gap_ref"][ss.GROUP_XC] - rx) < 0.01, (R["gap_ref"], rx)
+    assert abs(R["gap_ref"][ss.GROUP_IN] - ri) < 0.01, (R["gap_ref"], ri)
+    assert -0.02 < R["b"][R["blocks"]["peak"][0]] < 0.0      # the taper, planted -1%
+    masks = ss.bridgeMasks(D)
+    E = ss.subsetRows(D, ~masks["december_xc"])
+    Rk = ss.fitGLS(E, np.ones(E["y"].size, dtype=bool), outer=15)
+    assert abs(Rk["gap_ref"][ss.GROUP_XC] - rx) < 0.01
+
+
 def _packFromWorld(D, path):
     """A pack-shaped npz from a planted world (what speed_ratings writes)."""
     n = D["y"].size
@@ -79,8 +107,18 @@ def _packFromWorld(D, path):
     year = dates.astype("datetime64[Y]").astype(np.int64) + 1970
     doy = (dates - dates.astype("datetime64[Y]").astype("datetime64[D]")).astype(np.int64) + 1
     scal = {"athlete_keys": keys_a, "course_keys": ckeys}
+    # ! STORED ON THE POOL'S OWN ANCHOR, as the real pack is: ss_eval moves
+    #   every row back onto 5000 m with the pool's curve, so the planted
+    #   5000 m times are divided by that same move here (a college row
+    #   stored as its 5000 m time made the HS gap read 9% against 7%).
+    import normalize_distance as nd
+    pool = np.where(D["lv"] == 0, "hs_m", "college_m")
+    shift = np.array([nd.anchorShift(pl, "XC" if x else "TF") for pl, x in zip(pool, D["xc"])])
+    rng = np.random.default_rng(0)
+    clat = rng.uniform(30, 45, len(ckeys)); clon = rng.uniform(-120, -75, len(ckeys))
     np.savez(path, __scalars__=np.array([repr(scal)]), result_id=np.arange(n),
-             athlete=athlete, course=course, norm=np.exp(D["y"]).astype(np.float32),
+             course_lat=clat, course_lon=clon,
+             athlete=athlete, course=course, norm=(np.exp(D["y"]) / shift).astype(np.float32),
              days=days.astype(np.int32), sport=(1 - D["xc"]).astype(np.int8),
              doy=doy.astype(np.int16), year=year.astype(np.int16),
              dist_m=np.where(D["xc"] == 1, 5000.0, 1600.0).astype(np.float32),
@@ -93,12 +131,16 @@ def test_ss_eval_runs_on_a_pack_shaped_file(tmp_path):
     _packFromWorld(D, path)
     script = os.path.join(HERE, "..", "scripts", "ss_eval.py")
     env = dict(os.environ)
+    elev = tmp_path / "elev.csv"
+    elev.write_text("".join(f"XC:v{c},{1600 if c % 7 == 0 else 100}\n" for c in range(60)))
     r = subprocess.run([sys.executable, script, "--pack", str(path), "--mode", "gap",
-                        "--outer", "6", "--jack-outer", "3", "--repo", str(tmp_path / "repo")],
+                        "--outer", "6", "--jack-outer", "3", "--repo", str(tmp_path / "repo"),
+                        "--elevation", str(elev)],
                        capture_output=True, text=True, timeout=900, env=env)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     assert "levels against the flat outdoor gauge" in r.stdout
     assert "without fall_track" in r.stdout
+    assert "regional check" in r.stdout and "altitude per km" in r.stdout
 
     # a "current engine" dump on the forward window, a little worse, then paired
     sys.path.insert(0, os.path.join(HERE, "..", "engine"))

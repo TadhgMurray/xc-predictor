@@ -68,7 +68,14 @@ import statespace as ss                                         # noqa: E402
 PACK = os.path.join(REPO, "engine", "data", "packed_XC_TF.npz")
 OUT_DIR = os.path.join(REPO, "engine", "data", "ss")
 COLS = ("result_id", "athlete", "course", "norm", "days", "sport", "doy",
-        "year", "dist_m", "meet_id", "div_id")
+        "year", "dist_m", "meet_id", "div_id", "course_lat", "course_lon")
+ALT_FLOOR_M = 600.0
+# ! A LEVEL PAST 25% IS NOT A MEASUREMENT. Grass costs ~5% (Sassi 2011) and
+#   no course doubles it twice over; a level that far out means nothing in
+#   the rows ties that surface to the gauge (the jackknife below finds them
+#   by dropping one kind of bridge), and it is printed as such.
+UNDETERMINED = 0.25
+REGION_DEG = 3.0           # the regional check's grid, degrees of latitude and longitude
 TERMS = ("peak", "recovery", "event", "mu_by_level")
 KAPPA_PROFILE = (0.0, 0.15, 0.31, 0.45, 0.6)
 
@@ -123,7 +130,7 @@ class Rows:
     """The pack, keyed for the engine: every per-file-row array the modes
     need, and build(use) -> (D, idx) for any subset of file rows."""
 
-    def __init__(self, cols, era_years=0):
+    def __init__(self, cols, era_years=0, elevation=None):
         self.cols = cols
         self.n = cols["norm"].size
         self.keep = (cols["course"] >= 0) & (cols["norm"] > 0)
@@ -152,6 +159,36 @@ class Rows:
         self.meet = np.asarray(cols["meet_id"]).astype(np.int64)
         self.div = np.asarray(cols["div_id"]).astype(np.int64)
         self.dist = np.asarray(cols.get("dist_m", np.zeros(self.n)), dtype=np.float64)
+        # the venue's elevation (venue_elevation, exported to CSV), keyed as
+        # run_joint.venueAltitude keys it: XC:<canonical>, TF:loc:<id>
+        self.alt_km = None
+        if elevation:
+            elev = {}
+            with open(elevation) as f:
+                for line in f:
+                    parts = line.rstrip("\n").rsplit(",", 1)
+                    try:
+                        elev[parts[0].strip('"')] = float(parts[1])
+                    except (IndexError, ValueError):
+                        continue
+            per = np.zeros(len(ck))
+            for i, k in enumerate(ck):
+                v = ":".join(k.split(":")[:2]) if k.startswith("XC:") else ":".join(k.split(":")[:3])
+                e = elev.get(v)
+                if e is not None:
+                    per[i] = max(e - ALT_FLOOR_M, 0.0) / 1000.0
+            self.alt_km = per[safe]
+            print(f"[ss] elevation: {len(elev):,} venues; "
+                  f"{int((per > 0).sum()):,} course keys above {ALT_FLOOR_M:.0f} m")
+        # the regional check's cell: a REGION_DEG grid on the course's place
+        self.region = np.full(self.n, -1, dtype=np.int64)
+        if "course_lat" in cols and "course_lon" in cols:
+            lat = np.asarray(cols["course_lat"], dtype=np.float64)[safe]
+            lon = np.asarray(cols["course_lon"], dtype=np.float64)[safe]
+            ok = np.isfinite(lat) & np.isfinite(lon)
+            gy = np.floor(np.where(ok, lat, 0) / REGION_DEG).astype(np.int64)
+            gx = np.floor(np.where(ok, lon, 0) / REGION_DEG).astype(np.int64)
+            self.region = np.where(ok, (gy + 100) * 1000 + (gx + 500), -1)
 
     def build(self, use):
         idx = np.flatnonzero(use)
@@ -178,7 +215,10 @@ class Rows:
                              self.dint[idx]),
             "dist_m": self.dist[idx],
             "lv_names": [str(x) for x in lv_names],
+            "region": self.region[idx],
         }
+        if self.alt_km is not None:
+            D["alt_km"] = self.alt_km[idx]
         D["starts"] = ss.segments(D["person"])
         print(f"[ss] {idx.size:,} rows, {D['starts'].size - 1:,} people, "
               f"{D['cell'].max() + 1:,} cells, {D['day'].max() + 1:,} venue-days, "
@@ -208,12 +248,17 @@ def gapLines(R, D, label=""):
     cnt = {g: np.bincount(D["lv"][D["group"] == g], minlength=len(names))
            for g in (ss.GROUP_XC, ss.GROUP_IN)}
     out.append(f"[ss] {label}levels against the flat outdoor gauge (+ = slower than track), "
-               f"for a runner at the median ({np.exp(R['C']):.0f} s 5000 m equivalent):")
+               f"each level at its own median runner (5000 m equivalent):")
     for nm, g in (("mu_XC", ss.GROUP_XC), ("mu_in", ss.GROUP_IN)):
         if nm not in gl:
             continue
-        b, se = gl[nm]
-        parts = [f"{names[L]} {100 * b[L]:+.2f}% (±{100 * se[L]:.2f}, {cnt[g][L]:,} rows)"
+        b, se, at = gl[nm]
+        parts = [(f"{names[L]} {100 * b[L]:+.2f}% (±{100 * se[L]:.2f}, at "
+                  f"{int(np.exp(at[L]) // 60)}:{np.exp(at[L]) % 60:04.1f}, {cnt[g][L]:,} rows)")
+                 if abs(b[L]) < UNDETERMINED else
+                 f"{names[L]} BEYOND 25% ({100 * b[L]:+.0f}%, {cnt[g][L]:,} rows: a scale "
+                 f"mismatch between the pool's XC and track anchors, or no bridge -- "
+                 f"see the jackknife)"
                  for L in range(len(names)) if cnt[g][L] > 0]
         out.append(f"[ss]   {'XC    ' if g == ss.GROUP_XC else 'indoor'}  " + "  ".join(parts))
     out.append(f"[ss]   slope in ability (per unit log time, + = the gap grows for "
@@ -224,6 +269,36 @@ def gapLines(R, D, label=""):
     out.append(f"[ss]   season's last race (taper) {100 * R['b'][bl['peak'][0]]:+.2f}%   "
                f"first races after a 21-45 / 45-90 day break "
                f"{100 * R['b'][bl['recovery'][0]]:+.2f}% / {100 * R['b'][bl['recovery'][1]]:+.2f}%")
+    if "altitude" in R and D.get("alt_km") is not None:
+        out.append(f"[ss]   altitude per km above {ALT_FLOOR_M:.0f} m: XC "
+                   f"{100 * R['altitude'][0]:+.2f}% (±{100 * R['altitude_se'][0]:.2f})  track "
+                   f"{100 * R['altitude'][1]:+.2f}% (±{100 * R['altitude_se'][1]:.2f}) at 5000 m "
+                   f"(the old engine holds 3.5%)")
+    return out
+
+
+def regionLines(R, D):
+    """XC against track inside each REGION_DEG cell, from its dual-sport
+    runners (statespace.regionCheck): + = XC there reads FASTER than those
+    runners' track says. The common level is the gap above; this is how far
+    each region strays from it. ⚠ A region that is an island shifts as a
+    whole (its tracks too) and this cannot see that -- only its XC against
+    its own track."""
+    rows = ss.regionCheck(D, R, D["region"], min_people=40)
+    if not rows:
+        return ["[ss] regional check: no course coordinates in the pack"]
+    out = [f"[ss] regional check, {len(rows)} cells of {REGION_DEG:g} degrees with 40+ "
+           f"dual-sport runners (+ = XC reads faster than their track):"]
+    v = np.array([m for _, _, m, _ in rows])
+    se = np.array([e for _, _, _, e in rows])
+    out.append(f"[ss]   spread across cells {100 * v.std():.2f}% (their own noise "
+               f"{100 * np.sqrt(np.mean(se ** 2)):.2f}%); cells beyond 3 se:")
+    for (r, n, m, e) in sorted(rows, key=lambda x: -abs(x[2] / max(x[3], 1e-9))):
+        if abs(m) > 3 * e:
+            lat = (r // 1000 - 100) * REGION_DEG
+            lon = (r % 1000 - 500) * REGION_DEG
+            out.append(f"[ss]     lat {lat:+.0f}..{lat + REGION_DEG:+.0f} lon {lon:+.0f}.."
+                       f"{lon + REGION_DEG:+.0f}: {100 * m:+.2f}% ±{100 * e:.2f} ({n:,} runners)")
     return out
 
 
@@ -234,6 +309,8 @@ def modeGap(rows, a):
     R = ss.fitGLS(D, tr, outer=a.outer, terms=TERMS, verbose=True)
     print(fitLine(R, t0))
     for line in gapLines(R, D):
+        print(line)
+    for line in regionLines(R, D):
         print(line)
     t1 = time.time()
     masks = ss.bridgeMasks(D)
@@ -383,9 +460,11 @@ def main():
     ap.add_argument("--no-jackknife", dest="jackknife", action="store_false")
     ap.add_argument("--kappa-profile", action="store_true")
     ap.add_argument("--era-years", type=int, default=0)
+    ap.add_argument("--elevation", default=None,
+                    help="venue_elevation as CSV (key,elevation_m); altitude is fitted from it")
     a = ap.parse_args()
 
-    rows = Rows(loadPack(a.pack), a.era_years)
+    rows = Rows(loadPack(a.pack), a.era_years, a.elevation)
     fitted = None
     if a.mode in ("all", "gap"):
         print("\n================ GAP ================")
