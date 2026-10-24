@@ -34,6 +34,7 @@ TEAM SCORING IS NOT A SEPARATE MODEL
 
 import datetime
 import functools
+import json
 import math
 import os
 
@@ -1280,7 +1281,7 @@ _RATING_SIGMA_STALE_MAX = 0.12
 
 def _predictBasis():
     b = (os.environ.get("XCP_PREDICT_BASIS") or "rating").strip().lower()
-    return b if b in ("guard", "model", "rating", "blend") else "rating"
+    return b if b in ("guard", "model", "rating", "blend", "trend") else "rating"
 
 
 _BLEND_MIN_PAIRS = 5
@@ -1297,6 +1298,98 @@ def blendFactor(pairs):
     n = len(xs)
     med = xs[n // 2] if n % 2 else 0.5 * (xs[n // 2 - 1] + xs[n // 2])
     return math.exp(max(-_BLEND_MAX_SHIFT, min(_BLEND_MAX_SHIFT, med)))
+
+
+# ★ TREND (review 2026-10, docs/REVIEW-PREDICTIONS-2026-10.md; OFF unless
+#   XCP_PREDICT_BASIS=trend). The rating basis plus what it is known to
+#   miss, learned on races BEFORE a date and written to a small table by
+#   scripts/backtest_baseline.py --write-table:
+#     level   a per-race rating is the runner's form THAT day (the form
+#             curve never enters it, joint_golive), so a form read off the
+#             last six races lags a season's improvement -- the measured
+#             +2.1% slow on high-school races. One median correction per
+#             (level, course has a cell, how old the form is).
+#     slope   the runner's own rise this season, carried forward over the
+#             form's age, at the fitted fraction slope_beta (0 = no use).
+#     bands   the time band adds the race-day spread (day_sd): a whole field
+#             runs fast or slow together and no form says which. The place
+#             spread (sigma_pct, what race_sim draws) is the form's own,
+#             scaled by place_k to what the races before the date showed.
+#   The model runs only for runners with no rating, as under "rating".
+# ! NO TABLE, NO CHANGE: every term defaults to nothing, so "trend" with no
+#   file serves exactly what "rating" does.
+TREND_PATH = os.environ.get("XCP_TREND_TABLE") or os.path.join(
+    _ROOT, "engine", "data", "rating_trend.json")
+TREND_AGE_BANDS = (14, 35, 70, 180)      # days: the form's age, banded
+TREND_MAX_SHIFT = 0.08                   # a correction past 8% is the table being wrong
+TREND_MAX_SLOPE = 0.03                   # ln-rating per 30 days, either way
+_TREND = {"mtime": None, "table": None}
+
+
+def trendTable(path=None):
+    """The fitted table (dict) or {} -- re-read when the file changes."""
+    path = path or TREND_PATH
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return {}
+    if _TREND["mtime"] != mtime:
+        try:
+            with open(path) as fh:
+                _TREND["table"] = json.load(fh)
+        except (OSError, ValueError):
+            _TREND["table"] = {}
+        _TREND["mtime"] = mtime
+    return _TREND["table"] or {}
+
+
+def trendKey(level, has_cell, age_days):
+    """'hs_m|1|15-35': the table cell a runner's correction is read from."""
+    head, lo = f"{level}|{int(bool(has_cell))}", 0
+    for hi in TREND_AGE_BANDS:
+        if age_days is None or age_days <= hi:
+            return f"{head}|{lo}-{hi}"
+        lo = hi + 1
+    return f"{head}|{lo}+"
+
+
+def trendShift(entry, table, has_cell):
+    """ln(time multiplier) for one rating-served entry under `table`. Pure.
+    + = slower. The cell's median, else its level's, else the overall; then
+    the runner's own slope carried over the form's age."""
+    if not table:
+        return 0.0
+    level = (entry.get("form_pool") or "?").split("|")[0]
+    age = entry.get("form_age_days")
+    cells, levels = table.get("cells") or {}, table.get("levels") or {}
+    shift = cells.get(trendKey(level, has_cell, age))
+    if shift is None:
+        shift = levels.get(level, table.get("overall") or 0.0)
+    slope = max(-TREND_MAX_SLOPE, min(TREND_MAX_SLOPE,
+                                      float(entry.get("season_slope") or 0.0)))
+    # a rising rating is a FALLING time
+    shift = float(shift) - float(table.get("slope_beta") or 0.0) * slope * (
+        float(age or 0.0) / 30.0)
+    return max(-TREND_MAX_SHIFT, min(TREND_MAX_SHIFT, shift))
+
+
+def trendApply(entry, table, has_cell, sport=None):
+    """The entry moved and banded by `table`, in place. Pure but for that."""
+    if not entry.get("seconds"):
+        return entry
+    shift = trendShift(entry, table, has_cell)
+    sig = float(entry.get("sigma_pct") or 0.0) / 100.0
+    place_sig = sig * float(table.get("place_k") or 1.0)
+    time_sig = math.sqrt(place_sig ** 2 + float(table.get("day_sd") or 0.0) ** 2)
+    nd = 2 if (sport or "XC").upper() == "TF" else 1
+    secs = float(entry["seconds"]) * math.exp(shift)
+    entry.update({"seconds": round(secs, nd),
+                  "lo": round(secs * math.exp(-time_sig), nd),
+                  "hi": round(secs * math.exp(time_sig), nd),
+                  "sigma_pct": round(100.0 * place_sig, 2),
+                  "time_sigma_pct": round(100.0 * time_sig, 2),
+                  "trend_shift_pct": round(100.0 * shift, 2)})
+    return entry
 
 
 def _servedTimes(cur, person_ids, target):
@@ -1340,7 +1433,8 @@ def _servedTimes(cur, person_ids, target):
     #    runs for the runners with no rating, the only ones it can serve.
     #    "guard" still needs it for everyone: it keeps the model when the
     #    two agree.
-    if basis == "rating":
+    #    "trend" is "rating" with the rating's times moved (trendApply).
+    if basis in ("rating", "trend"):
         need = [pid for pid in person_ids if pid not in rated]
         with _stage(f"model-{len(need)}"):
             got = (dict(zip(need, _predictTimes(cur, need, target, spec=spec)))
@@ -1352,7 +1446,7 @@ def _servedTimes(cur, person_ids, target):
         preds = _predictTimes(cur, person_ids, target, spec=spec)
     for pid, entry in zip(person_ids, preds):
         r = rated.get(pid)
-        if basis == "rating" and r is not None:
+        if basis in ("rating", "trend") and r is not None:
             continue                   # served from the rating, model never run
         secs, sig = entry.get("seconds"), entry.get("sigma_pct")
         if r is None:
@@ -1395,6 +1489,12 @@ def _servedTimes(cur, person_ids, target):
                 if e.get(k):
                     e[k] = round(float(e[k]) * f, nd)
             e["level_shift_pct"] = round(100.0 * (f - 1.0), 2)
+    if basis == "trend":
+        table = trendTable()
+        has_cell = (spec or {}).get("venue_cell") is not None
+        for e in preds:
+            if e.get("basis") == "rating":
+                trendApply(e, table, has_cell, (spec or {}).get("sport"))
     # the rating a model-served time is worth here (_secondsToRating)
     if spec is not None:
         season = (_asDate(spec.get("date")) or datetime.date.today()).year
@@ -1687,6 +1787,7 @@ def _ratingTimes(cur, person_ids, spec, cut):
         if form is None:
             continue
         rating, sig, pool, n = form
+        shape = _formShape(recent or mine, sport, hi_d)
         if stale_yrs:
             sig = min(sig + _RATING_STALE_PER_YEAR * stale_yrs,
                       _RATING_SIGMA_STALE_MAX)
@@ -1704,8 +1805,50 @@ def _ratingTimes(cur, person_ids, spec, cut):
                     "is_race_time": True, "time_basis": "rating",
                     "basis": "rating", "form_rating": round(rating, 1),
                     "form_pool": pool, "n_races": n,
-                    "stale_years": round(stale_yrs, 1)}
+                    "stale_years": round(stale_yrs, 1), **shape}
     return out
+
+
+# Purpose:   how old a form is and which way it is moving -- what the trend
+#            basis (trendShift) and scripts/backtest_baseline.py read.
+# Input:     rows as _formRating takes them, newest first; the cut (a date).
+# Output:    {form_age_days, last_days, season_slope}. Pure.
+# ! THE SAME ROWS _formRating READS: the target's sport when it has two, the
+#   pool raced in last, the last _RATING_LAST_N of them, weighted 0.8 ** k.
+#   season_slope is ln(rating) per 30 days over that pool's races in the
+#   120 days before the newest one -- three races over three weeks or more,
+#   else 0.0 (two races is a difference, not a trend).
+_SLOPE_DAYS, _SLOPE_MIN_RACES, _SLOPE_MIN_SPAN = 120, 3, 21
+
+
+def _formShape(rows, sport, cut):
+    cut = _asDate(cut)
+    if cut is None:
+        return {"form_age_days": None, "last_days": None, "season_slope": 0.0}
+    if sport:
+        same = [r for r in rows if len(r) < 4 or r[3] == sport]
+        if len(same) >= 2:
+            rows = same
+    if not rows:
+        return {"form_age_days": None, "last_days": None, "season_slope": 0.0}
+    pool = rows[0][2]
+    mine = [r for r in rows if r[2] == pool]
+    days = [(cut - (_asDate(r[0]) or cut)).days for r in mine]
+    use = days[:_RATING_LAST_N]
+    w = [0.8 ** k for k in range(len(use))]
+    age = sum(wi * d for wi, d in zip(w, use)) / sum(w)
+    pts = [(-d, math.log(r[1])) for d, r in zip(days, mine)
+           if r[1] and r[1] > 0 and d - days[0] <= _SLOPE_DAYS]
+    slope = 0.0
+    if len(pts) >= _SLOPE_MIN_RACES:
+        xs = [x for x, _y in pts]
+        if max(xs) - min(xs) >= _SLOPE_MIN_SPAN:
+            mx = sum(xs) / len(xs)
+            my = sum(y for _x, y in pts) / len(pts)
+            sxx = sum((x - mx) ** 2 for x in xs)
+            slope = 30.0 * sum((x - mx) * (y - my) for x, y in pts) / sxx
+    return {"form_age_days": round(age, 1), "last_days": days[0],
+            "season_slope": round(slope, 5)}
 
 
 def _fc():
