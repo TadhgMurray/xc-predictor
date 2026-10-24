@@ -48,6 +48,7 @@ races and the same runners. READ-ONLY (our database; LACCTiC's public API).
   Polite: one request per race and per runner, --sleep apart.
 """
 import argparse
+import json
 import math
 import os
 import re
@@ -70,11 +71,29 @@ _S.headers.update({"User-Agent": "racecast-compare/1.0 (read-only research)",
                    "Accept": "application/json"})
 
 
+# ★ ONE COPY OF THEIR SIDE FOR EVERY ARM (--cache DIR, 2026-10-24). The
+#   Oct 23 factorial scores four sets of our ratings against LACCTiC; their
+#   pages change nightly, so each arm read live would differ on their side
+#   too. The first run writes every page it reads; the later ones read
+#   those files and ask LACCTiC nothing.
+_CACHE = {"dir": None}
+
+
 def fetch(path, sleep):
+    cached = None
+    if _CACHE["dir"]:
+        cached = os.path.join(_CACHE["dir"], re.sub(r"[^A-Za-z0-9]+", "_", path).strip("_")
+                              + ".json")
+        if os.path.exists(cached):
+            with open(cached) as f:
+                return json.load(f)
     for attempt in range(3):
         r = _S.get(f"{API}/{path}", timeout=60)
         if r.status_code == 200 and r.text[:1] == "{":
             time.sleep(sleep)
+            if cached:
+                with open(cached, "w") as f:
+                    f.write(r.text)
             return r.json()
         time.sleep(max(sleep, 3) * (attempt + 1))
     raise SystemExit(f"[lacctic] {path}: HTTP {r.status_code}")
@@ -373,10 +392,16 @@ def main():
     ap.add_argument("--ours-npz", default=None,
                     help="the state-space engine's ratings (scripts/ss_eval.py --mode ratings) "
                          "in place of the published ones")
+    ap.add_argument("--cache", default=None, metavar="DIR",
+                    help="keep every LACCTiC page read in DIR and read it from there "
+                         "next time, so several runs see the same LACCTiC")
     ap.add_argument("--forward", action="store_true",
                     help="the ORDER test from each runner's races BEFORE the scored race only "
                          "(both systems), not the whole season around it")
     a = ap.parse_args()
+    if a.cache:
+        os.makedirs(a.cache, exist_ok=True)
+        _CACHE["dir"] = a.cache
     races = [int(x) for x in a.race.split(",") if x.strip()]
     if a.season:
         picked = seasonRaces(a.season, a.top, a.sleep)
