@@ -68,7 +68,7 @@ import statespace as ss                                         # noqa: E402
 PACK = os.path.join(REPO, "engine", "data", "packed_XC_TF.npz")
 OUT_DIR = os.path.join(REPO, "engine", "data", "ss")
 COLS = ("result_id", "athlete", "course", "norm", "days", "sport", "doy",
-        "year", "dist_m", "meet_id", "div_id", "course_lat", "course_lon")
+        "year", "dist_m", "meet_id", "div_id", "course_lat", "course_lon", "team")
 ALT_FLOOR_M = 600.0
 # ! A LEVEL PAST 25% IS NOT A MEASUREMENT. Grass costs ~5% (Sassi 2011) and
 #   no course doubles it twice over; a level that far out means nothing in
@@ -130,7 +130,7 @@ class Rows:
     """The pack, keyed for the engine: every per-file-row array the modes
     need, and build(use) -> (D, idx) for any subset of file rows."""
 
-    def __init__(self, cols, era_years=0, elevation=None):
+    def __init__(self, cols, era_years=0, elevation=None, weather=None):
         self.cols = cols
         self.n = cols["norm"].size
         self.keep = (cols["course"] >= 0) & (cols["norm"] > 0)
@@ -180,11 +180,31 @@ class Rows:
             self.alt_km = per[safe]
             print(f"[ss] elevation: {len(elev):,} venues; "
                   f"{int((per > 0).sum()):,} course keys above {ALT_FLOOR_M:.0f} m")
+        # ★ THE WEATHER, BACK IN THE MODEL (scripts/ss_weather_export.py):
+        #   the backfill's multiplier comes off y, and the day's temperature,
+        #   wind and wet ground become shared terms the fit estimates
+        self.wx = None
+        self.era_walk = False
+        if weather:
+            with np.load(weather) as z:
+                key_w = z["result_id"].astype(np.int64) * 2 + z["sport"].astype(np.int64)
+                o = np.argsort(key_w)
+                key_r = np.asarray(cols["result_id"]).astype(np.int64) * 2 + self.sport
+                j = o[np.clip(np.searchsorted(key_w, key_r, sorter=o), 0, key_w.size - 1)]
+                hit = key_w[j] == key_r
+                self.wx = {k: np.where(hit, z[k][j], np.nan) for k in ("temp", "wind", "wet")}
+                lm = np.where(hit, z["log_mult"][j], 0.0)
+            self.y5 = self.y5 - lm
+            print(f"[ss] weather: {int(np.isfinite(self.wx['temp']).sum()):,} rows with a day's "
+                  f"weather; the stored multiplier (median |ln| "
+                  f"{100 * np.median(np.abs(lm[lm != 0])) if (lm != 0).any() else 0:.2f}%) taken off")
         # the regional check's cell: a REGION_DEG grid on the course's place
         self.region = np.full(self.n, -1, dtype=np.int64)
+        self.lat = self.lon = None
         if "course_lat" in cols and "course_lon" in cols:
             lat = np.asarray(cols["course_lat"], dtype=np.float64)[safe]
             lon = np.asarray(cols["course_lon"], dtype=np.float64)[safe]
+            self.lat, self.lon = lat, lon        # the course's place, for course_tie
             ok = np.isfinite(lat) & np.isfinite(lon)
             gy = np.floor(np.where(ok, lat, 0) / REGION_DEG).astype(np.int64)
             gx = np.floor(np.where(ok, lon, 0) / REGION_DEG).astype(np.int64)
@@ -219,6 +239,16 @@ class Rows:
         }
         if self.alt_km is not None:
             D["alt_km"] = self.alt_km[idx]
+        if self.lat is not None:
+            D["lat"], D["lon"] = self.lat[idx], self.lon[idx]
+        if "team" in self.cols:
+            D["team"] = np.asarray(self.cols["team"]).astype(np.int64)[idx]
+        if self.wx is not None:
+            for k in ("temp", "wind", "wet"):
+                D["wx_" + k] = self.wx[k][idx]
+        if self.era_walk:
+            # a cell per (course, season), tied season to season by a walk
+            D = ss.eraCells(D)
         D["starts"] = ss.segments(D["person"])
         # the day the data end: a season raced in within 21 days of it may
         # still be running, so its newest race is not yet its taper
@@ -342,6 +372,34 @@ def raceMixLines(R, D, idx, rows, path=None, top=25):
     return out
 
 
+def coursePairLines(R, D, idx, rows, path=None, top=20):
+    """The cells the fit thinks are one course under two keys: how many
+    pairs, the share it learned per band of distance apart, and the
+    likeliest, so a person can look. Tied in proportion, never merged."""
+    if "pair_p" not in R or R["pair_p"].size == 0:
+        return []
+    a, b, p, m, dl = R["pair_a"], R["pair_b"], R["pair_p"], R["pair_m"], R["pair_delta"]
+    first = np.full(int(D["cell"].max()) + 1, -1, dtype=np.int64)
+    has = D["cell"] >= 0
+    first[D["cell"][has][::-1]] = np.flatnonzero(has)[::-1]
+    key = lambda c: str(rows.course_keys[rows.crs[idx[first[c]]]]) if first[c] >= 0 else "?"
+    bands = ", ".join(f"<{int(e)} m {100 * q:.0f}%" for e, q in zip(ss.PAIR_BANDS_M, R["pair_pi"]))
+    out = [f"[ss] courses: {a.size:,} candidate pairs within {int(ss.PAIR_MAX_M)} m; one course "
+           f"under two keys for {int((p > 0.5).sum()):,} (P > 0.5); share learned by distance "
+           f"apart: {bands}; slack {100 * R['pair_slack']:.2f}%"]
+    order = np.argsort(-p)
+    if path:
+        with open(path, "w") as f:
+            f.write("key_a,key_b,metres,listed_offset_pct,p_same\n")
+            for j in order[p[order] > 0.2]:
+                f.write(f"\"{key(a[j])}\",\"{key(b[j])}\",{m[j]:.0f},{100 * dl[j]:+.2f},{p[j]:.3f}\n")
+        out.append(f"[ss] courses: {int((p > 0.2).sum()):,} pairs with P > 0.2 -> {path}")
+    for j in order[:top]:
+        out.append(f"[ss]   {key(a[j])[:30]:30s} ~ {key(b[j])[:30]:30s} {m[j]:5.0f} m, "
+                   f"listed {100 * dl[j]:+.1f}%: P(one course) {p[j]:.2f}")
+    return out
+
+
 def modeGap(rows, a):
     D, idx = rows.build(rows.recent(a.seasons_back))
     tr = np.ones(D["y"].size, dtype=bool)
@@ -355,6 +413,9 @@ def modeGap(rows, a):
     os.makedirs(OUT_DIR, exist_ok=True)
     for line in raceMixLines(R, D, idx, rows,
                              os.path.join(OUT_DIR, f"distance_{str(rows.pack_date)}.csv")):
+        print(line)
+    for line in coursePairLines(R, D, idx, rows,
+                                os.path.join(OUT_DIR, f"courses_{str(rows.pack_date)}.csv")):
         print(line)
     t1 = time.time()
     masks = ss.bridgeMasks(D)
@@ -475,6 +536,10 @@ def modeRatings(rows, a, fitted=None):
              course_key=rows.course_keys[rows.crs[idx]].astype(str),
              course=R["cell"][D["cell"]].astype(np.float32),
              course_sd=cell_sd[D["cell"]].astype(np.float32),
+             # the rating's own SD, log time: how well its course, day and
+             # race corrections are known (a board can hold the wide ones)
+             perf_sd=R["perf_sd"].astype(np.float32),
+             theta_sd=np.sqrt(np.maximum(R["theta_var"], 0)).astype(np.float32),
              gap=(R["G"]).astype(np.float32),
              pool_names=names.astype(str), pool_means=pm)
     print(f"\n[ss] ratings -> {path}: {idx.size:,} results; 5K column = seconds on a flat "
@@ -585,11 +650,21 @@ def main():
     ap.add_argument("--no-jackknife", dest="jackknife", action="store_false")
     ap.add_argument("--kappa-profile", action="store_true")
     ap.add_argument("--era-years", type=int, default=0)
+    ap.add_argument("--era-walk", action="store_true",
+                    help="a course number per season, tied by a fitted walk (replaces --era-years)")
+    ap.add_argument("--weather", default=None, metavar="NPZ",
+                    help="scripts/ss_weather_export.py's file: the weather fitted inside the model")
     ap.add_argument("--elevation", default=None,
                     help="venue_elevation as CSV (key,elevation_m); altitude is fitted from it")
     a = ap.parse_args()
 
-    rows = Rows(loadPack(a.pack), a.era_years, a.elevation)
+    rows = Rows(loadPack(a.pack), a.era_years, a.elevation, a.weather)
+    global TERMS
+    if a.weather:
+        TERMS = TERMS + ("weather",)
+    if a.era_walk:
+        rows.era_walk = True
+        TERMS = TERMS + ("era_walk",)
     fitted = None
     if a.mode in ("all", "gap"):
         print("\n================ GAP ================")

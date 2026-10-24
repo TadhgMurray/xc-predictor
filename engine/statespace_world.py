@@ -243,7 +243,34 @@ def splits(D, seed=1, n_seasons=5):
 #   opposite directions depending on which way the runner crossed.
 HARD = dict(mu_xc=0.060, mu_in=0.010, peak=-0.010, brk=0.025,
             dec_xc_top=0.10, indoor_share=0.30, fall_track=0.03, summer_track=0.12,
-            alt_regions=(), alt_km=1.0, alt_coef=0.035, mislabel_p=0.0)
+            alt_regions=(), alt_km=1.0, alt_coef=0.035, mislabel_p=0.0,
+            alias_p=0.0, near_p=0.0, era_sd=0.0, reroute_p=0.0,
+            track_mix=False, eta_sd=0.03, team_p=0.0, weather=False)
+# ★ WEATHER (weather=True): each outdoor meet has a recorded apparent
+#   temperature -- the day's peak -- and a race run 0-15 F cooler than it;
+#   heat costs 0.15% a degree above 55 F and cold 0.05% a degree below
+#   45, wind 0.1% per mph on the track and 0.05% on grass, wet ground 2%
+#   per unit soil moisture on grass. A backfill-style multiplier keyed on
+#   the RECORDED peak (0.2% a degree above 55) has been taken off every
+#   row already, as normalized_time carries it; wx_log_mult is its ln.
+# ★ TRACK AT SEVERAL DISTANCES (track_mix): each track race is an 800, a
+#   1600 or a 3200 (a heat each), the normalisation off by EVENT_OFF per
+#   event, and every runner has their own distance curve: eta_p ~ N(0,
+#   eta_sd) per unit ln(d / 5000). truth_perf is the runner's 5000.
+# ★ TEAMS AT TEMPO (team_p): in a race, a school's 2+ runners all run
+#   3-8% slow together with probability team_p; not their ability, so not
+#   in truth_perf. D["team"] is the school. Their own streams.
+EVENT_OFF = {800.0: 0.010, 1600.0: 0.0, 3200.0: -0.005}
+# ★ COURSES THAT CHANGE (era_sd > 0): each course's number walks by era_sd
+#   a season, and with reroute_p a season it jumps by N(0, 3%) -- a new
+#   start, a hill added. truth_course is the season's value. Own stream.
+# ★ ONE COURSE UNDER TWO KEYS (alias_p > 0): a regular XC meet that keys its
+#   course under a second name -- a cell of its own at the same place (a
+#   few tens of metres off), the same true course, and half the time listed
+#   at 4828 though it is the same 5000 (the Mt SAC 4715/4828 kind). And
+#   near_p > 0: a new XC course placed 150-600 m from one already there, a
+#   different course that a radius rule would merge. Courses sit within
+#   10 km of their region's centre, regions 50 km apart. Their own stream.
 # ★ MISLABELLED RACES (mislabel_p > 0): a division whose listed distance is
 #   not what it ran -- an XC 5000 that was 4000, 3 miles or 6000, a track
 #   1600 that was 1500 or 2000. Every runner's time moves by the distance,
@@ -355,10 +382,41 @@ def worldHard(seed=0, n_regions=10, schools=20, per_school=14, n_seasons=5, **ov
                day=[], race=[], y=[], truth_theta=[], truth_perf=[], bad_race=[], dist_m=[],
                mislabel=[], true_dist=[])
     cells = {}
+    place = {}
+    rng_c = np.random.default_rng(seed + 20_000)
     def cellOf(key, group, sd):
         if key not in cells:
             cells[key] = (len(cells), rng.normal(0, sd))
         return cells[key]
+    def placeOf(key, reg):
+        if key not in place:
+            same = [v for k_, v in place.items() if v[2] == reg and k_[1] == key[1]]
+            if same and key[1] == "xc" and rng_c.random() < T["near_p"]:
+                lat0, lon0, _ = same[int(rng_c.integers(len(same)))]
+                r_m, ang = rng_c.uniform(150, 600), rng_c.uniform(0, 2 * np.pi)
+                lat = lat0 + r_m * np.sin(ang) / 111_000.0
+                lon = lon0 + r_m * np.cos(ang) / (111_000.0 * np.cos(np.radians(lat0)))
+            else:
+                lat = 35.0 + (reg % 10) * 0.45 + rng_c.uniform(-0.09, 0.09)
+                lon = -100.0 + (reg // 10) * 0.55 + rng_c.uniform(-0.11, 0.11)
+            place[key] = (lat, lon, reg)
+        return place[key]
+    alias_of = {}
+    rng_x = np.random.default_rng(seed + 40_000)
+    eta = rng_x.normal(0, T["eta_sd"], n_p) if T["track_mix"] else np.zeros(n_p)
+    tempo = {}
+    rng_w = np.random.default_rng(seed + 50_000)
+    wxm = {}
+    drift = {}
+    rng_e = np.random.default_rng(seed + 30_000)
+    def driftOf(key, s_):
+        if key not in drift:
+            step = rng_e.normal(0, T["era_sd"], n_seasons)
+            jump = np.where(rng_e.random(n_seasons) < T["reroute_p"],
+                            rng_e.normal(0, 0.03, n_seasons), 0.0)
+            walk = np.cumsum(step + jump)
+            drift[key] = walk - walk.mean()
+        return drift[key][s_]
     rows = []
     for (p, s), races in plan.items():
         races.sort()
@@ -402,11 +460,51 @@ def worldHard(seed=0, n_regions=10, schools=20, per_school=14, n_seasons=5, **ov
                 ckey = ("c", "out", key[1] * 5)
         cid, cval = cellOf(ckey, group, csd)
         mkey = (s, phz) + key
+        reg_place = ckey[3] if (ckey[1] == "xc" and len(ckey) > 3) else (
+            ckey[2] if len(ckey) > 2 else 0)
+        lat, lon, _ = placeOf(ckey, reg_place)
+        listed = 5000.0 if k == 0 else 1600.0
+        if T["track_mix"] and k != 0:
+            listed = float(rng_x.choice((800.0, 1600.0, 3200.0), p=(0.25, 0.5, 0.25)))
+        ev_d = listed
+        is_alias = False
+        if T["alias_p"] > 0 and key[0] == "xc":
+            if mkey not in alias_of:
+                alias_of[mkey] = (rng_c.random() < T["alias_p"], rng_c.random() < 0.5,
+                                  rng_c.normal(0, 40.0, 2))
+            is_alias, short_listed, jitter = alias_of[mkey]
+            if is_alias:
+                akey = ("alias",) + ckey + ((4828.0,) if short_listed else ())
+                if akey not in cells:
+                    cells[akey] = (len(cells), cval)
+                cid = cells[akey][0]
+                lat = lat + jitter[0] / 111_000.0
+                lon = lon + jitter[1] / (111_000.0 * np.cos(np.radians(lat)))
+                if short_listed:
+                    listed = 4828.0
+        true_course = cellOf(ckey, group, csd)[0]
+        if T["era_sd"] > 0 or T["reroute_p"] > 0:
+            cval = cval + driftOf(ckey, s)
         if mkey not in meets:
             w = T["s_w"][group] * rng.standard_t(3) / np.sqrt(3.0)
             meets[mkey] = [len(meets), w, {}]
         day_id, w, divs = meets[mkey]
+        wx_rec = wx_true = wwind = wwet = np.nan
+        wx_eff = wx_log = 0.0
+        if T["weather"] and k != 2:
+            if mkey not in wxm:
+                base_t = 75.0 - 30.0 * np.clip((phz - 20) / 100.0, 0, 1) if phz < 160 else (
+                    50.0 + 30.0 * np.clip((phz - 200) / 120.0, 0, 1))
+                rec = base_t + rng_w.normal(0, 8.0)
+                wxm[mkey] = (rec, rec - rng_w.uniform(0, 15), rng_w.gamma(2.0, 3.0),
+                             rng_w.beta(2, 5))
+            wx_rec, wx_true, wwind, wwet = wxm[mkey]
+            wx_eff = (0.0015 * max(wx_true - 55.0, 0) + 0.0005 * max(45.0 - wx_true, 0)
+                      + (0.001 if k == 1 else 0.0005) * wwind + (0.02 * wwet if k == 0 else 0.0))
+            wx_log = -0.002 * max(wx_rec - 55.0, 0)
         dv = 0 if k != 1 else int(th < THETA_HS)       # heats by ability on the track
+        if T["track_mix"] and k != 0:
+            dv = 2 + 2 * (0 if ev_d == 800.0 else 1 if ev_d == 1600.0 else 2) + int(k == 1 and th < THETA_HS)
         if dv not in divs:
             v = rng.normal(0, T["s_v"]); v0 = v
             u = rng.random()
@@ -414,10 +512,9 @@ def worldHard(seed=0, n_regions=10, schools=20, per_school=14, n_seasons=5, **ov
                 v += rng.uniform(-0.12, -0.03)
             elif u < T["short_p"] + T["long_p"]:
                 v += rng.uniform(0.03, 0.08)
-            listed = 5000.0 if k == 0 else 1600.0
-            true_d = listed
-            if T["mislabel_p"] > 0 and rng_m.random() < T["mislabel_p"]:
-                true_d = float(rng_m.choice(MISLABEL_TRUE[listed]))
+            true_d = 5000.0 if k == 0 else ev_d
+            if T["mislabel_p"] > 0 and rng_m.random() < T["mislabel_p"] and true_d in MISLABEL_TRUE:
+                true_d = float(rng_m.choice(MISLABEL_TRUE[true_d]))
             divs[dv] = (day_id * 8 + dv, v, abs(v - v0) > 0, true_d)
         rid, v, bad, true_d = divs[dv]
         mu = {ss.GROUP_XC: T["mu_xc"], ss.GROUP_OUT: 0.0, ss.GROUP_IN: T["mu_in"]}[group]
@@ -437,11 +534,25 @@ def worldHard(seed=0, n_regions=10, schools=20, per_school=14, n_seasons=5, **ov
         out["group"].append(group); out["cell"].append(cid); out["day"].append(day_id)
         out["race"].append(rid); out["truth_theta"].append(th)
         out["truth_perf"].append(th + beta[p] * (k == 0) + e); out["bad_race"].append(bad)
-        listed = 5000.0 if k == 0 else 1600.0
         out["dist_m"].append(listed)
-        out["true_dist"].append(true_d); out["mislabel"].append(true_d != listed)
+        out["true_dist"].append(true_d); out["mislabel"].append(true_d != (5000.0 if k == 0 else ev_d))
+        out.setdefault("team", []).append(school_of[p])
+        tmp = 0.0
+        if T["team_p"] > 0:
+            tk = (rid, school_of[p])
+            if tk not in tempo:
+                tempo[tk] = rng_x.uniform(0.03, 0.08) if rng_x.random() < T["team_p"] else 0.0
+            tmp = tempo[tk]
+        out.setdefault("tempo", []).append(tmp)
+        out.setdefault("wx_temp", []).append(wx_rec); out.setdefault("wx_wind", []).append(wwind)
+        out.setdefault("wx_wet", []).append(wwet if k == 0 else 0.0)
+        out.setdefault("wx_log_mult", []).append(wx_log)
+        x_d = (eta[p] * np.log(ev_d / 5000.0) + EVENT_OFF.get(ev_d, 0.0)) if (T["track_mix"] and k != 0) else 0.0
+        out.setdefault("lat", []).append(lat); out.setdefault("lon", []).append(lon)
+        out.setdefault("alias", []).append(is_alias)
+        out.setdefault("truth_cell", []).append(true_course)
         out["y"].append(th + beta[p] * (k == 0) + h * (mu + cval + w + v) + e + alt_eff
-                        + ss.RIEGEL * np.log(true_d / listed))
+                        + ss.RIEGEL * np.log(true_d / listed) + x_d + tmp + wx_eff + wx_log)
         out.setdefault("truth_course", []).append(cval)
         out.setdefault("region", []).append(region_of[p])
         out.setdefault("truth_day", []).append(w)

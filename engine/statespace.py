@@ -73,61 +73,87 @@ SEASON_DAYS = 366.0
 
 
 # ------------------------------------------------------------------ #
-# THE PERSON STEP: Kalman filter + RTS smoother, state (theta, beta)
+# THE PERSON STEP: Kalman filter + RTS smoother, state (theta, slope,
+# beta, eta)
 # ------------------------------------------------------------------ #
 
+NS = 4             # theta, the season's trend, grass, the runner's distance slope
+
+
 @njit(cache=True, inline="always")
-def _inv3(A, out):
-    """Closed-form inverse of a 3x3 (symmetric positive definite here)."""
-    a, b, c = A[0, 0], A[0, 1], A[0, 2]
-    d, e, f = A[1, 0], A[1, 1], A[1, 2]
-    g, h, i = A[2, 0], A[2, 1], A[2, 2]
-    c00 = e * i - f * h; c01 = -(d * i - f * g); c02 = d * h - e * g
-    det = a * c00 + b * c01 + c * c02
-    if abs(det) < 1e-300:
-        det = 1e-300
-    out[0, 0] = c00 / det; out[1, 0] = c01 / det; out[2, 0] = c02 / det
-    out[0, 1] = -(b * i - c * h) / det; out[1, 1] = (a * i - c * g) / det
-    out[2, 1] = -(a * h - b * g) / det
-    out[0, 2] = (b * f - c * e) / det; out[1, 2] = -(a * f - c * d) / det
-    out[2, 2] = (a * e - b * d) / det
+def _invN(A, out, W):
+    """Inverse of a small symmetric positive definite NS x NS, Gauss-Jordan
+    in place (W a 2 NS-wide scratch); no allocation in the RTS loop."""
+    n = A.shape[0]
+    for r in range(n):
+        for c in range(n):
+            W[r, c] = A[r, c]
+            W[r, n + c] = 1.0 if r == c else 0.0
+    for k in range(n):
+        piv = W[k, k]
+        if abs(piv) < 1e-300:
+            piv = 1e-300
+        for c in range(2 * n):
+            W[k, c] /= piv
+        for r in range(n):
+            if r != k:
+                f = W[r, k]
+                if f != 0.0:
+                    for c in range(2 * n):
+                        W[r, c] -= f * W[k, c]
+    for r in range(n):
+        for c in range(n):
+            out[r, c] = W[r, n + c]
 
 
 @njit(cache=True, inline="always")
 def _mm(A, B, out):
-    for r in range(3):
-        for c in range(3):
-            out[r, c] = A[r, 0] * B[0, c] + A[r, 1] * B[1, c] + A[r, 2] * B[2, c]
+    n = A.shape[0]
+    for r in range(n):
+        for c in range(n):
+            acc = 0.0
+            for k in range(n):
+                acc += A[r, k] * B[k, c]
+            out[r, c] = acc
 
 
 @njit(cache=True, inline="always")
 def _mmT(A, B, out):
     """A @ B.T"""
-    for r in range(3):
-        for c in range(3):
-            out[r, c] = A[r, 0] * B[c, 0] + A[r, 1] * B[c, 1] + A[r, 2] * B[c, 2]
+    n = A.shape[0]
+    for r in range(n):
+        for c in range(n):
+            acc = 0.0
+            for k in range(n):
+                acc += A[r, k] * B[c, k]
+            out[r, c] = acc
 
 
 @njit(parallel=True, cache=True)
 def _smoothPeople(starts, t, season, lv, z, xc, rvar, train, jump_mean,
-                  q_day, q_jump, s_slope2, s_beta2, m0, dynamic, ld):
-    """Per person, the smoothed state x = (theta, slope, beta) at every row,
-    and the moments the M-step needs. z is y minus everything but
-    theta + beta*xc; rvar the row's observation variance (sigma2 / weight).
+                  q_day, q_jump, s_slope2, s_beta2, m0, dynamic, ld, xe, s_eta2):
+    """Per person, the smoothed state x = (theta, slope, beta, eta) at every
+    row, and the moments the M-step needs. z is y minus everything but
+    theta + beta*xc + eta*xe; rvar the row's observation variance (sigma2 /
+    weight).
 
       theta  log time, a random walk q_day per day
       slope  this season's own trend, log time per 365 days: drawn fresh at
              every season seam from N(0, s_slope2), constant inside it --
              the runner who is getting fitter faster than the population
       beta   grass specialisation, constant for life
+      eta    the runner's own distance curve, log time per unit of
+             ln(distance / 5000) (xe), constant for life, N(0, s_eta2);
+             s_eta2 ~ 0 holds it at 0
 
     The transition into row k is theta += slope * dt inside a season; at a
     seam theta += jump (variance q_jump) and the slope is redrawn.
     dynamic=False holds theta constant inside a season and independent
     across seasons, no slope (the current engine's athlete-season), for the
-    like-for-like comparison."""
+    like-for-like comparison. Returns X (n, 4) and V (n, 6): the four
+    variances, then Cov(theta, beta) and Cov(theta, eta)."""
     n = t.size
-    X = np.zeros((n, 3)); V = np.zeros((n, 4))      # diag, then Cov(theta, beta)
+    X = np.zeros((n, NS)); V = np.zeros((n, NS + 2))
     d2 = np.zeros(n); gap = np.zeros(n)
     n_people = starts.size - 1
     for p in prange(n_people):
@@ -135,16 +161,17 @@ def _smoothPeople(starts, t, season, lv, z, xc, rvar, train, jump_mean,
         m = e - s
         if m == 0:
             continue
-        xp = np.zeros((m, 3)); Pp = np.zeros((m, 3, 3))
-        xf = np.zeros((m, 3)); Pf = np.zeros((m, 3, 3))
+        xp = np.zeros((m, NS)); Pp = np.zeros((m, NS, NS))
+        xf = np.zeros((m, NS)); Pf = np.zeros((m, NS, NS))
         dtk = np.zeros(m); seamk = np.zeros(m, dtype=np.bool_)
-        x = np.zeros(3); P = np.zeros((3, 3)); PH = np.zeros(3)
-        T1 = np.zeros((3, 3)); T2 = np.zeros((3, 3)); Fm = np.eye(3)
-        Pinv = np.zeros((3, 3)); G = np.zeros((3, 3))
+        x = np.zeros(NS); P = np.zeros((NS, NS)); PH = np.zeros(NS)
+        T1 = np.zeros((NS, NS)); T2 = np.zeros((NS, NS)); Fm = np.eye(NS)
+        Pinv = np.zeros((NS, NS)); G = np.zeros((NS, NS)); Wk = np.zeros((NS, 2 * NS))
         x[0] = m0[lv[s]]
         P[0, 0] = P0
         P[1, 1] = s_slope2 if dynamic else 1e-12
         P[2, 2] = s_beta2
+        P[3, 3] = max(s_eta2, 1e-12)
         for k in range(m):
             i = s + k
             if k > 0:
@@ -155,13 +182,13 @@ def _smoothPeople(starts, t, season, lv, z, xc, rvar, train, jump_mean,
                         # the seam: the season's trend ends, a new one starts
                         x[1] = 0.0
                         x[0] += jump_mean[lv[i]]
-                        for c in range(3):
+                        for c in range(NS):
                             P[1, c] = 0.0; P[c, 1] = 0.0
                         P[0, 0] += q_jump + q_day * min(dt, 60.0)
                         P[1, 1] = s_slope2
                     else:
                         x[0] = m0[lv[i]]
-                        for c in range(3):
+                        for c in range(NS):
                             P[0, c] = 0.0; P[c, 0] = 0.0
                         P[0, 0] = P0
                 elif dynamic and dt > 0:
@@ -170,37 +197,43 @@ def _smoothPeople(starts, t, season, lv, z, xc, rvar, train, jump_mean,
                     x[0] += u * x[1]
                     # P <- F P F' with F = I + u e0 e1'
                     p00 = P[0, 0] + 2 * u * P[0, 1] + u * u * P[1, 1]
-                    p01 = P[0, 1] + u * P[1, 1]
-                    p02 = P[0, 2] + u * P[1, 2]
+                    for c in range(1, NS):
+                        v_ = P[0, c] + u * P[1, c]
+                        P[0, c] = v_; P[c, 0] = v_
                     P[0, 0] = p00 + q_day * dt
-                    P[0, 1] = p01; P[1, 0] = p01
-                    P[0, 2] = p02; P[2, 0] = p02
-            xp[k] = x; Pp[k] = P
+            for r in range(NS):
+                xp[k, r] = x[r]
+                for c in range(NS):
+                    Pp[k, r, c] = P[r, c]
             if train[i]:
                 hx = xc[i]
+                he = xe[i]
                 l0 = ld[i]
-                for c in range(3):
-                    PH[c] = l0 * P[c, 0] + hx * P[c, 2]
-                S = l0 * PH[0] + hx * PH[2] + rvar[i]
-                innov = z[i] - (l0 * x[0] + hx * x[2])
-                for r in range(3):
+                for c in range(NS):
+                    PH[c] = l0 * P[c, 0] + hx * P[c, 2] + he * P[c, 3]
+                S = l0 * PH[0] + hx * PH[2] + he * PH[3] + rvar[i]
+                innov = z[i] - (l0 * x[0] + hx * x[2] + he * x[3])
+                for r in range(NS):
                     x[r] += PH[r] / S * innov
-                for r in range(3):
-                    for c in range(3):
+                for r in range(NS):
+                    for c in range(NS):
                         P[r, c] -= PH[r] * PH[c] / S
-            xf[k] = x; Pf[k] = P
+            for r in range(NS):
+                xf[k, r] = x[r]
+                for c in range(NS):
+                    Pf[k, r, c] = P[r, c]
         # RTS backwards
         xs = xf[m - 1].copy(); Ps = Pf[m - 1].copy()
         i = s + m - 1
-        for c in range(3):
+        for c in range(NS):
             X[i, c] = xs[c]; V[i, c] = Ps[c, c]
-        V[i, 3] = Ps[0, 2]
-        nx = np.zeros(3); nP = np.zeros((3, 3)); a = np.zeros(3); b = np.zeros(3)
+        V[i, NS] = Ps[0, 2]; V[i, NS + 1] = Ps[0, 3]
+        nx = np.zeros(NS); nP = np.zeros((NS, NS)); a = np.zeros(NS); b = np.zeros(NS)
         for k in range(m - 2, -1, -1):
             i = s + k
             # F into k+1
-            for r in range(3):
-                for c in range(3):
+            for r in range(NS):
+                for c in range(NS):
                     Fm[r, c] = 1.0 if r == c else 0.0
             if seamk[k + 1]:
                 if dynamic:
@@ -210,41 +243,43 @@ def _smoothPeople(starts, t, season, lv, z, xc, rvar, train, jump_mean,
             else:
                 Fm[0, 1] = dtk[k + 1]
             _mmT(Pf[k], Fm, T1)               # Pf F'
-            _inv3(Pp[k + 1], Pinv)
+            _invN(Pp[k + 1], Pinv, Wk)
             _mm(T1, Pinv, G)                  # G = Pf F' Pp^-1
-            for r in range(3):
+            for r in range(NS):
                 nx[r] = xf[k, r]
-                for c in range(3):
+                for c in range(NS):
                     nx[r] += G[r, c] * (xs[c] - xp[k + 1, c])
-            for r in range(3):
-                for c in range(3):
+            for r in range(NS):
+                for c in range(NS):
                     T1[r, c] = Ps[r, c] - Pp[k + 1, r, c]
             _mm(G, T1, T2)
             _mmT(T2, G, T1)
-            for r in range(3):
-                for c in range(3):
+            for r in range(NS):
+                for c in range(NS):
                     nP[r, c] = Pf[k, r, c] + T1[r, c]
             # E[(theta_{k+1} - theta_k - slope_k dt)^2], the walk's own step
             j = i + 1
-            a[0] = 1.0; a[1] = 0.0; a[2] = 0.0
-            b[0] = -1.0; b[1] = -dtk[k + 1]; b[2] = 0.0
+            for r in range(NS):
+                a[r] = 0.0; b[r] = 0.0
+            a[0] = 1.0
+            b[0] = -1.0; b[1] = -dtk[k + 1]
             _mmT(Ps, G, T2)                    # Cov(x_{k+1}, x_k | all)
             mean = xs[0] - nx[0] - dtk[k + 1] * nx[1]
             q = Ps[0, 0]
             r2 = 0.0; cr = 0.0
-            for r in range(3):
-                for c in range(3):
+            for r in range(NS):
+                for c in range(NS):
                     r2 += b[r] * nP[r, c] * b[c]
                     cr += a[r] * T2[r, c] * b[c]
             d2[j] = mean * mean + q + r2 + 2.0 * cr
             gap[j] = t[j] - t[i]
-            for r in range(3):
+            for r in range(NS):
                 xs[r] = nx[r]
-                for c in range(3):
+                for c in range(NS):
                     Ps[r, c] = nP[r, c]
-            for c in range(3):
+            for c in range(NS):
                 X[i, c] = xs[c]; V[i, c] = Ps[c, c]
-            V[i, 3] = Ps[0, 2]
+            V[i, NS] = Ps[0, 2]; V[i, NS + 1] = Ps[0, 3]
     return X, V, d2, gap
 
 
@@ -316,6 +351,204 @@ def _raceMix(code, n, num_w, den_w, prior_prec, sigma2, M, pi_mis):
     vv = 1.0 / q + np.sum(p * (vk - v[:, None]) ** 2, axis=1) / sigma2
     delta = np.sum(p[:, 1:] * mu[:, 1:], axis=1)
     return v, vv, den, 1.0 - p[:, 0], delta, p
+
+
+def coursePairs(cell, grp, lat, lon, dist, n_cell):
+    """Candidate same-course pairs: (a, b, metres apart, band, delta), where
+    delta = RIEGEL ln(d_a / d_b) is what c_b - c_a would be were the two one
+    course. Per cell its place and listed distance are its rows' (first
+    finite place; median listed distance)."""
+    has = cell >= 0
+    c_lat = np.full(n_cell, np.nan); c_lon = np.full(n_cell, np.nan)
+    c_grp = np.zeros(n_cell, dtype=np.int64); c_dist = np.zeros(n_cell)
+    ok = has & np.isfinite(lat) & np.isfinite(lon)
+    c_lat[cell[ok]] = lat[ok]; c_lon[cell[ok]] = lon[ok]
+    c_grp[cell[has]] = grp[has]
+    if dist is not None:
+        o = np.lexsort((dist[has], cell[has]))
+        cs, ds = cell[has][o], dist[has][o]
+        lo = np.searchsorted(cs, np.arange(n_cell)); hi = np.searchsorted(cs, np.arange(n_cell), "right")
+        m = hi > lo
+        c_dist[m] = ds[(lo[m] + hi[m] - 1) // 2]
+    deg = PAIR_MAX_M / 111_000.0
+    placed = np.flatnonzero(np.isfinite(c_lat))
+    gy = np.floor(c_lat[placed] / deg).astype(np.int64)
+    gx = np.floor(c_lon[placed] / deg).astype(np.int64)
+    grid = {}
+    for i, y_, x_ in zip(placed, gy, gx):
+        grid.setdefault((y_, x_), []).append(i)
+    A, B = [], []
+    for (y_, x_), members in grid.items():
+        near = [j for dy in (-1, 0, 1) for dx in (-1, 0, 1) for j in grid.get((y_ + dy, x_ + dx), ())]
+        near = np.asarray(near)
+        for i in members:
+            cand = near[near > i]
+            if cand.size:
+                A.append(np.full(cand.size, i)); B.append(cand)
+    if not A:
+        z = np.zeros(0, dtype=np.int64)
+        return z, z, np.zeros(0), z, np.zeros(0)
+    a = np.concatenate(A); b = np.concatenate(B)
+    dy = (c_lat[b] - c_lat[a]) * 111_000.0
+    dx = (c_lon[b] - c_lon[a]) * 111_000.0 * np.cos(np.radians(0.5 * (c_lat[a] + c_lat[b])))
+    m_apart = np.hypot(dx, dy)
+    da, db = c_dist[a], c_dist[b]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where((da > 0) & (db > 0), np.maximum(da, db) / np.minimum(da, db), 1.0)
+        delta = np.where((da > 0) & (db > 0), RIEGEL * np.log(da / db), 0.0)
+    keep = (m_apart <= PAIR_MAX_M) & (c_grp[a] == c_grp[b]) & (ratio <= PAIR_MAX_RATIO)
+    a, b, m_apart, delta = a[keep], b[keep], m_apart[keep], delta[keep]
+    band = np.searchsorted(PAIR_BANDS_M, m_apart)
+    return a, b, m_apart, band, delta
+
+
+def cellMarginal(cell_of_day, n_cell, day, num_w, den_w, sigma2, s_w2_of_day):
+    """Each cell's own estimate with its race days INTEGRATED OUT: per day
+    the mean residual (course and day left in), variance sigma2 / den +
+    s_w2; per cell the precision-weighted mean over its days. ! NOT the
+    estimate given the fitted days: once two cells are tied, their days
+    soak up the real difference between them and the cells then look the
+    same -- on the planted world that merged 1.7%-apart courses 200 m
+    apart. Returns (estimate, variance), variance inf where no data."""
+    nd = np.bincount(day, weights=num_w, minlength=cell_of_day.size)
+    dd = np.bincount(day, weights=den_w, minlength=cell_of_day.size)
+    ok = (dd > 0) & (cell_of_day >= 0)
+    md = np.where(ok, nd / np.where(ok, dd, 1.0), 0.0)
+    prec = np.where(ok, 1.0 / (sigma2 / np.where(ok, dd, 1.0) + s_w2_of_day), 0.0)
+    cd = np.maximum(cell_of_day, 0)
+    P = np.bincount(cd, weights=prec, minlength=n_cell)
+    M = np.bincount(cd, weights=prec * md, minlength=n_cell)
+    est = np.where(P > 0, M / np.where(P > 0, P, 1.0), 0.0)
+    return est, np.where(P > 0, 1.0 / np.where(P > 0, P, 1.0), np.inf)
+
+
+def pairLinks(person, season, cell, rr, wt, a, b, n_cell):
+    """Same-runner evidence per candidate pair: for each runner who raced
+    both cells in one season, their mean residual (course left in) at b
+    less at a -- their own level cancels, so this is the two courses'
+    difference whatever the fit did to the levels. Returns per pair
+    (runners linking it, precision-weighted mean difference, its variance
+    in units of sigma2 from the rows alone)."""
+    m = cell >= 0
+    key = (person[m].astype(np.int64) * 4096 + season[m] % 4096) * n_cell + cell[m]
+    u, inv = np.unique(key, return_inverse=True)
+    inv = inv.reshape(-1)
+    sw_ = np.bincount(inv, weights=wt[m]); sr = np.bincount(inv, weights=wt[m] * rr[m])
+    mean = sr / np.maximum(sw_, 1e-12)
+    ps, c_ = u // n_cell, u % n_cell                    # (person-season, cell), sorted
+    starts = np.flatnonzero(np.r_[True, ps[1:] != ps[:-1]])
+    sizes = np.diff(np.r_[starts, ps.size])
+    pair_key = a.astype(np.int64) * n_cell + b
+    order = np.argsort(pair_key); pk_sorted = pair_key[order]
+    n_link = np.zeros(a.size); num = np.zeros(a.size); prec = np.zeros(a.size)
+    for k in np.unique(sizes[sizes >= 2]):
+        st = starts[sizes == k]
+        i1, i2 = np.triu_indices(k, 1)
+        x = st[:, None] + i1[None, :]; y_ = st[:, None] + i2[None, :]
+        x, y_ = x.reshape(-1), y_.reshape(-1)
+        lo, hi = np.minimum(c_[x], c_[y_]), np.maximum(c_[x], c_[y_])
+        lo_i = np.where(c_[x] <= c_[y_], x, y_); hi_i = np.where(c_[x] <= c_[y_], y_, x)
+        pk = lo * n_cell + hi
+        j = np.searchsorted(pk_sorted, pk)
+        hit = (j < pk_sorted.size) & (pk_sorted[np.minimum(j, pk_sorted.size - 1)] == pk)
+        if not hit.any():
+            continue
+        idx = order[j[hit]]
+        d = mean[hi_i[hit]] - mean[lo_i[hit]]
+        pr = 1.0 / (1.0 / np.maximum(sw_[lo_i[hit]], 1e-12) + 1.0 / np.maximum(sw_[hi_i[hit]], 1e-12))
+        np.add.at(n_link, idx, 1.0); np.add.at(num, idx, pr * d); np.add.at(prec, idx, pr)
+    dbar = np.where(prec > 0, num / np.maximum(prec, 1e-12), 0.0)
+    return n_link, dbar, np.where(prec > 0, 1.0 / np.maximum(prec, 1e-12), np.inf)
+
+
+def _tieCourses(est, est_var, sigma2, tau2_of_cell, pairs, state):
+    """P(same course) per candidate pair, E-step on the cells' own
+    estimates with their days integrated out (cellMarginal); M-step for the
+    share of same-course pairs per band and the slack. Returns (P(same),
+    the tie weight in the units of a shrunk mean's precision)."""
+    a, b, _m, band, delta = pairs
+    if a.size == 0:
+        return np.zeros(0), np.zeros(0)
+    pi, slack2 = state["pi"], state["slack"] ** 2
+    # ★ ONLY RUNNERS WHO RACED BOTH SAY WHETHER THEY ARE ONE COURSE. A
+    #   pair nobody links (a high school course and a college course 300 m
+    #   apart, raced by different people) has a difference the fit cannot
+    #   see except through the levels it is fitting, and judged on the cell
+    #   estimates it merged 15-18 such pairs on the planted world. Unlinked,
+    #   a pair is reported and left untied. est: (n_link, dbar, var / sigma2,
+    #   day variance of the pair).
+    n_link, dbar, dvar, day_var = est
+    ok = n_link >= LINK_MIN
+    d = dbar
+    v0 = sigma2 * np.where(ok, dvar, 1e6) + day_var
+    s_same = v0 + slack2
+    s_diff = v0 + tau2_of_cell[a] + tau2_of_cell[b]
+    with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+        l_same = np.log(pi[band]) - 0.5 * np.log(s_same) - 0.5 * (d - delta) ** 2 / s_same
+        l_diff = np.log1p(-pi[band]) - 0.5 * np.log(s_diff) - 0.5 * d ** 2 / s_diff
+        p = 1.0 / (1.0 + np.exp(np.clip(l_diff - l_same, -50, 50)))
+    p = np.where(ok, p, 0.0)
+    for k in range(len(PAIR_BANDS_M)):
+        mk = ok & (band == k)
+        if mk.sum() >= 5:
+            pi[k] = float(np.clip(p[mk].mean(), 1e-3, 0.999))
+    # the slack: how far two keys of one course stray (era, a moved start)
+    w = p * ok
+    if w.sum() > 5:
+        slack2 = float(max(np.sum(w * ((d - delta) ** 2 - v0)) / w.sum(), 1e-6))
+    state["pi"], state["slack"] = pi, np.sqrt(slack2)
+    return p, sigma2 * p / slack2            # P(same), tie weight in the units of q
+
+
+def eraCells(D):
+    """D with a cell per (course, season) and each cell's course and
+    season, for terms "era_walk". Pure; D is not changed."""
+    E = dict(D)
+    cell = np.asarray(D["cell"]); has = cell >= 0
+    key = np.where(has, cell.astype(np.int64) * 4096 + np.asarray(D["season"]) % 4096, -1)
+    u, inv = np.unique(key[has], return_inverse=True)
+    E["cell"] = np.full(cell.size, -1, dtype=np.int64)
+    E["cell"][has] = inv.reshape(-1)
+    E["cell_course"] = (u // 4096).astype(np.int64)
+    E["cell_season"] = (u % 4096).astype(np.int64)
+    return E
+
+
+def eraPairs(cell_course, cell_season):
+    """Per course, each season's cell against the course's previous raced
+    season's: (a, b, seasons apart)."""
+    o = np.lexsort((cell_season, cell_course))
+    same = cell_course[o][1:] == cell_course[o][:-1]
+    a, b = o[:-1][same], o[1:][same]
+    return a, b, (cell_season[b] - cell_season[a]).astype(np.float64)
+
+
+def eraStep(est, est_var, a, b, gap, q_prev):
+    """The course's walk variance per season, by moments on the cells' own
+    estimates (days integrated out): E (c_b - c_a)^2 = q gap + var_a + var_b.
+    ! NOT FROM THE TIED ESTIMATES: a tie pulls the two together, the next
+    step reads less drift, ties harder, and the walk collapses to zero."""
+    ok = np.isfinite(est_var[a]) & np.isfinite(est_var[b])
+    if ok.sum() < 10:
+        return q_prev
+    d2 = (est[b] - est[a])[ok] ** 2
+    v = (est_var[a] + est_var[b])[ok]
+    g = gap[ok]
+    w = 1.0 / (q_prev * g + v) ** 2
+    return float(max(np.sum(w * g * (d2 - v)) / np.sum(w * g * g), 1e-7))
+
+
+def _tiedMeans(num, q, a, b, delta, W, c0, sweeps=8):
+    """Shrunk means with pairs tied: c_b - c_a pulled toward delta with
+    weight W (units of q). Jacobi sweeps; returns (c, variance / sigma2)."""
+    n = c0.size
+    Wsum = np.bincount(a, weights=W, minlength=n) + np.bincount(b, weights=W, minlength=n)
+    c = c0
+    for _ in range(sweeps):
+        pull = (np.bincount(a, weights=W * (c[b] - delta), minlength=n)
+                + np.bincount(b, weights=W * (c[a] + delta), minlength=n))
+        c = (num + pull) / (q + Wsum)
+    return c, 1.0 / (q + Wsum)
 
 
 def _splineBasis(phase, n_knots):
@@ -433,7 +666,8 @@ def fit(D, train, outer=40, dynamic=True, nested=True, heavy=True, heavy_rows=Tr
         rvar = sigma2 / np.maximum(wrow, 1e-6)
         X, V, d2, gap = _smoothPeople(
             D["starts"], D["t"], D["season"], D["lv"], z, xc, rvar, train,
-            jump, q_day, q_jump, s_slope2, s_beta2, m0, dynamic, np.ones(n))
+            jump, q_day, q_jump, s_slope2, s_beta2, m0, dynamic, np.ones(n),
+            np.zeros(n), 0.0)
         th, sl, be = X[:, 0], X[:, 1], X[:, 2]
         vth, vsl, vbe = V[:, 0], V[:, 1], V[:, 2]
         base = y - f - th - be * xc                    # = h * Dsum + e
@@ -665,17 +899,43 @@ MIX_MIN_LOG, MIX_MAX_LOG = 0.03, np.log(2.0)
 # RIEGEL * ln(d' / listed) slow
 RIEGEL = 1.06
 MIX_START = 0.01           # the share of mislabelled races, EM's start
+# ★ ONE COURSE UNDER TWO KEYS, WEIGHED, NEVER MERGED (owner, 2026-10-24:
+#   "same course under different names or listed distances (the Mt SAC
+#   4715/4828 kind of thing), done from the data, not hand rules"). Under
+#   terms "course_tie" every pair of cells of one surface whose places lie
+#   within PAIR_MAX_M is a candidate. If they are one course, their
+#   numbers differ by exactly what their listed distances say,
+#   RIEGEL ln(d_a / d_b), give or take a small slack; if they are two
+#   courses, by two independent draws. Each pair gets P(same) from its
+#   cells' own data, the share of same-course pairs is learned per band of
+#   distance apart (so how much "200 m apart" means is the data's call),
+#   and a pair is tied in proportion to P(same). PAIR_MAX_M only bounds
+#   the search.
+PAIR_MAX_M = 3000.0
+PAIR_BANDS_M = (100.0, 400.0, 1500.0, PAIR_MAX_M)
+PAIR_MAX_RATIO = 1.35      # listed distances further apart are other loops
+TIE_START = dict(pi=0.2, slack=0.005)
+LINK_MIN = 3               # runners who raced both cells in one season, for a pair to be judged
+# ★ THE WEATHER, FITTED (terms "weather", D["wx_temp"/"wx_wind"/"wx_wet"]):
+#   per surface (XC, outdoor track) a hat basis in apparent temperature
+#   with its zero at the cool optimum, a slope in wind and one in wet
+#   ground (soil moisture on grass, rain on the track). Conditions: out of
+#   a rating like altitude. Identified by runners seen in more than one
+#   kind of weather, each against their own trajectory; the race effect
+#   takes what a grid cell misses (a night race on a hot day).
+WX_TEMP_KNOTS = (30.0, 45.0, 55.0, 65.0, 75.0, 85.0, 100.0)   # the artifact's apparent temp, F
+WX_TEMP_PIN = 2                                              # 55 F: zero
 ALT_DIST_KNOTS = ((800.0, 0.21), (1600.0, 0.83), (3000.0, 0.93),
                   (5000.0, 1.00), (10000.0, 1.05))   # joint_solve's, NCAA tables
 
 
 @njit(parallel=True, cache=True)
 def _glsPeople(starts, t, season, z, xc, Xc, Xv, rvar, train, K, q_day,
-               q_jump, s_slope2, s_beta2, n_chunks, ld):
+               q_jump, s_slope2, s_beta2, n_chunks, ld, xe, s_eta2):
     """Per runner, the Kalman filter run on z and on every shared column it
     touches (same gains); accumulates S = sum v_X v_X' / F, s = sum v_X v_z
     / F and the log-likelihood pieces. Diffuse start: theta's first race is
-    absorbed, never scored."""
+    absorbed, never scored. State as _smoothPeople's."""
     n_people = starts.size - 1
     S_all = np.zeros((n_chunks, K, K))
     s_all = np.zeros((n_chunks, K))
@@ -686,10 +946,10 @@ def _glsPeople(starts, t, season, z, xc, Xc, Xv, rvar, train, K, q_day,
         hi = (ch + 1) * n_people // n_chunks
         loc = np.full(K, -1, dtype=np.int64)
         glob = np.zeros(KMAX_LOCAL, dtype=np.int64)
-        A = np.zeros((3, KMAX_LOCAL))
+        A = np.zeros((NS, KMAX_LOCAL))
         vx = np.zeros(KMAX_LOCAL)
         xrow = np.zeros(KMAX_LOCAL)
-        x = np.zeros(3); P = np.zeros((3, 3)); PH = np.zeros(3)
+        x = np.zeros(NS); P = np.zeros((NS, NS)); PH = np.zeros(NS)
         for p in range(lo, hi):
             s, e = starts[p], starts[p + 1]
             kp = 0
@@ -703,16 +963,17 @@ def _glsPeople(starts, t, season, z, xc, Xc, Xv, rvar, train, K, q_day,
                             kp += 1
                         else:
                             over[ch] += 1
-            for r in range(3):
+            for r in range(NS):
                 x[r] = 0.0
-                for c in range(3):
+                for c in range(NS):
                     P[r, c] = 0.0
             for j in range(kp):
-                for r in range(3):
+                for r in range(NS):
                     A[r, j] = 0.0
             P[0, 0] = DIFFUSE
             P[1, 1] = s_slope2
             P[2, 2] = s_beta2
+            P[3, 3] = max(s_eta2, 1e-12)
             for i in range(s, e):
                 if i > s:
                     dt = t[i] - t[i - 1]
@@ -720,7 +981,7 @@ def _glsPeople(starts, t, season, z, xc, Xc, Xv, rvar, train, K, q_day,
                         x[1] = 0.0
                         for j in range(kp):
                             A[1, j] = 0.0
-                        for c in range(3):
+                        for c in range(NS):
                             P[1, c] = 0.0; P[c, 1] = 0.0
                         P[0, 0] += q_jump + q_day * min(dt, 60.0)
                         P[1, 1] = s_slope2
@@ -730,19 +991,19 @@ def _glsPeople(starts, t, season, z, xc, Xc, Xv, rvar, train, K, q_day,
                         for j in range(kp):
                             A[0, j] += u * A[1, j]
                         p00 = P[0, 0] + 2 * u * P[0, 1] + u * u * P[1, 1]
-                        p01 = P[0, 1] + u * P[1, 1]
-                        p02 = P[0, 2] + u * P[1, 2]
+                        for c in range(1, NS):
+                            v_ = P[0, c] + u * P[1, c]
+                            P[0, c] = v_; P[c, 0] = v_
                         P[0, 0] = p00 + q_day * dt
-                        P[0, 1] = p01; P[1, 0] = p01
-                        P[0, 2] = p02; P[2, 0] = p02
                 if not train[i]:
                     continue
                 hx = xc[i]
+                he = xe[i]
                 l0 = ld[i]
-                for c in range(3):
-                    PH[c] = l0 * P[c, 0] + hx * P[c, 2]
-                F = l0 * PH[0] + hx * PH[2] + rvar[i]
-                vz = z[i] - (l0 * x[0] + hx * x[2])
+                for c in range(NS):
+                    PH[c] = l0 * P[c, 0] + hx * P[c, 2] + he * P[c, 3]
+                F = l0 * PH[0] + hx * PH[2] + he * PH[3] + rvar[i]
+                vz = z[i] - (l0 * x[0] + hx * x[2] + he * x[3])
                 for j in range(kp):
                     xrow[j] = 0.0
                 for j in range(m):
@@ -750,7 +1011,7 @@ def _glsPeople(starts, t, season, z, xc, Xc, Xv, rvar, train, K, q_day,
                     if c >= 0 and loc[c] >= 0:
                         xrow[loc[c]] += Xv[i, j]
                 for j in range(kp):
-                    vx[j] = xrow[j] - (l0 * A[0, j] + hx * A[2, j])
+                    vx[j] = xrow[j] - (l0 * A[0, j] + hx * A[2, j] + he * A[3, j])
                 Sc = S_all[ch]
                 sc = s_all[ch]
                 for a in range(kp):
@@ -761,13 +1022,13 @@ def _glsPeople(starts, t, season, z, xc, Xc, Xv, rvar, train, K, q_day,
                     sc[ga] += va * vz
                     for b in range(kp):
                         Sc[ga, glob[b]] += va * vx[b]
-                for r in range(3):
+                for r in range(NS):
                     g = PH[r] / F
                     x[r] += g * vz
                     for j in range(kp):
                         A[r, j] += g * vx[j]
-                for r in range(3):
-                    for c in range(3):
+                for r in range(NS):
+                    for c in range(NS):
                         P[r, c] -= PH[r] * PH[c] / F
             for j in range(kp):
                 loc[glob[j]] = -1
@@ -855,14 +1116,24 @@ def sharedDesign(D, feats, ability, fix_mu=None, n_knots=None,
     ev_n = len(EVENT_EDGES) + 1
     ev = add("event", n_lv * ev_n).reshape(n_lv, ev_n)
     alt = add("altitude", 2)          # per km above ALT_FLOOR_M: XC, track
+    wx_on = "weather" in terms and "wx_temp" in D
+    if wx_on:
+        n_tk = len(WX_TEMP_KNOTS)
+        wx_t = add("wx_temp", 2 * n_tk).reshape(2, n_tk)
+        wx_w = add("wx_wind", 2)
+        wx_e = add("wx_wet", 2)
     K = len(names)
 
     cols, vals = [], []
     def put(c, v):
         cols.append(np.asarray(c, dtype=np.int64)); vals.append(np.asarray(v, dtype=np.float64))
+    # one slot for both levels: a row is XC or indoor, never both
+    mu_col = np.full(n, -1, dtype=np.int64)
     for g, cid in mu_ids.items():
         on = grp == g
-        put(np.where(on, cid[lv] if by_level else cid[0], -1), np.ones(n))
+        mu_col = np.where(on, cid[lv] if by_level else cid[0], mu_col)
+    if mu_ids:
+        put(mu_col, np.ones(n))
     for g, cid in lam_ids.items():
         on = grp == g
         put(np.where(on, cid, -1), np.where(on, ability, 0.0))
@@ -908,6 +1179,25 @@ def sharedDesign(D, feats, ability, fix_mu=None, n_knots=None,
         on = ak > 0
         put(np.where(on, alt[(grp != GROUP_XC).astype(np.int64)], -1),
             np.where(on, ak * np.where(grp == GROUP_XC, 1.0, share), 0.0))
+    if wx_on:
+        # XC and outdoor track only; indoor and rows with no weather take none
+        sf = np.where(grp == GROUP_XC, 0, np.where(grp == GROUP_OUT, 1, -1))
+        tp = np.asarray(D["wx_temp"], dtype=np.float64)
+        okw = (sf >= 0) & np.isfinite(tp)
+        kn = np.asarray(WX_TEMP_KNOTS)
+        x = np.clip(np.where(okw, tp, kn[0]), kn[0], kn[-1] - 1e-9)
+        kk = np.searchsorted(kn, x, side="right") - 1
+        fr = (x - kn[kk]) / (kn[kk + 1] - kn[kk])
+        sfi = np.maximum(sf, 0)
+        for kcol, wv in ((kk, 1 - fr), (kk + 1, fr)):
+            on = okw & (kcol != WX_TEMP_PIN)
+            put(np.where(on, wx_t[sfi, np.minimum(kcol, n_tk - 1)], -1), np.where(on, wv, 0.0))
+        for arr, ids in ((D.get("wx_wind"), wx_w), (D.get("wx_wet"), wx_e)):
+            if arr is None:
+                continue
+            a_ = np.asarray(arr, dtype=np.float64)
+            on = (sf >= 0) & np.isfinite(a_)
+            put(np.where(on, ids[sfi], -1), np.where(on, a_, 0.0))
     Xc = np.stack(cols, axis=1)
     Xv = np.stack(vals, axis=1)
     Xv[Xc < 0] = 0.0
@@ -994,9 +1284,70 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
     th = np.full(n, np.median(y[train])); be = np.zeros(n); vth = np.full(n, 0.01)
     feats = sharedFeatures(D)
     mix = "dist_mix" in terms and nested
+    two_piece = "two_piece" in terms
+    side_s2 = np.array([P["sigma2"], P["sigma2"]])     # fast, slow
     delta = np.zeros(n_race); p_mis = np.zeros(n_race); pi_mis = MIX_START
     listed, Mc = raceCandidates(race, D.get("dist_m"), n_race) if mix else (None, None)
     p_comp = None
+    tie = "course_tie" in terms and "lat" in D
+    pairs = (coursePairs(cell, grp, D["lat"], D["lon"], D.get("dist_m"), n_cell) if tie
+             else None)
+    # ★ A COURSE'S NUMBER WALKS FROM SEASON TO SEASON (terms "era_walk",
+    #   D["cell_course"] / D["cell_season"] per cell): a cell per (course,
+    #   season), each tied to the course's previous season by a walk whose
+    #   variance is the data's. A re-routed course moves; one that did not
+    #   pools every season it was raced. Replaces the fixed 2-year eras.
+    era = "era_walk" in terms and "cell_course" in D
+    q_era = 0.005 ** 2
+    if era:
+        ea, eb, egap = eraPairs(np.asarray(D["cell_course"]), np.asarray(D["cell_season"]))
+        if tie:
+            # a course's own seasons are the walk's business, not a pair's
+            cc = np.asarray(D["cell_course"])
+            k_ = cc[pairs[0]] != cc[pairs[1]]
+            pairs = tuple(x[k_] for x in pairs)
+    tie_state = dict(pi=np.full(len(PAIR_BANDS_M), TIE_START["pi"]), slack=TIE_START["slack"])
+    day_cell_t = np.full(n_day, -1, dtype=np.int64)       # a venue-day's cell, -1 for none
+    day_cell_t[day[has_cell]] = cidx[has_cell]
+    p_same = np.zeros(0); pair_links = np.zeros(0)
+    # ★ THE RUNNER'S OWN DISTANCE CURVE (terms "endurance"): eta_p, how much
+    #   slower than the population's curve this runner gets per unit of
+    #   ln(distance / 5000) -- a miler's 3200 normalised to 5000 reads
+    #   faster than their 5000 does. Static per runner, N(0, s_eta2), its
+    #   variance by EM; a runner seen at one distance stays at 0. It moves
+    #   a result to the runner's OWN 5000, so the 5K column carries it.
+    endur = "endurance" in terms and "dist_m" in D
+    x_end = (np.log(np.where(np.asarray(D["dist_m"]) > 0, np.asarray(D["dist_m"]), 5000.0) / 5000.0)
+             if endur else np.zeros(n))
+    n_pp = D["starts"].size - 1
+    eta = np.zeros(n_pp); s_eta2 = 0.02 ** 2; en = np.zeros(n)
+    spread_p = np.zeros(n_pp, dtype=bool)
+    if endur:
+        # runners whose distances vary inside one surface: they alone measure s_eta
+        pg = D["person"].astype(np.int64) * 3 + grp
+        lo_ = np.full(3 * n_pp, np.inf); hi_ = np.full(3 * n_pp, -np.inf)
+        np.minimum.at(lo_, pg[train], x_end[train]); np.maximum.at(hi_, pg[train], x_end[train])
+        spread_p = ((hi_ - lo_) > 0.2).reshape(n_pp, 3).any(axis=1)
+    # ★ A TEAM INSIDE A RACE (terms "team_race", D["team"]): a shortfall
+    #   every runner of one team shares in one race -- a team told to run
+    #   tempo at a league meet (owner, 2026-10-18). Nested in the race,
+    #   Student-t, only where the team has 2+ runners in it; out of the
+    #   rating like the race's own effect.
+    team_on = "team_race" in terms and "team" in D
+    rt = np.full(n, -1, dtype=np.int64); n_rt = 0
+    if team_on:
+        tm_ = np.asarray(D["team"]).astype(np.int64)
+        okt = tm_ >= 0
+        key_t = race[okt] * (int(tm_.max()) + 2) + tm_[okt]
+        u_t, inv_t, cnt_t = np.unique(key_t, return_inverse=True, return_counts=True)
+        code = np.where(cnt_t[inv_t.reshape(-1)] >= 2, inv_t.reshape(-1), -1)
+        good = np.unique(code[code >= 0])
+        remap = np.full(u_t.size, -1, dtype=np.int64); remap[good] = np.arange(good.size)
+        rt[okt] = np.where(code >= 0, remap[np.maximum(code, 0)], -1)
+        n_rt = int(good.size)
+    tmv = np.zeros(max(n_rt, 1)); lam_t = np.ones(max(n_rt, 1)); s_t2 = 0.005 ** 2
+    has_rt = rt >= 0
+    tmr = np.zeros(n)
     cell_days = np.bincount(np.unique(cidx[has_cell] * (n_day + 1) + day[has_cell])
                             // (n_day + 1), minlength=n_cell)
     day_races = np.bincount(np.unique(day * (n_race + 1) + race) // (n_race + 1),
@@ -1021,14 +1372,15 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
         h = 1.0 + kappa * (level - theta_ref)
         Xc, Xv, names, blocks, K, nk, pin = sharedDesign(D, feats, level - theta_ref,
                                                           fix_mu, terms=terms)
-        eff = np.where(has_cell, c[cidx], 0.0) + w[day] + v[race]
+        eff = np.where(has_cell, c[cidx], 0.0) + w[day] + v[race] + tmr
         z = y - mu_fixed[grp] - h * eff
         rvar = sigma2 / np.maximum(wrow, 1e-6)
         ld = 1.0 + lam[grp]
         zc = z - C
         S, s, over = _glsPeople(D["starts"], D["t"], D["season"], zc,
                                 xc, Xc, Xv, rvar,
-                                train, K, q_day, q_jump, s_slope2, s_beta2, n_chunks, ld)
+                                train, K, q_day, q_jump, s_slope2, s_beta2, n_chunks, ld,
+                                x_end, s_eta2 if endur else 0.0)
         if over:
             raise RuntimeError(f"statespace: {over} shared columns past KMAX_LOCAL "
                                f"({KMAX_LOCAL}) for some runner; raise it")
@@ -1080,7 +1432,7 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
         #   conditions; the season curve, the summer step, the taper and the
         #   post-break recovery are the runner's fitness that day.
         cond_cols = np.zeros(b.size, dtype=bool)
-        for nm in ("altitude", "event"):
+        for nm in ("altitude", "event", "wx_temp", "wx_wind", "wx_wet"):
             if nm in blocks:
                 cond_cols[blocks[nm]] = True
         cond = applyDesign(Xc, Xv, np.where(cond_cols, b, 0.0))
@@ -1095,22 +1447,62 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
                        else np.median(zs[train]) for L in range(n_lv)])
         X, V, d2s, gap = _smoothPeople(D["starts"], D["t"], D["season"], D["lv"], zs - C, xc,
                                       rvar, train, np.zeros(n_lv), q_day, q_jump,
-                                      s_slope2, s_beta2, m0 - C, True, ld)
+                                      s_slope2, s_beta2, m0 - C, True, ld,
+                                      x_end, s_eta2 if endur else 0.0)
         th = X[:, 0] + C
         sl, be = X[:, 1], X[:, 2]
         vth, vsl, vbe = V[:, 0], V[:, 1], V[:, 2]
+        if endur:
+            # ★ eta IS A STATE, NOT A STEP: fitted with theta and its
+            #   uncertainty, so a noisy distance slope widens the level
+            #   rather than moving it. (As a block step after theta it made
+            #   cross-country forecasts worse on the planted world, 1.94 ->
+            #   1.98%, while fixing the track ratings.) Its variance by EM
+            #   over runners whose distances vary inside one surface.
+            eta_row, veta = X[:, 3], V[:, 3]
+            first_p = D["starts"][:-1][np.diff(D["starts"]) > 0]
+            sp = spread_p[D["person"][first_p]]
+            if sp.sum() >= 10:
+                s_eta2 = float(max(np.mean(eta_row[first_p][sp] ** 2 + veta[first_p][sp]), 1e-8))
+            eta = np.zeros(n_pp); eta[D["person"]] = eta_row
+            en = eta_row * x_end
         # the part of theta's error the row's own residual shares: Var(theta)
         # and, on XC rows, Cov(theta, beta) (the two trade on grass)
-        vres = vth + xc * V[:, 3]
+        vres = vth + xc * V[:, 4]
         level = th + fitness
         h = 1.0 + kappa * (level - theta_ref)
         G = G0 + lam[grp] * (th - C)                # the level at this runner's ability
-        base = y - th - be * xc - fitness - G - cond   # = h (c + w + v) + e
+        base_all = y - th - be * xc - fitness - G - cond - en   # = h (c + w + v + team) + e
+        base = base_all - h * tmr
         ww = wrow * tr
         # courses, venue-days, races
         r = base - h * (w[day] + v[race])
         c, vc, cden = _shrunkMean(cidx, n_cell, np.where(has_cell, ww * h * r, 0.0),
                                   np.where(has_cell, ww * h * h, 0.0), sigma2 / tau2[cell_grp])
+        if tie or era:
+            cq = cden + sigma2 / tau2[cell_grp]
+            rr = base - h * v[race]
+            est, est_var = cellMarginal(day_cell_t, n_cell, day,
+                                        np.where(has_cell, ww * h * rr, 0.0),
+                                        np.where(has_cell, ww * h * h, 0.0), sigma2,
+                                        s_w2[day_grp] / lam_w)
+            ta, tb, td, tw = [], [], [], []
+            if tie:
+                links = pairLinks(D["person"], D["season"], np.where(has_cell, cidx, -1), rr,
+                                  ww * h * h, pairs[0], pairs[1], n_cell)
+                # day noise the linked rows share: a day's effect is one draw
+                # for every runner on it, so it does not average out over runners
+                dv = s_w2[cell_grp] * (1.0 / np.maximum(cell_days, 1))
+                p_same, W = _tieCourses(links + (dv[pairs[0]] + dv[pairs[1]],), None, sigma2,
+                                        tau2[cell_grp], pairs, tie_state)
+                pair_links = links[0]
+                ta.append(pairs[0]); tb.append(pairs[1]); td.append(pairs[4]); tw.append(W)
+            if era:
+                q_era = eraStep(est, est_var, ea, eb, egap, q_era)
+                ta.append(ea); tb.append(eb); td.append(np.zeros(ea.size))
+                tw.append(sigma2 / (q_era * egap))
+            c, vc = _tiedMeans(c * cq, cq, np.concatenate(ta), np.concatenate(tb),
+                               np.concatenate(td), np.concatenate(tw), c)
         r = base - h * (np.where(has_cell, c[cidx], 0.0) + v[race])
         w, vw, wden = _shrunkMean(day, n_day, ww * h * r, ww * h * h,
                                   sigma2 * lam_w / s_w2[day_grp])
@@ -1145,6 +1537,17 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
                 if mr.any():
                     v[mr] -= (v[mr] - delta[mr]).mean()
         Dsum = np.where(has_cell, c[cidx], 0.0) + w[day] + v[race]
+        if team_on and n_rt:
+            r = base_all - h * Dsum
+            tmv, vt, tden = _shrunkMean(np.maximum(rt, 0), n_rt, np.where(has_rt, ww * h * r, 0.0),
+                                        np.where(has_rt, ww * h * h, 0.0), sigma2 * lam_t / s_t2)
+            okk = tden > 0
+            if okk.sum() >= 10:
+                s_t2 = float(max(np.mean(lam_t[okk] * (tmv[okk] ** 2 + sigma2 * vt[okk])), 1e-8))
+            if heavy:
+                lam_t = (NU_DAY + 1.0) / (NU_DAY + tmv ** 2 / s_t2)
+            tmr = np.where(has_rt, tmv[np.maximum(rt, 0)], 0.0)
+        base = base_all - h * tmr
         # ★ THE SLOPES BY EM, NOT BY PLUGGING IN THE ESTIMATE. A runner's
         #   level is estimated from the very rows a slope is fitted on, so a
         #   runner whose XC races ran slow looks both slower and more
@@ -1198,7 +1601,21 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
         h = 1.0 + kappa * (level - theta_ref)
         res = base - h * Dsum
         sigma2 = float(np.sum(ww * (res ** 2 + vth)) / max(tr.sum(), 1))
-        wrow = (NU_ROW + 1.0) / (NU_ROW + res ** 2 / sigma2)
+        if two_piece:
+            # ★ A BAD DAY IS SLOW, NEVER FAST (terms "two_piece"): the
+            #   residual's slow side gets its own scale, so a runner who
+            #   was ill or ran tempo pulls their level far less than a
+            #   good race does, and the level is the runner's normal day
+            slow = res > 0
+            for side, m_s in ((1, slow), (0, ~slow)):
+                ws = ww * m_s
+                if ws.sum() > 10:
+                    side_s2[side] = float(np.sum(ws * (res ** 2 + vth)) / ws.sum())
+            s2_row = np.where(slow, side_s2[1], side_s2[0])
+            wrow = (NU_ROW + 1.0) / (NU_ROW + res ** 2 / s2_row)
+            wrow = wrow * sigma2 / s2_row          # rvar = sigma2 / wrow = side's scale / weight
+        else:
+            wrow = (NU_ROW + 1.0) / (NU_ROW + res ** 2 / sigma2)
         # the walk and the trend
         same = (gap > 0) & (D["season"] == np.r_[D["season"][:1], D["season"][:-1]])
         same[D["starts"][:-1]] = False
@@ -1239,19 +1656,45 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
                   f"recovery {np.round(rc, 4)} curve sd {np.sqrt(curve_var):.4f}")
 
     eff_c = np.where(has_cell, c[cidx], 0.0)
-    pred_known = th + be * xc + fitness + G + cond + h * eff_c
+    pred_known = th + be * xc + fitness + G + cond + h * eff_c + en
     day_trained = np.bincount(day, weights=tr, minlength=n_day) > 0
     race_trained = np.bincount(race, weights=tr, minlength=n_race) > 0
+    rt_trained = (np.bincount(np.maximum(rt, 0), weights=tr * has_rt, minlength=max(n_rt, 1)) > 0)
     pred = pred_known + h * (np.where(day_trained[day], w[day], 0.0)
-                             + np.where(race_trained[race], v[race], 0.0))
-    perf = y - G - cond - h * (eff_c + w[day] + v[race])
-    out = dict(pred=pred, perf=perf, h=h, theta=th, beta=be, theta_var=vth, mu=mu,
+                             + np.where(race_trained[race], v[race], 0.0)
+                             + np.where(has_rt & rt_trained[np.maximum(rt, 0)], tmr, 0.0))
+    if two_piece:
+        # a held-out row's best guess is the residual's median, which a
+        # heavier slow side puts a little past the level
+        res_tr = (base - h * Dsum)[train]
+        pred = pred + float(np.median(res_tr))
+    perf = y - G - cond - h * (eff_c + w[day] + v[race] + tmr) - en
+    # ★ EVERY RATING CARRIES ITS SD (rating = perf on the pool's scale):
+    #   the course, day and race it was corrected by are estimates, and how
+    #   well each is known is their posterior variance (sigma2 units). A
+    #   result on a course raced once, on a day nobody else ran, is a
+    #   rating with a wide band; a board can show it as such or hold it.
+    vcell = np.where(has_cell, vc[cidx], 0.0)
+    perf_sd = np.sqrt(np.maximum(sigma2 * h * h * (vcell + vw[day] + (vv[race] if nested else 0.0)),
+                                 0.0))
+    out = dict(pred=pred, perf=perf, perf_sd=perf_sd, h=h, theta=th, beta=be, theta_var=vth, mu=mu,
                lam=lam, theta_ref=theta_ref, level=th + fitness,
                kappa=kappa, sigma2=sigma2, q_day=q_day, q_jump=q_jump,
                s_slope2=s_slope2, s_beta2=s_beta2, tau2=tau2, s_w2=s_w2, s_v2=s_v2,
                cell=c, day=w, race=v, b=b, se=se, names=names, blocks=blocks,
                curve_sd=np.sqrt(curve_var), n_knots=nk, fitness=fitness,
-               cell_var=sigma2 * vc)
+               cell_var=sigma2 * vc, sigma_fast=np.sqrt(side_s2[0]), sigma_slow=np.sqrt(side_s2[1]))
+    if era:
+        out["era_sd"] = float(np.sqrt(q_era))
+    if endur:
+        out.update(eta=eta, eta_sd=float(np.sqrt(s_eta2)), endurance_row=en)
+    if team_on:
+        out.update(team_sd=float(np.sqrt(s_t2)), team_row=tmr, n_team_races=n_rt)
+    if tie:
+        a_, b_, m_, band_, delta_ = pairs
+        out.update(pair_a=a_, pair_b=b_, pair_m=m_, pair_delta=delta_, pair_p=p_same,
+                   pair_links=pair_links,
+                   pair_pi=tie_state["pi"], pair_slack=tie_state["slack"])
     if mix:
         # per race: P(not the listed distance), the expected offset, and --
         # for the owner's list only, never applied -- the likeliest other
@@ -1290,6 +1733,9 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
     out["gap_ref"] = {g: float(mu[g]) for g in (GROUP_XC, GROUP_IN)}
     out["G"] = G
     out["cond"] = cond
+    for nm in ("wx_temp", "wx_wind", "wx_wet"):
+        if nm in blocks:
+            out[nm] = b[blocks[nm]]; out[nm + "_se"] = se[blocks[nm]]
     if "altitude" in blocks:
         out["altitude"] = b[blocks["altitude"]]
         out["altitude_se"] = se[blocks["altitude"]]

@@ -159,6 +159,39 @@ def test_a_mislabelled_race_is_rated_at_its_likely_distance_never_relabelled():
     assert right[flagged & rm].mean() > 0.85
 
 
+def test_one_course_under_two_keys_is_found_from_runners_and_nearby_courses_are_not():
+    """Some meets key a course under a second name, half of them listed at
+    4828 for the same 5000; some different courses sit 150-600 m from
+    another. Pairs are judged on runners who raced both: the aliases are
+    found, and no nearby different course is tied."""
+    D = sw.worldHard(seed=2, n_regions=24, schools=8, alias_p=0.15, near_p=0.3)
+    terms = ("peak", "recovery", "event", "mu_by_level", "course_tie")
+    R = ss.fitGLS(D, np.ones(D["y"].size, dtype=bool), outer=12, terms=terms)
+    a, b, p = R["pair_a"], R["pair_b"], R["pair_p"]
+    tcell = np.zeros(D["cell"].max() + 1, dtype=np.int64)
+    tcell[D["cell"]] = D["truth_cell"]
+    same = tcell[a] == tcell[b]
+    assert same.sum() > 20 and (~same).sum() > 5
+    assert (p[same] > 0.5).mean() > 0.8
+    assert (p[~same] > 0.5).sum() == 0
+
+
+def test_a_courses_number_walks_and_the_walk_is_measured():
+    """Each course drifts 0.8% a season (and is now and then re-routed): a
+    cell per course-season tied by a walk finds about that drift and
+    forecasts the next season at least as well as one number per course."""
+    D = sw.worldHard(seed=1, n_regions=12, schools=10, era_sd=0.008, reroute_p=0.05)
+    E = ss.eraCells(D)
+    base = ("peak", "recovery", "event", "mu_by_level")
+    last = D["season"] == D["season"].max()
+    R = ss.fitGLS(E, ~last, outer=12, terms=base + ("era_walk",))
+    assert 0.004 < R["era_sd"] < 0.016
+    one = ss.fitGLS(D, ~last, outer=12, terms=base)
+    f_walk = ss.score(D["y"], R["pred"], D["race"], last)["med_abs"]
+    f_one = ss.score(D["y"], one["pred"], D["race"], last)["med_abs"]
+    assert f_walk <= f_one + 0.0005
+
+
 def test_ss_eval_runs_on_a_pack_shaped_file(tmp_path):
     D = sw.worldHard(seed=4, n_regions=4, schools=8)
     path = tmp_path / "packed_XC_TF.npz"

@@ -169,17 +169,48 @@ so pool-level and tilt effects cancel in the gap. What is left is row-level:
 
 §9 prints both rows' factors.
 
-**How to settle it without three 9-hour runs** (§9 part 1, all read-only):
-1. Diff the model knobs in NEW's env against `env.old`.
-2. Read `engine/data/run_changes/20261023_171317.json`, which lists the
-   engine files changed and the courses that moved 1%+.
-3. List the tfrrs XC meets placed by 06a in this run by season and tier, and
-   which of the 150 runners' races are among them.
-4. Price the tilt on the forward scorecard: `scripts/scorecard.py`, `own`
-   against `hs`, same rows, about 2 h, writes nothing the site reads.
+**How it is settled: one experiment, two by two, on the same data**
+(§9 part 1). Today's nightly solve is run four times as a dry run, with
+the tilt `own` or `hs` and the tfrrs venue placement kept or undone. All
+four use the same pack, code and LACCTiC pages, and write nothing the site
+reads. Each arm is the pipeline's own 08_golive command, read out of
+`deploy/run_pipeline.sh` at run time, with `--golive` swapped for
+`--golive-dry`.
 
-If the venue mapping is the cause, `b1b86fe` (no-state matches) is the first
-thing to revert.
+| arm | tilt | tfrrs placement |
+|---|---|---|
+| A | own | undone |
+| B | hs | undone |
+| C | own | kept |
+| D | hs | kept (what runs now) |
+
+- **The placement undone** (`scripts/oct23_variant_pack.py`): the placed
+  meets are those with GPS now that had none in the migration's dump of OLD
+  (`/srv/migrate/db`). Their rows' course keys go back to
+  `XC:name:<venue>:d<dist>`, the key they had before. The weather the
+  placement switched on comes back off. Each row is normalised again with
+  and without that day's weather and compared with its stored value, so the
+  script finds out from the data whether the pack carries it. Championship
+  keys and rows placed through an athletic.net meet stay.
+- **The tilt**: `XCP_TILT_SCALE` per arm. The arm's ratings are converted
+  to track 5Ks through the site's own `conversions.fiveKForRating`, with
+  that arm's `engine_scale`, `sport_gain` and `distance_offset` rows pinned
+  in place of the live tables (`scripts/oct23_score.py`).
+- **Scored** on the nightly's three tests, plus the order test forward in
+  time. `lacctic_compare --cache` keeps LACCTiC's side identical across
+  the four arms. A table shows how far each arm moved every pool's
+  ratings.
+
+Reading it:
+- **Tilt effect** = (B − A + D − C) / 2.
+- **Placement effect** = (C − A + D − B) / 2.
+- **Interaction** = what is left.
+- If neither effect reaches the size of the drop, the cause is elsewhere:
+  the migration's env (part 1 prints the diff), the data_checks pins, or
+  the data scraped since Oct 19.
+
+Each arm takes about an hour on the solve. Run them one after another, and
+not across 06:00–07:00 UTC (the arms read `venue_elevation` at start).
 
 **Separately, how much the three nightly tests can say.**
 - The order test is 3 races, so races, the unit that varies, number three.
@@ -374,12 +405,21 @@ race *r* inside venue-day *v*, course cell *c* (course × distance, as
 today), and surface *g* ∈ {XC, indoor, outdoor}:
 
 ```
-y_i = θ_p(t) + β_p·xc_i                      the runner: fitness that day, grass specialisation
+y_i = θ_p(t) + β_p·xc_i + η_p·x_i            the runner: fitness that day, grass, their own distance curve
     + f_ℓ(phase) + J_ℓ·seams + τ·peak_i + ρ·recovery_i     the population's share of fitness
     + G_g,ℓ(θ)                               the surface level: XC or indoor against the gauge
-    + α_g·altitude_i + e_ℓ,d                 conditions: altitude, the track event offset
-    + h_i·(c_c + w_v + v_r)                  course, venue-day, race (Student-t days and races)
+    + α_g·altitude_i + e_ℓ,d + W_g(weather)  conditions: altitude, event offset, temperature, wind, wet
+    + h_i·(c_c,s + w_v + v_r + t_r,team)     course (this season), venue-day, race, team in race
     + ε_i                                    Student-t row residual
+
+  x_i      ln(distance / 5000); η_p fitted only from distances inside one
+           surface, so it never trades with grass
+  c_c,s    the course's number this season: a walk from season to season
+           whose step is fitted ("era_walk"); pairs of cells that may be one
+           course are tied in proportion to P(same) ("course_tie")
+  v_r      the race effect, or that plus a standard distance's offset when
+           the race may not be its listed distance, by posterior weight
+           ("dist_mix"); no distance is ever written
 
   y        ln(time) on ONE scale: the flat outdoor 5000 m equivalent (the
            pool's normalised time moved to 5000 m by its own curve)
@@ -392,8 +432,10 @@ y_i = θ_p(t) + β_p·xc_i                      the runner: fitness that day, gr
 ```
 
 **What a rating removes and what it keeps.**
-- **Removed (conditions):** G, the course, the day, the race, altitude and
-  the event offset.
+- **Removed (conditions):** G, the course, the day, the race (with its
+  likely distance error), a team's shared shortfall, altitude, the weather
+  and the event offset; and the runner's own distance curve, which moves a
+  result to their own 5000.
 - **Kept (the runner that day):** fitness, the taper, the summer step,
   recovery from a break, and their grass specialisation.
 
@@ -411,6 +453,12 @@ race back.
 | altitude by GLS | `ALT_PRIOR_MEAN`, `ALT_ACCLIM`, the resident/visitor credit logic (a resident's state is their sea-level fitness, and the coefficient comes from runners seen at several elevations) |
 | Student-t rows | Huber's two constants, the ability weights, the effort term |
 | everything else by EM | τ caps, priors stated in races, `RACE_SAT`, floors |
+| the distance mixture on `v_r` | `own_race_shift` and the race condemnations it feeds, `propose_distances`, the override audits (`audit_overrides`, `kill_bad_overrides`), and every machine-written distance in `corrections.py`. A record-beating time no distance explains stays a data error (`impossible_race`). |
+| course pairs judged on shared runners | `PLACE_RADIUS_M` / `PRIOR_PLACE` (the 400 m place prior), `SIBLING_DIST_TOL`, `VENUE_DIST_*`, and hand venue merges (Mt. SAC 4715/4828) |
+| the course walk | `--era-years 2` and the era drift prior |
+| the weather inside | the backfill's weather multiplier and its night-race errors (the race effect takes what a grid cell misses) |
+| η_p, the runner's distance curve | `SLOPE_RIDGE`'s per-athlete-season endurance slope, the rating-band split of the event offsets (`DIST_BANDS`) |
+| a team in a race | the league-meet tempo problem (owner, 2026-10-18), which today has no term |
 
 ### 4.3 What the 5K column is
 
@@ -544,7 +592,8 @@ The other big pipeline steps are data work this review did not profile:
 |---|---|
 | fitted (EM or GLS) | σ, the walk q, the season trend sd, the seam sd, the grass sd, τ per surface, the day and race sds, the curve's curvature, every level's gap, its slope in ability, the taper, recovery, altitude per surface, the event offsets |
 | cross-validated on the forward scorecard | the t degrees of freedom, the era walk once added, whether the track race day is credited |
-| stated, with the reason printed | the gauge (flat outdoor 400 = 0), κ (§4.4), the 600 m altitude floor, the event shares of the altitude cost (NCAA tables) |
+| stated, with the reason printed | the gauge (flat outdoor 400 = 0), κ (§4.4), the 600 m altitude floor, the event shares of the altitude cost (NCAA tables), Riegel's 1.06 for a wrong distance's cost (the same K the distance tools use), the standard distances a race may really have been, the 21 days after which a season counts as over (the taper), the temperature knots |
+| search bounds, not decisions | course pairs looked for within 3 km and 1.35× in listed distance; a pair is judged only with 3+ runners who raced both in one season |
 
 ---
 
@@ -553,7 +602,11 @@ The other big pipeline steps are data work this review did not profile:
 | today | under the model | caveat |
 |---|---|---|
 | **division guard**, `RACE_DAY_CAP` as threshold/clip/trigger, `flaggedFastDay`, division lean (Midlothian, Shamrock 2025/26, Mt. SAC 2024) | `v_r` is its own heavy-tailed effect inside `w_v`; a short-course division is one big `v_r`, and the venue-day and the other divisions are untouched | race key = (meet, div), already in the pack |
-| **borrowed distances**, wrong-distance overrides, Dan Conway, Monte Vista +19% | a wrong distance is a near-constant log-time offset on one race, i.e. `v_r`. It is absorbed when the race has known runners, and listed (\|v_r\| > 5%) for a human | first-timer fields (MS) still need the distance |
+| **borrowed distances**, wrong-distance overrides, Dan Conway, Monte Vista +19%, **`own_race_shift` condemnations, `propose_distances`, the override audits** | a wrong distance is a near-constant log-time offset on one race. The race effect is a mixture: its ordinary effect, or that plus the offset of a distance the listed one is commonly confused with (5000↔3 mi, 6000↔8000, 3000↔3200, …), by posterior weight. The rating carries the weighted offset; the listed distance is never changed and no race is condemned for it. The likeliest other distance and its weight go to a CSV for a person | first-timer fields (MS) have no known runners: the weights stay near the prior and the rating is wide (its SD says so) |
+| **the place prior** (400 m), **sibling distances**, **venue-distance ties**, hand merges (Mt. SAC 4715/4828) | every pair of cells of one surface within 3 km is judged on the runners who raced both in a season: one course if their numbers differ by what the listed distances say, two if not. The share of same-course pairs per band of distance apart is learned; a pair is tied in proportion; nobody linking it, it is left alone | |
+| **`--era-years 2`**, the era drift prior | a cell per course-season, tied season to season by a walk whose step is fitted | |
+| **the weather multiplier in front of the engine** | temperature, wind and wet ground fitted inside (`ss_weather_export.py`, `--weather`); the backfill's multiplier is taken back off | normalisation keeps distance and era until §8 point 5 |
+| **no term for a team at tempo** (league meets) | a team's shared shortfall in one race, nested in the race, heavy-tailed, out of the rating | needs the pack's team code (it has it) |
 | **`XC:fast`** (Ultimook), and no track race day at all | symmetric credit, shrunk by evidence; the walk tells a tactical race from a slow course. The track heat credit's night-race errors (Hammerand: 35 °C peak for a race run at 22 °C) are the same kind of race-level offset | crediting the track day is scored on the forward test first |
 | **field check** (Marmonte at Pepper Tree) | that race's `v_r` reads fast because the runners' trajectories say what they should run that week | |
 | **island check** (CSU/Wyoming 2020-21), **Michigan early-2000s** | runners carry their state through the island; where no runner connects, the posterior SD is wide and boards gated on it do not show it | gating changes what thin eras show: owner's call |
