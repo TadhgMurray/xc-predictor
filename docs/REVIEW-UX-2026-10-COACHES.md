@@ -141,7 +141,7 @@ This is part of the October UX review. It covers HS and MS coaches and college r
 - **Compare takes two athletes; recruiters compare 3–6.**
 - **10 sort options**, including four "Most improved" and three "(model)", with model talk in the tooltips (`recruiting_search.html:60-69`). The page also uses "programme", "corpus" and the "Being built 3" tab.
 
-<img src="ux-2026-10/coach-recruit-search-phone.png" width="300"> <img src="ux-2026-10/coach-recruit-search-desktop.png" width="480">
+<img src="ux-2026-10/coach-recruit-search-phone.png" width="300">
 
 **Ideas:**
 - **Search by time per event** ("5K < 15:30", "1600 < 4:20", "400 < 50.0"), converted to a rating behind the scenes.
