@@ -7,7 +7,9 @@
 #            Hy-Tek MEET MANAGER / TEAM MANAGER printed results (.txt), the
 #              layout every timer posts, cross country and track;
 #            Hy-Tek's HTML results (.htm/.html) -- the same text inside <pre>;
-#            CSV in the template uploads.CSV_TEMPLATE documents.
+#            CSV in the template uploads.CSV_TEMPLATE documents;
+#            a tab-separated table under each race's heading (MileSplit's
+#              "raw" results page, 2026-10-24), read as that CSV.
 #
 #          Pure: no database, no clock, no network. uploads.py stores what
 #          this returns; nothing here decides what reaches the live tables.
@@ -597,8 +599,103 @@ def htmlToText(raw):
     return body.replace("\xa0", " "), " ".join("".join(p.title).split())
 
 
+# ---- tab tables (MileSplit "raw" results) -------------------------------------
+# A heading line per race ("Boys 5000m Blue Div 5000 Meter"), then a header
+# row "Place<TAB>#<TAB>Name<TAB>Yr<TAB>Team<TAB>Mark" and one row a runner.
+# Turned into the CSV template's rows and read by parseCsv, so the two
+# share every rule; the meet's name, date and course come from the page's
+# schema.org SportsEvent block (htmlMeta), else its <title>.
+
+_TAB_HEAD = re.compile(r"^\s*(place|pl|pos)\t", re.I | re.M)
+_TAB_COLS = {"place": "place", "pl": "place", "pos": "place", "name": "name", "athlete": "name",
+             "yr": "grade", "grade": "grade", "gr": "grade", "team": "school", "school": "school",
+             "affiliation": "school", "mark": "time", "time": "time", "result": "time",
+             "finals": "time"}
+_HEADING_TAIL = re.compile(r"\s+\d[\d,]*\s*(meters?|metres?)\s*$", re.I)
+
+
+def isTabTable(text):
+    m = _TAB_HEAD.search(text or "")
+    if not m:
+        return False
+    head = (text[m.start():].split("\n", 1)[0]).lower().split("\t")
+    cols = {_TAB_COLS.get(h.strip()) for h in head}
+    return "name" in cols and "time" in cols
+
+
+def htmlMeta(raw):
+    """{name, date, location, sport} from a page's schema.org SportsEvent
+    JSON-LD, read as text (nothing is evaluated), else its <title>."""
+    import json
+    meta = {"name": None, "date": None, "location": None, "sport": None}
+    for m in re.finditer(r"<script[^>]*application/ld\+json[^>]*>(.*?)</script>", raw or "",
+                         re.S | re.I):
+        try:
+            d = json.loads(m.group(1))
+        except ValueError:
+            continue
+        for ev in (d if isinstance(d, list) else [d]):
+            if not isinstance(ev, dict) or "Event" not in str(ev.get("@type", "")):
+                continue
+            meta["name"] = meta["name"] or (str(ev.get("name") or "")[:200] or None)
+            meta["date"] = meta["date"] or parseDate(str(ev.get("startDate") or ""))
+            loc = ev.get("location")
+            if isinstance(loc, dict):
+                meta["location"] = meta["location"] or (str(loc.get("name") or "")[:200] or None)
+            meta["sport"] = meta["sport"] or (str(ev.get("sport") or "") or None)
+    t = re.search(r"<title[^>]*>(.*?)</title>", raw or "", re.S | re.I)
+    title = _html.unescape(" ".join(t.group(1).split())) if t else ""
+    title = re.split(r"\s+[-|]\s+", title)[0]
+    if title:
+        meta["name"] = meta["name"] or title[:200]
+        y = re.search(r"\b(19|20)\d\d\b", title)
+        if y and meta["name"] and not re.search(r"\b(19|20)\d\d\b", meta["name"]):
+            meta["name"] = f"{meta['name']} {y.group(0)}"
+    if meta["name"]:
+        meta["name"] = re.sub(r",?\s+presented by\s+[^,]*?(?=\s+(19|20)\d\d\b|$)", "",
+                              meta["name"], flags=re.I).strip()
+    return meta
+
+
+def parseTabTable(text, meta=None, fmt="tab_table"):
+    meta = meta or {}
+    sport = meta.get("sport") or ""
+    sport = "XC" if re.search(r"cross\s*country|\bxc\b", sport, re.I) else (
+        "TF" if re.search(r"track", sport, re.I) else "")
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(("meet_name", "meet_date", "location", "sport", "event", "place", "name", "grade",
+                "school", "time"))
+    heading, cols, src = None, None, []
+    for ln, line in enumerate((text or "").splitlines(), start=1):
+        if not line.strip():
+            continue
+        cells = [c.strip() for c in line.split("\t")]
+        if _TAB_HEAD.match(line):
+            cols = [_TAB_COLS.get(c.lower()) for c in cells]
+            continue
+        if len(cells) == 1:
+            heading, cols = _HEADING_TAIL.sub("", cells[0]) or cells[0], None
+            continue
+        if not cols or not heading:
+            continue
+        rec = {k: cells[i] for i, k in enumerate(cols) if k and i < len(cells)}
+        w.writerow((meta.get("name") or "", meta.get("date") or "", meta.get("location") or "",
+                    sport, heading, rec.get("place", ""), rec.get("name", ""),
+                    rec.get("grade", ""), rec.get("school", ""), rec.get("time", "")))
+        src.append(ln)
+    out = parseCsv(buf.getvalue())
+    out["format"] = fmt
+    back = lambda i: src[i - 2] if i and 2 <= i < len(src) + 2 else None   # noqa: E731
+    for x in out["rows"] + out["warnings"]:     # the table's own lines, not the made-up CSV's
+        x["line"] = back(x.get("line"))
+    return out
+
+
 def parseHytekHtml(raw):
     text, title = htmlToText(raw)
+    if isTabTable(text):
+        return parseTabTable(text, htmlMeta(raw), fmt="milesplit_raw")
     out = parseHytekText(text, fmt="hytek_html")
     if not out["meet"]["name"] and title:
         out["meet"]["name"] = title
@@ -835,6 +932,8 @@ def parse(filename, data):
         return checkRows(parseCsv(text))
     if fmt == "hytek_html":
         return checkRows(parseHytekHtml(text))
+    if isTabTable(text):
+        return checkRows(parseTabTable(text))
     out = parseHytekText(text)
     if out["software"] is None and not out["events"]:
         raise ParseError("This does not look like Hy-Tek results: no 'Event' headings were found. "

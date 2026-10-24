@@ -168,3 +168,25 @@ def test_a_page_too_big_is_refused(monkeypatch):
     monkeypatch.setattr(UF, "MAX_BYTES", 10)
     with pytest.raises(UF.FetchError):
         UF.fetchResults("https://timer.example.com/r.txt", getter=lambda u: Resp(200, b"x" * 50))
+
+
+def test_a_milesplit_results_page_follows_its_raw_files(monkeypatch):
+    # owner, 2026-10-24: the queue's link was MileSplit's formatted page,
+    # which carries no results itself -- only links to each file's raw text
+    _resolve(monkeypatch, {"ms.milesplit.com": "93.184.216.34", "evil.example.com": "93.184.216.35"})
+    base = "https://ms.milesplit.com/meets/1-x-2026"
+    fmt = (f'<html><a href="{base}/results/11/raw">Raw</a><a href="{base}/results/11/raw">again</a>'
+           f'<a href="/meets/1-x-2026/results/12/raw">Raw 2</a>'
+           f'<a href="https://evil.example.com/results/13/raw">elsewhere</a></html>').encode()
+    pages = {f"{base}/results?type=formatted&all=1": fmt,
+             f"{base}/results/11/raw": b"<html><pre>A</pre></html>",
+             f"{base}/results/12/raw": b"<html><pre>B</pre></html>"}
+    seen = []
+
+    def getter(u):
+        seen.append(u)
+        return Resp(200, pages[u], {"Content-Type": "text/html"})
+    name, data = UF.fetchResults(f"{base}/results?type=formatted&all=1", getter=getter)
+    assert name == "fetched.htm"
+    assert seen[1:] == [f"{base}/results/11/raw", f"{base}/results/12/raw"]
+    assert b"<pre>A</pre>" in data and b"<pre>B</pre>" in data

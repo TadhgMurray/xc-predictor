@@ -127,7 +127,7 @@
 <aside class="rc-side">
   <h2>What we read</h2>
   <table class="ct-facts"><tbody>
-    <tr><td>Format</td><td>{{ {"hytek_text": "Hy-Tek text", "hytek_html": "Hy-Tek HTML", "csv": "CSV", "url": "A link, not read yet"}.get(up.file_kind, up.file_kind) }}</td></tr>
+    <tr><td>Format</td><td>{{ {"hytek_text": "Hy-Tek text", "hytek_html": "Hy-Tek HTML", "csv": "CSV", "milesplit_raw": "MileSplit results page", "tab_table": "Tab-separated table", "url": "A link, not read yet"}.get(up.file_kind, up.file_kind) }}</td></tr>
     <tr><td>Races</td><td>{{ events|selectattr("kind", "equalto", "running")|list|length }}{% set skipped = events|rejectattr("kind", "equalto", "running")|list %}{% if skipped %} <span class="ct-muted">(+{{ skipped|length }} skipped)</span>{% endif %}</td></tr>
     <tr><td>Results</td><td>{{ up.n_rows }}</td></tr>
     <tr><td>To check</td><td>{{ warns|length }}{% if flagged_rows %} <span class="ct-muted">({{ flagged_rows|length }} rows)</span>{% endif %}</td></tr>

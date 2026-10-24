@@ -253,3 +253,50 @@ def test_the_reader_runs_nothing():
                    "urlopen", "requests.", "yaml.load"):
         assert banned not in code, banned
     assert re.search(r"convert_charrefs=True", src)
+
+
+# ---- MileSplit raw pages (2026-10-24) -----------------------------------------
+
+MILESPLIT_RAW = """<html><head>
+<title>Watson High School XC Classic, Presented by RunningLane 2026 - Complete Results (Raw)</title>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "SportsEvent",
+ "name": "Watson High School XC Classic, Presented by RunningLane",
+ "startDate": "2026-10-17", "sport": "Cross Country",
+ "location": {"@type": "Place", "name": "Choctaw Trails MC"}}
+</script></head><body><pre>
+Boys 5000m Blue Div 5000 Meter
+Place\t#\tName\tYr\tTeam\tMark
+1\t1059\tMatthew Simmons\t10\tFrench Camp Academy\t16:25.6
+2\t2121\tDevin Roberts\t11\tSenatobia High School\t16:44.8
+
+Girls 3000m JH 3000 Meter
+Place\t#\tName\tYr\tTeam\tMark
+1\t77\tAda Lane\t8\tJackson, Prep\t12:01.0
+\t78\tBea Moss\t7\tJackson Prep\tDNF
+</pre></body></html>"""
+
+
+def test_a_milesplit_raw_page_is_read_as_a_table():
+    out = RP.parse("fetched.htm", MILESPLIT_RAW.encode())
+    assert out["format"] == "milesplit_raw"
+    assert out["meet"]["name"] == "Watson High School XC Classic 2026"
+    assert out["meet"]["date"] == "2026-10-17"
+    assert out["meet"]["location"] == "Choctaw Trails MC"
+    assert out["sport"] == "XC"
+    evs = [(e["title"], e["gender"], e["distance_m"], e["division"]) for e in out["events"]]
+    assert evs == [("Boys 5000m Blue Div", "M", 5000.0, "Blue Div"),
+                   ("Girls 3000m JH", "F", 3000.0, "JH")]
+    r = out["rows"][0]
+    assert (r["place"], r["name"], r["grade"], r["school"], r["time_seconds"]) == \
+        (1, "Matthew Simmons", "10", "French Camp Academy", 985.6)
+    assert out["rows"][2]["school"] == "Jackson, Prep"
+    assert out["rows"][3]["status"] == "DNF"
+    assert out["rows"][0]["line"] == 4          # the page text's line (the <pre> opens on a newline), not the made-up CSV's
+
+
+def test_a_pasted_tab_table_reads_without_a_page():
+    text = "Boys 5000m Varsity\nPlace\tName\tYr\tTeam\tMark\n1\tOwen Castellano\t11\tJesuit\t15:12.4\n"
+    out = RP.parse("results.txt", text.encode())
+    assert out["format"] == "tab_table"
+    assert [(r["name"], r["time_seconds"]) for r in out["rows"]] == [("Owen Castellano", 912.4)]

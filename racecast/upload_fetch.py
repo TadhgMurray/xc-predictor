@@ -13,6 +13,9 @@
 #     Crystal Reports HTML       the positioned <div>s rebuilt into lines
 #                                (sources/hytek.py), every "Next Page" file
 #                                of the report followed, as .txt
+#     a MileSplit results page   every "raw" results file it links to
+#                                (/results/<id>/raw, same host), joined, as
+#                                .htm -- results_parse reads their tables
 #     anything else              as it came: .htm for HTML (results_parse
 #                                reads the <pre>), .csv / .txt by type
 #
@@ -105,6 +108,21 @@ def _pdfText(data):
     return out.stdout
 
 
+_RAW_LINK = re.compile(r'href="([^"]*/results/\d+/raw)"', re.I)
+
+
+def _rawLinks(page, base):
+    """MileSplit: the page's links to its results files' raw text, same
+    host only, in page order, each once."""
+    host = urllib.parse.urlsplit(base).hostname
+    out = []
+    for href in _RAW_LINK.findall(page):
+        u = urllib.parse.urljoin(base, href)
+        if urllib.parse.urlsplit(u).hostname == host and u not in out:
+            out.append(u)
+    return out
+
+
 def fetchResults(url, getter=None):
     """A results link -> (filename, data) for results_parse.parse."""
     if _ROOT not in sys.path:
@@ -132,6 +150,14 @@ def fetchResults(url, getter=None):
                 here = more.decode("utf-8", "replace")
                 parts.append(hytek.textFromPositionedHtml(here))
             return "fetched.txt", "\n".join(parts).encode("utf-8")
+        if not re.search(r"<pre", page, re.I):
+            raws = _rawLinks(page, final)
+            if raws:
+                pages = []
+                for rurl in raws[:MAX_PAGES]:
+                    _f, more, _t = _get(rurl, getter)
+                    pages.append(more)
+                return "fetched.htm", b"\n".join(pages)
         return "fetched.htm", data
     if path.endswith(".csv") or "csv" in ctype:
         return "fetched.csv", data
