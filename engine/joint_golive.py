@@ -417,6 +417,42 @@ def dayConsistencyReport(y, eff_pre, out, D, u_row, u_applied, day_on,
               f"({type(exc).__name__}: {exc})")
 
 
+# ★★ A DIVISION FASTER THAN ITS VENUE TAKES ITS OWN DAY (owner, 2026-10-24:
+#    Shamrock Invitational at Berrien, 2025 and 2026 -- both boys' races
+#    rated 11% above the same runners' seasons, 6% above their season
+#    bests, while every Shamrock 2021-2024 read level). The day guard
+#    (js.raceDayDivisions) flags a division more than RACE_DAY_CAP from its
+#    venue-day and holds its own excess out of the abilities as a fixed
+#    offset; its rows then RECEIVE the venue's day. That is right for a
+#    slow division (a long loop, a 5K stored as 2 miles: no credit) and
+#    wrong for a fast one: a short course's speed was held out of the
+#    abilities and then given straight back to every runner in the
+#    rating, and with a slow venue-day under 'XC:fast' nothing came off at
+#    all. A fast flagged division now takes its own day -- the venue's
+#    plus the held offset -- as any fast day is taken, beyond the cap too:
+#    it can only lower ratings toward what the runners' other races say.
+#    A slow flagged division is unchanged.
+def flaggedOffset(out, n):
+    """Per row, the guard's held offset (u-units; nonzero only on flagged
+    divisions), in the frame that publishes; None when there is none."""
+    dd = out.get("race_day_div_bracket")
+    off = dd.get("offset") if isinstance(dd, dict) else None
+    if off is None:
+        off = out.get("race_day_div_offset")
+    if off is None or np.asarray(off).size != n:
+        return None
+    return np.asarray(off, dtype=np.float64)
+
+
+def flaggedFastDay(u_cl, u_app, off, day_on):
+    """(u_cl with each fast flagged row on its own division's day, rows
+    moved). Pure."""
+    u_cl = np.asarray(u_cl, dtype=np.float64)
+    own = np.clip(np.asarray(u_app, dtype=np.float64), -js.RACE_DAY_CAP, js.RACE_DAY_CAP) + off
+    take = np.asarray(day_on, dtype=bool) & (off < 0) & (own < u_cl)
+    return np.where(take, np.minimum(own, 0.0), u_cl), int(take.sum())
+
+
 BROAD_MIN_ROWS = 5        # rows before a division testifies
 BROAD_MIN_DIVS = 2        # divisions before a day can be "everyone"
 BROAD_AGREE = 0.5         # each division at least this share of the day
@@ -537,6 +573,13 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
             u_app = u_row
         u_cl = np.clip(u_app, -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
         u_cl = np.where(fast_only, np.minimum(u_cl, 0.0), u_cl)
+        off = flaggedOffset(out, u_cl.size)
+        if off is not None:
+            u_cl, n_own = flaggedFastDay(u_cl, u_app, off, day_on)
+            if n_own:
+                print(f"[joint/live] race-day term: {n_own:,} rows in divisions that ran "
+                      f"beyond {100 * js.RACE_DAY_CAP:.0f}% faster than their venue's day "
+                      f"take their own division's day (a short course keeps none of it)")
         soft = daySoft()
         if soft > 0:
             u_cl = np.sign(u_cl) * np.maximum(np.abs(u_cl) - soft, 0.0)

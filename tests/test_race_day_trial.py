@@ -179,3 +179,27 @@ def test_the_report_prints_the_slow_day_trials():
     base = [ln for ln in text.splitlines() if "day in, leave-self-out" in ln][0]
     robust = lambda ln: float(ln.split("robust")[1].split("%")[0])           # noqa: E731
     assert robust(line) < robust(base)
+
+
+# ---- a division faster than its venue takes its own day (owner, 2026-10-24) ----
+
+def test_a_fast_flagged_division_takes_its_own_day_and_a_slow_one_does_not():
+    import joint_golive as jg
+    # rows: Shamrock boys (venue +8% slow, own -11%: offset -19%), a slow
+    # flagged division (offset +40%: a 5K stored as 2 miles), an ordinary row
+    u_app = np.array([0.08, 0.02, 0.03])
+    off = np.array([-0.19, 0.40, 0.0])
+    u_cl = np.minimum(np.clip(u_app, -0.10, 0.10), 0.0)          # 'XC:fast'
+    got, n = jg.flaggedFastDay(u_cl, u_app, off, np.ones(3, dtype=bool))
+    assert n == 1
+    assert abs(got[0] - -0.11) < 1e-12        # its own fast day comes off
+    assert got[1] == 0.0 and got[2] == 0.0    # slow and ordinary rows unchanged
+
+
+def test_the_offset_is_read_from_the_frame_that_publishes():
+    import joint_golive as jg
+    off = np.array([-0.1, 0.0])
+    assert jg.flaggedOffset({"race_day_div_bracket": {"offset": off}}, 2) is not None
+    assert jg.flaggedOffset({"race_day_div_offset": off}, 2) is not None
+    assert jg.flaggedOffset({"race_day_div_offset": off}, 3) is None
+    assert jg.flaggedOffset({}, 2) is None
