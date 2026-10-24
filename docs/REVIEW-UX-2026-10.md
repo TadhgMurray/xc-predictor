@@ -75,7 +75,13 @@ The best explanation on the whole site is the home page's one sentence: *"100 is
 
 ## The iPhone "table cut off at the top" bug
 
-I could not run Safari, but I reproduced **a top clip that matches the description in Chromium too**. Every tooltip (`.flag::after`) opens **above** the element it belongs to. On a phone every table sits in `div.tscroll`, which has `overflow-y: hidden`. Anything in the header row (the Rating ⓘ, the 5K ⓘ) or in the first data row (a PR badge, the gold medal) therefore has its tooltip cut off at the top edge of the table box:
+**First suspect: arriving from an athlete page.** Every meet link on an athlete page carries `?r=<result id>` (`athlete.html` meet cell), and `race.html:241-248` then calls `scrollIntoView({block: "center"})` on that row. On a phone the page opens in the middle of the table: no meet name, no race title, no column headers. Which column is Time and which is Rating? You can't tell. This is the most common way a parent reaches a race page, and it matches "cut off at the top" exactly:
+
+<img src="ux-2026-10/race-phone-arrive-from-athlete.png" width="300">
+
+Fix: scroll so the **table header** sits at the top of the screen, and only scroll further when the row would otherwise be off-screen. Or add a slim sticky bar with the race name and column labels. A sticky `<thead>` will not work inside `.tscroll`, because sticky elements stick to the nearest scrolling box, not to the page. `race-page.js:684-690` does the same thing for `#r…` links from the meet finder, and `link-flash.js` does it for other `?r=` links.
+
+**Second suspect: tooltips.** I could not run Safari, but I reproduced **a second top clip in Chromium too**. Every tooltip (`.flag::after`) opens **above** the element it belongs to. On a phone every table sits in `div.tscroll`, which has `overflow-y: hidden`. Anything in the header row (the Rating ⓘ, the 5K ⓘ) or in the first data row (a PR badge, the gold medal) therefore has its tooltip cut off at the top edge of the table box:
 
 <img src="ux-2026-10/race-phone-tooltip-clipped.png" width="390">
 
@@ -84,7 +90,35 @@ That may not be the bug in your screenshot. If yours shows the header row or the
 1. the `-webkit-mask-image` that `.tscroll.has-more` puts on a scrolling box (WebKit has had painting bugs with masks on overflow containers); test by turning the mask off;
 2. `width: 0; min-width: 100%` on `.tscroll` inside the CSS grid of `.rc-grid`.
 
-**Please send the screenshot.** Whichever cause it turns out to be, the tooltip clip is real and worth fixing. On phones, show a tooltip as one popup attached to `<body>` (fixed at the bottom of the screen), not as a `::after` inside the table.
+**Please send the screenshot.** Whichever cause it turns out to be, the tooltip clip is real and worth fixing. On phones, show a tooltip as one popup attached to `<body>` (fixed at the bottom of the screen), not as a `::after` inside the table. The site already has this pattern: `rating-explain.js` opens "How this was rated" as a bottom sheet on phones for exactly this reason (its header comment says so). The badge and ⓘ tooltips should reuse it.
+
+---
+
+## "How this was rated" (tap a rating)
+
+The structure is good: a bottom sheet on phones, with the steps, the percentages and the points. The wording is written for you, not for a parent. Sample text below comes from the string templates in `racecast/explain_rating.py`; the screenshot uses mocked API data:
+
+- "converts to 15:11.9 at the 5000 m reference on the HS boys **distance curve**" (`explain_rating.py:377`)
+- "(the **engine applies 0.92x of a course at this ability**)": this is the tilt, shown to users (`:498`)
+- "This result's stored time was **normalised before the latest refit** of the weather or distance model … stays in the rating **until the next backfill**" (`:471`). This is a maintenance note, not an explanation.
+- "Times ran faster across the board in 2019 than in the **reference era**" (`:416`)
+- For a middle-school or college runner, the sheet ends on a **different number from the one the page shows**, and it names two scales ("This page shows 122.7 on the HS-equivalent scale; the steps are on the HS boys scale, where it is 123.9", `rating-explain.js:266`). That brings back the two-scale idea the one-scale rule removed.
+
+<img src="ux-2026-10/rating-explain-phone.png" width="300">
+
+Suggest: one plain sentence first ("15:11.9 on a course about 2% slower than average, on a slightly fast day → **123.9**"), then the steps, folded, for anyone who wants them. Drop the tilt clause and the "Model update" step from the public text. If the stale-normalisation case matters, say "Recalculated soon" and nothing more.
+
+---
+
+## Across the site
+
+- **Small text on phones.** Root size is 14 px on phones, so the `.7rem` uppercase column headers come out at **9.8 px** (`style.css` `thead th`). The athlete stat labels are 9.5 px, and the "≈ 14:53" next to a rating is 9.4 px. Headers in grey uppercase at under 10 px are hard to read for many parents. Keep headers at 11 px or more, and drop the uppercase on phones.
+- **Tap targets.** Measured at 390 px: ⓘ icons are 14×14, rank links (#9, #1) are 17×16, PR badges are 24×17, Share is 55×24, the rankings tabs and chips are 28–31 px tall, and race and meet name links are 15–19 px tall. The usual floor is about 44 px (Apple) or 48 px (Android). Race page: 157 controls under 32 px tall; rankings: 198. Make the whole row tappable on boards and result tables, and give ⓘ and badges a larger invisible hit area.
+- **Contrast.** The rankings State combo shows "Any" at **1.9:1** with a 1.5:1 caret (`combo-btn-label`), the 9 px "State division / class" label is 3.5:1, and plain rank numbers are 3.8:1. Everything else I measured passed 4.5:1.
+- **Page weight.** Every page loads `style.css` (281 KB raw, 74 KB gzipped, **40% of it comments**) plus `race.css` (16 KB gz) before it can draw. That is about 90 KB of render-blocking CSS per page on a phone network. Stripping comments at deploy time would cut a third of it at no risk. `predictions.js` is 74 KB gzipped and `rankings.js` is 43 KB.
+- **No layout jumps.** I measured layout shift on race, athlete, rankings and home with slow mocked APIs, and it was about 0 everywhere (0.03 on rankings). Good.
+- **Season names disagree.** The rankings Year column says "2026-27" (`rankings.js:582`, `academicLabel`) for both sports. The athlete page says "2026 XC" and "2027 TF" for the same academic year (`app.py:3162`, whose docstring says the two agree). Pick one: "2026 XC" / "2027 Track" is what a runner says.
+- **"Share" falls onto its own line** with a stray "·" on phones on race, meet, home and rankings. Make it an icon button at the end of the title row.
 
 ---
 
