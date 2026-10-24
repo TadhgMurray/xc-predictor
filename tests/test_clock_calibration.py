@@ -52,3 +52,13 @@ def test_the_track_5k_takes_the_gap_back_out(monkeypatch):
     monkeypatch.setitem(C._cal, "map", {("hs_m", "XC"): [(117.0, -1.5)]})
     c2 = C.ratingClock(117.0, "hs_m", "XC", 8000.0)
     assert c2["time"] == "16:40"
+
+
+def test_the_top_five_percent_is_its_own_band():
+    # owner, 2026-10-24: the elite were read inside a band whose median is ~128
+    pairs = [(100.0 + i / 100.0, 0.0 if i < 3800 else 2.0) for i in range(4000)]
+    got = B.bands(pairs, min_n=150)
+    assert len(got) == 6
+    assert got[-1][4] == 2.0 and got[-1][3] == 200
+    # a pool too small for 150 at the top keeps its top fifth whole
+    assert len(B.bands(pairs[:1000], min_n=150)) == 5

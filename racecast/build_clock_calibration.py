@@ -31,7 +31,7 @@
 #   runners with MIN_TRACK_RACES or more at it count.
 # ★ BY RATING BAND. The gap grows with the rating (part B: the fastest third
 #   of hs_f -1.8%, the slowest +0.8%), so one number per pool would be wrong
-#   at both ends. BANDS quantile bands per pool and kind; a band with fewer
+#   at both ends. EDGES quantile bands per pool and kind; a band with fewer
 #   than MIN_BAND runners is left out, and the site interpolates between the
 #   bands' median ratings and holds the end values beyond them.
 # ! DISPLAY ONLY. No rating, board order or course number changes; the site
@@ -59,6 +59,13 @@ MIN_TRACK_RACES = 3
 MIN_TRACK_RACES_EACH = 2     # in each of the two springs
 MIN_SEASON_RACES = 3
 BANDS = 5
+# ★ THE TOP 5% ITS OWN BAND (owner, 2026-10-24: the HS boys' board, 143.8 =
+#   13:59, "too slow"; the college men's 13:21). Five equal bands put the
+#   elite inside one whose median is ~128 (hs_m 124.9-142.9), and the site
+#   holds that band's value for everyone above it. The top fifth is split
+#   at the 95th percentile; a pool too small for 150 runners there (middle
+#   school) keeps the top fifth whole.
+EDGES = (0.0, 0.2, 0.4, 0.6, 0.8, 0.95, 1.0)
 MIN_BAND = 150
 YEARS_BACK = 4
 CAP_PER_POOL_YEAR = 25000
@@ -119,15 +126,21 @@ def bestAndCount(rows, metres, distance_of):
     return best, n
 
 
-def bands(pairs, k=BANDS, min_n=MIN_BAND):
+def bands(pairs, k=None, min_n=MIN_BAND, edges=EDGES):
     """pairs: [(rating, bias_pct)] -> [(mid, lo, hi, n, median bias)] for
-    k quantile bands of the rating, those with min_n or more. Pure."""
+    the quantile bands `edges` cuts (or k equal ones), those with min_n or
+    more. A last band too small is merged into the one below it. Pure."""
     pairs = sorted(p for p in pairs if p[0] and math.isfinite(p[1]))
     out = []
     if len(pairs) < min_n:
         return out
-    for i in range(k):
-        part = pairs[(i * len(pairs)) // k:((i + 1) * len(pairs)) // k]
+    if k is not None:
+        edges = tuple(i / k for i in range(k + 1))
+    cuts = [round(e * len(pairs)) for e in edges]
+    if len(cuts) > 2 and cuts[-1] - cuts[-2] < min_n:
+        cuts.pop(-2)
+    for a, b in zip(cuts, cuts[1:]):
+        part = pairs[a:b]
         if len(part) < min_n:
             continue
         rs = [r for r, _ in part]

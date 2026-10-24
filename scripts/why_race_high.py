@@ -100,12 +100,20 @@ def main():
                     (meet, div, src))
         day = (cur.fetchone()[0] or "")[:10]
         print(f"\n{mname}  {day}  ({meet}/{div}, {src})  course {course!r}  {dist} m")
-        cur.execute("""SELECT round(100 * day_effect::numeric, 2), round(100 * course_effect::numeric, 2), n_rows
-                       FROM race_day_effect WHERE race_date::text = %s AND distance_m = %s
-                         AND lower(course_name) = lower(%s)""", (day, int(round(float(dist or 0))), course or ""))
-        for d_pct, c_pct, n in cur.fetchall():
-            print(f"  solve: course (this era) {c_pct}%   that day {d_pct:+}% "
-                  f"(+ = slow; cross country ratings take a fast day only)   {n} rows")
+        # race_day_effect names a course by its canonical name: find the ids
+        cur.execute("SELECT canonical_id FROM course_canonical WHERE lower(btrim(course_name)) = lower(btrim(%s))",
+                    (course or "",))
+        cids = [r[0] for r in cur.fetchall()]
+        dist_m = int(round(float(dist or 0)))
+
+        def solved(on_day):
+            cur.execute("""SELECT round(100 * day_effect::numeric, 2), round(100 * course_effect::numeric, 2)
+                           FROM race_day_effect WHERE canonical_id = ANY(%s) AND race_date::text = %s
+                             AND distance_m = %s LIMIT 1""", (cids, on_day, dist_m))
+            return cur.fetchone() or (None, None)
+        d_pct, c_pct = solved(day)
+        print(f"  solve: course (this race's era) {c_pct}%   that day {d_pct}% "
+              f"(+ = slow; cross country ratings take a fast day only)")
 
         cur.execute(_FIELD, {"m": meet, "d": div, "s": src, "k": MIN_OTHER})
         rows = sorted(cur.fetchall(), key=lambda r: -float(r[2]))
@@ -134,17 +142,20 @@ def main():
                 hist.append((hday[:10], hm, hd, hn))
         hist = sorted(hist)[-HISTORY:]
         print(f"\n  EVERY RACE AT {course!r} {dist} m (anet): the field vs its own season")
-        print(f"  {'date':10}  {'meet/div':>16}  {'rated':>5}  {'with base':>9}  {'vs med':>7}  {'vs best':>8}  name")
+        print(f"  {'date':10}  {'meet/div':>16}  {'rated':>5}  {'with base':>9}  {'vs med':>7}  {'vs best':>8}"
+              f"  {'course':>7}  {'day':>6}  name")
         for hday, hm, hd, hn in hist:
             cur.execute(_FIELD, {"m": hm, "d": hd, "s": "anet", "k": MIN_OTHER})
             hn2, hem, heb = fieldSummary(cur.fetchall())
             cur.execute("SELECT min(meet_name) FROM meets WHERE meet_id = %s AND div_id = %s", (hm, hd))
             nm = cur.fetchone()[0] or ""
             mark = "  <-" if (hm, hd) == (meet, div) else ""
+            hd_pct, hc_pct = solved(hday)
+            cd = f"{'-' if hc_pct is None else f'{hc_pct}%':>7}  {'-' if hd_pct is None else f'{hd_pct}%':>6}"
             if hn2:
-                print(f"  {hday}  {f'{hm}/{hd}':>16}  {hn:5}  {hn2:9}  {hem:+6.1f}%  {heb:+7.1f}%  {nm[:34]}{mark}")
+                print(f"  {hday}  {f'{hm}/{hd}':>16}  {hn:5}  {hn2:9}  {hem:+6.1f}%  {heb:+7.1f}%  {cd}  {nm[:30]}{mark}")
             else:
-                print(f"  {hday}  {f'{hm}/{hd}':>16}  {hn:5}  {0:9}        -         -  {nm[:34]}{mark}")
+                print(f"  {hday}  {f'{hm}/{hd}':>16}  {hn:5}  {0:9}        -         -  {cd}  {nm[:30]}{mark}")
         conn.rollback()
 
 
