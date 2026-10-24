@@ -1,22 +1,25 @@
 """
 ss_synthetic.py -- the planted-world tables in docs/REVIEW-ENGINE-2026-10.md
-§5: the state-space prototype (engine/statespace.py) against the same code
-held to the current engine's shape, on held-out races, a forward month and
-the spring track, plus what each does to the ratings of a mis-measured
-division.
+§6: the state-space engine (engine/statespace.fitGLS) against the same code
+held to the current engine's skeleton, on the hard world
+(statespace_world.worldHard: the real calendar's overlaps, tapers, December
+breaks, only the best racing December XC, short courses, bad days, a tilt,
+the XC gap planted at 6% and indoor at 1%).
 
-    python scripts/ss_synthetic.py            # seeds 0 and 1, ~1 minute
-    python scripts/ss_synthetic.py --seeds 0 1 2 3
+    python scripts/ss_synthetic.py                 # seeds 0 1 2, ~5 minutes
+    python scripts/ss_synthetic.py --seeds 0 --quick
 
-★ THE RUNGS, cumulative:
-    A    athlete-season ability, one race-day per venue-day, Gaussian days,
-         the XC gap asserted -- the current engine's skeleton (no bracket,
-         field check or island check: those are fixes for what A gets wrong)
-    +walk         ability a random walk with a personal season trend
-    +nested       venue-day > race, so a division has its own day
-    B    +heavy   Student-t days: a short course is absorbed, not shrunk
-⚠ PLANTED, NOT REAL. Every gain here is a gain on a world built to have the
-  things the model models. The pack decides (scripts/ss_eval.py).
+★ THE TABLES
+    1  held-out races, a forward month, spring track from the fall:
+       A (athlete-season ability, one day per venue-day, Gaussian days, the
+       gap ASSERTED at the truth) against the engine (everything fitted)
+    2  the ratings against the planted performance: ordinary rows, rows in a
+       mis-measured division, and the XC-vs-track level of the ratings
+    3  the gap: realised (the planted courses' own average), the engine's,
+       the naive 30-day pair difference, and the engine without each kind
+       of bridge
+    4  the gap's precision against how many venues the bridges touch
+⚠ PLANTED, NOT REAL. The pack decides (scripts/ss_eval.py).
 """
 import argparse
 import os
@@ -29,74 +32,88 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "engine"))
 import statespace as ss                                         # noqa: E402
 import statespace_world as sw                                   # noqa: E402
 
-GAP = sw.TRUE["mu_xc"]
-LADDER = (
-    ("A (current shape)", dict(dynamic=False, nested=False, heavy=False)),
-    ("+walk", dict(dynamic=True, nested=False, heavy=False)),
-    ("+nested", dict(dynamic=True, nested=True, heavy=False)),
-    ("B (+heavy)", dict(dynamic=True, nested=True, heavy=True)),
-)
+TERMS = ("peak", "recovery", "event", "mu_by_level")
 
 
-def figures(D, R, fast_only=False):
-    """The rating a model would publish, in log time: the row less its
-    tilted course and day. fast_only=True credits XC days only when fast
-    and track days never (production's XCP_RACE_EFFECT_SPORTS=XC:fast)."""
-    h, cell = R["h"], D["cell"]
-    course = R["mu"][D["group"]] + np.where(cell >= 0, R["cell"][np.maximum(cell, 0)], 0.0)
-    day = R["day"][D["day"]] + R["race"][D["race"]]
-    if fast_only:
-        day = np.where(D["xc"] == 1, np.minimum(day, 0.0), 0.0)
-    return D["y"] - h * (course + day)
+def realised(D):
+    tc = np.asarray(D["truth_course"]); g = D["group"]
+    _, first = np.unique(D["cell"], return_index=True)
+    cm = {gg: tc[first[g[first] == gg]].mean() for gg in range(3)}
+    T = D["truth"]
+    return T["mu_xc"] + cm[0] - cm[1], T["mu_in"] + cm[2] - cm[1]
+
+
+def rungA(D, tr, outer):
+    T = D["truth"]
+    return ss.fit(D, tr, outer=outer, dynamic=False, nested=False, heavy=False,
+                  fix_mu={ss.GROUP_XC: T["mu_xc"], ss.GROUP_IN: T["mu_in"]})
+
+
+def perfA(D, R):
+    return D["y"] - R["h"] * (R["mu"][D["group"]] + R["cell"][D["cell"]]
+                              + R["day"][D["day"]] + R["race"][D["race"]])
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1])
-    ap.add_argument("--outer", type=int, default=25)
+    ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
+    ap.add_argument("--outer", type=int, default=20)
+    ap.add_argument("--quick", action="store_true", help="skip tables 3b and 4")
     a = ap.parse_args()
     for seed in a.seeds:
-        D = sw.world(seed=seed)
+        D = sw.worldHard(seed=seed)
         S = sw.splits(D)
-        print(f"\n### seed {seed}: {D['y'].size:,} rows, {D['starts'].size - 1:,} people")
+        print(f"\n### seed {seed}: {D['y'].size:,} rows, {D['starts'].size - 1:,} runners")
+        print("\n1. held out")
+        print(f"  {'split':8s} {'rung':10s} {'bias':>7s} {'med|e|':>7s} {'spread':>7s} {'h2h':>7s}")
         for split in ("race", "forward", "sport"):
             tr, sc = S[split]
-            print(f"\n{split}: train {tr.sum():,}, scored {sc.sum():,}")
-            print(f"  {'rung':20s} {'bias':>7s} {'med|e|':>7s} {'spread':>7s} {'h2h':>7s} {'kappa':>6s}")
-            for name, kw in LADDER:
-                t0 = time.time()
-                R = ss.fit(D, tr, outer=a.outer, fix_mu={0: GAP}, **kw)
+            for name, fn in (("A", lambda: rungA(D, tr, a.outer)),
+                             ("engine", lambda: ss.fitGLS(D, tr, outer=a.outer, terms=TERMS))):
+                R = fn()
                 r = ss.score(D["y"], R["pred"], D["race"], sc)
-                print(f"  {name:20s} {100 * r['bias']:+6.2f}% {100 * r['med_abs']:6.3f}% "
-                      f"{100 * r['spread']:6.3f}% {100 * r['h2h']:6.2f}% {R['kappa']:6.2f}"
-                      f"  ({time.time() - t0:.0f}s)")
-        # the ratings themselves, fitted on everything
-        allrows = np.ones(D["y"].size, dtype=bool)
-        bad = D["bad_race"]
-        print(f"\nratings vs the planted performance, |figure - truth| median, all rows fitted"
-              f" ({bad.mean():.1%} of rows in a mis-measured division)")
-        print(f"  {'rung':28s} {'ordinary':>9s} {'mis-measured':>13s}")
-        for name, kw, fast in (("A, every day credited", LADDER[0][1], False),
-                               ("A, XC:fast", LADDER[0][1], True),
-                               ("B, every day credited", LADDER[3][1], False)):
-            R = ss.fit(D, allrows, outer=a.outer, fix_mu={0: GAP}, **kw)
-            err = figures(D, R, fast) - D["truth_perf"]
-            err = err - np.median(err[~bad])          # the scale's level is free
-            print(f"  {name:28s} {100 * np.median(np.abs(err[~bad])):8.3f}% "
-                  f"{100 * np.median(np.abs(err[bad])):12.3f}%")
-        R = ss.fit(D, allrows, outer=a.outer, **LADDER[3][1], fix_mu={0: GAP})
-        print(f"\nB recovers: kappa {R['kappa']:.3f} (planted {sw.TRUE['kappa']}), "
-              f"sigma {np.sqrt(R['sigma2']):.4f} ({sw.TRUE['sigma']} + bad days), "
-              f"season trend sd {np.sqrt(R['s_slope2']):.4f}/yr ({sw.TRUE['slope_sd']}), "
-              f"tau XC {np.sqrt(R['tau2'][0]):.4f} ({sw.TRUE['tau'][0]}), "
-              f"day sd XC {np.sqrt(R['s_w2'][0]):.4f} ({sw.TRUE['s_w'][0]}, t3)")
-        print("\nthe XC gap, profiled (train sigma; spring-track holdout med|e| and h2h):")
-        tr, sc = S["sport"]
-        for g in (0.0, 0.03, 0.06, 0.09):
-            R = ss.fit(D, tr, outer=a.outer, fix_mu={0: g}, **LADDER[3][1])
-            r = ss.score(D["y"], R["pred"], D["race"], sc)
-            print(f"  gap {g:.2f}: sigma {np.sqrt(R['sigma2']):.5f}  med|e| "
-                  f"{100 * r['med_abs']:.3f}%  h2h {100 * r['h2h']:.2f}%  bias {100 * r['bias']:+.2f}%")
+                print(f"  {split:8s} {name:10s} {100 * r['bias']:+6.2f}% {100 * r['med_abs']:6.3f}% "
+                      f"{100 * r['spread']:6.3f}% {100 * r['h2h']:6.2f}%", flush=True)
+        print("\n2. ratings against the planted performance (median |error|)")
+        allr = np.ones(D["y"].size, dtype=bool)
+        bad = D["bad_race"]; xc = D["group"] == ss.GROUP_XC
+        RA = rungA(D, allr, a.outer)
+        RB = ss.fitGLS(D, allr, outer=a.outer, terms=TERMS)
+        for name, perf in (("A", perfA(D, RA)), ("engine", RB["perf"])):
+            err = perf - D["truth_perf"]
+            err = err - np.median(err[~bad & ~xc])
+            print(f"  {name:8s} ordinary XC {100 * np.median(np.abs(err[~bad & xc])):.2f}%  "
+                  f"ordinary track {100 * np.median(np.abs(err[~bad & ~xc])):.2f}%  "
+                  f"mis-measured {100 * np.median(np.abs(err[bad])):.2f}%  "
+                  f"XC level vs track {100 * np.median(err[~bad & xc]):+.2f}%", flush=True)
+        rx, ri = realised(D)
+        nv = sw.naiveGaps(D, 30)
+        print(f"\n3. the gap (+ = slower than the flat outdoor gauge)")
+        print(f"  realised       XC {100 * rx:+.2f}%   indoor {100 * ri:+.2f}%")
+        print(f"  engine         XC {100 * RB['gap_ref'][ss.GROUP_XC]:+.2f}%   indoor "
+              f"{100 * RB['gap_ref'][ss.GROUP_IN]:+.2f}%   (taper "
+              f"{100 * RB['b'][RB['blocks']['peak'][0]]:+.2f}%, planted -1.00%)")
+        print(f"  naive 30-day   XC {-100 * nv['outdoor-XC'][0]:+.2f}%   indoor "
+              f"{100 * (nv['indoor-XC'][0] - nv['outdoor-XC'][0]):+.2f}%")
+        if not a.quick:
+            masks = ss.bridgeMasks(D)
+            for k in ss.BRIDGE_KINDS:
+                E = ss.subsetRows(D, ~masks[k])
+                Rk = ss.fitGLS(E, np.ones(E["y"].size, dtype=bool), outer=a.outer, terms=TERMS)
+                print(f"  without {k:16s} XC {100 * Rk['gap_ref'][ss.GROUP_XC]:+.2f}%   indoor "
+                      f"{100 * Rk['gap_ref'][ss.GROUP_IN]:+.2f}%", flush=True)
+    if not a.quick:
+        print("\n4. the XC-vs-track level of the ratings against the number of venues")
+        for nr, schools in ((10, 20), (40, 10)):
+            offs = []
+            for seed in a.seeds:
+                D = sw.worldHard(seed=seed, n_regions=nr, schools=schools)
+                R = ss.fitGLS(D, np.ones(D["y"].size, dtype=bool), outer=15, terms=TERMS)
+                bad = D["bad_race"]; xc = D["group"] == ss.GROUP_XC
+                err = R["perf"] - D["truth_perf"]
+                offs.append(np.median(err[xc & ~bad]) - np.median(err[~xc & ~bad]))
+            print(f"  {nr:3d} regions: offsets {np.round(100 * np.array(offs), 2)}%  "
+                  f"rms {100 * np.sqrt(np.mean(np.square(offs))):.2f}%", flush=True)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,10 @@
 #                  penalised spline in days since 1 August, per level.
 #     beta_p       the person's grass specialisation, N(0, s_beta^2).
 #     mu_g         the group level: XC, indoor, outdoor (outdoor = 0, the
-#                  gauge). mu_XC IS the XC-to-track gap, and it is fitted.
+#                  gauge). mu_XC IS the XC-to-track gap, and it is fitted
+#                  -- by fitGLS through each runner's filter (fit() below is
+#                  the first, block-step version, kept for the comparison
+#                  rungs; its level estimate stalls, see fitGLS).
 #     c_c          course x distance cell, N(0, tau_g^2).
 #     w_d, v_r     venue-day and race-within-day, Student-t: a short course
 #                  in one division is one big v_r, not a moved venue-day.
@@ -549,8 +552,11 @@ def score(y, pred, race, mask):
 #   window is chosen.
 #
 # ★ THE SHARED EFFECTS (the columns of X):
-#     mu_XC, mu_in     the group levels against the flat outdoor gauge,
-#                      tilted (h on the row)
+#     mu_XC, mu_in     the XC and indoor levels against the flat outdoor
+#                      gauge, per level of the pool ("mu_by_level"); their
+#                      slope in ability is the loading (1 + lam) on the
+#                      runner's state, fitted by EM (fitGLS), not a column
+#     altitude         per surface, per km above ALT_FLOOR_M (a condition)
 #     season curve     per level, a hat basis every SPLINE_KNOT_DAYS from
 #                      1 August, one knot (1 October) pinned at 0, its
 #                      curvature variance fitted by EM
@@ -564,8 +570,9 @@ def score(y, pred, race, mask):
 #                      costs the first indoor races
 #     event            track distance classes per level, 1600 m pinned
 #   Peak and recovery are FITNESS: they explain the trajectory so the gap
-#   is not asked to, and they stay in a runner's rating. Only mu, course,
-#   day and race come out of a rating.
+#   is not asked to, and they stay in a runner's rating. The level, the
+#   altitude, the event offset, the course, the day and the race come out
+#   of a rating (perf); its exp is the 5K column, on the day, no forecast.
 
 KMAX_LOCAL = 256           # shared columns one runner can touch (an error past it)
 # ⚠ THE START MUST BE DIFFUSE, AND z CENTRED. A prior N(0, 1) on theta with
@@ -782,20 +789,17 @@ def sharedDesign(D, feats, ability, fix_mu=None, n_knots=None,
     c1 = np.where(k1 == pin, -1, curve[lv, k1])
     if "nocurve" not in terms:
         put(c0, 1 - fr); put(c1, fr)
-    # seams: the count crossed INTO each level so far, per person
+    # seams: the count crossed INTO each level so far, per person.
+    # ! FOUR SLOTS, NOT ONE PER LEVEL. A runner enters at most four levels
+    #   (elementary, ms, hs, college or pro) but the corpus has a dozen pools; a column per
+    #   level on every row was ~10 GB of -1s on the full pack.
     starts = D["starts"]
     season = D["season"]
-    crossed = np.zeros((n, n_lv), dtype=np.int64)
     is_seam = np.r_[False, season[1:] != season[:-1]]
     is_seam[starts[:-1]] = False
-    inc = np.zeros((n, n_lv), dtype=np.int64)
-    inc[np.flatnonzero(is_seam), lv[is_seam]] = 1
-    cs = np.cumsum(inc, axis=0)
-    base = cs[np.repeat(starts[:-1], np.diff(starts))]
-    crossed = cs - base
-    for L in range(n_lv):
-        on = crossed[:, L] > 0
-        put(np.where(on, seam[L], -1), crossed[:, L].astype(np.float64))
+    cols3, vals3 = _seamSlots(starts, lv, is_seam, n_lv, seam.astype(np.int64))
+    for j in range(cols3.shape[1]):
+        put(cols3[:, j], vals3[:, j])
     if "peak" in terms:
         put(np.where(feats["peak"], peak, -1), np.ones(n))
     for b in range(len(BREAK_BINS) - 1):
@@ -826,6 +830,32 @@ def sharedDesign(D, feats, ability, fix_mu=None, n_knots=None,
     Xv[Xc < 0] = 0.0
     # columns nobody touches stay out of the solve
     return Xc, Xv, names, blocks, K, nk, pin
+
+
+@njit(cache=True)
+def _seamSlots(starts, lv, is_seam, n_lv, seam_ids):
+    """Per row, up to 4 (seam column, count crossed into that level so far)."""
+    n = lv.size
+    cols = np.full((n, 4), -1, dtype=np.int64)
+    vals = np.zeros((n, 4))
+    cnt = np.zeros(n_lv, dtype=np.int64)
+    order = np.zeros(4, dtype=np.int64)
+    for p in range(starts.size - 1):
+        s, e = starts[p], starts[p + 1]
+        for L in range(n_lv):
+            cnt[L] = 0
+        k = 0
+        for i in range(s, e):
+            if is_seam[i]:
+                L = lv[i]
+                if cnt[L] == 0 and k < 4:
+                    order[k] = L
+                    k += 1
+                cnt[L] += 1
+            for j in range(k):
+                cols[i, j] = seam_ids[order[j]]
+                vals[i, j] = cnt[order[j]]
+    return cols, vals
 
 
 def applyDesign(Xc, Xv, b):
