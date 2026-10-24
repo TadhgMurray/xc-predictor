@@ -104,6 +104,49 @@ Person = namedtuple("Person", "pid name gender rows")
 Verdict = namedtuple("Verdict", "target reason touched", defaults=((),))
 
 
+# ★ A NICKNAME AT THE SAME SCHOOL IS THE SAME RUNNER (owner, 2026-10-24:
+#   the Tufts 1600 m time trial's "William Burch" minted a new person beside
+#   tfrrs's "Will Burch", Tufts). Only as a fallback: no exact namesake holds
+#   the school, and exactly ONE holder whose first name is in the same group
+#   (and whose surname is the same) does, passing every test an exact match
+#   must. Groups are the common short forms only; a name that is a name in
+#   its own right (Liam, Jack) is not folded in.
+NICKNAMES = (
+    ("william", "will", "bill", "billy", "willy"), ("robert", "rob", "bob", "bobby", "robbie"),
+    ("james", "jim", "jimmy", "jamie"), ("michael", "mike", "mikey"), ("christopher", "chris"),
+    ("matthew", "matt"), ("nicholas", "nick", "nicky"), ("benjamin", "ben", "benny"),
+    ("alexander", "alex"), ("daniel", "dan", "danny"), ("joseph", "joe", "joey"),
+    ("thomas", "tom", "tommy"), ("andrew", "andy", "drew"), ("jonathan", "jon"),
+    ("samuel", "sam", "sammy"), ("zachary", "zach", "zack"), ("joshua", "josh"),
+    ("anthony", "tony"), ("edward", "ed", "eddie"), ("richard", "rick", "rich", "ricky"),
+    ("timothy", "tim", "timmy"), ("patrick", "pat"), ("steven", "steve"), ("stephen", "steve"),
+    ("jacob", "jake"), ("nathaniel", "nate", "nat"), ("nathan", "nate"), ("gregory", "greg"),
+    ("kenneth", "ken", "kenny"), ("charles", "charlie", "chuck"), ("peter", "pete"),
+    ("theodore", "theo", "ted"), ("gabriel", "gabe"), ("dominic", "dom"), ("maxwell", "max"),
+    ("elizabeth", "liz", "lizzy", "beth"), ("katherine", "kate", "katie", "kat"),
+    ("catherine", "cate", "cathy", "cat"), ("kathryn", "kate", "katie"), ("margaret", "maggie", "meg"),
+    ("jennifer", "jen", "jenny"), ("rebecca", "becca", "becky"), ("abigail", "abby"),
+    ("alexandra", "alex", "lexi"), ("samantha", "sam", "sammy"), ("victoria", "tori"),
+    ("madeline", "maddie", "maddy"), ("madeleine", "maddie"), ("isabella", "izzy", "bella"),
+    ("isabel", "izzy"), ("jessica", "jess", "jessie"), ("olivia", "liv"), ("natalie", "nat"),
+)
+
+
+def nameVariants(key):
+    """The other full name keys a name key could be written as (its first
+    name swapped within each group it is in); empty when none. Pure."""
+    if not key:
+        return set()
+    first, _sp, rest = key.partition(" ")
+    if not rest:
+        return set()
+    out = set()
+    for grp in NICKNAMES:
+        if first in grp:
+            out.update(f"{g} {rest}" for g in grp if g != first)
+    return out
+
+
 # ------------------------------------------------------------------ #
 #  THE DECISION -- pure
 # ------------------------------------------------------------------ #
@@ -184,6 +227,25 @@ def decide(u, namesakes):
     return Verdict(t.pid, MATCH, tids)
 
 
+def decideNick(u, verdict, nick_namesakes):
+    """decide()'s verdict, or -- when it found no exact holder at the school
+    (a mint, or a namesake elsewhere) -- the one nickname holder there."""
+    if verdict.target is not None or verdict.reason not in (MINT, "namesake at another school in the window"):
+        return verdict
+    key = normName(u.name)
+    variants = nameVariants(key)
+    gu = _g(u.gender)
+    holders = [t for t in nick_namesakes
+               if normName(t.name) in variants and _atSchool(t.rows, u.school)
+               and not (gu and _g(t.gender) and gu != _g(t.gender))]
+    if len(holders) != 1:
+        return verdict
+    t = holders[0]
+    if fits(u, t.rows, _atSchool(t.rows, u.school)):
+        return verdict
+    return Verdict(t.pid, MATCH, (t.pid,))
+
+
 def raceKey(u):
     return (u.sport, u.meet_id, u.div_id)
 
@@ -232,7 +294,10 @@ def mintGroups(rows, verdicts):
 
 def judge(rows, namesakes_by_key):
     """{result_id: Verdict} and the mint groups."""
-    vs = {u.result_id: decide(u, namesakes_by_key.get(normName(u.name), [])) for u in rows}
+    def nick(u):
+        return [p for v in nameVariants(normName(u.name)) for p in namesakes_by_key.get(v, [])]
+    vs = {u.result_id: decideNick(u, decide(u, namesakes_by_key.get(normName(u.name), [])), nick(u))
+          for u in rows}
     vs = resolveClaims(rows, vs)
     groups, refused = mintGroups(rows, vs)
     vs.update(refused)
@@ -290,7 +355,8 @@ def gather(cur):
     cur.execute(upRowsSql(PP.skipSql("XC", "r", det), PP.skipSql("TF", "r", det)))
     rows = [UpRow(rid, sport, d, nm, sch, gr, g, mid, did, uid)
             for sport, rid, d, nm, sch, gr, g, mid, did, uid in cur.fetchall()]
-    keys = sorted({normName(u.name) for u in rows} - {None})
+    keys = {normName(u.name) for u in rows} - {None}
+    keys = sorted(keys | {v for k in keys for v in nameVariants(k)})
     if not keys:
         return rows, {}
     cur.execute("SET LOCAL work_mem = '512MB'")

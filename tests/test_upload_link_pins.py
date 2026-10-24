@@ -453,3 +453,31 @@ def test_the_site_serves_uploaded_races_and_names_the_feed():
     import usage as US
     assert US.normalizeRule("/race/xc/<int(signed=True):meet_id>/<int(signed=True):div_id>") == \
         "/race/xc/:meet_id/:div_id"
+
+
+# ---- a nickname at the same school (owner, 2026-10-24: William / Will Burch) ----
+
+def test_a_nickname_at_the_same_school_links_and_one_elsewhere_does_not():
+    u = U(1, "TF", "2026-10-23", "William Burch", "Tufts", "SO", "M", 9, 1, 3)
+    will = P(77, "Will Burch", "M", [R("2026-04-12", "TF", "SO", "Tufts", "college"),
+                                     R("2025-10-04", "XC", "FR", "Tufts", "college")])
+    vs, groups = LU.judge([u], {"will burch": [will]})
+    assert vs[1].target == 77 and vs[1].reason == LU.MATCH and not groups
+    # the same nickname at another school is not him: a new person, as before
+    other = will._replace(rows=[r._replace(school="Bates") for r in will.rows])
+    vs, groups = LU.judge([u], {"will burch": [other]})
+    assert vs[1].target is None and vs[1].reason == LU.MINT
+
+
+def test_two_nickname_holders_at_the_school_is_no_link():
+    u = U(1, "TF", "2026-10-23", "William Burch", "Tufts", "SO", "M", 9, 1, 3)
+    rows = [R("2026-04-12", "TF", "SO", "Tufts", "college")]
+    vs, _g = LU.judge([u], {"will burch": [P(77, "Will Burch", "M", rows)],
+                            "bill burch": [P(78, "Bill Burch", "M", rows)]})
+    assert vs[1].target is None
+
+
+def test_name_variants_swap_the_first_name_only():
+    assert LU.nameVariants("william burch") == {"will burch", "bill burch", "billy burch", "willy burch"}
+    assert LU.nameVariants("liam burch") == set()
+    assert LU.nameVariants("burch") == set()
