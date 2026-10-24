@@ -261,6 +261,63 @@ def _shrunkMean(code, n, num_w, den_w, prior_prec):
     return num / q, 1.0 / q, den
 
 
+def raceCandidates(race, dist, n_race):
+    """Per race, its listed distance (the median of its rows) and the
+    offsets of the standard distances it may really have been: (listed,
+    M (n_race, k) with NaN padding)."""
+    listed = np.zeros(n_race)
+    if dist is None:
+        return listed, np.full((n_race, 1), np.nan)
+    order = np.lexsort((dist, race))
+    r_s, d_s = race[order], dist[order]
+    lo = np.searchsorted(r_s, np.arange(n_race))
+    hi = np.searchsorted(r_s, np.arange(n_race), side="right")
+    has = hi > lo
+    listed[has] = d_s[(lo[has] + hi[has] - 1) // 2]
+    std = np.asarray(STD_DIST)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        lr = np.log(std[None, :] / listed[:, None])
+    ok = (listed[:, None] > 0) & (np.abs(lr) >= MIX_MIN_LOG) & (np.abs(lr) <= MIX_MAX_LOG)
+    M = np.where(ok, RIEGEL * lr, np.nan)
+    keep = ok.any(axis=0)
+    M = M[:, keep] if keep.any() else np.full((n_race, 1), np.nan)
+    return listed, M
+
+
+def _raceMix(code, n, num_w, den_w, prior_prec, sigma2, M, pi_mis):
+    """_shrunkMean for races under the distance mixture. Component 0 is the
+    ordinary effect u ~ N(0, sigma2 / prior_prec); component k is M[:, k]
+    plus u. Returns (posterior mean of the race's whole offset, its
+    variance / sigma2, den, P(mislabelled), the expected mislabel offset,
+    the posterior weights (n, 1 + k))."""
+    num = np.bincount(code, weights=num_w, minlength=n)
+    den = np.bincount(code, weights=den_w, minlength=n)
+    q = den + prior_prec
+    ok = den > 0
+    rbar = np.where(ok, num / np.where(ok, den, 1.0), 0.0)
+    s2 = sigma2 * (1.0 / np.where(ok, den, 1.0) + 1.0 / prior_prec)
+    mu = np.concatenate([np.zeros((n, 1)), np.nan_to_num(M, nan=0.0)], axis=1)
+    k_r = np.isfinite(M).sum(axis=1)
+    logp = np.full(mu.shape, -np.inf)
+    logp[:, 0] = np.log1p(-pi_mis)
+    avail = np.isfinite(M)
+    with np.errstate(divide="ignore"):
+        logp[:, 1:] = np.where(avail, np.log(pi_mis) - np.log(np.maximum(k_r, 1))[:, None], -np.inf)
+    # no candidate: all the prior on the ordinary effect
+    logp[k_r == 0, 0] = 0.0
+    ll = logp - 0.5 * (rbar[:, None] - mu) ** 2 / s2[:, None]
+    ll[~ok, 1:] = -np.inf                  # no rows: nothing to move it
+    ll[~ok, 0] = 0.0
+    ll -= ll.max(axis=1, keepdims=True)
+    p = np.exp(ll)
+    p /= p.sum(axis=1, keepdims=True)
+    vk = mu + (num[:, None] - den[:, None] * mu) / q[:, None]
+    v = np.sum(p * vk, axis=1)
+    vv = 1.0 / q + np.sum(p * (vk - v[:, None]) ** 2, axis=1) / sigma2
+    delta = np.sum(p[:, 1:] * mu[:, 1:], axis=1)
+    return v, vv, den, 1.0 - p[:, 0], delta, p
+
+
 def _splineBasis(phase, n_knots):
     """Piecewise-linear hat basis on [0, SEASON_DAYS] (the season curve)."""
     step = SEASON_DAYS / (n_knots - 1)
@@ -587,6 +644,27 @@ RECOVERY_DAYS = 30.0
 BREAK_BINS = (21.0, 45.0, 90.0)
 EVENT_EDGES = (1000.0, 2000.0, 4000.0, 7000.0)   # classes; 1000-2000 is the pin
 PIN_PHASE = 60.0           # 1 October: the season curve's zero
+SEASON_CLOSED_DAYS = 21.0  # run_joint's: a season raced in more recently may still be running
+# ★ A DISTANCE IS NEVER PICKED (owner, 2026-10-24: "estimate how far off each
+#   race might be and let that feed the ratings, instead of changing
+#   distances"). Under terms "dist_mix" a race's offset is a mixture: the
+#   ordinary race effect, or the ordinary effect plus the offset of one of
+#   the distances a race listed at its distance is commonly mislabelled
+#   from (a 5000 that was 3 miles, a 6000 that was 8000, a 3200 that was
+#   3000). Each race gets posterior weights over those, learned with the
+#   share of mislabelled races by EM, and the rating carries the weighted
+#   offset -- so a race that is probably 3 miles is rated mostly as 3
+#   miles, and one that may or may not be gives a rating between.
+#   Candidates are the standard distances 3% to 2x away from the listed
+#   one; closer than 3% is a course's own length, the course's business.
+STD_DIST = (1500.0, 1600.0, 2000.0, 3000.0, 3200.0, 4000.0, 4828.0, 5000.0,
+            6000.0, 6437.0, 8000.0, 10000.0)
+MIX_MIN_LOG, MIX_MAX_LOG = 0.03, np.log(2.0)
+# time goes as distance^1.06 near these distances (Riegel); the row was
+# normalised from the listed distance, so a race really d' long reads
+# RIEGEL * ln(d' / listed) slow
+RIEGEL = 1.06
+MIX_START = 0.01           # the share of mislabelled races, EM's start
 ALT_DIST_KNOTS = ((800.0, 0.21), (1600.0, 0.83), (3000.0, 0.93),
                   (5000.0, 1.00), (10000.0, 1.05))   # joint_solve's, NCAA tables
 
@@ -716,7 +794,12 @@ def sharedFeatures(D):
     kinv = kinv.reshape(-1)
     last = np.full(kcnt.size, -np.inf)
     np.maximum.at(last, kinv, t)
-    peak = (t >= last[kinv]) & (kcnt[kinv] >= 4)
+    # ! ONLY A SEASON THAT HAS ENDED. Mid-season a runner's newest race is
+    #   not their last; read as a taper it would credit last week's race.
+    #   A season counts as over once SEASON_CLOSED_DAYS pass with no race in
+    #   it (run_joint's own rule); D["t_now"] is the pack's or the cut's day.
+    t_now = float(D.get("t_now", t.max()))
+    peak = (t >= last[kinv]) & (kcnt[kinv] >= 4) & (last[kinv] <= t_now - SEASON_CLOSED_DAYS)
     # recovery: the most recent 21-90 day gap inside this season
     gap_len = np.zeros(n); since = np.full(n, np.inf)
     starts = D["starts"]
@@ -910,6 +993,10 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
     wrow = np.ones(n)
     th = np.full(n, np.median(y[train])); be = np.zeros(n); vth = np.full(n, 0.01)
     feats = sharedFeatures(D)
+    mix = "dist_mix" in terms and nested
+    delta = np.zeros(n_race); p_mis = np.zeros(n_race); pi_mis = MIX_START
+    listed, Mc = raceCandidates(race, D.get("dist_m"), n_race) if mix else (None, None)
+    p_comp = None
     cell_days = np.bincount(np.unique(cidx[has_cell] * (n_day + 1) + day[has_cell])
                             // (n_day + 1), minlength=n_cell)
     day_races = np.bincount(np.unique(day * (n_race + 1) + race) // (n_race + 1),
@@ -1029,8 +1116,14 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
                                   sigma2 * lam_w / s_w2[day_grp])
         if nested:
             r = base - h * (np.where(has_cell, c[cidx], 0.0) + w[day])
-            v, vv, vden = _shrunkMean(race, n_race, ww * h * r, ww * h * h,
-                                      sigma2 * lam_v / s_v2[race_grp])
+            if mix:
+                v, vv, vden, p_mis, delta, p_comp = _raceMix(
+                    race, n_race, ww * h * r, ww * h * h,
+                    sigma2 * lam_v / s_v2[race_grp], sigma2, Mc, pi_mis)
+                pi_mis = float(np.clip(np.mean(p_mis[vden > 0]), 1e-4, 0.3))
+            else:
+                v, vv, vden = _shrunkMean(race, n_race, ww * h * r, ww * h * h,
+                                          sigma2 * lam_v / s_v2[race_grp])
         # ★ EACH GROUP'S COURSES, DAYS AND RACES AVERAGE ZERO. Their prior
         #   mean is zero, but a block step can still slide every XC cell by
         #   +d while mu_XC slides -d (the same rows, the same fit); the
@@ -1047,9 +1140,10 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
             if md.any():
                 w[md] -= w[md].mean()
             if nested:
+                # the ordinary part only: a mislabel is not a race-day effect
                 mr = (race_grp == g) & (vden > 0)
                 if mr.any():
-                    v[mr] -= v[mr].mean()
+                    v[mr] -= (v[mr] - delta[mr]).mean()
         Dsum = np.where(has_cell, c[cidx], 0.0) + w[day] + v[race]
         # ★ THE SLOPES BY EM, NOT BY PLUGGING IN THE ESTIMATE. A runner's
         #   level is estimated from the very rows a slope is fitted on, so a
@@ -1128,11 +1222,12 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
             if nested:
                 mr = (race_grp == g) & (vden > 0) & (day_races[race_day] >= 2)
                 if mr.sum() >= 10:
-                    s_v2[g] = max(np.mean(lam_v[mr] * (v[mr] ** 2 + sigma2 * vv[mr])), 1e-8)
+                    u = v[mr] - delta[mr]
+                    s_v2[g] = max(np.mean(lam_v[mr] * (u ** 2 + sigma2 * vv[mr])), 1e-8)
         if heavy:
             lam_w = (NU_DAY + 1.0) / (NU_DAY + w ** 2 / s_w2[day_grp])
             if nested:
-                lam_v = (NU_DAY + 1.0) / (NU_DAY + v ** 2 / s_v2[race_grp])
+                lam_v = (NU_DAY + 1.0) / (NU_DAY + (v - delta) ** 2 / s_v2[race_grp])
         if verbose and (it % 5 == 0 or it == outer - 1):
             pk = b[blocks["peak"][0]]
             rc = b[blocks["recovery"]]
@@ -1157,6 +1252,17 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
                cell=c, day=w, race=v, b=b, se=se, names=names, blocks=blocks,
                curve_sd=np.sqrt(curve_var), n_knots=nk, fitness=fitness,
                cell_var=sigma2 * vc)
+    if mix:
+        # per race: P(not the listed distance), the expected offset, and --
+        # for the owner's list only, never applied -- the likeliest other
+        # distance and its weight
+        best = np.argmax(p_comp[:, 1:], axis=1) if p_comp.shape[1] > 1 else np.zeros(n_race, int)
+        with np.errstate(invalid="ignore"):
+            alt = listed * np.exp(np.take_along_axis(np.nan_to_num(Mc), best[:, None], 1)[:, 0] / RIEGEL)
+        out.update(race_p_mis=p_mis, race_delta=delta, race_listed=listed,
+                   race_alt_dist=alt, race_alt_p=np.take_along_axis(p_comp[:, 1:], best[:, None], 1)[:, 0]
+                   if p_comp.shape[1] > 1 else np.zeros(n_race),
+                   pi_mis=pi_mis)
     for nm in ("mu_XC", "mu_in", "lam_XC", "lam_in"):
         out[nm + "_se"] = float(se[blocks[nm][0]]) if nm in blocks else 0.0
     # ★ EACH LEVEL READ AT ITS OWN TYPICAL RUNNER. With the slope in

@@ -125,6 +125,40 @@ def _packFromWorld(D, path):
              meet_id=D["day"].astype(np.int64), div_id=D["race"].astype(np.int64))
 
 
+def test_a_mislabelled_race_is_rated_at_its_likely_distance_never_relabelled():
+    """5% of divisions ran another distance than listed (a 5000 that was 3
+    miles, a 1600 that was 2000). The mixture flags them, finds the right
+    distance for most, and the ratings of their runners come back close;
+    the listed distance is never changed."""
+    D = sw.worldHard(seed=3, n_regions=6, schools=12, mislabel_p=0.05)
+    listed = D["dist_m"].copy()
+    allr = np.ones(D["y"].size, dtype=bool)
+    terms = ("peak", "recovery", "event", "mu_by_level")
+    mis, bad, xc = D["mislabel"], D["bad_race"], D["group"] == ss.GROUP_XC
+
+    def p90(R):
+        err = R["perf"] - D["truth_perf"]
+        err = err - np.median(err[~bad & ~xc & ~mis])
+        return np.percentile(np.abs(err[mis]), 90), np.median(np.abs(err[~bad & ~mis]))
+    t_only = p90(ss.fitGLS(D, allr, outer=15, terms=terms))
+    R = ss.fitGLS(D, allr, outer=15, terms=terms + ("dist_mix",))
+    mixed = p90(R)
+    assert np.array_equal(D["dist_m"], listed)
+    assert mixed[0] < 0.7 * t_only[0]                 # the mislabelled rows' tail
+    assert mixed[1] < t_only[1] + 0.0005              # and nothing else pays for it
+    nr = R["race_p_mis"].size
+    rm = np.bincount(D["race"], weights=mis.astype(float), minlength=nr) > 0
+    rb = np.bincount(D["race"], weights=bad.astype(float), minlength=nr) > 0
+    seen = np.bincount(D["race"], minlength=nr) > 0
+    flagged = (R["race_p_mis"] > 0.5) & seen
+    assert (flagged & rm).sum() > 0.6 * rm.sum()
+    assert (flagged & ~rm & ~rb).sum() < 0.005 * (seen & ~rm & ~rb).sum()
+    true_d = np.bincount(D["race"], weights=D["true_dist"], minlength=nr) / np.maximum(
+        np.bincount(D["race"], minlength=nr), 1)
+    right = np.abs(R["race_alt_dist"] - true_d) < 50
+    assert right[flagged & rm].mean() > 0.85
+
+
 def test_ss_eval_runs_on_a_pack_shaped_file(tmp_path):
     D = sw.worldHard(seed=4, n_regions=4, schools=8)
     path = tmp_path / "packed_XC_TF.npz"

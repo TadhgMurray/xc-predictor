@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "engine"))
 import statespace as ss                                         # noqa: E402
 import statespace_world as sw                                   # noqa: E402
 
-TERMS = ("peak", "recovery", "event", "mu_by_level")
+TERMS = ("peak", "recovery", "event", "mu_by_level", "dist_mix")
 
 
 def realised(D):

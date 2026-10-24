@@ -76,7 +76,7 @@ ALT_FLOOR_M = 600.0
 #   by dropping one kind of bridge), and it is printed as such.
 UNDETERMINED = 0.25
 REGION_DEG = 3.0           # the regional check's grid, degrees of latitude and longitude
-TERMS = ("peak", "recovery", "event", "mu_by_level")
+TERMS = ("peak", "recovery", "event", "mu_by_level", "dist_mix")
 KAPPA_PROFILE = (0.0, 0.15, 0.31, 0.45, 0.6)
 
 
@@ -220,6 +220,9 @@ class Rows:
         if self.alt_km is not None:
             D["alt_km"] = self.alt_km[idx]
         D["starts"] = ss.segments(D["person"])
+        # the day the data end: a season raced in within 21 days of it may
+        # still be running, so its newest race is not yet its taper
+        D["t_now"] = float(np.datetime64(self.pack_date, "D").astype(np.int64))
         print(f"[ss] {idx.size:,} rows, {D['starts'].size - 1:,} people, "
               f"{D['cell'].max() + 1:,} cells, {D['day'].max() + 1:,} venue-days, "
               f"{D['race'].max() + 1:,} races, levels {D['lv_names']}", flush=True)
@@ -302,6 +305,43 @@ def regionLines(R, D):
     return out
 
 
+def raceMixLines(R, D, idx, rows, path=None, top=25):
+    """The races the distance mixture thinks were not their listed
+    distance: how many, and the likeliest, with the rows' meet and div so
+    a person can look. Never applied as a distance -- the ratings carry the
+    weighted offset whatever this list says."""
+    if "race_p_mis" not in R:
+        return []
+    pm = R["race_p_mis"]
+    nr = pm.size
+    n = np.bincount(D["race"], minlength=nr)
+    first = np.full(nr, -1, dtype=np.int64)
+    first[D["race"][::-1]] = np.arange(D["race"].size)[::-1]
+    out = [f"[ss] distance: {100 * R['pi_mis']:.2f}% of races fitted as probably not their "
+           f"listed distance; P > 0.5 for {int((pm > 0.5).sum()):,} of {int((n > 0).sum()):,} "
+           f"races ({int(n[pm > 0.5].sum()):,} rows)"]
+    flag = np.flatnonzero((pm > 0.2) & (n > 0) & (first >= 0))
+    flag = flag[np.argsort(-pm[flag] * np.sqrt(n[flag]))]
+    raw = idx[first[flag]]
+    meet = np.asarray(rows.cols["meet_id"])[raw]
+    div = np.asarray(rows.cols["div_id"])[raw]
+    if path:
+        with open(path, "w") as f:
+            f.write("meet_id,div_id,date,course_key,runners,listed_m,likeliest_other_m,"
+                    "p_other,p_not_listed,offset_pct\n")
+            for j, r in enumerate(flag):
+                f.write(f"{meet[j]},{div[j]},{rows.dates[raw[j]]},\"{rows.course_keys[rows.crs[raw[j]]]}\","
+                        f"{n[r]},{R['race_listed'][r]:.0f},{R['race_alt_dist'][r]:.0f},"
+                        f"{R['race_alt_p'][r]:.3f},{pm[r]:.3f},{100 * R['race_delta'][r]:+.2f}\n")
+        out.append(f"[ss] distance: {flag.size:,} races with P > 0.2 -> {path}")
+    for j, r in enumerate(flag[:top]):
+        out.append(f"[ss]   meet {meet[j]} div {div[j]} {rows.dates[raw[j]]} "
+                   f"{rows.course_keys[rows.crs[raw[j]]][:34]:34s} {n[r]:4d} runners: listed "
+                   f"{R['race_listed'][r]:.0f}, likeliest {R['race_alt_dist'][r]:.0f} "
+                   f"(P {R['race_alt_p'][r]:.2f}), rated at {100 * R['race_delta'][r]:+.1f}%")
+    return out
+
+
 def modeGap(rows, a):
     D, idx = rows.build(rows.recent(a.seasons_back))
     tr = np.ones(D["y"].size, dtype=bool)
@@ -311,6 +351,10 @@ def modeGap(rows, a):
     for line in gapLines(R, D):
         print(line)
     for line in regionLines(R, D):
+        print(line)
+    os.makedirs(OUT_DIR, exist_ok=True)
+    for line in raceMixLines(R, D, idx, rows,
+                             os.path.join(OUT_DIR, f"distance_{str(rows.pack_date)}.csv")):
         print(line)
     t1 = time.time()
     masks = ss.bridgeMasks(D)
@@ -485,6 +529,7 @@ def asOfRows(D, cut_t, persons):
         if isinstance(v, np.ndarray) and v.shape[:1] == (n + k,):
             E[key] = v[order]
     E["starts"] = ss.segments(E["person"])
+    E["t_now"] = float(cut_t)
     del season_cut
     return E, new[order]
 
