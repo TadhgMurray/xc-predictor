@@ -60,7 +60,7 @@
                 </select>
             </label>
 
-            <label>Pool
+            <label>Level
                 <select id="source-pool">
                     {% for key, lbl in pools %}
                         <option value="{{ key }}">{{ lbl }}</option>
@@ -221,7 +221,6 @@
     </nav>
     {# One scale for the page: what a typed rating means and what the
        computed one shows. Same control as every other page. #}
-    <div class="rc-tbar-end">{{ scale_toggle() }}</div>
   </div>
 
   {# XC table -- most common courses, extensible #}

@@ -508,7 +508,7 @@ function drawChart(host, points, opts) {
   /* Say which scale is drawn whenever the alternate one is in effect --
      a rescaled chart with an unchanged title looks like a data change. */
   const scaled = scaleMode() === "hs" && data.some((p) => p.vh != null);
-  const title = scaled ? `${opts.title} - HS-equivalent` : opts.title;
+  const title = opts.title;     // one public scale, unnamed (UX review, 2026-10-24)
 
   host.classList.remove("chart-empty");
   host.innerHTML =
@@ -746,7 +746,7 @@ function drawCompareChart(host, series, opts) {
 
   const scaled = scaleMode() === "hs" &&
     series.some((s) => (s.points || []).some((p) => p.vh != null));
-  const title = scaled ? `${opts.title} - HS-equivalent` : opts.title;
+  const title = opts.title;     // one public scale, unnamed (UX review, 2026-10-24)
 
   host.classList.remove("chart-empty");
   host.innerHTML =

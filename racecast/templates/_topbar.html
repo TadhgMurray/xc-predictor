@@ -126,6 +126,9 @@
    when it cannot fit; the athlete sidebar folded at the top (layout.js,
    2026-10-03; nothing happens above 700px) #}
 <script src="{{ static_v('layout.js') }}" defer></script>
+{# every badge and ⓘ tooltip, unclippable: floating with a mouse, a sheet on
+   a phone (tips.js, UX review 2026-10-24) #}
+<script src="{{ static_v('tips.js') }}" defer></script>
 {# the feature additions (2026-10-04) in files of their own, so they never
    collide with style.css: "How was this rated?" on every rating cell that
    carries data-rx (rating-explain.js does nothing on a page without one) #}

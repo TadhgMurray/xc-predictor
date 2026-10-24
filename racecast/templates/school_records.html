@@ -42,7 +42,6 @@
          href="{{ url_for('school_records_page', school_name=school, sport=s, state=(state or none)) }}">{{ s|sport_name }}</a>
     {% endfor %}
   </div>
-  {% if has_hs_view %}{{ scale_toggle() }}{% endif %}
 </div>
 
 <div class="rc-w rc-grid rc-grid-one">

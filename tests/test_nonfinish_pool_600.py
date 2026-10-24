@@ -88,6 +88,7 @@ def test_conversions_follow_the_athlete_and_the_scale():
     assert "adoptAthletePool(" in js and "src.scale = hsMode()" in js
     assert "rc-scale-change" in js
     tpl = read("racecast", "templates", "conversions.html")
-    assert "scale_toggle()" in tpl and "data-prefill-pool" in tpl
+    # the Advanced switch left conversions (UX review, 2026-10-24): one scale
+    assert "scale_toggle()" not in tpl and "data-prefill-pool" in tpl
     assert (tpl.index("static_v('scale-view.js')")
             < tpl.index("static_v('conversions.js')"))

@@ -128,7 +128,6 @@
       <a class="seg-btn" href="#meets" data-tab="meets">Meets{% if meets %}<span class="n">{{ meets|length }}</span>{% endif %}</a>
       {% if has_track %}<a class="seg-btn" href="#track" data-tab="track">On the track</a>{% endif %}
     </nav>
-    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
   </div>
 
 {% if not sel_dist %}

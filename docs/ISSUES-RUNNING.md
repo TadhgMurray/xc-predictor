@@ -6623,3 +6623,7 @@ Ubuntu's automatic updates (`apt-daily-upgrade.timer`, about 06:00-07:00) instal
 - **What it breaks:** anything holding a database connection at that moment. That means a nightly step still running past 06:00, a scrape in the middle of saving, a long backfill, or a migration.
 - **What it doesn't:** the site. It shows the 503 "back in a minute" page for the few seconds the database is down (`database.PoolUnavailable`).
 - **So:** when proposing or starting a job that may run through 06:00-07:00, say so to the owner first.
+
+## Hiding a minor's page needs a report, by choice (owner, 2026-10-24)
+
+The UX review (docs/REVIEW-UX-2026-10.md, "Accounts") found no public way for a parent to ask for a minor's page to be hidden, though the backend supports it (`racecast/person_optout.py`). The owner decided not to add one for now: **"I cannot vet people right now."** A request comes in through the report form, and the owner handles it by hand. Revisit when there is a way to check who is asking.

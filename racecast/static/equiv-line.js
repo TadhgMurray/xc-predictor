@@ -165,15 +165,15 @@
       tcap.textContent = targetCaption();
       if (r) {
         var hs = hsOn();
-        var txt = (hs ? "HS-equivalent rating " : "Rating ") +
-                  (hs ? toHsView(r) : r).toFixed(1);
+        // one public scale, unnamed (UX review, 2026-10-24)
+        var txt = "Rating " + (hs ? toHsView(r) : r).toFixed(1);
         // ★ BOTH NUMBERS WHEN THEY DIFFER (owner, 2026-09-29): the rating
         //   the group reads on its own scale is the one thing a group
         //   change moves, so say which is which rather than leave one
         //   number to jump
         if (st.hs && Math.abs(st.hs - 1) > 0.005) {
           txt += hs ? " · " + r.toFixed(1) + " on the " + groupName() + " scale"
-                    : " (" + groupName() + ") · HS-equivalent " + toHsView(r).toFixed(1);
+                    : " (" + groupName() + ") · " + toHsView(r).toFixed(1) + " on the one scale";
         }
         ratingEl.textContent = txt;
       } else {

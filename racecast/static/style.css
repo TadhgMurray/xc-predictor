@@ -1767,6 +1767,32 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .flag:not(:hover):not(:focus)::after,
 .flag:not(:hover):not(:focus)::before { display: none; }
 
+/* ★ WITH tips.js RUNNING, THE TOOLTIPS ARE ITS OWN (UX review, 2026-10-24):
+   a floating one on <body> with a mouse, a sheet from the bottom on a
+   phone -- neither can be clipped by a table's box. The CSS bubbles above
+   stay the fallback without JavaScript. */
+html.js-tips .flag::after, html.js-tips .flag::before { display: none !important; }
+.rc-tipf { position: absolute; z-index: 1000; width: max-content; max-width: min(280px, calc(100vw - 16px));
+    padding: 9px 12px; border: 2px solid var(--tip, #111); border-radius: 9px; background: #fff; color: #222;
+    font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    letter-spacing: 0; text-transform: none; text-align: left; white-space: normal;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14); pointer-events: none; }
+.rc-tipf[hidden] { display: none; }
+.rc-tipf b { display: block; font-weight: 700; margin-bottom: 2px; }
+.rc-tips-backdrop { position: fixed; inset: 0; z-index: 999; background: rgba(17, 20, 24, 0.32); }
+.rc-tips { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000; background: #fff; color: #222;
+    border-radius: 14px 14px 0 0; padding: 14px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.18); max-height: 70vh; overflow: auto;
+    font: 400 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    text-transform: none; letter-spacing: 0; text-align: left; }
+.rc-tips[hidden], .rc-tips-backdrop[hidden] { display: none; }
+.rc-tips-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.rc-tips-head b { font-size: 16px; }
+.rc-tips-x { flex: none; width: 36px; height: 36px; margin: -6px -6px 0 0; border: 0; background: none;
+    font-size: 26px; line-height: 1; color: #6b7280; cursor: pointer; }
+.rc-tips p { margin: 6px 0 0; }
+.rc-tips-more { display: inline-block; margin-top: 10px; font-weight: 600; }
+
 @media (max-width: 900px) {
     /* Flags sit in the LAST table column. On a wide screen the bubble opens
        rightwards over the sidebar, which is fine; once the layout stacks

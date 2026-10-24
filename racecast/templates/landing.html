@@ -81,7 +81,7 @@
       </div>
     </div>
     <div class="lf-field">
-      <span class="lf-label">Pool</span>
+      <span class="lf-label">Level</span>
       <div class="pool-chips">
         {% for slug, words, href in pool_links %}<a class="chip{{ ' is-on' if slug == pool }}" href="{{ href }}">{{ words|replace("High School", "HS")|replace("Middle School", "MS") }}</a>{% endfor %}
       </div>

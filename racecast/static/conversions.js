@@ -416,8 +416,9 @@
     function paintScaleHint() {
         var el = document.getElementById('rating-scale-hint');
         if (!el) return;
-        el.textContent = hsMode() ? '(HS-equivalent scale)'
-                                  : '(own-pool scale: ' + (poolSel ? poolSel.value : '') + ')';
+        // one public scale: no name for it (UX review, 2026-10-24)
+        el.textContent = hsMode() ? ''
+                                  : "(this level's own scale)";
     }
     paintScaleHint();
     if (poolSel) poolSel.addEventListener('change', paintScaleHint);
@@ -433,7 +434,7 @@
         if (!lastBase) return;
         var v = hsMode() && lastBase.hs != null ? lastBase.hs : lastBase.pool;
         showNorm('Speed rating: ' + (v != null ? v : ' - ') +
-                 (hsMode() ? ' (HS-equivalent)' : ' (own pool)') + lastBase.tail);
+                 (hsMode() ? '' : " (this level's own scale)") + lastBase.tail);
     }
 
     function buildSource() {

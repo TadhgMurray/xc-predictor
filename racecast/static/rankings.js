@@ -1167,7 +1167,7 @@ const COLUMNS = {
     { key: "name",   label: "Athlete" },
     { key: "school", label: "School" },
     { key: "grade",  label: "Grade" },
-    { key: null,     label: "Pool" },
+    { key: null,     label: "Level" },
     { key: "date",   label: "Date" },
     /* One column for both: a time on a running board, a mark on a field
        board. The sort key stays "time"; the API maps it onto the mark. */
@@ -2496,6 +2496,7 @@ $("sport").addEventListener("change", () => { state.sportTouched = true; syncMin
 /* Once touched, the pool is the user's and syncBoard stops overriding it. */
 $("pool").addEventListener("change", () => {
   state.poolTouched = true;
+  if ($("pool").value !== "all") saveLevel($("pool").value);
   applyNow();
 });
 
@@ -2623,6 +2624,21 @@ function setInputFromUrl(id, value) {
  * multiples of PAGE_SIZE, and an arbitrary one from a URL would desync the
  * pager's arithmetic from the rows on screen.
  */
+/* The reader's level, one browser-local preference shared with home.js. A
+   first visit picks HS girls or HS boys at random and keeps it, so neither
+   is everyone's default. Storage may fail (private mode): then nothing is
+   remembered and the page's own default stands. */
+function readerLevel() {
+  try {
+    let lv = localStorage.getItem("rc_level");
+    if (!lv) { lv = Math.random() < 0.5 ? "hs_f" : "hs_m"; localStorage.setItem("rc_level", lv); }
+    return lv;
+  } catch (e) { return null; }
+}
+function saveLevel(lv) {
+  try { localStorage.setItem("rc_level", lv); } catch (e) { /* private mode */ }
+}
+
 function applyUrlFilters(params) {
   /* ! 'all' ONLY ON THE PR BOARD, even from a URL. setSelectFromUrl writes
        whatever it is given, and a stale link carrying pool=all to another
@@ -2630,6 +2646,13 @@ function applyUrlFilters(params) {
   const askedPool = params.get("pool");
   setSelectFromUrl("pool",
     askedPool === "all" && state.board !== "pr" ? null : askedPool);
+  // ★ NOT BOYS BY DEFAULT (UX review, 2026-10-24): with no pool in the link,
+  //   the level the reader last chose (rc_level, shared with home.js), or
+  //   girls or boys at random on a first visit -- remembered after that
+  if (!askedPool && state.board !== "pr") {
+    const lv = readerLevel();
+    if (lv && $("pool").querySelector(`option[value="${lv}"]`)) $("pool").value = lv;
+  }
   setSelectFromUrl("sport", params.get("sport"));
   /* ★ THE TIMES BOARD OPENS ON TRACK (owner, 2026-10-23: "the fastest times
        board should really start with tf as default"). A cross country time

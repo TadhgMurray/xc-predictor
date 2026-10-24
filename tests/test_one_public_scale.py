@@ -35,7 +35,11 @@ def read(*parts):
 SINGLE_POOL = ("athlete.html", "what_it_takes.html", "race.html", "race_tf.html",
                "meet_tf.html", "compiled.html", "compiled_tf.html", "school.html",
                "school_prs.html", "landing.html")
-ADVANCED = ("rankings.html", "conversions.html", "predictions.html")
+# ★ conversions left the list (UX review, 2026-10-24: the "Advanced" switch
+#   off the seven pages that are not boards); rankings and predictions keep it
+ADVANCED = ("rankings.html", "predictions.html")
+NO_SWITCH = ("compare.html", "conversions.html", "course.html", "venue_tf.html",
+             "breakouts.html", "records.html", "school_records.html")
 
 
 def test_single_pool_pages_have_no_scale_switch():
@@ -54,7 +58,9 @@ def test_every_remaining_caller_gets_the_advanced_box():
     s = read("racecast", "templates", "_scale.html")
     macro = s[s.index("{% macro scale_toggle"):]
     assert 'id="scale-toggle"' in macro and "<summary>Advanced</summary>" in macro
-    assert "<input type=\"checkbox\" data-scale-own> Show each pool's own scale" in macro
+    assert "<input type=\"checkbox\" data-scale-own> Show each level's own scale" in macro
+    for f in NO_SWITCH:
+        assert "{{ scale_toggle(" not in read("racecast", "templates", f), f
     assert 'data-scale="pool"' not in macro and "Own pool</button>" not in macro
     # ! the `same` flag survives, as before: a class for scripts
     assert "scale_toggle(hidden=False, same=False)" in macro
@@ -75,7 +81,7 @@ def test_scale_view_wires_the_checkbox_and_keeps_the_preference():
 
 def test_the_definitions_describe_the_hs_scale():
     e = read("racecast", "templates", "_explain.html")
-    assert "100 is an average high-school runner; every level is shown on that one scale." in e
+    assert "100 is an average high-school runner of the same sex; every level is shown on that one scale." in e
     assert "'runner in the pool'" not in e          # the old fallback text
     a = read("racecast", "templates", "about.html")
     sec = a[a.index('id="rating"'):a.index('id="how"')]
@@ -91,7 +97,7 @@ def test_the_explain_macro_renders():
     env.filters.update(diffpct=str, daypct=str, dayabs=str, dayword=str, daycapped=bool)
     out = env.from_string('{% from "_explain.html" import rating_i %}{{ rating_i() }}').render(
         RACE_DAY_SPORTS=())
-    assert "100 is an average high-school runner; every level is shown on that one scale." in out
+    assert "100 is an average high-school runner of the same sex; every level is shown on that one scale." in out
     tog = env.from_string('{% from "_scale.html" import scale_toggle %}'
                           '{{ scale_toggle(hidden=True, same=True) }}').render()
     assert 'class="scale-toggle scale-adv is-same"' in tog and 'style="display:none"' in tog
