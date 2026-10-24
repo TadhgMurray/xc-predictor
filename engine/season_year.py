@@ -84,16 +84,6 @@ def seasonShift(sport, month):
     return 0 if month >= ACADEMIC_START_MONTH else -1
 
 
-def rollsOver(sport, month):
-    """Kept for callers that only asked "does this move forward?".
-
-    Nothing moves forward any more -- the season is named for the year it
-    OPENS in, so a race either sits in its own calendar year or belongs to the
-    one before. Always False.
-    """
-    return False
-
-
 def seasonYearFor(sport, d, ledger=None):
     """Season year for a race on date `d`. For callers holding a date object.
 

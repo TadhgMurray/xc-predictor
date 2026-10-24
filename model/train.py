@@ -1149,11 +1149,6 @@ def computeStats(dataset, is_train: torch.Tensor,
             "break_band_n": band_n}
 
 
-def zScore(values: torch.Tensor, mean: float, std: float) -> torch.Tensor:
-    """(value - mean) / std. Kept for callers that z-score by hand."""
-    return (values - mean) / std
-
-
 # _statsFromModel
 # Purpose: the stats a trained model is ACTUALLY using, read back off its
 #          buffers, in the shape saveTargetStats writes.

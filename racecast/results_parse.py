@@ -939,7 +939,3 @@ def parse(filename, data):
         raise ParseError("This does not look like Hy-Tek results: no 'Event' headings were found. "
                          "If it is a spreadsheet, save it as CSV in the template's layout.")
     return checkRows(out)
-
-
-def escapeForDisplay(s):
-    return _html.escape(s or "")

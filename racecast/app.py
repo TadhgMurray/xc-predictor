@@ -29,7 +29,7 @@ import psycopg2.extras
 #   import side effect for an exception class in an except clause is a
 #   NameError at the worst possible moment.
 import psycopg2.errors
-from flask import Flask, render_template, abort, redirect, url_for, make_response
+from flask import Flask, render_template, abort, redirect, make_response
 from athlete_chart_data import build_chart_data
 from athlete_bests import all_time_bests, season_bests_flat
 from pool_view import (fetchPoolRows, stampHsRatings, repFactor,
@@ -3771,46 +3771,6 @@ def find_current_records(races, key_fn, value_fn, better):
 def _better_time(new, old):
     """True if `new` is a faster time than `old` (or there's no old yet)."""
     return old is None or new < old
-
-
-def _better_rating(new, old):
-    """True if `new` is a higher rating than `old` (or there's no old yet)."""
-    return old is None or new > old
-
-
-def _track_event_best(bucket, race):
-    """If this race is the year's fastest at its distance, record it."""
-    event = race["event"]
-    time  = race["time_raw"]
-    if event is None or time is None:
-        return                              # field events / missing data: skip
-    current = bucket["events"].get(event)
-    if current is None or _better_time(time, current["time_raw"]):
-        bucket["events"][event] = race
-
-
-def _track_rating_best(bucket, race):
-    """If this race is the year's best-rated, record it."""
-    rating = race["speed_rating"]
-    if rating is None:
-        return
-    current = bucket["best_rating"]
-    if current is None or _better_rating(rating, current["speed_rating"]):
-        bucket["best_rating"] = race
-
-
-def season_bests_by_year(races):
-    """{year: {sport: {"events": {...}, "best_rating": race}}}"""
-    years = {}
-    for r in races:
-        year  = r["date"][:4]
-        sport = r["sport"]
-        bucket = years.setdefault(year, {}).setdefault(
-            sport, {"events": {}, "best_rating": None}
-        )
-        _track_event_best(bucket, r)
-        _track_rating_best(bucket, r)
-    return years
 
 
 def tf_distances(races):

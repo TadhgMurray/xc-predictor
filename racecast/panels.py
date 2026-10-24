@@ -1201,11 +1201,6 @@ _ATHLETE_SQL_TEMPLATE = """
 """
 
 
-def _seasonJoinFor(sport):
-    """The season-verdict join for one sport, with the combined fallback."""
-    return _seasonLevelJoin(sport)
-
-
 def _athleteSql(sport):
     """No holes left to fill.
 

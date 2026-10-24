@@ -104,21 +104,6 @@ def h(rating, k=TILT_K, pool=None):
     return max(H_MIN, min(H_MAX, v))
 
 
-def difficultyFor(difficulty, rating, k=TILT_K, pool=None):
-    """
-    Course difficulty as THIS athlete experiences it.
-
-    Arguments: difficulty -- the stored value from course_difficulties;
-               rating     -- the athlete's speed rating.
-
-    Use for "how hard is this course for a 130 runner". At rating 100 it returns
-    the stored value unchanged, which is the definition of the anchor.
-    """
-    if difficulty is None:
-        return None
-    return float(difficulty) * h(rating, k, pool)
-
-
 def ratingFor(rating, difficulty, k=TILT_K, pool=None):
     """
     ★ THE ONE A RACE PAGE WANTS. The rating this performance is worth once the

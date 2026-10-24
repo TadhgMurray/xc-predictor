@@ -3117,12 +3117,6 @@ def trackRaces(rows):
     return out
 
 
-def isTrackEvent(target):
-    """A track target that names its event -- the races scored by points."""
-    return ((target.get("sport") or "XC").upper() == "TF"
-            and target.get("event_id") is not None)
-
-
 # ★ EACH TEAM'S TOP N BY PREDICTED TIME, NOT SEASON RATING (owner,
 #   2026-10-11: "predict best athletes for every team, but you only
 #   present/show the top x. This is highly necessary"). The squads come

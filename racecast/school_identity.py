@@ -384,18 +384,6 @@ def schoolHref(school, state=None, pool=None, sport=None, trusted=False):
     return url + ("?" + urllib.parse.urlencode(q) if q else "")
 
 
-def stateFor(school, preferred=None):
-    """The state a school label should carry: the preferred one when the
-    school has a cluster there, else its primary, else the preferred."""
-    if not school:
-        return preferred
-    if preferred:
-        share = ((_LABELS.get("clusters") or {}).get(school) or {}).get(preferred)
-        if share is not None and share >= CONTEXT_MIN_SHARE:
-            return preferred
-    return _LABELS["map"].get(school) or preferred
-
-
 def primaryState(school):
     """'Tufts' -> 'MA'. The school's HOME state, or None.
 

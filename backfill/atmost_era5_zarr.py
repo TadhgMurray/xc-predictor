@@ -300,13 +300,6 @@ def fetchTileWeather(ds, tileCells):
     return rows
 
 
-def fetchCellWeather(ds, cellLat, cellLon, dates):
-    """Single-cell fetch (kept for --debug). One network read for one cell."""
-    hours = _neededHours(dates)
-    cell = _selectCellHours(ds, cellLat, cellLon, hours)
-    return _cellRowsFromDataset(cellLat, cellLon, cell)
-
-
 def _cellRowsFromDataset(cellLat, cellLon, cellDS):
     """
     Purpose: turn ONE cell's per-hour Dataset (dims: valid_time) into DB rows --
