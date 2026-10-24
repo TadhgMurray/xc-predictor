@@ -824,11 +824,13 @@ L=/srv/xc-predictor/engine/data/ss; mkdir -p $L
 # the review branch as a detached worktree beside production (production stays on
 # master); its engine/data IS production's, so every script sees the real pack,
 # fitted curves and Kailo snapshots
-git fetch -q origin claude/sharp-lamport-p381q5
-[ -d /srv/ss-review ] || git worktree add -q --detach /srv/ss-review FETCH_HEAD
-git -C /srv/ss-review checkout -q --detach FETCH_HEAD
-rm -rf /srv/ss-review/engine/data && ln -s /srv/xc-predictor/engine/data /srv/ss-review/engine/data
+# ! the symlink comes off BEFORE any checkout, so git can never write through it
 W=/srv/ss-review
+git fetch -q origin claude/sharp-lamport-p381q5
+[ -L $W/engine/data ] && rm $W/engine/data
+[ -d $W ] || git worktree add -q --detach $W FETCH_HEAD
+git -C $W checkout -q -f --detach FETCH_HEAD
+rm -rf $W/engine/data && ln -s /srv/xc-predictor/engine/data $W/engine/data
 # 0. the venues' elevations, for the altitude term (one small table)
 psql -P pager=off -c "\copy (SELECT key, elevation_m FROM venue_elevation) TO '$L/venue_elevation.csv' CSV"
 # 1. today's engine, forward holdout, tilt own vs hs, rows dumped (~2 h; production code)
