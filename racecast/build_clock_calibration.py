@@ -5,11 +5,12 @@
 #          For each pool and rating band: the time the site SHOWS for a
 #          runner's cross country season, at the track distance that level
 #          races in spring, against the best they actually ran there the
-#          next spring. The median gap is stored, and conversions.ratingClock
-#          takes it back out of the "≈ 17:31 5K on a track" it prints.
+#          next spring. REPORT ONLY (owner, 2026-10-24: "There's too many
+#          corrections" -- the gap it found was taken back out of the 5K
+#          column for one day and removed; a gap here is a fault in the
+#          scale to fix there, not a number to patch on top).
 #
-#     python racecast/build_clock_calibration.py            # report only
-#     python racecast/build_clock_calibration.py --write    # and store it
+#     python racecast/build_clock_calibration.py
 #
 # ★ THE CLOCK THE PAGE SHOWS, NOT A COUSIN. diag_hs_to_college part B read
 #   every pool through the TRACK curve; the high school 5K column is the
@@ -34,9 +35,6 @@
 #   at both ends. EDGES quantile bands per pool and kind; a band with fewer
 #   than MIN_BAND runners is left out, and the site interpolates between the
 #   bands' median ratings and holds the end values beyond them.
-# ! DISPLAY ONLY. No rating, board order or course number changes; the site
-#   reads the table (XCP_CLOCK_CAL=0 turns the correction off), and a run
-#   that cannot build it leaves the last table in place.
 import argparse
 import datetime
 import math
@@ -70,18 +68,6 @@ MIN_BAND = 150
 YEARS_BACK = 4
 CAP_PER_POOL_YEAR = 25000
 CLAMP_PCT = 6.0              # a correction past this is a broken input, not a clock
-
-DDL = """
-CREATE TABLE IF NOT EXISTS clock_calibration (
-    pool        text    NOT NULL,
-    kind        text    NOT NULL,      -- 'XC' (the cross country scale) / 'TF' (the track curve)
-    rating_mid  real    NOT NULL,      -- the band's median rating
-    rating_lo   real,
-    rating_hi   real,
-    n           integer NOT NULL,
-    bias_pct    real    NOT NULL,      -- 100 ln(shown / ran): - = the clock reads fast
-    built_at    timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (pool, kind, rating_mid))"""
 
 _SEASONS_SQL = """
     SELECT person_id, split_part(pool, '|', 1), year, mean_rating
@@ -208,34 +194,17 @@ def measure(cur, years_back=YEARS_BACK, cap=CAP_PER_POOL_YEAR, seed=7):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--write", action="store_true")
     ap.add_argument("--years-back", type=int, default=YEARS_BACK)
     a = ap.parse_args(argv)
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("SET LOCAL statement_timeout = '15min'")
         got = measure(cur, a.years_back)
-        rows = []
         print("\npool       kind  band rating (lo-hi)        n    shown vs ran")
         for (pool, kind), pairs in sorted(got.items()):
             for mid, lo, hi, n, b in bands(pairs):
-                rows.append((pool, kind, mid, lo, hi, n, b))
                 print(f"{pool:<10} {kind:<4} {mid:>6.1f} ({lo:.1f}-{hi:.1f}) {n:>8,}   {b:+.2f}%"
                       + ("  (reads fast)" if b < 0 else ""))
         conn.rollback()
-        if not a.write:
-            print("\nreport only; --write stores it")
-            return 0
-        if not rows:
-            print("\nnothing measured: the last table stays")
-            return 0
-        cur.execute(DDL)
-        cur.execute("DELETE FROM clock_calibration")
-        from psycopg2.extras import execute_values
-        execute_values(cur, """INSERT INTO clock_calibration
-                               (pool, kind, rating_mid, rating_lo, rating_hi, n, bias_pct)
-                               VALUES %s""", rows)
-        conn.commit()
-        print(f"\nclock_calibration: {len(rows)} bands written")
     return 0
 
 

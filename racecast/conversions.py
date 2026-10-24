@@ -202,63 +202,6 @@ def _loadEngineScale():
     _scale["at"] = time.time() if out else time.time() - _OFFSET_TTL + 60.0
 
 
-# ★ THE 5K COLUMN, CHECKED AGAINST THE TRACK (owner, 2026-10-23: "the 5k
-#   equivs on my race were abt 15-20s faster"). build_clock_calibration.py
-#   measures, every run, how far the track time printed here sits from what
-#   the same runners ran on the track the next spring, by pool, clock
-#   ('XC' scale / 'TF' curve) and rating band; ratingClock takes that gap
-#   back out of a track time of 3000 m or more. Display only: no rating
-#   moves. XCP_CLOCK_CAL=0 turns it off; no table, no correction.
-_cal = {"at": 0.0, "map": {}}
-
-
-def _loadClockCal():
-    out = {}
-    try:
-        with getConn() as conn, conn.cursor() as cur:
-            cur.execute("SELECT to_regclass('public.clock_calibration') IS NOT NULL")
-            row = cur.fetchone()
-            if row and (row[0] if not isinstance(row, dict) else list(row.values())[0]):
-                cur.execute("SELECT pool, kind, rating_mid, bias_pct FROM clock_calibration "
-                            "ORDER BY pool, kind, rating_mid")
-                for r in cur.fetchall():
-                    pool, kind, mid, b = (r if not isinstance(r, dict) else
-                                          (r["pool"], r["kind"], r["rating_mid"], r["bias_pct"]))
-                    out.setdefault((_bare(pool), kind), []).append((float(mid), float(b)))
-    except Exception:                                    # noqa: BLE001
-        out = {}
-    _cal["map"] = out
-    _cal["at"] = time.time()
-
-
-def clockBias(rating, pool, sport):
-    """100 ln(shown / ran) for this rating's track time: negative when the
-    clock reads fast. 0 when switched off or unmeasured. Linear between the
-    bands' median ratings, the end bands' value beyond them."""
-    import os
-    if os.environ.get("XCP_CLOCK_CAL", "1").strip() == "0":
-        return 0.0
-    with _offset_lock:
-        if time.time() - _cal["at"] > _OFFSET_TTL:
-            _loadClockCal()
-        pts = _cal["map"].get((_bare(pool), str(sport or "XC").upper()))
-    if not pts:
-        return 0.0
-    try:
-        r = float(rating)
-    except (TypeError, ValueError):
-        return 0.0
-    if r <= pts[0][0]:
-        return pts[0][1]
-    if r >= pts[-1][0]:
-        return pts[-1][1]
-    for (r0, b0), (r1, b1) in zip(pts, pts[1:]):
-        if r0 <= r <= r1:
-            w = (r - r0) / (r1 - r0) if r1 != r0 else 0.0
-            return b0 + w * (b1 - b0)
-    return 0.0
-
-
 def engineScale(pool, sport):
     """(pool_mean, median_effect, anchor_shift) or None."""
     if not pool:
@@ -1133,15 +1076,12 @@ _PACE_SEASON_SQL = """
 def ratingPaceRaces(rating, pool):
     """The track mile and 5K a rating is worth, as two 'races' for the
     critical-speed line (paces.seasonLadder's fallback): the TF clock the
-    5K column prints, calibrated the same way (clockBias). None when the
-    pool has no clock."""
+    5K column prints. None when the pool has no clock."""
     out = []
     for d in (1609.344, FIVE_K_M):           # the mile, the 5K
         t = ratingSeconds(rating, pool, "TF", d)
         if not t:
             return None
-        if d >= 3000:
-            t *= math.exp(-clockBias(rating, pool, "TF") / 100.0)
         out.append((float(d), float(t)))
     return out
 
@@ -1462,10 +1402,6 @@ def ratingClock(rating, pool, sport="XC", distance=None):
         where = None
     d = distance or readerDistance(pool, sport)
     secs = ratingSeconds(rating, pool, sport, d)
-    # a track time at a distance the calibration measured (3200 m / 5000 m):
-    # the gap the same runners showed on the track comes back out
-    if secs and d and float(d) >= 3000 and (where == "on a track" or str(sport or "XC").upper() == "TF"):
-        secs *= math.exp(-clockBias(rating, pool, sport) / 100.0)
     t = clockFor(secs)
     if not t:
         return None
