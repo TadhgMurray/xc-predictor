@@ -18,6 +18,14 @@
 #   'TF', each through conversions.ratingSeconds -- the function the site
 #   calls -- at the level's spring distance (high school and middle school
 #   3200, college 5000), and stored apart.
+# ★ THE SPRING BEFORE AND THE SPRING AFTER, AVERAGED (owner's first report,
+#   2026-10-24: middle school +5-6%, high school +2%, the fastest bands
+#   least -- improvement, not the clock). A fall rating against the NEXT
+#   spring's best reads every runner's growth since as the clock being
+#   slow; against the spring BEFORE it would read it the other way. The
+#   geometric mean of the two springs' bests sits at the fall in time, so
+#   steady improvement cancels, as the +-30 days do in diag_weather_credit.
+#   A runner needs a serious best in BOTH springs.
 # ★ A SERIOUS BEST ONLY. A runner who ran the distance once may never have
 #   raced it hard (owner, 2026-10-22: "every conversion is fast?"), so only
 #   runners with MIN_TRACK_RACES or more at it count.
@@ -48,6 +56,7 @@ SPRING_M = {"hs": 3200.0, "ms": 3200.0, "college": 5000.0}
 TIME_RANGE = {3200.0: (500, 1200), 5000.0: (780, 1500)}
 DIST_TOL = 0.01
 MIN_TRACK_RACES = 3
+MIN_TRACK_RACES_EACH = 2     # in each of the two springs
 MIN_SEASON_RACES = 3
 BANDS = 5
 MIN_BAND = 150
@@ -165,19 +174,22 @@ def measure(cur, years_back=YEARS_BACK, cap=CAP_PER_POOL_YEAR, seed=7):
         for i in range(0, len(ids), 20000):
             cur.execute(_TRACK_SQL, {"ids": ids[i:i + 20000]})
             for pid, ty, ev, sec in cur.fetchall():
-                if ty == yr + 1:
-                    tracks[pid].append((ev, sec))
+                if ty in (yr, yr + 1):              # the spring before, the spring after
+                    tracks[pid].append((ty, ev, sec))
         n0 = sum(len(v) for k, v in out.items() if k[0] == pool)
         for pid, rows_tf in tracks.items():
-            ran, n_at = bestAndCount(rows_tf, metres, dist)
-            if not ran or n_at < MIN_TRACK_RACES:
+            before, n_b = bestAndCount([(e, t) for y, e, t in rows_tf if y == yr], metres, dist)
+            after, n_a = bestAndCount([(e, t) for y, e, t in rows_tf if y == yr + 1], metres, dist)
+            if not before or not after or min(n_b, n_a) < MIN_TRACK_RACES_EACH:
                 continue
+            ran = math.sqrt(before * after)
             for kind in ("XC", "TF"):
                 t = shown(rating[pid], pool, kind, metres)
                 if t and t > 0:
                     out[(pool, kind)].append((rating[pid], 100.0 * math.log(t / ran)))
         print(f"  {yr} {pool}: {sum(len(v) for k, v in out.items() if k[0] == pool) - n0:,} "
-              f"runner-clocks with {MIN_TRACK_RACES}+ {int(metres)}s the next spring", flush=True)
+              f"runner-clocks with {MIN_TRACK_RACES_EACH}+ {int(metres)}s in the spring "
+              f"before and the spring after", flush=True)
     return out
 
 
