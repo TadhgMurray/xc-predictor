@@ -82,10 +82,11 @@ commands that produce the numbers still missing.*
 - about 6,700 lines of model code;
 - 2–3 s of model time per 195-runner field.
 
-In return, the site uses one number per race from it. Replace `blend`
-with the `trend` basis (§6) once the §8 backtest agrees. Keep the network
-only as the fallback for runners with no rating, and stop retraining it
-until a test held out by date shows it beating `trend`.
+In return, the site uses one number per race from it.
+
+**Direction (owner, 2026-10-24): make the model better, not replace it.**
+The plan is `docs/PLAN-MODEL-2026-10.md`. `trend` (§6) stays as the
+yardstick the network has to beat, not as the product.
 
 ---
 
@@ -395,8 +396,8 @@ Send back the outputs of B, C and D.
 | # | Change | Expected gain | Cost | Risk |
 |---|---|---|---|---|
 | 1 | **Finish the tfrrs course cells** (MIGRATE §5c: backfill gps, `build_course_canonical`, solve) | College level −6.4% → near 0; against Kailo, mean miss 6.5% → roughly 2–2.5% (estimate from the level-free spread) | Already scripted; one solve | Low |
-| 2 | **Serve `trend` instead of `blend`** after §8 D, then refit the table weekly (a pipeline step after 16d) | Same order as blend. Level from an explicit table instead of a checkpoint. Honest time bands. **2–3 s less model time per field** (the network only for runners with no rating). | Done on the branch; one env change and a restart, with your go-ahead | Low; `rating` is one env change away |
-| 3 | **Stop retraining the network** until a date-split version beats `trend` | Saves the extraction (over 1 h, 125 GB), GPU runs and most model upkeep | None | Runners with no rating keep today's fallback |
+| 2 | **Keep `trend` as the yardstick** (`docs/PLAN-MODEL-2026-10.md` §3). Serve it only if a model is not ready when the level needs fixing. | Same order as blend. Level from an explicit table instead of a checkpoint. Honest time bands. **2–3 s less model time per field** (the network only for runners with no rating). | Done on the branch; one env change and a restart, with your go-ahead | Low; `rating` is one env change away |
+| 3 | **Retrain only against the new bench** (plan §2): split by date, order within each race as the score, `trend` as the bar | Retrains that can be judged | One re-extraction | — |
 | 4 | **Use the frozen archive as the accuracy number** on What's new (`score_frozen_forecasts.py`), not 16d | An honest public number, with team scores and coverage | Small (`run_report` reads one more log) | None |
 | 5 | **Keep `p_win` and σ in `meet_forecast` teams** (`upcoming_preview._TEAM_KEYS`) | Lets win probabilities be scored (Brier) | Small | None |
 | 6 | **Set `team_rho` from the data** (`teamRho`, printed by §8 D) | Team win % no longer overconfident | Trivial once measured | Low |
