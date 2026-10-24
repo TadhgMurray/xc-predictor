@@ -6,127 +6,104 @@ xc" and "none of this forecast bs for ratings or 5k equivalent". It maps the
 rating engine as it runs today, says what is redundant and what fights,
 proposes one model to replace the stack, measures the XC↔track relation
 inside it instead of asserting it, and gives the one run that settles it on
-real data (§9). Nothing here touches production. The engine is
-`engine/statespace.py`; `scripts/ss_eval.py` runs it on the pack.*
+real data (§9). Revised again after "go deeper ... bad distances, course
+matching, what can be removed, settle Oct 23": §0 leads with that round.
+Nothing here touches production. The engine is `engine/statespace.py`;
+`scripts/ss_eval.py` runs it on the pack.*
 
 ---
 
 ## 0. The short version
 
-**The XC↔track relation can be measured, and there is a textbook way to do it.**
+**What this round settled or built** (owner, 2026-10-24: "go deeper").
 
-1. **What identifies it.** Every runner has one fitness that moves through
-   time: a Kalman state with a walk, a personal season trend, a step each
-   summer, a taper at the season's last race, and recovery after a break.
-   Grass, the indoor oval and altitude are levels against the flat outdoor
-   400. They are estimated by GLS *through* each runner's own trajectory
-   (regression with state-space errors, de Jong 1991).
+1. **The Oct 23 drop gets settled by an experiment, not an argument** (§1,
+   §9 part 2). Today's nightly solve runs four times as a dry run: tilt
+   `own` or `hs`, tfrrs venue placement kept or undone, on one frozen pack,
+   with LACCTiC's pages cached so their side is identical. About 5 hours,
+   nothing written. Until it runs, my read is unchanged: the placement is the
+   likelier cause, because every test is college XC on tfrrs meets.
+2. **A race's distance is weighed, never picked.** The race effect is a
+   mixture: its ordinary effect, or that plus the offset of a distance its
+   listed one is commonly confused with (5000↔3 mi, 6000↔8000, 3000↔3200,
+   …). The rating carries the weighted offset. No distance is written, and
+   no race is condemned for one. On a planted world with 4% of divisions
+   mislabelled:
+   - the worst tenth of their runners' rating errors fell from 6% to 2.4%;
+   - the likeliest true distance was right for 93–94% of the races it
+     flagged;
+   - it flagged 45 of 31,223 ordinary races.
 
-   The information comes from people who race on both surfaces close
-   together in time, and each such pair counts by how far that runner's
-   fitness could have moved in between. Examples:
-   - an XC race and a fall track race two weeks apart;
-   - a June 3200 and an August XC opener;
-   - a November state meet and a December indoor mile.
+   The flagged list goes to a CSV for a person.
+3. **Courses are matched from the runners who raced both.** Two cells are
+   one course if their numbers differ by exactly what their listed distances
+   say (the Mt. SAC 4715/4828 case). How often nearby cells are one course is
+   learned per band of distance apart. Pairs are tied in proportion, never
+   merged.
+   - It found 163–170 of 180 planted alias pairs.
+   - It tied none of 28–66 different courses placed 150–600 m apart.
 
-   No window is chosen and no gap is asserted.
-2. **What it needs, found on a planted world** (§4.4, §6):
-   - **Several kinds of bridge.** December bridges alone (December XC
-     finals, the first indoor races) are biased by the taper and the
-     December break. They missed the gap by 1.3–3.5% seed to seed. With
-     every kind in, it landed within 0.5% (XC) and 0.65% (indoor) of the
-     planted value.
-   - **Bridges that run on venues also raced in-season.** A venue raced only
-     at bridge time has its own course number to absorb the gap.
-   - **Many such venues.** With 10 regions the XC-vs-track level of the
-     ratings wandered ±1% from seed to seed. With 40 regions it was within
-     0.3%. The real corpus has thousands.
+   The first version judged pairs on the cells' own numbers and tied 15–18
+   of those. Ratings barely move when the aliases are well raced. Its value
+   is replacing four hand rules and producing a list a person can check.
+4. **Every hand-set constant and correction is listed**
+   ([REVIEW-ENGINE-2026-10-CONSTANTS.md](REVIEW-ENGINE-2026-10-CONSTANTS.md),
+   generated from the code, with a test that fails on anything new and
+   unlisted). There are 737 constants and 143 switches. The new engine makes
+   unnecessary **184 constants and 54 switches**, and fits 28 more itself.
+   13 are left unclear, each with its reason; the largest is the board's
+   season aggregate.
+5. **The engine went deeper.** Each piece was tested against a world that
+   plants exactly what it is for (§6, table 5):
 
-   The run in §9 counts all three on real data and refits without each kind
-   of bridge. If those refits disagree, the gap is not determined by the
-   data, and the report says so rather than printing a number.
-3. **What each level reads.** The gap is measured per level (hs_m, hs_f,
-   college_m, …). Each level is read at its own median runner, with a slope
-   in ability fitted from runners seen on both surfaces.
+   | piece | effect on the planted world |
+   |---|---|
+   | each course's number walks season to season, step fitted | best next-season forecasts of three keyings |
+   | weather fitted inside | ratings 14–45% closer; hot-day bias −1.3% → −0.4% |
+   | a team running tempo together | tempo rows' error 4.8–5.5% → 3.3–3.7% |
+   | each runner's own distance curve, as a fourth state | track ratings 2.1% → 0.7–0.8%; cross-country forecasts 0.03–0.04% worse, so it is priced separately on real data |
+   | a rating SD on every result | available for gating boards |
+   | a two-sided residual (bad days slow only) | made things worse; off |
 
-   That slope needs care. A runner's ability is estimated from the same
-   rows, so a naive regression is biased. On the planted world it read +7%
-   per unit of log time with nothing planted. The EM step with the
-   posterior covariance brings it to −2%.
+**The XC↔track relation (the point of the review).**
 
-   The course tilt has the same problem and does not yield to that fix, so
-   it stays at the current engine's value. It moves ratings by tenths of a
-   percent (§4.4).
-
-   Kailo's published conversion has slope 0.72 (3.3% at 14:00, 8.7% at
-   16:00 for men). That looks like the same dilution from the other side.
-4. **The 5K column is a conversion, not a forecast.** A result's 5K
-   equivalent is `exp(performance)`, where performance = log time less its
-   course, day, race, grass or indoor level, altitude and event offset, all
-   on the day it was run. Nothing is projected and nothing is calibrated on
-   top. It is right exactly when the measured gap is right, and §9 checks
-   it against LACCTiC's per-race track 5Ks.
-5. **What LACCTiC and Kailo actually do** (research, §4.5):
-   - **LACCTiC.** Since 21 October it scores each race against "how fit its
-     runners are expected to be on the day, … an average improvement of
-     0.2% a week": one rate for everyone. How it pins XC to the track 5K is
-     not documented; the FAQ says the conversion is "for interpretability".
-   - **Kailo.** It regresses track on XC. Its fitness has no in-season
-     growth term.
-   - **Neither** models a runner's own trajectory, and neither measures the
-     surface gap through one. That is the opening.
-
-**The rest of the engine**
-
-6. **The engine is seven estimators in series, each correcting the one
-   before it.** In order: normalisation, the joint solve, the bracket
-   engine, the race-day refit, the go-live corrections, fill, and the board
-   gates. Between them they carry about 460 module-level constants and 144
-   `XCP_` switches. Most recent bug classes come from two early choices:
-   - **ability is one number per athlete-season**, so a runner's fitness
-     cannot move within a season;
-   - **the race-day key is the venue-day**, so a division run on the wrong
-     course cannot have its own day.
-
-   The season curve, the 30-day window, the field check, the island check,
-   season centring, the division guard, `flaggedFastDay` and `XC:fast` each
-   patch one of the two.
-7. **On the planted world, the proposed engine beats the current engine's
-   skeleton on every held-out test** (§6, three seeds):
-   - median time error is 0.2–0.7% lower;
-   - head-to-head is 2–4 points higher on spring track predicted from the
-     fall;
-   - rating error is about a third lower on ordinary rows and halved in
-     mis-measured divisions.
-
-   Today's skeleton gets the gap asserted at the truth in these runs and
-   still loses. A planted world proves the code does what it claims; only
-   the pack says whether it wins on real races (§9).
-8. **The Oct 23 drop is probably not the tilt alone** (§1). The "before"
-   numbers come from OLD's ratings, frozen since the Oct 19 solve. Between
-   that solve and the Oct 23 run, three commits moved college XC meets onto
-   venues for the first time, which is exactly the population every test
-   measures.
+6. **It is measured, not asserted.** Every runner has one fitness moving
+   through time. Grass, the indoor oval and altitude are levels against the
+   flat outdoor 400, estimated by GLS through each runner's own trajectory
+   (regression with state-space errors). The information comes from people
+   racing both surfaces close together in time: fall track during XC, summer
+   track before August, December XC beside December indoor, and the
+   indoor/outdoor overlap. No window is chosen.
+7. **What it needs** (planted world, §4.4): several kinds of bridge
+   (December alone missed by 1.3–3.5%), on venues also raced in-season, and
+   many of them (±1% with 10 regions, 0.3% with 40). The run refits without
+   each bridge kind; if those disagree, the report says the gap is not
+   determined instead of printing a number.
+8. **The 5K column is a conversion, not a forecast:** `exp(performance)`,
+   the time less everything measured about the day. It is right exactly
+   when the measured terms are, and §9 checks it against LACCTiC's track 5Ks
+   and runners' own 5000s.
+9. **The current engine is seven estimators in series**, each correcting
+   the one before it. Most recent bug classes trace to two choices: ability
+   is one number per athlete-season, and the race-day key is the venue-day.
+   On the planted world the proposed engine beats today's skeleton on every
+   held-out test, even with that skeleton handed the true gap (§6).
 
 **Recommendations, in order**
 
-1. **Run §9 once.** It takes about 6 hours, reads the pack, and writes
-   nothing the site reads. It produces:
-   - the measured gaps per level, with their bridges, the leave-one-kind-out
-     refits and a regional check;
-   - the paired forward scorecard against today's engine;
-   - LACCTiC's order and XC→5000 tests on the new numbers, forward in time;
-   - Kailo's rating snapshots scored on the races after each one.
-2. **If the gaps hold across bridge kinds and the scorecard wins, build it
-   out in the order of §8.** The fitness core comes first, then the race
-   key, then retiring the go-live corrections it makes redundant.
-3. **Stop judging runs on the three nightly tests.**
-   - The LACCTiC order test is three D3 races, scored in-sample.
-   - The "XC→5000 spread" is in-sample for us.
-   - Hammerand is one pair, and its gap is a known weather artifact (the
-     track heat credit takes the day's 35 °C peak for a 10k run at night).
-
-   §7 replaces them.
+1. **Run §9 once** (about 11 hours, all three parts in one paste each;
+   start at 07:00 UTC). It writes nothing the site reads. It produces:
+   - the Oct 23 answer;
+   - the measured gaps with their bridges and leave-one-kind-out refits;
+   - the distance and course lists;
+   - the forward scorecard against today's engine;
+   - LACCTiC (40 races, forward) and Kailo on the new numbers.
+2. **Decide the tilt and the tfrrs placement from part 2** before anything
+   new goes live.
+3. **If the gaps hold and the scorecard wins, build it out in §8's order.**
+4. **Stop judging runs on the three nightly tests.** That is 3 races
+   scored in-sample, and one Hammerand pair whose gap is a known weather
+   artifact. §7 replaces them.
 
 ---
 
@@ -703,10 +680,47 @@ What this does and does not show:
 - **Planted, not real.** Weather errors, mislinked people and timing errors
   are not in it. §9 decides.
 
+**5. This round's terms, each against the world that plants what it is for**
+(seeds 0 / 1; median |rating error| against the planted performance;
+forward = median |e| on the held-out month; the tables above were made
+before these terms existed)
+
+| term | planted | without | with | forward without → with |
+|---|---|---|---|---|
+| distance mixture (`dist_mix`) | 4% of divisions ran another distance than listed (5000 that was 4000, 3 mi or 6000; 1600 that was 1500 or 2000) | mislabelled rows 1.21 / 0.98%, worst tenth 6.3 / 5.9% | **0.92 / 0.72%, worst tenth 2.4 / 2.4%** | ordinary rows unchanged |
+| course pairs (`course_tie`) | 15% of meets key their course under a second name, half listed at 4828 for the same 5000; different courses 150–600 m from another | — | true pairs found **170 / 163 of 180**; nearby different courses tied **0 of 28 / 0 of 66** | ratings unchanged (the alias cells are well raced) |
+| | the same, aliases thin (2.5% of meets) | — | found 82 of 127 / 75 of 104 (the rest nobody links); **0** wrong | worst tenth 2.25 → 2.22% |
+| course walk (`era_walk`) | each course drifts 0.8% a season, re-routed now and then | one number per course: track 0.61 / 0.77% | **0.48 / 0.55%**; drift found 0.72 / 0.94% | next season **4.21 → 4.20 / 4.18 → 4.09%** (a number per season, untied: 4.38 / 4.46%) |
+| team in a race (`team_race`) | 4% of (race, school) run 3–8% slow together | tempo rows 4.76 / 5.52% | **3.30 / 3.69%** | **1.909 → 1.876 / 1.976 → 1.908%** |
+| the runner's distance curve (`endurance`, a fourth state) | 800 / 1600 / 3200 on the track, each runner's own slope (sd 3% per unit ln distance) | track 2.09 / 2.15% | **0.83 / 0.66%**; slope sd found 2.96 / 3.01% | track rows better at every distance; **cross-country 5000s 0.03–0.04% worse** (1.965 → 1.989 / 1.911 → 1.944% overall) |
+| weather inside (`weather`) | race run up to 15 F cooler than the day's recorded peak; the stored multiplier keyed on the peak | stored multiplier: XC 1.44 / 1.06%, track 0.86 / 0.70%, hot days −1.28 / −0.54% | **XC 1.20 / 0.91%, track 0.47 / 0.45%, hot days −0.37 / +0.31%** | 1.880 → 1.909 / **1.946 → 1.870%** |
+| two-sided residual (`two_piece`) | 5% bad days, slow only | 1.17 / 0.94% | 1.20 / 0.95% | 1.845 → 1.868 / 1.889 → 1.925%: **worse; off** |
+
+Two of these were wrong the first time and are worth knowing about:
+- **Course pairs judged on the cells' own numbers merged 15–18 nearby
+  different courses.** Once two cells are tied, their days soak up the real
+  difference, and the cells then look alike. With nobody racing both (a
+  high-school course beside a college one), the difference is not
+  identified at all. Judging only on runners who raced both cells in a
+  season fixed it.
+- **The distance curve as a step after the level made forecasts worse**
+  (1.94 → 1.98%), because a noisy slope was subtracted as if known. As a
+  fourth state in the runner's filter, its uncertainty reaches the level.
+  That cut the loss to 0.03–0.04% on cross-country, and improved every
+  track distance.
+
 `tests/test_statespace.py` pins the following:
 - B beats A on held-out races and the spring track;
 - a short division's rating stays within 1.5× ordinary;
 - the gap is recovered within 1% with and without December XC;
+- mislabelled races: the tail of their ratings falls by 30%+, nothing
+  else pays, the listed distance is never changed, and the likeliest
+  distance is right for 85%+ of flagged races;
+- course pairs: 80%+ of true pairs found, no nearby different course tied;
+- the course walk finds its drift and forecasts no worse than one number
+  per course;
+- team tempo, the distance curve and weather each beat their absence on
+  the world that plants them;
 - `ss_eval` runs end to end (gap with jackknife, regional check and
   altitude; score; ratings) on a pack-shaped file.
 
@@ -801,33 +815,41 @@ before, and keeps every output table's shape.
    - the indoor pin and gates;
    - the course guard (to a flag);
    - the bracket engine.
-3. **Posterior SDs** on ratings and courses, published with `n_results`;
-   boards gated on the SD.
-4. **The course eras' walk.** The prototype only splits by era.
-5. **Distance and weather inside the model:**
-   - one log-distance curve with a per-runner endurance slope (Blythe &
-     Király's low-rank form) instead of the pool curves and event offsets;
-   - weather as covariates in the same fit, with the race effect taking up
-     what the hourly grid gets wrong (night races).
-6. **Pipeline time.** The solve becomes minutes. The data steps are a
+3. **Distances weighed, never written.** The race-effect mixture
+   (`dist_mix`) goes live and the machine-written distance machinery is
+   turned off, scored at each step: `own_race_shift`'s condemnations,
+   `propose_distances`, the override audits. Owner-verified overrides stay
+   as data. The flagged-race CSV replaces the worklists.
+4. **Courses matched from runners.** `course_tie` replaces the place prior,
+   the sibling-distance tolerance and the venue-distance ties; the
+   course-pair CSV replaces hand merges. `era_walk` replaces `--era-years`.
+5. **Posterior SDs** on ratings (`perf_sd`) and courses, published with
+   `n_results`; boards gated on the SD.
+6. **Conditions and people inside the model:** weather (the backfill's
+   multiplier comes off; normalisation keeps distance and era), a team in a
+   race, the runner's own distance curve (priced on real data first: on the
+   planted world it fixes track ratings and costs cross-country forecasts
+   0.03–0.04%). One log-distance curve in place of the pool curves is the
+   step after.
+7. **Pipeline time.** The solve becomes minutes. The data steps are a
    separate look.
 
 ---
 
 ## 9. The one run
 
-Paste each part into `tmux` on NEW, as root in `/srv/xc-predictor`.
-- Production's checkout stays on master: the review branch is a separate
-  worktree at `/srv/ss-review`.
-- Nothing writes a table the site reads.
-- Outputs go to `engine/data/ss/`.
-
-**Postgres restarts unattended between 06:00 and 07:00 UTC.** Start part 2
-between 07:00 and 12:00 UTC:
-- the scorecard and `ss_eval` read the pack and finish in about 4–5 hours;
-- the LACCTiC and Kailo steps read the database for about 30 minutes at
-  the end;
-- the whole thing is clear of the next restart.
+Three parts, pasted into `tmux` on NEW as root in `/srv/xc-predictor`.
+- Production's checkout stays on master. The review branch is a separate
+  worktree at `/srv/ss-review` whose `engine/data` is a symlink to
+  production's, so every script sees the real pack and fitted curves.
+- Nothing writes a table the site reads, or a file in `engine/data` that
+  the site reads. The Oct 23 arms write to `/srv/oct23`, the engine to
+  `engine/data/ss/`.
+- **About 11 hours in all.** Start part 2 at 07:00 UTC, right after the
+  Postgres restart window, and run part 3 straight after it. Each part reads
+  the database only at its start and its end; neither is reading it at 06:00.
+- **Disk:** the Oct 23 part keeps two packs and four arms' solve files.
+  Check that `df -h /srv` shows 60 GB free first.
 
 **Part 1: what changed between OLD's Oct 19 solve and 20261023_171317.**
 Read-only, a few minutes. Paste the output.
@@ -839,7 +861,7 @@ R=logs/20261023_171317
 KN='^(export )?XCP_(TILT_SCALE|POST_COLLEGIATE|RACE_|DIFFICULTY|SPORT_LEVEL|ERA_|ALTITUDE|INDOOR|GAUGE|BRACKET_|DAY_|FIELD_CHECK|ISLAND_CHECK|SEASON_TIE|FORM_TREND|EFFORT|IMPORTANCE|TEAM_POOL|XC_COURSE_SUSPECT|TF_TAU|GEOMETRY|DISTANCE_BY|CURVE_|EQUAL_TIME)'
 echo "== env diff (< OLD, > NEW)"; diff <(grep -E "$KN" /etc/xc-predictor.env.old | sort) <(grep -E "$KN" /etc/xc-predictor.env | sort)
 # 2. what the run itself recorded as changed
-echo "== run_changes"; $P - <<'EOF'
+echo "== run_changes"; $P - <<'PYEOF'
 import json, glob
 for p in sorted(glob.glob("engine/data/run_changes/*.json"))[-2:]:
     d = json.load(open(p))
@@ -849,34 +871,32 @@ for p in sorted(glob.glob("engine/data/run_changes/*.json"))[-2:]:
     c = d.get("courses") or {}
     print("  courses compared", c.get("compared"), "moved 1%+", c.get("moved_1pct"), "new", c.get("new"))
     for r in (c.get("biggest") or [])[:15]: print("   ", r)
-EOF
+PYEOF
 # 3. the three tests, both sides, last 4 runs
 echo "== history"; tail -n 4 engine/data/run_history.jsonl | $P -c "
 import sys, json
 for l in sys.stdin:
     d = json.loads(l); m = d.get('metrics', d)
     print(d.get('run', d.get('log_dir', '?')), {k: m.get(k) for k in ('lacctic_order_ours','lacctic_order_theirs','lacctic_5000_ours','lacctic_5000_theirs','holdout_race_sd','day_scatter')})"
-# 4. what 06a placed in this run, and how
+# 4. what 06a placed in this run, and how; and whether the migration's dump of OLD is still there
 echo "== 06a"; tail -n 25 $R/06a_tfrrs_location.log
-ls $R | grep -i -E "tfrrs|location|leftover" | head
 psql -P pager=off -c "SELECT substr(m.date::text,1,4) yr, count(*) meets, count(m.location_id) located, count(m.gps_lat) with_gps FROM meets_tfrrs m WHERE m.sport='XC' GROUP BY 1 ORDER BY 1 DESC LIMIT 6;"
+ls -d /srv/migrate/db && du -sh /srv/migrate/db; df -h /srv | tail -1
 # 5. Hammerand's two 10ks: time, normalized, the weather/altitude the row carries
 psql -P pager=off -c "SELECT r.result_id, r.date, r.time_seconds, r.normalized_time, round((r.normalized_time/r.time_seconds)::numeric,4) nt_over_t, r.speed_rating, r.rating_pool FROM results_tf r WHERE r.result_id IN (277459367, 293998421);"
-$P scripts/athlete_dump.py $(psql -At -c "SELECT person_id FROM results_tf WHERE result_id=277459367") 2>&1 | grep -E "10000|10,000|277459367|293998421" | head -8
 ```
 
 If a query names a column that does not exist on NEW, paste the error and I
-will fix it.
+will fix it. If `/srv/migrate/db` is gone, part 2 needs `--all-tfrrs` on
+its first line (it then treats every tfrrs XC meet with GPS as placed).
 
-**Part 2: everything else, in one go.**
+**Part 2: the Oct 23 drop, settled** (§1; about 5 hours). Four dry runs of
+today's nightly solve, two packs × two tilts, the same code and the same
+LACCTiC pages for all four.
 
 ```bash
 cd /srv/xc-predictor && set -a; . /etc/xc-predictor.env; set +a; P=/srv/venv/bin/python
-. deploy/solve_env.sh
-L=/srv/xc-predictor/engine/data/ss; mkdir -p $L
-# the review branch as a detached worktree beside production (production stays on
-# master); its engine/data IS production's, so every script sees the real pack,
-# fitted curves and Kailo snapshots
+# the review branch as a detached worktree beside production
 # ! the symlink comes off BEFORE any checkout, so git can never write through it
 W=/srv/ss-review
 git fetch -q origin claude/sharp-lamport-p381q5
@@ -884,44 +904,101 @@ git fetch -q origin claude/sharp-lamport-p381q5
 [ -d $W ] || git worktree add -q --detach $W FETCH_HEAD
 git -C $W checkout -q -f --detach FETCH_HEAD
 rm -rf $W/engine/data && ln -s /srv/xc-predictor/engine/data $W/engine/data
-# 0. the venues' elevations, for the altitude term (one small table)
+O=/srv/oct23; mkdir -p $O
+# today's pack, frozen (with its date), and the same pack without the tfrrs placement
+cp --preserve=timestamps engine/data/packed_XC_TF.npz $O/pack_now.npz
+$P -u $W/scripts/oct23_variant_pack.py --repo /srv/xc-predictor --pack $O/pack_now.npz \
+    --out $O/pack_noplace.npz > $O/variant.log 2>&1
+# the four arms: the pipeline's own 08_golive, dry (~1 h each)
+for arm in "A own noplace" "B hs noplace" "C own now" "D hs now"; do
+  set -- $arm
+  PY=$P bash $W/scripts/oct23_arm.sh /srv/xc-predictor $O/pack_$3.npz $2 $O/$1 > /dev/null 2>&1 \
+    || echo "arm $1 FAILED: tail $O/$1/arm.log"
+  $P $W/scripts/oct23_score.py --repo /srv/xc-predictor --arm-dir $O/$1 > $O/$1/score.log 2>&1
+done
+$P $W/scripts/oct23_score.py --repo /srv/xc-predictor --table $O/A $O/B $O/C $O/D > $O/table.log 2>&1
+# the nightly's three races, then 40 races of 2025 forward; LACCTiC read once, cached for all four
+for a in A B C D; do
+  $P $W/scripts/lacctic_compare.py --race 12194,12158,11632 --runners 150 \
+      --ours-npz $O/$a/five.npz --cache $O/lacctic > $O/$a/lacctic3.log 2>&1
+  $P $W/scripts/lacctic_compare.py --season 2025 --top 40 --runners 600 --forward \
+      --ours-npz $O/$a/five.npz --cache $O/lacctic > $O/$a/lacctic40.log 2>&1
+done
+echo OCT23 DONE
+```
+
+**Part 3: the state-space engine on real data** (about 6 hours).
+
+```bash
+cd /srv/xc-predictor && set -a; . /etc/xc-predictor.env; set +a; P=/srv/venv/bin/python
+. deploy/solve_env.sh
+W=/srv/ss-review; L=/srv/xc-predictor/engine/data/ss; mkdir -p $L
+# 0. inputs: the venues' elevations; each row's race-day weather and the multiplier the backfill applied
 psql -P pager=off -c "\copy (SELECT key, elevation_m FROM venue_elevation) TO '$L/venue_elevation.csv' CSV"
-# 1. today's engine, forward holdout, tilt own vs hs, rows dumped (~2 h; production code)
+$P -u $W/scripts/ss_weather_export.py --repo /srv/xc-predictor --out $L/weather.npz > $L/weather.log 2>&1
+# 1. today's engine, forward holdout, rows dumped (~2 h; production code)
 $P scripts/scorecard.py --base "production --tilt-scale own" \
     --try "production --tilt-scale hs" > $L/tilt_scorecard.log 2>&1
-# 2. the state-space engine: gap (+ jackknife, regional check, tilt profile),
-#    score on the same rows, ratings, and as-of fits at two Kailo cuts (~3 h)
+# 2. the new engine without the runner's distance curve, on the same rows (prices it: it
+#    fixes track ratings and cost cross-country forecasts 0.03-0.04% on the planted world)
+$P -u $W/scripts/ss_eval.py --repo /srv/xc-predictor --mode score \
+    --base-dump engine/data/scorecard/ladder_logs/try_holdout.npz --elevation $L/venue_elevation.csv \
+    --weather $L/weather.npz --era-walk --drop endurance > $L/ss_noend.log 2>&1
+# 3. the whole engine: gap (+ jackknife, regional check, tilt profile), the distance and course
+#    lists, score on the same rows, ratings, as-of fits at two Kailo cuts (~3 h)
 CUTS=$($P -c "import json,glob; c=sorted({json.load(open(p))['cut'] for p in glob.glob('engine/data/kailo/ratings_*.json')}); print(','.join(sorted({c[0], c[len(c)//2]})) if c else '')")
 $P -u $W/scripts/ss_eval.py --repo /srv/xc-predictor --mode all \
     --base-dump engine/data/scorecard/ladder_logs/try_holdout.npz \
-    --elevation $L/venue_elevation.csv --kappa-profile --cuts "$CUTS" > $L/ss_eval.log 2>&1
+    --elevation $L/venue_elevation.csv --weather $L/weather.npz --era-walk \
+    --kappa-profile --cuts "$CUTS" > $L/ss_eval.log 2>&1
 R=$(ls -t $L/ratings_*.npz | head -1)
-# 3. LACCTiC, 40 races of 2025: ours today; the new engine; the new engine forward (~1 h, API-paced)
-$P $W/scripts/lacctic_compare.py --season 2025 --top 40 --runners 600 > $L/lacctic_now.log 2>&1
-$P $W/scripts/lacctic_compare.py --season 2025 --top 40 --runners 600 --ours-npz $R > $L/lacctic_ss.log 2>&1
-$P $W/scripts/lacctic_compare.py --season 2025 --top 40 --runners 600 --ours-npz $R --forward > $L/lacctic_ss_fwd.log 2>&1
-# 4. Kailo: every saved snapshot, ours and the state-space engine beside Kailo
+# 4. LACCTiC, 40 races of 2025: ours today; the new engine; the new engine forward (cached pages)
+$P $W/scripts/lacctic_compare.py --season 2025 --top 40 --runners 600 --cache /srv/oct23/lacctic > $L/lacctic_now.log 2>&1
+$P $W/scripts/lacctic_compare.py --season 2025 --top 40 --runners 600 --ours-npz $R --cache /srv/oct23/lacctic > $L/lacctic_ss.log 2>&1
+$P $W/scripts/lacctic_compare.py --season 2025 --top 40 --runners 600 --ours-npz $R --forward --cache /srv/oct23/lacctic > $L/lacctic_ss_fwd.log 2>&1
+# 5. Kailo: every saved snapshot, ours and the state-space engine beside Kailo
 $P $W/scripts/kailo_ratings.py --ours-dir $L > $L/kailo.log 2>&1
 echo DONE
 ```
 
 Afterwards, take the review checkout away with
-`rm /srv/ss-review/engine/data && git worktree remove --force /srv/ss-review`.
-Remove the symlink first, so nothing can reach production's data.
+`rm /srv/ss-review/engine/data && git worktree remove --force /srv/ss-review`
+(the symlink first, so nothing can reach production's data), and
+`rm -rf /srv/oct23` once the numbers are in.
 
 **What to paste back** (one block, a few hundred lines):
 
 ```bash
-cd /srv/xc-predictor; L=engine/data/ss
+cd /srv/xc-predictor; L=engine/data/ss; O=/srv/oct23
+echo "== OCT23"; grep -E "^\[variant\]" $O/variant.log | head -30
+for a in A B C D; do echo "-- $a"; head -2 $O/$a/arm.log | cut -c1-300; grep -E "Hammerand|5K$|with a 5K|pools with no" $O/$a/score.log
+  grep -A2 -E "ORDER \(" $O/$a/lacctic3.log | head -3; grep -A2 -E "XC -> TRACK" $O/$a/lacctic3.log | head -3
+  grep -A3 -E "ORDER \(" $O/$a/lacctic40.log | head -4; grep -A2 -E "XC -> TRACK" $O/$a/lacctic40.log | head -3; done
+head -60 $O/table.log
+echo "== ENGINE"; tail -3 $L/weather.log
 sed -n '/TRY AGAINST BASE/,$p' $L/tilt_scorecard.log | grep -E "SCORECARD|  (bias|median|p90|pairwise)|^    all " | head -16
-sed -n '/=== GAP/,/=== SCORE/p' $L/ss_eval.log | grep -vE "^\[ss\] +[0-9]+ sigma" | head -160
+grep -E "terms:|against the current|  (bias|median|p90|pairwise)|^    (all|sport: )" $L/ss_noend.log | head -30
+sed -n '/=== GAP/,/=== SCORE/p' $L/ss_eval.log | grep -vE "^\[ss\] +[0-9]+ sigma" | head -220
 sed -n '/=== SCORE/,/=== RATINGS/p' $L/ss_eval.log | grep -E "against the current|SCORECARD|  (bias|median|p90|pairwise)|^    (all|sport: |pool: )" | head -70
 sed -n '/=== RATINGS/,$p' $L/ss_eval.log | grep -E "ratings ->|median 5K|as of" | head -20
 for f in lacctic_now lacctic_ss lacctic_ss_fwd; do echo "== $f"; grep -A3 -E "ORDER \(|XC -> TRACK|CONSISTENCY|CROSS-SPORT" $L/$f.log | head -18; done
 grep -B1 -A8 "SNAPSHOT" $L/kailo.log | head -80
 ```
 
-**Reading part 2:**
+**Reading part 2 (Oct 23).**
+- Per arm: the order test on the nightly's three races and on 40 races
+  forward, XC → 5000, and Hammerand. Tilt effect = (B − A + D − C) / 2;
+  placement effect = (C − A + D − B) / 2.
+- `variant.log` says how many placed meets and rows were re-keyed, and
+  whether the pack carried the weather the placement switched on (it decides
+  from the rows, not from a setting).
+- The table: each arm's median rating move per pool against arm A. It says
+  which change moved whom before any test does.
+- If neither effect reaches the size of the drop (order 86.1 → 83.7, 5000
+  spread 2.12 → 2.52), the cause is elsewhere. Part 1's env diff is the
+  next place to look.
+
+**Reading part 3 (the engine).**
 - **The levels.** Each level's XC and indoor gap at its own median runner,
   with a slope in ability. Then:
   - the bridge table: kinds, venues, and how many venues are raced
@@ -931,12 +1008,25 @@ grep -B1 -A8 "SNAPSHOT" $L/kailo.log | head -80
     its venues are what to inspect);
   - the regional check;
   - the tilt profile.
+- **Distances and courses.** How many races the mixture thinks were not
+  their listed distance, the 25 likeliest with meet and division, and the
+  course pairs it thinks are one course under two keys, with how many
+  metres apart. The full lists are `distance_<date>.csv` and
+  `courses_<date>.csv` in `engine/data/ss`. These are for a person to look
+  at; the ratings already carry them as weights. ⚠ A division that ran
+  3.6% fast on a day its other divisions did not is exactly what a 5000
+  that was 3 miles looks like; the rating is the same either way, but the
+  "likeliest distance" is a question for a person, not a verdict.
 - **The scorecard.**
   - The first block is the tilt: own against hs.
-  - The second is the new engine against today's, on the same rows: higher
-    pairwise and lower median |err|, each beyond 2 SE, is a win.
-  - Rung A against today's says whether the prototype's missing terms (era
-    walk, weather inside) matter.
+  - `ss_noend` is the engine without the runner's distance curve; the
+    `ss_eval` SCORE block is the whole engine. Both are against today's
+    engine on the same rows, so the difference between them prices the
+    distance curve, by sport (on the planted world it helped every track
+    distance and cost cross-country forecasts 0.03–0.04%). Higher pairwise
+    and lower median |err|, each beyond 2 SE, is a win.
+  - Rung A against today's says whether the state-space skeleton alone
+    matters.
 - **LACCTiC.** Ours today against theirs, then the new engine against
   theirs, season-wide and then forward. **Kailo** gets the same, on each
   snapshot.

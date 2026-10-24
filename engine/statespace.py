@@ -429,6 +429,8 @@ def pairLinks(person, season, cell, rr, wt, a, b, n_cell):
     difference whatever the fit did to the levels. Returns per pair
     (runners linking it, precision-weighted mean difference, its variance
     in units of sigma2 from the rows alone)."""
+    if a.size == 0:
+        return np.zeros(0), np.zeros(0), np.zeros(0)
     m = cell >= 0
     key = (person[m].astype(np.int64) * 4096 + season[m] % 4096) * n_cell + cell[m]
     u, inv = np.unique(key, return_inverse=True)

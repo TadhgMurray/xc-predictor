@@ -40,7 +40,8 @@ def _repo():
 
 
 REPO = _repo()
-for _p in (os.path.join(REPO, "racecast"), os.path.join(REPO, "engine")):
+for _p in (os.path.join(REPO, "racecast"), os.path.join(REPO, "engine"),
+           os.path.join(REPO, "scripts")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -118,9 +119,16 @@ def modeArm(a):
     print(f"[oct23]   wrote {a.arm_dir}/five.npz ({rid.size:,} rows)")
     tf = {int(r): f for r, s, f in zip(rid, sp, five) if s == 1 and int(r) in HAMMERAND}
     h = [tf.get(r) for r in HAMMERAND]
+    rt = {}
+    if "TF_result_id" in arm:
+        for r, v in zip(arm["TF_result_id"], arm["TF_rating"]):
+            if int(r) in HAMMERAND:
+                rt[int(r)] = float(v)
     if all(h):
+        gap_r = (f", rating gap {rt[HAMMERAND[1]] - rt[HAMMERAND[0]]:+.1f}"
+                 if len(rt) == 2 else "")
         print(f"[oct23]   Hammerand: {HAMMERAND[0]} {h[0]:.1f}s, {HAMMERAND[1]} {h[1]:.1f}s, "
-              f"gap {h[0] - h[1]:+.1f}s ({100 * math.log(h[0] / h[1]):+.2f}%)")
+              f"gap {h[0] - h[1]:+.1f}s ({100 * math.log(h[0] / h[1]):+.2f}%){gap_r}")
     else:
         print(f"[oct23]   Hammerand: not both rated in this arm ({h})")
 

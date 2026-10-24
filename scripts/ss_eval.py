@@ -32,8 +32,15 @@ only: no database, nothing written but its own files.
   own curve (normalize_distance.anchorShift, as model/feature_extraction
   .toCommonScale does), so a senior's spring and a freshman's fall are one
   trajectory.
-⚠ NOT YET IN IT: altitude, the course eras' walk (--era-years only
-  splits), weather beyond what normalized_time already carries.
+★ THE TERMS (statespace.fitGLS): by default the distance mixture on each
+  race, course pairs judged on shared runners, a team inside a race and the
+  runner's own distance curve; --era-walk adds a course number per season
+  tied by a fitted walk, --weather (scripts/ss_weather_export.py) the
+  weather fitted inside in place of the backfill's multiplier,
+  --elevation altitude. --drop leaves terms out, to price them on the same
+  rows. Each race's likely other distance and each likely course pair go
+  to CSVs in engine/data/ss for a person to look at; neither is applied
+  as a decision.
 """
 import argparse
 import ast
@@ -76,7 +83,8 @@ ALT_FLOOR_M = 600.0
 #   by dropping one kind of bridge), and it is printed as such.
 UNDETERMINED = 0.25
 REGION_DEG = 3.0           # the regional check's grid, degrees of latitude and longitude
-TERMS = ("peak", "recovery", "event", "mu_by_level", "dist_mix")
+TERMS = ("peak", "recovery", "event", "mu_by_level", "dist_mix", "course_tie", "team_race",
+         "endurance")
 KAPPA_PROFILE = (0.0, 0.15, 0.31, 0.45, 0.6)
 
 
@@ -376,8 +384,11 @@ def coursePairLines(R, D, idx, rows, path=None, top=20):
     """The cells the fit thinks are one course under two keys: how many
     pairs, the share it learned per band of distance apart, and the
     likeliest, so a person can look. Tied in proportion, never merged."""
-    if "pair_p" not in R or R["pair_p"].size == 0:
+    if "pair_p" not in R:
         return []
+    if R["pair_p"].size == 0:
+        return [f"[ss] courses: no two cells of one surface within {int(ss.PAIR_MAX_M)} m "
+                f"(or the pack carries no course places)"]
     a, b, p, m, dl = R["pair_a"], R["pair_b"], R["pair_p"], R["pair_m"], R["pair_delta"]
     first = np.full(int(D["cell"].max()) + 1, -1, dtype=np.int64)
     has = D["cell"] >= 0
@@ -650,6 +661,9 @@ def main():
     ap.add_argument("--no-jackknife", dest="jackknife", action="store_false")
     ap.add_argument("--kappa-profile", action="store_true")
     ap.add_argument("--era-years", type=int, default=0)
+    ap.add_argument("--drop", default="", metavar="TERMS",
+                    help="terms to leave out, comma separated (dist_mix, course_tie, team_race, "
+                         "endurance, weather, era_walk ...): the same run without them, to price them")
     ap.add_argument("--era-walk", action="store_true",
                     help="a course number per season, tied by a fitted walk (replaces --era-years)")
     ap.add_argument("--weather", default=None, metavar="NPZ",
@@ -665,6 +679,10 @@ def main():
     if a.era_walk:
         rows.era_walk = True
         TERMS = TERMS + ("era_walk",)
+    drop = {x.strip() for x in a.drop.split(",") if x.strip()}
+    if drop:
+        TERMS = tuple(x for x in TERMS if x not in drop)
+    print(f"[ss] terms: {', '.join(TERMS)}")
     fitted = None
     if a.mode in ("all", "gap"):
         print("\n================ GAP ================")

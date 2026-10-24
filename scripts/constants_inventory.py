@@ -26,7 +26,7 @@ files only: no database, no pack.
   is for and what the new engine does with it.
 ⚠ CONSERVATIVE BY DESIGN. REMOVED only where §4-§5 of the review name the
   mechanism that covers it. Normalisation (distance curves, era, weather,
-  geometry) stays in front of the new engine until §8 point 5, and its
+  geometry) stays in front of the new engine until §8 point 6, and its
   constants are classified as what they are today, not as what they might
   become.
 ! THE NEW ENGINE IS A PROTOTYPE. "REMOVED" means "the model has a term that
@@ -349,9 +349,9 @@ TILT_ABS = "the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ �
 ONE_SCALE = "one 5000 m scale in the model; pools are a display transform (§5)"
 GAUGE = "the gauge: a flat outdoor 400 is 0 (§4.4, stated)"
 KAPPA = "tilt κ, stated at the current value (statespace KAPPA_STATED 0.31 per unit log time; §4.4)"
-KEPT_DIST = "kept until §8 point 5: the distance curves stay in normalisation in front of the new engine"
-KEPT_WX = "kept until §8 point 5 (weather as covariates in the fit, the race effect taking what the grid misses)"
-KEPT_ERA = "kept: the era curve stays in normalisation; §8 does not yet schedule it (point 5 moves distance and weather only)"
+KEPT_DIST = "kept until §8 point 6: the distance curves stay in normalisation in front of the new engine"
+KEPT_WX = "kept until §8 point 6 (weather as covariates in the fit, the race effect taking what the grid misses)"
+KEPT_ERA = "kept: the era curve stays in normalisation; §8 does not yet schedule it (point 6 moves weather; distance follows)"
 DEAD = "already dead in production (legacy ALS solve; 07_pack runs --pack-only)"
 REPORT = "report or diagnostic only: changes what is printed, not a rating"
 DIST_RES = ("distance resolution stays; §5: once v_r absorbs a wrong distance most "
@@ -364,6 +364,13 @@ LEGACY_SCALE = ("§4.2 lists rescaleToPool / anchor juggling as replaced by one 
 MIX = ("per-race distance mixture (statespace dist_mix): each race's offset is the ordinary "
        "race effect or one of the standard distances' offsets, weighted by posterior; the "
        "rating carries the weighted offset and no distance is ever written")
+
+
+TIE = ("course pairs judged on the runners who raced both (statespace course_tie): one course "
+       "if their numbers differ by what the listed distances say, P(same) per pair, the share "
+       "learned per band of distance apart, tied in proportion")
+ENDUR = ("the runner's own distance curve (statespace endurance: a fourth state, eta per unit "
+         "ln(d / 5000), its variance by EM)")
 
 
 def _all(names, cat, note):
@@ -417,7 +424,7 @@ RULES = {
         "_SCHOOL_LEVELS": ("DATA", "identity: school -> level"),
         **_all("DISTANCE_MODES DISTANCE_BY DISTANCE_BY_SOURCE DISTANCE_RESIDUAL "
                "DISTANCE_RESIDUAL_SOURCE", "STATED",
-               KEPT_DIST + " (switch: pool curves or the ability family; §8 point 5 replaces both "
+               KEPT_DIST + " (switch: pool curves or the ability family; §8 point 6 replaces both "
                            "with one curve and a per-runner slope)"),
         "_ABILITY": ("FITTED", KEPT_DIST + ": the distance-by-ability artifact (fit_distance_ability)"),
         **_all("_SCHOOL_ABBREV _SCHOOL_PAREN _NON_SCHOOLS _PRO_EXACT _PRO_FRAGMENTS _GRAPH_LEVELS "
@@ -463,7 +470,7 @@ RULES = {
     "engine/distance_tables.py": _all(
         "SEGMENT_KNOTS EXPONENTS BELOW_800_EXTRA", "STATED",
         "physics: the published equivalence tables (World Athletics, Purdy) as the event-offset prior; "
-        "the prototype fits e_ℓ,d with no table prior, so thin classes (600, 10k) need it until §8 point 5"),
+        "the prototype fits e_ℓ,d with no table prior, so thin classes (600, 10k) need it until §8 point 6"),
     # ---------------------------------------------------- fit_era_corrections
     "engine/fit_era_corrections.py": {
         **_all("_OV_JOIN _OV_COALESCE _OV_DROP", "DATA", "hand-verified distance overrides (corrections.py)"),
@@ -552,17 +559,15 @@ RULES = {
                "SPORT_GAIN_ROW_Q SPORT_GAIN_MIN_ROWS", "REMOVED", SEAM + " and " + XC_LEVEL),
         **_all("DIST_PRIOR_SD DIST_WALK_SD DIST_CAL_SHARE DIST_CAL_MIN_PAIRS", "FITTED",
                EVENT + " (prototype: coarse classes per level, 1000-2000 m pinned)"),
-        **_all("DIST_BANDS DIST_N_BAND DIST_BAND_ANCHORS", "REVIEW",
-               "the event offsets by rating band (ability-dependent distance exchange): the prototype fits "
-               "e_ℓ,d per level only; the per-runner endurance slope of §8 point 5 is what would replace it"),
+        **_all("DIST_BANDS DIST_N_BAND DIST_BAND_ANCHORS", "REMOVED",
+               ENDUR + ": the event offsets by rating band were the population's guess at it"),
         "RACE_DAY_CAP": ("REMOVED", RACE + " (§5: all four of its jobs)"),
         "DIVISION_TABLE_COLS": ("INFRA", "division-guard table columns (the guard itself goes: " + RACE + ")"),
         **_all("THETA_RACE_PRIOR_N EFFORT_THETA_FLOOR EFFORT_SHORT_CUT EFFORT_INNER_ITERS "
                "EFFORT_FAST_BEFORE_DAY EFFORT_CLASS_NAMES EFFORT_GROUP_NAMES", "REMOVED",
                ROWT + " (§4.2: the effort term; off in production)"),
         **_all("_ERFC_COEF _SQRT2 _SQRT2PI _MILLS_CF_Z _MILLS_CF_TIERS", "INFRA", "numerics (erfc, Mills ratio)"),
-        "SLOPE_RIDGE": ("REVIEW", "per-athlete-season endurance slope g: no counterpart in the prototype; "
-                                  "§8 point 5 (one log-distance curve, per-runner slope, variance by EM) would replace it"),
+        "SLOPE_RIDGE": ("REMOVED", ENDUR + " (the ridge becomes a fitted prior variance)"),
         **_all("LINK_WEIGHT SEASON_TIE_BANDS SEASON_TIE_MIN_PAIRS", "REMOVED", THETA + " (§5: the season tie)"),
         "TILT_SCALES": ("REMOVED", TILT_ABS + " (§5: XCP_TILT_SCALE)"),
         "ALT_FLOOR_M": ("STATED", "physics: altitude costs nothing below 600 m (statespace keeps it)"),
@@ -601,10 +606,8 @@ RULES = {
                                          "be running; statespace.SEASON_CLOSED_DAYS keeps its newest race "
                                          "from reading as the taper"),
         "INDOOR_PAIR_MAX_DAYS": ("INFRA", REPORT + " (indoorTransitionCheck: last indoor vs first outdoor race)"),
-        **_all("VENUE_DIST_SD VENUE_DIST_REF VENUE_DIST_MIN_GAP", "REVIEW",
-               "ties one venue's XC distances (a cell is venue × distance): the prototype keys cells the same "
-               "way with no tie; v_r takes a one-race distance error, but a whole cell keyed at a wrong "
-               "distance is not covered by §4-§5"),
+        **_all("VENUE_DIST_SD VENUE_DIST_REF VENUE_DIST_MIN_GAP", "REMOVED",
+               TIE + " (a venue's other listed distance is one candidate pair)"),
         "_ALT_FIT": ("FITTED", ALT + " (run state for --altitude-fit)"),
         **_all("TILT_REPORT_BANDS FIELD_REPORT_BANDS HOLDOUT_SEASON_BUCKETS CROSS_SPORT_DISTANCES _MONTH_ENDS "
                "_MONTHS DIST_GAP_BUCKETS CE_BANDS TILT_RATING_BANDS TILT_CE_BANDS", "INFRA", REPORT),
@@ -629,12 +632,9 @@ RULES = {
         **_all("INDOOR_CENTRE INDOOR_MODES INDOOR_MODE_DEFAULT INDOOR_GATES INDOOR_GATE_MODES "
                "INDOOR_GATE_MODE_DEFAULT", "REMOVED", IN_LEVEL + " (§5: indoor centre / pin / gates)"),
         **_all("XC_LEVEL_MODES XC_LEVEL_MODE_DEFAULT", "REMOVED", XC_LEVEL),
-        **_all("PLACE_RADIUS_M PRIOR_PLACE", "REVIEW",
-               "the place prior pulls one venue keyed in pieces together: venue identity, not a model "
-               "correction; the prototype has no such tie, so either the venue key is fixed in data or a tie stays"),
-        **_all("SIBLING_DIST_TOL SIBLING_DEFAULT", "REVIEW",
-               "one course listed at two near distances shares a history (Mt. SAC 2024): cell keying; "
-               "v_r absorbs a one-race distance error but not a split cell, which §4-§5 do not address"),
+        **_all("PLACE_RADIUS_M PRIOR_PLACE", "REMOVED", TIE + " (the 400 m radius and 2-race pull, learned)"),
+        **_all("SIBLING_DIST_TOL SIBLING_DEFAULT", "REMOVED",
+               TIE + " (Mt. SAC 4715/4828: same course if the numbers differ by RIEGEL ln(4828/4715))"),
         **_all("TILT_BANDS RACE_BUCKETS WELL_KNOWN_RACES WELL_KNOWN_BUCKETS", "REMOVED",
                COURSE + "; κ stated and the course scale is not re-read (§3: 'implied = applied' re-estimates the tilt)"),
     },
@@ -712,8 +712,7 @@ RULES = {
     },
     "racecast/conversions.py": {
         **_all("_POOL_MEAN_CACHE _SAMPLE_PER_POOL _OFFSET_TTL", "INFRA", "caches and samples"),
-        **_all("_DIST_BANDS _BAND_ANCHORS", "REVIEW", "mirrors joint_solve.DIST_BANDS (pinned by a test); "
-                                                    "goes wherever the band split goes"),
+        **_all("_DIST_BANDS _BAND_ANCHORS", "REMOVED", "mirrors joint_solve.DIST_BANDS; " + ENDUR),
         "_TILT_K": ("STATED", KAPPA + " (mirror)"),
         **_all("_TILT_LO _TILT_HI", "REMOVED", TILT_ABS),
         "_DEFAULT_DIFFICULTY_CACHE": ("REMOVED", XC_LEVEL + " (§4.2: the conversions' XC median effect)"),
@@ -800,8 +799,7 @@ ENV_RULES = {
            "REMOVED", COURSE),
     "XCP_BRACKET_WINDOW": ("REMOVED", THETA + " (§4.2: the walk's variance is the window, fitted)"),
     **_all("XCP_BRACKET_PLACE_RADIUS XCP_BRACKET_PLACE_PRIOR XCP_BRACKET_PLACE_VENUE XCP_BRACKET_SIBLING_TOL "
-           "XCP_VENUE_DIST_SD", "REVIEW", "venue identity / cell keying ties (see PLACE_RADIUS_M, "
-                                         "SIBLING_DIST_TOL, VENUE_DIST_SD): not covered by §4-§5"),
+           "XCP_VENUE_DIST_SD", "REMOVED", TIE),
     **_all("XCP_RACE_KEY XCP_RACE_EFFECT_OWN XCP_DAY_DIVISION_GUARD XCP_DAY_DIVISION_SHRINK XCP_DAY_SOFT "
            "XCP_DAY_PRIOR", "REMOVED", RACE),
     "XCP_RACE_EFFECT_SPORTS": ("FITTED", "whether the track race day is credited: cross-validated on the "
@@ -825,7 +823,7 @@ ENV_RULES = {
     "XCP_ERA_DRIFT": ("FITTED", "the course eras' walk, cross-validated once added (§4.7)"),
     "XCP_DIST_WALK": ("FITTED", EVENT),
     "XCP_NO_DIST_TABLE": ("STATED", "the published-table prior on the event offsets (distance_tables); "
-                                    "kept until §8 point 5"),
+                                    "kept until §8 point 6"),
     **_all("XCP_ALTITUDE XCP_ALTITUDE_FIT", "FITTED", ALT),
     **_all("XCP_GAUGE XCP_GAUGE_UNKNOWN_LENGTH XCP_GAUGE_FALLBACK", "STATED", GAUGE),
     "XCP_GEOMETRY": ("REMOVED", "course cell c_c per oval (the geometry spline is already off)"),
@@ -962,7 +960,7 @@ def render(items, env):
         L.append(f"- **{c}**: {CATEGORIES[c]}.")
     L += ["",
           f"Two things the counts hide. {kept} STATED or FITTED items are *kept*: normalisation "
-          "(distance curves, era, weather) stays in front of the new engine until §8 point 5, so its "
+          "(distance curves, era, weather) stays in front of the new engine until §8 point 6, so its "
           "settings stay too; the note starts with \"kept\". "
           f"{dead} items are in code that production no longer runs (the legacy ALS solve after "
           "`07_pack --pack-only`); their note says so. The review's §2.6 count (~460 constants, 144 "

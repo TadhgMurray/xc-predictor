@@ -122,7 +122,8 @@ def _packFromWorld(D, path):
              days=days.astype(np.int32), sport=(1 - D["xc"]).astype(np.int8),
              doy=doy.astype(np.int16), year=year.astype(np.int16),
              dist_m=np.where(D["xc"] == 1, 5000.0, 1600.0).astype(np.float32),
-             meet_id=D["day"].astype(np.int64), div_id=D["race"].astype(np.int64))
+             meet_id=D["day"].astype(np.int64), div_id=D["race"].astype(np.int64),
+             team=D["team"].astype(np.int32))
 
 
 def test_a_mislabelled_race_is_rated_at_its_likely_distance_never_relabelled():
@@ -192,6 +193,53 @@ def test_a_courses_number_walks_and_the_walk_is_measured():
     assert f_walk <= f_one + 0.0005
 
 
+def _ratingErr(D, R, m):
+    bad, xc = D["bad_race"], D["group"] == ss.GROUP_XC
+    err = R["perf"] - D["truth_perf"]
+    err = err - np.median(err[~bad & ~xc])
+    return float(np.median(np.abs(err[m & ~bad])))
+
+
+def test_a_team_at_tempo_is_taken_out_of_its_runners_ratings():
+    D = sw.worldHard(seed=5, n_regions=6, schools=12, team_p=0.04)
+    allr = np.ones(D["y"].size, dtype=bool)
+    base = ("peak", "recovery", "event", "mu_by_level")
+    tempo = D["tempo"] > 0
+    off = _ratingErr(D, ss.fitGLS(D, allr, outer=12, terms=base), tempo)
+    on = _ratingErr(D, ss.fitGLS(D, allr, outer=12, terms=base + ("team_race",)), tempo)
+    assert on < 0.85 * off
+
+
+def test_the_runners_own_distance_curve_moves_track_results_to_their_5000():
+    """800s, 1600s and 3200s, each runner with their own slope (sd 3% per
+    unit ln distance): the fourth state finds the spread and the track
+    ratings come back near the planted 5000."""
+    D = sw.worldHard(seed=5, n_regions=6, schools=12, track_mix=True)
+    allr = np.ones(D["y"].size, dtype=bool)
+    base = ("peak", "recovery", "event", "mu_by_level")
+    track = D["group"] != ss.GROUP_XC
+    off = _ratingErr(D, ss.fitGLS(D, allr, outer=12, terms=base), track)
+    R = ss.fitGLS(D, allr, outer=12, terms=base + ("endurance",))
+    assert _ratingErr(D, R, track) < 0.6 * off
+    assert 0.02 < R["eta_sd"] < 0.04
+
+
+def test_weather_fitted_inside_beats_a_correction_keyed_on_the_wrong_temperature():
+    """The stored correction reads the day's peak for a race run up to 15 F
+    cooler. Taken off and fitted from the runners themselves, the ratings
+    land closer, hot days most of all."""
+    D = sw.worldHard(seed=5, n_regions=6, schools=12, weather=True)
+    allr = np.ones(D["y"].size, dtype=bool)
+    base = ("peak", "recovery", "event", "mu_by_level")
+    hot = np.nan_to_num(D["wx_temp"]) > 75
+    stored = ss.fitGLS(D, allr, outer=12, terms=base)
+    U = dict(D); U["y"] = D["y"] - D["wx_log_mult"]
+    fitted = ss.fitGLS(U, allr, outer=12, terms=base + ("weather",))
+    every = np.ones(D["y"].size, dtype=bool)
+    assert _ratingErr(D, fitted, every) < _ratingErr(D, stored, every)
+    assert _ratingErr(D, fitted, hot) < 0.8 * _ratingErr(D, stored, hot)
+
+
 def test_ss_eval_runs_on_a_pack_shaped_file(tmp_path):
     D = sw.worldHard(seed=4, n_regions=4, schools=8)
     path = tmp_path / "packed_XC_TF.npz"
@@ -237,3 +285,20 @@ def test_ss_eval_runs_on_a_pack_shaped_file(tmp_path):
     assert out
     z = np.load(out[0])
     assert np.all(np.isfinite(z["five_k_s"])) and z["result_id"].size > 0
+    assert np.all(np.isfinite(z["perf_sd"]))
+
+    # the real run's flags: the weather file, the course walk, a term dropped
+    n = D["y"].size
+    rng = np.random.default_rng(1)
+    wx = tmp_path / "weather.npz"
+    np.savez(wx, result_id=np.arange(n), sport=(1 - D["xc"]).astype(np.int8),
+             temp=rng.uniform(40, 90, n), wind=rng.gamma(2.0, 3.0, n),
+             wet=rng.uniform(0, 0.5, n), log_mult=np.zeros(n))
+    r = subprocess.run([sys.executable, script, "--pack", str(path), "--mode", "gap",
+                        "--outer", "4", "--no-jackknife", "--repo", str(tmp_path / "repo"),
+                        "--weather", str(wx), "--era-walk", "--drop", "endurance"],
+                       capture_output=True, text=True, timeout=900, env=env)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    assert "weather" in r.stdout.split("[ss] terms:")[1].splitlines()[0]
+    assert "era_walk" in r.stdout and "endurance" not in r.stdout.split("[ss] terms:")[1].splitlines()[0]
+    assert "[ss] distance:" in r.stdout and "[ss] courses:" in r.stdout
