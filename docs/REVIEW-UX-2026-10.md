@@ -2,213 +2,337 @@
 
 This review is written for the people who use the site: runners (MS, HS, college), their parents and coaches, and most of them are on a phone. It is not a code review.
 
-**How I looked.** I rendered the real templates locally with made-up sample data (one 60-runner race, one runner with two XC seasons and one track season, a 50-row rankings board) and took screenshots in Chromium at 390 px (iPhone 13) and 1280 px. I did not use the live site, and I did not have Safari/WebKit. Names and numbers in the shots are fake. The course page and the recruiting pages are reviewed from their templates only. Screenshots are in `docs/ux-2026-10/`. In the mockups, the parts I changed have a dashed blue outline.
+**How I looked.** I rendered the real templates locally with made-up sample data and took screenshots in Chromium at 390 px (iPhone 13) and 1280 px. Pages driven by JavaScript got mocked API answers. I did not use the live site, and I did not have Safari. Names and numbers in the shots are fake. Pages marked *(template)* were read, not rendered. Screenshots are in `docs/ux-2026-10/`. In mockups, the parts I changed have a dashed blue outline. Every claim about code was checked against the file and line given.
 
 ---
 
-## The biggest problems, in order
+## The ten biggest problems
 
-### 1. On a phone, the results start a full screen or more down the page
+### 1. On a phone, the answer starts a screen or more down the page
 
-"Results first" holds on desktop, but not on a phone. Before the first result row, a phone user scrolls past:
+"Results first" holds on desktop, but not on a phone.
 
-| Page | Before the first row | First row starts at |
+| Page | What comes before the first row | First row at |
 |---|---|---|
-| Race | meet link, sport tag, title, meta, Share on its own line, course/day/weather, story, **a winner block that repeats row 1**, tabs, "Predict next year", grade picker, find box, dot chart | ~720 px (screen 2) |
-| Rankings | 5 tabs (the 5th is cut off), Breakouts · By state, title, subtitle, No. 1 line, filter panel (Pool, Sport, State, More filters), **a second search box** | ~790 px |
-| Athlete | name, Follow plus 2 lines of help text, 4 stats, ranks, 5 buttons, the recruiting line, tabs, **an open chart** | ~900 px |
+| Race | meet link, title, meta, Share on its own line, course/day/weather, story, **a winner block that repeats row 1**, tabs, "Predict next year", grade picker, find box, dot chart | ~720 px |
+| Rankings | 5 tabs (the 5th cut off), Breakouts · By state, title, subtitle, No. 1 line, filter panel, **a second search box** | ~790 px |
+| Athlete | name, Follow + 2 lines of help, 4 stats, ranks, 5 buttons, recruiting line, tabs, **an open chart** | ~900 px |
+| School | Follow + help, chips, "State OR · Athletes 1843 · Racing 2006 to 2026", 6 links, season-tracker line, 13 year pills | ~880 px |
+| State records | era note, Best race ever / Best season ever, 4 filters, tabs, "Advanced" | ~950 px |
+| Course | the girls' table starts after the boys' 15 rows + "Show more" + "View all" | girls ~1,100 px |
+| Predictions (from "Predict this meet") | a 3-step setup screen: 9 race pills, groupings, Show/Squads, a team box per race | Predict button ~1,700–2,000 px |
 
 <img src="ux-2026-10/race-phone-before.png" width="300"> <img src="ux-2026-10/race-phone-mockup.png" width="300">
 
-*Race page on a phone: as built (left), mockup (right). In the mockup the duplicate winner block is gone, course and day are in plain words, the grade picker and find box share one row, team scores are folded above the table, and the dot chart moves under the table. The first runner now appears on the first screen.*
+*Race page on a phone: as built (left), mockup (right). In the mockup the duplicate winner block is gone, course and day are in plain words, grade and find share one row, team scores are folded above the table, and the dot chart is under it. The first runner is on the first screen.*
 
-### 2. Athlete page on a phone: the rating is off-screen and the PRs are at the very bottom
+### 2. Following a link into a race drops you mid-table (likely the iPhone "cut off at the top" bug)
 
-- The season table has 8 columns and a 640 px minimum width, so on a phone you see Date, Meet, Result and Place. **Rating, the number the site exists for, is off the right edge.** The only hint is a faint fade.
-- **"All-time bests" and "Season bests" come after every race and after "Report it".** PRs are what a parent looks for first. `layout.js` has code that folds the sidebar into a "Bests & PRs" bar at the top, but it looks for `.page-layout`, which no template uses anymore, so that code never runs (a silent regression).
-- The race page's Team scores card has the same problem. On a phone it sits under all 60 rows (under 250 at a big meet), and its tip says "Tap a team to light its runners", but those runners are thousands of pixels further up.
+Every meet link on an athlete page carries `?r=<result id>`, and `race.html:241-248` then scrolls that row to the **centre** of the screen. On a phone you land with no meet name, no race title and no column headers. This is the most common way a parent reaches a race page. Details and two other suspects are in [the iPhone bug section](#the-iphone-table-cut-off-at-the-top-bug).
 
-<img src="ux-2026-10/athlete-phone-rating-offscreen.png" width="260"> <img src="ux-2026-10/athlete-phone-bests-at-bottom.png" width="260"> <img src="ux-2026-10/athlete-phone-mockup.png" width="260">
+<img src="ux-2026-10/race-phone-arrive-from-athlete.png" width="300">
 
-*Left: Rating is off the right edge. Middle: the bests come last. Right: mockup with one headline number and sentence, 4 buttons, "PRs & bests" folded at the top, the chart folded, and a season table of Meet (date under it), Result, Place and Rating that fits the screen.*
+### 3. On a phone, the key column is off-screen and side cards fall to the bottom
 
-### 3. Too many numbers and badges for one runner
+The same two faults repeat across the site:
 
-A parent opening an athlete page sees **seven different numbers that look like "the" rating or time**:
+- **The column that matters is off the right edge.**
 
-- Athlete rating 123.0, with ≈ 15:12
-- Best race 123.9, with ≈ 14:53
-- The season heading's 123.0 ≈ 15:00
-- The sidebar's Best rating and Average rating, each with a ≈ time
-- The Rating column and the 5K equiv column on every row
+  | Page | Hidden column |
+  |---|---|
+  | Athlete season table | **Rating** (8 columns, 640 px minimum) |
+  | Recruiting | the **You** tier: column 10 of 10 (`recruiting.js:243-249`) |
+  | Compare | **B's time and who won** |
+  | Venue | **Rating**: column 9 of 10 *(template)* |
+  | Course | the record's **date** |
+  | Rankings | **School** |
 
-Next to those there are **five record badges** (PR, SR, CR, R, RSR, plus a ★), a "Course +4.2%⌄" cell on every row, and three ranks. Each one makes sense on its own. Together, nobody can tell which number matters.
+  The only hint is a faint fade.
+- **Side cards drop to the very bottom on a phone.** This hits the athlete's **PRs and bests** (after every race and after "Report it"), the race's **Team scores** (after 60, or 250, rows), course "Recent meets", the School PRs "Events" jump list, and the schools directory "Biggest teams". `layout.js` has code that folds the athlete sidebar into a "Bests & PRs" bar at the top, but it looks for `.page-layout`, which no template uses anymore, so it never runs. This is a silent regression.
+
+<img src="ux-2026-10/athlete-phone-rating-offscreen.png" width="250"> <img src="ux-2026-10/athlete-phone-bests-at-bottom.png" width="250"> <img src="ux-2026-10/athlete-phone-mockup.png" width="250">
+
+*Left: Rating is off-screen. Middle: the bests come last. Right: mockup with one headline number and sentence, 4 buttons, "PRs & bests" folded at the top, the chart folded, and a season table (Meet with date, Result, Place, Rating) that fits.*
+
+<img src="ux-2026-10/recruit-phone-you-offscreen.png" width="250"> <img src="ux-2026-10/tools-compare-phone.png" width="250">
+
+### 4. Too many numbers, and the "5K" doesn't mean what it says
+
+- An athlete page shows **seven figures that each look like "the" rating or time**:
+  - Athlete rating ≈ time
+  - Best race ≈ time
+  - the season heading ≈ time
+  - sidebar Best rating
+  - sidebar Average rating
+  - the Rating column
+  - the 5K equiv column
+
+  It also has **five record badges** (PR, SR, CR, R, RSR, plus ★), a "Course +4.2%⌄" cell on every row, and three ranks.
+- **"5K equiv" is a track 5K, but it isn't labelled as one.**
+  - Beside a real XC 5K it disagrees: a state record reads "14:40 · 5000m" next to "5K equiv 13:34" (`course-desktop.png`).
+  - It also shows on sprints: an 11.16 100 m reads "5K equiv 15:36" (`_scale.html:56`, `tf-sprint-phone.png`).
+  - Recruiting shows both "PRs 15:11.9" and "Rating equivalents 15:12".
+- **The season rating is explained three ways**:
+  - "averaged across a season" (`rankings.js:2239`);
+  - "80th-percentile race" (`projections.html:325`, `team_season.html:94`);
+  - "100 is the group's average runner" (`scale.html:93`), against "100 is an average high-school runner" everywhere else.
 
 <img src="ux-2026-10/athlete-desktop.png" width="640">
 
-### 4. Jargon that only the builder knows
+### 5. Jargon and developer text
 
-| On the site | Where | What a parent reads | Suggest |
-|---|---|---|---|
-| **Pool** | rankings filter, conversions | ? | **Level** (HS boys, MS girls…) |
-| **Course +3.5%⌄** | race header, every athlete row | "3.5% of what?" | "Course: **harder than average**". Keep the % in the tooltip. |
-| **Day slow · 1.1%** | race header | ? | "Conditions: **slightly slow**" |
-| **Compiled** | meet page tab and stat | ? | **Combined results** (all runners at a distance in one list) |
-| **XC SPEED RATING - HS-EQUIVALENT** | athlete chart title | "equivalent to what?" | **Speed rating**. There is only one public scale now, so the qualifier says nothing. |
-| **5K EQUIV ⓘ** (wraps to 3 lines on a phone) | every table | OK once explained | **5K ≈** on one line |
-| **R, RSR** ("Rating Season Record") | athlete rows | ? | Show **PR** and **SR** only. Keep R/RSR/CR in the tooltip, or behind a "more badges" setting. |
-| **Source / Pool / Sport / hh:mm:ss / Distance (m)** | conversions form | a spreadsheet | "I ran ___ for ___ on ___ → here's what it's worth" |
-| "Meets from the last year with real fields (+ results)"; "no meet in the window cleared the results floor" | meets list | ? | "Recent meets, newest first"; "No meets match these filters." |
-| "Season ability - averaged across a season…" | rankings subtitle | OK, but long | "Each runner's average rating this season." |
+| On the site | Where | Suggest |
+|---|---|---|
+| **Pool** | rankings filter, conversions, About ×15 | **Level** |
+| **Course +3.5%⌄** / **Difficulty +3.5%** | race header, athlete rows, course header | "Course: **harder than average** (about 20 s on a 5K)". `difficulty_words()` already writes it. |
+| **Day slow · 1.1%** | race header | "Conditions: **slightly slow**" |
+| **Venue 0.0%** | every outdoor track race | hide when 0 |
+| **Compiled**; **Ran** next to Pl (`compiled.html:124`) | meet pages, combined results | **Combined results**; "Place in own race" |
+| **Marks** = number of results | track meet page | **Results** (to a track parent a mark is a time) |
+| **XC SPEED RATING - HS-EQUIVALENT** | athlete chart | **Speed rating** |
+| **5K EQUIV ⓘ** (3 lines on a phone) | every table | **Track 5K ≈** on one line |
+| **R, RSR** | athlete rows | PR and SR only by default |
+| **1–5 gap** (rating points), **mean of the top five** | school, season tracker | the gap in **seconds**, the way coaches think of it |
+| **Meet calendar (.ics)** | school | "Add meets to my calendar" |
+| **programmes**, **corpus**, **unit**, **THIN** | recruiting, coaches, state odds | plain words |
+| **Being built 3** (a tab) | `/coaches` (`coaches.html:64`) | hide unfinished work |
+| "**…not set up on this server yet (racecast/follows.py --init)**" | `shortlist.html:60`, `my_page.html:56`, `fixes.html:38`, `login.html` "server log" | "Not available yet." |
+| "could not be computed just now (**{{ data.error }}**)" | team season tracker | never show the raw error |
+| era note (`record_books.py:27`), roster note ("until they turn out for someone else"), "nightly data run" | records, school | "Ratings compare runners across years; times are as run." / "Hasn't raced yet this season." |
+| "Model estimates, **not predictions**" | `state_odds.html:64`, inside Predictions | say what it is: "Chances, from this season's ratings" |
+| "Meets from the last year with real fields (+ results)", "cleared the results floor" | meets list | "Recent meets, newest first" / "No meets match." |
+| **"How this was rated"** text | tap a rating | [see below](#how-this-was-rated-tap-a-rating) |
 
-The best explanation on the whole site is the home page's one sentence: *"100 is an average high schooler, about a [time] 5K."* It should be the first line of the rating ⓘ on every page. Right now the ⓘ next to "Rating" is a **link** to /scale, so on a phone a tap may take you away from the page instead of showing the tip.
+The best explanation on the site is the home page's sentence *"100 is an average high schooler, about a [time] 5K."* Make it the first line of the rating ⓘ everywhere. Right now that ⓘ is a **link** to /scale, so on a phone a tap may leave the page.
 
-### 5. One thing, several names; one control, two copies
+### 6. One thing, several names
 
-- **Compare**: "Compare" (athlete button), "Compare two athletes" (Tools menu), "Head to head" (the page's own title).
-- **Recruiting**: "Recruiting" (nav), "College fit" (athlete button), "Where would I fit in college" (home), "Similar runners", "RECRUITING · One-page profile" (athlete header), "Recruit search" (/coaches). That is six names for one family of features.
-- **Two search boxes on one screen**: on rankings ("Find an athlete on this board" under the site search) and on home on a phone (the top bar and the hero box).
-- **Meets list**: a Sport dropdown *and* Cross country / Track & field tabs under it.
-- **Side cards** go to the bottom on a phone on both race and athlete pages, against the rule that side cards behave the same everywhere and stay useful.
+- **Compare**: "Compare" (button), "Compare two athletes" (Tools), "**Head to head**" (the page).
+- **Recruiting**: "Recruiting", "College fit", "Where would I fit in college", "Athletes: where you'd fit", "Similar runners", "One-page profile" and "Recruit search". There are also **two separate profile pages**: `/athlete/<id>/profile` ("One-page profile") and `/recruit/<id>` (tagged "Recruiting profile", linked as "Similar runners").
+- **State**: "Who wins state" (Tools), "STATE PROJECTION" (tag), "State odds" (sibling page).
+- **The same lists under different tab names on every page**: "Best performances" (school, venue), "Best ratings" (course), "Best races" (rankings, records), "Best athletes" (school). Team bests/Team records/Team seasons likewise.
+- **XC and track pages use different words for the same parts**: "On the track" vs "Equivalent times", "Course" vs "Venue", "Team scores" vs "Event points".
+- **Seasons**: rankings says "2026-27" (`rankings.js:582`), while athlete pages say "2026 XC" / "2027 TF" for the same year. `app.py:3162` claims the two agree.
+- **The rankings family**: rankings, breakouts and movers each show a **different strip of boards**, and nothing on the site links to /movers.
+- **Two search boxes on one screen**: rankings ("Find an athlete on this board"), and home on a phone. **Two sport controls** on the meets list (dropdown + tabs). **Two Share buttons** on the track meet page.
+
+### 7. Parents can't easily follow or claim a runner
+
+- **A signed-out tap on Follow doesn't follow.** It sends you to sign in and back to the page, still not following (`follows.py:429`, `account_return`: "Changes nothing else").
+- **The login page's "What an account does" never mentions following.**
+- **Claiming a page can't be found from the page.** `contact.html` says "claim it from your athlete page", but no such link exists there. Claiming lives in Settings, worded for the athlete. The word "parent" appears nowhere in login, account or My page.
+- **The signed-in avatar goes to Settings** (`topbar-search.js:189`), not to My page.
+
+### 8. Tools that make you work before giving the answer
+
+- **Predictions**: "Predict this meet →" opens a setup screen, not a prediction. Run with defaults, show the result, and fold "Adjust".
+- **Recruiting**: after "Place me", the "Every college" table stays open, and the grouped answer ("Where your times fit") is tab 2. The gap reads in rating points ("2.2 to just under") where a parent needs seconds. Six tier names, and the top one reads "Top recruit" or "Scholarship range" depending on the division (`recruiting.py:569,624`).
+- **Runners like you** (`recruit.html:95-135`) leads with statistics ("1,284 past juniors rated within 1.4 of 123.0 (the margin of 6 races…)", "Middle half 121.6 – 126.1", "the model is the one to doubt"). "32% ran in college" is at the bottom.
+- **Conversions**: the answer appears **above** the form and the times **below** it, so nothing changes next to the Convert button. The default tab is 10 famous XC courses rather than 1600/3200, times come with hundredths ("16:25.26"), and "(own pool)" shows (`conversions.js:435`).
+- **The goal page ("What do I need to run?")** answers the parent question best, but it's buried in Tools as "Goal calculator", and its main button is styled like a secondary link (`goal.html:112`).
+
+<img src="ux-2026-10/predict-meet-chosen-desktop.png" width="640">
+
+### 9. Track pages on a phone
+
+- **Varsity and JV events look identical**: the Division column is hidden on phones, so "100m Boys" appears twice with nothing to tell them apart. That's how a parent looks for their kid's event at a 68-event meet, and there's no filter but the find box.
+- **Relays are 5–6 lines a row**: `race.css:167` puts every link in the name cell on its own line, so each leg and its comma stack.
+- **Wind**: the column is hidden on phones, and **nothing marks a wind-aided mark** (no "w"; no legal-wind check anywhere in the site code).
+- **No overall place** across heats.
+- The **5K column on sprints** (problem 4).
+
+<img src="ux-2026-10/tf-meet-phone-varsity-vs-jv.png" width="300"> <img src="ux-2026-10/tf-relay-phone.png" width="300">
+
+### 10. A tone problem with minors
+
+The forecast recap (`meet_recap.html:106`) publicly lists, by name, the high schoolers who "**Fell short of it the most**". A 15-year-old finding their name on a "fell short" list on a public site, with a % gap, is the kind of thing that turns a parent against the site. Keep "Beat our forecast", and show the misses as a count or for teams only.
 
 ---
 
 ## The iPhone "table cut off at the top" bug
 
-**First suspect: arriving from an athlete page.** Every meet link on an athlete page carries `?r=<result id>` (`athlete.html` meet cell), and `race.html:241-248` then calls `scrollIntoView({block: "center"})` on that row. On a phone the page opens in the middle of the table: no meet name, no race title, no column headers. Which column is Time and which is Rating? You can't tell. This is the most common way a parent reaches a race page, and it matches "cut off at the top" exactly:
+**First suspect: arriving from a link** (problem 2). Every meet link on an athlete page carries `?r=`. `race.html:241-248` calls `scrollIntoView({block: "center"})` on that row, and `race-page.js:684-690` and `link-flash.js` do the same for other entries. On a phone you see rows with no header above them.
 
-<img src="ux-2026-10/race-phone-arrive-from-athlete.png" width="300">
+Fix: scroll so the table's header row sits at the top of the screen, and scroll further only if the row would otherwise be off-screen. Or add a slim sticky bar with the race name and column labels. A sticky `<thead>` won't work inside `.tscroll`, because sticky elements stick to their nearest scrolling box, not to the page.
 
-Fix: scroll so the **table header** sits at the top of the screen, and only scroll further when the row would otherwise be off-screen. Or add a slim sticky bar with the race name and column labels. A sticky `<thead>` will not work inside `.tscroll`, because sticky elements stick to the nearest scrolling box, not to the page. `race-page.js:684-690` does the same thing for `#r…` links from the meet finder, and `link-flash.js` does it for other `?r=` links.
-
-**Second suspect: tooltips.** I could not run Safari, but I reproduced **a second top clip in Chromium too**. Every tooltip (`.flag::after`) opens **above** the element it belongs to. On a phone every table sits in `div.tscroll`, which has `overflow-y: hidden`. Anything in the header row (the Rating ⓘ, the 5K ⓘ) or in the first data row (a PR badge, the gold medal) therefore has its tooltip cut off at the top edge of the table box:
+**Second suspect: tooltips.** Every `.flag::after` tooltip opens **above** its element, and on phones every table sits in `div.tscroll` with `overflow-y: hidden`. So tooltips on the header (Rating ⓘ, 5K ⓘ) and on the first row (PR badge) are cut off at the top of the box. This reproduces in Chromium too:
 
 <img src="ux-2026-10/race-phone-tooltip-clipped.png" width="390">
 
-That may not be the bug in your screenshot. If yours shows the header row or the first runners missing *without* a tooltip open, the next suspects are:
+If your screenshot shows rows missing *without* either of these, check two more things: the `-webkit-mask-image` that `.tscroll.has-more` puts on a scrolling box (turn it off to test), and `width: 0; min-width: 100%` on `.tscroll` inside the `.rc-grid` grid.
 
-1. the `-webkit-mask-image` that `.tscroll.has-more` puts on a scrolling box (WebKit has had painting bugs with masks on overflow containers); test by turning the mask off;
-2. `width: 0; min-width: 100%` on `.tscroll` inside the CSS grid of `.rc-grid`.
-
-**Please send the screenshot.** Whichever cause it turns out to be, the tooltip clip is real and worth fixing. On phones, show a tooltip as one popup attached to `<body>` (fixed at the bottom of the screen), not as a `::after` inside the table. The site already has this pattern: `rating-explain.js` opens "How this was rated" as a bottom sheet on phones for exactly this reason (its header comment says so). The badge and ⓘ tooltips should reuse it.
+**Please send the screenshot.** The tooltip clip is worth fixing either way. The site already has the fix pattern: `rating-explain.js` shows its explanation as a bottom sheet on phones for exactly this reason. The badge and ⓘ tooltips should reuse that sheet.
 
 ---
 
 ## "How this was rated" (tap a rating)
 
-The structure is good: a bottom sheet on phones, with the steps, the percentages and the points. The wording is written for you, not for a parent. Sample text below comes from the string templates in `racecast/explain_rating.py`; the screenshot uses mocked API data:
+A good structure (a bottom sheet with steps, percentages and points), written in the builder's words. The text comes from `racecast/explain_rating.py`; the screenshot uses mocked data:
 
-- "converts to 15:11.9 at the 5000 m reference on the HS boys **distance curve**" (`explain_rating.py:377`)
-- "(the **engine applies 0.92x of a course at this ability**)": this is the tilt, shown to users (`:498`)
-- "This result's stored time was **normalised before the latest refit** of the weather or distance model … stays in the rating **until the next backfill**" (`:471`). This is a maintenance note, not an explanation.
-- "Times ran faster across the board in 2019 than in the **reference era**" (`:416`)
-- For a middle-school or college runner, the sheet ends on a **different number from the one the page shows**, and it names two scales ("This page shows 122.7 on the HS-equivalent scale; the steps are on the HS boys scale, where it is 123.9", `rating-explain.js:266`). That brings back the two-scale idea the one-scale rule removed.
+- "converts … on the HS boys **distance curve**" (`:377`)
+- "(the **engine applies 0.92x of a course at this ability**)": the tilt, shown to the public (`:498`)
+- "stored time was **normalised before the latest refit** … until the **next backfill**" (`:471`): a maintenance note, not an explanation
+- "the **reference era**" (`:416`)
+- For MS and college runners the sheet ends on a **different number than the page shows** and names two scales (`rating-explain.js:266`). That brings back the two-scale idea.
 
 <img src="ux-2026-10/rating-explain-phone.png" width="300">
 
-Suggest: one plain sentence first ("15:11.9 on a course about 2% slower than average, on a slightly fast day → **123.9**"), then the steps, folded, for anyone who wants them. Drop the tilt clause and the "Model update" step from the public text. If the stale-normalisation case matters, say "Recalculated soon" and nothing more.
+Suggest: one plain sentence first ("15:11.9 on a course about 2% slower than average, on a slightly fast day → **123.9**"), then the steps, folded. Drop the tilt clause and the "Model update" step.
 
 ---
 
 ## Across the site
 
-- **Small text on phones.** Root size is 14 px on phones, so the `.7rem` uppercase column headers come out at **9.8 px** (`style.css` `thead th`). The athlete stat labels are 9.5 px, and the "≈ 14:53" next to a rating is 9.4 px. Headers in grey uppercase at under 10 px are hard to read for many parents. Keep headers at 11 px or more, and drop the uppercase on phones.
-- **Tap targets.** Measured at 390 px: ⓘ icons are 14×14, rank links (#9, #1) are 17×16, PR badges are 24×17, Share is 55×24, the rankings tabs and chips are 28–31 px tall, and race and meet name links are 15–19 px tall. The usual floor is about 44 px (Apple) or 48 px (Android). Race page: 157 controls under 32 px tall; rankings: 198. Make the whole row tappable on boards and result tables, and give ⓘ and badges a larger invisible hit area.
-- **Contrast.** The rankings State combo shows "Any" at **1.9:1** with a 1.5:1 caret (`combo-btn-label`), the 9 px "State division / class" label is 3.5:1, and plain rank numbers are 3.8:1. Everything else I measured passed 4.5:1.
-- **Page weight.** Every page loads `style.css` (281 KB raw, 74 KB gzipped, **40% of it comments**) plus `race.css` (16 KB gz) before it can draw. That is about 90 KB of render-blocking CSS per page on a phone network. Stripping comments at deploy time would cut a third of it at no risk. `predictions.js` is 74 KB gzipped and `rankings.js` is 43 KB.
-- **No layout jumps.** I measured layout shift on race, athlete, rankings and home with slow mocked APIs, and it was about 0 everywhere (0.03 on rankings). Good.
-- **Season names disagree.** The rankings Year column says "2026-27" (`rankings.js:582`, `academicLabel`) for both sports. The athlete page says "2026 XC" and "2027 TF" for the same academic year (`app.py:3162`, whose docstring says the two agree). Pick one: "2026 XC" / "2027 Track" is what a runner says.
-- **"Share" falls onto its own line** with a stray "·" on phones on race, meet, home and rankings. Make it an icon button at the end of the title row.
+- **Small text on phones.** The `.7rem` uppercase column headers come out at **9.8 px**, stat labels at 9.5 px, and the "≈ 14:53" after a rating at 9.4 px. Use 11 px or more, without uppercase, on phones.
+- **Tap targets.** At 390 px, ⓘ icons are 14×14, rank links 17×16, PR badges 24×17, Share 55×24, rankings tabs and chips 28–31 px tall, and name links 15–19 px tall. The race page has 157 controls under 32 px; rankings has 198. Make whole rows tappable and give small icons a bigger hit area.
+- **Contrast.** The rankings State picker's "Any" is **1.9:1** (caret 1.5:1), the 9 px "State division / class" label is 3.5:1, and plain rank numbers are 3.8:1. The rest passed.
+- **Page weight.** Every page blocks on `style.css` (74 KB gzipped, **40% of it comments**) plus `race.css` (16 KB). Stripping comments at deploy would save about a third. `predictions.js` is 74 KB gzipped.
+- **No layout jumps** (measured on race, athlete, rankings and home). Good.
+- **The "Advanced: each pool's own scale" switch** is still on compare, conversions, course, venue, breakouts, records and school records (`_scale.html:85`). On the records page on a phone it **draws over the lead text** (`records-phone-advanced-overlap.png`). You need to decide whether these count as "multi-pool boards". Compare and conversions are parent pages, and the switch shouldn't be there.
+- **"Show 20 more (1 left)"** on every school, course and PR table: the 20 is hard-coded (`course.html:41`, `school.html`, `school_prs.html`, `staged.js:62`).
+- **Share is in a different place on every page** (it's the 7th link on the school page and mid-line on the tracker), with a stray "·" on phones. Its markup is copied into about 15 templates and none use `_share.html`.
+
+<img src="ux-2026-10/records-phone-advanced-overlap.png" width="300">
 
 ---
 
 ## Page by page
 
 ### Race (`race.html`)
-- **Phone**: see problem 1. The winner block repeats row 1. "Predict next year →" sits between the tabs and the table, where it reads like part of the table. Share drops to its own line with a stray "·". Course and Day are jargon (problem 4).
-- **Rows** are 3 to 4 lines tall on a phone ("Owen / Castellano / Jesuit (OR) · / 9"), because the PR badge widens the Time column. Under your rule ("one row, or made for two"), two lines is right: name on line 1, school · grade on line 2. That needs the PR badge to be a small mark after the time, or to go under it.
-- **The dot chart** ("The field on one scale") is nice, but on a phone it costs about 250 px above the table. Put it under the table, folded.
-- **Team scores**: tapping a team on desktop lights its runners, which is clever but hidden. On a phone the card is at the bottom (problem 2).
-- **Desktop**: good. This is the strongest page.
+- Phone: problems 1 and 2. "Predict next year →" sits between tabs and table and reads like part of the table.
+- **Rows are 3–4 lines** on a phone because the PR badge widens the Time column. Two lines is right (name; school · grade). Make PR a small mark after the time.
+- **The dot chart** costs about 250 px above the table on a phone. Move it under the table, folded.
+- **Team scores**: tapping a team on desktop lights its runners, which is clever but hidden.
+- Desktop: the strongest page.
 
 ### Athlete (`athlete.html`)
-- See problems 2 and 3.
-- The **Follow** help text ("Get an email when Owen races, sets a PR or breaks out.") takes two lines on a phone. Make it the button's tooltip, or show it only after the first tap.
-- **Five action buttons, then a "RECRUITING · One-page profile" line** (from `_next_race.html`). Keep Compare, College fit and Share, and put the rest under "More".
-- **The chart opens by default** above the races. On a phone it is a whole screen. Fold it on phones.
-- **Meet names are cut off on desktop** ("Metro League Cha…", "Lane Community Coll…") while Place and Records have spare room.
-- "2026 2025" season-jump links float alone above the first season. Fold them into the season headings, or drop them.
-- **Desktop**: the place cell's "· 2nd on team" runs into the rating ("2nd on team122.7") at some widths.
+- Problems 3 and 4.
+- The Follow help text takes 2 lines on a phone.
+- 5 action buttons plus a "RECRUITING · One-page profile" line (`_next_race.html`). Keep 3 + More.
+- **The chart opens by default** and is a full screen on a phone. Fold it.
+- Desktop: meet names are cut off ("Metro League Cha…") while other columns have room, and "· 2nd on team" runs into the rating.
+- "2026 2025" jump links float alone above the first season.
 
 ### Rankings (`rankings.html`, `rankings.js`)
-- **Phone**: see problem 1. The 5 tabs scroll sideways, and "Courses" is cut to "Co" with no hint that there is more. The filter panel is about 450 px tall.
-- **"Athletes (season)" vs "Best races" vs "Fastest times"**: the difference is not obvious. Suggested names: "Top runners this season", "Best single races", "Fastest times".
-- **Desktop**: 10 columns next to a 280 px side card, so school names wrap to 2 or 3 lines ("Mountainside / HS / TX") and "RACES" is cut off. **Sport and Year repeat the filter** on every row (always "XC", always "2026-27"). Hide them when the filter fixes them.
-- **Phone table**: Rating and 5K are right after the name, which is good. School is off-screen. Put it under the name, as on the race page.
+- Phone: problem 1. 5 tabs scroll sideways, and "Courses" shows as "Co".
+- **"Athletes (season)" / "Best races" / "Fastest times"**: the difference isn't obvious. Try "Top runners this season", "Best single races", "Fastest times".
+- Desktop: 10 columns beside a 280 px card, so schools wrap to 3 lines and "RACES" is cut off. **Sport and Year repeat the filter** on every row.
 
 <img src="ux-2026-10/rankings-phone-before.png" width="300"> <img src="ux-2026-10/rankings-phone-mockup.png" width="300">
 
-*Mockup: the tabs become one picker, the filters become one row (Level, State, Filters), and the second search and the No. 1 line are gone. The board starts on the first screen.*
+*Mockup: the boards as one picker, filters as one row (Level, State, Filters), and no second search. The board starts on the first screen.*
 
 <img src="ux-2026-10/rankings-desktop.png" width="640">
 
-### Meet (`meet.html`): **the model to copy**
-One header, one tab bar, one table, every row in the same two-line shape, no side card. The only fix needed is **"Compiled" → "Combined results"**. Race, athlete and rankings should feel like this on a phone.
+### Meet (`meet.html`): the model to copy
+One header, one tab bar, one table, two-line rows, no side card. Only "Compiled" needs renaming.
 
 <img src="ux-2026-10/meet-phone.png" width="300">
 
-### Course (`course.html`, from the template)
-- It has **up to 7 tabs**: Records, Team records, Best ratings, Year by year, Record history, Meets, On the track. Below them are distance pills. On a phone that is a sideways-scrolling bar where half the tabs can't be seen. Keep **Records · Best ratings · Meets**, and put the rest under "More".
-- **"Difficulty +3.5%"** is the course page's whole point, and it needs words: "Runs **about 20 seconds slower** than an average 5K course." `difficulty_words()` already writes that sentence, so put it in the header.
+### Course (`course.html`)
+- **It opens on the wrong question.** It shows "All distances, ranked by rating", the header shows "Boys best 132.7" (a rating, not a time), and 5000/4800/3000 m are mixed in one table. The **course record ("14:32.5") appears only after tapping the 5000m pill.** Open at the usual distance (`primary_dist` is already computed) with Records first.
+- **The tabs change with the pill** (Best ratings / Team bests / Distances / Meets / On the track vs Records / Team records / Best ratings / Meets / On the track). On a phone "On the track" is cut to "On t".
+- "Results 118,420 · Athletes 61,203" is noise. College courses say Boys/Girls (`course.html:156-158`).
+
+<img src="ux-2026-10/course-phone-default.png" width="300"> <img src="ux-2026-10/course-desktop.png" width="480">
+
+### School (`school.html`, `school_prs.html`, record book)
+- **About 880 px of header** on a phone (problem 1). "State OR" repeats the "(OR)" beside the name, and "Athletes 1843" means ever, not now.
+- **Four overlapping "best" lists**:
+  - Best athletes;
+  - Best performances (no time, no meet name, only a date);
+  - School PRs;
+  - the Record book, which is both a link and a tab.
+
+  Suggest three tabs: **Roster · Records · Races**.
+- PR page: "Boys best" in the header is the highest rating across events, which may not be the 5000m record holder. 10 year pills and 8 course pills (~380 px) come before any table; use two dropdowns.
+- *(template)* The schools directory has no find box and can list hundreds of schools.
+
+<img src="ux-2026-10/school-phone-header.png" width="300"> <img src="ux-2026-10/school-prs-phone.png" width="300">
+
+### Track (`race_tf.html`, `meet_tf.html`, `compiled*.html`)
+- Problem 9.
+- The meet page's "Team scores" tab and "Compiled results →" show the same computed team points.
+- A relay page still shows the "All grades" picker.
+- The explanation of what "combining" means on compiled pages is good.
+
+<img src="ux-2026-10/tf-sprint-phone.png" width="300">
 
 ### Home (`home.html`)
-- Good: the hero sentence that explains ratings, and the four "Look up a runner / Predict / Convert / College fit" cards.
-- **Phone**: there are two search boxes on the first screen. Hide the top bar's box on the home page, or drop the hero box on phones. The photo strip takes the top 300 px, so the search sits below it. Put the search first.
-- "Share" drops to its own line with a stray "·" (the same on race and meet). Make Share a small icon button on the right of the title line.
+- Good: the hero sentence and the four "Look up a runner / Predict / Convert / College fit" cards.
+- Phone: two search boxes on the first screen, and photos above the search. Put the search first.
 
 <img src="ux-2026-10/home-phone.png" width="300">
 
 ### Predictions (`predictions.html`)
-This opening is clear: this week's meets, Who wins state, Re-run a past race. Keep it. The one confusing line is "or test the model against what happened"; drop it.
+- The opening is clear (this week's meets, Who wins state, Re-run a past race). Drop "test the model against what happened".
+- After a meet is chosen: problem 8.
 
 ### Conversions (`conversions.html`)
-The most common question a parent or runner brings here is "what is my 5K worth at another distance or course?" The page answers it with a form: Source / Pool / Sport / Time (hh:mm:ss, starting at 00:00:00) / Distance (m) / Course / Weather / Convert. Under the form are an empty table and an "Advanced" switch. Suggest one sentence with blanks: **"I ran [16:05] for [5K] at [course, optional] → 1600 ≈ 4:38 · 3200 ≈ 10:05 · on a flat course ≈ 15:48"**, with level and sport guessed from the athlete or a default. The subtitle "0 courses · 0 track distances · any time…" reads like a bug.
+- Problem 8. Suggest one sentence: **"I ran [16:05] for [5K] at [course] → 1600 ≈ 4:38 · 3200 ≈ 10:05"**, with Track first.
+- The paces section dead-ends for a typed time ("Pick an athlete as the source…", with no athlete picker there).
 
-<img src="ux-2026-10/predictions-conversions-meets-phone.png" width="760">
+<img src="ux-2026-10/conv-phone-result.png" width="300">
 
-### Meets list (`meets.html`)
-On a phone, 7 filter fields (Sport, Level, School, State, Meet name, From, To, Season) and a Filter button come before any meet. Then Results/Upcoming tabs and Cross country/Track & field tabs repeat the Sport dropdown. Suggest: the tabs, a search box, and "Filters ▸" folded.
+### Recruiting (`recruiting.html`, `recruit.html`, `athlete_profile.html`, `coaches.html`)
+- Problem 8 and the names in problem 6.
+- 7 numbers per college row.
+- The "at least [3] recruits" filter needs Apply while everything else applies at once.
+- "9 schools, fastest 3 shown" has no link to the rest.
+- Coaches: 10 sort options, including four "Most improved" and three "(model)". Placeholders like "Gain at least +0" and "Season 2026" look like set values.
 
-### What's new, Compare, Uploads, Report, Contact
-- **What's new**: the meta line ends in the link "when results show up", which reads like a fragment. Suggest "When do new results appear?"
-- **Compare** is titled "Head to head". The two boxes have no placeholder, and the Compare button sits beside box B only. Title it "Compare", and use the site's dark buttons rather than blue.
-- **Uploads/Report/Contact**: fine. "Add missing results" is in the Tools menu and on the meets list, which is good.
+<img src="ux-2026-10/recruit-desktop.png" width="640"> <img src="ux-2026-10/recruit-profile-phone.png" width="300">
+
+### Search (`search.html`, top-bar autocomplete)
+- **Two runners with the same name show identically**: the label is the school only (`search_index.py:338`). Add the class year or last year raced.
+- On a phone the result tabs run off the edge ("Ver…"), nothing explains Venues vs Courses, and the "All" tab's type column is lowercase.
+
+<img src="ux-2026-10/search-same-name-phone.png" width="300">
+
+### Meets list, What's new, Compare, Report, Uploads
+- **Meets list**: 7 filter fields before any meet on a phone, then tabs that repeat the Sport dropdown.
+- **What's new**: the meta line ends in "when results show up". Try "When do new results appear?"
+- **Compare**: titled "Head to head". The boxes have no placeholders, the button sits beside B only and is blue, and the 4th tab is clipped on a phone.
+- **Report**: the form shows a raw path ("/race/xc/1234/2") twice instead of the page name, and preselects "A rating looks wrong" for every report.
+- **Uploads**: the clearest flow on the site. Move "Relays and field events are skipped" up to the file box, and style the guest email field.
+
+<img src="ux-2026-10/account-report-raw-path-phone.png" width="300">
 
 ### Navigation (`_topbar.html`)
-- There are 6 links plus Tools. **What's new** in the main bar matters to you, but for a parent it competes with the four things they actually do (find a runner, see a race, rankings, predictions). It could sit under Tools, with its dot kept on the Tools button.
-- The Tools menu holds 8 tools + 4 reference links, and some names don't match the page titles (problem 5).
+- 6 links plus Tools. "What's new" competes with what parents actually do, so it could live under Tools, keeping its dot.
+- The Tools labels don't match the page titles (problem 6). "What it takes **to make state**" undersells a page that also covers top 25 and top 8.
 
 ---
 
 ## Ranked plan
 
-Effort: S = under half a day, M = 1 to 2 days, L = more. Risk: chance of breaking something you have already decided, or of breaking the site.
+Effort: S = under half a day, M = 1–2 days, L = more. Risk = chance of breaking a decision you already made, or the site.
 
 | # | Change | Helps | Effort | Risk |
 |---|---|---|---|---|
-| 1 | **Side cards fold to the top on phones, the same on every page**: "PRs & bests ▸" on athlete, "Team scores ▸" on race. Fix the dead `foldSidebar` in `layout.js` so it targets `.rc-side`. | parents, runners, coaches | S | Low |
-| 2 | **Tooltips as one body-level popup on phones** (fixes the clipped ⓘ and PR tips; likely the iPhone top-clip) | everyone on a phone | S–M | Low |
-| 3 | **Athlete season table fits a phone**: Meet (date under), Result, Place, Rating. On phones, Course and Records move into the row's tap-through, and the 5K goes under the rating. | parents, runners | M | Medium: it reverses the 2026-10-10 "5K kept on phones" note |
-| 4 | **Race page phone order**: drop the duplicate winner block, grade + find on one row, dot chart under the table (folded), "Predict next year" after the table | runners, parents | S | Low |
-| 5 | **Plain-words pass** (the table in problem 4): Level, Combined results, Course/Conditions in words, "5K ≈", chart title, PR/SR-only badges by default, meets-list copy | parents especially | S | Low (a few tests pin strings; update them) |
-| 6 | **Athlete header: one number, one sentence**: "123.0 this season, about a 15:12 5K · top 2.1% of HS boys · #9 in Oregon", 3 buttons + More, chart folded on phones | parents | M | Low–medium |
-| 7 | **Rankings phone filters in one row** (Level ▾, State ▾, Filters), the board picker as one select, drop the second search box | everyone on rankings | M | Medium: `rankings.js` is large and owns the URL state |
-| 8 | **One name per feature**: Compare (not Head to head); College fit; Tools labels match page titles | everyone | S | Low |
-| 9 | **Rankings desktop**: hide Sport/Year when the filter fixes them; school on one line | coaches | S | Low |
-| 10 | **Meets list**: filters folded, the duplicate sport control removed | parents, coaches | S | Low |
-| 11 | **Course page**: 3 tabs + More; difficulty in words in the header | runners | M | Low |
-| 12 | **Conversions as a sentence** | runners, parents | L | Medium |
+| 1 | **Land at the table header**, not mid-table, when a link carries `?r=`/`#r` (likely the iPhone bug) | everyone arriving from an athlete page | S | Low |
+| 2 | **Side cards fold to the top on phones, everywhere** (fix the dead `foldSidebar`, target `.rc-side`) | parents, runners | S | Low |
+| 3 | **Tooltips use the bottom sheet** `rating-explain.js` already has | phone users | S–M | Low |
+| 4 | **Key column on screen**: athlete (Meet+date, Result, Place, Rating), recruiting (You first), compare (two-line rows, "Owen won by 1.2 s"), venue (Rating 3rd) | parents, runners | M | Medium: reverses "5K kept on phones" |
+| 5 | **Race page phone order**: no duplicate winner, grade + find in one row, chart under the table | runners, parents | S | Low |
+| 6 | **Plain-words and dev-text pass** (problem 5 table, explainer text, "Show N more") | parents especially | S | Low (some tests pin strings) |
+| 7 | **"Track 5K ≈"** label; hide the 5K on events under 800 m | everyone | S | Low–medium |
+| 8 | **Recap: drop the named "fell short" list** for HS/MS | minors, parents | S | Low |
+| 9 | **Follow completes after sign-in**, the login page says what following is, "Is this you? / your child?" claim link on athlete pages, avatar → My page | parents | M | Medium (who may claim is policy) |
+| 10 | **Track meet on phones**: group events under "Varsity · Boys" headings, relays on one line, wind shown and wind-aided marked | track parents, coaches | M | Medium (wind/PR logic is in the pipeline) |
+| 11 | **Athlete header: one number, one sentence**, 3 buttons + More, chart folded on phones | parents | M | Low–medium |
+| 12 | **Rankings phone filters in one row**, boards as one picker, no second search; desktop hides Sport/Year | everyone | M | Medium (`rankings.js` owns the URL state) |
+| 13 | **One name per feature** (Compare, College fit, Who wins state, best-list tab names, XC = track words, one season format, one rankings strip) | everyone | S–M | Low |
+| 14 | **Answer first** in predictions (auto-run) and recruiting (fit tab, gap in seconds) | parents | M | Medium (predictions.js restore paths) |
+| 15 | **Course opens on records at the usual distance**; school header diet; school lists → Roster · Records · Races | runners, coaches | M | Low–medium (keep old URLs) |
+| 16 | **Search labels** carry class year / last year raced (index rebuild) | everyone | S | Low |
+| 17 | **The scale switch** off compare and conversions; fix its overlap on records | parents | S | Low (check `test_one_public_scale`) |
+| 18 | **Text ≥ 11 px, bigger tap targets, fix the 1.9:1 picker** | everyone, older parents | S–M | Low |
+| 19 | **Strip CSS comments at deploy** | phone users | S | Low |
+| 20 | **Conversions as a sentence**; promote the goal page | runners, parents | L | Medium |
 
-**I suggest doing 1–5 first.** They are small, mostly CSS and template text, and together they fix most of what a parent on a phone runs into. 6–8 come next. 11–12 are their own projects.
+**Do 1–8 first.** They're small, mostly CSS, template text and a few lines of JS, and together they fix most of what a parent on a phone runs into. 9–14 are the next layer. 15–20 can wait or be their own projects.
 
-**I would leave these alone**: the meet page, the predictions opening, the home page's explanation and its four cards, the race page on desktop, and the one-scale decision.
+**I would leave these alone**: the meet page, the uploads flow, the predictions opening, the home page's explanation and four cards, the "what is combining" text, the race page on desktop, and the one-scale decision itself.
+
+*Correction to the first version of this doc: the conversions subtitle "0 courses · 0 track distances" came from my empty render. With data it reads "10 courses · 7 track distances…", which is fine.*
