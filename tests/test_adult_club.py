@@ -224,10 +224,10 @@ def test_a_brand_run_into_elite_is_a_club():
 
 def test_a_clubs_initials_are_the_club():
     got = GS.clubAliases({(1, 2022): {"royal city athletics club"}, (2, 2024): {"zap endurance"},
-                          (3, 2024): {"the ab club"}})
+                          (3, 2024): {"the a b club"}})
     assert (1, "rcac", "royal city athletics club") in got
     assert not any(a == "ze" for _p, a, _c in got)            # under three letters: never an alias
-    assert (3, "abc", "the ab club") in got
+    assert (3, "abc", "the a b club") in got
 
 
 def test_spanish_club_words_are_clubs():
