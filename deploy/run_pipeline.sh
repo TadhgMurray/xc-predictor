@@ -260,6 +260,18 @@ summarise() {
 # ★ 00_integrity TOO: a damaged page is damaged whichever step reads it first.
 _ALWAYS="00_integrity 00b_run_snapshot 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a2b_feed_twins 04a4_unsplit 04a3_pins 04a3b_merges 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
+# beforeFrom NAME: true when NAME is before --from and not on _ALWAYS.
+# ★ ONE RULE FOR EVERY KIND OF STEP (complexity review, 2026-10-24): only
+#   step() read _ALWAYS, and 05b_anchor_repair runs through steps2, so
+#   `--from 7` -- the standard recipe -- still skipped the repair the list
+#   exists to keep (run20). steps2, stepsN, shards and bgstep ask here now,
+#   and --skip is honoured per name, not only for a batch's first.
+beforeFrom() {
+  case " $_ALWAYS " in *" $1 "*) return 1 ;; esac
+  _n=$(echo "$1" | sed 's/^0*\([0-9]*\).*/\1/')
+  [ "${_n:-0}" -lt "$FROM" ]
+}
+
 step() {
   name="$1"; shift
   num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
@@ -328,15 +340,15 @@ _live() (
 # sequential for no reason).
 steps2() {
   nameA="$1"; cmdA="$2"; nameB="$3"; cmdB="$4"
-  num=$(echo "$nameA" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ]; then
-    echo "  $nameA + $nameB skipped (--from $FROM)"
-    return 0
-  fi
-  if skipped "$nameA"; then
-    echo "  $nameA + $nameB skipped (--skip)"
-    return 0
-  fi
+  runA=1; runB=1
+  if beforeFrom "$nameA"; then echo "  $nameA skipped (--from $FROM)"; runA=0
+  elif skipped "$nameA"; then echo "  $nameA skipped (--skip)"; runA=0; fi
+  if beforeFrom "$nameB"; then echo "  $nameB skipped (--from $FROM)"; runB=0
+  elif skipped "$nameB"; then echo "  $nameB skipped (--skip)"; runB=0; fi
+  if [ "$runA" -eq 0 ] && [ "$runB" -eq 0 ]; then return 0; fi
+  # one of the pair left: it runs alone, as a step
+  if [ "$runB" -eq 0 ]; then step "$nameA" sh -c "$cmdA"; return 0; fi
+  if [ "$runA" -eq 0 ]; then step "$nameB" sh -c "$cmdB"; return 0; fi
   if [ "$DRY" -eq 1 ]; then
     echo "  $nameA : $cmdA   (with $nameB : $cmdB)"
     return 0
@@ -369,16 +381,17 @@ steps2() {
 # parallel, one log each, one summary line each. Same --from and --dry-run
 # rules as steps2; the --from test uses the FIRST name's number.
 stepsN() {
+  # each pair judged on its own name: --from (with _ALWAYS) and --skip
+  _keep=()
+  while [ $# -ge 2 ]; do
+    if beforeFrom "$1"; then echo "  $1 skipped (--from $FROM)"
+    elif skipped "$1"; then echo "  $1 skipped (--skip)"
+    else _keep+=("$1" "$2"); fi
+    shift 2
+  done
+  [ "${#_keep[@]}" -eq 0 ] && return 0
+  set -- "${_keep[@]}"
   first="$1"
-  num=$(echo "$first" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ]; then
-    echo "  $first (+ $(( $# / 2 - 1 )) more) skipped (--from $FROM)"
-    return 0
-  fi
-  if skipped "$first"; then
-    echo "  $first (+ $(( $# / 2 - 1 )) more) skipped (--skip)"
-    return 0
-  fi
   if [ "$DRY" -eq 1 ]; then
     while [ $# -ge 2 ]; do echo "  $1 : $2"; shift 2; done
     return 0
@@ -418,9 +431,12 @@ stepsN() {
 # --dry-run rules as step.
 shards() {
   name="$1"; n="$2"; shift 2
-  num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ] && [ "$name" != "02_drop_old" ]; then
+  if beforeFrom "$name"; then
     echo "  $name skipped (--from $FROM)"
+    return 0
+  fi
+  if skipped "$name"; then
+    echo "  $name skipped (--skip)"
     return 0
   fi
   if [ "$DRY" -eq 1 ]; then
@@ -466,8 +482,7 @@ shards() {
 BG_PIDS=(); BG_NAMES=(); BG_T0=()
 bgstep() {
   name="$1"; shift
-  num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ]; then
+  if beforeFrom "$name"; then
     echo "  $name skipped (--from $FROM)"
     return 0
   fi

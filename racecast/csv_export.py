@@ -44,11 +44,8 @@ def fmtTime(sec):
         return None
     if s <= 0 or s >= 999999:
         return None
-    h, rem = divmod(s, 3600)
-    m, rem = divmod(rem, 60)
-    if h:
-        return f"{int(h)}:{int(m):02d}:{rem:04.1f}"
-    return f"{int(m)}:{rem:05.2f}"
+    from time_format import clock_fixed
+    return clock_fixed(s, 2, hour_places=1)
 
 
 def _num(v, nd=1):

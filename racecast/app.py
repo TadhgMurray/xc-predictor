@@ -1869,7 +1869,7 @@ def _mainTrackDistance(races, label):
         if r.get("sport") != "TF" or str(r.get("season_label")) != str(label):
             continue
         ev = parseEventShort(r.get("event"))
-        m = ev.get("meters")
+        m = _eventMetres(r.get("event")) if ev.get("kind") == "flat" else None
         if ev.get("kind") != "flat" or not m or not 800.0 <= m <= 10000.0:
             continue
         m = round(float(m), 2)
@@ -1878,6 +1878,21 @@ def _mainTrackDistance(races, label):
     if not counts:
         return None
     return max(counts, key=lambda m: counts[m])
+
+
+# ★ AN EVENT'S DISTANCE AS THE RATINGS READ IT (complexity review,
+#   2026-10-24: an "880" with no stored distance showed PRs against 880 m
+#   while the backfill rated the rows at 804.67 m). event_parse is the
+#   backfill's parser; normalize_distance.parseEventShort answers only for
+#   what it rejects (steeple, hurdles), which the ratings do not price.
+def _eventMetres(event_short):
+    from event_parse import distanceFromEventShort
+    from normalize_distance import parseEventShort
+    try:
+        m = distanceFromEventShort(event_short)[0]
+    except Exception:                     # noqa: BLE001 -- a label, not a page
+        m = None
+    return m or parseEventShort(event_short).get("meters")
 
 
 @app.route("/athlete/<int:person_id>")
@@ -5805,8 +5820,7 @@ def race_tf(meet_id, event_id, div_id):
                 #   used to rate the rows says what the event was.
                 dist = header.get("distance_meters")
                 if not dist:
-                    from normalize_distance import parseEventShort
-                    dist = parseEventShort(header.get("event_short")).get("meters")
+                    dist = _eventMetres(header.get("event_short"))
                 # ! the event's kind, as ranking_results stores it (sweep
                 #   2026-10-10): hurdlers measured against hurdles
                 try:
@@ -5891,8 +5905,8 @@ def race_tf(meet_id, event_id, div_id):
     #   average cross country 5K. Not for field events or relays.
     equiv_dist = header.get("distance_meters")
     if not equiv_dist and header.get("event_short"):
-        from normalize_distance import parseEventShort
-        equiv_dist = parseEventShort(header["event_short"]).get("meters")
+        from event_parse import distanceFromEventShort
+        equiv_dist = distanceFromEventShort(header["event_short"])[0]
     _ev = (header.get("event_short") or "").lower()
     _run = [r for r in results if not r.get("is_field")
             and r.get("time_seconds") and r["time_seconds"] < 999999]

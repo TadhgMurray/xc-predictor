@@ -576,11 +576,9 @@ def cachedAthleteCard(cur, person_id):
 def _clock(seconds):
     if seconds is None:
         return "-"
+    from time_format import clock_fixed
     s = float(seconds)
-    if s >= 3600:
-        return f"{int(s // 3600)}:{int(s % 3600 // 60):02d}:{s % 60:05.2f}"
-    m = int(s // 60)
-    return f"{m}:{s - 60 * m:05.2f}" if s < 600 else f"{m}:{int(round(s - 60 * m)):02d}"
+    return clock_fixed(s, 2 if s < 600 else 0, hour_places=2)
 
 
 def _pills(dr, x0, y, items, width, max_rows, h=44):

@@ -260,8 +260,8 @@ def accuracyEvents(history=HISTORY, runs=10):
 
 
 _SCRAPED_SQL = """
-    SELECT %(sport)s AS sport, source, meet_id, min(date), count(*),
-           max(scraped_at)::text
+    SELECT %(sport)s AS sport, source, meet_id, min(date) AS race_date,
+           count(*) AS n, max(scraped_at)::text AS scraped_at
     FROM   {table}
     WHERE  scraped_at >= %(since)s
     GROUP  BY source, meet_id

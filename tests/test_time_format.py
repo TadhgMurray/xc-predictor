@@ -56,3 +56,21 @@ def test_compiled_template_uses_the_clock_filter():
     src = open(os.path.join(_ROOT, "racecast", "templates", "compiled.html"),
                encoding="utf-8").read()
     assert "%04.1f" not in src and "|clock" in src
+
+
+# ---- the carry, in every fixed-place clock (complexity review, 2026-10-24) ----
+
+def test_fixed_place_clocks_carry_instead_of_printing_sixty():
+    import os, sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "racecast"))
+    import social, cards, explain_rating, csv_export, race_story
+    from time_format import clock_fixed
+    assert clock_fixed(959.96, 1) == "16:00.0"
+    assert clock_fixed(959.996, 2) == "16:00.00"
+    assert clock_fixed(3725.04, 2, hour_places=1) == "1:02:05.0"
+    for v in (959.96, 959.996, 59.996, 3599.996):
+        for f in (social._clock, cards._clock, explain_rating.clock, csv_export.fmtTime, race_story._clock):
+            out = f(v)
+            assert ":60" not in out and not out.endswith("."), (f.__module__, v, out)
+    assert cards._clock(959.96) == "16:00" and social._clock(883.7) == "14:43.7"
+    assert race_story._clock(883.7) == "14:43.7" and csv_export.fmtTime(883.7) == "14:43.70"

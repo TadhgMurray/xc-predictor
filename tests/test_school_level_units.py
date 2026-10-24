@@ -52,7 +52,7 @@ def test_a_unique_school_name_is_its_own_out_of_state(units):
 def test_a_school_season_keeps_a_small_clusters_state(monkeypatch):
     monkeypatch.setitem(SI._LABELS, "clusters", {"Amherst": {"MA": 0.9, "WI": 0.02}})
     monkeypatch.setitem(SI._LABELS, "map", {"Amherst": "MA"})
-    monkeypatch.setattr(SI, "_collegeState", lambda s: "MA")
+    monkeypatch.setattr(SI, "_collegeState", lambda s, *a: "MA")
     assert SI.teamState("Amherst", "elem_m", "WI") == "WI"
     assert SI.teamState("Amherst", "hs_m", "TX") == "MA"            # no school there: primary
     assert SI.teamState("Amherst", "college_m", "WI") == "MA"       # a college keeps its campus

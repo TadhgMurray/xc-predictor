@@ -42,6 +42,9 @@ def _localModuleNames():
         for f in files:
             if f.endswith(".py"):
                 out.add(f[:-3])
+        # a package is local too (sources/, imported as `sources`)
+        if "__init__.py" in files:
+            out.add(os.path.basename(root))
     return out
 
 

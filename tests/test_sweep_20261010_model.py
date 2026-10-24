@@ -96,7 +96,7 @@ def test_compute_stats_ignores_a_year_after_the_extraction():
 # ------------------------------------------------------------------ #
 
 def test_stored_pool_prefers_the_rated_pool(monkeypatch):
-    monkeypatch.setattr(F, "rowPool", lambda row: "hs_m")
+    monkeypatch.setattr(F, "rowPool", lambda row, *a: "hs_m")
     # same pool: nothing to decide
     assert F.storedPool({"rating_pool": "hs_m|XC"}) == "hs_m"
     # unrated: the backfill's pool, as before
@@ -109,7 +109,7 @@ def test_stored_pool_prefers_the_rated_pool(monkeypatch):
 
 def test_stored_pool_lets_the_row_decide_when_the_pools_disagree(monkeypatch):
     import anchor_check
-    monkeypatch.setattr(F, "rowPool", lambda row: "hs_m")
+    monkeypatch.setattr(F, "rowPool", lambda row, *a: "hs_m")
     # the stored value reproduces hs_m within 1% and college_m 40% off:
     # a row the nightly rated but 05b has not yet repaired
     offs = {"hs_m": 1.01, "college_m": 0.60}
