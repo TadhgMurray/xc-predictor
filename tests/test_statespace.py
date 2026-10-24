@@ -56,16 +56,14 @@ def test_the_tilt_comes_back_with_its_sign(world):
     assert 0.1 < R["kappa"] < 0.45
 
 
-def test_ss_eval_runs_on_a_pack_shaped_file(tmp_path):
-    D = sw.world(seed=4, n_regions=3, schools=8)
+def _packFromWorld(D, path):
+    """A pack-shaped npz from a planted world (what speed_ratings writes)."""
     n = D["y"].size
     pack_date = np.datetime64("2026-10-20")
-    # seasons 0..4 are 2021..2025; the pack closes in the 2026 season
-    dates = np.array([np.datetime64(f"{2021 + s}-08-01") + np.timedelta64(int(p), "D")
+    dates = np.array([np.datetime64(f"{2021 + int(s)}-08-01") + np.timedelta64(int(p), "D")
                       for s, p in zip(D["season"], D["phase"])], dtype="datetime64[D]")
-    # one row in the running season so the windows resolve
-    keys_a = [(int(p), ("hs_m" if lv == 0 else "college_m")) for p, lv in
-              sorted(set(zip(D["person"].tolist(), D["lv"].tolist())))]
+    keys_a = sorted({(int(p), "hs_m" if lv == 0 else "college_m")
+                     for p, lv in zip(D["person"].tolist(), D["lv"].tolist())})
     a_code = {k: i for i, k in enumerate(keys_a)}
     athlete = np.array([a_code[(int(p), "hs_m" if lv == 0 else "college_m")]
                         for p, lv in zip(D["person"], D["lv"])])
@@ -80,34 +78,53 @@ def test_ss_eval_runs_on_a_pack_shaped_file(tmp_path):
     days = (pack_date - dates).astype(np.int64)
     year = dates.astype("datetime64[Y]").astype(np.int64) + 1970
     doy = (dates - dates.astype("datetime64[Y]").astype("datetime64[D]")).astype(np.int64) + 1
-    norm = np.exp(D["y"]) * np.where(D["lv"] == 1, 1.0, 1.0)
     scal = {"athlete_keys": keys_a, "course_keys": ckeys}
-    path = tmp_path / "packed_XC_TF.npz"
     np.savez(path, __scalars__=np.array([repr(scal)]), result_id=np.arange(n),
-             athlete=athlete, course=course, norm=norm.astype(np.float32),
+             athlete=athlete, course=course, norm=np.exp(D["y"]).astype(np.float32),
              days=days.astype(np.int32), sport=(1 - D["xc"]).astype(np.int8),
              doy=doy.astype(np.int16), year=year.astype(np.int16),
-             dist_m=np.full(n, 5000.0, dtype=np.float32),
+             dist_m=np.where(D["xc"] == 1, 5000.0, 1600.0).astype(np.float32),
              meet_id=D["day"].astype(np.int64), div_id=D["race"].astype(np.int64))
-    out = tmp_path / "ss.npz"
-    r = subprocess.run([sys.executable, os.path.join(HERE, "..", "scripts", "ss_eval.py"),
-                        "--pack", str(path), "--outer", "5", "--out", str(out)],
-                       capture_output=True, text=True, timeout=600)
-    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-    assert "scorecard" in r.stdout and out.exists()
 
-    # a "current engine" dump on those rows, a little worse, then paired
-    z = dict(np.load(out))
-    rng = np.random.default_rng(0)
-    m = z["row"].size
-    base = tmp_path / "base.npz"
-    np.savez(base, row=z["row"], y=z["y"], pred=z["pred"] + rng.normal(0, 0.02, m),
-             covered=np.ones(m, dtype=bool), group=z["group"], race=z["group"],
-             sport=z["sport"], pool=np.array(["hs_m"] * m), window=z["window"],
-             sample_pct=np.array([100.0]), sample_seed=np.array([11]))
-    r = subprocess.run([sys.executable, os.path.join(HERE, "..", "scripts", "ss_eval.py"),
-                        "--pack", str(path), "--outer", "5", "--base-dump", str(base),
-                        "--out", str(tmp_path / "ss2.npz")],
-                       capture_output=True, text=True, timeout=600)
+
+def test_ss_eval_runs_on_a_pack_shaped_file(tmp_path):
+    D = sw.worldHard(seed=4, n_regions=4, schools=8)
+    path = tmp_path / "packed_XC_TF.npz"
+    _packFromWorld(D, path)
+    script = os.path.join(HERE, "..", "scripts", "ss_eval.py")
+    env = dict(os.environ)
+    r = subprocess.run([sys.executable, script, "--pack", str(path), "--mode", "gap",
+                        "--outer", "6", "--jack-outer", "3", "--repo", str(tmp_path / "repo")],
+                       capture_output=True, text=True, timeout=900, env=env)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-    assert "SCORECARD on" in r.stdout
+    assert "levels against the flat outdoor gauge" in r.stdout
+    assert "without fall_track" in r.stdout
+
+    # a "current engine" dump on the forward window, a little worse, then paired
+    sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+    import forward_holdout as fh
+    sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
+    import ss_eval
+    cols = ss_eval.loadPack(str(path))
+    w = fh.forwardWindow(cols, verbose=False)
+    dates, _, _ = fh.rowDates(cols)
+    rows = np.flatnonzero((dates >= w["from"]) & (dates < w["until"]))
+    rng = np.random.default_rng(0)
+    y = np.log(cols["norm"][rows].astype(np.float64))
+    base = tmp_path / "base.npz"
+    race = cols["div_id"][rows]
+    np.savez(base, row=rows, y=y, pred=y + rng.normal(0, 0.03, rows.size),
+             covered=np.ones(rows.size, dtype=bool), group=race, race=race,
+             sport=cols["sport"][rows], pool=np.array(["hs_m"] * rows.size),
+             window=np.array([str(w["from"]), str(w["until"])]),
+             sample_pct=np.array([100.0]), sample_seed=np.array([11]))
+    r = subprocess.run([sys.executable, script, "--pack", str(path), "--mode", "all",
+                        "--outer", "6", "--jack-outer", "3", "--no-jackknife",
+                        "--base-dump", str(base), "--repo", str(tmp_path / "repo")],
+                       capture_output=True, text=True, timeout=900, env=env)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    assert "SCORECARD on" in r.stdout and "ratings ->" in r.stdout
+    out = list((tmp_path / "repo" / "engine" / "data" / "ss").glob("ratings_*.npz"))
+    assert out
+    z = np.load(out[0])
+    assert np.all(np.isfinite(z["five_k_s"])) and z["result_id"].size > 0

@@ -221,3 +221,241 @@ def splits(D, seed=1, n_seasons=5):
         "forward": (D["t"] < t_fwd, fwd_score),
         "sport": (D["t"] < t_sp, sp_score),
     }
+
+
+# ------------------------------------------------------------------ #
+# THE HARD WORLD: real calendars, tapers, breaks, selection
+# ------------------------------------------------------------------ #
+#
+# ★ WHY A SECOND WORLD. world() has no overlap between the sports, so the
+#   XC level is not identified there by construction (statespace.fitGLS
+#   says so: the level runs off). The real calendar does overlap, and the
+#   overlap is where the gap is learned -- but it is also where every bias
+#   lives:
+#     December XC    (NXN, Foot Locker, JO) -- only the best, still peaked
+#     December indoor -- the first races after a break for most
+#     fall track     (a few all-comers / time trials in the XC season)
+#     summer track   (June-July), then August XC after a summer off
+#     the peak       every season's last race is tapered (-PEAK)
+#     the break      a runner who stops 3+ weeks after their last XC race
+#                    loses BREAK at three weeks, recovering over ~6 weeks
+#   so a naive pair difference is biased by the break and the taper, in
+#   opposite directions depending on which way the runner crossed.
+HARD = dict(mu_xc=0.060, mu_in=0.010, peak=-0.010, brk=0.025,
+            dec_xc_top=0.10, indoor_share=0.30, fall_track=0.03, summer_track=0.12)
+# the population's shape, continuous through the sport change
+HARD_SHAPE = ((0, 0.030), (110, 0.000), (200, -0.010), (300, -0.025), (366, -0.025))
+
+
+def _hardShape(phase, shape=None):
+    xs, ys = zip(*(shape or HARD_SHAPE))
+    return np.interp(phase, xs, ys)
+
+
+def worldHard(seed=0, n_regions=10, schools=20, per_school=14, n_seasons=5, **over):
+    """A world with the real calendar's overlaps and biases. Same row layout
+    as world(), plus dist_m. over: any HARD key."""
+    rng = np.random.default_rng(seed)
+    T = dict(TRUE); T.update(HARD); T.update(over)
+    persons = []
+    pid = 0
+    for reg in range(n_regions):
+        for sch in range(schools):
+            for s0 in range(-3, n_seasons):
+                for _ in range(per_school // 4 + rng.integers(0, 2)):
+                    persons.append((pid, reg, reg * schools + sch, s0))
+                    pid += 1
+    n_p = pid
+    base = rng.normal(0, 0.08, n_p)
+    beta = rng.normal(0, T["s_beta"], n_p)
+    level = np.zeros((n_p, n_seasons)); lv = np.zeros((n_p, n_seasons), dtype=np.int64)
+    active = np.zeros((n_p, n_seasons), dtype=bool)
+    slope = rng.normal(0, T["slope_sd"], (n_p, n_seasons))
+    for p, reg, sch, s0 in persons:
+        th = THETA_HS + 0.05 + base[p]
+        go = None
+        for g in range(8):
+            s = s0 + g
+            if g >= 4:
+                if go is None:
+                    go = (th < THETA_HS - 0.05) and rng.random() < 0.5
+                if not go:
+                    break
+            if 0 <= s < n_seasons:
+                level[p, s] = th; lv[p, s] = 1 if g >= 4 else 0; active[p, s] = True
+            th += (rng.normal(T["hs_jump"], T["hs_jump_sd"]) if g < 4
+                   else rng.normal(T["col_jump"], T["col_jump_sd"]))
+    region_of = np.array([r for _, r, _, _ in persons])
+    school_of = np.array([s for _, _, s, _ in persons])
+
+    # ---- each runner-season's calendar: (phase, kind, meet key) ----------
+    # kinds: 0 XC, 1 outdoor, 2 indoor
+    plan = {}
+    def addRace(p, s, phase, kind, key):
+        plan.setdefault((p, s), []).append((phase, kind, key))
+    for s in range(n_seasons):
+        act = np.flatnonzero(active[:, s])
+        hs = act[lv[act, s] == 0]; col = act[lv[act, s] == 1]
+        th_mid = level[act, s] + 0.0
+        for grp_people, is_col in ((hs, False), (col, True)):
+            if grp_people.size == 0:
+                continue
+            xc = grp_people[rng.random(grp_people.size) < (0.9 if is_col else 0.85)]
+            # regular XC: weekly; colleges every other week
+            phases = range(20, 106, 14 if is_col else 7)
+            for wk, ph in enumerate(phases):
+                go = xc[rng.random(xc.size) < 0.75]
+                for p in go:
+                    m = (school_of[p] + wk) % 2
+                    reg = region_of[p] if not is_col else region_of[p] // 2
+                    addRace(p, s, ph, 0, ("xc", is_col, reg, wk, m))
+            # the championship: everyone's last regular race at a fixed course
+            for p in xc:
+                addRace(p, s, 110 if not is_col else 113, 0, ("xcchamp", is_col, region_of[p] // 3))
+            # December XC: the best tenth (HS), still racing
+            if not is_col:
+                good = xc[np.argsort(level[xc, s])][: int(T["dec_xc_top"] * xc.size)]
+                for p in good:
+                    addRace(p, s, 120, 0, ("xcreg", region_of[p] // 5))
+                    if rng.random() < 0.5:
+                        addRace(p, s, 132, 0, ("xcnat",))
+            # fall track: a handful during XC
+            ft = xc[rng.random(xc.size) < T["fall_track"]]
+            for p in ft:
+                addRace(p, s, int(rng.integers(40, 100)), 1, ("falltf", region_of[p]))
+            # indoor
+            tf = grp_people[rng.random(grp_people.size) < 0.75]
+            ind = tf[rng.random(tf.size) < (0.7 if is_col else T["indoor_share"])]
+            for p in ind:
+                start = int(rng.integers(124, 150))
+                for ph in range(start, 216, 14):
+                    addRace(p, s, ph, 2, ("in", region_of[p] // 2, ph // 7))
+            # outdoor
+            for p in tf:
+                for wk, ph in enumerate(range(210 + int(rng.integers(0, 14)), 316, 10)):
+                    addRace(p, s, ph, 1, ("out", region_of[p], ph // 7, (school_of[p] + wk) % 3))
+            # summer track, then (next season) August XC
+            su = tf[rng.random(tf.size) < T["summer_track"]]
+            for p in su:
+                for ph in (330, 345):
+                    addRace(p, s, ph, 1, ("summer", region_of[p] // 5, ph))
+
+    # ---- the runner's true fitness on each date --------------------------
+    meets = {}
+    out = dict(person=[], t=[], season=[], lv=[], phase=[], xc=[], group=[], cell=[],
+               day=[], race=[], y=[], truth_theta=[], truth_perf=[], bad_race=[], dist_m=[])
+    cells = {}
+    def cellOf(key, group, sd):
+        if key not in cells:
+            cells[key] = (len(cells), rng.normal(0, sd))
+        return cells[key]
+    rows = []
+    for (p, s), races in plan.items():
+        races.sort()
+        ph = np.array([r[0] for r in races], dtype=float)
+        kind = np.array([r[1] for r in races])
+        # last race of each sport-season gets the taper; the break follows XC
+        last_xc = ph[kind == 0].max() if (kind == 0).any() else None
+        th = (level[p, s] + _hardShape(ph, T.get("shape")) + slope[p, s] * ph / 366.0
+              + rng.normal(0, 0.004, ph.size))
+        for k in (0, 1, 2):
+            mk = kind == k
+            if mk.sum() >= 4:
+                th[np.flatnonzero(mk)[-1]] += T["peak"]
+        if last_xc is not None:
+            nxt = ph[ph > last_xc]
+            if nxt.size and nxt.min() - last_xc >= 21:
+                d = ph - last_xc
+                dip = np.where(d > 0, T["brk"] * (1 - np.exp(-d / 7.0))
+                               * np.exp(-np.maximum(d - 21.0, 0) / 30.0), 0.0)
+                th += dip
+        for j, (phz, k, key) in enumerate(races):
+            rows.append((p, s, phz, k, key, th[j]))
+    for p, s, phz, k, key, th in rows:
+        group = (ss.GROUP_XC, ss.GROUP_OUT, ss.GROUP_IN)[k]
+        csd = T["tau"][group]
+        ckey = ("c",) + key[:3] if k == 0 else ("c",) + key[:2]
+        # ★ BRIDGE RACES RUN WHERE THE SEASON RUNS (T["bridge_venues"] =
+        #   "shared", the default): December XC on a region's regular course,
+        #   fall and summer track on the spring tracks -- Van Cortlandt,
+        #   Balboa, a high school's own oval. "own" gives each bridge its own
+        #   venue, raced at no other time, and then only the venues' prior
+        #   can tell the gap from the courses (see the review, §4.4).
+        if T.get("bridge_venues", "shared") == "shared":
+            if key[0] == "xcreg":
+                ckey = ("c", "xc", False, key[1] * 5)
+            elif key[0] == "xcnat":
+                ckey = ("c", "xc", False, 0)
+            elif key[0] == "falltf":
+                ckey = ("c", "out", key[1])
+            elif key[0] == "summer":
+                ckey = ("c", "out", key[1] * 5)
+        cid, cval = cellOf(ckey, group, csd)
+        mkey = (s, phz) + key
+        if mkey not in meets:
+            w = T["s_w"][group] * rng.standard_t(3) / np.sqrt(3.0)
+            meets[mkey] = [len(meets), w, {}]
+        day_id, w, divs = meets[mkey]
+        dv = 0 if k != 1 else int(th < THETA_HS)       # heats by ability on the track
+        if dv not in divs:
+            v = rng.normal(0, T["s_v"]); v0 = v
+            u = rng.random()
+            if u < T["short_p"]:
+                v += rng.uniform(-0.12, -0.03)
+            elif u < T["short_p"] + T["long_p"]:
+                v += rng.uniform(0.03, 0.08)
+            divs[dv] = (len(meets) * 8 + dv, v, abs(v - v0) > 0)
+        rid, v, bad = divs[dv]
+        mu = {ss.GROUP_XC: T["mu_xc"], ss.GROUP_OUT: 0.0, ss.GROUP_IN: T["mu_in"]}[group]
+        h = 1.0 + T["kappa"] * (th - THETA_HS)
+        e = rng.normal(0, T["sigma"])
+        if rng.random() < T["bad_p"]:
+            e += rng.exponential(T["bad_mean"])
+        out["person"].append(p); out["t"].append(s * 366.0 + phz); out["season"].append(s)
+        out["lv"].append(lv[p, s]); out["phase"].append(phz); out["xc"].append(int(k == 0))
+        out["group"].append(group); out["cell"].append(cid); out["day"].append(day_id)
+        out["race"].append(rid); out["truth_theta"].append(th)
+        out["truth_perf"].append(th + beta[p] * (k == 0) + e); out["bad_race"].append(bad)
+        out["dist_m"].append(5000.0 if k == 0 else 1600.0)
+        out["y"].append(th + beta[p] * (k == 0) + h * (mu + cval + w + v) + e)
+        out.setdefault("truth_course", []).append(cval)
+        out.setdefault("truth_day", []).append(w)
+        out.setdefault("truth_race", []).append(v)
+    D = {k: np.asarray(v) for k, v in out.items()}
+    order = np.lexsort((D["t"], D["person"]))
+    D = {k: v[order] for k, v in D.items()}
+    _, D["person"] = np.unique(D["person"], return_inverse=True)
+    for k in ("person", "cell", "day", "race", "season", "lv", "group"):
+        D[k] = np.asarray(D[k]).reshape(-1).astype(np.int64)
+    for k in ("day", "race"):
+        _, D[k] = np.unique(D[k], return_inverse=True)
+        D[k] = D[k].reshape(-1).astype(np.int64)
+    D["t"] = D["t"].astype(np.float64); D["phase"] = D["phase"].astype(np.float64)
+    D["starts"] = ss.segments(D["person"])
+    D["truth"] = T
+    return D
+
+
+def naiveGaps(D, window=30):
+    """The pair differences the repo measured before (xc_tf_bridge): per
+    runner, the mean of every XC row against every indoor / outdoor row of
+    the same season within `window` days, log time, track minus XC. Truth
+    for a fitness-free world: mu_in - mu_XC and -mu_XC."""
+    out = {}
+    for name, g in (("indoor-XC", GROUP_IN_), ("outdoor-XC", GROUP_OUT_)):
+        diffs = []
+        for p in range(D["starts"].size - 1):
+            s, e = D["starts"][p], D["starts"][p + 1]
+            yy, tt, gg, se = D["y"][s:e], D["t"][s:e], D["group"][s:e], D["season"][s:e]
+            ix = np.flatnonzero(gg == ss.GROUP_XC); it = np.flatnonzero(gg == g)
+            if ix.size == 0 or it.size == 0:
+                continue
+            dt = np.abs(tt[it][:, None] - tt[ix][None, :])
+            ok = (dt <= window) & (se[it][:, None] == se[ix][None, :])
+            if ok.any():
+                diffs.append(np.mean((yy[it][:, None] - yy[ix][None, :])[ok]))
+        out[name] = (float(np.mean(diffs)) if diffs else float("nan"), len(diffs))
+    return out
+
+
+GROUP_IN_, GROUP_OUT_ = ss.GROUP_IN, ss.GROUP_OUT
