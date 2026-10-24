@@ -34,7 +34,9 @@
 #   - state_div matches "state_div" OR "class" on the board; here the
 #     partition key is coalesce(state_div, class), the one approximation.
 #   - team: the school page's order, count of strictly faster + 1, any
-#     pool, any race count (rank(), not row_number()).
+#     level, any race count (rank(), not row_number()) -- but ONE GENDER,
+#     the pool's suffix (_m / _f). Owner, 2026-10-24: "the team rankings
+#     include opposite gender on athlete page".
 
 import argparse
 import sys
@@ -100,7 +102,7 @@ def rankSql(unit_cols=True, grade_col=True):
                CASE WHEN ranked AND rg IS NOT NULL THEN {rn('rg')} END::int AS region,
                CASE WHEN ranked AND cf IS NOT NULL THEN {rn('cf')} END::int AS conference,
                CASE WHEN school IS NOT NULL THEN
-                    rank() OVER (PARTITION BY school, sport, year ORDER BY mean_rating DESC) END::int AS team,
+                    rank() OVER (PARTITION BY school, sport, year, right(pool, 2) ORDER BY mean_rating DESC) END::int AS team,
                gk AS grade_key,
                CASE WHEN ranked AND us AND gk IS NOT NULL THEN {rn('gk')} END::int AS grade_nation,
                CASE WHEN ranked AND us AND gk IS NOT NULL THEN count(*) OVER (PARTITION BY pool, sport, year, ranked, us, gk) END::int AS grade_nation_total,

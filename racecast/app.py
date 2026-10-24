@@ -1806,6 +1806,7 @@ def buildRankLine(cur, person_id, season):
                 try:
                     # Strictly-better count + 1 = place on the roster, the same
                     # mean-rating order schoolRoster sorts by; ties share it.
+                    # Own gender only (the pool's _m / _f), owner 2026-10-24.
                     cur.execute("""
                         SELECT count(*) + 1 AS place
                         FROM   athlete_season t
@@ -1813,8 +1814,9 @@ def buildRankLine(cur, person_id, season):
                           AND  t.sport  = %(sport)s
                           AND  t.year   = %(year)s
                           AND  t.mean_rating > %(mine)s
+                          AND  right(t.pool, 2) = right(%(pool)s, 2)
                     """, {"school": school, "sport": sport,
-                          "year": season["year"],
+                          "year": season["year"], "pool": season["pool"],
                           "mine": season["mean_rating"]})
                     row = cur.fetchone()
                 except Exception:            # noqa: BLE001
