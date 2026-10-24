@@ -379,6 +379,25 @@ def dayConsistencyReport(y, eff_pre, out, D, u_row, u_applied, day_on,
                 um = np.clip(np.asarray(mix, dtype=np.float64), -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
                 um = np.where(fast_only, np.minimum(um, 0.0), um)
                 variants.append(("day in, heavy-tailed", z_off - np.where(day_on, h * um, 0.0)))
+            # ★ SLOW DAYS, WHEN IT IS CONDITIONS (owner, 2026-10-24: Shamrock
+            #   at Berrien, early September, +8.2% in 2025 and +14.0% in
+            #   2026, none of it credited under 'XC:fast'). A jog is one team
+            #   or one division backing off; weather slows every division
+            #   run there that day. Two trials beside today's: every slow
+            #   day credited, and only the slow days every division shares
+            #   (broadSlowRaces). Report only.
+            u_loo = out.get("race_effect_row")
+            u_loo = u_row if u_loo is None or np.asarray(u_loo).size != u_row.size \
+                else np.asarray(u_loo, dtype=np.float64)
+            slow = np.clip(u_loo, 0.0, js.RACE_DAY_CAP)
+            add_all = np.where(day_on & fast_only, slow, 0.0)
+            variants.append(("day in + every slow day", z_on - h * add_all))
+            sub = getattr(D, "subrace", None)
+            if sub is not None and np.asarray(sub).size == z_off.size:
+                broad = broadSlowRaces(z_off, D.athlete, D.race, sub, out["race_effect"], h)
+                add_b = np.where(broad[D.race], add_all, 0.0)
+                variants.append((f"day in + shared slow days ({int(broad.sum()):,} races)",
+                                 z_on - h * add_b))
             for label, z in variants:
                 sd, rsd, n = _scatter(z, D.athlete, m)
                 rows.append((label, sd, rsd, n))
@@ -396,6 +415,42 @@ def dayConsistencyReport(y, eff_pre, out, D, u_row, u_applied, day_on,
     except Exception as exc:                                      # noqa: BLE001
         print(f"[joint/live] day-term consistency not computed "
               f"({type(exc).__name__}: {exc})")
+
+
+BROAD_MIN_ROWS = 5        # rows before a division testifies
+BROAD_MIN_DIVS = 2        # divisions before a day can be "everyone"
+BROAD_AGREE = 0.5         # each division at least this share of the day
+
+
+def broadSlowRaces(z, group, race, sub, u_race, h=1.0, min_rows=BROAD_MIN_ROWS,
+                   min_divs=BROAD_MIN_DIVS, agree=BROAD_AGREE):
+    """Per race, True when its day is slow and every division run in it
+    shares that: BROAD_MIN_DIVS or more divisions of BROAD_MIN_ROWS rows,
+    each running at least BROAD_AGREE of the day slow. A division's own
+    reading is its rows' log-time less their athlete-season's mean (z is
+    log-time less the course). Pure."""
+    z = np.asarray(z, dtype=np.float64)
+    group = np.asarray(group, dtype=np.int64)
+    race = np.asarray(race, dtype=np.int64)
+    sub = np.asarray(sub, dtype=np.int64)
+    u_race = np.asarray(u_race, dtype=np.float64)
+    h = np.broadcast_to(np.asarray(h, dtype=np.float64), z.shape)
+    n_g = np.bincount(group, minlength=int(group.max()) + 1).astype(np.float64)
+    mean_g = np.bincount(group, weights=z, minlength=n_g.size) / np.maximum(n_g, 1.0)
+    dev = z - mean_g[group]
+    n_s = int(sub.max()) + 1
+    cnt = np.bincount(sub, minlength=n_s).astype(np.float64)
+    day_s = np.bincount(sub, weights=dev, minlength=n_s) / np.maximum(cnt, 1.0)
+    h_s = np.bincount(sub, weights=h, minlength=n_s) / np.maximum(cnt, 1.0)
+    race_of = np.zeros(n_s, dtype=np.int64)
+    race_of[sub] = race
+    big = cnt >= min_rows
+    want = agree * h_s * u_race[race_of]
+    ok_s = big & (day_s >= want)
+    n_race = u_race.size
+    n_big = np.bincount(race_of[big], minlength=n_race)
+    n_ok = np.bincount(race_of[ok_s], minlength=n_race)
+    return (u_race > 0) & (n_big >= min_divs) & (n_ok == n_big)
 
 
 def _dayWord(mode):

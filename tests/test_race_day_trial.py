@@ -136,3 +136,46 @@ def test_pipeline_and_scorecard_carry_the_switches():
     import scorecard as sc
     assert ("XCP_RACE_KEY", "--race-key", True) in sc.PRODUCTION_ENV
     assert "XCP_RACE_EFFECT_OWN" in sc.PUBLISH_ONLY
+
+
+# ---- slow days that are conditions (owner, 2026-10-24) -------------------------
+
+def test_a_slow_day_every_division_shares_is_broad_and_one_division_is_not():
+    import joint_golive as jg
+    # race 0: weather -- both divisions 8% slow; race 1: one division jogs
+    group = np.r_[np.arange(10), np.arange(10), np.arange(10, 20), np.arange(10, 20)]
+    race = np.r_[np.zeros(20, int), np.ones(20, int)]
+    sub = np.r_[np.zeros(10, int), np.ones(10, int), np.full(10, 2), np.full(10, 3)]
+    z = np.r_[np.full(10, 0.08), np.full(10, 0.08), np.full(10, 0.16), np.zeros(10)]
+    # every runner's other races, at 0: three more each, ordinary
+    group = np.r_[group, np.tile(np.arange(20), 3)]
+    race = np.r_[race, np.full(60, 2)]
+    sub = np.r_[sub, np.full(60, 4)]
+    z = np.r_[z, np.zeros(60)]
+    u = np.array([0.08, 0.08, 0.0])
+    broad = jg.broadSlowRaces(z, group, race, sub, u)
+    assert broad.tolist() == [True, False, False]
+
+
+def test_the_report_prints_the_slow_day_trials():
+    import joint_golive as jg
+    rng = np.random.default_rng(5)
+    n_ath, per = 400, 6
+    ath = np.repeat(np.arange(n_ath), per)
+    n = ath.size
+    race = rng.integers(0, 80, n)
+    sub = race * 2 + rng.integers(0, 2, n)               # two divisions a race
+    day = np.where(np.arange(80) < 10, 0.08, rng.normal(0, 0.005, 80))   # ten weather days
+    y = rng.normal(0, 0.01, n) + day[race]
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        jg.dayConsistencyReport(y, np.zeros(n), {"h": np.ones(n), "race_effect": day},
+                                SimpleNamespace(athlete=ath, race=race, subrace=sub),
+                                day[race], np.minimum(day[race], 0.0), np.ones(n, dtype=bool),
+                                np.ones(n, dtype=bool), np.zeros(n, dtype=np.int8))
+    text = buf.getvalue()
+    assert "day in + every slow day" in text and "shared slow days" in text
+    line = [ln for ln in text.splitlines() if "shared slow days" in ln][0]
+    base = [ln for ln in text.splitlines() if "day in, leave-self-out" in ln][0]
+    robust = lambda ln: float(ln.split("robust")[1].split("%")[0])           # noqa: E731
+    assert robust(line) < robust(base)

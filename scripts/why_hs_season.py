@@ -5,6 +5,7 @@ READ ONLY.
 
     set -a; . /etc/xc-predictor.env; set +a
     /srv/venv/bin/python scripts/why_hs_season.py https://racecast.co/athlete/1234567
+    /srv/venv/bin/python scripts/why_hs_season.py "Robert Baraldi"     # by name
 
 (owner, 2026-10-13, Jake Ritter: Railroad Athletics (TX), "Professional" in
 2025 and 2026, "Grade 11" in 2024 and national #1 high school boy at 147.7.)
@@ -28,12 +29,37 @@ for _p in ("scripts", "engine", "racecast"):
     sys.path.insert(0, os.path.join(_ROOT, _p))
 
 
+def _byName(getConn, name):
+    """The one person a name matches (athletes' trigram-indexed full name),
+    or None after listing the candidates."""
+    with getConn() as c, c.cursor() as cur:
+        cur.execute("""SELECT r.person_id, min(COALESCE(a.first_name,'') || ' ' || COALESCE(a.last_name,'')),
+                              min(r.school), min(r.date::text), max(r.date::text), count(*)
+                       FROM   athletes a JOIN results r ON r.athlete_id = a.athlete_id
+                       WHERE  (COALESCE(a.first_name,'') || ' ' || COALESCE(a.last_name,'')) ILIKE %s
+                         AND  r.person_id IS NOT NULL
+                       GROUP  BY 1 ORDER BY 6 DESC LIMIT 20""", (f"%{name.strip()}%",))
+        got = cur.fetchall()
+        c.rollback()
+    if len(got) == 1:
+        return got[0][0]
+    print(f"{len(got)} people match {name!r}" + (": run again with the id" if got else ""))
+    for pid, nm, school, d0, d1, n in got:
+        print(f"  {pid:>10}  {nm[:28]:28} {(school or '')[:28]:28} {d0[:10]} .. {d1[:10]}  {n} XC races")
+    return None
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
-    m = re.search(r"(\d+)\s*$", sys.argv[1].rstrip("/"))
-    pid = int(m.group(1))
     from database import getConn
+    m = re.search(r"(\d+)\s*$", sys.argv[1].rstrip("/"))
+    if m:
+        pid = int(m.group(1))
+    else:
+        pid = _byName(getConn, sys.argv[1])
+        if pid is None:
+            return
     from grade_sanity import ADULT_CLUB_SHARE, CLUB_NAME_RE, NOT_SCHOOL_RE, _ACAD_R
     from level_graph import _raceKeyExpr
     with getConn() as c, c.cursor() as cur:
