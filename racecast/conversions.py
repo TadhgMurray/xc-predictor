@@ -1114,52 +1114,73 @@ def normalized_to_rating(norm, pool, difficulty=0.0, sport=None):
 #   already carries the distance correction, so a distance-time line built
 #   from it would be fitting this project's own exponent back to itself.
 _PACE_RACES_SQL = """
-    SELECT year, pool, distance, time_seconds
+    SELECT year, pool, sport, distance, time_seconds
     FROM   ranking_results
     WHERE  person_id = %(pid)s
       AND  time_seconds > 0
       AND  distance > 0
     ORDER  BY year DESC
 """
+_PACE_SEASON_SQL = """
+    SELECT year, split_part(pool, '|', 1), mean_rating
+    FROM   athlete_season
+    WHERE  person_id = %(pid)s AND mean_rating > 0
+    ORDER  BY year DESC, n_races DESC
+    LIMIT  1
+"""
+
+
+def ratingPaceRaces(rating, pool):
+    """The track mile and 5K a rating is worth, as two 'races' for the
+    critical-speed line (paces.seasonLadder's fallback): the TF clock the
+    5K column prints, calibrated the same way (clockBias). None when the
+    pool has no clock."""
+    out = []
+    for d in (1609.344, FIVE_K_M):           # the mile, the 5K
+        t = ratingSeconds(rating, pool, "TF", d)
+        if not t:
+            return None
+        if d >= 3000:
+            t *= math.exp(-clockBias(rating, pool, "TF") / 100.0)
+        out.append((float(d), float(t)))
+    return out
+
+
+def athletePacesFrom(cur, person_id):
+    """paces.seasonLadder for one athlete, on an open cursor (dict or
+    tuple rows): the newest season's track races, else their newest
+    season's rating."""
+    import paces as _p
+
+    def tup(r, keys):
+        return tuple(r[k] for k in keys) if isinstance(r, dict) else tuple(r)
+
+    cur.execute(_PACE_RACES_SQL, {"pid": person_id})
+    rows = [tup(r, ("year", "pool", "sport", "distance", "time_seconds")) for r in cur.fetchall()]
+
+    def fallback():
+        cur.execute(_PACE_SEASON_SQL, {"pid": person_id})
+        r = cur.fetchone()
+        if not r:
+            return None
+        year, pool, rating = tuple(r.values()) if isinstance(r, dict) else tuple(r)
+        races = ratingPaceRaces(float(rating), pool)
+        return (year, pool, races) if races else None
+
+    if not rows:
+        fb = fallback()
+        if not fb:
+            return None
+    return _p.seasonLadder(rows, fallback)
 
 
 def athlete_paces(person_id):
-    """{year, n_races, paces, dprime, vdot} for one athlete, or a refusal."""
-    import paces as _p
+    """{year, n_races, paces, dprime, vdot, basis} for one athlete, or a refusal."""
     with getConn() as conn:
         with conn.cursor() as cur:
-            cur.execute(_PACE_RACES_SQL, {"pid": person_id})
-            rows = cur.fetchall()
+            got = athletePacesFrom(cur, person_id)
         conn.rollback()
-    if not rows:
-        return None
-
-    by_year = {}
-    for year, pool, dist, secs in rows:
-        by_year.setdefault(year, []).append(
-            (float(dist), float(secs), pool))
-
-    for year in sorted(by_year, reverse=True):
-        races = [(d, t) for d, t, _ in by_year[year]]
-        got, why = _p.criticalSpeed(races)
-        if got is None:
-            continue
-        ladder = _p.trainingPaces(races)
-        if not ladder:
-            continue
-        cs, dprime = got
-        pool = by_year[year][0][2]
-        return {
-            "year": year, "n_races": len(races), "paces": ladder,
-            "dprime": round(dprime),
-            "vdot": _p.vdot(_p._timeFor(cs, dprime, 5000.0), 5000.0, pool),
-        }
-
-    # ! THE REASON, NOT SILENCE. "No paces" and "every race you ran was the
-    #   same distance" are different messages and only one is actionable.
-    newest = sorted(by_year, reverse=True)[0]
-    _, why = _p.criticalSpeed([(d, t) for d, t, _ in by_year[newest]])
-    return {"year": newest, "paces": [], "reason": why}
+    return got
 
 
 # ★ THE EQUIVALENCE LINE (owner, 2026-09-25: "on a race page ... the number

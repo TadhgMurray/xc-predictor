@@ -373,3 +373,55 @@ def projectedPaces(mile_seconds, pace_10k_seconds):
                 "basis": "threshold pace × 1.15–1.38 (Daniels, E against T)",
                 "source": "modeled"})
     return out
+
+
+# ★ TRACK RACES ONLY, OR THE RATING (owner, 2026-10-23: "these paces are
+#   off" -- critical speed 5:39/mi for a 14:48 5K runner). The ladder was
+#   fitted to every race of a season, cross country included: raw times on
+#   courses that run 5-10% slow (and a 10,000 m college race on grass), so
+#   the distance-time line measured the courses, not the runner. A line
+#   needs distances that mean what they say: track races between
+#   TRACK_MIN_M and TRACK_MAX_M (the critical-speed span). A season without
+#   two of them far enough apart takes its paces from the rating instead --
+#   the track mile and 5K the rating is worth (conversions.ratingSeconds,
+#   the same clock the 5K column prints) -- and says so.
+TRACK_MIN_M, TRACK_MAX_M = 1500.0, 10000.0
+
+
+def seasonLadder(rows, fallback=None):
+    """{year, n_races, paces, dprime, vdot, equiv_5k, basis} or
+    {year, paces: [], reason}.
+    rows: [(year, pool, sport, distance_m, seconds)], any order.
+    fallback(): (year, pool, [(d, t), (d, t)]) from the rating, or None."""
+    by_year = {}
+    for year, pool, sport, d, t in rows:
+        if str(sport or "").upper() != "TF" or not d or not t:
+            continue
+        if TRACK_MIN_M <= float(d) <= TRACK_MAX_M:
+            by_year.setdefault(year, []).append((float(d), float(t), pool))
+    why = "needs two track races, a mile to 10K, at different distances"
+    for year in sorted(by_year, reverse=True):
+        races = [(d, t) for d, t, _ in by_year[year]]
+        got, why_y = criticalSpeed(races)
+        if got is None:
+            why = why_y or why
+            continue
+        ladder = trainingPaces(races)
+        if ladder:
+            return _ladderOut(year, by_year[year][0][2], races, got, ladder, "track")
+    fb = fallback() if fallback else None
+    if fb:
+        year, pool, races = fb
+        got, _w = criticalSpeed(races)
+        ladder = trainingPaces(races) if got else []
+        if ladder:
+            return _ladderOut(year, pool, races, got, ladder, "rating")
+    years = sorted({r[0] for r in rows}, reverse=True)
+    return {"year": years[0] if years else None, "paces": [], "reason": why}
+
+
+def _ladderOut(year, pool, races, got, ladder, basis):
+    cs, dprime = got
+    t5k = _timeFor(cs, dprime, 5000.0)
+    return {"year": year, "n_races": len(races), "paces": ladder, "dprime": round(dprime),
+            "vdot": vdot(t5k, 5000.0, pool), "equiv_5k": t5k, "basis": basis}

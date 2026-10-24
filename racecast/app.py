@@ -1486,54 +1486,11 @@ def compare_page():
 #   already contains the distance correction, so a distance-time line built
 #   from it would be fitting this project's own exponent back to itself.
 def _athletePaces(cur, person_id):
-    import paces                       # noqa: E402
-    cur.execute("""
-        SELECT year, pool, distance, time_seconds
-        FROM   ranking_results
-        WHERE  person_id = %s
-          AND  time_seconds > 0
-          AND  distance > 0
-        ORDER  BY year DESC
-    """, (person_id,))
-    rows = cur.fetchall()
-    if not rows:
-        return None
-
-    by_year = {}
-    for r in rows:
-        by_year.setdefault(r["year"], []).append(r)
-
-    for year in sorted(by_year, reverse=True):
-        races = [(float(r["distance"]), float(r["time_seconds"]))
-                 for r in by_year[year]]
-        got, why = paces.criticalSpeed(races)
-        if got is None:
-            continue
-        cs, dprime = got
-        ladder = paces.trainingPaces(races)
-        if not ladder:
-            continue
-        # VDOT off the model's own 5K, so it is one number for one fitness
-        # rather than one that moves with whichever race is quoted.
-        t5k = paces._timeFor(cs, dprime, 5000.0)
-        pool = by_year[year][0]["pool"]
-        return {
-            "year": year,
-            "n_races": len(races),
-            "paces": ladder,
-            "dprime": round(dprime),
-            "vdot": paces.vdot(t5k, 5000.0, pool),
-            "equiv_5k": t5k,
-        }
-
-    # ! THE REASON, NOT SILENCE. "No paces" and "your races are all the same
-    #   distance" are different messages, and the second one tells a runner
-    #   what to do about it.
-    newest = sorted(by_year, reverse=True)[0]
-    _, why = paces.criticalSpeed(
-        [(float(r["distance"]), float(r["time_seconds"]))
-         for r in by_year[newest]])
-    return {"year": newest, "paces": [], "reason": why}
+    """The athlete page's training paces: track races only, else the
+    season rating's track mile and 5K (conversions.athletePacesFrom; owner,
+    2026-10-23: "these paces are off")."""
+    import conversions
+    return conversions.athletePacesFrom(cur, person_id)
 
 
 # The season rank line's scope sets, per level (the pool's prefix). Broadest

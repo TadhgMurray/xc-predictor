@@ -443,7 +443,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 20c.6-3.4 3-5 6-5s5.4 1.6 6 5M16 5.2a3 3 0 010 5.6M18 15c1.8.6 2.8 2.2 3 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Similar runners</a>
       {% endif %}
       {% if training and training.paces %}
-      <a class="ath-act" href="/conversions?athlete={{ athlete.person_id }}" title="Workout paces and VO2max: critical speed {{ training.paces[1].per_mile if training.paces|length > 1 else training.paces[0].per_mile }}/mi, fitted from {{ training.n_races }} races in {{ training.year }}">
+      <a class="ath-act" href="/conversions?athlete={{ athlete.person_id }}" title="Workout paces and VO2max: critical speed {{ training.paces[1].per_mile if training.paces|length > 1 else training.paces[0].per_mile }}/mi, {{ 'from the ' ~ training.year ~ ' rating' if training.basis == 'rating' else 'fitted from ' ~ training.n_races ~ ' track races in ' ~ training.year }}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 13V9M10 2h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Training paces</a>
       {% endif %}
       <button type="button" class="ath-act share-btn" data-share-title="{{ athlete.name }} on Racecast"

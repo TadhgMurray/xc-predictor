@@ -610,8 +610,11 @@
                    '</td><td class="basis">' + esc(p.basis) + '</td></tr>';
         }).join('');
 
+        // the rating's mile and 5K when the season has no two track races
         src.textContent = from && from.n_races
-            ? from.year + ' season \u00b7 ' + from.n_races + ' races' : '';
+            ? (from.basis === 'rating'
+               ? from.year + ' season \u00b7 from the rating\u2019s track mile and 5K'
+               : from.year + ' season \u00b7 ' + from.n_races + ' track races') : '';
 
         // ★ VO2MAX ON ITS OWN LINE. It is a headline number the page was asked
         //   for, not a caveat; buried at the end of the footnote it read as
@@ -674,7 +677,9 @@
         if (more) more.hidden = !on;
         var src = document.getElementById('side-paces-src');
         if (src) src.textContent = on && from && from.n_races
-            ? 'Fitted from the ' + from.year + ' season · ' + from.n_races + ' races.' : '';
+            ? (from.basis === 'rating'
+               ? 'From the ' + from.year + ' rating\u2019s track mile and 5K: no two track races to fit.'
+               : 'Fitted from the ' + from.year + ' season · ' + from.n_races + ' track races.') : '';
         var sv = document.getElementById('side-vdot');
         if (sv) {
             sv.hidden = !(on && v && v.value);
