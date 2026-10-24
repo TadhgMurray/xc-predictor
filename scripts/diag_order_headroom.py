@@ -149,6 +149,41 @@ def raceScores(got):
     return out
 
 
+def runnerMisses(got):
+    """[{basis: within-race miss %}] per runner, in `got`'s order: ln(pred /
+    actual) less the race's own median, so only the runner-vs-field part is
+    left. Pure."""
+    act = [a for a, _p in got]
+    cols = {}
+    for b in BASES:
+        e = [math.log(p[b] / a) for (_a, p), a in zip(got, act)]
+        m = statistics.median(e)
+        cols[b] = [100.0 * (x - m) for x in e]
+    return [{b: cols[b][i] for b in BASES} for i in range(len(got))]
+
+
+# ★ WHERE THE ROOM IS, PER RUNNER (owner's E0, 2026-10-24: the month split
+#   put most of the gap in August and September). A runner's first cross
+#   country race of the season is predicted from last season or a spring of
+#   track; a mid-season race from last week. The bands split those.
+BANDS = ("in season, <=21d", "in season, >21d", "season opener, <=120d",
+         "season opener, 121-365d", "season opener, >1yr")
+
+
+def runnerBand(all_dates, xc_season_dates, day):
+    """all_dates: the runner's rated race dates before `day`, any sport;
+    xc_season_dates: their cross country dates this season. Pure."""
+    before = [d for d in all_dates if d < day]
+    if not before:
+        return None
+    gap = (datetime.date.fromisoformat(day) - datetime.date.fromisoformat(max(before))).days
+    if any(d < day for d in xc_season_dates):
+        return BANDS[0] if gap <= 21 else BANDS[1]
+    if gap <= 120:
+        return BANDS[2]
+    return BANDS[3] if gap <= 365 else BANDS[4]
+
+
 def paired(xs, ys, draws=2000, seed=0):
     """Mean of xs - ys over races, with a 90% interval by resampling races."""
     d = [x - y for x, y in zip(xs, ys) if x is not None and y is not None]
@@ -185,6 +220,17 @@ def summarize(races):
                  f"nearest {math.sqrt(n2):.2f}% -> form error the ratings carry "
                  f"<= ~{math.sqrt(max(p2 - n2, 0.0)):.2f}% in the same median-miss units "
                  "(the rest is the day)")
+    rows = [(band, m) for r in races for band, m in r.get("runners") or [] if band]
+    if rows:
+        lines.append("\nby runner: median |within-race miss| %, prior -> nearest "
+                     "(last beside it)")
+        for band in BANDS:
+            ms = [m for b, m in rows if b == band]
+            if len(ms) < 50:
+                continue
+            med = {b: statistics.median(abs(m[b]) for m in ms) for b in BASES}
+            lines.append(f"  {band:26} {len(ms):>6}  {med['prior']:.2f}% -> "
+                         f"{med['nearest']:.2f}%   (last {med['last']:.2f}%)")
     for title, key in (("level", "level"), ("month", "month")):
         groups = {}
         for r in races:
@@ -232,7 +278,7 @@ def scoreRace(cur, P, race):
             return None
         return P._ratingToSeconds(form[0], form[1], spec, day.year)
 
-    got, levels = [], []
+    got, levels, bands = [], [], []
     for pid, actual, _school in fin:
         mine = [(str(r[0])[:10], r[1], r[2]) for r in rows.get(pid) or [] if r[3] == "XC"]
         past = [(str(r[0])[:10], r[1], r[2]) for r in every.get(pid) or [] if r[3] == "XC"]
@@ -243,9 +289,12 @@ def scoreRace(cur, P, race):
         if all(pred.values()):
             got.append((actual, pred))
             levels.append((prior[pid].get("form_pool") or "?").split("|")[0])
+            bands.append(runnerBand([str(r[0])[:10] for r in every.get(pid) or []],
+                                    [d for d, _r, _p in mine], race["day"]))
     if len(got) < MIN_MATCHED:
         return None
     return {"scores": raceScores(got), "n": len(got),
+            "runners": list(zip(bands, runnerMisses(got))),
             "level": statistics.mode(levels), "month": race["day"][:7]}
 
 
@@ -257,6 +306,8 @@ def main():
     ap.add_argument("--divs", type=int, default=300)
     ap.add_argument("--min-field", type=int, default=20)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--source", choices=("anet", "tfrrs"), default=None,
+                    help="only this feed's races (tfrrs = college, Kailo's world)")
     a = ap.parse_args()
 
     import psycopg2.extras
@@ -269,6 +320,8 @@ def main():
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SET statement_timeout = '600s'")
         races = sampleRaces(cur, a.lo, a.hi, "XC", a.min_field)
+        if a.source:
+            races = [r for r in races if r["source"] == a.source]
         conn.rollback()
         random.Random(a.seed).shuffle(races)
         races = races[:a.divs]

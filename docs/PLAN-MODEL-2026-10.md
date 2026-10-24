@@ -321,3 +321,84 @@ public prices (check the live page):
 **During E3–E6:** a handful of subset arms and one or two full runs a
 week, so about **$10–40 a week**. Nothing is rented before E0, T1a and
 E2 say there is something to train for. E0, T1a and E2 need no GPU.
+
+---
+
+## 8. Results so far
+
+### E0, run 2026-10-24 (owner): a ceiling, not a result
+
+Same runners, same races; pairs in the right order, mean over races.
+"Gap" is nearest minus prior, with a 90% interval from resampling races.
+
+| Season | Races | Runners | Last race | **Prior (served)** | Season (hindsight) | **Nearest (hindsight)** | Gap |
+|---|---|---|---|---|---|---|---|
+| 2024-25 | 294 | 21,677 | 87.0% | **87.7%** | 89.9% | **90.1%** | +2.42 [+2.12, +2.74] |
+| 2025-26 | 293 | 20,905 | 87.1% | **88.1%** | 90.4% | **90.6%** | +2.52 [+2.22, +2.82] |
+
+**By month (prior → nearest):**
+
+| Month | 2024-25 | 2025-26 |
+|---|---|---|
+| August | 84.0 → 89.7 (**+5.7**) | 83.6 → 89.8 (**+6.2**) |
+| September | 86.7 → 90.1 (+3.4) | 88.0 → 91.2 (+3.2) |
+| October | 89.1 → 90.2 (+1.1) | 89.3 → 90.4 (+1.1) |
+| November | 89.2 → 89.5 (+0.3) | 89.8 → 90.0 (+0.2) |
+
+**Within-race spread** (rms of race medians): prior 3.12% → nearest
+2.49% (2024-25), and 2.97% → 2.25% (2025-26). The form error the ratings
+carry is at most about 1.9% in those units; the rest is the day.
+
+### What it means
+
+1. **There is room on order, and it is not huge.**
+   - The most better form estimation could buy is about +2.5 points.
+     Even perfect hindsight gets about 9.5% of pairs wrong: that part is
+     the day.
+   - The first milestone (+1 point) is about 40% of the ceiling.
+     Plausible, not free.
+2. **Almost all of the room is at the start of the season.**
+   - August: about +6 points. September: about +3. October: about +1.
+     November: about 0.
+   - By championship season, the ratings are already within a third of a
+     point of hindsight form.
+   - So better form estimation will not move late-season or championship
+     order. Anything left there is the day, plus race-specific effects
+     (tactics, effort) that E0 cannot separate from the day.
+3. **So the order problem is mostly the season opener:** predicting
+   autumn form from last season, a summer, or a spring of track, by grade
+   and level. That is a career and sequence problem, which the network's
+   history encoder and its gap twins were built for. **This is the
+   clearest case for keeping the network.** It is also where the field
+   encoder (B2) and championship effects (C1) matter least, so both drop
+   in priority for order. C1 stays in Track T, for the race's level.
+4. **Averaging recent races buys little over the last race alone:**
+   +0.7 and +1.0 points.
+5. **College is barely sampled** (7–10 races per season). Kailo's world
+   needs its own run (E0b).
+6. ⚠ **2025-26 is the sealed test season** (`forward_holdout`). E0 fits
+   nothing and only describes the ratings, and the two seasons agree, so
+   the seal mostly holds. Every experiment from here uses 2024-25 for
+   validation and leaves 2025-26 alone until the end.
+
+### Changes to the plan
+
+- **E0b** (next, SQL only): the per-runner split on 2024-25 (in season
+  against season opener, by days since the last race), and college only
+  (`--source tfrrs`) on 2023-24 and 2024-25.
+- **E1 focuses on openers.** The network, the ratings and the engine's
+  carry-forward across the summer (Y3, the season tie) are compared on
+  the same opener races.
+  - Carrying form across a gap is fitness, so under the one-fitness-model
+    rule it belongs to whichever of the engine and the network does it
+    better. **The owner decides after E1.**
+  - If the engine wins, the network does not do it twice.
+- **E2's features for openers**, all prior-only:
+  - grade progression (rising grades, a freshman's first college season);
+  - last season's trajectory (early to late);
+  - spring track times and how recent they are;
+  - the length of the break;
+  - the school's typical summer improvement in past years (its returning
+    runners, seasons before this one).
+- **B2 and C1-for-order wait** until E1 and E2 show room outside the
+  season opener.

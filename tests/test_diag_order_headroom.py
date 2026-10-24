@@ -74,3 +74,22 @@ def test_the_ceiling_reads_above_the_prior_and_the_split_recovers_the_form_error
 
 def statistics_mean(xs):
     return sum(xs) / len(xs)
+
+
+def test_the_runner_bands():
+    assert H.runnerBand(["2025-09-06"], ["2025-09-06"], "2025-09-20") == H.BANDS[0]
+    assert H.runnerBand(["2025-08-20"], ["2025-08-20"], "2025-09-20") == H.BANDS[1]
+    # first cross country race of the season, off a spring of track
+    assert H.runnerBand(["2025-06-01"], [], "2025-09-06") == H.BANDS[2]
+    assert H.runnerBand(["2024-11-01"], [], "2025-09-06") == H.BANDS[3]
+    assert H.runnerBand(["2023-11-01"], [], "2025-09-06") == H.BANDS[4]
+    assert H.runnerBand([], [], "2025-09-06") is None
+    # a race later in the season does not make an opener in-season
+    assert H.runnerBand(["2025-06-01"], ["2025-10-01"], "2025-09-06") == H.BANDS[2]
+
+
+def test_runner_misses_take_the_race_out():
+    got = [(1000.0, {b: 1010.0 for b in H.BASES}), (1100.0, {b: 1111.0 for b in H.BASES}),
+           (1200.0, {b: 1212.0 for b in H.BASES})]
+    for m in H.runnerMisses(got):
+        assert all(abs(v) < 1e-9 for v in m.values())      # all 1% slow: no runner part
