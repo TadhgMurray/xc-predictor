@@ -189,6 +189,14 @@ def test_weather_fitted_inside_beats_a_correction_keyed_on_the_wrong_temperature
     assert _ratingErr(D, fitted, hot) < 0.8 * _ratingErr(D, stored, hot)
 
 
+def test_the_tilt_is_fitted_inside_races_near_what_was_planted():
+    base = ("peak", "recovery", "event", "mu_by_level")
+    for planted in (0.30, 0.0):
+        D = sw.worldHard(seed=2, kappa=planted)
+        R = ss.fitGLS(D, np.ones(D["y"].size, dtype=bool), outer=20, terms=base, fit_kappa=True)
+        assert abs(R["kappa"] - planted) < 0.08, (planted, R["kappa"])
+
+
 def test_ss_eval_runs_on_a_pack_shaped_file(tmp_path):
     D = sw.worldHard(seed=4, n_regions=4, schools=8)
     path = tmp_path / "packed_XC_TF.npz"

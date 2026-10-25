@@ -245,7 +245,17 @@ HARD = dict(mu_xc=0.060, mu_in=0.010, peak=-0.010, brk=0.025,
             dec_xc_top=0.10, indoor_share=0.30, fall_track=0.03, summer_track=0.12,
             alt_regions=(), alt_km=1.0, alt_coef=0.035, mislabel_p=0.0,
             alias_p=0.0, near_p=0.0, era_sd=0.0, reroute_p=0.0,
-            track_mix=False, eta_sd=0.03, team_p=0.0, weather=False)
+            track_mix=False, eta_sd=0.03, team_p=0.0, weather=False, oneoff_p=0.0,
+            dist_truth=False)
+# ★ A DISTANCE CURVE THE NORMALISATION GETS WRONG (dist_truth, with
+#   track_mix): the true cost of distance is curved and differs by level
+#   (HS 1.08 ln(d/5000) + 0.03 ln^2, college 1.05 ln + 0.015 ln^2); the
+#   stored rows were normalised with one straight 1.06 for everyone, as a
+#   per-pool exponent would. D["y"] is the stored row; D["y_rawdist"] the
+#   same with the stored distance leg taken back off, D["ld"] its ln(d/5000).
+# ★ ONE-OFF COURSES (oneoff_p > 0): a regular XC meet held, with this
+#   probability, on a course raced at no other meet -- a thin cell whose
+#   number the meet's own runners must pin. Own stream.
 # ★ WEATHER (weather=True): each outdoor meet has a recorded apparent
 #   temperature -- the day's peak -- and a race run 0-15 F cooler than it;
 #   heat costs 0.15% a degree above 55 F and cold 0.05% a degree below
@@ -403,6 +413,8 @@ def worldHard(seed=0, n_regions=10, schools=20, per_school=14, n_seasons=5, **ov
             place[key] = (lat, lon, reg)
         return place[key]
     alias_of = {}
+    rng_o = np.random.default_rng(seed + 60_000)
+    oneoff_of = {}
     rng_x = np.random.default_rng(seed + 40_000)
     eta = rng_x.normal(0, T["eta_sd"], n_p) if T["track_mix"] else np.zeros(n_p)
     tempo = {}
@@ -459,8 +471,13 @@ def worldHard(seed=0, n_regions=10, schools=20, per_school=14, n_seasons=5, **ov
                 ckey = ("c", "out", key[1])
             elif key[0] == "summer":
                 ckey = ("c", "out", key[1] * 5)
-        cid, cval = cellOf(ckey, group, csd)
         mkey = (s, phz) + key
+        if T["oneoff_p"] > 0 and key[0] == "xc":
+            if mkey not in oneoff_of:
+                oneoff_of[mkey] = rng_o.random() < T["oneoff_p"]
+            if oneoff_of[mkey]:
+                ckey = ("oneoff",) + mkey
+        cid, cval = cellOf(ckey, group, csd)
         reg_place = ckey[3] if (ckey[1] == "xc" and len(ckey) > 3) else (
             ckey[2] if len(ckey) > 2 else 0)
         lat, lon, _ = placeOf(ckey, reg_place)
@@ -549,6 +566,14 @@ def worldHard(seed=0, n_regions=10, schools=20, per_school=14, n_seasons=5, **ov
         out.setdefault("wx_wet", []).append(wwet if k == 0 else 0.0)
         out.setdefault("wx_log_mult", []).append(wx_log)
         x_d = (eta[p] * np.log(ev_d / 5000.0) + EVENT_OFF.get(ev_d, 0.0)) if (T["track_mix"] and k != 0) else 0.0
+        ld_ = np.log(listed / 5000.0)
+        stored_leg = 0.0
+        if T["dist_truth"] and k != 0 and T["track_mix"]:
+            a_, b_ = (1.08, 0.03) if lv[p, s] == 0 else (1.05, 0.015)
+            x_d = eta[p] * ld_ + (a_ - 1.06) * ld_ + b_ * ld_ * ld_    # true - stored
+            stored_leg = 1.06 * ld_
+        out.setdefault("ld", []).append(ld_)
+        out.setdefault("stored_leg", []).append(stored_leg)
         out.setdefault("lat", []).append(lat); out.setdefault("lon", []).append(lon)
         out.setdefault("alias", []).append(is_alias)
         out.setdefault("truth_cell", []).append(true_course)

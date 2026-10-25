@@ -36,7 +36,7 @@ Nothing here touches production. The engine is `engine/statespace.py`;
    ([REVIEW-ENGINE-2026-10-CONSTANTS.md](REVIEW-ENGINE-2026-10-CONSTANTS.md),
    generated from the code, with a test that fails on anything new and
    unlisted). There are 737 constants and 143 switches. The new engine makes
-   unnecessary **135 constants and 48 switches**, and fits 28 more itself.
+   unnecessary **135 constants and 48 switches**, and fits 32 more itself.
    The distance and course-identity rules stay until that separate work
    replaces them. 13 are left unclear, each with its reason; the largest is
    the board's season aggregate.
@@ -394,8 +394,8 @@ y_i = θ_p(t) + β_p·xc_i + η_p·x_i            the runner: fitness that day, 
            season (redrawn each summer), a step at each summer seam
   G        μ_g,ℓ + λ_g·(θ − C): the XC (indoor) level for level ℓ, with its
            slope in ability; outdoor = 0 is the gauge
-  h        1 + κ·(θ + fitness − ref), κ stated at the current engine's
-           TILT_K (0.31 per unit log time); see §4.4
+  h        1 + κ·(θ + fitness − ref), κ fitted within races (the current
+           engine states 0.31 per unit log time); see §4.4
 ```
 
 **What a rating removes and what it keeps.**
@@ -479,7 +479,7 @@ repo hit this wall:
 | few venues | the ratings' XC level ±1% with 10 regions | many venues: within 0.3% with 40 |
 | the courses' average sliding against μ | μ_XC = +0.22 on a world planted at +0.06 | each group's courses, days and races recentred to mean 0 (the old `recentreLevels` move) |
 | the filter's prior mean (θ near 7 in log seconds, prior 0) | a pseudo-row moved the gap +1.3% along its flat direction | diffuse start (P0 = 1e4) and z centred; the kernel matches a direct person-fixed-effect solve to 6e-6 |
-| the ability slope from the same rows | +0.07 slope with none planted (and −0.44 tilt) | the slope as a loading on θ, by EM with Var(θ) and Cov(θ, grass), from runners seen on both surfaces only: −0.02. The tilt stays stated. |
+| the ability slope from the same rows | +0.07 slope with none planted (and −0.44 tilt) | the slope as a loading on θ, by EM with Var(θ) and Cov(θ, grass), from runners seen on both surfaces only: −0.02. The tilt, by the same within-race step, now comes back (§6, table 6). |
 | indoor and outdoor as one "track" season | the indoor taper went unexplained: indoor −1.2% | the taper per surface |
 
 **How it is checked on real data** (§9, `ss_eval --mode gap`):
@@ -506,11 +506,14 @@ repo hit this wall:
 
 **What stays stated.**
 - **The gauge:** a flat outdoor 400 is 0.
-- **The tilt κ.** Held-out error on the planted world is flat in it to the
-  third decimal (0 to 0.6), and its EM step is biased by the course
-  estimates' own errors. It stays at the current engine's value, and the
-  training-likelihood profile is printed on real data (`--kappa-profile`).
-  At real course spreads it moves a rating by tenths of a percent.
+
+**The tilt κ is fitted** inside each race: does the spread between a race's
+fast and slow runners grow with the race's difficulty? It once read −0.29
+on a world planted at +0.30, so the first version stated it. With the
+diffuse start and the covariance terms it reads 0.26–0.31 (planted 0.30)
+and −0.04 to +0.01 (planted 0), three seeds each (§6, table 6). The
+likelihood profile is still printed (`--kappa-profile`), and part 4 prices
+the stated value against the fitted one.
 
 ### 4.5 What others do (researched 2026-10-24)
 
@@ -555,9 +558,9 @@ The other big pipeline steps are data work this review did not profile:
 
 | kind | which |
 |---|---|
-| fitted (EM or GLS) | σ, the walk q, the season trend sd, the seam sd, the grass sd, τ per surface, the day and race sds, the curve's curvature, every level's gap, its slope in ability, the taper, recovery, altitude per surface, the event offsets |
+| fitted (EM or GLS) | κ (within races), σ, the walk q, the season trend sd, the seam sd, the grass sd, τ per surface, the day and race sds, the curve's curvature, every level's gap, its slope in ability, the taper, recovery, altitude per surface, the event offsets |
 | cross-validated on the forward scorecard | the t degrees of freedom, the era walk once added, whether the track race day is credited |
-| stated, with the reason printed | the gauge (flat outdoor 400 = 0), κ (§4.4), the 600 m altitude floor, the event shares of the altitude cost (NCAA tables), the 21 days after which a season counts as over (the taper), the temperature knots |
+| stated, with the reason printed | the gauge (flat outdoor 400 = 0), the 600 m altitude floor, the event shares of the altitude cost (NCAA tables), the 21 days after which a season counts as over (the taper), the temperature knots |
 
 
 ---
@@ -576,7 +579,7 @@ The other big pipeline steps are data work this review did not profile:
 | **island check** (CSU/Wyoming 2020-21), **Michigan early-2000s** | runners carry their state through the island; where no runner connects, the posterior SD is wide and boards gated on it do not show it | gating changes what thin eras show: owner's call |
 | **season centring** (Newhall) | a fast season is fitness, so it is in θ | |
 | **30-day window**, **form trend**, **season tie**, **opener rust** | q, the season trend, the seam, recovery: fitted | |
-| **`TILT_K`, `XCP_TILT_SCALE`** | the tilt reads θ, an absolute scale; no pool label enters | κ stays stated (§4.4) |
+| **`TILT_K`, `XCP_TILT_SCALE`** | the tilt reads θ, an absolute scale; no pool label enters, and κ is fitted | |
 | **`XCP_SPORT_LEVEL`, `XCP_SPORT_LEVEL_POOLS`, indoor centre / pin / gates** | measured per level (§4.4) | only if the leave-one-kind-out fits agree |
 | **per-pool anchors in the solve**, `13b_pool_consts`, the HS factor | one 5000 m scale; pools are a display transform | normalisation keeps its curves until §8 point 5 |
 | **5K clock calibration** (rejected) | the 5K column is a direct conversion (§4.3); a wrong 5K is a wrong measured term, and it shows | |
@@ -686,6 +689,16 @@ One of these was wrong the first time and is worth knowing about:
   fourth state in the runner's filter, its uncertainty reaches the level.
   That cut the loss to 0.03–0.04% on cross-country, and improved every
   track distance.
+
+**6. The four gaps left after table 5, investigated** (seeds 0 / 1, or 0 / 1 / 2)
+
+| gap | what was tried | planted-world result | in the run |
+|---|---|---|---|
+| **the tilt was stated, not fitted** | (a) the existing within-race step, rerun now that the kernel's diffuse start and covariance terms are in; (b) a new step regressing on the level the filter predicted before each row | (a) **planted 0.30 → 0.285 / 0.262 / 0.308; planted 0 → −0.010 / −0.040 / +0.012**: the bias that made me state it is gone. (b) −0.15 to +0.44: far noisier, dropped | **fitted by default**; part 4 `stated_tilt` prices the old way |
+| **course uncertainty did not reach the runners** | each row counts in its runner's filter with its course, day and race's posterior variance added (`prop_var`), on a world where 30% of meets are on one-off courses | no difference: forward 2.151 → 2.146 / 2.403 → 2.394%, ratings equal to 0.02%. A full meet pins even a one-off course | part 4 `course_uncertainty` (real data has thinner cells and smaller fields) |
+| **the per-pool distance curves sit in front** | the stored distance leg is taken back off each row with the normaliser's own inverse and one log-distance curve per level is fitted inside (`--distance-inside`), on a world whose true curve is curved and level-specific while the stored one is straight | no better: track 0.92 → 0.92 / 0.76 → 0.86%, forward equal. With three planted distances, one event class per distance already fits any curve | part 4 `distance_inside` (real track has 1500 / 1600 / mile, 3000 / 3200 / 2 mile inside one class) |
+| **the distance curve cost cross-country forecasts** | race-centred error, bias, grass spread and μ_XC with and without it | the 0.02–0.04% is all race level: **ordering is unchanged** (race-centred 1.339 → 1.338 / 1.352 → 1.354%) and bias unchanged. Without it the grass spread reads 4.0–4.1% against 1.5% planted, because grass soaks up each runner's distance curve; with it 2.0–2.2% | priced by part 3's `ss_noend` |
+| weather's forecasts were mixed | (the forward comparison is on the same raw times either way, so it is a real difference, not a scale artefact) | 1.880 → 1.909 / 1.946 → 1.870%: one seed each way, inside a month's noise; the ratings gain on both | part 4 `stored_weather` |
 
 `tests/test_statespace.py` pins the following:
 - B beats A on held-out races and the spring track;
@@ -851,6 +864,10 @@ psql -P pager=off -c "SELECT substr(m.date::text,1,4) yr, count(*) meets, count(
 ls -d /srv/migrate/db && du -sh /srv/migrate/db; df -h /srv | tail -1
 # 5. Hammerand's two 10ks: time, normalized, the weather/altitude the row carries
 psql -P pager=off -c "SELECT r.result_id, r.date, r.time_seconds, r.normalized_time, round((r.normalized_time/r.time_seconds)::numeric,4) nt_over_t, r.speed_rating, r.rating_pool FROM results_tf r WHERE r.result_id IN (277459367, 293998421);"
+# 6. where the nightly's hours go: the last full run's steps, slowest first (for the pipeline work)
+D=$(for d in $(ls -td logs/2026*/); do grep -q "08_golive ok" $d/summary.log 2>/dev/null && { echo $d; break; }; done)
+echo "== step times, $D"; sed -E 's/^ *([^ ]+) (ok|FAILED)[^0-9]*([0-9]+)s.*/\3 \1 \2/' $D/summary.log | grep -E '^[0-9]+ ' | sort -rn | head -45
+nproc; free -g | head -2
 ```
 
 If a query names a column that does not exist on NEW, paste the error and I
@@ -928,6 +945,25 @@ $P $W/scripts/kailo_ratings.py --ours-dir $L > $L/kailo.log 2>&1
 echo DONE
 ```
 
+**Part 4: each method priced on the same forward rows** (optional; about
+5 hours; reads no database, so it can run overnight across the restart).
+Each line is the whole engine of part 3 with one thing changed, scored
+against today's engine on the same rows.
+
+```bash
+cd /srv/xc-predictor && set -a; . /etc/xc-predictor.env; set +a; P=/srv/venv/bin/python
+W=/srv/ss-review; L=/srv/xc-predictor/engine/data/ss
+BASE="--repo /srv/xc-predictor --mode score --no-rung-a --elevation $L/venue_elevation.csv --base-dump engine/data/scorecard/ladder_logs/try_holdout.npz"
+FULL="--weather $L/weather.npz --era-walk"
+for arm in "stated_tilt:$FULL --stated-tilt" "stored_weather:--era-walk" "fixed_eras:--weather $L/weather.npz" \
+           "no_team:$FULL --drop team_race" "distance_inside:$FULL --distance-inside" \
+           "course_uncertainty:$FULL --add prop_var" "two_sided:$FULL --add two_piece"; do
+  n=${arm%%:*}; f=${arm#*:}
+  $P -u $W/scripts/ss_eval.py $BASE $f --tag $n > $L/m_$n.log 2>&1 || echo "$n FAILED"
+done
+echo METHODS DONE
+```
+
 Afterwards, take the review checkout away with
 `rm /srv/ss-review/engine/data && git worktree remove --force /srv/ss-review`
 (the symlink first, so nothing can reach production's data), and
@@ -950,6 +986,7 @@ sed -n '/=== SCORE/,/=== RATINGS/p' $L/ss_eval.log | grep -E "against the curren
 sed -n '/=== RATINGS/,$p' $L/ss_eval.log | grep -E "ratings ->|median 5K|as of" | head -20
 for f in lacctic_now lacctic_ss lacctic_ss_fwd; do echo "== $f"; grep -A3 -E "ORDER \(|XC -> TRACK|CONSISTENCY|CROSS-SPORT" $L/$f.log | head -18; done
 grep -B1 -A8 "SNAPSHOT" $L/kailo.log | head -80
+for f in $L/m_*.log; do echo "== $f"; grep -E "terms:|distance inside:|against the current|  (bias|median|pairwise)|^    (all|sport: )" $f | head -12; done
 ```
 
 **Reading part 2 (Oct 23).**
@@ -988,3 +1025,17 @@ grep -B1 -A8 "SNAPSHOT" $L/kailo.log | head -80
 - **LACCTiC.** Ours today against theirs, then the new engine against
   theirs, season-wide and then forward. **Kailo** gets the same, on each
   snapshot.
+
+**Reading part 4 (the methods).** Each arm against today's engine on the
+same rows; compare its pairwise and median |err| with the whole engine's
+SCORE block in part 3. Whatever loses its arm is the better choice:
+- `stated_tilt` loses → fitting the tilt is right (the default);
+- `stored_weather` loses → weather inside is right;
+- `fixed_eras` loses → the course walk is right;
+- `no_team` loses → the team term is right;
+- `distance_inside` **wins** → the distance curve moves inside the model;
+- `course_uncertainty` **wins** → course uncertainty reaches the runners;
+- `two_sided` **wins** → the slow-only residual goes in.
+
+The defaults are what won on the planted world; this is where they have to
+win again on real races.

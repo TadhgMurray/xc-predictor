@@ -74,7 +74,8 @@ import statespace as ss                                         # noqa: E402
 PACK = os.path.join(REPO, "engine", "data", "packed_XC_TF.npz")
 OUT_DIR = os.path.join(REPO, "engine", "data", "ss")
 COLS = ("result_id", "athlete", "course", "norm", "days", "sport", "doy",
-        "year", "dist_m", "meet_id", "div_id", "course_lat", "course_lon", "team")
+        "year", "dist_m", "meet_id", "div_id", "course_lat", "course_lon", "team",
+        "track_length", "track_type")
 ALT_FLOOR_M = 600.0
 # ! A LEVEL PAST 25% IS NOT A MEASUREMENT. Grass costs ~5% (Sassi 2011) and
 #   no course doubles it twice over; a level that far out means nothing in
@@ -84,6 +85,9 @@ UNDETERMINED = 0.25
 REGION_DEG = 3.0           # the regional check's grid, degrees of latitude and longitude
 TERMS = ("peak", "recovery", "event", "mu_by_level", "team_race", "endurance")
 KAPPA_PROFILE = (0.0, 0.15, 0.31, 0.45, 0.6)
+# the tilt is fitted inside each race (statespace.fitGLS fit_kappa); --stated-tilt
+# holds it at the current engine's 0.31 instead
+FIT_KAPPA = True
 
 
 def loadPack(path):
@@ -136,7 +140,7 @@ class Rows:
     """The pack, keyed for the engine: every per-file-row array the modes
     need, and build(use) -> (D, idx) for any subset of file rows."""
 
-    def __init__(self, cols, era_years=0, elevation=None, weather=None):
+    def __init__(self, cols, era_years=0, elevation=None, weather=None, distance_inside=False):
         self.cols = cols
         self.n = cols["norm"].size
         self.keep = (cols["course"] >= 0) & (cols["norm"] > 0)
@@ -150,6 +154,8 @@ class Rows:
         self.raw = np.asarray(cols["athlete"]).astype(np.int64)
         self.lshift = shift_tab[pool_code_raw[self.raw], self.sport]
         self.y5 = np.log(np.maximum(cols["norm"], 1e-9)) + self.lshift
+        self.lshift_anchor = self.lshift          # pool anchor -> 5000 m, for the rating scale
+        self.ld = None
         ck = np.asarray(cols["course_keys"]).astype(str)
         self.course_keys = ck
         crs = np.asarray(cols["course"]).astype(np.int64)
@@ -204,6 +210,8 @@ class Rows:
             print(f"[ss] weather: {int(np.isfinite(self.wx['temp']).sum()):,} rows with a day's "
                   f"weather; the stored multiplier (median |ln| "
                   f"{100 * np.median(np.abs(lm[lm != 0])) if (lm != 0).any() else 0:.2f}%) taken off")
+        if distance_inside:
+            self.distanceInside(cols, np.zeros(self.n) if not weather else lm)
         # the regional check's cell: a REGION_DEG grid on the course's place
         self.region = np.full(self.n, -1, dtype=np.int64)
         self.lat = self.lon = None
@@ -215,6 +223,58 @@ class Rows:
             gy = np.floor(np.where(ok, lat, 0) / REGION_DEG).astype(np.int64)
             gx = np.floor(np.where(ok, lon, 0) / REGION_DEG).astype(np.int64)
             self.region = np.where(ok, (gy + 100) * 1000 + (gx + 500), -1)
+
+    def distanceInside(self, cols, log_mult):
+        """★ THE DISTANCE CURVE INSIDE THE MODEL (--distance-inside). Each
+        row's distance leg -- what the backfill's per-pool curve multiplied
+        the time by -- comes back off, by the normaliser's own inverse
+        (factorForNorm over the geometry x era part, on the norm with the
+        weather put back), so y is ln(time at the race's distance) with era,
+        geometry and weather still applied; the fit's "dist_curve" then
+        measures the cost of distance per level, from runners seen at
+        several. lshift becomes the row's own leg, so predictions still go
+        back onto the stored scale for the paired scorecard."""
+        import normalize_distance as nd
+        t0 = time.time()
+        dist = np.asarray(cols.get("dist_m", np.zeros(self.n)), dtype=np.float64)
+        norm = np.asarray(cols["norm"], dtype=np.float64) * np.exp(-log_mult)
+        ck = self.course_keys
+        tl_c = np.asarray(cols["track_length"], dtype=np.float64) if "track_length" in cols else None
+        tt_c = np.asarray(cols["track_type"]).astype(str) if "track_type" in cols else None
+        safe = np.maximum(self.crs, 0)
+        cal_year = self.dates.astype("datetime64[Y]").astype(np.int64) + 1970
+        pools = self.pool_of_raw[self.raw]
+        bare = np.char.partition(pools.astype(str), "|")[:, 0]
+        leg = np.zeros(self.n)
+        ok = (dist > 0) & (norm > 0)
+        by_ability = getattr(nd, "_ABILITY", None) is not None
+        cache = {}
+        for i in np.flatnonzero(ok):
+            sp = "XC" if self.sport[i] == 0 else "TF"
+            tl = None
+            tt = None
+            if sp == "TF" and tl_c is not None:
+                v = tl_c[safe[i]]
+                tl = None if not np.isfinite(v) else float(v)
+                tt = (tt_c[safe[i]] or None) if tt_c is not None else None
+            args = (float(dist[i]), str(bare[i]), int(cal_year[i]), tl, tt, sp, None)
+            other = cache.get(("o",) + args)
+            if other is None:
+                other = cache[("o",) + args] = nd._otherFactorCached(*nd._factorKey(*args))
+            if by_ability:
+                full = nd.factorForNorm(float(norm[i]), *args)
+            else:
+                full = cache.get(args)
+                if full is None:
+                    full = cache[args] = nd.factorForNorm(None, *args)
+            if full and other:
+                leg[i] = np.log(full / other)
+        self.ld = np.where(dist > 0, np.log(np.maximum(dist, 1.0) / 5000.0), 0.0)
+        self.lshift = -leg
+        self.y5 = np.log(np.maximum(cols["norm"], 1e-9)) - log_mult - leg
+        print(f"[ss] distance inside: the per-pool distance leg taken off {int(ok.sum()):,} rows "
+              f"({'by ability' if by_ability else 'by pool'}, {time.time() - t0:.0f}s); "
+              f"median |leg| {100 * np.median(np.abs(leg[ok])):.1f}%")
 
     def build(self, use):
         idx = np.flatnonzero(use)
@@ -252,6 +312,8 @@ class Rows:
         if self.wx is not None:
             for k in ("temp", "wind", "wet"):
                 D["wx_" + k] = self.wx[k][idx]
+        if self.ld is not None:
+            D["ld"] = self.ld[idx]
         if self.era_walk:
             # a cell per (course, season), tied season to season by a walk
             D = ss.eraCells(D)
@@ -345,7 +407,7 @@ def modeGap(rows, a):
     D, idx = rows.build(rows.recent(a.seasons_back))
     tr = np.ones(D["y"].size, dtype=bool)
     t0 = time.time()
-    R = ss.fitGLS(D, tr, outer=a.outer, terms=TERMS, verbose=True)
+    R = ss.fitGLS(D, tr, outer=a.outer, terms=TERMS, verbose=True, fit_kappa=FIT_KAPPA)
     print(fitLine(R, t0))
     for line in gapLines(R, D):
         print(line)
@@ -366,7 +428,8 @@ def modeGap(rows, a):
                 continue
             E = ss.subsetRows(D, ~masks[k])
             t2 = time.time()
-            Rk = ss.fitGLS(E, np.ones(E["y"].size, dtype=bool), outer=a.jack_outer, terms=TERMS)
+            Rk = ss.fitGLS(E, np.ones(E["y"].size, dtype=bool), outer=a.jack_outer, terms=TERMS,
+                           fit_kappa=FIT_KAPPA)
             print(f"[ss]  -- without {k} ({int(masks[k].sum()):,} rows, {time.time() - t2:.0f}s)")
             for line in gapLines(Rk, E):
                 print("  " + line)
@@ -406,11 +469,13 @@ def modeScore(rows, a):
     D, idx = rows.build(use)
     tr = train[idx]
     out = {}
-    for name, fn in (("state-space", lambda: ss.fitGLS(D, tr, outer=a.outer, terms=TERMS,
-                                                       verbose=True)),
-                     ("rung A (today's skeleton)",
-                      lambda: ss.fit(D, tr, outer=a.outer, dynamic=False, nested=False,
-                                     heavy=False, fix_mu={ss.GROUP_XC: 0.0583}))):
+    fits = [("state-space", lambda: ss.fitGLS(D, tr, outer=a.outer, terms=TERMS, fit_kappa=FIT_KAPPA,
+                                              verbose=True))]
+    if not a.no_rung_a:
+        fits.append(("rung A (today's skeleton)",
+                     lambda: ss.fit(D, tr, outer=a.outer, dynamic=False, nested=False,
+                                    heavy=False, fix_mu={ss.GROUP_XC: 0.0583})))
+    for name, fn in fits:
         t0 = time.time()
         R = fn()
         print(fitLine(R, t0) if "q_day" in R else f"[ss] fit {time.time() - t0:.0f}s")
@@ -433,7 +498,7 @@ def modeScore(rows, a):
             print(line)
         out[name] = ours
     os.makedirs(OUT_DIR, exist_ok=True)
-    np.savez(os.path.join(OUT_DIR, "ss_fwd.npz"), **out["state-space"])
+    np.savez(os.path.join(OUT_DIR, f"ss_fwd{'_' + a.tag if a.tag else ''}.npz"), **out["state-space"])
     return out
 
 
@@ -441,7 +506,7 @@ def modeRatings(rows, a, fitted=None):
     if fitted is None:
         D, idx = rows.build(rows.recent(a.seasons_back))
         t0 = time.time()
-        R = ss.fitGLS(D, np.ones(D["y"].size, dtype=bool), outer=a.outer, terms=TERMS,
+        R = ss.fitGLS(D, np.ones(D["y"].size, dtype=bool), outer=a.outer, terms=TERMS, fit_kappa=FIT_KAPPA,
                       verbose=True)
         print(fitLine(R, t0))
     else:
@@ -449,7 +514,7 @@ def modeRatings(rows, a, fitted=None):
     perf = R["perf"]                         # log seconds, flat outdoor 5000 m, on the day
     five_k = np.exp(perf)
     pools = rows.pool_of_raw[rows.raw[idx]]
-    perf_pool = perf - rows.lshift[idx]      # back onto the pool's own anchor
+    perf_pool = perf - rows.lshift_anchor[idx]      # back onto the pool's own anchor
     # the pool's scale: 100 at the pool's median performance of runners with
     # 3+ races in a season (the boards' anchor is a mean; this is its robust twin)
     names, pinv = np.unique(pools, return_inverse=True)
@@ -550,7 +615,7 @@ def modeAsOf(rows, a):
         persons = np.unique(D["person"])
         E, new = asOfRows(D, float(cut_d.astype(np.int64)), persons)
         t0 = time.time()
-        R = ss.fitGLS(E, ~new, outer=a.outer, terms=TERMS)
+        R = ss.fitGLS(E, ~new, outer=a.outer, terms=TERMS, fit_kappa=FIT_KAPPA)
         print(fitLine(R, t0))
         secs = np.exp(R["pred"][new])
         # the person id of each dense person: any of their rows' raw athlete
@@ -585,9 +650,19 @@ def main():
     ap.add_argument("--no-jackknife", dest="jackknife", action="store_false")
     ap.add_argument("--kappa-profile", action="store_true")
     ap.add_argument("--era-years", type=int, default=0)
+    ap.add_argument("--tag", default="", help="score mode: name the saved forward file ss_fwd_<tag>.npz")
+    ap.add_argument("--no-rung-a", action="store_true",
+                    help="score mode: the state-space engine only (for the pricing runs)")
+    ap.add_argument("--add", default="", metavar="TERMS",
+                    help="experimental terms to add, comma separated (prop_var, two_piece): the "
+                         "same run with them, to price them")
     ap.add_argument("--drop", default="", metavar="TERMS",
                     help="terms to leave out, comma separated (team_race, endurance, weather, "
                          "era_walk ...): the same run without them, to price them")
+    ap.add_argument("--distance-inside", action="store_true",
+                    help="take the per-pool distance curve back off and fit one per level inside")
+    ap.add_argument("--stated-tilt", action="store_true",
+                    help="hold the tilt at the current engine's 0.31 instead of fitting it")
     ap.add_argument("--era-walk", action="store_true",
                     help="a course number per season, tied by a fitted walk (replaces --era-years)")
     ap.add_argument("--weather", default=None, metavar="NPZ",
@@ -596,13 +671,18 @@ def main():
                     help="venue_elevation as CSV (key,elevation_m); altitude is fitted from it")
     a = ap.parse_args()
 
-    rows = Rows(loadPack(a.pack), a.era_years, a.elevation, a.weather)
+    rows = Rows(loadPack(a.pack), a.era_years, a.elevation, a.weather, a.distance_inside)
     global TERMS
     if a.weather:
         TERMS = TERMS + ("weather",)
     if a.era_walk:
         rows.era_walk = True
         TERMS = TERMS + ("era_walk",)
+    if a.distance_inside:
+        TERMS = tuple(x for x in TERMS if x != "event") + ("dist_curve",)
+    global FIT_KAPPA
+    FIT_KAPPA = not a.stated_tilt
+    TERMS = TERMS + tuple(x.strip() for x in a.add.split(",") if x.strip() and x.strip() not in TERMS)
     drop = {x.strip() for x in a.drop.split(",") if x.strip()}
     if drop:
         TERMS = tuple(x for x in TERMS if x not in drop)

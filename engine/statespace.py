@@ -151,9 +151,12 @@ def _smoothPeople(starts, t, season, lv, z, xc, rvar, train, jump_mean,
     dynamic=False holds theta constant inside a season and independent
     across seasons, no slope (the current engine's athlete-season), for the
     like-for-like comparison. Returns X (n, 4) and V (n, 6): the four
-    variances, then Cov(theta, beta) and Cov(theta, eta)."""
+    variances, then Cov(theta, beta) and Cov(theta, eta); and PR (n, 2),
+    theta as predicted from the runner's other rows BEFORE this one and its
+    variance -- free of the row's own noise, for the tilt's estimate."""
     n = t.size
     X = np.zeros((n, NS)); V = np.zeros((n, NS + 2))
+    PR = np.zeros((n, 2))            # theta predicted before the row is seen, and its variance
     d2 = np.zeros(n); gap = np.zeros(n)
     n_people = starts.size - 1
     for p in prange(n_people):
@@ -205,6 +208,7 @@ def _smoothPeople(starts, t, season, lv, z, xc, rvar, train, jump_mean,
                 xp[k, r] = x[r]
                 for c in range(NS):
                     Pp[k, r, c] = P[r, c]
+            PR[i, 0] = x[0]; PR[i, 1] = P[0, 0]
             if train[i]:
                 hx = xc[i]
                 he = xe[i]
@@ -280,7 +284,7 @@ def _smoothPeople(starts, t, season, lv, z, xc, rvar, train, jump_mean,
             for c in range(NS):
                 X[i, c] = xs[c]; V[i, c] = Ps[c, c]
             V[i, NS] = Ps[0, 2]; V[i, NS + 1] = Ps[0, 3]
-    return X, V, d2, gap
+    return X, V, d2, gap, PR
 
 
 # ------------------------------------------------------------------ #
@@ -480,7 +484,7 @@ def fit(D, train, outer=40, dynamic=True, nested=True, heavy=True, heavy_rows=Tr
         # (1) people
         z = y - f - h * Dsum
         rvar = sigma2 / np.maximum(wrow, 1e-6)
-        X, V, d2, gap = _smoothPeople(
+        X, V, d2, gap, _pr = _smoothPeople(
             D["starts"], D["t"], D["season"], D["lv"], z, xc, rvar, train,
             jump, q_day, q_jump, s_slope2, s_beta2, m0, dynamic, np.ones(n),
             np.zeros(n), 0.0)
@@ -702,6 +706,14 @@ SEASON_CLOSED_DAYS = 21.0  # run_joint's: a season raced in more recently may st
 #   a rating like altitude. Identified by runners seen in more than one
 #   kind of weather, each against their own trajectory; the race effect
 #   takes what a grid cell misses (a night race on a hot day).
+# ★ THE DISTANCE CURVE, FITTED (terms "dist_curve", D["ld"] = ln(d / 5000)
+#   with the pool's distance leg taken back off y): per level a hat basis in
+#   ln distance, zero at 5000 m, in place of the per-pool curves the
+#   backfill applies and the coarse event classes on top of them. Measured
+#   by runners seen at several distances, against their own trajectory;
+#   with "endurance" each runner's own slope sits on top.
+LD_KNOTS = tuple(np.log(np.array([600.0, 1000.0, 1600.0, 3000.0, 5000.0, 8000.0, 12000.0]) / 5000.0))
+LD_PIN = 4                                                    # 5000 m: zero
 WX_TEMP_KNOTS = (30.0, 45.0, 55.0, 65.0, 75.0, 85.0, 100.0)   # the artifact's apparent temp, F
 WX_TEMP_PIN = 2                                              # 55 F: zero
 ALT_DIST_KNOTS = ((800.0, 0.21), (1600.0, 0.83), (3000.0, 0.93),
@@ -895,6 +907,10 @@ def sharedDesign(D, feats, ability, fix_mu=None, n_knots=None,
     ev_n = len(EVENT_EDGES) + 1
     ev = add("event", n_lv * ev_n).reshape(n_lv, ev_n)
     alt = add("altitude", 2)          # per km above ALT_FLOOR_M: XC, track
+    dc_on = "dist_curve" in terms and "ld" in D
+    if dc_on:
+        n_ld = len(LD_KNOTS)
+        dcurve = add("dist_curve", n_lv * n_ld).reshape(n_lv, n_ld)
     wx_on = "weather" in terms and "wx_temp" in D
     if wx_on:
         n_tk = len(WX_TEMP_KNOTS)
@@ -958,6 +974,14 @@ def sharedDesign(D, feats, ability, fix_mu=None, n_knots=None,
         on = ak > 0
         put(np.where(on, alt[(grp != GROUP_XC).astype(np.int64)], -1),
             np.where(on, ak * np.where(grp == GROUP_XC, 1.0, share), 0.0))
+    if dc_on:
+        kn = np.asarray(LD_KNOTS)
+        x = np.clip(np.asarray(D["ld"], dtype=np.float64), kn[0], kn[-1] - 1e-9)
+        kk = np.searchsorted(kn, x, side="right") - 1
+        fr = (x - kn[kk]) / (kn[kk + 1] - kn[kk])
+        for kcol, wv in ((kk, 1 - fr), (kk + 1, fr)):
+            on = kcol != LD_PIN
+            put(np.where(on, dcurve[lv, np.minimum(kcol, n_ld - 1)], -1), np.where(on, wv, 0.0))
     if wx_on:
         # XC and outdoor track only; indoor and rows with no weather take none
         sf = np.where(grp == GROUP_XC, 0, np.where(grp == GROUP_OUT, 1, -1))
@@ -1045,11 +1069,13 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
     tau2 = np.array(P["tau2"]); s_w2 = np.array(P["s_w2"]); s_v2 = np.array(P["s_v2"])
     sigma2, q_day, q_jump, s_beta2 = P["sigma2"], P["q_day"], P["q_jump"], P["s_beta2"]
     s_slope2 = P["s_slope2"]
-    # ★ THE TILT IS STATED, NOT FITTED, BY DEFAULT: TILT_K = -0.031 per 10
-    #   rating points is +0.31 per unit of log time (slower = more of the
-    #   course). On the planted world held-out error is flat in it to the
-    #   third decimal (0 to 0.6), and its EM step is biased by the course
-    #   estimates' own errors; fit_kappa=True runs the within-race EM step.
+    # ★ THE TILT, FITTED (fit_kappa=True, what ss_eval runs): the within-race
+    #   step below. It once read -0.29 on a world planted at +0.30; since the
+    #   diffuse start and the covariance terms it reads +0.26 / +0.29 / +0.31
+    #   (planted 0.30) and -0.04 / -0.01 / +0.01 (planted 0), three seeds. A
+    #   step on the level as predicted before the row (no row noise in the
+    #   regressor) was tried and is far noisier (-0.15 to +0.44). Without
+    #   fit_kappa the tilt is the current engine's TILT_K, 0.31.
     kappa = KAPPA_STATED if kappa0 is None else float(kappa0)
     curve_var = (curve_sd or 0.01) ** 2
     mu_fixed = np.zeros(3)
@@ -1063,6 +1089,14 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
     th = np.full(n, np.median(y[train])); be = np.zeros(n); vth = np.full(n, 0.01)
     feats = sharedFeatures(D)
     two_piece = "two_piece" in terms
+    # ★ HOW SURE THE COURSE IS REACHES THE RUNNER (terms "prop_var"): a row
+    #   counts in its runner's filter with variance sigma2 / weight plus
+    #   h^2 Var(course + day + race) from the last pass, so a result on a
+    #   course raced once moves the runner's level less than one on a
+    #   course raced a hundred times. The block steps otherwise treat each
+    #   course as known exactly when they fit the runner.
+    prop = "prop_var" in terms
+    cond_var = np.zeros(n)
     side_s2 = np.array([P["sigma2"], P["sigma2"]])     # fast, slow
     # ★ A COURSE'S NUMBER WALKS FROM SEASON TO SEASON (terms "era_walk",
     #   D["cell_course"] / D["cell_season"] per cell): a cell per (course,
@@ -1139,7 +1173,7 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
                                                           fix_mu, terms=terms)
         eff = np.where(has_cell, c[cidx], 0.0) + w[day] + v[race] + tmr
         z = y - mu_fixed[grp] - h * eff
-        rvar = sigma2 / np.maximum(wrow, 1e-6)
+        rvar = sigma2 / np.maximum(wrow, 1e-6) + (h * h * cond_var if prop else 0.0)
         ld = 1.0 + lam[grp]
         zc = z - C
         S, s, over = _glsPeople(D["starts"], D["t"], D["season"], zc,
@@ -1197,7 +1231,7 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
         #   conditions; the season curve, the summer step, the taper and the
         #   post-break recovery are the runner's fitness that day.
         cond_cols = np.zeros(b.size, dtype=bool)
-        for nm in ("altitude", "event", "wx_temp", "wx_wind", "wx_wet"):
+        for nm in ("altitude", "event", "wx_temp", "wx_wind", "wx_wet", "dist_curve"):
             if nm in blocks:
                 cond_cols[blocks[nm]] = True
         cond = applyDesign(Xc, Xv, np.where(cond_cols, b, 0.0))
@@ -1210,7 +1244,7 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
         zs = y - Xb - mu_fixed[grp] - h * eff
         m0 = np.array([np.median(zs[(D["lv"] == L) & train]) if ((D["lv"] == L) & train).any()
                        else np.median(zs[train]) for L in range(n_lv)])
-        X, V, d2s, gap = _smoothPeople(D["starts"], D["t"], D["season"], D["lv"], zs - C, xc,
+        X, V, d2s, gap, PR = _smoothPeople(D["starts"], D["t"], D["season"], D["lv"], zs - C, xc,
                                       rvar, train, np.zeros(n_lv), q_day, q_jump,
                                       s_slope2, s_beta2, m0 - C, True, ld,
                                       x_end, s_eta2 if endur else 0.0)
@@ -1280,6 +1314,9 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
                 if mr.any():
                     v[mr] -= v[mr].mean()
         Dsum = np.where(has_cell, c[cidx], 0.0) + w[day] + v[race]
+        if prop:
+            cond_var = sigma2 * (np.where(has_cell, vc[cidx], 0.0) + vw[day]
+                                 + (vv[race] if nested else 0.0))
         if team_on and n_rt:
             r = base_all - h * Dsum
             tmv, vt, tden = _shrunkMean(np.maximum(rt, 0), n_rt, np.where(has_rt, ww * h * r, 0.0),
@@ -1459,7 +1496,7 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
     out["gap_ref"] = {g: float(mu[g]) for g in (GROUP_XC, GROUP_IN)}
     out["G"] = G
     out["cond"] = cond
-    for nm in ("wx_temp", "wx_wind", "wx_wet"):
+    for nm in ("wx_temp", "wx_wind", "wx_wet", "dist_curve"):
         if nm in blocks:
             out[nm] = b[blocks[nm]]; out[nm + "_se"] = se[blocks[nm]]
     if "altitude" in blocks:

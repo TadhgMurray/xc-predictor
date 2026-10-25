@@ -348,7 +348,7 @@ EVENT = "event offsets e_ℓ,d by GLS"
 TILT_ABS = "the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label)"
 ONE_SCALE = "one 5000 m scale in the model; pools are a display transform (§5)"
 GAUGE = "the gauge: a flat outdoor 400 is 0 (§4.4, stated)"
-KAPPA = "tilt κ, stated at the current value (statespace KAPPA_STATED 0.31 per unit log time; §4.4)"
+KAPPA = "tilt κ, fitted within races by the new engine (statespace fit_kappa; §4.4, §6 table 6)"
 KEPT_DIST = "kept until §8 point 5: the distance curves stay in normalisation in front of the new engine"
 KEPT_WX = "kept until §8 point 5 (weather as covariates in the fit, the race effect taking what the grid misses)"
 KEPT_ERA = "kept: the era curve stays in normalisation; §8 does not yet schedule it (point 5 moves weather; distance follows)"
@@ -545,7 +545,7 @@ RULES = {
     # ----------------------------------------------------------- joint_solve
     "engine/joint_solve.py": {
         **_all("HUBER_SLOW HUBER_FAST", "REMOVED", ROWT + " (§4.2: Huber's two constants)"),
-        "TILT_K": ("STATED", KAPPA),
+        "TILT_K": ("FITTED", KAPPA),
         **_all("TILT_RATING_LO TILT_RATING_HI", "REMOVED", TILT_ABS),
         "SPORT_RIDGE": ("FITTED", "grass specialisation β_p ~ N(0, s_β²), s_β by EM"),
         "XC_TRACK_GAP": ("REMOVED", XC_LEVEL + "; only if the leave-one-kind-out fits agree (§5)"),
@@ -660,7 +660,7 @@ RULES = {
     # ------------------------------------------------------------ apply_tilt
     "engine/apply_tilt.py": {
         "_HERE": ("INFRA", "path"),
-        "TILT_K": ("STATED", KAPPA),
+        "TILT_K": ("FITTED", KAPPA),
         **_all("H_MIN H_MAX", "REMOVED", TILT_ABS),
         **_all("_DIST_SNAP _PHASES REBUILD_ABOVE MIN_SHIFT DELTA_FLOOR", "INFRA",
                "join key and speed-ups (a move under 0.05 points is skipped, not approximated)"),
@@ -709,7 +709,7 @@ RULES = {
     "racecast/conversions.py": {
         **_all("_POOL_MEAN_CACHE _SAMPLE_PER_POOL _OFFSET_TTL", "INFRA", "caches and samples"),
         **_all("_DIST_BANDS _BAND_ANCHORS", "REMOVED", "mirrors joint_solve.DIST_BANDS; " + ENDUR),
-        "_TILT_K": ("STATED", KAPPA + " (mirror)"),
+        "_TILT_K": ("FITTED", KAPPA + " (mirror)"),
         **_all("_TILT_LO _TILT_HI", "REMOVED", TILT_ABS),
         "_DEFAULT_DIFFICULTY_CACHE": ("REMOVED", XC_LEVEL + " (§4.2: the conversions' XC median effect)"),
         **_all("EQUIV_RATINGS READER_XC_M READER_TF_M FIVE_K_TITLE", "DISPLAY", "the reader's time beside a rating"),
@@ -718,7 +718,7 @@ RULES = {
                                   "no curve read-back (§4.3, §8 point 1)"),
     },
     "racecast/tilt.py": {
-        "TILT_K": ("STATED", KAPPA + " (mirror)"),
+        "TILT_K": ("FITTED", KAPPA + " (mirror)"),
         **_all("H_MIN H_MAX", "REMOVED", TILT_ABS),
         "TILT_SCALES": ("REMOVED", TILT_ABS + " (§5: XCP_TILT_SCALE)"),
     },

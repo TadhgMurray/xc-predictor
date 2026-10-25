@@ -28,27 +28,27 @@ Two things the counts hide. 134 STATED or FITTED items are *kept*: normalisation
 | `engine/track_geometry.py` | 4 |  | 5 |  |  |  |  | 9 |
 | `engine/pool_resolve.py` |  |  |  | 18 |  |  |  | 18 |
 | `engine/speed_ratings.py` | 13 |  |  | 13 |  | 35 | 5 | 66 |
-| `engine/joint_solve.py` | 45 | 15 | 6 |  | 1 | 15 |  | 82 |
+| `engine/joint_solve.py` | 45 | 16 | 5 |  | 1 | 15 |  | 82 |
 | `engine/run_joint.py` | 5 | 1 | 2 | 3 |  | 13 | 2 | 26 |
 | `engine/bracket_engine.py` | 30 |  | 2 | 4 |  | 4 |  | 40 |
 | `engine/bracket.py` |  |  |  |  |  | 2 |  | 2 |
 | `engine/xc_reference.py` | 1 |  |  |  |  | 1 |  | 2 |
 | `engine/indoor_reference.py` | 2 |  |  |  |  | 2 |  | 4 |
 | `engine/joint_golive.py` | 11 |  |  |  |  | 7 |  | 18 |
-| `engine/apply_tilt.py` | 2 |  | 1 |  |  | 6 |  | 9 |
+| `engine/apply_tilt.py` | 2 | 1 |  |  |  | 6 |  | 9 |
 | `engine/fill_ratings.py` |  |  |  |  | 2 | 5 |  | 7 |
 | `racecast/build_ranking_results.py` |  |  |  | 16 | 3 | 31 | 4 | 54 |
 | `racecast/pool_ceiling.py` |  |  |  |  | 2 |  |  | 2 |
 | `racecast/pool_view.py` |  |  |  |  | 6 | 17 |  | 23 |
-| `racecast/conversions.py` | 6 |  | 2 |  | 4 | 7 |  | 19 |
-| `racecast/tilt.py` | 3 |  | 1 |  |  |  |  | 4 |
+| `racecast/conversions.py` | 6 | 1 | 1 |  | 4 | 7 |  | 19 |
+| `racecast/tilt.py` | 3 | 1 |  |  |  |  |  | 4 |
 | `engine/impossible_race.py` |  |  |  | 3 |  | 2 |  | 5 |
 | `engine/own_race_shift.py` |  |  | 1 | 7 |  | 1 |  | 9 |
 | `engine/bad_distance.py` |  |  |  | 1 |  | 3 |  | 4 |
 | `engine/propose_distances.py` |  |  | 1 | 16 |  | 11 |  | 28 |
 | `engine/audit_overrides.py` |  |  | 1 | 13 |  | 9 |  | 23 |
 | `engine/kill_bad_overrides.py` |  |  | 1 | 5 |  | 3 |  | 9 |
-| **all constants** | **135** | **20** | **113** | **176** | **19** | **263** | **11** | **737** |
+| **all constants** | **135** | **24** | **109** | **176** | **19** | **263** | **11** | **737** |
 | **`XCP_` switches** | **48** | **8** | **10** | **9** | **13** | **53** | **2** | **143** |
 
 Columns below: the name, its line(s), its value (first 60 characters), what the comment above it says it is for, and what the state-space engine does with it.
@@ -476,7 +476,7 @@ Columns below: the name, its line(s), its value (first 60 characters), what the 
 |---|---|---|---|---|
 | `HUBER_SLOW` | 90 | `2.5` | positive residuals, in robust scales · ★ ASYMMETRIC BY DESIGN. Residual is in log-time, so POSITIVE = ran slow. | **REMOVED** Student-t row residual (IRLS weights) (§4.2: Huber's two constants) |
 | `HUBER_FAST` | 91 | `1.5` | negative residuals · ★ ASYMMETRIC BY DESIGN. Residual is in log-time, so POSITIVE = ran slow. | **REMOVED** Student-t row residual (IRLS weights) (§4.2: Huber's two constants) |
-| `TILT_K` | 93 | `-0.031` | per 10 rating points; matches racecast/tilt.py | **STATED** tilt κ, stated at the current value (statespace KAPPA_STATED 0.31 per unit log time; §4.4) |
+| `TILT_K` | 93 | `-0.031` | per 10 rating points; matches racecast/tilt.py | **FITTED** tilt κ, fitted within races by the new engine (statespace fit_kappa; §4.4, §6 table 6) |
 | `TILT_RATING_LO` | 101 | `40.0` | ★ THE LINE RUNS ON (owner, 2026-09-11: "I'd prefer to extrapolate rather than remain constant"). The slope was measured over ratings 70-140 and | **REMOVED** the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label) |
 | `TILT_RATING_HI` | 102 | `200.0` | ★ THE LINE RUNS ON (owner, 2026-09-11: "I'd prefer to extrapolate rather than remain constant"). The slope was measured over ratings 70-140 and | **REMOVED** the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label) |
 | `SPORT_RIDGE` | 106 | `0.5` | The sport-offset ridge, in row units exactly as pair_engine.demeanWithinSport uses it (beta = sum(sc*v) / (sum(sc^2) + K)). Issue #70's optimum. | **FITTED** grass specialisation β_p ~ N(0, s_β²), s_β by EM |
@@ -684,7 +684,7 @@ Columns below: the name, its line(s), its value (first 60 characters), what the 
 | name | line | value | what it was for | under the new engine |
 |---|---|---|---|---|
 | `_HERE` | 45 | `os.path.dirname(os.path.abspath(__file__))` | — | **INFRA** path |
-| `TILT_K` | 57 | `-0.031` | the tilt per 10 rating points (mirror of joint_solve.TILT_K) | **STATED** tilt κ, stated at the current value (statespace KAPPA_STATED 0.31 per unit log time; §4.4) |
+| `TILT_K` | 57 | `-0.031` | the tilt per 10 rating points (mirror of joint_solve.TILT_K) | **FITTED** tilt κ, fitted within races by the new engine (statespace fit_kappa; §4.4, §6 table 6) |
 | `H_MIN` | 64 | `0.60` | ⚠ RAILS, NOT A CLAMP AT 140. The tilt was fitted over ratings ~70-140 and the line runs on past that: h = 0.69 at a rating of 200, 0.60 at 229, | **REMOVED** the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label) |
 | `H_MAX` | 64 | `1.50` | ⚠ RAILS, NOT A CLAMP AT 140. The tilt was fitted over ratings ~70-140 and the line runs on past that: h = 0.69 at a rating of 200, 0.60 at 229, | **REMOVED** the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label) |
 | `_DIST_SNAP` | 68 | `100` | How the join finds a row's cell. The engine stores XC difficulty keyed 'XC:' \|\| course_name with the distance snapped to the nearest 100 m. | **INFRA** join key and speed-ups (a move under 0.05 points is skipped, not approximated) |
@@ -809,7 +809,7 @@ Columns below: the name, its line(s), its value (first 60 characters), what the 
 | `_OFFSET_TTL` | 141 | `3600.0` | THE TRACK DISTANCE OFFSET (issue 148 / 150) The joint solve fits one log-time offset per (pool, track distance) -- | **INFRA** caches and samples |
 | `_DIST_BANDS` | 147 | `(105.0, 120.0, 135.0)` | ! MUST MATCH engine/joint_solve.DIST_BANDS (tests/test_conversions_ distance_offset.py pins it): the offsets are by the athlete's rating | **REMOVED** mirrors joint_solve.DIST_BANDS; the runner's own distance curve (statespace endurance: a fourth state, eta per unit ln(d / 5000), its variance by EM) |
 | `_BAND_ANCHORS` | 149 | `(90.0, 112.0, 127.0, 145.0)` | the band anchors the offsets interpolate between (joint_solve.DIST_BAND_ANCHORS) | **REMOVED** mirrors joint_solve.DIST_BANDS; the runner's own distance curve (statespace endurance: a fourth state, eta per unit ln(d / 5000), its variance by EM) |
-| `_TILT_K` | 181 | `-0.031` | must match joint_solve.TILT_K (pinned by test) · THE ENGINE'S SCALE (issue 177) ★ A RATING IS 100 * pool_mean / adjusted, where adjusted is the normalised | **STATED** tilt κ, stated at the current value (statespace KAPPA_STATED 0.31 per unit log time; §4.4) (mirror) |
+| `_TILT_K` | 181 | `-0.031` | must match joint_solve.TILT_K (pinned by test) · THE ENGINE'S SCALE (issue 177) ★ A RATING IS 100 * pool_mean / adjusted, where adjusted is the normalised | **FITTED** tilt κ, fitted within races by the new engine (statespace fit_kappa; §4.4, §6 table 6) (mirror) |
 | `_TILT_LO` | 182 | `40.0` | must match joint_solve.TILT_RATING_LO/HI (pinned by test) · THE ENGINE'S SCALE (issue 177) ★ A RATING IS 100 * pool_mean / adjusted, where adjusted is the normalised | **REMOVED** the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label) |
 | `_TILT_HI` | 182 | `200.0` | must match joint_solve.TILT_RATING_LO/HI (pinned by test) · THE ENGINE'S SCALE (issue 177) ★ A RATING IS 100 * pool_mean / adjusted, where adjusted is the normalised | **REMOVED** the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label) |
 | `_DEFAULT_DIFFICULTY_CACHE` | 534 | `{}` | sport -> result-weighted median delta | **REMOVED** measured XC level (G per level by GLS through each runner's filter; §4.4) (§4.2: the conversions' XC median effect) |
@@ -827,7 +827,7 @@ Columns below: the name, its line(s), its value (first 60 characters), what the 
 
 | name | line | value | what it was for | under the new engine |
 |---|---|---|---|---|
-| `TILT_K` | 47 | `-0.031` | Fitted over 51M rows in cells with degree >= 25. See ability_slope.py. | **STATED** tilt κ, stated at the current value (statespace KAPPA_STATED 0.31 per unit log time; §4.4) (mirror) |
+| `TILT_K` | 47 | `-0.031` | Fitted over 51M rows in cells with degree >= 25. See ability_slope.py. | **FITTED** tilt κ, fitted within races by the new engine (statespace fit_kappa; §4.4, §6 table 6) (mirror) |
 | `H_MIN` | 55 | `0.60` | ⚠ RAILS, NOT A CLAMP AT 140. The tilt was fitted over ratings ~70-140 and the line runs on past that: h = 0.69 at a rating of 200, 0.60 at 229, | **REMOVED** the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label) |
 | `H_MAX` | 55 | `1.50` | ⚠ RAILS, NOT A CLAMP AT 140. The tilt was fitted over ratings ~70-140 and the line runs on past that: h = 0.69 at a rating of 200, 0.60 at 229, | **REMOVED** the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label) |
 | `TILT_SCALES` | 66 | `("own", "hs")` | ★★ THE SCALE THE TILT READS (owner, 2026-09-29; the engine's joint_solve.TILT_SCALES). 'own' reads the rating on the athlete's own | **REMOVED** the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label) (§5: XCP_TILT_SCALE) |
