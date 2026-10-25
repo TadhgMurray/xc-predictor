@@ -247,9 +247,58 @@ def _loadTeams():
     return levels, pro_teams
 
 
+# ★ THE PRO-TEAM NAME TEST, CHEAP FIRST (2026-10-25, owner: "freedom as long
+#   as it remains accurate and working"). pool_resolve._normSchool in SQL is
+#   two regexp_replace passes, and the school veto and the post-collegiate
+#   team levels ran it on every one of ~210M rows to find the few thousand
+#   that read "HOKA ...". Python caches that call per distinct school; SQL
+#   cannot, so it is guarded instead.
+#
+# ! WHY THE GUARD CAN NEVER CHANGE AN ANSWER. Both regexes only DELETE
+#   characters or turn whitespace into a space, so every non-space character
+#   of the normalized school is a character of lower(school), in order. A
+#   school that normalizes to "hoka naz elite" therefore has h, o, k, a, n,
+#   a, z, ... in that order in lower(school), which is exactly what
+#   LIKE '%h%o%k%a%n%a%z%...' asks. The LIKE is implied by the equality, so
+#   `LIKE AND equality` is the equality, row for row; it only lets a row
+#   that cannot match skip the regexes. A pattern that is implied by a
+#   shorter one adds nothing ("hoka one one" needs "hoka"), so only the
+#   shortest are kept -- today that is the one pattern '%h%o%k%a%'.
+_LIKE_SAFE = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def _isSubsequence(short, long_):
+    """Does `short` appear in `long_` in order (not necessarily adjacent)?"""
+    it = iter(long_)
+    return all(c in it for c in short)
+
+
+def _proTeamNameSql():
+    """SQL that is true when r.school, normalized as pool_resolve._normSchool
+    normalizes it, is one of pool_resolve._PRO_TEAMS. Never NULL."""
+    from pool_resolve import _PRO_TEAMS
+    low = "lower(COALESCE(r.school, ''))"
+    # pool_resolve._normSchool, in SQL: casefold, punctuation out, one space
+    norm = (f"btrim(regexp_replace(regexp_replace({low},"
+            " '[^a-z0-9 ]+', '', 'g'), '\\s+', ' ', 'g'))")
+    names = ", ".join("'" + n.replace("'", "''") + "'" for n in sorted(_PRO_TEAMS))
+    # the guard: each name's letters and digits in order (see above). A
+    # character outside a-z0-9 is left out of its pattern, which only makes
+    # the pattern looser -- still implied by the equality -- and needs no
+    # LIKE escaping.
+    keys = sorted({"".join(c for c in n if c in _LIKE_SAFE) for n in _PRO_TEAMS},
+                  key=lambda k: (len(k), k))
+    shortest = []
+    for k in keys:
+        if not any(_isSubsequence(s, k) for s in shortest):
+            shortest.append(k)
+    like = " OR ".join(f"{low} LIKE '%{'%'.join(k)}%'" if k else "TRUE"
+                       for k in shortest)
+    return f"(({like}) AND {norm} IN ({names}))"
+
+
 def _schoolTeamSql(cur, results):
     """(joins, predicate) naming a row at a school team in `results`."""
-    from pool_resolve import _PRO_TEAMS
     has_team = hasColumn(cur, results, "team_id")
     has_slug = hasColumn(cur, results, "team_slug")
     slug = ("(split_part(r.team_slug, '_', 3) <> '' AND "
@@ -265,11 +314,15 @@ def _schoolTeamSql(cur, results):
                          ELSE COALESCE({slug}, FALSE) END"""
     else:
         joins, level = "", f"COALESCE({slug}, FALSE)"
-    # pool_resolve._normSchool, in SQL: casefold, punctuation out, one space
-    norm = ("btrim(regexp_replace(regexp_replace(lower(COALESCE(r.school, '')),"
-            " '[^a-z0-9 ]+', '', 'g'), '\\s+', ' ', 'g'))")
-    names = ", ".join("'" + n.replace("'", "''") + "'" for n in sorted(_PRO_TEAMS))
-    return joins, f"({level}) AND {norm} NOT IN ({names})"
+    # ! THE TEAM FIRST, THE NAME ONLY FOR A SCHOOL-TEAM ROW (2026-10-25).
+    #   This was `level AND name NOT IN (...)`, and Postgres pushed the name
+    #   half down into the scan, where it ran on every row. As a CASE it
+    #   waits for the team joins and is asked only when the team is a
+    #   school. The same truth table: level is never NULL (a CASE of
+    #   booleans, or COALESCE(.., FALSE)) and neither is the name test, so
+    #   `level AND NOT name` is TRUE exactly when level is and name is not.
+    return joins, (f"CASE WHEN ({level}) THEN NOT {_proTeamNameSql()} "
+                   f"ELSE FALSE END")
 
 
 def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
@@ -809,7 +862,6 @@ def _rowLevelSql(cur, results):
     """(joins, expr): the level of a row's team -- 'none' (team_id 0),
     'pro' (a professional team), anet's level name, else the tfrrs slug's,
     else NULL. Needs tmp_team_lv and tmp_pro_team (buildSchoolSeasons)."""
-    from pool_resolve import _PRO_TEAMS
     has_team = hasColumn(cur, results, "team_id")
     has_slug = hasColumn(cur, results, "team_slug")
     lv_list = ", ".join(f"'{x}'" for x in _ROW_LEVELS)
@@ -827,15 +879,16 @@ def _rowLevelSql(cur, results):
                          ELSE {slug} END"""
     else:
         joins, level = "", slug
-    norm = ("btrim(regexp_replace(regexp_replace(lower(COALESCE(r.school, '')),"
-            " '[^a-z0-9 ]+', '', 'g'), '\\s+', ' ', 'g'))")
-    names = ", ".join("'" + n.replace("'", "''") + "'" for n in sorted(_PRO_TEAMS))
     team = ("(r.team_id IS NOT NULL AND r.team_id <> 0)" if has_team else "FALSE")
     if has_slug:
         team = f"({team} OR r.team_slug IS NOT NULL)"
-    expr = f"""CASE WHEN {norm} IN ({names}) THEN 'pro'
-                    WHEN ({level}) IS NOT NULL THEN ({level})
-                    WHEN {team} THEN 'other'
+    # ! COALESCE, NOT `WHEN level IS NOT NULL THEN level` (2026-10-25): the
+    #   same answer -- the level when there is one, else 'other' for a row
+    #   with a team, else NULL -- with the level worked out once per row
+    #   instead of twice.
+    expr = f"""CASE WHEN {_proTeamNameSql()} THEN 'pro'
+                    ELSE COALESCE({level},
+                                  CASE WHEN {team} THEN 'other' END)
                END"""
     return joins, expr
 
@@ -849,6 +902,14 @@ def buildTeamSeasons(cur):
     cur.execute("""CREATE TEMP TABLE tmp_team_rows
                    (person_id bigint, yr int, n_school int, n_college int,
                     n_club int, n_other int)""")
+    # ⚠ OFFSET 0 IS THE FIX FOR THE STEP'S SLOWEST PHASE (2026-10-25: 1,870 s
+    #   of 03_pro_flag's 3,096 s on the server). Without it Postgres pulls the
+    #   subquery up into the GROUP BY and pastes the whole `lv` expression --
+    #   two regexp_replace passes and the team CASE -- into each of the four
+    #   FILTERs, so every one of ~210M rows was levelled four times over.
+    #   OFFSET 0 keeps the subquery a subquery: `lv` is computed once per row
+    #   and the FILTERs compare a text column. Same rows, same expression,
+    #   same counts; only the number of times it is evaluated changes.
     for results in ("results", "results_tf"):
         joins, lv = _rowLevelSql(cur, results)
         cur.execute(f"""
@@ -862,7 +923,8 @@ def buildTeamSeasons(cur):
                   FROM {results} r
                   {joins}
                   WHERE r.person_id IS NOT NULL
-                    AND r.date ~ '^(19|20)[0-9]{{2}}') x
+                    AND r.date ~ '^(19|20)[0-9]{{2}}'
+                  OFFSET 0) x
             GROUP BY 1, 2""")
     cur.execute("DROP TABLE IF EXISTS tmp_team_season")
     cur.execute("""CREATE TEMP TABLE tmp_team_season AS
@@ -882,17 +944,27 @@ def buildPostCollegiate(cur, min_races=_MIN_PRO_RACES):
     tmp_team_lv, tmp_pro_team and tmp_pro_season."""
     buildTeamSeasons(cur)
     cur.execute("DROP TABLE IF EXISTS tmp_post_collegiate")
+    # ! `two` COMPARES TWO PER-PERSON YEARS, NOT EVERY SEASON (2026-10-25).
+    #   It was "a school season after the first college one", a join of
+    #   tmp_team_season to the first-college year; the planner cannot see
+    #   inside the col CTE, guessed 200 people for millions, and probed the
+    #   (person_id, yr) index once per collegian -- most of this query's
+    #   time. "Some school season is later than y0" is "the LATEST school
+    #   season is later than y0" (max() skips a NULL yr exactly as `>` never
+    #   passes one), so the same people come out of two GROUP BYs and one
+    #   hash join.
     cur.execute(f"""
         CREATE TEMP TABLE tmp_post_collegiate AS
         WITH col AS (
             SELECT person_id, yr FROM tmp_team_season WHERE n_college > 0
             UNION SELECT person_id, yr FROM tmp_ncaa_season),
         two AS (
-            SELECT DISTINCT t.person_id
-            FROM tmp_team_season t
-            JOIN (SELECT person_id, min(yr) AS y0 FROM col GROUP BY 1) f
-              ON f.person_id = t.person_id
-            WHERE t.n_school > 0 AND t.yr > f.y0)
+            SELECT f.person_id
+            FROM (SELECT person_id, min(yr) AS y0 FROM col GROUP BY 1) f
+            JOIN (SELECT person_id, max(yr) AS y1 FROM tmp_team_season
+                  WHERE n_school > 0 GROUP BY 1) k
+              ON k.person_id = f.person_id
+            WHERE k.y1 > f.y0)
         SELECT s.person_id, s.yr, s.n_club, s.n_other,
                min(c.yr) AS first_college, max(c.yr) AS last_college
         FROM tmp_team_season s
