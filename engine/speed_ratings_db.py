@@ -72,6 +72,13 @@ import psycopg2.extras
 sys.path.insert(0, "scripts")
 sys.path.insert(0, "engine")
 from database import getConn
+
+
+def _seasonAy(col):
+    """season_year's academic-year SQL for a text date column -- the one
+    clock every pooling table is keyed on."""
+    from season_year import seasonYearSqlInt
+    return seasonYearSqlInt(None, col)
 from merge_column import mergeColumn      # heap-rebuild write path (see below)
 import person_gender as _pg               # gender by the rows (issue 164)
 
@@ -1177,7 +1184,10 @@ def loadClubPros(min_pros=1):
                        count(DISTINCT r.person_id) AS n
                 FROM   {table} r JOIN pr ON pr.person_id = r.person_id
                 WHERE  r.date ~ '^(19|20)[0-9][0-9]-'
-                  AND  substr(r.date, 1, 4)::int BETWEEN pr.s0 AND pr.s1 + 1
+                  -- ★ ACADEMIC YEAR, pro_athlete_season's own clock: this
+                  --   compared a CALENDAR year with an academic span and
+                  --   padded the end by a whole season to cover the gap
+                  AND  {_seasonAy('r.date')} BETWEEN pr.s0 AND pr.s1
                   AND  (({team_expr}) IS NOT NULL OR r.school IS NOT NULL)
                 GROUP  BY 1, 2""")
             for team_id, school, n in cur.fetchall():
@@ -1201,9 +1211,16 @@ def loadClubPros(min_pros=1):
 #   the rules fire only for athlete-years in which MORE THAN HALF of the
 #   athlete's rows are on a club or a team with professionals.
 def loadClubMajority(club_team_ids, pro_team_ids, pro_schools):
-    """{(person_id, calendar year)} whose rows that year are mostly on a
-    club-level anet team, a team with professionals, or a school string
-    with professionals. Empty when there is nothing to test against."""
+    """{(person_id, academic year)} whose rows that season are mostly on
+    a club-level anet team, a team with professionals, or a school string
+    with professionals. Empty when there is nothing to test against.
+
+    ★ THE ACADEMIC YEAR, LIKE EVERY OTHER POOLING FACT (pooling review,
+      2026-10-25). This was substr(date, 1, 4) -- the calendar year -- so
+      one athlete-season's fall and spring were judged on two different
+      majorities, each mixed with half of a neighbouring season, and a
+      season could pool pro for its cross country and hs for its track.
+      speed_ratings.clubSeason asks with the academic year to match."""
     team_ids = sorted(set(int(t) for t in club_team_ids) | set(int(t) for t in pro_team_ids))
     schools = sorted(set(str(x) for x in pro_schools))
     if not team_ids and not schools:
@@ -1216,6 +1233,15 @@ def loadClubMajority(club_team_ids, pro_team_ids, pro_schools):
             _copyInto(cur, "club_teams", ("team_id",), [(t,) for t in team_ids])
         if schools:
             _copyInto(cur, "club_schools", ("school",), [(_escape(x),) for x in schools])
+        # ★ ONE AGGREGATE OVER BOTH SPORTS (pooling review, 2026-10-25).
+        #   This ran one query per table, each with HAVING n_club > 0, and
+        #   summed what came back -- so a sport with NO club row that season
+        #   never reached the sum, and its rows were missing from the
+        #   denominator. Three summer club XC races beside ten school track
+        #   races read 3 of 3, a club season, and the club rules repooled it.
+        #   The note that used to stand here called that "the same answer";
+        #   it is only the same answer per table.
+        parts = []
         for table in ("results", "results_tf"):
             cur.execute("""SELECT column_name FROM information_schema.columns
                            WHERE table_schema = 'public' AND table_name = %s
@@ -1223,26 +1249,22 @@ def loadClubMajority(club_team_ids, pro_team_ids, pro_schools):
             has_team = cur.fetchone() is not None
             on_team = ("ct.team_id IS NOT NULL" if has_team else "FALSE")
             join_team = (f"LEFT JOIN club_teams ct ON ct.team_id = r.team_id" if has_team else "")
-            cur.execute(f"""
-                SELECT r.person_id, substr(r.date, 1, 4)::int AS yr,
-                       count(*) FILTER (WHERE {on_team} OR cs.school IS NOT NULL) AS n_club,
-                       count(*) AS n
+            parts.append(f"""
+                SELECT r.person_id, {_seasonAy('r.date')} AS yr,
+                       ({on_team} OR cs.school IS NOT NULL) AS is_club
                 FROM   {table} r
                 {join_team}
                 LEFT   JOIN club_schools cs ON cs.school = lower(btrim(r.school))
-                WHERE  r.person_id IS NOT NULL AND r.date ~ '^(19|20)[0-9][0-9]-'
-                GROUP  BY 1, 2
-                HAVING count(*) FILTER (WHERE {on_team} OR cs.school IS NOT NULL) > 0""")
-            for pid, yr, n_club, n in cur.fetchall():
-                k = (int(pid), int(yr))
-                a = agg.get(k, [0, 0])
-                a[0] += int(n_club); a[1] += int(n)
-                agg[k] = a
+                WHERE  r.person_id IS NOT NULL AND r.date ~ '^(19|20)[0-9][0-9]-'""")
+        cur.execute(f"""
+            SELECT person_id, yr,
+                   count(*) FILTER (WHERE is_club) AS n_club, count(*) AS n
+            FROM   ({" UNION ALL ".join(parts)}) u
+            GROUP  BY 1, 2
+            HAVING count(*) FILTER (WHERE is_club) > 0""")
+        for pid, yr, n_club, n in cur.fetchall():
+            agg[(int(pid), int(yr))] = (int(n_club), int(n))
         conn.rollback()                                  # the temp tables
-    # ! BOTH SPORTS TOGETHER: a season's rows are summed across the two
-    #   tables before the majority is judged (a HAVING that kept only the
-    #   athlete-years with a club row means a year with none is not here,
-    #   which is the same answer: no club rows, no majority)
     return {k for k, (n_club, n) in agg.items() if n_club * 2 > n}
 
 

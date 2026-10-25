@@ -1469,7 +1469,7 @@ def packResults(batches, today, merge=False):
     #   call queries the database and prints its table, so calling them here
     #   up front would move those lines and run them on a pack that never
     #   reaches a row. None = not fetched yet; each returns a dict or a set.
-    from pool_resolve import teamLevelOf, UNATTACHED_TEAM_ID
+    from pool_resolve import teamLevelOf, UNATTACHED_TEAM_ID, unattachedEntry
     _levels = _pro_teams = _unatt = None
 
     while True:
@@ -1532,7 +1532,8 @@ def packResults(batches, today, merge=False):
                 #   CLUB (clubSeason): one national-team race is one row
                 # ! THE MAJORITY GATE DOES NOT APPLY TO no_team. A row with
                 #   no team is not a club row: there is no club.
-                if (team_level == "club" or has_pros) and not clubSeason(r[_PID], d.year):
+                # ! THE ACADEMIC YEAR, the clock loadClubMajority keys on
+                if (team_level == "club" or has_pros) and not clubSeason(r[_PID], _academicYear(d)):
                     has_pros = False
                     if team_level == "club":
                         team_level = None
@@ -1557,6 +1558,11 @@ def packResults(batches, today, merge=False):
                     race_top_level = None
                 if race_top_level is not None:
                     census[f"unattached_race_{race_top_level}"] += 1
+            # ★ A CEILING MAKES THE ROW UNATTACHED, tfrrs "Unattached" rows
+            #   included -- see pool_resolve.unattachedEntry.
+            if not no_team and unattachedEntry(no_team, race_top_level):
+                no_team = True
+                census["unattached_by_school_string"] += 1
             pool = poolOf(r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL],
                           r[_SPORT], merge,
                           person_id=r[_PID], season=d.year,

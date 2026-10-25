@@ -22,13 +22,30 @@ WHY THIS EXISTS
   the engine passes them from its dicts, the site passes them from LEFT JOINs,
   and the decision is identical either way.
 
-  The six facts and where the site gets them:
-      season_level      athlete_season_level      (person_id, ay)
-      grade_untrusted   grade_untrusted           (person_id, season)
+  ⚠ IT IS NOT SIX FACTS ANY MORE, IT IS FOURTEEN (pooling review,
+    2026-10-25; docs/REVIEW-POOLING-2026-10.md). Every one is keyed on the
+    academic year (season_year) unless it says otherwise.
+      per athlete-season, from tables:
+      season_level      athlete_season_level      (person_id, ay, sport|ALL)
+      grade_untrusted   grade_fix / grade_untrusted (person_id, season):
+                        True for EVERY season with a verdict, not only
+                        distrusted ones
+      fixed_grade,
+      fixed_level,
+      grade_verdict     grade_fix grade / level / method
       is_pro            pro_athlete_season        (person_id, season)
       pro_ability       pro_ability_season        (person_id, season) -> bool
-      college_first     college_first_season      (person_id) -> date
-      upperclass_first  upperclass_first_season   (person_id) -> date
+      college_first     college_first_season      (person_id) -> date (veto)
+      upperclass_first  upperclass_first_season   accepted and ignored
+      per row, from the team (the engine only -- speed_ratings.packResults):
+      team_level        anet_team.level / tfrrs slug   (teamLevelOf)
+      no_team           team_id == 0
+      team_pro          team_pool.kind = 'pro'
+      team_has_pros     club with a professional, raced for most of the year
+      race_top_level    race_top_level, unattached rows only
+  ! The engine passes all fourteen. fill_ratings, the board build's
+    fallback arm, panels and feature_extraction pass only the table facts,
+    so a row they pool without the engine's stamp can land somewhere else.
 """
 
 import re
@@ -688,6 +705,27 @@ def _proPoolFor(gender):
     return None
 
 
+def unattachedEntry(no_team, race_top_level):
+    """Is this row an unattached entry, for resolvePool's `no_team`?
+
+    ★ team_id 0 (anet) OR A STATED RACE CEILING (pooling review,
+      2026-10-25). The engine looks race_top_level up only for unattached
+      rows -- team_id 0 AND an "Unattached" school string, the only way a
+      tfrrs row can say it (speed_ratings_db.loadUnattachedRaceLevel). But
+      the pack set no_team from team_id alone and resolvePool reads the
+      ceiling only under no_team, so every tfrrs unattached row carried its
+      ceiling in and fell through to the grade and then to "tfrrs means
+      college". The owner's rule (2026-09-20, "the highest pool in the race
+      they're running in") is about the entry, whichever feed wrote it.
+
+    ! ONLY A STATED CEILING. A string-unattached row with no verdict keeps
+      the old path; this never makes it professional. And resolvePool itself
+      still ignores a ceiling on an attached row (test_unattached_race_level):
+      the caller decides what is unattached, here.
+    """
+    return bool(no_team) or _levelFromVerdict(race_top_level) is not None
+
+
 def _levelFromVerdict(level):
     """A level name this module ranks, or None. Anything it does not rank --
     None, '', 'club', a typo -- is 'no verdict', never a silent default."""
@@ -955,7 +993,15 @@ def resolvePool(grade, gender, source, school, sport,
     # ★ THE FEED'S OWN WORD ON THE TEAM (team_level, above): a gradeless row
     #   on a club is a professional; a college team's row is college
     school_grade = _gradeLevel(fixed_grade if fixed_grade is not None else grade)
-    if team_level == "club" and (school_grade is None or grade_untrusted) \
+    # ! A CORRECTED GRADE IS NOT AN UNTRUSTED ONE (pooling review,
+    #   2026-10-25). grade_sanity writes grade_untrusted for EVERY season it
+    #   has a verdict for, corroborated ones included, so testing the flag
+    #   alone sent a youth club's corroborated grade 10 to pro -- the
+    #   opposite of "a club runner WITH a school grade is that grade's".
+    #   Only a distrusted grade with no replacement counts as no grade.
+    if team_level == "club" \
+            and (school_grade is None
+                 or (grade_untrusted and fixed_grade is None)) \
             and fixed_level not in ("hs", "ms", "elem"):
         is_pro = True
     # ★ A CLUB WITH PROFESSIONALS HAS NO SCHOOLCHILDREN AT ALL (owner,
@@ -1105,7 +1151,12 @@ def resolvePool(grade, gender, source, school, sport,
     #   stage 1 below returns None and the row goes unrated. That is the
     #   gradeless unattached adult running a 40:00 10k, and dropping them
     #   is the mechanism by which the pool actually gets clean.
-    if pro_ability is False:
+    # ! EXCEPT THE HAND LIST (pooling review, 2026-10-25). _PRO_SEASONS is a
+    #   person's word, not an inference, and the gate exists to clean up the
+    #   inferred routes. Without this, Guillaume Tremblay -- the case at the
+    #   top of this file, a 1:54 800 m -- failed the 14:00 bar, lost is_pro and
+    #   went back to the middle school pool his feed's grades describe.
+    if pro_ability is False and not isProPerson(person_id, sport, season):
         is_pro = False
     # ! A LEVEL THE FEED STATES FOR THE TEAM COUNTS AS EVIDENCE. The three
     #   verdicts mean grade_sanity does not know the GRADE; the kill is
