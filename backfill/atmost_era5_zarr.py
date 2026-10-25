@@ -593,6 +593,13 @@ def main():
 
         # --- FETCH + WRITE PHASE: one tile-read at a time, batched writes. ---
         ds = openEra5Store()
+        # ★ SAY HOW FAR THE STORE GOES (owner, 2026-10-25: "we haven't
+        #   collected weather in a while"). A store that stopped updating
+        #   left every newer meet-day "out of coverage", skipped in silence.
+        end = str(ds[TIME_DIM].values[-1])[:10]
+        later = sum(1 for _, ds_ in cells for d in ds_ if str(d)[:10] > end)
+        print(f"store covers through {end}; {later} of the cell-days are after it "
+              f"(left for a later run)", flush=True)
         with getConn() as conn:
             _runBackfill(ds, tiles, conn, args.debug)
     finally:
