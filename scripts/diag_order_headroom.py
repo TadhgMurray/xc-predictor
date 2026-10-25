@@ -191,6 +191,50 @@ def runnerBand(all_dates, xc_season_dates, day):
     return BANDS[3] if gap <= 365 else BANDS[4]
 
 
+def centred(got):
+    """[{basis: (x, y)}] per runner: x = ln(pred) less the race's median
+    ln(pred), y = ln(actual) less the race's median ln(actual). Pure."""
+    la = [math.log(a) for a, _p in got]
+    ma = statistics.median(la)
+    cols = {}
+    for b in got[0][1]:
+        lp = [math.log(p[b]) for _a, p in got]
+        mp = statistics.median(lp)
+        cols[b] = [(x - mp, y - ma) for x, y in zip(lp, la)]
+    return [{b: cols[b][i] for b in cols} for i in range(len(got))]
+
+
+# ★ E1b (2026-10-25): ARE THE RATINGS' GAPS THE RIGHT SIZE? The owner's E1a
+#   had the network level with prior on ORDER but under it on per-runner
+#   miss -- what a predictor does when it only shrinks the gaps between
+#   runners. One factor k on the within-race gaps (y ~ k x) tests that: it
+#   changes no order, and if it closes the network's lead on miss, the
+#   network was adding a constant, not knowledge. k is fitted with each race
+#   LEFT OUT of its own k, so no race grades itself.
+def gapScale(races, basis):
+    """{race index: k} by least squares on every OTHER race. Pure."""
+    sums = []
+    for r in races:
+        xy = xx = 0.0
+        for c in r.get("centred") or []:
+            if basis in c:
+                x, y = c[basis]
+                xy += x * y
+                xx += x * x
+        sums.append((xy, xx))
+    txy = sum(a for a, _b in sums)
+    txx = sum(b for _a, b in sums)
+    return {i: ((txy - a) / (txx - b) if txx - b > 0 else 1.0)
+            for i, (a, b) in enumerate(sums)}
+
+
+def scaledMisses(race, basis, k):
+    """Per-runner within-race miss % after scaling the gaps by k. Pure."""
+    e = [k * c[basis][0] - c[basis][1] for c in race["centred"]]
+    m = statistics.median(e)
+    return [100.0 * (x - m) for x in e]
+
+
 def paired(xs, ys, draws=2000, seed=0):
     """Mean of xs - ys over races, with a 90% interval by resampling races."""
     d = [x - y for x, y in zip(xs, ys) if x is not None and y is not None]
@@ -243,6 +287,26 @@ def summarize(races):
             extra = f", model {med['model']:.2f}%" if "model" in med else ""
             lines.append(f"  {band:26} {len(ms):>6}  {med['prior']:.2f}% -> "
                          f"{med['nearest']:.2f}%   (last {med['last']:.2f}%{extra})")
+    if all(r.get("centred") for r in races):
+        lines.append("\ngap size (E1b): one factor on the within-race gaps, each race "
+                     "left out of its own; median |within-race miss| % by runner")
+        scaled = {}
+        for b in [x for x in ("prior", "model") if x in bases]:
+            ks = gapScale(races, b)
+            k_all = statistics.fmean(ks.values())
+            lines.append(f"  {b}: k = {k_all:.3f} (1 = the gaps are the right size, "
+                         f"< 1 = too wide)")
+            scaled[b] = [(band, x) for i, r in enumerate(races)
+                         for (band, _m), x in zip(r["runners"], scaledMisses(r, b, ks[i]))]
+        for band in BANDS:
+            cells = []
+            for b, rows_b in scaled.items():
+                xs = [abs(x) for bd, x in rows_b if bd == band]
+                if len(xs) >= 50:
+                    raw = statistics.median(abs(m[b]) for bd, m in rows if bd == band)
+                    cells.append(f"{b} {raw:.2f}% -> {statistics.median(xs):.2f}%")
+            if cells:
+                lines.append(f"  {band:26} " + "   ".join(cells))
     for title, key in (("level", "level"), ("month", "month")):
         groups = {}
         for r in races:
@@ -323,6 +387,7 @@ def scoreRace(cur, P, race, with_model=False, val_only=False, min_matched=MIN_MA
         return None
     return {"scores": raceScores(got), "n": len(got),
             "runners": list(zip(bands, runnerMisses(got))),
+            "centred": centred(got),
             "level": statistics.mode(levels), "month": race["day"][:7]}
 
 

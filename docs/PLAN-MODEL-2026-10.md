@@ -461,3 +461,65 @@ in-sample without it.
 - **If it beats prior on openers,** a hybrid (the network for openers,
   ratings in season) is the first real use of it, and E1 confirms it on
   the date-split bench.
+
+### E1a, run 2026-10-25 (owner): the current network on the same test
+
+| Run | Races / runners | Prior pairs | Model pairs | Model − prior | Nearest (ceiling) |
+|---|---|---|---|---|---|
+| Athletes it never trained on (`--val-only`) | 273 / 2,601 | 88.1% | 88.1% | **+0.08** [−0.48, +0.66] | 90.6% |
+| Everyone (in-sample: flattered) | 196 / 14,601 | 87.7% | 88.1% | +0.46 [+0.19, +0.74] | 90.2% |
+| College, never trained on | 96 / 898 | 88.8% | 88.0% | −0.72 [−1.81, +0.38] | 90.7% |
+
+**Median |within-race miss| by runner** (held-out athletes): prior →
+model, with the ceiling.
+
+| Runners | Prior | Model | Ceiling |
+|---|---|---|---|
+| In season, ≤21 days | 2.12% | 1.92% | 1.73% |
+| In season, >21 days | 2.70% | 2.47% | 2.36% |
+| Season opener, ≤120 days | 3.13% | 2.25% | 1.17% |
+| Season opener, 121–365 days | 3.56% | 3.25% | 2.03% |
+
+In-sample, openers off a summer read 4.06% → 3.68% (ceiling 2.51%), and
+after over a year 8.22% → 5.85% (ceiling 3.60%). College, held out: the
+model is worse in every band (in season 1.99% → 2.04%; openers 2.12% →
+2.63%).
+
+### What it means
+
+1. **On order, today's network ties the ratings even in its best case.**
+   It does not beat them on held-out athletes (+0.08, interval ±0.6),
+   only slightly in-sample, and it is behind on college. It cannot own
+   openers as it stands.
+2. **But it misses by less per runner in most bands, with the same
+   order.** A predictor that only shrinks the gaps between runners does
+   exactly that. So either the ratings' gaps are too wide (a calibration
+   any rule can fix), or the network knows something about gap sizes.
+   **E1b separates the two:** one factor on the ratings' within-race gaps,
+   each race left out of its own fit (`diag_order_headroom.py`, "gap
+   size"). If that closes most of the network's lead, the lead was a
+   constant. Either way it is a free gain on times (G2).
+3. **On openers it closes only a fifth to a third of the way to the
+   ceiling,** and none of that shows up as order. That fits the plan's
+   diagnosis (a target holding the race level, a one-runner loss) more
+   than "sequence models can't do this". **Whether openers can be
+   predicted from prior-only data at all is the question for E2.**
+
+### Next
+
+- **E1b:** the same runs with the gap factor (no GPU, ~1 h).
+- **E2o, the opener probe (no GPU, build on approval):** trees on
+  openers only, predicting the prior's within-race miss from prior-only
+  facts:
+  - last season's final and best ratings, and its early-to-late
+    trajectory;
+  - the latest spring track ratings, and how recent they are;
+  - grade and grade progression, including the HS → college step;
+  - the length of the break, and races last season;
+  - the school's typical summer change in past seasons.
+
+  Trained on 2022-23 and 2023-24 openers, tested on 2024-25.
+
+  **Gate:** if trees cannot beat prior on openers, a retrained network
+  is unlikely to either, and the GPU work (E3 onward) should not start.
+  If they can, the features that won go into the retrain.

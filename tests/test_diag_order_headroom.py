@@ -93,3 +93,23 @@ def test_runner_misses_take_the_race_out():
            (1200.0, {b: 1212.0 for b in H.BASES})]
     for m in H.runnerMisses(got):
         assert all(abs(v) < 1e-9 for v in m.values())      # all 1% slow: no runner part
+
+
+def test_gap_scale_finds_gaps_twice_too_wide_and_scaling_closes_them():
+    import math as _m
+    rng = random.Random(7)
+    races = []
+    for _k in range(30):
+        got = []
+        for _j in range(20):
+            y = rng.gauss(0, 0.03)
+            # the predictor sees the right order but doubles every gap
+            got.append((1000 * _m.exp(y), {b: 1000 * _m.exp(2 * y + rng.gauss(0, 0.002))
+                                           for b in H.BASES}))
+        races.append({"centred": H.centred(got),
+                      "runners": [(H.BANDS[0], m) for m in H.runnerMisses(got)]})
+    ks = H.gapScale(races, "prior")
+    assert all(k == pytest.approx(0.5, abs=0.05) for k in ks.values())
+    raw = sum(abs(m["prior"]) for r in races for _b, m in r["runners"])
+    fixed = sum(abs(x) for i, r in enumerate(races) for x in H.scaledMisses(r, "prior", ks[i]))
+    assert fixed < 0.2 * raw
