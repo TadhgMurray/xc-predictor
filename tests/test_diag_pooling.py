@@ -18,7 +18,8 @@ for _p in (_ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "scripts"))
 
 _TABLES = ("results", "results_tf", "grade_fix", "college_first_season",
            "pro_athlete_season", "pro_ability_season", "team_pool",
-           "race_top_level", "race_level", "person_gender", "ranking_results")
+           "race_top_level", "race_level", "person_gender", "ranking_results",
+           "tfrrs_hs_meets")
 
 
 def _seed(cur):
@@ -104,6 +105,13 @@ def _seed(cur):
     # 15 grade_typo: one season reading 9 and 10
     x(15, "2024-09-01", "hs_m", "9")
     x(15, "2024-09-08", "hs_m", "10")
+    # 16 tfrrs_hs: a Florida senior at a TFRRS state-site meet, rated college
+    x(16, "2024-10-01", "college_m", "SR-4", school="Some FL HS", team=None,
+      meet=7716, source="tfrrs")
+    cur.execute("""CREATE TABLE tfrrs_hs_meets (meet_id bigint, sport text,
+                       host text, date text, name text)""")
+    cur.execute("INSERT INTO tfrrs_hs_meets VALUES (7716, 'XC', "
+                "'fl.tfrrs.org', '2024-10-01', 'FHSAA')")
     cur.executemany("INSERT INTO results VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,"
                     "%s,%s,%s,%s)", xc)
     cur.executemany("INSERT INTO results_tf VALUES (%s,%s,%s,%s,%s,%s,%s,%s,"
@@ -158,6 +166,7 @@ def test_each_kind_is_found(dsn, capsys):
     assert got["merge_wide"][0] == 2
     assert got["grade_back"][0] == 1
     assert got["grade_typo"][0] == 2           # both rows of the season
+    assert got["tfrrs_hs"][0] == 1
     out = capsys.readouterr().out
     assert "RANKED BY RATINGS MOVED" in out
     assert "nothing written" in out
@@ -232,6 +241,9 @@ def test_the_fill_check_runs_the_board_query(dsn, capsys):
     out = capsys.readouterr().out
     assert "engine pro      fill hs" in out, out
     assert d.fill_share > 0
+    # the fill as it decides now reads team_id 0 and agrees with the engine
+    assert "with the engine's team facts" in out, out
+    assert "fill now hs" not in out, out
     with conn.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS athletes, meets, meets_tf, meets_tfrrs,"
                     " dist_override, result_twin, wheelchair_person,"

@@ -1,8 +1,12 @@
 # Pooling review — 2026-10-25
 
 How every rated row gets its pool (`hs_m`, `ms_f`, `college_m`, `pro_f`, …),
-what is wrong with it, and a plan you can approve item by item. Nothing in
-the plan (section 5) is built yet. Section 3 lists what this pass did fix.
+what is wrong with it, and a plan you can approve item by item. Section 3
+lists what was fixed. Of the plan (section 5), only the first half of P1
+(the fill uses the engine's team facts) is built; the rest waits on you.
+
+Two sessions ran this review in parallel on 2026-10-25. This doc is the
+merged result: the second session's additions are marked *(second pass)*.
 
 **Why it matters.** `speed_rating` is relative to the pool's mean, and the
 pool also picks the distance curve. So a wrong pool doesn't shift a rating,
@@ -34,8 +38,15 @@ doubt, separate.
   that was meant to override `school_levels.pkl` for 198 schools (Cornell,
   Duke, Arkansas and the rest) never matches anything, because of a key
   mismatch (P3).
-- **Six clear bugs are fixed in this pass, with tests** (section 3). They
-  take effect at the next full run.
+- **Nine clear bugs are fixed in this pass, with tests** (section 3). They
+  take effect at the next full run, except the fill fix, which the nightly
+  picks up as soon as the server pulls.
+- **New today: the TFRRS high school meets** *(second pass)*. Florida and
+  Indiana state-site meets (`sources/tfrrs_hs.py`, another session) land as
+  source `tfrrs`. A class-word year (`SR-4`) reads college, and an
+  unresolved tfrrs row falls back to college, so a Florida senior can be
+  rated `college_m`. The diagnostic's `tfrrs_hs` section counts them; P0
+  below is the fix.
 - **`scripts/diag_pooling.py`** measures each failure kind and ranks them by
   how many ratings each one moves (section 4). Run it before and after the
   next full run.
@@ -53,11 +64,11 @@ Unless a row says otherwise, every fact is keyed on the academic year
 | pro_ability | `build_pro_ability.py` | pro_ability_season | 05c | yes | yes (`pro_ability.py`) |
 | college_first (veto) | `college_flag.py` | college_first_season | **not in run_pipeline** | yes | yes |
 | upperclass_first | — | — | — | passed, ignored | passed, ignored |
-| team_level | anet_team.level / tfrrs slug | — | per row | yes | **no** |
-| no_team | team_id = 0 | — | per row | yes | **no** |
-| team_pro | `build_team_pool.py` | team_pool | **not in run_pipeline** | yes | **no** |
-| team_has_pros + club gate | `speed_ratings_db.loadClubPros / loadClubMajority` | computed in the pack | per run | yes | **no** |
-| race_top_level | `level_graph.py` | race_top_level | **not in run_pipeline** | yes | **no** |
+| team_level | anet_team.level / tfrrs slug | — | per row | yes | fill: **yes, since P1**; board fallback: no |
+| no_team | team_id = 0 | — | per row | yes | same |
+| team_pro | `build_team_pool.py` | team_pool | **not in run_pipeline** | yes | same |
+| team_has_pros + club gate | `speed_ratings_db.loadClubPros / loadClubMajority` | computed in the pack | per run | yes | same |
+| race_top_level | `level_graph.py` | race_top_level | **not in run_pipeline** | yes | same |
 | gender | person_gender + the row's label | person_gender | 04d | pack's own rule | boards' own rule (P6) |
 
 **Who calls `resolvePool`:**
@@ -67,7 +78,9 @@ Unless a row says otherwise, every fact is keyed on the academic year
 2. **The board build** (`build_ranking_results`) takes `rating_pool` off
    the row. Rows without one (sprints, field events, rows rated before the
    column existed) go through a fallback that has only the table facts.
-3. **`fill_ratings`** has only the table facts too. It runs:
+3. **`fill_ratings`** had only the table facts too; since this review it
+   asks `speed_ratings.rowTeamFacts`, the pack's own team-fact code, for
+   the other five (section 3, item 7). It runs:
    - in the full run (09b), for rows the solve left out of its pace band;
    - in the nightly update (`--venue`), for every new result. Those rows
      **rank**, because the board takes the pool fill wrote into
@@ -137,12 +150,47 @@ was also checked on a scratch Postgres.
 Also: `pool_resolve`'s header now lists all 14 facts and which callers pass
 which.
 
+*(second pass)* In `tests/test_pooling_fill_facts.py`, each failing on the
+old code:
+
+7. **The fill decides pools from the engine's team facts** (the first half
+   of P1).
+   - The pack's per-row team block is now `speed_ratings.rowTeamFacts`,
+     including the `unattachedEntry` rule from item 3. The pack, the fill
+     and `engine/dump_pack_row.py` all call it.
+   - The fill's query selects `team_id` / `team_slug`.
+   - So an unattached row the engine pools pro, or a `team_pool` pro
+     squad's row, is no longer priced on a school scale and ranked. It gets
+     no fill number, because pro pools have no board constant. That is the
+     engine's own "separate" answer.
+   - **Cost to watch.** The fill now loads the engine's club and team
+     tables once per run (a few full scans), in 09b and in the nightly.
+     That is why P1 proposed persisting them at go-live. Time it with the
+     one-liner in section 4 before deciding whether that second half is
+     needed.
+8. **`poolOf` no longer crashes for a row with no person_id.** `ay` and
+   `grade_verdict` were unbound on that path. Only the replay scripts call
+   it that way.
+9. **The athlete page no longer says "not ranked"** for a no-evidence
+   season that something else placed. `app._attach_season_verdicts`
+   flagged every `no_evidence` / `contradicted` / `thin_field` /
+   `lone_word` season. `resolvePool` refuses those only when no team
+   level, field or pro rule places the season, so an anet high school's
+   no-evidence season is ranked while the page said it wasn't. It now
+   flags only seasons whose rows carry no pool.
+
 ## 4. Diagnostics: `scripts/diag_pooling.py` (read-only)
 
 ```
 cd /srv/xc-predictor && git pull; set -a; . /etc/xc-predictor.env; set +a; P=/srv/venv/bin/python
 tmux new -s pooldiag
 $P scripts/diag_pooling.py 2>&1 | tee logs/diag_pooling_$(date +%Y%m%d_%H%M).log
+```
+
+*(second pass)* How long the fill's new loads take (read-only, minutes):
+
+```
+$P -c "import sys,time; sys.path[:0]=['scripts','engine']; import speed_ratings as S; t=time.time(); S.loadAnetLevels(); S.loadClubPros(); S.loadClubMajority(); S.loadUnattachedRaceLevel(); print(f'fill team facts load: {time.time()-t:.0f}s')"
 ```
 
 To look at one meet's pools by division (seconds; the meet in your brief):
@@ -179,16 +227,31 @@ $P scripts/diag_pooling.py --meet 270331
 | `club` | row on a team_pool `pro` team rated in a school or college pool |
 | `race_level` | ms row in an hs race, hs row in an ms race |
 | `merge_wide`, `merge_back` | one season spanning levels 2+ apart (ms and college); a level going back down later (college → hs). Two people under one id, usually |
+| `tfrrs_hs` | *(second pass)* rows from the TFRRS high school state-site meets rated college or pro, plus every row of those meets by level and raw grade |
 | `stale` | when each fact table was last analyzed, and how many of its person_ids no longer have a result (built before a relink) |
-| `fill` | `fill_ratings`' pool for engine-rated rows vs the engine's stamp: the pool a nightly-priced row gets |
+| `fill` | `fill_ratings`' pool for engine-rated rows vs the engine's stamp, twice: the old fill (no team facts), and the fill as it decides now. What's left in the second is stamps from older tables |
 
-**Please paste me the summary table and the `stale` and `fill` sections.**
-Those three decide the order of section 5.
+**Please paste me the summary table, the `stale`, `fill` and `tfrrs_hs`
+sections, and the load time.** Those decide the order of section 5.
 
 ## 5. The plan: approve or refuse each item
 
 Ordered by my estimate of ratings moved. The diagnostics will confirm or
 reorder it.
+
+### P0. TFRRS high school meets: pool them as high school *(second pass)*
+
+- **Problem.** Rows from `tfrrs_hs_meets` (Florida, Indiana) arrive as
+  source `tfrrs`. TFRRS writes the year as a class word (`SR-4`, `Jr.`),
+  which `GRADE_TO_LEVEL` reads as college, and `poolFor`'s last resort calls
+  any unresolved tfrrs row college. Whether grade_sanity's field verdict
+  rescues them depends on `race_level`, which is stale (P2).
+- **Fix.** For a row at a meet in `tfrrs_hs_meets` (or on a tfrrs team whose
+  slug says `hs`): read `FR/SO/JR/SR` as grades 9-12, and never apply the
+  `tfrrs -> college` fallback. Small and pure; agree it with the session
+  that added the source.
+- **Measure first:** `diag_pooling --only tfrrs_hs`. If it's ~0, grade_sanity
+  is already catching them and this can wait.
 
 ### P1. One fact-gatherer for every caller (the fill / nightly gap)
 
@@ -200,6 +263,10 @@ reorder it.
   - a gradeless club row falls through to the school-name map.
 - **Why it matters most.** The nightly update prices every new result this
   way, and those rows rank until the next full run.
+- **Status (second pass).** The first two bullets below are built
+  (section 3, item 7): `rowTeamFacts` exists and the pack and the fill call
+  it. Not built: the board fallback calling it, and the small table that
+  would spare the nightly the rescans.
 - **Fix.**
   - Move the pack's per-row team block (`speed_ratings.py`, around 1500–1565)
     into one function, `rowTeamFacts(...)`.
@@ -220,6 +287,9 @@ reorder it.
     `result_twin`.
   - `team_pool` and `pro_athlete_season` each read the other's last
     version.
+  - *(second pass)* `pro_flag` (the age floor) and `grade_sanity` (adult
+    clubs, prior adult seasons) read last run's `athlete_season`, which is
+    last run's pools. So a wrong pool is next run's evidence for itself.
 - **Fix.** After the relink and merge steps (04a*):
   1. `level_graph` (about 2.5h)
   2. `season_level`
@@ -340,6 +410,24 @@ These are proposals, not fixes. Each one removes a number or a path.
 - **`pro_unknown_gender`** can still be produced (a pro row with no sex).
   The file says such rows should drop.
 
+### P10. Split seasons: decide the policy *(second pass)*
+
+- **Problem.** The engine's athlete is `(person, pool)`, so any per-row rule
+  (team_id 0, a race ceiling, `team_pool`, the HOKA list, and until this
+  review the calendar-year club gate) can cut one athlete-season in two.
+  Each half gets its own ability from a few races, and nothing joins them
+  back. The athlete page shows only the main pool.
+- **Choice.** Keep it per row (today), or give every row of an
+  athlete-season the season's main pool, except a hand-listed pro season.
+  I'd do the second for school-age seasons only. The `flip` section says how
+  many seasons and rows this moves.
+
+### P11. Board fallback: no stamp, no rank *(second pass)*
+
+- Simpler than wiring the fallback to all 14 facts: a rated row with no
+  `rating_pool` is not ranked; the fallback stays only for sprints and
+  field events (ranked by mark, never rated).
+
 ### P9. Smaller things, for the record
 
 - **"Unattached (TX)" passes the unattached filter**, because
@@ -353,10 +441,19 @@ These are proposals, not fixes. Each one removes a number or a path.
   low-trust seasons in the pool mean, despite `grade_sanity`'s note.
 - **The elem pool is rated but has no board** (`rankings.POOLS`). That is
   probably fine; just noting it.
+- *(second pass)* **`conversions.py` reads `ranking_results.pool` before the
+  row's own `rating_pool`**; after a failed step 10 the two disagree.
+- *(second pass)* **`impossible_race` (06c) judges a race by last run's
+  stamp**, so a row the old fill mis-stamped was held to the wrong pool's
+  record bar.
+- *(second pass)* **`model/feature_extraction` ignores `rating_pool`** even
+  though its query selects it. Fixing it needs a retrain.
+- *(second pass)* **`scripts/replay_rating.py` replays pools without the
+  team facts** (`dump_pack_row.py` is fixed).
 
 ## 6. What I need from you
 
 1. Run section 4's command and send me the summary table plus the `stale`
    and `fill` sections.
-2. Approve or refuse P1–P8, one by one. P8's bullets are separate items
+2. Approve or refuse P0–P11, one by one. P8's bullets are separate items
    too.

@@ -142,16 +142,19 @@ def _function(src, name):
 
 
 def test_the_pack_asks_the_helper():
-    body = _function(_src("engine/speed_ratings.py"), "packResults")
-    assert "unattachedEntry(no_team, race_top_level)" in body
+    # ! THE TEAM FACTS MOVED INTO rowTeamFacts (P1), which the pack and the
+    #   fill both call; the helper is asked there now.
+    src = _src("engine/speed_ratings.py")
+    assert "rowTeamFacts(" in _function(src, "packResults")
+    assert "unattachedEntry(no_team, race_top_level)" in _function(src, "rowTeamFacts")
 
 
 # ---- 4. the club majority, on the academic year ------------------------ #
 
 def test_the_pack_asks_the_club_gate_with_the_academic_year():
-    body = _function(_src("engine/speed_ratings.py"), "packResults")
-    assert "clubSeason(r[_PID], _academicYear(d))" in body
-    assert "clubSeason(r[_PID], d.year)" not in body
+    body = _function(_src("engine/speed_ratings.py"), "rowTeamFacts")
+    assert "clubSeason(person_id, _academicYear(race_date))" in body
+    assert ".year)" not in body
 
 
 def test_neither_club_loader_reads_a_calendar_year():

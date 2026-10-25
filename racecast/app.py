@@ -3538,7 +3538,13 @@ def _attach_season_verdicts(seasons, verdicts):
             season["grade_note"] = note
         if v is None:
             continue
-        if v.get("method") in _NO_POOL_VERDICTS:
+        # ! ONLY WHERE THE VERDICT ACTUALLY DROPPED THE SEASON (pooling
+        #   review, 2026-10-25). resolvePool refuses these four only when
+        #   nothing else places the season -- a team level from the feed, a
+        #   college or pro field, a professional -- so a no_evidence season
+        #   on an anet high school pools hs and ranks. Its rows then carry a
+        #   pool, and "not ranked" would be false. A refused row has none.
+        if v.get("method") in _NO_POOL_VERDICTS and not season.get("pool"):
             season["board_note"] = v["method"]
         elif v.get("trust") == "low":
             season["board_note"] = "low_trust"

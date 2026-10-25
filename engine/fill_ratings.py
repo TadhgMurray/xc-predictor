@@ -84,6 +84,14 @@ _MARK = {
 }
 
 
+_TEAM_ANCHOR = "SELECT r.result_id, r.person_id,"
+
+
+def _teamColumns(table):
+    from speed_ratings_db import _teamColumns as probe
+    return probe(table)
+
+
 def _sqlFor(sport, conn=None):
     # ★ THROUGH _sourceSql, not _SQL: it fills in the rating_pool column and
     #   the impossible-race anti-join (2026-09-14), so a race the record
@@ -91,6 +99,16 @@ def _sqlFor(sport, conn=None):
     sql = (B._sourceSql(conn, sport) if conn is not None
            else B._collegeFirstSql(None, B._SQL[sport])
                  .replace("__IMPOSSIBLE__", ""))
+    # ★ AND THE ROW'S TEAM, which the board query does not carry: the fill
+    #   decides the pool with the engine's five team facts (rowTeamFacts),
+    #   and those start from team_id and team_slug. Probed like the pack
+    #   probes them, NULL where a database lacks a column.
+    team_cols = (_teamColumns(_TABLE[sport]) if conn is not None
+                 else "NULL::bigint AS team_id, NULL::text AS team_slug")
+    assert _TEAM_ANCHOR in sql, (
+        f"build_ranking_results._SQL[{sport!r}] no longer opens with "
+        f"{_TEAM_ANCHOR!r} -- update fill_ratings._sqlFor together with it")
+    sql = sql.replace(_TEAM_ANCHOR, f"{_TEAM_ANCHOR} {team_cols},", 1)
     mark, inverse = _MARK[sport]
     assert mark in sql, (
         f"build_ranking_results._SQL[{sport!r}] no longer carries the WHERE "
@@ -148,11 +166,39 @@ def poolConstants(conn, sport):
     return k
 
 
+def _teamFacts(row, sport):
+    """The engine's five team facts for this row (speed_ratings.rowTeamFacts),
+    or all-off when the row carries no team columns.
+
+    ★ WHY (pooling review, 2026-10-25). This file used to call resolvePool
+      with none of them, and it stamps rating_pool on every row it prices --
+      which build_ranking_results then trusts as the engine's. So an
+      unattached row (team_id 0) the engine pools pro was priced hs_m and
+      ranked, and a row on a team build_team_pool calls professional was
+      priced in its school pool, every night until the next full run. The
+      same function the pack calls, so the two cannot disagree.
+
+    ! IMPORTED LAZILY: speed_ratings is the engine (numba kernels), and a
+      caller that never prices a row should not pay for it."""
+    if not hasattr(row, "team_id"):
+        return None, False, False, False, None
+    from datetime import date as _date
+    from speed_ratings import rowTeamFacts
+    try:
+        d = _date.fromisoformat(str(row.date)[:10])
+    except (TypeError, ValueError):
+        d = None
+    return rowTeamFacts(row.team_id, getattr(row, "team_slug", None),
+                        row.school, row.person_id, d, sport, row.result_id)
+
+
 def _rowPool(row, sport):
-    """The board build's pool decision, verbatim -- see buildSport. The
-    non-school/DODEA guards are deliberately NOT applied: those exclude rows
-    from RANKINGS, and this file only prices rows for display."""
+    """The board build's pool decision, verbatim -- see buildSport -- plus
+    the engine's team facts (_teamFacts). The non-school/DODEA guards are
+    deliberately NOT applied: those exclude rows from RANKINGS, and this
+    file only prices rows for display."""
     season = seasonYearFromIso(sport, row.date)
+    team_level, has_pros, no_team, team_pro, race_top = _teamFacts(row, sport)
     return resolvePool(row.grade, row.gender, row.source, row.school,
                        sport,
                        season=season,
@@ -174,6 +220,9 @@ def _rowPool(row, sport):
                        #   person's first collegiate season on. The engine
                        #   passes the same date; see B._collegeFirstSql.
                        college_first=getattr(row, "college_first", None),
+                       team_level=team_level, team_has_pros=has_pros,
+                       no_team=no_team, team_pro=team_pro,
+                       race_top_level=race_top,
                        merge=True)
 
 

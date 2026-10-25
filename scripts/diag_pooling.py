@@ -48,6 +48,8 @@ SECTIONS (--only takes these keys)
   race_level    ms rows in races level_graph calls hs, and hs rows in ms races
   merge         one person in two levels two+ apart in one season, or a level
                 that goes back down (college -> hs) a later season
+  tfrrs_hs      rows from the TFRRS high school state-site meets
+                (tfrrs_hs_meets) rated college or pro
   stale         fact tables keyed on person_ids that no longer have a row
                 (built before a relink/merge), and when each table was built
   fill          (Python) fill_ratings' pool decision vs the stamped pool on
@@ -75,6 +77,12 @@ _SCHOOL_GRADE = r"^(0?[1-9]|1[0-2])$"
 _GRADE_LEVEL_SQL = ("CASE WHEN {g} ~ '^0?[1-5]$' THEN 'elem' "
                     "WHEN {g} ~ '^0?[6-8]$' THEN 'ms' "
                     "WHEN {g} ~ '^(9|09|1[0-2])$' THEN 'hs' END")
+
+
+class _Row:
+    """A board row without its team columns: fill_ratings' old decision."""
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
 
 
 def _raceKey(alias):
@@ -452,6 +460,23 @@ class Diag:
             WHERE t.kind IN ('pro', 'club') GROUP BY 1, 2 ORDER BY 3 DESC""",
             "team kind, rated level:")
 
+    def tfrrs_hs(self):
+        if not self.exists("tfrrs_hs_meets"):
+            print("\n=== tfrrs_hs: no tfrrs_hs_meets -- skipped")
+            return
+        self.record("tfrrs_hs", "a TFRRS high school meet's row rated college or pro", """
+            SELECT r.sport, r.result_id, r.person_id FROM dp_rows r
+            JOIN tfrrs_hs_meets h ON h.meet_id = r.meet_id AND h.sport = r.sport
+            WHERE r.source = 'tfrrs' AND r.lvl IN ('college', 'pro')""",
+            "Florida / Indiana state-site meets (sources/tfrrs_hs.py, 2026-10-25) "
+            "land as source tfrrs; a class word (SR-4) reads college and an "
+            "unresolved tfrrs row falls back to college")
+        self.crosstab("""
+            SELECT r.lvl, COALESCE(r.grade, '-'), count(*) FROM dp_rows r
+            JOIN tfrrs_hs_meets h ON h.meet_id = r.meet_id AND h.sport = r.sport
+            WHERE r.source = 'tfrrs' GROUP BY 1, 2 ORDER BY 3 DESC""",
+            "every row of those meets: rated level, raw grade:")
+
     def race_level(self):
         if not self.exists("race_level"):
             print("\n=== race_level: no race_level -- skipped")
@@ -550,7 +575,7 @@ class Diag:
             print(f"\n=== fill: cannot import fill_ratings ({exc}) -- skipped")
             return
         print("\n=== fill: fill_ratings' pool vs the engine's, on engine-rated rows")
-        moved, seen, sexed = Counter(), Counter(), Counter()
+        moved, seen, sexed, moved_now = Counter(), Counter(), Counter(), Counter()
         examples = defaultdict(list)
         import psycopg2.extras
         try:
@@ -568,6 +593,14 @@ class Diag:
                 F._MARK[sport][0],
                 "WHERE r.speed_rating IS NOT NULL AND r.rating_pool IS NOT NULL"
                 " AND mod(r.result_id, 97) = 0", 1)
+            # ★ AND THE ROW'S TEAM, which fill_ratings selects since P1 went
+            #   in (2026-10-25): each row is checked twice, the old way (no
+            #   team facts) and the way the fill decides now
+            c = self.cols(F._TABLE[sport])
+            team_cols = ", ".join([
+                "r.team_id" if "team_id" in c else "NULL::bigint AS team_id",
+                "r.team_slug" if "team_slug" in c else "NULL::text AS team_slug"])
+            sql = sql.replace(F._TEAM_ANCHOR, f"{F._TEAM_ANCHOR} {team_cols},", 1)
             with self.conn.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
                 try:
                     cur.execute(sql + f" LIMIT {int(n_rows)}",
@@ -578,9 +611,14 @@ class Diag:
                     continue
             for row in rows:
                 stamped = str(row.rating_pool).split("|", 1)[0]
-                got = F._rowPool(row, sport)
+                fields = {k: v for k, v in row._asdict().items()
+                          if k not in ("team_id", "team_slug")}
+                got = F._rowPool(_Row(**fields), sport)       # the old fill
                 a = stamped.split("_", 1)[0]
                 b = (got or "none").split("_", 1)[0]
+                now = (F._rowPool(row, sport) or "none").split("_", 1)[0]
+                if a != now:
+                    moved_now[(sport, a, now)] += 1
                 seen[sport] += 1
                 if got and got != stamped and a == b:
                     sexed[sport] += 1
@@ -599,6 +637,12 @@ class Diag:
         for (sport, a, b), n in moved.most_common(20):
             print(f"      {n:>8,}  {sport}  engine {a:<8} fill {b:<8} e.g. "
                   + ", ".join(str(p) for p in examples[(sport, a, b)]))
+        n_now = sum(moved_now.values())
+        print(f"    with the engine's team facts (the fill since 2026-10-25): "
+              f"{n_now:,} ({100 * n_now / max(total, 1):.1f}%) -- what is left is "
+              f"stamps from older tables, and the club rules if their loaders failed")
+        for (sport, a, b), n in moved_now.most_common(10):
+            print(f"      {n:>8,}  {sport}  engine {a:<8} fill now {b:<8}")
         self.found.append(("fill", "fill_ratings would pool another level (% of rows)",
                            None, None, None))
         self.fill_share = 100 * n_moved / max(total, 1)
@@ -649,7 +693,7 @@ class Diag:
 SECTIONS = ("flip", "xflip", "ms_in_hs", "hs_in_ms", "hs_in_college",
             "college_in_hs", "pro_in_school", "pro_pool_slow", "postcollege",
             "gender", "grade_typo", "unattached", "club", "race_level",
-            "merge", "stale", "fill")
+            "merge", "tfrrs_hs", "stale", "fill")
 
 
 def main(argv=None):
