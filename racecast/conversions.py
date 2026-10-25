@@ -1425,10 +1425,28 @@ def track5k(rating, pool):
 # ★ THE HOME BOARDS' "5K" COLUMN (owner, 2026-10-10): every rating beside
 #   the track 5K it is worth, at the row's own level -- one yardstick a
 #   parent already knows, whichever pool and sport the board is.
-def stampTrack5k(rows, key="rating", pool=None):
-    """row['track5k'] = track5k(row[key], row's pool). Never raises."""
+def stampTrack5k(rows, key="rating", pool=None, sport=None):
+    """row['track5k'] = the track 5K row[key] (on the row's pool) is worth.
+    Never raises.
+
+    ★ A CROSS COUNTRY ROW READS ON THE XC SCALE (owner, 2026-10-25: the HS
+      girls board said 158.1 = 15:15 where the athlete's page said 16:02).
+      track5k reads every rating through the TRACK curve, so an XC rating
+      came out as if it were a track one. ratingClock's XC path is the one
+      the athlete page and every other 5K column use (fiveK); a middle
+      school XC row keeps the track read, since its XC anchor is 3200 m and
+      this column is a 5K."""
     for row in rows:
-        row["track5k"] = track5k(row.get(key), row.get("pool") or pool)
+        p = row.get("pool") or pool
+        sp = str(row.get("sport") or sport or "XC").upper()
+        t = None
+        if sp == "XC" and (_bare(p) or "").partition("_")[0] in ("hs", "college"):
+            try:
+                c = ratingClock(row.get(key), p, "XC")
+                t = c["time"] if c and c["dist"] == distanceWords(FIVE_K_M) else None
+            except Exception:                           # noqa: BLE001
+                t = None
+        row["track5k"] = t or track5k(row.get(key), p)
     return rows
 
 
