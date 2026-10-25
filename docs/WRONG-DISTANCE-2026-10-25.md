@@ -102,8 +102,17 @@ have to run about 20% faster than its own season, which no fast day does.
   a 12%+ move onto a real distance, 70%+ of the field the same way, and 10+
   runners with other races. A downward pin only lowers ratings, and never
   below what the times say.
-  - A venue where **every** day reads 20% fast is pinned too. No course is
-    that fast, so the label is wrong every year.
+  - A venue where **every** day reads fast (say 20%) is **left to its
+    difficulty** (owner, 2026-10-25: "should this not just have the
+    difficulty?"). The solve gives each venue and distance its own
+    difficulty, and with enough races it learns even 20%. A pin would only
+    make those races venueless. But the difficulty prior (sd about 3.5%)
+    pulls a venue with few races most of the way back to normal, so the last
+    run's ratings decide:
+    - ratings within 5% of the runners' own level → the difficulty took it,
+      listed only;
+    - still 5%+ high → pinned down;
+    - no ratings → listed only.
 - **Up (listed too short, field slow)**: these runners are already
   **underrated**, which is safe. Raising the distance raises ratings, so it
   is **never written automatically**. The harm a too-short label does to

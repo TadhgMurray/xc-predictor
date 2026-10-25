@@ -35,6 +35,15 @@ sys.path.insert(0, "scripts")
 from database import getConn                                   # noqa: E402
 
 PROFILE_VOTES = 3            # a scraped profile's weight against labelled rows
+# ★ A DECISIVE FIELD OUTVOTES A PROFILE (owner, 2026-10-25: Liam Whitling,
+#   one race, a boys' "Varsity" at Rocky Grove whose field is all boys, his
+#   athletic.net profile marked F: his single row voted M once, the profile
+#   F three times, and a 16:55 boy sat #1 on the girls' board). A cross
+#   country division is one gender; FIELD_MIN+ known runners saying one
+#   gender FIELD_SHARE to 1 is the strongest single fact we have, stronger
+#   than one letter on a profile somebody typed. Labelled rows still count
+#   one each, so the Cam Kuss and stray-label cases are unchanged.
+FIELD_VOTES = 4
 FIELD_MIN = 3                # known-gender runners a division needs to vote
 FIELD_SHARE = 9              # ...and one gender must outnumber the other 9 to 1
 M_RX = r"\m(boys?|men|mens|male|males)\M"
@@ -110,13 +119,24 @@ ev AS (
     --   college division on athletic.net is often just "Collegiate", and
     --   45 first-years at the Bates Preview 2026 were normalised on the
     --   women's 6 km anchor for want of a word.
+    -- (the field is the OTHER runners: a person's own profile never votes
+    --  in their own field, or a lone wrong profile in a small field makes
+    --  it look mixed)
     SELECT r.person_id,
-           COALESCE(CASE WHEN f.fm >= {FIELD_MIN} AND f.fm >= {FIELD_SHARE} * f.ff THEN 'M'
-                         WHEN f.ff >= {FIELD_MIN} AND f.ff >= {FIELD_SHARE} * f.fm THEN 'F' END,
-                    {labelExpr(ROW_LABEL_PACK['XC'])}) AS g
+           COALESCE(CASE WHEN f.om >= {FIELD_MIN} AND f.om >= {FIELD_SHARE} * f.of THEN 'M'
+                         WHEN f.of >= {FIELD_MIN} AND f.of >= {FIELD_SHARE} * f.om THEN 'F' END,
+                    {labelExpr(ROW_LABEL_PACK['XC'])}) AS g,
+           CASE WHEN (f.om >= {FIELD_MIN} AND f.om >= {FIELD_SHARE} * f.of)
+                  OR (f.of >= {FIELD_MIN} AND f.of >= {FIELD_SHARE} * f.om)
+                THEN {FIELD_VOTES} ELSE 1 END AS w
     FROM   results r
-    LEFT   JOIN fld f ON f.source = r.source AND f.meet_id = r.meet_id
-                     AND f.div_id IS NOT DISTINCT FROM r.div_id
+    LEFT   JOIN pa ps ON ps.person_id = r.person_id
+    LEFT   JOIN LATERAL (
+               SELECT f0.fm - (ps.g IS NOT DISTINCT FROM 'M')::int AS om,
+                      f0.ff - (ps.g IS NOT DISTINCT FROM 'F')::int AS of
+               FROM   fld f0
+               WHERE  f0.source = r.source AND f0.meet_id = r.meet_id
+                 AND  f0.div_id IS NOT DISTINCT FROM r.div_id) f ON TRUE
     -- ★ AND AN UPLOADED RACE'S DIVISION (2026-10-10): racecast/uploads.py
     --   writes an anet-shaped meets row per race, source 'upload', the
     --   gender in its division ("Girls Varsity"); an uploaded runner has no
@@ -128,7 +148,7 @@ ev AS (
     LEFT   JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id AND r.source = 'tfrrs'
     WHERE  r.person_id IS NOT NULL
     UNION ALL
-    SELECT r.person_id, {labelExpr('r.event_short')}
+    SELECT r.person_id, {labelExpr('r.event_short')}, 1
     FROM   results_tf r
     WHERE  r.person_id IS NOT NULL
       AND  r.event_short ~* '{M_RX}|{F_RX}'
@@ -153,7 +173,9 @@ prof AS (
 rows_ AS (
     SELECT person_id,
            count(*) FILTER (WHERE g = 'M') AS n_m,
-           count(*) FILTER (WHERE g = 'F') AS n_f
+           count(*) FILTER (WHERE g = 'F') AS n_f,
+           coalesce(sum(w) FILTER (WHERE g = 'M'), 0) AS w_m,
+           coalesce(sum(w) FILTER (WHERE g = 'F'), 0) AS w_f
     FROM   ev WHERE g IS NOT NULL GROUP BY person_id
 ),
 profs AS (
@@ -163,7 +185,7 @@ profs AS (
     FROM   prof GROUP BY person_id
 )
 SELECT person_id,
-       CASE WHEN n_f + {PROFILE_VOTES} * p_f > n_m + {PROFILE_VOTES} * p_m
+       CASE WHEN w_f + {PROFILE_VOTES} * p_f > w_m + {PROFILE_VOTES} * p_m
             THEN 'F' ELSE 'M' END                        AS gender,
        n_m, n_f,
        -- split is decided by the ROWS alone: a profile is one letter, not
@@ -173,6 +195,7 @@ SELECT person_id,
 FROM (
     SELECT COALESCE(r.person_id, p.person_id) AS person_id,
            COALESCE(r.n_m, 0) AS n_m, COALESCE(r.n_f, 0) AS n_f,
+           COALESCE(r.w_m, 0) AS w_m, COALESCE(r.w_f, 0) AS w_f,
            COALESCE(p.p_m, 0) AS p_m, COALESCE(p.p_f, 0) AS p_f
     FROM   rows_ r FULL OUTER JOIN profs p USING (person_id)
 ) s

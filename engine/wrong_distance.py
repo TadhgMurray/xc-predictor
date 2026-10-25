@@ -92,6 +92,16 @@ VENUE_MIN_MEETS = 2      # other meets at the venue and label before they set th
 VENUE_TRUE = 0.05        # a venue whose other days read within this runs true
 VENUE_WIDE = 0.12        # ... past this the whole venue reads off: listed, not used as a baseline
 SIB_TRUE = 0.04          # the meet's other races within this ran true
+# ★ A VENUE THAT READS OFF EVERY DAY IS THE COURSE NUMBER'S JOB (owner,
+#   2026-10-25: "should this not just have the difficulty?"). The solve
+#   gives each venue and distance its own difficulty, and with enough races
+#   it learns even a 20% offset -- a pin there would only take the races'
+#   course away. But the difficulty prior (sd ~3.5%, joint_solve) pulls a
+#   thin venue most of the way back to normal, and then its races stay
+#   overrated. So the last run's ratings decide: a venue-wide fast field
+#   whose ratings read within ABSORBED of the runners' own level is left
+#   to the difficulty; one still reading higher is pinned.
+ABSORBED = 0.05
 
 # ---- combined divisions ----
 MIX_MIN = 10             # referenced runners before a split is looked for
@@ -347,6 +357,22 @@ def judge(d, ctx):
     out["points"] = pts
     conf = "high" if pts >= 4 else "medium" if pts == 3 else "low"
     out["confidence"] = conf
+    rg, rn = d.get("rating_gap"), d.get("rating_n") or 0
+    rated = rg is not None and rn >= FIELD_MIN
+    if rated:
+        ev.append(f"last run's ratings {100 * rg:+.0f}% vs their own level")
+    if down and wide:
+        if not rated:
+            out.update(kind="venue_wide", action="review", points=pts, evidence="; ".join(
+                ev + ["every day here reads fast, and no ratings to show whether the "
+                      "course's difficulty takes it"]))
+            return out
+        if rg <= ABSORBED:
+            out.update(kind="venue_wide", action="review", points=pts, evidence="; ".join(
+                ev + ["every day here reads fast, but the ratings come out normal: "
+                      "the course's difficulty takes it"]))
+            return out
+        ev.append("every day here reads fast and the difficulty does not take it")
     if down:
         # ★ CONFIDENCE DOES NOT GATE A DOWNWARD PIN (owner, 2026-10-25): it
         #   only lowers a distance, never below what the times say; the
@@ -545,10 +571,37 @@ WHERE  (s.n_ref >= %(f)s AND (abs(s.res) >= %(c)s OR abs(s.res - COALESCE(vb.b, 
    {ovr}
 """
 
+# the last run's ratings for the candidates: each runner's rating here
+# against their own mean in the same pool (data_checks' _base), so a
+# venue that reads off every day can be told absorbed from not
+_RATING_SQL = ("""
+CREATE TEMP TABLE wd_rp AS
+SELECT DISTINCT w.person_id FROM wd_row w JOIN wd_cand c ON c.dk = w.dk
+WHERE  w.person_id IS NOT NULL
+""", "ALTER TABLE wd_rp ADD PRIMARY KEY (person_id)", """
+CREATE TEMP TABLE wd_rb AS
+SELECT r.person_id, r.rating_pool AS pool, avg(ln(r.speed_rating)) AS lb
+FROM   results r JOIN wd_rp p ON p.person_id = r.person_id
+WHERE  r.speed_rating > 0 AND r.rating_pool IS NOT NULL
+GROUP  BY 1, 2 HAVING count(*) >= 5
+""", """
+CREATE TEMP TABLE wd_rg AS
+SELECT w.dk, percentile_cont(0.5) WITHIN GROUP (ORDER BY ln(r.speed_rating) - b.lb) AS g,
+       count(*)::int AS n
+FROM   wd_row w
+JOIN   wd_cand c ON c.dk = w.dk
+JOIN   results r ON r.result_id = w.result_id
+JOIN   wd_rb b ON b.person_id = r.person_id AND b.pool = r.rating_pool
+WHERE  r.speed_rating > 0
+GROUP  BY 1
+""")
+
 _LOAD_SQL = """
 SELECT d.dk, d.source, d.meet_id, d.div_id, d.listed, d.meet_name, d.div_name, d.course,
-       d.venue, s.n_rows, s.n_ref, s.res, s.q, s.sh_fast, s.sh_slow, s.e50, s.day, s.pool
+       d.venue, s.n_rows, s.n_ref, s.res, s.q, s.sh_fast, s.sh_slow, s.e50, s.day, s.pool,
+       g.g, g.n
 FROM   wd_div d JOIN wd_stat s USING (dk)
+LEFT   JOIN wd_rg g USING (dk)
 WHERE  {where}
 """
 
@@ -600,13 +653,15 @@ def build(cur, work_mem="512MB"):
     _ex(cur, _CAND_SQL.format(ovr=ovr),
         {"f": FIELD_MIN, "c": CAND, "mix": MIX_MIN, "sep": MIX_SEP}, "divisions to judge", t0)
     cur.execute("ALTER TABLE wd_cand ADD PRIMARY KEY (dk)")
+    for i, q in enumerate(_RATING_SQL):
+        _ex(cur, q, None, "the candidates' last ratings" if i == len(_RATING_SQL) - 1 else None, t0)
     return pools, has_ovr
 
 
 def _divDict(row):
     keys = ("dk", "source", "meet_id", "div_id", "listed", "meet_name", "div_name",
             "course", "venue", "n_rows", "n_ref", "res", "q", "sh_fast", "sh_slow",
-            "e50", "day", "pool")
+            "e50", "day", "pool", "rating_gap", "rating_n")
     return dict(zip(keys, row))
 
 

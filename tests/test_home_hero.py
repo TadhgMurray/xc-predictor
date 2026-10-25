@@ -72,6 +72,16 @@ def test_track5k_matches_rating_clock():
     assert cv.track5k(146, "hs_m") < t                     # m:ss, faster
     rows = cv.stampTrack5k([{"rating": 130.0, "pool": "hs_f"}, {"rating": None, "pool": "hs_m"}])
     assert rows[0]["track5k"] and rows[1]["track5k"] is None
+    # an XC row reads on the XC scale, the athlete page's own 5K (owner,
+    # 2026-10-25: the girls board said 15:15 for a 158.1 the page read 16:02)
+    real = cv.ratingSeconds
+    try:
+        cv.ratingSeconds = lambda r, p, sport, d: 960.0 if sport == "XC" else 915.0
+        xc, tf = cv.stampTrack5k([{"rating": 150.0, "pool": "hs_f", "sport": "XC"},
+                                  {"rating": 150.0, "pool": "hs_f", "sport": "TF"}])
+    finally:
+        cv.ratingSeconds = real
+    assert (xc["track5k"], tf["track5k"]) == ("16:00", "15:15")
 
 
 # ---------------------------------------------------------------- render
