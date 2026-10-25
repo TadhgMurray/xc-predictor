@@ -131,7 +131,7 @@ def paired(xs, ys, draws=2000, seed=0):
 def runnerModel(seed=0):
     from sklearn.ensemble import HistGradientBoostingRegressor
     return HistGradientBoostingRegressor(
-        loss="squared_error", learning_rate=0.05, max_iter=1500, max_leaf_nodes=63,
+        loss="squared_error", learning_rate=0.05, max_iter=4000, max_leaf_nodes=63,
         min_samples_leaf=400, l2_regularization=1.0, early_stopping=True,
         validation_fraction=0.1, n_iter_no_change=40, random_state=seed)
 
@@ -307,13 +307,72 @@ def main():
         mb = bav[s:e].mean()
         tot_m[s:e] = mb + lvl_model[k] + pv[s:e]
         tot_n[s:e] = mb + lvl_naive[k] + bv[s:e]
-    lines.append("\nTIMES, the validation season (the whole prediction; level from trees "
-                 "against a (level, distance) table)")
-    for lab, tot in (("table + ratings", tot_n), ("trees + model", tot_m)):
+    # ★ THE PAGE ITSELF (2026-10-25): base_abs is what the site would print
+    #   (race_rows.pageBase) wherever page_base is 1, so "page" is the served
+    #   clock with no correction at all
+    page = bav.copy()
+    lines.append("\nTIMES, the validation season: mean |% miss| is Kailo's statistic")
+    lines.append(f"  {'':18} {'median':>7} {'mean':>7} {'college':>8} {'clean races':>12}")
+    preds = (("page (ratings)", page), ("table + ratings", tot_n), ("trees + model", tot_m))
+    race_miss = {lab: np.array([float(np.mean(tot[s:e] - yav[s:e])) for s, e in sl])
+                 for lab, tot in preds}
+    # ! ONE SET OF CLEAN RACES FOR EVERY ROW: the trees' own verdict
+    clean = np.repeat(np.abs(race_miss["trees + model"]) < 0.10, [e - s for s, e in sl])
+    for lab, tot in preds:
         miss = np.abs(np.exp(tot - yav) - 1.0) * 100.0
         c = tv == 1
-        lines.append(f"  {lab:16} median {np.median(miss):5.2f}%  mean {miss.mean():5.2f}%  "
-                     f"college mean {miss[c].mean() if c.any() else float('nan'):5.2f}%")
+        lines.append(f"  {lab:18} {np.median(miss):6.2f}% {miss.mean():6.2f}% "
+                     f"{miss[c].mean() if c.any() else float('nan'):7.2f}% "
+                     f"{miss[clean].mean():11.2f}%")
+    lines.append("  (clean races: those the trees put within 10% as a whole -- the rest "
+                 "are mostly a wrong distance or a mixed field; listed below)")
+    rmm = np.abs(race_miss["trees + model"])
+    lines.append(f"\nrace level miss, trees: median {100 * np.median(rmm):.2f}%, p90 "
+                 f"{100 * np.percentile(rmm, 90):.2f}%, p99 {100 * np.percentile(rmm, 99):.2f}%; "
+                 f"{100 * (rmm > 0.05).mean():.1f}% of races over 5%, "
+                 f"{100 * (rmm > 0.10).mean():.1f}% over 10%")
+    names = z["race_names"] if "race_names" in z.files else None
+    keys = z["race_keys"]
+    vidx = [int(rv[s]) for s, _e in sl]
+    worst = np.argsort(-rmm)[:12]
+    lines.append("  the worst races (miss, runners, distance, name, key):")
+    for k in worst:
+        ri = vidx[k]
+        nm = str(names[ri]) if names is not None else "?"
+        dist = float(XvA[sl[k][0], fidx["distance"]])
+        lines.append(f"    {100 * race_miss['trees + model'][k]:+7.1f}%  {sl[k][1] - sl[k][0]:>4}  "
+                     f"{dist:>7.0f}  {nm[:40]:40}  {keys[ri]}")
+
+    # ★ RANGES THAT MEAN WHAT THEY SAY: the place spread by runner band and
+    #   the race-level spread, fitted on half the validation races (even
+    #   race ids) and checked on the other half; the saved model carries the
+    #   ones fitted on all of it.
+    def sigmas(mask_races):
+        rows = np.repeat(mask_races, [e - s for s, e in sl])
+        out = {}
+        for band in BANDS:
+            m = rows & (bands == band)
+            if m.sum() >= 200:
+                out[band] = 1.4826 * float(np.median(np.abs(em[m])))
+        allm = em[rows]
+        out["_all"] = 1.4826 * float(np.median(np.abs(allm))) if len(allm) else 0.03
+        lv = race_miss["trees + model"][mask_races]
+        out["_level"] = 1.4826 * float(np.median(np.abs(lv - np.median(lv)))) if len(lv) else 0.03
+        return out
+    even = np.array([vidx[k] % 2 == 0 for k in range(len(sl))])
+    sg = sigmas(even)
+    rows_odd = np.repeat(~even, [e - s for s, e in sl])
+    place_sig = np.array([sg.get(b, sg["_all"]) for b in bands])
+    time_sig = np.sqrt(place_sig ** 2 + sg["_level"] ** 2)
+    err_abs = tot_m - yav
+    lines.append("\nRANGES (fitted on half the races, checked on the other half; honest = "
+                 "68 / 90)")
+    lines.append(f"  place, inside +-1 sigma: {100 * (np.abs(em[rows_odd]) <= place_sig[rows_odd]).mean():.0f}%"
+                 f"   time, inside +-1 / +-1.645 sigma: "
+                 f"{100 * (np.abs(err_abs[rows_odd]) <= time_sig[rows_odd]).mean():.0f}% / "
+                 f"{100 * (np.abs(err_abs[rows_odd]) <= 1.645 * time_sig[rows_odd]).mean():.0f}%")
+    lines.append("  sigmas: " + ", ".join(f"{k} {100 * v:.2f}%" for k, v in sg.items()))
+    sig_all = sigmas(np.ones(len(sl), dtype=bool))
     print("\n".join(lines))
 
     if a.importance:
@@ -330,6 +389,7 @@ def main():
     if a.out:
         with open(a.out, "wb") as fh:
             pickle.dump({"runner": rm, "level": lm, "features": feats,
+                         "sigmas": sig_all,
                          "all_features": feats_all,
                          "level_features": [f for f, u in zip(LEVEL_FEATURES, lused) if u],
                          "clip": CLIP,

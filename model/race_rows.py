@@ -81,7 +81,7 @@ RACE_FEATURES = (
     "field_n", "rank_pct", "gap_to_median", "gap_ahead", "gap_behind",
     "team_n", "team_slope", "team_summer", "team_openers",
     "distance", "season_week", "meet_type", "is_tfrrs",
-    "course_cell", "has_cell",
+    "course_cell", "has_cell", "page_base",
 )
 FEATURES = RUNNER_FEATURES + RACE_FEATURES
 
@@ -285,11 +285,53 @@ def raceFeatures(runners, race):
             "course_cell": (float(race["cell"]) if race.get("cell") is not None
                             else math.nan),
             "has_cell": 1.0 if race.get("cell") is not None else 0.0,
+            "page_base": 1.0 if race.get("page_base") else 0.0,
         })
         r["y"] = ys[i] - my
         r["base"] = bs[i] - mb
         r["y_abs"], r["base_abs"] = ys[i], bs[i]
     return runners
+
+
+# ★ THE PAGE'S OWN CLOCK (2026-10-25, the first run's times were the weak
+#   part). base is what the site would PRINT for this runner at this race:
+#   their form through predict._ratingToSeconds on the race's distance and
+#   course cell, under the production venue flag. So "ratings" in every
+#   comparison is the page, and the level part corrects the page's clock.
+#   A race where any runner cannot be converted (no distance) keeps the
+#   5K-equivalent for all of them, and page_base says which it got.
+_SERVED = {}
+
+
+def servedLn(rating, pool, race):
+    """ln(seconds) the page would print, or None. Cached on a rating
+    rounded to 0.02 (0.02% of a time)."""
+    import predict as P
+    dist = race.get("distance")
+    if not dist:
+        return None
+    key = (round(rating, 2), pool, float(dist), race.get("cell"), race["day"].year)
+    if key not in _SERVED:
+        spec = {"distance_meters": float(dist), "sport": "XC", "course_name": None,
+                "venue_cell": race.get("cell"),
+                "course_difficulty": race.get("cell") or 0.0, "canonical_id": None}
+        try:
+            secs = P._ratingToSeconds(key[0], pool, spec, key[4])
+        except Exception:                                # noqa: BLE001
+            secs = None
+        _SERVED[key] = math.log(secs) if secs and secs > 0 else None
+    return _SERVED[key]
+
+
+def pageBase(field, race):
+    """base_ln on the page's clock for the whole field, else left as the
+    5K-equivalent; race["page_base"] records which. In place."""
+    got = [servedLn(r["rating"], r["pool"], race) for r in field]
+    race["page_base"] = all(g is not None for g in got)
+    if race["page_base"]:
+        for r, g in zip(field, got):
+            r["base_ln"] = g
+    return field
 
 
 def keepRace(key, day, val_from, train_frac):
@@ -455,7 +497,7 @@ def build(conn, a):
                     #   their races to fill, and a dict per row is ~3 KB
                     races.setdefault(key, []).append((
                         pid, float(r[4]), r[8], math.log(100.0 * pm[pool] / rating),
-                        array("f", [f[k] for k in RUNNER_FEATURES])))
+                        array("f", [f[k] for k in RUNNER_FEATURES]), rating, pool))
             for r in rows[i:j]:
                 if r[2] and r[2] > 0 and r[3]:
                     hist.append((day, float(r[2]), r[3], "TF" if r[10] else "XC"))
@@ -475,14 +517,22 @@ def build(conn, a):
     y_abs, base_abs = array("f"), array("f")
     src_col = array("b")
     keys = sorted(races)
+    # ! THE PRODUCTION VENUE FLAG, so a course with no cell converts as the
+    #   site converts it (the median race) and nothing asks the database
+    os.environ.setdefault("XCP_PREDICT_VENUE_DIFFICULTY", "xc")
+    names, dists, n_page = [], [], 0
     for ix, key in enumerate(keys):
         if ix % 50_000 == 0:
             print(f"  race inputs: {ix:,} of {len(keys):,}", flush=True)
         day = datetime.date.fromisoformat(key[3])
         rmeta = dict(meta.get(key) or {}, day=day, source=key[2])
         field = [{"pid": p, "secs": secs, "school": school, "base_ln": b,
-                  "f": dict(zip(RUNNER_FEATURES, vec))}
-                 for p, secs, school, b, vec in races.pop(key)]
+                  "f": dict(zip(RUNNER_FEATURES, vec)), "rating": rating, "pool": pool}
+                 for p, secs, school, b, vec, rating, pool in races.pop(key)]
+        pageBase(field, rmeta)
+        n_page += rmeta["page_base"]
+        names.append(str(rmeta.get("meet_name") or ""))
+        dists.append(float(rmeta.get("distance") or 0.0))
         for r in raceFeatures(field, rmeta):
             for k in FEATURES:
                 cols[k].append(r["f"][k])
@@ -494,7 +544,10 @@ def build(conn, a):
             day_ix.append(day.toordinal())
             pid_col.append(int(r["pid"]))
             src_col.append(1 if key[2] == "tfrrs" else 0)
-    return cols, y, base, y_abs, base_abs, race_ix, day_ix, pid_col, src_col, keys
+    print(f"  {n_page:,} of {len(keys):,} races on the page's clock; the rest on the "
+          "5K-equivalent", flush=True)
+    return (cols, y, base, y_abs, base_abs, race_ix, day_ix, pid_col, src_col, keys,
+            names, dists)
 
 
 def main():
@@ -521,7 +574,8 @@ def main():
     from database import getConn
     t0 = datetime.datetime.now()
     with getConn() as conn:
-        cols, y, base, y_abs, base_abs, race_ix, day_ix, pid, src, keys = build(conn, a)
+        (cols, y, base, y_abs, base_abs, race_ix, day_ix, pid, src, keys,
+         names, dists) = build(conn, a)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     np.savez_compressed(
         a.out, X=np.stack([np.frombuffer(cols[k], dtype=np.float32) for k in FEATURES], axis=1),
@@ -531,6 +585,7 @@ def main():
         race=np.frombuffer(race_ix, dtype=np.int32), day=np.frombuffer(day_ix, dtype=np.int32),
         pid=np.frombuffer(pid, dtype=np.int64), tfrrs=np.frombuffer(src, dtype=np.int8),
         features=np.array(FEATURES), race_keys=np.array([repr(k) for k in keys]),
+        race_names=np.array(names), race_distance=np.array(dists, dtype=np.float32),
         args=np.array([repr(vars(a))]))
     if not len(y):
         print("⚠ NO RACES: nothing in the window had enough rated runners")

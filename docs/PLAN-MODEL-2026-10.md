@@ -523,3 +523,49 @@ model is worse in every band (in season 1.99% → 2.04%; openers 2.12% →
   **Gate:** if trees cannot beat prior on openers, a retrained network
   is unlikely to either, and the GPU work (E3 onward) should not start.
   If they can, the features that won go into the retrain.
+
+### The race model, version 1 (trees), run 2026-10-25 (owner)
+
+`model/race_rows.py` builds the table and `model/race_trees.py` trains and
+scores it. Trained on 2018-19 to 2023-24 (a quarter of those races, kept
+whole), scored on all of 2024-25.
+
+| 2024-25 (never seen) | Races | Ratings pairs | Model pairs | Gain [90%] |
+|---|---|---|---|---|
+| All | 35,321 | 84.24% | **85.52%** | **+1.28** [+1.26, +1.30] |
+| College | 941 | 81.10% | 82.67% | +1.57 [+1.44, +1.70] |
+
+- Rho went from 0.814 to 0.840, and the within-race miss from 2.91% to
+  2.62%.
+- It is better in every month, at every level, and in every runner band.
+  Openers off a summer went from 5.15% to 4.60%; mid-season runners
+  from 2.37% to 2.13%.
+- The ratings read lower here than in E0 because this table includes
+  every race with 8 or more rated runners (JV, small and middle-school
+  fields too); E0 used fields of 20 or more.
+- **Times:** median 4.44% → 3.85%, mean 7.64% → 5.89% (college 8.41% →
+  7.24%), against a rough (level, distance) table. The gap between
+  median and mean says a few very bad races drive the mean.
+- **What it leans on most:** the runner's gap to the field's median,
+  form level, rank in the field, distance, form, week of season, grade,
+  teammates opening their season.
+- **Not finished:** the trees stopped at the 1,500-round cap while still
+  improving.
+
+**Version 1.1, on the branch:**
+
+- The starting point is the page's own clock: each runner's rating
+  through `predict._ratingToSeconds` on the race's distance and course
+  cell (`race_rows.pageBase`). "Ratings" in every comparison is then what
+  the site prints, and the level part corrects the page.
+- Times are printed against the page itself, with the 12 worst races by
+  name (to find the wrong distances and mixed fields behind the mean).
+- Calibrated ranges: a place spread per runner band and a race-level
+  spread, fitted on half the validation races and checked on the other.
+  Both are saved with the model.
+- Up to 4,000 rounds.
+- The switch: `XCP_PREDICT_BASIS=race` (`racecast/race_model.py`)
+  re-predicts the rated field with the trees, and leaves the field to the
+  ratings when it cannot read it.
+- The Kailo recorder records `race` beside the other bases.
+- `XCP_KAILO_STORE` keeps review recordings out of the live store.
