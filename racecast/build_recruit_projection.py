@@ -60,6 +60,7 @@
 
 import argparse
 import datetime as dt
+import os
 import sys
 
 sys.path.insert(0, "scripts")
@@ -92,6 +93,40 @@ CHUNK = 400
 
 # a projection wider than this is not a projection
 MAX_SIGMA_PCT = 25.0
+
+# ★ THE CHUNKS ON SEVERAL PROCESSES (owner, 2026-10-25: "you can
+#   multithread/core as necessary. You have freedom as long as it remains
+#   accurate and working"). 10f2 had grown from 50 minutes to 8,668 s and was
+#   the tail of the whole night, every second of it the same loop: CHUNK
+#   athletes, one _predictTimes -- their history read, a feature vector each
+#   in Python, the network -- then the next CHUNK, one after another in one
+#   process. The chunks do not depend on each other, so they are handed out
+#   to XCP_PROJ_WORKERS processes and their results put back in chunk order.
+#
+# ! THE SAME CHUNKS, SO THE SAME NUMBERS. A worker is given exactly the CHUNK
+#   rows the loop would have taken (rows[i:i + CHUNK]), and _predictTimes
+#   sorts and batches the network's input WITHIN its call -- so every runner
+#   is in the same encoder batch, padded to the same length, as before.
+#
+# ! SPAWNED, NOT FORKED, AND AT THE SAME TORCH THREAD COUNT. Measured
+#   2026-10-25 on a random-weight XCPredictor (torch 2.x CPU): a forked child
+#   using 3 threads after its parent had run the network HUNG (libgomp is not
+#   fork-safe), and 2 threads gave different bits from 3. A spawned child
+#   loads the model itself through _loadModel, which sets the thread count by
+#   the same rule as this process (XCP_TORCH_THREADS, else cores // 8), and
+#   its outputs were bit-for-bit the parent's.
+#
+# ⚠ EACH WORKER HOLDS THREE CONNECTIONS (its own cursor, and one history
+#   reader per sport -- _historyStart's readers cut to one each in a worker,
+#   which reads the same batches of the same ids, only not two at once), and
+#   about the memory of the old single process: torch, the model and
+#   feature_extraction with corrections. Six is 18 connections against a
+#   max_connections of 100 that the site's workers (up to 48) and 13j's
+#   record-book workers (beside this step, 8 + 1) also draw on, and 6 x 3
+#   torch threads leaves the box's other cores to the steps in line.
+#   1 runs the loop in this process, exactly as before.
+PROJ_WORKERS_MAX = 6
+PROJ_WORKER_CONNS = 3
 
 # ★ EVERY SEASON SINCE THIS ONE (owner, 2026-09-22: "can you do beyond just
 #   2026. Like do since 2020"). A past season is projected AS OF ITS END --
@@ -281,12 +316,106 @@ def addResiduals(projected, band=PROJ_BAND, min_band_n=MIN_BAND_N):
     return out
 
 
+def projectChunk(cur, part, target, predict):
+    """projectRows for one chunk of candidates: `predict` is
+    predict._predictTimes (or a stand-in with its signature). The one unit of
+    work, in this process or in a worker."""
+    preds = predict(cur, [r["person_id"] for r in part], target)
+    return projectRows(part, preds)
+
+
+def projWorkers():
+    """How many processes project at once: XCP_PROJ_WORKERS, else the
+    smaller of PROJ_WORKERS_MAX and the cores less four (the site and
+    Postgres keep those). 1 is the old in-process loop."""
+    raw = (os.environ.get("XCP_PROJ_WORKERS") or "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return max(1, min(PROJ_WORKERS_MAX, (os.cpu_count() or 1) - 4))
+
+
+def warmLevels():
+    """Load normalize_distance's school_level_graph lookup now, on one thread.
+
+    ⚠ IT WAS FIRST LOADED INSIDE THE HISTORY READERS (found 2026-10-25).
+      toCommonScale -> storedPool -> poolFor -> levelForSchool reaches
+      loadGraphLevels, which sets its dict to {} and THEN fills it -- and the
+      first _predictTimes runs four reader threads at once, so a reader that
+      finished its query while another was filling read a half-empty lookup
+      and fell back to the pickle for those schools. That was one chunk a run
+      in the single process; with a worker per process it would be one chunk
+      per worker. Loaded here first, every chunk sees the whole table.
+    ! A FAILURE IS SURVIVED as loadGraphLevels survives it (the pickle alone),
+      exactly what the readers would have done."""
+    try:
+        from normalize_distance import loadGraphLevels
+        loadGraphLevels()
+    except Exception as exc:                            # noqa: BLE001
+        print(f"  school_level_graph not preloaded ({exc})")
+
+
+def _workerInit(hook=None):
+    """Set up one spawned worker. `hook` ("module:function") runs first --
+    the tests' way to put a stand-in database and model in the child; the
+    pipeline passes none.
+
+    ! THREE POOLED CONNECTIONS KEPT, NOT FIVE. database's pool opens MIN_CONN
+      at once and CLOSES any returned past MIN_CONN, so it is set to what a
+      chunk holds at its peak: no idle extras, and no reconnect per chunk.
+    ! ONE HISTORY READER PER SPORT. _queueStart's readers take the same
+      batches off the same queue in the same order whatever their number, so
+      every id's rows come from the same query; only the overlap goes, and
+      the workers are the overlap now.
+    """
+    import atexit
+    import importlib
+    if hook:
+        mod, fn = hook.split(":")
+        getattr(importlib.import_module(mod), fn)()
+    import database
+    import predict
+    database.MIN_CONN = PROJ_WORKER_CONNS
+    for key in list(predict.READ_WORKERS):
+        if key[0] == "hist":
+            predict.READ_WORKERS[key] = 1
+    atexit.register(database.closePool)
+    warmLevels()
+
+
+def _workerChunk(part, target):
+    """projectChunk in a worker, on a connection of its own. getConn rolls
+    back on the way out, so no read stays open between chunks."""
+    from predict import _predictTimes
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            return projectChunk(cur, part, target, _predictTimes)
+
+
+def startWorkers(n, hook=None):
+    """A spawn-context process pool of `n` workers, or None for n <= 1 (the
+    in-process loop). See PROJ_WORKERS_MAX for why spawn."""
+    if n <= 1:
+        return None
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    # a spawned child is not given -u; its lines go to the step's log as
+    # they happen, like this process's
+    os.environ.setdefault("PYTHONUNBUFFERED", "1")
+    # ! ProcessPoolExecutor, NOT multiprocessing.Pool: a worker the kernel
+    #   kills (out of memory) breaks the pool and the step FAILS, where
+    #   Pool would wait for that chunk's result forever.
+    return ProcessPoolExecutor(max_workers=n,
+                               mp_context=multiprocessing.get_context("spawn"),
+                               initializer=_workerInit, initargs=(hook,))
+
+
 def buildOne(cur, pool, sport, year, min_races, weeks, limit, chunk=CHUNK,
-             verbose=True, as_of=None, past=False):
+             verbose=True, as_of=None, past=False, workers=None):
     """Every projection for one (pool, sport, year), residuals included.
 
     `as_of` is the day the projection is made (seasonAsOf); for a `past`
-    season the history is cut there too.
+    season the history is cut there too. `workers` is a startWorkers pool;
+    None projects in this process, on `cur`.
     """
     from predict import _predictTimes
     rows = candidates(cur, pool, sport, year, min_races, limit)
@@ -295,13 +424,23 @@ def buildOne(cur, pool, sport, year, min_races, weeks, limit, chunk=CHUNK,
               + (f" (as of {as_of})" if past else ""))
     target = targetFor(sport, weeks, today=as_of,
                        history_before=as_of if past else None)
+    parts = [rows[i:i + chunk] for i in range(0, len(rows), chunk)]
+    if workers is None:
+        done = (projectChunk(cur, part, target, _predictTimes)
+                for part in parts)
+    else:
+        # ! THIS PROCESS ONLY WAITS NOW, so its read ends here rather than
+        #   when the slice is written: an open transaction is what CREATE
+        #   INDEX CONCURRENTLY waits on (see main's COMMIT AS IT GOES).
+        cur.connection.commit()
+        # map hands results back in the order of `parts`, whichever worker
+        # finished first
+        done = workers.map(_workerChunk, parts, [target] * len(parts))
     projected = []
-    for i in range(0, len(rows), chunk):
-        part = rows[i:i + chunk]
-        preds = _predictTimes(cur, [r["person_id"] for r in part], target)
-        projected.extend(projectRows(part, preds))
-        if verbose and (i // chunk) % 10 == 9:
-            print(f"    {i + len(part):,}/{len(rows):,} "
+    for k, (part, got) in enumerate(zip(parts, done)):
+        projected.extend(got)
+        if verbose and k % 10 == 9:
+            print(f"    {k * chunk + len(part):,}/{len(rows):,} "
                   f"({len(projected):,} usable)", flush=True)
     if verbose:
         print(f"    {len(projected):,} of {len(rows):,} projected")
@@ -353,7 +492,7 @@ def main():
                     help="candidates per pool, for a quick look")
     a = ap.parse_args()
 
-    from predict import modelStatus, _currentSeason
+    from predict import modelStatus
     status = modelStatus()
     if not status["available"]:
         # ! NOT A FAILURE. An untrained model is an expected state of this
@@ -366,6 +505,33 @@ def main():
     sports = [a.sport.upper()] if a.sport else ["XC", "TF"]
     mid = modelId()
     today = dt.date.today()
+    n_workers = projWorkers()
+    if n_workers <= 1:
+        warmLevels()                # see warmLevels; the workers do their own
+    pool_box = []                   # the worker pool, started on first need
+    try:
+        return _run(a, sports, mid, today, n_workers, pool_box)
+    finally:
+        for ex in pool_box:
+            if ex is not None:
+                ex.shutdown(wait=True, cancel_futures=True)
+
+
+def _run(a, sports, mid, today, n_workers, pool_box):
+    """main's body, with the worker pool's lifetime held by main."""
+    from predict import _currentSeason
+
+    def workers():
+        # ! STARTED ONCE AND ONLY WHEN A SLICE IS COMPUTED: a run that
+        #   carries every past season forward and has one current slice
+        #   pays one start, and a carry-only run pays none.
+        if not pool_box:
+            pool_box.append(startWorkers(n_workers))
+            if pool_box[0] is not None:
+                print(f"  projecting on {n_workers} worker processes "
+                      f"(XCP_PROJ_WORKERS)", flush=True)
+        return pool_box[0]
+
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             if not a.dry_run:
@@ -403,7 +569,7 @@ def main():
                                 continue
                         got = buildOne(cur, pool, sport, year, a.min_races,
                                        a.weeks, a.limit, as_of=as_of,
-                                       past=past)
+                                       past=past, workers=workers())
                         conn.commit()           # end the read before the write
                         if a.dry_run:
                             for item in sorted(
