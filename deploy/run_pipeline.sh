@@ -552,6 +552,13 @@ step 00_integrity     "$PY" -u scripts/integrity_check.py
 #   season's athlete ratings and every XC course number, kept so 17c0 can
 #   tell readers what the recompute moved (What's new). On every --from.
 step 00b_run_snapshot "$PY" -u scripts/run_changes.py --snapshot || true
+# ★ LAST RUN'S LEVEL GRAPH GOES LIVE HERE, BEFORE ANYTHING READS IT
+#   (2026-10-25: "the tables nothing builds"). school_level_graph,
+#   race_level and race_top_level were built by hand, now and then; 01c
+#   rebuilds them every run in the background as <name>_next, and this
+#   swaps a complete set in, all three in one transaction, in seconds. A
+#   run with nothing staged changes nothing.
+step 00c_level_swap   "$PY" -u engine/level_graph.py --swap-staged
 if failed 00_integrity; then
   echo "" | tee -a "$SUMMARY"
   echo "FATAL: 00_integrity found damaged pages (or could not check). Nothing" | tee -a "$SUMMARY"
@@ -578,6 +585,12 @@ if [ -x "$WXPY" ]; then
 else
   echo "  04e_weather_grid skipped ($WXPY not found; see deploy/run_pipeline.sh)" | tee -a "$SUMMARY"
 fi
+# ★ THE LEVEL GRAPH, REBUILT EVERY RUN, BESIDE IT (2026-10-25). About two and
+#   a half hours of graph propagation over the race/team graph, written as
+#   <name>_next for the NEXT run's 00c to swap in: this run reads one
+#   version throughout. It commits after reading results, so it holds no
+#   lock on the live tables while it propagates. Collected at the end (bgwait).
+bgstep 01c_level_graph "$PY" -u engine/level_graph.py --stage
 # ★ WHERE EVERY ATHLETE'S ROWS ARE, BEFORE ANYTHING MOVES THEM (2026-09-26).
 #   Twins, tfrrs links and mints all change person ids, and the old id's page
 #   404s. 13c0 compares against this and 301s each vanished id to its
@@ -672,6 +685,14 @@ step 04c_twins        "$PY" -u engine/twin_flag.py --write
 # gender by the divisions raced under; a person who raced both ways enough
 # is two athletes to the pack and the boards (issue 164)
 step 04d_gender       "$PY" -u engine/person_gender.py --write
+# ★ THE SEASON LEVELS, REBUILT EVERY RUN (2026-10-25: "the tables nothing
+#   builds"). college_first_season / upperclass_first_season (college_flag)
+#   and athlete_season_level (season_level, from race_level and tonight's
+#   grade_fix) were built by hand; the backfill, the pack and the boards
+#   read them. After the person steps (both read person ids and dates) and
+#   04_grade_sanity, in the background while 04g runs (which reads neither),
+#   and collected before 05, their first reader.
+bgstep 04h_season_levels sh -c "\"$PY\" -u engine/college_flag.py --write && \"$PY\" -u engine/season_level.py --write"
 # ★ THE WEATHER GRID FOLLOWS THE SEASON (2026-09-06). The grid stopped at
 #   2025-12-31 because nothing in the pipeline ever extended it, so the
 #   whole 2026 season was rated with no weather. The fetcher is resumable:
@@ -783,6 +804,7 @@ else
   echo "  04g_audit_overrides skipped (XCP_AUDIT_OVERRIDES=0 or no engine/corrections.py)" | tee -a "$SUMMARY"
 fi
 
+bgjoin 04h_season_levels
 if [ "$SKIP_BACKFILL" -eq 1 ]; then
   echo "  05_backfill skipped (--skip-backfill)"
 else

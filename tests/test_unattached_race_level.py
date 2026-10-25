@@ -217,7 +217,7 @@ class TheSqlParsesBeforeTheWorkStarts(unittest.TestCase):
     def test_the_ceiling_is_a_plain_aggregate(self):
         """★ max() OVER THE RANK is one grouped scan with no window to sort,
         and the rank maps back to a name at the end."""
-        i = self.src.index("INSERT INTO race_top_level")
+        i = self.src.index("INSERT INTO {_t('race_top_level')}")
         body = self.src[i:i + 1200]
         self.assertIn("max(", body)
         self.assertIn("top_rank", body)
