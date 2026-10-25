@@ -518,12 +518,8 @@ def _fiveK(rating, pool, sport):
 def _clock(seconds):
     if not seconds:
         return None
-    s = float(seconds)
-    m, sec = divmod(s, 60.0)
-    if m >= 60:
-        h, m = divmod(m, 60)
-        return f"{int(h)}:{int(m):02d}:{sec:04.1f}"
-    return f"{int(m)}:{sec:04.1f}"
+    from time_format import clock_fixed
+    return clock_fixed(seconds, 1)
 
 
 def _board(cur, sport, pool, year, weeks, col, n, state=None):

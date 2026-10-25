@@ -287,14 +287,14 @@ def api_shortlist():
     aid = sess["account"]["id"]
     with AC._db() as (conn, cur):
         if not F.tablesReady(cur):
-            return answer({"error": "The shortlist is not set up on this server yet."}, 503)
+            return answer({"error": "The shortlist isn't available right now."}, 503)
         have = listFor(cur, aid)
         there = any(h["school"] == prog[0] and h["state"] == prog[1] for h in have)
         if action == "save" and not there:
             ok = programExists(cur, prog[0], prog[1])
             if not ok:
                 conn.rollback()
-                return answer({"error": "Recruiting numbers are not built on this server yet." if ok is None
+                return answer({"error": "The recruiting numbers aren't ready yet; try again tomorrow." if ok is None
                                else "That college is not in the recruiting list."}, 404 if ok is False else 503)
             cur.execute("""INSERT INTO account_shortlist (account_id, school, state)
                            VALUES (%s, %s, %s) ON CONFLICT DO NOTHING""", (aid, prog[0], prog[1]))

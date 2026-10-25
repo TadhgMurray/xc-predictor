@@ -1684,9 +1684,12 @@ def buildRankLine(cur, person_id, season):
                   f"({type(exc).__name__}: {exc})", flush=True)
             return None
 
+    # ★ THE LINK OPENS ON THE ATHLETE (UX review, 2026-10-24: "National
+    #   #212" opened page 1 with nothing lit). jump= asks rankings.js to page
+    #   to them and light their row (its own find-an-athlete path, jumpTo).
     def boardHref(with_state):
         q = "&".join(f"{k}={v}" for k, v in boardArgs(with_state).items())
-        return "/rankings?" + q
+        return f"/rankings?{q}&jump={person_id}"
 
     # the athlete's own units, once -- three scopes read from this
     from school_units import unitsFor, applyUnitFilters, homeStateOf
@@ -1781,7 +1784,7 @@ def buildRankLine(cur, person_id, season):
                 q = "&".join(f"{k}={v}" for k, v
                              in unitArgs(u["kind"], u["raw"]).items())
                 entries.append({"label": u["label"], "rank": r,
-                                "href": "/rankings?" + q})
+                                "href": f"/rankings?{q}&jump={person_id}"})
         elif scope == "nation":
             r = boardRank(False)
             if r:
@@ -1803,6 +1806,7 @@ def buildRankLine(cur, person_id, season):
                 try:
                     # Strictly-better count + 1 = place on the roster, the same
                     # mean-rating order schoolRoster sorts by; ties share it.
+                    # Own gender only (the pool's _m / _f), owner 2026-10-24.
                     cur.execute("""
                         SELECT count(*) + 1 AS place
                         FROM   athlete_season t
@@ -1810,8 +1814,9 @@ def buildRankLine(cur, person_id, season):
                           AND  t.sport  = %(sport)s
                           AND  t.year   = %(year)s
                           AND  t.mean_rating > %(mine)s
+                          AND  right(t.pool, 2) = right(%(pool)s, 2)
                     """, {"school": school, "sport": sport,
-                          "year": season["year"],
+                          "year": season["year"], "pool": season["pool"],
                           "mine": season["mean_rating"]})
                     row = cur.fetchone()
                 except Exception:            # noqa: BLE001
@@ -1869,7 +1874,7 @@ def _mainTrackDistance(races, label):
         if r.get("sport") != "TF" or str(r.get("season_label")) != str(label):
             continue
         ev = parseEventShort(r.get("event"))
-        m = ev.get("meters")
+        m = _eventMetres(r.get("event")) if ev.get("kind") == "flat" else None
         if ev.get("kind") != "flat" or not m or not 800.0 <= m <= 10000.0:
             continue
         m = round(float(m), 2)
@@ -1878,6 +1883,21 @@ def _mainTrackDistance(races, label):
     if not counts:
         return None
     return max(counts, key=lambda m: counts[m])
+
+
+# ★ AN EVENT'S DISTANCE AS THE RATINGS READ IT (complexity review,
+#   2026-10-24: an "880" with no stored distance showed PRs against 880 m
+#   while the backfill rated the rows at 804.67 m). event_parse is the
+#   backfill's parser; normalize_distance.parseEventShort answers only for
+#   what it rejects (steeple, hurdles), which the ratings do not price.
+def _eventMetres(event_short):
+    from event_parse import distanceFromEventShort
+    from normalize_distance import parseEventShort
+    try:
+        m = distanceFromEventShort(event_short)[0]
+    except Exception:                     # noqa: BLE001 -- a label, not a page
+        m = None
+    return m or parseEventShort(event_short).get("meters")
 
 
 @app.route("/athlete/<int:person_id>")
@@ -5281,7 +5301,9 @@ def meet_xc_find(meet_id):
                 ) x
                 WHERE  x.name ILIKE %(q)s OR x.school ILIKE %(q)s
                 ORDER  BY (x.name ILIKE %(q)s) DESC, x.time_seconds NULLS LAST
-                LIMIT  25
+                -- ! a school's whole team, not its first 25 (UX review,
+                --   2026-10-24): one meet's rows, so the cap costs nothing
+                LIMIT  200
             """, {"m": meet_id, "src": src, "q": "%" + q + "%"})
             rows = cur.fetchall()
     out = []
@@ -5327,7 +5349,7 @@ def meet_tf_find(meet_id):
                 ) x
                 WHERE  x.name ILIKE %(q)s OR x.school ILIKE %(q)s
                 ORDER  BY (x.name ILIKE %(q)s) DESC, x.name, x.event_short
-                LIMIT  40
+                LIMIT  200
             """, {"m": meet_id, "src": src, "q": "%" + q + "%"})
             rows = cur.fetchall()
     out = []
@@ -5805,8 +5827,7 @@ def race_tf(meet_id, event_id, div_id):
                 #   used to rate the rows says what the event was.
                 dist = header.get("distance_meters")
                 if not dist:
-                    from normalize_distance import parseEventShort
-                    dist = parseEventShort(header.get("event_short")).get("meters")
+                    dist = _eventMetres(header.get("event_short"))
                 # ! the event's kind, as ranking_results stores it (sweep
                 #   2026-10-10): hurdlers measured against hurdles
                 try:
@@ -5891,8 +5912,8 @@ def race_tf(meet_id, event_id, div_id):
     #   average cross country 5K. Not for field events or relays.
     equiv_dist = header.get("distance_meters")
     if not equiv_dist and header.get("event_short"):
-        from normalize_distance import parseEventShort
-        equiv_dist = parseEventShort(header["event_short"]).get("meters")
+        from event_parse import distanceFromEventShort
+        equiv_dist = distanceFromEventShort(header["event_short"])[0]
     _ev = (header.get("event_short") or "").lower()
     _run = [r for r in results if not r.get("is_field")
             and r.get("time_seconds") and r["time_seconds"] < 999999]
@@ -10367,8 +10388,7 @@ def api_teams():
                     conn.rollback()
                     app.logger.exception("/api/teams (course) failed")
                     return jsonify({"error": "Team rankings failed to load. "
-                                             "The server log has the "
-                                             "traceback."}), 500
+                                             "Try again in a minute."}), 500
         # Rows carry their race distance, so the exact factor applies
         # rather than the representative one.
         hs_movable = stampBoardRows(rows, rating_keys=("top5_mean",),

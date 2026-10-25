@@ -68,12 +68,8 @@ def clock(sec, places=2):
     sec = float(sec)
     if sec <= 0 or not math.isfinite(sec):
         return None
-    h, rem = divmod(sec, 3600)
-    m, s = divmod(rem, 60)
-    fmt = f"{{:0{3 + places}.{places}f}}" if places else "{:02.0f}"
-    if h >= 1:
-        return f"{int(h)}:{int(m):02d}:{fmt.format(s)}"
-    return f"{int(m)}:{fmt.format(s)}"
+    from time_format import clock_fixed
+    return clock_fixed(sec, places)
 
 
 def pctOf(x):

@@ -228,6 +228,13 @@ def test_return_route_signs_in_then_sets_the_hint(monkeypatch):
     assert "rc_si=1" in r.headers.get("Set-Cookie", "") and "HttpOnly" not in r.headers["Set-Cookie"]
     # never off-site
     assert c.get("/account/return?next=//evil.com").headers["Location"].endswith("/account/me")
+    # ★ the tap survives the sign-in (UX review, 2026-10-24): follow.js's
+    #   #rc-follow mark rides the way back, and the button finishes the follow
+    r = c.get("/account/return?next=/athlete/7%23rc-follow")
+    assert r.headers["Location"].endswith("/athlete/7#rc-follow")
+    js = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "racecast", "static", "follow.js"), encoding="utf-8").read()
+    assert "location.hash === MARK" in js and "btn.click()" in js
 
 
 def test_every_new_post_route_checks_csrf():

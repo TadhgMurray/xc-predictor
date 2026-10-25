@@ -17,7 +17,7 @@
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
 <link rel="stylesheet" href="{{ static_v('tools.css') }}">
 {% set one = tables[0] if tables|length == 1 else none %}
-{% set meta_title = ("Rating to time: " ~ one.label) if one else "Rating to time: every pool" %}
+{% set meta_title = ("Rating to time: " ~ one.label) if one else "Rating to time: every level" %}
 {% set meta_description = "What a Racecast rating means in time: every rating on the boards as an 800, a 1600, a 3200 and a cross country 5K (college: 800, 1500, mile, 5000 and the 6K or 8K), on a typical track and course." %}
 {% set meta_path = "/scale" ~ ("?pool=" ~ want if want != "hs_m" else "") %}
 {% set meta_crumbs = [("About", "/about"), ("Rating to time", none)] %}
@@ -36,7 +36,7 @@
       <div class="rc-meta">
         <a href="/about#rating">What a rating is</a>
         · <a href="/conversions">Any time, any course</a>
-        · <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title }} on Racecast"
+        <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title }} on Racecast"
             data-share-url="{{ site_origin ~ meta_path }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
         · <button type="button" class="rc-share-link scale-print" onclick="window.print()">Print</button>
       </div>

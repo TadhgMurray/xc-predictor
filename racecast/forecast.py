@@ -218,22 +218,26 @@ def _fetch(lat, lon, d, hour):
 # ------------------------------------------------------------------ #
 
 def describe(row):
-    """'24C, feels 27, wind 12 km/h, 3 mm rain, overcast' -- or None."""
+    """'75°F, feels 81, wind 9 mph, 0.10 in rain, overcast' -- or None.
+
+    ★ °F AND MPH, AS THE RACE PAGES (UX review, 2026-10-24): forecasts read
+      in °C, km/h and mm beside race pages in °F and mph. The stored row
+      stays metric (Open-Meteo's units); only the words change."""
     if not row:
         return None
     parts = []
     t = row.get("temp_c")
     if t is not None:
-        parts.append(f"{t:.0f}°C")
+        parts.append(f"{t * 9 / 5 + 32:.0f}°F")
         a = row.get("apparent_temp_c")
         if a is not None and abs(a - t) >= 2:
-            parts.append(f"feels {a:.0f}")
+            parts.append(f"feels {a * 9 / 5 + 32:.0f}")
     w = row.get("wind_speed_kmh")
     if w is not None and w >= 10:
-        parts.append(f"wind {w:.0f} km/h")
+        parts.append(f"wind {w / 1.609344:.0f} mph")
     p = row.get("precipitation_mm")
     if p is not None and p >= 0.3:
-        parts.append(f"{p:.1f} mm rain")
+        parts.append(f"{p / 25.4:.2f} in rain")
     c = row.get("cloud_cover")
     if c is not None:
         parts.append("overcast" if c >= 80 else "sunny" if c <= 20 else "some cloud")

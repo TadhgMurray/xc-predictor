@@ -4,6 +4,7 @@ data_checks.py -- the data checks, one pipeline step (04g1), fixes included.
 
     python engine/data_checks.py            # dry run: the issues, nothing written
     python engine/data_checks.py --write    # data_issue table + the pins block
+    python engine/data_checks.py --purge-label-pins   # only drop venue_label's old pins
 
 (owner, 2026-10-13: "there are so many small data leaks ... wrong distance,
 wrong parser, wrong gender, wrong age ... just a pipeline step that can be
@@ -31,11 +32,14 @@ the previous run's numbers, before the backfill that would carry a fix:
                stored at its "3 miles" (4828) when the venue's own record
                says 2.93 mi (4715) is 2.4% -- under every bar we had, and
                it moves every rating that day and the day's term with it.
-               FIX: the division is pinned to the venue's SHORTER well-
-               attested label when the two are 1.2-4% apart, its field ran
-               high (gap >= 1%, most of it the same way), and the distance
-               that gap implies is nearer the shorter label than the stored
-               one. Downward only, like every override. Same sticky block.
+               LISTED ONLY, NEVER PINNED (owner, 2026-10-24, on Hayward
+               4828 -> 4747, Mt. SAC 4828 -> 4715, CIF State 5000 -> 4828:
+               "all of those distances are right. NONE OF THOSE SHOULD BE
+               CORRECTED"). A field 1-4% above its own level is a fast
+               day or a championship field peaking, far more often than a
+               wrong label, and the pin took the race's course away (a
+               corrected division is venueless in the solve). The pins it
+               wrote are taken back out of the sticky block (labelSized).
   parser       two parsers of one event name. event_parse (normalized_time)
                against speed_ratings_db._eventMetersSql (the pack's
                distance) on every distinct track event_short: a
@@ -142,6 +146,8 @@ def fieldVerdict(row, meet_distances, venue=None):
     ev += f"; stored {float(stored):g} m implies {implied:,.0f}"
     if s is None or abs(s - float(stored)) <= CORROB_TOL * s:
         return "review", None, ev + " (no standard distance there)"
+    if labelSized(float(stored), s):
+        return "review", None, ev + f" -> {s:g}, too small a move to explain the gap"
     sibs = [d for d in meet_distances.get((source, meet), meet_distances.get(meet, ()))
             if d and abs(d - s) <= CORROB_TOL * s]
     if sibs:
@@ -249,6 +255,29 @@ def venueLabelVerdict(stored, n, gap, share_up, labels):
           f"({100 * share_up:.0f}% high); stored {stored:g} m implies {implied:,.0f}; "
           f"the venue runs {d:g} m ({rows:,} results over {yrs} seasons)")
     return float(d), ev
+
+
+def labelSized(stored, pinned):
+    """A pin that moves its division DOWN by no more than a venue-label gap
+    (LABEL_MAX_GAP). venue_label wrote these; race_field needs a field 9%+
+    off, and a pin this small cannot explain a gap that size (distance_repair's
+    Weston HS / Reid Park note), so none of them is kept. Pure."""
+    if not stored or not pinned or pinned >= stored:
+        return False
+    return stored / pinned - 1 <= LABEL_MAX_GAP
+
+
+def labelPins(cur, pins):
+    """The anet keys of `pins` that labelSized condemns, by the division's
+    own stored (listed) distance."""
+    keys = [k for k in pins if len(k) == 2]
+    if not keys:
+        return set()
+    cur.execute("""SELECT meet_id, div_id, max(distance)::float FROM meets
+                   WHERE (meet_id, div_id) IN (SELECT * FROM unnest(%s::int[], %s::int[]))
+                   GROUP BY 1, 2""", ([k[0] for k in keys], [k[1] for k in keys]))
+    return {(int(m), int(d)) for m, d, stored in cur.fetchall()
+            if labelSized(stored, pins[(int(m), int(d))])}
 
 
 def parserIssues(pairs, tol=0.01):
@@ -416,7 +445,8 @@ _VENUE_SQL = """
 
 def venueLabel(cur):
     """Divisions stored at a venue's longer label that run like its
-    shorter one (see the header). Returns (issues, pins)."""
+    shorter one (see the header). Returns (issues, pins); pins is always
+    empty -- listed for review only."""
     _base(cur)
     cur.execute("DROP TABLE IF EXISTS dc_venue")
     cur.execute(_VENUE_SQL)
@@ -448,9 +478,8 @@ def venueLabel(cur):
                                   labels.get(cid, ()))
         if d is None:
             continue
-        pins[(int(meet), int(div))] = d
         issues.append(("venue_label", "XC", f"anet {meet}/{div}", int(n),
-                       float(gap), int(n) * float(gap), ev, "pin"))
+                       float(gap), int(n) * float(gap), ev, "review"))
     return issues, pins
 
 
@@ -498,6 +527,8 @@ def main():
     import time
     write = "--write" in sys.argv
     from database import getConn
+    if "--purge-label-pins" in sys.argv:
+        return purgeLabelPins(getConn)
     issues, pins, rejects = [], {}, set()
     t0 = time.time()
     with getConn() as c, c.cursor() as cur:
@@ -539,6 +570,8 @@ def main():
             c.rollback()
             print(f"[data_checks] DRY RUN -- {len(pins):,} pins would be added")
             return
+        old_text = io.open(PATH, encoding="utf-8", newline="").read() if os.path.exists(PATH) else ""
+        label = labelPins(cur, readPins(old_text))
         cur.execute(_DDL)
         cur.execute("DELETE FROM data_issue")
         if issues:
@@ -551,19 +584,39 @@ def main():
     if os.path.exists(PATH):
         text = io.open(PATH, encoding="utf-8", newline="").read()
         old = readPins(text)
-        merged = {k: v for k, v in old.items() if k not in rejects}
+        merged = {k: v for k, v in old.items() if k not in rejects and k not in label}
         dropped = sorted(set(old) - set(merged))
         for k, v in pins.items():
             if k not in dropped:
                 merged.setdefault(k, v)
         io.open(PATH, "w", encoding="utf-8", newline="").write(replaceBlock(text, block(merged)))
         print(f"[data_checks] pins: {len(set(merged) - set(old)):,} new, "
-              f"{len(dropped):,} dropped (their field still reads 9%+ off its "
-              f"own level at the pinned distance), {len(merged):,} in the block")
+              f"{len(dropped):,} dropped ({len(label):,} venue-label sized, the rest "
+              f"because their field still reads 9%+ off its own level at the "
+              f"pinned distance), {len(merged):,} in the block")
         for k in dropped[:20]:
             print(f"    dropped {k}: was {old[k]:g} m")
     else:
         print(f"[data_checks] {PATH} missing -- pins not written")
+
+
+def purgeLabelPins(getConn):
+    """--purge-label-pins: take the venue-label sized pins out of the sticky
+    block now, without running the checks (a minute, not half an hour). The
+    ratings move on the next run from 04g1, or the nightly backfill."""
+    if not os.path.exists(PATH):
+        print(f"[data_checks] {PATH} missing")
+        return
+    text = io.open(PATH, encoding="utf-8", newline="").read()
+    old = readPins(text)
+    with getConn() as c, c.cursor() as cur:
+        label = labelPins(cur, old)
+        c.rollback()
+    for k in sorted(label):
+        print(f"    dropped {k}: was {old[k]:g} m")
+    keep = {k: v for k, v in old.items() if k not in label}
+    io.open(PATH, "w", encoding="utf-8", newline="").write(replaceBlock(text, block(keep)))
+    print(f"[data_checks] {len(label):,} venue-label pins dropped, {len(keep):,} kept")
 
 
 if __name__ == "__main__":

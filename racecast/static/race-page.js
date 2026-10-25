@@ -4,6 +4,14 @@
      panel shows, one under another (race.css hides panels only under
      .rc-js), the team rows are plain rows and the finder box is inert. */
 (function () {
+  // ★ THE WINDOW ONLY (UX review, 2026-10-24): scrollIntoView also scrolls
+  //   a phone table's own box (div.tscroll, overflow-y hidden), and what it
+  //   scrolls off the top -- the header row -- cannot be scrolled back.
+  function centreRow(el, smooth) {
+    var r = el.getBoundingClientRect();
+    window.scrollTo({ top: window.pageYOffset + r.top - (window.innerHeight - r.height) / 2,
+                      behavior: smooth ? "smooth" : "auto" });
+  }
   var main = document.querySelector("main.rc");
   if (!main) return;
   main.classList.add("rc-js");
@@ -365,7 +373,7 @@
         c.addEventListener("click", function () {
           show(first);
           p.tr.hidden = false;
-          p.tr.scrollIntoView({ block: "center", behavior: "smooth" });
+          centreRow(p.tr, true);
           p.tr.classList.remove("rc-flash"); void p.tr.offsetWidth; p.tr.classList.add("rc-flash");
         });
         svg.appendChild(c);
@@ -685,7 +693,7 @@
   if (/^#r-?\d+$/.test(location.hash)) {           // -? : tfrrs ids are negative
     var target = document.getElementById(location.hash.slice(1));
     if (target) {
-      target.scrollIntoView({ block: "center" });
+      centreRow(target);
       target.classList.add("rc-flash");
     }
   }

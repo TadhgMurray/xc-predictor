@@ -54,3 +54,26 @@ def format_time(seconds):
     if hours > 0:
         return f"{hours}:{minutes:02d}:{secs:02d}{tail}"
     return f"{minutes}:{secs:02d}{tail}"
+
+
+def clock_fixed(seconds, places=2, hour_places=None):
+    """m:ss.ff (h:mm:ss.f over an hour) at a FIXED number of places,
+    rounded before it is split, so 959.996 is '16:00.00', never '15:60.00'.
+
+    ★ ONE ROUNDING FOR EVERY FIXED-PLACE CLOCK (complexity review,
+      2026-10-24): five copies split minutes before rounding the seconds and
+      printed 959.96 as '15:60.0' -- one of them on the share-card images.
+      They keep their own places; the carry is done here.
+    hour_places: the places past an hour, when they differ (default: places)."""
+    s = float(seconds)
+    hp = places if hour_places is None else hour_places
+    p = hp if s >= 3600 - 0.5 * 10 ** -hp else places
+    q = 10 ** p
+    units = int(round(s * q))
+    whole, frac = divmod(units, q)
+    tail = f".{frac:0{p}d}" if p else ""
+    h, rem = divmod(whole, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{sec:02d}{tail}"
+    return f"{m}:{sec:02d}{tail}"

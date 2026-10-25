@@ -55,7 +55,7 @@
         {% if d.history %}Ranks on {{ d.weeks[0]|mdy }} against {{ d.weeks[1]|mdy }}{% else %}Rank changes start once two weekly snapshots exist{% endif %}
         {% if d.anchor %} · races {{ d.window_lo|mdy }} to {{ d.anchor|mdy }}{% endif %}
         · <span class="p2-muted">computed {{ d.computed_at|ago_words }}</span>
-        · <button type="button" class="share-btn rc-share-link" data-share-title="This week in {{ state_name }} on Racecast"
+        <button type="button" class="share-btn rc-share-link" data-share-title="This week in {{ state_name }} on Racecast"
               data-share-url="{{ site_origin ~ qs() }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
       </div>
       {% if lede %}<p class="rc-story mv-lede">{% for s in lede %}{{ s }}{% if not loop.last %} {% endif %}{% endfor %}</p>{% endif %}

@@ -106,7 +106,8 @@ def _expected(us_states):
             "region": place(r, ["region"]) if r["region"] else None,
             "conference": place(r, ["conference"]) if r["conference"] else None,
             "team": (1 + len([x for x in rows if x["school"] == r["school"] and x["sport"] == r["sport"]
-                              and x["year"] == r["year"] and x["mean_rating"] > r["mean_rating"]]))
+                              and x["year"] == r["year"] and x["pool"][-2:] == r["pool"][-2:]
+                              and x["mean_rating"] > r["mean_rating"]]))
                     if r["school"] else None,
             "grade_key": r["gk"],
             "grade_nation": place(r, ["gk"], lambda x: x["us"]) if (r["us"] and r["gk"]) else None,
@@ -169,6 +170,7 @@ def test_every_scope_matches_a_hand_computation():
     assert got[(1, "hs_m", "XC", 2025)]["nation"] == 1
     assert got[(4, "hs_m", "XC", 2025)]["nation"] is None      # under the floor: on no board
     assert got[(4, "hs_m", "XC", 2025)]["team"] == 2           # the team line has no floor
+    assert got[(2, "hs_f", "XC", 2025)]["team"] == 1           # the boys are not her team rank
     assert got[(9, "hs_m", "XC", 2026)]["nation"] == 2         # an open season ranks on one race
     assert got[(7, "hs_m", "XC", 2025)]["nation"] is None      # outside the US
     assert got[(7, "hs_m", "XC", 2025)]["state_rank"] == 1     # but still ranked in its own state

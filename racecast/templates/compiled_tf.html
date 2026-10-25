@@ -56,7 +56,7 @@
       {%- if meet_date %} · {{ meet_date|mdy }}{% endif %}
       {%- if header.state %} · {{ header.state }}{% endif %}
       · Compiled results
-      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name ~ ' compiled results on Racecast' }}"
+      <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ header.meet_name ~ ' compiled results on Racecast' }}"
             data-share-url="{{ site_origin ~ '/meet/tf/' ~ header.meet_id ~ '/compiled' ~ ('?alt=' ~ alt_idx if alt_idx else '') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
     </div>
     {% if has_teams %}
@@ -159,7 +159,7 @@
 {# ★ THE TEAM FIGHT BESIDE THE EVENTS, as meet_tf.html's card: the first
    scored division's top five per gender; "All team points" opens the tab
    with every division and team. #}
-<aside class="rc-side" data-repeats="teams">
+<aside class="rc-side" data-repeats="teams" data-fold="Team scores">
   <h2>Team points <small>{{ d0.name if d0.name and d0.name != "All divisions" else "top 5" }}</small></h2>
   {% for g, g_label in [("M", "Boys"), ("F", "Girls")] %}
   {% set st = (official_on and d0.official and d0.official[g]) or d0.teams[g] %}

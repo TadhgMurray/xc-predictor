@@ -105,7 +105,7 @@
     <h1>School PRs</h1>
     <div class="rc-meta">
       Best mark per athlete{% if data.year %}, {{ data.year }} season{% endif %}{% if data.course %}, at <a href="/course/{{ data.course|urlencode }}">{{ data.course }}</a>{% endif %}
-      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ school ~ ' school PRs on Racecast' }}"
+      <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ school ~ ' school PRs on Racecast' }}"
             data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
     </div>
     {# ★ EACH GENDER'S BEST PERFORMANCE, NOT THE FIRST EVENT'S #1 (owner,

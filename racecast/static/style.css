@@ -1767,6 +1767,32 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .flag:not(:hover):not(:focus)::after,
 .flag:not(:hover):not(:focus)::before { display: none; }
 
+/* ★ WITH tips.js RUNNING, THE TOOLTIPS ARE ITS OWN (UX review, 2026-10-24):
+   a floating one on <body> with a mouse, a sheet from the bottom on a
+   phone -- neither can be clipped by a table's box. The CSS bubbles above
+   stay the fallback without JavaScript. */
+html.js-tips .flag::after, html.js-tips .flag::before { display: none !important; }
+.rc-tipf { position: absolute; z-index: 1000; width: max-content; max-width: min(280px, calc(100vw - 16px));
+    padding: 9px 12px; border: 2px solid var(--tip, #111); border-radius: 9px; background: #fff; color: #222;
+    font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    letter-spacing: 0; text-transform: none; text-align: left; white-space: normal;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14); pointer-events: none; }
+.rc-tipf[hidden] { display: none; }
+.rc-tipf b { display: block; font-weight: 700; margin-bottom: 2px; }
+.rc-tips-backdrop { position: fixed; inset: 0; z-index: 999; background: rgba(17, 20, 24, 0.32); }
+.rc-tips { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000; background: #fff; color: #222;
+    border-radius: 14px 14px 0 0; padding: 14px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.18); max-height: 70vh; overflow: auto;
+    font: 400 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    text-transform: none; letter-spacing: 0; text-align: left; }
+.rc-tips[hidden], .rc-tips-backdrop[hidden] { display: none; }
+.rc-tips-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.rc-tips-head b { font-size: 16px; }
+.rc-tips-x { flex: none; width: 36px; height: 36px; margin: -6px -6px 0 0; border: 0; background: none;
+    font-size: 26px; line-height: 1; color: #6b7280; cursor: pointer; }
+.rc-tips p { margin: 6px 0 0; }
+.rc-tips-more { display: inline-block; margin-top: 10px; font-weight: 600; }
+
 @media (max-width: 900px) {
     /* Flags sit in the LAST table column. On a wide screen the bubble opens
        rightwards over the sidebar, which is fine; once the layout stacks
@@ -5528,7 +5554,12 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
      (layout.js measures both and sets .tw-wrap). A table that cannot fit
      either way is not squeezed for nothing: it keeps one-line rows and
      scrolls in its box. Words never break. */
-  div.tscroll > table th, div.tscroll > table td, div.tscroll > table td *,
+  /* ! td *:not(.sr-only) (UX review, 2026-10-24): "td *" matched every PR
+     badge's hidden screen-reader sentence and laid it out at full size, so
+     the box came out ~90px taller than its table and a jump to a row
+     scrolled the box itself -- the header row gone for good under
+     overflow-y: hidden (the iPhone "cut off at the top"). */
+  div.tscroll > table th, div.tscroll > table td, div.tscroll > table td *:not(.sr-only),
   .season div.tscroll > table th, .season div.tscroll > table td,
   .season div.tscroll > table td.meet-cell .meet-course {
     white-space: nowrap; text-overflow: clip; overflow: visible; max-width: none;
@@ -5536,7 +5567,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   /* wrapping, a cell breaks between words, but the pieces the templates
      mark .no-break ("48th", "· 3rd on team") and the first column (a
      date, a place) stay whole */
-  div.tscroll.tw-wrap > table th, div.tscroll.tw-wrap > table td, div.tscroll.tw-wrap > table td *,
+  div.tscroll.tw-wrap > table th, div.tscroll.tw-wrap > table td, div.tscroll.tw-wrap > table td *:not(.sr-only),
   .season div.tscroll.tw-wrap > table th, .season div.tscroll.tw-wrap > table td,
   .season div.tscroll.tw-wrap > table td.meet-cell .meet-course { white-space: normal; }
   div.tscroll.tw-wrap > table td:first-child, div.tscroll.tw-wrap > table td .no-break,
@@ -5602,6 +5633,8 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .side-fold > summary::after { content: "\25BE"; float: right; color: #6b7280; }
   .side-fold[open] > summary::after { content: "\25B4"; }
   .side-fold > .sidebar { width: auto; flex: none; max-width: none; margin-top: 0.6rem; }
+  .side-fold-rc > .rc-side { margin-top: 0.6rem; position: static; max-height: none; }
+  main.rc.rc-side-away .side-fold-rc { display: none; }
 
   /* ★ FILTER BOXES, ONE WIDTH AND ONE LOOK (ui pass, 2026-10-04; owner:
        "elements of different widths on phone"). The meets filters were a

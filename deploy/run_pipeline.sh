@@ -272,6 +272,18 @@ _skipCost() {
   fi
 }
 
+# beforeFrom NAME: true when NAME is before --from and not on _ALWAYS.
+# ★ ONE RULE FOR EVERY KIND OF STEP (complexity review, 2026-10-24): only
+#   step() read _ALWAYS, and 05b_anchor_repair runs through steps2, so
+#   `--from 7` -- the standard recipe -- still skipped the repair the list
+#   exists to keep (run20). steps2, stepsN, shards and bgstep ask here now,
+#   and --skip is honoured per name, not only for a batch's first.
+beforeFrom() {
+  case " $_ALWAYS " in *" $1 "*) return 1 ;; esac
+  _n=$(echo "$1" | sed 's/^0*\([0-9]*\).*/\1/')
+  [ "${_n:-0}" -lt "$FROM" ]
+}
+
 step() {
   name="$1"; shift
   num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
@@ -332,15 +344,15 @@ _live() (
 # sequential for no reason).
 steps2() {
   nameA="$1"; cmdA="$2"; nameB="$3"; cmdB="$4"
-  num=$(echo "$nameA" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ]; then
-    echo "  $nameA + $nameB skipped (--from $FROM)"
-    return 0
-  fi
-  if skipped "$nameA"; then
-    echo "  $nameA + $nameB skipped (--skip)"
-    return 0
-  fi
+  runA=1; runB=1
+  if beforeFrom "$nameA"; then echo "  $nameA skipped (--from $FROM)"; runA=0
+  elif skipped "$nameA"; then echo "  $nameA skipped (--skip)"; runA=0; fi
+  if beforeFrom "$nameB"; then echo "  $nameB skipped (--from $FROM)"; runB=0
+  elif skipped "$nameB"; then echo "  $nameB skipped (--skip)"; runB=0; fi
+  if [ "$runA" -eq 0 ] && [ "$runB" -eq 0 ]; then return 0; fi
+  # one of the pair left: it runs alone, as a step
+  if [ "$runB" -eq 0 ]; then step "$nameA" sh -c "$cmdA"; return 0; fi
+  if [ "$runA" -eq 0 ]; then step "$nameB" sh -c "$cmdB"; return 0; fi
   if [ "$DRY" -eq 1 ]; then
     echo "  $nameA : $cmdA   (with $nameB : $cmdB)"
     return 0
@@ -379,21 +391,15 @@ steps2() {
 #   teams, `--from 7` must still rebuild wheelchair_person, and `--skip
 #   04d_gender` must skip gender and nothing else.
 stepsN() {
+  # each pair judged on its own name: --from (with _ALWAYS) and --skip
   _keep=()
   while [ $# -ge 2 ]; do
-    num=$(echo "$1" | sed 's/^0*\([0-9]*\).*/\1/')
-    case " $_ALWAYS " in *" $1 "*) always=1 ;; *) always=0 ;; esac
-    if [ "${num:-0}" -lt "$FROM" ] && [ "$always" -eq 0 ]; then
-      echo "  $1 skipped (--from $FROM)"
-    elif skipped "$1"; then
-      echo "  $1 skipped (--skip)"
-      _skipCost "$1"
-    else
-      _keep+=("$1" "$2")
-    fi
+    if beforeFrom "$1"; then echo "  $1 skipped (--from $FROM)"
+    elif skipped "$1"; then echo "  $1 skipped (--skip)"; _skipCost "$1"
+    else _keep+=("$1" "$2"); fi
     shift 2
   done
-  [ "${#_keep[@]}" -gt 0 ] || return 0
+  [ "${#_keep[@]}" -eq 0 ] && return 0
   set -- "${_keep[@]}"
   first="$1"
   if [ "$DRY" -eq 1 ]; then
@@ -435,9 +441,12 @@ stepsN() {
 # --dry-run rules as step.
 shards() {
   name="$1"; n="$2"; shift 2
-  num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ] && [ "$name" != "02_drop_old" ]; then
+  if beforeFrom "$name"; then
     echo "  $name skipped (--from $FROM)"
+    return 0
+  fi
+  if skipped "$name"; then
+    echo "  $name skipped (--skip)"
     return 0
   fi
   if [ "$DRY" -eq 1 ]; then
@@ -483,8 +492,7 @@ shards() {
 BG_PIDS=(); BG_NAMES=(); BG_T0=()
 bgstep() {
   name="$1"; shift
-  num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ]; then
+  if beforeFrom "$name"; then
     echo "  $name skipped (--from $FROM)"
     return 0
   fi
@@ -599,6 +607,11 @@ step 01b_tfrrs_location "$PY" -u scripts/backfill_tfrrs_location.py --apply --ou
 #   on why it exists sit where it used to run, above 04f.
 if [ -x "$WXPY" ]; then
   bgstep 04e_weather_grid "$WXPY" -u backfill/atmost_era5_zarr.py
+  # ★ AND THE MONTHS THAT STORE HAS NOT REACHED (2026-10-25: the grid
+  #   stopped at 2026-06-30 -- the free store runs 3-4 months behind). The
+  #   CDS's ERA5T, ~5 days behind, for the days after the store's last one;
+  #   no CDSAPI_KEY in the env file and it says so and exits 0.
+  bgstep 04e2_weather_recent "$WXPY" -u backfill/era5_cds_recent.py
 else
   echo "  04e_weather_grid skipped ($WXPY not found; see deploy/run_pipeline.sh)" | tee -a "$SUMMARY"
 fi
@@ -732,6 +745,7 @@ bgstep 04h_season_levels sh -c "\"$PY\" -u engine/college_flag.py --write && \"$
 # (started in the background after 01_season_year; collected here, before
 #  the refit and the backfill read the grid)
 bgjoin 04e_weather_grid
+bgjoin 04e2_weather_recent
 # ! THE REFIT IS OPT-IN. fit_weather_correction is the heavy stage (hours)
 #   and its answer only changes when the grid's numbers do -- after
 #   scripts/recompute_apparent_temp.py, or a new season's worth of rows.

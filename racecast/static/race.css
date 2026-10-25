@@ -165,6 +165,11 @@ main.rc .page-report { margin-top: 1.4rem; }
   main.rc .rc-subline { display: block; font-size: .8rem; line-height: 1.3; color: var(--muted); margin-top: .1rem; }
   main.rc .rc-subline img.school-mark { width: 15px; height: 15px; margin-right: .3rem; vertical-align: -3px; }
   main.rc .rc-table td.nm a { display: block; line-height: 1.2; white-space: normal; }
+  /* ! A RELAY'S RUNNERS STAY ONE WRAPPING LINE (UX review, 2026-10-24): the
+       rule above put every leg, and every comma, on a line of its own --
+       5-6 lines a row */
+  main.rc .rc-table td.nm .relay-legs { display: block; font-size: .85rem; line-height: 1.3; white-space: normal; }
+  main.rc .rc-table td.nm .relay-legs a { display: inline; white-space: nowrap; }
   main.rc td { padding-left: .35rem; padding-right: .35rem; }
   main.rc .rc-teams-full { display: block; overflow-x: auto; }
 }
@@ -297,6 +302,9 @@ main.rc .rc-hone .rc-story { max-width: 46rem; }
 main.rc .rc-share-link { display: inline-flex; align-items: center; gap: .3rem; background: none; border: 0;
   padding: 0; font: inherit; font-weight: 600; font-size: inherit; color: var(--link); cursor: pointer; white-space: nowrap; }
 main.rc .rc-share-link:hover span { text-decoration: underline; }
+/* ★ NO "·" BEFORE SHARE (UX review, 2026-10-24): when Share wrapped, the
+   dot led its new line alone. The button's arrow is the separator. */
+main.rc .rc-share-link { margin-left: .5rem; }
 /* "· Share" never splits across a line break (sweep 2026-10-10, B15) */
 .rc-nowrap { white-space: nowrap; }
 /* ★ PHONE TAP TARGETS, 24px AT LEAST (sweep 2026-10-10, B15). The meta
@@ -475,6 +483,9 @@ main.rc.home-rc .hm-states td.tpts { width: 7rem; font-weight: 600; }
   main.rc.home-rc .hm-t th, main.rc.home-rc .hm-t td { padding-left: .3rem; padding-right: .3rem; }
   main.rc.home-rc .hm-t th.pl, main.rc.home-rc .hm-t td.pl { width: 1.7rem; }
   main.rc.home-rc .hm-t th.n, main.rc.home-rc .hm-t td.rt { width: 3.3rem; }
+  /* ! A HEADER WITH ITS ⓘ NEEDS THE ROOM (UX review, 2026-10-24): at 3.3rem
+       "RATING ⓘ" ran on top of "5K EQUIV" */
+  main.rc.home-rc .hm-t th.n:has(> .info-i) { width: 5.2rem; }
   main.rc.home-rc .hm-t .hm-5k { width: 5.4rem; }
   main.rc.home-rc .hm-t td.nm { overflow: hidden; }
   /* a long surname breaks rather than clips ("Rasmusse") */
@@ -1033,3 +1044,29 @@ main.ath-page.rc .season-head .season-rating .fk-i { color: inherit; font-weight
 /* ★ venue_tf best performances: no sidebar, scroll on a phone (owner, 2026-10-13) */
 main.rc table.venue-best { width: 100%; }
 main.rc .vb-wrap { max-width: 100%; overflow-x: auto; }
+
+/* ! A FIXED-HEIGHT BAR CANNOT WRAP (UX review, 2026-10-24): on a phone the
+     records page's "Advanced" wrapped below the tabs and drew over the lead
+     text. Home and rankings already let theirs grow; these do too. */
+@media (max-width: 760px) {
+  main.rc.landing-page .rc-tbar, main.rc.recruit-page .rc-tbar,
+  main.rc.coach-home .rc-tbar { height: auto; min-height: 2.4rem; flex-wrap: wrap; }
+}
+
+/* ! ONE COLUMN BELOW 1000px (UX review, 2026-10-24): a race's results table
+     is ~650px and its card 280px, so at 844 (a phone on its side) or an
+     iPad's 820 the table ran 176px over the team scores. Below 1000 the card
+     folds above the main column instead (layout.js), as on a phone. */
+@media (max-width: 1000px) {
+  main.rc .rc-grid { grid-template-columns: minmax(0, 1fr); }
+  main.rc .side-fold-rc { margin: 0 0 .4rem; width: 100%; }
+  main.rc .side-fold-rc > summary { cursor: pointer; list-style: none; padding: .55rem .75rem;
+    font-weight: 600; font-size: .95rem; color: #374151; background: #f3f4f6;
+    border: 1px solid #e5e7eb; border-radius: 6px; }
+  main.rc .side-fold-rc > summary::-webkit-details-marker { display: none; }
+  main.rc .side-fold-rc > summary::after { content: "\25BE"; float: right; color: #6b7280; }
+  main.rc .side-fold-rc[open] > summary::after { content: "\25B4"; }
+  main.rc .side-fold-rc > .rc-side { margin-top: .6rem; position: static; max-height: none; }
+  main.rc.rc-side-away .side-fold-rc { display: none; }
+}
+

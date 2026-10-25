@@ -23,7 +23,7 @@ def _fn(name):
 
 
 def _run(setup, call):
-    script = ("DRY=1\n" + setup + "\n" + _fn("skipped") + _fn("_skipCost")
+    script = ("DRY=1\n" + setup + "\n" + _fn("skipped") + _fn("_skipCost") + _fn("beforeFrom")
               + _fn("stepsN") + call + "\n")
     out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr

@@ -57,13 +57,13 @@ def _t(row):
 
 def _clock(seconds):
     """14:43.7 from 883.7 -- the decimals the data has, like format_time."""
+    from time_format import format_time
     s = float(seconds)
-    m, sec = divmod(s, 60)
-    whole = f"{int(m)}:{int(sec):02d}"
-    frac = round(sec - int(sec), 2)
-    if frac == 0:
-        return whole
-    return whole + f"{frac:.2f}"[1:].rstrip("0")
+    centis = int(round(s * 100))
+    if centis >= 6000:
+        return format_time(s)              # rounds first: 959.996 is 16:00
+    whole = f"0:{centis // 100:02d}"
+    return whole + (f".{centis % 100:02d}".rstrip("0") if centis % 100 else "")
 
 
 def _gap(seconds):

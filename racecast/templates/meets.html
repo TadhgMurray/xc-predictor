@@ -52,7 +52,7 @@
          <a href="/course/{{ course|urlencode }}">{{ course }}</a>,
          newest first · {{ "{:,}".format(n_meets) }}
          meet{{ "" if n_meets == 1 else "s" }}
-         <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+         <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
               data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
     </div>
@@ -114,7 +114,7 @@
       <h1>{{ "Meets" if filtering else ("Upcoming meets" if upcoming else "Recent meets") }}</h1>
       {% if upcoming %}
       <div class="rc-meta">Next seven days · {{ ns.n_coming }} meet{{ "" if ns.n_coming == 1 else "s" }}
-         <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+         <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
               data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {# ! WHAT THE PREDICTION ACTUALLY DOES (2026-10-06): the field is the
@@ -132,13 +132,13 @@
          · <strong>Showing the newest {{ max_meets }}</strong> - narrow by season
          to see further back
          {% endif %}
-         <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+         <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
               data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {% else %}
       <div class="rc-meta">Meets from the last year with real fields
          ({{ min_results }}+ results), newest first · {{ "{:,}".format(ns.n_recent) }} meets
-         <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
+         <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title ~ ' on Racecast' }}"
               data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {% endif %}

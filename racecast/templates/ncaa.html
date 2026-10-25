@@ -61,7 +61,7 @@
       Week of {{ d.week|mdy }} · results through {{ d.p.asof|mdy }}
       · {{ "{:,}".format(d.p.draws) }} simulated regionals and nationals
       · <span class="p2-muted">computed {{ d.computed_at|ago_words }}</span>
-      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ board_words }}: projected nationals field on Racecast"
+      <button type="button" class="share-btn rc-share-link" data-share-title="{{ board_words }}: projected nationals field on Racecast"
               data-share-url="{{ site_origin ~ meta_path }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
     </div>
     {% endif %}

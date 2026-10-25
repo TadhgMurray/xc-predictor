@@ -508,7 +508,7 @@ function drawChart(host, points, opts) {
   /* Say which scale is drawn whenever the alternate one is in effect --
      a rescaled chart with an unchanged title looks like a data change. */
   const scaled = scaleMode() === "hs" && data.some((p) => p.vh != null);
-  const title = scaled ? `${opts.title} - HS-equivalent` : opts.title;
+  const title = opts.title;     // one public scale, unnamed (UX review, 2026-10-24)
 
   host.classList.remove("chart-empty");
   host.innerHTML =
@@ -600,10 +600,18 @@ function attachHover(host) {
        #race-<id> anchor runs the page's own link path: race-page.js opens
        the sport tab holding the row (the Career tab holds none), and
        link-flash.js centres it and flashes it once the scroll ends. */
+  /* ★ ON A PHONE, THE FIRST TAP READS THE DOT (UX review, 2026-10-24): a
+       tap is mouseover and click at once, so the tooltip flashed and the
+       page scrolled away to the row before it could be read. Where there is
+       no hover, a dot's first tap shows its tooltip; tapping it again goes. */
+  const noHover = !!(window.matchMedia && window.matchMedia("(hover: none)").matches);
+  let armed = null;
   svg.addEventListener("click", (e) => {
     const hit = e.target.closest(".hit");
     if (!hit || !hit.dataset.rid) return;
     if (!document.getElementById(`race-${hit.dataset.rid}`)) return;
+    if (noHover && armed !== hit.dataset.rid) { armed = hit.dataset.rid; return; }
+    armed = null;
 
     const a = document.createElement("a");
     a.href = `#race-${hit.dataset.rid}`;
@@ -738,7 +746,7 @@ function drawCompareChart(host, series, opts) {
 
   const scaled = scaleMode() === "hs" &&
     series.some((s) => (s.points || []).some((p) => p.vh != null));
-  const title = scaled ? `${opts.title} - HS-equivalent` : opts.title;
+  const title = opts.title;     // one public scale, unnamed (UX review, 2026-10-24)
 
   host.classList.remove("chart-empty");
   host.innerHTML =

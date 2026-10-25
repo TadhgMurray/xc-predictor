@@ -39,7 +39,7 @@
         {% if p.grad_year %} · Class of {{ p.grad_year }}{% endif %}
         · <a href="/athlete/{{ p.person_id }}">Athlete page</a>
         · <a href="/compare?a={{ p.person_id }}">Compare</a>
-        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ p.name ~ ' recruiting profile on Racecast' }}"
+        <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ p.name ~ ' recruiting profile on Racecast' }}"
               data-share-url="{{ site_origin ~ '/recruit/' ~ p.person_id }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {# the latest season in each sport, and its gain #}
