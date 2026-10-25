@@ -21,13 +21,14 @@ def test_longitudes_go_back_to_the_cds_convention():
     assert C.lon180(241.75) == -118.25 and C.lon180(10.0) == 10.0 and C.lon180(180.0) == -180.0
 
 
-def test_touching_tiles_are_one_request_and_far_ones_their_own():
-    cells = [(34.0, 241.75), (38.0, 250.0), (45.0, 262.0),      # CA, UT, SD: touching tiles
-             (61.25, 210.0), (21.25, 202.25)]                    # Alaska, Hawaii
+def test_the_lower_48_is_one_request_and_far_ones_their_own():
+    cells = [(34.0, 241.75), (45.0, 262.0), (40.0, 285.0),      # CA, SD, NJ: one box
+             (61.25, 210.0), (61.5, 210.25), (21.25, 202.25)]    # Alaska (touching), Hawaii
     got = C.regions(cells)
     assert len(got) == 3
     boxes = {len(g): box for g, box in got}
-    assert boxes[3] == [45.25, -118.5, 33.75, -97.75]            # N, W, S, E with the margin
+    assert boxes[3] == [45.25, -118.5, 33.75, -74.75]            # N, W, S, E with the margin
+    assert boxes[2] == [61.75, -150.25, 61.0, -149.5]
 
 
 def test_the_request_asks_for_every_variable_all_day():
