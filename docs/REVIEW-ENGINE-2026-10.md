@@ -23,37 +23,24 @@ Nothing here touches production. The engine is `engine/statespace.py`;
    with LACCTiC's pages cached so their side is identical. About 5 hours,
    nothing written. Until it runs, my read is unchanged: the placement is the
    likelier cause, because every test is college XC on tfrrs meets.
-2. **A race's distance is weighed, never picked.** The race effect is a
-   mixture: its ordinary effect, or that plus the offset of a distance its
-   listed one is commonly confused with (5000↔3 mi, 6000↔8000, 3000↔3200,
-   …). The rating carries the weighted offset. No distance is written, and
-   no race is condemned for one. On a planted world with 4% of divisions
-   mislabelled:
-   - the worst tenth of their runners' rating errors fell from 6% to 2.4%;
-   - the likeliest true distance was right for 93–94% of the races it
-     flagged;
-   - it flagged 45 of 31,223 ordinary races.
-
-   The flagged list goes to a CSV for a person.
-3. **Courses are matched from the runners who raced both.** Two cells are
-   one course if their numbers differ by exactly what their listed distances
-   say (the Mt. SAC 4715/4828 case). How often nearby cells are one course is
-   learned per band of distance apart. Pairs are tied in proportion, never
-   merged.
-   - It found 163–170 of 180 planted alias pairs.
-   - It tied none of 28–66 different courses placed 150–600 m apart.
-
-   The first version judged pairs on the cells' own numbers and tied 15–18
-   of those. Ratings barely move when the aliases are well raced. Its value
-   is replacing four hand rules and producing a list a person can check.
-4. **Every hand-set constant and correction is listed**
+2. **Distance corrections and course identity are separate work** (owner,
+   2026-10-25). The engine takes listed distances and course keys as the
+   pack has them. A wrong distance lands in that race's own heavy-tailed
+   effect, which the rating already removes; nothing is written and nothing
+   is condemned. My two attempts to do more inside the engine (a menu of
+   "commonly confused" distances per race, and course pairs tied by shared
+   runners) are out: the first in effect picked a distance and could not
+   tell a fast race from a short one, and both were only ever tested on a
+   world I planted to suit them.
+3. **Every hand-set constant and correction is listed**
    ([REVIEW-ENGINE-2026-10-CONSTANTS.md](REVIEW-ENGINE-2026-10-CONSTANTS.md),
    generated from the code, with a test that fails on anything new and
    unlisted). There are 737 constants and 143 switches. The new engine makes
-   unnecessary **184 constants and 54 switches**, and fits 28 more itself.
-   13 are left unclear, each with its reason; the largest is the board's
-   season aggregate.
-5. **The engine went deeper.** Each piece was tested against a world that
+   unnecessary **135 constants and 48 switches**, and fits 28 more itself.
+   The distance and course-identity rules stay until that separate work
+   replaces them. 13 are left unclear, each with its reason; the largest is
+   the board's season aggregate.
+4. **The engine went deeper.** Each piece was tested against a world that
    plants exactly what it is for (§6, table 5):
 
    | piece | effect on the planted world |
@@ -65,25 +52,30 @@ Nothing here touches production. The engine is `engine/statespace.py`;
    | a rating SD on every result | available for gating boards |
    | a two-sided residual (bad days slow only) | made things worse; off |
 
+   ⚠ The same weakness as the two pieces taken out: each world was built to
+   contain what the piece fixes, so these numbers show the code does what it
+   claims, not that it helps on real races. §9 part 3 prices them on real
+   rows against today's engine; anything that does not win there goes.
+
 **The XC↔track relation (the point of the review).**
 
-6. **It is measured, not asserted.** Every runner has one fitness moving
+5. **It is measured, not asserted.** Every runner has one fitness moving
    through time. Grass, the indoor oval and altitude are levels against the
    flat outdoor 400, estimated by GLS through each runner's own trajectory
    (regression with state-space errors). The information comes from people
    racing both surfaces close together in time: fall track during XC, summer
    track before August, December XC beside December indoor, and the
    indoor/outdoor overlap. No window is chosen.
-7. **What it needs** (planted world, §4.4): several kinds of bridge
+6. **What it needs** (planted world, §4.4): several kinds of bridge
    (December alone missed by 1.3–3.5%), on venues also raced in-season, and
    many of them (±1% with 10 regions, 0.3% with 40). The run refits without
    each bridge kind; if those disagree, the report says the gap is not
    determined instead of printing a number.
-8. **The 5K column is a conversion, not a forecast:** `exp(performance)`,
+7. **The 5K column is a conversion, not a forecast:** `exp(performance)`,
    the time less everything measured about the day. It is right exactly
    when the measured terms are, and §9 checks it against LACCTiC's track 5Ks
    and runners' own 5000s.
-9. **The current engine is seven estimators in series**, each correcting
+8. **The current engine is seven estimators in series**, each correcting
    the one before it. Most recent bug classes trace to two choices: ability
    is one number per athlete-season, and the race-day key is the venue-day.
    On the planted world the proposed engine beats today's skeleton on every
@@ -95,7 +87,6 @@ Nothing here touches production. The engine is `engine/statespace.py`;
    start at 07:00 UTC). It writes nothing the site reads. It produces:
    - the Oct 23 answer;
    - the measured gaps with their bridges and leave-one-kind-out refits;
-   - the distance and course lists;
    - the forward scorecard against today's engine;
    - LACCTiC (40 races, forward) and Kailo on the new numbers.
 2. **Decide the tilt and the tfrrs placement from part 2** before anything
@@ -392,11 +383,10 @@ y_i = θ_p(t) + β_p·xc_i + η_p·x_i            the runner: fitness that day, 
   x_i      ln(distance / 5000); η_p fitted only from distances inside one
            surface, so it never trades with grass
   c_c,s    the course's number this season: a walk from season to season
-           whose step is fitted ("era_walk"); pairs of cells that may be one
-           course are tied in proportion to P(same) ("course_tie")
-  v_r      the race effect, or that plus a standard distance's offset when
-           the race may not be its listed distance, by posterior weight
-           ("dist_mix"); no distance is ever written
+           whose step is fitted ("era_walk")
+  v_r      the race effect, heavy-tailed: a wrong listed distance lands
+           here and comes out of the rating; correcting the distance itself
+           is separate work
 
   y        ln(time) on ONE scale: the flat outdoor 5000 m equivalent (the
            pool's normalised time moved to 5000 m by its own curve)
@@ -409,8 +399,8 @@ y_i = θ_p(t) + β_p·xc_i + η_p·x_i            the runner: fitness that day, 
 ```
 
 **What a rating removes and what it keeps.**
-- **Removed (conditions):** G, the course, the day, the race (with its
-  likely distance error), a team's shared shortfall, altitude, the weather
+- **Removed (conditions):** G, the course, the day, the race, a team's
+  shared shortfall, altitude, the weather
   and the event offset; and the runner's own distance curve, which moves a
   result to their own 5000.
 - **Kept (the runner that day):** fitness, the taper, the summer step,
@@ -430,8 +420,6 @@ race back.
 | altitude by GLS | `ALT_PRIOR_MEAN`, `ALT_ACCLIM`, the resident/visitor credit logic (a resident's state is their sea-level fitness, and the coefficient comes from runners seen at several elevations) |
 | Student-t rows | Huber's two constants, the ability weights, the effort term |
 | everything else by EM | τ caps, priors stated in races, `RACE_SAT`, floors |
-| the distance mixture on `v_r` | `own_race_shift` and the race condemnations it feeds, `propose_distances`, the override audits (`audit_overrides`, `kill_bad_overrides`), and every machine-written distance in `corrections.py`. A record-beating time no distance explains stays a data error (`impossible_race`). |
-| course pairs judged on shared runners | `PLACE_RADIUS_M` / `PRIOR_PLACE` (the 400 m place prior), `SIBLING_DIST_TOL`, `VENUE_DIST_*`, and hand venue merges (Mt. SAC 4715/4828) |
 | the course walk | `--era-years 2` and the era drift prior |
 | the weather inside | the backfill's weather multiplier and its night-race errors (the race effect takes what a grid cell misses) |
 | η_p, the runner's distance curve | `SLOPE_RIDGE`'s per-athlete-season endurance slope, the rating-band split of the event offsets (`DIST_BANDS`) |
@@ -569,8 +557,8 @@ The other big pipeline steps are data work this review did not profile:
 |---|---|
 | fitted (EM or GLS) | σ, the walk q, the season trend sd, the seam sd, the grass sd, τ per surface, the day and race sds, the curve's curvature, every level's gap, its slope in ability, the taper, recovery, altitude per surface, the event offsets |
 | cross-validated on the forward scorecard | the t degrees of freedom, the era walk once added, whether the track race day is credited |
-| stated, with the reason printed | the gauge (flat outdoor 400 = 0), κ (§4.4), the 600 m altitude floor, the event shares of the altitude cost (NCAA tables), Riegel's 1.06 for a wrong distance's cost (the same K the distance tools use), the standard distances a race may really have been, the 21 days after which a season counts as over (the taper), the temperature knots |
-| search bounds, not decisions | course pairs looked for within 3 km and 1.35× in listed distance; a pair is judged only with 3+ runners who raced both in one season |
+| stated, with the reason printed | the gauge (flat outdoor 400 = 0), κ (§4.4), the 600 m altitude floor, the event shares of the altitude cost (NCAA tables), the 21 days after which a season counts as over (the taper), the temperature knots |
+
 
 ---
 
@@ -579,8 +567,7 @@ The other big pipeline steps are data work this review did not profile:
 | today | under the model | caveat |
 |---|---|---|
 | **division guard**, `RACE_DAY_CAP` as threshold/clip/trigger, `flaggedFastDay`, division lean (Midlothian, Shamrock 2025/26, Mt. SAC 2024) | `v_r` is its own heavy-tailed effect inside `w_v`; a short-course division is one big `v_r`, and the venue-day and the other divisions are untouched | race key = (meet, div), already in the pack |
-| **borrowed distances**, wrong-distance overrides, Dan Conway, Monte Vista +19%, **`own_race_shift` condemnations, `propose_distances`, the override audits** | a wrong distance is a near-constant log-time offset on one race. The race effect is a mixture: its ordinary effect, or that plus the offset of a distance the listed one is commonly confused with (5000↔3 mi, 6000↔8000, 3000↔3200, …), by posterior weight. The rating carries the weighted offset; the listed distance is never changed and no race is condemned for it. The likeliest other distance and its weight go to a CSV for a person | first-timer fields (MS) have no known runners: the weights stay near the prior and the rating is wide (its SD says so) |
-| **the place prior** (400 m), **sibling distances**, **venue-distance ties**, hand merges (Mt. SAC 4715/4828) | every pair of cells of one surface within 3 km is judged on the runners who raced both in a season: one course if their numbers differ by what the listed distances say, two if not. The share of same-course pairs per band of distance apart is learned; a pair is tied in proportion; nobody linking it, it is left alone | |
+| **borrowed distances**, wrong-distance overrides, Dan Conway, Monte Vista +19% | a wrong distance is a near-constant log-time offset on one race, i.e. `v_r`: absorbed when the race has known runners, out of the rating, nothing written | correcting distances (`own_race_shift`, `propose_distances`, the override audits) is separate work and stays until it is replaced; first-timer fields (MS) have no known runners and a wide SD |
 | **`--era-years 2`**, the era drift prior | a cell per course-season, tied season to season by a walk whose step is fitted | |
 | **the weather multiplier in front of the engine** | temperature, wind and wet ground fitted inside (`ss_weather_export.py`, `--weather`); the backfill's multiplier is taken back off | normalisation keeps distance and era until §8 point 5 |
 | **no term for a team at tempo** (league meets) | a team's shared shortfall in one race, nested in the race, heavy-tailed, out of the rating | needs the pack's team code (it has it) |
@@ -687,22 +674,13 @@ before these terms existed)
 
 | term | planted | without | with | forward without → with |
 |---|---|---|---|---|
-| distance mixture (`dist_mix`) | 4% of divisions ran another distance than listed (5000 that was 4000, 3 mi or 6000; 1600 that was 1500 or 2000) | mislabelled rows 1.21 / 0.98%, worst tenth 6.3 / 5.9% | **0.92 / 0.72%, worst tenth 2.4 / 2.4%** | ordinary rows unchanged |
-| course pairs (`course_tie`) | 15% of meets key their course under a second name, half listed at 4828 for the same 5000; different courses 150–600 m from another | — | true pairs found **170 / 163 of 180**; nearby different courses tied **0 of 28 / 0 of 66** | ratings unchanged (the alias cells are well raced) |
-| | the same, aliases thin (2.5% of meets) | — | found 82 of 127 / 75 of 104 (the rest nobody links); **0** wrong | worst tenth 2.25 → 2.22% |
 | course walk (`era_walk`) | each course drifts 0.8% a season, re-routed now and then | one number per course: track 0.61 / 0.77% | **0.48 / 0.55%**; drift found 0.72 / 0.94% | next season **4.21 → 4.20 / 4.18 → 4.09%** (a number per season, untied: 4.38 / 4.46%) |
 | team in a race (`team_race`) | 4% of (race, school) run 3–8% slow together | tempo rows 4.76 / 5.52% | **3.30 / 3.69%** | **1.909 → 1.876 / 1.976 → 1.908%** |
 | the runner's distance curve (`endurance`, a fourth state) | 800 / 1600 / 3200 on the track, each runner's own slope (sd 3% per unit ln distance) | track 2.09 / 2.15% | **0.83 / 0.66%**; slope sd found 2.96 / 3.01% | track rows better at every distance; **cross-country 5000s 0.03–0.04% worse** (1.965 → 1.989 / 1.911 → 1.944% overall) |
 | weather inside (`weather`) | race run up to 15 F cooler than the day's recorded peak; the stored multiplier keyed on the peak | stored multiplier: XC 1.44 / 1.06%, track 0.86 / 0.70%, hot days −1.28 / −0.54% | **XC 1.20 / 0.91%, track 0.47 / 0.45%, hot days −0.37 / +0.31%** | 1.880 → 1.909 / **1.946 → 1.870%** |
 | two-sided residual (`two_piece`) | 5% bad days, slow only | 1.17 / 0.94% | 1.20 / 0.95% | 1.845 → 1.868 / 1.889 → 1.925%: **worse; off** |
 
-Two of these were wrong the first time and are worth knowing about:
-- **Course pairs judged on the cells' own numbers merged 15–18 nearby
-  different courses.** Once two cells are tied, their days soak up the real
-  difference, and the cells then look alike. With nobody racing both (a
-  high-school course beside a college one), the difference is not
-  identified at all. Judging only on runners who raced both cells in a
-  season fixed it.
+One of these was wrong the first time and is worth knowing about:
 - **The distance curve as a step after the level made forecasts worse**
   (1.94 → 1.98%), because a noisy slope was subtracted as if known. As a
   fourth state in the runner's filter, its uncertainty reaches the level.
@@ -713,10 +691,6 @@ Two of these were wrong the first time and are worth knowing about:
 - B beats A on held-out races and the spring track;
 - a short division's rating stays within 1.5× ordinary;
 - the gap is recovered within 1% with and without December XC;
-- mislabelled races: the tail of their ratings falls by 30%+, nothing
-  else pays, the listed distance is never changed, and the likeliest
-  distance is right for 85%+ of flagged races;
-- course pairs: 80%+ of true pairs found, no nearby different course tied;
 - the course walk finds its drift and forecasts no worse than one number
   per course;
 - team tempo, the distance curve and weather each beat their absence on
@@ -815,23 +789,16 @@ before, and keeps every output table's shape.
    - the indoor pin and gates;
    - the course guard (to a flag);
    - the bracket engine.
-3. **Distances weighed, never written.** The race-effect mixture
-   (`dist_mix`) goes live and the machine-written distance machinery is
-   turned off, scored at each step: `own_race_shift`'s condemnations,
-   `propose_distances`, the override audits. Owner-verified overrides stay
-   as data. The flagged-race CSV replaces the worklists.
-4. **Courses matched from runners.** `course_tie` replaces the place prior,
-   the sibling-distance tolerance and the venue-distance ties; the
-   course-pair CSV replaces hand merges. `era_walk` replaces `--era-years`.
-5. **Posterior SDs** on ratings (`perf_sd`) and courses, published with
+3. **The course walk.** `era_walk` replaces `--era-years`.
+4. **Posterior SDs** on ratings (`perf_sd`) and courses, published with
    `n_results`; boards gated on the SD.
-6. **Conditions and people inside the model:** weather (the backfill's
+5. **Conditions and people inside the model:** weather (the backfill's
    multiplier comes off; normalisation keeps distance and era), a team in a
    race, the runner's own distance curve (priced on real data first: on the
    planted world it fixes track ratings and costs cross-country forecasts
    0.03–0.04%). One log-distance curve in place of the pool curves is the
    step after.
-7. **Pipeline time.** The solve becomes minutes. The data steps are a
+6. **Pipeline time.** The solve becomes minutes. The data steps are a
    separate look.
 
 ---
@@ -1008,15 +975,6 @@ grep -B1 -A8 "SNAPSHOT" $L/kailo.log | head -80
     its venues are what to inspect);
   - the regional check;
   - the tilt profile.
-- **Distances and courses.** How many races the mixture thinks were not
-  their listed distance, the 25 likeliest with meet and division, and the
-  course pairs it thinks are one course under two keys, with how many
-  metres apart. The full lists are `distance_<date>.csv` and
-  `courses_<date>.csv` in `engine/data/ss`. These are for a person to look
-  at; the ratings already carry them as weights. ⚠ A division that ran
-  3.6% fast on a day its other divisions did not is exactly what a 5000
-  that was 3 miles looks like; the rating is the same either way, but the
-  "likeliest distance" is a question for a person, not a verdict.
 - **The scorecard.**
   - The first block is the tilt: own against hs.
   - `ss_noend` is the engine without the runner's distance curve; the

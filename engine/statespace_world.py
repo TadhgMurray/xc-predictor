@@ -278,6 +278,7 @@ EVENT_OFF = {800.0: 0.010, 1600.0: 0.0, 3200.0: -0.005}
 #   a results page would have it. Drawn from their own stream, so a world
 #   without them is the same world as before.
 MISLABEL_TRUE = {5000.0: (4000.0, 4828.0, 6000.0), 1600.0: (1500.0, 2000.0)}
+RIEGEL = 1.06       # time goes as distance^1.06 near these distances
 # the population's shape, continuous through the sport change
 HARD_SHAPE = ((0, 0.030), (110, 0.000), (200, -0.010), (300, -0.025), (366, -0.025))
 
@@ -552,7 +553,7 @@ def worldHard(seed=0, n_regions=10, schools=20, per_school=14, n_seasons=5, **ov
         out.setdefault("alias", []).append(is_alias)
         out.setdefault("truth_cell", []).append(true_course)
         out["y"].append(th + beta[p] * (k == 0) + h * (mu + cval + w + v) + e + alt_eff
-                        + ss.RIEGEL * np.log(true_d / listed) + x_d + tmp + wx_eff + wx_log)
+                        + RIEGEL * np.log(true_d / listed) + x_d + tmp + wx_eff + wx_log)
         out.setdefault("truth_course", []).append(cval)
         out.setdefault("region", []).append(region_of[p])
         out.setdefault("truth_day", []).append(w)

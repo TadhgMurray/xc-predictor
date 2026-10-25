@@ -32,15 +32,14 @@ only: no database, nothing written but its own files.
   own curve (normalize_distance.anchorShift, as model/feature_extraction
   .toCommonScale does), so a senior's spring and a freshman's fall are one
   trajectory.
-★ THE TERMS (statespace.fitGLS): by default the distance mixture on each
-  race, course pairs judged on shared runners, a team inside a race and the
+★ THE TERMS (statespace.fitGLS): by default a team inside a race and the
   runner's own distance curve; --era-walk adds a course number per season
   tied by a fitted walk, --weather (scripts/ss_weather_export.py) the
   weather fitted inside in place of the backfill's multiplier,
   --elevation altitude. --drop leaves terms out, to price them on the same
-  rows. Each race's likely other distance and each likely course pair go
-  to CSVs in engine/data/ss for a person to look at; neither is applied
-  as a decision.
+  rows. Listed distances and course keys are taken as the pack has them:
+  correcting either is separate work (owner, 2026-10-25), and a wrong
+  distance lands in its race's own heavy-tailed effect, out of the rating.
 """
 import argparse
 import ast
@@ -83,8 +82,7 @@ ALT_FLOOR_M = 600.0
 #   by dropping one kind of bridge), and it is printed as such.
 UNDETERMINED = 0.25
 REGION_DEG = 3.0           # the regional check's grid, degrees of latitude and longitude
-TERMS = ("peak", "recovery", "event", "mu_by_level", "dist_mix", "course_tie", "team_race",
-         "endurance")
+TERMS = ("peak", "recovery", "event", "mu_by_level", "team_race", "endurance")
 KAPPA_PROFILE = (0.0, 0.15, 0.31, 0.45, 0.6)
 
 
@@ -212,7 +210,7 @@ class Rows:
         if "course_lat" in cols and "course_lon" in cols:
             lat = np.asarray(cols["course_lat"], dtype=np.float64)[safe]
             lon = np.asarray(cols["course_lon"], dtype=np.float64)[safe]
-            self.lat, self.lon = lat, lon        # the course's place, for course_tie
+            self.lat, self.lon = lat, lon        # the course's place
             ok = np.isfinite(lat) & np.isfinite(lon)
             gy = np.floor(np.where(ok, lat, 0) / REGION_DEG).astype(np.int64)
             gx = np.floor(np.where(ok, lon, 0) / REGION_DEG).astype(np.int64)
@@ -343,74 +341,6 @@ def regionLines(R, D):
     return out
 
 
-def raceMixLines(R, D, idx, rows, path=None, top=25):
-    """The races the distance mixture thinks were not their listed
-    distance: how many, and the likeliest, with the rows' meet and div so
-    a person can look. Never applied as a distance -- the ratings carry the
-    weighted offset whatever this list says."""
-    if "race_p_mis" not in R:
-        return []
-    pm = R["race_p_mis"]
-    nr = pm.size
-    n = np.bincount(D["race"], minlength=nr)
-    first = np.full(nr, -1, dtype=np.int64)
-    first[D["race"][::-1]] = np.arange(D["race"].size)[::-1]
-    out = [f"[ss] distance: {100 * R['pi_mis']:.2f}% of races fitted as probably not their "
-           f"listed distance; P > 0.5 for {int((pm > 0.5).sum()):,} of {int((n > 0).sum()):,} "
-           f"races ({int(n[pm > 0.5].sum()):,} rows)"]
-    flag = np.flatnonzero((pm > 0.2) & (n > 0) & (first >= 0))
-    flag = flag[np.argsort(-pm[flag] * np.sqrt(n[flag]))]
-    raw = idx[first[flag]]
-    meet = np.asarray(rows.cols["meet_id"])[raw]
-    div = np.asarray(rows.cols["div_id"])[raw]
-    if path:
-        with open(path, "w") as f:
-            f.write("meet_id,div_id,date,course_key,runners,listed_m,likeliest_other_m,"
-                    "p_other,p_not_listed,offset_pct\n")
-            for j, r in enumerate(flag):
-                f.write(f"{meet[j]},{div[j]},{rows.dates[raw[j]]},\"{rows.course_keys[rows.crs[raw[j]]]}\","
-                        f"{n[r]},{R['race_listed'][r]:.0f},{R['race_alt_dist'][r]:.0f},"
-                        f"{R['race_alt_p'][r]:.3f},{pm[r]:.3f},{100 * R['race_delta'][r]:+.2f}\n")
-        out.append(f"[ss] distance: {flag.size:,} races with P > 0.2 -> {path}")
-    for j, r in enumerate(flag[:top]):
-        out.append(f"[ss]   meet {meet[j]} div {div[j]} {rows.dates[raw[j]]} "
-                   f"{rows.course_keys[rows.crs[raw[j]]][:34]:34s} {n[r]:4d} runners: listed "
-                   f"{R['race_listed'][r]:.0f}, likeliest {R['race_alt_dist'][r]:.0f} "
-                   f"(P {R['race_alt_p'][r]:.2f}), rated at {100 * R['race_delta'][r]:+.1f}%")
-    return out
-
-
-def coursePairLines(R, D, idx, rows, path=None, top=20):
-    """The cells the fit thinks are one course under two keys: how many
-    pairs, the share it learned per band of distance apart, and the
-    likeliest, so a person can look. Tied in proportion, never merged."""
-    if "pair_p" not in R:
-        return []
-    if R["pair_p"].size == 0:
-        return [f"[ss] courses: no two cells of one surface within {int(ss.PAIR_MAX_M)} m "
-                f"(or the pack carries no course places)"]
-    a, b, p, m, dl = R["pair_a"], R["pair_b"], R["pair_p"], R["pair_m"], R["pair_delta"]
-    first = np.full(int(D["cell"].max()) + 1, -1, dtype=np.int64)
-    has = D["cell"] >= 0
-    first[D["cell"][has][::-1]] = np.flatnonzero(has)[::-1]
-    key = lambda c: str(rows.course_keys[rows.crs[idx[first[c]]]]) if first[c] >= 0 else "?"
-    bands = ", ".join(f"<{int(e)} m {100 * q:.0f}%" for e, q in zip(ss.PAIR_BANDS_M, R["pair_pi"]))
-    out = [f"[ss] courses: {a.size:,} candidate pairs within {int(ss.PAIR_MAX_M)} m; one course "
-           f"under two keys for {int((p > 0.5).sum()):,} (P > 0.5); share learned by distance "
-           f"apart: {bands}; slack {100 * R['pair_slack']:.2f}%"]
-    order = np.argsort(-p)
-    if path:
-        with open(path, "w") as f:
-            f.write("key_a,key_b,metres,listed_offset_pct,p_same\n")
-            for j in order[p[order] > 0.2]:
-                f.write(f"\"{key(a[j])}\",\"{key(b[j])}\",{m[j]:.0f},{100 * dl[j]:+.2f},{p[j]:.3f}\n")
-        out.append(f"[ss] courses: {int((p > 0.2).sum()):,} pairs with P > 0.2 -> {path}")
-    for j in order[:top]:
-        out.append(f"[ss]   {key(a[j])[:30]:30s} ~ {key(b[j])[:30]:30s} {m[j]:5.0f} m, "
-                   f"listed {100 * dl[j]:+.1f}%: P(one course) {p[j]:.2f}")
-    return out
-
-
 def modeGap(rows, a):
     D, idx = rows.build(rows.recent(a.seasons_back))
     tr = np.ones(D["y"].size, dtype=bool)
@@ -422,12 +352,6 @@ def modeGap(rows, a):
     for line in regionLines(R, D):
         print(line)
     os.makedirs(OUT_DIR, exist_ok=True)
-    for line in raceMixLines(R, D, idx, rows,
-                             os.path.join(OUT_DIR, f"distance_{str(rows.pack_date)}.csv")):
-        print(line)
-    for line in coursePairLines(R, D, idx, rows,
-                                os.path.join(OUT_DIR, f"courses_{str(rows.pack_date)}.csv")):
-        print(line)
     t1 = time.time()
     masks = ss.bridgeMasks(D)
     print(f"\n[ss] the bridges ({time.time() - t1:.0f}s); 'raced otherwise' = venues also "
@@ -662,8 +586,8 @@ def main():
     ap.add_argument("--kappa-profile", action="store_true")
     ap.add_argument("--era-years", type=int, default=0)
     ap.add_argument("--drop", default="", metavar="TERMS",
-                    help="terms to leave out, comma separated (dist_mix, course_tie, team_race, "
-                         "endurance, weather, era_walk ...): the same run without them, to price them")
+                    help="terms to leave out, comma separated (team_race, endurance, weather, "
+                         "era_walk ...): the same run without them, to price them")
     ap.add_argument("--era-walk", action="store_true",
                     help="a course number per season, tied by a fitted walk (replaces --era-years)")
     ap.add_argument("--weather", default=None, metavar="NPZ",

@@ -296,112 +296,6 @@ def _shrunkMean(code, n, num_w, den_w, prior_prec):
     return num / q, 1.0 / q, den
 
 
-def raceCandidates(race, dist, n_race):
-    """Per race, its listed distance (the median of its rows) and the
-    offsets of the standard distances it may really have been: (listed,
-    M (n_race, k) with NaN padding)."""
-    listed = np.zeros(n_race)
-    if dist is None:
-        return listed, np.full((n_race, 1), np.nan)
-    order = np.lexsort((dist, race))
-    r_s, d_s = race[order], dist[order]
-    lo = np.searchsorted(r_s, np.arange(n_race))
-    hi = np.searchsorted(r_s, np.arange(n_race), side="right")
-    has = hi > lo
-    listed[has] = d_s[(lo[has] + hi[has] - 1) // 2]
-    std = np.asarray(STD_DIST)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        lr = np.log(std[None, :] / listed[:, None])
-    ok = (listed[:, None] > 0) & (np.abs(lr) >= MIX_MIN_LOG) & (np.abs(lr) <= MIX_MAX_LOG)
-    M = np.where(ok, RIEGEL * lr, np.nan)
-    keep = ok.any(axis=0)
-    M = M[:, keep] if keep.any() else np.full((n_race, 1), np.nan)
-    return listed, M
-
-
-def _raceMix(code, n, num_w, den_w, prior_prec, sigma2, M, pi_mis):
-    """_shrunkMean for races under the distance mixture. Component 0 is the
-    ordinary effect u ~ N(0, sigma2 / prior_prec); component k is M[:, k]
-    plus u. Returns (posterior mean of the race's whole offset, its
-    variance / sigma2, den, P(mislabelled), the expected mislabel offset,
-    the posterior weights (n, 1 + k))."""
-    num = np.bincount(code, weights=num_w, minlength=n)
-    den = np.bincount(code, weights=den_w, minlength=n)
-    q = den + prior_prec
-    ok = den > 0
-    rbar = np.where(ok, num / np.where(ok, den, 1.0), 0.0)
-    s2 = sigma2 * (1.0 / np.where(ok, den, 1.0) + 1.0 / prior_prec)
-    mu = np.concatenate([np.zeros((n, 1)), np.nan_to_num(M, nan=0.0)], axis=1)
-    k_r = np.isfinite(M).sum(axis=1)
-    logp = np.full(mu.shape, -np.inf)
-    logp[:, 0] = np.log1p(-pi_mis)
-    avail = np.isfinite(M)
-    with np.errstate(divide="ignore"):
-        logp[:, 1:] = np.where(avail, np.log(pi_mis) - np.log(np.maximum(k_r, 1))[:, None], -np.inf)
-    # no candidate: all the prior on the ordinary effect
-    logp[k_r == 0, 0] = 0.0
-    ll = logp - 0.5 * (rbar[:, None] - mu) ** 2 / s2[:, None]
-    ll[~ok, 1:] = -np.inf                  # no rows: nothing to move it
-    ll[~ok, 0] = 0.0
-    ll -= ll.max(axis=1, keepdims=True)
-    p = np.exp(ll)
-    p /= p.sum(axis=1, keepdims=True)
-    vk = mu + (num[:, None] - den[:, None] * mu) / q[:, None]
-    v = np.sum(p * vk, axis=1)
-    vv = 1.0 / q + np.sum(p * (vk - v[:, None]) ** 2, axis=1) / sigma2
-    delta = np.sum(p[:, 1:] * mu[:, 1:], axis=1)
-    return v, vv, den, 1.0 - p[:, 0], delta, p
-
-
-def coursePairs(cell, grp, lat, lon, dist, n_cell):
-    """Candidate same-course pairs: (a, b, metres apart, band, delta), where
-    delta = RIEGEL ln(d_a / d_b) is what c_b - c_a would be were the two one
-    course. Per cell its place and listed distance are its rows' (first
-    finite place; median listed distance)."""
-    has = cell >= 0
-    c_lat = np.full(n_cell, np.nan); c_lon = np.full(n_cell, np.nan)
-    c_grp = np.zeros(n_cell, dtype=np.int64); c_dist = np.zeros(n_cell)
-    ok = has & np.isfinite(lat) & np.isfinite(lon)
-    c_lat[cell[ok]] = lat[ok]; c_lon[cell[ok]] = lon[ok]
-    c_grp[cell[has]] = grp[has]
-    if dist is not None:
-        o = np.lexsort((dist[has], cell[has]))
-        cs, ds = cell[has][o], dist[has][o]
-        lo = np.searchsorted(cs, np.arange(n_cell)); hi = np.searchsorted(cs, np.arange(n_cell), "right")
-        m = hi > lo
-        c_dist[m] = ds[(lo[m] + hi[m] - 1) // 2]
-    deg = PAIR_MAX_M / 111_000.0
-    placed = np.flatnonzero(np.isfinite(c_lat))
-    gy = np.floor(c_lat[placed] / deg).astype(np.int64)
-    gx = np.floor(c_lon[placed] / deg).astype(np.int64)
-    grid = {}
-    for i, y_, x_ in zip(placed, gy, gx):
-        grid.setdefault((y_, x_), []).append(i)
-    A, B = [], []
-    for (y_, x_), members in grid.items():
-        near = [j for dy in (-1, 0, 1) for dx in (-1, 0, 1) for j in grid.get((y_ + dy, x_ + dx), ())]
-        near = np.asarray(near)
-        for i in members:
-            cand = near[near > i]
-            if cand.size:
-                A.append(np.full(cand.size, i)); B.append(cand)
-    if not A:
-        z = np.zeros(0, dtype=np.int64)
-        return z, z, np.zeros(0), z, np.zeros(0)
-    a = np.concatenate(A); b = np.concatenate(B)
-    dy = (c_lat[b] - c_lat[a]) * 111_000.0
-    dx = (c_lon[b] - c_lon[a]) * 111_000.0 * np.cos(np.radians(0.5 * (c_lat[a] + c_lat[b])))
-    m_apart = np.hypot(dx, dy)
-    da, db = c_dist[a], c_dist[b]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ratio = np.where((da > 0) & (db > 0), np.maximum(da, db) / np.minimum(da, db), 1.0)
-        delta = np.where((da > 0) & (db > 0), RIEGEL * np.log(da / db), 0.0)
-    keep = (m_apart <= PAIR_MAX_M) & (c_grp[a] == c_grp[b]) & (ratio <= PAIR_MAX_RATIO)
-    a, b, m_apart, delta = a[keep], b[keep], m_apart[keep], delta[keep]
-    band = np.searchsorted(PAIR_BANDS_M, m_apart)
-    return a, b, m_apart, band, delta
-
-
 def cellMarginal(cell_of_day, n_cell, day, num_w, den_w, sigma2, s_w2_of_day):
     """Each cell's own estimate with its race days INTEGRATED OUT: per day
     the mean residual (course and day left in), variance sigma2 / den +
@@ -420,86 +314,6 @@ def cellMarginal(cell_of_day, n_cell, day, num_w, den_w, sigma2, s_w2_of_day):
     M = np.bincount(cd, weights=prec * md, minlength=n_cell)
     est = np.where(P > 0, M / np.where(P > 0, P, 1.0), 0.0)
     return est, np.where(P > 0, 1.0 / np.where(P > 0, P, 1.0), np.inf)
-
-
-def pairLinks(person, season, cell, rr, wt, a, b, n_cell):
-    """Same-runner evidence per candidate pair: for each runner who raced
-    both cells in one season, their mean residual (course left in) at b
-    less at a -- their own level cancels, so this is the two courses'
-    difference whatever the fit did to the levels. Returns per pair
-    (runners linking it, precision-weighted mean difference, its variance
-    in units of sigma2 from the rows alone)."""
-    if a.size == 0:
-        return np.zeros(0), np.zeros(0), np.zeros(0)
-    m = cell >= 0
-    key = (person[m].astype(np.int64) * 4096 + season[m] % 4096) * n_cell + cell[m]
-    u, inv = np.unique(key, return_inverse=True)
-    inv = inv.reshape(-1)
-    sw_ = np.bincount(inv, weights=wt[m]); sr = np.bincount(inv, weights=wt[m] * rr[m])
-    mean = sr / np.maximum(sw_, 1e-12)
-    ps, c_ = u // n_cell, u % n_cell                    # (person-season, cell), sorted
-    starts = np.flatnonzero(np.r_[True, ps[1:] != ps[:-1]])
-    sizes = np.diff(np.r_[starts, ps.size])
-    pair_key = a.astype(np.int64) * n_cell + b
-    order = np.argsort(pair_key); pk_sorted = pair_key[order]
-    n_link = np.zeros(a.size); num = np.zeros(a.size); prec = np.zeros(a.size)
-    for k in np.unique(sizes[sizes >= 2]):
-        st = starts[sizes == k]
-        i1, i2 = np.triu_indices(k, 1)
-        x = st[:, None] + i1[None, :]; y_ = st[:, None] + i2[None, :]
-        x, y_ = x.reshape(-1), y_.reshape(-1)
-        lo, hi = np.minimum(c_[x], c_[y_]), np.maximum(c_[x], c_[y_])
-        lo_i = np.where(c_[x] <= c_[y_], x, y_); hi_i = np.where(c_[x] <= c_[y_], y_, x)
-        pk = lo * n_cell + hi
-        j = np.searchsorted(pk_sorted, pk)
-        hit = (j < pk_sorted.size) & (pk_sorted[np.minimum(j, pk_sorted.size - 1)] == pk)
-        if not hit.any():
-            continue
-        idx = order[j[hit]]
-        d = mean[hi_i[hit]] - mean[lo_i[hit]]
-        pr = 1.0 / (1.0 / np.maximum(sw_[lo_i[hit]], 1e-12) + 1.0 / np.maximum(sw_[hi_i[hit]], 1e-12))
-        np.add.at(n_link, idx, 1.0); np.add.at(num, idx, pr * d); np.add.at(prec, idx, pr)
-    dbar = np.where(prec > 0, num / np.maximum(prec, 1e-12), 0.0)
-    return n_link, dbar, np.where(prec > 0, 1.0 / np.maximum(prec, 1e-12), np.inf)
-
-
-def _tieCourses(est, est_var, sigma2, tau2_of_cell, pairs, state):
-    """P(same course) per candidate pair, E-step on the cells' own
-    estimates with their days integrated out (cellMarginal); M-step for the
-    share of same-course pairs per band and the slack. Returns (P(same),
-    the tie weight in the units of a shrunk mean's precision)."""
-    a, b, _m, band, delta = pairs
-    if a.size == 0:
-        return np.zeros(0), np.zeros(0)
-    pi, slack2 = state["pi"], state["slack"] ** 2
-    # ★ ONLY RUNNERS WHO RACED BOTH SAY WHETHER THEY ARE ONE COURSE. A
-    #   pair nobody links (a high school course and a college course 300 m
-    #   apart, raced by different people) has a difference the fit cannot
-    #   see except through the levels it is fitting, and judged on the cell
-    #   estimates it merged 15-18 such pairs on the planted world. Unlinked,
-    #   a pair is reported and left untied. est: (n_link, dbar, var / sigma2,
-    #   day variance of the pair).
-    n_link, dbar, dvar, day_var = est
-    ok = n_link >= LINK_MIN
-    d = dbar
-    v0 = sigma2 * np.where(ok, dvar, 1e6) + day_var
-    s_same = v0 + slack2
-    s_diff = v0 + tau2_of_cell[a] + tau2_of_cell[b]
-    with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
-        l_same = np.log(pi[band]) - 0.5 * np.log(s_same) - 0.5 * (d - delta) ** 2 / s_same
-        l_diff = np.log1p(-pi[band]) - 0.5 * np.log(s_diff) - 0.5 * d ** 2 / s_diff
-        p = 1.0 / (1.0 + np.exp(np.clip(l_diff - l_same, -50, 50)))
-    p = np.where(ok, p, 0.0)
-    for k in range(len(PAIR_BANDS_M)):
-        mk = ok & (band == k)
-        if mk.sum() >= 5:
-            pi[k] = float(np.clip(p[mk].mean(), 1e-3, 0.999))
-    # the slack: how far two keys of one course stray (era, a moved start)
-    w = p * ok
-    if w.sum() > 5:
-        slack2 = float(max(np.sum(w * ((d - delta) ** 2 - v0)) / w.sum(), 1e-6))
-    state["pi"], state["slack"] = pi, np.sqrt(slack2)
-    return p, sigma2 * p / slack2            # P(same), tie weight in the units of q
 
 
 def eraCells(D):
@@ -528,7 +342,7 @@ def eraPairs(cell_course, cell_season):
 def eraStep(est, est_var, a, b, gap, q_prev):
     """The course's walk variance per season, by moments on the cells' own
     estimates (days integrated out): E (c_b - c_a)^2 = q gap + var_a + var_b.
-    ! NOT FROM THE TIED ESTIMATES: a tie pulls the two together, the next
+    ! NOT FROM THE TIED ESTIMATES: a tie pulls two seasons together, the next
     step reads less drift, ties harder, and the walk collapses to zero."""
     ok = np.isfinite(est_var[a]) & np.isfinite(est_var[b])
     if ok.sum() < 10:
@@ -881,43 +695,6 @@ BREAK_BINS = (21.0, 45.0, 90.0)
 EVENT_EDGES = (1000.0, 2000.0, 4000.0, 7000.0)   # classes; 1000-2000 is the pin
 PIN_PHASE = 60.0           # 1 October: the season curve's zero
 SEASON_CLOSED_DAYS = 21.0  # run_joint's: a season raced in more recently may still be running
-# ★ A DISTANCE IS NEVER PICKED (owner, 2026-10-24: "estimate how far off each
-#   race might be and let that feed the ratings, instead of changing
-#   distances"). Under terms "dist_mix" a race's offset is a mixture: the
-#   ordinary race effect, or the ordinary effect plus the offset of one of
-#   the distances a race listed at its distance is commonly mislabelled
-#   from (a 5000 that was 3 miles, a 6000 that was 8000, a 3200 that was
-#   3000). Each race gets posterior weights over those, learned with the
-#   share of mislabelled races by EM, and the rating carries the weighted
-#   offset -- so a race that is probably 3 miles is rated mostly as 3
-#   miles, and one that may or may not be gives a rating between.
-#   Candidates are the standard distances 3% to 2x away from the listed
-#   one; closer than 3% is a course's own length, the course's business.
-STD_DIST = (1500.0, 1600.0, 2000.0, 3000.0, 3200.0, 4000.0, 4828.0, 5000.0,
-            6000.0, 6437.0, 8000.0, 10000.0)
-MIX_MIN_LOG, MIX_MAX_LOG = 0.03, np.log(2.0)
-# time goes as distance^1.06 near these distances (Riegel); the row was
-# normalised from the listed distance, so a race really d' long reads
-# RIEGEL * ln(d' / listed) slow
-RIEGEL = 1.06
-MIX_START = 0.01           # the share of mislabelled races, EM's start
-# ★ ONE COURSE UNDER TWO KEYS, WEIGHED, NEVER MERGED (owner, 2026-10-24:
-#   "same course under different names or listed distances (the Mt SAC
-#   4715/4828 kind of thing), done from the data, not hand rules"). Under
-#   terms "course_tie" every pair of cells of one surface whose places lie
-#   within PAIR_MAX_M is a candidate. If they are one course, their
-#   numbers differ by exactly what their listed distances say,
-#   RIEGEL ln(d_a / d_b), give or take a small slack; if they are two
-#   courses, by two independent draws. Each pair gets P(same) from its
-#   cells' own data, the share of same-course pairs is learned per band of
-#   distance apart (so how much "200 m apart" means is the data's call),
-#   and a pair is tied in proportion to P(same). PAIR_MAX_M only bounds
-#   the search.
-PAIR_MAX_M = 3000.0
-PAIR_BANDS_M = (100.0, 400.0, 1500.0, PAIR_MAX_M)
-PAIR_MAX_RATIO = 1.35      # listed distances further apart are other loops
-TIE_START = dict(pi=0.2, slack=0.005)
-LINK_MIN = 3               # runners who raced both cells in one season, for a pair to be judged
 # ★ THE WEATHER, FITTED (terms "weather", D["wx_temp"/"wx_wind"/"wx_wet"]):
 #   per surface (XC, outdoor track) a hat basis in apparent temperature
 #   with its zero at the cool optimum, a slope in wind and one in wet
@@ -1285,15 +1062,8 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
     wrow = np.ones(n)
     th = np.full(n, np.median(y[train])); be = np.zeros(n); vth = np.full(n, 0.01)
     feats = sharedFeatures(D)
-    mix = "dist_mix" in terms and nested
     two_piece = "two_piece" in terms
     side_s2 = np.array([P["sigma2"], P["sigma2"]])     # fast, slow
-    delta = np.zeros(n_race); p_mis = np.zeros(n_race); pi_mis = MIX_START
-    listed, Mc = raceCandidates(race, D.get("dist_m"), n_race) if mix else (None, None)
-    p_comp = None
-    tie = "course_tie" in terms and "lat" in D
-    pairs = (coursePairs(cell, grp, D["lat"], D["lon"], D.get("dist_m"), n_cell) if tie
-             else None)
     # ★ A COURSE'S NUMBER WALKS FROM SEASON TO SEASON (terms "era_walk",
     #   D["cell_course"] / D["cell_season"] per cell): a cell per (course,
     #   season), each tied to the course's previous season by a walk whose
@@ -1303,15 +1073,8 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
     q_era = 0.005 ** 2
     if era:
         ea, eb, egap = eraPairs(np.asarray(D["cell_course"]), np.asarray(D["cell_season"]))
-        if tie:
-            # a course's own seasons are the walk's business, not a pair's
-            cc = np.asarray(D["cell_course"])
-            k_ = cc[pairs[0]] != cc[pairs[1]]
-            pairs = tuple(x[k_] for x in pairs)
-    tie_state = dict(pi=np.full(len(PAIR_BANDS_M), TIE_START["pi"]), slack=TIE_START["slack"])
     day_cell_t = np.full(n_day, -1, dtype=np.int64)       # a venue-day's cell, -1 for none
     day_cell_t[day[has_cell]] = cidx[has_cell]
-    p_same = np.zeros(0); pair_links = np.zeros(0)
     # ★ THE RUNNER'S OWN DISTANCE CURVE (terms "endurance"): eta_p, how much
     #   slower than the population's curve this runner gets per unit of
     #   ln(distance / 5000) -- a miler's 3200 normalised to 5000 reads
@@ -1481,43 +1244,22 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
         r = base - h * (w[day] + v[race])
         c, vc, cden = _shrunkMean(cidx, n_cell, np.where(has_cell, ww * h * r, 0.0),
                                   np.where(has_cell, ww * h * h, 0.0), sigma2 / tau2[cell_grp])
-        if tie or era:
+        if era:
             cq = cden + sigma2 / tau2[cell_grp]
             rr = base - h * v[race]
             est, est_var = cellMarginal(day_cell_t, n_cell, day,
                                         np.where(has_cell, ww * h * rr, 0.0),
                                         np.where(has_cell, ww * h * h, 0.0), sigma2,
                                         s_w2[day_grp] / lam_w)
-            ta, tb, td, tw = [], [], [], []
-            if tie:
-                links = pairLinks(D["person"], D["season"], np.where(has_cell, cidx, -1), rr,
-                                  ww * h * h, pairs[0], pairs[1], n_cell)
-                # day noise the linked rows share: a day's effect is one draw
-                # for every runner on it, so it does not average out over runners
-                dv = s_w2[cell_grp] * (1.0 / np.maximum(cell_days, 1))
-                p_same, W = _tieCourses(links + (dv[pairs[0]] + dv[pairs[1]],), None, sigma2,
-                                        tau2[cell_grp], pairs, tie_state)
-                pair_links = links[0]
-                ta.append(pairs[0]); tb.append(pairs[1]); td.append(pairs[4]); tw.append(W)
-            if era:
-                q_era = eraStep(est, est_var, ea, eb, egap, q_era)
-                ta.append(ea); tb.append(eb); td.append(np.zeros(ea.size))
-                tw.append(sigma2 / (q_era * egap))
-            c, vc = _tiedMeans(c * cq, cq, np.concatenate(ta), np.concatenate(tb),
-                               np.concatenate(td), np.concatenate(tw), c)
+            q_era = eraStep(est, est_var, ea, eb, egap, q_era)
+            c, vc = _tiedMeans(c * cq, cq, ea, eb, np.zeros(ea.size), sigma2 / (q_era * egap), c)
         r = base - h * (np.where(has_cell, c[cidx], 0.0) + v[race])
         w, vw, wden = _shrunkMean(day, n_day, ww * h * r, ww * h * h,
                                   sigma2 * lam_w / s_w2[day_grp])
         if nested:
             r = base - h * (np.where(has_cell, c[cidx], 0.0) + w[day])
-            if mix:
-                v, vv, vden, p_mis, delta, p_comp = _raceMix(
-                    race, n_race, ww * h * r, ww * h * h,
-                    sigma2 * lam_v / s_v2[race_grp], sigma2, Mc, pi_mis)
-                pi_mis = float(np.clip(np.mean(p_mis[vden > 0]), 1e-4, 0.3))
-            else:
-                v, vv, vden = _shrunkMean(race, n_race, ww * h * r, ww * h * h,
-                                          sigma2 * lam_v / s_v2[race_grp])
+            v, vv, vden = _shrunkMean(race, n_race, ww * h * r, ww * h * h,
+                                      sigma2 * lam_v / s_v2[race_grp])
         # ★ EACH GROUP'S COURSES, DAYS AND RACES AVERAGE ZERO. Their prior
         #   mean is zero, but a block step can still slide every XC cell by
         #   +d while mu_XC slides -d (the same rows, the same fit); the
@@ -1534,10 +1276,9 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
             if md.any():
                 w[md] -= w[md].mean()
             if nested:
-                # the ordinary part only: a mislabel is not a race-day effect
                 mr = (race_grp == g) & (vden > 0)
                 if mr.any():
-                    v[mr] -= (v[mr] - delta[mr]).mean()
+                    v[mr] -= v[mr].mean()
         Dsum = np.where(has_cell, c[cidx], 0.0) + w[day] + v[race]
         if team_on and n_rt:
             r = base_all - h * Dsum
@@ -1641,12 +1382,11 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
             if nested:
                 mr = (race_grp == g) & (vden > 0) & (day_races[race_day] >= 2)
                 if mr.sum() >= 10:
-                    u = v[mr] - delta[mr]
-                    s_v2[g] = max(np.mean(lam_v[mr] * (u ** 2 + sigma2 * vv[mr])), 1e-8)
+                    s_v2[g] = max(np.mean(lam_v[mr] * (v[mr] ** 2 + sigma2 * vv[mr])), 1e-8)
         if heavy:
             lam_w = (NU_DAY + 1.0) / (NU_DAY + w ** 2 / s_w2[day_grp])
             if nested:
-                lam_v = (NU_DAY + 1.0) / (NU_DAY + (v - delta) ** 2 / s_v2[race_grp])
+                lam_v = (NU_DAY + 1.0) / (NU_DAY + v ** 2 / s_v2[race_grp])
         if verbose and (it % 5 == 0 or it == outer - 1):
             pk = b[blocks["peak"][0]]
             rc = b[blocks["recovery"]]
@@ -1692,22 +1432,6 @@ def fitGLS(D, train, outer=30, fix_mu=None, nested=True, heavy=True,
         out.update(eta=eta, eta_sd=float(np.sqrt(s_eta2)), endurance_row=en)
     if team_on:
         out.update(team_sd=float(np.sqrt(s_t2)), team_row=tmr, n_team_races=n_rt)
-    if tie:
-        a_, b_, m_, band_, delta_ = pairs
-        out.update(pair_a=a_, pair_b=b_, pair_m=m_, pair_delta=delta_, pair_p=p_same,
-                   pair_links=pair_links,
-                   pair_pi=tie_state["pi"], pair_slack=tie_state["slack"])
-    if mix:
-        # per race: P(not the listed distance), the expected offset, and --
-        # for the owner's list only, never applied -- the likeliest other
-        # distance and its weight
-        best = np.argmax(p_comp[:, 1:], axis=1) if p_comp.shape[1] > 1 else np.zeros(n_race, int)
-        with np.errstate(invalid="ignore"):
-            alt = listed * np.exp(np.take_along_axis(np.nan_to_num(Mc), best[:, None], 1)[:, 0] / RIEGEL)
-        out.update(race_p_mis=p_mis, race_delta=delta, race_listed=listed,
-                   race_alt_dist=alt, race_alt_p=np.take_along_axis(p_comp[:, 1:], best[:, None], 1)[:, 0]
-                   if p_comp.shape[1] > 1 else np.zeros(n_race),
-                   pi_mis=pi_mis)
     for nm in ("mu_XC", "mu_in", "lam_XC", "lam_in"):
         out[nm + "_se"] = float(se[blocks[nm][0]]) if nm in blocks else 0.0
     # ★ EACH LEVEL READ AT ITS OWN TYPICAL RUNNER. With the slope in

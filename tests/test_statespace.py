@@ -126,57 +126,6 @@ def _packFromWorld(D, path):
              team=D["team"].astype(np.int32))
 
 
-def test_a_mislabelled_race_is_rated_at_its_likely_distance_never_relabelled():
-    """5% of divisions ran another distance than listed (a 5000 that was 3
-    miles, a 1600 that was 2000). The mixture flags them, finds the right
-    distance for most, and the ratings of their runners come back close;
-    the listed distance is never changed."""
-    D = sw.worldHard(seed=3, n_regions=6, schools=12, mislabel_p=0.05)
-    listed = D["dist_m"].copy()
-    allr = np.ones(D["y"].size, dtype=bool)
-    terms = ("peak", "recovery", "event", "mu_by_level")
-    mis, bad, xc = D["mislabel"], D["bad_race"], D["group"] == ss.GROUP_XC
-
-    def p90(R):
-        err = R["perf"] - D["truth_perf"]
-        err = err - np.median(err[~bad & ~xc & ~mis])
-        return np.percentile(np.abs(err[mis]), 90), np.median(np.abs(err[~bad & ~mis]))
-    t_only = p90(ss.fitGLS(D, allr, outer=15, terms=terms))
-    R = ss.fitGLS(D, allr, outer=15, terms=terms + ("dist_mix",))
-    mixed = p90(R)
-    assert np.array_equal(D["dist_m"], listed)
-    assert mixed[0] < 0.7 * t_only[0]                 # the mislabelled rows' tail
-    assert mixed[1] < t_only[1] + 0.0005              # and nothing else pays for it
-    nr = R["race_p_mis"].size
-    rm = np.bincount(D["race"], weights=mis.astype(float), minlength=nr) > 0
-    rb = np.bincount(D["race"], weights=bad.astype(float), minlength=nr) > 0
-    seen = np.bincount(D["race"], minlength=nr) > 0
-    flagged = (R["race_p_mis"] > 0.5) & seen
-    assert (flagged & rm).sum() > 0.6 * rm.sum()
-    assert (flagged & ~rm & ~rb).sum() < 0.005 * (seen & ~rm & ~rb).sum()
-    true_d = np.bincount(D["race"], weights=D["true_dist"], minlength=nr) / np.maximum(
-        np.bincount(D["race"], minlength=nr), 1)
-    right = np.abs(R["race_alt_dist"] - true_d) < 50
-    assert right[flagged & rm].mean() > 0.85
-
-
-def test_one_course_under_two_keys_is_found_from_runners_and_nearby_courses_are_not():
-    """Some meets key a course under a second name, half of them listed at
-    4828 for the same 5000; some different courses sit 150-600 m from
-    another. Pairs are judged on runners who raced both: the aliases are
-    found, and no nearby different course is tied."""
-    D = sw.worldHard(seed=2, n_regions=24, schools=8, alias_p=0.15, near_p=0.3)
-    terms = ("peak", "recovery", "event", "mu_by_level", "course_tie")
-    R = ss.fitGLS(D, np.ones(D["y"].size, dtype=bool), outer=12, terms=terms)
-    a, b, p = R["pair_a"], R["pair_b"], R["pair_p"]
-    tcell = np.zeros(D["cell"].max() + 1, dtype=np.int64)
-    tcell[D["cell"]] = D["truth_cell"]
-    same = tcell[a] == tcell[b]
-    assert same.sum() > 20 and (~same).sum() > 5
-    assert (p[same] > 0.5).mean() > 0.8
-    assert (p[~same] > 0.5).sum() == 0
-
-
 def test_a_courses_number_walks_and_the_walk_is_measured():
     """Each course drifts 0.8% a season (and is now and then re-routed): a
     cell per course-season tied by a walk finds about that drift and
@@ -301,4 +250,3 @@ def test_ss_eval_runs_on_a_pack_shaped_file(tmp_path):
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     assert "weather" in r.stdout.split("[ss] terms:")[1].splitlines()[0]
     assert "era_walk" in r.stdout and "endurance" not in r.stdout.split("[ss] terms:")[1].splitlines()[0]
-    assert "[ss] distance:" in r.stdout and "[ss] courses:" in r.stdout
