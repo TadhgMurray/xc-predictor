@@ -10969,7 +10969,7 @@ def _predictSource(cur, meet_id, sport, alt=None, div_id=None):
 #   meet is the posted one and the feed is the answer with no index.
 # ! ONLY THE FEED NAMES (anet, tfrrs, and upload since 2026-10-10). Anything else is ignored, never echoed, and a
 #   link without it resolves exactly as before.
-_FEEDS = ("anet", "tfrrs", "upload")   # + the owner-approved uploads (2026-10-10)
+_FEEDS = ("anet", "tfrrs", "upload", "timer")   # + approved uploads (2026-10-10), timer meets (2026-10-25)
 
 
 def _feedPin(cur, meet_id, sport, hint, src, alt_idx):

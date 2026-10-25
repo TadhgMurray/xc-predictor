@@ -120,10 +120,11 @@ ev AS (
     -- ★ AND AN UPLOADED RACE'S DIVISION (2026-10-10): racecast/uploads.py
     --   writes an anet-shaped meets row per race, source 'upload', the
     --   gender in its division ("Girls Varsity"); an uploaded runner has no
-    --   athletes profile, so the label is the only vote they bring
+    --   athletes profile, so the label is the only vote they bring. A timer
+    --   meet (sources/promote.py, source 'timer', 2026-10-25) is the same shape
     LEFT   JOIN meets m        ON m.div_id = r.div_id
                               AND (r.source = 'anet'
-                                   OR (r.source = 'upload' AND m.source = 'upload'))
+                                   OR (r.source IN ('upload', 'timer') AND m.source = r.source))
     LEFT   JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id AND r.source = 'tfrrs'
     WHERE  r.person_id IS NOT NULL
     UNION ALL

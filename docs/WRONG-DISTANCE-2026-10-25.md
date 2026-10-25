@@ -61,7 +61,10 @@ not used.
 | other years here | same venue, label and level: this year's raw median is 8%+ off the same way |
 | raw pace | the field median is in the fastest 3% (or slowest 3%) of fields at its level, at the listed distance |
 
-**high** = 4+ points, **medium** = 3, **low** = 2 or fewer.
+**high** = 4+ points, **medium** = 3, **low** = 2 or fewer. Confidence is
+reported and orders the list. It does **not** decide whether a downward pin
+is written (owner, 2026-10-25: "the main thing isn't confidence but that you
+don't overestimate the distance"; see §3).
 
 Runners with too few other races (one-meet middle schoolers) can't testify. A
 division with too few referenced runners is judged on raw pace alone, and
@@ -89,9 +92,18 @@ have to run about 20% faster than its own season, which no fast day does.
 `normalized = raw * (5000/d)^1.06`, so a stored distance LONGER than the truth
 **overrates**.
 
+- **Never a distance longer than the times say.** Whatever is written sits
+  at most 2% (the estimate's noise) above the distance the field's times
+  imply. If the nearest real distance is longer than that, the next real one
+  below is used. If there is none within 5% below, nothing is written and the
+  race is listed.
 - **Down (listed too long, field fast)**: the case this system is for.
-  `high` → `pin` (written automatically), `medium` → `pin?` (waits for the
-  owner), `low` → review.
+  **`pin`, written automatically, at any confidence**, once the bars hold:
+  a 12%+ move onto a real distance, 70%+ of the field the same way, and 10+
+  runners with other races. A downward pin only lowers ratings, and never
+  below what the times say.
+  - A venue where **every** day reads 20% fast is pinned too. No course is
+    that fast, so the label is wrong every year.
 - **Up (listed too short, field slow)**: these runners are already
   **underrated**, which is safe. Raising the distance raises ratings, so it
   is **never written automatically**. The harm a too-short label does to
@@ -99,8 +111,11 @@ have to run about 20% faster than its own season, which no fast day does.
   and everyone else there gets too much credit (Al Shirley 2026). So the
   action is **`novote`**: keep the listed distance and stop the division
   voting on the course. `pin-up?` (owner only) needs `high` plus a sibling
-  stored at, or venue history of, the proposed distance, and the candidate
-  can't sit more than 2% above the field's implied distance.
+  stored at, or venue history of, the proposed distance.
+  - Except at a venue where **every** day reads slow. That is a hard course
+    far more often than a label that's wrong every year (Steens Mountain
+    +41%), and novote on all of them would leave the course no difficulty.
+    Listed only.
 - **Ambiguous candidates** (two within the 5% snap, e.g. 4828 and 5000):
   the one the meet or venue actually runs. Otherwise, or if it runs both, the
   **lower** one, which gives the lower rating.
@@ -176,8 +191,9 @@ A Postgres table, written only by this system (and by the owner through it):
 
 1. **Every run re-judges every active pin** from the raw-time evidence at
    the **listed** distance. Pinning doesn't change that evidence, so a
-   correct pin keeps getting confirmed. One to keep needs 3 points, one below
-   the 4 needed to write it, so a pin doesn't flap on a run-to-run wobble.
+   correct pin keeps getting confirmed. To stay, a pin needs a field 6%+ off
+   (8% to write one) and must still be no longer than the times say, so it
+   doesn't flap on a run-to-run wobble.
    When the evidence no longer supports it, the pin is retired with the
    reason logged, and the division goes back to its listed distance on that
    run's backfill.
@@ -199,7 +215,7 @@ A Postgres table, written only by this system (and by the owner through it):
 | `data_checks.py` race_field **pins** + the sticky block (`_DISTANCE_PIN_FIELD`, `_DISTANCE_PIN_FIELD_TFRRS`) | **replaced.** race_field keeps its rating-gap *listing* (it also catches non-distance faults); it no longer pins. The 229 remaining pins are judged once and moved into the table (or vetoed). |
 | `data_checks.py` venue_label | **deleted.** Report-only already; `small_label` covers it. |
 | `gender_pace_pin.py` (04g0) | **replaced** by `novote` / `pin-up?` (§3). Step removed. |
-| `audit_overrides.py` (04g): removes overrides the field rejects; CSV proposals | **replaced.** Every `dist_override` entry is judged by the same evidence (finder: "EXISTING OVERRIDES"). A generated override the field contradicts at high confidence gets a `veto` row. A **hand-written** one (`_DISTANCE_OVERRIDES_XC`) is only listed, for the owner. |
+| `audit_overrides.py` (04g): removes overrides the field rejects; CSV proposals | **replaced.** Every `dist_override` entry is judged by the same evidence (finder: "EXISTING OVERRIDES"). An override **longer** than the times say (it overrates) is replaced automatically, whoever wrote it. One **shorter** than the times say (it underrates by 5%+) is replaced if generated, and **listed** for the owner if hand-typed (`_DISTANCE_OVERRIDES_XC`). It is replaced by this system's pin, or by the listed distance when the times say that is right (a `veto` row). If neither fits, it stays and is listed. |
 | `propose_distances.py` (DIST_PROPOSED), `distance_repair.py`, `distance_pin.py`, `kill_bad_overrides.py`, `rebuild_overrides.py` (manual, not in the pipeline) | **retired as writers** (code left in place; a guard stops `--write`). Their past entries stay in corrections.py, frozen, and are judged like any override until each is moved into the table or vetoed. Then those dicts can go. |
 | `bad_distance.py`, `impossible_distance.py`, `scripts/why_*` | read-only diagnostics, kept. `wrong_distance.py --explain MEET/DIV` is the distance diagnostic. |
 | `dump_overrides.py` (04g2) | **kept**: still the one materialiser of `dist_override`, plus the pins, vetoes and novote. |
@@ -220,13 +236,12 @@ That's one writer of distance corrections instead of five.
    a scratch Postgres (synthetic corpus with planted faults; already used
    by the finder's test).
 
-## 9. Three decisions for the owner
+## 9. Owner's decisions (2026-10-25)
 
-1. **Auto-write only `high` downward pins**, with `medium` waiting for your
-   OK? (Recommended.)
-2. **Upward: `novote` only, never raise a distance automatically?**
-   (Recommended. The runners stay underrated, but no one else is overrated
-   through the course.)
-3. **Hand-written overrides the field contradicts: list them for you, don't
-   veto automatically?** (Recommended. Generated ones are vetoed
-   automatically.)
+1. **Confidence doesn't gate a pin. Never a distance longer than the times
+   say.** Downward pins are written at any confidence once the bars in §2
+   hold, never above the field's implied distance (§3).
+2. **Upward: `novote` only.** A distance is never raised automatically.
+3. **Overrides follow the same rule.** One longer than the times say is
+   replaced, whoever typed it. One shorter than the times say is replaced if
+   a script wrote it, and listed for the owner if a person typed it.

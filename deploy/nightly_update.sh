@@ -189,6 +189,13 @@ if [ "$SCRAPE" -eq 1 ]; then
     scrape scrape_anet "$PY" -u scripts/launcher.py &
     pa=$!
   fi
+  # ★ TFRRS'S HIGH SCHOOL STATE SITES FIRST (2026-10-25): the newest meets
+  #   on fl. / indiana.tfrrs.org's lists (3 index pages each, ~6 requests),
+  #   kept in tfrrs_hs_meets for 04a pass 2b, and any of the last 30 days
+  #   with no rows queued for the scrape below. XCP_NIGHTLY_TFRRS_HS=0 skips.
+  if [ "${XCP_NIGHTLY_TFRRS_HS:-1}" != "0" ]; then
+    step 01_tfrrs_hs "$PY" -u -m sources.tfrrs_hs refresh --pages 3 --since-days 30 --out "$LOGDIR/tfrrs_hs_index.csv"
+  fi
   scrape scrape_tfrrs "$PY" -u tfrrs/driver/launch_tfrrs.py &
   pb=$!
   [ -n "${pa:-}" ] && wait "$pa"; wait "$pb"

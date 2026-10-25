@@ -36,14 +36,26 @@ def test_a_5k_listed_as_6k_is_pinned_down_with_corroboration():
     assert v["action"] == "pin" and v["confidence"] == "high"
 
 
-def test_the_field_alone_is_not_enough_to_pin():
-    # Miner 2007's shape: one race, no siblings, no venue history
+def test_confidence_does_not_gate_a_downward_pin():
+    # Miner 2007's shape: one race, no siblings, no venue history. Pinned,
+    # and since nothing says 5000 rather than 3 miles, to the lower of the two
     v = WD.judge(_div(6000, _x(5000, 6000)), {})
-    # nothing says 5000 rather than 3 miles: the lower of the two
-    assert v["proposed"] == 4828.0 and v["action"] == "review"
-    # ... plus an impossible pace for the level: still only "pin?"
-    v = WD.judge(_div(6000, _x(5000, 6000), pace=0.01), {})
-    assert v["action"] == "pin?"
+    assert (v["proposed"], v["action"], v["confidence"]) == (4828.0, "pin", "low")
+    # but not on a handful of runners
+    v = WD.judge(_div(6000, _x(5000, 6000), n=8), {})
+    assert v["action"] == "review" and "only 8 runners" in v["evidence"]
+
+
+def test_never_a_distance_longer_than_the_times_say():
+    # implied 4700: 4828 sits 2.7% above it, and nothing real is just below
+    v = WD.judge(_div(6000, _x(4700, 6000)), {"venue_meets": [0.0, 0.0]})
+    assert v["action"] == "review" and "longer than the times say" in v["evidence"]
+    # implied 4750: 4828 is within the estimate's noise
+    v = WD.judge(_div(6000, _x(4750, 6000)), {"venue_meets": [0.0, 0.0]})
+    assert (v["action"], v["proposed"]) == ("pin", 4828.0)
+    # the venue's own 5000 wins a tie only when the times reach it
+    v = WD.judge(_div(6000, _x(4880, 6000)), {"venue_labels": [5000.0]})
+    assert v["proposed"] == 4828.0
 
 
 def test_label_differences_are_never_acted_on():
@@ -53,7 +65,6 @@ def test_label_differences_are_never_acted_on():
         v = WD.judge(_div(listed, _x(true, listed) - 0.06),   # and a fast day on top
                      {"venue_meets": [0.0, 0.0], "venue_labels": [4715.0]})
         assert v["action"] in ("ignore", "review"), (true, listed, v)
-        assert v["action"] != "pin"
     # a championship field 3% fast at a true 4828 is nothing at all
     v = WD.judge(_div(4828, -0.03), {"venue_meets": [0.0, 0.01]})
     assert v["kind"] is None
@@ -70,11 +81,17 @@ def test_a_hard_course_is_the_course_not_the_label():
     assert v["proposed"] == 5000.0 and v["direction"] == "down"
 
 
-def test_a_venue_whose_every_race_is_off_is_listed_not_used():
+def test_a_venue_whose_every_race_is_off_is_not_a_baseline():
+    # every day here reads 20% fast: no course runs that fast, the label is
+    # wrong every year. Not used to excuse this race; it is pinned down (it
+    # only lowers a distance) and the evidence says the whole venue reads so
     v = WD.judge(_div(5000, -0.20), {"venue_meets": [-0.20, -0.19, -0.21]})
-    # the baseline is not used: the race itself is judged against nothing
-    assert v["proposed"] == 4000.0 and "venue reads" in v["evidence"]
-    assert v["action"] != "pin"          # the field alone, plus nothing
+    assert (v["proposed"], v["action"]) == (4000.0, "pin")
+    assert "venue reads" in v["evidence"]
+    # the same venue reading 20% SLOW is a hard course or a short label:
+    # never raised, at most listed
+    v = WD.judge(_div(5000, 0.20), {"venue_meets": [0.20, 0.19, 0.21]})
+    assert v["action"] == "review"
 
 
 def test_upward_is_never_a_pin():
@@ -128,13 +145,17 @@ def test_a_field_without_other_races_speaks_only_through_its_pace():
 
 
 def test_existing_overrides_are_judged_by_the_field():
-    # Hole in the Wall 2022: a true 5000 "corrected" to 4506
-    assert WD.overrideVerdict(5000, 4506, 5000.0, 300)[0] == "drop?"
+    # Hole in the Wall 2022: a true 5000 "corrected" to 4506. It underrates:
+    # a generated one is replaced, a hand-typed one is listed for the owner
+    assert WD.overrideVerdict(5000, 4506, 5000.0, 300)[0] == "replace"
+    assert WD.overrideVerdict(5000, 4506, 5000.0, 300, hand=True)[0] == "list"
+    # longer than the times say overrates: replaced whoever typed it
+    act, why = WD.overrideVerdict(6000, 5000, 4000.0, 40, hand=True)
+    assert act == "replace" and "overrates" in why
+    act, why = WD.overrideVerdict(5000, 8000, 5000.0, 40, hand=True)
+    assert act == "replace" and "RAISES" in why
     # a right one
-    assert WD.overrideVerdict(6000, 5000, 5050.0, 40)[0] == "keep"
-    # a raise is named as one
-    act, why = WD.overrideVerdict(5000, 8000, 5000.0, 40)
-    assert act == "drop?" and "RAISES" in why
+    assert WD.overrideVerdict(6000, 5000, 5050.0, 40, hand=True)[0] == "keep"
     assert WD.overrideVerdict(5000, 4000, None, 2)[0] == "unjudged"
 
 
@@ -300,15 +321,16 @@ def test_the_finder_on_a_synthetic_corpus(scratch):
 
         # the championship 3% fast and the 2.93 mile course are never acted on
         champ = got.get(faults["champ"])
-        assert champ is None or champ["action"] not in ("pin", "pin?"), champ
+        assert champ is None or champ["action"] != "pin", champ
         small = [v for k, v in got.items() if k[0] == faults["small"][0]]
-        assert all(v["action"] not in ("pin", "pin?") for v in small)
+        assert all(v["action"] != "pin" for v in small)
 
         v = got[tuple(bad)]
-        assert v["override_verdict"][0] == "drop?", v
+        assert v["override_verdict"][0] == "replace", v
+        assert "-> the listed 5000" in v["override_verdict"][1], v
 
         # nothing else in the corpus is pinned
-        pinned = {k for k, v in got.items() if v["action"] in ("pin", "pin?")}
+        pinned = {k for k, v in got.items() if v["action"] == "pin"}
         assert pinned == {faults["wrong6k"]}, [got[k]["evidence"] for k in pinned]
 
         WD.report(verdicts, top=10)
