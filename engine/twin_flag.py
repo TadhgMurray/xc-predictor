@@ -34,7 +34,8 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
                   the same time (XC within a second, track to the
                   hundredth): one race under two names with no canon link
                   (2026-10-06, the UVU pair).
-    twin_upload   an uploaded row (racecast/uploads.py, source 'upload')
+    twin_upload   an uploaded row (racecast/uploads.py, source 'upload'),
+                  or a timing company's (sources/promote.py, source 'timer'),
                   that a scraped feed also has: same day, same time, and the
                   same person, name or school (2026-10-10; see
                   twinUploadSql). The feed's copy survives.
@@ -267,6 +268,11 @@ def twinRaceRestSql(table, sport):
 #     uploaded copy is the one flagged. Nothing is deleted (this file's rule),
 #     so the owner's approval of the upload stays on record.
 UPLOAD_PARTNERS = ("anet", "tfrrs")
+# ★ AND A TIMING COMPANY'S MEET (2026-10-25). sources/promote.py writes a
+#   timer meet no feed had in the upload's shape, source 'timer'. Meet-level
+#   dedup (sources/dedup.py) keeps out the races a feed already has; this is
+#   the net under it, for a feed that posts the race later.
+FLAGGED_SOURCES = ("upload", "timer")
 
 
 def uploadTwins(uploads, scraped):
@@ -310,13 +316,14 @@ def twinUploadSql(table, sport):
         match = "round(u.ts::numeric, 2) = round(s.ts::numeric, 2)"
     keep_r = keep.replace("is_relay", "r.is_relay").replace("is_field", "r.is_field")
     feeds = ", ".join(f"'{f}'" for f in UPLOAD_PARTNERS)
+    flagged = ", ".join(f"'{f}'" for f in FLAGGED_SOURCES)
     return f"""
         WITH u AS (
             SELECT result_id, person_id, substr(date, 1, 10) AS d, time_seconds AS ts,
                    NULLIF({nameKeyTextSql('athlete_name')}, '') AS nm,
                    {_schoolWordsSql('school')} AS sw
             FROM   {table}
-            WHERE  source = 'upload'
+            WHERE  source IN ({flagged})
               AND  time_seconds > 0 AND time_seconds < 100000
               AND  date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}' {keep}),
         s AS (

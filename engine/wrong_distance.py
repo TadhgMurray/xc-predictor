@@ -80,7 +80,12 @@ STANDARD = (1609.0, 2000.0, 2414.0, 3000.0, 3218.0, 4000.0, 4828.0, 5000.0,
             6000.0, 6437.0, 8000.0, 10000.0)
 SNAP_TOL = 0.05          # |ln(implied / candidate)|
 BIG_MOVE = math.log(1.12)  # |ln(listed / proposed)|: 5K vs 6K is 0.18, 3mi vs 5K 0.035
-UP_OVERSHOOT = 0.02      # an upward candidate may sit at most this far above the implied
+# ★ NEVER A DISTANCE LONGER THAN THE TIMES SAY (owner, 2026-10-25: "the main
+#   thing isn't confidence but that you don't overestimate the distance").
+#   A stored distance longer than the truth overrates, so whatever is
+#   written may sit at most this far above the field's implied distance
+#   (the noise of the estimate); otherwise the next real distance below.
+OVERSHOOT = 0.02
 
 # ---- the course baseline ----
 VENUE_MIN_MEETS = 2      # other meets at the venue and label before they set the baseline
@@ -97,8 +102,9 @@ MIX_PURE = 0.85          # an attribute value this concentrated in one cluster e
 
 PACE_FAST, PACE_SLOW = 0.03, 0.97   # division-median percentile within its pool
 
-ACTION_ORDER = ("pin", "pin?", "split", "pin-up?", "novote", "review", "keep",
-                "drop?", "unjudged", "ignore")
+ACTION_ORDER = ("pin", "split", "replace", "pin-up?", "novote", "list", "review",
+                "keep", "unjudged", "ignore")
+HAND_DICT = "_DISTANCE_OVERRIDES_XC"     # the hand-typed overrides in corrections.py
 
 
 # ------------------------------------------------------------------ #
@@ -291,6 +297,15 @@ def judge(d, ctx):
     if s is None:
         out.update(kind="off_no_standard", action="review", evidence="; ".join(ev))
         return out
+    if math.log(s / imp) > OVERSHOOT:
+        # longer than the times say: the next real distance below, or nothing
+        below = [c for c in cands if math.log(c / imp) <= OVERSHOOT
+                 and math.log(imp / c) <= SNAP_TOL]
+        if not below:
+            out.update(kind="off_no_standard", action="review", evidence="; ".join(
+                ev + [f"the nearest real distance, {s:g}, is longer than the times say"]))
+            return out
+        s = max(below)
     out["proposed"] = s
     move = math.log(listed / s)
     if abs(move) < BIG_MOVE:
@@ -333,18 +348,23 @@ def judge(d, ctx):
     conf = "high" if pts >= 4 else "medium" if pts == 3 else "low"
     out["confidence"] = conf
     if down:
-        act = {"high": "pin", "medium": "pin?"}.get(conf, "review")
-        if n_ref < PIN_MIN and act != "review":
+        # ★ CONFIDENCE DOES NOT GATE A DOWNWARD PIN (owner, 2026-10-25): it
+        #   only lowers a distance, never below what the times say; the
+        #   bars above (12% onto a real distance, 70% of the field) and the
+        #   runner count are the gate. Confidence is reported.
+        act = "pin"
+        if n_ref < PIN_MIN:
             act = "review"
             ev.append(f"only {n_ref} runners with other races")
         out.update(kind="wrong_distance", action=act)
     else:
-        # never above the field's own implied distance by more than a hair
-        if math.log(s / imp) > UP_OVERSHOOT:
-            ev.append(f"{s:g} is above the implied {imp:,.0f}")
-            conf = "low" if conf == "high" else conf
         act = ("pin-up?" if conf == "high" and runs_it
                else "novote" if conf in ("high", "medium") else "review")
+        if wide:
+            # ! EVERY DAY HERE READS SLOW: a hard course far more often than
+            #   a label wrong every year (Steens Mountain +41%). novote on all
+            #   of them would leave the course no difficulty: listed only.
+            act = "review"
         out.update(kind="wrong_distance", action=act, confidence=conf)
     out["evidence"] = "; ".join(ev)
     return out
@@ -364,24 +384,34 @@ def _paceOnly(d, ctx, out):
     return out
 
 
-def overrideVerdict(listed, override, imp, n_ref):
+def overrideVerdict(listed, override, imp, n_ref, hand=False):
     """An existing dist_override entry against the evidence at the listed
-    distance. Returns (action, why). Pure."""
+    distance. Returns (action, why). Pure.
+
+    keep      within SNAP_TOL of what the times say
+    replace   LONGER than the times say: it overrates, so it goes, whoever
+              wrote it; or a generated one shorter than the times say
+    list      a hand-typed one shorter than the times say: it only
+              underrates, so it stays and is shown to the owner
+    unjudged  too few runners with other races"""
     listed, override = float(listed), float(override)
     if abs(override - listed) < 1:
         return "keep", "agrees with the listed distance"
     flags = []
     if override > listed * 1.01:
-        flags.append("RAISES the distance")
+        flags.append("RAISES the listed distance")
     if abs(math.log(listed / override)) < BIG_MOVE:
         flags.append("a label-sized move")
     if imp is None or (n_ref or 0) < FIELD_MIN:
         return "unjudged", "; ".join(flags + ["too few runners with other races"])
-    if abs(math.log(imp / override)) <= SNAP_TOL:
+    off = math.log(override / imp)
+    if abs(off) <= SNAP_TOL:
         return "keep", "; ".join(flags + [f"the field implies {imp:,.0f}"])
-    if abs(math.log(imp / listed)) <= SNAP_TOL:
-        return "drop?", "; ".join(flags + [f"the field runs true at the listed {listed:g}"])
-    return "drop?", "; ".join(flags + [f"the field implies {imp:,.0f}, not {override:g}"])
+    if off > 0:
+        return "replace", "; ".join(flags + [
+            f"longer than the {imp:,.0f} the times say: overrates {100 * K * off:.0f}%"])
+    why = f"shorter than the {imp:,.0f} the times say: underrates {100 * K * -off:.0f}%"
+    return ("list" if hand else "replace"), "; ".join(flags + [why])
 
 
 # ------------------------------------------------------------------ #
@@ -690,7 +720,16 @@ def judgeOne(c, by_meet, vh, pools, ovr, rows_by):
         imp = v["implied"]
         if imp is None and c["res"] is not None and (c["n_ref"] or 0) >= FIELD_MIN:
             imp = implied(listed, c["res"] - base)
-        act, why = overrideVerdict(listed, o[0], imp, c["n_ref"])
+        act, why = overrideVerdict(listed, o[0], imp, c["n_ref"], hand=o[1] == HAND_DICT)
+        if act == "replace":
+            # with what: this system's own pin, else the listed distance if
+            # the times say it is right, else nothing better is known
+            if v["action"] == "pin":
+                why += f"; -> {v['proposed']:g}"
+            elif imp and abs(math.log(imp / listed)) <= SNAP_TOL:
+                why += f"; -> the listed {listed:g}"
+            else:
+                act, why = "review", why + "; no real distance fits the times either"
         v["override_verdict"] = (act, why)
         if v["kind"] is None or v["action"] == "ignore":
             v.update(kind="override", action=act,

@@ -1136,7 +1136,9 @@ _UPLOAD_DIV_GENDER = {}
 
 
 def _loadUploadDivGenders(cur):
-    cur.execute("SELECT div_id, division FROM meets WHERE source = 'upload'")
+    # ! AND A TIMER MEET'S (sources/promote.py, 2026-10-25): the same shape,
+    #   negative div ids of its own range
+    cur.execute("SELECT div_id, division FROM meets WHERE source IN ('upload', 'timer')")
     _UPLOAD_DIV_GENDER.clear()
     for div_id, division in cur:
         g = _genderFromDivName(division)
@@ -1921,7 +1923,7 @@ def _resolveDistanceGender(cfg, row, meet_distances, tfrrs_blob):
 # Detail   : tfrrs only. anet rows carry gender on the athlete, so a title guess
 #           there would ADD noise rather than remove it.
 def _blobGender(row, tfrrs_blob):
-    if row[_SRC] == "upload":
+    if row[_SRC] in ("upload", "timer"):
         return _UPLOAD_DIV_GENDER.get(row[_DIV])
     if row[_SRC] != "tfrrs":
         return None

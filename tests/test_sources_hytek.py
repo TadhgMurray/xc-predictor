@@ -133,3 +133,23 @@ def test_gender_last_on_the_event_line():
 def test_a_line_that_merely_starts_with_event_is_not_an_event():
     m = H.parseReport(REPORT.replace("Results\n", "Event schedule changed due to weather\n", 1))
     assert [e.number for e in m.events] == [6, 7]
+
+
+RANKINGS = """Lakeside Timing - Contractor License Hy-Tek's MEET MANAGER  2:43 PM  9/12/2026  Page 1
+Lakeside Cross Country Invitational - 9/12/2026
+Lakeside Park
+Rankings
+Boys 2400 Meter Run CC Modified
+      Comp#  Name                            School                           Time Points
+=========================================================================================
+    1   200  Alder, Aaron                 8  Northfield                      11:09
+    2   210  Birch, Ben                   9  South Harbor                    11:29.40    1
+"""
+
+
+def test_a_rankings_report_has_no_event_line_and_a_bib_column():
+    m = H.parseReport(RANKINGS)
+    assert [(e.gender, e.title, e.meters) for e in m.events] == [("M", "2400 Meter Run CC Modified", 2400.0)]
+    a, b = m.events[0].rows
+    assert (a.place, a.last, a.first, a.grade, a.school, a.seconds) == (1, "Alder", "Aaron", "8", "Northfield", 669.0)
+    assert (b.last, b.grade, b.school, b.seconds, b.points) == ("Birch", "9", "South Harbor", 689.4, 1)

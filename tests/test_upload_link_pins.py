@@ -203,7 +203,7 @@ def test_apply_links_mints_logs_and_reports(monkeypatch):
     by_key = {"owen castellano": [CAREER],
               "ann doe": [P(1, "Ann Doe", "F", [R("2025-09-20", "XC", "11", "Lakeside", "hs")]),
                           P(2, "Ann Doe", "F", [R("2025-09-20", "XC", "11", "Lakeside", "hs")])]}
-    monkeypatch.setattr(LU, "gather", lambda cur: ([OWEN, doubtful, new], by_key))
+    monkeypatch.setattr(LU, "gather", lambda cur, *_a: ([OWEN, doubtful, new], by_key))
     cur = Cur([(r"to_regclass", [("x",)]), (r"GREATEST", [(2000000100,)])])
     conn = Conn(cur)
     out = LU.run(conn, apply=True)
@@ -221,7 +221,7 @@ def test_apply_links_mints_logs_and_reports(monkeypatch):
 
 
 def test_dry_run_writes_nothing(monkeypatch):
-    monkeypatch.setattr(LU, "gather", lambda cur: ([OWEN], {"owen castellano": [CAREER]}))
+    monkeypatch.setattr(LU, "gather", lambda cur, *_a: ([OWEN], {"owen castellano": [CAREER]}))
     cur = Cur()
     conn = Conn(cur)
     LU.run(conn, apply=False)
@@ -410,7 +410,7 @@ def test_the_twin_rule_flags_the_upload_side_and_reuses_the_feed_rules():
     import twin_flag as TF
     assert [r for r, _ in TF.RULES][:5] == ["twin_race", "twin_person", "twin_same_day", "twin_race_rest", "twin_upload"]
     xc = TF.twinUploadSql("results", "XC")
-    assert "WHERE  source = 'upload'" in xc and "r.source IN ('anet', 'tfrrs')" in xc
+    assert "WHERE  source IN ('upload', 'timer')" in xc and "r.source IN ('anet', 'tfrrs')" in xc
     assert "SELECT DISTINCT u_rid AS result_id" in xc, "the upload's copy is flagged, the feed's stays"
     assert "floor(s.ts::numeric + 0.000001)" in xc or "floor(u.ts::numeric + 0.000001)" in xc
     assert "WHERE strong OR (nu = 1 AND ns = 1)" in xc
@@ -439,7 +439,7 @@ def test_an_uploaded_xc_row_takes_its_divisions_gender(realDb):
     assert bn._blobGender(tuple(row), {}) is None, "an anet row's gender is the athlete's"
     bn._UPLOAD_DIV_GENDER.clear()
     import person_gender as PG
-    assert "(r.source = 'upload' AND m.source = 'upload')" in PG._BUILD
+    assert "(r.source IN ('upload', 'timer') AND m.source = r.source)" in PG._BUILD
 
 
 def test_the_site_serves_uploaded_races_and_names_the_feed():
@@ -449,7 +449,7 @@ def test_the_site_serves_uploaded_races_and_names_the_feed():
                  '@app.route("/race/tf/<int(signed=True):meet_id>/<int:event_id>/<int(signed=True):div_id>")',
                  '@app.route("/meet/tf/<int(signed=True):meet_id>")'):
         assert rule in app, rule
-    assert '_FEEDS = ("anet", "tfrrs", "upload")' in app
+    assert '_FEEDS = ("anet", "tfrrs", "upload", "timer")' in app
     import usage as US
     assert US.normalizeRule("/race/xc/<int(signed=True):meet_id>/<int(signed=True):div_id>") == \
         "/race/xc/:meet_id/:div_id"
