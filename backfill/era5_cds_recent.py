@@ -17,8 +17,8 @@ reached yet, from the Copernicus Climate Data Store (CDS). Pipeline step
 
   Work: every (cell, day) the meets need that weather_grid lacks, after the
   free store's last day and at least LAG_DAYS old. One CDS request per day
-  per region (the cells of that day, grouped into connected 10-degree tiles:
-  the lower 48 is one box, Alaska and Hawaii their own), sampled with the
+  per region (the lower 48 one box; Alaska, Hawaii and anything else by
+  connected 10-degree tiles), sampled with the
   zarr script's own fetchTileWeather and written with its writeWeatherRows.
   Rows already there are skipped (ON CONFLICT DO NOTHING), so it resumes.
 
@@ -75,13 +75,21 @@ def lon180(lon):
     return round(((lon + 180.0) % 360.0) - 180.0, 2)
 
 
+def _lower48(cl, cn):
+    lon = lon180(cn)
+    return 24.0 <= cl <= 50.0 and -125.5 <= lon <= -66.0
+
+
 def regions(cells, tile=TILE_DEG):
-    """Group (cellLat, cellLon) cells into regions of touching tiles (8
-    neighbours). Returns [(cells, [N, W, S, E])], the box in -180..180 with
-    MARGIN around it. Pure."""
+    """Group (cellLat, cellLon) cells into request regions: every lower-48
+    cell in ONE box (a summer day's 14 scattered cells were six requests,
+    each queued at the CDS), the rest by touching tiles (8 neighbours).
+    Returns [(cells, [N, W, S, E])], the box in -180..180 with MARGIN
+    around it. Pure."""
     by_tile = {}
     for cl, cn in cells:
-        by_tile.setdefault((int(cl // tile), int(lon180(cn) // tile)), []).append((cl, cn))
+        key = ("lower48",) if _lower48(cl, cn) else (int(cl // tile), int(lon180(cn) // tile))
+        by_tile.setdefault(key, []).append((cl, cn))
     seen, out = set(), []
     for start in by_tile:
         if start in seen:
@@ -91,6 +99,8 @@ def regions(cells, tile=TILE_DEG):
         while stack:
             t = stack.pop()
             group.extend(by_tile[t])
+            if t == ("lower48",):
+                continue
             for dy in (-1, 0, 1):
                 for dx in (-1, 0, 1):
                     n = (t[0] + dy, t[1] + dx)
