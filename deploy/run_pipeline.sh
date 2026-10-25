@@ -50,7 +50,10 @@ export OMP_NUM_THREADS="$XCP_THREADS" OPENBLAS_NUM_THREADS="$XCP_THREADS" \
 #    row walks run four at a time again and the course pages in three.
 export XCP_DB_QUIET="${XCP_DB_QUIET:-1}"
 XCP_STREAMS="${XCP_STREAMS:-4}"
-XCP_COURSE_SHARDS="${XCP_COURSE_SHARDS:-3}"
+# ★ SIX COURSE SHARDS ON THE 24-CORE BOX (2026-10-25: 12b was 1,541 s at
+#   three, and the shards wait on the database, not the CPU). Each holds one
+#   pooled connection until it needs more (XCP_DB_MIN_CONN=1 at 12b).
+XCP_COURSE_SHARDS="${XCP_COURSE_SHARDS:-6}"
 ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 
 FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""
@@ -1587,7 +1590,7 @@ step 12_courses       "$PY" -u racecast/build_course_rank.py
 #   every third course cut the wall time to about a third. --prepare and
 #   --finish bracket them so the swap happens once, after all three.
 step 12b_prepare      "$PY" -u racecast/build_course_boards.py --prepare
-shards 12b_course_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_course_boards.py --limit 1200
+XCP_DB_MIN_CONN=1 shards 12b_course_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_course_boards.py --limit 1200
 step 12b_finish       "$PY" -u racecast/build_course_boards.py --finish
 # ★ THE RECORD BOOKS (2026-10-10): state all-time lists, school record books,
 #   course records by era, "on this day" (racecast/build_record_books.py).
