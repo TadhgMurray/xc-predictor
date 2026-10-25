@@ -1,0 +1,534 @@
+#!/usr/bin/env python3
+"""
+race_rows.py -- the training table for the race model: one row per runner
+per cross country race, every input known the day before. READ ONLY on
+the database; writes one .npz.
+
+    set -a; . /etc/xc-predictor.env; set +a; P=/srv/venv/bin/python
+    $P -u model/race_rows.py --out /srv/pred/rows.npz                 # ~1 h
+    $P -u model/race_rows.py --out /srv/pred/smoke.npz --max-persons 20000
+
+★ WHAT IT IS FOR (docs/PLAN-MODEL-2026-10.md, 2026-10-25; owner: "you're
+  guessing what each runner in an entire race will run"). The race model
+  predicts every runner's time in a race as two parts that add up:
+    the race's level   how fast the whole field runs: course, distance,
+                       race type, week of the season
+    each runner        their time relative to the field
+  starting from the ratings and learning corrections to each. So each row
+  carries:
+    y, base          ln(time) and the served rating form's ln(5K time),
+                     each less the race's mean -- the runner part
+    y_abs, base_abs  the same, not centred -- their race means give the
+                     level part (y_abs - base_abs, averaged over the race)
+    X                what might correct them: the form read several ways,
+                     this season, last season, track, the break, grade and
+                     level, the race and its course, and the runner's place
+                     in this field and among their teammates
+  model/race_trees.py learns both parts from X.
+
+★ NOTHING FROM THE DAY OR AFTER. Every runner input reads rated races
+  dated strictly before the race; the field and teammate inputs are built
+  from the OTHER runners' same prior-only inputs, never from the race's
+  results. tests/test_race_rows.py appends a later race to a history and
+  asserts no input moves.
+
+⚠ RATINGS ARE TODAY'S SOLVE (the plan's Tier 1): every season's ratings
+  were fitted with every season in view. That flatters the ratings and the
+  model alike; the comparison between them holds.
+
+★ SAMPLED BY RACE, NEVER BY ROW. A race is kept or dropped whole (crc32 of
+  its key), because y and base are relative to the race. Every race from
+  --val-from on is kept; earlier ones at --train-frac.
+"""
+import argparse
+import datetime
+import heapq
+import math
+import os
+import statistics
+import sys
+import zlib
+from array import array
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for sub in ("racecast", "scripts", "engine", "model"):
+    p = os.path.join(_ROOT, sub)
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+MIN_FIELD = 8            # rated runners a race needs to say anything about order
+SEASON_START_MONTH = 8   # season_year.ACADEMIC_START_MONTH
+_LEVEL = {"elem": 0.0, "ms": 1.0, "hs": 2.0, "college": 3.0, "pro": 4.0}
+_GRADE = {"FR": 13.0, "SO": 14.0, "JR": 15.0, "SR": 16.0}
+
+# The runner inputs, in column order. Everything rated is a log ratio to the
+# served form (so 0 = "same as the form"); days are days; NaN = unknown.
+RUNNER_FEATURES = (
+    "form_ln", "form_sigma", "form_n", "stale_years",
+    "last_minus_form", "last_days", "last_xc_days", "last_is_tf",
+    "ewma30_minus_form", "ewma120_minus_form", "best2_minus_form",
+    "season_n", "season_mean_minus_form", "season_max_minus_form",
+    "season_slope", "season_days", "opener",
+    "prev_n", "prev_final_minus_form", "prev_best_minus_form",
+    "prev_mean_minus_form", "prev_late_minus_early", "prev_final_days",
+    "tf_last_minus_form", "tf_last_days", "tf_best365_minus_form", "tf_n365",
+    "career_n", "career_years", "xc_seasons",
+    "grade", "level", "female", "form_level", "level_change",
+)
+RACE_FEATURES = (
+    "field_n", "rank_pct", "gap_to_median", "gap_ahead", "gap_behind",
+    "team_n", "team_slope", "team_summer", "team_openers",
+    "distance", "season_week", "meet_type", "is_tfrrs",
+    "course_cell", "has_cell",
+)
+FEATURES = RUNNER_FEATURES + RACE_FEATURES
+
+# ★ HOW MUCH A RACE IS RUN FOR, from its name (0 = unknown). Ordered, so
+#   one tree split can say "championship or above".
+_MEET_TYPES = (
+    (6, ("nxn", "nike cross nationals", "foot locker", "eastbay", "champs sports",
+         "ncaa division", "ncaa championship", "naia national", "njcaa national")),
+    (5, ("state champ", "state meet", "state final", "state cross country champ",
+         "ncaa regional", "region champ", "regional champ")),
+    (4, ("section", "sectional", "district", "conference", "league champ",
+         "county champ", "city champ", "championship", "champs")),
+    (2, ("invit", "classic", "jamboree", "preview", "festival", "opener")),
+    (1, ("dual", "tri-meet", "tri meet", "quad", " vs ", " vs.")),
+    (0, ("jv", "junior varsity", "frosh", "freshman", "novice", "reserve")),
+)
+
+
+# ------------------------------------------------------------------ #
+#  pure parts
+# ------------------------------------------------------------------ #
+
+def meetType(name):
+    """0..6 from a meet's name; 3 = an ordinary meet. Pure."""
+    n = f" {(name or '').lower()} "
+    for score, words in reversed(_MEET_TYPES):           # sub-varsity first
+        if score == 0 and any(w in n for w in words):
+            return 0.0
+    for score, words in _MEET_TYPES:
+        if score and any(w in n for w in words):
+            return float(score)
+    return 3.0
+
+
+def seasonOf(d):
+    """The academic year a date (date) falls in."""
+    return d.year if d.month >= SEASON_START_MONTH else d.year - 1
+
+
+def gradeNum(g):
+    g = (g or "").strip().upper()
+    if g[:2] in _GRADE:
+        return _GRADE[g[:2]]
+    try:
+        v = float(g)
+        return v if 1 <= v <= 12 else math.nan
+    except ValueError:
+        return math.nan
+
+
+def levelOf(pool):
+    p = (pool or "").split("|")[0]
+    for k, v in _LEVEL.items():
+        if p.startswith(k):
+            return v
+    return math.nan
+
+
+def _slope(pts):
+    """ln-rating per 30 days by least squares over (day, ln rating); 0.0
+    with fewer than three races or under three weeks of span."""
+    if len(pts) < 3:
+        return 0.0
+    xs = [x for x, _y in pts]
+    if max(xs) - min(xs) < 21:
+        return 0.0
+    mx = statistics.fmean(xs)
+    my = statistics.fmean(y for _x, y in pts)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    return 30.0 * sum((x - mx) * (y - my) for x, y in pts) / sxx
+
+
+def _ewma(rows, d0, half_life):
+    """Recency-weighted geometric mean of ratings. rows: (date, rating)."""
+    lam = math.log(2.0) / half_life
+    w = [math.exp(-lam * (d0 - d).days) for d, _r in rows]
+    return math.exp(sum(wi * math.log(r) for wi, (_d, r) in zip(w, rows)) / sum(w))
+
+
+def runnerFeatures(hist, day, target):
+    """The runner inputs for one race. Pure.
+
+    hist: the runner's rated, non-outlier races, oldest first, each
+          (date, rating, pool, sport) with date a datetime.date. Rows on or
+          after `day` are ignored, so the caller can pass the whole career.
+    day:  the race's date.
+    target: {"pool", "grade"} of the runner's row in this race.
+    Returns (form_rating, form_pool, {feature: value}) or None when the
+    runner has no rated race before the day."""
+    import predict as P
+    prior = [h for h in hist if h[0] < day]
+    if not prior:
+        return None
+    newest = [(h[0].isoformat(), h[1], h[2], h[3], None, None) for h in reversed(prior)]
+    lo = (day - datetime.timedelta(days=365)).isoformat()
+    recent = [r for r in newest if r[0] >= lo]
+    form = P._formRating(recent or newest, "XC")
+    if form is None:
+        return None
+    rating, sig, pool, n = form
+    stale = 0.0 if recent else max(0.0, (day - prior[-1][0]).days / 365.25 - 1.0)
+    lf = math.log(rating)
+    nan = math.nan
+
+    def rel(r):
+        return math.log(r) - lf if r and r > 0 else nan
+
+    xc = [h for h in prior if h[3] == "XC"]
+    xc_pool = [h for h in xc if h[2] == pool] or xc
+    tf = [h for h in prior if h[3] == "TF"]
+    season, prev_season = seasonOf(day), seasonOf(day) - 1
+    this = [h for h in xc_pool if seasonOf(h[0]) == season]
+    prev = [h for h in xc if seasonOf(h[0]) == prev_season]
+    last = prior[-1]
+    yr = [h for h in xc_pool if (day - h[0]).days <= 365] or xc_pool
+    best2 = sorted((h[1] for h in yr), reverse=True)[:2]
+    tf365 = [h for h in tf if (day - h[0]).days <= 365]
+    f = {
+        "form_ln": lf, "form_sigma": sig, "form_n": float(n), "stale_years": stale,
+        "last_minus_form": rel(last[1]), "last_days": float((day - last[0]).days),
+        "last_xc_days": float((day - xc[-1][0]).days) if xc else nan,
+        "last_is_tf": 1.0 if last[3] == "TF" else 0.0,
+        "ewma30_minus_form": rel(_ewma([(h[0], h[1]) for h in xc_pool], day, 30.0))
+        if xc_pool else nan,
+        "ewma120_minus_form": rel(_ewma([(h[0], h[1]) for h in xc_pool], day, 120.0))
+        if xc_pool else nan,
+        "best2_minus_form": (rel(math.exp(statistics.fmean(math.log(b) for b in best2)))
+                             if best2 else nan),
+        "season_n": float(len(this)),
+        "season_mean_minus_form": rel(statistics.fmean(h[1] for h in this)) if this else nan,
+        "season_max_minus_form": rel(max(h[1] for h in this)) if this else nan,
+        "season_slope": _slope([(-(day - h[0]).days, math.log(h[1])) for h in this]),
+        "season_days": float((day - this[0][0]).days) if this else nan,
+        "opener": 0.0 if this else 1.0,
+        "prev_n": float(len(prev)),
+        "prev_final_minus_form": rel(prev[-1][1]) if prev else nan,
+        "prev_best_minus_form": rel(max(h[1] for h in prev)) if prev else nan,
+        "prev_mean_minus_form": rel(statistics.fmean(h[1] for h in prev)) if prev else nan,
+        "prev_late_minus_early": (math.log(statistics.fmean(h[1] for h in prev[-(len(prev) // 3 or 1):]))
+                                  - math.log(statistics.fmean(h[1] for h in prev[:len(prev) // 3 or 1])))
+        if len(prev) >= 3 else nan,
+        "prev_final_days": float((day - prev[-1][0]).days) if prev else nan,
+        "tf_last_minus_form": rel(tf[-1][1]) if tf else nan,
+        "tf_last_days": float((day - tf[-1][0]).days) if tf else nan,
+        "tf_best365_minus_form": rel(max(h[1] for h in tf365)) if tf365 else nan,
+        "tf_n365": float(len(tf365)),
+        "career_n": float(len(prior)),
+        "career_years": (day - prior[0][0]).days / 365.25,
+        "xc_seasons": float(len({seasonOf(h[0]) for h in xc})),
+        "grade": gradeNum(target.get("grade")),
+        "level": levelOf(target.get("pool") or pool),
+        "female": 1.0 if (target.get("pool") or pool or "").split("|")[0].endswith("_f") else 0.0,
+        "form_level": levelOf(pool),
+    }
+    f["level_change"] = (f["level"] - f["form_level"]
+                         if not (math.isnan(f["level"]) or math.isnan(f["form_level"])) else nan)
+    return rating, pool, f
+
+
+def raceFeatures(runners, race):
+    """The field and teammate inputs, filled into each runner's dict in
+    place, and y / base centred on the race. Pure.
+
+    runners: [{"secs", "base_ln", "school", "f": {...}}] -- every rated
+             runner of one race, base_ln = ln of the form's time
+    race:    {"distance", "day", "meet_name", "source", "is_champ"}"""
+    n = len(runners)
+    ys = [math.log(r["secs"]) for r in runners]
+    bs = [r["base_ln"] for r in runners]
+    my, mb = statistics.fmean(ys), statistics.fmean(bs)
+    order = sorted(range(n), key=lambda i: bs[i])
+    rank = {i: k for k, i in enumerate(order)}
+    med = statistics.median(bs)
+    teams = {}
+    for i, r in enumerate(runners):
+        teams.setdefault(r.get("school") or f"_none{i}", []).append(i)
+    day = race["day"]
+    week = (day - datetime.date(seasonOf(day), SEASON_START_MONTH, 1)).days / 7.0
+    mt = 5.0 if race.get("is_champ") and meetType(race.get("meet_name")) < 4 else \
+        meetType(race.get("meet_name"))
+    for i, r in enumerate(runners):
+        k = rank[i]
+        mates = [j for j in teams[r.get("school") or f"_none{i}"] if j != i]
+
+        def med_of(key):
+            v = [runners[j]["f"][key] for j in mates if not math.isnan(runners[j]["f"][key])]
+            return statistics.median(v) if v else math.nan
+        r["f"].update({
+            "field_n": float(n), "rank_pct": k / max(n - 1, 1),
+            "gap_to_median": bs[i] - med,
+            "gap_ahead": bs[i] - bs[order[k - 1]] if k > 0 else math.nan,
+            "gap_behind": bs[order[k + 1]] - bs[i] if k + 1 < n else math.nan,
+            "team_n": float(len(mates)),
+            "team_slope": med_of("season_slope"),
+            "team_summer": med_of("prev_final_minus_form"),
+            "team_openers": (statistics.fmean(runners[j]["f"]["opener"] for j in mates)
+                             if mates else math.nan),
+            "distance": float(race.get("distance") or math.nan),
+            "season_week": week, "meet_type": mt,
+            "is_tfrrs": 1.0 if race.get("source") == "tfrrs" else 0.0,
+            "course_cell": (float(race["cell"]) if race.get("cell") is not None
+                            else math.nan),
+            "has_cell": 1.0 if race.get("cell") is not None else 0.0,
+        })
+        r["y"] = ys[i] - my
+        r["base"] = bs[i] - mb
+        r["y_abs"], r["base_abs"] = ys[i], bs[i]
+    return runners
+
+
+def keepRace(key, day, val_from, train_frac):
+    """Every race from val_from on; earlier ones by crc32 of their key."""
+    if day >= val_from:
+        return True
+    return (zlib.crc32(repr(key).encode()) % 10000) < train_frac * 10000
+
+
+# ------------------------------------------------------------------ #
+#  the database side
+# ------------------------------------------------------------------ #
+
+def _stream(conn, sql, params, name):
+    with conn.cursor(name=name) as cur:
+        cur.itersize = 50_000
+        cur.execute(sql, params)
+        for row in cur:
+            yield row
+
+
+def _sql(has_outliers):
+    skip = ("AND NOT EXISTS (SELECT 1 FROM rating_outlier ro WHERE ro.sport = '{s}' "
+            "AND ro.result_id = r.result_id)")
+    xc = f"""
+        SELECT r.person_id, left(r.date, 10), r.speed_rating,
+               split_part(r.rating_pool, '|', 1), r.time_seconds,
+               r.meet_id, r.div_id, r.source, r.school, r.grade, 0
+        FROM   results r
+        WHERE  r.person_id IS NOT NULL AND r.date >= %(lo)s AND r.date < %(hi)s
+          AND  r.time_seconds > 0 AND r.time_seconds < 19999
+          AND  NOT EXISTS (SELECT 1 FROM result_twin x
+                           WHERE x.sport = 'XC' AND x.result_id = r.result_id)
+          {skip.format(s='XC') if has_outliers else ''}
+        ORDER  BY r.person_id, r.date"""
+    tf = f"""
+        SELECT r.person_id, left(r.date, 10), r.speed_rating,
+               split_part(r.rating_pool, '|', 1), NULL, NULL, NULL, NULL, NULL, NULL, 1
+        FROM   results_tf r
+        WHERE  r.person_id IS NOT NULL AND r.date >= %(lo)s AND r.date < %(hi)s
+          AND  r.speed_rating > 0 AND r.rating_pool IS NOT NULL
+          AND  COALESCE(r.is_field, 0) = 0 AND COALESCE(r.is_relay, 0) = 0
+          {skip.format(s='TF') if has_outliers else ''}
+        ORDER  BY r.person_id, r.date"""
+    return xc, tf
+
+
+def _people(conn, lo, hi, has_outliers):
+    """Each person's rows, both sports, oldest first: heap-merged streams."""
+    xc_sql, tf_sql = _sql(has_outliers)
+    p = {"lo": lo, "hi": hi}
+    merged = heapq.merge(_stream(conn, xc_sql, p, "rr_xc"),
+                         _stream(conn, tf_sql, p, "rr_tf"),
+                         key=lambda r: (r[0], r[1], r[10]))
+    pid, rows = None, []
+    for r in merged:
+        if r[0] != pid:
+            if rows:
+                yield pid, rows
+            pid, rows = r[0], []
+        rows.append(r)
+    if rows:
+        yield pid, rows
+
+
+def _raceMeta(cur, keys):
+    """{(meet_id, div_id, source): {distance, meet_name, is_champ}}."""
+    anet = sorted({k[1] for k in keys if k[2] != "tfrrs"})
+    tfr = sorted({k[0] for k in keys if k[2] == "tfrrs"})
+    out = {}
+    # ★ THE COURSE BY THE SAME JOIN THE PREDICTOR USES (name + gps rounded to
+    #   5 places -> course_canonical), then its cell at the race's distance
+    #   (rounded to 100 m) below. ⚠ Today's cells: they saw these races.
+    canon_join = ("LEFT JOIN course_canonical cc ON cc.course_name = {name} "
+                  "AND round(cc.gps_lat::numeric, 5) = round({lat}::numeric, 5) "
+                  "AND round(cc.gps_long::numeric, 5) = round({lon}::numeric, 5)")
+    for i in range(0, len(anet), 5000):
+        cur.execute("SELECT m.div_id, m.source, m.meet_name, m.distance, cc.canonical_id "
+                    "FROM meets m " + canon_join.format(name="m.course_name", lat="m.gps_lat",
+                                                        lon="m.gps_long")
+                    + " WHERE m.div_id = ANY(%s)", (anet[i:i + 5000],))
+        for div, src, name, dist, cid in cur.fetchall():
+            out[(src, div)] = {"meet_name": name, "distance": dist, "canonical_id": cid}
+    for i in range(0, len(tfr), 5000):
+        cur.execute("SELECT mt.meet_id, mt.meet_name, COALESCE(mt.is_championship, 0), "
+                    "mt.division_distances, mt.distance, cc.canonical_id "
+                    "FROM meets_tfrrs mt " + canon_join.format(name="mt.venue_name",
+                                                               lat="mt.gps_lat",
+                                                               lon="mt.gps_long")
+                    + " WHERE mt.sport = 'XC' AND mt.meet_id = ANY(%s)", (tfr[i:i + 5000],))
+        for meet, name, champ, dd, dist, cid in cur.fetchall():
+            out[("tfrrs", meet)] = {"meet_name": name, "is_champ": bool(champ),
+                                    "divs": dd if isinstance(dd, dict) else {},
+                                    "distance": dist, "canonical_id": cid}
+    cids = sorted({m["canonical_id"] for m in out.values() if m.get("canonical_id") is not None})
+    cells = {}
+    for i in range(0, len(cids), 5000):
+        cur.execute("SELECT canonical_id, distance_m, difficulty FROM course_difficulties "
+                    "WHERE canonical_id = ANY(%s)", (cids[i:i + 5000],))
+        for cid, dm, diff in cur.fetchall():
+            cells[(cid, int(dm))] = diff
+    res = {}
+    for k in keys:
+        if k[2] == "tfrrs":
+            m = out.get(("tfrrs", k[0])) or {}
+            d = ((m.get("divs") or {}).get(str(k[1])) or {}).get("distance") or m.get("distance")
+            res[k] = {"meet_name": m.get("meet_name"), "is_champ": m.get("is_champ"),
+                      "distance": d, "canonical_id": m.get("canonical_id")}
+        else:
+            res[k] = dict(out.get((k[2], k[1])) or {})
+        cid, d = res[k].get("canonical_id"), res[k].get("distance")
+        try:
+            res[k]["cell"] = (cells.get((cid, int(round(float(d) / 100.0) * 100)))
+                              if cid is not None and d else None)
+        except (TypeError, ValueError):
+            res[k]["cell"] = None
+    return res
+
+
+def build(conn, a):
+    import conversions
+    from predict import _outlierFilter
+    cur = conn.cursor()
+    has_out = bool(_outlierFilter(cur, "XC"))
+    conn.rollback()
+    lo_t = datetime.date.fromisoformat(a.lo)
+    hi_t = datetime.date.fromisoformat(a.hi)
+    val_from = datetime.date.fromisoformat(a.val_from)
+    pm = {}
+    races = {}            # key -> [runner dict]
+    n_people = 0
+    for pid, rows in _people(conn, a.hist_from, (hi_t + datetime.timedelta(days=1)).isoformat(),
+                             has_out):
+        n_people += 1
+        hist = []
+        i = 0
+        while i < len(rows):
+            day_s = rows[i][1]
+            j = i
+            while j < len(rows) and rows[j][1] == day_s:
+                j += 1
+            try:
+                day = datetime.date.fromisoformat(day_s)
+            except ValueError:
+                i = j
+                continue
+            if lo_t <= day <= hi_t:
+                for r in rows[i:j]:
+                    if r[10] != 0 or not r[4]:
+                        continue
+                    key = (r[5], r[6], r[7], day_s)
+                    if not keepRace(key, day, val_from, a.train_frac):
+                        continue
+                    got = runnerFeatures(hist, day, {"pool": r[3], "grade": r[9]})
+                    if got is None:
+                        continue
+                    rating, pool, f = got
+                    if pool not in pm:
+                        pm[pool] = conversions.pool_mean(pool, "XC") or 0.0
+                    if not pm[pool]:
+                        continue
+                    # ! COMPACT UNTIL THE END: millions of rows wait here for
+                    #   their races to fill, and a dict per row is ~3 KB
+                    races.setdefault(key, []).append((
+                        pid, float(r[4]), r[8], math.log(100.0 * pm[pool] / rating),
+                        array("f", [f[k] for k in RUNNER_FEATURES])))
+            for r in rows[i:j]:
+                if r[2] and r[2] > 0 and r[3]:
+                    hist.append((day, float(r[2]), r[3], "TF" if r[10] else "XC"))
+            i = j
+        if n_people % 100_000 == 0:
+            print(f"  {n_people:,} people, {len(races):,} races so far", flush=True)
+        if a.max_persons and n_people >= a.max_persons:
+            break
+    conn.rollback()
+    races = {k: v for k, v in races.items() if len(v) >= MIN_FIELD}
+    print(f"{n_people:,} people read; {len(races):,} races with >= {MIN_FIELD} rated runners",
+          flush=True)
+    meta = _raceMeta(cur, list(races))
+    conn.rollback()
+    cols = {k: array("f") for k in FEATURES}
+    y, base, race_ix, day_ix, pid_col = array("f"), array("f"), array("i"), array("i"), array("q")
+    y_abs, base_abs = array("f"), array("f")
+    src_col = array("b")
+    keys = sorted(races)
+    for ix, key in enumerate(keys):
+        if ix % 50_000 == 0:
+            print(f"  race inputs: {ix:,} of {len(keys):,}", flush=True)
+        day = datetime.date.fromisoformat(key[3])
+        rmeta = dict(meta.get(key) or {}, day=day, source=key[2])
+        field = [{"pid": p, "secs": secs, "school": school, "base_ln": b,
+                  "f": dict(zip(RUNNER_FEATURES, vec))}
+                 for p, secs, school, b, vec in races.pop(key)]
+        for r in raceFeatures(field, rmeta):
+            for k in FEATURES:
+                cols[k].append(r["f"][k])
+            y.append(r["y"])
+            base.append(r["base"])
+            y_abs.append(r["y_abs"])
+            base_abs.append(r["base_abs"])
+            race_ix.append(ix)
+            day_ix.append(day.toordinal())
+            pid_col.append(int(r["pid"]))
+            src_col.append(1 if key[2] == "tfrrs" else 0)
+    return cols, y, base, y_abs, base_abs, race_ix, day_ix, pid_col, src_col, keys
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--hist-from", default="2014-08-01",
+                    help="history read from here (inputs only)")
+    ap.add_argument("--from", dest="lo", default="2018-08-01", help="first race day")
+    ap.add_argument("--to", dest="hi", default="2025-07-31",
+                    help="last race day (default: before the sealed 2025-26 season)")
+    ap.add_argument("--val-from", default="2024-08-01",
+                    help="races from here on are all kept: the validation season")
+    ap.add_argument("--train-frac", type=float, default=0.25,
+                    help="share of earlier races kept, whole races")
+    ap.add_argument("--max-persons", type=int, default=None, help="smoke run")
+    a = ap.parse_args()
+
+    import numpy as np
+    from database import getConn
+    t0 = datetime.datetime.now()
+    with getConn() as conn:
+        cols, y, base, y_abs, base_abs, race_ix, day_ix, pid, src, keys = build(conn, a)
+    os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+    np.savez_compressed(
+        a.out, X=np.stack([np.frombuffer(cols[k], dtype=np.float32) for k in FEATURES], axis=1),
+        y=np.frombuffer(y, dtype=np.float32), base=np.frombuffer(base, dtype=np.float32),
+        y_abs=np.frombuffer(y_abs, dtype=np.float32),
+        base_abs=np.frombuffer(base_abs, dtype=np.float32),
+        race=np.frombuffer(race_ix, dtype=np.int32), day=np.frombuffer(day_ix, dtype=np.int32),
+        pid=np.frombuffer(pid, dtype=np.int64), tfrrs=np.frombuffer(src, dtype=np.int8),
+        features=np.array(FEATURES), race_keys=np.array([repr(k) for k in keys]),
+        args=np.array([repr(vars(a))]))
+    print(f"wrote {a.out}: {len(y):,} runner-races in {len(keys):,} races, "
+          f"{len(FEATURES)} inputs ({datetime.datetime.now() - t0})")
+
+
+if __name__ == "__main__":
+    main()
