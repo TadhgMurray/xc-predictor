@@ -83,3 +83,19 @@ def test_past_the_budget_no_new_day_starts(monkeypatch):
     failed, left, _ = C.fetchDays(make, sorted(days), days, threads=2, budget_s=-1,
                                   write=got.extend)
     assert (failed, left, got) == (0, 5, [])
+
+
+def test_one_request_carries_a_months_days():
+    r = C.request(["2026-09-13", "2026-09-02", "2026-09-13"], [45.0, -120.0, 30.0, -100.0])
+    assert (r["year"], r["month"], r["day"]) == (["2026"], ["09"], ["02", "13"])
+    import pytest as _pt
+    with _pt.raises(AssertionError):
+        C.request(["2026-09-30", "2026-10-01"], [45.0, -120.0, 30.0, -100.0])
+
+
+def test_days_group_into_months():
+    got = C.months({"2026-09-02": [(1.0, 2.0)], "2026-09-13": [(3.0, 4.0)],
+                    "2026-10-01": [(1.0, 2.0)]})
+    assert sorted(got) == ["2026-09", "2026-10"]
+    assert got["2026-09"] == {"2026-09-02": [(1.0, 2.0)], "2026-09-13": [(3.0, 4.0)]}
+    assert C._size(got["2026-09"]) == 2

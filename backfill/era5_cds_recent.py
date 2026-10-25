@@ -16,9 +16,10 @@ reached yet, from the Copernicus Climate Data Store (CDS). Pipeline step
   conversion code and the weather fit reads them like any other.
 
   Work: every (cell, day) the meets need that weather_grid lacks, after the
-  free store's last day and at least LAG_DAYS old. One CDS request per day
-  per region (the lower 48 one box; Alaska, Hawaii and anything else by
-  connected 10-degree tiles), sampled with the
+  free store's last day and at least LAG_DAYS old. One CDS request per
+  MONTH per region (the lower 48 one box; Alaska, Hawaii and anything else
+  by connected 10-degree tiles), for just the days of that month that have
+  meets, sampled with the
   zarr script's own fetchTileWeather and written with its writeWeatherRows.
   Rows already there are skipped (ON CONFLICT DO NOTHING), so it resumes.
 
@@ -122,12 +123,15 @@ def regions(cells, tile=TILE_DEG):
     return out
 
 
-def request(day, box):
-    """The CDS request for one day over one box."""
-    y, m, d = day.split("-")
+def request(days, box):
+    """The CDS request for some days of ONE month over one box. `days` is
+    'YYYY-MM-DD' or a list of them."""
+    days = [days] if isinstance(days, str) else sorted(days)
+    y, m = days[0][:4], days[0][5:7]
+    assert all(d[:7] == f"{y}-{m}" for d in days), "one month per request"
     return {"product_type": ["reanalysis"],
             "variable": sorted(CDS_VARS.values()),
-            "year": [y], "month": [m], "day": [d],
+            "year": [y], "month": [m], "day": sorted({d[8:10] for d in days}),
             "time": [f"{h:02d}:00" for h in range(24)],
             "area": box,
             "data_format": "netcdf",
@@ -179,19 +183,45 @@ def _openDownload(path, tmp):
     return xr.open_dataset(path).load()
 
 
-def fetchDay(client, day, cells):
-    """Rows for every cell of one day, region by region."""
+def months(days):
+    """{day: cells} -> {'YYYY-MM': {day: cells}}. Pure."""
+    out = {}
+    for d, cells in days.items():
+        out.setdefault(d[:7], {})[d] = cells
+    return out
+
+
+def fetchDay(client, month, daycells):
+    """Rows for every (cell, day) of one month, region by region: one CDS
+    request per region for the month's days that have meets.
+
+    ★ A MONTH A REQUEST, NOT A DAY (owner's server, 2026-10-25: one day took
+      3,938 s, nearly all of it queued at the CDS; 111 days would have been
+      days). The queue wait is per request, so a month of days costs about
+      what one day did. A month is 12 fields x 24 hours x up to 31 days,
+      well inside the CDS's per-request limit."""
+    cells = sorted({c for cs in daycells.values() for c in cs})
+    when = {}
+    for d, cs in daycells.items():
+        for c in cs:
+            when.setdefault(c, []).append(d)
     rows = []
     for group, box in regions(cells):
         tmp = tempfile.mkdtemp(prefix="cds_")
         try:
             target = os.path.join(tmp, "dl")
-            client.retrieve(DATASET, request(day, box), target)
+            gdays = sorted({d for c in group for d in when[c]})
+            client.retrieve(DATASET, request(gdays, box), target)
             ds = normalise(_openDownload(target, tmp))
-            rows.extend(Z.fetchTileWeather(ds, [(c, [day]) for c in group]))
+            rows.extend(Z.fetchTileWeather(ds, [(c, sorted(when[c])) for c in group]))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
     return rows
+
+
+def _size(payload):
+    """Cell-days in one unit of work (a month's {day: cells}, or a cell list)."""
+    return sum(len(v) for v in payload.values()) if isinstance(payload, dict) else len(payload)
 
 
 def fetchDays(makeClient, order, days, threads=None, budget_s=None, write=None):
@@ -235,7 +265,7 @@ def fetchDays(makeClient, order, days, threads=None, budget_s=None, write=None):
                 print(f"  ! {d} failed ({type(exc).__name__}: {exc}); retried next run", flush=True)
                 continue
             write(rows)
-            print(f"  [{done}/{len(order)}] {d}: {len(days[d])} cells, {len(rows)} rows "
+            print(f"  [{done}/{len(order)}] {d}: {_size(days[d])} cell-days, {len(rows)} rows "
                   f"({secs:.0f}s)", flush=True)
     return failed, left, t0
 
@@ -271,13 +301,16 @@ def main():
                 print(f"    {d}: {len(days[d])} cells, {len(regions(days[d]))} region(s)")
             return
         import cdsapi
+        by_month = months({d: days[d] for d in order})
+        print(f"  {len(by_month)} month(s), one CDS request per month and region", flush=True)
         failed, left, t0 = fetchDays(lambda: cdsapi.Client(quiet=True, progress=False),
-                                     order, days)
+                                     sorted(by_month), by_month)
+        order = sorted(by_month)
         tried = len(order) - left
         if tried and failed == tried:
-            print(f"  !! every day failed ({failed}); step failed", flush=True)
+            print(f"  !! every month failed ({failed}); step failed", flush=True)
             raise SystemExit(2)
-        print(f"done: {tried - failed} days in {time.time() - t0:.0f}s"
+        print(f"done: {tried - failed} month(s) in {time.time() - t0:.0f}s"
               f"{f' ({failed} failed -- rerun to retry)' if failed else ''}"
               f"{f'; {left} left for the next run (XCP_CDS_BUDGET_MIN)' if left else ''}",
               flush=True)

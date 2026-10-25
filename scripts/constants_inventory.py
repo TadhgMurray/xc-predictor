@@ -670,7 +670,7 @@ RULES = {
         **_all("_K_SAMPLED _K_EXACT", "DISPLAY",
                "the pool constant an unsolved row is priced at (the pool's median course); a display "
                "anchor while ratings keep the pool scale"),
-        **_all("_TABLE _MARK _MIN_SAMPLE _VENUE_ROWS _UNRATED", "INFRA", "SQL and sampling"),
+        **_all("_TABLE _MARK _MIN_SAMPLE _VENUE_ROWS _UNRATED _TEAM_ANCHOR", "INFRA", "SQL and sampling"),
     },
     # ------------------------------------------------ build_ranking_results
     "racecast/build_ranking_results.py": {
