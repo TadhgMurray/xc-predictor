@@ -124,6 +124,13 @@ _EVENT = re.compile(r"^\s*Event\s+(\d+)\s+(Girls|Boys|Women|Men|Mixed|Coed)\b\s*
 #   read no events at all on those pages
 _EVENT_ANY = re.compile(r"^\s*Event\s+(\d+)\s+(\S.*?)\s*$", re.I)
 _GENDER_WORD = re.compile(r"\b(Girls|Boys|Women|Men|Mixed|Coed)\b", re.I)
+# ★ A "RANKINGS" REPORT HAS NO EVENT LINE (2026-10-25, YenTiming's Wayne
+#   Invitational modified races): the race's title stands alone --
+#   "Boys 2400 Meter Run CC Modified" -- above a header with a Comp# column
+#   and an unlabelled grade. A bare title is an event when it starts with a
+#   gender word, names a race, and a Name ... Time header follows.
+_BARE_EVENT = re.compile(r"^\s*(Girls|Boys|Women|Men|Mixed|Coed)\s+(\S.*\b(Run|Meters?|Mile|Dash|Hurdles|"
+                         r"Steeplechase|Walk|\d+(?:\.\d+)?\s*k)\b.*?)\s*$", re.I)
 _TITLE_DATE = re.compile(r"^(.*?)\s+-\s+(\d{1,2})/(\d{1,2})/(\d{4})(?:\s+to\s+\S+)?\s*$")
 _MARK = r"(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d{1,2})?|\d{2,3}\.\d{1,2}"
 _ROW_TAIL = re.compile(rf"\s+(?P<mark>{_MARK}|DNF|DQ|DNS|NT|SCR)\s*(?:[*#xXqQ]\s*)?(?P<pts>\d+)?\s*$")
@@ -163,6 +170,8 @@ def metersOf(title):
 def _columns(header):
     """Start columns of the grade and school fields, from the header line."""
     cols = {}
+    if re.search(r"(?<!\S)Comp#?(?!\S)", header):
+        cols["comp"] = True
     for name, keys in (("grade", ("Year", "Yr", "Grade", "Gr", "Age", "Cl")),
                        ("school", ("School", "Team", "Affiliation"))):
         for k in keys:
@@ -186,13 +195,19 @@ def _parseRow(line, cols):
     pm = _PLACE.match(line)
     if not pm:
         return None
+    start = pm.end()
+    if "comp" in cols:
+        # the bib (Comp#) sits between the place and the name: skip it
+        cm = re.match(r"\d+\s+", line[start:])
+        if cm:
+            start += cm.end()
     tail = _ROW_TAIL.search(line)
     if not tail:
         return None
     place = int(pm.group(1)) if pm.group(1).isdigit() else None
     body = line[:tail.start()]
     if "grade" in cols and "school" in cols and cols["grade"] < cols["school"] <= len(body):
-        name = body[pm.end():cols["grade"]]
+        name = body[start:cols["grade"]]
         grade = body[cols["grade"]:cols["school"]].strip()
         school = body[cols["school"]:].strip()
         # a long name runs into the grade column ("Maximilian12"): take the
@@ -203,7 +218,7 @@ def _parseRow(line, cols):
                 name, grade = g.group(1), g.group(2)
     else:
         m = re.match(rf"^(?P<name>.+?)\s+(?P<grade>{_GRADE_WORD})\s+(?P<school>\S.*)$",
-                     body[pm.end():], re.I)
+                     body[start:], re.I)
         if not m:
             return None
         name, grade, school = m.group("name"), m.group("grade"), m.group("school")
@@ -242,9 +257,22 @@ def parseReport(text):
                     meet.venue = nxt[1]
             continue
         ev = _EVENT.match(line)
+        anyev = gw = None
         if not ev:
             anyev = _EVENT_ANY.match(line)
             gw = _GENDER_WORD.search(anyev.group(2)) if anyev else None
+        bare = None if (ev or (anyev and gw)) else _BARE_EVENT.match(line)
+        if bare and not any(re.search(r"(?<!\S)Name(?!\S)", l) and re.search(r"Time|Finals", l, re.I)
+                            for l in lines[i + 1:i + 3]):
+            bare = None
+        if bare:
+            title = bare.group(2).strip()
+            if not (event and event.title == title and event.gender == _GENDER.get(bare.group(1).lower(), "")):
+                event = Event(number=900 + len(meet.events), gender=_GENDER.get(bare.group(1).lower(), ""),
+                              title=title, meters=metersOf(title))
+                meet.events.append(event)
+            cols, in_rows = {}, False
+            continue
         if ev or (anyev and gw):
             if ev:
                 num, title = int(ev.group(1)), ev.group(3).strip()

@@ -21,6 +21,20 @@ becomes one source among many, used for what no one else has.
 | Hy-Tek report parser | `sources/hytek.py` | Reads Meet Manager results reports from Crystal Reports HTML (positioned divs), `<pre>` pages and PDFs (`pdftotext -layout`, poppler-utils). Gives the meet name, date, venue and timer, plus each event's gender, distance and rows (place, name, grade, school, time, points). Team scores are skipped. Checked on a real YenTiming page: 44 of 44 rows parsed. |
 | Tests | `tests/test_sources_fetch.py`, `tests/test_sources_hytek.py` | Use synthetic names. |
 
+## Built 2026-10-25: landing, dedup, promotion, linking, the HS TFRRS sites
+
+| Piece | File | What it does |
+|---|---|---|
+| Landing tables | `sources/land.py` | `meets_ext` (one row per timer meet page, `source = 'timer:<slug>'`), `races_ext` (one per race, with the **timer's own distance**, `meters_stated`), `results_ext` (one per runner). A re-land that changes nothing is a no-op; a promoted meet is never rewritten. |
+| Meet dedup | `sources/dedup.py` | Each landed race is judged against every anet / TFRRS / upload / promoted-timer row on its day ±1. The runners are the evidence: same day, same time to the printed precision, and the same name (or the same school with one partner each way). 3 name matches, or 3 matches that are 30% of the finishers, make a race a **twin**. Meet status: `twin`, `partial` or `new`. A twin race's feed division and distance are kept beside the timer's (`twin_div_id`, `twin_meters`); `status` lists the ones that disagree by more than 3%. |
+| Promotion | `sources/promote.py` | The races no feed has go into `meets` + `results` (XC) or `meets_tf_meta` + `meets_tf` + `results_tf` (TF), shaped like an approved upload: `source = 'timer'`, the slug in `id_system`, `meet_id = -(700,000,000 + ext_meet_id)`, no `person_id`. |
+| Linking | `scripts/link_uploads.py --source timer` | The upload linker (name + school + generation, the teamless / profile_school / feed_twins rules), with its own rules `timer` / `timer_mint` and report `timer_link_report`. It runs as part of pass 4 of `link_tfrrs_rows.py` (04a). `twin_flag`'s `twin_upload`, `person_gender` and `backfill_normalize` read `timer` rows as they read uploads. |
+| The job's steps | `sources/timers.py` | `fetch` (fetches and parses into a file, no database), `land`, `dedup`, `promote`, `status`. Each one is a dry run until `--write` / `--apply`. Adapters: MeetPro meet index, a Hy-Tek report (HTML, `<pre>` or PDF, and its page files), or a Hy-Tek directory (YenTiming). |
+| HS TFRRS sites | `sources/tfrrs_hs.py` | fl.tfrrs.org and indiana.tfrrs.org are views of TFRRS's one database: the same meet ids and athlete ids as www.tfrrs.org, which the existing scraper already walks. `index` reads each site's `results_search.html` list. `check` says what we hold and how it is linked. `queue` puts meets with no rows back in `meet_queue` and keeps the list in `tfrrs_hs_meets`. `refresh` runs nightly (3 pages per site) before the TFRRS scrape. |
+| HS linking | `scripts/link_tfrrs_hs.py` | Pass 2b of `link_tfrrs_rows.py`: a TFRRS identity at a state-site meet joins its athletic.net career by name + school + grade (FR–SR read as 9–12) instead of being minted a second person. The whole id moves or none of it does, and it is logged with rule `tfrrs_hs`. Nightly it judges ids with a row scraped in the last 14 days. |
+
+The fetcher now sends `racecast-results/1.0 (+https://racecast.co/about)`. It used to send a Chrome string (owner, 2026-10-25: "never disguise the fetcher's identity").
+
 ## Next
 
 1. **Source registry** (`sources/registry.py`): one entry per timer with
@@ -35,7 +49,7 @@ becomes one source among many, used for what no one else has.
    - **Hy-Tek directory walker.** YenTiming's open directories: `/<year>/cross/<meet>/`, page files `X.html` then `X2.html`, plus PDFs.
    - **MeetPro parser.** `results.tfmeetpro.com/<Timer>/<Meet>/` and `rtspt.com/.../mp/`. One layout everywhere, always with grade and team. Mitchell Timing has about 740 meets, B&B about 350, MAC-FAT about 200.
    - **Small adapters:** Finished Results (CA/AZ, about 1,400 meets), GSE (MN), Black Squirrel (NE), TRXC, SportTrax (UT).
-3. **Landing table** `results_ext`: one row per runner per race, with
+3. **Landing table** `results_ext` (built 2026-10-25, above): one row per runner per race, with
    - `source = 'timer:<slug>'`,
    - the meet, race and distance,
    - name, grade, school, time and place,

@@ -58,3 +58,31 @@ def test_no_grade_column_is_an_empty_grade():
     page = RESULTS.replace('<th class="year">Yr</th>', "").replace('<td class="year">11</td>', "") \
         .replace('<td class="year">12</td>', "").replace('<td class="year">10</td>', "")
     assert [r.grade for r in M.parseResults(page)] == ["", "", ""]
+
+
+ROUNDS = """<h3 class="event-results-hdr">#6 Boys 100 Meters Results</h3>
+<h4 class="round-results-hdr">Finals</h4>
+<table class="results-table table"><thead><tr><th class="place">PL</th><th class="athlete">Athlete</th><th class="team">Team</th><th class="time">Time</th></tr></thead><tbody>
+<tr><td class="place">1</td><td class="athlete">Aaron ALPHA</td><td class="team">NORTHFIELD</td><td class="time">11.81</td></tr>
+</tbody></table>
+<h4 class="heat-results-hdr">Finals Section: 1</h4>
+<table class="results-table table"><thead><tr><th class="hplace">HPL</th><th class="athlete">Athlete</th><th class="team">Team</th><th class="time">Time</th></tr></thead><tbody>
+<tr><td class="hplace">1</td><td class="athlete">Aaron ALPHA</td><td class="team">NORTHFIELD</td><td class="time">11.81</td></tr>
+</tbody></table>
+<h4 class="round-results-hdr">Prelims</h4>
+<table class="results-table table"><thead><tr><th class="place">PL</th><th class="athlete">Athlete</th><th class="team">Team</th><th class="time">Time</th></tr></thead><tbody>
+<tr><td class="place">3</td><td class="athlete">Aaron ALPHA</td><td class="team">NORTHFIELD</td><td class="time">12.07Q</td></tr>
+</tbody></table>"""
+
+
+def test_prelims_and_finals_are_two_races_and_a_qualifier_is_not_the_time():
+    rounds = M.parseRounds(ROUNDS)
+    assert [(r, [(x.place, x.seconds, x.mark) for x in rows]) for r, rows in rounds] == [
+        ("Finals", [(1, 11.81, "11.81")]), ("Prelims", [(3, 12.07, "12.07")])]
+    assert len(M.parseResults(ROUNDS)) == 2
+    from sources import land as L
+    idx = M.MeetIndex(name="Region Meet", date="2022-05-20",
+                      events=[M.MeetEvent(6, "Boys 100 Meters", "M", 100.0, "results_6.html")])
+    lm = L.fromMeetPro(idx, {6: rounds}, "t", "u")
+    assert [(r.n, r.title, r.sport) for r in lm.races] == [(6, "Boys 100 Meters", "TF"),
+                                                         (10006, "Boys 100 Meters Prelims", "TF")]

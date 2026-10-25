@@ -51,6 +51,20 @@ FLOSPORTS = {"meetpro", "milesplit"}
 
 # terms that forbid bots and scrapers: never fetched, whatever else they post
 BLOCKED_NAMES = re.compile(r"pttiming|primetime timing|leone timing", re.I)
+# ★ THE HOSTS NOTHING FETCHES (owner, 2026-10-23, PLAN-MULTISOURCE.md "What
+#   counts as off limits"): terms that forbid bots (PTTiming and its white
+#   labels, Leone, TimerHub), and results a robots.txt bars for every
+#   crawler (ItsYourRace's results, eccathletics.org's results pages).
+#   sources.timers refuses a url on one of these before any request.
+OFF_LIMITS_HOSTS = re.compile(r"(^|\.)(pttiming\.com|primetimetiming\.com|leonetiming\.com|"
+                              r"timerhub\.com|itsyourrace\.com|eccathletics\.org)$", re.I)
+
+
+def offLimits(url):
+    """True for a url on a host nothing may fetch."""
+    import urllib.parse
+    host = urllib.parse.urlsplit(url or "").netloc.lower().split(":")[0]
+    return bool(OFF_LIMITS_HOSTS.search(host))
 
 US_STATES = set("""AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA
 MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV

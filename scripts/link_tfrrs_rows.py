@@ -52,13 +52,20 @@ THREE PASSES, IN THIS ORDER, EACH SAFE TO RE-RUN
   'fanout' / 'mint'; the freshman pass logs 'freshman') with from_person 0,
   and --undo <rule> puts exactly those rows back to NULL.
 
+★ 2b. HIGH SCHOOL TFRRS ROWS (2026-10-25, scripts/link_tfrrs_hs.py): a
+  runner at an fl. / indiana.tfrrs.org meet (tfrrs_hs_meets) joins their
+  athletic.net career by name + school + grade before pass 3 would mint a
+  second person; rule 'tfrrs_hs'. XCP_LINK_TFRRS_HS=0 skips it.
+
 ★ 4. UPLOADS (owner, 2026-10-10). An approved results upload
   (racecast/uploads.py) lands with source = 'upload' and no person; pass 4
   is scripts/link_uploads.py -- name + school + generation, the teamless and
   profile_school linkers' rules, doubtful rows report-only -- so the step
   that gives tfrrs rows a person gives uploaded rows one too.
   XCP_LINK_UPLOADS=0 or --no-uploads skips it; --undo upload|upload_mint
-  takes it back.
+  takes it back. Timing-company rows (sources/promote.py, source 'timer')
+  go through the same linker after the uploads: rules 'timer' /
+  'timer_mint', XCP_LINK_TIMERS=0 skips them.
 
 ! A DETACHED ROW IS NEVER RE-LINKED (2026-10-10). A result the owner moved
   off a person on an athlete's "not mine" (scripts/person_pins.py,
@@ -240,7 +247,8 @@ def main():
     ap.add_argument("--no-mint", action="store_true")
     ap.add_argument("--no-uploads", action="store_true",
                     help="skip pass 4, the uploaded rows (scripts/link_uploads.py)")
-    ap.add_argument("--undo", choices=("fanout", "mint", "freshman", "upload", "upload_mint"))
+    ap.add_argument("--undo", choices=("fanout", "mint", "freshman", "upload", "upload_mint",
+                                       "timer", "timer_mint", "tfrrs_hs"))
     a = ap.parse_args()
     if os.environ.get("XCP_LINK_TFRRS", "1") in ("0", "false"):
         print("[tfrrs-link] XCP_LINK_TFRRS=0 -- skipped")
@@ -301,6 +309,13 @@ def main():
                 print(f"[tfrrs-link] pass 2: joined {len(tpairs):,} by race "
                       f"times; rows {moved}")
 
+        # ★ PASS 2b, HIGH SCHOOL TFRRS ROWS (2026-10-25): an fl. / indiana.tfrrs.org
+        #   meet's runner joins their athletic.net career by name + school +
+        #   grade (scripts/link_tfrrs_hs.py; rule 'tfrrs_hs'), before pass 3
+        #   would mint them a second person. XCP_LINK_TFRRS_HS=0 skips it.
+        if os.environ.get("XCP_LINK_TFRRS_HS", "1") not in ("0", "false"):
+            import link_tfrrs_hs as LH
+            LH.run(conn, a.apply, days=int(os.environ.get("XCP_LINK_TFRRS_HS_DAYS", "14")))
         if not a.no_mint:
             with conn.cursor() as cur:
                 n = mint(cur, a.apply, a.mint_seasons)
@@ -311,6 +326,12 @@ def main():
         if not a.no_uploads and os.environ.get("XCP_LINK_UPLOADS", "1") not in ("0", "false"):
             import link_uploads as LU
             LU.run(conn, a.apply)
+        # ★ AND THE TIMING COMPANIES' ROWS (2026-10-25): a timer meet no feed
+        #   had, promoted by sources/promote.py, is linked by the same rules
+        #   (link_uploads --source timer; rules 'timer' / 'timer_mint')
+        if not a.no_uploads and os.environ.get("XCP_LINK_TIMERS", "1") not in ("0", "false"):
+            import link_uploads as LU
+            LU.run(conn, a.apply, feed=LU.TIMER)
         if not a.apply:
             print("[tfrrs-link] dry run -- nothing written; --apply to link")
 
