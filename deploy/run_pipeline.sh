@@ -582,6 +582,11 @@ step 01_season_year   "$PY" -u engine/season_year.py
 #   on why it exists sit where it used to run, above 04f.
 if [ -x "$WXPY" ]; then
   bgstep 04e_weather_grid "$WXPY" -u backfill/atmost_era5_zarr.py
+  # ★ AND THE MONTHS THAT STORE HAS NOT REACHED (2026-10-25: the grid
+  #   stopped at 2026-06-30 -- the free store runs 3-4 months behind). The
+  #   CDS's ERA5T, ~5 days behind, for the days after the store's last one;
+  #   no CDSAPI_KEY in the env file and it says so and exits 0.
+  bgstep 04e2_weather_recent "$WXPY" -u backfill/era5_cds_recent.py
 else
   echo "  04e_weather_grid skipped ($WXPY not found; see deploy/run_pipeline.sh)" | tee -a "$SUMMARY"
 fi
@@ -694,6 +699,7 @@ step 04d_gender       "$PY" -u engine/person_gender.py --write
 # (started in the background after 01_season_year; collected here, before
 #  the refit and the backfill read the grid)
 bgjoin 04e_weather_grid
+bgjoin 04e2_weather_recent
 # ! THE REFIT IS OPT-IN. fit_weather_correction is the heavy stage (hours)
 #   and its answer only changes when the grid's numbers do -- after
 #   scripts/recompute_apparent_temp.py, or a new season's worth of rows.
