@@ -560,6 +560,14 @@ if failed 00_integrity; then
 fi
 step 00_meet_dates    "$PY" -u engine/meet_date_fix.py --write --show 20
 step 01_season_year   "$PY" -u engine/season_year.py
+# ★ tfrrs XC MEETS PLACED BEFORE THE WEATHER GRID READS THEIR PLACE
+#   (2026-10-25). 04e fetches weather for the meets that have gps, and
+#   tfrrs meets only get gps from 06a, which ran after it: a meet 06a placed
+#   tonight got no weather until the next full run. The same script runs
+#   here first (tiers 1-2 on the links that already exist; idempotent,
+#   seconds to minutes) and again at 06a, which still catches the meets the
+#   linking steps between make placeable.
+step 01b_tfrrs_location "$PY" -u scripts/backfill_tfrrs_location.py --apply --out "$LOGDIR"
 # ★ THE WEATHER GRID IN THE BACKGROUND FROM HERE (2026-10-18, 23 min off
 #   the critical path). It reads the meets' dates and venues (corrected by
 #   the two steps above) and writes only the weather grid, which nothing
