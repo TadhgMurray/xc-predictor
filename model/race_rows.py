@@ -6,7 +6,9 @@ the database; writes one .npz.
 
     set -a; . /etc/xc-predictor.env; set +a; P=/srv/venv/bin/python
     $P -u model/race_rows.py --out /srv/pred/rows.npz                 # ~1 h
-    $P -u model/race_rows.py --out /srv/pred/smoke.npz --max-persons 20000
+    # a smoke run: every runner, one month of races, a year of history (~10 min)
+    $P -u model/race_rows.py --out /srv/pred/smoke.npz --hist-from 2023-08-01 \
+        --from 2024-09-01 --to 2024-09-30 --val-from 2024-09-16 --train-frac 1
 
 ★ WHAT IT IS FOR (docs/PLAN-MODEL-2026-10.md, 2026-10-25; owner: "you're
   guessing what each runner in an entire race will run"). The race model
@@ -508,7 +510,11 @@ def main():
                     help="races from here on are all kept: the validation season")
     ap.add_argument("--train-frac", type=float, default=0.25,
                     help="share of earlier races kept, whole races")
-    ap.add_argument("--max-persons", type=int, default=None, help="smoke run")
+    # ! NOT A SMOKE RUN: a race's runners are spread over every person id,
+    #   so the first N people complete almost no race (2026-10-25: 0 rows).
+    #   Narrow the dates instead (the docstring's smoke line).
+    ap.add_argument("--max-persons", type=int, default=None,
+                    help="stop after N people (a code check only; completes few races)")
     a = ap.parse_args()
 
     import numpy as np
@@ -526,6 +532,8 @@ def main():
         pid=np.frombuffer(pid, dtype=np.int64), tfrrs=np.frombuffer(src, dtype=np.int8),
         features=np.array(FEATURES), race_keys=np.array([repr(k) for k in keys]),
         args=np.array([repr(vars(a))]))
+    if not len(y):
+        print("⚠ NO RACES: nothing in the window had enough rated runners")
     print(f"wrote {a.out}: {len(y):,} runner-races in {len(keys):,} races, "
           f"{len(FEATURES)} inputs ({datetime.datetime.now() - t0})")
 

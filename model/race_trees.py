@@ -227,6 +227,9 @@ def main():
     race, day, tfrrs = z["race"][order], z["day"][order], z["tfrrs"][order]
     cut = datetime.date.fromisoformat(a.val_from).toordinal()
     val = day >= cut
+    if not (~val).any() or not val.any():
+        raise SystemExit(f"{a.rows}: {int((~val).sum()):,} training and {int(val.sum()):,} "
+                         f"validation rows around --val-from {a.val_from}; both are needed")
     print(f"{len(y):,} runner-races in {len(np.unique(race)):,} races; "
           f"train {int((~val).sum()):,}, validation {int(val.sum()):,} (from {a.val_from})")
 
