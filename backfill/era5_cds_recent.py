@@ -47,6 +47,13 @@ DATASET = "reanalysis-era5-single-levels"
 LAG_DAYS = 6                 # ERA5T is ~5 days behind; one day of slack
 TILE_DEG = 10.0              # region grouping: cells in touching 10-degree tiles
 MARGIN = 0.25                # one grid step around each region's box
+# ★ FOUR DAYS IN FLIGHT, AND A BUDGET (2026-10-25). One request a day, one
+#   after another, was ~115 days on the first run, and a CDS request can sit
+#   in its queue for minutes -- while the run waits for this step before
+#   04f. Each thread has its own client; the writes stay on the main thread.
+#   Past the budget no new day starts and the rest resume on the next run.
+THREADS = int(os.environ.get("XCP_CDS_THREADS") or 4)
+BUDGET_S = 60 * float(os.environ.get("XCP_CDS_BUDGET_MIN") or 90)
 
 # The store's short names (Z.VAR_MAP's values) -> the CDS request names.
 CDS_VARS = {
@@ -187,6 +194,52 @@ def fetchDay(client, day, cells):
     return rows
 
 
+def fetchDays(makeClient, order, days, threads=None, budget_s=None, write=None):
+    """fetchDay for every day of `order`, THREADS at a time (a client per
+    thread), each day's rows written on this thread as it lands. No day
+    starts past `budget_s`. Returns (failed, left, t0): left is the days
+    never started, for the next run."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    threads = max(1, threads or THREADS)
+    budget_s = BUDGET_S if budget_s is None else budget_s
+    local = threading.local()
+    t0 = time.time()
+
+    def one(d):
+        if time.time() - t0 > budget_s:
+            return d, None, None, 0.0                    # not started
+        if not hasattr(local, "client"):
+            local.client = makeClient()
+        ts = time.time()
+        try:
+            return d, fetchDay(local.client, d, days[d]), None, time.time() - ts
+        except Exception as exc:                          # noqa: BLE001 -- resumable
+            return d, None, exc, time.time() - ts
+
+    def store(rows):
+        with getConn() as conn:
+            Z.writeWeatherRows(conn, rows)
+            conn.commit()
+    write = write or store
+    failed = left = done = 0
+    with ThreadPoolExecutor(threads) as ex:
+        for fut in as_completed([ex.submit(one, d) for d in order]):
+            d, rows, exc, secs = fut.result()
+            if rows is None and exc is None:
+                left += 1
+                continue
+            done += 1
+            if exc is not None:
+                failed += 1
+                print(f"  ! {d} failed ({type(exc).__name__}: {exc}); retried next run", flush=True)
+                continue
+            write(rows)
+            print(f"  [{done}/{len(order)}] {d}: {len(days[d])} cells, {len(rows)} rows "
+                  f"({secs:.0f}s)", flush=True)
+    return failed, left, t0
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     p.add_argument("--dry-run", action="store_true", help="list the work, fetch nothing")
@@ -218,26 +271,16 @@ def main():
                 print(f"    {d}: {len(days[d])} cells, {len(regions(days[d]))} region(s)")
             return
         import cdsapi
-        client = cdsapi.Client(quiet=True, progress=False)
-        failed, t0 = 0, time.time()
-        for i, d in enumerate(order, 1):
-            ts = time.time()
-            try:
-                rows = fetchDay(client, d, days[d])
-            except Exception as exc:                       # noqa: BLE001 -- resumable
-                failed += 1
-                print(f"  ! {d} failed ({type(exc).__name__}: {exc}); retried next run", flush=True)
-                continue
-            with getConn() as conn:
-                Z.writeWeatherRows(conn, rows)
-                conn.commit()
-            print(f"  [{i}/{len(order)}] {d}: {len(days[d])} cells, {len(rows)} rows "
-                  f"({time.time() - ts:.0f}s)", flush=True)
-        if failed == len(order):
+        failed, left, t0 = fetchDays(lambda: cdsapi.Client(quiet=True, progress=False),
+                                     order, days)
+        tried = len(order) - left
+        if tried and failed == tried:
             print(f"  !! every day failed ({failed}); step failed", flush=True)
             raise SystemExit(2)
-        print(f"done: {len(order) - failed} days in {time.time() - t0:.0f}s"
-              f"{f' ({failed} failed -- rerun to retry)' if failed else ''}", flush=True)
+        print(f"done: {tried - failed} days in {time.time() - t0:.0f}s"
+              f"{f' ({failed} failed -- rerun to retry)' if failed else ''}"
+              f"{f'; {left} left for the next run (XCP_CDS_BUDGET_MIN)' if left else ''}",
+              flush=True)
     finally:
         closePool()
 
