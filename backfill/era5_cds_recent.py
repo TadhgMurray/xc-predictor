@@ -53,7 +53,11 @@ MARGIN = 0.25                # one grid step around each region's box
 #   in its queue for minutes -- while the run waits for this step before
 #   04f. Each thread has its own client; the writes stay on the main thread.
 #   Past the budget no new day starts and the rest resume on the next run.
-THREADS = int(os.environ.get("XCP_CDS_THREADS") or 4)
+# ! ONE AT A TIME BY DEFAULT (owner's server, 2026-10-25: four in flight were
+#   rejected, "Maximum number queued requests for this dataset has been
+#   reached. Please configure your scripts to request data sequentially").
+#   A month a request (fetchDay) is what makes sequential fast enough.
+THREADS = int(os.environ.get("XCP_CDS_THREADS") or 1)
 BUDGET_S = 60 * float(os.environ.get("XCP_CDS_BUDGET_MIN") or 90)
 
 # The store's short names (Z.VAR_MAP's values) -> the CDS request names.
