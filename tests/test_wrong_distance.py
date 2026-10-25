@@ -81,13 +81,23 @@ def test_a_hard_course_is_the_course_not_the_label():
     assert v["proposed"] == 5000.0 and v["direction"] == "down"
 
 
-def test_a_venue_whose_every_race_is_off_is_not_a_baseline():
-    # every day here reads 20% fast: no course runs that fast, the label is
-    # wrong every year. Not used to excuse this race; it is pinned down (it
-    # only lowers a distance) and the evidence says the whole venue reads so
-    v = WD.judge(_div(5000, -0.20), {"venue_meets": [-0.20, -0.19, -0.21]})
+def test_a_venue_that_reads_fast_every_day_is_left_to_its_difficulty():
+    # every day here reads 20% fast. The solve's difficulty for the venue
+    # learns that, and a pin would only take the races' course away -- so
+    # the last run's ratings decide (owner, 2026-10-25: "should this not
+    # just have the difficulty?")
+    ctx = {"venue_meets": [-0.20, -0.19, -0.21]}
+    d = _div(5000, -0.20)
+    d.update(rating_gap=0.01, rating_n=30)          # ratings normal: absorbed
+    v = WD.judge(d, ctx)
+    assert (v["kind"], v["action"]) == ("venue_wide", "review")
+    assert "difficulty takes it" in v["evidence"]
+    d.update(rating_gap=None, rating_n=0)           # no ratings: can't tell
+    assert WD.judge(d, ctx)["action"] == "review"
+    d.update(rating_gap=0.15, rating_n=30)          # a thin venue still reads high
+    v = WD.judge(d, ctx)
     assert (v["proposed"], v["action"]) == (4000.0, "pin")
-    assert "venue reads" in v["evidence"]
+    assert "does not take it" in v["evidence"]
     # the same venue reading 20% SLOW is a hard course or a short label:
     # never raised, at most listed
     v = WD.judge(_div(5000, 0.20), {"venue_meets": [0.20, 0.19, 0.21]})
@@ -280,7 +290,7 @@ def test_the_finder_on_a_synthetic_corpus(scratch):
         c.execute("""
             CREATE TABLE results (result_id bigint, meet_id bigint, div_id bigint, source text,
                 person_id bigint, athlete_id bigint, time_seconds real, date text,
-                rating_pool text, grade text, athlete_name text);
+                rating_pool text, grade text, athlete_name text, speed_rating real);
             CREATE TABLE meets (div_id bigint, meet_id bigint, meet_name text, course_name text,
                 distance real, division text, gps_lat real, gps_long real,
                 source text DEFAULT 'anet');
@@ -295,6 +305,7 @@ def test_the_finder_on_a_synthetic_corpus(scratch):
         execute_values(c, "INSERT INTO results (result_id, meet_id, div_id, source, person_id,"
                           " athlete_id, time_seconds, date, rating_pool) VALUES %s",
                        data["results"])
+        c.execute("UPDATE results SET speed_rating = 100 * exp(random() * 0.02)")
         execute_values(c, "INSERT INTO meets (div_id, meet_id, meet_name, course_name, distance,"
                           " division, gps_lat, gps_long) VALUES %s", data["meets"])
         execute_values(c, "INSERT INTO athletes (athlete_id, gender) VALUES %s", data["athletes"])
