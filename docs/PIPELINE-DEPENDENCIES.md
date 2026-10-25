@@ -187,6 +187,8 @@ serial ones for identical rows. Each has a switch back to the old way.
 |---|---:|---|---|
 | 04e_weather_grid (bg, waited on before 04f) | 9,797 | ERA5 tiles read 8 at a time; rows written in tile order. Same rows on the live store, 2.6x on a 4-core box | `XCP_WX_THREADS=1` |
 | 04e2_weather_recent (bg, new on master) | new | CDS days 4 at a time; no new day after 90 min, the rest resume next run | `XCP_CDS_THREADS=1`, `XCP_CDS_BUDGET_MIN` |
+| 03_pro_flag | 3,096 | each row's team level computed once, not four times; a cheap guard before the pro-team name regexes; a hash join for post-collegiate. Same tables (md5) on a 20M-row synthetic copy, 418 s -> 205 s; ~1,500 s expected | — |
+| 04_grade_sanity | 4,292 | its SQL helpers marked PARALLEL SAFE (unmarked, every statement using them ran on one core); rule 4 staged into analysed tables; COPY writes. Same grade_fix (md5) on synthetic corpora; ~2,500 s expected | — |
 | 04_grade_sanity, 04b_wheelchair, 04d_gender | 4,292 + two | together (group 3), then 04c_twins | — |
 | 09b_fill, 09c_school_names | 1,085 + 09c | together (group 7) | — |
 | 10a .. 11_teams | ~2,100 in a row | three waves of up to four (group 1), then 10f3 | `XCP_STREAMS=1` |
