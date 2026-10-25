@@ -49,7 +49,9 @@ sys.path.insert(0, "scripts")   # database.py lives in scripts/; run from repo r
 
 import argparse
 import math
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -65,6 +67,16 @@ from database import getConn, initPool, closePool   # project DB layer (pool + c
 
 GRID_DEG = 0.25          # ERA5 resolution in degrees; the cell size we snap to.
 WRITE_BATCH = 5000       # rows per DB insert; keeps memory + round-trips sane.
+# ★ TILES FETCHED SIDE BY SIDE (owner, 2026-10-25: "you can multithread/core
+#   as necessary"). 04e took 9,797 s on 20261023_171317 and the run waits
+#   for it before 04f. A tile is ~6 s of network waits and decompression,
+#   and one tile's .load() parallelises only its own few chunks. Measured
+#   2026-10-25 on the live store, 12 tiles of 5 cells x 4 seasons: serial
+#   6.2 s a tile, 4 threads 2.4 s, 8 threads 2.7 s (on a 4-core box: the
+#   decompression is the limit there; the server has 24). The rows were
+#   byte-identical. Reads only: every write stays on the main thread, in
+#   tile order. XCP_WX_THREADS=1 is the old serial loop.
+FETCH_THREADS = int(os.environ.get("XCP_WX_THREADS") or 8)
 TIME_DIM = "valid_time"  # this store names the hourly axis 'valid_time', not 'time'.
 # Grid-keyed target table. NOT your old per-meet `weather` table (different shape);
 # this one is keyed (cell_lat, cell_lon, date, hour). Join it to meets later on
@@ -600,6 +612,11 @@ def main():
         later = sum(1 for _, ds_ in cells for d in ds_ if str(d)[:10] > end)
         print(f"store covers through {end}; {later} of the cell-days are after it "
               f"(left for a later run)", flush=True)
+        # ! AND NOT ASKED FOR. A day past the store's end fetched nothing anyway
+        #   (fetchTileWeather clamps to the coverage); a tile of only such days
+        #   still cost a selection. 04e2 fetches those days from the CDS.
+        cells = [(c, [d for d in dates if str(d)[:10] <= end]) for c, dates in cells]
+        tiles = _groupIntoTiles([(c, dates) for c, dates in cells if dates])
         with getConn() as conn:
             _runBackfill(ds, tiles, conn, args.debug)
     finally:
@@ -621,12 +638,21 @@ def _groupIntoTiles(cells, tileDeg=3.0):
     return list(tiles.values())
 
 
-def _runBackfill(ds, tiles, conn, debug=False):
+def _fetchTimed(ds, tileCells):
+    """fetchTileWeather on a worker thread: (rows, error, seconds). The error
+    is handed back, not raised, so one bad tile fails only itself."""
+    ts = time.time()
+    try:
+        return fetchTileWeather(ds, tileCells), None, time.time() - ts
+    except Exception as e:                             # transient -> retry on resume
+        return None, e, time.time() - ts
+
+
+def _runBackfill(ds, tiles, conn, debug=False, threads=None):
     """
-    Purpose: fetch tile by tile (each is one shared chunk read) and write rows in
-             batches, with progress. Serial by design -- one big per-tile .load()
-             lets zarr parallelise its own chunk fetches internally, which is the
-             speedup, with no user threads to deadlock.
+    Purpose: fetch the tiles (each is one shared chunk read) FETCH_THREADS at a
+             time and write rows in batches, in tile order, with progress. The
+             threads only read the store; the writes stay on this thread.
     Arguments:
         ds: the open ERA5 dataset.
         tiles: list of tiles (each a list of ((cellLat, cellLon), dates)).
@@ -638,16 +664,17 @@ def _runBackfill(ds, tiles, conn, debug=False):
     t0 = time.time()
     every = max(1, total // 50)                        # ~50 progress lines total
     buffer, done, failed = [], 0, 0
-    for tileCells in tiles:
-        ts = time.time()
-        try:
-            rows = fetchTileWeather(ds, tileCells)
-        except Exception as e:                         # transient -> retry on resume
+    threads = max(1, threads or FETCH_THREADS)
+    pool = ThreadPoolExecutor(threads) if threads > 1 else None
+    # map hands results back in tile order, whichever thread finished first
+    fetched = (pool.map(lambda tc: _fetchTimed(ds, tc), tiles) if pool
+               else (_fetchTimed(ds, tc) for tc in tiles))
+    for tileCells, (rows, err, fetchSecs) in zip(tiles, fetched):
+        if err is not None:
             failed += 1
-            print(f"  ! tile failed ({e}); retry on resume", flush=True)
+            print(f"  ! tile failed ({err}); retry on resume", flush=True)
             done += 1
             continue
-        fetchSecs = time.time() - ts                   # time the FETCH
         buffer.extend(rows)
         done += 1
         writeSecs = 0.0
@@ -663,6 +690,8 @@ def _runBackfill(ds, tiles, conn, debug=False):
                   f"{writeSecs:.1f}s", flush=True)
         if not debug and (done % every == 0 or done == total):
             _printProgress(done, total, t0)
+    if pool:
+        pool.shutdown()
     writeWeatherRows(conn, buffer)                     # final partial batch
     conn.commit()
     # ! A STEP THAT FETCHED NOTHING IS A FAILED STEP (run16, 2026-09-07):
