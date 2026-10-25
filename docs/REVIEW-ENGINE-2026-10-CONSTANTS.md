@@ -946,146 +946,146 @@ Read with `os.environ` / `os.getenv` in the files above, or expanded as `${XCP_.
 
 | switch | read at | default | under the new engine |
 |---|---|---|---|
-| `XCP_ALERTS` | deploy/run_pipeline.sh:1577 | 0 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
-| `XCP_ALTITUDE` | deploy/run_pipeline.sh:114, deploy/run_pipeline.sh:1138, deploy/run_pipeline.sh:1139, deploy/solve_env.sh:36 | 1 (run_pipeline.sh); 1 (solve_env.sh) | **FITTED** fitted altitude (α per surface by GLS, from runners seen at several elevations) |
-| `XCP_ALTITUDE_FIT` | deploy/run_pipeline.sh:1139, deploy/solve_env.sh:43 | 0 (run_pipeline.sh); 1 (solve_env.sh) | **FITTED** fitted altitude (α per surface by GLS, from runners seen at several elevations) |
-| `XCP_AUDIT_OVERRIDES` | deploy/run_pipeline.sh:760 | 1 (run_pipeline.sh) | **DATA** distance overrides audited; distance resolution stays; §5: once v_r absorbs a wrong distance most overrides become a flag list (first-timer fields still need the distance) |
-| `XCP_BACKFILL_XC` | deploy/run_pipeline.sh:787 | full (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_BACKTEST` | deploy/run_pipeline.sh:1644 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_BACKTEST_DIVS` | deploy/run_pipeline.sh:1647 | 40 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_BRACKET` | deploy/run_pipeline.sh:1308 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_ALERTS` | deploy/run_pipeline.sh:1607 | 0 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
+| `XCP_ALTITUDE` | deploy/run_pipeline.sh:114, deploy/run_pipeline.sh:1168, deploy/run_pipeline.sh:1169, deploy/solve_env.sh:36 | 1 (run_pipeline.sh); 1 (solve_env.sh) | **FITTED** fitted altitude (α per surface by GLS, from runners seen at several elevations) |
+| `XCP_ALTITUDE_FIT` | deploy/run_pipeline.sh:1169, deploy/solve_env.sh:43 | 0 (run_pipeline.sh); 1 (solve_env.sh) | **FITTED** fitted altitude (α per surface by GLS, from runners seen at several elevations) |
+| `XCP_AUDIT_OVERRIDES` | deploy/run_pipeline.sh:789 | 1 (run_pipeline.sh) | **DATA** distance overrides audited; distance resolution stays; §5: once v_r absorbs a wrong distance most overrides become a flag list (first-timer fields still need the distance) |
+| `XCP_BACKFILL_XC` | deploy/run_pipeline.sh:817 | full (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_BACKTEST` | deploy/run_pipeline.sh:1674 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_BACKTEST_DIVS` | deploy/run_pipeline.sh:1677 | 40 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_BRACKET` | deploy/run_pipeline.sh:1338 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
 | `XCP_BRACKET_FIELD` | engine/bracket_engine.py:90 | "on" (bracket_engine.py) | **REMOVED** one course estimate c_c with its SD (the bracket engine goes, §5) |
-| `XCP_BRACKET_INDOOR_CENTRE` | deploy/run_pipeline.sh:1107, deploy/solve_env.sh:61 | flag default (run_pipeline.sh); 0.003 (solve_env.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
-| `XCP_BRACKET_INDOOR_GATES` | deploy/run_pipeline.sh:1105, deploy/solve_env.sh:152 | flag default (run_pipeline.sh); clamp (solve_env.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
-| `XCP_BRACKET_INDOOR_LEVELS` | deploy/run_pipeline.sh:1109 | flag default (run_pipeline.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
-| `XCP_BRACKET_INDOOR_MODE` | deploy/run_pipeline.sh:1108, deploy/solve_env.sh:86 | flag default (run_pipeline.sh); pin (solve_env.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
-| `XCP_BRACKET_PLACE_PRIOR` | deploy/run_pipeline.sh:1112 | flag default (run_pipeline.sh) | **DATA** kept: which keys are one physical course is separate work (owner, 2026-10-25); the new engine keys cells as the pack does |
-| `XCP_BRACKET_PLACE_RADIUS` | deploy/run_pipeline.sh:1101 | flag default (run_pipeline.sh) | **DATA** kept: which keys are one physical course is separate work (owner, 2026-10-25); the new engine keys cells as the pack does |
-| `XCP_BRACKET_PLACE_VENUE` | deploy/run_pipeline.sh:1113 | flag default (run_pipeline.sh) | **DATA** kept: which keys are one physical course is separate work (owner, 2026-10-25); the new engine keys cells as the pack does |
-| `XCP_BRACKET_PRIOR` | deploy/run_pipeline.sh:1098 | flag default (run_pipeline.sh) | **REMOVED** one course estimate c_c with its SD (the bracket engine goes, §5) |
-| `XCP_BRACKET_SIBLING_TOL` | deploy/run_pipeline.sh:1102 | flag default (run_pipeline.sh) | **DATA** kept: which keys are one physical course is separate work (owner, 2026-10-25); the new engine keys cells as the pack does |
-| `XCP_BRACKET_WINDOW` | deploy/run_pipeline.sh:114, deploy/run_pipeline.sh:1099, deploy/solve_env.sh:218 | flag default (run_pipeline.sh); 30 (solve_env.sh) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) (§4.2: the walk's variance is the window, fitted) |
-| `XCP_BRACKET_XC_LEVEL` | deploy/run_pipeline.sh:1110 | flag default (run_pipeline.sh) | **REMOVED** measured XC level (G per level by GLS through each runner's filter; §4.4) |
-| `XCP_BRACKET_XC_LEVEL_MODE` | deploy/run_pipeline.sh:1111, deploy/solve_env.sh:117 | flag default (run_pipeline.sh); off (solve_env.sh) | **REMOVED** measured XC level (G per level by GLS through each runner's filter; §4.4) |
-| `XCP_CENTRE_CURVE` | deploy/run_pipeline.sh:1130 | flag default (run_pipeline.sh) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) (§5: form trend, season tie; per-season ability) |
+| `XCP_BRACKET_INDOOR_CENTRE` | deploy/run_pipeline.sh:1137, deploy/solve_env.sh:61 | flag default (run_pipeline.sh); 0.003 (solve_env.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
+| `XCP_BRACKET_INDOOR_GATES` | deploy/run_pipeline.sh:1135, deploy/solve_env.sh:152 | flag default (run_pipeline.sh); clamp (solve_env.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
+| `XCP_BRACKET_INDOOR_LEVELS` | deploy/run_pipeline.sh:1139 | flag default (run_pipeline.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
+| `XCP_BRACKET_INDOOR_MODE` | deploy/run_pipeline.sh:1138, deploy/solve_env.sh:86 | flag default (run_pipeline.sh); pin (solve_env.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
+| `XCP_BRACKET_PLACE_PRIOR` | deploy/run_pipeline.sh:1142 | flag default (run_pipeline.sh) | **DATA** kept: which keys are one physical course is separate work (owner, 2026-10-25); the new engine keys cells as the pack does |
+| `XCP_BRACKET_PLACE_RADIUS` | deploy/run_pipeline.sh:1131 | flag default (run_pipeline.sh) | **DATA** kept: which keys are one physical course is separate work (owner, 2026-10-25); the new engine keys cells as the pack does |
+| `XCP_BRACKET_PLACE_VENUE` | deploy/run_pipeline.sh:1143 | flag default (run_pipeline.sh) | **DATA** kept: which keys are one physical course is separate work (owner, 2026-10-25); the new engine keys cells as the pack does |
+| `XCP_BRACKET_PRIOR` | deploy/run_pipeline.sh:1128 | flag default (run_pipeline.sh) | **REMOVED** one course estimate c_c with its SD (the bracket engine goes, §5) |
+| `XCP_BRACKET_SIBLING_TOL` | deploy/run_pipeline.sh:1132 | flag default (run_pipeline.sh) | **DATA** kept: which keys are one physical course is separate work (owner, 2026-10-25); the new engine keys cells as the pack does |
+| `XCP_BRACKET_WINDOW` | deploy/run_pipeline.sh:114, deploy/run_pipeline.sh:1129, deploy/solve_env.sh:218 | flag default (run_pipeline.sh); 30 (solve_env.sh) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) (§4.2: the walk's variance is the window, fitted) |
+| `XCP_BRACKET_XC_LEVEL` | deploy/run_pipeline.sh:1140 | flag default (run_pipeline.sh) | **REMOVED** measured XC level (G per level by GLS through each runner's filter; §4.4) |
+| `XCP_BRACKET_XC_LEVEL_MODE` | deploy/run_pipeline.sh:1141, deploy/solve_env.sh:117 | flag default (run_pipeline.sh); off (solve_env.sh) | **REMOVED** measured XC level (G per level by GLS through each runner's filter; §4.4) |
+| `XCP_CENTRE_CURVE` | deploy/run_pipeline.sh:1160 | flag default (run_pipeline.sh) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) (§5: form trend, season tie; per-season ability) |
 | `XCP_CG_TRACE` | engine/joint_solve.py:2527, engine/joint_solve.py:2724 | "0" (joint_solve.py) | **INFRA** performance and plumbing |
 | `XCP_CONVERT_SPORT_GAIN` | racecast/conversions.py:286 | — | **REMOVED** summer-seam step J_ℓ by GLS (fall-to-spring change measured per level, as fitness) and measured XC level (G per level by GLS through each runner's filter; §4.4) |
-| `XCP_COURSE_SCALE` | deploy/run_pipeline.sh:1114 | flag default (run_pipeline.sh) | **REMOVED** one course estimate c_c with its SD (the bracket engine goes, §5) |
-| `XCP_COURSE_SHARDS` | deploy/run_pipeline.sh:53, deploy/run_pipeline.sh:1529 | 3 (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_COURSE_SCALE` | deploy/run_pipeline.sh:1144 | flag default (run_pipeline.sh) | **REMOVED** one course estimate c_c with its SD (the bracket engine goes, §5) |
+| `XCP_COURSE_SHARDS` | deploy/run_pipeline.sh:53, deploy/run_pipeline.sh:1559 | 3 (run_pipeline.sh) | **INFRA** performance and plumbing |
 | `XCP_CURVE_SMOOTH` | engine/run_joint.py:2354 | js.CURVE_SMOOTH (run_joint.py) | **FITTED** season curve f_ℓ by GLS, curvature by EM |
 | `XCP_DAY_CENTRE` | engine/run_joint.py:3620 | "1" (run_joint.py) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) (§5: season centring; a fast season is fitness) |
 | `XCP_DAY_DIVISION_GUARD` | engine/joint_solve.py:270 | "1" (joint_solve.py) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) |
 | `XCP_DAY_DIVISION_SHRINK` | engine/joint_solve.py:402 | "1" (joint_solve.py) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) |
-| `XCP_DAY_NOISE` | deploy/run_pipeline.sh:1106, deploy/solve_env.sh:161 | flag default (run_pipeline.sh); fitted (solve_env.sh) | **REMOVED** one course estimate c_c with its SD (the bracket engine goes, §5) |
+| `XCP_DAY_NOISE` | deploy/run_pipeline.sh:1136, deploy/solve_env.sh:161 | flag default (run_pipeline.sh); fitted (solve_env.sh) | **REMOVED** one course estimate c_c with its SD (the bracket engine goes, §5) |
 | `XCP_DAY_PRIOR` | engine/run_joint.py:3644 | "" (run_joint.py) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) |
 | `XCP_DAY_SOFT` | engine/joint_golive.py:67 | "0" (joint_golive.py) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) |
 | `XCP_DB_QUIET` | deploy/run_pipeline.sh:51, deploy/solve_env.sh:248 | 1 (run_pipeline.sh); 1 (solve_env.sh) | **INFRA** performance and plumbing |
-| `XCP_DIFFICULTY` | deploy/run_pipeline.sh:113, deploy/run_pipeline.sh:1097, deploy/solve_env.sh:33 | flag default (run_pipeline.sh); bracket (solve_env.sh) | **REMOVED** one course estimate c_c with its SD (the bracket engine goes, §5) |
+| `XCP_DIFFICULTY` | deploy/run_pipeline.sh:113, deploy/run_pipeline.sh:1127, deploy/solve_env.sh:33 | flag default (run_pipeline.sh); bracket (solve_env.sh) | **REMOVED** one course estimate c_c with its SD (the bracket engine goes, §5) |
 | `XCP_DISTANCE_BY` | engine/normalize_distance.py:299 | "" (normalize_distance.py) | **STATED** kept until §8 point 5: the distance curves stay in normalisation in front of the new engine (which distance curve family) |
 | `XCP_DISTANCE_RESIDUAL` | engine/normalize_distance.py:328 | "" (normalize_distance.py) | **STATED** kept until §8 point 5: the distance curves stay in normalisation in front of the new engine (which distance curve family) |
-| `XCP_DIST_HOLDOUT` | deploy/run_pipeline.sh:1223 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_DIST_WALK` | deploy/run_pipeline.sh:1127 | flag default (run_pipeline.sh) | **FITTED** event offsets e_ℓ,d by GLS |
+| `XCP_DIST_HOLDOUT` | deploy/run_pipeline.sh:1253 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_DIST_WALK` | deploy/run_pipeline.sh:1157 | flag default (run_pipeline.sh) | **FITTED** event offsets e_ℓ,d by GLS |
 | `XCP_EFFORT` | engine/run_joint.py:2678 | "0" (run_joint.py) | **REMOVED** Student-t row residual (IRLS weights) (off in production) |
 | `XCP_ENV` | deploy/run_pipeline.sh:54 | /etc/xc-predictor.env (run_pipeline.sh) | **INFRA** performance and plumbing |
 | `XCP_EQUAL_TIME_SCALE` | racecast/pool_view.py:840 | "0" (pool_view.py) | **DISPLAY** the public scale: one 5000 m scale in the model; pools are a display transform (§5) |
-| `XCP_ERA_DRIFT` | engine/run_joint.py:886, deploy/run_pipeline.sh:1126, deploy/run_pipeline.sh:1187, deploy/run_pipeline.sh:1210 (+1) | flag default (run_pipeline.sh) | **FITTED** the course eras' walk, cross-validated once added (§4.7) |
-| `XCP_ERA_YEARS` | deploy/run_pipeline.sh:113, deploy/run_pipeline.sh:1125, deploy/run_pipeline.sh:1186, deploy/run_pipeline.sh:1209 (+3) | flag default (run_pipeline.sh); 2 (solve_env.sh) | **STATED** course eras of N years: the prototype splits by era; §8 point 4 adds the walk |
-| `XCP_EVIDENCE` | deploy/run_pipeline.sh:1336 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_EVIDENCE_BG` | deploy/run_pipeline.sh:1338 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_EVIDENCE_NICE` | deploy/run_pipeline.sh:1341, deploy/run_pipeline.sh:1344 | 19 (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_ERA_DRIFT` | engine/run_joint.py:886, deploy/run_pipeline.sh:1156, deploy/run_pipeline.sh:1217, deploy/run_pipeline.sh:1240 (+1) | flag default (run_pipeline.sh) | **FITTED** the course eras' walk, cross-validated once added (§4.7) |
+| `XCP_ERA_YEARS` | deploy/run_pipeline.sh:113, deploy/run_pipeline.sh:1155, deploy/run_pipeline.sh:1216, deploy/run_pipeline.sh:1239 (+3) | flag default (run_pipeline.sh); 2 (solve_env.sh) | **STATED** course eras of N years: the prototype splits by era; §8 point 4 adds the walk |
+| `XCP_EVIDENCE` | deploy/run_pipeline.sh:1366 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_EVIDENCE_BG` | deploy/run_pipeline.sh:1368 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_EVIDENCE_NICE` | deploy/run_pipeline.sh:1371, deploy/run_pipeline.sh:1374 | 19 (run_pipeline.sh) | **INFRA** performance and plumbing |
 | `XCP_FIELD_CHECK` | engine/joint_golive.py:148 | "1" (joint_golive.py) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) read against the runners' θ (§5: field check) |
 | `XCP_FIELD_CHECK_CAP` | engine/joint_golive.py:133 | "0.06" (joint_golive.py) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) read against the runners' θ (§5: field check) |
 | `XCP_FIELD_CHECK_FLOOR` | engine/joint_golive.py:132 | "0.01" (joint_golive.py) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) read against the runners' θ (§5: field check) |
 | `XCP_FIELD_CHECK_FLOOR_OPENER` | engine/joint_golive.py:144 | "0.02" (joint_golive.py) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) read against the runners' θ (§5: field check) |
 | `XCP_FIELD_CHECK_MIN` | engine/joint_golive.py:131 | "10" (joint_golive.py) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) read against the runners' θ (§5: field check) |
-| `XCP_FORECASTS` | deploy/run_pipeline.sh:1586 | 0 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
-| `XCP_FORM_TREND` | engine/joint_solve.py:1170, engine/run_joint.py:3919, deploy/run_pipeline.sh:1136, deploy/run_pipeline.sh:1190 (+2) | "0" (joint_solve.py); flag default (run_pipeline.sh) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) (§5: form trend, season tie; per-season ability) |
-| `XCP_FROM_STATE` | deploy/run_pipeline.sh:1119 | flag default (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_GAUGE` | deploy/run_pipeline.sh:115, deploy/run_pipeline.sh:1103, deploy/solve_env.sh:60 | flag default (run_pipeline.sh); flat400 (solve_env.sh) | **STATED** the gauge: a flat outdoor 400 is 0 (§4.4, stated) |
+| `XCP_FORECASTS` | deploy/run_pipeline.sh:1616 | 0 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
+| `XCP_FORM_TREND` | engine/joint_solve.py:1170, engine/run_joint.py:3919, deploy/run_pipeline.sh:1166, deploy/run_pipeline.sh:1220 (+2) | "0" (joint_solve.py); flag default (run_pipeline.sh) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) (§5: form trend, season tie; per-season ability) |
+| `XCP_FROM_STATE` | deploy/run_pipeline.sh:1149 | flag default (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_GAUGE` | deploy/run_pipeline.sh:115, deploy/run_pipeline.sh:1133, deploy/solve_env.sh:60 | flag default (run_pipeline.sh); flat400 (solve_env.sh) | **STATED** the gauge: a flat outdoor 400 is 0 (§4.4, stated) |
 | `XCP_GAUGE_FALLBACK` | engine/bracket_engine.py:1358, engine/bracket_engine.py:1376 | "" (bracket_engine.py) | **STATED** the gauge: a flat outdoor 400 is 0 (§4.4, stated) |
-| `XCP_GAUGE_SCOPE` | deploy/run_pipeline.sh:1104, deploy/solve_env.sh:145 | flag default (run_pipeline.sh); sport (solve_env.sh) | **REMOVED** measured XC level (G per level by GLS through each runner's filter; §4.4) |
+| `XCP_GAUGE_SCOPE` | deploy/run_pipeline.sh:1134, deploy/solve_env.sh:145 | flag default (run_pipeline.sh); sport (solve_env.sh) | **REMOVED** measured XC level (G per level by GLS through each runner's filter; §4.4) |
 | `XCP_GAUGE_UNKNOWN_LENGTH` | engine/track_geometry.py:92, deploy/solve_env.sh:75 | "" (track_geometry.py); assume400 (solve_env.sh) | **STATED** the gauge: a flat outdoor 400 is 0 (§4.4, stated) |
 | `XCP_GEOMETRY` | engine/normalize_distance.py:160 | "0" (normalize_distance.py) | **REMOVED** course cell c_c per oval (the geometry spline is already off) |
 | `XCP_HOLDOUT_DUMP` | engine/run_joint.py:2143 | — | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_HOLDOUT_PCT` | deploy/run_pipeline.sh:1179, deploy/run_pipeline.sh:1202, deploy/run_pipeline.sh:1225 | 25 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_HOLDOUT_PCT` | deploy/run_pipeline.sh:1209, deploy/run_pipeline.sh:1232, deploy/run_pipeline.sh:1255 | 25 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
 | `XCP_HOLDOUT_VERBOSE` | engine/run_joint.py:2081 | "0" (run_joint.py) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_IGNORE_BACKFILL_FAIL` | deploy/run_pipeline.sh:808 | 0 (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_IGNORE_GOLIVE_FAIL` | deploy/run_pipeline.sh:1388 | 0 (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_IGNORE_PEOPLE_FAIL` | deploy/run_pipeline.sh:710 | 0 (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_IMPORTANCE` | deploy/run_pipeline.sh:1121, deploy/run_pipeline.sh:1182, deploy/run_pipeline.sh:1205, deploy/run_pipeline.sh:1228 (+1) | flag default (run_pipeline.sh); none (solve_env.sh) | **REMOVED** taper term τ·peak by GLS (the season's last race) (off in production: none) |
-| `XCP_INDOOR_LEVEL` | deploy/run_pipeline.sh:1124, deploy/run_pipeline.sh:1185, deploy/run_pipeline.sh:1208, deploy/run_pipeline.sh:1231 (+1) | flag default (run_pipeline.sh); 0.003 (solve_env.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
+| `XCP_IGNORE_BACKFILL_FAIL` | deploy/run_pipeline.sh:838 | 0 (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_IGNORE_GOLIVE_FAIL` | deploy/run_pipeline.sh:1418 | 0 (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_IGNORE_PEOPLE_FAIL` | deploy/run_pipeline.sh:739 | 0 (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_IMPORTANCE` | deploy/run_pipeline.sh:1151, deploy/run_pipeline.sh:1212, deploy/run_pipeline.sh:1235, deploy/run_pipeline.sh:1258 (+1) | flag default (run_pipeline.sh); none (solve_env.sh) | **REMOVED** taper term τ·peak by GLS (the season's last race) (off in production: none) |
+| `XCP_INDOOR_LEVEL` | deploy/run_pipeline.sh:1154, deploy/run_pipeline.sh:1215, deploy/run_pipeline.sh:1238, deploy/run_pipeline.sh:1261 (+1) | flag default (run_pipeline.sh); 0.003 (solve_env.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
 | `XCP_ISLAND_CHECK` | engine/joint_golive.py:259 | "1" (joint_golive.py) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) + posterior-SD gate (flag, not a rating change) (§5: island check) |
 | `XCP_ISLAND_CHECK_CAP` | engine/joint_golive.py:255 | "0.06" (joint_golive.py) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) + posterior-SD gate (flag, not a rating change) (§5: island check) |
 | `XCP_ISLAND_CHECK_FLOOR` | engine/joint_golive.py:254 | "0.03" (joint_golive.py) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) + posterior-SD gate (flag, not a rating change) (§5: island check) |
 | `XCP_ISLAND_CHECK_MIN` | engine/joint_golive.py:253 | "10" (joint_golive.py) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) + posterior-SD gate (flag, not a rating change) (§5: island check) |
-| `XCP_JOINT` | deploy/run_pipeline.sh:1357 | 0 (run_pipeline.sh) | **INFRA** engine selector (joint go-live vs the legacy linkage path) |
-| `XCP_JOINT_LIVE` | deploy/run_pipeline.sh:950, deploy/run_pipeline.sh:1477 | 1 (run_pipeline.sh) | **INFRA** engine selector (joint go-live vs the legacy linkage path) |
-| `XCP_KAILO` | deploy/run_pipeline.sh:1636 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_LACCTIC` | deploy/run_pipeline.sh:1626 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_LACCTIC_RACES` | deploy/run_pipeline.sh:1628 | 12194,12158,11632 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_LADDER` | deploy/run_pipeline.sh:1267 | auto (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_LADDER_ALL` | deploy/run_pipeline.sh:1290 | flag default (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_LADDER_MIN_DAYS` | deploy/run_pipeline.sh:1279, deploy/run_pipeline.sh:1280 | 7 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_LADDER_ONLY` | deploy/run_pipeline.sh:1292, deploy/run_pipeline.sh:1295 | flag default (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_LADDER_PCT` | deploy/run_pipeline.sh:1288, deploy/run_pipeline.sh:1311 | 15 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_LADDER_TUNE` | deploy/run_pipeline.sh:1291, deploy/run_pipeline.sh:1295 | 0 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_LINK_FEED_TWINS` | deploy/run_pipeline.sh:620 | 1 (run_pipeline.sh) | **DATA** identity: feed twins merged |
+| `XCP_JOINT` | deploy/run_pipeline.sh:1387 | 0 (run_pipeline.sh) | **INFRA** engine selector (joint go-live vs the legacy linkage path) |
+| `XCP_JOINT_LIVE` | deploy/run_pipeline.sh:980, deploy/run_pipeline.sh:1507 | 1 (run_pipeline.sh) | **INFRA** engine selector (joint go-live vs the legacy linkage path) |
+| `XCP_KAILO` | deploy/run_pipeline.sh:1666 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_LACCTIC` | deploy/run_pipeline.sh:1656 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_LACCTIC_RACES` | deploy/run_pipeline.sh:1658 | 12194,12158,11632 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_LADDER` | deploy/run_pipeline.sh:1297 | auto (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_LADDER_ALL` | deploy/run_pipeline.sh:1320 | flag default (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_LADDER_MIN_DAYS` | deploy/run_pipeline.sh:1309, deploy/run_pipeline.sh:1310 | 7 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_LADDER_ONLY` | deploy/run_pipeline.sh:1322, deploy/run_pipeline.sh:1325 | flag default (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_LADDER_PCT` | deploy/run_pipeline.sh:1318, deploy/run_pipeline.sh:1341 | 15 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_LADDER_TUNE` | deploy/run_pipeline.sh:1321, deploy/run_pipeline.sh:1325 | 0 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_LINK_FEED_TWINS` | deploy/run_pipeline.sh:641 | 1 (run_pipeline.sh) | **DATA** identity: feed twins merged |
 | `XCP_LIVE` | deploy/run_pipeline.sh:318 | 1 (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_MERGE_SPORTS` | deploy/run_pipeline.sh:1129 | flag default (run_pipeline.sh) | **REMOVED** measured XC level (G per level by GLS through each runner's filter; §4.4) |
+| `XCP_MERGE_SPORTS` | deploy/run_pipeline.sh:1159 | flag default (run_pipeline.sh) | **REMOVED** measured XC level (G per level by GLS through each runner's filter; §4.4) |
 | `XCP_MUD_SENS` | engine/fit_weather_correction.py:764 | — | **STATED** kept until §8 point 5 (weather as covariates in the fit, the race effect taking what the grid misses) |
-| `XCP_NCAA` | deploy/run_pipeline.sh:1512 | 0 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
+| `XCP_NCAA` | deploy/run_pipeline.sh:1542 | 0 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
 | `XCP_NICE` | deploy/run_pipeline.sh:33, deploy/run_pipeline.sh:34 | 10 (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_NO_DIST_TABLE` | deploy/run_pipeline.sh:1128, deploy/run_pipeline.sh:1188, deploy/run_pipeline.sh:1211, deploy/run_pipeline.sh:1234 | flag default (run_pipeline.sh) | **STATED** the published-table prior on the event offsets (distance_tables); kept until §8 point 5 |
-| `XCP_NO_IMPORTANCE` | deploy/run_pipeline.sh:1122, deploy/run_pipeline.sh:1183, deploy/run_pipeline.sh:1206, deploy/run_pipeline.sh:1229 | flag default (run_pipeline.sh) | **REMOVED** taper term τ·peak by GLS (the season's last race) (off in production: none) |
-| `XCP_NO_INDOOR` | deploy/run_pipeline.sh:1123, deploy/run_pipeline.sh:1184, deploy/run_pipeline.sh:1207, deploy/run_pipeline.sh:1230 | flag default (run_pipeline.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
+| `XCP_NO_DIST_TABLE` | deploy/run_pipeline.sh:1158, deploy/run_pipeline.sh:1218, deploy/run_pipeline.sh:1241, deploy/run_pipeline.sh:1264 | flag default (run_pipeline.sh) | **STATED** the published-table prior on the event offsets (distance_tables); kept until §8 point 5 |
+| `XCP_NO_IMPORTANCE` | deploy/run_pipeline.sh:1152, deploy/run_pipeline.sh:1213, deploy/run_pipeline.sh:1236, deploy/run_pipeline.sh:1259 | flag default (run_pipeline.sh) | **REMOVED** taper term τ·peak by GLS (the season's last race) (off in production: none) |
+| `XCP_NO_INDOOR` | deploy/run_pipeline.sh:1153, deploy/run_pipeline.sh:1214, deploy/run_pipeline.sh:1237, deploy/run_pipeline.sh:1260 | flag default (run_pipeline.sh) | **REMOVED** measured indoor level (G per level by GLS; §4.4) |
 | `XCP_ONE_SCALE` | racecast/pool_view.py:450 | "0" (pool_view.py) | **DISPLAY** the public scale: one 5000 m scale in the model; pools are a display transform (§5) |
-| `XCP_OUTER` | deploy/run_pipeline.sh:1096, deploy/run_pipeline.sh:1180, deploy/run_pipeline.sh:1203, deploy/run_pipeline.sh:1226 (+1) | 5 (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_OUTLIER_FLOOR` | deploy/run_pipeline.sh:1441 | flag default (run_pipeline.sh) | **DISPLAY** board outlier rule (rank-only; Student-t row residual (IRLS weights) keeps such rows from moving the fit) |
-| `XCP_OUTLIER_K` | deploy/run_pipeline.sh:1442 | flag default (run_pipeline.sh) | **DISPLAY** board outlier rule (rank-only; Student-t row residual (IRLS weights) keeps such rows from moving the fit) |
-| `XCP_OUTLIER_SIGMA` | deploy/run_pipeline.sh:1439 | flag default (run_pipeline.sh) | **DISPLAY** board outlier rule (rank-only; Student-t row residual (IRLS weights) keeps such rows from moving the fit) |
-| `XCP_OUTLIER_SLOW_SIGMA` | deploy/run_pipeline.sh:1440 | flag default (run_pipeline.sh) | **DISPLAY** board outlier rule (rank-only; Student-t row residual (IRLS weights) keeps such rows from moving the fit) |
+| `XCP_OUTER` | deploy/run_pipeline.sh:1126, deploy/run_pipeline.sh:1210, deploy/run_pipeline.sh:1233, deploy/run_pipeline.sh:1256 (+1) | 5 (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_OUTLIER_FLOOR` | deploy/run_pipeline.sh:1471 | flag default (run_pipeline.sh) | **DISPLAY** board outlier rule (rank-only; Student-t row residual (IRLS weights) keeps such rows from moving the fit) |
+| `XCP_OUTLIER_K` | deploy/run_pipeline.sh:1472 | flag default (run_pipeline.sh) | **DISPLAY** board outlier rule (rank-only; Student-t row residual (IRLS weights) keeps such rows from moving the fit) |
+| `XCP_OUTLIER_SIGMA` | deploy/run_pipeline.sh:1469 | flag default (run_pipeline.sh) | **DISPLAY** board outlier rule (rank-only; Student-t row residual (IRLS weights) keeps such rows from moving the fit) |
+| `XCP_OUTLIER_SLOW_SIGMA` | deploy/run_pipeline.sh:1470 | flag default (run_pipeline.sh) | **DISPLAY** board outlier rule (rank-only; Student-t row residual (IRLS weights) keeps such rows from moving the fit) |
 | `XCP_OWN_SHIFT_SINCE` | engine/impossible_race.py:421 | — | **DATA** kept: correcting a race's distance is separate work (owner, 2026-10-25: "distance corrections should probably be entirely separate"); the new engine takes the listed distance as given and a wrong one lands in its race's own heavy-tailed effect, out of the rating (the season own_race_shift starts judging from) |
 | `XCP_PACK_PREFETCH` | engine/speed_ratings.py:1296 | "1" (speed_ratings.py) | **INFRA** performance and plumbing |
-| `XCP_PAGE_TIMING` | deploy/run_pipeline.sh:1654 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_PAGE_TIMING_N` | deploy/run_pipeline.sh:1655 | 6 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_PAGE_TIMING` | deploy/run_pipeline.sh:1684 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_PAGE_TIMING_N` | deploy/run_pipeline.sh:1685 | 6 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
 | `XCP_PRECOND` | engine/joint_solve.py:2801 | "jacobi" (joint_solve.py) | **INFRA** performance and plumbing |
-| `XCP_PROBES` | deploy/run_pipeline.sh:1095 | 0 (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_PROBES` | deploy/run_pipeline.sh:1125 | 0 (run_pipeline.sh) | **INFRA** performance and plumbing |
 | `XCP_PYTHON` | deploy/run_pipeline.sh:18 | /srv/venv/bin/python (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_RACE_EFFECT_OWN` | deploy/run_pipeline.sh:1116, deploy/solve_env.sh:179 | flag default (run_pipeline.sh); leave-out (solve_env.sh) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) |
-| `XCP_RACE_EFFECT_SPORTS` | deploy/run_pipeline.sh:1115, deploy/solve_env.sh:178 | flag default (run_pipeline.sh); XC (solve_env.sh) | **FITTED** whether the track race day is credited: cross-validated on the forward scorecard (§4.7); the XC day is nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) |
-| `XCP_RACE_KEY` | deploy/run_pipeline.sh:1117, deploy/run_pipeline.sh:1191, deploy/run_pipeline.sh:1214, deploy/run_pipeline.sh:1237 (+1) | flag default (run_pipeline.sh); venue (solve_env.sh) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) |
-| `XCP_RANK_SEAM` | deploy/run_pipeline.sh:1447, deploy/run_pipeline.sh:1448, deploy/run_pipeline.sh:1449, deploy/run_pipeline.sh:1450 | 2018-01-01 (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_RECORD_BOOKS` | deploy/run_pipeline.sh:1539 | 0 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
-| `XCP_RECORD_SCHOOLS` | deploy/run_pipeline.sh:1539 | 4000 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
+| `XCP_RACE_EFFECT_OWN` | deploy/run_pipeline.sh:1146, deploy/solve_env.sh:179 | flag default (run_pipeline.sh); leave-out (solve_env.sh) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) |
+| `XCP_RACE_EFFECT_SPORTS` | deploy/run_pipeline.sh:1145, deploy/solve_env.sh:178 | flag default (run_pipeline.sh); XC (solve_env.sh) | **FITTED** whether the track race day is credited: cross-validated on the forward scorecard (§4.7); the XC day is nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) |
+| `XCP_RACE_KEY` | deploy/run_pipeline.sh:1147, deploy/run_pipeline.sh:1221, deploy/run_pipeline.sh:1244, deploy/run_pipeline.sh:1267 (+1) | flag default (run_pipeline.sh); venue (solve_env.sh) | **REMOVED** nested Student-t race effect (v_r keyed (meet, div) inside venue-day w_v) |
+| `XCP_RANK_SEAM` | deploy/run_pipeline.sh:1477, deploy/run_pipeline.sh:1478, deploy/run_pipeline.sh:1479, deploy/run_pipeline.sh:1480 | 2018-01-01 (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_RECORD_BOOKS` | deploy/run_pipeline.sh:1569 | 0 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
+| `XCP_RECORD_SCHOOLS` | deploy/run_pipeline.sh:1569 | 4000 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
 | `XCP_ROOT` | deploy/run_pipeline.sh:17 | /srv/xc-predictor (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_RUNG_TIMEOUT` | deploy/run_pipeline.sh:1289 | 7200 (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_SANITY_TOP` | deploy/run_pipeline.sh:1465 | 60 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_RUNG_TIMEOUT` | deploy/run_pipeline.sh:1319 | 7200 (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_SANITY_TOP` | deploy/run_pipeline.sh:1495 | 60 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
 | `XCP_SCHUR` | engine/joint_solve.py:2805 | "0" (joint_solve.py) | **INFRA** performance and plumbing |
-| `XCP_SCOREBOARD` | deploy/run_pipeline.sh:1664 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_SCOREBOARD` | deploy/run_pipeline.sh:1694 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
 | `XCP_SEASON_SHARDS` | racecast/build_ranking_results.py:3144 | "4" (build_ranking_results.py) | **INFRA** performance and plumbing |
-| `XCP_SEASON_TIE` | deploy/run_pipeline.sh:1137, deploy/run_pipeline.sh:1192, deploy/run_pipeline.sh:1215, deploy/run_pipeline.sh:1238 | 0 (run_pipeline.sh) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) (§5: form trend, season tie; per-season ability) |
-| `XCP_SKIP_ANCHOR_REPAIR` | deploy/run_pipeline.sh:851 | 0 (run_pipeline.sh) | **REVIEW** anchor_repair moves normalized_time onto the rated pool's anchor. §4.2 lists rescaleToPool / anchor juggling as replaced by one scale, but a row written on another pool's curve is still mis-shifted by anchorShift unless backfill and pack agree on the pool: not covered by the model itself |
-| `XCP_SOCIAL` | deploy/run_pipeline.sh:1550 | 1 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
-| `XCP_SPLIT_ABILITY` | deploy/run_pipeline.sh:1132 | flag default (run_pipeline.sh) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) (§5: form trend, season tie; per-season ability) |
+| `XCP_SEASON_TIE` | deploy/run_pipeline.sh:1167, deploy/run_pipeline.sh:1222, deploy/run_pipeline.sh:1245, deploy/run_pipeline.sh:1268 | 0 (run_pipeline.sh) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) (§5: form trend, season tie; per-season ability) |
+| `XCP_SKIP_ANCHOR_REPAIR` | deploy/run_pipeline.sh:881 | 0 (run_pipeline.sh) | **REVIEW** anchor_repair moves normalized_time onto the rated pool's anchor. §4.2 lists rescaleToPool / anchor juggling as replaced by one scale, but a row written on another pool's curve is still mis-shifted by anchorShift unless backfill and pack agree on the pool: not covered by the model itself |
+| `XCP_SOCIAL` | deploy/run_pipeline.sh:1580 | 1 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
+| `XCP_SPLIT_ABILITY` | deploy/run_pipeline.sh:1162 | flag default (run_pipeline.sh) | **REMOVED** θ state walk (per-person Kalman fitness; walk q and seam step fitted by EM) (§5: form trend, season tie; per-season ability) |
 | `XCP_SPORT_GAIN_STAT` | engine/joint_solve.py:945 | "" (joint_solve.py) | **REMOVED** summer-seam step J_ℓ by GLS (fall-to-spring change measured per level, as fitness) and measured XC level (G per level by GLS through each runner's filter; §4.4) |
-| `XCP_SPORT_HOLDOUT` | deploy/run_pipeline.sh:1202 | sport (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
-| `XCP_SPORT_LEVEL` | deploy/run_pipeline.sh:114, deploy/run_pipeline.sh:1120, deploy/run_pipeline.sh:1181, deploy/run_pipeline.sh:1204 (+2) | flag default (run_pipeline.sh); 0.0583 (solve_env.sh) | **REMOVED** measured XC level (G per level by GLS through each runner's filter; §4.4) |
-| `XCP_SPORT_LEVEL_POOLS` | deploy/run_pipeline.sh:1118, deploy/solve_env.sh:245 | flag default (run_pipeline.sh); college=0.0037,hs=0.0092,ms=0.0191,elem… (solve_env.sh) | **REMOVED** summer-seam step J_ℓ by GLS (fall-to-spring change measured per level, as fitness) and measured XC level (G per level by GLS through each runner's filter; §4.4) |
-| `XCP_STATE_ODDS` | deploy/run_pipeline.sh:1555 | 0 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
-| `XCP_STREAMS` | deploy/run_pipeline.sh:52, deploy/run_pipeline.sh:388, deploy/run_pipeline.sh:397, deploy/run_pipeline.sh:1438 | 4 (run_pipeline.sh) | **INFRA** performance and plumbing |
+| `XCP_SPORT_HOLDOUT` | deploy/run_pipeline.sh:1232 | sport (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_SPORT_LEVEL` | deploy/run_pipeline.sh:114, deploy/run_pipeline.sh:1150, deploy/run_pipeline.sh:1211, deploy/run_pipeline.sh:1234 (+2) | flag default (run_pipeline.sh); 0.0583 (solve_env.sh) | **REMOVED** measured XC level (G per level by GLS through each runner's filter; §4.4) |
+| `XCP_SPORT_LEVEL_POOLS` | deploy/run_pipeline.sh:1148, deploy/solve_env.sh:245 | flag default (run_pipeline.sh); college=0.0037,hs=0.0092,ms=0.0191,elem… (solve_env.sh) | **REMOVED** summer-seam step J_ℓ by GLS (fall-to-spring change measured per level, as fitness) and measured XC level (G per level by GLS through each runner's filter; §4.4) |
+| `XCP_STATE_ODDS` | deploy/run_pipeline.sh:1585 | 0 (run_pipeline.sh) | **DISPLAY** site products built from ratings (optional pipeline steps) |
+| `XCP_STREAMS` | deploy/run_pipeline.sh:52, deploy/run_pipeline.sh:388, deploy/run_pipeline.sh:397, deploy/run_pipeline.sh:1468 | 4 (run_pipeline.sh) | **INFRA** performance and plumbing |
 | `XCP_SWAP_ATTEMPTS` | backfill/backfill_normalize.py:3023 | — | **INFRA** performance and plumbing |
-| `XCP_TAU_MAX` | deploy/run_pipeline.sh:1131 | flag default (run_pipeline.sh) | **FITTED** EM variance (τ per surface, day and race sds) (§4.2: τ caps) |
+| `XCP_TAU_MAX` | deploy/run_pipeline.sh:1161 | flag default (run_pipeline.sh) | **FITTED** EM variance (τ per surface, day and race sds) (§4.2: τ caps) |
 | `XCP_TEAM_POOL` | engine/speed_ratings.py:388, deploy/solve_env.sh:239 | "" (speed_ratings.py); 1 (solve_env.sh) | **DATA** scope: a team with under 15 athletes all-time pools professional |
 | `XCP_TF_TAU` | engine/joint_solve.py:3827, engine/joint_solve.py:3828 | — | **FITTED** EM variance (τ per surface, day and race sds) (§4.2: τ caps) |
 | `XCP_TF_TEMP_AGG` | engine/fit_weather_correction.py:1077 | "" (fit_weather_correction.py) | **STATED** kept until §8 point 5 (weather as covariates in the fit, the race effect taking what the grid misses) |
 | `XCP_THREADS` | engine/joint_solve.py:1469, deploy/run_pipeline.sh:37, deploy/run_pipeline.sh:38, deploy/run_pipeline.sh:39 | "0" (joint_solve.py); $(( _cores > 3 ? _cores - 2 : 1 )) (run_pipeline.sh) | **INFRA** performance and plumbing |
-| `XCP_TILT_SCALE` | racecast/tilt.py:72, deploy/run_pipeline.sh:1135, deploy/run_pipeline.sh:1189, deploy/run_pipeline.sh:1212 (+1) | flag default (run_pipeline.sh) | **REMOVED** the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label) (§5) |
-| `XCP_TRACK_LEVEL_BY_POOL` | deploy/run_pipeline.sh:1100 | flag default (run_pipeline.sh) | **REVIEW** see TRACK_POP_MIN_SHARE: plausibly covered, not named in §5 |
+| `XCP_TILT_SCALE` | racecast/tilt.py:72, deploy/run_pipeline.sh:1165, deploy/run_pipeline.sh:1219, deploy/run_pipeline.sh:1242 (+1) | flag default (run_pipeline.sh) | **REMOVED** the tilt reads θ on one absolute scale (statespace: h = 1 + κ(θ − θ_ref), no rails, no pool label) (§5) |
+| `XCP_TRACK_LEVEL_BY_POOL` | deploy/run_pipeline.sh:1130 | flag default (run_pipeline.sh) | **REVIEW** see TRACK_POP_MIN_SHARE: plausibly covered, not named in §5 |
 | `XCP_VENUE_DIST_SD` | engine/run_joint.py:874 | "0.025" (run_joint.py) | **DATA** kept: which keys are one physical course is separate work (owner, 2026-10-25); the new engine keys cells as the pack does |
-| `XCP_WATCHDOG` | deploy/run_pipeline.sh:1600 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
+| `XCP_WATCHDOG` | deploy/run_pipeline.sh:1630 | 1 (run_pipeline.sh) | **INFRA** report or diagnostic only: changes what is printed, not a rating (holdouts, ladder, comparisons, timing) |
 | `XCP_WEATHER_ALLOW_STALE` | engine/normalize_distance.py:204 | — | **INFRA** lets normalisation run on a stale weather artifact |
-| `XCP_WEATHER_FIT` | deploy/run_pipeline.sh:687 | 0 (run_pipeline.sh) | **STATED** kept until §8 point 5 (weather as covariates in the fit, the race effect taking what the grid misses) |
-| `XCP_WINTER_GAIN` | deploy/run_pipeline.sh:1133, deploy/run_pipeline.sh:1361 | flag default (run_pipeline.sh) | **REMOVED** summer-seam step J_ℓ by GLS (fall-to-spring change measured per level, as fitness) and measured XC level (G per level by GLS through each runner's filter; §4.4) |
-| `XCP_WINTER_GAIN_BANDS` | deploy/run_pipeline.sh:1134 | flag default (run_pipeline.sh) | **REMOVED** summer-seam step J_ℓ by GLS (fall-to-spring change measured per level, as fitness) and measured XC level (G per level by GLS through each runner's filter; §4.4) |
+| `XCP_WEATHER_FIT` | deploy/run_pipeline.sh:716 | 0 (run_pipeline.sh) | **STATED** kept until §8 point 5 (weather as covariates in the fit, the race effect taking what the grid misses) |
+| `XCP_WINTER_GAIN` | deploy/run_pipeline.sh:1163, deploy/run_pipeline.sh:1391 | flag default (run_pipeline.sh) | **REMOVED** summer-seam step J_ℓ by GLS (fall-to-spring change measured per level, as fitness) and measured XC level (G per level by GLS through each runner's filter; §4.4) |
+| `XCP_WINTER_GAIN_BANDS` | deploy/run_pipeline.sh:1164 | flag default (run_pipeline.sh) | **REMOVED** summer-seam step J_ℓ by GLS (fall-to-spring change measured per level, as fitness) and measured XC level (G per level by GLS through each runner's filter; §4.4) |
 | `XCP_WXPYTHON` | deploy/run_pipeline.sh:24 | /srv/wxvenv/bin/python (run_pipeline.sh) | **INFRA** performance and plumbing |
 | `XCP_XC_COURSE_SUSPECT` | engine/joint_golive.py:74 | "0.15" (joint_golive.py) | **REMOVED** posterior-SD gate (flag, not a rating change) (§5: course guard) |
