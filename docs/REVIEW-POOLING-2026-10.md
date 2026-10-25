@@ -145,6 +145,12 @@ tmux new -s pooldiag
 $P scripts/diag_pooling.py 2>&1 | tee logs/diag_pooling_$(date +%Y%m%d_%H%M).log
 ```
 
+To look at one meet's pools by division (seconds; the meet in your brief):
+
+```
+$P scripts/diag_pooling.py --meet 270331
+```
+
 - **It writes nothing** except session temp tables.
 - **The default samples 1 person in 10** (`--sample 1` reads everyone) and
   rows since 2018-08 (`--since`).

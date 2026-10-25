@@ -237,3 +237,24 @@ def test_the_fill_check_runs_the_board_query(dsn, capsys):
                     " dist_override, result_twin, wheelchair_person,"
                     " athlete_season_level")
     conn.close()
+
+
+def test_one_meet_by_division(dsn, capsys):
+    """--meet alone prints that meet's pools and the rows whose own grade
+    names another level, without building the sample."""
+    import psycopg2
+    import diag_pooling as D
+    conn = psycopg2.connect(dsn)
+    conn.autocommit = True
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO results (result_id, person_id, date, grade,
+                           source, school, team_id, athlete_name, meet_id,
+                           div_id, rating_pool, speed_rating)
+                       VALUES (9999, 99, '2024-10-01', '10', 'anet', 'X HS',
+                               10, 'P99', 9012, 1, 'ms_m|XC', 120)""")
+    conn.close()
+    d = D.main(["--dsn", dsn, "--meet", "9012"])
+    out = capsys.readouterr().out
+    assert "XC div 1 (anet)  ms_m" in out
+    assert "99  P99  1  10  X HS  10  ms_m  120.0" in out
+    assert d.found == []                     # no sample was built

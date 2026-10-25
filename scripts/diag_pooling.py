@@ -7,6 +7,7 @@ ratings each kind moves. READ-ONLY (session temp tables only).
     python scripts/diag_pooling.py --sample 1         # everybody (slow)
     python scripts/diag_pooling.py --only flip,ms_in_hs --show 20
     python scripts/diag_pooling.py --fill-check 0     # skip the Python check
+    python scripts/diag_pooling.py --meet 270331      # one meet, by division
 
 ★ WHY (pooling review, 2026-10-25; docs/REVIEW-POOLING-2026-10.md).
   speed_rating is relative to its pool's mean, and the pool also picks the
@@ -602,6 +603,37 @@ class Diag:
                            None, None, None))
         self.fill_share = 100 * n_moved / max(total, 1)
 
+    def meet(self, meet_id):
+        """One meet, every division: how its rated rows were pooled, and the
+        rows whose grade says another level. Not sampled."""
+        print(f"\n=== meet {meet_id}: pools by division")
+        for table, sport in (("results", "XC"), ("results_tf", "TF")):
+            if "rating_pool" not in self.cols(table):
+                continue
+            got = self.q(f"""
+                SELECT r.div_id, r.source,
+                       split_part(r.rating_pool, '|', 1) AS pool, count(*),
+                       count(*) FILTER (WHERE r.rating_pool IS NULL) AS unrated
+                FROM   {table} r WHERE r.meet_id = %s
+                GROUP  BY 1, 2, 3 ORDER BY 1, 2, 4 DESC""", (meet_id,))
+            for div, src, pool, n, _u in got:
+                print(f"    {sport} div {div} ({src})  {pool or '(unrated)':<18}{n:>6,}")
+            odd = self.q(f"""
+                SELECT r.person_id, r.athlete_name, r.div_id, r.grade, r.school,
+                       r.team_id, split_part(r.rating_pool, '|', 1),
+                       round(r.speed_rating::numeric, 1)
+                FROM   {table} r WHERE r.meet_id = %s
+                  AND  ({_GRADE_LEVEL_SQL.format(g="btrim(r.grade)")})
+                       IS DISTINCT FROM
+                       substring(r.rating_pool from '^(elem|ms|hs|college|pro)_')
+                  AND  btrim(r.grade) ~ '{_SCHOOL_GRADE}'
+                ORDER  BY r.speed_rating DESC NULLS LAST LIMIT 40""", (meet_id,))
+            if odd:
+                print(f"    {sport}: rows whose school grade names another level "
+                      "(person, name, div, grade, school, team, pool, rating)")
+                for r in odd:
+                    print("      " + "  ".join("-" if v is None else str(v) for v in r))
+
     def summary(self):
         print("\n" + "=" * 78)
         print("RANKED BY RATINGS MOVED (rows; estimates x{} under --sample)".format(self.sample))
@@ -630,6 +662,8 @@ def main(argv=None):
     ap.add_argument("--show", type=int, default=8, help="examples per section")
     ap.add_argument("--fill-check", type=int, default=20000,
                     help="rows per sport through fill_ratings' resolver; 0 skips")
+    ap.add_argument("--meet", type=int, default=None,
+                    help="also show one meet's pools by division (athletic.net meet id)")
     ap.add_argument("--dsn", default=None, help=argparse.SUPPRESS)  # tests
     a = ap.parse_args(argv)
     only = [s for s in a.only.split(",") if s] or list(SECTIONS)
@@ -655,6 +689,10 @@ def _run(conn, a, only):
         cur.execute("SET temp_buffers = '1GB'")
     d = Diag(conn, a.sample, a.show)
     t0 = time.time()
+    if a.meet is not None:
+        d.meet(a.meet)
+        if not a.only:
+            return d                         # --meet alone: just the meet
     d.build(a.since)
     for s in only:
         if s == "fill":
