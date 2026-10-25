@@ -75,7 +75,9 @@ _S.headers.update({"User-Agent": "racecast-compare/1.0 (read-only research)",
 #   before the start all the same, and the results are in our tfrrs rows.
 SCORED = {"scored", "results_unavailable", "awaiting_results", "held", "locked"}
 UPCOMING = {"published", "locked"}
-BASES = ("rating", "guard", "model", "blend")
+# trend (review 2026-10, predict.trendApply): recorded beside the others before
+#   race day, so the clean test can judge it before anyone serves it
+BASES = ("rating", "guard", "model", "blend", "trend")
 _STOP = {"the", "of", "and", "at", "xc", "cross", "country", "invitational",
          "invite", "meet", "championship", "championships", "college", "open"}
 
@@ -386,9 +388,14 @@ def compareSeason(cur, season, sleep, show, csv_path=None, basis=None):
         if os.path.exists(store):
             try:
                 saved = json.load(open(store))
-                pick = (saved.get("by_basis") or {}).get(basis) if basis else None
-                recorded = {int(k): v for k, v in (pick or saved["ours"]).items()}
-                how = "recorded"
+                # ! A BASIS THE RECORDING DOES NOT HAVE IS REBUILT, not read
+                #   off the served one (review 2026-10): a file saved before
+                #   by_basis -- or before "trend" -- used to hand --basis X
+                #   the served basis's numbers, labelled "recorded"
+                pick = ((saved.get("by_basis") or {}).get(basis) if basis
+                        else saved["ours"])
+                recorded = {int(k): v for k, v in (pick or {}).items()}
+                how = "recorded" if recorded else "rebuilt"
             except (OSError, ValueError, KeyError):
                 recorded = {}
         if not recorded:

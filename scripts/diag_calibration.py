@@ -33,7 +33,7 @@ WHAT IT READS
     The extracted chunks and the athlete-disjoint validation split that
     model/train.py already builds (val_mask.pt), so these are unseen
     people. No database. The horizon is read off the context's
-    days_since_last_race, which is feature 3 -- the same feature the twins
+    days_since_last_race, which is feature 4 -- the same feature the twins
     are generated against.
 
 ⚠ THE NUMBERS ARE ABOUT THE CHECKPOINT AND THE EXTRACTION TOGETHER. ISSUES
@@ -53,9 +53,15 @@ for _p in (_ROOT, os.path.join(_ROOT, "model"), os.path.join(_ROOT, "engine"),
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-# the context feature that carries the gap; see feature_extraction's
-# "[course_difficulty, distance_meters, day_of_year, days_since_last_race, ...]"
-GAP_FEATURE = 3
+# the context feature that carries the gap: transformer.CONTEXT_GAP_INDEX.
+# ⚠ 4, NOT 3 (review 2026-10). The old 3 came from feature_extraction's
+#   "[course_difficulty, distance_meters, day_of_year, days_since_last_race,
+#   ...]" note, which predates is_forecast at index 0 -- so every band this
+#   printed was cut on DAY OF YEAR / 7, and "44-104w" was November and
+#   December races, not one-to-two-year horizons. A copy, not an import:
+#   transformer imports torch, and this module's tests run without it;
+#   tests/test_calibration_diag.py pins the two together.
+GAP_FEATURE = 4
 
 # week edges. 2-40 is the forecast twin's range, 44-208 the horizon twin's,
 # so the bands are cut where the generators are.

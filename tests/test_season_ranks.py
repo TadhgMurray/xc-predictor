@@ -63,6 +63,6 @@ def test_the_page_reads_the_table_first():
     assert 'return pre.get("nation_total")' in app
     assert "return pre.get(kind)" in app
     assert 'row = {"place": pre["team"]} if pre.get("team") else None' in app
-    assert 'step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py' in read("deploy", "run_pipeline.sh")
+    assert '10g_season_ranks "$PY -u racecast/build_season_ranks.py"' in read("deploy", "run_pipeline.sh")
     assert B._COLS == ("nation", "nation_total", "state_rank", "state_div", "section", "section_div",
                        "area", "league", "division", "region", "conference", "team")

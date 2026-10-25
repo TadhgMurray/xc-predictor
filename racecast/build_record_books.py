@@ -35,6 +35,16 @@ reads record_books, so nothing waits on it.
       most --max-schools per run. The rest wait for the next run, and their
       page says the record book is being compiled -- never a live scan.
 
+★ THE SCHOOL PAGES SIDE BY SIDE (owner, 2026-10-25: "you can
+  multithread/core as necessary. You have freedom as long as it remains
+  accurate and working"). One page was about a second, built one after
+  another: 4,000 pages, 4,095 s for the step. A page reads only its own
+  school's rows and writes only its own key, so the pages are built by
+  XCP_RECORD_WORKERS processes (default min(8, cores - 4); --workers
+  overrides), each on its own connection, biggest first, and the parent
+  writes what they return through the same upsert, 100 at a time. 1 is
+  the one-session loop, unchanged. buildSchoolPages says the rest.
+
 ! THE BOARDS' FILTERS, REUSED, NEVER RETYPED. Rows come from ranking_results
   and athlete_season, which already leave out condemned races
   (impossible_result), twins (result_twin), pro pools (isRankablePool) and
@@ -53,8 +63,10 @@ reads record_books, so nothing waits on it.
 import argparse
 import datetime
 import json
+import os
 import sys
 import time
+from contextlib import contextmanager
 from decimal import Decimal
 
 sys.path.insert(0, "scripts")
@@ -779,7 +791,7 @@ def _poolSort(pool):
     return (order.index(level) if level in order else 9, {"m": 0, "f": 1}.get(g, 2))
 
 
-def buildSchools(conn, cur, cap, force=False):
+def buildSchools(conn, cur, cap, force=False, workers=None):
     from panels import isTeamName
     t0 = time.time()
     fps = schoolFingerprints(cur)
@@ -789,34 +801,195 @@ def buildSchools(conn, cur, cap, force=False):
         cur.execute("SELECT key, sig FROM record_books WHERE kind = 'school'")
         stored = {r["key"]: r["sig"] for r in cur.fetchall()}
     todo = changedSchools(fps, stored, clusters, isTeamName, cap)
+    workers = schoolWorkers(workers)
     print(f"  school: {len(fps):,} (school, sport) fingerprints, "
-          f"{len(todo):,} pages to build (cap {cap or 'none'}) "
+          f"{len(todo):,} pages to build (cap {cap or 'none'}), "
+          f"{workers} worker{'s' if workers != 1 else ''} "
           f"[{time.time() - t0:.0f}s]", flush=True)
-    batch, built, failed = [], 0, 0
-    for i, (school, sport, state, primary, fp) in enumerate(todo):
-        try:
-            cur.execute("SAVEPOINT rb_school")
-            ctx = schoolBook(cur, school, state, primary, sport)
-            cur.execute("RELEASE SAVEPOINT rb_school")
-        except Exception as exc:                        # noqa: BLE001
-            cur.execute("ROLLBACK TO SAVEPOINT rb_school")
-            failed += 1
-            print(f"  ! {school} ({state}) {sport}: {type(exc).__name__}: {exc}",
-                  flush=True)
-            continue
-        batch.append((RB.schoolKey(school, state, sport), ctx, fp))
-        built += 1
-        if len(batch) >= 100:
-            writePart(conn, cur, "school", batch, None, replace=False)
-            batch = []
-        if (i + 1) % 500 == 0:
-            print(f"    {i + 1:,}/{len(todo):,} schools "
-                  f"({(time.time() - t0) / 60:.1f} min)", flush=True)
-    if batch:
-        writePart(conn, cur, "school", batch, None, replace=False)
+    built, failed = buildSchoolPages(conn, cur, todo, workers, t0=t0)
     print(f"  school: {built:,} built, {failed:,} failed "
           f"[{(time.time() - t0) / 60:.1f} min]", flush=True)
     return built
+
+
+# ★ HOW MANY PROCESSES BUILD SCHOOL PAGES (owner, 2026-10-25: "you can
+#   multithread/core as necessary"). XCP_RECORD_WORKERS when set (1 is the
+#   one-session loop), else min(8, cores - 4): four cores stay with the
+#   site, 10f2's projection workers run beside this step (18 connections),
+#   and eight sessions keep the night under max_connections = 100 with the
+#   site's own.
+# ! STRICT QUIET MODE IS ONE. XCP_DB_QUIET=strict is the site-first switch
+#   (scripts/database.py); without an explicit XCP_RECORD_WORKERS it gets
+#   today's single session. The balanced default does not cap this at
+#   dbJobs' two: that is for index builds and big scans, and a school page
+#   is a handful of index lookups plus Python.
+WORKERS_CAP = 8
+WORKERS_SPARE = 4
+
+
+def schoolWorkers(n=None):
+    if n is None:
+        raw = (os.environ.get("XCP_RECORD_WORKERS") or "").strip()
+        if raw:
+            n = int(raw)
+        elif os.environ.get("XCP_DB_QUIET") == "strict":
+            n = 1
+        else:
+            n = min(WORKERS_CAP, (os.cpu_count() or 1) - WORKERS_SPARE)
+    return max(1, n)
+
+
+def _schoolPage(cur, item):
+    """One page: ((key, ctx, fp), None), or (None, the log line) when it
+    failed. The savepoint keeps a failed page from taking the rest of the
+    transaction with it."""
+    school, sport, state, primary, fp = item
+    try:
+        cur.execute("SAVEPOINT rb_school")
+        ctx = schoolBook(cur, school, state, primary, sport)
+        cur.execute("RELEASE SAVEPOINT rb_school")
+    except Exception as exc:                            # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT rb_school")
+        return None, (f"  ! {school} ({state}) {sport}: "
+                      f"{type(exc).__name__}: {exc}")
+    return (RB.schoolKey(school, state, sport), ctx, fp), None
+
+
+def buildSchoolPages(conn, cur, todo, workers=1, opener=None, t0=None):
+    """Build `todo` (changedSchools' list) and upsert every page; returns
+    (built, failed).
+
+    ★ THE SAME PAGE EITHER WAY. A page is schoolBook over its own school's
+      rows -- nothing it reads is written by this step, and no page reads
+      another -- so which session builds it, and when, cannot change it.
+      workers=1 runs on the caller's session in todo order (the loop as it
+      was); more runs _pooledPages, and the parent takes each page as it
+      arrives: the same log line for a failure, the same writePart upsert
+      per 100, the same progress line per 500. Only the order rows land in
+      (and built_at) differ, and the table is keyed by (kind, key).
+    ! A PAGE THAT RAISES PAST ITS SAVEPOINT still stops the step, in both
+      paths: the pool cancels what has not started and the error surfaces
+      here, as the loop's did."""
+    t0 = t0 or time.time()
+    st = {"batch": [], "built": 0, "failed": 0, "done": 0}
+
+    def take(page, msg):
+        if msg:
+            st["failed"] += 1
+            print(msg, flush=True)
+        else:
+            st["batch"].append(page)
+            st["built"] += 1
+            if len(st["batch"]) >= 100:
+                writePart(conn, cur, "school", st["batch"], None, replace=False)
+                st["batch"] = []
+        st["done"] += 1
+        if st["done"] % 500 == 0:
+            print(f"    {st['done']:,}/{len(todo):,} schools "
+                  f"({(time.time() - t0) / 60:.1f} min)", flush=True)
+
+    if workers <= 1 or len(todo) <= 1:
+        for item in todo:
+            take(*_schoolPage(cur, item))
+    else:
+        _pooledPages(conn, todo, workers, take, opener)
+    if st["batch"]:
+        writePart(conn, cur, "school", st["batch"], None, replace=False)
+    return st["built"], st["failed"]
+
+
+# ★ PROCESSES, NOT THREADS. Part of a page's second is Python -- bucketing
+#   a big program's tens of thousands of races (school_prs._snap per row),
+#   building the dict rows -- and threads would take turns at it under the
+#   GIL. Processes run it on separate cores.
+# ⚠ SPAWNED, NEVER FORKED. The parent already holds a pool of open
+#   connections (database._pool); a forked child inherits those sockets and
+#   its getConn would hand one out, talking over the parent's session. A
+#   spawned child starts clean and opens its own.
+# ! ONE CONNECTION PER WORKER, closed when it exits. XCP_DB_MIN_CONN=1
+#   before database is imported (the default opens five per process: eight
+#   workers would be forty against max_connections = 100), and the parent's
+#   answer to rankings._hasEventKind is handed down so no worker draws a
+#   second connection to ask it again. The parent's own session sits idle
+#   between writes, its read transaction committed first so it holds no
+#   locks while the workers run.
+# ! EACH PAGE COMMITS IN THE WORKER. Nothing is written there; the commit
+#   only ends the read transaction, so a worker never holds its tables'
+#   locks across pages (the serial loop released them every 100, at the
+#   write) and a step-10 swap is never queued behind it.
+_W = {}
+
+
+@contextmanager
+def _dbSession():
+    """(conn, cur) for one worker: a pooled connection with the session
+    settings main() gives the parent's (dbfast.tuneSession, and the quiet
+    caps getConn applies), so the plans are the ones the serial loop got."""
+    import psycopg2.extras
+    from database import getConn, closePool
+    from dbfast import tuneSession
+    try:
+        with getConn() as conn:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            try:
+                tuneSession(conn, quiet=True)
+            except Exception:                           # noqa: BLE001
+                conn.rollback()
+            yield conn, cur
+    finally:
+        closePool()
+
+
+def _poolInit(opener, event_kind):
+    os.environ["XCP_DB_MIN_CONN"] = "1"
+    import multiprocessing.util
+    import rankings
+    if event_kind is not None:
+        rankings._EVENT_KIND_PRESENT = event_kind
+    cm = (opener or _dbSession)()
+    _W["conn"], _W["cur"] = cm.__enter__()
+    _W["cm"] = cm
+    # run by the worker's own exit (multiprocessing's finalizers), so the
+    # connection is closed rather than dropped
+    multiprocessing.util.Finalize(None, _poolExit, exitpriority=10)
+
+
+def _poolExit():
+    cm = _W.pop("cm", None)
+    if cm is not None:
+        cm.__exit__(None, None, None)
+
+
+def _poolPage(item):
+    out = _schoolPage(_W["cur"], item)
+    _W["conn"].commit()
+    return out
+
+
+def _pooledPages(conn, todo, workers, take, opener=None):
+    """Every page of `todo` built in `workers` spawned processes, each
+    page handed to take(page, msg) in the parent as it finishes. One task
+    per page, submitted biggest first, so the slow pages start first and
+    the run ends on small ones."""
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    import rankings
+    rankings._hasEventKind()
+    event_kind = rankings._EVENT_KIND_PRESENT
+    conn.commit()
+    with ProcessPoolExecutor(max_workers=min(workers, len(todo)),
+                             mp_context=multiprocessing.get_context("spawn"),
+                             initializer=_poolInit,
+                             initargs=(opener, event_kind)) as ex:
+        try:
+            for fut in as_completed([ex.submit(_poolPage, item)
+                                     for item in todo]):
+                take(*fut.result())
+        except BaseException:
+            # ! not the with-block's plain shutdown, which would run every
+            #   queued page before re-raising
+            ex.shutdown(wait=True, cancel_futures=True)
+            raise
 
 
 # ------------------------------------------------------------------ #
@@ -830,6 +1003,10 @@ def main(argv=None):
     ap.add_argument("--max-schools", type=int, default=4000,
                     help="school pages per run, biggest changed first "
                          "(0 = no cap); the rest wait for the next run")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="processes building school pages (default "
+                         "XCP_RECORD_WORKERS, else min(8, cores - 4); "
+                         "1 = one session, in order)")
     ap.add_argument("--levels", default=",".join(RB.BUILD_LEVELS),
                     help="state lists for these levels (hs,ms,college)")
     args = ap.parse_args(argv)
@@ -856,7 +1033,8 @@ def main(argv=None):
         for part in parts:
             p0 = time.time()
             if part == "school":
-                buildSchools(conn, cur, args.max_schools, force=args.force)
+                buildSchools(conn, cur, args.max_schools, force=args.force,
+                             workers=args.workers)
                 continue
             sig = tableSig(cur, PART_TABLES[part])
             if part == "state":

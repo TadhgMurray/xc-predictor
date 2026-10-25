@@ -41,6 +41,9 @@ been run. READ ONLY.
     base    the model's own anchor (its "you'll run what you ran" baseline)
             through the SAME conversion to a race time -- if base carries
             the model's bias too, the conversion is wrong, not the network
+    blend   the rating's order at the model's level (what the site serves)
+    trend   the rating moved by engine/data/rating_trend.json, when one has
+            been written (scripts/backtest_baseline.py; review 2026-10)
   The model's breakdown also splits by its conversion (time_basis).
 
 ! THE MODEL'S OWN TRAINING SET. A race before model.pt was written may have
@@ -128,41 +131,7 @@ def main():
         cur.execute("SET statement_timeout = '600s'")
         tf = a.sport == "TF"
         table = "results_tf" if tf else "results"
-        # a track race is one event: grouped by it, running events only
-        ev_col = ", event_id, min(event_short) AS event_short" if tf else ""
-        ev_grp = ", event_id" if tf else ""
-        running = ("AND COALESCE(is_field, 0) = 0 AND COALESCE(is_relay, 0) = 0"
-                   if tf else "")
-        # ! XC GROUPS BY THE DAY AS IT ALWAYS DID; a track event's prelim and
-        #   final days are one event id, dated by its first day
-        day = "min(left(date, 10))" if tf else "left(date, 10)"
-        day_grp = "" if tf else ", left(date, 10)"
-        cur.execute(f"""
-            SELECT meet_id, div_id, source, {day} AS day,
-                   count(*) AS n {ev_col}
-            FROM   {table} r
-            WHERE  date >= %s AND date <= %s {running}
-              AND  person_id IS NOT NULL
-              AND  time_seconds > 0 AND time_seconds < 19999
-              -- ★ ONE RACE, ONE SAMPLE (sweep 2026-10-10). A race stored in
-              --   both feeds (anet and tfrrs) is two (meet, div, source)
-              --   groups, so it could be drawn twice and weigh double in
-              --   every average. result_twin is the verdict the corpus, the
-              --   engine and the boards all anti-join; the flagged copy's
-              --   rows vanish here and its group falls under --min-field.
-              AND  NOT EXISTS (SELECT 1 FROM result_twin x
-                               WHERE x.sport = %s
-                                 AND x.result_id = r.result_id)
-            GROUP  BY meet_id, div_id, source {ev_grp}{day_grp}
-            HAVING count(*) >= %s""",
-                    (a.lo, a.hi + "~", a.sport, a.min_field))
-        races = cur.fetchall()
-        if tf:
-            # ! A DISTANCE RACE BY ITS NAME, the page's own test
-            #   (predict.trackRaces / event_parse)
-            from event_parse import distanceFromEventShort
-            races = [r for r in races
-                     if distanceFromEventShort(r.get("event_short") or "")[0]]
+        races = sampleRaces(cur, a.lo, a.hi, a.sport, a.min_field)
         conn.rollback()
         random.Random(a.seed).shuffle(races)
         races = races[:a.divs]
@@ -223,9 +192,19 @@ def main():
                 #   XCP_PREDICT_BASIS=blend, the same factor)
                 f = P.blendFactor([(model[p]["seconds"], rated[p]["seconds"]) for p in both])
                 blend = {p: {"seconds": float(rated[p]["seconds"]) * f} for p in both}
+                # ★ TREND (review 2026-10): the rating moved by the fitted
+                #   table (predict.trendApply), once one has been written by
+                #   scripts/backtest_baseline.py --write-table
+                # ! NOT `table`: that is the results table this loop reads
+                trend_tab = P.trendTable()
+                trend = {p: P.trendApply(dict(rated[p]), trend_tab,
+                                         spec.get("venue_cell") is not None, a.sport)
+                         for p in both}
                 for basis, got in (("rating", rated), ("model", model), ("base", base),
-                                   ("blend", blend)):
+                                   ("blend", blend), ("trend", trend)):
                     if basis == "base" and len(base) < len(both):
+                        continue
+                    if basis == "trend" and not trend_tab:
                         continue
                     pred = [float(got[p]["seconds"]) for p in both]
                     s = acc.setdefault((basis, lead), {"err": [], "order": [], "races": 0,
@@ -263,6 +242,51 @@ def main():
               f"{med:>12.2f}% {bias:>+6.2f}% {order:>6.3f} {within:>11.2f}%")
     if a.breakdown:
         _breakdown(acc)
+
+
+# Purpose:   the finished races of one sport between two dates, every one
+#            with at least min_field timed runners, in database order (the
+#            caller shuffles). scripts/backtest_baseline.py samples with it
+#            too, so both backtests mean the same thing by "a race".
+def sampleRaces(cur, lo, hi, sport, min_field):
+    tf = sport == "TF"
+    table = "results_tf" if tf else "results"
+    # a track race is one event: grouped by it, running events only
+    ev_col = ", event_id, min(event_short) AS event_short" if tf else ""
+    ev_grp = ", event_id" if tf else ""
+    running = ("AND COALESCE(is_field, 0) = 0 AND COALESCE(is_relay, 0) = 0"
+               if tf else "")
+    # ! XC GROUPS BY THE DAY AS IT ALWAYS DID; a track event's prelim and
+    #   final days are one event id, dated by its first day
+    day = "min(left(date, 10))" if tf else "left(date, 10)"
+    day_grp = "" if tf else ", left(date, 10)"
+    cur.execute(f"""
+        SELECT meet_id, div_id, source, {day} AS day,
+               count(*) AS n {ev_col}
+        FROM   {table} r
+        WHERE  date >= %s AND date <= %s {running}
+          AND  person_id IS NOT NULL
+          AND  time_seconds > 0 AND time_seconds < 19999
+          -- ★ ONE RACE, ONE SAMPLE (sweep 2026-10-10). A race stored in
+          --   both feeds (anet and tfrrs) is two (meet, div, source)
+          --   groups, so it could be drawn twice and weigh double in
+          --   every average. result_twin is the verdict the corpus, the
+          --   engine and the boards all anti-join; the flagged copy's
+          --   rows vanish here and its group falls under --min-field.
+          AND  NOT EXISTS (SELECT 1 FROM result_twin x
+                           WHERE x.sport = %s
+                             AND x.result_id = r.result_id)
+        GROUP  BY meet_id, div_id, source {ev_grp}{day_grp}
+        HAVING count(*) >= %s""",
+                (lo, hi + "~", sport, min_field))
+    races = cur.fetchall()
+    if tf:
+        # ! A DISTANCE RACE BY ITS NAME, the page's own test
+        #   (predict.trackRaces / event_parse)
+        from event_parse import distanceFromEventShort
+        races = [r for r in races
+                 if distanceFromEventShort(r.get("event_short") or "")[0]]
+    return races
 
 
 def _facts(cur, ids, cut, rated):

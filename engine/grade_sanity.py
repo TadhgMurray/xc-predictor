@@ -386,6 +386,84 @@ def runTimed(cur, sql, label="", slow=1.0):
     print(f"    [{_t.time() - t_all:7.1f}s] {label} total", flush=True)
 
 
+# ★ COPY, NOT INSERT ... VALUES (2026-10-25, run log: 349 s from "written as
+#   31,638,512 academic-year rows" to the end -- the write and nothing else).
+#   execute_values formats every row into an INSERT in Python and the
+#   server parses each one back; COPY streams tab-separated lines the server
+#   reads as data. The values are the same values: copyText is COPY's own
+#   text format -- \N for NULL, and the four characters it reads as escapes
+#   (backslash, tab, newline, carriage return) escaped -- so every string
+#   arrives byte for byte as the INSERT delivered it, and a Python int is
+#   its digits either way.
+def copyText(v):
+    """One field of COPY's text format."""
+    if v is None:
+        return "\\N"
+    s = str(v)
+    if "\\" in s or "\t" in s or "\n" in s or "\r" in s:
+        s = (s.replace("\\", "\\\\").replace("\t", "\\t")
+              .replace("\n", "\\n").replace("\r", "\\r"))
+    return s
+
+
+def copyLines(rows):
+    """The rows as COPY text lines, one str per row. Strings repeat (a
+    verdict's method, its level) so each is escaped once; ints are not
+    cached -- there are 31M person ids."""
+    cache = {None: "\\N"}
+
+    def field(v):
+        if type(v) is int:
+            return str(v)
+        s = cache.get(v)
+        if s is None:
+            s = cache[v] = copyText(v)
+        return s
+
+    for r in rows:
+        yield "\t".join([field(v) for v in r]) + "\n"
+
+
+class _CopySource:
+    """A file copy_expert can read: copyLines, a chunk at a time, so 31M
+    rows never sit in memory as one string."""
+
+    def __init__(self, rows, encoding="utf-8", chunk_rows=100_000):
+        self._lines = copyLines(rows)
+        self._enc = encoding
+        self._chunk = chunk_rows
+        self._buf, self._pos = b"", 0
+
+    def read(self, size=-1):
+        if self._pos >= len(self._buf):
+            part = []
+            for line in self._lines:
+                part.append(line)
+                if len(part) >= self._chunk:
+                    break
+            self._buf, self._pos = "".join(part).encode(self._enc), 0
+            if not self._buf:
+                return b""
+        if size is None or size < 0:
+            size = len(self._buf) - self._pos
+        out = self._buf[self._pos:self._pos + size]
+        self._pos += len(out)
+        return out
+
+
+def _copyRows(cur, table, columns, rows):
+    """COPY rows (tuples, in `columns` order) into `table`, encoded as the
+    connection encodes everything else it sends."""
+    enc = "utf-8"
+    try:
+        from psycopg2.extensions import encodings
+        enc = encodings.get(cur.connection.encoding, enc)
+    except Exception:                                            # noqa: BLE001
+        pass
+    cur.copy_expert(f"COPY {table} ({', '.join(columns)}) FROM STDIN",
+                    _CopySource(rows, encoding=enc), size=1 << 20)
+
+
 _UNCERTAIN_METHODS = ("field", "bare_class", "bare_field", "no_evidence")
 
 # * THREE SEASONS TO OVERRULE ONE, NOT TWO. With two disagreeing seasons
@@ -582,6 +660,30 @@ _BUILD = f"""
     SET parallel_setup_cost = 0;
     SET parallel_tuple_cost = 0;
 
+    -- ★ EVERY FUNCTION BELOW IS PARALLEL SAFE, AND SAYS SO (2026-10-25,
+    --   04_grade_sanity at 4,292 s on the critical path; owner: "you can
+    --   multithread/core as necessary. You have freedom as long as it
+    --   remains accurate and working").
+    --
+    -- ! WITHOUT THE LABEL THE SETTINGS ABOVE DID NOTHING FOR HALF THE STEP.
+    --   CREATE FUNCTION defaults to PARALLEL UNSAFE, and one unsafe function
+    --   anywhere in a statement makes Postgres plan the WHOLE statement on
+    --   one core. It reads the labels before it inlines these SQL bodies, so
+    --   being inlined does not rescue it. raceIdent kept the allraces build
+    --   serial (420 s), gradeLevel kept rule 4 (826 s), rule 2c's field
+    --   passes and rule 5f serial, and normGrade kept rule 7's staging
+    --   serial (219 s). Checked on a scratch Postgres: EXPLAIN of one
+    --   statement is a Seq Scan without the label and a Gather over a
+    --   Parallel Seq Scan with it, and the allraces build on a 3.3M-row
+    --   synthetic corpus went from 8.2 s to 3.5 s on four cores.
+    --
+    -- ⚠ THE LABEL IS A PROMISE, AND EACH BODY KEEPS IT: a CASE over TRIM,
+    --   regexes, casts, round and hashtext, reading no table and writing
+    --   nothing. A parallel plan runs the same expression on the same row in
+    --   another process, so every value is the one the serial plan made. A
+    --   function added here that reads a table or a setting must NOT carry
+    --   the label.
+
     -- ============================================================== --
     --  GRADE NORMALISATION -- three helpers and a composition.
     --
@@ -637,7 +739,7 @@ _BUILD = f"""
             WHEN TRIM(g) ~* '^0*([1-9]|1[0-2])[thsnrd. ]*$'
             THEN (regexp_replace(TRIM(g), '[^0-9].*$', ''))::int::text
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- classGrade: the college class words, every spelling onto one key.
     -- 'Sr', 'SR' and 'SR-4' are one value. The eligibility digit in the
@@ -671,7 +773,7 @@ _BUILD = f"""
             WHEN 'sr-4' THEN 'SR'
             WHEN 'rs' THEN 'RS' WHEN 'redshirt'  THEN 'RS'
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     CREATE OR REPLACE FUNCTION classGrade(g text) RETURNS text AS $$
         SELECT CASE
@@ -679,7 +781,7 @@ _BUILD = f"""
             THEN upper(left(TRIM(g), 2))
             ELSE classWord(g)
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
 
     -- isDefiniteClass: does this row use the tfrrs CLASS+ELIGIBILITY form?
@@ -690,7 +792,7 @@ _BUILD = f"""
     --   distinction; rule 2c can now read it too.
     CREATE OR REPLACE FUNCTION isDefiniteClass(g text) RETURNS boolean AS $$
         SELECT upper(TRIM(g)) ~ '^(FR|SO|JR|SR)-[1-6]$'
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- The banded keys GRADE_TO_LEVEL carries verbatim. They are grades, not
     -- age ranges: '13-14' and '15-16' are ages and stay out.
@@ -700,7 +802,7 @@ _BUILD = f"""
             WHEN '9-10'  THEN '9-10'
             WHEN '11-12' THEN '11-12'
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- isGradYear: DIAGNOSTIC ONLY. Nothing in the build calls this.
     --
@@ -713,7 +815,7 @@ _BUILD = f"""
     --     SELECT count(*) FROM results WHERE isGradYear(grade);
     CREATE OR REPLACE FUNCTION isGradYear(g text) RETURNS boolean AS $$
         SELECT TRIM(g) ~ '^(19|20)[0-9][0-9]$'
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- normGrade: one spelling per grade, so counting works.
     --
@@ -751,7 +853,7 @@ _BUILD = f"""
             --   being mistaken for a value.
             ELSE NULL
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- Grade to level, poolFor's boundaries.
     -- Grade to level, poolFor's boundaries. Mirrors GRADE_TO_LEVEL key for
@@ -768,7 +870,7 @@ _BUILD = f"""
             WHEN g IN ('9-10','11-12')                       THEN 'hs'
             ELSE NULL
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- raceIdent: ONE STRING PER ACTUAL RACE, so a race scraped twice
     -- counts once.
@@ -815,7 +917,7 @@ _BUILD = f"""
         SELECT COALESCE(round(t::numeric * 100)::bigint + 1,
                         -(abs(hashtext(d || ':' || m::text || ':'
                                        || e::text))::bigint + 1))
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- ★ NORMALISE THE SPELLINGS, NOT THE ROWS. normGrade is a CASE over
     --   three helper functions, each with its own regex -- four pattern
@@ -1057,7 +1159,46 @@ _CORROBORATED_SQL = """
 #  RULE 4: THE LEVEL OF THE FIELD
 # ------------------------------------------------------------------ #
 
-_FIELD_SQL = f"""
+# ★ STAGED INTO TABLES, ONE STATEMENT A STEP (2026-10-25, run log: 826 s
+#   between "[2c round 2]" and "[4] field levels read", the longest gap in
+#   the step). It was one statement of five CTEs. Two things made it slow,
+#   and neither was the arithmetic:
+#
+#   1. gradeLevel was PARALLEL UNSAFE (see _BUILD), so the whole statement
+#      ran on one core.
+#   2. `needy` is read twice, so Postgres materialises it, and a CTE scan
+#      may not run under a Gather: every join against it ran in the leader.
+#      Its row estimates were guesses besides, and a guess of one row for
+#      event_level turns the final join into a nested loop (reproduced on a
+#      synthetic corpus: the unchanged statement had not finished after two
+#      minutes on 450K rows, and took 3 s with nested loops turned off).
+#
+#   Each CTE is now an UNLOGGED table, ANALYZEd, so every step can run in
+#   parallel and the next one is planned on real row counts. The SQL of each
+#   step is the CTE it replaces; two changes are below, each the same
+#   relation by construction.
+#
+# ★ season_races IS ALSO RULE 5e's race_count (run log: 286 s for that one
+#   GROUP BY). needy read `SELECT DISTINCT person_id, acad FROM allraces`, and
+#   5e later grouped allraces by the same key again to count races. One
+#   table is both: its keys ARE the distinct seasons, and its count is 5e's
+#   count(DISTINCT race) verbatim. Nothing between here and 5e writes
+#   person_id, acad or race (the 2c write-back, the only UPDATE of allraces,
+#   runs before rule 4 and touches grade_folded alone), so the count read at
+#   5e is the count 5e used to make.
+#
+# ★ mode() BECOMES A COUNT PER LEVEL, AND THE ANSWER IS THE SAME. mode() is
+#   an ordered-set aggregate: it cannot be split across workers, so the
+#   leader read every entrant of every wanted event and ran gradeLevel on
+#   each, three times. Counting entrants per (event, level) is an ordinary
+#   GROUP BY the workers share. The level is then the one with the most
+#   entrants, ties to the FIRST in ORDER BY level -- which is mode()'s own
+#   rule: it walks the sorted values and replaces its answer only on a
+#   strictly larger count, so a tie keeps the earlier value. Same ORDER BY
+#   (the level text, default collation), same tie, same NULLs left out by
+#   the FILTER; count(a.grade) per level summed is the old
+#   count(*) FILTER (WHERE a.grade IS NOT NULL).
+_FIELD_BUILD = f"""
     -- ! ONE PASS, NOT A SUBQUERY PER SEASON. The first version asked
     --   NOT EXISTS (... GROUP BY grade HAVING count(*) >= n) for every
     --   athlete-season, which re-scans allraces ~15M times: it ran 19 minutes
@@ -1070,32 +1211,52 @@ _FIELD_SQL = f"""
     -- ! THE SAME CHANGE, AND IT MATTERS MORE HERE. by_grade decides who is
     --   NEEDY, so a duplicate-inflated count does not merely pick the wrong
     --   grade -- it removes the season from rule 4 entirely.
-    WITH by_grade AS (
-        SELECT person_id, acad, grade_folded AS grade,
-               count(DISTINCT race) AS n
-        FROM   allraces
-        WHERE  grade_folded IS NOT NULL
-        GROUP  BY 1, 2, 3
-    ),
-    best AS (
+    -- ★ NO NESTED LOOPS FOR THESE STAGES (rule 7's and rule 8's setting, for
+    --   the same reason). The wanted events are most of the corpus, and the
+    --   planner still probed allraces' event index once per event, on one
+    --   worker; turned off, it hash-joins on every worker (synthetic corpus:
+    --   event_level 9.8 s -> 4.6 s, the final read 6.7 s -> 3.7 s). A plan
+    --   setting: the rows are the rows. RESET in _FIELD_DROP.
+    SET enable_nestloop = off;
+
+    DROP TABLE IF EXISTS season_races;
+    CREATE UNLOGGED TABLE season_races AS
+        SELECT person_id, acad, count(DISTINCT race) AS races
+        FROM   allraces GROUP BY 1, 2;
+    ANALYZE season_races;
+
+    DROP TABLE IF EXISTS fld_best;
+    CREATE UNLOGGED TABLE fld_best AS
         SELECT person_id, acad, max(n) AS top_n
-        FROM   by_grade GROUP BY 1, 2
-    ),
-    needy AS (
+        FROM  (SELECT person_id, acad, grade_folded AS grade,
+                      count(DISTINCT race) AS n
+               FROM   allraces
+               WHERE  grade_folded IS NOT NULL
+               GROUP  BY 1, 2, 3) by_grade
+        GROUP  BY 1, 2;
+    ANALYZE fld_best;
+
+    -- the seasons with no grade on MIN_CORROBORATION races
+    DROP TABLE IF EXISTS fld_needy;
+    CREATE UNLOGGED TABLE fld_needy AS
         SELECT a.person_id, a.acad
-        FROM   (SELECT DISTINCT person_id, acad FROM allraces) a
-        LEFT   JOIN best b
+        FROM   season_races a
+        LEFT   JOIN fld_best b
                ON b.person_id = a.person_id AND b.acad = a.acad
-        WHERE  b.top_n IS NULL OR b.top_n < %(minc)s
-    ),
+        WHERE  b.top_n IS NULL OR b.top_n < {MIN_CORROBORATION};
+    ANALYZE fld_needy;
+
     -- Only the events those athletes ran, scored from their own entrants.
-    wanted AS (
+    DROP TABLE IF EXISTS fld_wanted;
+    CREATE UNLOGGED TABLE fld_wanted AS
         SELECT DISTINCT a.meet_id, a.div_id, a.source, a.event_key
-        FROM   needy n
-        JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
-    ),
-    event_level AS (
-        SELECT w.meet_id, w.div_id, w.source, w.event_key,
+        FROM   fld_needy n
+        JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad;
+    ANALYZE fld_wanted;
+
+    DROP TABLE IF EXISTS fld_event_level;
+    CREATE UNLOGGED TABLE fld_event_level AS
+        SELECT meet_id, div_id, source, event_key,
                -- ★ EDIT 2, PART 1 -- AN EVENT NOBODY GRADED IS NOT A
                --   SCHOOL RACE. The HAVING below now lets the ungraded
                --   event through, but `mode()` over an empty set is NULL
@@ -1112,18 +1273,22 @@ _FIELD_SQL = f"""
                --   Amelio Chio's open 10 km is the case: no entrant
                --   carried a grade, MIN_FIELD_GRADED skipped the event, no
                --   verdict was produced, and his stale grade 6 stood.
-               CASE WHEN count(*) FILTER (WHERE a.grade IS NOT NULL) = 0
+               CASE WHEN sum(n_graded) = 0
                     THEN 'pro'
-                    ELSE mode() WITHIN GROUP (ORDER BY gradeLevel(a.grade))
-                             FILTER (WHERE gradeLevel(a.grade) IS NOT NULL)
-               END AS level,
-               -- Carried for the diagnostic below, not for the decision.
-               count(*) AS n_entrants,
-               count(*) FILTER (WHERE a.grade IS NOT NULL) AS n_graded
-        FROM   wanted w
-        JOIN   allraces a
-               ON a.meet_id = w.meet_id AND a.div_id = w.div_id
-              AND a.source = w.source AND a.event_key = w.event_key
+                    -- the modal level: most entrants, ties to the first
+                    -- level in sort order (mode()'s rule, above)
+                    ELSE (array_agg(lvl ORDER BY n DESC, lvl)
+                              FILTER (WHERE lvl IS NOT NULL))[1]
+               END AS level
+        FROM  (SELECT w.meet_id, w.div_id, w.source, w.event_key,
+                      gradeLevel(a.grade) AS lvl,
+                      count(*)            AS n,
+                      count(a.grade)      AS n_graded
+               FROM   fld_wanted w
+               JOIN   allraces a
+                      ON a.meet_id = w.meet_id AND a.div_id = w.div_id
+                     AND a.source = w.source AND a.event_key = w.event_key
+               GROUP  BY 1, 2, 3, 4, 5) per_level
         GROUP  BY 1, 2, 3, 4
         -- ★ EDIT 2, PART 2 -- the gate. Either the event has enough graded
         --   entrants for its mode to mean something, OR it has NONE, which
@@ -1133,22 +1298,33 @@ _FIELD_SQL = f"""
         --   one-entrant ungraded event therefore votes 'pro' on a field of
         --   one. If reportUngraded() below shows that is common, the floor
         --   is one clause:
-        --       OR (count(*) FILTER (WHERE a.grade IS NOT NULL) = 0
-        --           AND count(*) >= {MIN_FIELD_GRADED})
-        HAVING count(*) FILTER (WHERE gradeLevel(a.grade) IS NOT NULL)
+        --       OR (sum(n_graded) = 0 AND sum(n) >= {MIN_FIELD_GRADED})
+        HAVING COALESCE(sum(n) FILTER (WHERE lvl IS NOT NULL), 0)
                    >= {MIN_FIELD_GRADED}
-            OR count(*) FILTER (WHERE a.grade IS NOT NULL) = 0
-    )
+            OR sum(n_graded) = 0;
+    ANALYZE fld_event_level;
+"""
+
+_FIELD_SQL = """
     SELECT DISTINCT ON (n.person_id, n.acad)
            n.person_id, n.acad, e.level
-    FROM   needy n
+    FROM   fld_needy n
     JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
-    JOIN   event_level e
+    JOIN   fld_event_level e
            ON e.meet_id = a.meet_id AND e.div_id = a.div_id
           AND e.source = a.source AND e.event_key = a.event_key
     WHERE  e.level IS NOT NULL
     GROUP  BY n.person_id, n.acad, e.level
     ORDER  BY n.person_id, n.acad, count(*) DESC, e.level
+"""
+
+# rule 4's staging tables; season_races outlives them until rule 5e reads it
+_FIELD_DROP = """
+    DROP TABLE IF EXISTS fld_best;
+    DROP TABLE IF EXISTS fld_needy;
+    DROP TABLE IF EXISTS fld_wanted;
+    DROP TABLE IF EXISTS fld_event_level;
+    RESET enable_nestloop;
 """
 
 
@@ -1178,7 +1354,17 @@ _FIELD_SQL = f"""
 #
 # The verdict is a LEVEL with no grade, like rule 4's: the raw grade stays
 # the feed's (the athlete page shows it, asterisked), and the pool is 'hs'.
-_TEAM_LEVEL_SQL = f"""
+#
+# ★ TWO STATEMENTS AND NO TEMP TABLE (2026-10-25, run log: 379 s from the
+#   5e line to the 5f line). tl_cand was TEMP, and a temp table cannot be
+#   read by a parallel worker, so the scan of both results tables joined to
+#   it ran on one core -- as did everything else here, gradeLevel being
+#   PARALLEL UNSAFE until today (_BUILD). tl_cand is UNLOGGED now, like
+#   allraces and for the same reason. `mine` was a CTE read twice, which
+#   Postgres materialises anyway; it is the table tl_mine instead, so the
+#   joins against it can run in workers too. Same rows, same statement.
+_TEAM_MINE_SQL = f"""
+    CREATE UNLOGGED TABLE tl_mine AS
     WITH teams AS (
         SELECT r.person_id, {_ACAD_R} AS acad,
                COALESCE(t.level = ANY(%(codes)s), false) AS hs
@@ -1200,14 +1386,16 @@ _TEAM_LEVEL_SQL = f"""
         JOIN   tl_cand c ON c.person_id = t.person_id AND c.acad = t.acad
         GROUP  BY 1, 2
         HAVING bool_and(t.hs)
-    ),
-    mine AS (
-        SELECT a.person_id, a.acad, a.meet_id, a.div_id, a.source, a.event_key
-        FROM   allraces a
-        JOIN   team_ok k ON k.person_id = a.person_id AND k.acad = a.acad
-    ),
-    wanted AS (
-        SELECT DISTINCT meet_id, div_id, source, event_key FROM mine
+    )
+    -- the seasons' own rows: what `mine` was
+    SELECT a.person_id, a.acad, a.meet_id, a.div_id, a.source, a.event_key
+    FROM   allraces a
+    JOIN   team_ok k ON k.person_id = a.person_id AND k.acad = a.acad
+"""
+
+_TEAM_LEVEL_SQL = f"""
+    WITH wanted AS (
+        SELECT DISTINCT meet_id, div_id, source, event_key FROM tl_mine
     ),
     event_level AS (
         SELECT w.meet_id, w.div_id, w.source, w.event_key,
@@ -1222,7 +1410,7 @@ _TEAM_LEVEL_SQL = f"""
                    >= {MIN_FIELD_GRADED}
     )
     SELECT m.person_id, m.acad
-    FROM   mine m
+    FROM   tl_mine m
     JOIN   event_level e
            ON e.meet_id = m.meet_id AND e.div_id = m.div_id
           AND e.source = m.source AND e.event_key = m.event_key
@@ -1234,11 +1422,17 @@ _TEAM_LEVEL_SQL = f"""
 def teamLevelCandidates(acad, seasons_of):
     """The athlete-seasons rule 5f may move: the athlete's only season, a
     school grade 1-8 on the verdict, and not the owner's pin."""
+    # ! THE CHEAP TEST FIRST (2026-10-25). This walks every verdict, 31M of
+    #   them, and formatted each one's grade before asking the two dict
+    #   lookups that turn most of them away. Same three tests, same keys in
+    #   the same order out; the string is only built for the seasons that
+    #   can still pass.
     out = []
     for key, v in acad.items():
+        if seasons_of.get(key[0]) != 1 or v.get("method") == "pinned":
+            continue
         g = str(v.get("grade") or "").strip()
-        if (seasons_of.get(key[0]) == 1 and v.get("method") != "pinned"
-                and g.isdigit() and 1 <= int(g) <= 8):
+        if g.isdigit() and 1 <= int(g) <= 8:
             out.append(key)
     return out
 
@@ -1258,23 +1452,29 @@ def _hsTeamCodes():
 
 
 def teamLevelSeasons(cur, acad, seasons_of, hs_codes=None):
-    """{(person_id, acad)} rule 5f moves to 'hs'. See _TEAM_LEVEL_SQL."""
-    from psycopg2.extras import execute_values
+    """{(person_id, acad)} rule 5f moves to 'hs'. See _TEAM_LEVEL_SQL.
+    hs_codes: the codes, or a Future of them (resolve reads them in a
+    thread while 5e counts), or None to read them here."""
     cand = teamLevelCandidates(acad, seasons_of)
     if not cand:
         return set()
     if hs_codes is None:
         hs_codes = _hsTeamCodes()
+    elif hasattr(hs_codes, "result"):
+        hs_codes = hs_codes.result()
     if not hs_codes:
         return set()
-    cur.execute("DROP TABLE IF EXISTS tl_cand")
-    cur.execute("CREATE TEMP TABLE tl_cand (person_id bigint, acad int, "
+    cur.execute("DROP TABLE IF EXISTS tl_cand; DROP TABLE IF EXISTS tl_mine")
+    cur.execute("CREATE UNLOGGED TABLE tl_cand (person_id bigint, acad int, "
                 "PRIMARY KEY (person_id, acad))")
-    execute_values(cur, "INSERT INTO tl_cand VALUES %s", cand, page_size=10000)
+    _copyRows(cur, "tl_cand", ("person_id", "acad"), cand)
     cur.execute("ANALYZE tl_cand")
-    cur.execute(_TEAM_LEVEL_SQL, {"codes": list(hs_codes)})
+    params = {"codes": list(hs_codes)}
+    cur.execute(_TEAM_MINE_SQL, params)
+    cur.execute("ANALYZE tl_mine")
+    cur.execute(_TEAM_LEVEL_SQL, params)
     got = {(int(p), int(a)) for p, a in cur.fetchall()}
-    cur.execute("DROP TABLE tl_cand")
+    cur.execute("DROP TABLE tl_mine; DROP TABLE tl_cand")
     return got
 
 
@@ -2471,10 +2671,13 @@ def resolve(cur, audit=False):
     #   is the absence of school-ness. Only the second can emit 'pro', so the
     #   level identifies its own origin and the two stay countable apart.
     _tq = time.time()
-    cur.execute(_FIELD_SQL, {"minc": MIN_CORROBORATION})
+    runTimed(cur, _FIELD_BUILD, label="[4] staging")
+    cur.execute(_FIELD_SQL)
+    _field_rows = cur.fetchall()
+    cur.execute(_FIELD_DROP)
     print(f"    [4] field levels read ({time.time() - _tq:.0f}s)", flush=True)
     n_nograde = 0
-    for pid, ay, level in cur.fetchall():
+    for pid, ay, level in _field_rows:
         key = (int(pid), int(ay))
         if key in acad:
             continue
@@ -2785,12 +2988,22 @@ def resolve(cur, audit=False):
     #   (person_id, acad) for rule 6, and count(DISTINCT race) per season for
     #   trust -- three passes over 225M rows for one table of 31M seasons.
     #   race_count IS that table; the other two are read off it.
+    # ★ AND IT IS ALREADY BUILT (2026-10-25): rule 4 made season_races, the
+    #   same GROUP BY, and nothing has written allraces' person_id, acad or
+    #   race since (see _FIELD_BUILD). This is a read, not a 225M-row count.
+    # ★ RULE 5f's TEAM LEVELS ARE READ MEANWHILE (2026-10-25, run log: 379 s
+    #   from here to the 5f line). _hsTeamCodes opens its own connection and
+    #   groups results by team code; nothing it reads is anything this step
+    #   writes, so it runs in a thread while this connection streams 31M
+    #   seasons into Python, and 5f takes its answer when it gets there.
+    from concurrent.futures import ThreadPoolExecutor
+    _bg = ThreadPoolExecutor(max_workers=1)
+    hs_codes = _bg.submit(_hsTeamCodes)
+    _bg.shutdown(wait=False)
     t_rc = time.time()
-    cur.execute("""
-        SELECT person_id, acad, count(DISTINCT race) AS races
-        FROM   allraces GROUP BY 1, 2
-    """)
+    cur.execute("SELECT person_id, acad, races FROM season_races")
     race_count = {(int(p), int(a)): int(n) for p, a, n in cur.fetchall()}
+    cur.execute("DROP TABLE IF EXISTS season_races")
     seasons_of = {}
     for (pid, _ay) in race_count:
         seasons_of[pid] = seasons_of.get(pid, 0) + 1
@@ -2807,7 +3020,7 @@ def resolve(cur, audit=False):
 
     # RULE 5f: a lone season on a high school team, in high school fields
     _tq = time.time()
-    moved5f = teamLevelSeasons(cur, acad, seasons_of)
+    moved5f = teamLevelSeasons(cur, acad, seasons_of, hs_codes=hs_codes)
     for key in moved5f:
         acad[key] = {"grade": None, "level": "hs", "method": "team_level"}
     n_team = len(moved5f)
@@ -2893,33 +3106,43 @@ def write(cur, resolved):
       it academically; renaming it would break correct code. speed_ratings'
       poolOf is the consumer that had to move.
     """
-    from psycopg2.extras import execute_values
-
     cur.execute("DROP TABLE IF EXISTS grade_fix")
     # ⚠ `trust` IS A COLUMN, NOT A SEPARATE TABLE. A consumer that does not
     #   know about it still reads grade and level exactly as before and is
     #   simply not filtering -- which is the old behaviour, not a broken one.
+    # ★ THE KEY IS ADDED AFTER THE ROWS (2026-10-25, with the COPY above
+    #   copyText). Built once from sorted keys instead of grown by 31M
+    #   inserts in dict order. ADD PRIMARY KEY names it grade_fix_pkey, the
+    #   name the inline constraint had, on the same two columns, so the table
+    #   a consumer sees is the same table; a duplicate key would fail here
+    #   instead of at the INSERT, and abort the same transaction.
     cur.execute("""CREATE TABLE grade_fix (
                        person_id bigint NOT NULL,
                        season    int    NOT NULL,
                        grade     text,
                        level     text,
                        method    text   NOT NULL,
-                       trust     text   NOT NULL DEFAULT 'high',
-                       PRIMARY KEY (person_id, season))""")
-    execute_values(cur, "INSERT INTO grade_fix VALUES %s",
-                   [(p, s, v["grade"], v["level"], v["method"],
-                     v.get("trust", "high"))
-                    for (p, s), v in resolved.items()], page_size=5000)
+                       trust     text   NOT NULL DEFAULT 'high')""")
+    _copyRows(cur, "grade_fix",
+              ("person_id", "season", "grade", "level", "method", "trust"),
+              ((p, s, v["grade"], v["level"], v["method"], v.get("trust", "high"))
+               for (p, s), v in resolved.items()))
+    cur.execute("ALTER TABLE grade_fix ADD PRIMARY KEY (person_id, season)")
     cur.execute("ANALYZE grade_fix")
 
+    # ! FROM grade_fix, NOT FROM PYTHON AGAIN. Its rows are every key of
+    #   `resolved` -- sorted(resolved.keys()) was exactly that set -- so the
+    #   server copies the two columns across in the same sorted order rather
+    #   than Python sorting and sending 31M pairs a second time. The key goes
+    #   on after the rows, as grade_fix's does.
     cur.execute("DROP TABLE IF EXISTS grade_untrusted")
     cur.execute("""CREATE TABLE grade_untrusted (
                        person_id bigint NOT NULL,
-                       season    int    NOT NULL,
-                       PRIMARY KEY (person_id, season))""")
-    execute_values(cur, "INSERT INTO grade_untrusted VALUES %s",
-                   sorted(resolved.keys()), page_size=5000)
+                       season    int    NOT NULL)""")
+    cur.execute("""INSERT INTO grade_untrusted (person_id, season)
+                   SELECT person_id, season FROM grade_fix
+                   ORDER  BY person_id, season""")
+    cur.execute("ALTER TABLE grade_untrusted ADD PRIMARY KEY (person_id, season)")
     cur.execute("ANALYZE grade_untrusted")
     return len(resolved)
 

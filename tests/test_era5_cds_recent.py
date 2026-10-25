@@ -36,3 +36,50 @@ def test_the_request_asks_for_every_variable_all_day():
     assert (r["year"], r["month"], r["day"]) == (["2026"], ["10"], ["11"])
     assert len(r["time"]) == 24 and len(r["variable"]) == len(C.CDS_VARS)
     assert r["area"] == [45.0, -120.0, 30.0, -100.0]
+
+
+def _fake(monkeypatch, bad=(), slow=0.0):
+    import threading
+    import time
+    clients = []
+
+    def fetchDay(client, day, cells):
+        time.sleep(slow)
+        if day in bad:
+            raise RuntimeError("queue timeout")
+        return [{"day": day, "client": client}]
+    monkeypatch.setattr(C, "fetchDay", fetchDay)
+
+    def make():
+        clients.append(threading.get_ident())
+        return len(clients)
+    return make, clients
+
+
+def test_days_run_side_by_side_with_a_client_per_thread(monkeypatch):
+    make, clients = _fake(monkeypatch, slow=0.05)
+    days = {f"2026-09-{d:02d}": [(40.0, 260.0)] for d in range(1, 13)}
+    got = []
+    failed, left, _ = C.fetchDays(make, sorted(days), days, threads=4, budget_s=600,
+                                  write=got.extend)
+    assert (failed, left) == (0, 0)
+    assert sorted(r["day"] for r in got) == sorted(days)
+    assert len(clients) == len(set(clients)) <= 4             # one client per thread
+
+
+def test_a_failed_day_is_counted_and_the_rest_written(monkeypatch):
+    make, _ = _fake(monkeypatch, bad={"2026-09-03"})
+    days = {f"2026-09-{d:02d}": [(40.0, 260.0)] for d in range(1, 6)}
+    got = []
+    failed, left, _ = C.fetchDays(make, sorted(days), days, threads=2, budget_s=600,
+                                  write=got.extend)
+    assert (failed, left) == (1, 0) and len(got) == 4
+
+
+def test_past_the_budget_no_new_day_starts(monkeypatch):
+    make, _ = _fake(monkeypatch)
+    days = {f"2026-09-{d:02d}": [(40.0, 260.0)] for d in range(1, 6)}
+    got = []
+    failed, left, _ = C.fetchDays(make, sorted(days), days, threads=2, budget_s=-1,
+                                  write=got.extend)
+    assert (failed, left, got) == (0, 5, [])

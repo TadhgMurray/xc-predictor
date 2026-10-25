@@ -111,11 +111,17 @@ _QUIET_STRICT = {
 #   which picks nested-loop index probes -- a dozen per row over 61.6M rows
 #   in the ranking build. Every pipeline cursor reads its query to the end,
 #   so plan for the end (panels.py found and fixed this for itself).
+# ★ FOUR WORKERS, NOT TWO (2026-10-25, owner: "you can multithread/core as
+#   necessary"). The box has 24 cores and the run was 10 hours of
+#   single-worker scans; four per query and four per index build, with the
+#   server's own ceiling raised to match (max_worker_processes 24,
+#   max_parallel_workers 16; deploy/server_setup.sh). Under the server's old
+#   default of 8 a query simply gets fewer workers -- never an error.
 _QUIET_SETTINGS = {
     "work_mem": "512MB",
     "maintenance_work_mem": "2GB",
-    "max_parallel_workers_per_gather": "2",
-    "max_parallel_maintenance_workers": "2",
+    "max_parallel_workers_per_gather": "4",
+    "max_parallel_maintenance_workers": "4",
     "synchronous_commit": "off",
     "cursor_tuple_fraction": "1.0",
 }
@@ -145,12 +151,12 @@ def dbSetting(name, default):
 
 def dbJobs(default, quiet=1):
     """How many database-heavy workers a builder may run side by side:
-    one in strict mode, up to two in the balanced default."""
+    one in strict mode, up to four in the balanced default (2026-10-25)."""
     if not dbQuiet():
         return default
     if os.environ.get("XCP_DB_QUIET") == "strict":
         return quiet
-    return max(quiet, min(default, 2))
+    return max(quiet, min(default, 4))
 
 
 _TUNED = {}          # id(conn) -> conn, connections already capped

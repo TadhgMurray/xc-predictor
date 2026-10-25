@@ -49,13 +49,24 @@ def test_the_bands_are_cut_where_the_twins_are_generated():
     the two questions get averaged together."""
     assert 2 in C.DEFAULT_BANDS and 44 in C.DEFAULT_BANDS
     assert 208 in C.DEFAULT_BANDS
-    # and the gap really is context feature 3
+
+
+def test_the_gap_is_the_models_own_gap_slot():
+    """★ review 2026-10: this test used to pin GAP_FEATURE at 3 off a prose
+    list that left out is_forecast at index 0, so the bands were cut on the
+    day of the year. Pinned now to transformer.CONTEXT_GAP_INDEX (read as
+    text: transformer imports torch) AND to the slot the builder fills with
+    days_since_last_race."""
+    import re
+    tr = open(os.path.join(_ROOT, "model", "transformer.py")).read()
+    m = re.search(r"^CONTEXT_GAP_INDEX = (\d+)", tr, re.M)
+    assert m and C.GAP_FEATURE == int(m.group(1))
     fe = open(os.path.join(_ROOT, "model", "feature_extraction.py")).read()
-    order = fe[fe.index("#     [course_difficulty, distance_meters, day_of_year,"):]
-    order = order[:order.index("school_encoded")]
-    assert order.index("course_difficulty") < order.index("distance_meters") \
-        < order.index("day_of_year") < order.index("days_since_last_race")
-    assert C.GAP_FEATURE == 3
+    body = fe[fe.index("def _buildContextVector"):]
+    body = body[body.index("return ["):body.index("def addContextToExamples")]
+    slots = [ln.strip() for ln in body.splitlines()[1:]
+             if ln.strip() and not ln.strip().startswith("#")]
+    assert slots[C.GAP_FEATURE].startswith("days_since_last_race")
 
 
 def test_a_sigma_that_falls_with_the_horizon_is_not_flagged_when_the_error_falls_too():
