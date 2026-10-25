@@ -176,3 +176,41 @@ How to read the table:
 - 10_rankings reads school_identity and school_unit from the previous run (10b and 10d rebuild them after). The code says so for school_identity.
 - 09b_fill and 05b_anchor_repair read the previous run's ranking_results.
 - athlete_season_level, college_first_season, upperclass_first_season and race_top_level are read by the backfill, the pack and the boards, but no pipeline step builds them.
+
+## Done, 2026-10-25
+
+What changed after the step times of 20261023_171317. Every change keeps
+each step's output the same; the parallel paths were checked against the
+serial ones for identical rows. Each has a switch back to the old way.
+
+| step | before (s) | what changed | switch back |
+|---|---:|---|---|
+| 04e_weather_grid (bg, waited on before 04f) | 9,797 | ERA5 tiles read 8 at a time; rows written in tile order. Same rows on the live store, 2.6x on a 4-core box | `XCP_WX_THREADS=1` |
+| 04e2_weather_recent (bg, new on master) | new | CDS days 4 at a time; no new day after 90 min, the rest resume next run | `XCP_CDS_THREADS=1`, `XCP_CDS_BUDGET_MIN` |
+| 04_grade_sanity, 04b_wheelchair, 04d_gender | 4,292 + two | together (group 3), then 04c_twins | — |
+| 09b_fill, 09c_school_names | 1,085 + 09c | together (group 7) | — |
+| 10a .. 11_teams | ~2,100 in a row | three waves of up to four (group 1), then 10f3 | `XCP_STREAMS=1` |
+| 10f2_projection (bg, the run's tail) | 8,668 | chunks on 6 spawned workers, put back in chunk order | `XCP_PROJ_WORKERS=1` |
+| 12b_course_pages | 1,541 | 6 shards, not 3 | `XCP_COURSE_SHARDS=3` |
+| 13j_record_books (bg) | 4,095 | school pages on 8 spawned workers; the parent writes | `XCP_RECORD_WORKERS=1` |
+| every step | | 4 Postgres workers per query and per index build, not 2 | `XCP_DB_QUIET=strict` |
+
+stepsN now asks `--from`, `--skip` and `_ALWAYS` of each name (master made
+the same change with `beforeFrom`), so a mixed group keeps 04b's
+run-on-every-`--from` rule and `--from 11` still builds the teams.
+
+Connections at the busiest point: 10f2's workers (3 each, 18) and 13j's (1
+each, 8, plus the parent) beside the site's (up to 48), under
+`max_connections = 100`.
+
+The Postgres side needs one change, made by the owner, live from the next
+restart (06:00 UTC): the 4-per-query caps can only draw on the server's
+worker pool, which is 8 by default.
+
+    sudo -u postgres psql -P pager=off -c "ALTER SYSTEM SET max_worker_processes = 24" \
+        -c "ALTER SYSTEM SET max_parallel_workers = 16" \
+        -c "ALTER SYSTEM SET max_parallel_maintenance_workers = 4"
+
+`max_worker_processes` takes effect only at a restart; the nightly one
+picks it up. deploy/server_setup.sh writes the same three lines for a new
+box.
