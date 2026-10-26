@@ -444,6 +444,19 @@ def _json(fetched):
         return None
 
 
+def keyedPage(page):
+    """A meet_list page as {key: document}.
+
+    ⚠ FIREBASE ANSWERS SOME PAGES AS A JSON LIST. When a page's keys are
+      integers filling more than half of 0..max (the first pages: ids 1, 2,
+      3 ...), the REST API returns them as an array -- position = id, a null
+      where there is none. The first server run read that as "no page" and
+      stopped after one request with 0 meets (2026-10-26)."""
+    if isinstance(page, list):
+        return {str(i): v for i, v in enumerate(page) if v is not None}
+    return page if isinstance(page, dict) else {}
+
+
 def listUrl(start, limit=PAGE):
     return (f'{FIREBASE}/meet_list.json?orderBy="$key"&startAt="{int(start)}"'
             f"&limitToFirst={int(limit)}")
@@ -514,17 +527,15 @@ async def discover(cur, fetcher, back=REFRESH_BACK, start=None, max_pages=None):
         start = max(0, top - back)
     n = pages = 0
     while max_pages is None or pages < max_pages:
-        page = _json(await fetcher.fetch(listUrl(start)))
+        page = keyedPage(_json(await fetcher.fetch(listUrl(start))))
         pages += 1
-        if not isinstance(page, dict):
-            break
         ids = sorted(int(k) for k in page if str(k).isdigit())
         for k in ids:
             row = parseMeet(k, page.get(str(k)))
             if row:
                 cur.execute(_UPSERT, row)
                 n += 1
-        if len(page) < PAGE or not ids:
+        if len(ids) < PAGE:
             break
         start = ids[-1] + 1
     return n, pages

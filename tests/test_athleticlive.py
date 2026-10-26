@@ -278,3 +278,26 @@ def test_alive_meets_sql():
     finally:
         conn.rollback()
         conn.close()
+
+
+def test_a_page_firebase_sends_as_a_list_is_read_by_position():
+    """The first pages come back as a JSON array (ids 1, 2, 3 ...): position
+    is the id. Read as 'no page', the first server run found 0 meets."""
+    assert A.keyedPage([None, MEET, None, dict(MEET, ani=7)]) == {"1": MEET, "3": dict(MEET, ani=7)}
+    assert A.keyedPage({"65672": MEET}) == {"65672": MEET}
+    assert A.keyedPage(None) == {}
+
+    class _Cur:
+        def __init__(self):
+            self.rows = []
+
+        def execute(self, sql, row=None):
+            self.rows.append(row)
+
+    full = [None] + [dict(MEET, ani=i) for i in range(1, A.PAGE + 1)]
+    f = _Fetcher({'startAt="0"': full, 'startAt="%d"' % (A.PAGE + 1): {"9999": MEET}})
+    cur = _Cur()
+    n, pages = asyncio.run(A.discover(cur, f, start=0))
+    assert (n, pages) == (A.PAGE + 1, 2)
+    assert cur.rows[0]["alive_id"] == 1 and cur.rows[-1]["alive_id"] == 9999
+
