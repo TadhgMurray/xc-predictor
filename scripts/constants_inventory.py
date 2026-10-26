@@ -511,6 +511,8 @@ RULES = {
     },
     # ---------------------------------------------------------- pool_resolve
     "engine/pool_resolve.py": {
+        "NO_POOL_VERDICTS": ("DATA", "grade_sanity verdicts that leave a season with no pool (one list, "
+                                     "the site imports it)"),
         **_all("PRO_ABILITY_5K ABILITY_CURVE_POOL ABILITY_CURVE_SPORT", "DATA",
                "scope: the professional pool by ability (sub-14:00 / sub-15:30)"),
         **_all("US_STATES US_NAMES NATIONAL_TEAMS AMBIGUOUS_NATIONAL_TEAMS _NT_SUFFIX _PARA_SCHOOL",
@@ -674,6 +676,7 @@ RULES = {
     },
     # ------------------------------------------------ build_ranking_results
     "racecast/build_ranking_results.py": {
+        "_HAVE_RATING_POOL": ("INFRA", "whether the result tables carry rating_pool (set per build)"),
         **_all("_PHASES _FETCH_BATCH _COPY_BATCH _INDEX_JOBS _SWAP_LOCK_TIMEOUT_MS _SWAP_ATTEMPTS "
                "_SWAP_BACKOFF _COLUMNS _TF_DISTANCE _UNIT_COLS _UNITS _TEAM_CACHE _SCHOOL_OK _COPY_ESCAPES "
                "_GATE _TIMED_KIND _LOAD_TABLE _LOAD_SEASON _CANONICAL_INDEXES _BOARD_SIZE_SPORTS "
