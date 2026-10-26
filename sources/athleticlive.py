@@ -14,6 +14,8 @@
 #   python -m sources.athleticlive discover [--back 3000]   # new and recent meets
 #   python -m sources.athleticlive check  --meets 20        # vs anet rows we have; nothing written
 #   python -m sources.athleticlive land   [--limit 50] [--meet ANET_ID] [--write]
+#   python -m sources.athleticlive events                   # genders of anet event ids
+#                                                           # scraper.EVENT_ID_TO_SHORT lacks
 #   python -m sources.athleticlive status
 #
 # ★ WHY (owner, 2026-10-26: "we're trying to not scrape athletic net as much
@@ -291,12 +293,34 @@ def matchSlots(events, slots):
     return out, why
 
 
-def _catalogue():
+_LEARNED = None
+
+
+def learnedEvents(cur):
+    """{anet event id: (event_short, gender)} from anet_event_gender: the
+    events scraper.EVENT_ID_TO_SHORT does not list (60m is 42), gendered by
+    who ran them (`events` builds it). {} before it is built."""
+    global _LEARNED
+    if _LEARNED is None:
+        if cur is None:
+            return {}                    # nothing to read: do not cache the nothing
+        _LEARNED = {}
+        cur.execute("SELECT to_regclass('anet_event_gender')")
+        if cur.fetchone()[0]:
+            cur.execute("SELECT event_id, event_short, gender FROM anet_event_gender")
+            _LEARNED = {e: (s, g) for e, s, g in cur.fetchall()}
+    return _LEARNED
+
+
+def _catalogue(cur=None):
     """{(canonShort, gender): (anet event id, anet event_short)}."""
     from scraper import EVENT_ID_TO_SHORT
     out = {}
     for eid, (short, g) in EVENT_ID_TO_SHORT.items():
         out.setdefault((canonShort(short), g), (eid, short))
+    for eid, (short, g) in sorted(learnedEvents(cur).items()):
+        if g:
+            out.setdefault((canonShort(short), g), (eid, short))
     return out
 
 
@@ -542,16 +566,81 @@ async def discover(cur, fetcher, back=REFRESH_BACK, start=None, max_pages=None):
 
 
 def anetSlots(cur, meet_id):
-    """athletic.net's slots for a meet from meets_tf: [Slot]."""
+    """athletic.net's slots for a meet from meets_tf: [Slot]. An event's
+    gender is scraper.EVENT_ID_TO_SHORT's, else the learned one
+    (anet_event_gender): without it the boys' and girls' 60 m are one
+    event to matchSlots and neither lands."""
     from scraper import EVENT_ID_TO_SHORT
+    learned = learnedEvents(cur)
     cur.execute("""SELECT DISTINCT event_id, div_id, event_short, division
                    FROM meets_tf WHERE meet_id = %s AND event_id IS NOT NULL
                      AND div_id IS NOT NULL""", (meet_id,))
     out = []
     for eid, did, short, division in cur.fetchall():
-        g = (EVENT_ID_TO_SHORT.get(eid) or (None, None))[1]
+        g = (EVENT_ID_TO_SHORT.get(eid) or learned.get(eid) or (None, None))[1]
         out.append(Slot(eid, did, short, g, division))
     return out
+
+
+EVENT_GENDER_DDL = """
+CREATE TABLE IF NOT EXISTS anet_event_gender (
+    event_id     bigint PRIMARY KEY,
+    event_short  text,
+    gender       text,           -- 'm' / 'f' / NULL (mixed: no answer)
+    n_m          integer,
+    n_f          integer,
+    built_at     timestamptz NOT NULL DEFAULT now()
+)"""
+
+# up to 20 meets per event, 30 runners per race: enough to say who runs it
+_EVENT_GENDER_SQL = """
+WITH ev AS (
+    SELECT event_id, meet_id, div_id, event_short,
+           row_number() OVER (PARTITION BY event_id ORDER BY meet_id DESC) AS rn
+    FROM   meets_tf
+    WHERE  event_id IS NOT NULL AND NOT (event_id = ANY(%(known)s))
+)
+SELECT ev.event_id, min(ev.event_short),
+       count(*) FILTER (WHERE upper(a.gender) = 'M'),
+       count(*) FILTER (WHERE upper(a.gender) = 'F')
+FROM   ev
+CROSS  JOIN LATERAL (SELECT r.athlete_id FROM results_tf r
+                     WHERE r.meet_id = ev.meet_id AND r.div_id = ev.div_id
+                       AND r.event_id = ev.event_id AND r.athlete_id IS NOT NULL
+                     LIMIT 30) r
+JOIN   LATERAL (SELECT gender FROM athletes a WHERE a.athlete_id = r.athlete_id
+                LIMIT 1) a ON true
+WHERE  ev.rn <= 20
+GROUP  BY ev.event_id
+"""
+
+
+def eventGender(n_m, n_f, min_n=10, share=0.9):
+    """'m' / 'f' when nearly everyone who ran it is one gender, else None."""
+    n = (n_m or 0) + (n_f or 0)
+    if n < min_n:
+        return None
+    if n_m / n >= share:
+        return "m"
+    if n_f / n >= share:
+        return "f"
+    return None
+
+
+def buildEventGender(cur):
+    from scraper import EVENT_ID_TO_SHORT
+    global _LEARNED
+    cur.execute(EVENT_GENDER_DDL)
+    cur.execute("SET LOCAL statement_timeout = 0")
+    cur.execute(_EVENT_GENDER_SQL, {"known": sorted(EVENT_ID_TO_SHORT)})
+    rows = cur.fetchall()
+    cur.execute("DELETE FROM anet_event_gender")
+    for eid, short, n_m, n_f in rows:
+        cur.execute("""INSERT INTO anet_event_gender (event_id, event_short, gender, n_m, n_f)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (eid, short, eventGender(n_m, n_f), n_m, n_f))
+    _LEARNED = None
+    return rows
 
 
 def anetHasResults(cur, meet_id):
@@ -603,7 +692,7 @@ def _divIds(blobs):
     return out
 
 
-def plan(meet_id, alive, events, blobs, slots, meta):
+def plan(meet_id, alive, events, blobs, slots, meta, catalogue=None):
     """What landing one meet would write. Pure. -> dict with meet_info,
     meets_to_save, athletes, results_to_save, own (True: AthleticLIVE's
     own slots), unmatched {event id: reason}, left Counter."""
@@ -611,7 +700,7 @@ def plan(meet_id, alive, events, blobs, slots, meta):
         matched, why = matchSlots(events, slots)
         own = False
     else:
-        cat = _catalogue()
+        cat = catalogue if catalogue is not None else _catalogue()
         divs = _divIds(blobs)
         matched = {ev["id"]: ownSlot(ev, divs.get(ev["id"]), cat) for ev in events}
         why, own = {}, True
@@ -813,7 +902,7 @@ def cmdLand(a):
                 total[note or "no events"] += 1
                 continue
             p = plan(meet_id, alive, events, blobs, anetSlots(cur, meet_id),
-                     metaFromDb(cur, meet_id))
+                     metaFromDb(cur, meet_id), catalogue=_catalogue(cur))
             _report(meet_id, alive, p)
             total["results"] += len(p["results_to_save"])
             total["meets"] += 1
@@ -834,66 +923,169 @@ def _secs(r):
     return r["SortInt"] / 1000 if r.get("SortInt") else None
 
 
-def compareMeet(have, results_to_save):
+_FT_IN = re.compile(r"^(\d{1,3})\s*(?:'|-)\s*(\d{1,2}(?:\.\d{1,2})?)\s*\"?$")
+_METRES = re.compile(r"^(\d{1,3}(?:\.\d{1,3})?)\s*m?$", re.IGNORECASE)
+
+
+def markMetres(mark):
+    """A field mark in metres, whichever way it is written: athletic.net's
+    "78' 0", the timers' '55-11.25', AthleticLIVE's '23.77m'. None when it
+    is not a mark (NH, FOUL, garbage). For comparing only: what is stored
+    is the mark as printed."""
+    s = str(mark or "").strip()
+    m = _FT_IN.match(s)
+    if m:
+        inches = float(m.group(2))
+        return None if inches >= 12 else int(m.group(1)) * 0.3048 + inches * 0.0254
+    m = _METRES.match(s)
+    return float(m.group(1)) if m else None
+
+
+def _sameMark(alive_r, anet_row):
+    """AthleticLIVE's row and athletic.net's carry the same mark: a time to
+    the hundredth, a field mark to 1.5 cm (a quarter inch is 0.6 cm, and
+    each side rounds its own conversion), or the same status."""
+    t = _secs(alive_r)
+    if t is not None and anet_row[4] is not None:
+        return abs(t - anet_row[4]) < 0.011
+    res = str(alive_r.get("Result") or "").strip()
+    if not res:
+        return False
+    a, b = markMetres(res), markMetres(anet_row[5])
+    if a is not None and b is not None:
+        return abs(a - b) < 0.015
+    return res.upper() in (str(anet_row[5] or "").strip().upper(),
+                           str(anet_row[9] or "").strip().upper())
+
+
+def compareMeet(have, results_to_save, known=None):
     """athletic.net's rows for a meet against what AthleticLIVE would land
     there. Individual rows only (a relay has no runner to match on).
-    have: (result_id, athlete_id, div_id, event_id, time_seconds, mark, place,
-    is_relay, event_short, status, athlete_name). -> (Counter, {kind: [line]})."""
-    theirs = {}
+
+    have: (result_id, athlete_id, div_id, event_id, time_seconds, mark,
+    place, is_relay, event_short, status, name, person_id). known:
+    {athlete_id: (person_id, name)} from `athletes`, for both sides' ids.
+    -> (Counter, {kind: [example line]}).
+
+    A row athletic.net has and AthleticLIVE does not, by runner id, is one
+    of: the same race and the same mark under ANOTHER athlete id (the id
+    question, sub-split by whether we know that id and whose it is); a race
+    AthleticLIVE did not land at all; the runner in another race; absent."""
+    known = known or {}
+    theirs, ours = {}, {}
     for h in have:
         if h[1] and not h[7]:
             theirs.setdefault((h[1], h[2], h[3]), h)
-    ours = {}
     for t in results_to_save:
         if not t[5] and t[0].get("AthleteID"):
             ours.setdefault((t[0]["AthleteID"], t[2], t[3]), t)
-    by_runner = defaultdict(list)
-    for (ath, _div, _ev), t in ours.items():
-        by_runner[ath].append(t)
+    landed = {(k[1], k[2]) for k in ours}
     c, ex = Counter(), defaultdict(list)
     c["anet rows"], c["alive rows"] = len(theirs), len(ours)
+    used, left = set(), []
+
+    def nm(aid, fallback=None):
+        return str((known.get(aid) or (None, None))[1] or fallback or aid)
+
     for key, h in theirs.items():
         t = ours.get(key)
         if t is None:
-            elsewhere = by_runner.get(key[0])
-            if elsewhere:
-                c["anet: runner in another race"] += 1
-                o = elsewhere[0]
-                ex["runner in another race"].append(
-                    f"{h[10]!s:<24} anet {h[8]} div {h[2]} ev {h[3]} -> alive {o[4]} "
-                    f"div {o[2]} ev {o[3]}")
-            else:
-                c["anet: runner not in alive"] += 1
-                ex["anet runner AthleticLIVE does not have"].append(
-                    f"{h[10]!s:<24} {h[8]} div {h[2]}: {h[4] or h[5] or h[9]} place {h[6]}")
+            left.append(h)
             continue
+        used.add(key)
         r = t[0]
         c["same runner+race"] += 1
-        a_t = _secs(r)
-        same = (a_t is not None and h[4] is not None and abs(a_t - h[4]) < 0.011) or (
-            bool(r.get("Result")) and str(r["Result"]).strip() in (str(h[5] or "").strip(),
-                                                                   str(h[9] or "").strip()))
-        if same:
+        if _sameMark(r, h):
             c["same mark"] += 1
         else:
             ex["same runner and race, different mark"].append(
-                f"{h[10]!s:<24} {h[8]}: anet {h[4] or h[5] or h[9]}  alive "
-                f"{a_t if a_t is not None else r.get('Result')}")
+                f"{nm(h[1], h[10]):<26} {h[8]}: anet {h[4] or h[5] or h[9]}  alive "
+                f"{_secs(r) if _secs(r) is not None else r.get('Result')}")
         if r.get("Place") is not None and r.get("Place") == h[6]:
             c["same place"] += 1
-    theirs_ath = {k[0] for k in theirs}
-    for (ath, _div, _ev), t in ours.items():
-        if ath not in theirs_ath:
-            r = t[0]
-            no_mark = r.get("SortInt") is None and not t[7]
-            if no_mark or (t[7] and r.get("Result") and not any(ch.isdigit() for ch in r["Result"])):
-                c["alive only, no mark (DNS/SCR...)"] += 1
+    # the same race and mark, under another id
+    spare = defaultdict(list)
+    for key, t in ours.items():
+        if key not in used:
+            spare[(key[1], key[2])].append((key, t))
+    by_runner = defaultdict(list)
+    for key, t in ours.items():
+        by_runner[key[0]].append(t)
+    for h in left:
+        slot = (h[2], h[3])
+        twin = next((kt for kt in spare.get(slot, ())
+                     if kt[0] not in used and _sameMark(kt[1][0], h)
+                     and (kt[1][0].get("Place") is None or h[6] is None
+                          or kt[1][0].get("Place") == h[6])), None)
+        if twin:
+            used.add(twin[0])
+            ani = twin[0][0]
+            mine = known.get(ani)
+            if mine is None:
+                kind = "other id, not in our athletes"
+            elif mine[0] is not None and mine[0] == h[11]:
+                kind = "other id, same person"
             else:
-                c["alive only, with a mark"] += 1
-                ex["alive runner athletic.net does not have"].append(
-                    f"{r.get('FirstName')} {r.get('LastName')!s:<14} {t[4]}: "
-                    f"{_secs(r) or r.get('Result')} place {r.get('Place')}")
+                kind = "other id, another person"
+            c[f"same race+mark, {kind}"] += 1
+            ex[f"same race and mark, {kind}"].append(
+                f"{h[8]:<6} anet {h[1]} {nm(h[1], h[10])!r} person {h[11]}  |  alive {ani} "
+                f"{twin[1][0].get('FirstName')} {twin[1][0].get('LastName')}"
+                + (f", ours: person {mine[0]} {mine[1]!r}" if mine else ""))
+        elif slot not in landed:
+            c["anet: race not landed"] += 1
+        elif by_runner.get(h[1]):
+            c["anet: runner in another race"] += 1
+            o = by_runner[h[1]][0]
+            ex["runner in another race"].append(
+                f"{nm(h[1], h[10]):<26} anet {h[8]} div {h[2]} ev {h[3]} -> alive {o[4]} "
+                f"div {o[2]} ev {o[3]}")
+        else:
+            c["anet: runner not in alive"] += 1
+            ex["anet runner AthleticLIVE does not have"].append(
+                f"{nm(h[1], h[10]):<26} {h[8]} div {h[2]}: {h[4] or h[5] or h[9]} place {h[6]}")
+    for key, t in ours.items():
+        if key in used:
+            continue
+        r = t[0]
+        marked = _secs(r) is not None or markMetres(r.get("Result")) is not None
+        if not marked:
+            c["alive only, no mark (DNS/SCR...)"] += 1
+        else:
+            c["alive only, with a mark"] += 1
+            ex["alive runner athletic.net does not have"].append(
+                f"{r.get('FirstName')} {r.get('LastName')!s:<16} {t[4]}: "
+                f"{_secs(r) or r.get('Result')} place {r.get('Place')}")
     return c, ex
+
+
+def _unlandedLines(meet_id, p, slots):
+    """For the events plan() did not land: what AthleticLIVE calls it, and
+    the slots athletic.net has for that event -- the division names and
+    genders matchSlots had to choose between."""
+    out = []
+    for ev in p["events"]:
+        why = p["unmatched"].get(ev["id"])
+        if not why:
+            continue
+        cands = sorted({(s.event_id, s.gender or "?", s.division or "") for s in slots
+                        if canonShort(s.event_short) == canonShort(ev["ab"])})
+        out.append(f"meet {meet_id}: {ev['ab']} {ev['gender'] or '?'} [{ev['division']}] -> {why}; "
+                   f"anet: {cands or sorted({s.event_short for s in slots})[:12]}")
+    return out
+
+
+def cmdEvents(a):
+    with _conn() as conn:
+        cur = conn.cursor()
+        rows = buildEventGender(cur)
+        conn.commit()
+    named = [(e, s, eventGender(m, f), m, f) for e, s, m, f in rows]
+    print(f"[alive] anet_event_gender: {len(rows)} event ids outside scraper.EVENT_ID_TO_SHORT, "
+          f"{sum(1 for r in named if r[2])} with a gender")
+    for e, s, g, m, f in sorted(named, key=lambda r: -(r[3] + r[4]))[:a.show]:
+        print(f"    {e:>6} {s!s:<22} {g or '-':<2} boys {m:>5} girls {f:>5}")
+    return 0
 
 
 def cmdCheck(a):
@@ -914,24 +1106,37 @@ def cmdCheck(a):
         pairs = cur.fetchall()
         for meet_id, alive_id in pairs:
             alive = aliveFor(cur, meet_id)
-            events, blobs, _ = _run(fetchMeet(fetcher, alive_id, alive["meet_date"]))
-            p = plan(meet_id, alive, events, blobs, anetSlots(cur, meet_id), None)
+            events, blobs, note = _run(fetchMeet(fetcher, alive_id, alive["meet_date"]))
+            slots = anetSlots(cur, meet_id)
+            p = plan(meet_id, alive, events, blobs, slots, None)
             cur.execute("""SELECT result_id, athlete_id, div_id, event_id, time_seconds, mark,
-                                  place, is_relay, event_short, status, athlete_name
+                                  place, is_relay, event_short, status, athlete_name, person_id
                            FROM results_tf WHERE meet_id = %s AND source = 'anet'
                              AND result_id < %s""", (meet_id, RESULT_BASE))
             have = cur.fetchall()
-            res, why = compareMeet(have, p["results_to_save"])
+            ids = {h[1] for h in have if h[1]} | {t[0].get("AthleteID")
+                                                   for t in p["results_to_save"]
+                                                   if t[0].get("AthleteID")}
+            cur.execute("""SELECT DISTINCT ON (athlete_id) athlete_id, person_id,
+                                  btrim(concat_ws(' ', first_name, last_name))
+                           FROM athletes WHERE athlete_id = ANY(%s)""", (sorted(ids),))
+            known = {a: (pid, name) for a, pid, name in cur.fetchall()}
+            res, why = compareMeet(have, p["results_to_save"], known)
             agg.update(res)
             agg["meets"] += 1
             for kind, ex in why.items():
-                examples[kind].extend(ex)
-            print(f"  meet {meet_id} ({alive['meet_date']}, {str(alive['name'])[:36]}): "
+                examples[kind].extend(ex[:max(2, a.show // 4)])     # a few from each meet
+            for line in _unlandedLines(meet_id, p, slots)[:4]:
+                examples["events not landed (alive event -> reason; anet's slots for it)"].append(line)
+            other = sum(v for k, v in res.items() if k.startswith("same race+mark"))
+            print(f"  meet {meet_id} ({alive['meet_date']}, {str(alive['name'])[:34]}): "
                   f"anet {res['anet rows']}, alive {res['alive rows']}; "
-                  f"{res['same runner+race']} same runner in the same race "
-                  f"({res['same mark']} same mark, {res['same place']} same place); "
-                  f"anet not in alive: {res['anet: runner not in alive']} absent, "
-                  f"{res['anet: runner in another race']} in another race"
+                  f"{res['same runner+race']} same runner+race ({res['same mark']} same mark); "
+                  f"{other} same race+mark under another id; "
+                  f"{res['anet: race not landed']} in races not landed, "
+                  f"{res['anet: runner in another race']} in another race, "
+                  f"{res['anet: runner not in alive']} absent"
+                  + (f"; {note}" if note else "")
                   + (f"; events not landed {dict(Counter(p['unmatched'].values()))}"
                      if p["unmatched"] else ""), flush=True)
     for kind, ex in examples.items():
@@ -972,9 +1177,11 @@ def main(argv=None):
     ld.add_argument("--meet", type=int, action="append", help="this athletic.net meet id")
     ld.add_argument("--write", action="store_true")
     sub.add_parser("status")
+    e = sub.add_parser("events")
+    e.add_argument("--show", type=int, default=40)
     a = ap.parse_args(argv)
     return {"init": cmdInit, "discover": cmdDiscover, "check": cmdCheck,
-            "land": cmdLand, "status": cmdStatus}[a.cmd](a)
+            "land": cmdLand, "status": cmdStatus, "events": cmdEvents}[a.cmd](a)
 
 
 if __name__ == "__main__":

@@ -336,21 +336,41 @@ def test_one_fetcher_serves_meet_after_meet():
 def test_check_says_why_rows_differ():
     evs = A.parseSummary(SUMMARY)
     slots = [Slot(52, 111, "1600m", "m", "Varsity"), Slot(52, 112, "1600m", "m", "Frosh Soph"),
-             Slot(35, 111, "lj", "f", "Varsity")]
+             Slot(35, 111, "lj", "f", "Varsity"), Slot(42, 111, "60m", "m", "Varsity")]
     p = A.plan(642474, A.parseMeet(65672, MEET), evs, {2402879: MILE, 2402928: LJ}, slots, None)
     # (result_id, athlete_id, div_id, event_id, time_seconds, mark, place,
-    #  is_relay, event_short, status, athlete_name)
+    #  is_relay, event_short, status, name, person_id)
     have = [
-        (1, 30578388, 111, 52, 265.96, None, 1, 0, "1600m", None, "Uriel Texis"),
-        (2, 30475359, 111, 52, 276.2, None, 2, 0, "1600m", None, "Ann Other"),       # mark differs
-        (3, 27377960, 112, 52, 300.0, None, 1, 0, "1600m", None, "Jo Jump"),         # other race
-        (4, 11111111, 111, 52, 290.0, None, 4, 0, "1600m", None, "Not There"),       # absent
-        (5, 22222222, 111, 7, 44.0, None, 1, 1, "4x100m", None, "a, b, c, d"),       # relay: ignored
+        (1, 30578388, 111, 52, 265.96, None, 1, 0, "1600m", None, None, 30578388),
+        (2, 30475359, 111, 52, 276.2, None, 2, 0, "1600m", None, None, 30475359),   # mark differs
+        (3, 27377960, 112, 52, 300.0, None, 1, 0, "1600m", None, None, 27377960),   # FS: not landed
+        (4, 11111111, 111, 52, 290.0, None, 4, 0, "1600m", None, None, 11111111),   # absent
+        (5, 22222222, 111, 7, 44.0, None, 1, 1, "4x100m", None, None, None),        # relay: ignored
+        (6, 99999999, 111, 35, None, "13' 8.75", 1, 0, "lj", None, None, 77),       # LJ winner, other id
+        (7, 33333333, 111, 42, 7.5, None, 1, 0, "60m", None, None, 33333333),        # race not landed
     ]
-    c, ex = A.compareMeet(have, p["results_to_save"])
-    assert c["anet rows"] == 4 and c["same runner+race"] == 2 and c["same mark"] == 1
+    known = {27377960: (77, "Jo Jump"), 30578388: (30578388, "Uriel Texis")}
+    c, ex = A.compareMeet(have, p["results_to_save"], known)
+    assert c["anet rows"] == 6 and c["same runner+race"] == 2 and c["same mark"] == 1
     assert c["same place"] == 2
-    assert c["anet: runner in another race"] == 1 and c["anet: runner not in alive"] == 1
+    assert c["same race+mark, other id, same person"] == 1           # 13-08.75 is 4.18 m
+    assert c["anet: race not landed"] == 2 and c["anet: runner not in alive"] == 1
+    assert c["anet: runner in another race"] == 0
     assert c["alive only, no mark (DNS/SCR...)"] == 1                 # the DNS
     assert "276.2" in ex["same runner and race, different mark"][0]
-    assert "Not There" in ex["anet runner AthleticLIVE does not have"][0]
+    assert "11111111" in ex["anet runner AthleticLIVE does not have"][0]
+    assert "Uriel Texis" not in str(ex)                                # matched rows are not examples
+
+
+def test_field_marks_compare_across_units():
+    assert abs(A.markMetres("78' 0") - 23.7744) < 1e-6
+    assert abs(A.markMetres("13-08.75") - A.markMetres("4.18m")) < 0.015
+    assert A.markMetres("23.77m") == 23.77 and A.markMetres("FOUL") is None
+    assert A.markMetres("17-15") is None
+    assert A._sameMark({"Result": "23.77m"}, (0, 1, 1, 1, None, "78' 0", 1, 0, "dt", None))
+    assert not A._sameMark({"Result": "23.17m"}, (0, 1, 1, 1, None, "78' 0", 1, 0, "dt", None))
+
+
+def test_learned_event_genders():
+    assert A.eventGender(95, 2) == "m" and A.eventGender(1, 40) == "f"
+    assert A.eventGender(30, 30) is None and A.eventGender(3, 0) is None
