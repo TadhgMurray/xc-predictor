@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
 wrong_distance.py -- cross country races stored at the wrong distance.
-READ ONLY (the writer comes after the owner has read this list).
 
-    python engine/wrong_distance.py                     # the ranked list + counts
+    python engine/wrong_distance.py                     # the ranked list + counts (read only)
     python engine/wrong_distance.py --csv out.csv       # ... and every row to a CSV
     python engine/wrong_distance.py --explain 254287/1015294   # one division, runner by runner
+    python engine/wrong_distance.py --write             # the writer: distance_pin (pipeline 04g1b)
+    python engine/wrong_distance.py --write --allow-many    # past the circuit breaker (first run)
+    python engine/wrong_distance.py --hold anet/MEET/DIV    # owner: keep this division's rows as they are
+    python engine/wrong_distance.py --refuse anet/MEET/DIV  # owner: never act on this division
+    python engine/wrong_distance.py --release anet/MEET/DIV # owner: back to the writer's judgment
 
 Design: docs/WRONG-DISTANCE-2026-10-25.md.
 
@@ -115,6 +119,15 @@ PACE_FAST, PACE_SLOW = 0.03, 0.97   # division-median percentile within its pool
 ACTION_ORDER = ("pin", "split", "replace", "pin-up?", "novote", "list", "review",
                 "keep", "unjudged", "ignore")
 HAND_DICT = "_DISTANCE_OVERRIDES_XC"     # the hand-typed overrides in corrections.py
+
+# ---- the writer (docs/WRONG-DISTANCE-2026-10-25.md sections 5-6) ----
+# ★ A PIN STAYS ON LESS THAN IT TAKES TO MAKE ONE. CAND (8%) to be looked
+#   at, STAY (6%) to be kept: a race sitting near the bar is not written,
+#   retired and written again run after run.
+STAY = 0.06
+# ★ THE CIRCUIT BREAKER. venue_label wrote 14,802 pins in a week; a run
+#   that would add or retire more than this writes nothing and says why.
+MAX_CHANGES = 300
 
 
 # ------------------------------------------------------------------ #
@@ -606,6 +619,11 @@ WHERE  {where}
 """
 
 
+def _hasTable(cur, name):
+    cur.execute("SELECT to_regclass(%s)", (f"public.{name}",))
+    return cur.fetchone()[0] is not None
+
+
 def _ex(cur, sql, args=None, label=None, t0=None):
     t = time.time()
     cur.execute(sql, args)
@@ -659,6 +677,16 @@ def build(cur, work_mem="512MB"):
     has_ovr = cur.fetchone()[0]
     ovr = ("OR (d.meet_id, d.div_id) IN (SELECT meet_id, div_id FROM dist_override)"
            if has_ovr else "")
+    # ★ AND EVERY DIVISION THE WRITER HAS A ROW FOR, so each is re-judged
+    #   every run (a pin comes off when its evidence goes), and every
+    #   override the writer vetoed (dist_override_vetoed), so a veto is
+    #   judged against the override it removed
+    if _hasTable(cur, "distance_pin"):
+        ovr += (" OR (d.source, d.meet_id, d.div_id) IN (SELECT source, meet_id, div_id "
+                "FROM distance_pin WHERE status IN ('active', 'held'))")
+    if _hasTable(cur, "dist_override_vetoed"):
+        ovr += (" OR (d.meet_id, d.div_id) IN (SELECT meet_id, div_id "
+                "FROM dist_override_vetoed)")
     _ex(cur, _CAND_SQL.format(ovr=ovr),
         {"f": FIELD_MIN, "c": CAND, "mix": MIX_MIN, "sep": MIX_SEP}, "divisions to judge", t0)
     cur.execute("ALTER TABLE wd_cand ADD PRIMARY KEY (dk)")
@@ -704,9 +732,15 @@ def gather(cur, pools, has_ovr):
     vh = venueIndex(cur.fetchall())
     ovr = {}
     if has_ovr:
-        cur.execute("""SELECT o.meet_id, o.div_id, o.distance, o.dict_name FROM dist_override o
-                       JOIN wd_div d ON d.meet_id = o.meet_id AND d.div_id = o.div_id
-                       JOIN wd_cand c ON c.dk = d.dk""")
+        # the writer's own pins are not overrides to judge; the overrides
+        # it vetoed are (from dist_override_vetoed), against the evidence
+        vetoed = ("UNION ALL SELECT meet_id, div_id, distance, dict_name "
+                  "FROM dist_override_vetoed" if _hasTable(cur, "dist_override_vetoed") else "")
+        cur.execute(f"""SELECT o.meet_id, o.div_id, o.distance, o.dict_name
+                        FROM  (SELECT meet_id, div_id, distance, dict_name FROM dist_override
+                               WHERE dict_name NOT IN ('distance_pin', 'novote') {vetoed}) o
+                        JOIN wd_div d ON d.meet_id = o.meet_id AND d.div_id = o.div_id
+                        JOIN wd_cand c ON c.dk = d.dk""")
         ovr = {(int(m), int(dv)): (float(dist), name) for m, dv, dist, name in cur.fetchall()}
     # per-runner residuals for the ones spread like two races
     mixc = [c for c in cand if (c["n_ref"] or 0) >= MIX_MIN and c["q"] and c["res"] is not None
@@ -778,6 +812,7 @@ def judgeOne(c, by_meet, vh, pools, ovr, rows_by):
     v = judge(d, {"venue_meets": venue_meets, "sibs": sibs, "sib_labels": sib_labels,
                   "venue_labels": venue_labels, "raw_hist": raw_hist, "e50": c["e50"],
                   "mix": mix})
+    v["mix"] = mix
     o = ovr.get((int(c["meet_id"]), int(c["div_id"])))
     v["override"] = o
     if o:
@@ -800,6 +835,252 @@ def judgeOne(c, by_meet, vh, pools, ovr, rows_by):
                      evidence=f"override {o[0]:g} ({o[1]}): {why}")
     v["div"] = c
     return v
+
+
+
+# ------------------------------------------------------------------ #
+#  the writer: distance_pin, one table for every distance fix
+# ------------------------------------------------------------------ #
+#
+# Design: docs/WRONG-DISTANCE-2026-10-25.md sections 5 and 6. Rows are keyed
+# (source, meet_id, div_id, part): part '' is the whole division, 'g:f' /
+# 'lvl:ms' one side of a combined division. Actions:
+#   pin     the division (or part) ran `distance`, never longer than its
+#           times say; the backfill normalises on it
+#   novote  keep the listed distance, vote on no course (dist_override.novote)
+#   veto    an existing override the times reject; the listed distance stands
+# Nothing is deleted: a row the evidence no longer holds is RETIRED with its
+# reason, and every change goes to distance_pin_log. held / refused are the
+# owner's word and never changed here.
+
+_PIN_DDL = """
+CREATE TABLE IF NOT EXISTS distance_pin (
+    source      text   NOT NULL,
+    meet_id     bigint NOT NULL,
+    div_id      bigint NOT NULL,
+    part        text   NOT NULL DEFAULT '',
+    listed      real,
+    distance    real,
+    action      text   NOT NULL,
+    status      text   NOT NULL DEFAULT 'active',
+    kind        text,
+    confidence  text,
+    points      int,
+    evidence    text,
+    set_by      text   NOT NULL DEFAULT 'auto',
+    first_seen  timestamptz DEFAULT now(),
+    last_judged timestamptz DEFAULT now(),
+    retired_at  timestamptz,
+    retired_why text,
+    PRIMARY KEY (source, meet_id, div_id, part));
+CREATE TABLE IF NOT EXISTS distance_pin_log (
+    at       timestamptz DEFAULT now(),
+    source   text, meet_id bigint, div_id bigint, part text,
+    old      text, new text, why text);
+"""
+
+
+def wants(v):
+    """[(part, action, distance)] the verdict on one division asks for. Pure."""
+    c = v["div"]
+    listed = float(c["listed"])
+    out = []
+    if v["action"] == "pin" and v.get("proposed"):
+        out.append(("", "pin", float(v["proposed"])))
+    elif v["action"] == "split":
+        # ★ THE FAST SIDE ONLY, ONLY DOWN, ONLY WHEN AN ATTRIBUTE EXPLAINS IT
+        #   (design section 4). The side that ran the listed distance keeps
+        #   it, and the division votes on no course either way.
+        mix = v.get("mix") or {}
+        by = mix.get("by")
+        fast = next((cl for cl in mix.get("clusters", ()) if cl["name"] == "fast"), None)
+        s = fast and fast.get("snap")
+        if (by and s and s < listed and math.log(listed / s) >= BIG_MOVE
+                and math.log(s / fast["implied"]) <= OVERSHOOT):
+            attr = "g" if by[0] == "gender" else "lvl"
+            for val in by[1]:
+                out.append((f"{attr}:{val}", "pin", float(s)))
+        out.append(("", "novote", None))
+    elif v["action"] == "novote":
+        out.append(("", "novote", None))
+    ov = v.get("override_verdict")
+    if (ov and ov[0] == "replace" and v["action"] != "pin" and "-> the listed" in ov[1]
+            and not any(p == "" for p, _a, _d in out)):
+        out.append(("", "veto", None))
+    return out
+
+
+def keeps(row, v):
+    """(True, why) when an active auto row the verdict no longer asks for
+    should stay: STAY, not CAND, is the bar (hysteresis). Pure.
+    row: dict with part, action, distance, listed."""
+    if v is None:
+        return False, "the division is no longer in the corpus"
+    x = v.get("x")
+    listed = float(row.get("listed") or v["div"]["listed"])
+    if row["part"]:
+        return (v.get("kind") == "combined",
+                "still two races in one division" if v.get("kind") == "combined"
+                else "no longer two races in one division")
+    if row["action"] == "pin":
+        if x is None or x > -STAY:
+            return False, f"the field now reads {100 * (x or 0):+.1f}% at the listed distance"
+        imp = implied(listed, x)
+        if math.log(float(row["distance"]) / imp) > OVERSHOOT:
+            return False, f"the pin {row['distance']:g} is now longer than the {imp:,.0f} the times say"
+        return True, f"the field still reads {100 * x:+.1f}%"
+    if row["action"] == "novote":
+        if v.get("kind") == "combined" or (x is not None and x >= STAY):
+            return True, "still slow, or still two races"
+        return False, f"the field now reads {100 * (x or 0):+.1f}%"
+    if row["action"] == "veto":
+        ov = v.get("override_verdict")
+        if v.get("override") and ov and ov[0] in ("replace", "review"):
+            return True, "the override is still rejected"
+        return False, "no override left to veto, or the times now agree with it"
+    return False, "unknown action"
+
+
+def plan(verdicts, rows):
+    """The changes one run makes. verdicts: judged divisions; rows:
+    {(source, meet, div, part): row dict} already in distance_pin. Returns
+    (upserts, retires, refreshed): upserts [(key, action, distance, v)] new
+    or changed; retires [(key, why)]; refreshed [(key, v, why)] kept as they
+    are. Pure."""
+    by_div = {(v["div"]["source"], int(v["div"]["meet_id"]), int(v["div"]["div_id"])): v
+              for v in verdicts}
+    upserts, retires, refreshed, wanted = [], [], [], set()
+    for dkey, v in by_div.items():
+        for part, action, dist in wants(v):
+            key = dkey + (part,)
+            wanted.add(key)
+            old = rows.get(key)
+            if old and old["status"] in ("held", "refused"):
+                refreshed.append((key, v, "owner's " + old["status"]))
+                continue
+            if (old and old["status"] == "active" and old["action"] == action
+                    and (dist is None or abs(float(old["distance"] or 0) - dist) < 1)):
+                refreshed.append((key, v, "confirmed"))
+                continue
+            upserts.append((key, action, dist, v))
+    for key, row in rows.items():
+        if key in wanted or row["status"] != "active" or row.get("set_by") != "auto":
+            if row["status"] == "held" and key not in wanted:
+                refreshed.append((key, by_div.get(key[:3]), "owner's held"))
+            continue
+        ok, why = keeps(row, by_div.get(key[:3]))
+        if ok:
+            refreshed.append((key, by_div.get(key[:3]), why))
+        else:
+            retires.append((key, why))
+    return upserts, retires, refreshed
+
+
+def _loadRows(cur):
+    cur.execute("""SELECT source, meet_id, div_id, part, listed, distance, action, status, set_by
+                   FROM distance_pin""")
+    out = {}
+    for src, m, d, part, listed, dist, act, st, by in cur.fetchall():
+        out[(src, int(m), int(d), part)] = {"part": part, "listed": listed, "distance": dist,
+                                            "action": act, "status": st, "set_by": by}
+    return out
+
+
+def write(cur, verdicts, allow_many=False):
+    """Apply plan() to distance_pin. Returns the counts, or None when the
+    circuit breaker refused."""
+    cur.execute(_PIN_DDL)
+    rows = _loadRows(cur)
+    upserts, retires, refreshed = plan(verdicts, rows)
+    adds = sum(1 for k, *_ in upserts if k not in rows or rows[k]["status"] != "active")
+    print(f"[wrong_distance] writer: {len(upserts):,} to write ({adds:,} new), "
+          f"{len(retires):,} to retire, {len(refreshed):,} kept", flush=True)
+    if not allow_many and (adds > MAX_CHANGES or len(retires) > MAX_CHANGES):
+        print(f"[wrong_distance] !! CIRCUIT BREAKER: more than {MAX_CHANGES} adds or retires "
+              f"in one run -- NOTHING WRITTEN. Read the list; --allow-many writes it.", flush=True)
+        return None
+    from psycopg2.extras import execute_values
+    log, up_rows = [], []
+    for key, action, dist, v in upserts:
+        c = v["div"]
+        old = rows.get(key)
+        up_rows.append(key + (float(c["listed"]), dist, action, v.get("kind"),
+                              v.get("confidence") or None, v.get("points") or 0,
+                              (v.get("evidence") or "")[:2000]))
+        log.append(key + (f"{old['action']} {old['distance']} {old['status']}" if old else None,
+                          f"{action} {dist}", (v.get("evidence") or "")[:500]))
+    if up_rows:
+        execute_values(cur, """
+            INSERT INTO distance_pin (source, meet_id, div_id, part, listed, distance, action,
+                                      kind, confidence, points, evidence)
+            VALUES %s
+            ON CONFLICT (source, meet_id, div_id, part) DO UPDATE SET
+                listed = EXCLUDED.listed, distance = EXCLUDED.distance,
+                action = EXCLUDED.action, kind = EXCLUDED.kind,
+                confidence = EXCLUDED.confidence, points = EXCLUDED.points,
+                evidence = EXCLUDED.evidence, status = 'active', set_by = 'auto',
+                last_judged = now(), retired_at = NULL, retired_why = NULL""", up_rows)
+    for key, why in retires:
+        cur.execute("""UPDATE distance_pin SET status = 'retired', retired_at = now(),
+                              retired_why = %s, last_judged = now()
+                       WHERE source = %s AND meet_id = %s AND div_id = %s AND part = %s""",
+                    (why,) + key)
+        old = rows[key]
+        log.append(key + (f"{old['action']} {old['distance']} active", "retired", why))
+    for key, v, _why in refreshed:
+        if v is not None:
+            cur.execute("""UPDATE distance_pin SET last_judged = now(), evidence = %s
+                           WHERE source = %s AND meet_id = %s AND div_id = %s AND part = %s""",
+                        ((v.get("evidence") or "")[:2000],) + key)
+    if log:
+        execute_values(cur, """INSERT INTO distance_pin_log
+                               (source, meet_id, div_id, part, old, new, why) VALUES %s""", log)
+    cur.execute("""SELECT action, count(*) FROM distance_pin WHERE status IN ('active', 'held')
+                   GROUP BY 1 ORDER BY 1""")
+    now = dict(cur.fetchall())
+    print(f"[wrong_distance] distance_pin now: {now}; {len(upserts):,} written, "
+          f"{len(retires):,} retired", flush=True)
+    return {"written": len(upserts), "retired": len(retires), "now": now}
+
+
+# dump_overrides' reading of distance_pin, here so it can be tested
+def applyPins(rows, pins):
+    """rows {key: (distance, dict_name)}; pins [(meet, div, action, distance,
+    listed)]. Returns (rows, novote_keys, vetoed [(meet, div, distance,
+    dict_name)]). Pure."""
+    rows, novote, vetoed = dict(rows), set(), []
+    for m, d, action, dist, listed in pins:
+        key = (int(m), int(d))
+        if action == "pin" and dist:
+            rows[key] = (float(dist), "distance_pin")
+        elif action == "veto" and key in rows:
+            vetoed.append(key + rows.pop(key))
+        elif action == "novote":
+            if key not in rows and listed:
+                rows[key] = (float(listed), "novote")
+            if key in rows:
+                novote.add(key)
+    return rows, novote, vetoed
+
+
+def setStatus(cur, ref, status):
+    """--hold / --refuse / --release SOURCE/MEET/DIV[/PART]."""
+    parts = ref.strip("/").split("/")
+    src, meet, div = parts[0], int(parts[1]), int(parts[2])
+    part = parts[3] if len(parts) > 3 else ""
+    cur.execute(_PIN_DDL)
+    new = "active" if status == "release" else status
+    by = "auto" if status == "release" else "owner"
+    # a division with no row yet gets action 'none': holding or refusing it
+    # says "leave it alone", not "novote" (readers apply pin/veto/novote only)
+    cur.execute("""INSERT INTO distance_pin (source, meet_id, div_id, part, action, status, set_by)
+                   VALUES (%s, %s, %s, %s, 'none', %s, %s)
+                   ON CONFLICT (source, meet_id, div_id, part) DO UPDATE
+                   SET status = EXCLUDED.status, set_by = EXCLUDED.set_by, last_judged = now()""",
+                (src, meet, div, part, new, by))
+    cur.execute("""INSERT INTO distance_pin_log (source, meet_id, div_id, part, old, new, why)
+                   VALUES (%s, %s, %s, %s, NULL, %s, 'owner')""", (src, meet, div, part, new))
+    print(f"[wrong_distance] {src}/{meet}/{div}{'/' + part if part else ''}: {new} ({by})")
 
 
 # ------------------------------------------------------------------ #
@@ -997,8 +1278,20 @@ def main(argv=None):
     ap.add_argument("--explain", help="MEET/DIV (or a racecast race URL): one division")
     ap.add_argument("--source", help="with --explain: anet or tfrrs")
     ap.add_argument("--work-mem", default=os.environ.get("XCP_WD_WORK_MEM", "512MB"))
+    ap.add_argument("--write", action="store_true", help="the writer: distance_pin")
+    ap.add_argument("--allow-many", action="store_true",
+                    help=f"past the circuit breaker ({MAX_CHANGES} adds or retires)")
+    for st in ("hold", "refuse", "release"):
+        ap.add_argument(f"--{st}", metavar="SOURCE/MEET/DIV[/PART]")
     a = ap.parse_args(argv)
     from database import getConn
+    for st in ("hold", "refuse", "release"):
+        ref = getattr(a, st)
+        if ref:
+            with getConn() as conn, conn.cursor() as cur:
+                setStatus(cur, ref, {"hold": "held", "refuse": "refused"}.get(st, st))
+                conn.commit()
+            return
     with getConn() as conn, conn.cursor() as cur:
         try:
             if a.explain:
@@ -1011,9 +1304,15 @@ def main(argv=None):
             pools, has_ovr = build(cur, a.work_mem)
             verdicts = gather(cur, pools, has_ovr)
             report(verdicts, a.top, a.csv)
+            if a.write:
+                done = write(cur, verdicts, a.allow_many)
+                conn.commit()
+                print(f"[wrong_distance] done in {(time.time() - t0) / 60:.0f} min. "
+                      + ("Written." if done else "Nothing written (circuit breaker)."))
+                return
             print(f"[wrong_distance] done in {(time.time() - t0) / 60:.0f} min. Nothing written.")
         finally:
-            conn.rollback()      # temp tables only; nothing to keep
+            conn.rollback()      # temp tables; a --write committed above
 
 
 if __name__ == "__main__":

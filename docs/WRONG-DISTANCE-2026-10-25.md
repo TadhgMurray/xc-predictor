@@ -6,8 +6,14 @@ being overrated. Over-find for review, but only act on big errors. Watch for
 combined divisions. Fewer correction layers, not one more.
 
 Code: `engine/wrong_distance.py`. Tests: `tests/test_wrong_distance.py`.
-Status: **the finder (read only) is built. The writer waits until the owner has
-read the finder's list.**
+Status: **the finder and the writer are built (2026-10-26).** The owner read
+the finder's list ("sure"). `--write` fills `distance_pin`; the backfill,
+`dump_overrides` and the solve read it; pipeline step 04g1b runs it every
+run. The first run needs `--allow-many` (thousands of rows at once); after
+that the circuit breaker holds each run to 300 adds or retires.
+Not built yet: the post-solve over-correction check (section 6.2), and
+retiring gender_pace_pin / audit_overrides (they still run; distance_pin
+outranks them in the dump).
 
 ---
 

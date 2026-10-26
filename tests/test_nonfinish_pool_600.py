@@ -51,7 +51,8 @@ def test_status_letters_are_kept_and_nothing_else():
 
 def test_scraper_and_saver_carry_the_status():
     db = read("scripts", "database.py")
-    assert "ADD COLUMN IF NOT EXISTS status TEXT" in db
+    # asks the catalogue first, then adds (the 2026-10-26 outage)
+    assert '_addColumnIfMissing(cursor, table, "status", "TEXT")' in db
     assert "status        = COALESCE(EXCLUDED.status, results.status)" in db
     assert "mark = _statusOf(result) if time_seconds is None else None" in db
     sc = read("scripts", "scrape_results.py")

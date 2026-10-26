@@ -844,6 +844,13 @@ if [ "${XCP_AUDIT_OVERRIDES:-1}" != "0" ] && [ -f engine/corrections.py ]; then
   #   one person on both genders -- data_issue, ranked by impact
   step 04g1_data_checks "$PY" -u engine/data_checks.py --write
   step 04g_audit_overrides "$PY" -u engine/audit_overrides.py --rebuild --write
+  # ★ THE ONE WRITER OF DISTANCE FIXES (engine/wrong_distance.py, 2026-10-26;
+  #   docs/WRONG-DISTANCE-2026-10-25.md). Raw times against each runner's own
+  #   season, re-judged every run, into distance_pin; dump_overrides reads it
+  #   first. Its circuit breaker writes nothing past 300 adds or retires in
+  #   one run (the step still succeeds and says so in its log).
+  step 04g1b_wrong_distance "$PY" -u engine/wrong_distance.py --write --top 20 \
+       --csv "$LOGDIR/wrong_distance.csv"
   if ! failed 04g_audit_overrides; then
     step 04g2_dump_overrides "$PY" -u engine/dump_overrides.py
   fi

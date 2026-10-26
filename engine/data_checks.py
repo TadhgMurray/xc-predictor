@@ -550,9 +550,12 @@ def main():
             try:
                 got = fn(cur)
                 if name == "race_field":
-                    got, more, rejects = got
-                    for k, v in more.items():
-                        pins.setdefault(k, v)
+                    # ★ LISTED, NO LONGER PINNED (2026-10-26): wrong_distance
+                    #   (04g1b) is the one writer of distance fixes, from raw
+                    #   times it can re-judge every run. race_field still
+                    #   lists what it sees (it also catches faults that are not
+                    #   distances), and its rejects still take old pins out.
+                    got, _more, rejects = got
                 elif name == "venue_label":
                     got, more = got
                     for k, v in more.items():

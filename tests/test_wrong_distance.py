@@ -346,4 +346,84 @@ def test_the_finder_on_a_synthetic_corpus(scratch):
 
         WD.report(verdicts, top=10)
         WD.explain(c, *faults["wrong6k"], "anet")
+
+        # ---- the writer on the same verdicts ----
+        res = WD.write(c, verdicts, allow_many=True)
+        assert res and res["written"] > 0
+        c.execute("SELECT meet_id, div_id, part, action, distance, status FROM distance_pin")
+        pins = {(m, d, p): (a, dist, st) for m, d, p, a, dist, st in c.fetchall()}
+        assert pins[faults["wrong6k"] + ("",)] == ("pin", 5000.0, "active")
+        assert pins[faults["combined"] + ("",)][0] == "novote"
+        assert pins[tuple(bad) + ("",)][0] == "veto"
+        # a second run on the same evidence changes nothing
+        again = WD.write(c, verdicts)
+        assert again["written"] == 0 and again["retired"] == 0
+        c.execute("SELECT count(*) FROM distance_pin_log")
+        n_log = c.fetchone()[0]
+        assert n_log == res["written"]
     scratch.rollback()
+
+
+def _v(source="anet", meet=1, div=2, listed=6000.0, action="pin", proposed=5000.0,
+       x=-0.19, kind="wrong_distance", **kw):
+    v = {"div": {"source": source, "meet_id": meet, "div_id": div, "listed": listed},
+         "action": action, "proposed": proposed, "x": x, "kind": kind,
+         "confidence": "high", "points": 4, "evidence": "e"}
+    v.update(kw)
+    return v
+
+
+def test_what_each_verdict_writes():
+    assert WD.wants(_v()) == [("", "pin", 5000.0)]
+    assert WD.wants(_v(action="novote", proposed=8000.0, x=0.5)) == [("", "novote", None)]
+    assert WD.wants(_v(action="review")) == []
+    # a combined division explained by gender: the fast side pinned, the whole voting on nothing
+    mix = {"by": ("gender", ["f"], ["m"]),
+           "clusters": [{"name": "fast", "snap": 4000.0, "implied": 4010.0},
+                        {"name": "slow", "snap": 5000.0, "implied": 5000.0}]}
+    assert WD.wants(_v(listed=5000.0, action="split", kind="combined", mix=mix)) == \
+        [("g:f", "pin", 4000.0), ("", "novote", None)]
+    # never a pin longer than the times say, never a small move, never up
+    mix["clusters"][0]["implied"] = 3800.0
+    assert WD.wants(_v(listed=5000.0, action="split", kind="combined", mix=mix)) == [("", "novote", None)]
+    # an override the times reject, to be replaced by the listed distance
+    assert WD.wants(_v(action="replace", kind="override", proposed=None,
+                       override_verdict=("replace", "longer than ...; -> the listed 5000"))) == \
+        [("", "veto", None)]
+
+
+def test_a_pin_stays_on_less_than_it_takes_and_comes_off_when_the_evidence_goes():
+    row = {"part": "", "action": "pin", "distance": 5000.0, "listed": 6000.0,
+           "status": "active", "set_by": "auto"}
+    key = ("anet", 1, 2, "")
+    # 7% fast: not enough to write (8%), enough to keep (6%) -- but 5000 is
+    # longer than the 5617 a 7% field implies? no: 5000 < 5617, kept
+    up, ret, kept = WD.plan([_v(action="review", proposed=None, x=-0.07)], {key: row})
+    assert (up, ret) == ([], []) and kept[0][0] == key
+    # the field now reads true: retired with its reason
+    up, ret, kept = WD.plan([_v(action="ignore", proposed=None, x=-0.01)], {key: row})
+    assert ret and ret[0][0] == key and "reads" in ret[0][1]
+    # an owner's hold is never retired
+    held = dict(row, status="held", set_by="owner")
+    up, ret, kept = WD.plan([_v(action="ignore", proposed=None, x=-0.01)], {key: held})
+    assert ret == [] and up == []
+    # refused: the writer never activates it, whatever the verdict
+    refused = dict(row, status="refused", set_by="owner")
+    up, ret, kept = WD.plan([_v()], {key: refused})
+    assert up == [] and ret == []
+
+
+def test_the_dump_reads_the_pins_first():
+    rows = {(1, 2): (4000.0, "_DISTANCE_OVERRIDES_XC"), (3, 4): (4500.0, "DIST_PROPOSED"),
+            (5, 6): (6000.0, "_DISTANCE_PIN_GENDER")}
+    pins = [(1, 2, "pin", 5000.0, 6000.0),        # outranks the hand-typed 4000
+            (3, 4, "veto", None, 5000.0),         # the proposal goes, kept apart
+            (5, 6, "novote", None, 5000.0),       # an existing row, flagged
+            (7, 8, "novote", None, 3218.0),       # a new row at the listed distance
+            (9, 9, "none", None, None)]           # an owner's hold with nothing to apply
+    got, novote, vetoed = WD.applyPins(rows, pins)
+    assert got[(1, 2)] == (5000.0, "distance_pin")
+    assert (3, 4) not in got and vetoed == [(3, 4, 4500.0, "DIST_PROPOSED")]
+    assert got[(5, 6)] == (6000.0, "_DISTANCE_PIN_GENDER") and (5, 6) in novote
+    assert got[(7, 8)] == (3218.0, "novote") and (7, 8) in novote
+    assert (9, 9) not in got

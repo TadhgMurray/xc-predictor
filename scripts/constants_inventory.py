@@ -378,6 +378,8 @@ def _all(names, cat, note):
 RULES = {
     # -------------------------------------------------------------- backfill
     "backfill/backfill_normalize.py": {
+        **_all("_DPIN_DIV _DPIN_PART", "DATA",
+               "distance_pin, loaded once a run: wrong_distance's fixes, read before the dicts"),
         **_all("_SKIP_ORDER _RESULT_TABLE _ONLY_CHANGED _NEW_ONLY _WRITE_PAGE _STAGING "
                "_INDEX_JOBS _INDEX_MEM _INDEX_WORKERS SWAP_LOCK_TIMEOUT SWAP_ATTEMPTS "
                "SWAP_BACKOFF _REWRITE_MAX_ROWS _REWRITE_SAMPLE_PCT _CHANGED _TOP_N "

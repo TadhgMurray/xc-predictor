@@ -85,6 +85,24 @@ import person_gender as _pg               # gender by the rows (issue 164)
 _PG_AVAILABLE = None
 
 
+_NOVOTE_SQL = None
+
+
+def _novoteSql():
+    """Once per process: dist_override.novote, or false before the dump has
+    written the column (engine/dump_overrides.py, 2026-10-26)."""
+    global _NOVOTE_SQL
+    if _NOVOTE_SQL is None:
+        try:
+            with getConn() as conn, conn.cursor() as cur:
+                cur.execute("""SELECT 1 FROM information_schema.columns
+                               WHERE table_name = 'dist_override' AND column_name = 'novote'""")
+                _NOVOTE_SQL = "COALESCE(dov.novote, false)" if cur.fetchone() else "false"
+        except Exception:                                    # noqa: BLE001
+            _NOVOTE_SQL = "false"
+    return _NOVOTE_SQL
+
+
 def _personGenderAvailable():
     """Once per process: does person_gender exist? Without it the pack
     pools by the profile majority exactly as before."""
@@ -625,7 +643,13 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
                --   Venue NULL = the row still informs its athlete's ability
                --   and votes on nothing, the loader's own venueless rule.
                --   Agreement entries (override == stored) keep their venue.
-               CASE WHEN dov.distance IS NOT NULL
+               -- ★ AND A novote DIVISION VOTES ON NONE EITHER (wrong_distance,
+               --   2026-10-26): its listed distance stands, but its times
+               --   say the label is wrong (a field far slower than its
+               --   runners, two races in one division), so it informs its
+               --   runners' ability and moves no course.
+               CASE WHEN {_novoteSql()} THEN NULL
+                    WHEN dov.distance IS NOT NULL
                      AND COALESCE(m.distance,
                                   (mt.division_distances -> r.div_id::text
                                      ->> 'distance')::real,
