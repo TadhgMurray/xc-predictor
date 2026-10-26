@@ -135,8 +135,11 @@ def test_rows_in_athletic_nets_own_shape():
     assert first["Round"] == "finals" and first["Heat"] == 2 and first["Result"] is None
     dns = by[A.RESULT_BASE + 37183138]
     assert dns["SortInt"] is None and dns["Result"] == "DNS" and dns["Place"] is None
-    assert skipped["no anet athlete id"] == 1 and len(rows) == 3
-    assert {a["AthleteID"] for a in ath} == {30578388, 30475359, 21940232}
+    # a runner with no athletic.net id is kept under a stand-in (minus
+    # AthleticLIVE's own id) for resolveIds / holdUnknown
+    assert skipped["no anet athlete id"] == 1 and len(rows) == 4
+    assert by[A.RESULT_BASE + 37183139]["AthleteID"] == -9
+    assert {a["AthleteID"] for a in ath} == {30578388, 30475359, 21940232, -9}
     # field: the mark as printed; a foul is no mark, so it is left out
     rows, _a, skipped = A.resultRows(LJ, evs[2402928])
     assert [r["Result"] for r in rows] == ["13-08.75"] and rows[0]["SortInt"] is None
@@ -448,4 +451,29 @@ def test_a_name_the_other_way_round_still_finds_its_person():
              {"AthleteID": 2, "FirstName": "James", "LastName": "Thomas", "Gender": "M",
               "SchoolName": "Cedar"}]
     assert A._resolveIds(ours, alive) == {1: 27242759, 2: 30000003}
+
+
+def _hold_plan(own):
+    evs = A.parseSummary(SUMMARY)
+    slots = [] if own else [Slot(52, 111, "1600m", "m", "Varsity"), Slot(35, 111, "lj", "f", "Varsity"),
+                            Slot(7, 111, "4x100m", "m", "Varsity")]
+    return A.plan(642474, A.parseMeet(65672, MEET), evs,
+                  {2402879: MILE, 2402928: LJ, 410219: RELAY}, slots, None)
+
+
+def test_a_race_with_a_runner_nobody_can_name_waits():
+    """The mile has one runner with no athletic.net id. On anet's slots the
+    mile waits (the long jump and relay land); on our own, the meet waits."""
+    p = _hold_plan(own=False)
+    assert A.holdUnknown(p) == 1
+    assert {(t[2], t[3]) for t in p["results_to_save"]} == {(111, 35), (111, 7)}
+    assert p["held"] == {"races": 1, "runners": 1, "whole meet": False}
+    assert all(a["AthleteID"] > 0 for a in p["athletes"])
+    p = _hold_plan(own=True)
+    assert A.holdUnknown(p) == 1
+    assert p["results_to_save"] == [] and p["meets_to_save"] == [] and p["held"]["whole meet"]
+    # once our athlete is found for them, nothing waits
+    p = _hold_plan(own=True)
+    assert A.applyIds(p, {-9: 4242}) == 1 and A.holdUnknown(p) == 0
+    assert any(t[0].get("AthleteID") == 4242 for t in p["results_to_save"])
 

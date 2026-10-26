@@ -70,6 +70,11 @@
 #               merged away (the server's check, 2026-10-26): an id we do not
 #               have is swapped for ours when one person at the runner's
 #               school has their name and gender (resolveIds).
+#               ⚠ AND SOME RUNNERS HAVE NO ATHLETIC.NET ID AT ALL (2-8% of a
+#               meet, all of some meets). They get ours the same way; a race
+#               with a runner still unnamed is held whole (holdUnknown) -- on
+#               anet's slots that race waits for athletic.net, on our own
+#               slots the whole meet does. A meet never lands short.
 #
 # ! TRACK ONLY FOR NOW. XC meets are in meet_list (`o` = 'xc') but their
 #   event_summary is empty; where an XC race's results live is still to find.
@@ -408,8 +413,12 @@ def resultRows(doc, ev):
         else:
             ani = _int(a.get("ani"))
             if not ani:
+                # ! KEPT, UNDER A STAND-IN ID (minus AthleticLIVE's own): the
+                #   name, school and gender may still find our athlete
+                #   (resolveIds), and a race with a runner nobody can name is
+                #   held whole (holdUnknown), never landed short of them
                 skipped["no anet athlete id"] += 1
-                continue
+                ani = -(_int(a.get("i")) or int(x["i"]))
             r.update({"AthleteID": ani, "FirstName": a.get("fn"), "LastName": a.get("l"),
                       "Grade": str(a.get("y") or ""),
                       "Gender": {"male": "M", "female": "F"}.get(str(a.get("g") or "").lower())})
@@ -749,6 +758,33 @@ def applyIds(p, remap):
     return n
 
 
+def holdUnknown(p):
+    """After applyIds: a runner still without an athletic.net id (a stand-in
+    below zero) holds their race back, so nothing lands short of a runner.
+    On athletic.net's slots only that race waits (it stays in the recovery
+    gap); on AthleticLIVE's own slots the whole meet waits for athletic.net,
+    since nothing would ever fill a race we leave out. -> runners held.
+
+    ★ WHY (the server's check, 2026-10-26). The meets that looked half-posted
+      on AthleticLIVE were whole: their runners had no athletic.net id, and
+      dropping those runners made the races look empty -- 386 runners at
+      Shaker Heights, 296 at Liberty vs Skyline, 1,038 at the Bulldog
+      Invitational, and 2-8% of the good meets. Landed without them, a
+      meet is short for good: athletic.net is never asked again."""
+    bad = {(t[2], t[3]) for t in p["results_to_save"]
+           if not t[5] and (t[0].get("AthleteID") or 0) < 0}
+    runners = sum(1 for t in p["results_to_save"]
+                  if not t[5] and (t[0].get("AthleteID") or 0) < 0)
+    if bad and p["own"]:
+        p["results_to_save"], p["meets_to_save"] = [], []
+    elif bad:
+        p["results_to_save"] = [t for t in p["results_to_save"] if (t[2], t[3]) not in bad]
+        p["meets_to_save"] = [m for m in p["meets_to_save"] if (m[1], m[2]) not in bad]
+    p["athletes"] = [a for a in p["athletes"] if (a.get("AthleteID") or 0) > 0]
+    p["held"] = {"races": len(bad), "runners": runners, "whole meet": bool(bad and p["own"])}
+    return runners
+
+
 def anetHasResults(cur, meet_id):
     """True when results_tf already holds athletic.net's own rows for it."""
     cur.execute("""SELECT 1 FROM results_tf WHERE meet_id = %s AND source = 'anet'
@@ -883,6 +919,9 @@ async def landForScrape(meet_id, meet_info, events_dict, event_divs, label="[ali
         return None
     with getConn() as conn:
         applyIds(p, resolveIds(conn.cursor(), p["athletes"]))
+    holdUnknown(p)
+    if not p["results_to_save"]:
+        return None
     covered = {(t[3], t[2]) for t in p["results_to_save"]}       # (event_id, div_id)
     from scrape_results import _saveTFMeet
     from event_parse import distanceFromEventShort
@@ -983,7 +1022,8 @@ def _report(meet_id, alive, p):
           f"{landed_ev} races from {evs} events"
           + (" [own slots]" if p["own"] else " [anet slots]")
           + (f"; not landed: {dict(why)}" if why else "")
-          + (f"; rows left out: {dict(p['left'])}" if p["left"] else ""))
+          + (f"; rows left out: {dict(p['left'])}" if p["left"] else "")
+          + (f"; held: {p['held']}" if p.get("held", {}).get("races") else ""))
 
 
 def cmdLand(a):
@@ -1012,6 +1052,9 @@ def cmdLand(a):
             p = plan(meet_id, alive, events, blobs, anetSlots(cur, meet_id),
                      metaFromDb(cur, meet_id), catalogue=_catalogue(cur))
             total["rows given our id"] += applyIds(p, resolveIds(cur, p["athletes"]))
+            if holdUnknown(p):
+                total["races held for a runner without an id"] += p["held"]["races"]
+                total["meets held whole"] += int(p["held"]["whole meet"])
             _report(meet_id, alive, p)
             total["results"] += len(p["results_to_save"])
             total["meets"] += 1
@@ -1233,6 +1276,7 @@ def cmdCheck(a):
                 known = {a: (pid, name) for a, pid, name in cur.fetchall()}
                 before, _w = compareMeet(have, p["results_to_save"], known)
                 moved = applyIds(p, resolveIds(cur, p["athletes"]))
+                holdUnknown(p)
                 res, why = compareMeet(have, p["results_to_save"], known)
                 res["rows given our id"] = moved
                 res["other id before ours"] = sum(v for k, v in before.items()
@@ -1255,6 +1299,7 @@ def cmdCheck(a):
                       f"{res['anet: runner not in alive']} absent"
                       + (f"; {note}" if note else "")
                       + (f"; rows left out {dict(p['left'])}" if p["left"] else "")
+                      + (f"; held {p['held']}" if p.get("held", {}).get("races") else "")
                       + (f"; events not landed {dict(Counter(p['unmatched'].values()))}"
                          if p["unmatched"] else ""), flush=True)
             except Exception as exc:                        # noqa: BLE001
