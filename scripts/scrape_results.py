@@ -1058,7 +1058,27 @@ async def scrapeMeetTF(page, meet_id: int, meet_info: dict,
                        label: str, vpn_rotator) -> int:
  
     jwt_token = meet_info.get("jwtMeet", "")
- 
+
+    # ★ ATHLETICLIVE FIRST (owner, 2026-10-26: "I'd like to avoid athletic in
+    #   general"). When AthleticLIVE has this meet, its results land under
+    #   athletic.net's own slots and athletic.net is not asked for them; the
+    #   slots it did not cover are left in the recovery gap, exactly as the
+    #   no-flatEvents branch below leaves them (sources/athleticlive.py).
+    #   Anything going wrong there means athletic.net as before.
+    try:
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _root not in sys.path:
+            sys.path.insert(0, _root)
+        from sources import athleticlive
+        got = await athleticlive.landForScrape(meet_id, meet_info, events_dict,
+                                               event_divs, label)
+    except Exception as e:                                  # noqa: BLE001
+        print(f"{label} [!] AthleticLIVE failed for meet {meet_id}: {e} "
+              f"-- athletic.net as before")
+        got = None
+    if got is not None:
+        return got[0]
+
     # ---- Fast path: one call for the whole meet -------------------------- #
     payload = None
     try:
