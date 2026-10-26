@@ -126,6 +126,44 @@ def paired(xs, ys, draws=2000, seed=0):
     return statistics.fmean(d), means[int(0.05 * draws)], means[int(0.95 * draws) - 1]
 
 
+# ★ EVERYTHING THE ENGINE MADE (owner, 2026-10-26: "why does the model
+#   really need the ratings?"). --no-ratings leaves these out and starts
+#   from race_rows' raw clock (Riegel only) instead: the ratings, every
+#   input read off them, the field inputs ordered by them, the course cell
+#   and the page's clock flag. What is left is dates, counts, grade and
+#   level, the race, teammates' counts, meetings won, and the raw times.
+RATING_INPUTS = frozenset((
+    "form_ln", "form_sigma", "form_n", "stale_years", "last_minus_form",
+    "ewma30_minus_form", "ewma120_minus_form", "best2_minus_form",
+    "season_mean_minus_form", "season_max_minus_form", "season_slope",
+    "prev_final_minus_form", "prev_best_minus_form", "prev_mean_minus_form",
+    "prev_late_minus_early", "tf_last_minus_form", "tf_best365_minus_form",
+    "team_slope", "team_summer", "h2h_vs_base", "course_cell", "has_cell", "page_base"))
+# the field inputs that are ORDERS of the base: rebuilt on the raw clock
+FIELD_FROM_BASE = ("rank_pct", "gap_to_median", "gap_ahead", "gap_behind")
+
+
+def fieldFromBase(X, base, slices, fidx):
+    """FIELD_FROM_BASE recomputed from `base` (race_rows.raceFeatures' own
+    definitions), in place. Pure but for numpy."""
+    import numpy as np
+    for a, b in slices:
+        bs = base[a:b]
+        n = b - a
+        order = np.argsort(bs, kind="stable")
+        rank = np.empty(n)
+        rank[order] = np.arange(n)
+        srt = bs[order]
+        ahead = np.full(n, np.nan)
+        behind = np.full(n, np.nan)
+        ahead[order[1:]] = srt[1:] - srt[:-1]
+        behind[order[:-1]] = srt[1:] - srt[:-1]
+        X[a:b, fidx["rank_pct"]] = rank / max(n - 1, 1)
+        X[a:b, fidx["gap_to_median"]] = bs - np.median(bs)
+        X[a:b, fidx["gap_ahead"]] = ahead
+        X[a:b, fidx["gap_behind"]] = behind
+
+
 # ------------------------------------------------------------------ #
 #  fitting
 # ------------------------------------------------------------------ #
@@ -186,22 +224,23 @@ def _mean(xs):
     return statistics.fmean(xs) if xs else float("nan")
 
 
-def orderReport(name, base_s, model_s, keep=None):
+def orderReport(name, base_s, model_s, keep=None, labels=("ratings", "model"), extra=()):
     keep = keep if keep is not None else list(range(len(base_s)))
     if not keep:
         return [f"\n{name}: no races"]
     b = [base_s[i] for i in keep]
     m = [model_s[i] for i in keep]
     lines = [f"\n{name}: {len(keep):,} races",
-             f"  {'':8} {'pairs':>7} {'rho':>6} {'within':>7}"]
-    for lab, s in (("ratings", b), ("model", m)):
-        lines.append(f"  {lab:8} {100 * _mean(x[0] for x in s):6.2f}% "
+             f"  {'':11} {'pairs':>7} {'rho':>6} {'within':>7}"]
+    rows = [(labels[0], b), (labels[1], m)] + [(lab, [x[i] for i in keep]) for lab, x in extra]
+    for lab, s in rows:
+        lines.append(f"  {lab:11} {100 * _mean(x[0] for x in s):6.2f}% "
                      f"{_mean(x[1] for x in s):6.3f} "
                      f"{statistics.median(x[2] for x in s):6.2f}%")
     got = paired([100 * x[0] if x[0] is not None else None for x in m],
                  [100 * x[0] if x[0] is not None else None for x in b])
     if got:
-        lines.append(f"  model - ratings, pairs: {got[0]:+.2f} points "
+        lines.append(f"  {labels[1]} - {labels[0]}, pairs: {got[0]:+.2f} points "
                      f"[{got[1]:+.2f}, {got[2]:+.2f}]")
     return lines
 
@@ -215,7 +254,12 @@ def main():
     ap.add_argument("--importance", action="store_true",
                     help="permutation importance of the runner inputs (a few minutes)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--no-ratings", action="store_true",
+                    help="a TEST: the same trees with nothing the engine made, from raw "
+                         "times on a 5K by Riegel (RATING_INPUTS); the ratings print beside")
     a = ap.parse_args()
+    if a.no_ratings and a.out:
+        raise SystemExit("--no-ratings is a test, not a model to serve: drop --out")
 
     import numpy as np
     t0 = datetime.datetime.now()
@@ -227,6 +271,20 @@ def main():
     y, base = z["y"][order].astype(np.float64), z["base"][order].astype(np.float64)
     y_abs, base_abs = z["y_abs"][order].astype(np.float64), z["base_abs"][order].astype(np.float64)
     race, day, tfrrs = z["race"][order], z["day"][order], z["tfrrs"][order]
+    base_page, base_page_abs = base, base_abs    # the ratings on the page's clock, always
+    if a.no_ratings:
+        if "base_raw" not in z.files:
+            raise SystemExit(f"{a.rows} has no raw times: build it with race_rows 1.4")
+        base = z["base_raw"][order].astype(np.float64)
+        base_abs = z["base_raw_abs"][order].astype(np.float64)
+        X = X.copy()
+        fieldFromBase(X, base, raceSlices(race), fidx)
+        excluded = set(RATING_INPUTS)
+        labels = ("raw times", "no ratings")
+    else:
+        # ★ THE RAW TIMES ARE FOR THE TEST ONLY: the served model is ratings-based
+        excluded = {f for f in feats if f.startswith("raw_")}
+        labels = ("ratings", "model")
     cut = datetime.date.fromisoformat(a.val_from).toordinal()
     val = day >= cut
     if not (~val).any() or not val.any():
@@ -242,6 +300,7 @@ def main():
     if not used.all():
         print("  inputs with no training values, left out: "
               + ", ".join(f for f, u in zip(feats, used) if not u))
+    used &= np.array([f not in excluded for f in feats])
     X_all, X = X, X[:, used]
     feats_all, feats = feats, [f for f, u in zip(feats, used) if u]
     r = np.clip(y - base, -CLIP, CLIP)
@@ -253,10 +312,13 @@ def main():
     sl = raceSlices(rv)
     pv = centre(bv + rm.predict(Xv), sl)
     base_s, model_s = orderScores(bv, yv, sl), orderScores(pv, yv, sl)
+    extra = ([("ratings", orderScores(base_page[val], yv, sl))] if a.no_ratings else [])
 
-    lines = orderReport("ORDER, the validation season", base_s, model_s)
+    lines = orderReport("ORDER, the validation season", base_s, model_s,
+                        labels=labels, extra=extra)
     coll = [i for i, (s, _e) in enumerate(sl) if tv[s] == 1]
-    lines += orderReport("ORDER, college (tfrrs) only", base_s, model_s, coll)
+    lines += orderReport("ORDER, college (tfrrs) only", base_s, model_s, coll,
+                         labels=labels, extra=extra)
     names = {0: "elem", 1: "ms", 2: "hs", 3: "college", 4: "pro"}
 
     def level_of(s, e):
@@ -268,7 +330,7 @@ def main():
         groups = {}
         for i, (s, e) in enumerate(sl):
             groups.setdefault(key(s, e), []).append(i)
-        lines.append(f"\n{title}: races, pairs ratings -> model")
+        lines.append(f"\n{title}: races, pairs {labels[0]} -> {labels[1]}")
         for g, ix in sorted(groups.items()):
             if len(ix) >= 20:
                 lines.append(f"  {g:10} {len(ix):>6}  "
@@ -283,7 +345,7 @@ def main():
             dst[s:e] = d - np.median(d)
     bands = np.array([bandOf(o, ld) for o, ld in zip(XvA[:, fidx["opener"]],
                                                        XvA[:, fidx["last_days"]])])
-    lines.append("\nby runner: median |within-race miss| %, ratings -> model")
+    lines.append(f"\nby runner: median |within-race miss| %, {labels[0]} -> {labels[1]}")
     for band in BANDS:
         m = bands == band
         if m.sum() >= 50:
@@ -293,7 +355,9 @@ def main():
 
     # ---- the level part -------------------------------------------- #
     sl_all = raceSlices(race)
-    lf = [k for k in LEVEL_FEATURES if k in fidx]        # an older table has fewer
+    lf = [k for k in LEVEL_FEATURES if k in fidx and k not in excluded]
+    if a.no_ratings and "raw_form" in fidx:
+        lf.append("raw_form")
     R, L = raceTable(X_all, y_abs, base_abs, sl_all, fidx, lf)
     race_val = np.array([val[s] for s, _e in sl_all])
     # ! THE LEVEL IS LEARNED ONLY WHERE THE RACE HAS A REAL DISTANCE (1.3): a
@@ -321,18 +385,19 @@ def main():
     # ★ THE PAGE ITSELF (2026-10-25): base_abs is what the site would print
     #   (race_rows.pageBase) wherever page_base is 1, so "page" is the served
     #   clock with no correction at all
-    page = bav.copy()
+    page = base_page_abs[val].copy()
     lines.append("\nTIMES, the validation season: mean |% miss| is Kailo's statistic")
     lines.append(f"  {'':18} {'median':>7} {'mean':>7} {'college':>8} {'clean races':>12} "
                  f"{'known dist':>11} {'college 100+':>13}")
     known_v = np.repeat(known[race_val], [e - s for s, e in sl])
     big = np.repeat(np.array([tv[s] == 1 and e - s >= 100 for s, e in sl]),
                     [e - s for s, e in sl])
-    preds = (("page (ratings)", page), ("table + ratings", tot_n), ("trees + model", tot_m))
+    preds = (("page (ratings)", page),
+             ("table + " + labels[0], tot_n), ("trees + " + labels[1], tot_m))
     race_miss = {lab: np.array([float(np.mean(tot[s:e] - yav[s:e])) for s, e in sl])
                  for lab, tot in preds}
     # ! ONE SET OF CLEAN RACES FOR EVERY ROW: the trees' own verdict
-    clean = np.repeat(np.abs(race_miss["trees + model"]) < 0.10, [e - s for s, e in sl])
+    clean = np.repeat(np.abs(race_miss["trees + " + labels[1]]) < 0.10, [e - s for s, e in sl])
     for lab, tot in preds:
         miss = np.abs(np.exp(tot - yav) - 1.0) * 100.0
         c = tv == 1
@@ -343,7 +408,7 @@ def main():
                      f"{miss[big].mean() if big.any() else float('nan'):12.2f}%")
     lines.append("  (clean races: those the trees put within 10% as a whole -- the rest "
                  "are mostly a wrong distance or a mixed field; listed below)")
-    rmm = np.abs(race_miss["trees + model"])
+    rmm = np.abs(race_miss["trees + " + labels[1]])
     lines.append(f"\nrace level miss, trees: median {100 * np.median(rmm):.2f}%, p90 "
                  f"{100 * np.percentile(rmm, 90):.2f}%, p99 {100 * np.percentile(rmm, 99):.2f}%; "
                  f"{100 * (rmm > 0.05).mean():.1f}% of races over 5%, "
@@ -357,7 +422,7 @@ def main():
         ri = vidx[k]
         nm = str(names[ri]) if names is not None else "?"
         dist = float(XvA[sl[k][0], fidx["distance"]])
-        lines.append(f"    {100 * race_miss['trees + model'][k]:+7.1f}%  {sl[k][1] - sl[k][0]:>4}  "
+        lines.append(f"    {100 * race_miss['trees + ' + labels[1]][k]:+7.1f}%  {sl[k][1] - sl[k][0]:>4}  "
                      f"{dist:>7.0f}  {nm[:40]:40}  {keys[ri]}")
 
     # ★ RANGES THAT MEAN WHAT THEY SAY: the place spread by runner band and
@@ -373,7 +438,7 @@ def main():
                 out[band] = 1.4826 * float(np.median(np.abs(em[m])))
         allm = em[rows]
         out["_all"] = 1.4826 * float(np.median(np.abs(allm))) if len(allm) else 0.03
-        lv = race_miss["trees + model"][mask_races]
+        lv = race_miss["trees + " + labels[1]][mask_races]
         out["_level"] = 1.4826 * float(np.median(np.abs(lv - np.median(lv)))) if len(lv) else 0.03
         return out
     even = np.array([vidx[k] % 2 == 0 for k in range(len(sl))])

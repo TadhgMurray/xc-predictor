@@ -76,7 +76,18 @@ RUNNER_FEATURES = (
     "tf_last_minus_form", "tf_last_days", "tf_best365_minus_form", "tf_n365",
     "career_n", "career_years", "xc_seasons",
     "grade", "level", "female", "form_level", "level_change",
+) + (
+    # ★ RAW TIMES, NOTHING FROM THE ENGINE (owner, 2026-10-26: "why does the
+    #   model really need the ratings?"). Each past cross country time put on
+    #   a 5K by Riegel's law alone -- no course, no day, no pool -- so
+    #   race_trees --no-ratings can ask what the model does without them.
+    #   ln(5K-equivalent seconds), smaller = faster; *_minus are against
+    #   raw_form. The default model leaves these out (race_trees RAW).
+    "raw_form", "raw_last_minus", "raw_best2_minus", "raw_season_mean_minus",
+    "raw_season_best_minus", "raw_season_slope", "raw_prev_final_minus",
+    "raw_prev_best_minus", "raw_n", "raw_spread",
 )
+RIEGEL = 1.06            # t2 = t1 * (d2 / d1) ** 1.06
 RACE_FEATURES = (
     "field_n", "rank_pct", "gap_to_median", "gap_ahead", "gap_behind",
     "team_n", "team_slope", "team_summer", "team_openers",
@@ -172,7 +183,40 @@ def _ewma(rows, d0, half_life):
     return math.exp(sum(wi * math.log(r) for wi, (_d, r) in zip(w, rows)) / sum(w))
 
 
-def runnerFeatures(hist, day, target):
+def rawFeatures(raw, day):
+    """The raw-time inputs (RUNNER_FEATURES' raw_*). Pure.
+    raw: [(date, ln 5K-equivalent seconds)] of the runner's cross country
+         races, oldest first; rows on or after `day` are ignored."""
+    nan = math.nan
+    prior = [x for x in raw or () if x[0] < day]
+    out = {k: nan for k in RUNNER_FEATURES if k.startswith("raw_")}
+    out["raw_n"] = float(len(prior))
+    if not prior:
+        return out
+    yr = [x for x in prior if (day - x[0]).days <= 365] or prior
+    lam = math.log(2.0) / 60.0
+    w = [math.exp(-lam * (day - d).days) for d, _t in yr]
+    form = sum(wi * t for wi, (_d, t) in zip(w, yr)) / sum(w)
+    season, prev_season = seasonOf(day), seasonOf(day) - 1
+    this = [t for d, t in prior if seasonOf(d) == season]
+    prev = [t for d, t in prior if seasonOf(d) == prev_season]
+    fast2 = sorted(t for _d, t in yr)[:2]
+    last6 = [t for _d, t in prior[-6:]]
+    out.update({
+        "raw_form": form, "raw_last_minus": prior[-1][1] - form,
+        "raw_best2_minus": statistics.fmean(fast2) - form,
+        "raw_season_mean_minus": statistics.fmean(this) - form if this else nan,
+        "raw_season_best_minus": min(this) - form if this else nan,
+        "raw_season_slope": _slope([(-(day - d).days, t) for d, t in prior
+                                    if seasonOf(d) == season]),
+        "raw_prev_final_minus": prev[-1] - form if prev else nan,
+        "raw_prev_best_minus": min(prev) - form if prev else nan,
+        "raw_spread": statistics.pstdev(last6) if len(last6) > 1 else nan,
+    })
+    return out
+
+
+def runnerFeatures(hist, day, target, raw=None):
     """The runner inputs for one race. Pure.
 
     hist: the runner's rated, non-outlier races, oldest first, each
@@ -180,6 +224,7 @@ def runnerFeatures(hist, day, target):
           after `day` are ignored, so the caller can pass the whole career.
     day:  the race's date.
     target: {"pool", "grade"} of the runner's row in this race.
+    raw:  rawFeatures' list, or None (every raw_* input then NaN).
     Returns (form_rating, form_pool, {feature: value}) or None when the
     runner has no rated race before the day."""
     import predict as P
@@ -249,6 +294,7 @@ def runnerFeatures(hist, day, target):
     }
     f["level_change"] = (f["level"] - f["form_level"]
                          if not (math.isnan(f["level"]) or math.isnan(f["form_level"])) else nan)
+    f.update(rawFeatures(raw, day))
     return rating, pool, f
 
 
@@ -309,6 +355,18 @@ def raceFeatures(runners, race):
         r["y"] = ys[i] - my
         r["base"] = bs[i] - mb
         r["y_abs"], r["base_abs"] = ys[i], bs[i]
+    # ★ THE RAW CLOCK, for race_trees --no-ratings: raw_form carried to the
+    #   race's distance by Riegel alone; a runner with no timed race sits at
+    #   the field's median (and raw_n = 0 says so)
+    d = race.get("distance")
+    shift = RIEGEL * math.log(float(d) / 5000.0) if d else 0.0
+    raw = [r["f"].get("raw_form", math.nan) for r in runners]
+    known = [x for x in raw if not math.isnan(x)]
+    fill = statistics.median(known) if known else 0.0
+    raw = [(fill if math.isnan(x) else x) + shift for x in raw]
+    mr = statistics.fmean(raw)
+    for r, x in zip(runners, raw):
+        r["base_raw_abs"], r["base_raw"] = x, x - mr
     return runners
 
 
@@ -581,6 +639,7 @@ def build(conn, a):
         n_people += 1
         hist = []
         past = []             # (date, raceHash, ln time) of their XC races
+        raw = []              # (date, ln 5K-equivalent) of the same, Riegel only
         i = 0
         while i < len(rows):
             day_s = rows[i][1]
@@ -599,7 +658,7 @@ def build(conn, a):
                     key = (r[5], r[6], r[7], day_s)
                     if not keepRace(key, day, val_from, a.train_frac):
                         continue
-                    got = runnerFeatures(hist, day, {"pool": r[3], "grade": r[9]})
+                    got = runnerFeatures(hist, day, {"pool": r[3], "grade": r[9]}, raw)
                     if got is None:
                         continue
                     rating, pool, f = got
@@ -621,6 +680,8 @@ def build(conn, a):
                     hist.append((day, float(r[2]), r[3], "TF" if r[10] else "XC"))
                 if r[10] == 0 and r[4] and r[5] is not None and r[6] is not None:
                     past.append((day, raceHash(r[5], r[6], r[7], day_s), math.log(float(r[4]))))
+                if r[10] == 0 and r[4] and r[11] and DIST_OK[0] <= float(r[11]) <= DIST_OK[1]:
+                    raw.append((day, math.log(float(r[4])) - RIEGEL * math.log(float(r[11]) / 5000.0)))
             i = j
         if n_people % 100_000 == 0:
             print(f"  {n_people:,} people, {len(races):,} races so far", flush=True)
@@ -636,6 +697,7 @@ def build(conn, a):
     cols = {k: array("f") for k in FEATURES}
     y, base, race_ix, day_ix, pid_col = array("f"), array("f"), array("i"), array("i"), array("q")
     y_abs, base_abs = array("f"), array("f")
+    base_raw, base_raw_abs = array("f"), array("f")
     src_col = array("b")
     keys = sorted(races)
     # ! THE PRODUCTION VENUE FLAG, so a course with no cell converts as the
@@ -662,6 +724,8 @@ def build(conn, a):
             base.append(r["base"])
             y_abs.append(r["y_abs"])
             base_abs.append(r["base_abs"])
+            base_raw.append(r["base_raw"])
+            base_raw_abs.append(r["base_raw_abs"])
             race_ix.append(ix)
             day_ix.append(day.toordinal())
             pid_col.append(int(r["pid"]))
@@ -669,7 +733,7 @@ def build(conn, a):
     print(f"  {n_page:,} of {len(keys):,} races on the page's clock; the rest on the "
           "5K-equivalent", flush=True)
     return (cols, y, base, y_abs, base_abs, race_ix, day_ix, pid_col, src_col, keys,
-            names, dists)
+            names, dists, base_raw, base_raw_abs)
 
 
 def main():
@@ -697,13 +761,15 @@ def main():
     t0 = datetime.datetime.now()
     with getConn() as conn:
         (cols, y, base, y_abs, base_abs, race_ix, day_ix, pid, src, keys,
-         names, dists) = build(conn, a)
+         names, dists, base_raw, base_raw_abs) = build(conn, a)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     np.savez_compressed(
         a.out, X=np.stack([np.frombuffer(cols[k], dtype=np.float32) for k in FEATURES], axis=1),
         y=np.frombuffer(y, dtype=np.float32), base=np.frombuffer(base, dtype=np.float32),
         y_abs=np.frombuffer(y_abs, dtype=np.float32),
         base_abs=np.frombuffer(base_abs, dtype=np.float32),
+        base_raw=np.frombuffer(base_raw, dtype=np.float32),
+        base_raw_abs=np.frombuffer(base_raw_abs, dtype=np.float32),
         race=np.frombuffer(race_ix, dtype=np.int32), day=np.frombuffer(day_ix, dtype=np.int32),
         pid=np.frombuffer(pid, dtype=np.int64), tfrrs=np.frombuffer(src, dtype=np.int8),
         features=np.array(FEATURES), race_keys=np.array([repr(k) for k in keys]),

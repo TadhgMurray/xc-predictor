@@ -79,3 +79,21 @@ def test_the_trees_find_the_openers_and_beat_the_ratings(tmp_path):
     line = next(ln for ln in got.stdout.splitlines() if "model - ratings, pairs" in ln)
     gain = float(line.split(":")[1].split("points")[0])
     assert gain > 0.5, got.stdout
+
+
+def test_field_inputs_rebuilt_from_another_clock():
+    fi = {"rank_pct": 0, "gap_to_median": 1, "gap_ahead": 2, "gap_behind": 3}
+    X = np.zeros((3, 4))
+    T.fieldFromBase(X, np.array([0.02, -0.01, 0.0]), [(0, 3)], fi)
+    assert list(X[:, 0]) == [1.0, 0.0, 0.5]
+    assert X[1, 1] == pytest.approx(-0.01) and np.isnan(X[1, 2]) and np.isnan(X[0, 3])
+    assert X[0, 2] == pytest.approx(0.02)
+
+
+def test_no_ratings_needs_raw_times_and_is_never_saved(tmp_path):
+    path = tmp_path / "rows.npz"
+    _table(str(path))
+    for extra in (["--no-ratings"], ["--no-ratings", "--out", str(tmp_path / "x.pkl")]):
+        got = subprocess.run([sys.executable, os.path.join(_ROOT, "model", "race_trees.py"),
+                              "--rows", str(path)] + extra, capture_output=True, text=True)
+        assert got.returncode != 0

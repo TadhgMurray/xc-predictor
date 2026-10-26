@@ -119,3 +119,22 @@ def test_head_to_head_reads_only_past_meetings_and_beyond_the_ratings():
     assert got[0] == (2, 1.0, 1.0) and got[1] == (2, 0.0, -1.0)
     assert 2 not in got                                     # never met anyone here
     assert R.raceHash(1, 1, "anet", "2025-09-06 00:00") == h1
+
+
+def test_raw_times_are_riegel_only_and_never_read_the_day():
+    t5 = math.log(1000.0)
+    raw = [(D(2025, 9, 6), t5), (D(2025, 9, 20), t5 - 0.02), (D(2025, 10, 11), t5 - 0.5)]
+    f = R.rawFeatures(raw, D(2025, 10, 11))
+    assert f["raw_n"] == 2 and f["raw_last_minus"] < 0       # the day's own -0.5 unseen
+    assert f["raw_season_best_minus"] == pytest.approx(t5 - 0.02 - f["raw_form"])
+    assert math.isnan(R.rawFeatures([], D(2025, 10, 11))["raw_form"])
+    # the raw clock carries raw_form to the race distance by Riegel
+    rs = []
+    for k, rf in enumerate((t5, t5 + 0.01, math.nan)):
+        f = {x: math.nan for x in R.RUNNER_FEATURES}
+        f.update(opener=0.0, raw_form=rf)
+        rs.append({"secs": 1000.0 + k, "base_ln": 7.0 + k / 100, "school": None, "f": f})
+    R.raceFeatures(rs, {"day": D(2025, 10, 11), "distance": 8000.0})
+    assert rs[0]["base_raw_abs"] == pytest.approx(t5 + R.RIEGEL * math.log(1.6))
+    assert rs[2]["base_raw_abs"] == pytest.approx(t5 + 0.005 + R.RIEGEL * math.log(1.6))
+    assert sum(r["base_raw"] for r in rs) == pytest.approx(0.0, abs=1e-9)
