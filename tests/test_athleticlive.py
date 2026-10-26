@@ -374,3 +374,14 @@ def test_field_marks_compare_across_units():
 def test_learned_event_genders():
     assert A.eventGender(95, 2) == "m" and A.eventGender(1, 40) == "f"
     assert A.eventGender(30, 30) is None and A.eventGender(3, 0) is None
+
+
+def test_unlanded_lines_survive_a_slot_with_no_event_name():
+    """The server's second check died sorting a slot whose event_short is
+    NULL next to named ones."""
+    evs = A.parseSummary(SUMMARY)
+    slots = [Slot(84, 111, None, "m", None), Slot(52, 111, "1600m", "m", None),
+             Slot(52, 112, "1600m", "m", "Open")]
+    p = A.plan(1, A.parseMeet(65672, MEET), evs, {2402879: MILE}, slots, None)
+    lines = A._unlandedLines(1, p, slots)
+    assert lines and any("ambiguous division" in l or "no anet slot" in l for l in lines)

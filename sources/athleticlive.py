@@ -1068,10 +1068,10 @@ def _unlandedLines(meet_id, p, slots):
         why = p["unmatched"].get(ev["id"])
         if not why:
             continue
-        cands = sorted({(s.event_id, s.gender or "?", s.division or "") for s in slots
+        cands = sorted({(s.event_id, s.gender or "?", str(s.division or "")) for s in slots
                         if canonShort(s.event_short) == canonShort(ev["ab"])})
         out.append(f"meet {meet_id}: {ev['ab']} {ev['gender'] or '?'} [{ev['division']}] -> {why}; "
-                   f"anet: {cands or sorted({s.event_short for s in slots})[:12]}")
+                   f"anet: {cands or sorted({str(s.event_short) for s in slots})[:12]}")
     return out
 
 
@@ -1105,40 +1105,45 @@ def cmdCheck(a):
                     (datetime.date.today().isoformat(), RESULT_BASE, a.meets))
         pairs = cur.fetchall()
         for meet_id, alive_id in pairs:
-            alive = aliveFor(cur, meet_id)
-            events, blobs, note = _run(fetchMeet(fetcher, alive_id, alive["meet_date"]))
-            slots = anetSlots(cur, meet_id)
-            p = plan(meet_id, alive, events, blobs, slots, None)
-            cur.execute("""SELECT result_id, athlete_id, div_id, event_id, time_seconds, mark,
-                                  place, is_relay, event_short, status, athlete_name, person_id
-                           FROM results_tf WHERE meet_id = %s AND source = 'anet'
-                             AND result_id < %s""", (meet_id, RESULT_BASE))
-            have = cur.fetchall()
-            ids = {h[1] for h in have if h[1]} | {t[0].get("AthleteID")
-                                                   for t in p["results_to_save"]
-                                                   if t[0].get("AthleteID")}
-            cur.execute("""SELECT DISTINCT ON (athlete_id) athlete_id, person_id,
-                                  btrim(concat_ws(' ', first_name, last_name))
-                           FROM athletes WHERE athlete_id = ANY(%s)""", (sorted(ids),))
-            known = {a: (pid, name) for a, pid, name in cur.fetchall()}
-            res, why = compareMeet(have, p["results_to_save"], known)
-            agg.update(res)
-            agg["meets"] += 1
-            for kind, ex in why.items():
-                examples[kind].extend(ex[:max(2, a.show // 4)])     # a few from each meet
-            for line in _unlandedLines(meet_id, p, slots)[:4]:
-                examples["events not landed (alive event -> reason; anet's slots for it)"].append(line)
-            other = sum(v for k, v in res.items() if k.startswith("same race+mark"))
-            print(f"  meet {meet_id} ({alive['meet_date']}, {str(alive['name'])[:34]}): "
-                  f"anet {res['anet rows']}, alive {res['alive rows']}; "
-                  f"{res['same runner+race']} same runner+race ({res['same mark']} same mark); "
-                  f"{other} same race+mark under another id; "
-                  f"{res['anet: race not landed']} in races not landed, "
-                  f"{res['anet: runner in another race']} in another race, "
-                  f"{res['anet: runner not in alive']} absent"
-                  + (f"; {note}" if note else "")
-                  + (f"; events not landed {dict(Counter(p['unmatched'].values()))}"
-                     if p["unmatched"] else ""), flush=True)
+            try:
+                alive = aliveFor(cur, meet_id)
+                events, blobs, note = _run(fetchMeet(fetcher, alive_id, alive["meet_date"]))
+                slots = anetSlots(cur, meet_id)
+                p = plan(meet_id, alive, events, blobs, slots, None)
+                cur.execute("""SELECT result_id, athlete_id, div_id, event_id, time_seconds, mark,
+                                      place, is_relay, event_short, status, athlete_name, person_id
+                               FROM results_tf WHERE meet_id = %s AND source = 'anet'
+                                 AND result_id < %s""", (meet_id, RESULT_BASE))
+                have = cur.fetchall()
+                ids = {h[1] for h in have if h[1]} | {t[0].get("AthleteID")
+                                                       for t in p["results_to_save"]
+                                                       if t[0].get("AthleteID")}
+                cur.execute("""SELECT DISTINCT ON (athlete_id) athlete_id, person_id,
+                                      btrim(concat_ws(' ', first_name, last_name))
+                               FROM athletes WHERE athlete_id = ANY(%s)""", (sorted(ids),))
+                known = {a: (pid, name) for a, pid, name in cur.fetchall()}
+                res, why = compareMeet(have, p["results_to_save"], known)
+                agg.update(res)
+                agg["meets"] += 1
+                for kind, ex in why.items():
+                    examples[kind].extend(ex[:max(2, a.show // 4)])     # a few from each meet
+                for line in _unlandedLines(meet_id, p, slots)[:4]:
+                    examples["events not landed (alive event -> reason; anet's slots for it)"].append(line)
+                other = sum(v for k, v in res.items() if k.startswith("same race+mark"))
+                print(f"  meet {meet_id} ({alive['meet_date']}, {str(alive['name'])[:34]}): "
+                      f"anet {res['anet rows']}, alive {res['alive rows']}; "
+                      f"{res['same runner+race']} same runner+race ({res['same mark']} same mark); "
+                      f"{other} same race+mark under another id; "
+                      f"{res['anet: race not landed']} in races not landed, "
+                      f"{res['anet: runner in another race']} in another race, "
+                      f"{res['anet: runner not in alive']} absent"
+                      + (f"; {note}" if note else "")
+                      + (f"; events not landed {dict(Counter(p['unmatched'].values()))}"
+                         if p["unmatched"] else ""), flush=True)
+            except Exception as exc:                        # noqa: BLE001
+                conn.rollback()
+                agg["meets that failed"] += 1
+                print(f"  meet {meet_id}: FAILED {type(exc).__name__}: {exc}", flush=True)
     for kind, ex in examples.items():
         print(f"\n  {kind} (up to {a.show}):")
         for line in ex[:a.show]:
