@@ -46,7 +46,9 @@ BANDS = ("in season, <=21d", "in season, >21d", "season opener, <=120d",
 LEVEL_FEATURES = ("distance", "season_week", "meet_type", "is_tfrrs", "course_cell",
                   "has_cell", "level", "female", "form_ln", "field_n",
                   # the day's weather (race_rows 1.3): the page's clock leaves it out
-                  "temp_c", "dew_point_c", "precip_mm", "wind_kmh")
+                  "temp_c", "dew_point_c", "precip_mm", "wind_kmh",
+    # how far ahead the forecast was made (race_rows 1.6 forecast copies)
+    "lead_days")
 
 
 # ------------------------------------------------------------------ #
@@ -207,29 +209,54 @@ def ownUpdate(st, day, resids, champs):
     st["day"] = day
 
 
-def ownHistory(pid, day, resid, champ):
-    """(features [n, len(OWN_FEATURES)], {pid: state after every row}). A
-    row's features read only the runner's races on EARLIER days."""
+def ownHistory(pid, day, resid, champ, asof=None, real=None):
+    """(features [n, len(OWN_FEATURES)], {key: state after every real row}).
+
+    pid    the key whose record it is (a runner; or a school, for the team)
+    day    each row's race day (an ordinal)
+    asof   the day each row's history stops (default its race day): a
+           forecast copy (race_rows lead_days) reads only races before it
+    real   which rows are results to remember (default all): a forecast copy
+           repeats a result and must never be counted twice
+    A row's features read only that key's real races on days before its
+    asof. Ordered (key, time, queries before updates)."""
     import numpy as np
     n = len(pid)
+    asof = day if asof is None else asof
+    real = np.ones(n, dtype=bool) if real is None else real
     out = np.full((n, len(OWN_FEATURES)), np.nan, dtype=np.float32)
-    order = np.lexsort((day, pid))
+    qi = np.arange(n)
+    ui = np.flatnonzero(real)
+    ev_key = np.concatenate([pid[qi], pid[ui]])
+    ev_t = np.concatenate([asof[qi], day[ui]])
+    ev_kind = np.concatenate([np.zeros(len(qi), np.int8), np.ones(len(ui), np.int8)])
+    ev_row = np.concatenate([qi, ui])
+    order = np.lexsort((ev_kind, ev_t, ev_key))
     states = {}
-    i = 0
-    while i < n:
+    i, m = 0, len(order)
+    while i < m:
+        e = order[i]
+        k, t, kind = int(ev_key[e]), int(ev_t[e]), ev_kind[e]
         j = i
-        p, d = pid[order[i]], day[order[i]]
-        while j < n and pid[order[j]] == p and day[order[j]] == d:
+        while (j < m and ev_key[order[j]] == k and ev_t[order[j]] == t
+               and ev_kind[order[j]] == kind):
             j += 1
-        st = states.get(int(p))
-        f = ownFeatures(st, int(d))
-        idx = order[i:j]
-        out[idx] = f
-        if st is None:
-            st = states[int(p)] = ownNew()
-        ownUpdate(st, int(d), [float(resid[k]) for k in idx], [bool(champ[k]) for k in idx])
+        rows = ev_row[order[i:j]]
+        st = states.get(k)
+        if kind == 0:
+            out[rows] = ownFeatures(st, t)
+        else:
+            if st is None:
+                st = states[k] = ownNew()
+            ownUpdate(st, t, [float(resid[r]) for r in rows], [bool(champ[r]) for r in rows])
         i = j
     return out, states
+
+
+# ★ THE TEAM'S RECORD (2026-10-26): the same history kept per school --
+#   programmes whose runners keep beating their ratings (a coach, a summer
+#   camp, a late peak). From race_rows' school hash; 0 = no school.
+TEAM_FEATURES = tuple("team_rec_" + f[4:] for f in OWN_FEATURES)
 
 
 _OWN_SCALARS = ("n", "s", "day", "last", "S", "W", "season", "sn", "ss", "cn", "cs")
@@ -367,6 +394,100 @@ def orderReport(name, base_s, model_s, keep=None, labels=("ratings", "model"), e
     return lines
 
 
+# Purpose:   the table, ready for any model: sorted by race, each runner's and
+#            each team's record added, the inputs this run may use chosen, the
+#            validation season marked, the training rows' practice blanks made.
+#            race_trees.main and race_blend.py both start here.
+def loadTable(rows, val_from, own=True, no_ratings=False, seed=0):
+    import numpy as np
+    t0 = datetime.datetime.now()
+    z = np.load(rows, allow_pickle=False)
+    feats = [str(f) for f in z["features"]]
+    fidx = {f: i for i, f in enumerate(feats)}
+    order = np.argsort(z["race"], kind="stable")
+    X = z["X"][order]
+    y, base = z["y"][order].astype(np.float64), z["base"][order].astype(np.float64)
+    y_abs, base_abs = z["y_abs"][order].astype(np.float64), z["base_abs"][order].astype(np.float64)
+    race, day, tfrrs = z["race"][order], z["day"][order], z["tfrrs"][order]
+    base_page, base_page_abs = base, base_abs    # the ratings on the page's clock, always
+    if no_ratings:
+        if "base_raw" not in z.files:
+            raise SystemExit(f"{rows} has no raw times: build it with race_rows 1.4")
+        base = z["base_raw"][order].astype(np.float64)
+        base_abs = z["base_raw_abs"][order].astype(np.float64)
+        X = X.copy()
+        fieldFromBase(X, base, raceSlices(race), fidx)
+        excluded = set(RATING_INPUTS)
+        labels = ("raw times", "no ratings")
+    else:
+        # ★ THE RAW TIMES ARE FOR THE TEST ONLY: the served model is ratings-based
+        excluded = {f for f in feats if f.startswith("raw_")}
+        labels = ("ratings", "model")
+    own_pack = team_pack = None
+    lead = (np.nan_to_num(X[:, fidx["lead_days"]], nan=0.0).astype(np.int64)
+            if "lead_days" in fidx else np.zeros(len(day), dtype=np.int64))
+    if own:
+        t1 = datetime.datetime.now()
+        champ = np.nan_to_num(X[:, fidx["meet_type"]], nan=0.0) >= 4
+        resid0 = np.clip(y - base, -CLIP, CLIP)
+        asof, real = day - lead, lead == 0
+        own, states = ownHistory(z["pid"][order], day, resid0, champ, asof, real)
+        add, names = [own], list(OWN_FEATURES)
+        own_pack = ownPack(states, int(day.max()) - 730)
+        del states
+        if "school" in z.files:
+            school = z["school"][order].astype(np.int64)
+            team, tstates = ownHistory(school, day, resid0, champ, asof, real & (school != 0))
+            team[school == 0] = np.nan
+            add.append(team)
+            names += list(TEAM_FEATURES)
+            team_pack = ownPack(tstates, int(day.max()) - 730)
+            del tstates
+        X = np.hstack([X] + add)
+        feats = feats + names
+        fidx = {f: i for i, f in enumerate(feats)}
+        print(f"  own records: {len(own_pack['pid']):,} runners"
+              + (f", {len(team_pack['pid']):,} schools" if team_pack else "")
+              + f" kept for the page ({datetime.datetime.now() - t1})")
+    cut = datetime.date.fromisoformat(val_from).toordinal()
+    val = day >= cut
+    if not (~val).any() or not val.any():
+        raise SystemExit(f"{rows}: {int((~val).sum()):,} training and {int(val.sum()):,} "
+                         f"validation rows around --val-from {val_from}; both are needed")
+    print(f"{len(y):,} runner-races in {len(np.unique(race)):,} races; "
+          f"train {int((~val).sum()):,}, validation {int(val.sum()):,} (from {val_from})")
+
+    # ---- the runner part ------------------------------------------- #
+    # ! AN INPUT THE TRAINING SEASONS NEVER FILL is dropped, not binned
+    #   (sklearn cannot bin a column with no values)
+    used = ~np.all(np.isnan(X[~val]), axis=0)
+    if not used.all():
+        print("  inputs with no training values, left out: "
+              + ", ".join(f for f, u in zip(feats, used) if not u))
+    used &= np.array([f not in excluded for f in feats])
+    X_all, X = X, X[:, used]
+    feats_all, feats = feats, [f for f, u in zip(feats, used) if u]
+    r = np.clip(y - base, -CLIP, CLIP)
+    # ★ PRACTICE WITH MISSING INPUTS (2026-10-26): the page will not always
+    #   have the weather, a course cell or a past meeting. A few training
+    #   rows have each blanked, so the trees learn what to do without it.
+    Xt = X[~val].copy()
+    rng = np.random.default_rng(seed)
+    for group in (("temp_c", "dew_point_c", "precip_mm", "wind_kmh"),
+                  ("course_cell",), ("h2h_n", "h2h_share", "h2h_vs_base")):
+        cols = [feats.index(g) for g in group if g in feats]
+        if cols:
+            hit = rng.random(len(Xt)) < 0.05
+            for c in cols:
+                Xt[hit, c] = np.nan
+    return {k: v for k, v in locals().items() if k in _TABLE_KEYS}
+
+
+_TABLE_KEYS = ('z', 't0', 'feats_all', 'feats', 'fidx', 'X_all', 'X', 'y', 'base', 'y_abs',
+               'base_abs', 'base_page', 'base_page_abs', 'race', 'day', 'tfrrs', 'val', 'lead',
+               'own_pack', 'team_pack', 'labels', 'r', 'Xt', 'excluded')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -387,62 +508,14 @@ def main():
     if a.no_ratings and a.out:
         raise SystemExit("--no-ratings is a test, not a model to serve: drop --out")
 
+    T = loadTable(a.rows, a.val_from, a.own, a.no_ratings, a.seed)
+    (z, t0, feats_all, feats, fidx, X_all, X, y, base, y_abs, base_abs, base_page,
+     base_page_abs, race, day, tfrrs, val, lead, own_pack, team_pack, labels, r, Xt,
+     excluded) = \
+        (T[k] for k in _TABLE_KEYS)
     import numpy as np
-    t0 = datetime.datetime.now()
-    z = np.load(a.rows, allow_pickle=False)
-    feats = [str(f) for f in z["features"]]
-    fidx = {f: i for i, f in enumerate(feats)}
-    order = np.argsort(z["race"], kind="stable")
-    X = z["X"][order]
-    y, base = z["y"][order].astype(np.float64), z["base"][order].astype(np.float64)
-    y_abs, base_abs = z["y_abs"][order].astype(np.float64), z["base_abs"][order].astype(np.float64)
-    race, day, tfrrs = z["race"][order], z["day"][order], z["tfrrs"][order]
-    base_page, base_page_abs = base, base_abs    # the ratings on the page's clock, always
-    if a.no_ratings:
-        if "base_raw" not in z.files:
-            raise SystemExit(f"{a.rows} has no raw times: build it with race_rows 1.4")
-        base = z["base_raw"][order].astype(np.float64)
-        base_abs = z["base_raw_abs"][order].astype(np.float64)
-        X = X.copy()
-        fieldFromBase(X, base, raceSlices(race), fidx)
-        excluded = set(RATING_INPUTS)
-        labels = ("raw times", "no ratings")
-    else:
-        # ★ THE RAW TIMES ARE FOR THE TEST ONLY: the served model is ratings-based
-        excluded = {f for f in feats if f.startswith("raw_")}
-        labels = ("ratings", "model")
-    own_pack = None
-    if a.own:
-        t1 = datetime.datetime.now()
-        champ = np.nan_to_num(X[:, fidx["meet_type"]], nan=0.0) >= 4
-        own, states = ownHistory(z["pid"][order], day, np.clip(y - base, -CLIP, CLIP), champ)
-        X = np.hstack([X, own])
-        feats = feats + list(OWN_FEATURES)
-        fidx = {f: i for i, f in enumerate(feats)}
-        own_pack = ownPack(states, int(day.max()) - 730)
-        del states
-        print(f"  each runner's own record: {len(own_pack['pid']):,} runners kept for the "
-              f"page ({datetime.datetime.now() - t1})")
-    cut = datetime.date.fromisoformat(a.val_from).toordinal()
-    val = day >= cut
-    if not (~val).any() or not val.any():
-        raise SystemExit(f"{a.rows}: {int((~val).sum()):,} training and {int(val.sum()):,} "
-                         f"validation rows around --val-from {a.val_from}; both are needed")
-    print(f"{len(y):,} runner-races in {len(np.unique(race)):,} races; "
-          f"train {int((~val).sum()):,}, validation {int(val.sum()):,} (from {a.val_from})")
-
-    # ---- the runner part ------------------------------------------- #
-    # ! AN INPUT THE TRAINING SEASONS NEVER FILL is dropped, not binned
-    #   (sklearn cannot bin a column with no values)
-    used = ~np.all(np.isnan(X[~val]), axis=0)
-    if not used.all():
-        print("  inputs with no training values, left out: "
-              + ", ".join(f for f, u in zip(feats, used) if not u))
-    used &= np.array([f not in excluded for f in feats])
-    X_all, X = X, X[:, used]
-    feats_all, feats = feats, [f for f, u in zip(feats, used) if u]
-    r = np.clip(y - base, -CLIP, CLIP)
-    rm = runnerModel(a.seed, a.big).fit(X[~val], r[~val])
+    rm = runnerModel(a.seed, a.big).fit(Xt, r[~val])
+    del Xt
     print(f"runner trees: {rm.n_iter_} rounds ({datetime.datetime.now() - t0})")
     Xv, yv, bv = X[val], y[val], base[val]
     XvA = X_all[val]                     # every input, for the report's bands
@@ -452,11 +525,21 @@ def main():
     base_s, model_s = orderScores(bv, yv, sl), orderScores(pv, yv, sl)
     extra = ([("ratings", orderScores(base_page[val], yv, sl))] if a.no_ratings else [])
 
-    lines = orderReport("ORDER, the validation season", base_s, model_s,
+    # ★ THE HEADLINE IS RACE MORNING (lead 0); the forecast copies (race_rows
+    #   1.6) are scored on their own, by how far ahead they were made
+    lead_r = (np.array([int(np.nan_to_num(XvA[s, fidx["lead_days"]], nan=0.0)) for s, _e in sl])
+              if "lead_days" in fidx else np.zeros(len(sl), dtype=int))
+    main = [k for k in range(len(sl)) if lead_r[k] == 0]
+    main_rows = np.repeat(lead_r == 0, [e - s for s, e in sl])
+    lines = orderReport("ORDER, the validation season", base_s, model_s, main,
                         labels=labels, extra=extra)
-    coll = [i for i, (s, _e) in enumerate(sl) if tv[s] == 1]
+    coll = [i for i in main if tv[sl[i][0]] == 1]
     lines += orderReport("ORDER, college (tfrrs) only", base_s, model_s, coll,
                          labels=labels, extra=extra)
+    for ld in sorted(set(lead_r.tolist()) - {0}):
+        ix = [k for k in range(len(sl)) if lead_r[k] == ld]
+        lines += orderReport(f"ORDER, forecasts made {ld} days ahead", base_s, model_s, ix,
+                             labels=labels, extra=extra)
     names = {0: "elem", 1: "ms", 2: "hs", 3: "college", 4: "pro"}
 
     def level_of(s, e):
@@ -466,7 +549,8 @@ def main():
     for title, key in (("by month", lambda s, e: datetime.date.fromordinal(int(dv[s])).strftime("%Y-%m")),
                        ("by level", level_of)):
         groups = {}
-        for i, (s, e) in enumerate(sl):
+        for i in main:
+            s, e = sl[i]
             groups.setdefault(key(s, e), []).append(i)
         lines.append(f"\n{title}: races, pairs {labels[0]} -> {labels[1]}")
         for g, ix in sorted(groups.items()):
@@ -485,7 +569,7 @@ def main():
                                                        XvA[:, fidx["last_days"]])])
     lines.append(f"\nby runner: median |within-race miss| %, {labels[0]} -> {labels[1]}")
     for band in BANDS:
-        m = bands == band
+        m = (bands == band) & main_rows
         if m.sum() >= 50:
             lines.append(f"  {band:26} {int(m.sum()):>8}  "
                          f"{100 * np.median(np.abs(eb[m])):.2f}% -> "
@@ -536,21 +620,33 @@ def main():
                  for lab, tot in preds}
     # ! ONE SET OF CLEAN RACES FOR EVERY ROW: the trees' own verdict
     clean = np.repeat(np.abs(race_miss["trees + " + labels[1]]) < 0.10, [e - s for s, e in sl])
+    def mean_on(x, m):
+        m = m & main_rows
+        return x[m].mean() if m.any() else float("nan")
     for lab, tot in preds:
         miss = np.abs(np.exp(tot - yav) - 1.0) * 100.0
         c = tv == 1
-        lines.append(f"  {lab:18} {np.median(miss):6.2f}% {miss.mean():6.2f}% "
-                     f"{miss[c].mean() if c.any() else float('nan'):7.2f}% "
-                     f"{miss[clean].mean():11.2f}% "
-                     f"{miss[known_v].mean() if known_v.any() else float('nan'):10.2f}% "
-                     f"{miss[big].mean() if big.any() else float('nan'):12.2f}%")
+        lines.append(f"  {lab:18} {np.median(miss[main_rows]):6.2f}% "
+                     f"{mean_on(miss, np.ones_like(c)):6.2f}% "
+                     f"{mean_on(miss, c):7.2f}% {mean_on(miss, clean):11.2f}% "
+                     f"{mean_on(miss, known_v):10.2f}% {mean_on(miss, big):12.2f}%")
+    leads_seen = sorted(set(lead_r.tolist()) - {0})
+    if leads_seen:
+        lines.append("  by how far ahead (trees; median / mean on races with a known distance):")
+        for ld in leads_seen:
+            m = np.repeat(lead_r == ld, [e - s for s, e in sl]) & known_v
+            miss = np.abs(np.exp(tot_m - yav) - 1.0) * 100.0
+            if m.any():
+                lines.append(f"    {ld:>3} days ahead  {np.median(miss[m]):5.2f}% / "
+                             f"{miss[m].mean():5.2f}%")
     lines.append("  (clean races: those the trees put within 10% as a whole -- the rest "
                  "are mostly a wrong distance or a mixed field; listed below)")
-    rmm = np.abs(race_miss["trees + " + labels[1]])
-    lines.append(f"\nrace level miss, trees: median {100 * np.median(rmm):.2f}%, p90 "
-                 f"{100 * np.percentile(rmm, 90):.2f}%, p99 {100 * np.percentile(rmm, 99):.2f}%; "
-                 f"{100 * (rmm > 0.05).mean():.1f}% of races over 5%, "
-                 f"{100 * (rmm > 0.10).mean():.1f}% over 10%")
+    rmm = np.abs(race_miss["trees + " + labels[1]]) * (lead_r == 0)
+    rm0 = rmm[lead_r == 0]
+    lines.append(f"\nrace level miss, trees: median {100 * np.median(rm0):.2f}%, p90 "
+                 f"{100 * np.percentile(rm0, 90):.2f}%, p99 {100 * np.percentile(rm0, 99):.2f}%; "
+                 f"{100 * (rm0 > 0.05).mean():.1f}% of races over 5%, "
+                 f"{100 * (rm0 > 0.10).mean():.1f}% over 10%")
     names = z["race_names"] if "race_names" in z.files else None
     keys = z["race_keys"]
     vidx = [int(rv[s]) for s, _e in sl]
@@ -589,8 +685,8 @@ def main():
         out["_z90"] = float(np.percentile(np.abs((tot_m - yav)[rows]) / ts, 90)) if rows.any() else 1.645
         return out
     even = np.array([vidx[k] % 2 == 0 for k in range(len(sl))])
-    sg = sigmas(even)
-    rows_odd = np.repeat(~even, [e - s for s, e in sl])
+    sg = sigmas(even & (lead_r == 0))
+    rows_odd = np.repeat(~even & (lead_r == 0), [e - s for s, e in sl])
     place_sig = np.array([sg.get(b, sg["_all"]) for b in bands])
     time_sig = np.sqrt(place_sig ** 2 + sg["_level"] ** 2)
     err_abs = tot_m - yav
@@ -603,7 +699,9 @@ def main():
                  f"(the 90% band is {sg['_z90']:.2f} sigma)")
     lines.append("  sigmas: " + ", ".join(f"{k} {100 * v:.2f}%" for k, v in sg.items()
                                           if k != "_z90"))
-    sig_all = sigmas(np.ones(len(sl), dtype=bool))
+    sig_all = sigmas(lead_r == 0)
+    # the page reads the set for the nearest lead (race_model)
+    sig_lead = {int(ld): sigmas(lead_r == ld) for ld in set(lead_r.tolist())}
     print("\n".join(lines))
 
     if a.importance:
@@ -620,7 +718,8 @@ def main():
     if a.out:
         with open(a.out, "wb") as fh:
             pickle.dump({"runner": rm, "level": lm, "features": feats,
-                         "sigmas": sig_all, "own": own_pack,
+                         "sigmas": sig_all, "sigmas_by_lead": sig_lead,
+                         "own": own_pack, "team": team_pack,
                          "all_features": feats_all,
                          "level_features": [f for f, u in zip(lf, lused) if u],
                          "clip": CLIP,

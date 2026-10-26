@@ -95,6 +95,7 @@ RACE_FEATURES = (
     "course_cell", "has_cell", "page_base",
     "temp_c", "dew_point_c", "precip_mm", "wind_kmh",
     "h2h_n", "h2h_share", "h2h_vs_base",
+    "lead_days",
 )
 H2H_DAYS = 400           # a meeting older than this says little about Saturday
 H2H_LAST = 15            # the runner's last N cross country races, at most
@@ -183,12 +184,13 @@ def _ewma(rows, d0, half_life):
     return math.exp(sum(wi * math.log(r) for wi, (_d, r) in zip(w, rows)) / sum(w))
 
 
-def rawFeatures(raw, day):
+def rawFeatures(raw, day, cut=None):
     """The raw-time inputs (RUNNER_FEATURES' raw_*). Pure.
     raw: [(date, ln 5K-equivalent seconds)] of the runner's cross country
-         races, oldest first; rows on or after `day` are ignored."""
+         races, oldest first; rows on or after `cut` (default `day`) are
+         ignored."""
     nan = math.nan
-    prior = [x for x in raw or () if x[0] < day]
+    prior = [x for x in raw or () if x[0] < (cut or day)]
     out = {k: nan for k in RUNNER_FEATURES if k.startswith("raw_")}
     out["raw_n"] = float(len(prior))
     if not prior:
@@ -216,7 +218,7 @@ def rawFeatures(raw, day):
     return out
 
 
-def runnerFeatures(hist, day, target, raw=None):
+def runnerFeatures(hist, day, target, raw=None, cut=None):
     """The runner inputs for one race. Pure.
 
     hist: the runner's rated, non-outlier races, oldest first, each
@@ -225,10 +227,13 @@ def runnerFeatures(hist, day, target, raw=None):
     day:  the race's date.
     target: {"pool", "grade"} of the runner's row in this race.
     raw:  rawFeatures' list, or None (every raw_* input then NaN).
+    cut:  the day the history stops (default `day`): a forecast made L days
+          ahead sees only races before day - L, while every "days since"
+          is still counted to the race itself, as the page counts it.
     Returns (form_rating, form_pool, {feature: value}) or None when the
     runner has no rated race before the day."""
     import predict as P
-    prior = [h for h in hist if h[0] < day]
+    prior = [h for h in hist if h[0] < (cut or day)]
     if not prior:
         return None
     newest = [(h[0].isoformat(), h[1], h[2], h[3], None, None) for h in reversed(prior)]
@@ -294,7 +299,7 @@ def runnerFeatures(hist, day, target, raw=None):
     }
     f["level_change"] = (f["level"] - f["form_level"]
                          if not (math.isnan(f["level"]) or math.isnan(f["form_level"])) else nan)
-    f.update(rawFeatures(raw, day))
+    f.update(rawFeatures(raw, day, cut))
     return rating, pool, f
 
 
@@ -351,6 +356,7 @@ def raceFeatures(runners, race):
             "h2h_n": float(h2h[i][0]) if i in h2h else 0.0,
             "h2h_share": h2h[i][1] if i in h2h else math.nan,
             "h2h_vs_base": h2h[i][2] if i in h2h else math.nan,
+            "lead_days": float(race.get("lead_days") or 0.0),
         })
         r["y"] = ys[i] - my
         r["base"] = bs[i] - mb
@@ -458,6 +464,23 @@ def raceDistance(dists):
     or None when nothing sane is there (DIST_OK). Pure."""
     ok = sorted(float(d) for d in dists or [] if d and DIST_OK[0] <= float(d) <= DIST_OK[1])
     return ok[len(ok) // 2] if ok else None
+
+
+# ★ FORECAST COPIES (owner, 2026-10-26: "could we manufacture data, like
+#   hiding a window of somebody's races?"). A posted forecast is made days
+#   ahead, and Kailo's own numbers say a week out costs them 3.03% against
+#   2.84%. So a share of races is repeated with every runner's history cut
+#   `lead` days before the gun -- the same finishers, the same result, only
+#   less known -- and lead_days says how far ahead it was asked. Each copy
+#   is its own field (its centring, its ranks) and never adds a result.
+def leadsFor(key, leads, frac):
+    """[0] and each lead in `leads` this race is copied at (crc32 of the key
+    and the lead, so a rerun copies the same races)."""
+    out = [0]
+    for lead in leads:
+        if (zlib.crc32(repr((key, lead)).encode()) % 10000) < frac * 10000:
+            out.append(int(lead))
+    return out
 
 
 def keepRace(key, day, val_from, train_frac):
@@ -658,23 +681,28 @@ def build(conn, a):
                     key = (r[5], r[6], r[7], day_s)
                     if not keepRace(key, day, val_from, a.train_frac):
                         continue
-                    got = runnerFeatures(hist, day, {"pool": r[3], "grade": r[9]}, raw)
-                    if got is None:
-                        continue
-                    rating, pool, f = got
-                    if pool not in pm:
-                        pm[pool] = conversions.pool_mean(pool, "XC") or 0.0
-                    if not pm[pool]:
-                        continue
-                    # ! COMPACT UNTIL THE END: millions of rows wait here for
-                    #   their races to fill, and a dict per row is ~3 KB
-                    recent = [x for x in past if (day - x[0]).days <= H2H_DAYS][-H2H_LAST:]
-                    races.setdefault(key, []).append((
-                        pid, float(r[4]), r[8], math.log(100.0 * pm[pool] / rating),
-                        array("f", [f[k] for k in RUNNER_FEATURES]), rating, pool,
-                        array("q", [x[1] for x in recent]), array("f", [x[2] for x in recent])))
                     if r[11]:
                         race_dist.setdefault(key, []).append(float(r[11]))
+                    for lead in leadsFor(key, a.leads, a.lead_frac):
+                        cut = day - datetime.timedelta(days=lead)
+                        got = runnerFeatures(hist, day, {"pool": r[3], "grade": r[9]}, raw,
+                                             cut=cut)
+                        if got is None:
+                            continue
+                        rating, pool, f = got
+                        if pool not in pm:
+                            pm[pool] = conversions.pool_mean(pool, "XC") or 0.0
+                        if not pm[pool]:
+                            continue
+                        # ! COMPACT UNTIL THE END: millions of rows wait here for
+                        #   their races to fill, and a dict per row is ~3 KB
+                        recent = [x for x in past if x[0] < cut
+                                  and (day - x[0]).days <= H2H_DAYS][-H2H_LAST:]
+                        races.setdefault(key + (lead,) if lead else key, []).append((
+                            pid, float(r[4]), r[8], math.log(100.0 * pm[pool] / rating),
+                            array("f", [f[k] for k in RUNNER_FEATURES]), rating, pool,
+                            array("q", [x[1] for x in recent]),
+                            array("f", [x[2] for x in recent])))
             for r in rows[i:j]:
                 if r[2] and r[2] > 0 and r[3]:
                     hist.append((day, float(r[2]), r[3], "TF" if r[10] else "XC"))
@@ -691,8 +719,9 @@ def build(conn, a):
     races = {k: v for k, v in races.items() if len(v) >= MIN_FIELD}
     print(f"{n_people:,} people read; {len(races):,} races with >= {MIN_FIELD} rated runners",
           flush=True)
-    dist_of = {k: raceDistance(race_dist.get(k)) for k in races}
-    meta = _raceMeta(cur, list(races), dist_of)
+    base_keys = sorted({k[:4] for k in races})
+    dist_of = {k: raceDistance(race_dist.get(k)) for k in base_keys}
+    meta = _raceMeta(cur, base_keys, dist_of)
     conn.rollback()
     cols = {k: array("f") for k in FEATURES}
     y, base, race_ix, day_ix, pid_col = array("f"), array("f"), array("i"), array("i"), array("q")
@@ -709,7 +738,8 @@ def build(conn, a):
         if ix % 50_000 == 0:
             print(f"  race inputs: {ix:,} of {len(keys):,}", flush=True)
         day = datetime.date.fromisoformat(key[3])
-        rmeta = dict(meta.get(key) or {}, day=day, source=key[2])
+        rmeta = dict(meta.get(key[:4]) or {}, day=day, source=key[2],
+                     lead_days=key[4] if len(key) > 4 else 0)
         field = [{"pid": p, "secs": secs, "school": school, "base_ln": b,
                   "f": dict(zip(RUNNER_FEATURES, vec)), "rating": rating, "pool": pool,
                   "past": list(zip(ph, pt))}
@@ -754,9 +784,14 @@ def main():
     # ! NOT A SMOKE RUN: a race's runners are spread over every person id,
     #   so the first N people complete almost no race (2026-10-25: 0 rows).
     #   Narrow the dates instead (the docstring's smoke line).
+    ap.add_argument("--leads", default="7,28",
+                    help="forecast copies: history cut this many days before the race")
+    ap.add_argument("--lead-frac", type=float, default=0.25,
+                    help="share of races copied at each lead (0 = none)")
     ap.add_argument("--max-persons", type=int, default=None,
                     help="stop after N people (a code check only; completes few races)")
     a = ap.parse_args()
+    a.leads = [int(x) for x in a.leads.split(",") if x.strip()] if a.lead_frac > 0 else []
 
     import numpy as np
     from database import getConn

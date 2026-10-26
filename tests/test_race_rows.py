@@ -138,3 +138,14 @@ def test_raw_times_are_riegel_only_and_never_read_the_day():
     assert rs[0]["base_raw_abs"] == pytest.approx(t5 + R.RIEGEL * math.log(1.6))
     assert rs[2]["base_raw_abs"] == pytest.approx(t5 + 0.005 + R.RIEGEL * math.log(1.6))
     assert sum(r["base_raw"] for r in rs) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_forecast_copy_sees_less_but_counts_days_to_the_race():
+    day = D(2025, 10, 11)
+    t = {"pool": "hs_m", "grade": "11"}
+    _r0, _p0, now = R.runnerFeatures(_hist(), day, t)
+    _r7, _p7, week = R.runnerFeatures(_hist(), day, t, cut=day - datetime.timedelta(days=7))
+    assert now["season_n"] == 3 and week["season_n"] == 2          # 4 Oct is hidden
+    assert week["last_days"] == (day - D(2025, 9, 20)).days         # counted to the race
+    assert R.leadsFor((1, 2, "anet", "2025-10-11"), [7, 28], 0.0) == [0]
+    assert R.leadsFor((1, 2, "anet", "2025-10-11"), [7, 28], 1.0) == [0, 7, 28]

@@ -179,14 +179,24 @@ def predictField(model, field, race):
     #   carried from the table's last day to this race; a runner the table
     #   never saw reads as "no record", which is what the trees learned for
     #   a first race. ! As fresh as the last table build: rebuild weekly.
-    pack = model.get("own")
-    if pack is not None:
-        if "_own_index" not in model:
-            model["_own_index"] = {int(p): i for i, p in enumerate(pack["pid"])}
-        d = race["day"].toordinal()
+    import zlib
+    lead = int(race.get("lead_days") or 0)
+    asof = race["day"].toordinal() - lead            # what is known: today
+    for name, feats, key in (("own", RT.OWN_FEATURES, lambda r: r["pid"]),
+                             ("team", RT.TEAM_FEATURES,
+                              lambda r: zlib.crc32(r["school"].encode()) if r.get("school") else None)):
+        pack = model.get(name)
+        if pack is None:
+            continue
+        if f"_{name}_index" not in model:
+            model[f"_{name}_index"] = {int(p): i for i, p in enumerate(pack["pid"])}
         for r in field:
-            st = RT.ownState(pack, model["_own_index"], r["pid"])
-            r["f"].update(zip(RT.OWN_FEATURES, RT.ownFeatures(st, d)))
+            k = key(r)
+            st = RT.ownState(pack, model[f"_{name}_index"], k) if k is not None else None
+            vals = RT.ownFeatures(st, asof)
+            if name == "team" and k is None:
+                vals = [math.nan] * len(feats)
+            r["f"].update(zip(feats, vals))
     X = np.array([[r["f"].get(k, math.nan) for k in model["features"]] for r in field],
                  dtype=np.float32)
     base = np.array([r["base"] for r in field])
@@ -198,7 +208,9 @@ def predictField(model, field, race):
                       else math.nan for k in lf]], dtype=np.float32)
     level = float(model["level"].predict(lrow)[0])
     mean_base = float(np.mean([r["base_ln"] for r in field]))
-    sig = model.get("sigmas") or {}
+    by_lead = model.get("sigmas_by_lead") or {}
+    sig = (by_lead[min(by_lead, key=lambda ld: abs(ld - lead))] if by_lead
+           else model.get("sigmas") or {})
     out = {}
     for r, x in zip(field, rel):
         band = RT.bandOf(r["f"]["opener"], r["f"]["last_days"])
@@ -246,5 +258,7 @@ def predictRace(cur, person_ids, spec, cut, rated):
         return {}
     race = {"distance": float(spec["distance_meters"]), "day": day, "meet_name": name,
             "source": spec.get("source"), "is_champ": champ, "cell": spec.get("venue_cell"),
-            "page_base": True, "weather": _weather(cur, spec)}
+            "page_base": True, "weather": _weather(cur, spec),
+            # how far ahead this is asked: the forecast copies' lead_days
+            "lead_days": max(0, (day - datetime.date.today()).days)}
     return predictField(model, field, race)
