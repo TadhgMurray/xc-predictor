@@ -742,8 +742,10 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     #   typical XC course is not rated either.
     suspect_cells = xcCourseSuspects(out["delta"], D.cell, sport, solved)
     together_bad = xcTogetherSuspect(out["delta"], D.cell, sport, solved, u_used)
+    guarded = np.zeros(0, dtype=np.int64)     # result ids the guard unrated (XC)
     if suspect_cells.size or together_bad.any():
         bad_row = np.isin(D.cell, suspect_cells) | together_bad
+        guarded = np.asarray(result_id[bad_row & (sport == 0)], dtype=np.int64)
         if together_bad.any():
             print(f"[joint/live] course guard: {int((together_bad & ~np.isin(D.cell, suspect_cells)).sum()):,} "
                   f"more XC rows whose course + day is beyond the cap")
@@ -1022,7 +1024,7 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
             "r_career": rc, "r_seasonal": rs, "attrs": attrs, "rat": rat,
             "dist_rows": dist_rows, "scale_rows": scale_rows,
             "suspect_days": suspect_days, "gain_rows": gain_rows,
-            "day_rows": day_rows}
+            "day_rows": day_rows, "guarded": guarded}
 
 
 _SUSPECT_DDL = """
@@ -1035,6 +1037,30 @@ _SUSPECT_DDL = """
         PRIMARY KEY (cell_key, race_date)
     )
 """
+
+
+# ★ THE ROWS THE COURSE GUARD LEFT UNRATED, KEPT UNRATED (engine review,
+#   2026-10-24: "fill_ratings re-prices every NULL row", the guard's included;
+#   only the pace band kept them off the boards). fill_ratings skips every
+#   result id here. Replaced whole at each go-live.
+_GUARD_DDL = """
+    CREATE TABLE IF NOT EXISTS course_guard_unrated (
+        result_id bigint PRIMARY KEY)
+"""
+
+
+def writeCourseGuard(ids):
+    from database import getConn
+    from psycopg2.extras import execute_values
+    ids = sorted({int(i) for i in (ids if ids is not None else ())})
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute(_GUARD_DDL)
+        cur.execute("DELETE FROM course_guard_unrated")
+        if ids:
+            execute_values(cur, "INSERT INTO course_guard_unrated (result_id) VALUES %s",
+                           [(i,) for i in ids], page_size=10000)
+        conn.commit()
+    print(f"[joint/live] course_guard_unrated: {len(ids):,} XC rows the fill will not price")
 
 
 def writeSuspectDays(rows):
@@ -1378,6 +1404,7 @@ def writeLive(live):
     writeDistOffsets(live.get("dist_rows", []))
     writeEngineScale(live.get("scale_rows", []))
     writeSuspectDays(live.get("suspect_days", []))
+    writeCourseGuard(live.get("guarded"))
     writeSportGain(live.get("gain_rows", []))
     if live.get("day_rows") is not None:
         writeRaceDays(live["day_rows"])

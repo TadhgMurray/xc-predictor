@@ -92,6 +92,12 @@ def _teamColumns(table):
     return probe(table)
 
 
+def _hasTable(conn, name):
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass(%s)", (f"public.{name}",))
+        return cur.fetchone()[0] is not None
+
+
 def _sqlFor(sport, conn=None):
     # ★ THROUGH _sourceSql, not _SQL: it fills in the rating_pool column and
     #   the impossible-race anti-join (2026-09-14), so a race the record
@@ -110,6 +116,11 @@ def _sqlFor(sport, conn=None):
         f"{_TEAM_ANCHOR!r} -- update fill_ratings._sqlFor together with it")
     sql = sql.replace(_TEAM_ANCHOR, f"{_TEAM_ANCHOR} {team_cols},", 1)
     mark, inverse = _MARK[sport]
+    # ★ NOT THE ROWS THE COURSE GUARD UNRATED (joint_golive.writeCourseGuard):
+    #   their course number is the problem, so pricing them on it is too.
+    if sport == "XC" and conn is not None and _hasTable(conn, "course_guard_unrated"):
+        inverse += ("\n               AND NOT EXISTS (SELECT 1 FROM course_guard_unrated g"
+                    " WHERE g.result_id = r.result_id)")
     assert mark in sql, (
         f"build_ranking_results._SQL[{sport!r}] no longer carries the WHERE "
         "this file inverts -- update fill_ratings._MARK together with it")
