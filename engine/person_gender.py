@@ -122,21 +122,23 @@ ev AS (
     -- (the field is the OTHER runners: a person's own profile never votes
     --  in their own field, or a lone wrong profile in a small field makes
     --  it look mixed)
+    -- ! PLAIN HASH JOINS, NO LATERAL (2026-10-26: the LATERAL form ran 18
+    --   hours on the server, one probe of fld per result row, and its lock
+    --   on results queued the nightly and then the site behind it). The
+    --   runner's own vote comes off in the expressions instead.
     SELECT r.person_id,
-           COALESCE(CASE WHEN f.om >= {FIELD_MIN} AND f.om >= {FIELD_SHARE} * f.of THEN 'M'
-                         WHEN f.of >= {FIELD_MIN} AND f.of >= {FIELD_SHARE} * f.om THEN 'F' END,
+           COALESCE(CASE WHEN f.fm - sm >= {FIELD_MIN} AND f.fm - sm >= {FIELD_SHARE} * (f.ff - sf) THEN 'M'
+                         WHEN f.ff - sf >= {FIELD_MIN} AND f.ff - sf >= {FIELD_SHARE} * (f.fm - sm) THEN 'F' END,
                     {labelExpr(ROW_LABEL_PACK['XC'])}) AS g,
-           CASE WHEN (f.om >= {FIELD_MIN} AND f.om >= {FIELD_SHARE} * f.of)
-                  OR (f.of >= {FIELD_MIN} AND f.of >= {FIELD_SHARE} * f.om)
+           CASE WHEN (f.fm - sm >= {FIELD_MIN} AND f.fm - sm >= {FIELD_SHARE} * (f.ff - sf))
+                  OR (f.ff - sf >= {FIELD_MIN} AND f.ff - sf >= {FIELD_SHARE} * (f.fm - sm))
                 THEN {FIELD_VOTES} ELSE 1 END AS w
     FROM   results r
     LEFT   JOIN pa ps ON ps.person_id = r.person_id
-    LEFT   JOIN LATERAL (
-               SELECT f0.fm - (ps.g IS NOT DISTINCT FROM 'M')::int AS om,
-                      f0.ff - (ps.g IS NOT DISTINCT FROM 'F')::int AS of
-               FROM   fld f0
-               WHERE  f0.source = r.source AND f0.meet_id = r.meet_id
-                 AND  f0.div_id IS NOT DISTINCT FROM r.div_id) f ON TRUE
+    CROSS  JOIN LATERAL (SELECT (ps.g IS NOT DISTINCT FROM 'M')::int AS sm,
+                                (ps.g IS NOT DISTINCT FROM 'F')::int AS sf) own
+    LEFT   JOIN fld f ON f.source = r.source AND f.meet_id = r.meet_id
+                     AND f.div_id IS NOT DISTINCT FROM r.div_id
     -- ★ AND AN UPLOADED RACE'S DIVISION (2026-10-10): racecast/uploads.py
     --   writes an anet-shaped meets row per race, source 'upload', the
     --   gender in its division ("Girls Varsity"); an uploaded runner has no

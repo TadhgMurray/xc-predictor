@@ -1204,19 +1204,47 @@ def _createRecoveryTable(cursor):
 # ! ONLY NEW AND RE-SCRAPED ROWS GET A VALUE. Additive on purpose: NULL for
 #   everything already stored, and result_status.kind() falls back to the
 #   sentinel for those, which is all they have.
+# ★ ASK FIRST, ALTER ONLY WHEN MISSING (2026-10-26, a site outage). These
+#   two ran ADD COLUMN IF NOT EXISTS on results and results_tf at every
+#   scraper start. IF NOT EXISTS still takes an ACCESS EXCLUSIVE lock when
+#   the column is there: the nightly's ALTER queued behind an 18-hour reader
+#   and every page touching results queued behind the ALTER -- six hours of
+#   504s. The same lesson ensureCoreColumns learned on 2026-09-17 (above):
+#   a catalogue read takes no lock, and a real ALTER waits _LOCK_TIMEOUT at
+#   most instead of for ever.
+def _hasColumn(cursor, table, column):
+    cursor.execute("""SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = 'public' AND table_name = %s
+                        AND column_name = %s""", (table, column))
+    return cursor.fetchone() is not None
+
+
+def _hasIndex(cursor, name):
+    cursor.execute("SELECT to_regclass(%s)", (f"public.{name}",))
+    return cursor.fetchone()[0] is not None
+
+
+def _addColumnIfMissing(cursor, table, column, spec):
+    if _hasColumn(cursor, table, column):
+        return False
+    cursor.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
+    cursor.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {spec}")
+    return True
+
+
 def _migrateResultsAddStatus(cursor):
     for table in ("results", "results_tf"):
-        cursor.execute(
-            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS status TEXT")
+        _addColumnIfMissing(cursor, table, "status", "TEXT")
 
 
 def _migrateResultsAddTeamSlug(cursor):
     for table in ("results", "results_tf"):
-        cursor.execute(
-            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS team_slug TEXT")
-        cursor.execute(
-            f"CREATE INDEX IF NOT EXISTS idx_{table}_team_slug "
-            f"ON {table} (team_slug) WHERE team_slug IS NOT NULL")
+        _addColumnIfMissing(cursor, table, "team_slug", "TEXT")
+        if not _hasIndex(cursor, f"idx_{table}_team_slug"):
+            cursor.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
+            cursor.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{table}_team_slug "
+                f"ON {table} (team_slug) WHERE team_slug IS NOT NULL")
 
 
 # _createMeetsTFMetaTable
@@ -2157,7 +2185,7 @@ def _ensureResultsStatus(conn, table="results"):
     if table in _RESULTS_STATUS_READY:
         return
     cur = conn.cursor()
-    cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS status TEXT")
+    _addColumnIfMissing(cur, table, "status", "TEXT")      # asks first (above)
     _RESULTS_STATUS_READY.add(table)
 
 

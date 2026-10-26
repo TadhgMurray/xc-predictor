@@ -41,7 +41,8 @@ INSERT INTO results VALUES (1,101,101,'anet',1,11),(2,102,102,'anet',1,11),(3,10
 
 def test_the_field_vote_is_in_the_build():
     assert "count(DISTINCT fr.person_id) FILTER (WHERE pa.g = 'M') AS fm" in PG._BUILD
-    assert f"f.om >= {PG.FIELD_MIN} AND f.om >= {PG.FIELD_SHARE} * f.of" in PG._BUILD
+    assert f"f.fm - sm >= {PG.FIELD_MIN} AND f.fm - sm >= {PG.FIELD_SHARE} * (f.ff - sf)" in PG._BUILD
+    assert "LATERAL (\n               SELECT f0" not in PG._BUILD      # one probe per row: 18 h
 
 
 def test_field_vote_on_a_scratch_database():
