@@ -639,6 +639,12 @@ step 02_drop_old      "$PY" -u engine/drop_old.py
 #   was called by nothing, which is why the ids kept appearing.
 step 02b_tf_venues    "$PY" -u scripts/backfill_tf_venues.py --write
 step 03_pro_flag      "$PY" -u engine/pro_flag.py --skip-dist --write
+# ★ THE TEAM POOLS, EVERY RUN (pooling review P2, 2026-10-26). team_pool
+#   (a club with a pro is pro, a team of under 15 athletes ever is pro) was
+#   built only by overnight_fit_pool_solve.sh, so the pack and the fill read
+#   a table as old as that run, keyed on team ids and pros since changed.
+#   After 03 because it reads pro_athlete_season; the pack reads it at 08.
+step 03a_team_pool    "$PY" -u engine/build_team_pool.py --write
 # ⚠ BEFORE grade_sanity: it decides whether "11-12" is grades or ages, and
 #   every rule downstream reads that answer.
 step 03b_age_bands    "$PY" -u engine/age_band_grades.py --write
