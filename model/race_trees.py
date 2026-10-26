@@ -485,7 +485,61 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0):
 
 _TABLE_KEYS = ('z', 't0', 'feats_all', 'feats', 'fidx', 'X_all', 'X', 'y', 'base', 'y_abs',
                'base_abs', 'base_page', 'base_page_abs', 'race', 'day', 'tfrrs', 'val', 'lead',
-               'own_pack', 'team_pack', 'labels', 'r', 'Xt', 'excluded')
+               'own_pack', 'team_pack', 'labels', 'r', 'Xt', 'excluded', 'order')
+
+
+def siteReport(path, pid_v, keys, rv, sl, lead_r, yv, page_abs, lastv, pv, tot_m, yav, labels):
+    """EVERY BASELINE ON THE SAME RACES AND RUNNERS (owner, 2026-10-27):
+    last race, the ratings (the site's order today), the transformer alone,
+    the site today (blend: the ratings at the transformer's level), and the
+    new model -- on the race-morning races race_site.py sampled, the runners
+    the transformer priced. Lines."""
+    import numpy as np
+    try:
+        from predict import blendFactor
+    except Exception:                                    # noqa: BLE001
+        def blendFactor(pairs):
+            xs = sorted(math.log(m / r) for m, r in pairs if m and r)
+            if len(xs) < 5:
+                return 1.0
+            return math.exp(max(-0.12, min(0.12, float(np.median(xs)))))
+    S = np.load(path)
+    look = {(str(k), int(p)): float(v) for k, p, v in zip(S["key"], S["pid"], S["model_s"])}
+    per = {b: [] for b in ("last race", "ratings", "transformer", "site today", labels[1])}
+    miss = {b: [] for b in per}
+    n_r = n_p = 0
+    for k, (s, e) in enumerate(sl):
+        if lead_r[k] != 0:
+            continue
+        key = str(keys[int(rv[s])])
+        idx = [i for i in range(s, e) if (key, int(pid_v[i])) in look]
+        if len(idx) < 8:
+            continue
+        n_r += 1
+        n_p += len(idx)
+        idx = np.array(idx)
+        trans = np.log([look[(key, int(pid_v[i]))] for i in idx])
+        f = blendFactor([(math.exp(t), math.exp(p)) for t, p in zip(trans, page_abs[idx])])
+        clocks = {"last race": page_abs[idx] - lastv[idx], "ratings": page_abs[idx],
+                  "transformer": trans, "site today": page_abs[idx] + math.log(f),
+                  labels[1]: tot_m[idx]}
+        y = yv[idx] - yv[idx].mean()
+        for b, c in clocks.items():
+            o = c - c.mean() if b != labels[1] else pv[idx] - pv[idx].mean()
+            per[b].append((pairShare(o, y), spearman(o, y)))
+            miss[b] += list(np.abs(np.exp(c - yav[idx]) - 1.0) * 100.0)
+    out = [f"\nEVERY BASELINE, SAME {n_r:,} RACES AND {n_p:,} RUNNERS (race morning; the "
+           "transformer as the page runs it)",
+           f"  {'':12} {'pairs':>7} {'rho':>6} {'median miss':>12} {'mean miss':>10}"]
+    for b in per:
+        if not per[b]:
+            continue
+        out.append(f"  {b:12} {100 * _mean(x[0] for x in per[b]):6.2f}% "
+                   f"{_mean(x[1] for x in per[b]):6.3f} {np.median(miss[b]):11.2f}% "
+                   f"{np.mean(miss[b]):9.2f}%")
+    out.append("  (site today = blend: the ratings' order, so its pairs are the ratings'; "
+               "its times are the transformer's level)")
+    return out
 
 
 def main():
@@ -501,6 +555,9 @@ def main():
                     help="leave out each runner's own record against the ratings")
     ap.add_argument("--big", action="store_true",
                     help="bigger trees (255 leaves, up to 8,000 rounds): slower, more capacity")
+    ap.add_argument("--site", default=None, metavar="NPZ",
+                    help="model/race_site.py's file: the transformer and the site's blend "
+                         "beside every other basis, on the races it sampled")
     ap.add_argument("--no-ratings", action="store_true",
                     help="a TEST: the same trees with nothing the engine made, from raw "
                          "times on a 5K by Riegel (RATING_INPUTS); the ratings print beside")
@@ -511,7 +568,7 @@ def main():
     T = loadTable(a.rows, a.val_from, a.own, a.no_ratings, a.seed)
     (z, t0, feats_all, feats, fidx, X_all, X, y, base, y_abs, base_abs, base_page,
      base_page_abs, race, day, tfrrs, val, lead, own_pack, team_pack, labels, r, Xt,
-     excluded) = \
+     excluded, order) = \
         (T[k] for k in _TABLE_KEYS)
     import numpy as np
     rm = runnerModel(a.seed, a.big).fit(Xt, r[~val])
@@ -523,7 +580,13 @@ def main():
     sl = raceSlices(rv)
     pv = centre(bv + rm.predict(Xv), sl)
     base_s, model_s = orderScores(bv, yv, sl), orderScores(pv, yv, sl)
+    # ★ "SAME AS THEIR LAST RACE", the simplest baseline (owner, 2026-10-27):
+    #   the last rated race on the page's clock -- the form's time moved by
+    #   how far the last race sat from the form (a rating is ~ 1 / time)
+    lastv = np.nan_to_num(XvA[:, fidx["last_minus_form"]], nan=0.0)
+    last_s = orderScores(centre(base_page[val] - lastv, sl), yv, sl)
     extra = ([("ratings", orderScores(base_page[val], yv, sl))] if a.no_ratings else [])
+    extra = [("last race", last_s)] + extra
 
     # ★ THE HEADLINE IS RACE MORNING (lead 0); the forecast copies (race_rows
     #   1.6) are scored on their own, by how far ahead they were made
@@ -658,6 +721,10 @@ def main():
         dist = float(XvA[sl[k][0], fidx["distance"]])
         lines.append(f"    {100 * race_miss['trees + ' + labels[1]][k]:+7.1f}%  {sl[k][1] - sl[k][0]:>4}  "
                      f"{dist:>7.0f}  {nm[:40]:40}  {keys[ri]}")
+
+    if a.site:
+        lines += siteReport(a.site, z["pid"][order][val], keys, rv, sl, lead_r, yv,
+                            base_page_abs[val], lastv, pv, tot_m, yav, labels)
 
     # ★ RANGES THAT MEAN WHAT THEY SAY: the place spread by runner band and
     #   the race-level spread, fitted on half the validation races (even
