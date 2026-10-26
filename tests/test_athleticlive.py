@@ -301,3 +301,56 @@ def test_a_page_firebase_sends_as_a_list_is_read_by_position():
     assert (n, pages) == (A.PAGE + 1, 2)
     assert cur.rows[0]["alive_id"] == 1 and cur.rows[-1]["alive_id"] == 9999
 
+
+
+def test_one_fetcher_serves_meet_after_meet():
+    """check / land fetch meet after meet with one fetcher. Each meet on its
+    own asyncio.run raised 'bound to a different event loop' on the server's
+    second meet (2026-10-26)."""
+    from sources.fetch import Fetcher, HostLimiter, RawStore
+    import tempfile
+
+    class _Resp:
+        status_code, headers = 200, {}
+
+        def __init__(self, body):
+            self.content = json.dumps(body).encode()
+
+    class _Allow:
+        def get(self, url):
+            return True, None
+
+    pages = {"event_summary": SUMMARY, "2402879": MILE, "2402928": LJ, "410219": RELAY}
+
+    def getter(url, headers):
+        return _Resp(next((b for k, b in pages.items() if k in url), {}))
+
+    with tempfile.TemporaryDirectory() as d:
+        f = Fetcher(RawStore(d), limiter=HostLimiter(interval=0.0), robots=_Allow(),
+                    getter=getter)
+        for alive_id in (65672, 65673, 65674):
+            events, blobs, _ = A._run(A.fetchMeet(f, alive_id, None))
+            assert len(events) == 4 and len(blobs) == 4
+
+
+def test_check_says_why_rows_differ():
+    evs = A.parseSummary(SUMMARY)
+    slots = [Slot(52, 111, "1600m", "m", "Varsity"), Slot(52, 112, "1600m", "m", "Frosh Soph"),
+             Slot(35, 111, "lj", "f", "Varsity")]
+    p = A.plan(642474, A.parseMeet(65672, MEET), evs, {2402879: MILE, 2402928: LJ}, slots, None)
+    # (result_id, athlete_id, div_id, event_id, time_seconds, mark, place,
+    #  is_relay, event_short, status, athlete_name)
+    have = [
+        (1, 30578388, 111, 52, 265.96, None, 1, 0, "1600m", None, "Uriel Texis"),
+        (2, 30475359, 111, 52, 276.2, None, 2, 0, "1600m", None, "Ann Other"),       # mark differs
+        (3, 27377960, 112, 52, 300.0, None, 1, 0, "1600m", None, "Jo Jump"),         # other race
+        (4, 11111111, 111, 52, 290.0, None, 4, 0, "1600m", None, "Not There"),       # absent
+        (5, 22222222, 111, 7, 44.0, None, 1, 1, "4x100m", None, "a, b, c, d"),       # relay: ignored
+    ]
+    c, ex = A.compareMeet(have, p["results_to_save"])
+    assert c["anet rows"] == 4 and c["same runner+race"] == 2 and c["same mark"] == 1
+    assert c["same place"] == 2
+    assert c["anet: runner in another race"] == 1 and c["anet: runner not in alive"] == 1
+    assert c["alive only, no mark (DNS/SCR...)"] == 1                 # the DNS
+    assert "276.2" in ex["same runner and race, different mark"][0]
+    assert "Not There" in ex["anet runner AthleticLIVE does not have"][0]

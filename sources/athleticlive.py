@@ -716,6 +716,23 @@ async def landForScrape(meet_id, meet_info, events_dict, event_divs, label="[ali
 #  commands
 # ------------------------------------------------------------------ #
 
+_LOOP = None
+
+
+def _run(coro):
+    """Run a coroutine on ONE event loop for the whole command.
+
+    ⚠ NOT asyncio.run PER MEET. The fetcher's per-host locks and its
+      semaphore belong to the loop they were first used on; a second
+      asyncio.run makes a new loop and the first lock it meets raises
+      "bound to a different event loop" (the server's first check,
+      2026-10-26, on its second meet)."""
+    global _LOOP
+    if _LOOP is None or _LOOP.is_closed():
+        _LOOP = asyncio.new_event_loop()
+    return _LOOP.run_until_complete(coro)
+
+
 def _conn():
     from database import getConn, initPool
     initPool()
@@ -735,8 +752,8 @@ def cmdDiscover(a):
     with _conn() as conn:
         cur = conn.cursor()
         initTables(cur)
-        n, pages = asyncio.run(discover(cur, fetcher, back=a.back, start=a.start,
-                                        max_pages=a.max_pages))
+        n, pages = _run(discover(cur, fetcher, back=a.back, start=a.start,
+                                 max_pages=a.max_pages))
         conn.commit()
         cur.execute("""SELECT sport, count(*), count(*) FILTER (WHERE cardinality(anet_ids) > 0),
                               max(meet_date) FROM alive_meets GROUP BY 1 ORDER BY 1""")
@@ -790,8 +807,8 @@ def cmdLand(a):
                     noteLanded(cur, alive["alive_id"], 0, "anet has it")
                     conn.commit()
                 continue
-            events, blobs, note = asyncio.run(fetchMeet(fetcher, alive["alive_id"],
-                                                        alive["meet_date"]))
+            events, blobs, note = _run(fetchMeet(fetcher, alive["alive_id"],
+                                                 alive["meet_date"]))
             if not events:
                 total[note or "no events"] += 1
                 continue
@@ -813,11 +830,78 @@ def cmdLand(a):
     return 0
 
 
+def _secs(r):
+    return r["SortInt"] / 1000 if r.get("SortInt") else None
+
+
+def compareMeet(have, results_to_save):
+    """athletic.net's rows for a meet against what AthleticLIVE would land
+    there. Individual rows only (a relay has no runner to match on).
+    have: (result_id, athlete_id, div_id, event_id, time_seconds, mark, place,
+    is_relay, event_short, status, athlete_name). -> (Counter, {kind: [line]})."""
+    theirs = {}
+    for h in have:
+        if h[1] and not h[7]:
+            theirs.setdefault((h[1], h[2], h[3]), h)
+    ours = {}
+    for t in results_to_save:
+        if not t[5] and t[0].get("AthleteID"):
+            ours.setdefault((t[0]["AthleteID"], t[2], t[3]), t)
+    by_runner = defaultdict(list)
+    for (ath, _div, _ev), t in ours.items():
+        by_runner[ath].append(t)
+    c, ex = Counter(), defaultdict(list)
+    c["anet rows"], c["alive rows"] = len(theirs), len(ours)
+    for key, h in theirs.items():
+        t = ours.get(key)
+        if t is None:
+            elsewhere = by_runner.get(key[0])
+            if elsewhere:
+                c["anet: runner in another race"] += 1
+                o = elsewhere[0]
+                ex["runner in another race"].append(
+                    f"{h[10]!s:<24} anet {h[8]} div {h[2]} ev {h[3]} -> alive {o[4]} "
+                    f"div {o[2]} ev {o[3]}")
+            else:
+                c["anet: runner not in alive"] += 1
+                ex["anet runner AthleticLIVE does not have"].append(
+                    f"{h[10]!s:<24} {h[8]} div {h[2]}: {h[4] or h[5] or h[9]} place {h[6]}")
+            continue
+        r = t[0]
+        c["same runner+race"] += 1
+        a_t = _secs(r)
+        same = (a_t is not None and h[4] is not None and abs(a_t - h[4]) < 0.011) or (
+            bool(r.get("Result")) and str(r["Result"]).strip() in (str(h[5] or "").strip(),
+                                                                   str(h[9] or "").strip()))
+        if same:
+            c["same mark"] += 1
+        else:
+            ex["same runner and race, different mark"].append(
+                f"{h[10]!s:<24} {h[8]}: anet {h[4] or h[5] or h[9]}  alive "
+                f"{a_t if a_t is not None else r.get('Result')}")
+        if r.get("Place") is not None and r.get("Place") == h[6]:
+            c["same place"] += 1
+    theirs_ath = {k[0] for k in theirs}
+    for (ath, _div, _ev), t in ours.items():
+        if ath not in theirs_ath:
+            r = t[0]
+            no_mark = r.get("SortInt") is None and not t[7]
+            if no_mark or (t[7] and r.get("Result") and not any(ch.isdigit() for ch in r["Result"])):
+                c["alive only, no mark (DNS/SCR...)"] += 1
+            else:
+                c["alive only, with a mark"] += 1
+                ex["alive runner athletic.net does not have"].append(
+                    f"{r.get('FirstName')} {r.get('LastName')!s:<14} {t[4]}: "
+                    f"{_secs(r) or r.get('Result')} place {r.get('Place')}")
+    return c, ex
+
+
 def cmdCheck(a):
     """Meets athletic.net already gave us AND AthleticLIVE has: land them in
     memory and compare with the rows we hold. Nothing is written."""
     fetcher = makeFetcher()
     agg = Counter()
+    examples = defaultdict(list)
     with _conn() as conn:
         cur = conn.cursor()
         cur.execute("""SELECT u.anet_id, am.alive_id
@@ -830,43 +914,30 @@ def cmdCheck(a):
         pairs = cur.fetchall()
         for meet_id, alive_id in pairs:
             alive = aliveFor(cur, meet_id)
-            events, blobs, _ = asyncio.run(fetchMeet(fetcher, alive_id, alive["meet_date"]))
+            events, blobs, _ = _run(fetchMeet(fetcher, alive_id, alive["meet_date"]))
             p = plan(meet_id, alive, events, blobs, anetSlots(cur, meet_id), None)
             cur.execute("""SELECT result_id, athlete_id, div_id, event_id, time_seconds, mark,
-                                  place, is_relay
+                                  place, is_relay, event_short, status, athlete_name
                            FROM results_tf WHERE meet_id = %s AND source = 'anet'
                              AND result_id < %s""", (meet_id, RESULT_BASE))
             have = cur.fetchall()
-            have_key = {(r[1], r[2], r[3]): r for r in have if r[1] and not r[7]}
-            ours = [(t[0], t[2], t[3]) for t in p["results_to_save"] if not t[5]]
-            same_slot = same_time = same_place = 0
-            for r, div, ev in ours:
-                h = have_key.get((r.get("AthleteID"), div, ev))
-                if h is None:
-                    continue
-                same_slot += 1
-                t = (r["SortInt"] or 0) / 1000 if r.get("SortInt") else None
-                if t is not None and h[4] is not None and abs(t - h[4]) < 0.011:
-                    same_time += 1
-                elif r.get("Result") and h[5] and str(r["Result"]).strip() == str(h[5]).strip():
-                    same_time += 1
-                if r.get("Place") is not None and r.get("Place") == h[6]:
-                    same_place += 1
-            ids_ours = {t[0]["IDResult"] for t in p["results_to_save"]}
-            anet_ind = len(have_key)
-            athletes_ours = {r.get("AthleteID") for r, _d, _e in ours}
-            athletes_theirs = {k[0] for k in have_key}
-            agg.update({"meets": 1, "anet rows": anet_ind, "alive rows": len(ours),
-                        "same runner+slot": same_slot, "same mark": same_time,
-                        "same place": same_place,
-                        "anet runners not in alive": len(athletes_theirs - athletes_ours),
-                        "alive runners not in anet": len(athletes_ours - athletes_theirs),
-                        # anet's result id IS AthleticLIVE's? then RESULT_BASE is not needed
-                        "alive id == anet id": sum(1 for h in have if h[0] + RESULT_BASE in ids_ours)})
-            print(f"  meet {meet_id}: anet {anet_ind} rows, alive {len(ours)}; "
-                  f"{same_slot} same runner in the same race, {same_time} same mark, "
-                  f"{same_place} same place; unmatched events "
-                  f"{dict(Counter(p['unmatched'].values()))}")
+            res, why = compareMeet(have, p["results_to_save"])
+            agg.update(res)
+            agg["meets"] += 1
+            for kind, ex in why.items():
+                examples[kind].extend(ex)
+            print(f"  meet {meet_id} ({alive['meet_date']}, {str(alive['name'])[:36]}): "
+                  f"anet {res['anet rows']}, alive {res['alive rows']}; "
+                  f"{res['same runner+race']} same runner in the same race "
+                  f"({res['same mark']} same mark, {res['same place']} same place); "
+                  f"anet not in alive: {res['anet: runner not in alive']} absent, "
+                  f"{res['anet: runner in another race']} in another race"
+                  + (f"; events not landed {dict(Counter(p['unmatched'].values()))}"
+                     if p["unmatched"] else ""), flush=True)
+    for kind, ex in examples.items():
+        print(f"\n  {kind} (up to {a.show}):")
+        for line in ex[:a.show]:
+            print(f"    {line}")
     print(f"[alive] check: {dict(agg)}  fetches {fetcher.stats}  (nothing written)")
     return 0
 
@@ -895,6 +966,7 @@ def main(argv=None):
     d.add_argument("--max-pages", type=int)
     c = sub.add_parser("check")
     c.add_argument("--meets", type=int, default=20)
+    c.add_argument("--show", type=int, default=12, help="examples of each kind of difference")
     ld = sub.add_parser("land")
     ld.add_argument("--limit", type=int, default=50)
     ld.add_argument("--meet", type=int, action="append", help="this athletic.net meet id")
