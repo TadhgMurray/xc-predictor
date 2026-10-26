@@ -1198,6 +1198,14 @@ _CORROBORATED_SQL = """
 #   (the level text, default collation), same tie, same NULLs left out by
 #   the FILTER; count(a.grade) per level summed is the old
 #   count(*) FILTER (WHERE a.grade IS NOT NULL).
+# ★ A TIE GOES TO THE HIGHER LEVEL, BY RANK (owner, 2026-10-26: "I'd prefer
+#   for a tie to go to a higher level"). Both tie-breaks below were the level
+#   TEXT in sort order -- college, elem, hs, ms, pro -- so a college/hs tie
+#   went up but an elem/hs tie went DOWN to elem, and ms beat pro. They now
+#   rank pro > college > hs > ms > elem, highest first.
+_LEVEL_RANK_SQL = ("CASE {x} WHEN 'pro' THEN 5 WHEN 'college' THEN 4 WHEN 'hs' THEN 3 "
+               "WHEN 'ms' THEN 2 WHEN 'elem' THEN 1 ELSE 0 END")
+
 _FIELD_BUILD = f"""
     -- ! ONE PASS, NOT A SUBQUERY PER SEASON. The first version asked
     --   NOT EXISTS (... GROUP BY grade HAVING count(*) >= n) for every
@@ -1275,9 +1283,9 @@ _FIELD_BUILD = f"""
                --   verdict was produced, and his stale grade 6 stood.
                CASE WHEN sum(n_graded) = 0
                     THEN 'pro'
-                    -- the modal level: most entrants, ties to the first
-                    -- level in sort order (mode()'s rule, above)
-                    ELSE (array_agg(lvl ORDER BY n DESC, lvl)
+                    -- the modal level: most entrants, ties to the HIGHER
+                    -- level (_LEVEL_RANK_SQL; was mode()'s text order)
+                    ELSE (array_agg(lvl ORDER BY n DESC, {_LEVEL_RANK_SQL.format(x="lvl")} DESC)
                               FILTER (WHERE lvl IS NOT NULL))[1]
                END AS level
         FROM  (SELECT w.meet_id, w.div_id, w.source, w.event_key,
@@ -1305,7 +1313,9 @@ _FIELD_BUILD = f"""
     ANALYZE fld_event_level;
 """
 
-_FIELD_SQL = """
+# ! RACES, NOT ROWS (pooling review P4): a race scraped by both feeds is
+#   one race (allraces.race, raceIdent) and votes once.
+_FIELD_SQL = f"""
     SELECT DISTINCT ON (n.person_id, n.acad)
            n.person_id, n.acad, e.level
     FROM   fld_needy n
@@ -1315,7 +1325,8 @@ _FIELD_SQL = """
           AND e.source = a.source AND e.event_key = a.event_key
     WHERE  e.level IS NOT NULL
     GROUP  BY n.person_id, n.acad, e.level
-    ORDER  BY n.person_id, n.acad, count(*) DESC, e.level
+    ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC,
+              {_LEVEL_RANK_SQL.format(x="e.level")} DESC
 """
 
 # rule 4's staging tables; season_races outlives them until rule 5e reads it

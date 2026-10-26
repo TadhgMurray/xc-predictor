@@ -43,7 +43,10 @@ DB = "xcp_grade_speed_test"
 #  THE OLD CODE, VERBATIM -- the reference every test compares against
 # ------------------------------------------------------------------ #
 
-# grade_sanity._FIELD_SQL before 2026-10-25 (comments dropped)
+# grade_sanity._FIELD_SQL before 2026-10-25 (comments dropped), with the
+# 2026-10-26 rules written into it the slow way: a tie goes to the HIGHER
+# level (owner), and a season's events are counted in races, not rows
+_RANK = "CASE {x} WHEN 'pro' THEN 5 WHEN 'college' THEN 4 WHEN 'hs' THEN 3 WHEN 'ms' THEN 2 WHEN 'elem' THEN 1 ELSE 0 END"
 OLD_FIELD_SQL = f"""
     WITH by_grade AS (
         SELECT person_id, acad, grade_folded AS grade,
@@ -72,8 +75,13 @@ OLD_FIELD_SQL = f"""
         SELECT w.meet_id, w.div_id, w.source, w.event_key,
                CASE WHEN count(*) FILTER (WHERE a.grade IS NOT NULL) = 0
                     THEN 'pro'
-                    ELSE mode() WITHIN GROUP (ORDER BY gradeLevel(a.grade))
-                             FILTER (WHERE gradeLevel(a.grade) IS NOT NULL)
+                    ELSE (SELECT gradeLevel(a2.grade) FROM allraces a2
+                          WHERE  a2.meet_id = w.meet_id AND a2.div_id = w.div_id
+                            AND  a2.source = w.source AND a2.event_key = w.event_key
+                            AND  gradeLevel(a2.grade) IS NOT NULL
+                          GROUP  BY 1
+                          ORDER  BY count(*) DESC, {_RANK.format(x="gradeLevel(a2.grade)")} DESC
+                          LIMIT  1)
                END AS level,
                count(*) AS n_entrants,
                count(*) FILTER (WHERE a.grade IS NOT NULL) AS n_graded
@@ -95,7 +103,7 @@ OLD_FIELD_SQL = f"""
           AND e.source = a.source AND e.event_key = a.event_key
     WHERE  e.level IS NOT NULL
     GROUP  BY n.person_id, n.acad, e.level
-    ORDER  BY n.person_id, n.acad, count(*) DESC, e.level
+    ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC, {_RANK.format(x="e.level")} DESC
 """
 
 # rule 5e's own count before 2026-10-25
@@ -469,12 +477,16 @@ def test_rule4_stages_match_the_one_statement(cur, seed):
 
 def test_rule4_ties_and_ungraded_events(cur):
     rows = []
-    # event 1: 2 hs, 2 ms entrants -> mode() ties to 'hs' (first in order)
+    # event 1: 2 hs, 2 ms entrants -> a tie, to the higher level: 'hs'
+    # (and an elem/hs tie goes to hs too, where the text order said elem)
     for pid, g in ((1, "9"), (2, "10"), (3, "7"), (4, "8")):
         rows.append((pid, 2024, g, g, 1, 1, "anet", -1, 100 + pid))
     # event 2: 3 college, 3 elem -> 'college'
     for pid, g in ((5, "SR"), (6, "JR"), (7, "FR"), (8, "3"), (9, "4"), (10, "5")):
         rows.append((pid, 2024, g, g, 2, 1, "anet", -1, 200 + pid))
+    # event 5: 2 elem, 2 hs -> a tie, to 'hs' (the text order said 'elem')
+    for pid, g in ((13, "4"), (14, "5"), (15, "9"), (16, "11")):
+        rows.append((pid, 2024, g, g, 5, 1, "anet", -1, 500 + pid))
     # event 3: nobody graded -> 'pro'; event 4: graded but no level -> nothing
     rows += [(11, 2024, None, None, 3, 1, "anet", -1, 300),
              (12, 2024, "XYZ", "XYZ", 4, 1, "anet", -1, 400),
@@ -489,6 +501,7 @@ def test_rule4_ties_and_ungraded_events(cur):
     assert levels[1] == "hs" and levels[3] == "hs"
     assert levels[5] == "college" and levels[8] == "college"
     assert levels[11] == "pro" and 12 not in levels
+    assert levels[13] == "hs" and levels[15] == "hs"
 
 
 @pytest.mark.parametrize("seed", range(5))
