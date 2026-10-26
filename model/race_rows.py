@@ -334,6 +334,13 @@ def pageBase(field, race):
     return field
 
 
+def raceDistance(dists):
+    """The race's distance from its rows' corrected distances: the median,
+    or None when nothing sane is there (DIST_OK). Pure."""
+    ok = sorted(float(d) for d in dists or [] if d and DIST_OK[0] <= float(d) <= DIST_OK[1])
+    return ok[len(ok) // 2] if ok else None
+
+
 def keepRace(key, day, val_from, train_frac):
     """Every race from val_from on; earlier ones by crc32 of their key."""
     if day >= val_from:
@@ -353,23 +360,49 @@ def _stream(conn, sql, params, name):
             yield row
 
 
+# ★ THE CORRECTED DISTANCE, THE CORPUS'S OWN EXPRESSION (2026-10-26: the
+#   first page-clock run's worst races were stored at 1, 2 and 3 m and read
+#   8x fast). feature_extraction._XC_DIST is the hand-verified override, then
+#   the meet's distance, then a tfrrs division's own -- the distance every
+#   normalized time and every course cell was computed at. Imported, not
+#   copied, and only here: it needs the server's corrections.py.
+def _xcDistance():
+    from feature_extraction import _XC_DIST, _OV_JOIN_XC
+    joins = f"""
+        LEFT JOIN meets m ON r.div_id = m.div_id AND r.meet_id = m.meet_id
+                         AND r.source = m.source
+        LEFT JOIN meets_tfrrs mt ON r.source = 'tfrrs' AND mt.meet_id = r.meet_id
+                                AND mt.sport = 'XC'
+{_OV_JOIN_XC}"""
+    return _XC_DIST, joins
+
+
+# A race distance outside this is a unit or a typo (miles, kilometres, a
+# relay leg), not a cross country race: the race keeps no distance.
+DIST_OK = (1500.0, 15000.0)
+
+
 def _sql(has_outliers):
+    from feature_extraction import escapeLiteralPercent
+    dist, joins = _xcDistance()
     skip = ("AND NOT EXISTS (SELECT 1 FROM rating_outlier ro WHERE ro.sport = '{s}' "
             "AND ro.result_id = r.result_id)")
-    xc = f"""
+    xc = escapeLiteralPercent(f"""
         SELECT r.person_id, left(r.date, 10), r.speed_rating,
                split_part(r.rating_pool, '|', 1), r.time_seconds,
-               r.meet_id, r.div_id, r.source, r.school, r.grade, 0
+               r.meet_id, r.div_id, r.source, r.school, r.grade, 0, {dist}
         FROM   results r
+{joins}
         WHERE  r.person_id IS NOT NULL AND r.date >= %(lo)s AND r.date < %(hi)s
           AND  r.time_seconds > 0 AND r.time_seconds < 19999
           AND  NOT EXISTS (SELECT 1 FROM result_twin x
                            WHERE x.sport = 'XC' AND x.result_id = r.result_id)
           {skip.format(s='XC') if has_outliers else ''}
-        ORDER  BY r.person_id, r.date"""
+        ORDER  BY r.person_id, r.date""")
     tf = f"""
         SELECT r.person_id, left(r.date, 10), r.speed_rating,
-               split_part(r.rating_pool, '|', 1), NULL, NULL, NULL, NULL, NULL, NULL, 1
+               split_part(r.rating_pool, '|', 1), NULL, NULL, NULL, NULL, NULL, NULL, 1,
+               NULL
         FROM   results_tf r
         WHERE  r.person_id IS NOT NULL AND r.date >= %(lo)s AND r.date < %(hi)s
           AND  r.speed_rating > 0 AND r.rating_pool IS NOT NULL
@@ -397,7 +430,7 @@ def _people(conn, lo, hi, has_outliers):
         yield pid, rows
 
 
-def _raceMeta(cur, keys):
+def _raceMeta(cur, keys, dist_of=None):
     """{(meet_id, div_id, source): {distance, meet_name, is_champ}}."""
     anet = sorted({k[1] for k in keys if k[2] != "tfrrs"})
     tfr = sorted({k[0] for k in keys if k[2] == "tfrrs"})
@@ -442,7 +475,10 @@ def _raceMeta(cur, keys):
                       "distance": d, "canonical_id": m.get("canonical_id")}
         else:
             res[k] = dict(out.get((k[2], k[1])) or {})
-        cid, d = res[k].get("canonical_id"), res[k].get("distance")
+        # the rows' corrected distance wins; a stored one only if it is sane
+        d = (dist_of or {}).get(k) or raceDistance([res[k].get("distance")])
+        res[k]["distance"] = d
+        cid = res[k].get("canonical_id")
         try:
             res[k]["cell"] = (cells.get((cid, int(round(float(d) / 100.0) * 100)))
                               if cid is not None and d else None)
@@ -461,7 +497,8 @@ def build(conn, a):
     hi_t = datetime.date.fromisoformat(a.hi)
     val_from = datetime.date.fromisoformat(a.val_from)
     pm = {}
-    races = {}            # key -> [runner dict]
+    races = {}            # key -> [runner tuple]
+    race_dist = {}        # key -> the rows' corrected distances
     n_people = 0
     for pid, rows in _people(conn, a.hist_from, (hi_t + datetime.timedelta(days=1)).isoformat(),
                              has_out):
@@ -498,6 +535,8 @@ def build(conn, a):
                     races.setdefault(key, []).append((
                         pid, float(r[4]), r[8], math.log(100.0 * pm[pool] / rating),
                         array("f", [f[k] for k in RUNNER_FEATURES]), rating, pool))
+                    if r[11]:
+                        race_dist.setdefault(key, []).append(float(r[11]))
             for r in rows[i:j]:
                 if r[2] and r[2] > 0 and r[3]:
                     hist.append((day, float(r[2]), r[3], "TF" if r[10] else "XC"))
@@ -510,7 +549,8 @@ def build(conn, a):
     races = {k: v for k, v in races.items() if len(v) >= MIN_FIELD}
     print(f"{n_people:,} people read; {len(races):,} races with >= {MIN_FIELD} rated runners",
           flush=True)
-    meta = _raceMeta(cur, list(races))
+    dist_of = {k: raceDistance(race_dist.get(k)) for k in races}
+    meta = _raceMeta(cur, list(races), dist_of)
     conn.rollback()
     cols = {k: array("f") for k in FEATURES}
     y, base, race_ix, day_ix, pid_col = array("f"), array("f"), array("i"), array("i"), array("q")

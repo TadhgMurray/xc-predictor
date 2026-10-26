@@ -569,3 +569,29 @@ whole), scored on all of 2024-25.
   ratings when it cannot read it.
 - The Kailo recorder records `race` beside the other bases.
 - `XCP_KAILO_STORE` keeps review recordings out of the live store.
+
+### Version 1.1, run 2026-10-26 (owner): the page's own clock
+
+| 2024-25 (35,321 races) | Ratings (the page) | Model |
+|---|---|---|
+| Pairs in order | 87.22% | **88.33%** (+1.11 [+1.09, +1.12]) |
+| Rho | 0.885 | 0.901 |
+| Within-race miss | 2.75% | 2.41% |
+| Time miss, median / mean | 3.96% / 5.27% | **2.93%** / 4.24% |
+| College mean | 5.10% | 4.59% |
+
+- **On the page's clock, the ratings themselves order much better**
+  (87.2% against 84.2% on the 5K-equivalent). The page's distance and
+  course conversion matters for mixed fields.
+- **What the model leans on is now form:** this season's best and mean,
+  week of the season, the 30-day trend, grade, spring track. Before, it
+  leaned mostly on clock fixes.
+- **Ranges:** place 65% inside ±1σ (a little narrow); time 68% / 86%
+  (the 90% one is short: the tails are heavy).
+- **The mean is driven by bad distances.** 2.9% of races miss by more
+  than 10% as a whole. The worst twelve were all stored at 1, 2 or 3 m
+  ("Manhattan College XC Invitational", "SEC Batch Meet 1"), so they read
+  8× fast. **Version 1.2** reads the corrected distance
+  (`feature_extraction._XC_DIST`: the hand-verified override, the meet's
+  own distance, then a tfrrs division's), takes the median over the race,
+  and treats anything outside 1,500–15,000 m as no distance.

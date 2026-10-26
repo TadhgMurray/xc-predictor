@@ -100,3 +100,10 @@ def test_races_are_kept_whole():
     assert R.keepRace(k, D(2020, 9, 1), D(2024, 8, 1), 0.25) == \
         R.keepRace(k, D(2020, 9, 1), D(2024, 8, 1), 0.25)
     assert R.keepRace(k, D(2024, 9, 1), D(2024, 8, 1), 0.0)
+
+
+def test_a_race_distance_is_the_rows_median_and_never_a_unit_slip():
+    assert R.raceDistance([5000.0, 5000.0, 4990.0]) == 5000.0
+    assert R.raceDistance([2.0, 3.0]) is None                # miles, or a typo
+    assert R.raceDistance([2.0, 8000.0, 8000.0]) == 8000.0
+    assert R.raceDistance([]) is None and R.raceDistance(None) is None
