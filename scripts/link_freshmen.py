@@ -83,14 +83,14 @@ def academicYear(d=None):
 
 def normName(name):
     """'SMITH, Jake' and 'Jake  Smith' -> 'jake smith'; None when it is not a
-    two-token name."""
-    n = str(name or "").strip()
-    if "," in n:
-        last, _, first = n.partition(",")
-        n = f"{first} {last}"
-    n = re.sub(r"[^a-z ]+", "", n.lower().replace("-", " "))
-    n = " ".join(n.split())
-    return n if len(n.split()) >= 2 else None
+    two-token name.
+
+    ★ person_name.personKey, SUFFIX KEPT (2026-10-26). Accents are FOLDED, not
+      deleted: 'José Peña' and 'Jose Pena' were 'jos pea' and 'jose pena',
+      two people (about 670 such pairs at one school, scripts/diag_name_key).
+      Jr / II / III stay: a suffix difference can be a father and a son."""
+    from person_name import personKey
+    return personKey(name, keep_suffix=True)
 
 
 def _hasTable(cur, name):

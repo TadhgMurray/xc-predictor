@@ -87,6 +87,14 @@ JOIN   s b ON b.person_id = p.p2 AND b.ay = a.ay AND b.gr <> a.gr
 """
 
 
+def legacyKeySql(first, last):
+    """The linkers' key before 2026-10-26 (accents DELETED, no suffix rule),
+    frozen here so this report still says what the switch changed."""
+    return (f"btrim(regexp_replace(regexp_replace(lower(replace("
+            f"concat_ws(' ', btrim({first}), btrim({last})), '-', ' ')), "
+            f"'[^a-z ]+', '', 'g'), '\\s+', ' ', 'g'))")
+
+
 def why(n1, n2):
     """What made two names different under the old key."""
     a, b = str(n1 or ""), str(n2 or "")
@@ -108,11 +116,10 @@ def main():
     ap.add_argument("--show", type=int, default=40)
     args = ap.parse_args()
     from database import getConn
-    from link_teamless import nameKeySql
     t0 = time.time()
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("SET LOCAL work_mem = '1GB'")
-        cur.execute(_KEYS.format(old=nameKeySql("a.first_name", "a.last_name"),
+        cur.execute(_KEYS.format(old=legacyKeySql("a.first_name", "a.last_name"),
                                  new=personKeySql("a.first_name", "a.last_name")))
         cur.execute("CREATE INDEX ON nk (newk, sch, g)")
         cur.execute("ANALYZE nk")

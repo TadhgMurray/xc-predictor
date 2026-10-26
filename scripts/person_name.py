@@ -50,9 +50,11 @@ SUFFIXES = ("jr", "sr", "ii", "iii", "iv")
 _SUFFIX_RX = re.compile(r" (?:%s)$" % "|".join(SUFFIXES))
 
 
-def personKey(name, min_tokens=2):
+def personKey(name, min_tokens=2, keep_suffix=False):
     """The key of one name string, or None when it is not `min_tokens`
-    words after cleaning."""
+    words after cleaning. keep_suffix: Jr / Sr / II / III / IV stay (the
+    linkers' key: a suffix difference can be a father and a son, owner
+    2026-10-26, so it is never linked on the name alone)."""
     n = str(name or "").strip()
     if "," in n:
         last, _, first = n.partition(",")
@@ -60,31 +62,36 @@ def personKey(name, min_tokens=2):
     n = n.translate(_FOLD).lower().replace("-", " ")
     n = re.sub(r"[^a-z ]+", "", n)
     n = " ".join(n.split())
-    n = _SUFFIX_RX.sub("", n)
+    if not keep_suffix:
+        n = _SUFFIX_RX.sub("", n)
     return n if len(n.split()) >= min_tokens else None
 
 
-def personKeyParts(first, last):
+def personKeyParts(first, last, keep_suffix=False):
     """personKey of a first and a last name held apart."""
-    return personKey(" ".join(p for p in (str(first or "").strip(), str(last or "").strip()) if p))
+    return personKey(" ".join(p for p in (str(first or "").strip(), str(last or "").strip()) if p),
+                     keep_suffix=keep_suffix)
 
 
-def _keySql(expr):
+def _keySql(expr, keep_suffix=False):
     folded = f"lower(translate({expr}, '{FOLD_FROM}', '{FOLD_TO}'))"
     cleaned = (f"btrim(regexp_replace(regexp_replace(replace({folded}, '-', ' '), "
                f"'[^a-z ]+', '', 'g'), '\\s+', ' ', 'g'))")
+    if keep_suffix:
+        return cleaned
     return f"regexp_replace({cleaned}, ' ({'|'.join(SUFFIXES)})$', '')"
 
 
-def personKeySql(first, last):
+def personKeySql(first, last, keep_suffix=False):
     """personKeyParts in SQL (without the two-word floor: a caller tests
     position(' ' in key) > 0, as the linkers already do)."""
-    return _keySql(f"concat_ws(' ', NULLIF(btrim({first}), ''), NULLIF(btrim({last}), ''))")
+    return _keySql(f"concat_ws(' ', NULLIF(btrim({first}), ''), NULLIF(btrim({last}), ''))",
+                   keep_suffix)
 
 
-def personKeyTextSql(col):
+def personKeyTextSql(col, keep_suffix=False):
     """personKey of one name column in SQL, "Last, First" swapped."""
     swapped = (f"CASE WHEN position(',' in {col}) > 0 "
                f"THEN substr({col}, position(',' in {col}) + 1) || ' ' || split_part({col}, ',', 1) "
                f"ELSE {col} END")
-    return _keySql(swapped)
+    return _keySql(swapped, keep_suffix)

@@ -46,3 +46,15 @@ def test_the_sql_is_the_python():
     finally:
         conn.rollback()
         conn.close()
+
+
+def test_the_linkers_fold_accents_and_keep_suffixes():
+    """the linkers' key (link_freshmen.normName and its SQL twins), 2026-10-26:
+    José Peña is Jose Pena; John Smith Jr is NOT John Smith (a father and a son)"""
+    sys.path.insert(0, os.path.join(_ROOT, "engine"))
+    os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+    import link_freshmen as LF
+    assert LF.normName("José Peña") == LF.normName("Jose Pena") == "jose pena"
+    assert LF.normName("Peña, José") == "jose pena"
+    assert LF.normName("John Smith Jr") == "john smith jr" != LF.normName("John Smith")
+    assert LF.normName("Madonna") is None

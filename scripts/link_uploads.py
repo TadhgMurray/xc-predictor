@@ -330,11 +330,8 @@ def judge(rows, namesakes_by_key):
 def nameKeyTextSql(col):
     """normName(<one name column>) in SQL: 'Smith, Jake' -> 'jake smith'.
     Pinned to normName by the tests."""
-    swapped = (f"CASE WHEN position(',' in {col}) > 0 "
-               f"THEN substr({col}, position(',' in {col}) + 1) || ' ' || split_part({col}, ',', 1) "
-               f"ELSE {col} END")
-    return (f"btrim(regexp_replace(regexp_replace(lower(replace({swapped}, '-', ' ')), "
-            f"'[^a-z ]+', '', 'g'), '\\s+', ' ', 'g'))")
+    from person_name import personKeyTextSql
+    return personKeyTextSql(col, keep_suffix=True)     # one rule (2026-10-26)
 
 
 def _hasTable(cur, name):
