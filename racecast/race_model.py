@@ -175,6 +175,18 @@ def predictField(model, field, race):
     for r in field:
         r.setdefault("secs", math.exp(r["base_ln"]))     # raceFeatures' y; unused
     RR.raceFeatures(field, race)
+    # ★ EACH RUNNER'S OWN RECORD AGAINST THE RATINGS (race_trees OWN_FEATURES),
+    #   carried from the table's last day to this race; a runner the table
+    #   never saw reads as "no record", which is what the trees learned for
+    #   a first race. ! As fresh as the last table build: rebuild weekly.
+    pack = model.get("own")
+    if pack is not None:
+        if "_own_index" not in model:
+            model["_own_index"] = {int(p): i for i, p in enumerate(pack["pid"])}
+        d = race["day"].toordinal()
+        for r in field:
+            st = RT.ownState(pack, model["_own_index"], r["pid"])
+            r["f"].update(zip(RT.OWN_FEATURES, RT.ownFeatures(st, d)))
     X = np.array([[r["f"].get(k, math.nan) for k in model["features"]] for r in field],
                  dtype=np.float32)
     base = np.array([r["base"] for r in field])

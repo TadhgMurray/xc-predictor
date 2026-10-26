@@ -143,6 +143,127 @@ RATING_INPUTS = frozenset((
 FIELD_FROM_BASE = ("rank_pct", "gap_to_median", "gap_ahead", "gap_behind")
 
 
+# ★ EACH RUNNER'S OWN RECORD AGAINST THE RATINGS (owner, 2026-10-26: "there
+#   must be more we can get"). Some runners reliably beat their rating --
+#   kickers, championship racers, a steep climber -- and some reliably fall
+#   short. The table already holds every earlier race's answer and the
+#   ratings' guess for it, so each row can carry the runner's own residual
+#   history from races STRICTLY BEFORE its day. Shrunk toward 0 (no record
+#   = the ratings' own answer).
+OWN_FEATURES = ("own_n", "own_mean", "own_ewma", "own_last", "own_season",
+                "own_champ", "own_champ_n", "own_spread")
+OWN_HALF_LIFE = 60.0      # days
+OWN_SHRINK = 3.0          # pseudo-races at 0
+OWN_RECENT = 8
+
+
+def _seasonOfOrdinal(d):
+    dd = datetime.date.fromordinal(int(d))
+    return dd.year if dd.month >= 8 else dd.year - 1
+
+
+def ownNew():
+    return {"n": 0, "s": 0.0, "day": None, "last": math.nan, "S": 0.0, "W": 0.0,
+            "season": None, "sn": 0, "ss": 0.0, "cn": 0, "cs": 0.0, "recent": []}
+
+
+def ownFeatures(st, day):
+    """OWN_FEATURES at `day` (an ordinal) from a state holding only earlier
+    races. Pure."""
+    nan = math.nan
+    if not st or not st["n"]:
+        return [0.0, 0.0, 0.0, nan, nan, 0.0, 0.0, nan]
+    decay = math.exp(-math.log(2.0) / OWN_HALF_LIFE * (day - st["day"]))
+    same = st["season"] == _seasonOfOrdinal(day)
+    rec = st["recent"]
+    return [float(st["n"]), st["s"] / (st["n"] + OWN_SHRINK),
+            st["S"] * decay / (st["W"] * decay + 1.0), st["last"],
+            st["ss"] / (st["sn"] + OWN_SHRINK) if same and st["sn"] else nan,
+            st["cs"] / (st["cn"] + OWN_SHRINK), float(st["cn"]),
+            float(statistics.pstdev(rec)) if len(rec) > 1 else nan]
+
+
+def ownUpdate(st, day, resids, champs):
+    """Fold one day's races into the state. In place."""
+    if st["day"] is not None:
+        decay = math.exp(-math.log(2.0) / OWN_HALF_LIFE * (day - st["day"]))
+        st["S"] *= decay
+        st["W"] *= decay
+    season = _seasonOfOrdinal(day)
+    if st["season"] != season:
+        st["season"], st["sn"], st["ss"] = season, 0, 0.0
+    for r, c in zip(resids, champs):
+        st["n"] += 1
+        st["s"] += r
+        st["S"] += r
+        st["W"] += 1.0
+        st["sn"] += 1
+        st["ss"] += r
+        if c:
+            st["cn"] += 1
+            st["cs"] += r
+        st["recent"] = (st["recent"] + [r])[-OWN_RECENT:]
+        st["last"] = r
+    st["day"] = day
+
+
+def ownHistory(pid, day, resid, champ):
+    """(features [n, len(OWN_FEATURES)], {pid: state after every row}). A
+    row's features read only the runner's races on EARLIER days."""
+    import numpy as np
+    n = len(pid)
+    out = np.full((n, len(OWN_FEATURES)), np.nan, dtype=np.float32)
+    order = np.lexsort((day, pid))
+    states = {}
+    i = 0
+    while i < n:
+        j = i
+        p, d = pid[order[i]], day[order[i]]
+        while j < n and pid[order[j]] == p and day[order[j]] == d:
+            j += 1
+        st = states.get(int(p))
+        f = ownFeatures(st, int(d))
+        idx = order[i:j]
+        out[idx] = f
+        if st is None:
+            st = states[int(p)] = ownNew()
+        ownUpdate(st, int(d), [float(resid[k]) for k in idx], [bool(champ[k]) for k in idx])
+        i = j
+    return out, states
+
+
+_OWN_SCALARS = ("n", "s", "day", "last", "S", "W", "season", "sn", "ss", "cn", "cs")
+
+
+def ownPack(states, min_day):
+    """The states of runners who raced on or after min_day, as arrays, for
+    the page (race_model): it carries them forward to a race's day."""
+    import numpy as np
+    keep = [(p, st) for p, st in states.items() if st["day"] is not None and st["day"] >= min_day]
+    pack = {"pid": np.array([p for p, _st in keep], dtype=np.int64)}
+    for k in _OWN_SCALARS:
+        pack[k] = np.array([np.nan if st[k] is None else st[k] for _p, st in keep],
+                           dtype=np.float64)
+    rec = np.full((len(keep), OWN_RECENT), np.nan, dtype=np.float32)
+    for i, (_p, st) in enumerate(keep):
+        rec[i, :len(st["recent"])] = st["recent"]
+    pack["recent"] = rec
+    return pack
+
+
+def ownState(pack, index, pid):
+    """One runner's state back out of ownPack's arrays, or None."""
+    import numpy as np
+    i = index.get(int(pid))
+    if i is None:
+        return None
+    st = {k: (None if k == "season" and np.isnan(pack[k][i]) else
+              int(pack[k][i]) if k in ("n", "day", "season", "sn", "cn") else float(pack[k][i]))
+          for k in _OWN_SCALARS}
+    st["recent"] = [float(x) for x in pack["recent"][i] if not np.isnan(x)]
+    return st
+
+
 def fieldFromBase(X, base, slices, fidx):
     """FIELD_FROM_BASE recomputed from `base` (race_rows.raceFeatures' own
     definitions), in place. Pure but for numpy."""
@@ -168,11 +289,12 @@ def fieldFromBase(X, base, slices, fidx):
 #  fitting
 # ------------------------------------------------------------------ #
 
-def runnerModel(seed=0):
+def runnerModel(seed=0, big=False):
     from sklearn.ensemble import HistGradientBoostingRegressor
     return HistGradientBoostingRegressor(
-        loss="squared_error", learning_rate=0.05, max_iter=4000, max_leaf_nodes=63,
-        min_samples_leaf=400, l2_regularization=1.0, early_stopping=True,
+        loss="squared_error", learning_rate=0.05, max_iter=8000 if big else 4000,
+        max_leaf_nodes=255 if big else 63, min_samples_leaf=200 if big else 400,
+        l2_regularization=1.0, early_stopping=True,
         validation_fraction=0.1, n_iter_no_change=40, random_state=seed)
 
 
@@ -254,6 +376,10 @@ def main():
     ap.add_argument("--importance", action="store_true",
                     help="permutation importance of the runner inputs (a few minutes)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--no-own", dest="own", action="store_false",
+                    help="leave out each runner's own record against the ratings")
+    ap.add_argument("--big", action="store_true",
+                    help="bigger trees (255 leaves, up to 8,000 rounds): slower, more capacity")
     ap.add_argument("--no-ratings", action="store_true",
                     help="a TEST: the same trees with nothing the engine made, from raw "
                          "times on a 5K by Riegel (RATING_INPUTS); the ratings print beside")
@@ -285,6 +411,18 @@ def main():
         # ★ THE RAW TIMES ARE FOR THE TEST ONLY: the served model is ratings-based
         excluded = {f for f in feats if f.startswith("raw_")}
         labels = ("ratings", "model")
+    own_pack = None
+    if a.own:
+        t1 = datetime.datetime.now()
+        champ = np.nan_to_num(X[:, fidx["meet_type"]], nan=0.0) >= 4
+        own, states = ownHistory(z["pid"][order], day, np.clip(y - base, -CLIP, CLIP), champ)
+        X = np.hstack([X, own])
+        feats = feats + list(OWN_FEATURES)
+        fidx = {f: i for i, f in enumerate(feats)}
+        own_pack = ownPack(states, int(day.max()) - 730)
+        del states
+        print(f"  each runner's own record: {len(own_pack['pid']):,} runners kept for the "
+              f"page ({datetime.datetime.now() - t1})")
     cut = datetime.date.fromisoformat(a.val_from).toordinal()
     val = day >= cut
     if not (~val).any() or not val.any():
@@ -304,7 +442,7 @@ def main():
     X_all, X = X, X[:, used]
     feats_all, feats = feats, [f for f, u in zip(feats, used) if u]
     r = np.clip(y - base, -CLIP, CLIP)
-    rm = runnerModel(a.seed).fit(X[~val], r[~val])
+    rm = runnerModel(a.seed, a.big).fit(X[~val], r[~val])
     print(f"runner trees: {rm.n_iter_} rounds ({datetime.datetime.now() - t0})")
     Xv, yv, bv = X[val], y[val], base[val]
     XvA = X_all[val]                     # every input, for the report's bands
@@ -432,14 +570,23 @@ def main():
     def sigmas(mask_races):
         rows = np.repeat(mask_races, [e - s for s, e in sl])
         out = {}
+        # ★ BY QUANTILE, NOT BY MAD (1.4, owner's run: 66% inside a band
+        #   claiming 68, 86% inside one claiming 90 -- the tails are heavier
+        #   than a normal's). The 68.27th percentile of |miss| IS the 1-sigma
+        #   half-width that covers 68%; _z90 is the multiple of the time
+        #   sigma that covers 90%, measured rather than assumed 1.645.
         for band in BANDS:
             m = rows & (bands == band)
             if m.sum() >= 200:
-                out[band] = 1.4826 * float(np.median(np.abs(em[m])))
+                out[band] = float(np.percentile(np.abs(em[m]), 68.27))
         allm = em[rows]
-        out["_all"] = 1.4826 * float(np.median(np.abs(allm))) if len(allm) else 0.03
+        out["_all"] = float(np.percentile(np.abs(allm), 68.27)) if len(allm) else 0.03
         lv = race_miss["trees + " + labels[1]][mask_races]
-        out["_level"] = 1.4826 * float(np.median(np.abs(lv - np.median(lv)))) if len(lv) else 0.03
+        out["_level"] = (float(np.percentile(np.abs(lv - np.median(lv)), 68.27))
+                         if len(lv) else 0.03)
+        ps = np.array([out.get(b, out["_all"]) for b in bands[rows]])
+        ts = np.sqrt(ps ** 2 + out["_level"] ** 2)
+        out["_z90"] = float(np.percentile(np.abs((tot_m - yav)[rows]) / ts, 90)) if rows.any() else 1.645
         return out
     even = np.array([vidx[k] % 2 == 0 for k in range(len(sl))])
     sg = sigmas(even)
@@ -450,10 +597,12 @@ def main():
     lines.append("\nRANGES (fitted on half the races, checked on the other half; honest = "
                  "68 / 90)")
     lines.append(f"  place, inside +-1 sigma: {100 * (np.abs(em[rows_odd]) <= place_sig[rows_odd]).mean():.0f}%"
-                 f"   time, inside +-1 / +-1.645 sigma: "
+                 f"   time, inside +-1 sigma / the 90% band: "
                  f"{100 * (np.abs(err_abs[rows_odd]) <= time_sig[rows_odd]).mean():.0f}% / "
-                 f"{100 * (np.abs(err_abs[rows_odd]) <= 1.645 * time_sig[rows_odd]).mean():.0f}%")
-    lines.append("  sigmas: " + ", ".join(f"{k} {100 * v:.2f}%" for k, v in sg.items()))
+                 f"{100 * (np.abs(err_abs[rows_odd]) <= sg['_z90'] * time_sig[rows_odd]).mean():.0f}% "
+                 f"(the 90% band is {sg['_z90']:.2f} sigma)")
+    lines.append("  sigmas: " + ", ".join(f"{k} {100 * v:.2f}%" for k, v in sg.items()
+                                          if k != "_z90"))
     sig_all = sigmas(np.ones(len(sl), dtype=bool))
     print("\n".join(lines))
 
@@ -471,7 +620,7 @@ def main():
     if a.out:
         with open(a.out, "wb") as fh:
             pickle.dump({"runner": rm, "level": lm, "features": feats,
-                         "sigmas": sig_all,
+                         "sigmas": sig_all, "own": own_pack,
                          "all_features": feats_all,
                          "level_features": [f for f, u in zip(lf, lused) if u],
                          "clip": CLIP,

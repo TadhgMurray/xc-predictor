@@ -698,6 +698,7 @@ def build(conn, a):
     y, base, race_ix, day_ix, pid_col = array("f"), array("f"), array("i"), array("i"), array("q")
     y_abs, base_abs = array("f"), array("f")
     base_raw, base_raw_abs = array("f"), array("f")
+    school_col = array("I")       # crc32 of the school, for team-level history
     src_col = array("b")
     keys = sorted(races)
     # ! THE PRODUCTION VENUE FLAG, so a course with no cell converts as the
@@ -725,6 +726,7 @@ def build(conn, a):
             y_abs.append(r["y_abs"])
             base_abs.append(r["base_abs"])
             base_raw.append(r["base_raw"])
+            school_col.append(zlib.crc32((r.get("school") or "").encode()) if r.get("school") else 0)
             base_raw_abs.append(r["base_raw_abs"])
             race_ix.append(ix)
             day_ix.append(day.toordinal())
@@ -733,7 +735,7 @@ def build(conn, a):
     print(f"  {n_page:,} of {len(keys):,} races on the page's clock; the rest on the "
           "5K-equivalent", flush=True)
     return (cols, y, base, y_abs, base_abs, race_ix, day_ix, pid_col, src_col, keys,
-            names, dists, base_raw, base_raw_abs)
+            names, dists, base_raw, base_raw_abs, school_col)
 
 
 def main():
@@ -761,7 +763,7 @@ def main():
     t0 = datetime.datetime.now()
     with getConn() as conn:
         (cols, y, base, y_abs, base_abs, race_ix, day_ix, pid, src, keys,
-         names, dists, base_raw, base_raw_abs) = build(conn, a)
+         names, dists, base_raw, base_raw_abs, school) = build(conn, a)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     np.savez_compressed(
         a.out, X=np.stack([np.frombuffer(cols[k], dtype=np.float32) for k in FEATURES], axis=1),
@@ -770,6 +772,7 @@ def main():
         base_abs=np.frombuffer(base_abs, dtype=np.float32),
         base_raw=np.frombuffer(base_raw, dtype=np.float32),
         base_raw_abs=np.frombuffer(base_raw_abs, dtype=np.float32),
+        school=np.frombuffer(school, dtype=np.uint32),
         race=np.frombuffer(race_ix, dtype=np.int32), day=np.frombuffer(day_ix, dtype=np.int32),
         pid=np.frombuffer(pid, dtype=np.int64), tfrrs=np.frombuffer(src, dtype=np.int8),
         features=np.array(FEATURES), race_keys=np.array([repr(k) for k in keys]),

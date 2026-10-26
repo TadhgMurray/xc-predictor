@@ -97,3 +97,23 @@ def test_no_ratings_needs_raw_times_and_is_never_saved(tmp_path):
         got = subprocess.run([sys.executable, os.path.join(_ROOT, "model", "race_trees.py"),
                               "--rows", str(path)] + extra, capture_output=True, text=True)
         assert got.returncode != 0
+
+
+def test_own_record_reads_only_earlier_days_and_carries_to_the_page():
+    pid = np.array([7, 7, 7, 8, 7])
+    day = np.array([100, 110, 110, 105, 130])          # two races of 7's on day 110
+    resid = np.array([0.02, 0.04, -0.01, 0.5, 0.0])
+    champ = np.array([False, True, False, False, False])
+    f, states = T.ownHistory(pid, day, resid, champ)
+    fi = {k: i for i, k in enumerate(T.OWN_FEATURES)}
+    assert f[0, fi["own_n"]] == 0                       # the first race knows nothing
+    assert f[1, fi["own_n"]] == 1 and f[2, fi["own_n"]] == 1     # not each other's
+    assert f[1, fi["own_last"]] == pytest.approx(0.02)
+    assert f[4, fi["own_n"]] == 3 and f[4, fi["own_champ_n"]] == 1
+    assert f[4, fi["own_mean"]] == pytest.approx(0.05 / (3 + T.OWN_SHRINK))
+    assert f[3, fi["own_n"]] == 0                       # 8's own 0.5 never leaks to 7
+    pack = T.ownPack(states, 0)
+    idx = {int(p): i for i, p in enumerate(pack["pid"])}
+    again = T.ownFeatures(T.ownState(pack, idx, 7), 130)
+    assert again[fi["own_n"]] == 4 and again[fi["own_last"]] == pytest.approx(0.0)
+    assert T.ownState(pack, idx, 99) is None
