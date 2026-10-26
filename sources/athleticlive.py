@@ -677,16 +677,24 @@ def _resolveIds(rows, athletes):
             people[(k, str(g or "").upper(), sch)][pid if pid is not None else aid].add(aid)
     out = {}
     for a in athletes:
-        k = personKeyParts(a.get("FirstName"), a.get("LastName"), keep_suffix=True)
-        if not k:
-            continue
-        hits = {}
-        for sch in {str(x).strip().lower() for x in (a.get("SchoolName"), a.get("SchoolFull")) if x}:
-            for pid, ids in people.get((k, str(a.get("Gender") or "").upper(), sch), {}).items():
-                hits.setdefault(pid, set()).update(ids)
-        if len(hits) == 1:                       # one person: their own id, else their newest
-            pid, ids = next(iter(hits.items()))
-            out[a["AthleteID"]] = pid if pid in ids else max(ids)
+        schools = {str(x).strip().lower() for x in (a.get("SchoolName"), a.get("SchoolFull")) if x}
+        g = str(a.get("Gender") or "").upper()
+        # the name as given; failing that, first and last the other way round
+        # ('Avila Ethan' / 'Ethan Avila', the server's check, 2026-10-26)
+        for first, last in ((a.get("FirstName"), a.get("LastName")),
+                            (a.get("LastName"), a.get("FirstName"))):
+            k = personKeyParts(first, last, keep_suffix=True)
+            if not k:
+                continue
+            hits = {}
+            for sch in schools:
+                for pid, ids in people.get((k, g, sch), {}).items():
+                    hits.setdefault(pid, set()).update(ids)
+            if hits:
+                if len(hits) == 1:               # one person: their own id, else their newest
+                    pid, ids = next(iter(hits.items()))
+                    out[a["AthleteID"]] = pid if pid in ids else max(ids)
+                break                            # two people is no answer, either way round
     return out
 
 

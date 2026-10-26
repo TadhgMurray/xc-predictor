@@ -436,3 +436,16 @@ def test_high_jump_marks_lose_their_letter():
                               "a": _ath(5, "R", "S", "10", "Female")}]}}
     rows, _a, _s = A.resultRows(doc, hj)
     assert rows[0]["Result"] == "4-10.00"
+
+
+def test_a_name_the_other_way_round_still_finds_its_person():
+    ours = [(27242759, 27242759, "Avila", "Ethan", "M", "cedar"),
+            (30000002, 30000002, "Thomas", "James", "M", "cedar"),
+            (30000003, 30000003, "James", "Thomas", "M", "cedar")]
+    alive = [{"AthleteID": 1, "FirstName": "Ethan", "LastName": "Avila", "Gender": "M",
+              "SchoolName": "Cedar"},
+             # the name as given wins: James Thomas is 30000003, never the swap
+             {"AthleteID": 2, "FirstName": "James", "LastName": "Thomas", "Gender": "M",
+              "SchoolName": "Cedar"}]
+    assert A._resolveIds(ours, alive) == {1: 27242759, 2: 30000003}
+
