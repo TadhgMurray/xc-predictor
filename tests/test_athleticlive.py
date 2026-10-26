@@ -385,3 +385,54 @@ def test_unlanded_lines_survive_a_slot_with_no_event_name():
     p = A.plan(1, A.parseMeet(65672, MEET), evs, {2402879: MILE}, slots, None)
     lines = A._unlandedLines(1, p, slots)
     assert lines and any("ambiguous division" in l or "no anet slot" in l for l in lines)
+
+
+def test_an_id_we_do_not_have_becomes_ours_when_one_person_fits():
+    """AthleticLIVE kept 'Caleb Schulz' 19402627; athletic.net merged him
+    into 30054942. One person at his school with his name and gender: ours."""
+    ours = [
+        (30054942, 30054942, "Caleb", "Schulz", "M", "oprf"),
+        (28000001, 30054942, "Caleb", "Schulz", "M", "oprf"),       # an older id, same person
+        (30000002, 30000002, "John", "Smith", "M", "oprf"),
+        (30000003, 30000003, "John", "Smith", "M", "oprf"),          # two people: no answer
+        (30000004, 30000004, "John", "Smith Jr", "M", "oprf"),
+        (30000005, 30000005, "Ann", "Lee", "F", "oprf"),
+    ]
+    alive = [
+        {"AthleteID": 19402627, "FirstName": "Caleb", "LastName": "Schulz", "Gender": "M",
+         "SchoolName": "OPRF", "SchoolFull": "Oak Park River Forest"},
+        {"AthleteID": 1, "FirstName": "John", "LastName": "Smith", "Gender": "M", "SchoolName": "OPRF"},
+        {"AthleteID": 2, "FirstName": "Ann", "LastName": "Lee", "Gender": "M", "SchoolName": "OPRF"},
+        {"AthleteID": 3, "FirstName": "Ann", "LastName": "Lee", "Gender": "F", "SchoolName": "Elsewhere"},
+        {"AthleteID": 4, "FirstName": "John", "LastName": "Smith Jr.", "Gender": "M", "SchoolName": "oprf "},
+    ]
+    assert A._resolveIds(ours, alive) == {19402627: 30054942, 4: 30000004}
+
+
+def test_apply_ids_moves_rows_and_merges_athletes():
+    p = {"results_to_save": [({"AthleteID": 1},), ({"AthleteID": 2},), ({"AthleteID": 1},)],
+         "athletes": [{"AthleteID": 1, "SchoolName": "X"}, {"AthleteID": 9, "SchoolName": "X"}]}
+    assert A.applyIds(p, {1: 9}) == 2
+    assert [t[0]["AthleteID"] for t in p["results_to_save"]] == [9, 2, 9]
+    assert p["athletes"] == [{"AthleteID": 9, "SchoolName": "X"}]
+
+
+def test_divisions_a_year_apart_still_meet():
+    assert A.divWords("13-15 Cadet") == A.divWords("13-14 Cadet") == {"cadet"}
+    evs = [dict(e, division="13-15 Cadet") for e in A.parseSummary(SUMMARY) if e["id"] == 2402879]
+    slots = [Slot(52, 1, "1600m", "m", "11-12 Minor"), Slot(52, 2, "1600m", "m", "13-14 Cadet"),
+             Slot(52, 3, "1600m", "m", "9-10 Novice")]
+    got, why = A.matchSlots(evs, slots)
+    assert got[2402879].div_id == 2 and not why
+    # two alive divisions with one word set onto one slot: neither
+    two = evs + [dict(evs[0], id=5, division="15-16 Cadet")]
+    got, why = A.matchSlots(two, slots)
+    assert not got
+
+
+def test_high_jump_marks_lose_their_letter():
+    hj = dict(A.parseSummary(SUMMARY)[2], ab="HJ", field=True)
+    doc = {"_source": {"r": [{"i": 1, "p": "1", "m": "J4-10.00", "im": 1, "hn": 1,
+                              "a": _ath(5, "R", "S", "10", "Female")}]}}
+    rows, _a, _s = A.resultRows(doc, hj)
+    assert rows[0]["Result"] == "4-10.00"

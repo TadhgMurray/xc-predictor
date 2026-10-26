@@ -66,6 +66,10 @@
 #   athlete_id  the runner's athletic.net id (`a.ani`); person_id seeds from it
 #               exactly as saveAthletesBulk / saveResultsTFBulk seed anet's.
 #               A runner AthleticLIVE gives no anet id is not landed (counted).
+#               ⚠ 11% of AthleticLIVE's ids are ones athletic.net has since
+#               merged away (the server's check, 2026-10-26): an id we do not
+#               have is swapped for ours when one person at the runner's
+#               school has their name and gender (resolveIds).
 #
 # ! TRACK ONLY FOR NOW. XC meets are in meet_list (`o` = 'xc') but their
 #   event_summary is empty; where an XC race's results live is still to find.
@@ -245,14 +249,22 @@ def canonDiv(name):
     return " ".join(str(name or "").lower().replace("-", " ").split())
 
 
+def divWords(name):
+    """A division's words without its numbers: '13-15 Cadet' and '13-14
+    Cadet' are both {'cadet'} (the server's check, 2026-10-26: one meet's
+    age groups were labelled a year apart on the two sites)."""
+    return frozenset(w for w in re.findall(r"[a-z]+", canonDiv(name)))
+
+
 def matchSlots(events, slots):
     """AthleticLIVE events onto athletic.net's slots for the same meet.
     -> ({alive event id: Slot}, {alive event id: reason}).
 
     A slot is (event, division). An event takes the slot of its event and
-    gender whose division has its name; failing a name match, the ONE slot of
-    its event and gender -- unless two AthleticLIVE divisions would share it,
-    which is two races in one slot, and neither is landed."""
+    gender whose division has its name; failing that, the one whose division
+    has its WORDS (numbers aside); failing that, the ONE slot of its event
+    and gender -- the last two unless two AthleticLIVE divisions would share
+    it, which is two races in one slot, and neither is landed."""
     by = defaultdict(list)
     for s in slots:
         by[canonShort(s.event_short)].append(s)
@@ -264,8 +276,12 @@ def matchSlots(events, slots):
             why[ev["id"]] = "no anet slot"
             continue
         named = [s for s in cands if canonDiv(s.division) == canonDiv(ev["division"])]
+        words = divWords(ev["division"])
+        worded = [s for s in cands if words and divWords(s.division) == words]
         if len(named) == 1:
             exact[ev["id"]] = named[0]
+        elif len(worded) == 1:
+            loose[ev["id"]] = worded[0]          # '13-15 Cadet' / '13-14 Cadet'
         elif len(cands) == 1:
             loose[ev["id"]] = cands[0]
         else:
@@ -357,6 +373,10 @@ def resultRows(doc, ev):
             skipped["malformed"] += 1
             continue
         mark = str(x.get("m") or "").strip()
+        if ev["field"]:
+            # ! 'J4-10.00': AthleticLIVE's high jump marks carry a letter
+            #   athletic.net's do not (the server's check, 2026-10-26)
+            mark = re.sub(r"^[A-Za-z]+(?=\d)", "", mark)
         status = normalise(mark)
         ms = _int(x.get("im"))
         if ev["field"]:
@@ -395,7 +415,7 @@ def resultRows(doc, ev):
                       "Gender": {"male": "M", "female": "F"}.get(str(a.get("g") or "").lower())})
             athletes.append({"AthleteID": ani, "FirstName": a.get("fn"),
                              "LastName": a.get("l"), "Gender": r["Gender"],
-                             "SchoolName": r["TeamName"]})
+                             "SchoolName": r["TeamName"], "SchoolFull": team.get("f")})
         results.append(r)
     return results, athletes, skipped
 
@@ -577,8 +597,10 @@ def anetSlots(cur, meet_id):
                      AND div_id IS NOT NULL""", (meet_id,))
     out = []
     for eid, did, short, division in cur.fetchall():
-        g = (EVENT_ID_TO_SHORT.get(eid) or learned.get(eid) or (None, None))[1]
-        out.append(Slot(eid, did, short, g, division))
+        cat_short, g = EVENT_ID_TO_SHORT.get(eid) or learned.get(eid) or (None, None)
+        # ! A SLOT CAN HAVE NO NAME: the 60 m rows (event 42) were saved with
+        #   event_short NULL, so nothing matched them (the server's check)
+        out.append(Slot(eid, did, short or cat_short, g, division))
     return out
 
 
@@ -641,6 +663,82 @@ def buildEventGender(cur):
                     (eid, short, eventGender(n_m, n_f), n_m, n_f))
     _LEARNED = None
     return rows
+
+
+def _resolveIds(rows, athletes):
+    """Pure half of resolveIds. rows: our athletes at those schools,
+    (athlete_id, person_id, first, last, gender, school lowercased).
+    -> {AthleticLIVE id: our athlete_id}."""
+    from person_name import personKeyParts
+    people = defaultdict(lambda: defaultdict(set))   # (key, g, school) -> person -> ids
+    for aid, pid, fn, ln, g, sch in rows:
+        k = personKeyParts(fn, ln, keep_suffix=True)
+        if k:
+            people[(k, str(g or "").upper(), sch)][pid if pid is not None else aid].add(aid)
+    out = {}
+    for a in athletes:
+        k = personKeyParts(a.get("FirstName"), a.get("LastName"), keep_suffix=True)
+        if not k:
+            continue
+        hits = {}
+        for sch in {str(x).strip().lower() for x in (a.get("SchoolName"), a.get("SchoolFull")) if x}:
+            for pid, ids in people.get((k, str(a.get("Gender") or "").upper(), sch), {}).items():
+                hits.setdefault(pid, set()).update(ids)
+        if len(hits) == 1:                       # one person: their own id, else their newest
+            pid, ids = next(iter(hits.items()))
+            out[a["AthleteID"]] = pid if pid in ids else max(ids)
+    return out
+
+
+def resolveIds(cur, athletes):
+    """{AthleticLIVE's athlete id: ours} for the runners whose id we do not
+    have, when exactly one PERSON at their school has their name and gender.
+
+    ★ WHY (the server's check, 2026-10-26: 729 of 6,795 runners, 11%, were
+      the same race, mark and place under an athletic.net id we have never
+      seen -- 'Caleb Schulz' 19402627 on AthleticLIVE, 30054942 on
+      athletic.net). AthleticLIVE keeps the id a runner was entered under;
+      athletic.net later merges profiles and moves the results. Landed as
+      is, every one of those starts a second person.
+    ! The name key keeps Jr / Sr / II (owner, 2026-10-26: a father and a son
+      are never one person on the name alone), and two people at one school
+      with one name is no answer: the id stays AthleticLIVE's."""
+    ids = sorted({a["AthleteID"] for a in athletes if a.get("AthleteID")})
+    if not ids:
+        return {}
+    cur.execute("SELECT athlete_id FROM athletes WHERE athlete_id = ANY(%s)", (ids,))
+    have = {r[0] for r in cur.fetchall()}
+    unknown = [a for a in athletes if a.get("AthleteID") and a["AthleteID"] not in have]
+    schools = sorted({str(x).strip().lower() for a in unknown
+                      for x in (a.get("SchoolName"), a.get("SchoolFull")) if x})
+    if not schools:
+        return {}
+    cur.execute("""SELECT athlete_id, person_id, first_name, last_name, gender,
+                          lower(btrim(school))
+                   FROM athletes WHERE lower(btrim(school)) = ANY(%s)""", (schools,))
+    return _resolveIds(cur.fetchall(), unknown)
+
+
+def applyIds(p, remap):
+    """Put our ids on a plan's rows and athletes. -> how many rows moved."""
+    if not remap:
+        return 0
+    n = 0
+    for t in p["results_to_save"]:
+        r = t[0]
+        new = remap.get(r.get("AthleteID"))
+        if new is not None:
+            r["AthleteID"] = new
+            n += 1
+    seen, keep = set(), []
+    for a in p["athletes"]:
+        a["AthleteID"] = remap.get(a["AthleteID"], a["AthleteID"])
+        key = (a["AthleteID"], a.get("SchoolName"))
+        if key not in seen:
+            seen.add(key)
+            keep.append(a)
+    p["athletes"] = keep
+    return n
 
 
 def anetHasResults(cur, meet_id):
@@ -775,6 +873,8 @@ async def landForScrape(meet_id, meet_info, events_dict, event_divs, label="[ali
     p = plan(meet_id, alive, events, blobs, slots, meet_info)
     if not p["results_to_save"]:
         return None
+    with getConn() as conn:
+        applyIds(p, resolveIds(conn.cursor(), p["athletes"]))
     covered = {(t[3], t[2]) for t in p["results_to_save"]}       # (event_id, div_id)
     from scrape_results import _saveTFMeet
     from event_parse import distanceFromEventShort
@@ -903,6 +1003,7 @@ def cmdLand(a):
                 continue
             p = plan(meet_id, alive, events, blobs, anetSlots(cur, meet_id),
                      metaFromDb(cur, meet_id), catalogue=_catalogue(cur))
+            total["rows given our id"] += applyIds(p, resolveIds(cur, p["athletes"]))
             _report(meet_id, alive, p)
             total["results"] += len(p["results_to_save"])
             total["meets"] += 1
@@ -1122,7 +1223,13 @@ def cmdCheck(a):
                                       btrim(concat_ws(' ', first_name, last_name))
                                FROM athletes WHERE athlete_id = ANY(%s)""", (sorted(ids),))
                 known = {a: (pid, name) for a, pid, name in cur.fetchall()}
+                before, _w = compareMeet(have, p["results_to_save"], known)
+                moved = applyIds(p, resolveIds(cur, p["athletes"]))
                 res, why = compareMeet(have, p["results_to_save"], known)
+                res["rows given our id"] = moved
+                res["other id before ours"] = sum(v for k, v in before.items()
+                                                  if k.startswith("same race+mark"))
+                res["same runner+race before ours"] = before["same runner+race"]
                 agg.update(res)
                 agg["meets"] += 1
                 for kind, ex in why.items():
@@ -1133,11 +1240,13 @@ def cmdCheck(a):
                 print(f"  meet {meet_id} ({alive['meet_date']}, {str(alive['name'])[:34]}): "
                       f"anet {res['anet rows']}, alive {res['alive rows']}; "
                       f"{res['same runner+race']} same runner+race ({res['same mark']} same mark); "
-                      f"{other} same race+mark under another id; "
+                      f"{other} same race+mark under another id "
+                      f"(was {res['other id before ours']}; {moved} rows given our id); "
                       f"{res['anet: race not landed']} in races not landed, "
                       f"{res['anet: runner in another race']} in another race, "
                       f"{res['anet: runner not in alive']} absent"
                       + (f"; {note}" if note else "")
+                      + (f"; rows left out {dict(p['left'])}" if p["left"] else "")
                       + (f"; events not landed {dict(Counter(p['unmatched'].values()))}"
                          if p["unmatched"] else ""), flush=True)
             except Exception as exc:                        # noqa: BLE001
