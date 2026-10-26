@@ -1302,14 +1302,14 @@ _FIELD_BUILD = f"""
         --   entrants for its mode to mean something, OR it has NONE, which
         --   is itself the evidence.
         --
-        -- ⚠ NO FIELD-SIZE FLOOR ON THE SECOND ARM, AS SPECIFIED. A
-        --   one-entrant ungraded event therefore votes 'pro' on a field of
-        --   one. If reportUngraded() below shows that is common, the floor
-        --   is one clause:
-        --       OR (sum(n_graded) = 0 AND sum(n) >= {MIN_FIELD_GRADED})
+        -- ★ AND THE SAME FLOOR ON THE SECOND ARM (pooling review P5,
+        --   2026-10-26): a one-entrant ungraded event voted 'pro' on a
+        --   field of one. An ungraded field now needs MIN_FIELD_GRADED
+        --   entrants to say "not a school race", as a graded one does to
+        --   name its level.
         HAVING COALESCE(sum(n) FILTER (WHERE lvl IS NOT NULL), 0)
                    >= {MIN_FIELD_GRADED}
-            OR sum(n_graded) = 0;
+            OR (sum(n_graded) = 0 AND sum(n) >= {MIN_FIELD_GRADED});
     ANALYZE fld_event_level;
 """
 
@@ -2937,10 +2937,16 @@ def resolve(cur, audit=False):
         SELECT person_id, acad FROM gradekind
         WHERE  n_num > 0 AND n_word > n_num
     """)
+    #  ! A PRO VERDICT STANDS (pooling review P5, 2026-10-26). Rules 3, 4 and
+    #    the age floor run before this one; a season they already called
+    #    professional (stale_grade, elite_field, post_collegiate, adult_club,
+    #    no_grades) is a claim about eligibility, not a guess from its grades,
+    #    and the mixed grades are exactly what an adult with a stale profile
+    #    looks like. Nuking it left the row with no pool at all.
     n_nuked = 0
     for pid, ay in cur.fetchall():
         key = (int(pid), int(ay))
-        if key in acad:
+        if key in acad and acad[key].get("level") != "pro":
             acad[key] = {"grade": None, "level": None,
                          "method": "contradicted"}
             n_nuked += 1

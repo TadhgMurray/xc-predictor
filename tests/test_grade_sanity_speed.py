@@ -92,7 +92,8 @@ OLD_FIELD_SQL = f"""
         GROUP  BY 1, 2, 3, 4
         HAVING count(*) FILTER (WHERE gradeLevel(a.grade) IS NOT NULL)
                    >= {GS.MIN_FIELD_GRADED}
-            OR count(*) FILTER (WHERE a.grade IS NOT NULL) = 0
+            OR (count(*) FILTER (WHERE a.grade IS NOT NULL) = 0
+                AND count(*) >= {GS.MIN_FIELD_GRADED})
     )
     SELECT DISTINCT ON (n.person_id, n.acad)
            n.person_id, n.acad, e.level
@@ -488,6 +489,10 @@ def test_rule4_ties_and_ungraded_events(cur):
     for pid, g in ((13, "4"), (14, "5"), (15, "9"), (16, "11")):
         rows.append((pid, 2024, g, g, 5, 1, "anet", -1, 500 + pid))
     # event 3: nobody graded -> 'pro'; event 4: graded but no level -> nothing
+    # (an ungraded field needs MIN_FIELD_GRADED entrants to say 'pro', P5;
+    #  event 6 is one ungraded runner alone, which says nothing)
+    rows += [(pid, 2024, None, None, 3, 1, "anet", -1, 300 + pid) for pid in (17, 18, 19)]
+    rows += [(20, 2024, None, None, 6, 1, "anet", -1, 600)]
     rows += [(11, 2024, None, None, 3, 1, "anet", -1, 300),
              (12, 2024, "XYZ", "XYZ", 4, 1, "anet", -1, 400),
              (12, 2024, None, None, 4, 1, "anet", -1, 401)]
@@ -500,7 +505,7 @@ def test_rule4_ties_and_ungraded_events(cur):
     levels = {p: lv for p, _a, lv in want}
     assert levels[1] == "hs" and levels[3] == "hs"
     assert levels[5] == "college" and levels[8] == "college"
-    assert levels[11] == "pro" and 12 not in levels
+    assert levels[11] == "pro" and 12 not in levels and 20 not in levels
     assert levels[13] == "hs" and levels[15] == "hs"
 
 
