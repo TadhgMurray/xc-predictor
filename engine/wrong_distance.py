@@ -623,7 +623,16 @@ def build(cur, work_mem="512MB"):
     _ex(cur, _DIV_SQL, None, "divisions (meets + tfrrs blob)", t0)
     cur.execute("CREATE INDEX ON wd_div (source, div_id, jm)")
     cur.execute("ANALYZE wd_div")
+    # ★ ONE HASH JOIN, NOT 34M INDEX PROBES (owner's server, 2026-10-26: this
+    #   statement ran 1 h 41 m and was killed). wd_div fits in work_mem; a
+    #   nested loop through its index, one probe per result row, is what a
+    #   statement this slow looks like. Temp tables get no parallel workers,
+    #   so the plan is all there is to choose.
+    cur.execute("SET LOCAL enable_nestloop = off")
+    cur.execute("SET LOCAL enable_mergejoin = off")
     _ex(cur, _ROW_SQL, {"k": K}, "result rows at their listed distance", t0)
+    cur.execute("SET LOCAL enable_nestloop = on")
+    cur.execute("SET LOCAL enable_mergejoin = on")
     cur.execute("ANALYZE wd_row")
     _ex(cur, _REF_SQL.format(name="wd_ref1", excl=""), {"n": REF_MIN + 1},
         "runner-seasons, pass 1", t0)
