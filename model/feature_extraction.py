@@ -1498,7 +1498,6 @@ def buildPool(row: dict) -> float:
                        fixed_level=row.get("fixed_level"),
         is_pro=bool(row.get("is_pro")),
         college_first=row.get("college_first"),
-        upperclass_first=row.get("upperclass_first"),
         race_date=_asDate(row.get("date")),
         merge=True,
     )

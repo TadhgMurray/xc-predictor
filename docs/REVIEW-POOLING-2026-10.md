@@ -457,3 +457,29 @@ These are proposals, not fixes. Each one removes a number or a path.
    and `fill` sections.
 2. Approve or refuse P0–P11, one by one. P8's bullets are separate items
    too.
+
+## 7. Owner's decisions and what was built (2026-10-26)
+
+From the diagnostic (`logs/diag_pooling_before.log` on the server, 1-in-10
+sample): the largest real kinds were ms rated hs (54k rows, 28k athletes),
+a level going back down (74k / 10.7k), college 5+ seasons on (47k / 4.2k),
+college rated hs (37k / 1.8k), club on a pro team in a school pool (18k);
+gender mismatches 0, fill disagreement 0.6%, tfrrs_hs not yet present.
+
+| item | decision | built |
+|---|---|---|
+| P0 | yes | `link_tfrrs_hs.fixHsGrades`: class words to grades 9-12 at state-site meets, in pass 2b |
+| P1 rest | later (the fill mis-pools 0.6%) | -- |
+| P2 | yes | `03a_team_pool` every run; the level graph and season levels already were (engine branch) |
+| P3 | yes | `loadGraphLevels` reads the `S:` nodes, prefix off |
+| P4 | yes, **but a tie goes to the HIGHER level** (owner) | both rule-4 tie-breaks by level rank, highest first; races counted once |
+| P5 | yes | 5c keeps a pro verdict; an ungraded field needs 4 entrants to say pro |
+| P6 | not now (0 mismatches) | -- |
+| P7 | yes | the backfill reads every season level the engine does |
+| P8 | yes, not the club-rule merge | `NO_POOL_VERDICTS` exported (app imports it); `upperclass_first` out of the signature |
+| P10 | no (about 1,100 rows) | -- |
+| P11 | yes | a rated row with no pool stamp is not ranked |
+
+Still to look at, with examples first: the "level goes back down" seasons
+(likely two people merged) and "college 5+ seasons on" (some are real
+sixth-year collegians).

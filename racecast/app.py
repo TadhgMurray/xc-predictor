@@ -3501,11 +3501,9 @@ def _season_state(races, school=None):
     return c.most_common(1)[0][0]
 
 
-# The verdicts that mean grade_sanity looked and could not place the season.
-# ⚠ MUST MATCH pool_resolve.resolvePool's refusal list -- these four make it
-#   return no pool, which is what drops the season from every board. They are
-#   inlined there rather than named, so this copy is the thing to keep in step.
-_NO_POOL_VERDICTS = ("no_evidence", "contradicted", "thin_field", "lone_word")
+# The verdicts that mean grade_sanity looked and could not place the season:
+# pool_resolve.resolvePool's own refusal list, imported, not copied.
+from pool_resolve import NO_POOL_VERDICTS as _NO_POOL_VERDICTS             # noqa: E402
 
 
 def _attach_season_verdicts(seasons, verdicts):

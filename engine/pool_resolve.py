@@ -36,7 +36,8 @@ WHY THIS EXISTS
       is_pro            pro_athlete_season        (person_id, season)
       pro_ability       pro_ability_season        (person_id, season) -> bool
       college_first     college_first_season      (person_id) -> date (veto)
-      upperclass_first  upperclass_first_season   accepted and ignored
+      (upperclass_first: dropped from the signature 2026-10-26, P8 -- it was
+                         accepted and ignored)
       per row, from the team (the engine only -- speed_ratings.packResults):
       team_level        anet_team.level / tfrrs slug   (teamLevelOf)
       no_team           team_id == 0
@@ -745,10 +746,17 @@ def _gradeLevel(grade):
         return None
 
 
+# The verdicts that mean grade_sanity looked and could not place the season:
+# resolvePool returns no pool for them (below), which drops the season from
+# every board. One list, read by the site too (app._NO_POOL_VERDICTS) --
+# pooling review P8, 2026-10-26; app.py used to keep a copy in step by hand.
+NO_POOL_VERDICTS = ("no_evidence", "contradicted", "thin_field", "lone_word")
+
+
 def resolvePool(grade, gender, source, school, sport,
                 season_level=None, grade_untrusted=False, is_pro=False,
                 season=None,
-                college_first=None, upperclass_first=None,
+                college_first=None,
                 race_date=None, merge=False, poolfor=poolFor,
                 fixed_grade=None, fixed_level=None,
                 grade_verdict=None, person_id=None, team_level=None,
@@ -1174,8 +1182,7 @@ def resolvePool(grade, gender, source, school, sport,
     #   approved on 2026-09-16 land in exactly this case, so is_pro is
     #   decisive here as it is everywhere else.
     told = team_level in ("elem", "ms", "hs", "college")
-    if grade_verdict in ("no_evidence", "contradicted", "thin_field",
-                         "lone_word") and not above_hs and not told \
+    if grade_verdict in NO_POOL_VERDICTS and not above_hs and not told \
             and not is_pro:
         return None
 
@@ -1326,9 +1333,10 @@ def resolvePool(grade, gender, source, school, sport,
         #  ★ EXCEPT college_first, WHICH IS READ AGAIN -- AS A VETO, AT THE
         #    TOP (2026-09-29). It can only refuse a college verdict for a
         #    season before it, never promote one after it, so neither case
-        #    above can recur through it.
-        _ = (upperclass_first,)
+        #    above can recur through it. (upperclass_first, the last of
+        #    them, left the signature on 2026-10-26.)
         # ============================================================ #
+        pass
 
     # merge=True drops the sport from the athlete key, so one person's XC and
     # TF results share a SINGLE ability unknown. Venues stay sport-namespaced
