@@ -477,3 +477,24 @@ def test_a_race_with_a_runner_nobody_can_name_waits():
     assert A.applyIds(p, {-9: 4242}) == 1 and A.holdUnknown(p) == 0
     assert any(t[0].get("AthleteID") == 4242 for t in p["results_to_save"])
 
+
+
+def test_a_short_form_of_the_first_name_finds_its_person():
+    ours = [(29638193, 29638193, "Matthew", "McKee", "M", "park"),
+            (22394131, 22394131, "Joseph", "Kurkowski", "M", "park"),
+            (22394132, 22394132, "Joey", "Kurkowski", "M", "park")]
+    alive = [{"AthleteID": 1, "FirstName": "Matt", "LastName": "McKee", "Gender": "M",
+              "SchoolName": "Park"},
+             # Joe could be Joseph or Joey: two people, no answer
+             {"AthleteID": 2, "FirstName": "Joe", "LastName": "Kurkowski", "Gender": "M",
+              "SchoolName": "Park"}]
+    assert A._resolveIds(ours, alive) == {1: 29638193}
+
+
+def test_threshold_table():
+    shares = [(20, 0), (20, 1), (10, 1), (5, 2)]
+    t = A.thresholdTable(shares)
+    assert t[1.0] == (1, 3, 0, 35)
+    assert t[0.95] == (2, 2, 1, 15)
+    assert t[0.9] == (3, 1, 2, 5)
+    assert t[0.8] == (3, 1, 2, 5)

@@ -679,6 +679,7 @@ def _resolveIds(rows, athletes):
     (athlete_id, person_id, first, last, gender, school lowercased).
     -> {AthleticLIVE id: our athlete_id}."""
     from person_name import personKeyParts
+    from link_uploads import nameVariants
     people = defaultdict(lambda: defaultdict(set))   # (key, g, school) -> person -> ids
     for aid, pid, fn, ln, g, sch in rows:
         k = personKeyParts(fn, ln, keep_suffix=True)
@@ -689,21 +690,23 @@ def _resolveIds(rows, athletes):
         schools = {str(x).strip().lower() for x in (a.get("SchoolName"), a.get("SchoolFull")) if x}
         g = str(a.get("Gender") or "").upper()
         # the name as given; failing that, first and last the other way round
-        # ('Avila Ethan' / 'Ethan Avila', the server's check, 2026-10-26)
-        for first, last in ((a.get("FirstName"), a.get("LastName")),
-                            (a.get("LastName"), a.get("FirstName"))):
-            k = personKeyParts(first, last, keep_suffix=True)
-            if not k:
-                continue
+        # ('Avila Ethan' / 'Ethan Avila'); failing that, a common short form
+        # of the first name (link_uploads.NICKNAMES: 'Matt McKee' / 'Matthew
+        # McKee', 'Joe Kurkowski' -- the server's check, 2026-10-26)
+        given = personKeyParts(a.get("FirstName"), a.get("LastName"), keep_suffix=True)
+        tries = [{given}, {personKeyParts(a.get("LastName"), a.get("FirstName"), keep_suffix=True)},
+                 nameVariants(given)]
+        for keys in tries:
             hits = {}
-            for sch in schools:
-                for pid, ids in people.get((k, g, sch), {}).items():
-                    hits.setdefault(pid, set()).update(ids)
+            for k in keys - {None}:
+                for sch in schools:
+                    for pid, ids in people.get((k, g, sch), {}).items():
+                        hits.setdefault(pid, set()).update(ids)
             if hits:
                 if len(hits) == 1:               # one person: their own id, else their newest
                     pid, ids = next(iter(hits.items()))
                     out[a["AthleteID"]] = pid if pid in ids else max(ids)
-                break                            # two people is no answer, either way round
+                break                            # two people is no answer, any way round
     return out
 
 
@@ -756,6 +759,40 @@ def applyIds(p, remap):
             keep.append(a)
     p["athletes"] = keep
     return n
+
+
+def identifiedShares(p):
+    """[(runners, unnamed)] per race, before holdUnknown: how much of each
+    race a threshold rule would land. Relays have no runner to name."""
+    per = defaultdict(lambda: [0, 0])
+    for t in p["results_to_save"]:
+        if t[5]:
+            continue
+        c = per[(t[2], t[3])]
+        c[0] += 1
+        c[1] += (t[0].get("AthleteID") or 0) < 0
+    return [tuple(v) for v in per.values()]
+
+
+THRESHOLDS = (1.0, 0.95, 0.9, 0.8)
+
+
+def thresholdTable(shares):
+    """What each threshold does to a set of races: {threshold: (races
+    landed, races held, runners left out of landed races, runners in held
+    races)}. Pure."""
+    out = {}
+    for th in THRESHOLDS:
+        landed = held = lost = waiting = 0
+        for n, unnamed in shares:
+            if n and (n - unnamed) / n >= th:
+                landed += 1
+                lost += unnamed
+            else:
+                held += 1
+                waiting += n
+        out[th] = (landed, held, lost, waiting)
+    return out
 
 
 def holdUnknown(p):
@@ -1246,6 +1283,7 @@ def cmdCheck(a):
     fetcher = makeFetcher()
     agg = Counter()
     examples = defaultdict(list)
+    shares = []
     with _conn() as conn:
         cur = conn.cursor()
         cur.execute("""SELECT u.anet_id, am.alive_id
@@ -1276,6 +1314,7 @@ def cmdCheck(a):
                 known = {a: (pid, name) for a, pid, name in cur.fetchall()}
                 before, _w = compareMeet(have, p["results_to_save"], known)
                 moved = applyIds(p, resolveIds(cur, p["athletes"]))
+                shares.extend(identifiedShares(p))
                 holdUnknown(p)
                 res, why = compareMeet(have, p["results_to_save"], known)
                 res["rows given our id"] = moved
@@ -1310,6 +1349,11 @@ def cmdCheck(a):
         print(f"\n  {kind} (up to {a.show}):")
         for line in ex[:a.show]:
             print(f"    {line}")
+    print("\n  a race lands when this share of its runners is named (the rest wait in a side table):")
+    print(f"    {'share':>6} {'races landed':>13} {'races held':>11} {'runners left out':>17} "
+          f"{'runners in held races':>22}")
+    for th, (landed, held, lost, waiting) in thresholdTable(shares).items():
+        print(f"    {th:>6.0%} {landed:>13,} {held:>11,} {lost:>17,} {waiting:>22,}")
     print(f"[alive] check: {dict(agg)}  fetches {fetcher.stats}  (nothing written)")
     return 0
 
