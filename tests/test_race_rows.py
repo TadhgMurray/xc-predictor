@@ -107,3 +107,15 @@ def test_a_race_distance_is_the_rows_median_and_never_a_unit_slip():
     assert R.raceDistance([2.0, 3.0]) is None                # miles, or a typo
     assert R.raceDistance([2.0, 8000.0, 8000.0]) == 8000.0
     assert R.raceDistance([]) is None and R.raceDistance(None) is None
+
+
+def test_head_to_head_reads_only_past_meetings_and_beyond_the_ratings():
+    h1, h2 = R.raceHash(1, 1, "anet", "2025-09-06"), R.raceHash(2, 1, "anet", "2025-09-13")
+    # the ratings now put runner 1 ahead of runner 0, but 0 beat 1 twice
+    rs = [{"base_ln": 6.91, "past": [(h1, 6.90), (h2, 6.89)]},
+          {"base_ln": 6.90, "past": [(h1, 6.92), (h2, 6.93)]},
+          {"base_ln": 6.95, "past": []}]
+    got = R.headToHead(rs)
+    assert got[0] == (2, 1.0, 1.0) and got[1] == (2, 0.0, -1.0)
+    assert 2 not in got                                     # never met anyone here
+    assert R.raceHash(1, 1, "anet", "2025-09-06 00:00") == h1

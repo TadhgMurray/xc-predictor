@@ -595,3 +595,30 @@ whole), scored on all of 2024-25.
   (`feature_extraction._XC_DIST`: the hand-verified override, the meet's
   own distance, then a tfrrs division's), takes the median over the race,
   and treats anything outside 1,500–15,000 m as no distance.
+
+### Version 1.2, run 2026-10-26 (owner)
+
+- **Order held:** 88.32% against 87.22% (+1.10 [+1.09, +1.12]).
+- **Times barely moved** (mean 4.25%). The 1–3 m races are gone; the
+  worst are now races that are not cross country at all: an NJCAA
+  half-marathon, "Fast Track 800", "Test Race", practice meets. They have
+  no sane distance, and no clock can be right there.
+- The server has 125 GB, 97 GB free: room to train on every earlier race.
+
+### Version 1.3, on the branch
+
+- **The day's weather** (temperature, dew point, rain, wind) for the
+  race's level, and as a runner input. The page's clock leaves weather
+  out, and Kailo says it has none. Training reads the `weather` table at
+  the cross country hour; the page passes the forecast, else the normal
+  for the place and date.
+- **Head-to-head, beyond the ratings** (`race_rows.headToHead`): from
+  the past races (400 days, last 15) in which runners of this field met,
+  the share of meetings won, and that share less what today's ratings
+  order expects. Prior races only; computed by sorting, not by pairs.
+- **The level is learned only on races with a real distance**
+  (`page_base`).
+- **Times are reported three more ways:** on races with a known
+  distance, on clean races, and on college fields of 100+ (Kailo's kind
+  of race).
+- **Trained on every earlier race** (`--train-frac 1`).

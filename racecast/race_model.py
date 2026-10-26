@@ -103,6 +103,39 @@ def _latest(cur, ids, day):
     return out
 
 
+def _pastRaces(cur, ids, cut):
+    """{pid: [(raceHash, ln time)]}: each runner's last race_rows.H2H_LAST
+    cross country races in the H2H_DAYS before the cut, as the table keeps
+    them for head-to-head."""
+    import race_rows as RR
+    lo = (cut - datetime.timedelta(days=RR.H2H_DAYS)).isoformat()
+    cur.execute("""
+        SELECT person_id, meet_id, div_id, source, left(date, 10), time_seconds
+        FROM   results
+        WHERE  person_id = ANY(%s) AND date >= %s AND date < %s
+          AND  time_seconds > 0 AND time_seconds < 19999
+          AND  meet_id IS NOT NULL AND div_id IS NOT NULL
+        ORDER  BY person_id, date""", (sorted(ids), lo, cut.isoformat()))
+    out = {}
+    for row in cur.fetchall():
+        row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+        out.setdefault(row[0], []).append((RR.raceHash(row[1], row[2], row[3], row[4]),
+                                           math.log(float(row[5]))))
+    return {p: v[-RR.H2H_LAST:] for p, v in out.items()}
+
+
+def _weather(cur, spec):
+    """The race's weather as the table carries it: the forecast at the cross
+    country hour when there is one, else the normal for the place and date."""
+    import predict as P
+    try:
+        got = P._weatherVariants(cur, spec, "both")
+    except Exception:                                    # noqa: BLE001
+        P._rollback(cur)
+        return None
+    return got.get("forecast") or got.get("normal")
+
+
 def _meetFacts(cur, spec):
     """(meet name, is_champ) of the target meet; (None, False) unknown."""
     mid, src = spec.get("meet_id"), spec.get("source")
@@ -184,6 +217,7 @@ def predictRace(cur, person_ids, spec, cut, rated):
     cut = cut or day
     rows = P._ratingRows(cur, ids, None, cut.isoformat())
     latest = _latest(cur, ids, cut)
+    past = _pastRaces(cur, ids, cut)
     name, champ = _meetFacts(cur, spec)
     field = []
     for pid in ids:
@@ -195,10 +229,10 @@ def predictRace(cur, person_ids, spec, cut, rated):
         if got is None:
             continue
         field.append({"pid": pid, "school": school, "base_ln": math.log(float(e["seconds"])),
-                      "f": got[2]})
+                      "f": got[2], "past": past.get(pid) or []})
     if len(field) < MIN_FIELD:
         return {}
     race = {"distance": float(spec["distance_meters"]), "day": day, "meet_name": name,
             "source": spec.get("source"), "is_champ": champ, "cell": spec.get("venue_cell"),
-            "page_base": True}
+            "page_base": True, "weather": _weather(cur, spec)}
     return predictField(model, field, race)

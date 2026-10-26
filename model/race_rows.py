@@ -82,7 +82,11 @@ RACE_FEATURES = (
     "team_n", "team_slope", "team_summer", "team_openers",
     "distance", "season_week", "meet_type", "is_tfrrs",
     "course_cell", "has_cell", "page_base",
+    "temp_c", "dew_point_c", "precip_mm", "wind_kmh",
+    "h2h_n", "h2h_share", "h2h_vs_base",
 )
+H2H_DAYS = 400           # a meeting older than this says little about Saturday
+H2H_LAST = 15            # the runner's last N cross country races, at most
 FEATURES = RUNNER_FEATURES + RACE_FEATURES
 
 # ★ HOW MUCH A RACE IS RUN FOR, from its name (0 = unknown). Ordered, so
@@ -103,6 +107,13 @@ _MEET_TYPES = (
 # ------------------------------------------------------------------ #
 #  pure parts
 # ------------------------------------------------------------------ #
+
+def _num(v):
+    try:
+        return float(v) if v is not None else math.nan
+    except (TypeError, ValueError):
+        return math.nan
+
 
 def meetType(name):
     """0..6 from a meet's name; 3 = an ordinary meet. Pure."""
@@ -255,6 +266,8 @@ def raceFeatures(runners, race):
     order = sorted(range(n), key=lambda i: bs[i])
     rank = {i: k for k, i in enumerate(order)}
     med = statistics.median(bs)
+    h2h = headToHead(runners)
+    wx = race.get("weather") or {}
     teams = {}
     for i, r in enumerate(runners):
         teams.setdefault(r.get("school") or f"_none{i}", []).append(i)
@@ -286,6 +299,12 @@ def raceFeatures(runners, race):
                             else math.nan),
             "has_cell": 1.0 if race.get("cell") is not None else 0.0,
             "page_base": 1.0 if race.get("page_base") else 0.0,
+            "temp_c": _num(wx.get("temp_c")), "dew_point_c": _num(wx.get("dew_point_c")),
+            "precip_mm": _num(wx.get("precipitation_mm")),
+            "wind_kmh": _num(wx.get("wind_speed_kmh", wx.get("wind_speed_km"))),
+            "h2h_n": float(h2h[i][0]) if i in h2h else 0.0,
+            "h2h_share": h2h[i][1] if i in h2h else math.nan,
+            "h2h_vs_base": h2h[i][2] if i in h2h else math.nan,
         })
         r["y"] = ys[i] - my
         r["base"] = bs[i] - mb
@@ -332,6 +351,48 @@ def pageBase(field, race):
         for r, g in zip(field, got):
             r["base_ln"] = g
     return field
+
+
+def raceHash(meet_id, div_id, source, day_s):
+    """One past race, as an int both the table and the page compute alike."""
+    return zlib.crc32(repr((int(meet_id), int(div_id), str(source), str(day_s)[:10])).encode())
+
+
+def headToHead(runners):
+    """{index: (meetings, share beaten, share beaten less what the ratings
+    expect)} from the races this field's runners met in before. Pure.
+
+    ★ PRIOR RACES ONLY, AND BEYOND THE RATINGS. Each runner carries "past":
+      [(raceHash, ln time)] of their own earlier races, so nothing here sees
+      the race being predicted. In each past race two or more of them ran,
+      every co-runner is a meeting: beaten or not, against what today's
+      base (the ratings' order now) says should have happened. A runner who
+      keeps beating people the ratings rank above them shows it here."""
+    by = {}
+    for i, r in enumerate(runners):
+        for h, t in r.get("past") or ():
+            by.setdefault(h, []).append((i, t))
+    from bisect import bisect_left, bisect_right
+    wins, games, exp = {}, {}, {}
+    # ! BY SORTING, NOT BY PAIRS: a league that meets every week puts dozens
+    #   of this field in each past race, and pairs would be m^2 a race
+    for met in by.values():
+        m = len(met)
+        if m < 2:
+            continue
+        ts = sorted(t for _i, t in met)
+        bs = sorted(runners[i]["base_ln"] for i, _t in met)
+        for i, ti in met:
+            bi = runners[i]["base_ln"]
+            same_t = bisect_right(ts, ti) - bisect_left(ts, ti)
+            g = m - same_t                          # equal times are no evidence
+            if not g:
+                continue
+            games[i] = games.get(i, 0) + g
+            wins[i] = wins.get(i, 0) + (m - bisect_right(ts, ti))
+            same_b = bisect_right(bs, bi) - bisect_left(bs, bi) - 1
+            exp[i] = exp.get(i, 0.0) + (m - bisect_right(bs, bi)) + 0.5 * same_b
+    return {i: (g, wins[i] / g, (wins[i] - exp[i]) / g) for i, g in games.items()}
 
 
 def raceDistance(dists):
@@ -459,6 +520,20 @@ def _raceMeta(cur, keys, dist_of=None):
             out[("tfrrs", meet)] = {"meet_name": name, "is_champ": bool(champ),
                                     "divs": dd if isinstance(dd, dict) else {},
                                     "distance": dist, "canonical_id": cid}
+    # ★ THE DAY'S WEATHER at the cross country hour (feature_extraction's
+    #   XC_DEFAULT_HOUR); the page passes the forecast, or the normal for the
+    #   place and date (race_model.predictRace)
+    wx = {}
+    cur.execute("SELECT to_regclass('public.weather')")
+    if (cur.fetchone() or [None])[0]:
+        meets = sorted({k[0] for k in keys})
+        for i in range(0, len(meets), 5000):
+            cur.execute("SELECT meet_id, source, temp_c, dew_point_c, precipitation_mm, "
+                        "wind_speed_kmh FROM weather WHERE hour = 9 AND meet_id = ANY(%s)",
+                        (meets[i:i + 5000],))
+            for meet, src, t, dp, pr, wd in cur.fetchall():
+                wx[(src, meet)] = {"temp_c": t, "dew_point_c": dp, "precipitation_mm": pr,
+                                   "wind_speed_kmh": wd}
     cids = sorted({m["canonical_id"] for m in out.values() if m.get("canonical_id") is not None})
     cells = {}
     for i in range(0, len(cids), 5000):
@@ -478,6 +553,7 @@ def _raceMeta(cur, keys, dist_of=None):
         # the rows' corrected distance wins; a stored one only if it is sane
         d = (dist_of or {}).get(k) or raceDistance([res[k].get("distance")])
         res[k]["distance"] = d
+        res[k]["weather"] = wx.get((k[2], k[0]))
         cid = res[k].get("canonical_id")
         try:
             res[k]["cell"] = (cells.get((cid, int(round(float(d) / 100.0) * 100)))
@@ -504,6 +580,7 @@ def build(conn, a):
                              has_out):
         n_people += 1
         hist = []
+        past = []             # (date, raceHash, ln time) of their XC races
         i = 0
         while i < len(rows):
             day_s = rows[i][1]
@@ -532,14 +609,18 @@ def build(conn, a):
                         continue
                     # ! COMPACT UNTIL THE END: millions of rows wait here for
                     #   their races to fill, and a dict per row is ~3 KB
+                    recent = [x for x in past if (day - x[0]).days <= H2H_DAYS][-H2H_LAST:]
                     races.setdefault(key, []).append((
                         pid, float(r[4]), r[8], math.log(100.0 * pm[pool] / rating),
-                        array("f", [f[k] for k in RUNNER_FEATURES]), rating, pool))
+                        array("f", [f[k] for k in RUNNER_FEATURES]), rating, pool,
+                        array("q", [x[1] for x in recent]), array("f", [x[2] for x in recent])))
                     if r[11]:
                         race_dist.setdefault(key, []).append(float(r[11]))
             for r in rows[i:j]:
                 if r[2] and r[2] > 0 and r[3]:
                     hist.append((day, float(r[2]), r[3], "TF" if r[10] else "XC"))
+                if r[10] == 0 and r[4] and r[5] is not None and r[6] is not None:
+                    past.append((day, raceHash(r[5], r[6], r[7], day_s), math.log(float(r[4]))))
             i = j
         if n_people % 100_000 == 0:
             print(f"  {n_people:,} people, {len(races):,} races so far", flush=True)
@@ -567,8 +648,9 @@ def build(conn, a):
         day = datetime.date.fromisoformat(key[3])
         rmeta = dict(meta.get(key) or {}, day=day, source=key[2])
         field = [{"pid": p, "secs": secs, "school": school, "base_ln": b,
-                  "f": dict(zip(RUNNER_FEATURES, vec)), "rating": rating, "pool": pool}
-                 for p, secs, school, b, vec, rating, pool in races.pop(key)]
+                  "f": dict(zip(RUNNER_FEATURES, vec)), "rating": rating, "pool": pool,
+                  "past": list(zip(ph, pt))}
+                 for p, secs, school, b, vec, rating, pool, ph, pt in races.pop(key)]
         pageBase(field, rmeta)
         n_page += rmeta["page_base"]
         names.append(str(rmeta.get("meet_name") or ""))

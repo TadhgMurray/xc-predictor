@@ -44,7 +44,9 @@ CLIP = 0.10               # ln: a fall or a walk-in is not form
 BANDS = ("in season, <=21d", "in season, >21d", "season opener, <=120d",
          "season opener, 121-365d", "season opener, >1yr")
 LEVEL_FEATURES = ("distance", "season_week", "meet_type", "is_tfrrs", "course_cell",
-                  "has_cell", "level", "female", "form_ln", "field_n")
+                  "has_cell", "level", "female", "form_ln", "field_n",
+                  # the day's weather (race_rows 1.3): the page's clock leaves it out
+                  "temp_c", "dew_point_c", "precip_mm", "wind_kmh")
 
 
 # ------------------------------------------------------------------ #
@@ -144,11 +146,11 @@ def levelModel(seed=0):
         validation_fraction=0.1, n_iter_no_change=40, random_state=seed)
 
 
-def raceTable(X, y_abs, base_abs, slices, fidx):
+def raceTable(X, y_abs, base_abs, slices, fidx, level_features=LEVEL_FEATURES):
     """One row per race: the level inputs (race constants, and the field's
     mean level, sex and form) and the level target."""
     import numpy as np
-    cols = [fidx[k] for k in LEVEL_FEATURES]
+    cols = [fidx[k] for k in level_features]
     R = np.empty((len(slices), len(cols)), dtype=np.float32)
     L = np.empty(len(slices), dtype=np.float32)
     import warnings
@@ -291,12 +293,21 @@ def main():
 
     # ---- the level part -------------------------------------------- #
     sl_all = raceSlices(race)
-    R, L = raceTable(X_all, y_abs, base_abs, sl_all, fidx)
+    lf = [k for k in LEVEL_FEATURES if k in fidx]        # an older table has fewer
+    R, L = raceTable(X_all, y_abs, base_abs, sl_all, fidx, lf)
     race_val = np.array([val[s] for s, _e in sl_all])
-    lidx = {k: i for i, k in enumerate(LEVEL_FEATURES)}
-    lused = ~np.all(np.isnan(R[~race_val]), axis=0)
-    lm = levelModel(a.seed).fit(R[~race_val][:, lused], L[~race_val])
-    naive = levelTable(R[~race_val], L[~race_val], lidx)
+    # ! THE LEVEL IS LEARNED ONLY WHERE THE RACE HAS A REAL DISTANCE (1.3): a
+    #   half-marathon filed as cross country, a track 800, a "Test Race" --
+    #   no clock can be right there, and fitting them teaches the trees noise
+    known = (np.array([not X_all[s, fidx["page_base"]] == 0 for s, _e in sl_all])
+             if "page_base" in fidx else np.ones(len(sl_all), dtype=bool))
+    if not (~race_val & known).any():
+        known = np.ones(len(sl_all), dtype=bool)        # a table that never says
+    lidx = {k: i for i, k in enumerate(lf)}
+    fit_l = ~race_val & known
+    lused = ~np.all(np.isnan(R[fit_l]), axis=0)
+    lm = levelModel(a.seed).fit(R[fit_l][:, lused], L[fit_l])
+    naive = levelTable(R[fit_l], L[fit_l], lidx)
     Rv = R[race_val]
     lvl_model, lvl_naive = lm.predict(Rv[:, lused]), naive(Rv)
     # the whole prediction, per runner: race mean of base_abs + level + centred runner part
@@ -312,7 +323,11 @@ def main():
     #   clock with no correction at all
     page = bav.copy()
     lines.append("\nTIMES, the validation season: mean |% miss| is Kailo's statistic")
-    lines.append(f"  {'':18} {'median':>7} {'mean':>7} {'college':>8} {'clean races':>12}")
+    lines.append(f"  {'':18} {'median':>7} {'mean':>7} {'college':>8} {'clean races':>12} "
+                 f"{'known dist':>11} {'college 100+':>13}")
+    known_v = np.repeat(known[race_val], [e - s for s, e in sl])
+    big = np.repeat(np.array([tv[s] == 1 and e - s >= 100 for s, e in sl]),
+                    [e - s for s, e in sl])
     preds = (("page (ratings)", page), ("table + ratings", tot_n), ("trees + model", tot_m))
     race_miss = {lab: np.array([float(np.mean(tot[s:e] - yav[s:e])) for s, e in sl])
                  for lab, tot in preds}
@@ -323,7 +338,9 @@ def main():
         c = tv == 1
         lines.append(f"  {lab:18} {np.median(miss):6.2f}% {miss.mean():6.2f}% "
                      f"{miss[c].mean() if c.any() else float('nan'):7.2f}% "
-                     f"{miss[clean].mean():11.2f}%")
+                     f"{miss[clean].mean():11.2f}% "
+                     f"{miss[known_v].mean() if known_v.any() else float('nan'):10.2f}% "
+                     f"{miss[big].mean() if big.any() else float('nan'):12.2f}%")
     lines.append("  (clean races: those the trees put within 10% as a whole -- the rest "
                  "are mostly a wrong distance or a mixed field; listed below)")
     rmm = np.abs(race_miss["trees + model"])
@@ -391,7 +408,7 @@ def main():
             pickle.dump({"runner": rm, "level": lm, "features": feats,
                          "sigmas": sig_all,
                          "all_features": feats_all,
-                         "level_features": [f for f, u in zip(LEVEL_FEATURES, lused) if u],
+                         "level_features": [f for f, u in zip(lf, lused) if u],
                          "clip": CLIP,
                          "val_from": a.val_from, "made": datetime.date.today().isoformat()}, fh)
         print(f"\nwrote {a.out}")
