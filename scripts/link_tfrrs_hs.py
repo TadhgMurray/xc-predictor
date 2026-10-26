@@ -93,6 +93,35 @@ def _hsGrade(a="r"):
             f"WHEN 'JR' THEN '11' WHEN 'SR' THEN '12' ELSE {a}.grade END)")
 
 
+# ★ AND THE STORED GRADE SAYS SO TOO (pooling review P0, 2026-10-26). A
+#   state-site row's "SR" / "SR-4" / "Jr." reached the pooling as a college
+#   class word, and poolFor's last resort calls an unresolved tfrrs row
+#   college -- so a Florida senior could be rated college_m. At a high school
+#   meet the word IS grade 9-12; the row is rewritten to the number once,
+#   here, so every reader (the pack, grade_sanity, the backfill, the fill and
+#   the boards) sees a high school grade without a special case of its own.
+#   Idempotent: a numeric grade no longer matches.
+_HS_GRADE_FIX = """
+    UPDATE {table} r
+    SET    grade = CASE left(upper(btrim(r.grade)), 2)
+                       WHEN 'FR' THEN '9' WHEN 'SO' THEN '10'
+                       WHEN 'JR' THEN '11' WHEN 'SR' THEN '12' END
+    FROM   tfrrs_hs_meets h
+    WHERE  r.source = 'tfrrs' AND h.meet_id = r.meet_id AND h.sport = %s
+      AND  upper(btrim(r.grade)) ~ '^(FR|SO|JR|SR)([^A-Z]|$)'
+"""
+
+
+def fixHsGrades(cur):
+    """Rewrite class words to grades 9-12 on every tfrrs row at a state
+    site's high school meet. Returns rows changed per table."""
+    out = {}
+    for table, sport in (("results", "XC"), ("results_tf", "TF")):
+        cur.execute(_HS_GRADE_FIX.format(table=table), (sport,))
+        out[table] = cur.rowcount
+    return out
+
+
 def rowsSql(skip_xc="", skip_tf="", recent=False):
     """The rows to judge, in link_uploads.upRowsSql's columns; the identity
     (id system, TFRRS id) rides in the last one as 'sys:native'. recent:
@@ -225,6 +254,8 @@ def run(conn, apply, show=20, days=None):
             return {}
         if apply:
             PP.ensure(cur)
+            fixed = fixHsGrades(cur)
+            print(f"[tfrrs-hs-link] class words read as grades 9-12: {fixed}")
         if days:
             stageRecent(cur, days)
         rows, by_key = LU.gather(cur, rows_sql=lambda sx, st: rowsSql(sx, st, recent=bool(days)))
