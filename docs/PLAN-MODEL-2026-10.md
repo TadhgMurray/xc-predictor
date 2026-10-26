@@ -622,3 +622,28 @@ whole), scored on all of 2024-25.
   distance, on clean races, and on college fields of 100+ (Kailo's kind
   of race).
 - **Trained on every earlier race** (`--train-frac 1`).
+
+### 1.4 and 1.5 (owner's runs, 2026-10-26)
+
+- **1.3/1.4 on every earlier race:** 88.45% against 87.22% (+1.23 [+1.21,
+  +1.24]). Time miss: median 2.88%; college fields of 100+ 3.54% against
+  the page's 4.20%. Head-to-head became the model's most important input.
+- **Without ratings:** raw times alone 86.31%; trees with nothing the
+  engine made 87.34% (the ratings 87.22%). The ratings are worth about
+  1.1 points of order to the model.
+
+### Version 1.6 (on the branch)
+
+- **Forecast copies** at 7 and 28 days, for a quarter of races each.
+- **The team's record** against the ratings.
+- **Missing-input practice:** a few training rows with weather, course
+  cell or head-to-head blanked.
+- **Scoring:** the headline is race morning, forecasts are scored per
+  lead, and ranges are saved per lead.
+- **`model/race_blend.py`:** six members (trees on the ratings, trees
+  without, LightGBM, LightGBM LambdaRank, XGBoost, a neural net),
+  blended on the even validation races and scored on the odd ones.
+- **The pre-race recorder** is step 13h unchanged, run with
+  `XCP_PREDICT_BASIS=race` and `XCP_FORECAST_TABLE=pred_meet_forecast`.
+  It records every posted meet, and `score_frozen_forecasts.py` scores it
+  with the same table setting.
