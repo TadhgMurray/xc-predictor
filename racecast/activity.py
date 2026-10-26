@@ -237,7 +237,7 @@ def _metricSpecs():
         import run_report
     except Exception:                                   # noqa: BLE001
         return []
-    specs = [(k, lab, b) for k, lab, _f, _rx, b in getattr(run_report, "LOG_METRICS", [])]
+    specs = [(k, lab, b) for k, lab, _f, _rx, b, *_ in getattr(run_report, "LOG_METRICS", [])]
     specs += [(k, lab, b) for k, lab, _sql, b in getattr(run_report, "SENTINELS", [])]
     return specs
 
