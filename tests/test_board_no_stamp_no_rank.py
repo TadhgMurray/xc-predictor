@@ -14,3 +14,10 @@ def test_a_rated_row_without_a_stamp_returns_before_the_resolver():
     assert guard < resolver
     assert '_GATE[sport]["rated_no_pool"] += 1' in body[guard:resolver]
     assert "_HAVE_RATING_POOL[sport] = have" in src
+
+
+def test_the_backfill_reads_the_engines_season_levels():
+    """pooling review P7: no unanimity filter the engine does not apply"""
+    src = open(os.path.join(_ROOT, "backfill", "backfill_normalize.py")).read()
+    i = src.index("FROM   athlete_season_level")
+    assert "unanimous" not in src[i:i + 120]

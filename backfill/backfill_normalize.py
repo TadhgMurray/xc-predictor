@@ -847,11 +847,11 @@ def _rowGender(genders, athlete_id, person_id):
 #   for a dict consulted once per row. One packed int keeps it small, and
 #   10000 sits safely above any academic year.
 #
-# ! ONLY `unanimous` ROWS CARRY A LEVEL -- season_level.py stores NULL for a
-#   season whose races disagree. That is the whole safety mechanism: a high
-#   schooler with one pro-meet appearance has a split season, gets NULL here,
-#   and keeps their grade. The WHERE clause below IS the unanimity gate,
-#   enforced by the data rather than re-implemented in this file.
+# ! A SPLIT SEASON BELOW season_level's SHARE BAR STORES NULL. That is the
+#   safety mechanism: a high schooler with one pro-meet appearance has a
+#   split season, gets NULL, and keeps their grade. Since 2026-10-26 (P7)
+#   this reads every level season_level wrote, as the engine does -- not
+#   only the unanimous ones.
 def _loadGradeFix(cur):
     """{person_id*10000 + academic_year: (grade, level)} from grade_fix.
 
@@ -937,9 +937,16 @@ def _loadSeasonLevels(cur):
     #   a verdict, else the combined one", and two dicts express that as one
     #   `or` at the call site. A single dict keyed on sport would need the
     #   caller to try twice and get the fallback order right every time.
+    # ★ THE ENGINE'S SET, NOT ONLY THE UNANIMOUS ONES (pooling review P7,
+    #   2026-10-26). season_level writes a level for a mixed season whose
+    #   highest level clears its share bar, and the engine pools on every
+    #   level it finds (speed_ratings.loadSeasonLevels). Reading only the
+    #   unanimous ones here normalised a mixed season on one pool's curve and
+    #   the engine then rated it in another. The share bar is the gate now,
+    #   in one place, for both.
     cur.execute("""SELECT person_id, ay, sport, level
                    FROM   athlete_season_level
-                   WHERE  level IS NOT NULL AND unanimous""")
+                   WHERE  level IS NOT NULL""")
     by_sport, combined = {}, {}
     for pid, ay, sport, lvl in cur:
         if pid is None or ay is None:
