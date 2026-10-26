@@ -1219,6 +1219,7 @@ _GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "corrected": 0, "wheelchair": 0,
                 "over_hs_distance": 0, "hs_no_distance": 0,
                 "pool_from_row": 0, "pro_pool": 0, "impossible_pace": 0,
+                "rated_no_pool": 0,
                 "no_distance": 0,
                 "field_mark": 0, "field_refused": 0},
          "TF": {"checked": 0, "mismatched": 0, "unchecked": 0,
@@ -1226,6 +1227,7 @@ _GATE = {"XC": {"checked": 0, "mismatched": 0, "unchecked": 0,
                 "corrected": 0, "wheelchair": 0,
                 "over_hs_distance": 0, "hs_no_distance": 0,
                 "pool_from_row": 0, "pro_pool": 0, "impossible_pace": 0,
+                "rated_no_pool": 0,
                 "no_distance": 0,
                 "field_mark": 0, "field_refused": 0}}
 
@@ -1279,6 +1281,9 @@ def timedEventKind(event_short):
 _WHEELCHAIR_RX = re.compile(r"wheelchair|seated|ambulator", re.IGNORECASE)
 
 
+_HAVE_RATING_POOL = {"XC": False, "TF": False}   # set by _sourceSql
+
+
 def _sourceSql(conn, sport):
     """_SQL[sport] with the rating_pool column where the table has it (the
     go-live has written it since issue 171), NULL where a database predates
@@ -1289,6 +1294,7 @@ def _sourceSql(conn, sport):
                        WHERE table_schema = 'public' AND table_name = %s
                          AND column_name = 'rating_pool'""", (table,))
         have = cur.fetchone() is not None
+    _HAVE_RATING_POOL[sport] = have
     sql = _SQL[sport].replace("__RATING_POOL__", "r.rating_pool" if have else "NULL::text")
     sql = _collegeFirstSql(conn, sql)
     return sql.replace("__IMPOSSIBLE__", _impossibleClause(conn, sport)
@@ -1469,6 +1475,16 @@ def prepareRow(row, sport):
     pool = str(rp).split("|", 1)[0] if rp else None
     if pool:
         _GATE[sport]["pool_from_row"] += 1
+    elif row.speed_rating is not None and _HAVE_RATING_POOL.get(sport):
+        # ★ NO STAMP, NO RANK (pooling review P11, 2026-10-26). A rating is
+        #   relative to the mean of the pool that made it; a rated row the
+        #   go-live and the fill left unstamped has no pool to be ranked in,
+        #   and re-deciding one here, with fewer facts than the engine had,
+        #   is how a row got ranked in a pool it was not rated in. The
+        #   fallback below stays for what is never rated (sprints, field
+        #   events, ranked by mark) and for a database without the column.
+        _GATE[sport]["rated_no_pool"] += 1
+        return None
     else:
         pool = resolvePool(row.grade, row.gender, row.source, school,
                            sport,
@@ -1902,7 +1918,8 @@ def buildSport(conn, sport, since, stats, until="2100-01-01"):
     print(f"    pool from the row: {g['pool_from_row']:,} rows ranked in the pool the "
           f"engine rated them in; {g['pro_pool']:,} professional-pool rows not ranked; "
           f"{g['impossible_pace']:,} rows faster than the world record not ranked; "
-          f"{g['no_distance']:,} rated rows with no distance not ranked")
+          f"{g['no_distance']:,} rated rows with no distance not ranked; "
+          f"{g['rated_no_pool']:,} rated rows with no pool stamp not ranked")
     if g["outside_band"]:
         print(f"    sanity band: {g['outside_band']:,} races rated but "
               f"outside the engine's pace band -- filled ratings the solve "
