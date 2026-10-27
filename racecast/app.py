@@ -10782,6 +10782,10 @@ for _bp in (_uploads.bp, _fixes.bp):
 #   /account/admin/social, see social.py; step 13g_social builds them.
 import social as _social                                       # noqa: E402
 app.register_blueprint(_social.bp)
+# ★ THE ACCOUNTS LIST (owner, 2026-10-27): /account/admin/accounts, every
+#   account and the profiles it claims; admins only, see admin_accounts.py.
+import admin_accounts as _admin_accounts                       # noqa: E402
+app.register_blueprint(_admin_accounts.bp)
 
 
 @app.route("/predictions")
