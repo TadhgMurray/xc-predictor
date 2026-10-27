@@ -45,7 +45,8 @@ DB = "xcp_grade_speed_test"
 
 # grade_sanity._FIELD_SQL before 2026-10-25 (comments dropped), with the
 # 2026-10-26 rules written into it the slow way: a tie goes to the HIGHER
-# level (owner), and a season's events are counted in races, not rows
+# level (owner), and a season's events are counted in races, not rows; and
+# the 2026-10-27 one: an open race casts no vote for its ungraded runners
 _RANK = "CASE {x} WHEN 'pro' THEN 5 WHEN 'college' THEN 4 WHEN 'hs' THEN 3 WHEN 'ms' THEN 2 WHEN 'elem' THEN 1 ELSE 0 END"
 OLD_FIELD_SQL = f"""
     WITH by_grade AS (
@@ -83,6 +84,8 @@ OLD_FIELD_SQL = f"""
                           ORDER  BY count(*) DESC, {_RANK.format(x="gradeLevel(a2.grade)")} DESC
                           LIMIT  1)
                END AS level,
+               count(*) - count(*) FILTER (WHERE gradeLevel(a.grade) IS NOT NULL)
+                   >= {GS.OPEN_FIELD_SHARE} * count(*) AS open_field,
                count(*) AS n_entrants,
                count(*) FILTER (WHERE a.grade IS NOT NULL) AS n_graded
         FROM   wanted w
@@ -103,6 +106,7 @@ OLD_FIELD_SQL = f"""
            ON e.meet_id = a.meet_id AND e.div_id = a.div_id
           AND e.source = a.source AND e.event_key = a.event_key
     WHERE  e.level IS NOT NULL
+      AND  NOT (e.open_field AND e.level <> 'pro' AND gradeLevel(a.grade) IS NULL)
     GROUP  BY n.person_id, n.acad, e.level
     ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC, {_RANK.format(x="e.level")} DESC
 """
@@ -592,3 +596,38 @@ def test_write_makes_the_same_tables(cur):
     # and grade_untrusted is laid down sorted, as the sorted INSERT laid it
     cur.execute("SELECT person_id, season FROM grade_untrusted")
     assert cur.fetchall() == want_phys
+
+
+def test_an_open_races_graded_few_do_not_pool_its_ungraded_runners(cur):
+    """Ethan Weiner's races (owner, 2026-10-27): 77 of 83 runners ungraded,
+    a few high schoolers graded. The ungraded runner gets no 'hs' from them;
+    a graded junior in the same race keeps 'hs'; where most ARE graded, an
+    ungraded runner still takes the field's level, as before."""
+    rows = []
+    # event 7: open -- 4 graded high schoolers, 10 ungraded adults
+    for pid, g in ((31, "11"), (32, "10"), (33, "12"), (34, "9")):
+        rows.append((pid, 2026, g, g, 7, 1, "anet", -1, 700 + pid))
+    for pid in range(40, 50):
+        rows.append((pid, 2026, None, None, 7, 1, "anet", -1, 700 + pid))
+    # event 8: a school race -- 4 graded, 2 ungraded
+    for pid, g in ((51, "11"), (52, "10"), (53, "12"), (54, "9")):
+        rows.append((pid, 2026, g, g, 8, 1, "anet", -1, 800 + pid))
+    for pid in (55, 56):
+        rows.append((pid, 2026, None, None, 8, 1, "anet", -1, 800 + pid))
+    _load(cur, rows)
+    cur.execute(OLD_FIELD_SQL, {"minc": GS.MIN_CORROBORATION})
+    want = sorted(cur.fetchall())
+    got, _races = _newField(cur)
+    assert sorted(got) == want
+    levels = {p: lv for p, _a, lv in want}
+    assert 40 not in levels and 49 not in levels          # no 'hs' for the adults
+    assert levels[31] == "hs"                              # the graded junior keeps it
+    assert levels[55] == "hs" and levels[56] == "hs"       # a school race still names them
+
+
+
+def test_compare_counts_each_kind_of_change():
+    old = {(1, 2026): ("hs", "field"), (2, 2026): ("hs", "field"), (3, 2026): ("ms", "majority")}
+    new = {(2, 2026): ("pro", "no_grades"), (3, 2026): ("ms", "majority"), (4, 2026): ("hs", "field")}
+    got = GS.compareVerdicts(old, new)
+    assert got == {"hs/field -> -": 1, "hs/field -> pro/no_grades": 1, "- -> hs/field": 1}

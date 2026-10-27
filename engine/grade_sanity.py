@@ -188,6 +188,18 @@ MAX_YEARS_AT_GRADE = 2
 
 # An event needs this many graded entries before its level means anything.
 MIN_FIELD_GRADED = 4
+# ★ AN OPEN RACE'S GRADED FEW DO NOT SPEAK FOR ITS UNGRADED MANY (owner,
+#   2026-10-27: Ethan Weiner, Cambridge Running, never a numeric grade,
+#   pooled high school and ranked nation #6). At an open meet the high
+#   schoolers carry grades and the adults carry none, so rule 4's mode over
+#   the GRADED entrants called every race of his 'hs' -- 77 of 83 runners
+#   ungraded at Wayland, 32 of 33 at the GBTC Invite. An event where at
+#   least this share of the entrants has no level casts no vote for an
+#   UNGRADED runner in it; a graded runner there still votes their field's
+#   level, and an event nobody graded still says 'pro' as before. With no
+#   vote, the season falls to what its team says (a club's gradeless row
+#   is professional; a school's is that school's).
+OPEN_FIELD_SHARE = 0.5
 
 # * FORGIVING BY ONE GRADE, AND ONLY BY ONE. Implied class year is
 #   `acad + (12 - grade)` and is constant for a real athlete. A drift of one
@@ -1287,7 +1299,10 @@ _FIELD_BUILD = f"""
                     -- level (_LEVEL_RANK_SQL; was mode()'s text order)
                     ELSE (array_agg(lvl ORDER BY n DESC, {_LEVEL_RANK_SQL.format(x="lvl")} DESC)
                               FILTER (WHERE lvl IS NOT NULL))[1]
-               END AS level
+               END AS level,
+               -- an open race: most of its entrants have no level (OPEN_FIELD_SHARE)
+               (sum(n) - COALESCE(sum(n) FILTER (WHERE lvl IS NOT NULL), 0))
+                   >= {OPEN_FIELD_SHARE} * sum(n) AS open_field
         FROM  (SELECT w.meet_id, w.div_id, w.source, w.event_key,
                       gradeLevel(a.grade) AS lvl,
                       count(*)            AS n,
@@ -1324,6 +1339,8 @@ _FIELD_SQL = f"""
            ON e.meet_id = a.meet_id AND e.div_id = a.div_id
           AND e.source = a.source AND e.event_key = a.event_key
     WHERE  e.level IS NOT NULL
+      -- an ungraded runner in an open race: its graded few say nothing of them
+      AND  NOT (e.open_field AND e.level <> 'pro' AND gradeLevel(a.grade) IS NULL)
     GROUP  BY n.person_id, n.acad, e.level
     ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC,
               {_LEVEL_RANK_SQL.format(x="e.level")} DESC
@@ -3164,12 +3181,53 @@ def write(cur, resolved):
     return len(resolved)
 
 
-def main(do_write=False, audit=False):
+def compareVerdicts(old, new):
+    """{(person, season): (level, method)} twice -> Counter of the changes,
+    '<old level>/<old method> -> <new ...>', a missing verdict as '-'. Pure."""
+    from collections import Counter
+    out = Counter()
+    for key in set(old) | set(new):
+        a, b = old.get(key), new.get(key)
+        if a == b:
+            continue
+        out[f"{'/'.join(map(str, a)) if a else '-'} -> {'/'.join(map(str, b)) if b else '-'}"] += 1
+    return out
+
+
+def compare(cur, resolved, show=12):
+    """Print how `resolved` differs from the grade_fix table now in place:
+    the dry run a rule change is judged on before --write."""
+    cur.execute("SELECT to_regclass('grade_fix')")
+    if not cur.fetchone()[0]:
+        print("[grade] no grade_fix to compare with")
+        return
+    cur.execute("SELECT person_id, season, level, method FROM grade_fix")
+    old = {(p, s): (lv, m) for p, s, lv, m in cur.fetchall()}
+    new = {k: (v["level"], v["method"]) for k, v in resolved.items()}
+    changes = compareVerdicts(old, new)
+    print(f"\n[grade] compared with grade_fix: {sum(changes.values()):,} seasons change")
+    for what, n in changes.most_common(20):
+        print(f"    {n:>9,}  {what}")
+    moved = [k for k in set(old) | set(new) if old.get(k) != new.get(k)
+             and (old.get(k) or (None,))[0] == "hs"]
+    if moved:
+        cur.execute("""SELECT DISTINCT ON (person_id) person_id, first_name, last_name, school
+                       FROM athletes WHERE person_id = ANY(%s)""", (sorted(moved)[:5000],))
+        names = {p: (f, l, sc) for p, f, l, sc in cur.fetchall()}
+        print(f"\n  seasons that were 'hs' and change (up to {show}):")
+        for key in sorted(moved, key=lambda k: -k[1])[:show]:
+            f, l, sc = names.get(key[0], ("?", "?", "?"))
+            print(f"    {key[0]} {key[1]} {f} {l} ({sc}): {old.get(key)} -> {new.get(key)}")
+
+
+def main(do_write=False, audit=False, do_compare=False):
     from database import getConn
 
     with getConn() as conn:
         with conn.cursor() as cur:
             resolved = resolve(cur, audit=audit)
+            if do_compare:
+                compare(cur, resolved)
             if do_write:
                 n = write(cur, resolved)
                 conn.commit()
@@ -3180,4 +3238,5 @@ def main(do_write=False, audit=False):
 
 if __name__ == "__main__":
     main(do_write="--write" in sys.argv,
-         audit="--audit" in sys.argv)
+         audit="--audit" in sys.argv,
+         do_compare="--compare" in sys.argv)
