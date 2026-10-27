@@ -85,6 +85,22 @@ def _norm(part):
     return " ".join(str(part or "").lower().split())
 
 
+def firstShare(part, stats):
+    """How often a name part is used as a first name in our athletes, or
+    None with fewer than MIN_USES uses."""
+    f, l = stats.get(_norm(part), (0, 0))
+    return f / (f + l) if f + l >= MIN_USES else None
+
+
+def orientation(first, last, stats):
+    """+1 when first-then-last reads the right way round (the first name is
+    mostly a first name, or the last mostly a last name), -1 the wrong way,
+    0 when our athletes cannot say."""
+    a, b = firstShare(first, stats), firstShare(last, stats)
+    score = (0 if a is None else a - 0.5) + (0 if b is None else 0.5 - b)
+    return (score > 0.1) - (score < -0.1)
+
+
 def isFirstName(part, stats):
     """stats: {name part: (uses as a first name, uses as a last name)}."""
     f, l = stats.get(_norm(part), (0, 0))
@@ -105,8 +121,13 @@ def decide(pair, kind, stats, rows_of, pairs_of, real_school):
         return "both names are first names", None, None
     if pairs_of.get(p1, 1) > 1 or pairs_of.get(p2, 1) > 1:
         return "in two pairs", None, None
+    # the side whose FIRST name reads as a first name keeps the id (its page
+    # shows the name the right way round); unclear, the bigger career; then
+    # the lower id (owner's dry run, 2026-10-27: 'Smith Jeff' 2 rows kept over
+    # 'Jeff Smith' 1, 'Thomas Jessica' over 'Jessica Thomas' on a 7-7 tie)
+    o1, o2 = orientation(f1, l1, stats), orientation(f2, l2, stats)
     n1, n2 = rows_of.get(p1, 0), rows_of.get(p2, 0)
-    keep, move = (p1, p2) if (n1, -p1) >= (n2, -p2) else (p2, p1)
+    keep, move = (p1, p2) if (o1, n1, -p1) >= (o2, n2, -p2) else (p2, p1)
     return "link", keep, move
 
 

@@ -22,8 +22,16 @@ def _d(pair, kind="safe", rows=None, pairs_of=None, real=True):
     return L.decide(pair, kind, STATS, rows or {}, pairs_of or {}, lambda s: real)
 
 
-def test_the_plain_case_keeps_the_bigger_career():
+def test_the_name_the_right_way_round_keeps_the_id():
     p = (1, 2, "cedar", "M", "Ethan", "Avila", "Avila", "Ethan")
+    # 'Ethan Avila' keeps it even with the smaller career
+    assert _d(p, rows={1: 3, 2: 12}) == ("link", 1, 2)
+    p = (1, 2, "cedar", "M", "Avila", "Ethan", "Ethan", "Avila")
+    assert _d(p, rows={1: 30, 2: 1}) == ("link", 2, 1)
+
+
+def test_unclear_names_keep_the_bigger_career():
+    p = (1, 2, "cedar", "M", "Mpoy", "Chetiace", "Chetiace", "Mpoy")   # our data cannot say
     assert _d(p, rows={1: 3, 2: 12}) == ("link", 2, 1)
     assert _d(p, rows={1: 5, 2: 5}) == ("link", 1, 2)          # a tie: the lower id
 
