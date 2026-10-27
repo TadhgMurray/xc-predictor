@@ -149,3 +149,10 @@ def test_a_forecast_copy_sees_less_but_counts_days_to_the_race():
     assert week["last_days"] == (day - D(2025, 9, 20)).days         # counted to the race
     assert R.leadsFor((1, 2, "anet", "2025-10-11"), [7, 28], 0.0) == [0]
     assert R.leadsFor((1, 2, "anet", "2025-10-11"), [7, 28], 1.0) == [0, 7, 28]
+
+
+def test_division_types():
+    assert R.divType("Varsity Boys 5K") == 2 and R.divType("Seeded Race") == 2
+    assert R.divType("JV Girls") == 0 and R.divType("Boys Junior Varsity") == 0
+    assert R.divType("Frosh/Soph Boys") == 0
+    assert R.divType("Middle School Boys") == 1 and R.divType(None) == 1

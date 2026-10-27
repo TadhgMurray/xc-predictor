@@ -117,3 +117,22 @@ def test_own_record_reads_only_earlier_days_and_carries_to_the_page():
     again = T.ownFeatures(T.ownState(pack, idx, 7), 130)
     assert again[fi["own_n"]] == 4 and again[fi["own_last"]] == pytest.approx(0.0)
     assert T.ownState(pack, idx, 99) is None
+
+
+def test_records_in_context_read_only_earlier_real_results_of_the_same_context():
+    keys = T.ctxKeys(pid=[1, 1, 1, 1, 2], course=[5, 5, 9, 5, 5],
+                     cell=[0.03, 0.03, 0.10, 0.03, 0.03], has_cell=[1, 1, 1, 1, 1],
+                     distance=[5000, 5000, 5000, 8000, 5000], temp=[10, 26, 26, np.nan, 10])
+    assert keys["crs"][0] == keys["crs"][1] != keys["crs"][2]      # same runner, same course
+    assert keys["crs"][4] != keys["crs"][0]                         # another runner there
+    assert keys["dif"][2] != keys["dif"][0] and keys["hot"][3] == -1
+    day = np.array([100, 110, 120, 130, 100])
+    real = np.array([True, True, True, False, True])     # row 3 is a forecast copy
+    resid = np.array([0.02, 0.04, -0.03, 0.5, 0.9])
+    f, pack = T.ctxRecords(keys["crs"], day, day, real, resid, 0)
+    n, mean, last = f[:, 0], f[:, 1], f[:, 2]
+    assert n[0] == 0 and n[1] == 1 and last[1] == pytest.approx(0.02)
+    assert n[3] == 2 and mean[3] == pytest.approx(0.06 / (2 + T.OWN_SHRINK))
+    assert n[4] == 0                                     # runner 2 never sees runner 1
+    assert T.ctxLookup(pack, int(keys["crs"][0]))[0] == 2         # the copy never counts
+    assert T.ctxLookup(pack, 123456789)[0] == 0

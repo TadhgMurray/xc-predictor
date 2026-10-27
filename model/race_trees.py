@@ -260,6 +260,102 @@ def ownHistory(pid, day, resid, champ, asof=None, real=None):
 TEAM_FEATURES = tuple("team_rec_" + f[4:] for f in OWN_FEATURES)
 
 
+# ★ RECORDS IN CONTEXT (owner, 2026-10-27: "maybe runner at this course's
+#   difficulty as well? Presumably they've ran courses of similar
+#   difficulties"). The runner's residual against the ratings where the race
+#   is LIKE this one: at this very course, on courses of similar difficulty,
+#   at similar distances, in similar heat. Real results on days before the
+#   row's cut only, as the runner's own record.
+CTX = ("crs", "dif", "dst", "hot")
+CTX_STATS = ("n", "mean", "last", "last3")
+CTX_FEATURES = tuple(f"{c}_{x}" for c in CTX for x in CTX_STATS)
+DIFF_CUTS = (0.02, 0.05, 0.09)            # the course cell (log): easy .. very hard
+DIST_CUTS = (4500.0, 5500.0, 7000.0, 9000.0)
+HEAT_CUTS = (8.0, 18.0, 24.0)             # degrees C at the race hour
+_DAY = 1_000_000                          # > any day ordinal
+
+
+def band(x, cuts):
+    """0..len(cuts) by the cuts; -1 for NaN. Vectorised."""
+    import numpy as np
+    x = np.asarray(x, dtype=np.float64)
+    out = np.searchsorted(np.asarray(cuts), x, side="right").astype(np.int64)
+    out[np.isnan(x)] = -1
+    return out
+
+
+def ctxKeys(pid, course, cell, has_cell, distance, temp):
+    """{family: int64 key per row, -1 = no context}. Vectorised; the page
+    calls it with one runner's values."""
+    import numpy as np
+    pid = np.asarray(pid, dtype=np.int64)
+    course = np.asarray(course, dtype=np.int64)
+    dif = np.where(np.asarray(has_cell) > 0.5, band(cell, DIFF_CUTS) + 1, 0)
+    out = {"crs": np.where(course >= 0, pid * 1_000_003 + course % 1_000_003, -1),
+           "dif": pid * 8 + dif}
+    for fam, x, cuts in (("dst", distance, DIST_CUTS), ("hot", temp, HEAT_CUTS)):
+        b = band(x, cuts)
+        out[fam] = np.where(b >= 0, pid * 8 + b, -1)
+    return out
+
+
+def ctxRecords(keys, day, asof, real, resid, keep_from):
+    """(features [n, 4] in CTX_STATS order, pack) for one family. A row reads
+    the real results of its key on days before its asof. Vectorised by
+    sorting: n, the shrunk mean, the last, the mean of the last three.
+    pack: each key's record over the whole table, for keys seen on or after
+    keep_from (the page reads it)."""
+    import numpy as np
+    n_rows = len(keys)
+    out = np.full((n_rows, 4), np.nan, dtype=np.float32)
+    ok = keys >= 0
+    if not ok.any():
+        return out, None
+    uniq, dense = np.unique(keys[ok], return_inverse=True)
+    dk = np.full(n_rows, -1, dtype=np.int64)
+    dk[ok] = dense
+    upd = ok & real
+    if not upd.any():
+        out[ok] = [0.0, 0.0, np.nan, np.nan]
+        return out, None
+    code_u = dk[upd] * _DAY + day[upd]
+    o = np.argsort(code_u, kind="stable")
+    R, vals = code_u[o], resid[upd][o]
+    C = np.concatenate([[0.0], np.cumsum(vals)])
+
+    def stats(q_codes, start_codes):
+        hi = np.searchsorted(R, q_codes, side="left")
+        lo = np.searchsorted(R, start_codes, side="left")
+        n = hi - lo
+        s = C[hi] - C[lo]
+        m3 = np.maximum(lo, hi - 3)
+        k3 = hi - m3
+        with np.errstate(invalid="ignore", divide="ignore"):
+            last = np.where(n > 0, vals[np.maximum(hi - 1, 0)], np.nan)
+            last3 = np.where(k3 > 0, (C[hi] - C[m3]) / np.maximum(k3, 1), np.nan)
+        return np.stack([n.astype(np.float64), s / (n + OWN_SHRINK), last, last3], axis=1)
+
+    out[ok] = stats(dk[ok] * _DAY + asof[ok], dk[ok] * _DAY)
+    end = np.full(len(uniq), _DAY - 1, dtype=np.int64)
+    st = stats(np.arange(len(uniq)) * _DAY + end, np.arange(len(uniq)) * _DAY)
+    last_day = np.full(len(uniq), -1, dtype=np.int64)
+    np.maximum.at(last_day, dense[real[ok]], day[ok][real[ok]])
+    k = last_day >= keep_from
+    pack = {"key": uniq[k], "stats": st[k].astype(np.float32)}
+    return out, pack
+
+
+def ctxLookup(pack, key):
+    """One key's CTX_STATS from a pack, or (0, 0, nan, nan)."""
+    import numpy as np
+    if pack is None or key < 0:
+        return [np.nan] * 4 if key < 0 else [0.0, 0.0, np.nan, np.nan]
+    i = int(np.searchsorted(pack["key"], key))
+    if i < len(pack["key"]) and int(pack["key"][i]) == key:
+        return [float(v) for v in pack["stats"][i]]
+    return [0.0, 0.0, np.nan, np.nan]
+
+
 _OWN_SCALARS = ("n", "s", "day", "last", "S", "W", "season", "sn", "ss", "cn", "cs")
 
 
@@ -425,6 +521,7 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
         excluded = {f for f in feats if f.startswith("raw_")}
         labels = ("ratings", "model")
     own_pack = team_pack = None
+    ctx_packs = {}
     lead = (np.nan_to_num(X[:, fidx["lead_days"]], nan=0.0).astype(np.int64)
             if "lead_days" in fidx else np.zeros(len(day), dtype=np.int64))
     if own:
@@ -461,6 +558,21 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
                      **{"own_" + k: v for k, v in own_pack.items()},
                      **({"team_" + k: v for k, v in team_pack.items()} if team_pack else {}))
         names = list(OWN_FEATURES) + (list(TEAM_FEATURES) if has_school else [])
+        ctx_packs = {}
+        if "course" in z.files:
+            t2 = datetime.datetime.now()
+            col = {k: X[:, fidx[k]] if k in fidx else np.full(len(y), np.nan)
+                   for k in ("course_cell", "has_cell", "distance", "temp_c")}
+            keys = ctxKeys(z["pid"][order], z["course"][order], col["course_cell"],
+                           np.nan_to_num(col["has_cell"], nan=0.0), col["distance"],
+                           col["temp_c"])
+            for fam in CTX:
+                f_, ctx_packs[fam] = ctxRecords(keys[fam], day, asof, real, resid0,
+                                                int(day.max()) - 730)
+                add.append(f_)
+            names += list(CTX_FEATURES)
+            print(f"  records in context (course, difficulty, distance, heat): "
+                  f"{datetime.datetime.now() - t2}")
         X = np.hstack([X] + add)
         feats = feats + names
         fidx = {f: i for i, f in enumerate(feats)}
@@ -515,7 +627,8 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
 
 _TABLE_KEYS = ('z', 't0', 'feats_all', 'feats', 'fidx', 'X_all', 'X', 'y', 'base', 'y_abs',
                'base_abs', 'base_page', 'base_page_abs', 'race', 'day', 'tfrrs', 'val', 'lead',
-               'own_pack', 'team_pack', 'labels', 'r', 'Xt', 'excluded', 'order', 'pid')
+               'own_pack', 'team_pack', 'labels', 'r', 'Xt', 'excluded', 'order', 'pid',
+               'ctx_packs')
 
 
 def siteReport(path, pid_v, keys, rv, sl, lead_r, yv, page_abs, lastv, pv, tot_m, yav, labels):
@@ -601,7 +714,7 @@ def main():
     T = loadTable(a.rows, a.val_from, a.own, a.no_ratings, a.seed, a.train_frac)
     (z, t0, feats_all, feats, fidx, X_all, X, y, base, y_abs, base_abs, base_page,
      base_page_abs, race, day, tfrrs, val, lead, own_pack, team_pack, labels, r, Xt,
-     excluded, order, pid) = \
+     excluded, order, pid, ctx_packs) = \
         (T[k] for k in _TABLE_KEYS)
     import numpy as np
     rm = runnerModel(a.seed, a.big).fit(Xt, r[~val])
@@ -819,7 +932,7 @@ def main():
         with open(a.out, "wb") as fh:
             pickle.dump({"runner": rm, "level": lm, "features": feats,
                          "sigmas": sig_all, "sigmas_by_lead": sig_lead,
-                         "own": own_pack, "team": team_pack,
+                         "own": own_pack, "team": team_pack, "ctx": ctx_packs,
                          "all_features": feats_all,
                          "level_features": [f for f, u in zip(lf, lused) if u],
                          "clip": CLIP,

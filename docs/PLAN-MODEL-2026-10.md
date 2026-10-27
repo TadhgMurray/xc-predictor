@@ -669,3 +669,27 @@ run as the page runs it, history cut the day before.
   against 3.09% median miss).
 - **`--train-frac`** (race_trees, race_blend) fits on a sample of the
   training races, for quicker tests.
+
+### 1.6 results (owner's run, 2026-10-27)
+
+- **Single model:** 88.59%, +1.37 [+1.35, +1.38].
+- **Forecasts:** 7 days ahead +1.38 (87.67% against 86.28%); 28 days
+  ahead +1.56 (85.06% against 83.50%). Time miss 7 days ahead 2.97%
+  median, 28 days ahead 3.40%.
+- **Ranges:** 69 / 70 / 90.
+- **Blend of six:** every member about 88.60%; the blend 88.68% (+0.07)
+  for about 6 hours of compute. The members agree because the inputs are
+  the limit, not the model, so new information is where the rest lies.
+
+### Version 1.7 (on the branch): new information
+
+- **Records in context** (owner: "the runner at this course's
+  difficulty"): the runner's residual against the ratings at this course,
+  on courses of similar difficulty (cell bands at 0.02 / 0.05 / 0.09), at
+  similar distances, and in similar heat. From real results before the
+  row's cut; vectorised, seconds.
+- **`div_type` from the division title:** varsity / JV / open.
+- `race_rows` saves each row's course id.
+- **The test protocol from here:** reuse a table, `--train-frac 0.35`,
+  old table against new, in minutes. One full run only for the final
+  model.

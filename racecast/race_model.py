@@ -136,6 +136,17 @@ def _weather(cur, spec):
     return got.get("forecast") or got.get("normal")
 
 
+def _division(cur, spec):
+    """The race's division title (race_rows.divType reads it), or None."""
+    import predict as P
+    try:
+        return P._divisionLabel(cur, spec.get("meet_id"), spec.get("div_id"), "XC",
+                                spec.get("source"))
+    except Exception:                                    # noqa: BLE001
+        P._rollback(cur)
+        return None
+
+
 def _meetFacts(cur, spec):
     """(meet name, is_champ) of the target meet; (None, False) unknown."""
     mid, src = spec.get("meet_id"), spec.get("source")
@@ -197,6 +208,21 @@ def predictField(model, field, race):
             if name == "team" and k is None:
                 vals = [math.nan] * len(feats)
             r["f"].update(zip(feats, vals))
+    # ★ RECORDS IN CONTEXT (race_trees CTX): this course, its difficulty, the
+    #   distance, the heat -- the same keys the table was built with
+    packs = model.get("ctx") or {}
+    if packs:
+        wx = race.get("weather") or {}
+        cid = race.get("canonical_id")
+        for r in field:
+            keys = RT.ctxKeys([r["pid"]], [int(cid) if cid is not None else -1],
+                              [race.get("cell") if race.get("cell") is not None else math.nan],
+                              [1.0 if race.get("cell") is not None else 0.0],
+                              [race.get("distance") or math.nan],
+                              [wx.get("temp_c") if wx.get("temp_c") is not None else math.nan])
+            for fam in RT.CTX:
+                vals = RT.ctxLookup(packs.get(fam), int(keys[fam][0]))
+                r["f"].update(zip((f"{fam}_{x}" for x in RT.CTX_STATS), vals))
     X = np.array([[r["f"].get(k, math.nan) for k in model["features"]] for r in field],
                  dtype=np.float32)
     base = np.array([r["base"] for r in field])
@@ -257,6 +283,8 @@ def predictRace(cur, person_ids, spec, cut, rated):
     if len(field) < MIN_FIELD:
         return {}
     race = {"distance": float(spec["distance_meters"]), "day": day, "meet_name": name,
+            "canonical_id": spec.get("canonical_id"),
+            "division": _division(cur, spec),
             "source": spec.get("source"), "is_champ": champ, "cell": spec.get("venue_cell"),
             "page_base": True, "weather": _weather(cur, spec),
             # how far ahead this is asked: the forecast copies' lead_days

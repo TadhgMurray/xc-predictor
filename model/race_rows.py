@@ -96,6 +96,8 @@ RACE_FEATURES = (
     "temp_c", "dew_point_c", "precip_mm", "wind_kmh",
     "h2h_n", "h2h_share", "h2h_vs_base",
     "lead_days",
+    # the division's own words: varsity / JV / open (2026-10-27)
+    "div_type",
 )
 H2H_DAYS = 400           # a meeting older than this says little about Saturday
 H2H_LAST = 15            # the runner's last N cross country races, at most
@@ -125,6 +127,29 @@ def _num(v):
         return float(v) if v is not None else math.nan
     except (TypeError, ValueError):
         return math.nan
+
+
+# ★ HOW HARD A DIVISION IS RUN FOR, from its title (owner, 2026-10-27): the
+#   meet name says "invitational", the division says whether this field is
+#   the varsity race or the JV one. 0 sub-varsity, 2 varsity / seeded /
+#   championship, 1 anything else (open, unnamed).
+# ! A LEVEL IS NOT AN EFFORT: "Middle School Boys" is a middle-school meet's
+#   varsity race, so school levels stay out of this list (level reads them)
+_DIV_LOW = ("jv", "junior varsity", "reserve", "frosh", "freshman", "novice", "sophomore",
+            "f/s", "fr/so", "c team", "b team", "development", "open 2", "community",
+            "alumni")
+_DIV_HIGH = ("varsity", "seeded", "elite", "championship", "champ", "gold", "sweepstakes",
+             "invitational", "a race", "white", "team race")
+
+
+def divType(name):
+    """0 / 1 / 2 from a division title; 1 when there is none. Pure."""
+    n = f" {(name or '').lower()} "
+    if any(w in n for w in _DIV_LOW) and " varsity" not in n.replace("junior varsity", ""):
+        return 0.0
+    if any(w in n for w in _DIV_HIGH):
+        return 2.0
+    return 1.0
 
 
 def meetType(name):
@@ -357,6 +382,7 @@ def raceFeatures(runners, race):
             "h2h_share": h2h[i][1] if i in h2h else math.nan,
             "h2h_vs_base": h2h[i][2] if i in h2h else math.nan,
             "lead_days": float(race.get("lead_days") or 0.0),
+            "div_type": divType(race.get("division")),
         })
         r["y"] = ys[i] - my
         r["base"] = bs[i] - mb
@@ -584,12 +610,14 @@ def _raceMeta(cur, keys, dist_of=None):
                   "AND round(cc.gps_lat::numeric, 5) = round({lat}::numeric, 5) "
                   "AND round(cc.gps_long::numeric, 5) = round({lon}::numeric, 5)")
     for i in range(0, len(anet), 5000):
-        cur.execute("SELECT m.div_id, m.source, m.meet_name, m.distance, cc.canonical_id "
+        cur.execute("SELECT m.div_id, m.source, m.meet_name, m.distance, cc.canonical_id, "
+                    "m.division "
                     "FROM meets m " + canon_join.format(name="m.course_name", lat="m.gps_lat",
                                                         lon="m.gps_long")
                     + " WHERE m.div_id = ANY(%s)", (anet[i:i + 5000],))
-        for div, src, name, dist, cid in cur.fetchall():
-            out[(src, div)] = {"meet_name": name, "distance": dist, "canonical_id": cid}
+        for div, src, name, dist, cid, division in cur.fetchall():
+            out[(src, div)] = {"meet_name": name, "distance": dist, "canonical_id": cid,
+                               "division": division}
     for i in range(0, len(tfr), 5000):
         cur.execute("SELECT mt.meet_id, mt.meet_name, COALESCE(mt.is_championship, 0), "
                     "mt.division_distances, mt.distance, cc.canonical_id "
@@ -628,7 +656,8 @@ def _raceMeta(cur, keys, dist_of=None):
             m = out.get(("tfrrs", k[0])) or {}
             d = ((m.get("divs") or {}).get(str(k[1])) or {}).get("distance") or m.get("distance")
             res[k] = {"meet_name": m.get("meet_name"), "is_champ": m.get("is_champ"),
-                      "distance": d, "canonical_id": m.get("canonical_id")}
+                      "distance": d, "canonical_id": m.get("canonical_id"),
+                      "division": ((m.get("divs") or {}).get(str(k[1])) or {}).get("div_name")}
         else:
             res[k] = dict(out.get((k[2], k[1])) or {})
         # the rows' corrected distance wins; a stored one only if it is sane
@@ -728,6 +757,7 @@ def build(conn, a):
     y_abs, base_abs = array("f"), array("f")
     base_raw, base_raw_abs = array("f"), array("f")
     school_col = array("I")       # crc32 of the school, for team-level history
+    course_col = array("q")       # the race's canonical course, -1 unknown (course records)
     src_col = array("b")
     keys = sorted(races)
     # ! THE PRODUCTION VENUE FLAG, so a course with no cell converts as the
@@ -757,6 +787,8 @@ def build(conn, a):
             base_abs.append(r["base_abs"])
             base_raw.append(r["base_raw"])
             school_col.append(zlib.crc32((r.get("school") or "").encode()) if r.get("school") else 0)
+            course_col.append(int(rmeta["canonical_id"]) if rmeta.get("canonical_id") is not None
+                              else -1)
             base_raw_abs.append(r["base_raw_abs"])
             race_ix.append(ix)
             day_ix.append(day.toordinal())
@@ -765,7 +797,7 @@ def build(conn, a):
     print(f"  {n_page:,} of {len(keys):,} races on the page's clock; the rest on the "
           "5K-equivalent", flush=True)
     return (cols, y, base, y_abs, base_abs, race_ix, day_ix, pid_col, src_col, keys,
-            names, dists, base_raw, base_raw_abs, school_col)
+            names, dists, base_raw, base_raw_abs, school_col, course_col)
 
 
 def main():
@@ -798,7 +830,7 @@ def main():
     t0 = datetime.datetime.now()
     with getConn() as conn:
         (cols, y, base, y_abs, base_abs, race_ix, day_ix, pid, src, keys,
-         names, dists, base_raw, base_raw_abs, school) = build(conn, a)
+         names, dists, base_raw, base_raw_abs, school, course) = build(conn, a)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     np.savez_compressed(
         a.out, X=np.stack([np.frombuffer(cols[k], dtype=np.float32) for k in FEATURES], axis=1),
@@ -808,6 +840,7 @@ def main():
         base_raw=np.frombuffer(base_raw, dtype=np.float32),
         base_raw_abs=np.frombuffer(base_raw_abs, dtype=np.float32),
         school=np.frombuffer(school, dtype=np.uint32),
+        course=np.frombuffer(course, dtype=np.int64),
         race=np.frombuffer(race_ix, dtype=np.int32), day=np.frombuffer(day_ix, dtype=np.int32),
         pid=np.frombuffer(pid, dtype=np.int64), tfrrs=np.frombuffer(src, dtype=np.int8),
         features=np.array(FEATURES), race_keys=np.array([repr(k) for k in keys]),
