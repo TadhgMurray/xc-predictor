@@ -199,12 +199,17 @@ def main():
     ap.add_argument("--val-from", default="2024-08-01")
     ap.add_argument("--members", default=",".join(MEMBERS))
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--train-frac", type=float, default=1.0,
+                    help="fit every member on this share of the training races (0.35 for "
+                         "a test in about a third of the time); the validation season stays whole")
+    ap.add_argument("--mlp-epochs", type=int, default=6)
     a = ap.parse_args()
     want = [m.strip() for m in a.members.split(",") if m.strip()]
 
     import numpy as np
     t0 = datetime.datetime.now()
-    T = RT.loadTable(a.rows, a.val_from, own=True, no_ratings=False, seed=a.seed)
+    T = RT.loadTable(a.rows, a.val_from, own=True, no_ratings=False, seed=a.seed,
+                     train_frac=a.train_frac)
     val = T["val"]
     yv = T["y"][val]
     sl = RT.raceSlices(T["race"][val])
@@ -215,7 +220,7 @@ def main():
     preds = {"ratings": T["base"][val]}
     fits = {"hgb": lambda: fitHgb(T, a.seed), "lgbm": lambda: fitLgbm(T, a.seed),
             "rank": lambda: fitRank(T, a.seed), "xgb": lambda: fitXgb(T, a.seed),
-            "mlp": lambda: fitMlp(T, a.seed)}
+            "mlp": lambda: fitMlp(T, a.seed, epochs=a.mlp_epochs)}
     for name in want:
         if name == "raw":
             continue
@@ -228,7 +233,8 @@ def main():
         print(f"  {name}: fitted ({datetime.datetime.now() - t1})", flush=True)
     if "raw" in want:
         t1 = datetime.datetime.now()
-        T2 = RT.loadTable(a.rows, a.val_from, own=True, no_ratings=True, seed=a.seed)
+        T2 = RT.loadTable(a.rows, a.val_from, own=True, no_ratings=True, seed=a.seed,
+                          train_frac=a.train_frac)
         preds["raw"] = RT.centre(fitHgb(T2, a.seed), sl)
         del T2
         print(f"  raw: fitted ({datetime.datetime.now() - t1})", flush=True)

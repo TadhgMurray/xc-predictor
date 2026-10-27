@@ -647,3 +647,25 @@ whole), scored on all of 2024-25.
   `XCP_PREDICT_BASIS=race` and `XCP_FORECAST_TABLE=pred_meet_forecast`.
   It records every posted meet, and `score_frozen_forecasts.py` scores it
   with the same table setting.
+
+### Every baseline on the same races (owner's run, 2026-10-27)
+
+1,000 race-morning races of 2024-25, 64,806 runners. The transformer is
+run as the page runs it, history cut the day before.
+
+| | Pairs | Rho | Median miss | Mean miss |
+|---|---|---|---|---|
+| Last race | 86.30% | 0.871 | 3.68% | 5.19% |
+| Ratings | 87.17% | 0.887 | 3.84% | 5.14% |
+| Transformer alone | 87.73% | 0.895 | 3.09% | 4.40% |
+| **Site today (blend)** | 87.17% | 0.887 | 3.31% | 4.69% |
+| **New model (1.5)** | **88.56%** | **0.906** | **2.85%** | **4.13%** |
+
+- **Against the site:** +1.39 points on order, and times about 14%
+  closer.
+- **The transformer was trained on data that includes 2024-25,** so its
+  line is flattered; the new model never saw the season. It is still
+  ahead of the transformer on everything (+0.83 points on order, 2.85%
+  against 3.09% median miss).
+- **`--train-frac`** (race_trees, race_blend) fits on a sample of the
+  training races, for quicker tests.

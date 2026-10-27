@@ -398,7 +398,7 @@ def orderReport(name, base_s, model_s, keep=None, labels=("ratings", "model"), e
 #            each team's record added, the inputs this run may use chosen, the
 #            validation season marked, the training rows' practice blanks made.
 #            race_trees.main and race_blend.py both start here.
-def loadTable(rows, val_from, own=True, no_ratings=False, seed=0):
+def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0):
     import numpy as np
     t0 = datetime.datetime.now()
     z = np.load(rows, allow_pickle=False)
@@ -451,6 +451,18 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0):
               + f" kept for the page ({datetime.datetime.now() - t1})")
     cut = datetime.date.fromisoformat(val_from).toordinal()
     val = day >= cut
+    pid = z["pid"][order]
+    # ★ A SAMPLE OF THE TRAINING RACES (owner, 2026-10-27: "that took way way
+    #   too long"). Whole races, by race id; the validation season stays
+    #   whole, and every runner's and team's record was already read from
+    #   the FULL table above, so only the fitting gets cheaper. 4x the rows
+    #   bought ~0.1 point (1.2 -> 1.4), so a third costs a few hundredths.
+    if train_frac < 1.0:
+        keep = val | ((race % 1000) < int(train_frac * 1000))
+        X, y, base, y_abs, base_abs = X[keep], y[keep], base[keep], y_abs[keep], base_abs[keep]
+        base_page, base_page_abs = base_page[keep], base_page_abs[keep]
+        race, day, tfrrs, lead, val, pid = (race[keep], day[keep], tfrrs[keep], lead[keep],
+                                            val[keep], pid[keep])
     if not (~val).any() or not val.any():
         raise SystemExit(f"{rows}: {int((~val).sum()):,} training and {int(val.sum()):,} "
                          f"validation rows around --val-from {val_from}; both are needed")
@@ -485,7 +497,7 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0):
 
 _TABLE_KEYS = ('z', 't0', 'feats_all', 'feats', 'fidx', 'X_all', 'X', 'y', 'base', 'y_abs',
                'base_abs', 'base_page', 'base_page_abs', 'race', 'day', 'tfrrs', 'val', 'lead',
-               'own_pack', 'team_pack', 'labels', 'r', 'Xt', 'excluded', 'order')
+               'own_pack', 'team_pack', 'labels', 'r', 'Xt', 'excluded', 'order', 'pid')
 
 
 def siteReport(path, pid_v, keys, rv, sl, lead_r, yv, page_abs, lastv, pv, tot_m, yav, labels):
@@ -555,6 +567,9 @@ def main():
                     help="leave out each runner's own record against the ratings")
     ap.add_argument("--big", action="store_true",
                     help="bigger trees (255 leaves, up to 8,000 rounds): slower, more capacity")
+    ap.add_argument("--train-frac", type=float, default=1.0,
+                    help="fit on this share of the training races (whole races); the "
+                         "validation season stays whole. 0.35 for a quick test")
     ap.add_argument("--site", default=None, metavar="NPZ",
                     help="model/race_site.py's file: the transformer and the site's blend "
                          "beside every other basis, on the races it sampled")
@@ -565,10 +580,10 @@ def main():
     if a.no_ratings and a.out:
         raise SystemExit("--no-ratings is a test, not a model to serve: drop --out")
 
-    T = loadTable(a.rows, a.val_from, a.own, a.no_ratings, a.seed)
+    T = loadTable(a.rows, a.val_from, a.own, a.no_ratings, a.seed, a.train_frac)
     (z, t0, feats_all, feats, fidx, X_all, X, y, base, y_abs, base_abs, base_page,
      base_page_abs, race, day, tfrrs, val, lead, own_pack, team_pack, labels, r, Xt,
-     excluded, order) = \
+     excluded, order, pid) = \
         (T[k] for k in _TABLE_KEYS)
     import numpy as np
     rm = runnerModel(a.seed, a.big).fit(Xt, r[~val])
@@ -723,7 +738,7 @@ def main():
                      f"{dist:>7.0f}  {nm[:40]:40}  {keys[ri]}")
 
     if a.site:
-        lines += siteReport(a.site, z["pid"][order][val], keys, rv, sl, lead_r, yv,
+        lines += siteReport(a.site, pid[val], keys, rv, sl, lead_r, yv,
                             base_page_abs[val], lastv, pv, tot_m, yav, labels)
 
     # ★ RANGES THAT MEAN WHAT THEY SAY: the place spread by runner band and
