@@ -498,3 +498,11 @@ def test_threshold_table():
     assert t[0.95] == (2, 2, 1, 15)
     assert t[0.9] == (3, 1, 2, 5)
     assert t[0.8] == (3, 1, 2, 5)
+
+
+def test_why_a_runner_is_unnamed():
+    r = {"FirstName": "Ann", "LastName": "Lee", "Gender": "F", "SchoolName": "OPRF",
+         "SchoolFull": "Oak Park River Forest"}
+    assert A.whyUnnamed(r, set()) == "not in our data"
+    assert A.whyUnnamed(r, {(1, "oak park-river forest")}) == "in our data at another school"
+    assert A.whyUnnamed(r, {(1, "oprf"), (2, "oprf")}) == "several people at their school"

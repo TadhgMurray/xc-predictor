@@ -1248,6 +1248,57 @@ def compareMeet(have, results_to_save, known=None):
     return c, ex
 
 
+def whyUnnamed(runner, hits):
+    """Why resolveIds found no one for a runner. hits: our athletes rows
+    with their name either way round, (person_id, school lowercased).
+    -> 'not in our data' / 'in our data at another school' /
+    'several people at their school'. Pure."""
+    schools = {str(x).strip().lower() for x in (runner.get("SchoolName"),
+                                                runner.get("SchoolFull")) if x}
+    here = {pid for pid, sch in hits if sch in schools}
+    if len(here) > 1:
+        return "several people at their school"
+    if hits and not here:
+        return "in our data at another school"
+    if not hits:
+        return "not in our data"
+    return "found (one person at the school)"
+
+
+def _reportUnnamed(cur, unnamed, show):
+    """check's answer to "why aren't the others there?": for each runner
+    still unnamed, is the name anywhere in our athletes at all?"""
+    from person_name import personKeyParts
+    lasts = sorted({str(x).strip().lower() for r in unnamed
+                    for x in (r.get("LastName"), r.get("FirstName")) if x})
+    cur.execute("""SELECT person_id, first_name, last_name, gender, lower(btrim(school))
+                   FROM athletes WHERE lower(btrim(last_name)) = ANY(%s)""", (lasts,))
+    by_key = defaultdict(set)
+    for pid, fn, ln, g, sch in cur.fetchall():
+        k = personKeyParts(fn, ln, keep_suffix=True)
+        if k:
+            by_key[(k, str(g or "").upper())].add((pid, sch))
+    kinds, ex = Counter(), defaultdict(list)
+    for r in unnamed:
+        g = str(r.get("Gender") or "").upper()
+        hits = set()
+        for f, l in ((r.get("FirstName"), r.get("LastName")), (r.get("LastName"), r.get("FirstName"))):
+            k = personKeyParts(f, l, keep_suffix=True)
+            hits |= by_key.get((k, g), set()) if k else set()
+        why = whyUnnamed(r, hits)
+        kinds[why] += 1
+        ours = sorted({sch for _p, sch in hits})[:3]
+        ex[why].append(f"meet {r['meet']}: {r.get('FirstName')} {r.get('LastName')} "
+                       f"({r.get('SchoolName')})" + (f"  ours: {ours}" if ours else ""))
+    print(f"\n  the {len(unnamed):,} runners still unnamed -- is the name in our athletes?")
+    for why, n in kinds.most_common():
+        print(f"    {n:>7,}  {why}")
+    for why, lines in ex.items():
+        print(f"\n  {why} (up to {show}):")
+        for line in lines[:show]:
+            print(f"    {line}")
+
+
 def _unlandedLines(meet_id, p, slots):
     """For the events plan() did not land: what AthleticLIVE calls it, and
     the slots athletic.net has for that event -- the division names and
@@ -1284,6 +1335,7 @@ def cmdCheck(a):
     agg = Counter()
     examples = defaultdict(list)
     shares = []
+    unnamed = []
     with _conn() as conn:
         cur = conn.cursor()
         cur.execute("""SELECT u.anet_id, am.alive_id
@@ -1315,6 +1367,8 @@ def cmdCheck(a):
                 before, _w = compareMeet(have, p["results_to_save"], known)
                 moved = applyIds(p, resolveIds(cur, p["athletes"]))
                 shares.extend(identifiedShares(p))
+                unnamed.extend(dict(a, meet=meet_id) for a in p["athletes"]
+                               if (a.get("AthleteID") or 0) < 0)
                 holdUnknown(p)
                 res, why = compareMeet(have, p["results_to_save"], known)
                 res["rows given our id"] = moved
@@ -1349,6 +1403,10 @@ def cmdCheck(a):
         print(f"\n  {kind} (up to {a.show}):")
         for line in ex[:a.show]:
             print(f"    {line}")
+    if unnamed:
+        with _conn() as conn2:
+            _reportUnnamed(conn2.cursor(), unnamed, a.show)
+            conn2.rollback()
     print("\n  a race lands when this share of its runners is named (the rest wait in a side table):")
     print(f"    {'share':>6} {'races landed':>13} {'races held':>11} {'runners left out':>17} "
           f"{'runners in held races':>22}")
