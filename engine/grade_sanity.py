@@ -2170,6 +2170,31 @@ NOT_SCHOOL_RE = (
     r"|morocco|algeria|bahrain|qatar|turkey|israel|philippines|colombia)$")
 
 
+# ★ ONE QUESTION FOR EVERY CANDIDATE, NOT ONE PER CANDIDATE (owner's dry
+#   run, 2026-10-27: grade_sanity --compare sat four hours on this step, and
+#   held the nightly pg_dump's table locks behind it). It was a correlated
+#   NOT EXISTS over a UNION ALL, which Postgres runs once per candidate --
+#   and under rule 8's enable_nestloop = off each run hashed the whole of
+#   race_top_level. Grades 6-12 (e4aa018, 2026-10-24) made the candidates
+#   many. Now the schoolers are found in one set-based pass, the shape of
+#   the facts query above it, and the rest are never_school.
+_NEVER_SCHOOL_SQL = """
+    WITH cand AS (SELECT DISTINCT person_id FROM tmp_club_cand),
+    schooled AS (
+        SELECT r.person_id
+        FROM   results r JOIN race_top_level rl ON rl.race = {race_r}
+        WHERE  r.person_id IN (SELECT person_id FROM cand)
+          AND  rl.top_level IN ('elem', 'ms', 'hs')
+        UNION
+        SELECT r.person_id
+        FROM   results_tf r JOIN race_top_level rl ON rl.race = {race_r}
+        WHERE  r.person_id IN (SELECT person_id FROM cand)
+          AND  rl.top_level IN ('elem', 'ms', 'hs'))
+    SELECT c.person_id
+    FROM   cand c LEFT JOIN schooled s ON s.person_id = c.person_id
+    WHERE  s.person_id IS NULL"""
+
+
 def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
     """{(person_id, acad): school} meeting rule 8's three signals. The
     school is '' for a season moved on the unattached arm (no club row).
@@ -2301,17 +2326,7 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
             pro_seasons.add((int(p), int(a)))
     # the candidates who never ran a race with school runners on top, any
     # season, either sport (_adultClubDecide's never_school)
-    cur.execute(f"""
-        SELECT c.person_id
-        FROM   (SELECT DISTINCT person_id FROM tmp_club_cand) c
-        WHERE  NOT EXISTS (
-            SELECT 1 FROM (SELECT r.meet_id, r.div_id, r.source FROM results r
-                           WHERE r.person_id = c.person_id
-                           UNION ALL
-                           SELECT r.meet_id, r.div_id, r.source FROM results_tf r
-                           WHERE r.person_id = c.person_id) r
-            JOIN race_top_level rl ON rl.race = {_raceKeyExpr('r')}
-            WHERE rl.top_level IN ('elem', 'ms', 'hs'))""")
+    cur.execute(_NEVER_SCHOOL_SQL.format(race_r=_raceKeyExpr("r")))
     never_school = {int(p) for (p,) in cur.fetchall()}
     cur.execute("RESET enable_nestloop")
     cur.execute("DROP TABLE tmp_club_rows; DROP TABLE tmp_club_cand; DROP TABLE tmp_club_alias")

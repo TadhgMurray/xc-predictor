@@ -221,11 +221,16 @@ def write(conn, decisions):
         cur.execute(LOG_DDL)
         cur.execute(MERGE_DDL)
         cur.execute(REDIRECT_DDL)
+        # ! COUNTED BEFORE AND AFTER: execute_values' rowcount is its LAST
+        #   page's (the first --apply said 72 of 16,872 -- 16,872 % 100)
+        cur.execute("SELECT count(*) FROM swapped_merge")
+        before = cur.fetchone()[0]
         if decisions:
             execute_values(cur, """
                 INSERT INTO swapped_merge (old_id, new_id, old_name, new_name, school)
                 VALUES %s ON CONFLICT (old_id) DO NOTHING""", decisions)
-            out["decisions new"] = cur.rowcount
+        cur.execute("SELECT count(*) FROM swapped_merge")
+        out["decisions new"] = cur.fetchone()[0] - before
         cur.execute("DROP TABLE IF EXISTS sm_map")
         cur.execute("""CREATE TEMP TABLE sm_map AS
                        SELECT old_id, new_id FROM swapped_merge
