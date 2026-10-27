@@ -96,7 +96,7 @@ main.rp-page .rp-words { margin: .9rem 0 .3rem; padding-left: 1.1rem; line-heigh
 main.rp-page .rp-count { margin: 0 0 .4rem; font-size: .85rem; color: var(--muted, #6b7280); }
 main.rp-page .rp-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.2rem; }
 main.rp-page .rp-sub { display: block; font-size: .78rem; line-height: 1.3; color: var(--muted, #6b7280); font-weight: 400; }
-main.rp-page td.n, main.rp-page th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+main.rp-page td.n, main.rp-page th.n { text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
 main.rp-page .rp-up { color: var(--good, #166534); font-weight: 650; }
 main.rp-page .rp-down { color: var(--bad, #b42318); font-weight: 650; }
 main.rp-page .rp-out { font-size: .9rem; line-height: 1.55; margin: 0; }

@@ -33,7 +33,7 @@ main.rc.my-page .mp-pred .dist-note { margin-left: .3rem; }
 main.rc.my-page .mp-why { font-size: .8rem; color: var(--muted); margin: .3rem 0 0; }
 main.rc.my-page .mp-links { display: flex; flex-wrap: wrap; gap: .2rem 1.1rem; margin: .45rem 0 0; font-weight: 600; font-size: .9rem; }
 main.rc.my-page .mp-table { width: 100%; font-size: .92rem; }
-main.rc.my-page .mp-table td.n, main.rc.my-page .mp-table th.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+main.rc.my-page .mp-table td.n, main.rc.my-page .mp-table th.n { text-align: left; white-space: nowrap; font-variant-numeric: tabular-nums; }
 main.rc.my-page .mp-table td.d { white-space: nowrap; color: var(--muted); width: 5.5rem; }
 main.rc.my-page .mp-flag { display: inline-block; font-size: .7rem; font-weight: 700; padding: 0 .35rem; border-radius: 3px;
   background: var(--sel-bg); color: var(--ink); margin-left: .3rem; vertical-align: .1em; }

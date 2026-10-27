@@ -42,7 +42,7 @@ main.rc.contrib-page table.ct-rows th { text-align: left; font-size: .72rem; tex
   color: var(--muted); font-weight: 600; padding: .35rem .5rem; border-bottom: 1px solid var(--line); }
 main.rc.contrib-page table.ct-rows td { padding: .35rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 main.rc.contrib-page table.ct-rows tr:nth-child(even) td { background: var(--zebra, #fafbfc); }
-main.rc.contrib-page table.ct-rows td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+main.rc.contrib-page table.ct-rows td.n { text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
 main.rc.contrib-page table.ct-rows td.t { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
 main.rc.contrib-page table.ct-rows tr.is-flag td { background: #fffbeb; }
 main.rc.contrib-page table.ct-rows .ct-flag { display: block; color: #b45309; font-size: .78rem; font-weight: 400; }

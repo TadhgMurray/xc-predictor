@@ -1123,7 +1123,7 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 
 .rankings-page .rk td.time {
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
 }
 
@@ -2341,7 +2341,7 @@ html.js-tips .flag::after, html.js-tips .flag::before { display: none !important
                                  padding-bottom: 0.25rem;
                                  border-bottom: 1px solid #e5e7eb; }
 .predict2 .chosen-tbl th.num, .predict2 .chosen-tbl td.num {
-    text-align: right; font-variant-numeric: tabular-nums; }
+    text-align: left; font-variant-numeric: tabular-nums; }
 /* The name column takes the slack; the rest are as wide as their contents. */
 .predict2 .chosen-tbl td:first-child,
 .predict2 .chosen-tbl th:first-child { width: 40%; white-space: normal; }
@@ -2694,7 +2694,7 @@ html.js-tips .flag::after, html.js-tips .flag::before { display: none !important
                                  padding-bottom: 0.25rem;
                                  border-bottom: 1px solid #e5e7eb; }
 .predict2 .chosen-tbl th.num, .predict2 .chosen-tbl td.num {
-    text-align: right; font-variant-numeric: tabular-nums; }
+    text-align: left; font-variant-numeric: tabular-nums; }
 /* The name column takes the slack; the rest are as wide as their contents. */
 .predict2 .chosen-tbl td:first-child,
 .predict2 .chosen-tbl th:first-child { width: 40%; white-space: normal; }
@@ -4633,7 +4633,7 @@ tr.is-carried td a { color: var(--link); }
 .landing-page .landing-nav { font-size: 0.9rem; color: #374151; line-height: 1.8; }
 .landing-page .landing-nav .is-on, .landing-page .landing-states .is-on { font-weight: 700; color: #111; }
 .landing-page .landing-tbl { width: 100%; border-collapse: collapse; margin-top: 0.8rem; }
-.landing-page .landing-tbl td.num, .landing-page .landing-tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.landing-page .landing-tbl td.num, .landing-page .landing-tbl th.num { text-align: left; font-variant-numeric: tabular-nums; }
 /* # as the rankings board sets it: narrow, left, not a right-aligned number
    under a wide empty cell (owner, 2026-10-07: "weird spacing") */
 .landing-page .landing-tbl td.rk, .landing-page .landing-tbl th.rk { text-align: left; width: 2.5rem; font-variant-numeric: tabular-nums; }
@@ -4700,8 +4700,8 @@ li > .school-mark, p > .school-mark { margin-right: 0.35rem; }
 .recruit-page .recruit-tbl { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
 .recruit-page .recruit-tbl th, .recruit-page .recruit-tbl td { padding: 0.45rem 0.6rem; border-bottom: 1px solid #e5e7eb; text-align: left; }
 .recruit-page .recruit-tbl th { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; }
-.recruit-page .recruit-tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
-.recruiting-page table.rk td.num, .recruiting-page table.rk th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.recruit-page .recruit-tbl .num { text-align: left; font-variant-numeric: tabular-nums; }
+.recruiting-page table.rk td.num, .recruiting-page table.rk th.num { text-align: left; font-variant-numeric: tabular-nums; }
 
 /* ======================================================================
    recruiting, the athlete edition (282)
@@ -4773,7 +4773,7 @@ li > .school-mark, p > .school-mark { margin-right: 0.35rem; }
 .recruit-athlete .r-scroll { overflow-x: auto; }
 .recruit-athlete table.rc-tbl { width: 100%; }
 .recruit-athlete table.rc-tbl td, .recruit-athlete table.rc-tbl th { white-space: nowrap; }
-.recruit-athlete table.rc-tbl td.num, .recruit-athlete table.rc-tbl th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.recruit-athlete table.rc-tbl td.num, .recruit-athlete table.rc-tbl th.num { text-align: left; font-variant-numeric: tabular-nums; }
 .recruit-athlete table.rc-tbl .rc-school { max-width: 20rem; overflow: hidden; text-overflow: ellipsis; }
 .recruit-athlete table.rc-tbl .rc-dim { color: #4b5563; }
 .recruit-athlete table.rc-tbl .rc-strong { font-weight: 650; }
@@ -5686,7 +5686,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .acc-history table { border-collapse: collapse; font-size: .9rem; margin-top: .5rem;
                      font-variant-numeric: tabular-nums; }
 .acc-history th, .acc-history td { padding: .3rem .6rem; border-bottom: 1px solid var(--line);
-                                   text-align: right; }
+                                   text-align: left; }
 .acc-history th:first-child, .acc-history td:first-child { text-align: left; white-space: nowrap; }
 .acc-history th { font-weight: 600; font-size: .8rem; color: var(--muted); }
 
