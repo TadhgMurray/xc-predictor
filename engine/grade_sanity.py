@@ -199,7 +199,20 @@ MIN_FIELD_GRADED = 4
 #   level, and an event nobody graded still says 'pro' as before. With no
 #   vote, the season falls to what its team says (a club's gradeless row
 #   is professional; a school's is that school's).
-OPEN_FIELD_SHARE = 0.5
+# ⚠ OFF UNTIL MEASURED (2026-10-27, the owner's --compare): "no vote" is not
+#   "the team decides" -- a season with no verdict is written no_evidence,
+#   and resolvePool gives no_evidence NO POOL. So the rule unpools a
+#   gradeless runner rather than handing them to their club, and at a meet
+#   where most entrants simply carry no grade it would unpool the school
+#   kids too. --compare-open measures what it alone moves; XCP_OPEN_FIELD_SHARE
+#   (0.5, say) switches it on. Unset, the share is above 1 and no event is
+#   ever open.
+OPEN_FIELD_OFF = 2.0
+try:
+    OPEN_FIELD_SHARE = float(os.environ.get("XCP_OPEN_FIELD_SHARE") or OPEN_FIELD_OFF)
+except ValueError:
+    OPEN_FIELD_SHARE = OPEN_FIELD_OFF
+_OPEN_TOKEN = "/*OPEN_FIELD_SHARE*/"
 
 # * FORGIVING BY ONE GRADE, AND ONLY BY ONE. Implied class year is
 #   `acad + (12 - grade)` and is constant for a real athlete. A drift of one
@@ -1302,7 +1315,7 @@ _FIELD_BUILD = f"""
                END AS level,
                -- an open race: most of its entrants have no level (OPEN_FIELD_SHARE)
                (sum(n) - COALESCE(sum(n) FILTER (WHERE lvl IS NOT NULL), 0))
-                   >= {OPEN_FIELD_SHARE} * sum(n) AS open_field
+                   >= {_OPEN_TOKEN} * sum(n) AS open_field
         FROM  (SELECT w.meet_id, w.div_id, w.source, w.event_key,
                       gradeLevel(a.grade) AS lvl,
                       count(*)            AS n,
@@ -1345,6 +1358,13 @@ _FIELD_SQL = f"""
     ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC,
               {_LEVEL_RANK_SQL.format(x="e.level")} DESC
 """
+
+def fieldBuild(share=None):
+    """_FIELD_BUILD with the open-race share laid in (OPEN_FIELD_SHARE when
+    None; above 1 is off)."""
+    return _FIELD_BUILD.replace(_OPEN_TOKEN, repr(float(
+        OPEN_FIELD_SHARE if share is None else share)))
+
 
 # rule 4's staging tables; season_races outlives them until rule 5e reads it
 _FIELD_DROP = """
@@ -2620,6 +2640,14 @@ def resolve(cur, audit=False):
     graduating case -- the LATER academic year wins, because grades only move
     forward.
     """
+    buildRaces(cur, audit)
+    # The academic-year verdicts, in precedence order.
+    return _resolve(cur)
+
+
+def buildRaces(cur, audit=False):
+    """The shared race table (allraces) and its companions, every rule's
+    input."""
     print("[grade] building the shared race table...")
     # ! SUBSTITUTED, NOT FORMATTED. _BUILD is already an f-string and its SQL
     #   carries `$$`-quoted function bodies; a second .format() pass over it
@@ -2650,7 +2678,9 @@ def resolve(cur, audit=False):
     reportFold(cur)
     reportUngraded(cur)
 
-    # The academic-year verdicts, in precedence order.
+
+def _resolve(cur):
+    """The rules, in precedence order, over buildRaces' tables."""
     acad = {}
 
     _tq = time.time()
@@ -2714,7 +2744,7 @@ def resolve(cur, audit=False):
     #   is the absence of school-ness. Only the second can emit 'pro', so the
     #   level identifies its own origin and the two stay countable apart.
     _tq = time.time()
-    runTimed(cur, _FIELD_BUILD, label="[4] staging")
+    runTimed(cur, fieldBuild(), label="[4] staging")
     cur.execute(_FIELD_SQL)
     _field_rows = cur.fetchall()
     cur.execute(_FIELD_DROP)
@@ -3227,12 +3257,66 @@ def compare(cur, resolved, show=12):
              and (old.get(k) or (None,))[0] == "hs"]
     if moved:
         cur.execute("""SELECT DISTINCT ON (person_id) person_id, first_name, last_name, school
-                       FROM athletes WHERE person_id = ANY(%s)""", (sorted(moved)[:5000],))
+                       FROM athletes WHERE person_id = ANY(%s)""",
+                    (sorted({k[0] for k in moved})[:5000],))
         names = {p: (f, l, sc) for p, f, l, sc in cur.fetchall()}
         print(f"\n  seasons that were 'hs' and change (up to {show}):")
         for key in sorted(moved, key=lambda k: -k[1])[:show]:
             f, l, sc = names.get(key[0], ("?", "?", "?"))
             print(f"    {key[0]} {key[1]} {f} {l} ({sc}): {old.get(key)} -> {new.get(key)}")
+
+
+def compareOpen(cur, share=0.5, show=25):
+    """What the open-race rule ALONE moves: rule 4's field verdicts with it
+    off and with it at `share`, over one build. Read only (the dry run is
+    rolled back). Field verdicts only -- rule 2c's relabelling of bare class
+    words is skipped, so a few seasons differ from a full run either way."""
+    from collections import Counter
+    buildRaces(cur)
+    out = {}
+    for label, sh in (("off", OPEN_FIELD_OFF), ("on", share)):
+        runTimed(cur, fieldBuild(sh), label=f"[open {label}] staging")
+        cur.execute(_FIELD_SQL)
+        out[label] = {(int(p), int(a)): lv for p, a, lv in cur.fetchall()}
+        cur.execute(_FIELD_DROP)
+    off, on = out["off"], out["on"]
+    moves = Counter()
+    moved = []
+    for key in set(off) | set(on):
+        a, b = off.get(key), on.get(key)
+        if a != b:
+            moves[f"{a or '-'} -> {b or 'no field verdict'}"] += 1
+            moved.append(key)
+    print(f"\n[grade] the open-race rule at {share:.0%} ungraded moves "
+          f"{len(moved):,} field verdicts (of {len(off):,}):")
+    for what, n in moves.most_common():
+        print(f"    {n:>9,}  {what}")
+    if not moved:
+        return
+    pids = sorted({k[0] for k in moved})
+    cur.execute("""SELECT DISTINCT ON (a.person_id) a.person_id, a.first_name, a.last_name,
+                          a.school, t.level
+                   FROM   athletes a
+                   LEFT   JOIN LATERAL (SELECT r.team_id FROM results r
+                                        WHERE r.person_id = a.person_id
+                                          AND r.team_id IS NOT NULL LIMIT 1) r ON true
+                   LEFT   JOIN anet_team t ON t.team_id = r.team_id
+                   WHERE  a.person_id = ANY(%s)""", (pids[:20000],))
+    info = {p: (f, l, sc, lv) for p, f, l, sc, lv in cur.fetchall()}
+    club = Counter()
+    for key in moved:
+        lv = (info.get(key[0]) or (None,) * 4)[3]
+        club["anet team level " + str(lv)] += 1
+    print("\n  the moved seasons by their team's anet level (16 = open / club):")
+    for what, n in club.most_common(8):
+        print(f"    {n:>9,}  {what}")
+    import random
+    rnd = random.Random(0)
+    print(f"\n  {show} examples, newest season first:")
+    for key in sorted(rnd.sample(moved, min(len(moved), show * 4)), key=lambda k: -k[1])[:show]:
+        f, l, sc, lv = info.get(key[0], ("?", "?", "?", None))
+        print(f"    {key[0]} {key[1]} {f} {l} ({sc}; team level {lv}): "
+              f"{off.get(key)} -> {on.get(key)}")
 
 
 def main(do_write=False, audit=False, do_compare=False):
@@ -3252,6 +3336,13 @@ def main(do_write=False, audit=False, do_compare=False):
 
 
 if __name__ == "__main__":
+    if "--compare-open" in sys.argv:
+        from database import getConn
+        with getConn() as _conn:
+            with _conn.cursor() as _cur:
+                compareOpen(_cur)
+            _conn.rollback()
+        sys.exit(0)
     main(do_write="--write" in sys.argv,
          audit="--audit" in sys.argv,
          do_compare="--compare" in sys.argv)

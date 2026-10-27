@@ -85,7 +85,7 @@ OLD_FIELD_SQL = f"""
                           LIMIT  1)
                END AS level,
                count(*) - count(*) FILTER (WHERE gradeLevel(a.grade) IS NOT NULL)
-                   >= {GS.OPEN_FIELD_SHARE} * count(*) AS open_field,
+                   >= OPEN_SHARE_TOKEN * count(*) AS open_field,
                count(*) AS n_entrants,
                count(*) FILTER (WHERE a.grade IS NOT NULL) AS n_graded
         FROM   wanted w
@@ -110,6 +110,13 @@ OLD_FIELD_SQL = f"""
     GROUP  BY n.person_id, n.acad, e.level
     ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC, {_RANK.format(x="e.level")} DESC
 """
+
+def oldField(share=None):
+    """OLD_FIELD_SQL with the open-race share (GS.OPEN_FIELD_SHARE, off by
+    default) laid in, as GS.fieldBuild lays it into the new stages."""
+    return OLD_FIELD_SQL.replace("OPEN_SHARE_TOKEN", repr(float(
+        GS.OPEN_FIELD_SHARE if share is None else share)))
+
 
 # rule 5e's own count before 2026-10-25
 OLD_RACE_COUNT_SQL = """
@@ -374,10 +381,10 @@ def test_every_build_function_is_parallel_safe():
 
 def test_the_staged_statements_take_no_parameters():
     # runTimed executes them without params: a %(name)s would reach the server
-    for sql in (GS._FIELD_BUILD, GS._FIELD_SQL, GS._FIELD_DROP):
-        assert "%(" not in sql
+    for sql in (GS.fieldBuild(), GS._FIELD_SQL, GS._FIELD_DROP):
+        assert "%(" not in sql and GS._OPEN_TOKEN not in sql
     heads = [s.split("\n")[-1] if s.startswith("--") else s
-             for s in GS.splitStatements(GS._FIELD_BUILD)]
+             for s in GS.splitStatements(GS.fieldBuild())]
     assert sum("CREATE UNLOGGED TABLE" in s for s in heads) == 5
 
 
@@ -454,8 +461,8 @@ def _load(cur, rows):
     cur.execute("ANALYZE allraces")
 
 
-def _newField(cur):
-    GS.runTimed(cur, GS._FIELD_BUILD, label="test", slow=1e9)
+def _newField(cur, share=None):
+    GS.runTimed(cur, GS.fieldBuild(share), label="test", slow=1e9)
     cur.execute(GS._FIELD_SQL)
     got = cur.fetchall()
     cur.execute("SELECT person_id, acad, races FROM season_races")
@@ -467,7 +474,7 @@ def _newField(cur):
 @pytest.mark.parametrize("seed", range(8))
 def test_rule4_stages_match_the_one_statement(cur, seed):
     _load(cur, _fixture(random.Random(seed)))
-    cur.execute(OLD_FIELD_SQL, {"minc": GS.MIN_CORROBORATION})
+    cur.execute(oldField(), {"minc": GS.MIN_CORROBORATION})
     want = cur.fetchall()
     cur.execute(OLD_RACE_COUNT_SQL)
     want_races = cur.fetchall()
@@ -502,7 +509,7 @@ def test_rule4_ties_and_ungraded_events(cur):
              (12, 2024, None, None, 4, 1, "anet", -1, 401)]
     # the athletes 1 and 5 are needy (one race each); 11 and 12 too
     _load(cur, rows)
-    cur.execute(OLD_FIELD_SQL, {"minc": GS.MIN_CORROBORATION})
+    cur.execute(oldField(), {"minc": GS.MIN_CORROBORATION})
     want = sorted(cur.fetchall())
     got, _races = _newField(cur)
     assert sorted(got) == want
@@ -615,9 +622,13 @@ def test_an_open_races_graded_few_do_not_pool_its_ungraded_runners(cur):
     for pid in (55, 56):
         rows.append((pid, 2026, None, None, 8, 1, "anet", -1, 800 + pid))
     _load(cur, rows)
-    cur.execute(OLD_FIELD_SQL, {"minc": GS.MIN_CORROBORATION})
+    # the rule is off by default (unmeasured, see GS.OPEN_FIELD_OFF): the
+    # adults still take 'hs'
+    got_off, _r = _newField(cur)
+    assert {p: lv for p, _a, lv in got_off}[40] == "hs"
+    cur.execute(oldField(0.5), {"minc": GS.MIN_CORROBORATION})
     want = sorted(cur.fetchall())
-    got, _races = _newField(cur)
+    got, _races = _newField(cur, 0.5)
     assert sorted(got) == want
     levels = {p: lv for p, _a, lv in want}
     assert 40 not in levels and 49 not in levels          # no 'hs' for the adults
