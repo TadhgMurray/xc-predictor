@@ -338,6 +338,11 @@ _optout.loadHidden(getConn)
 #   and a cold Jinja compile is part of a first page's wait -- then waits
 #   XCP_PREWARM_DELAY seconds (default 15) before loading the model. A
 #   Predict asked inside that window loads it itself, as it always could.
+# ★ AND NOT ALL AT ONCE (owner's timing, 2026-10-27: deploy/time_restart.sh
+#   answered at +2.4 s and in 1 ms from +5 s, then up to 3.4 s at +21-29 s
+#   -- the eight workers loading torch together, 7.5-9 s each). Each worker
+#   adds up to XCP_PREWARM_SPREAD seconds (default 40) of its own, so the
+#   loads take turns instead of piling up.
 _PREWARM_TEMPLATES = ("account.html", "athlete.html", "race.html", "home.html")
 
 
@@ -353,9 +358,11 @@ def _prewarmPredict():
     _prewarmTemplates()
     try:
         delay = float(os.environ.get("XCP_PREWARM_DELAY") or 15)
+        spread = float(os.environ.get("XCP_PREWARM_SPREAD") or 40)
     except ValueError:
-        delay = 15.0
-    time.sleep(max(0.0, delay))
+        delay, spread = 15.0, 40.0
+    import random
+    time.sleep(max(0.0, delay) + random.uniform(0.0, max(0.0, spread)))
     t0 = time.time()
     try:
         import predict as _predict
