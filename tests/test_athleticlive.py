@@ -504,5 +504,33 @@ def test_why_a_runner_is_unnamed():
     r = {"FirstName": "Ann", "LastName": "Lee", "Gender": "F", "SchoolName": "OPRF",
          "SchoolFull": "Oak Park River Forest"}
     assert A.whyUnnamed(r, set()) == "not in our data"
-    assert A.whyUnnamed(r, {(1, "oak park-river forest")}) == "in our data at another school"
+    assert A.whyUnnamed(r, {(1, "fenwick")}) == "in our data at another school"
+    # the same school spelt with a hyphen is the same school
+    assert A.whyUnnamed(r, {(1, "oak park-river forest")}) == "found (one person at the school)"
     assert A.whyUnnamed(r, {(1, "oprf"), (2, "oprf")}) == "several people at their school"
+
+
+def test_a_school_name_with_a_full_stop_is_the_same_school():
+    """Ruth Bryant (the server's check, 2026-10-27): 'St. Michael the
+    Archangel' on AthleticLIVE, 'st michael the archangel' in our athletes."""
+    assert A.schoolKey("St. Michael the Archangel") == A.schoolKey("st michael  the archangel")
+    ours = [(5, 5, "Ruth", "Bryant", "F", "st michael the archangel")]
+    alive = [{"AthleteID": -1, "FirstName": "Ruth", "LastName": "Bryant", "Gender": "F",
+              "SchoolName": "St. Michael the Archangel"}]
+    assert A._resolveIds(ours, alive) == {-1: 5}
+
+
+def test_the_school_key_sql_matches_python():
+    import pytest
+    dsn = os.environ.get("XCP_TWIN_TEST_DSN")
+    if not dsn:
+        pytest.skip("set XCP_TWIN_TEST_DSN to a scratch Postgres to run the SQL")
+    import psycopg2
+    conn = psycopg2.connect(dsn)
+    try:
+        cur = conn.cursor()
+        for name in ("St. Michael the Archangel", "  Holy  Family-Regional ", "O'Dea (WA)", "", "ABC"):
+            cur.execute(f"SELECT {A.SCHOOL_KEY_SQL.format(col='%s')}", (name,))
+            assert cur.fetchone()[0] == A.schoolKey(name), name
+    finally:
+        conn.close()

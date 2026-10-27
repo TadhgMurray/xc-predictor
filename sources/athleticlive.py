@@ -674,6 +674,17 @@ def buildEventGender(cur):
     return rows
 
 
+def schoolKey(name):
+    """A school name for matching: lower case, punctuation and runs of
+    spaces gone. 'St. Michael the Archangel' and 'st michael the archangel'
+    are one school (the server's check, 2026-10-27: Ruth Bryant). The SQL
+    twin is SCHOOL_KEY_SQL."""
+    return re.sub(r"[^a-z0-9]+", " ", str(name or "").lower()).strip()
+
+
+SCHOOL_KEY_SQL = "btrim(regexp_replace(lower({col}), '[^a-z0-9]+', ' ', 'g'))"
+
+
 def _resolveIds(rows, athletes):
     """Pure half of resolveIds. rows: our athletes at those schools,
     (athlete_id, person_id, first, last, gender, school lowercased).
@@ -684,10 +695,10 @@ def _resolveIds(rows, athletes):
     for aid, pid, fn, ln, g, sch in rows:
         k = personKeyParts(fn, ln, keep_suffix=True)
         if k:
-            people[(k, str(g or "").upper(), sch)][pid if pid is not None else aid].add(aid)
+            people[(k, str(g or "").upper(), schoolKey(sch))][pid if pid is not None else aid].add(aid)
     out = {}
     for a in athletes:
-        schools = {str(x).strip().lower() for x in (a.get("SchoolName"), a.get("SchoolFull")) if x}
+        schools = {schoolKey(x) for x in (a.get("SchoolName"), a.get("SchoolFull")) if x}
         g = str(a.get("Gender") or "").upper()
         # the name as given; failing that, first and last the other way round
         # ('Avila Ethan' / 'Ethan Avila'); failing that, a common short form
@@ -729,13 +740,13 @@ def resolveIds(cur, athletes):
     cur.execute("SELECT athlete_id FROM athletes WHERE athlete_id = ANY(%s)", (ids,))
     have = {r[0] for r in cur.fetchall()}
     unknown = [a for a in athletes if a.get("AthleteID") and a["AthleteID"] not in have]
-    schools = sorted({str(x).strip().lower() for a in unknown
-                      for x in (a.get("SchoolName"), a.get("SchoolFull")) if x})
+    schools = sorted({schoolKey(x) for a in unknown
+                      for x in (a.get("SchoolName"), a.get("SchoolFull")) if x} - {""})
     if not schools:
         return {}
-    cur.execute("""SELECT athlete_id, person_id, first_name, last_name, gender,
-                          lower(btrim(school))
-                   FROM athletes WHERE lower(btrim(school)) = ANY(%s)""", (schools,))
+    key = SCHOOL_KEY_SQL.format(col="school")
+    cur.execute(f"""SELECT athlete_id, person_id, first_name, last_name, gender, {key}
+                    FROM athletes WHERE {key} = ANY(%s)""", (schools,))
     return _resolveIds(cur.fetchall(), unknown)
 
 
@@ -1253,9 +1264,8 @@ def whyUnnamed(runner, hits):
     with their name either way round, (person_id, school lowercased).
     -> 'not in our data' / 'in our data at another school' /
     'several people at their school'. Pure."""
-    schools = {str(x).strip().lower() for x in (runner.get("SchoolName"),
-                                                runner.get("SchoolFull")) if x}
-    here = {pid for pid, sch in hits if sch in schools}
+    schools = {schoolKey(x) for x in (runner.get("SchoolName"), runner.get("SchoolFull")) if x}
+    here = {pid for pid, sch in hits if schoolKey(sch) in schools}
     if len(here) > 1:
         return "several people at their school"
     if hits and not here:
