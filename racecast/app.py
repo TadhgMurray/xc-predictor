@@ -329,7 +329,33 @@ _optout.loadHidden(getConn)
 #   behind its back. XCP_PREWARM=1 forces it on anywhere, =0 off everywhere.
 # ! NOT WITH --preload: the thread would run in the master and not survive
 #   the fork. deploy/server_setup.sh starts gunicorn without it.
+# ★ AFTER THE FIRST REQUESTS, NOT DURING THEM (owner, 2026-10-27: after a
+#   restart the topbar says "Sign in" for ~5 s before it shows the account,
+#   and the first click on the picture is slow). Every worker starts at once
+#   after a restart, and torch's import holds the interpreter while the
+#   worker's first requests (/api/me, /account) wait behind it. So the
+#   thread first compiles the templates those first clicks render -- cheap,
+#   and a cold Jinja compile is part of a first page's wait -- then waits
+#   XCP_PREWARM_DELAY seconds (default 15) before loading the model. A
+#   Predict asked inside that window loads it itself, as it always could.
+_PREWARM_TEMPLATES = ("account.html", "athlete.html", "race.html", "home.html")
+
+
+def _prewarmTemplates():
+    for name in _PREWARM_TEMPLATES:
+        try:
+            app.jinja_env.get_template(name)
+        except Exception:                               # noqa: BLE001
+            app.logger.exception("template warm-up failed: %s", name)
+
+
 def _prewarmPredict():
+    _prewarmTemplates()
+    try:
+        delay = float(os.environ.get("XCP_PREWARM_DELAY") or 15)
+    except ValueError:
+        delay = 15.0
+    time.sleep(max(0.0, delay))
     t0 = time.time()
     try:
         import predict as _predict
