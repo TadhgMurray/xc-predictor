@@ -65,16 +65,16 @@
 #               stable on a re-read, and above any id anet has issued
 #   athlete_id  the runner's athletic.net id (`a.ani`); person_id seeds from it
 #               exactly as saveAthletesBulk / saveResultsTFBulk seed anet's.
-#               A runner AthleticLIVE gives no anet id is not landed (counted).
 #               ⚠ 11% of AthleticLIVE's ids are ones athletic.net has since
 #               merged away (the server's check, 2026-10-26): an id we do not
 #               have is swapped for ours when one person at the runner's
 #               school has their name and gender (resolveIds).
 #               ⚠ AND SOME RUNNERS HAVE NO ATHLETIC.NET ID AT ALL (2-8% of a
-#               meet, all of some meets). They get ours the same way; a race
-#               with a runner still unnamed is held whole (holdUnknown) -- on
-#               anet's slots that race waits for athletic.net, on our own
-#               slots the whole meet does. A meet never lands short.
+#               meet, all of some meets). They get ours the same way. A race
+#               lands when LAND_SHARE (90%, owner 2026-10-27) of its runners
+#               are named; the rest go to alive_unnamed for a later linker.
+#               A race under it waits: on anet's slots for athletic.net, on
+#               our own slots the whole meet does (holdUnknown).
 #
 # ! TRACK ONLY FOR NOW. XC meets are in meet_list (`o` = 'xc') but their
 #   event_summary is empty; where an XC race's results live is still to find.
@@ -147,6 +147,33 @@ CREATE TABLE IF NOT EXISTS alive_meets (
     landed_note  text
 );
 CREATE INDEX IF NOT EXISTS alive_meets_anet ON alive_meets USING gin (anet_ids);
+-- ★ THE RUNNERS A LANDED RACE COULD NOT NAME (owner, 2026-10-27: land a race
+--   when 90% of its runners are named; holdUnknown). Kept whole, so a later
+--   linker can put each result on its person when they turn up with an id.
+CREATE TABLE IF NOT EXISTS alive_unnamed (
+    alive_result_id  bigint PRIMARY KEY,     -- AthleticLIVE's result id
+    meet_id          bigint NOT NULL,        -- the athletic.net meet it landed in
+    div_id           bigint,
+    event_id         bigint,
+    event_short      text,
+    is_field         boolean,
+    alive_athlete_id bigint,                 -- AthleticLIVE's own runner id
+    first_name       text,
+    last_name        text,
+    gender           text,
+    grade            text,
+    school           text,
+    team_id          bigint,                 -- the athletic.net team id AthleticLIVE gives
+    mark             text,
+    time_seconds     real,
+    place            integer,
+    round            text,
+    heat             integer,
+    saved_at         timestamptz NOT NULL DEFAULT now(),
+    person_id        bigint,                 -- set when a linker places it
+    placed_at        timestamptz
+);
+CREATE INDEX IF NOT EXISTS alive_unnamed_meet ON alive_unnamed (meet_id);
 """
 
 
@@ -806,31 +833,75 @@ def thresholdTable(shares):
     return out
 
 
-def holdUnknown(p):
-    """After applyIds: a runner still without an athletic.net id (a stand-in
-    below zero) holds their race back, so nothing lands short of a runner.
-    On athletic.net's slots only that race waits (it stays in the recovery
-    gap); on AthleticLIVE's own slots the whole meet waits for athletic.net,
-    since nothing would ever fill a race we leave out. -> runners held.
+# ★ A RACE LANDS WHEN THIS SHARE OF ITS RUNNERS IS NAMED (owner, 2026-10-27:
+#   "agree to 90%"). The runners it could not name go to alive_unnamed, kept
+#   whole for a later linker; a race under the share waits for athletic.net.
+#   On the server's 20-meet check: 351 of 487 races land instead of 297,
+#   94 runners go to the side table, 136 races still wait.
+LAND_SHARE = float(os.environ.get("XCP_ALIVE_LAND_SHARE") or 0.9)
+
+
+def holdUnknown(p, share=None):
+    """After applyIds: runners still without an athletic.net id (a stand-in
+    below zero). A race where at least `share` (LAND_SHARE) of its runners
+    are named lands without them, and they go to p["side"] (alive_unnamed);
+    a race under it is held whole -- on athletic.net's slots only that race
+    waits (it stays in the recovery gap), on AthleticLIVE's own slots the
+    whole meet does, since nothing would ever fill a race we leave out.
+    -> runners held or set aside.
 
     ★ WHY (the server's check, 2026-10-26). The meets that looked half-posted
       on AthleticLIVE were whole: their runners had no athletic.net id, and
       dropping those runners made the races look empty -- 386 runners at
       Shaker Heights, 296 at Liberty vs Skyline, 1,038 at the Bulldog
-      Invitational, and 2-8% of the good meets. Landed without them, a
-      meet is short for good: athletic.net is never asked again."""
-    bad = {(t[2], t[3]) for t in p["results_to_save"]
-           if not t[5] and (t[0].get("AthleteID") or 0) < 0}
-    runners = sum(1 for t in p["results_to_save"]
-                  if not t[5] and (t[0].get("AthleteID") or 0) < 0)
+      Invitational, and 2-8% of the good meets. A race landed short of more
+      than a few is short for good: athletic.net is never asked again."""
+    share = LAND_SHARE if share is None else share
+    per = defaultdict(lambda: [0, 0])                 # race -> [runners, unnamed]
+    for t in p["results_to_save"]:
+        if t[5]:
+            continue
+        c = per[(t[2], t[3])]
+        c[0] += 1
+        c[1] += (t[0].get("AthleteID") or 0) < 0
+    bad = {k for k, (n, u) in per.items() if u and (n - u) / n < share}
+    aside = {k for k, (n, u) in per.items() if u and k not in bad}
+    held = sum(per[k][1] for k in bad)
+
+    def unnamed(t):
+        return not t[5] and (t[0].get("AthleteID") or 0) < 0
+
+    p["side"] = [t for t in p["results_to_save"] if (t[2], t[3]) in aside and unnamed(t)]
     if bad and p["own"]:
-        p["results_to_save"], p["meets_to_save"] = [], []
-    elif bad:
-        p["results_to_save"] = [t for t in p["results_to_save"] if (t[2], t[3]) not in bad]
+        p["results_to_save"], p["meets_to_save"], p["side"] = [], [], []
+    else:
+        p["results_to_save"] = [t for t in p["results_to_save"]
+                                if (t[2], t[3]) not in bad and not unnamed(t)]
         p["meets_to_save"] = [m for m in p["meets_to_save"] if (m[1], m[2]) not in bad]
     p["athletes"] = [a for a in p["athletes"] if (a.get("AthleteID") or 0) > 0]
-    p["held"] = {"races": len(bad), "runners": runners, "whole meet": bool(bad and p["own"])}
-    return runners
+    p["held"] = {"races": len(bad), "runners": held, "whole meet": bool(bad and p["own"]),
+                 "set aside": len(p["side"])}
+    return held + len(p["side"])
+
+
+def saveSide(cur, meet_id, side):
+    """The runners a landed race could not name, into alive_unnamed."""
+    if not side:
+        return 0
+    from psycopg2.extras import execute_values
+    rows = []
+    for r, _mi, div, ev, short, _rel, school, is_field in side:
+        rows.append((r["IDResult"] - RESULT_BASE, meet_id, div, ev, short, bool(is_field),
+                     -r["AthleteID"], r.get("FirstName"), r.get("LastName"), r.get("Gender"),
+                     r.get("Grade"), school, r.get("TeamID"), r.get("Result"),
+                     (r["SortInt"] / 1000) if r.get("SortInt") else None,
+                     r.get("Place"), r.get("Round"), r.get("Heat")))
+    execute_values(cur, """
+        INSERT INTO alive_unnamed (alive_result_id, meet_id, div_id, event_id, event_short,
+                                   is_field, alive_athlete_id, first_name, last_name, gender,
+                                   grade, school, team_id, mark, time_seconds, place, round, heat)
+        VALUES %s ON CONFLICT (alive_result_id) DO NOTHING""", rows)
+    return len(rows)
 
 
 def anetHasResults(cur, meet_id):
@@ -920,7 +991,11 @@ def write(conn, meet_id, p, label="[alive]"):
             m2s = []
     else:
         m2s = []
-    return _saveTFMeet(meet_id, label, m2s, p["athletes"], p["results_to_save"])
+    n = _saveTFMeet(meet_id, label, m2s, p["athletes"], p["results_to_save"])
+    if n >= 0 and p.get("side"):
+        saveSide(cur, meet_id, p["side"])
+        conn.commit()
+    return n
 
 
 def noteLanded(cur, alive_id, n, note):
@@ -988,6 +1063,7 @@ async def landForScrape(meet_id, meet_info, events_dict, event_divs, label="[ali
         return n, list(event_divs)       # failed: the meet is retried as any failure is
     with getConn() as conn:
         cur = conn.cursor()
+        saveSide(cur, meet_id, p.get("side"))
         noteLanded(cur, alive["alive_id"], n, "scrape hook")
         conn.commit()
     left = [ed for ed in event_divs if (ed.get("e"), ed.get("d")) not in covered]
@@ -1101,7 +1177,8 @@ def cmdLand(a):
                      metaFromDb(cur, meet_id), catalogue=_catalogue(cur))
             total["rows given our id"] += applyIds(p, resolveIds(cur, p["athletes"]))
             if holdUnknown(p):
-                total["races held for a runner without an id"] += p["held"]["races"]
+                total["races held (under the landing share)"] += p["held"]["races"]
+                total["runners set aside (alive_unnamed)"] += p["held"]["set aside"]
                 total["meets held whole"] += int(p["held"]["whole meet"])
             _report(meet_id, alive, p)
             total["results"] += len(p["results_to_save"])

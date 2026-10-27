@@ -278,6 +278,13 @@ def test_alive_meets_sql():
         assert A.anetHasResults(cur, 642474)
         A.noteLanded(cur, 65672, 12, "test")
         assert A.aliveFor(cur, 642474)["landed_n"] == 12
+        cur.execute("DROP TABLE IF EXISTS alive_unnamed")
+        A.initTables(cur)
+        side = [t for t in _race(10, 2) if t[0]["AthleteID"] < 0]
+        assert A.saveSide(cur, 642474, side) == 2 and A.saveSide(cur, 642474, side) == 2
+        cur.execute("SELECT count(*), min(alive_athlete_id), min(time_seconds), min(school)"
+                    " FROM alive_unnamed")
+        assert cur.fetchone() == (2, 1, 300.0, "Cedar")
     finally:
         conn.rollback()
         conn.close()
@@ -467,7 +474,7 @@ def test_a_race_with_a_runner_nobody_can_name_waits():
     p = _hold_plan(own=False)
     assert A.holdUnknown(p) == 1
     assert {(t[2], t[3]) for t in p["results_to_save"]} == {(111, 35), (111, 7)}
-    assert p["held"] == {"races": 1, "runners": 1, "whole meet": False}
+    assert p["held"] == {"races": 1, "runners": 1, "whole meet": False, "set aside": 0}
     assert all(a["AthleteID"] > 0 for a in p["athletes"])
     p = _hold_plan(own=True)
     assert A.holdUnknown(p) == 1
@@ -534,3 +541,36 @@ def test_the_school_key_sql_matches_python():
             assert cur.fetchone()[0] == A.schoolKey(name), name
     finally:
         conn.close()
+
+
+def _race(n, unnamed, div=111, ev=52):
+    """n runners in one race, the first `unnamed` without an athletic.net id."""
+    out = []
+    for i in range(n):
+        r = {"IDResult": A.RESULT_BASE + div * 1000 + i, "AthleteID": -(i + 1) if i < unnamed else 1000 + i,
+             "FirstName": f"R{i}", "LastName": "X", "Gender": "M", "Grade": "11",
+             "TeamName": "Cedar", "TeamID": 7, "SortInt": 300000 + i, "Place": i + 1,
+             "Round": "finals", "Heat": 1, "Result": None}
+        out.append((r, {}, div, ev, "1600m", 0, "Cedar", 0))
+    return out
+
+
+def test_a_race_with_ninety_percent_named_lands_and_sets_the_rest_aside():
+    p = {"results_to_save": _race(10, 1) + _race(10, 2, div=112), "own": False,
+         "meets_to_save": [({}, 111, 52, "1600m", 1600, "V"), ({}, 112, 52, "1600m", 1600, "JV")],
+         "athletes": [{"AthleteID": -1}, {"AthleteID": 1001}]}
+    assert A.holdUnknown(p, share=0.9) == 3
+    assert {(t[2], t[3]) for t in p["results_to_save"]} == {(111, 52)}
+    assert len(p["results_to_save"]) == 9 and all(t[0]["AthleteID"] > 0 for t in p["results_to_save"])
+    assert [t[0]["AthleteID"] for t in p["side"]] == [-1]
+    assert p["held"] == {"races": 1, "runners": 2, "whole meet": False, "set aside": 1}
+    assert [m[1] for m in p["meets_to_save"]] == [111]
+    # on our own slots, one race under the share holds the whole meet
+    p = {"results_to_save": _race(10, 1) + _race(10, 2, div=112), "own": True,
+         "meets_to_save": [], "athletes": []}
+    A.holdUnknown(p, share=0.9)
+    assert p["results_to_save"] == [] and p["side"] == [] and p["held"]["whole meet"]
+    # ... and none under it lands, its unnamed set aside
+    p = {"results_to_save": _race(10, 1), "own": True, "meets_to_save": [], "athletes": []}
+    A.holdUnknown(p, share=0.9)
+    assert len(p["results_to_save"]) == 9 and len(p["side"]) == 1
