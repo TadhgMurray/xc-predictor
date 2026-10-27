@@ -34,6 +34,7 @@ ratings. No database; CPU, minutes.
   as an upper bound until the as-of check.
 """
 import argparse
+import os
 import datetime
 import math
 import pickle
@@ -431,18 +432,35 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
         champ = np.nan_to_num(X[:, fidx["meet_type"]], nan=0.0) >= 4
         resid0 = np.clip(y - base, -CLIP, CLIP)
         asof, real = day - lead, lead == 0
-        own, states = ownHistory(z["pid"][order], day, resid0, champ, asof, real)
-        add, names = [own], list(OWN_FEATURES)
-        own_pack = ownPack(states, int(day.max()) - 730)
-        del states
-        if "school" in z.files:
-            school = z["school"][order].astype(np.int64)
-            team, tstates = ownHistory(school, day, resid0, champ, asof, real & (school != 0))
-            team[school == 0] = np.nan
-            add.append(team)
-            names += list(TEAM_FEATURES)
-            team_pack = ownPack(tstates, int(day.max()) - 730)
-            del tstates
+        # ★ SAVED BESIDE THE TABLE (owner, 2026-10-27: too slow): the records
+        #   are a pure function of the table and which clock is the base, so
+        #   they are computed once per (table, clock) and read back after
+        cache = f"{rows}.records-{'raw' if no_ratings else 'ratings'}.npz"
+        has_school = "school" in z.files
+        if os.path.exists(cache) and os.path.getmtime(cache) >= os.path.getmtime(rows):
+            c = np.load(cache)
+            add = [c["own"]] + ([c["team"]] if has_school else [])
+            own_pack = {k[4:]: c[k] for k in c.files if k.startswith("own_")}
+            team_pack = ({k[5:]: c[k] for k in c.files if k.startswith("team_")}
+                         if has_school else None)
+            print(f"  records read from {cache}")
+        else:
+            own_f, states = ownHistory(z["pid"][order], day, resid0, champ, asof, real)
+            add = [own_f]
+            own_pack = ownPack(states, int(day.max()) - 730)
+            del states
+            if has_school:
+                school = z["school"][order].astype(np.int64)
+                team, tstates = ownHistory(school, day, resid0, champ, asof,
+                                           real & (school != 0))
+                team[school == 0] = np.nan
+                add.append(team)
+                team_pack = ownPack(tstates, int(day.max()) - 730)
+                del tstates
+            np.savez(cache, own=add[0], **({"team": add[1]} if has_school else {}),
+                     **{"own_" + k: v for k, v in own_pack.items()},
+                     **({"team_" + k: v for k, v in team_pack.items()} if team_pack else {}))
+        names = list(OWN_FEATURES) + (list(TEAM_FEATURES) if has_school else [])
         X = np.hstack([X] + add)
         feats = feats + names
         fidx = {f: i for i, f in enumerate(feats)}
