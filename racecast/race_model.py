@@ -243,6 +243,14 @@ def predictField(model, field, race):
             for fam in RT.CTX:
                 vals = RT.ctxLookup(packs.get(fam), int(keys[fam][0]))
                 r["f"].update(zip((f"{fam}_{x}" for x in RT.CTX_STATS), vals))
+    # ★ THE COURSE'S OWN LEVEL RECORD (race_trees CLV): one value for the field
+    if model.get("course_level") is not None:
+        cid = race.get("canonical_id")
+        key = RT.courseLevelKey([int(cid) if cid is not None else -1],
+                                [race.get("distance") or math.nan])
+        vals = RT.ctxLookup(model["course_level"], int(key[0]))
+        for r in field:
+            r["f"].update(zip(RT.CLV_FEATURES, vals))
     X = np.array([[r["f"].get(k, math.nan) for k in model["features"]] for r in field],
                  dtype=np.float32)
     base = np.array([r["base"] for r in field])

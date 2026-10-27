@@ -32,7 +32,7 @@ def test_pairs_and_slices():
     assert T.bandOf(0, 7) == T.BANDS[0] and T.bandOf(1, 200) == T.BANDS[3]
 
 
-def _table(path):
+def _table(path, course=None):
     rng = np.random.default_rng(0)
     F = list(RR.FEATURES)
     fi = {f: i for i, f in enumerate(F)}
@@ -67,7 +67,8 @@ def _table(path):
         race=np.array(out["race"], np.int32), day=np.array(out["day"], np.int32),
         tfrrs=np.array(out["tfrrs"], np.int8), pid=np.arange(len(out["race"])),
         features=np.array(F), race_keys=np.array([str(i) for i in range(900)]),
-        args=np.array(["synthetic"]))
+        args=np.array(["synthetic"]),
+        **({"course": np.array([course(k) for k in out["race"]], np.int64)} if course else {}))
 
 
 def test_the_trees_find_the_openers_and_beat_the_ratings(tmp_path):
@@ -87,6 +88,24 @@ def test_without_leaves_the_named_inputs_and_prefixes_out(tmp_path):
     t = T.loadTable(str(path), "2024-08-01", own=False, without=["opener", "prev_"])
     assert "opener" not in t["feats"] and not any(f.startswith("prev_") for f in t["feats"])
     assert "form_ln" in t["feats"] and "opener" in t["feats_all"]
+
+
+def test_the_course_level_record_reads_only_earlier_races_at_the_course(tmp_path):
+    path = tmp_path / "rows.npz"
+    _table(str(path), course=lambda k: 7 if k % 2 else -1)
+    t = T.loadTable(str(path), "2024-08-01", own=False)
+    fi, X, day, race = t["fidx"], t["X_all"], t["day"], t["race"]
+    assert not any(f.startswith("clv_") for f in t["feats"])      # never the runner trees
+    at7 = (race % 2 == 1)
+    n = X[:, fi["clv_n"]]
+    assert np.all(np.isnan(n[~at7]))                              # no course, no record
+    first = day[at7].min()
+    assert np.all(n[at7 & (day == first)] == 0)
+    # a race reads exactly the earlier days' races at the course
+    k = np.flatnonzero(at7)[-1]
+    earlier = len(np.unique(race[at7 & (day < day[k])]))
+    assert n[k] == earlier
+    assert T.courseLevelKey([7, -1, 7], [5000.0, 5000.0, np.nan]).tolist()[1:] == [-1, -1]
 
 
 def test_field_inputs_rebuilt_from_another_clock():

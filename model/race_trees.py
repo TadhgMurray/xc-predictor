@@ -274,6 +274,27 @@ DIST_CUTS = (4500.0, 5500.0, 7000.0, 9000.0)
 HEAT_CUTS = (8.0, 18.0, 24.0)             # degrees C at the race hour
 _DAY = 1_000_000                          # > any day ordinal
 
+# ★ THE COURSE'S OWN RECORD, FOR THE LEVEL (2026-10-27). 1.7's records in
+#   context bought nothing on order: the ratings are already course-adjusted,
+#   so a runner's residual at a course is mostly noise. The TIME is a
+#   different question. The page's clock carries the course cell; a course
+#   that keeps running slower or faster than its cell says (a loop measured
+#   long, a cell from few races, mud every October) shows up race after race
+#   as the same level miss. This is that miss -- the race's mean (actual -
+#   page clock) -- at this course and distance band, from real races on days
+#   before the race's cut. The level model reads it; the runner trees do not
+#   (it is one number for the whole field).
+CLV_FEATURES = tuple(f"clv_{x}" for x in CTX_STATS)
+CLV_CLIP = 0.15                           # a wrong distance is not a course
+
+
+def courseLevelKey(course, distance):
+    """int64 key per race (course and distance band), -1 = none. Vectorised."""
+    import numpy as np
+    course = np.asarray(course, dtype=np.int64)
+    b = band(distance, DIST_CUTS)
+    return np.where((course >= 0) & (b >= 0), (course % 1_000_003) * 8 + b, -1)
+
 
 def band(x, cuts):
     """0..len(cuts) by the cuts; -1 for NaN. Vectorised."""
@@ -496,7 +517,7 @@ def orderReport(name, base_s, model_s, keep=None, labels=("ratings", "model"), e
 #            validation season marked, the training rows' practice blanks made.
 #            race_trees.main and race_blend.py both start here.
 def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0,
-              without=()):
+              without=(), course_level=True):
     import numpy as np
     t0 = datetime.datetime.now()
     z = np.load(rows, allow_pickle=False)
@@ -580,6 +601,26 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
         print(f"  own records: {len(own_pack['pid']):,} runners"
               + (f", {len(team_pack['pid']):,} schools" if team_pack else "")
               + f" kept for the page ({datetime.datetime.now() - t1})")
+    clv_pack = None
+    if course_level and "course" in z.files:
+        t3 = datetime.datetime.now()
+        starts = np.flatnonzero(np.r_[True, race[1:] != race[:-1]])
+        cnt = np.diff(np.r_[starts, len(race)])
+        lvl = (np.add.reduceat(y_abs, starts) - np.add.reduceat(base_abs, starts)) / cnt
+        r_lead = lead[starts]
+        r_known = (X[starts, fidx["page_base"]] != 0 if "page_base" in fidx
+                   else np.ones(len(starts), dtype=bool))
+        key = courseLevelKey(z["course"][order][starts],
+                             X[starts, fidx["distance"]] if "distance" in fidx
+                             else np.full(len(starts), np.nan))
+        f_, clv_pack = ctxRecords(key, day[starts], day[starts] - r_lead,
+                                  (r_lead == 0) & r_known,
+                                  np.clip(lvl, -CLV_CLIP, CLV_CLIP), 0)
+        X = np.hstack([X, np.repeat(f_, cnt, axis=0)])
+        feats = feats + list(CLV_FEATURES)
+        fidx = {f: i for i, f in enumerate(feats)}
+        print(f"  the course's own level record: {int((key >= 0).sum()):,} races "
+              f"({datetime.datetime.now() - t3})")
     cut = datetime.date.fromisoformat(val_from).toordinal()
     val = day >= cut
     pid = z["pid"][order]
@@ -611,7 +652,7 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
     # measures what they are worth ("crs_" leaves out every name it starts)
     excluded |= {f for f in feats for w in without
                  if f == w or (w.endswith("_") and f.startswith(w))}
-    used &= np.array([f not in excluded for f in feats])
+    used &= np.array([f not in excluded and f not in CLV_FEATURES for f in feats])
     X_all, X = X, X[:, used]
     feats_all, feats = feats, [f for f, u in zip(feats, used) if u]
     r = np.clip(y - base, -CLIP, CLIP)
@@ -633,7 +674,7 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
 _TABLE_KEYS = ('z', 't0', 'feats_all', 'feats', 'fidx', 'X_all', 'X', 'y', 'base', 'y_abs',
                'base_abs', 'base_page', 'base_page_abs', 'race', 'day', 'tfrrs', 'val', 'lead',
                'own_pack', 'team_pack', 'labels', 'r', 'Xt', 'excluded', 'order', 'pid',
-               'ctx_packs')
+               'ctx_packs', 'clv_pack')
 
 
 def siteReport(path, pid_v, keys, rv, sl, lead_r, yv, page_abs, lastv, pv, tot_m, yav, labels):
@@ -724,7 +765,7 @@ def main():
                   [w for w in a.without.split(",") if w])
     (z, t0, feats_all, feats, fidx, X_all, X, y, base, y_abs, base_abs, base_page,
      base_page_abs, race, day, tfrrs, val, lead, own_pack, team_pack, labels, r, Xt,
-     excluded, order, pid, ctx_packs) = \
+     excluded, order, pid, ctx_packs, clv_pack) = \
         (T[k] for k in _TABLE_KEYS)
     import numpy as np
     rm = runnerModel(a.seed, a.big).fit(Xt, r[~val])
@@ -796,7 +837,7 @@ def main():
 
     # ---- the level part -------------------------------------------- #
     sl_all = raceSlices(race)
-    lf = [k for k in LEVEL_FEATURES if k in fidx and k not in excluded]
+    lf = [k for k in LEVEL_FEATURES + CLV_FEATURES if k in fidx and k not in excluded]
     if a.no_ratings and "raw_form" in fidx:
         lf.append("raw_form")
     R, L = raceTable(X_all, y_abs, base_abs, sl_all, fidx, lf)
@@ -943,6 +984,7 @@ def main():
             pickle.dump({"runner": rm, "level": lm, "features": feats,
                          "sigmas": sig_all, "sigmas_by_lead": sig_lead,
                          "own": own_pack, "team": team_pack, "ctx": ctx_packs,
+                         "course_level": clv_pack,
                          "all_features": feats_all,
                          "level_features": [f for f, u in zip(lf, lused) if u],
                          "clip": CLIP,

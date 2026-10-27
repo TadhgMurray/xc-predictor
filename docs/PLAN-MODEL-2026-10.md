@@ -693,3 +693,39 @@ run as the page runs it, history cut the day before.
 - **The test protocol from here:** reuse a table, `--train-frac 0.35`,
   old table against new, in minutes. One full run only for the final
   model.
+
+### 1.7 results (owner's run, 2026-10-27): the new information buys nothing
+
+Same table (rows7), same races, `--train-frac 0.35`; "without" leaves out
+`crs_,dif_,dst_,hot_,div_type` (`race_trees --without`).
+
+| | With | Without |
+|---|---|---|
+| Order, race morning | 88.56% (+1.34) | 88.55% (+1.33) |
+| Order, 28 days ahead | 85.03% | 85.02% |
+| Median time miss | 2.90% | 2.90% |
+| College 100+ | 3.52% | 3.52% |
+
+- **+0.01 point: nothing.** The ratings are already course-adjusted (the
+  joint solve), and each runner's own record already carries how they run
+  against them. What is left of a runner at one course or one band of
+  difficulty is a handful of races of day-to-day noise.
+- **Order looks close to what results alone can tell.** Every model type
+  sits at about 88.6% (the blend), and E0's hindsight ceiling is about 90%.
+  More inputs of the same kind will not move it; only information the
+  results do not hold would (training, injury, entries).
+- **So the time is where to push,** and the level of the race more than
+  the order inside it.
+
+### Version 1.8 (on the branch): the course's own level record
+
+- **For the level, not the runners.** A course that keeps running slower
+  or faster than its cell says (a loop measured long, a cell from few
+  races, mud every October) misses the same way race after race. The
+  record is that miss: the race's mean (actual − page clock) at this
+  course and distance band, from real races on days before the race's cut
+  (`CLV_FEATURES`, clipped at 15% so a wrong distance is not a course).
+- The level model reads it; the runner trees never see it. The page reads
+  it from the pickle (`course_level`).
+- **Test:** rows7, with and `--without clv_`. Read the TIMES table and the
+  race-level miss line.
