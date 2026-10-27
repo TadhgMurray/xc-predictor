@@ -97,3 +97,47 @@ def test_basis_race_replaces_the_rated_runners_only(monkeypatch):
 def test_no_model_file_leaves_the_ratings(monkeypatch, tmp_path):
     monkeypatch.setattr(M, "MODEL_PATH", str(tmp_path / "none.pkl"))
     assert M.predictRace(None, [1, 2, 3], {"distance_meters": 5000}, D(2026, 10, 4), {}) == {}
+
+
+class _Cur:
+    """Records statements; raises on any that is not a savepoint."""
+    def __init__(self):
+        self.sql = []
+        self.connection = self
+
+    def execute(self, sql, args=None):
+        self.sql.append(sql.split()[0] + " " + sql.split()[-1])
+        if "SAVEPOINT" not in sql:
+            raise RuntimeError("bad statement")
+
+    def rollback(self):
+        self.sql.append("ROLLBACK")
+
+
+def test_a_failed_read_rolls_back_to_its_own_savepoint_only(monkeypatch):
+    import predict as P
+    cur = _Cur()
+    monkeypatch.setattr(P, "_divisionLabel", lambda c, *a: c.execute("SELECT x"))
+    assert M._division(cur, {"meet_id": 1}) is None
+    assert cur.sql == ["SAVEPOINT race_div", "SELECT x", "ROLLBACK race_div",
+                       "RELEASE race_div"]            # never the caller's transaction
+
+
+def test_the_forecast_is_asked_without_the_cursor(monkeypatch):
+    # forecast.py's table cache commits, which ends the caller's savepoints
+    import predict as P
+    seen = {}
+
+    class _Fc:
+        @staticmethod
+        def raceHour(sport):
+            return 9
+
+        @staticmethod
+        def forecastAt(lat, lon, day, hour, cur=None):
+            seen["cur"] = cur
+            return {"temp_c": 12.0}
+    monkeypatch.setattr(P, "_fc", lambda: _Fc)
+    assert M._weather(_Cur(), {"gps_lat": 1.0, "gps_long": 2.0, "date": "2026-10-31"}) == \
+        {"temp_c": 12.0}
+    assert seen["cur"] is None

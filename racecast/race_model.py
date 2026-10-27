@@ -124,27 +124,47 @@ def _pastRaces(cur, ids, cut):
     return {p: v[-RR.H2H_LAST:] for p, v in out.items()}
 
 
+def _guarded(cur, name, fn, default=None, say=None):
+    """fn() under its own savepoint: a failed statement here is rolled back
+    to it and `default` comes back (with one line naming the error when
+    `say` names the race). Never a whole rollback -- that would end the
+    caller's transaction and its savepoints (upcoming_preview's up_pred,
+    the page's request)."""
+    cur.execute(f"SAVEPOINT {name}")
+    try:
+        out = fn()
+    except Exception as exc:                             # noqa: BLE001
+        if say:
+            print(f"race model {say}: {type(exc).__name__}: {exc}", flush=True)
+        cur.execute(f"ROLLBACK TO SAVEPOINT {name}")
+        cur.execute(f"RELEASE SAVEPOINT {name}")
+        return default
+    cur.execute(f"RELEASE SAVEPOINT {name}")
+    return out
+
+
 def _weather(cur, spec):
     """The race's weather as the table carries it: the forecast at the cross
-    country hour when there is one, else the normal for the place and date."""
+    country hour when there is one, else the normal for the place and date.
+    ! The forecast is asked WITHOUT cur: forecast.py's table cache commits,
+    which would end the caller's transaction (savepoint "up_pred" does not
+    exist). The in-process cache still holds each fetch."""
     import predict as P
+    fc = P._fc()
+    hour = fc.raceHour(spec.get("sport"))
+    lat, lon, day = spec.get("gps_lat"), spec.get("gps_long"), spec.get("date")
     try:
-        got = P._weatherVariants(cur, spec, "both")
+        row = fc.forecastAt(lat, lon, day, hour)
     except Exception:                                    # noqa: BLE001
-        P._rollback(cur)
-        return None
-    return got.get("forecast") or got.get("normal")
+        row = None
+    return row or _guarded(cur, "race_wx", lambda: fc.normalAt(cur, lat, lon, day, hour))
 
 
 def _division(cur, spec):
     """The race's division title (race_rows.divType reads it), or None."""
     import predict as P
-    try:
-        return P._divisionLabel(cur, spec.get("meet_id"), spec.get("div_id"), "XC",
-                                spec.get("source"))
-    except Exception:                                    # noqa: BLE001
-        P._rollback(cur)
-        return None
+    return _guarded(cur, "race_div", lambda: P._divisionLabel(
+        cur, spec.get("meet_id"), spec.get("div_id"), "XC", spec.get("source")))
 
 
 def _meetFacts(cur, spec):
@@ -254,12 +274,25 @@ def predictField(model, field, race):
 
 def predictRace(cur, person_ids, spec, cut, rated):
     """{pid: entry} from the race model for the rated runners of one race,
-    or {} when the trees cannot read the field (see the header)."""
-    import race_rows as RR
-    import predict as P
+    or {} when the trees cannot read the field (see the header). Its reads
+    sit under one savepoint, so a failure leaves the caller's transaction
+    as it was."""
     model = loadModel()
     if model is None or not spec or not spec.get("distance_meters"):
         return {}
+    say = f"{spec.get('meet_id')}/{spec.get('div_id')}"
+    try:
+        return _guarded(cur, "race_model",
+                        lambda: _predictRace(cur, model, person_ids, spec, cut, rated),
+                        default={}, say=say)
+    except Exception as exc:                             # noqa: BLE001
+        print(f"race model {say}: {type(exc).__name__}: {exc}", flush=True)
+        return {}
+
+
+def _predictRace(cur, model, person_ids, spec, cut, rated):
+    import race_rows as RR
+    import predict as P
     day = P._asDate(spec.get("date")) or cut or datetime.date.today()
     ids = [p for p in person_ids if (rated.get(p) or {}).get("seconds")]
     if len(ids) < MIN_FIELD:

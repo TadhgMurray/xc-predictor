@@ -1500,9 +1500,11 @@ def _servedTimes(cur, person_ids, target):
             with _stage("race-model"):
                 got = race_model.predictRace(cur, person_ids, spec, cut, rated)
         except Exception:                               # noqa: BLE001
+            # ! no _rollback here: predictRace keeps its reads under its own
+            #   savepoint, and a whole rollback would end the caller's
+            #   (upcoming_preview's up_pred)
             import logging
             logging.getLogger(__name__).exception("race model failed")
-            _rollback(cur)
             got = {}
         for i, pid in enumerate(person_ids):
             if pid in got and preds[i].get("basis") == "rating":
