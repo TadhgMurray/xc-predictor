@@ -495,7 +495,8 @@ def orderReport(name, base_s, model_s, keep=None, labels=("ratings", "model"), e
 #            each team's record added, the inputs this run may use chosen, the
 #            validation season marked, the training rows' practice blanks made.
 #            race_trees.main and race_blend.py both start here.
-def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0):
+def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0,
+              without=()):
     import numpy as np
     t0 = datetime.datetime.now()
     z = np.load(rows, allow_pickle=False)
@@ -606,6 +607,10 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
     if not used.all():
         print("  inputs with no training values, left out: "
               + ", ".join(f for f, u in zip(feats, used) if not u))
+    # --without: the same rows with some inputs left out, so one table
+    # measures what they are worth ("crs_" leaves out every name it starts)
+    excluded |= {f for f in feats for w in without
+                 if f == w or (w.endswith("_") and f.startswith(w))}
     used &= np.array([f not in excluded for f in feats])
     X_all, X = X, X[:, used]
     feats_all, feats = feats, [f for f, u in zip(feats, used) if u]
@@ -707,11 +712,16 @@ def main():
     ap.add_argument("--no-ratings", action="store_true",
                     help="a TEST: the same trees with nothing the engine made, from raw "
                          "times on a 5K by Riegel (RATING_INPUTS); the ratings print beside")
+    ap.add_argument("--without", default="",
+                    help="a TEST: leave these inputs out, comma separated; a name ending in "
+                         "_ leaves out every input it starts (crs_,dif_,dst_,hot_,div_type "
+                         "is the model before 1.7's new information)")
     a = ap.parse_args()
     if a.no_ratings and a.out:
         raise SystemExit("--no-ratings is a test, not a model to serve: drop --out")
 
-    T = loadTable(a.rows, a.val_from, a.own, a.no_ratings, a.seed, a.train_frac)
+    T = loadTable(a.rows, a.val_from, a.own, a.no_ratings, a.seed, a.train_frac,
+                  [w for w in a.without.split(",") if w])
     (z, t0, feats_all, feats, fidx, X_all, X, y, base, y_abs, base_abs, base_page,
      base_page_abs, race, day, tfrrs, val, lead, own_pack, team_pack, labels, r, Xt,
      excluded, order, pid, ctx_packs) = \

@@ -81,6 +81,14 @@ def test_the_trees_find_the_openers_and_beat_the_ratings(tmp_path):
     assert gain > 0.5, got.stdout
 
 
+def test_without_leaves_the_named_inputs_and_prefixes_out(tmp_path):
+    path = tmp_path / "rows.npz"
+    _table(str(path))
+    t = T.loadTable(str(path), "2024-08-01", own=False, without=["opener", "prev_"])
+    assert "opener" not in t["feats"] and not any(f.startswith("prev_") for f in t["feats"])
+    assert "form_ln" in t["feats"] and "opener" in t["feats_all"]
+
+
 def test_field_inputs_rebuilt_from_another_clock():
     fi = {"rank_pct": 0, "gap_to_median": 1, "gap_ahead": 2, "gap_behind": 3}
     X = np.zeros((3, 4))
