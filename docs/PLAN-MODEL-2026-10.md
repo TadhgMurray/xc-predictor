@@ -782,3 +782,33 @@ Order is untouched (the runner trees never see it). It stays in.
 - **"published"** in the TIMES table: a known distance and a real race's
   name, the scope to hold against Kailo.
 - **`--drop-odd`:** those races out of the training races, to test.
+
+### #6 result (owner's run, 2026-10-28): the order of the results adds nothing
+
+rows7, `--train-frac 0.35`, odd validation races, race morning: hgb 88.55%,
+mlp 88.53%, **seq 88.54%**, blend 88.59% (+0.04 over the trees). 28 days
+ahead: 85.06 / 85.02 / 85.05 / 85.10. The hand-made summaries already hold
+what a runner's results in order say. The trees alone stay the model; the
+blend's +0.04 is not worth serving three models. (seq is quick: 2.4 min an
+epoch on the server.)
+
+### #4, second look (owner's run, 2026-10-28)
+
+`--drop-odd` (5,357 training races out): order unchanged (+1.34).
+
+| Cause (first that fits) | Races | Median level miss | Over 10% | Error past 5% |
+|---|---|---|---|---|
+| No distance on file | 118 | 98.1% | 94.1% | 39.9% |
+| Odd name | 520 | 2.19% | 2.5% | 1.6% |
+| A distance new to the course | 3,859 | 2.54% | 6.3% | 15.9% |
+| A course with no history | 7,719 | 2.14% | 4.1% | 19.0% |
+| Mixed levels | 731 | 2.31% | 3.3% | 1.7% |
+| No cause found | 22,376 | 1.68% | 1.3% | 21.9% |
+
+- No distance: the page never predicts them (predictRace needs one); a
+  scoring matter only, and "published" leaves them out.
+- **Version 1.9: `dist_vs_course`**, a level input: the filed distance
+  against the nearest one the course ran before the cut. A 5K at a
+  course that only ever ran 4,828 m is likely three miles.
+- No history: nothing to learn from without course data.
+- No cause: mostly the day.

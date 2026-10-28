@@ -5,6 +5,7 @@ must find it and beat the ratings on order. No database.
     python -m pytest -q tests/test_race_trees.py
 """
 import datetime
+import math
 import os
 import subprocess
 import sys
@@ -222,3 +223,14 @@ def test_seq_member_runs_on_the_synthetic_table(tmp_path):
                          capture_output=True, text=True, timeout=600)
     assert got.returncode == 0, got.stderr[-2000:]
     assert "seq: fitted" in got.stdout and "seq " in got.stdout.split("blend weights")[1]
+
+
+def test_a_distance_is_read_against_what_the_course_ran_before():
+    d = T.courseDistances([1, 1, 1, 2, -1], [10, 20, 30, 10, 10],
+                          [4828.0, 3000.0, 4830.0, 5000.0, 5000.0],
+                          np.array([True, True, True, False, True]))
+    assert d == {1: [(4830.0, 10), (3000.0, 20)]}                 # course 2 was no real race
+    assert T.distVsCourse(d[1], 5000.0, 15) == pytest.approx(math.log(5000 / 4830))
+    assert T.distVsCourse(d[1], 3010.0, 25) == pytest.approx(math.log(3010 / 3000))
+    assert math.isnan(T.distVsCourse(d[1], 5000.0, 10))           # nothing before the cut
+    assert math.isnan(T.distVsCourse(None, 5000.0, 99))

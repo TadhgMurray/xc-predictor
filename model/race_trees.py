@@ -332,6 +332,46 @@ def seqTable(pid, day, lead, race, y, base, X, fidx, tfrrs, k=SEQ_LEN, chunk=2_0
     return {"F": F, "day": day[ev].astype(np.int32)}, idx
 
 
+# ★ IS THE DISTANCE ONE THIS COURSE HAS RUN? (owner's run, 2026-10-28:
+#   3,859 races at a distance new to their course missed by a median 2.54%,
+#   6% of them by over 10%). A 5K filed at a course that has only ever run
+#   4,828 m is most likely three miles. dist_vs_course is the filed distance
+#   against the nearest one the course ran in real races before the cut
+#   (log, signed; NaN with no history). The level model reads it.
+COURSE_FEATURES = CLV_FEATURES + ("dist_vs_course",)
+
+
+def courseDistances(course, day, distance, real):
+    """{course: [(distance to 10 m, first day run)]} from real races with a
+    distance. Per race arrays."""
+    import numpy as np
+    out = {}
+    for c, d, dd in zip(np.asarray(course)[real].tolist(), np.asarray(day)[real].tolist(),
+                        np.asarray(distance, dtype=np.float64)[real].tolist()):
+        if c < 0 or not dd == dd or dd <= 0:
+            continue
+        m = out.setdefault(int(c), {})
+        k = round(dd, -1)
+        if k not in m or d < m[k]:
+            m[k] = int(d)
+    return {c: sorted(m.items(), key=lambda kv: kv[1]) for c, m in out.items()}
+
+
+def distVsCourse(entry, distance, asof):
+    """log(distance / the nearest distance the course ran before asof), or
+    NaN (no distance, no history before asof)."""
+    if not entry or distance is None or not distance == distance or distance <= 0:
+        return math.nan
+    best = math.nan
+    for u, first in entry:
+        if first >= asof:
+            break
+        g = math.log(distance / u)
+        if not abs(g) >= abs(best):
+            best = g
+    return best
+
+
 def courseLevelKey(course, distance):
     """int64 key per race (course and distance band), -1 = none. Vectorised."""
     import numpy as np
@@ -660,8 +700,17 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
         f_, clv_pack = ctxRecords(key, day[starts], day[starts] - r_lead,
                                   (r_lead == 0) & r_known,
                                   np.clip(lvl, -CLV_CLIP, CLV_CLIP), 0)
-        X = np.hstack([X, np.repeat(f_, cnt, axis=0)])
-        feats = feats + list(CLV_FEATURES)
+        r_course = z["course"][order][starts]
+        r_dist = (X[starts, fidx["distance"]] if "distance" in fidx
+                  else np.full(len(starts), np.nan))
+        r_day = day[starts]
+        clv_pack = {"stats": clv_pack,
+                    "dists": courseDistances(r_course, r_day, r_dist, (r_lead == 0) & r_known)}
+        dvc = np.array([distVsCourse(clv_pack["dists"].get(int(c)), float(d), int(t - ld))
+                        for c, d, t, ld in zip(r_course, r_dist, r_day, r_lead)],
+                       dtype=np.float32)
+        X = np.hstack([X, np.repeat(f_, cnt, axis=0), np.repeat(dvc, cnt)[:, None]])
+        feats = feats + list(COURSE_FEATURES)
         fidx = {f: i for i, f in enumerate(feats)}
         print(f"  the course's own level record: {int((key >= 0).sum()):,} races "
               f"({datetime.datetime.now() - t3})")
@@ -722,7 +771,7 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
     # measures what they are worth ("crs_" leaves out every name it starts)
     excluded |= {f for f in feats for w in without
                  if f == w or (w.endswith("_") and f.startswith(w))}
-    used &= np.array([f not in excluded and f not in CLV_FEATURES for f in feats])
+    used &= np.array([f not in excluded and f not in COURSE_FEATURES for f in feats])
     X_all, X = X, X[:, used]
     feats_all, feats = feats, [f for f, u in zip(feats, used) if u]
     r = np.clip(y - base, -CLIP, CLIP)
@@ -965,7 +1014,7 @@ def main():
 
     # ---- the level part -------------------------------------------- #
     sl_all = raceSlices(race)
-    lf = [k for k in LEVEL_FEATURES + CLV_FEATURES if k in fidx and k not in excluded]
+    lf = [k for k in LEVEL_FEATURES + COURSE_FEATURES if k in fidx and k not in excluded]
     if a.no_ratings and "raw_form" in fidx:
         lf.append("raw_form")
     R, L = raceTable(X_all, y_abs, base_abs, sl_all, fidx, lf)
