@@ -754,3 +754,17 @@ Order is untouched (the runner trees never see it). It stays in.
 - **#6, a sequence model:** each runner's last results, in order, read by
   a small network trained for this target, as a `race_blend` member beside
   the trees. Expected +0.1–0.3 points, mostly openers.
+
+### #6 on the branch: the `seq` member
+
+- `race_trees.seqTable`: every row's runner's last 16 real results before
+  its cut, oldest first, from the full table: the residual against the
+  ratings, the place and the rated place in that field, distance, course
+  cell, meet type, level, college, field size, and how long before.
+- `race_blend --members seq`: the mlp's inputs plus those results, pooled
+  by attention (the query comes from who the runner is). Against `mlp` it
+  measures what the ORDER of the results is worth beyond the hand-made
+  summaries.
+- On a synthetic table where each runner has a hidden offset only the
+  history shows, with the records off: mlp 82.09% (the ratings), seq
+  86.89%. It reads the history.

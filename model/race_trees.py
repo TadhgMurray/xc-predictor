@@ -288,6 +288,50 @@ CLV_FEATURES = tuple(f"clv_{x}" for x in CTX_STATS)
 CLV_CLIP = 0.15                           # a wrong distance is not a course
 
 
+# ★ EACH RUNNER'S RESULTS IN ORDER, FOR A SEQUENCE MODEL (plan #6,
+#   race_blend's seq member). Every row gets the indices of its runner's last
+#   SEQ_LEN real results on days before its cut, oldest first (-1 = none),
+#   into one table of those results' facts. Read from the FULL table before
+#   --train-frac thins it, like the records.
+SEQ_LEN = 16
+SEQ_FEATURES = ("resid", "place_pct", "rated_pct", "log_dist", "course_cell", "has_cell",
+                "meet_type", "level", "is_tfrrs", "log_field")
+
+
+def seqTable(pid, day, lead, race, y, base, X, fidx, tfrrs, k=SEQ_LEN, chunk=2_000_000):
+    """({"F": [events, SEQ_FEATURES] float32, "day": [events]}, idx [rows, k]
+    int32). race must be sorted (loadTable's order). Vectorised."""
+    import numpy as np
+    n = len(day)
+    starts = np.flatnonzero(np.r_[True, race[1:] != race[:-1]])
+    cnt = np.diff(np.r_[starts, n])
+    of = np.repeat(np.arange(len(starts)), cnt)
+    pos = np.empty(n, dtype=np.int64)
+    pos[np.lexsort((y, of))] = np.arange(n)
+    place = (pos - starts[of]) / np.maximum(cnt[of] - 1, 1)
+
+    def col(name):
+        return (X[:, fidx[name]].astype(np.float64) if name in fidx
+                else np.full(n, np.nan))
+    ev = np.flatnonzero(lead == 0)
+    ev = ev[np.lexsort((day[ev], pid[ev]))]
+    F = np.stack([np.clip(y - base, -CLIP, CLIP), place, col("rank_pct"),
+                  np.log(col("distance") / 5000.0), col("course_cell"), col("has_cell"),
+                  col("meet_type") / 6.0, col("level") / 4.0, tfrrs.astype(np.float64),
+                  np.log(cnt[of]) / 5.0], axis=1)[ev]
+    F = np.nan_to_num(F, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    code = pid[ev].astype(np.int64) * _DAY + day[ev]
+    idx = np.empty((n, k), dtype=np.int32)
+    back = np.arange(k, 0, -1)[None, :]
+    for a in range(0, n, chunk):
+        p_ = pid[a:a + chunk].astype(np.int64)
+        hi = np.searchsorted(code, p_ * _DAY + (day[a:a + chunk] - lead[a:a + chunk]), "left")
+        lo = np.searchsorted(code, p_ * _DAY, "left")
+        j = hi[:, None] - back
+        idx[a:a + chunk] = np.where(j >= lo[:, None], j, -1)
+    return {"F": F, "day": day[ev].astype(np.int32)}, idx
+
+
 def courseLevelKey(course, distance):
     """int64 key per race (course and distance band), -1 = none. Vectorised."""
     import numpy as np
@@ -517,7 +561,7 @@ def orderReport(name, base_s, model_s, keep=None, labels=("ratings", "model"), e
 #            validation season marked, the training rows' practice blanks made.
 #            race_trees.main and race_blend.py both start here.
 def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0,
-              without=(), course_level=True):
+              without=(), course_level=True, seq=0):
     import numpy as np
     t0 = datetime.datetime.now()
     z = np.load(rows, allow_pickle=False)
@@ -624,6 +668,12 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
     cut = datetime.date.fromisoformat(val_from).toordinal()
     val = day >= cut
     pid = z["pid"][order]
+    seq_ev = seq_idx = None
+    if seq:
+        t4 = datetime.datetime.now()
+        seq_ev, seq_idx = seqTable(pid, day, lead, race, y, base, X, fidx, tfrrs, seq)
+        print(f"  results in order for the sequence model: {len(seq_ev['day']):,} results, "
+              f"{seq} per row ({datetime.datetime.now() - t4})")
     course = (z["course"][order] if "course" in z.files
               else np.full(len(day), -1, dtype=np.int64))
     # ★ A SAMPLE OF THE TRAINING RACES (owner, 2026-10-27: "that took way way
@@ -638,6 +688,8 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
         race, day, tfrrs, lead, val, pid = (race[keep], day[keep], tfrrs[keep], lead[keep],
                                             val[keep], pid[keep])
         course = course[keep]
+        if seq_idx is not None:
+            seq_idx = seq_idx[keep]
     if not (~val).any() or not val.any():
         raise SystemExit(f"{rows}: {int((~val).sum()):,} training and {int(val.sum()):,} "
                          f"validation rows around --val-from {val_from}; both are needed")
@@ -677,7 +729,7 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
 _TABLE_KEYS = ('z', 't0', 'feats_all', 'feats', 'fidx', 'X_all', 'X', 'y', 'base', 'y_abs',
                'base_abs', 'base_page', 'base_page_abs', 'race', 'day', 'tfrrs', 'val', 'lead',
                'own_pack', 'team_pack', 'labels', 'r', 'Xt', 'excluded', 'order', 'pid',
-               'ctx_packs', 'clv_pack', 'course')
+               'ctx_packs', 'clv_pack', 'course', 'seq_ev', 'seq_idx')
 
 
 _ODD_NAME = ("relay", "time trial", "alumni", "fun run", "parent", "exhibition", "practice",
@@ -809,7 +861,7 @@ def main():
                   [w for w in a.without.split(",") if w])
     (z, t0, feats_all, feats, fidx, X_all, X, y, base, y_abs, base_abs, base_page,
      base_page_abs, race, day, tfrrs, val, lead, own_pack, team_pack, labels, r, Xt,
-     excluded, order, pid, ctx_packs, clv_pack, course) = \
+     excluded, order, pid, ctx_packs, clv_pack, course, _seq_ev, _seq_idx) = \
         (T[k] for k in _TABLE_KEYS)
     import numpy as np
     rm = runnerModel(a.seed, a.big).fit(Xt, r[~val])

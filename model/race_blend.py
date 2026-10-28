@@ -20,6 +20,10 @@ stays race_trees'. No database; CPU.
            weight takes care of the scale)
     xgb    XGBoost, on the ratings
     mlp    a neural net (torch) on the same inputs, missing ones flagged
+    seq    the mlp's inputs AND each runner's last results in order (race_trees
+           SEQ_FEATURES), read by attention: patterns in a career the
+           hand-made summaries miss (plan #6). Against mlp, it measures what
+           the order of the results is worth.
   lgbm, rank and xgb need /srv/pred/pylib on PYTHONPATH (installed there,
   never into the site's venv); a member that does not import is skipped.
 
@@ -39,7 +43,7 @@ if _HERE not in sys.path:
 
 import race_trees as RT                                       # noqa: E402
 
-MEMBERS = ("hgb", "raw", "lgbm", "rank", "xgb", "mlp")
+MEMBERS = ("hgb", "raw", "lgbm", "rank", "xgb", "mlp", "seq")
 
 
 # ------------------------------------------------------------------ #
@@ -129,14 +133,10 @@ def fitXgb(T, seed):
                                            iteration_range=(0, m.best_iteration + 1))
 
 
-def fitMlp(T, seed, epochs=6, batch=8192):
-    """A plain neural net: standardised inputs, a missing-flag per input
-    that can be missing, three layers. Trained on the same clipped residual."""
+def _prep(T):
+    """The nets' input: standardised, a missing-flag per input that can be
+    missing (fitted on the training rows)."""
     import numpy as np
-    import torch
-    torch.manual_seed(seed)
-    tr = ~T["val"]
-    X = T["X"]
     med = np.nanmedian(T["Xt"], axis=0)
     sd = np.nanstd(T["Xt"], axis=0)
     sd[~(sd > 1e-9)] = 1.0
@@ -147,7 +147,18 @@ def fitMlp(T, seed, epochs=6, batch=8192):
         Z = np.where(nan, med, M)
         Z = (Z - med) / sd
         return np.hstack([Z, nan[:, holes]]).astype(np.float32)
+    return prep
 
+
+def fitMlp(T, seed, epochs=6, batch=8192):
+    """A plain neural net: standardised inputs, a missing-flag per input
+    that can be missing, three layers. Trained on the same clipped residual."""
+    import numpy as np
+    import torch
+    torch.manual_seed(seed)
+    tr = ~T["val"]
+    X = T["X"]
+    prep = _prep(T)
     Xt = torch.from_numpy(prep(T["Xt"]))
     rt = torch.from_numpy(T["r"][tr].astype(np.float32))
     net = torch.nn.Sequential(
@@ -180,6 +191,104 @@ def fitMlp(T, seed, epochs=6, batch=8192):
     return T["base"][T["val"]] + np.concatenate(out)
 
 
+def seqBatch(ev, idx, day):
+    """[B, k, SEQ_FEATURES + 1] steps (the facts and how long before the
+    race, in log weeks; zeros where there is no result) and the [B, k]
+    mask, for rows with these indices and race days. Pure but for numpy."""
+    import numpy as np
+    ok = idx >= 0
+    j = np.where(ok, idx, 0)
+    F = ev["F"][j]
+    age = np.log1p(np.maximum(day[:, None] - ev["day"][j], 0) / 7.0).astype(np.float32)
+    out = np.concatenate([F, age[..., None]], axis=2)
+    out[~ok] = 0.0
+    return out, ok
+
+
+def _seqNet(n_static, n_step, width=64):
+    import torch
+
+    class SeqNet(torch.nn.Module):
+        """The static inputs as the mlp reads them; each past result
+        embedded, then pooled by attention (the query comes from the static
+        inputs: who this runner is decides which results matter) and the
+        newest result on its own."""
+        def __init__(self):
+            super().__init__()
+            self.static = torch.nn.Sequential(
+                torch.nn.Linear(n_static, 256), torch.nn.SiLU(), torch.nn.Dropout(0.1),
+                torch.nn.Linear(256, 256), torch.nn.SiLU())
+            self.step = torch.nn.Sequential(
+                torch.nn.Linear(n_step, width), torch.nn.SiLU(), torch.nn.Linear(width, width))
+            self.pos = torch.nn.Parameter(torch.zeros(1, 64, width))
+            self.query = torch.nn.Linear(256, 4 * width)
+            self.head = torch.nn.Sequential(
+                torch.nn.Linear(256 + 5 * width + 1, 256), torch.nn.SiLU(), torch.nn.Dropout(0.1),
+                torch.nn.Linear(256, 128), torch.nn.SiLU(), torch.nn.Linear(128, 1))
+            self.width = width
+
+        def forward(self, xs, steps, mask):
+            h = self.static(xs)
+            k = steps.shape[1]
+            e = self.step(steps) + self.pos[:, -k:]                  # newest last
+            q = self.query(h).view(-1, 4, self.width)                # 4 heads
+            sc = torch.einsum("bhw,bkw->bhk", q, e) / self.width ** 0.5
+            sc = sc.masked_fill(~mask[:, None, :], -1e9)
+            att = torch.softmax(sc, dim=2) * mask[:, None, :].float()
+            pooled = torch.einsum("bhk,bkw->bhw", att, e).reshape(len(xs), -1)
+            n = mask.float().sum(1, keepdim=True)
+            last = e[:, -1] * mask[:, -1:].float()
+            return self.head(torch.cat([h, pooled, last, torch.log1p(n)], 1)).squeeze(1)
+    return SeqNet()
+
+
+def fitSeq(T, seed, epochs=4, batch=8192):
+    """mlp's inputs plus each runner's last results in order (seqBatch);
+    the same target and loss as fitMlp."""
+    import numpy as np
+    import torch
+    if T.get("seq_idx") is None:
+        raise SystemExit("the seq member needs loadTable(seq=RT.SEQ_LEN)")
+    torch.manual_seed(seed)
+    tr = ~T["val"]
+    prep = _prep(T)
+    Xt = torch.from_numpy(prep(T["Xt"]))
+    rt = torch.from_numpy(T["r"][tr].astype(np.float32))
+    ev, idx_t, day_t = T["seq_ev"], T["seq_idx"][tr], T["day"][tr]
+    net = _seqNet(Xt.shape[1], ev["F"].shape[1] + 1)
+    opt = torch.optim.AdamW(net.parameters(), lr=1e-3, weight_decay=1e-4)
+    steps = epochs * (len(rt) // batch + 1)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=2e-3, total_steps=steps)
+    loss_fn = torch.nn.HuberLoss(delta=0.03)
+    net.train()
+    for ep in range(epochs):
+        t1 = datetime.datetime.now()
+        perm = np.random.default_rng(seed + ep).permutation(len(rt))
+        tot = 0.0
+        for k in range(0, len(rt), batch):
+            ix = perm[k:k + batch]
+            st, mk = seqBatch(ev, idx_t[ix], day_t[ix])
+            opt.zero_grad()
+            loss = loss_fn(net(Xt[ix], torch.from_numpy(st), torch.from_numpy(mk)), rt[ix])
+            loss.backward()
+            opt.step()
+            sched.step()
+            tot += loss.item() * len(ix)
+        print(f"    seq epoch {ep + 1}/{epochs}: loss {tot / len(rt):.6f} "
+              f"({datetime.datetime.now() - t1})", flush=True)
+    net.eval()
+    val = T["val"]
+    Xv = prep(T["X"][val])
+    idx_v, day_v = T["seq_idx"][val], T["day"][val]
+    out = []
+    with torch.no_grad():
+        for k in range(0, len(Xv), 65536):
+            st, mk = seqBatch(ev, idx_v[k:k + 65536], day_v[k:k + 65536])
+            out.append(net(torch.from_numpy(Xv[k:k + 65536]), torch.from_numpy(st),
+                           torch.from_numpy(mk)).numpy())
+    return T["base"][val] + np.concatenate(out)
+
+
 # ------------------------------------------------------------------ #
 #  the blend
 # ------------------------------------------------------------------ #
@@ -203,13 +312,14 @@ def main():
                     help="fit every member on this share of the training races (0.35 for "
                          "a test in about a third of the time); the validation season stays whole")
     ap.add_argument("--mlp-epochs", type=int, default=6)
+    ap.add_argument("--seq-epochs", type=int, default=4)
     a = ap.parse_args()
     want = [m.strip() for m in a.members.split(",") if m.strip()]
 
     import numpy as np
     t0 = datetime.datetime.now()
     T = RT.loadTable(a.rows, a.val_from, own=True, no_ratings=False, seed=a.seed,
-                     train_frac=a.train_frac)
+                     train_frac=a.train_frac, seq=RT.SEQ_LEN if "seq" in want else 0)
     val = T["val"]
     yv = T["y"][val]
     sl = RT.raceSlices(T["race"][val])
@@ -220,7 +330,8 @@ def main():
     preds = {"ratings": T["base"][val]}
     fits = {"hgb": lambda: fitHgb(T, a.seed), "lgbm": lambda: fitLgbm(T, a.seed),
             "rank": lambda: fitRank(T, a.seed), "xgb": lambda: fitXgb(T, a.seed),
-            "mlp": lambda: fitMlp(T, a.seed, epochs=a.mlp_epochs)}
+            "mlp": lambda: fitMlp(T, a.seed, epochs=a.mlp_epochs),
+            "seq": lambda: fitSeq(T, a.seed, epochs=a.seq_epochs)}
     for name in want:
         if name == "raw":
             continue

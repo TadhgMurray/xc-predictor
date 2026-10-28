@@ -175,3 +175,34 @@ def test_a_race_miss_takes_the_first_cause_the_data_shows():
     assert T.missCause(dict(f, usual=float("nan"))) == "a course with no history"
     lines = T.missCauses([f, dict(f, miss=0.01)])
     assert "100.0%" in lines[-1] and "2" in lines[-1]
+
+
+def test_the_sequence_reads_earlier_real_results_only_oldest_first():
+    # one runner (pid 5) in races 0..3 on days 10, 20, 30, 30; race 3 is a
+    # forecast copy made 15 days ahead of day 30; pid 6 runs beside them
+    race = np.array([0, 0, 1, 1, 2, 2, 3, 3])
+    pid = np.array([5, 6, 5, 6, 5, 6, 5, 6])
+    day = np.array([10, 10, 20, 20, 30, 30, 30, 30])
+    lead = np.array([0, 0, 0, 0, 0, 0, 15, 15])
+    y = np.array([-.01, .01, .02, -.02, 0, 0, .03, -.03])
+    base = np.zeros(8)
+    X = np.zeros((8, 1))
+    ev, idx = T.seqTable(pid, day, lead, race, y, base, X, {"x": 0}, np.zeros(8), k=3)
+    assert len(ev["day"]) == 6                                   # the copy is no result
+    got = [[int(ev["day"][j]) if j >= 0 else None for j in row] for row in idx]
+    assert got[0] == [None, None, None]
+    assert got[4] == [None, 10, 20]                              # never its own day
+    assert got[6] == [None, None, 10]                            # cut at day 15
+    assert ev["F"][idx[4][-1], 0] == pytest.approx(0.02)         # resid of day 20
+    assert ev["F"][idx[4][-1], 1] == 1.0                         # last of two that day
+
+
+def test_seq_member_runs_on_the_synthetic_table(tmp_path):
+    pytest.importorskip("torch")
+    path = tmp_path / "rows.npz"
+    _table(str(path))
+    got = subprocess.run([sys.executable, os.path.join(_ROOT, "model", "race_blend.py"),
+                          "--rows", str(path), "--members", "hgb,seq", "--seq-epochs", "1"],
+                         capture_output=True, text=True, timeout=600)
+    assert got.returncode == 0, got.stderr[-2000:]
+    assert "seq: fitted" in got.stdout and "seq " in got.stdout.split("blend weights")[1]
