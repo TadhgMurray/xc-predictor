@@ -829,3 +829,23 @@ epoch on the server.)
 - On a synthetic table where swing depends on an input: per runner stays
   within 6 points of 68% in every fifth; one width per band covers over 90%
   of the steadiest and under 50% of the most erratic.
+
+### THE SEALED SEASON, 2025-26 (owner's run, 2026-10-28): it holds
+
+Run once. Table through 2026-07-31, trained on everything before
+2025-08-01, full data, `--without dist_vs_course` (1.9's input untested).
+
+| 2025-26, 41,923 races | Ratings | Model | Gain |
+|---|---|---|---|
+| Race morning | 87.54% | **88.82%** | **+1.29** [+1.27, +1.30] |
+| College | 86.14% | 87.63% | +1.49 [+1.37, +1.62] |
+| 7 days ahead | 86.67% | 87.98% | +1.31 [+1.28, +1.34] |
+| 28 days ahead | 83.67% | 85.15% | +1.48 |
+
+Validation (2024-25) said +1.34; the sealed season says +1.29. No sign
+of having tuned to the validation season.
+
+**Ranges per runner** (checked on the odd races of 2025-26): 68% inside
+in every fifth, narrowest to widest (widths 1.95% to 6.36%). One width
+per band: 87 / 77 / 68 / 59 / 50. Time: 71% inside ±1 sigma, 90% inside
+the 90% band.
